@@ -42,6 +42,7 @@ check m-i1 clr-mi1 "$(printf 'Hello, CLR 42\nlength = 13')"
 check m-i3 clr-mi3 "$(printf 'count = 3\nfirst = 10, last = 30\nsum after set = 139')"
 check m-c1 clr-mc1 "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
 check m-c2 clr-mc2 "$(printf 'grade(0)=zero grade(30)=fail grade(90)=pass\nsum 1..5 = 15\ncountdown 5 = 54321\nsafeDiv(10,2)=5 safeDiv(1,0)=-1')"
+check m-c3 clr-mc3 "$(printf 'greet: Hello\ngreet: Konnichiwa\nGREEN is green\nRED is red')"
 
 # M-I4: compile against an AUTO-GENERATED façade (no hand-written facade.kt).
 "$ROOT/scripts/gen-facades.sh" "$ROOT/build/gen-facades" System.Text.StringBuilder >/dev/null 2>&1
