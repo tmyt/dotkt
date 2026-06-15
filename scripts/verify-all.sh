@@ -46,5 +46,13 @@ check m-c1 clr-mc1 "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
 "$ROOT/scripts/gen-facades.sh" "$ROOT/build/gen-facades" System.Text.StringBuilder >/dev/null 2>&1
 check_multi m-i4 clr-mi4 "$ROOT/samples/m-i4/app.kt $ROOT/build/gen-facades" "$(printf 'Hello, CLR 42 True\nlength = 18')"
 
+# MSBuild: build & run a real .ktproj end-to-end via dotnet.
+ktexpected="$(printf 'Hello, Visual Studio, from a .ktproj!\nsum 1..5 = 15')"
+ktactual="$(dotnet run --project "$ROOT/samples/ktproj/hello.ktproj" -v q --nologo 2>/dev/null | grep -v 'kotlin/clr:')"
+if [[ "$ktactual" == "$ktexpected" ]]; then echo "PASS  ktproj (dotnet build)"; else
+	echo "FAIL  ktproj"; echo "--- expected ---"; echo "$ktexpected"; echo "--- actual ---"; echo "$ktactual"; fail=1
+fi
+rm -rf "$ROOT/samples/ktproj/bin" "$ROOT/samples/ktproj/obj"
+
 echo "------------------------------------"
 [[ $fail -eq 0 ]] && echo "ALL PASS" || { echo "SOME FAILED"; exit 1; }

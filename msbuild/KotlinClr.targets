@@ -1,0 +1,43 @@
+<!-- kotlin/clr MSBuild integration: compile .kt -> .cs with our backend, then let the C# toolchain
+     finish the build. Import this from a .ktproj. -->
+<Project>
+
+  <PropertyGroup>
+    <KotlinClrRoot Condition="'$(KotlinClrRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</KotlinClrRoot>
+    <KotlinClrLauncher Condition="'$(KotlinClrLauncher)' == ''">$(KotlinClrRoot)/compiler/build/install/compiler/bin/compiler</KotlinClrLauncher>
+    <KotlinStdlib Condition="'$(KotlinStdlib)' == ''">$(KotlinClrRoot)/runtime/kotlin/kotlin-stdlib.jar</KotlinStdlib>
+    <KotlinClrOut>$(IntermediateOutputPath)kotlin-cs</KotlinClrOut>
+    <!-- We generate the C# ourselves; don't let the SDK glob .cs/.kt. -->
+    <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
+    <!-- A .ktproj has no implicit language; build the generated C# with the C# language targets. -->
+    <LanguageTargets Condition="'$(LanguageTargets)' == ''">$(MSBuildToolsPath)/Microsoft.CSharp.targets</LanguageTargets>
+  </PropertyGroup>
+
+  <!-- By default every .kt under the project is a Kotlin source. -->
+  <ItemGroup>
+    <KotlinCompile Include="**/*.kt" Exclude="$(BaseIntermediateOutputPath)**;$(IntermediateOutputPath)**;bin/**;obj/**" />
+  </ItemGroup>
+
+  <!-- Bootstrap: build the kotlin/clr compiler launcher if it isn't there yet. -->
+  <Target Name="EnsureKotlinClrCompiler" BeforeTargets="KotlinClrCompile" Condition="!Exists('$(KotlinClrLauncher)')">
+    <Message Importance="high" Text="kotlin/clr: building compiler launcher (first run)..." />
+    <Exec Command="&quot;$(KotlinClrRoot)/gradlew&quot; -q :compiler:installDist" WorkingDirectory="$(KotlinClrRoot)" />
+  </Target>
+
+  <!-- Compile all .kt to .cs, then hand the generated C# to CoreCompile. -->
+  <Target Name="KotlinClrCompile" BeforeTargets="CoreCompile"
+          Inputs="@(KotlinCompile)" Outputs="$(KotlinClrOut)/.stamp">
+    <MakeDir Directories="$(KotlinClrOut)" />
+    <Message Importance="high" Text="kotlin/clr: compiling @(KotlinCompile->Count()) .kt file(s) -> C#" />
+    <Exec Command="&quot;$(KotlinClrLauncher)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(KotlinStdlib)&quot; -d &quot;$(KotlinClrOut)&quot;" />
+    <Touch Files="$(KotlinClrOut)/.stamp" AlwaysCreate="true" />
+  </Target>
+
+  <!-- Add generated C# to the compile set (runs whenever, before CoreCompile, regardless of incrementality). -->
+  <Target Name="KotlinClrCollect" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrCompile">
+    <ItemGroup>
+      <Compile Include="$(KotlinClrOut)/*.cs" />
+    </ItemGroup>
+  </Target>
+
+</Project>
