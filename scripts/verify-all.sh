@@ -40,6 +40,7 @@ check m0   clr-out "$(printf 'sum = 5\nzero\nn=1\nn=2')"
 check m2   clr-m2  "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"
 check m-i1 clr-mi1 "$(printf 'Hello, CLR 42\nlength = 13')"
 check m-i3 clr-mi3 "$(printf 'count = 3\nfirst = 10, last = 30\nsum after set = 139')"
+check m-c1 clr-mc1 "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
 
 # M-I4: compile against an AUTO-GENERATED façade (no hand-written facade.kt).
 "$ROOT/scripts/gen-facades.sh" "$ROOT/build/gen-facades" System.Text.StringBuilder >/dev/null 2>&1
