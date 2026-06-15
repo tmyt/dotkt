@@ -1,0 +1,12 @@
+# Build outputs
+/build/
+**/bin/
+**/obj/
+
+# Gradle / Kotlin
+/.gradle/
+/.kotlin/
+
+# IDE
+/.idea/
+*.iml
