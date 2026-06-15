@@ -15,10 +15,31 @@ calls, string templates, `println`, lambdas.
 - properties (get/set), generics (`new List<int>()`), indexers (`list[i]`)
 - Kotlin lambdas → CLR delegates (`Action`, `Func<T>`)
 
+**Classes (multi-file):** Kotlin classes → C# classes with fields, constructors, inheritance,
+`override`/`virtual`, objects → singletons. Multiple `.kt` files cross-reference each other.
+
+**MSBuild / `.ktproj`:** a Kotlin.NET project builds with plain `dotnet build` / `dotnet run`
+(and therefore in Visual Studio, which uses MSBuild):
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <StartupObject>AppKt</StartupObject>
+  </PropertyGroup>
+  <!-- expose .NET types to Kotlin; façades auto-generated at build time -->
+  <ItemGroup><KotlinClrFacade Include="System.Text.StringBuilder" /></ItemGroup>
+  <Import Project="path/to/msbuild/KotlinClr.targets" />
+</Project>
+```
+`dotnet build foo.ktproj` runs the kotlin/clr compiler on the `.kt` files, then the C# toolchain
+finishes the assembly. See `samples/ktproj/` and `samples/ktproj-ref/`.
+
 **Windowing:** a real window, **built in Kotlin**, rendered via Avalonia on WSLg.
 
 ```bash
-./scripts/verify-all.sh        # compile+run+assert all console samples (m0, m2, m-i1, m-i3)
+./scripts/verify-all.sh        # compile+run+assert all console + .ktproj samples
 ./scripts/run-window.sh 15     # launch the Kotlin-driven Avalonia window (auto-close 15s)
 ```
 

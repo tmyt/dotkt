@@ -13,7 +13,7 @@ check() { # <sample-dir> <out-dir> <expected>
 	"$ROOT/gradlew" -q --no-daemon :compiler:run \
 		--args="$src -no-stdlib -classpath $STDLIB -d $out" >/dev/null 2>&1
 	local actual
-	actual="$(dotnet run --project "$src/runner.csproj" -v q --nologo 2>/dev/null)"
+	actual="$(dotnet run --project "$src/runner.csproj" -v q --nologo 2>/dev/null | grep -vE "warning |error |\\.cs\\(")"
 	if [[ "$actual" == "$expected" ]]; then
 		echo "PASS  $1"
 	else
@@ -29,7 +29,7 @@ check_multi() { # <sample-name> <out-dir> <source-roots> <expected>
 	"$ROOT/gradlew" -q --no-daemon :compiler:run \
 		--args="$roots -no-stdlib -classpath $STDLIB -d $out" >/dev/null 2>&1
 	local actual
-	actual="$(dotnet run --project "$src/runner.csproj" -v q --nologo 2>/dev/null)"
+	actual="$(dotnet run --project "$src/runner.csproj" -v q --nologo 2>/dev/null | grep -vE "warning |error |\\.cs\\(")"
 	if [[ "$actual" == "$expected" ]]; then echo "PASS  $name"; else
 		echo "FAIL  $name"; echo "--- expected ---"; echo "$expected"; echo "--- actual ---"; echo "$actual"; fail=1
 	fi
@@ -41,6 +41,7 @@ check m2   clr-m2  "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"
 check m-i1 clr-mi1 "$(printf 'Hello, CLR 42\nlength = 13')"
 check m-i3 clr-mi3 "$(printf 'count = 3\nfirst = 10, last = 30\nsum after set = 139')"
 check m-c1 clr-mc1 "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
+check m-c2 clr-mc2 "$(printf 'grade(0)=zero grade(30)=fail grade(90)=pass\nsum 1..5 = 15\ncountdown 5 = 54321\nsafeDiv(10,2)=5 safeDiv(1,0)=-1')"
 
 # M-I4: compile against an AUTO-GENERATED façade (no hand-written facade.kt).
 "$ROOT/scripts/gen-facades.sh" "$ROOT/build/gen-facades" System.Text.StringBuilder >/dev/null 2>&1

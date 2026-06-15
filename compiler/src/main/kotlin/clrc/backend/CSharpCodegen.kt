@@ -32,6 +32,8 @@ import org.jetbrains.kotlin.ir.expressions.IrReturn
 import org.jetbrains.kotlin.ir.expressions.IrSetField
 import org.jetbrains.kotlin.ir.expressions.IrSetValue
 import org.jetbrains.kotlin.ir.expressions.IrStringConcatenation
+import org.jetbrains.kotlin.ir.expressions.IrThrow
+import org.jetbrains.kotlin.ir.expressions.IrTry
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperator
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperatorCall
 import org.jetbrains.kotlin.ir.expressions.IrWhen
@@ -59,6 +61,9 @@ class CSharpCodegen {
 
 	private val sb = StringBuilder()
 	private var indent = 0
+
+	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) used in expression position.
+	private val valSubst = HashMap<String, String>()
 
 	private fun line(text: String) {
 		repeat(indent) { sb.append("    ") }
@@ -139,18 +144,18 @@ class CSharpCodegen {
 	private fun generateMemberProperty(prop: IrProperty) {
 		val backing = prop.backingField
 		if (backing != null) {
-			line("public ${csType(backing.type)} ${prop.name.asString()};")
+			line("public ${csType(backing.type)} ${csId(prop.name.asString())};")
 		} else {
 			val getter = prop.getter ?: return
 			val body = (getter.body as? IrBlockBody)?.statements.orEmpty().joinToString(" ") { renderInline(it) }
-			line("public ${csType(getter.returnType)} ${prop.name.asString()} { get { $body } }")
+			line("public ${csType(getter.returnType)} ${csId(prop.name.asString())} { get { $body } }")
 		}
 	}
 
 	private fun generateConstructor(klass: IrClass, ctor: IrConstructor) {
 		val params = ctor.parameters
 			.filter { it.kind == IrParameterKind.Regular }
-			.joinToString(", ") { "${csType(it.type)} ${it.name.asString()}" }
+			.joinToString(", ") { "${csType(it.type)} ${csId(it.name.asString())}" }
 		val body = ctor.body as? IrBlockBody
 		val delegating = body?.statements?.filterIsInstance<IrDelegatingConstructorCall>()?.firstOrNull()
 		val baseClause = delegating?.let { d ->
@@ -191,7 +196,7 @@ class CSharpCodegen {
 		val ret = csType(function.returnType)
 		val params = function.parameters
 			.filter { it.kind == IrParameterKind.Regular }
-			.joinToString(", ") { "${csType(it.type)} ${it.name.asString()}" }
+			.joinToString(", ") { "${csType(it.type)} ${csId(it.name.asString())}" }
 		val modifier = when {
 			static -> "static "
 			function.overriddenSymbols.isNotEmpty() -> "override "
@@ -219,11 +224,11 @@ class CSharpCodegen {
 			is IrVariable -> {
 				// `var` lets C# infer the concrete (possibly .NET) type from the initializer.
 				val init = stmt.initializer?.let { genExpr(it) }
-				if (init != null) line("var ${stmt.name.asString()} = $init;")
-				else line("${csType(stmt.type)} ${stmt.name.asString()};")
+				if (init != null) line("var ${csId(stmt.name.asString())} = $init;")
+				else line("${csType(stmt.type)} ${csId(stmt.name.asString())};")
 			}
 			is IrSetValue -> line("${valueName(stmt.symbol.owner.name.asString())} = ${genExpr(stmt.value)};")
-			is IrSetField -> line("${stmt.receiver?.let { genExpr(it) } ?: "this"}.${stmt.symbol.owner.name.asString()} = ${genExpr(stmt.value)};")
+			is IrSetField -> line("${stmt.receiver?.let { genExpr(it) } ?: "this"}.${csId(stmt.symbol.owner.name.asString())} = ${genExpr(stmt.value)};")
 			is IrReturn -> {
 				if (stmt.value.type.isUnit()) line("return;")
 				else line("return ${genExpr(stmt.value)};")
@@ -238,7 +243,9 @@ class CSharpCodegen {
 				line("}")
 			}
 			is IrWhen -> generateWhenStatement(stmt)
-			is IrBlock -> stmt.statements.forEach { generateStatement(it) }
+			is IrTry -> generateTry(stmt)
+			is IrBlock -> if (stmt.origin?.toString() == "FOR_LOOP") generateForLoop(stmt)
+			else stmt.statements.forEach { generateStatement(it) }
 			is IrExpression -> line("${genExpr(stmt)};")
 			else -> line("// unsupported statement: ${stmt::class.simpleName}")
 		}
@@ -260,12 +267,81 @@ class CSharpCodegen {
 		}
 	}
 
+	private fun generateTry(tryExpr: IrTry) {
+		line("try")
+		line("{")
+		indent++
+		emitBlockOrStatement(tryExpr.tryResult)
+		indent--
+		line("}")
+		for (catch in tryExpr.catches) {
+			val p = catch.catchParameter
+			line("catch (${csType(p.type)} ${p.name.asString()})")
+			line("{")
+			indent++
+			emitBlockOrStatement(catch.result)
+			indent--
+			line("}")
+		}
+		tryExpr.finallyExpression?.let {
+			line("finally")
+			line("{")
+			indent++
+			emitBlockOrStatement(it)
+			indent--
+			line("}")
+		}
+	}
+
+	private fun emitBlockOrStatement(expr: IrExpression) {
+		if (expr is IrBlock) expr.statements.forEach { generateStatement(it) } else generateStatement(expr)
+	}
+
+	/** A Kotlin `for (x in ...)` is desugared to iterator+while; re-fold it into a C# for/foreach. */
+	private fun generateForLoop(block: IrBlock) {
+		val iterVar = block.statements.getOrNull(0) as? IrVariable
+		val whileLoop = block.statements.getOrNull(1) as? IrWhileLoop
+		val bodyBlock = whileLoop?.body as? IrBlock
+		val loopVar = bodyBlock?.statements?.getOrNull(0) as? IrVariable
+		if (iterVar == null || bodyBlock == null || loopVar == null) {
+			block.statements.forEach { generateStatement(it) }
+			return
+		}
+		val loopName = loopVar.name.asString()
+		val realBody = bodyBlock.statements.drop(1)
+		// The iterable is the receiver of `.iterator()`.
+		val source = (iterVar.initializer as? IrCall)?.let { dispatchReceiverOf(it) }
+		val header = (source as? IrCall)?.let { rangeForHeader(loopName, it) }
+			?: "foreach (var $loopName in ${source?.let { genExpr(it) } ?: "default"})"
+		line(header)
+		line("{")
+		indent++
+		realBody.forEach { generateStatement(it) }
+		indent--
+		line("}")
+	}
+
+	/** A C# `for` header for a Kotlin range (`a..b`, `a until b`, `a downTo b`), or null. */
+	private fun rangeForHeader(name: String, range: IrCall): String? {
+		val ops = operandList(range)
+		if (ops.size != 2) return null
+		val a = genExpr(ops[0]); val b = genExpr(ops[1])
+		return when (range.symbol.owner.name.asString()) {
+			"rangeTo" -> "for (int $name = $a; $name <= $b; $name++)"
+			"until", "rangeUntil" -> "for (int $name = $a; $name < $b; $name++)"
+			"downTo" -> "for (int $name = $a; $name >= $b; $name--)"
+			else -> null
+		}
+	}
+
 	// ----- expressions -----
 
 	private fun genExpr(expr: IrExpression): String = when (expr) {
 		is IrConst -> constLiteral(expr)
-		is IrGetValue -> valueName(expr.symbol.owner.name.asString())
-		is IrGetField -> "${expr.receiver?.let { genExpr(it) } ?: "this"}.${expr.symbol.owner.name.asString()}"
+		is IrGetValue -> valSubst[expr.symbol.owner.name.asString()] ?: valueName(expr.symbol.owner.name.asString())
+		is IrThrow -> "throw ${genExpr(expr.value)}"
+		is IrBlock -> genBlockExpr(expr)
+		is IrGetField -> "${expr.receiver?.let { genExpr(it) } ?: "this"}.${csId(expr.symbol.owner.name.asString())}"
 		is IrStringConcatenation -> "string.Concat(${expr.arguments.joinToString(", ") { genExpr(it) }})"
 		is IrWhen -> ternary(expr)
 		is IrConstructorCall -> genConstructorCall(expr)
@@ -288,7 +364,7 @@ class CSharpCodegen {
 		val fn = expr.function
 		val params = fn.parameters
 			.filter { it.kind == IrParameterKind.Regular }
-			.joinToString(", ") { it.name.asString() }
+			.joinToString(", ") { csId(it.name.asString()) }
 		val statements = (fn.body as? IrBlockBody)?.statements.orEmpty()
 		val body = statements.joinToString(" ") { renderInline(it) }
 		return "($params) => { $body }"
@@ -296,12 +372,27 @@ class CSharpCodegen {
 
 	/** Single-line rendering of a statement, for use inside lambda bodies. */
 	private fun renderInline(stmt: org.jetbrains.kotlin.ir.IrElement): String = when (stmt) {
-		is IrVariable -> stmt.initializer?.let { "var ${stmt.name.asString()} = ${genExpr(it)};" } ?: "${csType(stmt.type)} ${stmt.name.asString()};"
+		is IrVariable -> stmt.initializer?.let { "var ${csId(stmt.name.asString())} = ${genExpr(it)};" } ?: "${csType(stmt.type)} ${csId(stmt.name.asString())};"
 		is IrSetValue -> "${valueName(stmt.symbol.owner.name.asString())} = ${genExpr(stmt.value)};"
-		is IrSetField -> "${stmt.receiver?.let { genExpr(it) } ?: "this"}.${stmt.symbol.owner.name.asString()} = ${genExpr(stmt.value)};"
+		is IrSetField -> "${stmt.receiver?.let { genExpr(it) } ?: "this"}.${csId(stmt.symbol.owner.name.asString())} = ${genExpr(stmt.value)};"
 		is IrReturn -> if (stmt.value.type.isUnit()) "return;" else "return ${genExpr(stmt.value)};"
 		is IrExpression -> "${genExpr(stmt)};"
 		else -> "/* unsupported inline stmt: ${stmt::class.simpleName} */"
+	}
+
+	/** A block in expression position: a `when (subject)` lowers to `{ val tmp = subject; WHEN }`. */
+	private fun genBlockExpr(block: IrBlock): String {
+		val tmp = block.statements.getOrNull(0) as? IrVariable
+		val whenExpr = block.statements.getOrNull(1) as? IrWhen
+		if (block.statements.size == 2 && tmp != null && whenExpr != null && tmp.initializer != null) {
+			val key = tmp.name.asString()
+			valSubst[key] = "(${genExpr(tmp.initializer!!)})"
+			val result = ternary(whenExpr)
+			valSubst.remove(key)
+			return result
+		}
+		// Generic block-expression: value is the last statement.
+		return (block.statements.lastOrNull() as? IrExpression)?.let { genExpr(it) } ?: "default"
 	}
 
 	private fun ternary(whenExpr: IrWhen): String {
@@ -339,6 +430,17 @@ class CSharpCodegen {
 			val target = memberTarget(call, clrType ?: "")
 			return if (callee === property.setter) "$target.$propName = ${genExpr(regularArgs(call).first())}"
 			else "$target.$propName"
+		}
+
+		// Range membership: `x in a..b` -> `(x >= a && x <op> b)`.
+		if (isBuiltin && name == "contains") {
+			val range = dispatchReceiverOf(call) as? IrCall
+			val value = regularArgs(call).firstOrNull()
+			if (range != null && value != null) rangeForHeader("_", range)?.let {
+				val ops = operandList(range)
+				val op = if (range.symbol.owner.name.asString() == "rangeTo") "<=" else "<"
+				return "(${genExpr(value)} >= ${genExpr(ops[0])} && ${genExpr(value)} $op ${genExpr(ops[1])})"
+			}
 		}
 
 		// Built-in operators on primitives/intrinsics (NOT user methods that happen to be named `plus`).
@@ -396,7 +498,10 @@ class CSharpCodegen {
 	}
 
 	/** The Kotlin synthetic dispatch-receiver name `<this>` becomes C# `this`. */
-	private fun valueName(name: String): String = if (name == "<this>") "this" else name
+	private fun valueName(name: String): String = if (name == "<this>") "this" else csId(name)
+
+	/** Escapes a Kotlin identifier that collides with a C# keyword (`out` -> `@out`). */
+	private fun csId(name: String): String = if (name in CS_KEYWORDS) "@$name" else name
 
 	private fun dispatchReceiverOf(call: IrFunctionAccessExpression): IrExpression? {
 		val params = (call.symbol.owner as? IrFunction)?.parameters ?: return null
@@ -437,8 +542,11 @@ class CSharpCodegen {
 	}
 
 	private fun csType(type: IrType): String {
+		val fq = type.classFqName?.asString()
 		// Primitives & well-known Kotlin types map to C# keywords first.
-		PRIMITIVES[type.classFqName?.asString()]?.let { return it }
+		PRIMITIVES[fq]?.let { return it }
+		// Kotlin/JVM types (exceptions etc.) map to their .NET equivalents.
+		NET_TYPES[fq]?.let { return "global::$it" }
 		val klass = type.classifierOrNull?.owner as? IrClass
 		if (klass != null) {
 			// @Clr façade -> real .NET type; otherwise a user-declared class/object/interface.
@@ -472,6 +580,34 @@ class CSharpCodegen {
 			"kotlin.Byte" to "sbyte", "kotlin.Double" to "double", "kotlin.Float" to "float",
 			"kotlin.Boolean" to "bool", "kotlin.Char" to "char", "kotlin.String" to "string",
 			"kotlin.Any" to "object",
+		)
+
+		private val CS_KEYWORDS = setOf(
+			"abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked",
+			"class", "const", "continue", "decimal", "default", "delegate", "do", "double", "else",
+			"enum", "event", "explicit", "extern", "false", "finally", "fixed", "float", "for",
+			"foreach", "goto", "if", "implicit", "in", "int", "interface", "internal", "is", "lock",
+			"long", "namespace", "new", "null", "object", "operator", "out", "override", "params",
+			"private", "protected", "public", "readonly", "ref", "return", "sbyte", "sealed", "short",
+			"sizeof", "stackalloc", "static", "string", "struct", "switch", "this", "throw", "true",
+			"try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort", "using", "virtual",
+			"void", "volatile", "while", "lock",
+		)
+
+		// Kotlin/JVM types (as surfaced by the reused JVM frontend) -> .NET equivalents.
+		private val NET_TYPES = mapOf(
+			"java.lang.Object" to "System.Object", "java.lang.String" to "System.String",
+			"java.lang.Throwable" to "System.Exception", "kotlin.Throwable" to "System.Exception",
+			"java.lang.Exception" to "System.Exception", "kotlin.Exception" to "System.Exception",
+			"java.lang.RuntimeException" to "System.Exception", "kotlin.RuntimeException" to "System.Exception",
+			"java.lang.ArithmeticException" to "System.ArithmeticException",
+			"java.lang.IllegalArgumentException" to "System.ArgumentException",
+			"kotlin.IllegalArgumentException" to "System.ArgumentException",
+			"java.lang.IllegalStateException" to "System.InvalidOperationException",
+			"kotlin.IllegalStateException" to "System.InvalidOperationException",
+			"java.lang.IndexOutOfBoundsException" to "System.IndexOutOfRangeException",
+			"java.lang.NullPointerException" to "System.NullReferenceException",
+			"java.lang.UnsupportedOperationException" to "System.NotSupportedException",
 		)
 	}
 }
