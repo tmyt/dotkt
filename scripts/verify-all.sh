@@ -54,5 +54,13 @@ if [[ "$ktactual" == "$ktexpected" ]]; then echo "PASS  ktproj (dotnet build)"; 
 fi
 rm -rf "$ROOT/samples/ktproj/bin" "$ROOT/samples/ktproj/obj"
 
+# MSBuild + auto-generated reference façade.
+refexpected="built via dotnet build + facade for 42"
+refactual="$(dotnet run --project "$ROOT/samples/ktproj-ref/ref.ktproj" -v q --nologo 2>/dev/null | grep -vE 'kotlin/clr:|duplicate source root')"
+if [[ "$refactual" == "$refexpected" ]]; then echo "PASS  ktproj-ref (auto-façade)"; else
+	echo "FAIL  ktproj-ref"; echo "--- expected ---"; echo "$refexpected"; echo "--- actual ---"; echo "$refactual"; fail=1
+fi
+rm -rf "$ROOT/samples/ktproj-ref/bin" "$ROOT/samples/ktproj-ref/obj"
+
 echo "------------------------------------"
 [[ $fail -eq 0 ]] && echo "ALL PASS" || { echo "SOME FAILED"; exit 1; }

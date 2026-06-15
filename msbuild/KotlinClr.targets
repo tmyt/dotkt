@@ -6,7 +6,10 @@
     <KotlinClrRoot Condition="'$(KotlinClrRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</KotlinClrRoot>
     <KotlinClrLauncher Condition="'$(KotlinClrLauncher)' == ''">$(KotlinClrRoot)/compiler/build/install/compiler/bin/compiler</KotlinClrLauncher>
     <KotlinStdlib Condition="'$(KotlinStdlib)' == ''">$(KotlinClrRoot)/runtime/kotlin/kotlin-stdlib.jar</KotlinStdlib>
-    <KotlinClrOut>$(IntermediateOutputPath)kotlin-cs</KotlinClrOut>
+    <!-- Generated files live under obj/ (which the .kt glob excludes), not the source tree. -->
+    <KotlinClrOut>$(BaseIntermediateOutputPath)kotlin-cs</KotlinClrOut>
+    <KotlinClrFacadeGen>$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</KotlinClrFacadeGen>
+    <KotlinClrFacadeOut>$(BaseIntermediateOutputPath)kotlin-facades</KotlinClrFacadeOut>
     <!-- We generate the C# ourselves; don't let the SDK glob .cs/.kt. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
     <!-- A .ktproj has no implicit language; build the generated C# with the C# language targets. -->
@@ -22,6 +25,22 @@
   <Target Name="EnsureKotlinClrCompiler" BeforeTargets="KotlinClrCompile" Condition="!Exists('$(KotlinClrLauncher)')">
     <Message Importance="high" Text="kotlin/clr: building compiler launcher (first run)..." />
     <Exec Command="&quot;$(KotlinClrRoot)/gradlew&quot; -q :compiler:installDist" WorkingDirectory="$(KotlinClrRoot)" />
+  </Target>
+
+  <!-- Auto-generate Kotlin façades for the .NET types listed via <KotlinClrFacade Include="..."/>. -->
+  <Target Name="EnsureFacadeGen" BeforeTargets="KotlinClrFacades"
+          Condition="'@(KotlinClrFacade)' != '' and !Exists('$(KotlinClrFacadeGen)')">
+    <Message Importance="high" Text="kotlin/clr: building façade generator (first run)..." />
+    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/tools/facadegen&quot; -c Release -o &quot;$(KotlinClrRoot)/build/facadegen-bin&quot; -v q --nologo" />
+  </Target>
+
+  <Target Name="KotlinClrFacades" BeforeTargets="KotlinClrCompile" Condition="'@(KotlinClrFacade)' != ''">
+    <MakeDir Directories="$(KotlinClrFacadeOut)" />
+    <Message Importance="high" Text="kotlin/clr: generating façades for @(KotlinClrFacade->'%(Identity)', ', ')" />
+    <Exec Command="dotnet &quot;$(KotlinClrFacadeGen)&quot; &quot;$(KotlinClrFacadeOut)&quot; @(KotlinClrFacade->'%(Identity)', ' ')" />
+    <ItemGroup>
+      <KotlinCompile Include="$(KotlinClrFacadeOut)/clr/*.kt" />
+    </ItemGroup>
   </Target>
 
   <!-- Compile all .kt to .cs, then hand the generated C# to CoreCompile. -->
