@@ -143,8 +143,30 @@ class CSharpCodegen {
 		for (prop in klass.memberProperties()) generateMemberProperty(prop)
 		for (ctor in klass.declarations.filterIsInstance<IrConstructor>()) generateConstructor(klass, ctor)
 		for (m in klass.memberMethods()) { generateFunction(m, static = false); line("") }
+		if (klass.isData) generateDataEquality(klass)
 		indent--
 		line("}")
+	}
+
+	/** Value-based Equals/GetHashCode for a data class, generated from its backing fields. */
+	private fun generateDataEquality(klass: IrClass) {
+		val fields = klass.memberProperties().mapNotNull { it.backingField }.map { csId(it.name.asString()) }
+		if (fields.isEmpty()) return
+		val name = klass.name.asString()
+		line("public override bool Equals(object obj)")
+		line("{")
+		indent++
+		line("return obj is $name o && ${fields.joinToString(" && ") { "global::System.Object.Equals(this.$it, o.$it)" }};")
+		indent--
+		line("}")
+		line("")
+		line("public override int GetHashCode()")
+		line("{")
+		indent++
+		line("return global::System.HashCode.Combine(${fields.joinToString(", ") { "this.$it" }});")
+		indent--
+		line("}")
+		line("")
 	}
 
 	private fun generateObject(obj: IrClass) {
@@ -499,6 +521,12 @@ class CSharpCodegen {
 		// Built-in operators on primitives/intrinsics (NOT user methods that happen to be named `plus`).
 		if (isBuiltin) {
 			val operands = operandList(call)
+			// Structural equality: `==` for value types/strings, else System.Object.Equals (calls .Equals).
+			if ((name == "EQEQ" || name == "EQEQEQ") && operands.size == 2) {
+				return if (operands.all { isEqByValue(it.type) })
+					"(${genExpr(operands[0])} == ${genExpr(operands[1])})"
+				else "global::System.Object.Equals(${genExpr(operands[0])}, ${genExpr(operands[1])})"
+			}
 			BINARY_OPERATORS[name]?.let { op ->
 				if (operands.size == 2) return "(${genExpr(operands[0])} $op ${genExpr(operands[1])})"
 			}
@@ -553,6 +581,13 @@ class CSharpCodegen {
 
 	/** The Kotlin synthetic dispatch-receiver name `<this>` becomes C# `this`. */
 	private fun valueName(name: String): String = if (name == "<this>") "this" else csId(name)
+
+	/** Types whose `==` is value equality in C# (primitives, enums-as-int, strings). */
+	private fun isEqByValue(type: IrType): Boolean {
+		val fq = type.classFqName?.asString()
+		if (fq in PRIMITIVES || fq == "kotlin.String") return true
+		return (type.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.ENUM_CLASS
+	}
 
 	/** Escapes a Kotlin identifier that collides with a C# keyword (`out` -> `@out`). */
 	private fun csId(name: String): String = if (name in CS_KEYWORDS) "@$name" else name

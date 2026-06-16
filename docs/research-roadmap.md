@@ -88,7 +88,7 @@ coroutine lowering は compiler 内部・stdlib intrinsics に密結合。phase 
 # M-S: 前提となる言語/stdlib 補強（M-D2 と実用化の下地）
 
 - **S1 — null 安全（M）— 部分達成.** `?:`（elvis → `((a==null)?b:a)`、既存 block 経路）、`!!`（CHECK_NOT_NULL → 値そのまま）達成（`samples/m-s1`）。残: `?.`（値型メンバで nullable cast が要る）。
-- **S2 — data class（S）— 部分達成.** `toString`（field concat）/`copy`/`componentN` 生成、Object メソッド名（toString/equals/hashCode）を C# 名へ写像（宣言・呼出）。`samples/m-s2`。残: `equals`/`hashCode` の値等価本体。
+- **S2 — data class（S）✅ 達成.** `toString`/`copy`/`componentN`、フィールドから値等価 `Equals`/`GetHashCode` を生成、`==`(EQEQ) を値型/string/enum は `==`・参照型は `System.Object.Equals` へ写像、Object メソッド名を C# 名へ。`samples/m-s2`（`a==b` 構造等価が True）。
 - **S3 — collections stdlib（M）— 部分達成.** `listOf`/`mutableListOf`/`arrayListOf` → `new List<T>{...}`、`kotlin.collections.List/Set/Map` → BCL generics、`.size`→`.Count`、for-in→`foreach` 達成（`samples/m-s3`）。残: `mapOf`/`setOf`、`map`/`filter`/`forEach` 等拡張。
 - **S4 — generic 型の façade 自動生成（M）✅ 達成.** `facadegen` が generic type definition（`List\`1`）から `class List<T>` を自動生成（型パラメータ、indexer→operator get/set、generic param→T）。`samples/m-s4` が生成 façード経由で `List<Int>` を使用（count/indexer/add）。手書き m-i3 façード相当を自動化。
 - **S5 — FIR シンボル直接注入（XL・抜本）.** `JvmFrontendPipelinePhase` を CLR-aware frontend に差し替え、`AssemblyResolver` が解決した .NET 型を FIR symbol provider に注入。façade ファイルすら不要化（参考実装 `frontend/symbol/*` が移植元）。
