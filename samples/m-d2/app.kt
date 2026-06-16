@@ -1,13 +1,14 @@
+import clr.Api
 import clr.Coro
+import clr.await
 
-// A Kotlin suspend function that awaits real .NET async operations (non-blocking).
+// Drives real .NET async APIs (returning Task<T>) via the generic `.await()` interop point.
 suspend fun compute(): Int {
-	Coro.delay(20)
-	val v = Coro.fetchValue(30, 21)
+	val task = Api.fetchAsync(30, 21)   // a real .NET Task<Int>
+	val v = task.await()                // generic interop point -> await
 	return v * 2
 }
 
 fun main() {
-	val result = Coro.run { compute() }
-	println("result = $result")
+	println("result = ${Coro.run { compute() }}")
 }

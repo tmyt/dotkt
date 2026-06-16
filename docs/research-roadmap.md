@@ -65,9 +65,9 @@ Kotlin の `suspend` は `Continuation<T>` + `COROUTINE_SUSPENDED` センチネ�
 
 state machine lowering の代わりに、より実用的な **`suspend` → C# `async Task<T>` 写像**を採用:
 - `suspend fun` → `async global::System.Threading.Tasks.Task<T>`、suspend 呼び出し → `await`、suspend ラムダ → `async (...) =>`。
-- `@Clr` の suspend façード（`Coro.delay`/`fetchValue`）→ 実 .NET `Task` を返す C# メソッド、`await` で**真に非ブロッキング**。
+- **汎用 interop ポイント `@ClrAwait suspend fun <T> Task<T>.await(): T`**（WinRT `AsTask()` 着想の逆向き橋）。codegen は `@ClrAwait` 注釈の呼び出しを「拡張レシーバ＝awaitable」に畳み、suspend ラッパが `await <receiver>` を生成。→ **任意の .NET `Task<T>` を返す素の API をラップ無しで await 可能**（`IAsyncOperation`/`ValueTask` も同型注釈で拡張可）。
 - `runBlocking` 相当 = 境界で `body().GetAwaiter().GetResult()`。
-- `samples/m-d2`：Kotlin suspend が `Task.Delay` を await して `result = 42`（非ブロッキング）。
+- `samples/m-d2`：素の .NET async API `Api.FetchAsync(): Task<int>` を `task.await()` で await、`result = 42`（非ブロッキング）。
 
 **達成範囲**: suspend/await/Task の基本相互運用（非ブロッキング）。**残**: 完全な Kotlin coroutine 意味論（state machine lowering, `Dispatchers`, 構造化並行性, cancellation, `Flow`）は C# async 写像では近似に留まり、下記の正攻法（lowering 再利用）が要る。
 

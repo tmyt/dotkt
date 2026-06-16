@@ -1,22 +1,22 @@
-// kotlin/clr coroutine/Task interop runtime. Kotlin `suspend` maps to C# `async Task<T>`;
-// suspend calls map to `await`, so .NET async APIs are driven NON-BLOCKING from Kotlin.
+// kotlin/clr coroutine/Task interop. A Kotlin `suspend fun` maps to C# `async Task<T>`, and the
+// `@ClrAwait` intrinsic `Task<T>.await()` is the generic bridge to ANY .NET awaitable.
 using System;
 using System.Threading.Tasks;
 
 namespace Kfc
 {
-    public static class Coro
+    // An ordinary .NET async API — nothing Kotlin-specific.
+    public static class Api
     {
-        // A genuine non-blocking async operation: awaits Task.Delay, then yields a value.
-        public static async Task<int> FetchValue(int ms, int value)
+        public static async Task<int> FetchAsync(int ms, int value)
         {
             await Task.Delay(ms);
             return value;
         }
+    }
 
-        public static async Task Delay(int ms) => await Task.Delay(ms);
-
-        // runBlocking-style boundary: drives a suspend (async) lambda to completion.
+    public static class Coro
+    {
         public static int Run(Func<Task<int>> body) => body().GetAwaiter().GetResult();
     }
 }

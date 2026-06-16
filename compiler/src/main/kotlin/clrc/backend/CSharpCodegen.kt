@@ -496,6 +496,11 @@ class CSharpCodegen {
 
 	private fun genCallInner(call: IrCall): String {
 		val callee = call.symbol.owner
+		// `@ClrAwait` intrinsic (`suspend fun <T> Task<T>.await(): T`): the awaitable IS the receiver.
+		// The suspend wrapper in genCall turns this into `await <receiver>` — the generic interop point.
+		if (hasAnnotation(callee, CLR_AWAIT)) {
+			return extensionReceiverOf(call)?.let { genExpr(it) } ?: "default"
+		}
 		val name = callee.name.asString()
 		val declaringClass = callee.parent as? IrClass
 		val clrType = declaringClass?.let { clrName(it) }
@@ -623,6 +628,15 @@ class CSharpCodegen {
 		return if (idx in 0 until call.arguments.size) call.arguments[idx] else null
 	}
 
+	private fun extensionReceiverOf(call: IrFunctionAccessExpression): IrExpression? {
+		val params = (call.symbol.owner as? IrFunction)?.parameters ?: return null
+		val idx = params.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+		return if (idx in 0 until call.arguments.size) call.arguments[idx] else null
+	}
+
+	private fun hasAnnotation(decl: IrAnnotationContainer, fqName: String): Boolean =
+		decl.annotations.any { (it as? IrConstructorCall)?.type?.classFqName?.asString() == fqName }
+
 	/** Operands corresponding to `Regular` parameters only (drops dispatch/extension receivers). */
 	private fun regularArgs(call: IrFunctionAccessExpression): List<IrExpression> {
 		val params = (call.symbol.owner as? IrFunction)?.parameters ?: emptyList()
@@ -679,6 +693,7 @@ class CSharpCodegen {
 
 	companion object {
 		private const val CLR_ANNOTATION = "clr.Clr"
+		private const val CLR_AWAIT = "clr.ClrAwait"
 
 		private val BINARY_OPERATORS = mapOf(
 			"plus" to "+", "minus" to "-", "times" to "*", "div" to "/", "rem" to "%",

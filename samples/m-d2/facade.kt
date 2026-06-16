@@ -3,9 +3,24 @@ package clr
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 annotation class Clr(val name: String)
 
+// Marks the generic bridge from a .NET awaitable to a Kotlin suspension point.
+@Target(AnnotationTarget.FUNCTION)
+annotation class ClrAwait
+
+// Façade for any .NET Task<T>.
+@Clr("System.Threading.Tasks.Task")
+class Task<T>
+
+// THE interop point: await any .NET Task<T> from a Kotlin suspend function.
+@ClrAwait
+suspend fun <T> Task<T>.await(): T = TODO()
+
+@Clr("Kfc.Api")
+object Api {
+	@Clr("FetchAsync") fun fetchAsync(ms: Int, value: Int): Task<Int> = TODO()
+}
+
 @Clr("Kfc.Coro")
 object Coro {
-	@Clr("Delay") suspend fun delay(ms: Int): Unit = TODO()
-	@Clr("FetchValue") suspend fun fetchValue(ms: Int, value: Int): Int = TODO()
 	@Clr("Run") fun run(body: suspend () -> Int): Int = TODO()
 }
