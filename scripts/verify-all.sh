@@ -45,7 +45,7 @@ check m-c2 clr-mc2 "$(printf 'grade(0)=zero grade(30)=fail grade(90)=pass\nsum 1
 check m-c3 clr-mc3 "$(printf 'greet: Hello\ngreet: Konnichiwa\nGREEN is green\nRED is red')"
 check m-s3 clr-ms3 "$(printf 'size = 3\nsum = 60')"
 check m-s1 clr-ms1 "$(printf 'fallback\npresent\nforced\nlen null = -1\nlen hello = 5')"
-check m-d2 clr-md2 "result = 42"
+check m-d2 clr-md2 "$(printf 'result = 42\nsum = 15\nsafe = -1')"
 check m-d2-sm clr-md2sm "chain = 30"
 check m-s2 clr-ms2 "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4\na==b: True\na==c: False\nhash eq: True')"
 
