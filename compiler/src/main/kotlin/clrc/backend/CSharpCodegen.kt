@@ -38,6 +38,7 @@ import org.jetbrains.kotlin.ir.expressions.IrThrow
 import org.jetbrains.kotlin.ir.expressions.IrTry
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperator
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperatorCall
+import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.expressions.IrWhen
 import org.jetbrains.kotlin.ir.expressions.IrWhileLoop
 import org.jetbrains.kotlin.ir.types.IrSimpleType
@@ -459,10 +460,19 @@ class CSharpCodegen {
 			else "$target[${args.dropLast(1).joinToString(", ") { genExpr(it) }}] = ${genExpr(args.last())}"
 		}
 
+		// Kotlin collection factories -> a C# generic-collection literal.
+		val calleeFq = callee.fqNameOrNull()
+		if (calleeFq in LIST_FACTORIES) {
+			val elems = (call.arguments.firstOrNull() as? IrVararg)?.elements.orEmpty()
+				.filterIsInstance<IrExpression>().joinToString(", ") { genExpr(it) }
+			return "new global::System.Collections.Generic.List${csTypeArgs(call.type)} { $elems }"
+		}
+
 		// Property get/set (both @Clr and user classes) -> C# property access.
 		val property = callee.correspondingPropertySymbol?.owner
 		if (property != null) {
-			val propName = clrName(property) ?: property.name.asString()
+			val propName = COLLECTION_PROPS[property.name.asString()]?.takeIf { declFq?.startsWith("kotlin.collections") == true }
+				?: clrName(property) ?: property.name.asString()
 			val target = memberTarget(call, clrType ?: "")
 			return if (callee === property.setter) "$target.$propName = ${genExpr(regularArgs(call).first())}"
 			else "$target.$propName"
@@ -583,6 +593,8 @@ class CSharpCodegen {
 		PRIMITIVES[fq]?.let { return it }
 		// Kotlin/JVM types (exceptions etc.) map to their .NET equivalents.
 		NET_TYPES[fq]?.let { return "global::$it" }
+		// Kotlin collections map to BCL generics.
+		COLLECTIONS[fq]?.let { return "global::$it${csTypeArgs(type)}" }
 		val klass = type.classifierOrNull?.owner as? IrClass
 		if (klass != null) {
 			// @Clr façade -> real .NET type; otherwise a user-declared class/object/interface.
@@ -629,6 +641,23 @@ class CSharpCodegen {
 			"try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort", "using", "virtual",
 			"void", "volatile", "while", "lock",
 		)
+
+		private val COLLECTIONS = mapOf(
+			"kotlin.collections.List" to "System.Collections.Generic.List",
+			"kotlin.collections.MutableList" to "System.Collections.Generic.List",
+			"kotlin.collections.Collection" to "System.Collections.Generic.List",
+			"kotlin.collections.Iterable" to "System.Collections.Generic.IEnumerable",
+			"kotlin.collections.Set" to "System.Collections.Generic.HashSet",
+			"kotlin.collections.MutableSet" to "System.Collections.Generic.HashSet",
+			"kotlin.collections.Map" to "System.Collections.Generic.Dictionary",
+			"kotlin.collections.MutableMap" to "System.Collections.Generic.Dictionary",
+		)
+
+		private val LIST_FACTORIES = setOf(
+			"kotlin.collections.listOf", "kotlin.collections.mutableListOf", "kotlin.collections.arrayListOf",
+		)
+
+		private val COLLECTION_PROPS = mapOf("size" to "Count")
 
 		// Kotlin/JVM types (as surfaced by the reused JVM frontend) -> .NET equivalents.
 		private val NET_TYPES = mapOf(
