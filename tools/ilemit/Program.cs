@@ -280,6 +280,29 @@ sealed class Emitter
                 _il.MarkLabel(end);
                 break;
             }
+            case "for":
+            {
+                var local = _il.DeclareLocal(typeof(int));
+                _locals[s.GetProperty("var").GetString()] = local;
+                EmitExpr(s.GetProperty("from")); _il.Emit(OpCodes.Stloc, local);
+                var start = _il.DefineLabel(); var end = _il.DefineLabel();
+                _il.MarkLabel(start);
+                _il.Emit(OpCodes.Ldloc, local);
+                EmitExpr(s.GetProperty("to"));
+                switch (s.GetProperty("cmp").GetString())   // exit when the bound is crossed
+                {
+                    case "<=": _il.Emit(OpCodes.Bgt, end); break;
+                    case "<": _il.Emit(OpCodes.Bge, end); break;
+                    case ">=": _il.Emit(OpCodes.Blt, end); break;
+                }
+                foreach (var b in s.GetProperty("body").EnumerateArray()) EmitStmt(b);
+                _il.Emit(OpCodes.Ldloc, local);
+                _il.Emit(OpCodes.Ldc_I4, s.GetProperty("step").GetInt32());
+                _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, local);
+                _il.Emit(OpCodes.Br, start);
+                _il.MarkLabel(end);
+                break;
+            }
             case "block":
                 foreach (var b in s.GetProperty("body").EnumerateArray()) EmitStmt(b);
                 break;

@@ -140,9 +140,30 @@ class BirEmitter {
 		is IrReturn -> if (node.value.type.isUnit()) """{"k":"return"}""" else """{"k":"return","value":${expr(node.value)}}"""
 		is IrWhileLoop -> """{"k":"while","cond":${expr(node.condition)},"body":[${(node.body as? IrBlock)?.statements?.joinToString(",") { stmt(it) } ?: ""}]}"""
 		is IrWhen -> whenStmt(node)
-		is IrBlock -> """{"k":"block","body":[${node.statements.joinToString(",") { stmt(it) }}]}"""
+		is IrBlock -> (if (node.origin?.toString() == "FOR_LOOP") birForLoop(node) else null)
+			?: """{"k":"block","body":[${node.statements.joinToString(",") { stmt(it) }}]}"""
 		is IrExpression -> """{"k":"exprStmt","expr":${expr(node)}}"""
 		else -> """{"k":"unsupportedStmt","of":${str(node::class.simpleName ?: "?")}}"""
+	}
+
+	/** A Kotlin `for (i in a..b / until / downTo)` -> a BIR counter loop, or null if not a range. */
+	private fun birForLoop(block: IrBlock): String? {
+		val iterVar = block.statements.getOrNull(0) as? IrVariable
+		val whileLoop = block.statements.getOrNull(1) as? IrWhileLoop
+		val bodyBlock = whileLoop?.body as? IrBlock
+		val loopVar = bodyBlock?.statements?.getOrNull(0) as? IrVariable
+		val range = (iterVar?.initializer as? IrCall)?.let { dispatchReceiver(it) } as? IrCall ?: return null
+		if (loopVar == null) return null
+		val ops = range.arguments.filterNotNull()
+		if (ops.size != 2) return null
+		val (cmp, step) = when (range.symbol.owner.name.asString()) {
+			"rangeTo" -> "<=" to 1
+			"until", "rangeUntil" -> "<" to 1
+			"downTo" -> ">=" to -1
+			else -> return null
+		}
+		val body = bodyBlock.statements.drop(1).joinToString(",") { stmt(it) }
+		return """{"k":"for","var":${str(loopVar.name.asString())},"from":${expr(ops[0])},"to":${expr(ops[1])},"cmp":${str(cmp)},"step":$step,"body":[$body]}"""
 	}
 
 	private fun whenStmt(node: IrWhen): String {
@@ -265,6 +286,9 @@ class BirEmitter {
 
 		if (isBuiltin) {
 			val operands = call.arguments.filterNotNull()
+			// `String + x` is concatenation, not numeric add.
+			if (name == "plus" && declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.String" && operands.size == 2)
+				return """{"k":"concat","parts":[${expr(operands[0])},${expr(operands[1])}]}"""
 			BINARY[name]?.let { if (operands.size == 2) return """{"k":"bin","op":${str(it)},"l":${expr(operands[0])},"r":${expr(operands[1])}}""" }
 			UNARY[name]?.let { if (operands.size == 1) return """{"k":"un","op":${str(it)},"e":${expr(operands[0])}}""" }
 			val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
