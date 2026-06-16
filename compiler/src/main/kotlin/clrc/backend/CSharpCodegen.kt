@@ -489,6 +489,9 @@ class CSharpCodegen {
 			}
 		}
 
+		// `e!!` (not-null assertion) -> the value itself (C#'s use site throws on null anyway).
+		if (isBuiltin && name == "CHECK_NOT_NULL") return genExpr(regularArgs(call).first())
+
 		// Built-in operators on primitives/intrinsics (NOT user methods that happen to be named `plus`).
 		if (isBuiltin) {
 			val operands = operandList(call)
