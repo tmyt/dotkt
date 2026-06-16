@@ -18,6 +18,8 @@ import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrDelegatingConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrExpressionBody
+import org.jetbrains.kotlin.ir.declarations.IrEnumEntry
+import org.jetbrains.kotlin.ir.expressions.IrGetEnumValue
 import org.jetbrains.kotlin.ir.expressions.IrGetField
 import org.jetbrains.kotlin.ir.expressions.IrGetValue
 import org.jetbrains.kotlin.ir.expressions.IrInstanceInitializerCall
@@ -48,6 +50,9 @@ import java.io.File
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class BirEmitter {
+
+	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
+	private val valSubst = HashMap<String, String>()
 
 	fun emitFile(file: IrFile): String {
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
@@ -151,8 +156,19 @@ class BirEmitter {
 		is IrConst -> """{"k":"const","type":${str(birType(node.type))},"value":${constJson(node)}}"""
 		is IrGetValue -> {
 			val name = node.symbol.owner.name.asString()
-			if (name == "<this>") """{"k":"this"}""" else """{"k":"local","name":${str(name)}}"""
+			when {
+				valSubst.containsKey(name) -> valSubst[name]!!
+				name == "<this>" -> """{"k":"this"}"""
+				else -> """{"k":"local","name":${str(name)}}"""
+			}
 		}
+		is IrGetEnumValue -> {
+			// Lower an enum entry to its ordinal (int); equality/when then compare ints.
+			val entry = node.symbol.owner
+			val entries = (entry.parent as? IrClass)?.declarations?.filterIsInstance<IrEnumEntry>().orEmpty()
+			"""{"k":"const","type":"int","value":${entries.indexOf(entry)}}"""
+		}
+		is IrBlock -> blockExpr(node)
 		is IrGetField -> """{"k":"field","ownerType":${str((node.symbol.owner.parent as? IrClass)?.name?.asString() ?: "?")},"recv":${node.receiver?.let { expr(it) } ?: """{"k":"this"}"""},"name":${str(node.symbol.owner.name.asString())}}"""
 		is IrConstructorCall -> {
 			val klass = node.symbol.owner.parent as? IrClass
@@ -175,6 +191,20 @@ class BirEmitter {
 		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return null
 		val idx = params.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
 		return if (idx in 0 until call.arguments.size) call.arguments[idx] else null
+	}
+
+	private fun blockExpr(block: IrBlock): String {
+		// `when (subject)` lowers to `{ val tmp = subject; WHEN }` in expression position.
+		val tmp = block.statements.getOrNull(0) as? IrVariable
+		val whenExpr = block.statements.getOrNull(1) as? IrWhen
+		if (block.statements.size == 2 && tmp != null && whenExpr != null && tmp.initializer != null) {
+			val key = tmp.name.asString()
+			valSubst[key] = expr(tmp.initializer!!)
+			val result = ternary(whenExpr)
+			valSubst.remove(key)
+			return result
+		}
+		return (block.statements.lastOrNull() as? IrExpression)?.let { expr(it) } ?: """{"k":"const","type":"void","value":null}"""
 	}
 
 	private fun ternary(node: IrWhen): String {
@@ -244,8 +274,10 @@ class BirEmitter {
 			"kotlin.Char" -> return "char"
 			"kotlin.String" -> return "string"
 		}
-		// A user-declared class becomes a reference to that BIR type ("@Name").
 		val klass = t.classifierOrNull?.owner as? IrClass
+		// Enums are lowered to their ordinal (int).
+		if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return "int"
+		// A user-declared class becomes a reference to that BIR type ("@Name").
 		if (klass != null && klass.kind == ClassKind.CLASS) return "@" + klass.name.asString()
 		return "object"
 	}
