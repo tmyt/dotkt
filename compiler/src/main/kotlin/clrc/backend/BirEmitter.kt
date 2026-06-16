@@ -52,13 +52,23 @@ class BirEmitter {
 	fun emitFile(file: IrFile): String {
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
 		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS }
-		if (functions.isEmpty() && classes.isEmpty()) return ""
+		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE }
+		if (functions.isEmpty() && classes.isEmpty() && interfaces.isEmpty()) return ""
 		val className = File(file.fileEntry.name).name.removeSuffix(".kt")
 			.replaceFirstChar { it.uppercaseChar() } + "Kt"
 		val hasMain = functions.any { it.name.asString() == "main" && it.parameters.none { p -> p.kind == IrParameterKind.Regular } }
 		val methods = functions.joinToString(",") { method(it, static = true) }
-		val types = classes.joinToString(",") { typeDef(it) }
+		val types = (interfaces.map { interfaceDef(it) } + classes.map { typeDef(it) }).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"methods":[$methods],"types":[$types]}"""
+	}
+
+	private fun interfaceDef(iface: IrClass): String {
+		val methods = iface.declarations.filterIsInstance<IrSimpleFunction>()
+			.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride }
+			.joinToString(",") {
+				"""{"name":${str(it.name.asString())},"static":false,"override":false,"virtual":true,"params":[${paramsJson(it.parameters)}],"ret":${str(birType(it.returnType))},"body":[]}"""
+			}
+		return """{"name":${str(iface.name.asString())},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$methods]}"""
 	}
 
 	private fun typeDef(klass: IrClass): String {
@@ -71,7 +81,10 @@ class BirEmitter {
 			.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && it.body != null }
 			.joinToString(",") { method(it, static = false) }
 		val baseJson = base?.let { str(it.name.asString()) } ?: "null"
-		return """{"name":${str(klass.name.asString())},"kind":"class","base":$baseJson,"fields":[$fields],"ctors":[$ctors],"methods":[$methods]}"""
+		val ifaces = klass.superTypes.mapNotNull { it.classifierOrNull?.owner as? IrClass }
+			.filter { it.kind == ClassKind.INTERFACE }
+			.joinToString(",") { str(it.name.asString()) }
+		return """{"name":${str(klass.name.asString())},"kind":"class","base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods]}"""
 	}
 
 	private fun ctor(klass: IrClass, ctor: IrConstructor): String {

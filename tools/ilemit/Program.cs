@@ -36,6 +36,7 @@ sealed class TypeInfo
     public readonly Dictionary<string, MethodBuilder> Methods = new();
     public ConstructorBuilder Ctor;
     public JsonElement CtorDef;
+    public bool IsInterface;
 }
 
 sealed class Emitter
@@ -71,18 +72,27 @@ sealed class Emitter
                 foreach (var t in ts.EnumerateArray())
                 {
                     var name = t.GetProperty("name").GetString();
+                    var isIface = t.GetProperty("kind").GetString() == "interface";
+                    var attrs = isIface
+                        ? TypeAttributes.Public | TypeAttributes.Interface | TypeAttributes.Abstract
+                        : TypeAttributes.Public | TypeAttributes.Class;
                     _types[name] = new TypeInfo
                     {
-                        TB = _mod.DefineType(name, TypeAttributes.Public | TypeAttributes.Class),
+                        TB = _mod.DefineType(name, attrs),
                         Def = t,
+                        IsInterface = isIface,
                         BaseName = t.TryGetProperty("base", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null,
                     };
                 }
         }
 
-        // Pass 2: set parents.
+        // Pass 2: set parents and interface implementations.
         foreach (var ti in _types.Values)
+        {
             if (ti.BaseName != null) ti.TB.SetParent(_types[ti.BaseName].TB);
+            if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
+                foreach (var i in ifs.EnumerateArray()) ti.TB.AddInterfaceImplementation(_types[i.GetString()].TB);
+        }
 
         // Pass 3: declare fields, ctors, methods (signatures) so cross-refs resolve.
         foreach (var ti in _types.Values)
@@ -93,13 +103,13 @@ sealed class Emitter
             }
             else
             {
-                foreach (var f in ti.Def.GetProperty("fields").EnumerateArray())
-                    ti.Fields[f.GetProperty("name").GetString()] =
-                        ti.TB.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), FieldAttributes.Public);
+                if (!ti.IsInterface)
+                    foreach (var f in ti.Def.GetProperty("fields").EnumerateArray())
+                        ti.Fields[f.GetProperty("name").GetString()] =
+                            ti.TB.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), FieldAttributes.Public);
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: false);
-                // Declare the (primary) constructor now so cross-type `new` can resolve it.
                 var ctors = ti.Def.GetProperty("ctors");
-                if (ctors.GetArrayLength() > 0)
+                if (!ti.IsInterface && ctors.GetArrayLength() > 0)
                 {
                     var c = ctors.EnumerateArray().First();
                     var ps = c.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
@@ -109,11 +119,22 @@ sealed class Emitter
             }
         }
 
+        // Link interface implementations: every class method that satisfies an interface method.
+        foreach (var ti in _types.Values)
+            if (!ti.IsFileClass && !ti.IsInterface && ti.Def.TryGetProperty("interfaces", out var ifs))
+                foreach (var i in ifs.EnumerateArray())
+                {
+                    var iface = _types[i.GetString()];
+                    foreach (var im in iface.Methods)
+                        ti.TB.DefineMethodOverride(FindMethod(ti.TB.Name, im.Key), im.Value);
+                }
+
         // Pass 4: emit all bodies (every ctor/method signature already exists).
         foreach (var ti in _types.Values)
             if (ti.Ctor != null) EmitCtorBody(ti);
         foreach (var ti in _types.Values)
-            foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) EmitMethodBody(ti, m);
+            if (!ti.IsInterface)
+                foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) EmitMethodBody(ti, m);
 
         // Pass 5: synthesize entry point on the file class that has `main`.
         MethodBuilder entry = null;
@@ -153,7 +174,8 @@ sealed class Emitter
         var ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
         var ret = MapType(m.GetProperty("ret").GetString());
         var attrs = MethodAttributes.Public;
-        if (isStatic) attrs |= MethodAttributes.Static;
+        if (ti.IsInterface) attrs |= MethodAttributes.Virtual | MethodAttributes.Abstract | MethodAttributes.NewSlot;
+        else if (isStatic) attrs |= MethodAttributes.Static;
         else if (m.GetProperty("override").GetBoolean()) attrs |= MethodAttributes.Virtual;
         else if (m.GetProperty("virtual").GetBoolean()) attrs |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
         ti.Methods[name] = ti.TB.DefineMethod(name, attrs, ret, ps);
