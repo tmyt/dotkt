@@ -83,6 +83,9 @@ class CSharpCodegen {
 		val interfaces = userTypes.filter { it.kind == ClassKind.INTERFACE }
 		val enums = userTypes.filter { it.kind == ClassKind.ENUM_CLASS }
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
+		// Strategy-B opt-in: `@Sm`-marked suspend funcs compile to a state machine on the coroutine runtime.
+		val stateMachineFns = functions.filter { it.isSuspend && hasAnnotation(it, CLR_SM) }
+		val plainFns = functions.filterNot { it in stateMachineFns }
 
 		if (userTypes.isEmpty() && functions.isEmpty()) return ""
 
@@ -91,12 +94,14 @@ class CSharpCodegen {
 		for (i in interfaces) { generateInterface(i); line("") }
 		for (klass in classes) { generateClass(klass); line("") }
 		for (obj in objects) { generateObject(obj); line("") }
+		for (sm in stateMachineFns) { generateStateMachineClass(sm); line("") }
 
 		if (functions.isNotEmpty()) {
 			line("public static class ${fileClassName(file)}")
 			line("{")
 			indent++
-			for (function in functions) { generateFunction(function, static = true); line("") }
+			for (function in plainFns) { generateFunction(function, static = true); line("") }
+			for (sm in stateMachineFns) { generateStateMachineBridge(sm); line("") }
 			functions.firstOrNull { it.name.asString() == "main" && it.parameters.none { p -> p.kind == IrParameterKind.Regular } }
 				?.let {
 					line("public static void Main(string[] args)")
@@ -273,6 +278,84 @@ class CSharpCodegen {
 			is IrBlockBody -> body.statements.forEach { generateStatement(it) }
 			else -> line("// unsupported body: ${body?.let { it::class.simpleName }}")
 		}
+		indent--
+		line("}")
+	}
+
+	// ---- D2.1: compiler-generated coroutine state machine (constrained subset) ----
+	// Shape: `suspend fun f(): T { val x0 = e0.await(); ...; val xN = eN.await(); return r }`
+	// where each `ei.await()` is the @ClrAwait intrinsic over a .NET Task. Locals become fields;
+	// each await is a state boundary; the runtime (IContinuation/Future/TCS) drives suspension.
+
+	private fun awaitVars(fn: IrSimpleFunction): List<IrVariable> =
+		(fn.body as? IrBlockBody)?.statements?.filterIsInstance<IrVariable>()
+			?.filter { (it.initializer as? IrCall)?.let { c -> hasAnnotation(c.symbol.owner, CLR_AWAIT) } == true }
+			.orEmpty()
+
+	private fun awaitable(v: IrVariable): String =
+		extensionReceiverOf(v.initializer as IrCall)?.let { genExpr(it) } ?: "default"
+
+	private fun generateStateMachineClass(fn: IrSimpleFunction) {
+		val sm = "${fn.name.asString()}__sm"
+		val ret = csType(fn.returnType)
+		val vars = awaitVars(fn)
+		val returnExpr = (fn.body as? IrBlockBody)?.statements?.filterIsInstance<IrReturn>()?.firstOrNull()
+		line("internal sealed class $sm : global::Kotlin.Coroutines.IContinuation<$ret>")
+		line("{")
+		indent++
+		line("int __label;")
+		for (v in vars) line("${csType(v.type)} ${csId(v.name.asString())};")
+		line("readonly global::Kotlin.Coroutines.IContinuation<$ret> __completion;")
+		line("public global::Kotlin.Coroutines.CoroutineContext Context => __completion.Context;")
+		line("public $sm(global::Kotlin.Coroutines.IContinuation<$ret> c) { __completion = c; }")
+		line("public void ResumeWith(global::Kotlin.Coroutines.KResult<object> __r)")
+		line("{")
+		indent++
+		line("try {")
+		indent++
+		line("switch (__label) {")
+		indent++
+		vars.forEachIndexed { i, v ->
+			line("case $i:")
+			indent++
+			if (i > 0) line("${csId(vars[i - 1].name.asString())} = (${csType(vars[i - 1].type)})__r.Value;")
+			line("__label = ${i + 1};")
+			line("{ var __t = ${awaitable(v)};")
+			line("  __t.GetAwaiter().OnCompleted(() => ResumeWith(__t.IsFaulted")
+			line("    ? global::Kotlin.Coroutines.KResult<object>.Fail(__t.Exception.InnerException)")
+			line("    : global::Kotlin.Coroutines.KResult<object>.Success((object)__t.Result))); return; }")
+			indent--
+		}
+		line("case ${vars.size}:")
+		indent++
+		if (vars.isNotEmpty()) line("${csId(vars.last().name.asString())} = (${csType(vars.last().type)})__r.Value;")
+		val rexpr = returnExpr?.value?.let { genExpr(it) } ?: "default"
+		line("__completion.ResumeWith(global::Kotlin.Coroutines.KResult<object>.Success((object)($rexpr))); return;")
+		indent--
+		indent--
+		line("}")
+		indent--
+		line("} catch (global::System.Exception __e) {")
+		indent++
+		line("__completion.ResumeWith(global::Kotlin.Coroutines.KResult<object>.Fail(__e));")
+		indent--
+		line("}")
+		indent--
+		line("}")
+		indent--
+		line("}")
+	}
+
+	private fun generateStateMachineBridge(fn: IrSimpleFunction) {
+		val sm = "${fn.name.asString()}__sm"
+		val ret = csType(fn.returnType)
+		line("// ABI: hidden Continuation, exposed as Task<$ret> (driven by the coroutine runtime).")
+		line("public static global::System.Threading.Tasks.Task<$ret> ${fn.name.asString()}()")
+		line("{")
+		indent++
+		line("return global::Kotlin.Coroutines.CoroutineBuilders.Future<$ret>(")
+		line("    global::Kotlin.Coroutines.CoroutineContext.Empty,")
+		line("    __root => new $sm(__root).ResumeWith(global::Kotlin.Coroutines.KResult<object>.Success(null)));")
 		indent--
 		line("}")
 	}
@@ -694,6 +777,7 @@ class CSharpCodegen {
 	companion object {
 		private const val CLR_ANNOTATION = "clr.Clr"
 		private const val CLR_AWAIT = "clr.ClrAwait"
+		private const val CLR_SM = "clr.Sm"
 
 		private val BINARY_OPERATORS = mapOf(
 			"plus" to "+", "minus" to "-", "times" to "*", "div" to "/", "rem" to "%",

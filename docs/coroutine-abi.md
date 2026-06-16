@@ -70,7 +70,11 @@ Kotlin の suspend lowering を再利用して state machine を IR で入手し
 `runtime/csharp/KfcCoroutines/Coroutines.cs`: `KResult<T>`, `IContinuation<T>`, `CoroutineContext`, `Intrinsics.CoroutineSuspended`, **`CoroutineBuilders.Future`（Continuation⇄`TaskCompletionSource` ブリッジ：正常→SetResult / 例外→SetException / OperationCanceled→SetCanceled）**, `RunBlocking`。依存なし。
 **検証**: `ref/StateMachineRef.cs` が「lowering が生成すべき状態機械」を手書きで再現し、2段サスペンドの coroutine を **C# async/await を使わず** `IContinuation`+`Future`+TCS だけで非ブロッキング駆動 → `chain = 30`。**戦略B のエンジンが実動作することを実証**（戦略Aとは別経路）。この手書き state machine が **D2.1 の codegen ターゲット形**。
 
-### D2.1 — suspend lowering 組込み（最難所・未）
+### D2.1a — 制約付き状態機械 codegen（✅ 達成・実機）
+`@Sm` でオプトインした suspend fun（**線形 await 列**: `val xi = ei.await()` の並び + `return`）を、**コンパイラが state machine クラス（`IContinuation<T>` 実装 + label/locals フィールド + `ResumeWith` の label switch）へ変換**し、公開 `Task<T>` ブリッジ（`Future` 経由・Continuation 隠蔽）を生成。`samples/m-d2-sm`：`chain = 30` を **C# async/await 非使用**・D2.0 ランタイム（Continuation/TCS）の非ブロッキング駆動で達成。**「Kotlin suspend → コンパイラ生成状態機械 → 純ランタイム」が end-to-end で実動作**（strategy A/手書きと別）。
+残（D2.1b）: ループ/分岐内サスペンド・suspend 呼び出し点・引数の field 化を含む**一般 CPS 変換** = `AbstractSuspendFunctionsLowering` 再利用（下記）。
+
+### D2.1b — 一般 suspend lowering 組込み（最難所・未）
 `AbstractSuspendFunctionsLowering<C>` を CLR 用に継承して状態機械を IR で得る。**実機調査で判明した必要作業:**
 1. **CLR `CommonBackendContext` を構築**。約12の抽象メンバ（`getTypeSystem`/`getInnerClassesSupport`/mapping 等）+ `LoweringContext`（`irBuiltIns`/`irFactory`/`symbolTable`）を実装。coroutine intrinsic シンボル（`Continuation`, `COROUTINE_SUSPENDED`, `suspendCoroutineUninterceptedOrReturn`）は再利用した JVM frontend 経由で kotlin-stdlib から解決済み（`Fir2IrComponents` から取る）。
 2. **抽象メソッドを実装**: `getStateMachineMethodName`(=invokeSuspend), `getCoroutineBaseClass`(=CLR `IContinuation`/stdlib base), `nameForCoroutineClass`(=`<fn>$Coroutine`), **`buildStateMachine`（label フィールド + locals フィールド + resumeWith の label switch ＝ coroutine コンパイルの核心）**, `generateCoroutineStart`。JVM `AddContinuationLowering` が雛形。
