@@ -85,9 +85,9 @@ coroutine lowering は compiler 内部・stdlib intrinsics に密結合。phase 
 
 # M-S: 前提となる言語/stdlib 補強（M-D2 と実用化の下地）
 
-- **S1 — null 安全（M）.** `?.`（safe call: 脱糖された tmp+null check を C# `?.` へ畳む）、`?:`（elvis → `??`）、`!!`（→ 値そのまま or `!`）。
+- **S1 — null 安全（M）— 部分達成.** `?:`（elvis → `((a==null)?b:a)`、既存 block 経路）、`!!`（CHECK_NOT_NULL → 値そのまま）達成（`samples/m-s1`）。残: `?.`（値型メンバで nullable cast が要る）。
 - **S2 — data class（S）.** `equals`/`hashCode`/`toString`/`copy`/`componentN` を C# record 風 or 明示メンバで生成。
-- **S3 — collections stdlib（M）.** `listOf`/`mutableListOf`/`mapOf`/`setOf` を BCL（`List<>`/`Dictionary<>`/`HashSet<>`）へ写像。イテレーション・`map`/`filter`/`forEach` 等の主要拡張。
+- **S3 — collections stdlib（M）— 部分達成.** `listOf`/`mutableListOf`/`arrayListOf` → `new List<T>{...}`、`kotlin.collections.List/Set/Map` → BCL generics、`.size`→`.Count`、for-in→`foreach` 達成（`samples/m-s3`）。残: `mapOf`/`setOf`、`map`/`filter`/`forEach` 等拡張。
 - **S4 — generic 型の façade 自動生成（M）.** `facadegen` を総称型（`List<T>`/`Dictionary<K,V>`）対応へ。型パラメータ宣言の出力。
 - **S5 — FIR シンボル直接注入（XL・抜本）.** `JvmFrontendPipelinePhase` を CLR-aware frontend に差し替え、`AssemblyResolver` が解決した .NET 型を FIR symbol provider に注入。façade ファイルすら不要化（参考実装 `frontend/symbol/*` が移植元）。
 
