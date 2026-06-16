@@ -299,15 +299,21 @@ class CSharpCodegen {
 		val sm = "${fn.name.asString()}__sm"
 		val ret = csType(fn.returnType)
 		val vars = awaitVars(fn)
+		val params = fn.parameters.filter { it.kind == IrParameterKind.Regular }
 		val returnExpr = (fn.body as? IrBlockBody)?.statements?.filterIsInstance<IrReturn>()?.firstOrNull()
 		line("internal sealed class $sm : global::Kotlin.Coroutines.IContinuation<$ret>")
 		line("{")
 		indent++
 		line("int __label;")
+		for (p in params) line("readonly ${csType(p.type)} ${csId(p.name.asString())};")  // params -> fields
 		for (v in vars) line("${csType(v.type)} ${csId(v.name.asString())};")
 		line("readonly global::Kotlin.Coroutines.IContinuation<$ret> __completion;")
 		line("public global::Kotlin.Coroutines.CoroutineContext Context => __completion.Context;")
-		line("public $sm(global::Kotlin.Coroutines.IContinuation<$ret> c) { __completion = c; }")
+		val ctorParams = (listOf("global::Kotlin.Coroutines.IContinuation<$ret> c") +
+			params.map { "${csType(it.type)} ${csId(it.name.asString())}" }).joinToString(", ")
+		val ctorAssign = (listOf("__completion = c;") +
+			params.map { "this.${csId(it.name.asString())} = ${csId(it.name.asString())};" }).joinToString(" ")
+		line("public $sm($ctorParams) { $ctorAssign }")
 		line("public void ResumeWith(global::Kotlin.Coroutines.KResult<object> __r)")
 		line("{")
 		indent++
@@ -349,13 +355,16 @@ class CSharpCodegen {
 	private fun generateStateMachineBridge(fn: IrSimpleFunction) {
 		val sm = "${fn.name.asString()}__sm"
 		val ret = csType(fn.returnType)
+		val params = fn.parameters.filter { it.kind == IrParameterKind.Regular }
+		val sig = params.joinToString(", ") { "${csType(it.type)} ${csId(it.name.asString())}" }
+		val ctorArgs = (listOf("__root") + params.map { csId(it.name.asString()) }).joinToString(", ")
 		line("// ABI: hidden Continuation, exposed as Task<$ret> (driven by the coroutine runtime).")
-		line("public static global::System.Threading.Tasks.Task<$ret> ${fn.name.asString()}()")
+		line("public static global::System.Threading.Tasks.Task<$ret> ${fn.name.asString()}($sig)")
 		line("{")
 		indent++
 		line("return global::Kotlin.Coroutines.CoroutineBuilders.Future<$ret>(")
 		line("    global::Kotlin.Coroutines.CoroutineContext.Empty,")
-		line("    __root => new $sm(__root).ResumeWith(global::Kotlin.Coroutines.KResult<object>.Success(null)));")
+		line("    __root => new $sm($ctorArgs).ResumeWith(global::Kotlin.Coroutines.KResult<object>.Success(null)));")
 		indent--
 		line("}")
 	}

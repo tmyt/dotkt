@@ -72,7 +72,8 @@ Kotlin の suspend lowering を再利用して state machine を IR で入手し
 
 ### D2.1a — 制約付き状態機械 codegen（✅ 達成・実機）
 `@Sm` でオプトインした suspend fun（**線形 await 列**: `val xi = ei.await()` の並び + `return`）を、**コンパイラが state machine クラス（`IContinuation<T>` 実装 + label/locals フィールド + `ResumeWith` の label switch）へ変換**し、公開 `Task<T>` ブリッジ（`Future` 経由・Continuation 隠蔽）を生成。`samples/m-d2-sm`：`chain = 30` を **C# async/await 非使用**・D2.0 ランタイム（Continuation/TCS）の非ブロッキング駆動で達成。**「Kotlin suspend → コンパイラ生成状態機械 → 純ランタイム」が end-to-end で実動作**（strategy A/手書きと別）。
-残（D2.1b）: ループ/分岐内サスペンド・suspend 呼び出し点・引数の field 化を含む**一般 CPS 変換** = `AbstractSuspendFunctionsLowering` 再利用（下記）。
+引数付き suspend も対応（パラメータを state machine フィールド化、`samples/m-d2-sm` の `fetchDouble(7)=14`）。
+残（D2.1b）: ループ/分岐内サスペンド・suspend 呼び出し点を含む**一般 CPS 変換** = `AbstractSuspendFunctionsLowering` 再利用（下記）。
 
 ### D2.1b — 一般 suspend lowering 組込み（最難所・未）
 `AbstractSuspendFunctionsLowering<C>` を CLR 用に継承して状態機械を IR で得る。**実機調査で判明した必要作業:**

@@ -2,7 +2,6 @@ import clr.Api2
 import clr.Coro
 import clr.await
 
-// Compiled to a state machine on the coroutine runtime (NOT C# async/await) — strategy B.
 @clr.Sm
 suspend fun chain(): Int {
 	val a = Api2.step(10).await()
@@ -10,6 +9,14 @@ suspend fun chain(): Int {
 	return a + b
 }
 
+// Parameterized suspend fun -> state machine with the param stored as a field.
+@clr.Sm
+suspend fun fetchDouble(n: Int): Int {
+	val a = Api2.step(n).await()
+	return a * 2
+}
+
 fun main() {
 	println("chain = ${Coro.run { chain() }}")
+	println("fetchDouble(7) = ${Coro.run { fetchDouble(7) }}")
 }
