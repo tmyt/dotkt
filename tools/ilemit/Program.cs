@@ -50,6 +50,9 @@ sealed class Emitter
     ILGenerator _il;
     readonly Dictionary<string, int> _args = new();
     readonly Dictionary<string, LocalBuilder> _locals = new();
+    // active try blocks: a `return` inside stores to the result local and leaves to the end label.
+    readonly Stack<(LocalBuilder result, Label end)> _tryStack = new();
+    Type _methodRetType = typeof(void);
 
     public Emitter(string outDir, string asmName) { _outDir = outDir; _asmName = asmName; }
 
@@ -184,6 +187,7 @@ sealed class Emitter
     void EmitCtorBody(TypeInfo ti)
     {
         var c = ti.CtorDef;
+        _methodRetType = typeof(void);
         BeginMethod(ti.Ctor.GetILGenerator(), c, isStatic: false);
 
         // base ctor call
@@ -204,6 +208,7 @@ sealed class Emitter
     void EmitMethodBody(TypeInfo ti, JsonElement m)
     {
         var mb = ti.Methods[m.GetProperty("name").GetString()];
+        _methodRetType = mb.ReturnType;
         BeginMethod(mb.GetILGenerator(), m, isStatic: mb.IsStatic);
         foreach (var s in m.GetProperty("body").EnumerateArray()) EmitStmt(s);
         _il.Emit(OpCodes.Ret);
@@ -244,9 +249,47 @@ sealed class Emitter
                 break;
             }
             case "return":
-                if (s.TryGetProperty("value", out var rv)) EmitExpr(rv);
-                _il.Emit(OpCodes.Ret);
+                if (_tryStack.Count > 0)
+                {
+                    // Can't `ret` inside a protected region: store the value and leave the block.
+                    var ctx = _tryStack.Peek();
+                    if (s.TryGetProperty("value", out var trv)) { EmitExpr(trv); if (ctx.result != null) _il.Emit(OpCodes.Stloc, ctx.result); else _il.Emit(OpCodes.Pop); }
+                    _il.Emit(OpCodes.Leave, ctx.end);
+                }
+                else
+                {
+                    if (s.TryGetProperty("value", out var rv)) EmitExpr(rv);
+                    _il.Emit(OpCodes.Ret);
+                }
                 break;
+            case "throw":
+                EmitExpr(s.GetProperty("value"));
+                _il.Emit(OpCodes.Throw);
+                break;
+            case "try":
+            {
+                // A `return` inside the try captures into the method's result local (the try's own
+                // type is Nothing/void when every branch returns).
+                LocalBuilder result = _methodRetType != typeof(void) ? _il.DeclareLocal(_methodRetType) : null;
+                Label end = _il.BeginExceptionBlock();
+                _tryStack.Push((result, end));
+                foreach (var b in s.GetProperty("body").EnumerateArray()) EmitStmt(b);
+                foreach (var c in s.GetProperty("catches").EnumerateArray())
+                {
+                    _il.BeginCatchBlock(ResolveType(c.GetProperty("excType").GetString()));
+                    _il.Emit(OpCodes.Pop); // discard the exception object (catch var unused for now)
+                    foreach (var b in c.GetProperty("body").EnumerateArray()) EmitStmt(b);
+                }
+                if (s.TryGetProperty("finally", out var fin))
+                {
+                    _il.BeginFinallyBlock();
+                    foreach (var b in fin.EnumerateArray()) EmitStmt(b);
+                }
+                _il.EndExceptionBlock();
+                _tryStack.Pop();
+                if (result != null) { _il.Emit(OpCodes.Ldloc, result); _il.Emit(OpCodes.Ret); }
+                break;
+            }
             case "exprStmt":
             {
                 var t = EmitExpr(s.GetProperty("expr"));

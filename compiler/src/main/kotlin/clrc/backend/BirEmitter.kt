@@ -28,6 +28,8 @@ import org.jetbrains.kotlin.ir.expressions.IrReturn
 import org.jetbrains.kotlin.ir.expressions.IrSetField
 import org.jetbrains.kotlin.ir.expressions.IrSetValue
 import org.jetbrains.kotlin.ir.expressions.IrStringConcatenation
+import org.jetbrains.kotlin.ir.expressions.IrThrow
+import org.jetbrains.kotlin.ir.expressions.IrTry
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperatorCall
 import org.jetbrains.kotlin.ir.expressions.IrWhen
 import org.jetbrains.kotlin.ir.expressions.IrWhileLoop
@@ -140,6 +142,8 @@ class BirEmitter {
 		is IrReturn -> if (node.value.type.isUnit()) """{"k":"return"}""" else """{"k":"return","value":${expr(node.value)}}"""
 		is IrWhileLoop -> """{"k":"while","cond":${expr(node.condition)},"body":[${(node.body as? IrBlock)?.statements?.joinToString(",") { stmt(it) } ?: ""}]}"""
 		is IrWhen -> whenStmt(node)
+		is IrTry -> tryStmt(node)
+		is IrThrow -> """{"k":"throw","value":${expr(node.value)}}"""
 		is IrBlock -> (if (node.origin?.toString() == "FOR_LOOP") birForLoop(node) else null)
 			?: """{"k":"block","body":[${node.statements.joinToString(",") { stmt(it) }}]}"""
 		is IrExpression -> """{"k":"exprStmt","expr":${expr(node)}}"""
@@ -165,6 +169,18 @@ class BirEmitter {
 		val body = bodyBlock.statements.drop(1).joinToString(",") { stmt(it) }
 		return """{"k":"for","var":${str(loopVar.name.asString())},"from":${expr(ops[0])},"to":${expr(ops[1])},"cmp":${str(cmp)},"step":$step,"body":[$body]}"""
 	}
+
+	private fun tryStmt(node: IrTry): String {
+		val catches = node.catches.joinToString(",") { c ->
+			val p = c.catchParameter
+			"""{"excType":${str(netType(p.type))},"var":${str(p.name.asString())},"body":[${bodyStmts(c.result)}]}"""
+		}
+		val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
+		return """{"k":"try","type":${str(birType(node.type))},"body":[${bodyStmts(node.tryResult)}],"catches":[$catches]$finally}"""
+	}
+
+	private fun bodyStmts(e: IrExpression): String =
+		if (e is IrBlock) e.statements.joinToString(",") { stmt(it) } else stmt(e)
 
 	private fun whenStmt(node: IrWhen): String {
 		val branches = node.branches.joinToString(",") {
@@ -318,7 +334,7 @@ class BirEmitter {
 	}
 
 	/** A type's fully-qualified .NET name, for IL reflection-based member resolution. */
-	private fun netType(t: IrType): String = when (t.classFqName?.asString()) {
+	private fun netType(t: IrType): String = when (val fq = t.classFqName?.asString()) {
 		"kotlin.Int" -> "System.Int32"
 		"kotlin.Long" -> "System.Int64"
 		"kotlin.Short" -> "System.Int16"
@@ -329,7 +345,9 @@ class BirEmitter {
 		"kotlin.Char" -> "System.Char"
 		"kotlin.String" -> "System.String"
 		"kotlin.Unit" -> "System.Void"
-		else -> (t.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } ?: "System.Object"
+		else -> NET_EXCEPTIONS[fq]
+			?: (t.classifierOrNull?.owner as? IrClass)?.let { clrName(it) }
+			?: "System.Object"
 	}
 
 	private fun paramNetTypes(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
@@ -375,5 +393,16 @@ class BirEmitter {
 			"EQEQ" to "==", "EQEQEQ" to "==",
 		)
 		private val UNARY = mapOf("unaryMinus" to "-", "unaryPlus" to "+", "not" to "!")
+
+		private val NET_EXCEPTIONS = mapOf(
+			"java.lang.Throwable" to "System.Exception", "kotlin.Throwable" to "System.Exception",
+			"java.lang.Exception" to "System.Exception", "kotlin.Exception" to "System.Exception",
+			"java.lang.RuntimeException" to "System.Exception", "kotlin.RuntimeException" to "System.Exception",
+			"java.lang.ArithmeticException" to "System.ArithmeticException",
+			"java.lang.IllegalArgumentException" to "System.ArgumentException",
+			"java.lang.IllegalStateException" to "System.InvalidOperationException",
+			"java.lang.IndexOutOfBoundsException" to "System.IndexOutOfRangeException",
+			"java.lang.NullPointerException" to "System.NullReferenceException",
+		)
 	}
 }
