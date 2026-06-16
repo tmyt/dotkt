@@ -31,11 +31,14 @@ object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArti
 		File(outputDir, "KIR@Raw.txt").writeText(moduleFragment.dump())
 
 		val codegen = CSharpCodegen()
+		val bir = BirEmitter()
 		for (irFile in moduleFragment.files) {
-			val csharp = codegen.generateFile(irFile)
-			if (csharp.isBlank()) continue
 			val baseName = File(irFile.fileEntry.name).name.removeSuffix(".kt")
-			File(outputDir, "$baseName.cs").writeText(csharp)
+			val csharp = codegen.generateFile(irFile)
+			if (csharp.isNotBlank()) File(outputDir, "$baseName.cs").writeText(csharp)
+			// D1.1: also emit Backend IR (JSON) for the future CIL backend.
+			val birJson = bir.emitFile(irFile)
+			if (birJson.isNotBlank()) File(outputDir, "$baseName.bir.json").writeText(birJson)
 		}
 
 		return ClrBackendArtifact(ExitCode.OK)
