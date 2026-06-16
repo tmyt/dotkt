@@ -66,8 +66,9 @@ Kotlin の suspend lowering を再利用して state machine を IR で入手し
 
 ## 6. 戦略B 実装状況と手順
 
-### D2.0 — CLR Continuation ランタイム（✅ 構築・コンパイル検証済）
-`runtime/csharp/KfcCoroutines/Coroutines.cs`: `KResult<T>`, `IContinuation<T>`, `CoroutineContext`, `Intrinsics.CoroutineSuspended`, **`CoroutineBuilders.Future`（Continuation⇄`TaskCompletionSource` ブリッジ：正常→SetResult / 例外→SetException / OperationCanceled→SetCanceled）**, `RunBlocking`。依存なしの最小実装。lowering（D2.1）がこれを驅動すると end-to-end になる。
+### D2.0 — CLR Continuation ランタイム（✅ 構築・**end-to-end 実動作検証済**）
+`runtime/csharp/KfcCoroutines/Coroutines.cs`: `KResult<T>`, `IContinuation<T>`, `CoroutineContext`, `Intrinsics.CoroutineSuspended`, **`CoroutineBuilders.Future`（Continuation⇄`TaskCompletionSource` ブリッジ：正常→SetResult / 例外→SetException / OperationCanceled→SetCanceled）**, `RunBlocking`。依存なし。
+**検証**: `ref/StateMachineRef.cs` が「lowering が生成すべき状態機械」を手書きで再現し、2段サスペンドの coroutine を **C# async/await を使わず** `IContinuation`+`Future`+TCS だけで非ブロッキング駆動 → `chain = 30`。**戦略B のエンジンが実動作することを実証**（戦略Aとは別経路）。この手書き state machine が **D2.1 の codegen ターゲット形**。
 
 ### D2.1 — suspend lowering 組込み（最難所・未）
 `AbstractSuspendFunctionsLowering<C>` を CLR 用に継承して状態機械を IR で得る。**実機調査で判明した必要作業:**
