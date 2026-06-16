@@ -21,12 +21,14 @@ import org.jetbrains.kotlin.ir.expressions.IrExpressionBody
 import org.jetbrains.kotlin.ir.declarations.IrEnumEntry
 import org.jetbrains.kotlin.ir.expressions.IrGetEnumValue
 import org.jetbrains.kotlin.ir.expressions.IrGetField
+import org.jetbrains.kotlin.ir.expressions.IrGetObjectValue
 import org.jetbrains.kotlin.ir.expressions.IrGetValue
 import org.jetbrains.kotlin.ir.expressions.IrInstanceInitializerCall
 import org.jetbrains.kotlin.ir.expressions.IrReturn
 import org.jetbrains.kotlin.ir.expressions.IrSetField
 import org.jetbrains.kotlin.ir.expressions.IrSetValue
 import org.jetbrains.kotlin.ir.expressions.IrStringConcatenation
+import org.jetbrains.kotlin.ir.expressions.IrTypeOperatorCall
 import org.jetbrains.kotlin.ir.expressions.IrWhen
 import org.jetbrains.kotlin.ir.expressions.IrWhileLoop
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
@@ -56,8 +58,8 @@ class BirEmitter {
 
 	fun emitFile(file: IrFile): String {
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
-		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS }
-		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE }
+		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null }
+		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && clrName(it) == null }
 		if (functions.isEmpty() && classes.isEmpty() && interfaces.isEmpty()) return ""
 		val className = File(file.fileEntry.name).name.removeSuffix(".kt")
 			.replaceFirstChar { it.uppercaseChar() } + "Kt"
@@ -172,9 +174,14 @@ class BirEmitter {
 		is IrGetField -> """{"k":"field","ownerType":${str((node.symbol.owner.parent as? IrClass)?.name?.asString() ?: "?")},"recv":${node.receiver?.let { expr(it) } ?: """{"k":"this"}"""},"name":${str(node.symbol.owner.name.asString())}}"""
 		is IrConstructorCall -> {
 			val klass = node.symbol.owner.parent as? IrClass
-			"""{"k":"new","type":${str(klass?.name?.asString() ?: "object")},"args":[${regularArgs(node).joinToString(",") { expr(it) }}]}"""
+			val clr = klass?.let { clrName(it) }
+			if (clr != null)
+				"""{"k":"clrNew","type":${str(clr)},"argTypes":[${paramNetTypes(node.symbol.owner)}],"args":[${regularArgs(node).joinToString(",") { expr(it) }}]}"""
+			else
+				"""{"k":"new","type":${str(klass?.name?.asString() ?: "object")},"args":[${regularArgs(node).joinToString(",") { expr(it) }}]}"""
 		}
 		is IrStringConcatenation -> """{"k":"concat","parts":[${node.arguments.joinToString(",") { expr(it) }}]}"""
+		is IrTypeOperatorCall -> expr(node.argument) // coercions / implicit casts pass through
 		is IrWhen -> ternary(node)
 		is IrCall -> call(node)
 		else -> """{"k":"unsupportedExpr","of":${str(node::class.simpleName ?: "?")}}"""
@@ -224,6 +231,28 @@ class BirEmitter {
 		val declaringClass = callee.parent as? IrClass
 		val isBuiltin = declaringClass?.fqNameWhenAvailable?.asString()?.startsWith("kotlin") ?: true
 
+		// BCL interop: a call whose declaring class is `@Clr("System.X")` resolves to a real .NET member.
+		val clrType = declaringClass?.let { clrName(it) }
+		if (clrType != null) {
+			val recv = dispatchReceiver(call)
+			val isStatic = recv == null || recv is IrGetObjectValue
+			val prop = callee.correspondingPropertySymbol?.owner
+			if (prop != null) {
+				val pn = clrName(prop) ?: prop.name.asString()
+				val recvJson = if (isStatic) "null" else expr(recv!!)
+				return if (callee === prop.setter)
+					"""{"k":"clrPropSet","type":${str(clrType)},"name":${str(pn)},"static":$isStatic,"recv":$recvJson,"value":${expr(regularArgs(call).first())}}"""
+				else """{"k":"clrPropGet","type":${str(clrType)},"name":${str(pn)},"retType":${str(netType(callee.returnType))},"static":$isStatic,"recv":$recvJson}"""
+			}
+			val member = clrName(callee) ?: name
+			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
+			val ret = str(netType(callee.returnType))
+			return if (isStatic)
+				"""{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[${paramNetTypes(callee)}],"ret":$ret,"args":[$argsJson]}"""
+			else
+				"""{"k":"clrInstance","type":${str(clrType)},"method":${str(member)},"argTypes":[${paramNetTypes(callee)}],"ret":$ret,"recv":${expr(recv!!)},"args":[$argsJson]}"""
+		}
+
 		// Property get/set on a user class -> field access.
 		val property = callee.correspondingPropertySymbol?.owner
 		if (property != null && declaringClass != null) {
@@ -255,6 +284,34 @@ class BirEmitter {
 		} else """{"k":"callStatic","owner":null,"method":${str(name)},"args":[$args]}"""
 	}
 
+	/** Reads the .NET name from a `@Clr("...")` annotation, if present. */
+	private fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
+		for (a in decl.annotations) {
+			if ((a as? IrConstructorCall)?.type?.classFqName?.asString() == "clr.Clr")
+				return (a.arguments.firstOrNull() as? IrConst)?.value as? String
+		}
+		return null
+	}
+
+	/** A type's fully-qualified .NET name, for IL reflection-based member resolution. */
+	private fun netType(t: IrType): String = when (t.classFqName?.asString()) {
+		"kotlin.Int" -> "System.Int32"
+		"kotlin.Long" -> "System.Int64"
+		"kotlin.Short" -> "System.Int16"
+		"kotlin.Byte" -> "System.SByte"
+		"kotlin.Double" -> "System.Double"
+		"kotlin.Float" -> "System.Single"
+		"kotlin.Boolean" -> "System.Boolean"
+		"kotlin.Char" -> "System.Char"
+		"kotlin.String" -> "System.String"
+		"kotlin.Unit" -> "System.Void"
+		else -> (t.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } ?: "System.Object"
+	}
+
+	private fun paramNetTypes(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
+		callee.parameters.filter { it.kind == IrParameterKind.Regular }
+			.joinToString(",") { str(netType(it.type)) }
+
 	private fun constJson(c: IrConst): String = when (val v = c.value) {
 		is String -> str(v)
 		is Boolean -> v.toString()
@@ -275,6 +332,8 @@ class BirEmitter {
 			"kotlin.String" -> return "string"
 		}
 		val klass = t.classifierOrNull?.owner as? IrClass
+		// A @Clr façade type is a real .NET type ("clr:System.Text.StringBuilder").
+		klass?.let { clrName(it) }?.let { return "clr:$it" }
 		// Enums are lowered to their ordinal (int).
 		if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return "int"
 		// A user-declared class becomes a reference to that BIR type ("@Name").

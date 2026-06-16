@@ -374,6 +374,11 @@ sealed class Emitter
             case "un": return EmitUn(e);
             case "concat": return EmitConcat(e);
             case "cond": return EmitCond(e);
+            case "clrNew": return EmitClrNew(e);
+            case "clrStatic": return EmitClrCall(e, instance: false);
+            case "clrInstance": return EmitClrCall(e, instance: true);
+            case "clrPropGet": return EmitClrPropGet(e);
+            case "clrPropSet": return EmitClrPropSet(e);
             default: throw new NotSupportedException("expr " + e.GetProperty("k").GetString());
         }
     }
@@ -465,8 +470,81 @@ sealed class Emitter
         return t;
     }
 
+    // ---- BCL interop (@Clr) via reflection ----
+    static readonly Dictionary<string, Type> _typeCache = new();
+    static Type ResolveType(string name)
+    {
+        if (_typeCache.TryGetValue(name, out var c)) return c;
+        var t = Type.GetType(name)
+            ?? Type.GetType(name + ", System.Runtime")
+            ?? Type.GetType(name + ", System.Private.CoreLib")
+            ?? AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType(name)).FirstOrDefault(x => x != null);
+        if (t == null) throw new NotSupportedException("cannot resolve .NET type " + name);
+        _typeCache[name] = t;
+        return t;
+    }
+
+    Type EmitClrNew(JsonElement e)
+    {
+        var type = ResolveType(e.GetProperty("type").GetString());
+        var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => ResolveType(a.GetString())).ToArray();
+        var ci = type.GetConstructor(argTypes) ?? type.GetConstructor(Type.EmptyTypes);
+        EmitArgs(e.GetProperty("args"), ci.GetParameters());
+        _il.Emit(OpCodes.Newobj, ci);
+        return type;
+    }
+
+    Type EmitClrCall(JsonElement e, bool instance)
+    {
+        var type = ResolveType(e.GetProperty("type").GetString());
+        var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => ResolveType(a.GetString())).ToArray();
+        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
+        var mi = type.GetMethod(e.GetProperty("method").GetString(), flags, null, argTypes, null);
+        if (instance) EmitExpr(e.GetProperty("recv"));
+        EmitArgs(e.GetProperty("args"), mi.GetParameters());
+        _il.Emit(instance && mi.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, mi);
+        return mi.ReturnType;
+    }
+
+    Type EmitClrPropGet(JsonElement e)
+    {
+        var type = ResolveType(e.GetProperty("type").GetString());
+        var pi = type.GetProperty(e.GetProperty("name").GetString());
+        var getter = pi.GetGetMethod();
+        if (!e.GetProperty("static").GetBoolean()) EmitExpr(e.GetProperty("recv"));
+        _il.Emit(getter.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, getter);
+        return getter.ReturnType;
+    }
+
+    Type EmitClrPropSet(JsonElement e)
+    {
+        var type = ResolveType(e.GetProperty("type").GetString());
+        var pi = type.GetProperty(e.GetProperty("name").GetString());
+        var setter = pi.GetSetMethod();
+        if (!e.GetProperty("static").GetBoolean()) EmitExpr(e.GetProperty("recv"));
+        EmitArgs2(new[] { e.GetProperty("value") }, setter.GetParameters());
+        _il.Emit(setter.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, setter);
+        return typeof(void);
+    }
+
+    void EmitArgs(JsonElement args, ParameterInfo[] ps)
+    {
+        int i = 0;
+        foreach (var a in args.EnumerateArray()) { EmitArg(a, ps[i].ParameterType); i++; }
+    }
+    void EmitArgs2(JsonElement[] args, ParameterInfo[] ps)
+    {
+        for (int i = 0; i < args.Length; i++) EmitArg(args[i], ps[i].ParameterType);
+    }
+    void EmitArg(JsonElement a, Type want)
+    {
+        var got = EmitExpr(a);
+        if (got != null && got.IsValueType && !want.IsValueType) _il.Emit(OpCodes.Box, got);
+    }
+
     Type MapType(string t)
     {
+        if (t != null && t.StartsWith("clr:")) return ResolveType(t.Substring(4));
         if (t != null && t.StartsWith("@")) return _types[t.Substring(1)].TB;
         return t switch
         {

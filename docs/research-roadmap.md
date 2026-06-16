@@ -36,8 +36,8 @@
   BIR にクラス定義(fields/ctors/methods/base/override/virtual)。ilemit が**複数 BIR→1 アセンブリ**で型を emit（newobj/ldfld/stfld/base ctor、ctor を本体前に宣言）。`scripts/verify-il.sh` の `il:mc1` が C# 差分一致。
 - **D1.5 — 継承/virtual/interface（M）✅ 達成.**
   継承/virtual は D1.4。interface は本段: BIR に interface 定義+実装リスト、ilemit が interface TypeBuilder(abstract)/`AddInterfaceImplementation`/`DefineMethodOverride`/interface 経由 `callvirt`。`il:iface` が C# 差分一致。
-- **D1.6 — BCL interop（@Clr）（L）.**
-  instance `new`/`callvirt`、プロパティ（`get_X`/`set_X` 呼び出し）、総称（`MakeGenericType`/`MakeGenericMethod`）、indexer、参照アセンブリ解決。**判定**: m-i1/m-i3/m-i4 差分一致。
+- **D1.6 — BCL interop（@Clr）（L）✅ 達成（静的/インスタンス/new/プロパティ）.**
+  BIR が @Clr を `clrNew`/`clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet`（+argTypes/retType）で符号化、ilemit が reflection で実 .NET 型/メソッド/ctor/property を解決し `newobj`/`call`/`callvirt`（+box）。`il:m2`(System.Math 静的)・`il:mi1`(StringBuilder: new/Append連鎖/ToString/Length) が C# 差分一致。残: 総称(`MakeGenericType`)/indexer（m-i3 相当）。
 - **D1.7 — 例外/ループ/enum（M）.**
   IL の例外ハンドラ領域（try/catch/finally の `ExceptionHandler`）、ループ分岐、enum（int backing）。**判定**: m-c2 差分一致。
 - **D1.8 — MSBuild 統合（M）.**

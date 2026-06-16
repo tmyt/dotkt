@@ -25,6 +25,8 @@ il_check m0    M0Kt  "$ROOT/samples/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=
 il_check mc1   MC1   "$ROOT/samples/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
 il_check iface Iface "$ROOT/samples/il-iface"  "$(printf 'Hello\nKonnichiwa')"
 il_check enum  Enum  "$ROOT/samples/il-enum"   "$(printf 'red\ngreen\nblue')"
+il_check m2    M2    "$ROOT/samples/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"
+il_check mi1   MI1   "$ROOT/samples/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
 
 echo "------------------------------------"
 [[ $fail -eq 0 ]] && echo "IL ALL PASS" || { echo "IL SOME FAILED"; exit 1; }
