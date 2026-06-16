@@ -32,10 +32,10 @@
   `ilemit` が BIR→CIL を emit: ldstr/ldc, add/sub/mul/div/rem, 比較(ceq/clt/cgt 合成), `string.Concat(object[])`(box), `Console.WriteLine(object)`, sibling static 呼び出し(2-pass で解決), local/arg(ldloc/stloc/ldarg/starg), ret, while/if/ternary の分岐(br/brfalse + label)。**Kotlin→BIR→CIL→dotnet が C# を一切経由せず m0 を実行、出力が C# 経路と一致**（`scripts/run-il-m0.sh`）。
 - **D1.3 — 文字列テンプレ/println（S）.**
   string template → `string.Concat(object[])`（値型は `box`）。**判定**: m0 のテンプレ一致。
-- **D1.4 — クラス/フィールド/ctor（L）.**
-  型定義（field, instance method, ctor）、`newobj`/`ldfld`/`stfld`/`call`/base ctor。**判定**: m-c1 差分一致。
-- **D1.5 — 継承/virtual/interface（M）.**
-  base type、`virtual`/`override`（`callvirt`）、interface 実装と `callvirt` 経由のディスパッチ。**判定**: m-c1/m-c3 差分一致。
+- **D1.4 — クラス/フィールド/ctor（L）✅ 達成.**
+  BIR にクラス定義(fields/ctors/methods/base/override/virtual)。ilemit が**複数 BIR→1 アセンブリ**で型を emit（newobj/ldfld/stfld/base ctor、ctor を本体前に宣言）。`scripts/verify-il.sh` の `il:mc1` が C# 差分一致。
+- **D1.5 — 継承/virtual/interface（M）— 部分達成（継承/virtual 済、interface 残）.**
+  base type + `virtual`/`override`（`callvirt` + 継承チェーン解決）は D1.4 で達成（m-c1 の Rect.area 多態が IL で一致）。残: interface 型定義と interface 経由 `callvirt`。
 - **D1.6 — BCL interop（@Clr）（L）.**
   instance `new`/`callvirt`、プロパティ（`get_X`/`set_X` 呼び出し）、総称（`MakeGenericType`/`MakeGenericMethod`）、indexer、参照アセンブリ解決。**判定**: m-i1/m-i3/m-i4 差分一致。
 - **D1.7 — 例外/ループ/enum（M）.**

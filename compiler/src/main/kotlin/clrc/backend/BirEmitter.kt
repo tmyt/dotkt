@@ -1,23 +1,37 @@
 package clrc.backend
 
+import org.jetbrains.kotlin.descriptors.ClassKind
+import org.jetbrains.kotlin.descriptors.Modality
+import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
+import org.jetbrains.kotlin.ir.declarations.IrClass
+import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
+import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.expressions.IrBlock
 import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrConst
+import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
+import org.jetbrains.kotlin.ir.expressions.IrDelegatingConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.IrExpressionBody
+import org.jetbrains.kotlin.ir.expressions.IrGetField
 import org.jetbrains.kotlin.ir.expressions.IrGetValue
+import org.jetbrains.kotlin.ir.expressions.IrInstanceInitializerCall
 import org.jetbrains.kotlin.ir.expressions.IrReturn
+import org.jetbrains.kotlin.ir.expressions.IrSetField
 import org.jetbrains.kotlin.ir.expressions.IrSetValue
 import org.jetbrains.kotlin.ir.expressions.IrStringConcatenation
 import org.jetbrains.kotlin.ir.expressions.IrWhen
 import org.jetbrains.kotlin.ir.expressions.IrWhileLoop
+import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
+import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import java.io.File
@@ -37,25 +51,72 @@ class BirEmitter {
 
 	fun emitFile(file: IrFile): String {
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
-		if (functions.isEmpty()) return ""
+		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS }
+		if (functions.isEmpty() && classes.isEmpty()) return ""
 		val className = File(file.fileEntry.name).name.removeSuffix(".kt")
 			.replaceFirstChar { it.uppercaseChar() } + "Kt"
 		val hasMain = functions.any { it.name.asString() == "main" && it.parameters.none { p -> p.kind == IrParameterKind.Regular } }
-		val methods = functions.joinToString(",") { method(it) }
-		return """{"fileClass":${str(className)},"hasMain":$hasMain,"methods":[$methods]}"""
+		val methods = functions.joinToString(",") { method(it, static = true) }
+		val types = classes.joinToString(",") { typeDef(it) }
+		return """{"fileClass":${str(className)},"hasMain":$hasMain,"methods":[$methods],"types":[$types]}"""
 	}
 
-	private fun method(fn: IrSimpleFunction): String {
-		val params = fn.parameters
-			.filter { it.kind == IrParameterKind.Regular }
+	private fun typeDef(klass: IrClass): String {
+		val base = klass.superTypes.mapNotNull { it.classifierOrNull?.owner as? IrClass }
+			.firstOrNull { it.kind == ClassKind.CLASS && it.fqNameWhenAvailable?.asString() != "kotlin.Any" }
+		val fields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { it.backingField }
 			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
-		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-		return """{"name":${str(fn.name.asString())},"static":true,"params":[$params],"ret":${str(birType(fn.returnType))},"body":[$body]}"""
+		val ctors = klass.declarations.filterIsInstance<IrConstructor>().joinToString(",") { ctor(klass, it) }
+		val methods = klass.declarations.filterIsInstance<IrSimpleFunction>()
+			.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && it.body != null }
+			.joinToString(",") { method(it, static = false) }
+		val baseJson = base?.let { str(it.name.asString()) } ?: "null"
+		return """{"name":${str(klass.name.asString())},"kind":"class","base":$baseJson,"fields":[$fields],"ctors":[$ctors],"methods":[$methods]}"""
 	}
+
+	private fun ctor(klass: IrClass, ctor: IrConstructor): String {
+		val params = paramsJson(ctor.parameters)
+		val body = ctor.body as? IrBlockBody
+		val delegating = body?.statements?.filterIsInstance<IrDelegatingConstructorCall>()?.firstOrNull()
+		val baseArgs = delegating?.let { d ->
+			val targetFq = (d.symbol.owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
+			if (targetFq != "kotlin.Any") d.arguments.filterNotNull().joinToString(",") { expr(it) } else null
+		}
+		val stmts = ArrayList<String>()
+		body?.statements?.forEach { s ->
+			when (s) {
+				is IrDelegatingConstructorCall -> {}
+				is IrInstanceInitializerCall -> klass.declarations.forEach { d ->
+					when (d) {
+						is IrProperty -> d.backingField?.initializer?.let {
+							stmts.add("""{"k":"setField","ownerType":${str(klass.name.asString())},"recv":{"k":"this"},"name":${str(d.name.asString())},"value":${expr((it as IrExpressionBody).expression)}}""")
+						}
+						is IrAnonymousInitializer -> (d.body as? IrBlockBody)?.statements?.forEach { stmts.add(stmt(it)) }
+						else -> {}
+					}
+				}
+				else -> stmts.add(stmt(s))
+			}
+		}
+		val baseJson = baseArgs?.let { "[$it]" } ?: "null"
+		return """{"params":[$params],"baseArgs":$baseJson,"body":[${stmts.joinToString(",")}]}"""
+	}
+
+	private fun method(fn: IrSimpleFunction, static: Boolean): String {
+		val isOverride = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.CLASS }
+		val isVirtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT
+		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		return """{"name":${str(fn.name.asString())},"static":$static,"override":$isOverride,"virtual":$isVirtual,"params":[${paramsJson(fn.parameters)}],"ret":${str(birType(fn.returnType))},"body":[$body]}"""
+	}
+
+	private fun paramsJson(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): String =
+		params.filter { it.kind == IrParameterKind.Regular }
+			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 
 	private fun stmt(node: org.jetbrains.kotlin.ir.IrElement): String = when (node) {
 		is IrVariable -> """{"k":"var","name":${str(node.name.asString())},"type":${str(birType(node.type))},"init":${node.initializer?.let { expr(it) } ?: "null"}}"""
 		is IrSetValue -> """{"k":"setLocal","name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
+		is IrSetField -> """{"k":"setField","ownerType":${str((node.symbol.owner.parent as? IrClass)?.name?.asString() ?: "?")},"recv":${node.receiver?.let { expr(it) } ?: """{"k":"this"}"""},"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
 		is IrReturn -> if (node.value.type.isUnit()) """{"k":"return"}""" else """{"k":"return","value":${expr(node.value)}}"""
 		is IrWhileLoop -> """{"k":"while","cond":${expr(node.condition)},"body":[${(node.body as? IrBlock)?.statements?.joinToString(",") { stmt(it) } ?: ""}]}"""
 		is IrWhen -> whenStmt(node)
@@ -75,11 +136,32 @@ class BirEmitter {
 
 	private fun expr(node: IrExpression): String = when (node) {
 		is IrConst -> """{"k":"const","type":${str(birType(node.type))},"value":${constJson(node)}}"""
-		is IrGetValue -> """{"k":"local","name":${str(node.symbol.owner.name.asString())}}"""
+		is IrGetValue -> {
+			val name = node.symbol.owner.name.asString()
+			if (name == "<this>") """{"k":"this"}""" else """{"k":"local","name":${str(name)}}"""
+		}
+		is IrGetField -> """{"k":"field","ownerType":${str((node.symbol.owner.parent as? IrClass)?.name?.asString() ?: "?")},"recv":${node.receiver?.let { expr(it) } ?: """{"k":"this"}"""},"name":${str(node.symbol.owner.name.asString())}}"""
+		is IrConstructorCall -> {
+			val klass = node.symbol.owner.parent as? IrClass
+			"""{"k":"new","type":${str(klass?.name?.asString() ?: "object")},"args":[${regularArgs(node).joinToString(",") { expr(it) }}]}"""
+		}
 		is IrStringConcatenation -> """{"k":"concat","parts":[${node.arguments.joinToString(",") { expr(it) }}]}"""
 		is IrWhen -> ternary(node)
 		is IrCall -> call(node)
 		else -> """{"k":"unsupportedExpr","of":${str(node::class.simpleName ?: "?")}}"""
+	}
+
+	private fun regularArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
+		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: emptyList()
+		return call.arguments.mapIndexedNotNull { i, a ->
+			if (a != null && i < params.size && params[i].kind == IrParameterKind.Regular) a else null
+		}
+	}
+
+	private fun dispatchReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {
+		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return null
+		val idx = params.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
+		return if (idx in 0 until call.arguments.size) call.arguments[idx] else null
 	}
 
 	private fun ternary(node: IrWhen): String {
@@ -96,16 +178,38 @@ class BirEmitter {
 	private fun call(call: IrCall): String {
 		val callee = call.symbol.owner
 		val name = callee.name.asString()
-		val args = call.arguments.filterNotNull()
-		BINARY[name]?.let { if (args.size == 2) return """{"k":"bin","op":${str(it)},"l":${expr(args[0])},"r":${expr(args[1])}}""" }
-		UNARY[name]?.let { if (args.size == 1) return """{"k":"un","op":${str(it)},"e":${expr(args[0])}}""" }
-		val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
-		if (fq == "kotlin.io" && (name == "println" || name == "print")) {
-			val m = if (name == "println") "WriteLine" else "Write"
-			return """{"k":"console","method":${str(m)},"args":[${args.joinToString(",") { expr(it) }}]}"""
+		val declaringClass = callee.parent as? IrClass
+		val isBuiltin = declaringClass?.fqNameWhenAvailable?.asString()?.startsWith("kotlin") ?: true
+
+		// Property get/set on a user class -> field access.
+		val property = callee.correspondingPropertySymbol?.owner
+		if (property != null && declaringClass != null) {
+			val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
+			val owner = str(declaringClass.name.asString())
+			return if (callee === property.setter)
+				"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+			else """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())}}"""
 		}
-		// Sibling top-level call.
-		return """{"k":"callStatic","owner":null,"method":${str(name)},"args":[${args.joinToString(",") { expr(it) }}]}"""
+
+		if (isBuiltin) {
+			val operands = call.arguments.filterNotNull()
+			BINARY[name]?.let { if (operands.size == 2) return """{"k":"bin","op":${str(it)},"l":${expr(operands[0])},"r":${expr(operands[1])}}""" }
+			UNARY[name]?.let { if (operands.size == 1) return """{"k":"un","op":${str(it)},"e":${expr(operands[0])}}""" }
+			val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
+			if (fq == "kotlin.io" && (name == "println" || name == "print")) {
+				val m = if (name == "println") "WriteLine" else "Write"
+				return """{"k":"console","method":${str(m)},"args":[${operands.joinToString(",") { expr(it) }}]}"""
+			}
+		}
+
+		val args = regularArgs(call).joinToString(",") { expr(it) }
+		val recv = dispatchReceiver(call)
+		// Instance method on a user class, or a sibling top-level call.
+		return if (recv != null) {
+			val owner = str(declaringClass?.name?.asString() ?: "?")
+			val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
+			"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":${expr(recv)},"method":${str(name)},"args":[$args]}"""
+		} else """{"k":"callStatic","owner":null,"method":${str(name)},"args":[$args]}"""
 	}
 
 	private fun constJson(c: IrConst): String = when (val v = c.value) {
@@ -116,16 +220,21 @@ class BirEmitter {
 		else -> v.toString()
 	}
 
-	private fun birType(t: IrType): String = when (t.classFqName?.asString()) {
-		"kotlin.Unit", "kotlin.Nothing" -> "void"
-		"kotlin.Int" -> "int"
-		"kotlin.Long" -> "long"
-		"kotlin.Double" -> "double"
-		"kotlin.Float" -> "float"
-		"kotlin.Boolean" -> "bool"
-		"kotlin.Char" -> "char"
-		"kotlin.String" -> "string"
-		else -> "object"
+	private fun birType(t: IrType): String {
+		when (t.classFqName?.asString()) {
+			"kotlin.Unit", "kotlin.Nothing" -> return "void"
+			"kotlin.Int" -> return "int"
+			"kotlin.Long" -> return "long"
+			"kotlin.Double" -> return "double"
+			"kotlin.Float" -> return "float"
+			"kotlin.Boolean" -> return "bool"
+			"kotlin.Char" -> return "char"
+			"kotlin.String" -> return "string"
+		}
+		// A user-declared class becomes a reference to that BIR type ("@Name").
+		val klass = t.classifierOrNull?.owner as? IrClass
+		if (klass != null && klass.kind == ClassKind.CLASS) return "@" + klass.name.asString()
+		return "object"
 	}
 
 	private fun str(s: String): String =
