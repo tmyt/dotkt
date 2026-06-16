@@ -449,7 +449,18 @@ class CSharpCodegen {
 		val whenExpr = block.statements.getOrNull(1) as? IrWhen
 		if (block.statements.size == 2 && tmp != null && whenExpr != null && tmp.initializer != null) {
 			val key = tmp.name.asString()
+			// Elvis `a ?: b` -> C# `(a ?? b)` (collapses the nullable; b is the null-branch result).
+			if (block.origin?.toString() == "ELVIS") {
+				return "(${genExpr(tmp.initializer!!)} ?? ${genExpr(whenExpr.branches.first().result)})"
+			}
 			valSubst[key] = "(${genExpr(tmp.initializer!!)})"
+			// Safe call `a?.b` -> `(a == null ? (T?)null : a.b)`, casting null to the (nullable) result type.
+			if (block.origin?.toString() == "SAFE_CALL") {
+				val recv = valSubst[key]!!
+				val elseResult = genExpr(whenExpr.branches.last().result)
+				valSubst.remove(key)
+				return "($recv == null ? (${csType(block.type)}?)null : $elseResult)"
+			}
 			val result = ternary(whenExpr)
 			valSubst.remove(key)
 			return result
@@ -497,7 +508,7 @@ class CSharpCodegen {
 		// Property get/set (both @Clr and user classes) -> C# property access.
 		val property = callee.correspondingPropertySymbol?.owner
 		if (property != null) {
-			val propName = COLLECTION_PROPS[property.name.asString()]?.takeIf { declFq?.startsWith("kotlin.collections") == true }
+			val propName = BUILTIN_PROPS[property.name.asString()]?.takeIf { declFq?.startsWith("kotlin") == true }
 				?: clrName(property) ?: property.name.asString()
 			val target = memberTarget(call, clrType ?: "")
 			return if (callee === property.setter) "$target.$propName = ${genExpr(regularArgs(call).first())}"
@@ -700,7 +711,7 @@ class CSharpCodegen {
 			"kotlin.collections.listOf", "kotlin.collections.mutableListOf", "kotlin.collections.arrayListOf",
 		)
 
-		private val COLLECTION_PROPS = mapOf("size" to "Count")
+		private val BUILTIN_PROPS = mapOf("size" to "Count", "length" to "Length")
 
 		// Kotlin Object-method names -> their C# (System.Object) equivalents.
 		private val OBJECT_METHODS = mapOf("toString" to "ToString", "equals" to "Equals", "hashCode" to "GetHashCode")
