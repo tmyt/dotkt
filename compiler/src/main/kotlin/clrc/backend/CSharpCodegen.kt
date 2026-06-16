@@ -245,7 +245,13 @@ class CSharpCodegen {
 	}
 
 	private fun generateFunction(function: IrSimpleFunction, static: Boolean) {
-		val ret = csType(function.returnType)
+		// A Kotlin `suspend fun` maps to a C# `async Task<T>` (non-blocking); suspend calls become `await`.
+		val ret = when {
+			function.isSuspend && function.returnType.isUnit() -> "global::System.Threading.Tasks.Task"
+			function.isSuspend -> "global::System.Threading.Tasks.Task<${csType(function.returnType)}>"
+			else -> csType(function.returnType)
+		}
+		val async = if (function.isSuspend) "async " else ""
 		val params = function.parameters
 			.filter { it.kind == IrParameterKind.Regular }
 			.joinToString(", ") { "${csType(it.type)} ${csId(it.name.asString())}" }
@@ -260,7 +266,7 @@ class CSharpCodegen {
 			else -> ""
 		}
 		val methodName = OBJECT_METHODS[function.name.asString()] ?: function.name.asString()
-		line("public $modifier$ret $methodName($params)")
+		line("public $modifier$async$ret $methodName($params)")
 		line("{")
 		indent++
 		when (val body = function.body) {
@@ -430,7 +436,8 @@ class CSharpCodegen {
 			.joinToString(", ") { csId(it.name.asString()) }
 		val statements = (fn.body as? IrBlockBody)?.statements.orEmpty()
 		val body = statements.joinToString(" ") { renderInline(it) }
-		return "($params) => { $body }"
+		val async = if (fn.isSuspend) "async " else ""
+		return "$async($params) => { $body }"
 	}
 
 	/** Single-line rendering of a statement, for use inside lambda bodies. */
@@ -481,6 +488,13 @@ class CSharpCodegen {
 	}
 
 	private fun genCall(call: IrCall): String {
+		// A call to a `suspend fun` returns a Task in C#; await it (non-blocking).
+		// `await` binds tightly, and as a statement `await X;` is valid (unlike `(await X);`).
+		if (call.symbol.owner.isSuspend) return "await ${genCallInner(call)}"
+		return genCallInner(call)
+	}
+
+	private fun genCallInner(call: IrCall): String {
 		val callee = call.symbol.owner
 		val name = callee.name.asString()
 		val declaringClass = callee.parent as? IrClass

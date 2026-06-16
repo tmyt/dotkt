@@ -1,24 +1,22 @@
-// kotlin/clr coroutine/Task interop runtime (blocking semantics).
-// Lets Kotlin suspend functions call real .NET async APIs (Task) and obtain their results.
+// kotlin/clr coroutine/Task interop runtime. Kotlin `suspend` maps to C# `async Task<T>`;
+// suspend calls map to `await`, so .NET async APIs are driven NON-BLOCKING from Kotlin.
 using System;
 using System.Threading.Tasks;
 
 namespace Kfc
 {
-    // Wraps a real .NET Task<int>; `Value` blocks until it completes (a blocking await).
-    public sealed class IntTask
-    {
-        internal Task<int> Task;
-        public int Value => Task.GetAwaiter().GetResult();
-    }
-
     public static class Coro
     {
-        // A genuine .NET async operation (Task.Delay) producing a value.
-        public static IntTask DelayThenValue(int ms, int value) =>
-            new IntTask { Task = System.Threading.Tasks.Task.Run(async () => { await System.Threading.Tasks.Task.Delay(ms); return value; }) };
+        // A genuine non-blocking async operation: awaits Task.Delay, then yields a value.
+        public static async Task<int> FetchValue(int ms, int value)
+        {
+            await Task.Delay(ms);
+            return value;
+        }
 
-        // runBlocking-style driver: runs a (suspend) lambda to completion.
-        public static int Run(Func<int> body) => body();
+        public static async Task Delay(int ms) => await Task.Delay(ms);
+
+        // runBlocking-style boundary: drives a suspend (async) lambda to completion.
+        public static int Run(Func<Task<int>> body) => body().GetAwaiter().GetResult();
     }
 }

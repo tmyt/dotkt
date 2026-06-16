@@ -61,7 +61,17 @@ Kotlin の `suspend` は `Continuation<T>` + `COROUTINE_SUSPENDED` センチネ�
 - **対象 = `kotlin.coroutines.*` stdlib intrinsics ＋最小 dispatcher ＋ Task ブリッジ.** `kotlinx.coroutines`（`launch`/`async`/`Flow`/構造化並行性）は巨大ゆえスコープ外。
 - **CLR ランタイム** = C# 実装の `Continuation`/`CoroutineContext`/intrinsics（`runtime/csharp/KfcCoroutines`）。Task との橋は `TaskCompletionSource` ⇄ `Continuation`。
 
-## マイルストーン
+## 実装メモ（2026-06-16）— async-mapping 方式で非ブロッキング Task interop 達成（部分）
+
+state machine lowering の代わりに、より実用的な **`suspend` → C# `async Task<T>` 写像**を採用:
+- `suspend fun` → `async global::System.Threading.Tasks.Task<T>`、suspend 呼び出し → `await`、suspend ラムダ → `async (...) =>`。
+- `@Clr` の suspend façード（`Coro.delay`/`fetchValue`）→ 実 .NET `Task` を返す C# メソッド、`await` で**真に非ブロッキング**。
+- `runBlocking` 相当 = 境界で `body().GetAwaiter().GetResult()`。
+- `samples/m-d2`：Kotlin suspend が `Task.Delay` を await して `result = 42`（非ブロッキング）。
+
+**達成範囲**: suspend/await/Task の基本相互運用（非ブロッキング）。**残**: 完全な Kotlin coroutine 意味論（state machine lowering, `Dispatchers`, 構造化並行性, cancellation, `Flow`）は C# async 写像では近似に留まり、下記の正攻法（lowering 再利用）が要る。
+
+## マイルストーン（正攻法・state machine）
 
 - **D2.0 — coroutine ランタイム雛形（M）.**
   C# 実装: `kotlin.coroutines.Continuation<T>`, `CoroutineContext`, `EmptyCoroutineContext`, `ContinuationInterceptor`, `intrinsics.COROUTINE_SUSPENDED`, `suspendCoroutineUninterceptedOrReturn`, `createCoroutine`/`startCoroutine`。Kotlin 側 façade/expect で対応付け。**判定**: 単体で resume が回る最小テスト。

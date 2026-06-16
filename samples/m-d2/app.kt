@@ -1,9 +1,10 @@
 import clr.Coro
 
-// A Kotlin suspend function that drives a real .NET async operation and awaits its result.
+// A Kotlin suspend function that awaits real .NET async operations (non-blocking).
 suspend fun compute(): Int {
-	val task = Coro.delayThenValue(50, 21)
-	return task.value * 2
+	Coro.delay(20)
+	val v = Coro.fetchValue(30, 21)
+	return v * 2
 }
 
 fun main() {
