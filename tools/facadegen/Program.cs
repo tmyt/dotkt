@@ -25,21 +25,43 @@ static class FacadeGen
 
         foreach (var typeName in args.Skip(1))
         {
-            var t = Type.GetType(typeName) ?? Type.GetType(typeName + ", System.Runtime");
+            // Resolve directly, or as a generic type definition (List -> List`1, Dictionary -> `2).
+            var t = Resolve(typeName) ?? Resolve(typeName + "`1") ?? Resolve(typeName + "`2");
             if (t == null) { Console.Error.WriteLine($"type not found: {typeName}"); continue; }
-            File.WriteAllText(Path.Combine(clrDir, t.Name + ".kt"), GenerateType(t));
-            Console.WriteLine($"generated clr/{t.Name}.kt  <-  {t.FullName}");
+            var fileName = (t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name) + ".kt";
+            File.WriteAllText(Path.Combine(clrDir, fileName), GenerateType(t));
+            Console.WriteLine($"generated clr/{fileName}  <-  {t.FullName ?? t.Name}");
         }
         return 0;
     }
+
+    static Type Resolve(string name) => Type.GetType(name) ?? Type.GetType(name + ", System.Runtime")
+        ?? Type.GetType(name + ", System.Collections") ?? Type.GetType(name + ", System.Private.CoreLib");
 
     static string GenerateType(Type t)
     {
         var sb = new StringBuilder();
         sb.Append("package clr\n\n");
-        sb.Append($"@Clr(\"{t.FullName}\")\n");
-        sb.Append($"class {t.Name} {{\n");
+        // Generic type definitions (List`1) -> a generic Kotlin façade (`class List<T>`).
+        var simpleName = t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name;
+        var clrName = t.IsGenericTypeDefinition ? (t.Namespace + "." + simpleName) : t.FullName;
+        var typeParams = t.IsGenericTypeDefinition
+            ? "<" + string.Join(", ", t.GetGenericArguments().Select(g => g.Name)) + ">"
+            : "";
+        sb.Append($"@Clr(\"{clrName}\")\n");
+        sb.Append($"class {simpleName}{typeParams} {{\n");
         var seen = new HashSet<string>();
+
+        // Indexer (this[i]) -> Kotlin operator get/set.
+        var indexer = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .FirstOrDefault(p => p.GetIndexParameters().Length == 1 && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));
+        if (indexer != null)
+        {
+            var it = Map(indexer.GetIndexParameters()[0].ParameterType, t);
+            var vt = Map(indexer.PropertyType, t);
+            sb.Append($"\toperator fun get(index: {it}): {vt} = TODO()\n");
+            if (indexer.CanWrite) sb.Append($"\toperator fun set(index: {it}, value: {vt}): Unit = TODO()\n");
+        }
 
         foreach (var c in t.GetConstructors(BindingFlags.Public | BindingFlags.Instance))
         {
@@ -98,15 +120,18 @@ static class FacadeGen
         return sb.ToString();
     }
 
+    // A bare generic parameter (T) is fine as a Kotlin type parameter; constructed generics
+    // containing parameters (List<T>) are not yet emittable -> Any?.
     static bool Supported(Type t) =>
-        !t.IsByRef && !t.IsPointer && !t.IsGenericParameter && !t.ContainsGenericParameters && !t.IsArray;
+        !t.IsByRef && !t.IsPointer && !t.IsArray && (t.IsGenericParameter || !t.ContainsGenericParameters);
 
-    // Map a .NET type to a Kotlin façade type. Primitives map precisely; the type itself maps to its
-    // own façade (enables chaining); everything else degrades to Any? (call still passes through).
+    // Map a .NET type to a Kotlin façade type. Primitives map precisely; generic params map to their
+    // name (T); the type itself maps to its façade; everything else degrades to Any?.
     static string Map(Type t, Type self)
     {
         if (t == typeof(void)) return "Unit";
-        if (t == self) return self.Name;
+        if (t.IsGenericParameter) return t.Name;
+        if (t == self) return self.Name.Contains('`') ? self.Name.Substring(0, self.Name.IndexOf('`')) : self.Name;
         return t.FullName switch
         {
             "System.Int32" => "Int",

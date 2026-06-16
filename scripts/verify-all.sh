@@ -51,6 +51,10 @@ check m-s2 clr-ms2 "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4')"
 "$ROOT/scripts/gen-facades.sh" "$ROOT/build/gen-facades" System.Text.StringBuilder >/dev/null 2>&1
 check_multi m-i4 clr-mi4 "$ROOT/samples/m-i4/app.kt $ROOT/build/gen-facades" "$(printf 'Hello, CLR 42 True\nlength = 18')"
 
+# S4: compile against an AUTO-GENERATED GENERIC façade (List<T>).
+"$ROOT/scripts/gen-facades.sh" "$ROOT/build/gen-gen" System.Collections.Generic.List >/dev/null 2>&1
+check_multi m-s4 clr-ms4 "$ROOT/samples/m-s4/app.kt $ROOT/build/gen-gen" "$(printf 'count = 3\nfirst = 10, last = 30\nsum = 139')"
+
 # MSBuild: build & run a real .ktproj end-to-end via dotnet.
 ktexpected="$(printf 'Hello, Visual Studio, from a .ktproj!\nsum 1..5 = 15')"
 ktactual="$(dotnet run --project "$ROOT/samples/ktproj/hello.ktproj" -v q --nologo 2>/dev/null | grep -v 'kotlin/clr:')"
