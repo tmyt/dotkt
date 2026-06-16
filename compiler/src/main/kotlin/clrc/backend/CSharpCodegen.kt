@@ -165,7 +165,10 @@ class CSharpCodegen {
 
 	private fun IrClass.memberMethods(requireBody: Boolean = true): List<IrSimpleFunction> =
 		declarations.filterIsInstance<IrSimpleFunction>()
-			.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && (!requireBody || it.body != null) }
+			.filter {
+				it.correspondingPropertySymbol == null && !it.isFakeOverride && (!requireBody || it.body != null) &&
+					it.name.asString() !in setOf("equals", "hashCode") // value equality bodies deferred
+			}
 
 	/** Backing-field property -> C# field; computed property -> C# property with a getter body. */
 	private fun generateMemberProperty(prop: IrProperty) {
@@ -234,7 +237,8 @@ class CSharpCodegen {
 			function.modality == Modality.OPEN || function.modality == Modality.ABSTRACT -> "virtual "
 			else -> ""
 		}
-		line("public $modifier$ret ${function.name.asString()}($params)")
+		val methodName = OBJECT_METHODS[function.name.asString()] ?: function.name.asString()
+		line("public $modifier$ret $methodName($params)")
 		line("{")
 		indent++
 		when (val body = function.body) {
@@ -516,8 +520,9 @@ class CSharpCodegen {
 		// User-declared call: instance method (`recv.m(...)`) or sibling top-level (`m(...)`).
 		val receiver = dispatchReceiverOf(call)
 		val args = regularArgs(call).joinToString(", ") { genExpr(it) }
-		return if (receiver != null && receiver !is IrGetObjectValue) "${genExpr(receiver)}.$name($args)"
-		else "$name($args)"
+		val csMethod = OBJECT_METHODS[name] ?: name
+		return if (receiver != null && receiver !is IrGetObjectValue) "${genExpr(receiver)}.$csMethod($args)"
+		else "$csMethod($args)"
 	}
 
 	private fun genConstructorCall(call: IrConstructorCall): String {
@@ -661,6 +666,9 @@ class CSharpCodegen {
 		)
 
 		private val COLLECTION_PROPS = mapOf("size" to "Count")
+
+		// Kotlin Object-method names -> their C# (System.Object) equivalents.
+		private val OBJECT_METHODS = mapOf("toString" to "ToString", "equals" to "Equals", "hashCode" to "GetHashCode")
 
 		// Kotlin/JVM types (as surfaced by the reused JVM frontend) -> .NET equivalents.
 		private val NET_TYPES = mapOf(

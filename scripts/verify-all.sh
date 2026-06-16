@@ -45,6 +45,7 @@ check m-c2 clr-mc2 "$(printf 'grade(0)=zero grade(30)=fail grade(90)=pass\nsum 1
 check m-c3 clr-mc3 "$(printf 'greet: Hello\ngreet: Konnichiwa\nGREEN is green\nRED is red')"
 check m-s3 clr-ms3 "$(printf 'size = 3\nsum = 60')"
 check m-s1 clr-ms1 "$(printf 'fallback\npresent\nforced')"
+check m-s2 clr-ms2 "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4')"
 
 # M-I4: compile against an AUTO-GENERATED façade (no hand-written facade.kt).
 "$ROOT/scripts/gen-facades.sh" "$ROOT/build/gen-facades" System.Text.StringBuilder >/dev/null 2>&1
