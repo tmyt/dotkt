@@ -24,8 +24,8 @@
 
 ## マイルストーン
 
-- **D1.0 — スパイク: 手書き hello.dll（S）.**
-  `ilemit` 雛形が `PersistedAssemblyBuilder` で「Hello from IL」を出す .dll/.exe を生成し `dotnet hello.dll` で実行。*肝*: 実行用 `.runtimeconfig.json` 生成、entry point 設定、core 参照の解決。**判定**: 実行して期待出力。
+- **D1.0 — スパイク: 手書き hello.dll（S）✅ 達成.**
+  `tools/ilemit`（`PersistedAssemblyBuilder` + `ManagedPEBuilder`）が IL のみで `hello.dll` + `hello.runtimeconfig.json` を生成、`dotnet hello.dll` が `Hello from IL` を出力。C# ソース/csc を一切経由しないことを実証。CIL 経路の実現可能性を確認。
 - **D1.1 — BIR スキーマ v0 + Kotlin 側出力（M）.**
   M0 subset（file→static class, method[name/params/ret], body=構造化 stmt/expr: const/call/binop/var/setvar/return/if/while）の JSON スキーマ定義。`ClrBackendPhase` に BIR 出力を追加（`*.bir.json`）。現 IR 走査を流用。**判定**: m0 の BIR が妥当な JSON。
 - **D1.2 — ilemit M0（L）.**
