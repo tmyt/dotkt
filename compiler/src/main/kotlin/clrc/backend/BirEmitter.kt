@@ -336,8 +336,8 @@ class BirEmitter {
 		klass?.let { clrName(it) }?.let { return "clr:$it" }
 		// Enums are lowered to their ordinal (int).
 		if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return "int"
-		// A user-declared class becomes a reference to that BIR type ("@Name").
-		if (klass != null && klass.kind == ClassKind.CLASS) return "@" + klass.name.asString()
+		// A user-declared class/interface becomes a reference to that BIR type ("@Name").
+		if (klass != null && (klass.kind == ClassKind.CLASS || klass.kind == ClassKind.INTERFACE)) return "@" + klass.name.asString()
 		return "object"
 	}
 

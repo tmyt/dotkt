@@ -28,5 +28,20 @@ il_check enum  Enum  "$ROOT/samples/il-enum"   "$(printf 'red\ngreen\nblue')"
 il_check m2    M2    "$ROOT/samples/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"
 il_check mi1   MI1   "$ROOT/samples/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
 
+# Formal IL verification (ilverify), if the tool is available.
+ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
+REFDIR="$(dirname "$(find /usr/share/dotnet/shared/Microsoft.NETCore.App -name System.Private.CoreLib.dll 2>/dev/null | sort | tail -1)")"
+if [[ -n "$ILV" && -d "$REFDIR" ]]; then
+	echo "--- ilverify ---"
+	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 )
+	for n in "${!ASMS[@]}"; do
+		dll="$ROOT/build/il-$n/${ASMS[$n]}.dll"
+		[[ -f "$dll" ]] || continue
+		if dotnet "$ILV" "$dll" -r "$REFDIR/*.dll" 2>&1 | grep -qi 'Verified\.'; then echo "VERIFY  $n"; else echo "VERIFY FAIL  $n"; fail=1; fi
+	done
+else
+	echo "(ilverify not installed; skipping formal verification — 'dotnet tool install -g dotnet-ilverify')"
+fi
+
 echo "------------------------------------"
 [[ $fail -eq 0 ]] && echo "IL ALL PASS" || { echo "IL SOME FAILED"; exit 1; }
