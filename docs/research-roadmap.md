@@ -28,8 +28,8 @@
   `tools/ilemit`（`PersistedAssemblyBuilder` + `ManagedPEBuilder`）が IL のみで `hello.dll` + `hello.runtimeconfig.json` を生成、`dotnet hello.dll` が `Hello from IL` を出力。C# ソース/csc を一切経由しないことを実証。CIL 経路の実現可能性を確認。
 - **D1.1 — BIR スキーマ v0 + Kotlin 側出力（M）✅ 達成.**
   `BirEmitter.kt` が M0 subset（file→static class, method[name/params/ret], body=構造化 stmt/expr: const/local/bin/un/console/callStatic/concat/cond/var/setLocal/return/while/if）を JSON 化。`ClrBackendPhase` が `*.bir.json` を C# と並行出力。m0 で妥当な JSON（main/sum/fizz, hasMain）を確認。
-- **D1.2 — ilemit M0（L）.**
-  BIR→IL: `ldstr`/`ldc.i4`、算術（add/sub/mul/div）、static 呼び出し（`Console.WriteLine` を reflection 解決）、local（`stloc`/`ldloc`）、`ret`、分岐（`br`/`brtrue`/`brfalse` で if/while）。**判定**: 生成 .dll の stdout == C# 経路（m0）。
+- **D1.2 — ilemit M0（L）✅ 達成.**
+  `ilemit` が BIR→CIL を emit: ldstr/ldc, add/sub/mul/div/rem, 比較(ceq/clt/cgt 合成), `string.Concat(object[])`(box), `Console.WriteLine(object)`, sibling static 呼び出し(2-pass で解決), local/arg(ldloc/stloc/ldarg/starg), ret, while/if/ternary の分岐(br/brfalse + label)。**Kotlin→BIR→CIL→dotnet が C# を一切経由せず m0 を実行、出力が C# 経路と一致**（`scripts/run-il-m0.sh`）。
 - **D1.3 — 文字列テンプレ/println（S）.**
   string template → `string.Concat(object[])`（値型は `box`）。**判定**: m0 のテンプレ一致。
 - **D1.4 — クラス/フィールド/ctor（L）.**
