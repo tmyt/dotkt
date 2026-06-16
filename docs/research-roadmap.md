@@ -40,8 +40,8 @@
   BIR が @Clr を `clrNew`/`clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet`（+argTypes/retType）で符号化、ilemit が reflection で実 .NET 型/メソッド/ctor/property を解決し `newobj`/`call`/`callvirt`（+box）。`il:m2`(System.Math 静的)・`il:mi1`(StringBuilder: new/Append連鎖/ToString/Length) が C# 差分一致。残: 総称(`MakeGenericType`)/indexer（m-i3 相当）。
 - **D1.7 — 例外/ループ/enum（M）.**
   IL の例外ハンドラ領域（try/catch/finally の `ExceptionHandler`）、ループ分岐、enum（int backing）。**判定**: m-c2 差分一致。
-- **D1.8 — MSBuild 統合（M）.**
-  `<KotlinClrBackend>il</KotlinClrBackend>` で `KotlinClr.targets` が `ilemit` を起動しアセンブリを直接生成（CoreCompile/C# を完全スキップ）。`.ktproj` が `cs`（現行）/`il` を選択可能に。**判定**: `dotnet build` で IL 経路のみのアセンブリが走る。
+- **D1.8 — MSBuild 統合（M）✅ 達成.**
+  `<KotlinClrBackend>il</KotlinClrBackend>` で `KotlinClr.targets` が、csc には placeholder Main を与えて valid assembly を作らせ、`AfterTargets CoreCompile` で `ilemit` が BIR→CIL を emit してアセンブリを上書き。`samples/ktproj-il` が `dotnet build`/`run` で純 IL アセンブリを生成・実行（`Hello, ktproj, from IL!`）。※コンパイラ変更後は `installDist` 更新が前提。
 - **D1.9 — 健全性（L）.**
   stack 型整合（`box`/`unbox.any`/`conv.*` 数値変換）、`ilverify` による検証通過、PDB/sequence point（任意・デバッグ用）。**判定**: `ilverify` が clean、全 verify-all 差分一致。
 

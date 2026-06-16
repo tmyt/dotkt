@@ -10,6 +10,9 @@
     <KotlinClrOut>$(BaseIntermediateOutputPath)kotlin-cs</KotlinClrOut>
     <KotlinClrFacadeGen>$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</KotlinClrFacadeGen>
     <KotlinClrFacadeOut>$(BaseIntermediateOutputPath)kotlin-facades</KotlinClrFacadeOut>
+    <!-- Backend: "cs" (default: kt->C#->csc) or "il" (kt->BIR->ilemit, emit CIL directly). -->
+    <KotlinClrBackend Condition="'$(KotlinClrBackend)' == ''">cs</KotlinClrBackend>
+    <KotlinClrIlEmit>$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</KotlinClrIlEmit>
     <!-- We generate the C# ourselves; don't let the SDK glob .cs/.kt. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
     <!-- A .ktproj has no implicit language; build the generated C# with the C# language targets. -->
@@ -52,11 +55,40 @@
     <Touch Files="$(KotlinClrOut)/.stamp" AlwaysCreate="true" />
   </Target>
 
-  <!-- Add generated C# to the compile set (runs whenever, before CoreCompile, regardless of incrementality). -->
-  <Target Name="KotlinClrCollect" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrCompile">
+  <!-- cs backend: add generated C# to the compile set (before CoreCompile). -->
+  <Target Name="KotlinClrCollect" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrCompile"
+          Condition="'$(KotlinClrBackend)' == 'cs'">
     <ItemGroup>
       <Compile Include="$(KotlinClrOut)/*.cs" />
     </ItemGroup>
+  </Target>
+
+  <!-- il backend: give csc a trivial valid assembly to produce; ilemit overwrites it afterwards. -->
+  <Target Name="KotlinClrIlPlaceholder" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrCompile"
+          Condition="'$(KotlinClrBackend)' == 'il'">
+    <MakeDir Directories="$(KotlinClrOut)" />
+    <WriteLinesToFile File="$(KotlinClrOut)/_IlPlaceholder.cs" Overwrite="true"
+                      Lines="public static class _IlPlaceholder { public static void Main(string[] a) { } }" />
+    <ItemGroup>
+      <Compile Include="$(KotlinClrOut)/_IlPlaceholder.cs" />
+    </ItemGroup>
+  </Target>
+
+  <!-- il backend: bootstrap ilemit, then overwrite the compiled assembly with one emitted directly
+       as CIL from BIR (no C#). Runs after CoreCompile so it replaces csc's (placeholder) output. -->
+  <Target Name="EnsureIlEmit" BeforeTargets="KotlinClrIlEmit"
+          Condition="'$(KotlinClrBackend)' == 'il' and !Exists('$(KotlinClrIlEmit)')">
+    <Message Importance="high" Text="kotlin/clr: building ilemit (first run)..." />
+    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/tools/ilemit&quot; -c Release -o &quot;$(KotlinClrRoot)/build/ilemit-bin&quot; -v q --nologo" />
+  </Target>
+
+  <Target Name="KotlinClrIlEmit" AfterTargets="CoreCompile" DependsOnTargets="KotlinClrCompile"
+          Condition="'$(KotlinClrBackend)' == 'il'">
+    <ItemGroup>
+      <_KotlinBir Include="$(KotlinClrOut)/*.bir.json" />
+    </ItemGroup>
+    <Message Importance="high" Text="kotlin/clr: emitting CIL directly from BIR -> $(TargetName)$(TargetExt)" />
+    <Exec Command="dotnet &quot;$(KotlinClrIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; @(_KotlinBir->'&quot;%(FullPath)&quot;', ' ')" />
   </Target>
 
 </Project>
