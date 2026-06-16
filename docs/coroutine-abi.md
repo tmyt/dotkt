@@ -63,3 +63,18 @@ Kotlin の suspend lowering を再利用して state machine を IR で入手し
 5. `Flow` ⇔ `IAsyncEnumerable<T>` は B の上に別途。
 
 > まとめ: **「Continuation を隠して `Task<T>` として見せ、TCS で結線する」** が答え。現状（A）は Kotlin→CLR の ABI をすでに満たしており、B 移行時もこの契約を破らない。
+
+## 6. 戦略B 実装状況と手順
+
+### D2.0 — CLR Continuation ランタイム（✅ 構築・コンパイル検証済）
+`runtime/csharp/KfcCoroutines/Coroutines.cs`: `KResult<T>`, `IContinuation<T>`, `CoroutineContext`, `Intrinsics.CoroutineSuspended`, **`CoroutineBuilders.Future`（Continuation⇄`TaskCompletionSource` ブリッジ：正常→SetResult / 例外→SetException / OperationCanceled→SetCanceled）**, `RunBlocking`。依存なしの最小実装。lowering（D2.1）がこれを驅動すると end-to-end になる。
+
+### D2.1 — suspend lowering 組込み（最難所・未）
+`AbstractSuspendFunctionsLowering<C>` を CLR 用に継承して状態機械を IR で得る。**実機調査で判明した必要作業:**
+1. **CLR `CommonBackendContext` を構築**。約12の抽象メンバ（`getTypeSystem`/`getInnerClassesSupport`/mapping 等）+ `LoweringContext`（`irBuiltIns`/`irFactory`/`symbolTable`）を実装。coroutine intrinsic シンボル（`Continuation`, `COROUTINE_SUSPENDED`, `suspendCoroutineUninterceptedOrReturn`）は再利用した JVM frontend 経由で kotlin-stdlib から解決済み（`Fir2IrComponents` から取る）。
+2. **抽象メソッドを実装**: `getStateMachineMethodName`(=invokeSuspend), `getCoroutineBaseClass`(=CLR `IContinuation`/stdlib base), `nameForCoroutineClass`(=`<fn>$Coroutine`), **`buildStateMachine`（label フィールド + locals フィールド + resumeWith の label switch ＝ coroutine コンパイルの核心）**, `generateCoroutineStart`。JVM `AddContinuationLowering` が雛形。
+3. この lowering を `ClrBackendPhase` の lowering 列に組み込む。
+4. 生成された状態機械クラス（`IContinuation` 実装 + when/switch + field）は **既存 class codegen でそのまま出力できる**（class/when/field 実装済）。
+5. 公開 `Task<T> Foo(args)` ブリッジ = `CoroutineBuilders.Future(ctx, start)` を呼ぶ合成メソッド（Continuation 隠蔽）。
+
+**見積もり:** D2.1 は `CommonBackendContext` 構築 + `buildStateMachine` 実装で **XL（複数セッション・最難関所）**。ただし ABI（§1）は不変なので、完成までは戦略 A が production interop を提供し続ける。
