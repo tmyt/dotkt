@@ -1,6 +1,7 @@
 // C-1 .NET consumption: generic methods, params, .NET default args, operators, struct value-type methods.
 import clr.Vec2
 import clr.Util
+import clr.Ext.tripled
 
 fun main() {
     println(Util.echo(42))            // 42   (generic method)
@@ -11,4 +12,5 @@ fun main() {
 
     val c = Vec2(1, 2) + Vec2(3, 4)   // operator + (op_Addition)
     println(c.mag2())                 // (4,6) -> 52  (struct instance method)
+    println(7.tripled())              // 21   (.NET extension method)
 }

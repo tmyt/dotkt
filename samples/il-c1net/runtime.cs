@@ -5,6 +5,7 @@ namespace Probe {
         public static Vec2 operator +(Vec2 a, Vec2 b) => new Vec2(a.X + b.X, a.Y + b.Y);
         public int Mag2() => X * X + Y * Y;
     }
+    public static class Ext { public static int tripled(this int n) => n * 3; }
     public static class Util {
         public static T Echo<T>(T x) => x;                       // generic method (caller-side)
         public static int Sum(params int[] xs) { int s = 0; foreach (var x in xs) s += x; return s; }  // params

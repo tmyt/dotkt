@@ -2095,6 +2095,14 @@ class BirEmitter {
 				val allArgTypes = (listOf(str(netType(recv.type))) + regularArgs(call).map { str(netType(it.type)) }).joinToString(",")
 				return """{"k":"clrStatic","type":${str(memberType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]}"""
 			}
+			// A .NET extension method `static M(this T self, …)` exposed as a Kotlin extension `fun T.m()` on a @Clr
+			// object: it's a STATIC call whose first argument is the extension receiver.
+			val extRecv = extensionReceiver(call)
+			if (isStatic && extRecv != null) {
+				val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
+				val allArgTypes = (listOf(str(netType(extRecv.type))) + regularArgs(call).map { str(netType(it.type)) }).joinToString(",")
+				return """{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]}"""
+			}
 			return if (isStatic)
 				"""{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[${paramNetTypes(callee)}],"ret":$ret,"args":[$argsJson]}"""
 			else

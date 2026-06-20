@@ -173,11 +173,11 @@
 - [ ] `out` / `ref` パラメータ（Kotlin に構文無し＝holder 設計要）。**(M)**
 - [x] ジェネリックメソッド `T M<T>(...)` ✅ 2026-06-21（`il-c1net`、`Util.echo<T>`＝既に動作・検証追加）。**(M)**
 - [x] static フィールド・`const`・static プロパティ（facadegen が object 型に static field/prop を出力、`Math.PI`→`System.Math.PI`）。`samples/m-c7`。**(S)** ✅
-- [ ] .NET 拡張メソッド（LINQ 等）の呼び出し。**(M)**
+- [x] .NET 拡張メソッド ✅ 2026-06-21（`il-c1net`）: `@Clr` object 上の Kotlin 拡張 `fun T.m()` → static `Owner.M(receiver, …)`（拡張レシーバを第1引数へ前置）。`5.tripled()`。**(M)**
 - [x] 構造体（値型）interop ✅ 2026-06-21（`il-c1net` Vec2）: 値型インスタンスメソッド（`c.mag2()`）は `EmitClrCall` が **レシーバを EmitAddr**（managed pointer）で。残: コピー意味論の厳密検証・`readonly struct` 最適化。**(M)**
 - [x] 演算子/変換メソッド ✅ 2026-06-21（`il-c1net` `Vec2 + Vec2`）: `@Clr("op_*")` は **static メソッド**＝Kotlin instance レシーバを第1引数へ前置（op_Addition/op_Equality/op_Implicit/op_Explicit）。**(M)**
 - [x] params 配列・既定引数（.NET 側）✅ 2026-06-21（`il-c1net`）: params は既に動作、**.NET 既定引数**は `EmitArgs` が不足末尾を metadata の `DefaultValue` で補填。**(S)**
-- [ ] nested .NET 型 / generic indexer（IL 側含む）。**(M)**
+- [x] nested .NET 型 ✅ 2026-06-21: `@Clr("Outer+Inner")`（.NET nested 区切り `+`）で内部型を façade・呼び出し（`o.makeInner().value()`）。残: generic indexer。**(M)**
 - [ ] delegate 網羅（多キャスト `+=`/`-=` の `-=` 実機、`Func`/`Action` 総称、戻り delegate）。**(S–M)**
 
 ## C-2 取り込み UX の一本化（使い分けの排除・1.0 DX 必須）
