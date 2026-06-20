@@ -2196,7 +2196,8 @@ sealed class Emitter
         // Fall back to name + arity — e.g. a generic-parameter arg type (`Add(T)` on `Collection<int>`) that
         // doesn't name a plain .NET type; on the constructed type GetMethods returns the substituted overload.
         mi ??= type.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);
-        if (instance) EmitExpr(e.GetProperty("recv"));
+        // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
+        if (instance) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitArgs(e.GetProperty("args"), mi.GetParameters());
         _il.Emit(instance && mi.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, mi);
         return mi.ReturnType;
@@ -2286,6 +2287,27 @@ sealed class Emitter
     {
         int i = 0;
         foreach (var a in args.EnumerateArray()) { EmitArg(a, ps[i].ParameterType); i++; }
+        // .NET optional parameters: Kotlin may omit trailing args that have a default — the CLR caller must
+        // supply them. Push each missing param's default value (filled from the method metadata).
+        for (; i < ps.Length; i++) EmitDefaultArg(ps[i]);
+    }
+
+    void EmitDefaultArg(ParameterInfo p)
+    {
+        var pt = p.ParameterType;
+        var dv = p.HasDefaultValue ? p.DefaultValue : null;
+        switch (dv)
+        {
+            case null when !pt.IsValueType: _il.Emit(OpCodes.Ldnull); break;
+            case null: var loc = _il.DeclareLocal(pt); _il.Emit(OpCodes.Ldloca, loc); _il.Emit(OpCodes.Initobj, pt); _il.Emit(OpCodes.Ldloc, loc); break;
+            case bool b: _il.Emit(b ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); break;
+            case char c: _il.Emit(OpCodes.Ldc_I4, (int)c); break;
+            case string s: _il.Emit(OpCodes.Ldstr, s); break;
+            case long l: _il.Emit(OpCodes.Ldc_I8, l); break;
+            case double d: _il.Emit(OpCodes.Ldc_R8, d); break;
+            case float f: _il.Emit(OpCodes.Ldc_R4, f); break;
+            default: _il.Emit(OpCodes.Ldc_I4, Convert.ToInt32(dv)); break;  // int/short/byte/enum
+        }
     }
     void EmitArgs2(JsonElement[] args, ParameterInfo[] ps)
     {

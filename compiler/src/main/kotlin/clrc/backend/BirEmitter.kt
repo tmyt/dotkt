@@ -929,6 +929,14 @@ class BirEmitter {
 			val (kt, vt) = mapKV(source.type)
 			return """{"k":"forEachInline","label":$lbl,"elem":"clrg:System.Collections.Generic.KeyValuePair[$kt,$vt]","src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
 		}
+		// `for (x in dotNetEnumerable)` -> enumerate any .NET IEnumerable<T> (@Clr/injected type) via GetEnumerator
+		// (forEachInline). The façade's `operator iterator()` only satisfies the frontend; we bypass it. Element
+		// type = the source's first type arg (e.g. Collection<Int> -> Int), else the loop var's type.
+		if (source != null && (source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null) {
+			val elem = (source.type as? IrSimpleType)?.arguments?.firstOrNull()
+				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
+			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
+		}
 		val range = source as? IrCall ?: return null
 		val ops = range.arguments.filterNotNull()
 		if (ops.size != 2) return null
@@ -2080,6 +2088,13 @@ class BirEmitter {
 			val member = clrName(callee) ?: name
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
 			val ret = str(netType(callee.returnType))
+			// A .NET operator/conversion (`op_Addition`/`op_Equality`/`op_Implicit`…) is a STATIC method; a Kotlin
+			// `operator fun` models it as an instance member, so prepend the receiver as the first argument.
+			if (member.startsWith("op_") && !isStatic && recv != null) {
+				val allArgs = (listOf(expr(recv)) + regularArgs(call).map { expr(it) }).joinToString(",")
+				val allArgTypes = (listOf(str(netType(recv.type))) + regularArgs(call).map { str(netType(it.type)) }).joinToString(",")
+				return """{"k":"clrStatic","type":${str(memberType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]}"""
+			}
 			return if (isStatic)
 				"""{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[${paramNetTypes(callee)}],"ret":$ret,"args":[$argsJson]}"""
 			else

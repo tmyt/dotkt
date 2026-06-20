@@ -163,20 +163,20 @@
 - [x] 検証: `samples/revinterop`（C# consumer が Kotlin アセンブリを参照）を verify-all に常設。**(S)** ✅
 
 ## C-1 .NET 機能の消費（Kotlin → .NET）
-- [ ] **for-in で .NET `IEnumerable`/`IEnumerator` を反復**（`GetEnumerator`/`MoveNext`/`Current`）。任意の .NET コレクション/LINQ 結果を Kotlin の for で回す。**(M)**
+- [x] **for-in で .NET `IEnumerable`/`IEnumerator` を反復** ✅ 2026-06-21（`il-forin`）: `birForLoop` が .NET 型ソースを `forEachInline`（GetEnumerator/MoveNext/Current）へ。façade の `operator iterator()` は frontend を満たすだけ（backend は bypass）。残: facadegen の iterator() 自動生成（DX）。**(M)**
 - [x] **`use` / `IDisposable`**（try-finally で `Dispose`）— 実装済。併せて `AutoCloseable`/`Closeable`→`System.IDisposable`、`close()`→`Dispose()` を写像。`repeat(n){}` も。`samples/m-c4`。**(S)** ✅
 - [x] **ジェネリック .NET 型の FIR 直接注入（2026-06-18）** ✅ — 任意の generic .NET 型を façade 無しで `import`・構築・継承。`samples/il-netgen`（`Collection<Int>()` を構築し `Add`/`Count`/`Contains`/`IndexOf`、`3/True/2`）・`il-netgen2`（`class IntColl : Collection<Int>()` ＝**generic .NET 基底継承**、`3/True/2`）実機正＋ilverify-clean。**実装**: facadegen が generic 型定義（`Collection`1`）を解決し `class Collection <open名> open T`（型パラメータ名を末尾トークンで）＋`fun Add Unit final item:T`（`Map` が generic param→名前）を吐く。FIR インジェクタ（`ClrTypeInjection.kt`）が `typeParameter(Name,Variance.INVARIANT,false,key)` で型パラメータを宣言、`coneOf` が `owner.typeParameterSymbols…constructType` で `T` を解決（設計検証エージェントで 2.2.0 API 確定）。backend：`birType` が構築済み注入 generic を `clrg:<open>[args]`、`IrConstructorCall` も同様、メンバアクセスは**受け側が .NET 型なら受け側 birType（構築済み）／継承メンバなら subclass の .NET supertype（型引数を保持）**を type に。ilemit `EmitClrCall` を `ClrRef`（generic 対応）＋ overload は型引数解決失敗時に名前+arity fallback（`Add(T)` を構築型 `Collection<int>` 上で解決）。**型 RESOLUTION のフロントエンド機能＝[[s5-fir-injection-seam]] の generic 拡張**。残: generic .NET メソッド `M<T>()`（呼出時 MakeGenericMethod）・generic indexer（`this[i]`）・境界。**(L)**
 - [x] **ジェネリック .NET 基底の継承** `class C : Collection<Int>()` ✅（上記 il-netgen2、IL 側 Round 8 ＋フロントエンド generic 注入で end-to-end 完了）。
 - [x] **.NET インターフェース実装**（Kotlin class が注入した .NET interface を実装）— 実装済（facadegen が `interface` 種別検出、injector が `ClassKind.INTERFACE`＋abstract メンバ合成、Kotlin が override）。`samples/m-c5`：`class Money : System.IComparable` を façade-free 実装し多態使用。残: 総称 interface（`IComparable<T>`）。**(L)** ✅（非総称）
 - [x] .NET enum 取り込み — 実装済（facadegen が `enum` を検出し **object＋val プロパティ**として出力＝FIR enum-entry 合成を回避、`DayOfWeek.Friday`→`System.DayOfWeek.Friday`）。`samples/m-c6`。併せて `OBJECT_METHODS`（toString/equals/hashCode）を @Clr/注入型のメソッド呼び出しでも適用。**(M)** ✅
 - [x] nullable 値型 `Int?` → C# `int?`（`csType` が nullable 値型に `?`、`var` 不可なら明示型を出力）＋ `isEmpty`/`isNotEmpty`。`samples/m-c8`。残: `Nullable<T>` 引数の .NET API 往復。**(M)** ✅
-- [ ] `out` / `ref` パラメータ。**(M)**
-- [ ] ジェネリックメソッド `T M<T>(...)`（呼び出し時 `MakeGenericMethod` / 型推論）。**(M)**
+- [ ] `out` / `ref` パラメータ（Kotlin に構文無し＝holder 設計要）。**(M)**
+- [x] ジェネリックメソッド `T M<T>(...)` ✅ 2026-06-21（`il-c1net`、`Util.echo<T>`＝既に動作・検証追加）。**(M)**
 - [x] static フィールド・`const`・static プロパティ（facadegen が object 型に static field/prop を出力、`Math.PI`→`System.Math.PI`）。`samples/m-c7`。**(S)** ✅
 - [ ] .NET 拡張メソッド（LINQ 等）の呼び出し。**(M)**
-- [ ] 構造体（値型）コピー意味論、`readonly struct`。**(M)**
-- [ ] 変換演算子（implicit/explicit operator）/ 演算子メソッド。**(M)**
-- [ ] params 配列、既定引数（.NET 側）。**(S)**
+- [x] 構造体（値型）interop ✅ 2026-06-21（`il-c1net` Vec2）: 値型インスタンスメソッド（`c.mag2()`）は `EmitClrCall` が **レシーバを EmitAddr**（managed pointer）で。残: コピー意味論の厳密検証・`readonly struct` 最適化。**(M)**
+- [x] 演算子/変換メソッド ✅ 2026-06-21（`il-c1net` `Vec2 + Vec2`）: `@Clr("op_*")` は **static メソッド**＝Kotlin instance レシーバを第1引数へ前置（op_Addition/op_Equality/op_Implicit/op_Explicit）。**(M)**
+- [x] params 配列・既定引数（.NET 側）✅ 2026-06-21（`il-c1net`）: params は既に動作、**.NET 既定引数**は `EmitArgs` が不足末尾を metadata の `DefaultValue` で補填。**(S)**
 - [ ] nested .NET 型 / generic indexer（IL 側含む）。**(M)**
 - [ ] delegate 網羅（多キャスト `+=`/`-=` の `-=` 実機、`Func`/`Action` 総称、戻り delegate）。**(S–M)**
 
