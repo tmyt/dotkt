@@ -1242,6 +1242,19 @@ class BirEmitter {
 		return """{"k":"valueBlock","stmts":[${init.joinToString(",")}],"result":$result}"""
 	}
 
+	private var synthCounter = 0
+	/**
+	 * A synthetic one-arg lambda `(__x: paramType) -> bodyOf("__x")` lifted to a static method + delegate. Used for
+	 * LINQ ops that need a transform Kotlin doesn't supply as a user lambda (e.g. `chunked` -> `Select(c => c.ToList())`,
+	 * `filterNotNull` -> `Where(x => x != null)`). `bodyOf` builds the body expression from the param-ref BIR.
+	 */
+	private fun synthLambda(paramType: String, retType: String, bodyOf: (String) -> String): String {
+		val lname = "__synth${synthCounter++}"
+		val pref = """{"k":"local","name":"__x"}"""
+		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[{"name":"__x","type":${str(paramType)}}],"ret":${str(retType)},"body":[{"k":"return","value":${bodyOf(pref)}}]}""")
+		return """{"k":"delegateNew","method":${str(lname)},"funcType":${str("func:$retType:$paramType")}}"""
+	}
+
 	private fun hasLambdaArg(call: IrCall): Boolean = regularArgs(call).any { it is IrFunctionExpression }
 
 	/**
@@ -1810,6 +1823,18 @@ class BirEmitter {
 					"singleOrNull" -> if (a0 != null) clrGen(EN, "SingleOrDefault", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "SingleOrDefault", listOf(t), EI, listOf(src))
 					"reversed" -> toList(clrGen(EN, "Reverse", listOf(t), EI, listOf(src)), t)
 					"distinct" -> toList(clrGen(EN, "Distinct", listOf(t), EI, listOf(src)), t)
+					// `chunked(n)` -> Chunk(src,n).Select(c => c.ToList()) : IEnumerable<List<T>> (Kotlin List<List<T>>).
+					"chunked" -> {
+						val listT = "clrg:System.Collections.Generic.List[$t]"
+						val chunk = clrGen(EN, "Chunk", listOf(t), listOf("ienum", "int"), listOf(src, arg()))
+						val sel = synthLambda("array:$t", listT) { x -> clrGen(EN, "ToList", listOf(t), listOf("ienum"), listOf(x)) }
+						toList(clrGen(EN, "Select", listOf("array:$t", listT), listOf("ienum", "func:2"), listOf(chunk, sel)), listT)
+					}
+					// `filterNotNull()` -> Where(x => x != null). Reference elements only (value `T?` -> Nullable<T> unwrap deferred).
+					"filterNotNull" -> if (t.startsWith("nullable:")) """{"k":"unsupportedExpr","of":"filterNotNull on a value-type T?"}""" else {
+						val pred = synthLambda(t, "bool") { x -> """{"k":"un","op":"!","e":{"k":"objEq","l":$x,"r":{"k":"const","type":"void","value":null}}}""" }
+						toList(clrGen(EN, "Where", listOf(t), EF, listOf(src, pred)), t)
+					}
 					"toList" -> clrGen(EN, "ToList", listOf(t), EI, listOf(src))
 					"toSet" -> clrGen(EN, "ToHashSet", listOf(t), EI, listOf(src))
 					// `asSequence()` -> the receiver AS an IEnumerable (LINQ is already lazy); ops on the result
@@ -2649,7 +2674,7 @@ class BirEmitter {
 			"firstOrNull", "lastOrNull", "isEmpty", "isNotEmpty", "sum", "sumOf", "sorted", "maxOrNull", "minOrNull", "reduce",
 			"maxByOrNull", "minByOrNull", "zip", "associateWith", "associateBy", "groupBy",
 			"asSequence", "toSet", "takeWhile", "dropWhile", "single", "singleOrNull",
-			"sortedDescending", "sortedBy", "sortedByDescending", "mapIndexed",
+			"sortedDescending", "sortedBy", "sortedByDescending", "mapIndexed", "chunked", "filterNotNull",
 		)
 
 		// Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.
