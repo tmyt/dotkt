@@ -2085,6 +2085,21 @@ class BirEmitter {
 				val m = if (name == "println") "WriteLine" else "Write"
 				return """{"k":"console","method":${str(m)},"args":[${operands.joinToString(",") { expr(it) }}]}"""
 			}
+			// `readLine()` -> Console.ReadLine() (returns String?; null at EOF, like Kotlin).
+			if (fq == "kotlin.io" && name == "readLine")
+				return """{"k":"clrStatic","type":"System.Console","method":"ReadLine","argTypes":[],"ret":"System.String","args":[]}"""
+			// Regex: `"p".toRegex()` -> new Regex("p"); `r.containsMatchIn(s)` -> r.IsMatch(s); `r.replace(s,rep)` -> r.Replace(s,rep).
+			val RX = "System.Text.RegularExpressions.Regex"
+			if (name == "toRegex") extensionReceiver(call)?.let { p ->
+				return """{"k":"clrNew","type":${str(RX)},"argTypes":["System.String"],"args":[${expr(p)}]}"""
+			}
+			if ((name == "containsMatchIn" || name == "replace") &&
+				dispatchReceiver(call)?.type?.classFqName?.asString() == "kotlin.text.Regex") {
+				val r = dispatchReceiver(call)!!; val a = regularArgs(call)
+				return if (name == "containsMatchIn")
+					"""{"k":"clrInstance","type":${str(RX)},"method":"IsMatch","argTypes":["System.String"],"ret":"System.Boolean","recv":${expr(r)},"args":[${expr(a[0])}]}"""
+				else """{"k":"clrInstance","type":${str(RX)},"method":"Replace","argTypes":["System.String","System.String"],"ret":"System.String","recv":${expr(r)},"args":[${expr(a[0])},${expr(a[1])}]}"""
+			}
 			// Exhaustive-when synthetic else / uninitialized property -> throw (the branch is unreachable).
 			if (name == "noWhenBranchMatchedException" || name == "throwUninitializedPropertyAccessException")
 				return throwExpr(newExc("System.InvalidOperationException", str(name)))
@@ -2362,6 +2377,8 @@ class BirEmitter {
 			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
 			return "clrg:System.IComparable[$arg]"
 		}
+		// kotlin.text.Regex -> System.Text.RegularExpressions.Regex.
+		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
 		// `by lazy` delegate: kotlin.Lazy<T> -> System.Lazy<T>.
 		if (fqp == "kotlin.Lazy") {
 			val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"

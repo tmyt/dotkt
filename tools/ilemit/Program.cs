@@ -2122,6 +2122,8 @@ sealed class Emitter
             ?? Type.GetType(name + ", System.Linq")
             ?? Type.GetType(name + ", System.Collections")
             ?? Type.GetType(name + ", System.ObjectModel")
+            ?? Type.GetType(name + ", System.Text.RegularExpressions")
+            ?? Type.GetType(name + ", System.Console")
             ?? AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType(name)).FirstOrDefault(x => x != null);
         if (t == null) throw new NotSupportedException("cannot resolve .NET type " + name);
         _typeCache[name] = t;
