@@ -170,15 +170,15 @@
 - [x] **.NET インターフェース実装**（Kotlin class が注入した .NET interface を実装）— 実装済（facadegen が `interface` 種別検出、injector が `ClassKind.INTERFACE`＋abstract メンバ合成、Kotlin が override）。`samples/m-c5`：`class Money : System.IComparable` を façade-free 実装し多態使用。残: 総称 interface（`IComparable<T>`）。**(L)** ✅（非総称）
 - [x] .NET enum 取り込み — 実装済（facadegen が `enum` を検出し **object＋val プロパティ**として出力＝FIR enum-entry 合成を回避、`DayOfWeek.Friday`→`System.DayOfWeek.Friday`）。`samples/m-c6`。併せて `OBJECT_METHODS`（toString/equals/hashCode）を @Clr/注入型のメソッド呼び出しでも適用。**(M)** ✅
 - [x] nullable 値型 `Int?` → C# `int?`（`csType` が nullable 値型に `?`、`var` 不可なら明示型を出力）＋ `isEmpty`/`isNotEmpty`。`samples/m-c8`。残: `Nullable<T>` 引数の .NET API 往復。**(M)** ✅
-- [ ] `out` / `ref` パラメータ（Kotlin に構文無し＝holder 設計要）。**(M)**
+- [~] `out` / `ref` パラメータ — **意図的に見送り**。Kotlin に out/ref 構文が無く、facadegen は byref param のメソッドを surface しない（＝壊れず単に不可視）。最頻ユース（`Int32.TryParse` 等）は Kotlin の `toIntOrNull()` 等のイディオムで充足済み。残りの out/ref API は holder 設計が必要だが価値が低く保留。**(M, deferred)**
 - [x] ジェネリックメソッド `T M<T>(...)` ✅ 2026-06-21（`il-c1net`、`Util.echo<T>`＝既に動作・検証追加）。**(M)**
 - [x] static フィールド・`const`・static プロパティ（facadegen が object 型に static field/prop を出力、`Math.PI`→`System.Math.PI`）。`samples/m-c7`。**(S)** ✅
 - [x] .NET 拡張メソッド ✅ 2026-06-21（`il-c1net`）: `@Clr` object 上の Kotlin 拡張 `fun T.m()` → static `Owner.M(receiver, …)`（拡張レシーバを第1引数へ前置）。`5.tripled()`。**(M)**
 - [x] 構造体（値型）interop ✅ 2026-06-21（`il-c1net` Vec2）: 値型インスタンスメソッド（`c.mag2()`）は `EmitClrCall` が **レシーバを EmitAddr**（managed pointer）で。残: コピー意味論の厳密検証・`readonly struct` 最適化。**(M)**
 - [x] 演算子/変換メソッド ✅ 2026-06-21（`il-c1net` `Vec2 + Vec2`）: `@Clr("op_*")` は **static メソッド**＝Kotlin instance レシーバを第1引数へ前置（op_Addition/op_Equality/op_Implicit/op_Explicit）。**(M)**
 - [x] params 配列・既定引数（.NET 側）✅ 2026-06-21（`il-c1net`）: params は既に動作、**.NET 既定引数**は `EmitArgs` が不足末尾を metadata の `DefaultValue` で補填。**(S)**
-- [x] nested .NET 型 ✅ 2026-06-21: `@Clr("Outer+Inner")`（.NET nested 区切り `+`）で内部型を façade・呼び出し（`o.makeInner().value()`）。残: generic indexer。**(M)**
-- [ ] delegate 網羅（多キャスト `+=`/`-=` の `-=` 実機、`Func`/`Action` 総称、戻り delegate）。**(S–M)**
+- [x] nested .NET 型 ✅ 2026-06-21: `@Clr("Outer+Inner")`（.NET nested 区切り `+`）で内部型を façade・呼び出し（`o.makeInner().value()`）。generic indexer は構築型上の operator get/set＝G-5 と同機構（注入型は injector の `indexer` フィールド）で対応済み。**(M)**
+- [x] delegate 網羅 ✅ — event `+=`/`-=` 実機（`il-event`: `add_`/`remove_CollectionChanged`、`-=` は格納ハンドラで delegate 等価）、`Func`/`Action` 総称・戻り delegate は既存（il-c1net 等）。**(S–M)**
 
 ## C-2 取り込み UX の一本化（使い分けの排除・1.0 DX 必須）
 現状 `<KotlinClrType>`（façade-free 注入）と `<KotlinClrFacade>`（.kt 生成）の2系統＋総称は façade、という**使い分けが利用者に難しすぎる**。これを無くす。
