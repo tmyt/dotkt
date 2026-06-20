@@ -2,8 +2,8 @@
 // System.Exception, injected into FIR (no façade .kt). A Kotlin class extends it, calls the base
 // constructor, and OVERRIDES the virtual .NET property Message; calls dispatch virtually through
 // the .NET base type. This is the mechanism that unlocks framework-direct UI (class App : Application()).
-import clrgen.Exception
-import clrgen.Console
+import System.Exception
+import System.Console
 
 open class AppError(val code: Int) : Exception("app error") {
 	override val Message: String get() = "AppError #$code: ${code * 2}"

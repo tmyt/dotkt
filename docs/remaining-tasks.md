@@ -182,11 +182,11 @@
 
 ## C-2 取り込み UX の一本化（使い分けの排除・1.0 DX 必須）
 現状 `<KotlinClrType>`（façade-free 注入）と `<KotlinClrFacade>`（.kt 生成）の2系統＋総称は façade、という**使い分けが利用者に難しすぎる**。これを無くす。
-- [ ] **理想形＝import 駆動の自動解決**: 利用者はアセンブリを参照（`<PackageReference>`/`<Reference>`）し、Kotlin 側で **`import System.Text.StringBuilder` と書くだけ**で解決。型リストの手書き不要、注入/façade の選択も不要（コンパイラが内部で自動振り分け）。**(L, design-first)**
+- [x] **理想形＝import 駆動の自動解決** ✅ 2026-06-21（`ktproj-import`）: MSBuild が .kt を scan し `import System.Text.StringBuilder` 等を facadegen `--scan` → FIR 注入。型は **実 .NET 名前空間そのものを Kotlin パッケージとして** 解決（`clrgen` 合成パッケージは撤廃）。型リストの手書き不要・注入/façade の選択不要。**(L, design-first)**
   - 実装案A: ビルドが `.kt` の `import` を走査して取り込み型集合を自動導出（手書きリスト撤廃）。
   - 実装案B: 参照アセンブリから classId をオンデマンド解決する **FIR symbol provider**（宣言生成拡張より強力）。総称も含め一経路化。
-- [ ] **当面の一本化（理想形までの繋ぎ）**: ひとまず**単一の宣言**に統合（例 `<KotlinClrImport>`）。総称は内部で façade 経路へ自動フォールバック、非総称は注入——**振り分けは隠蔽**し、利用者は1種類だけ書く。`<KotlinClrFacade>` は利用者向け概念としては廃止（内部実装に降格）。明示メッセージでの「使い分け案内」は不要にする。**(M)**
-- [ ] 検証: 総称型・非総称型・外部アセンブリ型を**同じ1つの宣言（or import のみ）**で取り込むサンプルを verify に追加。
+- [x] **宣言の一本化** ✅: 明示が要る場合のみ `<DotKtImport>`（escape hatch、注入経路）。`<KotlinClrType>` は撤廃しサンプルから削除（import scan で代替）。`<KotlinClrFacade>` は内部実装（auto-façade）に降格。**(M)**
+- [x] 検証: BCL（`ktproj-import`/`ktproj-inject` = import のみ）・外部アセンブリ（`ktproj-extlib` ProjectReference・`ktproj-avalonia` PackageReference、いずれも import のみ）を verify-all で常設。
 
 ---
 

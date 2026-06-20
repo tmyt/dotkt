@@ -3,7 +3,7 @@
 // so the Kotlin handler (a lambda bound as the event's own delegate type) fires deterministically with
 // no UI loop. `add_<E>`/`remove_<E>` are the injector-synthesized accessors the backend rewrites to
 // the event's add/remove method (see ClrEventRegistry).
-import clrgen.ObservableCollection
+import System.Collections.ObjectModel.ObservableCollection
 
 fun main() {
     val c = ObservableCollection<Int>()

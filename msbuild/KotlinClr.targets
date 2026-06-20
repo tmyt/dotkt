@@ -52,19 +52,18 @@
     </ItemGroup>
   </Target>
 
-  <!-- Façade-FREE injection: reflect the <KotlinClrType> .NET types into a metadata file that the
-       compiler's FIR extension reads. No .kt is produced; the types resolve directly. (Generic types
-       belong on <KotlinClrFacade> instead — those go through the façade .kt path.) -->
-  <!-- DependsOnTargets=ResolveReferences so @(ReferencePath) is populated; those paths (BCL plus
-       PackageReference/ProjectReference/Reference, e.g. Avalonia/WPF) are handed to facadegen so any
-       referenced assembly's types become injectable (I2). -->
+  <!-- C-2: import-driven façade-FREE injection. The .kt sources are SCANNED for `import System.X` lines and
+       those .NET types are injected straight into FIR (no .kt produced) — so the user just writes the import.
+       Explicit additions go on <DotKtImport> (or legacy <KotlinClrType>); both merge with the scanned set.
+       Runs whenever there are sources. DependsOnTargets=ResolveReferences populates @(ReferencePath) (BCL plus
+       PackageReference/ProjectReference/Reference) so any referenced assembly's types become injectable. -->
   <Target Name="KotlinClrInjectTypes" BeforeTargets="KotlinClrCompile"
-          DependsOnTargets="ResolveReferences" Condition="'@(KotlinClrType)' != ''">
+          DependsOnTargets="ResolveReferences" Condition="'@(KotlinCompile)' != ''">
     <Exec Condition="!Exists('$(KotlinClrFacadeGen)')"
           Command="dotnet build &quot;$(KotlinClrRoot)/tools/facadegen&quot; -c Release -o &quot;$(KotlinClrRoot)/build/facadegen-bin&quot; -v q --nologo" />
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(KotlinClrTypeMeta)'))" />
-    <Message Importance="high" Text="kotlin/clr: injecting (façade-free) @(KotlinClrType->'%(Identity)', ', ')" />
-    <Exec Command="dotnet &quot;$(KotlinClrFacadeGen)&quot; --meta &quot;$(KotlinClrTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(KotlinClrType->'%(Identity)', ' ')" />
+    <Message Importance="high" Text="kotlin/clr: resolving .NET imports (scan @(KotlinCompile) + @(DotKtImport))" />
+    <Exec Command="dotnet &quot;$(KotlinClrFacadeGen)&quot; --meta &quot;$(KotlinClrTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --scan @(KotlinCompile->'%(FullPath)', ' ')" />
   </Target>
 
   <!-- Compile all .kt to .cs, then hand the generated C# to CoreCompile. CLR_TYPES_METADATA tells the

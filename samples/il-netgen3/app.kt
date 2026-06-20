@@ -3,9 +3,9 @@
 // static generic methods: the backend resolves the open definition and MakeGenericMethod's it with the
 // call's type arg (the CLR has reified generics — no erasure dance). `Collection<T>` gains a real `this[i]`
 // indexer (get_Item / set_Item on the constructed type).
-import clrgen.Unsafe
-import clrgen.RuntimeHelpers
-import clrgen.Collection
+import System.Runtime.CompilerServices.Unsafe
+import System.Runtime.CompilerServices.RuntimeHelpers
+import System.Collections.ObjectModel.Collection
 
 fun main() {
     println(Unsafe.SizeOf<Int>())                                     // 4

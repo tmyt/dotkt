@@ -1,9 +1,9 @@
 // S5 (generalized) — façade-free .NET interop. None of these types has a hand-written/generated
 // façade .kt: `clrgen.*` are synthesized straight into FIR from metadata that facadegen produced
 // by reflecting over the real System.Math / System.Console / System.Text.StringBuilder.
-import clrgen.Math
-import clrgen.Console
-import clrgen.StringBuilder
+import System.Math
+import System.Console
+import System.Text.StringBuilder
 
 fun main() {
 	Console.WriteLine("abs(-9) = ${Math.Abs(-9)}")        // static method + overload resolution

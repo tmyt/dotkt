@@ -149,9 +149,9 @@ fi
 rm -rf "$ROOT/samples/ktproj-ref/bin" "$ROOT/samples/ktproj-ref/obj"
 
 # MSBuild + façade-FREE FIR injection via <KotlinClrType> (no .kt façade generated).
-injexpected="no-facade via <KotlinClrType>; abs(-5)=5"
+injexpected="no-facade via import scan; abs(-5)=5"
 injactual="$(dotnet run --project "$ROOT/samples/ktproj-inject/inject.ktproj" -v q --nologo 2>/dev/null | grep -vE 'kotlin/clr:|duplicate source root')"
-if [[ "$injactual" == "$injexpected" ]]; then echo "PASS  ktproj-inject (façade-free <KotlinClrType>)"; else
+if [[ "$injactual" == "$injexpected" ]]; then echo "PASS  ktproj-inject (import-scan, façade-free)"; else
 	echo "FAIL  ktproj-inject"; echo "--- expected ---"; echo "$injexpected"; echo "--- actual ---"; echo "$injactual"; fail=1
 fi
 rm -rf "$ROOT/samples/ktproj-inject/bin" "$ROOT/samples/ktproj-inject/obj"

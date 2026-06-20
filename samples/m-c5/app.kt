@@ -1,6 +1,6 @@
 // C-1: a Kotlin class IMPLEMENTS a real .NET interface (System.IComparable), façade-free.
-import clrgen.IComparable
-import clrgen.Console
+import System.IComparable
+import System.Console
 
 class Money(val cents: Int) : IComparable {
 	override fun CompareTo(other: Any?): Int = cents

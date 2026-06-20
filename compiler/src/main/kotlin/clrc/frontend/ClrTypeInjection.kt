@@ -63,7 +63,7 @@ private class ClrType(
 	val events: List<ClrEvent>,
 	val indexer: ClrIndexer?,
 )
-private class ClrModule(val pkg: FqName, val types: List<ClrType>)
+private class ClrModule(val types: List<ClrType>)
 
 /**
  * Loads the .NET type metadata to inject, once per process. The path comes from `CLR_TYPES_METADATA`
@@ -76,7 +76,6 @@ private object ClrMetadataHolder {
 
 	private fun load(file: File): ClrModule? {
 		if (!file.isFile) return null
-		var pkg = FqName("clrgen")
 		val types = ArrayList<ClrType>()
 		var name = ""; var dotNet = ""; var isObject = false; var isInterface = false; var isOpen = false
 		var tparams = emptyList<String>()
@@ -89,7 +88,7 @@ private object ClrMetadataHolder {
 			if (line.isEmpty()) continue
 			val tok = line.split(' ')
 			when (tok[0]) {
-				"package" -> pkg = FqName(tok[1])
+				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
 					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null
 					name = tok[1]; dotNet = tok[2]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"
@@ -111,9 +110,12 @@ private object ClrMetadataHolder {
 			}
 		}
 		flush()
-		val module = ClrModule(pkg, types)
+		val module = ClrModule(types)
 		for (t in types) {
-			val fqn = "${pkg.asString()}.${t.kotlinName}"
+			// Register at the real .NET-namespace fqn (e.g. System.Text.StringBuilder), so the backend's clrName
+			// resolves the .NET type for `import System.Text.StringBuilder`. Namespace-less types fall back to bare name.
+			val ns = t.dotNetName.substringBefore('+').substringBeforeLast('.', "")
+			val fqn = if (ns.isNotEmpty()) "$ns.${t.kotlinName}" else t.kotlinName
 			ClrTypeRegistry.register(fqn, t.dotNetName)
 			for (e in t.events) {
 				ClrEventRegistry.register(fqn, "add_${e.name}", e.name, "+=")
@@ -142,14 +144,18 @@ private object ClrMetadataHolder {
  */
 class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(session) {
 	private val module = ClrMetadataHolder.module
-	private val pkg = module?.pkg ?: FqName("clrgen")
+	// C-2: each .NET type resolves at its REAL namespace, so `import System.Text.StringBuilder` works through
+	// Kotlin's normal package machinery — the .NET namespace IS the Kotlin package. (e.g.
+	// "System.Text.StringBuilder" -> package "System.Text"; nested "+" and generic arity already stripped.)
+	private fun namespaceOf(dotNet: String): String = dotNet.substringBefore('+').substringBeforeLast('.', "")
 	private val byClassId: Map<ClassId, ClrType> =
-		module?.types?.associateBy { ClassId(pkg, Name.identifier(it.kotlinName)) }.orEmpty()
+		module?.types?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
+	private val packages: Set<FqName> = byClassId.keys.map { it.packageFqName }.toSet()
 	private val classIdByName: Map<String, ClassId> =
 		byClassId.entries.associate { (id, t) -> t.kotlinName to id }
 
 	override fun hasPackage(packageFqName: FqName): Boolean =
-		byClassId.isNotEmpty() && packageFqName == pkg
+		byClassId.isNotEmpty() && packageFqName in packages
 
 	override fun getTopLevelClassIds(): Set<ClassId> = byClassId.keys
 

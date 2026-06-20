@@ -1,5 +1,5 @@
 // Inherit a real .NET base class in the direct-IL backend: base ctor call + SetParent + inherited .NET member.
-import clrgen.Exception
+import System.Exception
 
 class AppError(val code: Int) : Exception("app error")
 

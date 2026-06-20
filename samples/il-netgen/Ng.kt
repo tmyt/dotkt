@@ -1,5 +1,5 @@
 // Generic FIR injection: use a generic .NET type (System.Collections.ObjectModel.Collection<T>) façade-free.
-import clrgen.Collection
+import System.Collections.ObjectModel.Collection
 
 fun main() {
     val c = Collection<Int>()

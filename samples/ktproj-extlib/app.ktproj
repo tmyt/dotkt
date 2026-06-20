@@ -7,7 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="extlib/extlib.csproj" />
-    <KotlinClrType Include="Ext.Widget" />
   </ItemGroup>
   <Import Project="../../msbuild/KotlinClr.targets" />
 </Project>

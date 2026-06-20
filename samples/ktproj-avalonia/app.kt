@@ -1,7 +1,7 @@
 // The point of Kotlin.NET: a pure .NET binding. `Avalonia.Application` comes from a <PackageReference>
 // (no facade, no UI shim) and a Kotlin class inherits it directly, overriding a virtual. Whether
 // Avalonia actually renders is out of scope - this proves a PackageReference type can be a Kotlin base.
-import clrgen.Application
+import Avalonia.Application
 
 class MyApp : Application() {
 	override fun Initialize() {

@@ -1,5 +1,5 @@
 // The original motivation: inherit a GENERIC .NET base class, façade-free.
-import clrgen.Collection
+import System.Collections.ObjectModel.Collection
 
 class IntColl : Collection<Int>() {
     fun addAll(vararg xs: Int) { for (x in xs) Add(x) }

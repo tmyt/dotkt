@@ -28,7 +28,13 @@ static class FacadeGen
                 LoadRefs(rest[1].Split(';', StringSplitOptions.RemoveEmptyEntries));
                 rest = rest.Skip(2).ToList();
             }
-            return EmitMeta(args[1], rest);
+            // C-2: explicit type names, then optionally `--scan <ktfile>...` which extracts `import Ns.Type` lines
+            // from the Kotlin sources. Merge both. EmitMeta silently skips non-.NET imports (kotlin.*, own
+            // packages), so a bare `import System.Text.StringBuilder` resolves — no manual <DotKtImport> needed.
+            var scanAt = rest.IndexOf("--scan");
+            var explicitTypes = scanAt < 0 ? rest : rest.Take(scanAt).ToList();
+            var scanned = scanAt < 0 ? Enumerable.Empty<string>() : ScanImports(rest.Skip(scanAt + 1));
+            return EmitMeta(args[1], explicitTypes.Concat(scanned).Distinct());
         }
         var clrDir = Path.Combine(args[0], "clr");
         Directory.CreateDirectory(clrDir);
@@ -89,10 +95,30 @@ static class FacadeGen
     // Kotlin member names = .NET names verbatim (no per-member mapping needed in the backend).
     // A static .NET class (abstract+sealed, e.g. System.Math) -> Kotlin `object` (static call site);
     // an instance class -> Kotlin `class` with constructors + instance methods.
+    // C-2: extract explicit `.NET` imports from Kotlin sources. Matches `import A.B.C` (dotted, >=2 segments);
+    // excludes wildcard (`.*`), aliased (`as`), and Kotlin/own-façade imports — those aren't injectable .NET types.
+    static IEnumerable<string> ScanImports(IEnumerable<string> ktFiles)
+    {
+        var re = new System.Text.RegularExpressions.Regex(@"^\s*import\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)\s*$");
+        var seen = new HashSet<string>();
+        foreach (var f in ktFiles)
+        {
+            if (!File.Exists(f)) continue;
+            foreach (var line in File.ReadLines(f))
+            {
+                var m = re.Match(line);
+                if (!m.Success) continue;
+                var imp = m.Groups[1].Value;
+                if (imp.StartsWith("kotlin") || imp.StartsWith("clr.") || imp.StartsWith("java.")) continue;
+                if (seen.Add(imp)) yield return imp;
+            }
+        }
+    }
+
     static int EmitMeta(string outFile, IEnumerable<string> typeNames)
     {
         var sb = new StringBuilder();
-        sb.Append("package clrgen\n");
+        // types resolve at their real .NET namespace; no synthetic package header
         foreach (var typeName in typeNames)
         {
             // Resolve a plain type, or a generic type definition (Collection -> Collection`1, etc.).

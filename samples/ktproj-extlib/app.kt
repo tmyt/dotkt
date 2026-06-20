@@ -1,6 +1,6 @@
 // I2 + I4 — `Ext.Widget` lives in a referenced (non-BCL) assembly, injected façade-free via
-// <KotlinClrType> + the AssemblyResolver. Its .NET event `Changed` is subscribed with a Kotlin lambda.
-import clrgen.Widget
+// import-scan + the AssemblyResolver. Its .NET event `Changed` is subscribed with a Kotlin lambda.
+import Ext.Widget
 fun main() {
 	val w = Widget("gadget")
 	println("Add(2,3) = ${w.Add(2, 3)}")

@@ -1,5 +1,5 @@
 // Override a .NET base class's VIRTUAL member, dispatched polymorphically through the .NET base type.
-import clrgen.Exception
+import System.Exception
 
 open class AppError(val code: Int) : Exception("base msg") {
     override val Message: String get() = "AppError #$code"
