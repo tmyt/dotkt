@@ -242,6 +242,21 @@ class BirEmitter {
 		"""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$hasNext,$next]}"""
 	}
 
+	// `kotlin.Result<T>` -> a synthetic generic `Result<T>` (per-assembly, like KProperty): holds value/failure/
+	// isSuccess. runCatching constructs it; member accessors (getOrNull/getOrThrow/…) are inlined in call() over
+	// these fields, so no methods are synthesized (avoids the `getOrNull(): T?` generic-return problem).
+	private var needsResult = false
+	private fun resultDefs(): List<String> {
+		if (!needsResult) return emptyList()
+		val f = { n: String, t: String -> """{"name":${str(n)},"type":${str(t)}}""" }
+		val sf = { n: String -> """{"k":"setField","ownerType":"Result","recv":{"k":"this"},"name":${str(n)},"value":{"k":"local","name":${str(n)}}}""" }
+		// isFailure is also accessed as a field (Kotlin property -> backing field); compute it = !isSuccess in the ctor.
+		val sfFailFlag = """{"k":"setField","ownerType":"Result","recv":{"k":"this"},"name":"isFailure","value":{"k":"un","op":"!","e":{"k":"local","name":"isSuccess"}}}"""
+		val fields = "${f("value", "gp:T")},${f("failure", "clr:System.Exception")},${f("isSuccess", "bool")},${f("isFailure", "bool")}"
+		val ctor = """{"params":[${f("value", "gp:T")},${f("failure", "clr:System.Exception")},${f("isSuccess", "bool")}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[${sf("value")},${sf("failure")},${sf("isSuccess")},$sfFailFlag]}"""
+		return listOf("""{"name":"Result","kind":"class","abstract":false,"vis":"public","typeParams":["T"],"base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}""")
+	}
+
 	private val SCOPE_FUNCTIONS = setOf("kotlin.let", "kotlin.run", "kotlin.with", "kotlin.apply", "kotlin.also")
 
 	fun emitFile(file: IrFile): String {
@@ -287,7 +302,7 @@ class BirEmitter {
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
 		// kPropertyDefs/propIfaceDefs, which read flags/maps the producers populate).
 		val synthDelegateTypes = synthDelegateDefs.joinToString(",").let { if (it.isEmpty()) emptyList() else listOf(it) }
-		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + propIfaceDefs() + kPropertyDefs()).joinToString(",")
+		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + propIfaceDefs() + kPropertyDefs() + resultDefs()).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
 
@@ -993,12 +1008,20 @@ class BirEmitter {
 			val ownerClass = node.symbol.owner.parent as? IrClass
 			val clr = ownerClass?.let { clrName(it) }
 			val recvJson = node.receiver?.let { expr(it) } ?: """{"k":"this"}"""
-			// A .NET member (e.g. inherited `Exception.Message`) is modeled as a field by the FIR injector but is
-			// really a property -> emit a property getter call (`callvirt get_<name>`), not `ldfld`.
-			if (clr != null)
-				"""{"k":"clrPropGet","type":${str(clr)},"name":${str(node.symbol.owner.name.asString())},"retType":${str(netType(node.type))},"static":false,"recv":$recvJson}"""
+			val fldName = node.symbol.owner.name.asString()
+			val ownerFq = ownerClass?.fqNameWhenAvailable?.asString()
+			val recvFq = node.receiver?.type?.classFqName?.asString()
+			val isThrowableProp = (fldName == "message" || fldName == "cause") &&
+				(ownerFq == "kotlin.Throwable" || ownerClass?.name?.asString() == "Throwable" || recvFq == "kotlin.Throwable")
+			// `Throwable.message`/`.cause` -> System.Exception.Message/.InnerException. A .NET member (e.g. inherited
+			// `Exception.Message`) is modeled as a field by the FIR injector but is really a property getter call.
+			if (isThrowableProp) {
+				val (prop, rt) = if (fldName == "message") "Message" to "System.String" else "InnerException" to "System.Exception"
+				"""{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
+			} else if (clr != null)
+				"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"retType":${str(netType(node.type))},"static":false,"recv":$recvJson}"""
 			else
-				"""{"k":"field","ownerType":${str(ownerSpec(ownerClass, node.receiver?.type))},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())}}"""
+				"""{"k":"field","ownerType":${str(ownerSpec(ownerClass, node.receiver?.type))},"recv":$recvJson,"name":${str(fldName)}}"""
 		}
 		is IrConstructorCall -> {
 			val klass = node.symbol.owner.parent as? IrClass
@@ -1220,6 +1243,45 @@ class BirEmitter {
 	}
 
 	private fun hasLambdaArg(call: IrCall): Boolean = regularArgs(call).any { it is IrFunctionExpression }
+
+	/**
+	 * Translate a LITERAL printf-style format (`%d`/`%s`/`%.2f`/`%05d`/`%x`/`%%`) to a .NET composite format
+	 * (`{0}`/`{0:F2}`/`{0:D5}`/`{0:x}`). Returns null for an unsupported spec (caller falls back). Kotlin's
+	 * `String.format` is printf (`%`), .NET's `String.Format` is `{0}` — genuinely incompatible, so we rewrite.
+	 */
+	private fun translatePrintf(fmt: String): String? {
+		val sb = StringBuilder(); var i = 0; var arg = 0
+		while (i < fmt.length) {
+			val c = fmt[i]
+			when {
+				c == '{' -> { sb.append("{{"); i++ }
+				c == '}' -> { sb.append("}}"); i++ }
+				c != '%' -> { sb.append(c); i++ }
+				else -> {
+					i++
+					if (i < fmt.length && fmt[i] == '%') { sb.append('%'); i++; continue }
+					var leftAlign = false; var zeroPad = false
+					while (i < fmt.length && fmt[i] in "-0+ ") { if (fmt[i] == '-') leftAlign = true; if (fmt[i] == '0') zeroPad = true; i++ }
+					val ws = StringBuilder(); while (i < fmt.length && fmt[i].isDigit()) { ws.append(fmt[i]); i++ }
+					val ps = StringBuilder(); if (i < fmt.length && fmt[i] == '.') { i++; while (i < fmt.length && fmt[i].isDigit()) { ps.append(fmt[i]); i++ } }
+					if (i >= fmt.length) return null
+					val conv = fmt[i]; i++
+					val width = ws.toString().toIntOrNull(); val prec = ps.toString().toIntOrNull()
+					val fmtSpec = when (conv) {
+						'd', 'i' -> if (zeroPad && width != null) ":D$width" else ""
+						's', 'c', 'b' -> ""
+						'x' -> ":x"; 'X' -> ":X"
+						'f', 'F' -> ":F${prec ?: 6}"
+						'e' -> ":e${prec ?: 6}"; 'g', 'G' -> ":G"
+						else -> return null
+					}
+					val align = if (width != null && !(conv in "di" && zeroPad)) "," + (if (leftAlign) "-$width" else "$width") else ""
+					sb.append("{").append(arg++).append(align).append(fmtSpec).append("}")
+				}
+			}
+		}
+		return sb.toString()
+	}
 
 	/** Statements of a function/lambda body (block body, or a single-expression `= expr` body). */
 	private fun bodyStatements(body: org.jetbrains.kotlin.ir.IrElement?): List<org.jetbrains.kotlin.ir.IrStatement> = when (body) {
@@ -1632,6 +1694,56 @@ class BirEmitter {
 				return """{"k":"clrInstance","type":"System.Type","method":${str(m)},"argTypes":[],"ret":"System.String","recv":${expr(recv)},"args":[]}"""
 		}
 
+		// `runCatching { block }` -> a value-block: `var r; try { r = Result(block(), null, true) } catch(e) { r =
+		// Result(default, e, false) }; r`. Result is the synthetic generic type; the block is spliced inline.
+		if ((calleeFq == "kotlin.runCatching" || name == "runCatching") && call.type.classFqName?.asString() == "kotlin.Result") {
+			(regularArgs(call).getOrNull(0) as? IrFunctionExpression)?.let { lam ->
+				needsResult = true
+				var elem = (call.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+				if (elem == "void") elem = "object"
+				val spec = "Result[$elem]"
+				val rcVar = "__rc${scopeCounter++}"
+				val rcLoc = """{"k":"local","name":${str(rcVar)}}"""
+				val pre = ArrayList<String>()
+				val unit = lam.function.returnType.isUnit()
+				val v = if (unit) { spliceBody(bodyStatements(lam.function.body), true, pre); """{"k":"const","type":"void","value":null}""" }
+					else spliceBody(bodyStatements(lam.function.body), false, pre)
+				val valArg = if (unit) """{"k":"const","type":"void","value":null}""" else v
+				val nullExc = """{"k":"const","type":"void","value":null}"""
+				val mkOk = """{"k":"new","type":${str(spec)},"args":[$valArg,$nullExc,{"k":"const","type":"bool","value":true}]}"""
+				val mkErr = """{"k":"new","type":${str(spec)},"args":[{"k":"default","type":${str(elem)}},{"k":"local","name":"e"},{"k":"const","type":"bool","value":false}]}"""
+				val tryBody = (pre + """{"k":"setLocal","name":${str(rcVar)},"value":$mkOk}""").joinToString(",")
+				val tryN = """{"k":"try","type":"void","body":[$tryBody],"catches":[{"excType":"System.Exception","var":"e","body":[{"k":"setLocal","name":${str(rcVar)},"value":$mkErr}]}]}"""
+				val decl = """{"k":"var","name":${str(rcVar)},"type":${str("@$spec")},"init":null}"""
+				return """{"k":"valueBlock","stmts":[$decl,$tryN],"result":$rcLoc}"""
+			}
+		}
+		// Result accessors -> inline over the synthetic fields (value/failure/isSuccess). No methods synthesized.
+		// (getOrNull/getOrThrow/exceptionOrNull are members; getOrDefault is an extension -> check both receivers.)
+		if ((dispatchReceiver(call) ?: extensionReceiver(call))?.type?.classFqName?.asString() == "kotlin.Result" &&
+			name in setOf("getOrNull", "getOrThrow", "getOrDefault", "exceptionOrNull", "isFailure")) {
+			val r = dispatchReceiver(call) ?: extensionReceiver(call)!!
+			val spec = ownerSpec(r.type.classifierOrNull?.owner as? IrClass, r.type)
+			val elem = (r.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+			val rv = expr(r)
+			fun fld(n: String, rt: String) = """{"k":"field","ownerType":${str(spec)},"recv":$rv,"name":${str(n)},"retType":${str(rt)}}"""
+			val succ = fld("isSuccess", "bool"); val value = fld("value", elem); val fail = fld("failure", "clr:System.Exception")
+			return when (name) {
+				"isFailure" -> """{"k":"un","op":"!","e":$succ}"""
+				"exceptionOrNull" -> fail
+				"getOrDefault" -> """{"k":"cond","cond":$succ,"then":$value,"else":${expr(regularArgs(call).first())}}"""
+				"getOrThrow" -> """{"k":"cond","cond":$succ,"then":$value,"else":${throwExpr(fail)}}"""
+				else -> {  // getOrNull(): T? — value T -> Nullable<T> (both branches), ref T -> value-or-null.
+					// Use call.type (the SUBSTITUTED Int?/String?), not callee.returnType (the generic T?).
+					val rt = birType(call.type)
+					if (rt.startsWith("nullable:")) {
+						val ve = rt.removePrefix("nullable:")
+						"""{"k":"cond","cond":$succ,"then":{"k":"nullableOf","elem":${str(ve)},"e":$value},"else":{"k":"default","type":${str(rt)}}}"""
+					} else """{"k":"cond","cond":$succ,"then":$value,"else":{"k":"const","type":${str(rt)},"value":null}}"""
+				}
+			}
+		}
+
 		// Scope functions (let/run/with/apply/also) -> inline to a value-block (no delegate; mirrors the C# IIFE).
 		if (calleeFq in SCOPE_FUNCTIONS) {
 			val isWith = calleeFq == "kotlin.with"
@@ -1682,6 +1794,13 @@ class BirEmitter {
 				fun any() = if (a0 != null) clrGen(EN, "Any", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "Any", listOf(t), EI, listOf(src))
 				return when (op) {
 					"map" -> { val tr = targs.getOrNull(1) ?: lambdaRet(a0); toList(clrGen(EN, "Select", listOf(t, tr), EF, listOf(src, arg())), tr) }
+					// `mapIndexed { i, v -> … }` -> Range(0,MAX).Zip(src, Func<int,T,R>): Zip's (first,second) =
+					// (index,value) matches Kotlin's order, so no param-swap is needed (lambda lifts as-is).
+					"mapIndexed" -> {
+						val tr = lambdaRet(a0)
+						val range = """{"k":"clrStatic","type":"System.Linq.Enumerable","method":"Range","argTypes":["System.Int32","System.Int32"],"ret":"clrg:System.Collections.Generic.IEnumerable[int]","args":[{"k":"const","type":"int","value":0},{"k":"const","type":"int","value":2147483647}]}"""
+						toList(clrGen(EN, "Zip", listOf("int", t, tr), listOf("ienum", "ienum", "func:3"), listOf(range, src, arg())), tr)
+					}
 					"filter" -> toList(clrGen(EN, "Where", listOf(t), EF, listOf(src, arg())), t)
 					"take" -> toList(clrGen(EN, "Take", listOf(t), listOf("ienum", "int"), listOf(src, arg())), t)
 					"drop" -> toList(clrGen(EN, "Skip", listOf(t), listOf("ienum", "int"), listOf(src, arg())), t)
@@ -2100,6 +2219,22 @@ class BirEmitter {
 					"""{"k":"clrInstance","type":${str(RX)},"method":"IsMatch","argTypes":["System.String"],"ret":"System.Boolean","recv":${expr(r)},"args":[${expr(a[0])}]}"""
 				else """{"k":"clrInstance","type":${str(RX)},"method":"Replace","argTypes":["System.String","System.String"],"ret":"System.String","recv":${expr(r)},"args":[${expr(a[0])},${expr(a[1])}]}"""
 			}
+			// `"%d %s".format(a, b)` (printf) -> System.String.Format(translated, object[]{a,b}). Only a LITERAL
+			// format with supported specs is translated; otherwise a clean error (printf != .NET composite format).
+			if (name == "format") {
+				val fmtExpr = extensionReceiver(call) ?: regularArgs(call).getOrNull(0)
+				if (fmtExpr?.type?.classFqName?.asString() == "kotlin.String") {
+					val fmtConst = (fmtExpr as? IrConst)?.value as? String
+					val net = fmtConst?.let { translatePrintf(it) }
+					if (net != null) {
+						val fmtArgs = if (extensionReceiver(call) != null) regularArgs(call) else regularArgs(call).drop(1)
+						val elems = (fmtArgs.getOrNull(0) as? IrVararg)?.elements?.filterIsInstance<IrExpression>() ?: fmtArgs
+						val arr = """{"k":"newArray","elem":"object","elems":[${elems.joinToString(",") { expr(it) }}]}"""
+						return """{"k":"clrStatic","type":"System.String","method":"Format","argTypes":["System.String","array:object"],"ret":"System.String","args":[{"k":"const","type":"string","value":${str(net)}},$arr]}"""
+					}
+					if (fmtConst != null) return """{"k":"unsupportedExpr","of":"String.format: unsupported printf spec in '${fmtConst}'"}"""
+				}
+			}
 			// Exhaustive-when synthetic else / uninitialized property -> throw (the branch is unreachable).
 			if (name == "noWhenBranchMatchedException" || name == "throwUninitializedPropertyAccessException")
 				return throwExpr(newExc("System.InvalidOperationException", str(name)))
@@ -2379,6 +2514,14 @@ class BirEmitter {
 		}
 		// kotlin.text.Regex -> System.Text.RegularExpressions.Regex.
 		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
+		// kotlin.Throwable -> System.Exception (the common base; `.message` -> .Message).
+		if (fqp == "kotlin.Throwable") return "clr:System.Exception"
+		// kotlin.Result<T> -> the synthetic generic `Result<T>` (registers it for synthesis).
+		if (fqp == "kotlin.Result") {
+			needsResult = true
+			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+			return "@Result[$arg]"
+		}
 		// `by lazy` delegate: kotlin.Lazy<T> -> System.Lazy<T>.
 		if (fqp == "kotlin.Lazy") {
 			val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
@@ -2506,7 +2649,7 @@ class BirEmitter {
 			"firstOrNull", "lastOrNull", "isEmpty", "isNotEmpty", "sum", "sumOf", "sorted", "maxOrNull", "minOrNull", "reduce",
 			"maxByOrNull", "minByOrNull", "zip", "associateWith", "associateBy", "groupBy",
 			"asSequence", "toSet", "takeWhile", "dropWhile", "single", "singleOrNull",
-			"sortedDescending", "sortedBy", "sortedByDescending",
+			"sortedDescending", "sortedBy", "sortedByDescending", "mapIndexed",
 		)
 
 		// Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.

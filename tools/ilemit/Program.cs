@@ -918,8 +918,12 @@ sealed class Emitter
                 foreach (var b in bodyArr.EnumerateArray()) EmitStmt(b);
                 foreach (var c in catchesArr.EnumerateArray())
                 {
-                    _il.BeginCatchBlock(ResolveType(c.GetProperty("excType").GetString()));
-                    _il.Emit(OpCodes.Pop); // discard the exception object (catch var unused for now)
+                    var ct = ResolveType(c.GetProperty("excType").GetString());
+                    _il.BeginCatchBlock(ct);
+                    // Bind the caught exception to the catch variable (a local); referenced by the handler body.
+                    if (c.TryGetProperty("var", out var cv) && cv.ValueKind == JsonValueKind.String)
+                    { var el = _il.DeclareLocal(ct); _locals[cv.GetString()] = el; _il.Emit(OpCodes.Stloc, el); }
+                    else _il.Emit(OpCodes.Pop);
                     foreach (var b in c.GetProperty("body").EnumerateArray()) EmitStmt(b);
                 }
                 if (s.TryGetProperty("finally", out var fin))
@@ -1290,8 +1294,18 @@ sealed class Emitter
             }
             case "field":
             {
+                var fon = e.GetProperty("ownerType").GetString();
+                var fnm = e.GetProperty("name").GetString();
+                // `Throwable.message`/`.cause` (a Kotlin property accessed as a field) -> System.Exception property.
+                if (fon == "Throwable" && (fnm == "message" || fnm == "cause"))
+                {
+                    EmitExpr(e.GetProperty("recv"));
+                    var m = typeof(Exception).GetMethod(fnm == "message" ? "get_Message" : "get_InnerException");
+                    _il.Emit(OpCodes.Callvirt, m);
+                    return m.ReturnType;
+                }
                 EmitExpr(e.GetProperty("recv"));
-                var fb = ResolveField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString(), out var ft);
+                var fb = ResolveField(fon, fnm, out var ft);
                 _il.Emit(OpCodes.Ldfld, fb);
                 return RetOr(e, ft);
             }
@@ -1419,6 +1433,25 @@ sealed class Emitter
                 return mi.ReturnType;
             }
             case "newArray": return EmitNewArray(e);
+            case "nullableOf":
+            {
+                // value `v` -> `new Nullable<elem>(v)` (the implicit T -> T? wrap).
+                var elem = MapType(e.GetProperty("elem").GetString());
+                EmitExpr(e.GetProperty("e"));
+                var nt = typeof(Nullable<>).MakeGenericType(elem);
+                _il.Emit(OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
+                return nt;
+            }
+            case "default":
+            {
+                // `default(T)` -> the zero value: ldnull for a reference type, else a zero-init local (initobj).
+                var dt = MapType(e.GetProperty("type").GetString());
+                if (!dt.IsValueType && !dt.IsGenericParameter) { _il.Emit(OpCodes.Ldnull); return dt; }
+                var loc = _il.DeclareLocal(dt);
+                _il.Emit(OpCodes.Ldloca, loc); _il.Emit(OpCodes.Initobj, dt);
+                _il.Emit(OpCodes.Ldloc, loc);
+                return dt;
+            }
             case "spreadConcat":
             {
                 // `f(1, *a, 2)` -> new List<elem>(); Add(literal) / AddRange(spread); ToArray().
@@ -2054,7 +2087,9 @@ sealed class Emitter
         {
             _il.Emit(OpCodes.Dup);
             _il.Emit(OpCodes.Ldc_I4, i);
-            EmitExpr(elems[i]);
+            var et = EmitExpr(elems[i]);
+            // Box a value element stored into a reference array (e.g. ints into `object[]` for String.Format).
+            if (et != null && NeedsBoxToRef(et) && !elem.IsValueType && !elem.IsGenericParameter) _il.Emit(OpCodes.Box, et);
             _il.Emit(OpCodes.Stelem, elem);
         }
         return elem.MakeArrayType();
@@ -2148,8 +2183,9 @@ sealed class Emitter
         var argSpecs = e.GetProperty("argTypes").EnumerateArray().Select(a => a.GetString()).ToList();
         var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
         MethodInfo mi = null;
-        // Exact overload resolution when every arg type is a resolvable .NET type.
-        var resolved = argSpecs.Select(TryResolveType).ToArray();
+        // Exact overload resolution when every arg type resolves (ClrRef handles array:/clrg:/nullable:/func: too,
+        // so e.g. `array:object` -> object[] selects String.Format(string, params object[]) over (string, object)).
+        var resolved = argSpecs.Select(s => { try { return ClrRef(s); } catch { return (Type)null; } }).ToArray();
         if (resolved.All(x => x != null))
             mi = type.GetMethod(name, flags, null, resolved, null);
         // Fall back to name + arity — e.g. a generic-parameter arg type (`Add(T)` on `Collection<int>`) that
