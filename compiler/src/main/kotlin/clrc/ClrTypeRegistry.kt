@@ -1,0 +1,38 @@
+package clrc
+
+/**
+ * S5 bridge between the FIR type-injection frontend extension and the backend codegen.
+ *
+ * The frontend extension synthesizes .NET types into FIR *without* annotations (synthesizing FIR
+ * annotations that survive Fir2Ir is the brittle part). Instead it records `Kotlin FQN -> .NET type`
+ * here, and the backend's `clrName` consults this map as a fallback after `@Clr`. Net effect: a
+ * synthesized `clrgen.Math` maps to `System.Math` exactly as a hand-written `@Clr("System.Math")`
+ * would — but with no façade `.kt` file. Single JVM process, so a static registry is the simplest
+ * correct channel between the two compiler phases.
+ */
+object ClrTypeRegistry {
+	private val typeNames = HashMap<String, String>()
+
+	fun register(kotlinFqn: String, dotNetName: String) { typeNames[kotlinFqn] = dotNetName }
+
+	/** The .NET type name for a synthesized Kotlin class FQN, or null if not injected. */
+	fun dotNetName(kotlinFqn: String): String? = typeNames[kotlinFqn]
+}
+
+/**
+ * I4: .NET events have no Kotlin syntax, so the FIR injector synthesizes `add_<E>`/`remove_<E>`
+ * methods and records here that a call to one means `receiver.<E> += handler` / `-= handler`. The
+ * backend consults this in `genCallInner` and emits the C# event-subscription operator.
+ */
+object ClrEventRegistry {
+	// key = "<owner Kotlin FQN>#<methodName>"  ->  (eventName, "+=" | "-=")
+	private val ops = HashMap<String, Pair<String, String>>()
+
+	fun register(ownerFqn: String, methodName: String, eventName: String, op: String) {
+		ops["$ownerFqn#$methodName"] = eventName to op
+	}
+
+	/** (eventName, op) for an injected `add_`/`remove_` method call, or null. */
+	fun lookup(ownerFqn: String?, methodName: String): Pair<String, String>? =
+		ownerFqn?.let { ops["$it#$methodName"] }
+}

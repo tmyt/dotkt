@@ -101,7 +101,18 @@ coroutine lowering は compiler 内部・stdlib intrinsics に密結合。phase 
 - **S2 — data class（S）✅ 達成.** `toString`/`copy`/`componentN`、フィールドから値等価 `Equals`/`GetHashCode` を生成、`==`(EQEQ) を値型/string/enum は `==`・参照型は `System.Object.Equals` へ写像、Object メソッド名を C# 名へ。`samples/m-s2`（`a==b` 構造等価が True）。
 - **S3 — collections stdlib（M）— 部分達成.** `listOf`/`mutableListOf`/`arrayListOf` → `new List<T>{...}`、`kotlin.collections.List/Set/Map` → BCL generics、`.size`→`.Count`、for-in→`foreach` 達成（`samples/m-s3`）。残: `mapOf`/`setOf`、`map`/`filter`/`forEach` 等拡張。
 - **S4 — generic 型の façade 自動生成（M）✅ 達成.** `facadegen` が generic type definition（`List\`1`）から `class List<T>` を自動生成（型パラメータ、indexer→operator get/set、generic param→T）。`samples/m-s4` が生成 façード経由で `List<Int>` を使用（count/indexer/add）。手書き m-i3 façード相当を自動化。
-- **S5 — FIR シンボル直接注入（XL・抜本）.** `JvmFrontendPipelinePhase` を CLR-aware frontend に差し替え、`AssemblyResolver` が解決した .NET 型を FIR symbol provider に注入。façade ファイルすら不要化（参考実装 `frontend/symbol/*` が移植元）。
+- **S5 — FIR シンボル直接注入（✅ 達成・メタデータ駆動・実機）.** `import clrgen.Math; Math.Abs(-9)` / `Console.WriteLine(...)` を **façade .kt 無し**で解決 → `global::System.Math.Abs(-9)` 等 → 実行（`samples/m-s5`：`abs(-9)=9 / max(3,7)=7 / min(3,7)=3`、`verify-all` 常設）。
+  - **機構**: `compiler/.../frontend/ClrTypeInjection.kt` の `FirDeclarationGenerationExtension` が .NET 型を FIR に合成（object=静的メソッド / class=コンストラクタ+インスタンスメソッド、オーバーロード対応）。`ClrCompilerPluginRegistrar`→`COMPILER_PLUGIN_REGISTRARS` 経由で**再利用中の JVM frontend に登録**（`ClrPluginRegistrationPhase`、frontend 差し替え不要）。合成 FIR には注釈を付けず `ClrTypeRegistry`（Kotlin-FQN→.NET 名）を backend `clrName` が参照（注釈の Fir2Ir 透過問題を回避）。
+  - **メタデータ駆動**: 注入型集合はハードコードでなく、`facadegen --meta`（既存 reflection を再利用）が**実 .NET アセンブリ**から生成する metadata ファイルから読む（環境変数 `CLR_TYPES_METADATA`）。
+  - **対応メンバ（穴なし）**: object(静的メソッド) / class(コンストラクタ + インスタンスメソッド + **プロパティ**) / オーバーロード / 自己・他注入型参照。`samples/m-s5` は System.Math(90 メソッド)+System.Console+**System.Text.StringBuilder**(ctor/`Append` 自己返し/`Length` プロパティ/`ToString`) を façade 無しで実行。
+  - **MSBuild 統合**: `.ktproj` に `<KotlinClrType Include="System.X"/>` を書くと façade 無しで注入（`KotlinClrInjectTypes` ターゲットが metadata を生成し `CLR_TYPES_METADATA` を渡す）。`samples/ktproj-inject` が `dotnet build/run` で実動作。**総称型**は `<KotlinClrType>` では明示メッセージで `<KotlinClrFacade>`（実証済 façade 経路・`m-s4` の List<T>）へ誘導＝穴のない一体運用。
+  - **残（内部最適化・ユーザ可視な穴ではない）**: 総称型の FIR 直接注入（現状は façade 経路で網羅）、`AssemblyResolver`（参照アセンブリ走査）化。
+  - **確認済み seam（実装の土台）:**
+    1. `FirDeclarationGenerationExtension`（`getTopLevelClassIds`/`generateTopLevelClassLikeDeclaration`/`generateConstructors`/`generateFunctions`/`generateProperties`/`getCallableNamesForClass`/`hasPackage`）で .NET 型を **FIR に合成**。`createTopLevelClass`/`createMemberFunction`/`createConstructor` ヘルパが合成を補助。
+    2. これを `FirExtensionRegistrarAdapter`（= `ProjectExtensionDescriptor`）として **再利用中の JVM frontend セッションへ登録**（Configuration と Frontend の間に登録フェーズを差すだけ。frontend 差し替え不要）。
+    3. **合成 FIR に `@Clr("System.X")` 注釈を付与**すれば、既存 backend codegen がそのまま .NET へ写像（= facadegen が `.kt` に書くものを in-memory で生成するだけ）。新 backend 経路は不要。
+  - 対象型集合は compiler arg / `<KotlinClrType>` で与える（現 `<KotlinClrFacade>` の façード生成を FIR 注入へ置換）。
+  - **残る難所（= XL・複数セッション）**: FIR symbol の正しい構築（resolution phase、`ConeKotlinType`/`FirResolvedTypeRef`、lazy body、注釈の Fir2Ir 透過）。ここを品質を保って実装するのが本体。`AssemblyResolver`（reflection/Roslyn）で型集合のメタデータを供給。
 
 ---
 
@@ -122,3 +133,64 @@ coroutine lowering は compiler 内部・stdlib intrinsics に密結合。phase 
 **推奨着手順:** ① M-D1.0–D1.2（CIL の M0 を差分一致まで／自己完結で達成感が高い）→ ② M-S（S1 null安全, S3 collections）で実用度を底上げ → ③ M-D1 を D1.4 以降へ拡張（クラス/interop）→ ④ M-D2（coroutine）。M-D1 と M-D2 は独立に進行可。
 
 **横断的検証:** すべての段で `scripts/verify-all.sh` を緑に保ち、新バックエンド（IL）は C# 経路との差分一致を必須ゲートにする。
+
+---
+
+# 残マイルストーン計画（2026-06-16）— production grade への道
+
+M-D1 / M-D2 / M-S(S1–S5) は達成。ここからは「サンプルが動く」→「信頼できるコンパイラ・実用フレームワーク」への引き上げ。
+> **未実装の網羅チェックリストは [`docs/remaining-tasks.md`](remaining-tasks.md)（living）に集約**。本書は研究トラックの設計背景、あちらは漏れ防止のタスク表。
+原則1（穴なし）: 各段は **end-to-end・穴なし・verify-all 緑・想定外は明示メッセージ**。サイズ目安 S/M/L/XL。
+
+**原則2（スコープ＝純粋な .NET バインディング）.** Kotlin.NET は **Kotlin→.NET の「バインディング」（言語コンパイラ＋包括 interop）に徹し、独自ライブラリ（特に UI ライブラリ）を同梱しない**。
+- Windowing は `System.Windows`/XAML・WPF・WinUI・Avalonia の**実型を `import` して直接**使う。Kotlin.NET 提供の UI ランタイムに依存させない。
+- Kotlin らしい UI DSL（Avalonia/WPF/WinUI ラッパ）は、Kotlin.NET の**上に乗る別の派生プロダクト**（KMP が Kotlin の上に立つのと同じ関係）として分離。コアには入れない。
+- **帰結（✅ 実施済）**: `runtime/csharp/KfcUi`（C# 製 UI shim）と依存サンプル（`samples/win*`）・`scripts/run-window.sh` を**削除**。windowing は framework-direct（実型を import）のみ。下記 Track W は I2/I3/I4 の上の「バインディング検証」。
+
+## Track P — production 基盤（信頼性。最優先）
+- **P1 差分テストハーネス（M）**: 同一 `.kt` を kotlin/jvm と kotlin/clr で実行し stdout 一致を自動 assert。corpus を増やし回帰の正本を JVM oracle に。＝「デモ」と「コンパイラ」を分ける核。M0 からの積み残し。
+- **P2 診断品質（M）**: 未対応構文・interop エラーをソース位置付き・読めるメッセージで報告（現状は一部 throw/握りつぶし）。`-Xverify-ir` 相当の健全性ゲート常設。
+- **P3 境界の null 正当性（M）**: Kotlin null 安全 ↔ .NET 参照型 / `Nullable<T>` / NRT 注釈の対応を厳密化。プラットフォーム型の扱いを定義。
+- **P4 CI（S）**: verify-all + verify-il を CI 化、サンプル行列を拡張。
+
+## Track I — interop 完全化（穴を残さない）
+- **I1 総称型の FIR 直接注入（L）**: `<KotlinClrType>` で `List<T>`/`Dictionary<K,V>` を façade 無し注入（現状は façade 経路へ誘導）。型パラメータ付き FIR 合成＋ codegen 総称。これで注入経路の最後の穴が閉じる。
+- **I2 AssemblyResolver（M）— ✅ 達成・実機.** facadegen が `--refs <参照アセンブリパス;…>` を受け、`Assembly.LoadFrom`＋`AssemblyResolve` で**任意の参照アセンブリ**から型解決（BCL の `Type.GetType` プローブに加え）。型比較は assembly identity 非依存の FullName ベースへ。MSBuild は `KotlinClrInjectTypes`（`DependsOnTargets=ResolveReferences`）で `@(ReferencePath)` を渡す。`samples/ktproj-extlib`：外部 C# アセンブリ（`Ext.Widget`）を `ProjectReference`＋`<KotlinClrType>` で **façade-free 消費**（`dotnet build/run` で `Add(2,3)=5`）。これで Avalonia/WPF を `<PackageReference>` から注入する道が通った。
+- **I3 .NET 基底クラス継承（L）— ✅ メカニズム達成・実機.** 注入型を Kotlin class が継承（`class Sub : Base()`）、base ctor 呼び出し、継承メンバ参照、**.NET virtual メンバの override（virtual dispatch）**、継承チェーンまで実機動作。`samples/m-i5`（façade-free で `System.Exception` を継承し `Message` を override、`FatalError : AppError : Exception` の多態）。実装: 注入型/メンバを .NET sealed/virtual に応じて `open`(modality) 化（`ClrTypeInjection`）、property の `override`/`virtual` 修飾子を codegen 追加。残: ジェネリック基底（`List<T>` 継承）。これで `class App : Application()` の前提が立つ。
+- **I4 delegate/event interop（M）— ✅ イベント subscribe/unsubscribe 達成・実機.** .NET event を façade-free 注入型が `add_<E>`/`remove_<E>`（ハンドラ＝Kotlin 関数型 `kotlin.FunctionN`）として公開、codegen が `recv.<E> += handler` / `-= handler` を生成（`ClrEventRegistry`）。`samples/ktproj-extlib`：外部アセンブリの `event Action<int> Changed` を **Kotlin ラムダで購読**し発火（`changed: 5 / changed: 9`）。これでフレームワークの click/イベント駆動 UI を純 Kotlin で書ける。残: `out`/`ref`、nullable 値型、.NET enum 取り込み、総称 delegate の網羅。
+
+## Track L — 言語/stdlib breadth（実プログラム網羅）
+- **L1 collections stdlib（M）**: `map`/`filter`/`fold`/`forEach`/`associate`/`mapOf`/`setOf` 等を BCL/LINQ へ写像。
+- **L2 ユーザ定義総称（L）**: Kotlin 側の generic class/fun を codegen（façade だけでなく自前型の型パラメータ）。
+- **L3 関数型 breadth（M）**: クロージャ捕捉・inline 関数・拡張関数（自前型）・演算子オーバーロード網羅。
+- **L4 言語 breadth（M）**: sealed + exhaustive when、inner/nested、default/vararg、destructuring。
+
+## Track C — coroutine 完全意味論
+- **C1 一般 CPS 完成（L）**: 部分式内サスペンドの spilling、ループ/分岐 **条件式** 内サスペンド（現状は明示エラー）。
+- **C2 CancellationToken を ABI に（S）**.
+- **C3 Flow ⇄ IAsyncEnumerable（L）**.
+- **C4 構造化並行性（XL）**: Job/CoroutineScope/dispatcher。戦略B ランタイムの本丸。
+
+## Track D-IL — IL バックエンドを C# 経路と parity に
+- **D-IL1 IL で状態機械（L）**: coroutine を IL 直接出力（現状 C# 経路のみ）。
+- **D-IL2 IL で総称（L）**、**D-IL3 BCL interop parity + PDB/デバッグ情報（L）**。
+
+## Track W — framework-direct windowing（= バインディングの完全性テスト。UI ライブラリは作らない）
+原則2 に従い、これは「Kotlin.NET の windowing 機能」ではなく **「実 UI フレームワークを Kotlin から丸ごと消費できるか」のバインディング検証**。
+- **W0 KfcUi 撤去（M）— ✅ 達成**: C# 製 UI shim・`samples/win*`・`run-window.sh` を削除。
+- **W1 純 Kotlin App（L）— ✅ コア達成・実機（描画はスコープ外）.** `<PackageReference Include="Avalonia"/>` の実型 `Avalonia.Application` を façade-free 注入し、**Kotlin が直接継承** `class MyApp : Application()`＋virtual `Initialize()` を override → `dotnet build/run` で実行（`samples/ktproj-avalonia`）。I2 は ref アセンブリ（`ref/`）を読むため `MetadataLoadContext` 化（`Assembly.LoadFrom` は ref を拒否）。**PackageReference 型を Kotlin 基底にできることを実証**＝framework-direct windowing の中核成立。Avalonia の実描画は目標外（Kotlin.NET は純バインディングであることの確認が目的）。
+- **W2 XAML/WPF・WinUI（M〜L, Windows）**: `System.Windows`/XAML 名前空間の import と XAML ロード。WPF はコンパイル可、Windows 実行で点灯。
+- **W3（別プロダクト）Kotlin-idiomatic UI DSL**: Avalonia/WPF/WinUI をラップした KMP 的派生プロダクト。**Kotlin.NET コア外**。リポジトリ/パッケージを分離。
+
+## Track X — 配布/DX（publishable）
+- **X1 `dotnet new ktproj` テンプレート + MSBuild SDK/NuGet 化（M）**: targets をパッケージ配布、相対パス依存を排除。
+- **X2 VS/VS Code 体験（M〜L）**: ビルド/実行統合（フル LSP は別スコープ）。
+- **X3 リリース（S）**: self-contained コンパイラ、バージョン付き配布。
+
+## 推奨シーケンス
+1. **P1 差分ハーネス**（信頼性の土台・公開時の説得力）→ P2 診断。
+2. **I1 総称注入 → I2 AssemblyResolver → I3 .NET 継承**（interop の穴を全閉）。
+3. **W1 純 Kotlin App**（I3 の上に flagship デモ）。
+4. L1–L4（実プログラム網羅）→ C1–C3（coroutine）→ D-IL（IL parity）→ X（配布）。
+
+各段 verify-all/verify-il 緑を必須ゲート、IL は常に C# 経路と差分一致。

@@ -73,14 +73,17 @@ Kotlin の suspend lowering を再利用して state machine を IR で入手し
 ### D2.1a — 制約付き状態機械 codegen（✅ 達成・実機）
 `@Sm` でオプトインした suspend fun（**線形 await 列**: `val xi = ei.await()` の並び + `return`）を、**コンパイラが state machine クラス（`IContinuation<T>` 実装 + label/locals フィールド + `ResumeWith` の label switch）へ変換**し、公開 `Task<T>` ブリッジ（`Future` 経由・Continuation 隠蔽）を生成。`samples/m-d2-sm`：`chain = 30` を **C# async/await 非使用**・D2.0 ランタイム（Continuation/TCS）の非ブロッキング駆動で達成。**「Kotlin suspend → コンパイラ生成状態機械 → 純ランタイム」が end-to-end で実動作**（strategy A/手書きと別）。
 引数付き suspend も対応（パラメータを state machine フィールド化、`samples/m-d2-sm` の `fetchDouble(7)=14`）。
-残（D2.1b）: ループ/分岐内サスペンド・suspend 呼び出し点を含む**一般 CPS 変換** = `AbstractSuspendFunctionsLowering` 再利用（下記）。
+コルーチン合成（suspend が別 suspend を直接呼ぶ＝サスペンド点）も対応（`useChain=35`）。
 
-### D2.1b — 一般 suspend lowering 組込み（最難所・未）
-`AbstractSuspendFunctionsLowering<C>` を CLR 用に継承して状態機械を IR で得る。**実機調査で判明した必要作業:**
-1. **CLR `CommonBackendContext` を構築**。約12の抽象メンバ（`getTypeSystem`/`getInnerClassesSupport`/mapping 等）+ `LoweringContext`（`irBuiltIns`/`irFactory`/`symbolTable`）を実装。coroutine intrinsic シンボル（`Continuation`, `COROUTINE_SUSPENDED`, `suspendCoroutineUninterceptedOrReturn`）は再利用した JVM frontend 経由で kotlin-stdlib から解決済み（`Fir2IrComponents` から取る）。
-2. **抽象メソッドを実装**: `getStateMachineMethodName`(=invokeSuspend), `getCoroutineBaseClass`(=CLR `IContinuation`/stdlib base), `nameForCoroutineClass`(=`<fn>$Coroutine`), **`buildStateMachine`（label フィールド + locals フィールド + resumeWith の label switch ＝ coroutine コンパイルの核心）**, `generateCoroutineStart`。JVM `AddContinuationLowering` が雛形。
-3. この lowering を `ClrBackendPhase` の lowering 列に組み込む。
-4. 生成された状態機械クラス（`IContinuation` 実装 + when/switch + field）は **既存 class codegen でそのまま出力できる**（class/when/field 実装済）。
-5. 公開 `Task<T> Foo(args)` ブリッジ = `CoroutineBuilders.Future(ctx, start)` を呼ぶ合成メソッド（Continuation 隠蔽）。
+### D2.1b — 一般 CPS lowering（✅ 達成・実機 / 自前実装）
 
-**見積もり:** D2.1 は `CommonBackendContext` 構築 + `buildStateMachine` 実装で **XL（複数セッション・最難関所）**。ただし ABI（§1）は不変なので、完成までは戦略 A が production interop を提供し続ける。
+**方針決定（ユーザ確定）: `AbstractSuspendFunctionsLowering` は再利用しない。** 実機調査で `buildStateMachine` が**抽象**＝CPS の核心は結局自前実装が前提と判明（base は params→fields / coroutine class 生成 / body 差し替えの足場だけを提供）。IR レベルの雛形 `JsSuspendFunctionsLowering` は ~46KB、加えて CLR `CommonBackendContext` 構築 + stdlib coroutine intrinsic（`Continuation`/`COROUTINE_SUSPENDED`）の CLR ランタイムへの写像が必要で、「再利用」は近道にならない。よって**変換を端から端まで自前所有し、自前ランタイム（`IContinuation`/`Future`）へ直接出力**する。
+
+**鍵となる単純化: 出力が C# なので `goto` が使える。** JS/Native の lowering は IR（goto 無し）で状態機械を組むため relooper 相当の CFG 変換が要るが、こちらは構造化制御フロー＋サスペンド点を **label dispatch + goto** へ直接線形化できる（CFG/relooper 不要）。`CSharpCodegen.kt` の `emitCps`/`emitWhenCps`/`emitWhileCps`/`emitSuspend` が実装。
+
+- **サスペンド点**: `val x = e`／`e`／`return e`。任意のネスト（block / `if`・`when` 分岐 / `while` ボディ）内で可。
+- **field 昇格**: サスペンド `return` を跨いで生存するローカルは field 化（`collectCpsVars`）。C# ローカルは `ResumeWith` 呼び出し間で生存しないため。完全同期な島内のローカルはそのまま。
+- **状態機械**: 各サスペンド点 = 1 state（ループ内でも static に 1）。`switch(__label){ case k: goto __Rk; }` で再入ディスパッチ。
+- 実機: `samples/m-d2-sm` の `sumLoop(4)=6`（**ループ内サスペンド**）, `branch(true/false)=15/10`（**分岐内・パスごとに異なるサスペンド数**）。生成形は教科書的 CPS（`__L0:` ループ頭 → `if(!cond) goto __L1` → `__R1` サスペンド → 後退辺 `goto __L0`）。
+
+**残（明示的に loud error で拒否＝silent miscompile を出さない）**: ① 部分式にネストしたサスペンド（`f(g().await())` 等＝spilling が必要）, ② ループ/分岐の**条件式**内サスペンド。①②が stdlib 完全 lowering との最後の差分。ABI（§1）は不変なので、これらに当たるコードは戦略 A（`async Task`）で書ける。

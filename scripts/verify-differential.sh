@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# F1 differential harness: for pure-Kotlin samples (language + stdlib, no .NET interop), run the SAME
+# source on (a) kotlin/jvm — the ground-truth oracle — and (b) kotlin/clr, and assert stdout matches.
+# This validates our codegen + stdlib mappings against real Kotlin semantics (not hand-written expecteds).
+set -uo pipefail
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Prefer the local JDK path, then $JAVA_HOME (CI), then `java` on PATH.
+JAVA=/usr/lib/jvm/java-21-openjdk-amd64/bin/java
+[[ -x "$JAVA" ]] || JAVA="${JAVA_HOME:+$JAVA_HOME/bin/java}"
+[[ -x "$JAVA" ]] || JAVA="$(command -v java)"
+STDLIBJ="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.2.0.jar' | head -1)"
+EMB="$(find "$HOME/.gradle" -name 'kotlin-compiler-embeddable-2.2.0.jar' | head -1)"
+COR="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-*.jar' | head -1)"
+REFLECT="$(find "$HOME/.gradle/caches" -name 'kotlin-reflect-*.jar' | head -1)"
+SCRIPT="$(find "$HOME/.gradle/caches" -name 'kotlin-script-runtime-2.2.0.jar' | head -1)"
+ANNOT="$(find "$HOME/.gradle/caches" -path '*org.jetbrains/annotations*' -name 'annotations-*.jar' | head -1)"
+CCP="$EMB:$STDLIBJ:$COR:$REFLECT:$SCRIPT:$ANNOT"   # classpath to RUN the kotlin/jvm compiler
+
+# E-2: the clr side runs through the SHIPPING IL backend (BIR -> ilemit -> CIL), not C#, so this harness
+# validates the actual shipping path against real Kotlin semantics. Build ilemit once.
+dotnet build "$ROOT/tools/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null 2>&1
+
+# Pure-Kotlin samples only (no @Clr / injected .NET types — those can't run on the JVM).
+PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 il-seq il-char il-sort il-funref il-getclass il-localdeleg il-langfeat il-mapdes il-ctorref"
+fail=0
+
+for s in $PURE; do
+	src="$ROOT/samples/$s"
+	# main class = file (with `fun main`) name, first letter upper-cased + "Kt" (app.kt -> AppKt).
+	mainfile="$(grep -lE '^fun main' "$src"/*.kt 2>/dev/null | head -1)"
+	[[ -z "$mainfile" ]] && { echo "SKIP  $s (no main)"; continue; }
+	base="$(basename "$mainfile" .kt)"; mainclass="${base^}Kt"
+
+	# (a) kotlin/jvm oracle
+	jout="/tmp/diff-jvm-$s"; rm -rf "$jout"; mkdir -p "$jout"
+	"$JAVA" -cp "$CCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler "$src"/*.kt -no-stdlib -classpath "$STDLIBJ" -d "$jout" >/dev/null 2>&1
+	jvm="$("$JAVA" -cp "$jout:$STDLIBJ" "$mainclass" 2>/dev/null)"
+
+	# (b) kotlin/clr via the SHIPPING IL backend: compile to BIR, emit CIL with ilemit, run the dll.
+	cout="$ROOT/build/diff-clr-$s"; rm -rf "$cout"; mkdir -p "$cout"
+	"$ROOT/gradlew" -q --no-daemon :compiler:run --args="$src -no-stdlib -classpath $STDLIBJ -d $cout" >/dev/null 2>&1
+	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$cout" "$mainclass" "$cout"/*.bir.json >/dev/null 2>&1
+	clr="$(dotnet "$cout/$mainclass.dll" 2>/dev/null)"
+
+	# Kotlin.NET primitive formatting is CLR-native by design; normalize platform-cosmetic differences
+	# (boolean case true/True, double trailing `.0`) so the harness validates LOGIC, not host formatting.
+	norm() { sed -E 's/\bTrue\b/true/g; s/\bFalse\b/false/g; s/([0-9])\.0\b/\1/g'; }
+	if [[ "$(norm <<<"$jvm")" == "$(norm <<<"$clr")" ]]; then echo "MATCH $s"; else
+		echo "DIFF  $s"; echo "--- jvm ---"; echo "$jvm"; echo "--- clr ---"; echo "$clr"; fail=1
+	fi
+done
+
+echo "------------------------------------"
+[[ $fail -eq 0 ]] && echo "ALL MATCH (clr == kotlin/jvm)" || { echo "SOME DIFFER"; exit 1; }

@@ -10,8 +10,14 @@
     <KotlinClrOut>$(BaseIntermediateOutputPath)kotlin-cs</KotlinClrOut>
     <KotlinClrFacadeGen>$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</KotlinClrFacadeGen>
     <KotlinClrFacadeOut>$(BaseIntermediateOutputPath)kotlin-facades</KotlinClrFacadeOut>
-    <!-- Backend: "cs" (default: kt->C#->csc) or "il" (kt->BIR->ilemit, emit CIL directly). -->
-    <KotlinClrBackend Condition="'$(KotlinClrBackend)' == ''">cs</KotlinClrBackend>
+    <!-- S5: façade-FREE .NET types listed via <KotlinClrType Include="System.X"/> are injected straight
+         into FIR (no .kt). The metadata file is handed to the compiler via the CLR_TYPES_METADATA env. -->
+    <KotlinClrTypeMeta>$(BaseIntermediateOutputPath)clrtypes.meta</KotlinClrTypeMeta>
+    <!-- Backend: "il" (default: kt->BIR->ilemit, emit CIL directly — no C#) or "cs" (kt->C#->csc, the
+         retired dev/oracle path). E-5: the shipping default is now IL; C# is opt-in. -->
+    <KotlinClrBackend Condition="'$(KotlinClrBackend)' == ''">il</KotlinClrBackend>
+    <!-- C# emission is opt-in: the compiler emits ONLY BIR unless KOTLIN_CLR_EMIT_CS=1 (set only for the cs backend). -->
+    <KotlinClrEmitCs Condition="'$(KotlinClrBackend)' == 'cs'">1</KotlinClrEmitCs>
     <KotlinClrIlEmit>$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</KotlinClrIlEmit>
     <!-- We generate the C# ourselves; don't let the SDK glob .cs/.kt. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
@@ -46,12 +52,29 @@
     </ItemGroup>
   </Target>
 
-  <!-- Compile all .kt to .cs, then hand the generated C# to CoreCompile. -->
-  <Target Name="KotlinClrCompile" BeforeTargets="CoreCompile"
+  <!-- Façade-FREE injection: reflect the <KotlinClrType> .NET types into a metadata file that the
+       compiler's FIR extension reads. No .kt is produced; the types resolve directly. (Generic types
+       belong on <KotlinClrFacade> instead — those go through the façade .kt path.) -->
+  <!-- DependsOnTargets=ResolveReferences so @(ReferencePath) is populated; those paths (BCL plus
+       PackageReference/ProjectReference/Reference, e.g. Avalonia/WPF) are handed to facadegen so any
+       referenced assembly's types become injectable (I2). -->
+  <Target Name="KotlinClrInjectTypes" BeforeTargets="KotlinClrCompile"
+          DependsOnTargets="ResolveReferences" Condition="'@(KotlinClrType)' != ''">
+    <Exec Condition="!Exists('$(KotlinClrFacadeGen)')"
+          Command="dotnet build &quot;$(KotlinClrRoot)/tools/facadegen&quot; -c Release -o &quot;$(KotlinClrRoot)/build/facadegen-bin&quot; -v q --nologo" />
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(KotlinClrTypeMeta)'))" />
+    <Message Importance="high" Text="kotlin/clr: injecting (façade-free) @(KotlinClrType->'%(Identity)', ', ')" />
+    <Exec Command="dotnet &quot;$(KotlinClrFacadeGen)&quot; --meta &quot;$(KotlinClrTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(KotlinClrType->'%(Identity)', ' ')" />
+  </Target>
+
+  <!-- Compile all .kt to .cs, then hand the generated C# to CoreCompile. CLR_TYPES_METADATA tells the
+       compiler's FIR injector which façade-free .NET types to synthesize (empty/absent -> none). -->
+  <Target Name="KotlinClrCompile" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrInjectTypes"
           Inputs="@(KotlinCompile)" Outputs="$(KotlinClrOut)/.stamp">
     <MakeDir Directories="$(KotlinClrOut)" />
     <Message Importance="high" Text="kotlin/clr: compiling @(KotlinCompile->Count()) .kt file(s) -> C#" />
-    <Exec Command="&quot;$(KotlinClrLauncher)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(KotlinStdlib)&quot; -d &quot;$(KotlinClrOut)&quot;" />
+    <Exec Command="&quot;$(KotlinClrLauncher)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(KotlinStdlib)&quot; -d &quot;$(KotlinClrOut)&quot;"
+          EnvironmentVariables="CLR_TYPES_METADATA=$(KotlinClrTypeMeta);KOTLIN_CLR_EMIT_CS=$(KotlinClrEmitCs)" />
     <Touch Files="$(KotlinClrOut)/.stamp" AlwaysCreate="true" />
   </Target>
 
@@ -63,9 +86,14 @@
     </ItemGroup>
   </Target>
 
-  <!-- il backend: give csc a trivial valid assembly to produce; ilemit overwrites it afterwards. -->
+  <!-- il backend: give csc a trivial valid assembly to produce; ilemit overwrites it afterwards. The user's
+       StartupObject (e.g. AppKt) names a Kotlin entry that doesn't exist in the placeholder, so point csc at
+       the placeholder's Main for this throwaway compile; ilemit sets the real entry point on the final dll. -->
   <Target Name="KotlinClrIlPlaceholder" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrCompile"
           Condition="'$(KotlinClrBackend)' == 'il'">
+    <PropertyGroup>
+      <StartupObject Condition="'$(StartupObject)' != ''">_IlPlaceholder</StartupObject>
+    </PropertyGroup>
     <MakeDir Directories="$(KotlinClrOut)" />
     <WriteLinesToFile File="$(KotlinClrOut)/_IlPlaceholder.cs" Overwrite="true"
                       Lines="public static class _IlPlaceholder { public static void Main(string[] a) { } }" />

@@ -6,4 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>facadegen</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- I2: reflect over reference assemblies (the ref/ folder of frameworks/NuGet) without executing
+         them — Assembly.LoadFrom refuses reference assemblies; MetadataLoadContext is built for this. -->
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" />
+  </ItemGroup>
 </Project>

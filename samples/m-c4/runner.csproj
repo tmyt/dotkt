@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable><StartupObject>AppKt</StartupObject></PropertyGroup>
+  <ItemGroup><Compile Include="../../build/clr-mc4/*.cs" /></ItemGroup>
+</Project>

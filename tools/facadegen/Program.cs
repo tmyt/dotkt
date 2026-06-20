@@ -13,8 +13,22 @@ static class FacadeGen
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("usage: facadegen <outDir> <TypeFullName>...");
+            Console.Error.WriteLine("usage: facadegen <outDir> <TypeFullName>...  |  facadegen --meta <outFile> <TypeFullName>...");
             return 1;
+        }
+        // S5 generalization: emit a compact metadata file consumed by the compiler's FIR injector,
+        // so .NET types resolve façade-free. Same reflection as the .kt path, different sink.
+        // I2: `--refs <a.dll;b.dll;...>` lets types resolve from arbitrary referenced assemblies
+        // (Avalonia/WPF/NuGet), not just the BCL — fed by MSBuild's @(ReferencePath).
+        if (args[0] == "--meta")
+        {
+            var rest = args.Skip(2).ToList();
+            if (rest.Count >= 2 && rest[0] == "--refs")
+            {
+                LoadRefs(rest[1].Split(';', StringSplitOptions.RemoveEmptyEntries));
+                rest = rest.Skip(2).ToList();
+            }
+            return EmitMeta(args[1], rest);
         }
         var clrDir = Path.Combine(args[0], "clr");
         Directory.CreateDirectory(clrDir);
@@ -35,8 +49,171 @@ static class FacadeGen
         return 0;
     }
 
-    static Type Resolve(string name) => Type.GetType(name) ?? Type.GetType(name + ", System.Runtime")
-        ?? Type.GetType(name + ", System.Collections") ?? Type.GetType(name + ", System.Private.CoreLib");
+    static readonly string[] PROBE_ASSEMBLIES =
+        { "System.Runtime", "System.Collections", "System.ObjectModel", "System.Private.CoreLib", "System.Console", "System.Runtime.Extensions", "System.Linq", "mscorlib" };
+
+    // I2: referenced assemblies (Avalonia/WPF/NuGet) reflected via MetadataLoadContext — it reads
+    // metadata WITHOUT executing, so it handles reference assemblies (ref/ folder) that LoadFrom rejects.
+    static System.Reflection.MetadataLoadContext Mlc;
+
+    static void LoadRefs(string[] paths)
+    {
+        if (paths.Length == 0) return;
+        // The core assembly (System.Private.CoreLib / System.Runtime) must be in the path set.
+        var core = new[] { "System.Private.CoreLib", "System.Runtime", "mscorlib", "netstandard" }
+            .FirstOrDefault(n => paths.Any(p => Path.GetFileNameWithoutExtension(p).Equals(n, StringComparison.OrdinalIgnoreCase)))
+            ?? "System.Runtime";
+        Mlc = new System.Reflection.MetadataLoadContext(new System.Reflection.PathAssemblyResolver(paths), core);
+        foreach (var p in paths)
+            try { Mlc.LoadFromAssemblyPath(p); } catch { /* skip unloadable */ }
+    }
+
+    static Type Resolve(string name)
+    {
+        if (Mlc != null)
+        {
+            foreach (var asm in Mlc.GetAssemblies())
+                try { var mt = asm.GetType(name); if (mt != null) return mt; } catch { }
+            return null;
+        }
+        var t = Type.GetType(name);
+        if (t != null) return t;
+        foreach (var asm in PROBE_ASSEMBLIES)
+            if ((t = Type.GetType($"{name}, {asm}")) != null) return t;
+        return null;
+    }
+
+    // Compact line-based metadata for the FIR injector (package fixed to `clrgen`):
+    //   object <SimpleName> <DotNetFullName>      | class <SimpleName> <DotNetFullName>
+    //   fun <Name> <RetKotlinType> [pName:pType]* | ctor [pName:pType]*
+    // Kotlin member names = .NET names verbatim (no per-member mapping needed in the backend).
+    // A static .NET class (abstract+sealed, e.g. System.Math) -> Kotlin `object` (static call site);
+    // an instance class -> Kotlin `class` with constructors + instance methods.
+    static int EmitMeta(string outFile, IEnumerable<string> typeNames)
+    {
+        var sb = new StringBuilder();
+        sb.Append("package clrgen\n");
+        foreach (var typeName in typeNames)
+        {
+            // Resolve a plain type, or a generic type definition (Collection -> Collection`1, etc.).
+            var t = Resolve(typeName) ?? Resolve(typeName + "`1") ?? Resolve(typeName + "`2") ?? Resolve(typeName + "`3");
+            if (t == null) { Console.Error.WriteLine($"type not found: {typeName}"); continue; }
+            // A .NET enum -> an object whose members are `val` properties typed as the enum itself
+            // (avoids FIR enum-entry synthesis; `DayOfWeek.Friday` still maps to the real enum value).
+            if (t.IsEnum)
+            {
+                sb.Append($"object {t.Name} {t.FullName}\n");
+                foreach (var nm in Enum.GetNames(t)) sb.Append($"prop {nm} {t.Name} ro final\n");
+                Console.WriteLine($"meta: {t.FullName} (enum)");
+                continue;
+            }
+            // A .NET interface -> Kotlin can IMPLEMENT it (methods become abstract members).
+            if (t.IsInterface)
+            {
+                sb.Append($"interface {t.Name} {t.FullName}\n");
+                foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (m.IsSpecialName || m.IsGenericMethod) continue;
+                    var ps = m.GetParameters();
+                    if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
+                    sb.Append($"fun {m.Name} {Map(m.ReturnType, t)} abstract {MetaParams(ps, t)}".TrimEnd() + "\n");
+                }
+                Console.WriteLine($"meta: {t.FullName} (interface)");
+                continue;
+            }
+            var isStatic = t.IsAbstract && t.IsSealed;
+            // A generic type definition (`Collection`1`) -> simple name `Collection`, OPEN .NET name (namespace +
+            // simple, no `1` — the backend appends the arity), and the type parameter names as trailing tokens.
+            var simpleName = t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name;
+            var dotNet = t.IsGenericTypeDefinition ? (t.Namespace + "." + simpleName) : t.FullName;
+            var tparams = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
+            // `class <Name> <DotNetName> <open|sealed> [<TypeParam>...]` carries inheritability + generic arity.
+            sb.Append(isStatic ? $"object {simpleName} {dotNet}\n"
+                               : $"class {simpleName} {dotNet} {(t.IsSealed ? "sealed" : "open")}{tparams}\n");
+            var seen = new HashSet<string>();
+            if (!isStatic)
+            {
+                foreach (var c in t.GetConstructors(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    var ps = c.GetParameters();
+                    if (!ps.All(p => Supported(p.ParameterType))) continue;
+                    if (!seen.Add("ctor(" + Sig(ps, t) + ")")) continue;
+                    sb.Append($"ctor {MetaParams(ps, t)}".TrimEnd() + "\n");
+                }
+                // Instance properties (non-indexer). `prop <Name> <KType> <ro|rw> <open|final>`.
+                foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType)) continue;
+                    if (!p.CanRead || !seen.Add("prop:" + p.Name)) continue;
+                    var virt = (p.GetMethod?.IsVirtual ?? false) && !(p.GetMethod?.IsFinal ?? false);
+                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} {(virt ? "open" : "final")}\n");
+                }
+                // Events (I4). `event <Name> <handlerRetKType> <handlerParams...>` from the delegate's Invoke.
+                foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    var inv = ev.EventHandlerType?.GetMethod("Invoke");
+                    if (inv == null || !seen.Add("event:" + ev.Name)) continue;
+                    var ps = inv.GetParameters();
+                    if (!ps.All(p => Supported(p.ParameterType)) || !Supported(inv.ReturnType)) continue;
+                    sb.Append($"event {ev.Name} {Map(inv.ReturnType, t)} {MetaParams(ps, t)}".TrimEnd() + "\n");
+                }
+                // Indexer (`this[i]`) -> `index <indexKType> <valueKType> <ro|rw>`; injector synthesizes operator get/set.
+                var ix = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(p => p.GetIndexParameters().Length == 1
+                        && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));
+                if (ix != null)
+                    sb.Append($"index {Map(ix.GetIndexParameters()[0].ParameterType, t)} {Map(ix.PropertyType, t)} {(ix.CanWrite ? "rw" : "ro")}\n");
+            }
+            else
+            {
+                // Static fields/consts (e.g. Math.PI) and static properties -> read-only `prop`s on the object.
+                foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Static))
+                {
+                    if (!Supported(f.FieldType) || !seen.Add("sfield:" + f.Name)) continue;
+                    sb.Append($"prop {f.Name} {Map(f.FieldType, t)} ro final\n");
+                }
+                foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
+                {
+                    if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType) || !p.CanRead || !seen.Add("sprop:" + p.Name)) continue;
+                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} final\n");
+                }
+            }
+            var flags = BindingFlags.Public | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+            foreach (var m in t.GetMethods(flags))
+            {
+                if (m.IsSpecialName) continue;
+                if (OBJECT_MEMBERS.Contains(m.Name)) continue;
+                if (m.DeclaringType?.FullName == "System.Object") continue;
+                // A generic method (`SizeOf<T>()`) is now emitted: its method type params + any T-typed param/return
+                // map to the param names (Map returns the generic-parameter Name). Only simple shapes survive Supported.
+                if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
+                var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
+                var ps = m.GetParameters();
+                if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
+                if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
+                // `fun <Name> <ret> <open|final> [<TypeParam>...] [<param>:<type>]*` — bare trailing tokens (no `:`)
+                // are method type parameters; tokens with `:` are value params.
+                var virt = m.IsVirtual && !m.IsFinal;
+                var toks = new List<string> { "fun", m.Name, Map(m.ReturnType, t), virt ? "open" : "final" };
+                toks.AddRange(gp);
+                toks.AddRange(ps.Select((p, i) => $"{MetaParamName(p, i)}:{Map(p.ParameterType, t)}"));
+                sb.Append(string.Join(" ", toks) + "\n");
+            }
+            Console.WriteLine($"meta: {t.FullName} ({(isStatic ? "object" : "class")})");
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
+        File.WriteAllText(outFile, sb.ToString());
+        return 0;
+    }
+
+    static string MetaParams(ParameterInfo[] ps, Type self) =>
+        string.Join(" ", ps.Select((p, i) => $"{MetaParamName(p, i)}:{Map(p.ParameterType, self)}"));
+
+    static string MetaParamName(ParameterInfo p, int i)
+    {
+        var n = p.Name;
+        return (string.IsNullOrEmpty(n) || !IsIdent(n)) ? "arg" + i : n;
+    }
 
     static string GenerateType(Type t)
     {
@@ -88,7 +265,7 @@ static class FacadeGen
             if (m.IsSpecialName || m.IsGenericMethod) continue;
             // Skip Object identity members that would clash with Kotlin's Any (keep ToString).
             if (OBJECT_MEMBERS.Contains(m.Name)) continue;
-            if (m.DeclaringType == typeof(object) && m.Name != "ToString") continue;
+            if (m.DeclaringType?.FullName == "System.Object" && m.Name != "ToString") continue;
             var ps = m.GetParameters();
             if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
             var nm = Decap(m.Name);
@@ -129,9 +306,11 @@ static class FacadeGen
     // name (T); the type itself maps to its façade; everything else degrades to Any?.
     static string Map(Type t, Type self)
     {
-        if (t == typeof(void)) return "Unit";
+        // Compare by FullName, not typeof identity: types reflected from LoadFrom'd reference assemblies
+        // (I2) have a different assembly identity than the runtime's, so `t == typeof(...)` would miss.
+        if (t.FullName == "System.Void") return "Unit";
         if (t.IsGenericParameter) return t.Name;
-        if (t == self) return self.Name.Contains('`') ? self.Name.Substring(0, self.Name.IndexOf('`')) : self.Name;
+        if (t.FullName == self.FullName) return self.Name.Contains('`') ? self.Name.Substring(0, self.Name.IndexOf('`')) : self.Name;
         return t.FullName switch
         {
             "System.Int32" => "Int",

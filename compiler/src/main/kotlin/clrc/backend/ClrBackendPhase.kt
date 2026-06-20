@@ -30,13 +30,19 @@ object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArti
 
 		File(outputDir, "KIR@Raw.txt").writeText(moduleFragment.dump())
 
-		val codegen = CSharpCodegen()
+		// E-5: the IL backend (BIR -> ilemit) is the shipping path; C# codegen is demoted to a dev/oracle
+		// opt-in (`KOTLIN_CLR_EMIT_CS=1`). By default we emit ONLY BIR and never run CSharpCodegen, so the
+		// shipping path has no C# dependency and IL-only features can't trip the (frozen) C# backend.
+		// See docs/csharp-retirement-design.md / [[il-primary-backend-pivot]].
+		val emitCs = System.getenv("KOTLIN_CLR_EMIT_CS") == "1"
+		val codegen = if (emitCs) CSharpCodegen() else null
 		val bir = BirEmitter()
 		for (irFile in moduleFragment.files) {
 			val baseName = File(irFile.fileEntry.name).name.removeSuffix(".kt")
-			val csharp = codegen.generateFile(irFile)
-			if (csharp.isNotBlank()) File(outputDir, "$baseName.cs").writeText(csharp)
-			// D1.1: also emit Backend IR (JSON) for the future CIL backend.
+			if (codegen != null) {
+				val csharp = codegen.generateFile(irFile)
+				if (csharp.isNotBlank()) File(outputDir, "$baseName.cs").writeText(csharp)
+			}
 			val birJson = bir.emitFile(irFile)
 			if (birJson.isNotBlank()) File(outputDir, "$baseName.bir.json").writeText(birJson)
 		}
