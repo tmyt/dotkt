@@ -159,7 +159,8 @@
 
 ## C-0 双方向 interop（「.NET バインディング」の本質・最重要）
 - [x] **逆方向 interop（基盤達成・実機）**: Kotlin 生成アセンブリを C# から `ProjectReference` で参照し、Kotlin の class（`new Greeter("World").greet()`）・top-level fun（`LibKt.add(2,3)`）を呼べる（`samples/revinterop`、別アセンブリとして消費）。生成 C# が public 型なので双方向が成立。**(L)** ✅（基盤）
-- [ ] 逆方向 interop **磨き込み**（残・refinement）: C# 慣習の命名（Kotlin の lowercase fun → PascalCase 公開名・任意）、**nullability 注釈（`[Nullable]`）**、generics の公開形、`suspend fun`↔`Task<T>` の公開、プロパティ/イベントの .NET 慣習化。**(M)**
+- [x] 逆方向 interop **機能面** ✅ 2026-06-21（C# reflection で公開面を確認）: **generics の公開形**（`Box<T>` → C# generic）、**`suspend fun`↔`Task<T>` の公開**（`compute(Int): Task<Int>`）、class/メソッド/top-level fun/プロパティ。**(M)**
+- [~] 逆方向 interop **意匠面**（optional polish）: C# 慣習の命名（lowercase fun → PascalCase・任意）、**nullability 注釈 `[Nullable]`**（C# 消費側が `string?` を見られる）。いずれも cosmetic で 1.0 出荷をブロックしない（C# は lowercase メソッドも呼べる）。要望時に実装。**(M, deferred-optional)**
 - [x] 検証: `samples/revinterop`（C# consumer が Kotlin アセンブリを参照）を verify-all に常設。**(S)** ✅
 
 ## C-1 .NET 機能の消費（Kotlin → .NET）
