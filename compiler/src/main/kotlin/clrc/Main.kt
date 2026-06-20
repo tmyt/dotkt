@@ -24,4 +24,7 @@ fun main(args: Array<String>) {
 
 	val exitCode = ClrCliPipeline(perfManager).execute(arguments, Services.EMPTY, collector)
 	System.err.println("clrc finished: $exitCode")
+	// Propagate the compiler's exit code to the process, so a COMPILATION_ERROR (e.g. an unsupported construct
+	// reported with source location) stops the MSBuild/CLI pipeline before ilemit runs on partial output.
+	if (exitCode.code != 0) kotlin.system.exitProcess(exitCode.code)
 }

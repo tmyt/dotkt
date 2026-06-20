@@ -36,7 +36,9 @@ object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArti
 		// See docs/csharp-retirement-design.md / [[il-primary-backend-pivot]].
 		val emitCs = System.getenv("KOTLIN_CLR_EMIT_CS") == "1"
 		val codegen = if (emitCs) CSharpCodegen() else null
-		val bir = BirEmitter()
+		val messageCollector = input.configuration.get(
+			org.jetbrains.kotlin.config.CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
+		val bir = BirEmitter(messageCollector)
 		for (irFile in moduleFragment.files) {
 			val baseName = File(irFile.fileEntry.name).name.removeSuffix(".kt")
 			if (codegen != null) {
@@ -47,6 +49,8 @@ object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArti
 			if (birJson.isNotBlank()) File(outputDir, "$baseName.bir.json").writeText(birJson)
 		}
 
-		return ClrBackendArtifact(ExitCode.OK)
+		// An unsupported construct was reported (with source location) -> fail the compile here, so the build
+		// stops with a clear diagnostic instead of producing BIR that crashes ilemit downstream.
+		return ClrBackendArtifact(if (bir.hadError) ExitCode.COMPILATION_ERROR else ExitCode.OK)
 	}
 }

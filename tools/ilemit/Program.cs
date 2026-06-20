@@ -671,7 +671,7 @@ sealed class Emitter
                         if (_coTryDepth > 0) _il.Emit(OpCodes.Leave, _coExit); else _il.Emit(OpCodes.Ret);
                         break;
                     case "coUnsupported":
-                        throw new NotSupportedException("coroutine (deferred): " + st.GetProperty("of").GetString());
+                        throw new NotSupportedException("coroutine feature not supported by the .NET backend: " + st.GetProperty("of").GetString());
                     default:
                         EmitStmt(st);
                         break;
@@ -1073,7 +1073,7 @@ sealed class Emitter
                 EmitExpr(s.GetProperty("cond"));
                 _il.Emit(s.GetProperty("on").GetBoolean() ? OpCodes.Brtrue : OpCodes.Brfalse, _cfgLabels[s.GetProperty("id").GetInt32()]);
                 break;
-            case "unsupportedStmt": throw new NotSupportedException("unsupported Kotlin construct (deferred): " + s.GetProperty("of").GetString());
+            case "unsupportedStmt": throw new NotSupportedException("the .NET backend does not support this Kotlin construct: " + s.GetProperty("of").GetString());
             default: throw new NotSupportedException("stmt " + s.GetProperty("k").GetString());
         }
     }
@@ -1952,7 +1952,7 @@ sealed class Emitter
             case "clrPropSet": return EmitClrPropSet(e);
             case "clrEventAdd": return EmitClrEvent(e, add: true);
             case "clrEventRemove": return EmitClrEvent(e, add: false);
-            case "unsupportedExpr": throw new NotSupportedException("unsupported Kotlin construct (deferred): " + e.GetProperty("of").GetString());
+            case "unsupportedExpr": throw new NotSupportedException("the .NET backend does not support this Kotlin construct: " + e.GetProperty("of").GetString());
             default: throw new NotSupportedException("expr " + e.GetProperty("k").GetString());
         }
     }
@@ -2315,6 +2315,15 @@ sealed class Emitter
     }
     void EmitArg(JsonElement a, Type want)
     {
+        // A null literal passed to a Nullable<T> slot -> default(Nullable<T>) (an empty Nullable), not ldnull.
+        if (want.IsGenericType && want.GetGenericTypeDefinition() == typeof(Nullable<>)
+            && a.TryGetProperty("k", out var ak) && ak.GetString() == "const"
+            && a.TryGetProperty("value", out var av) && av.ValueKind == JsonValueKind.Null)
+        {
+            var loc = _il.DeclareLocal(want);
+            _il.Emit(OpCodes.Ldloca, loc); _il.Emit(OpCodes.Initobj, want); _il.Emit(OpCodes.Ldloc, loc);
+            return;
+        }
         var got = EmitExpr(a);
         if (got == null) return;
         // `T` passed to a `T?` param -> wrap in Nullable<T>; value passed to a reference param -> box.

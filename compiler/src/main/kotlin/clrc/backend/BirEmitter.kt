@@ -66,6 +66,10 @@ import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
+import org.jetbrains.kotlin.ir.IrFileEntry
+import org.jetbrains.kotlin.cli.common.messages.MessageCollector
+import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
+import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
 /**
@@ -79,7 +83,32 @@ import java.io.File
  * while/if. Classes & interop are later milestones (D1.4+).
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-class BirEmitter {
+class BirEmitter(private val messageCollector: MessageCollector? = null) {
+
+	// Diagnostics: a construct the .NET backend can't lower yet is a COMPILE-TIME error with source location
+	// (file:line:col) — never a silent BIR node that crashes ilemit later. `hadError` fails the build.
+	var hadError = false; private set
+	private var fileEntry: IrFileEntry? = null
+
+	private fun locationOf(node: IrElement?): CompilerMessageLocation? {
+		val fe = fileEntry ?: return null
+		val off = node?.startOffset ?: return CompilerMessageLocation.create(fe.name)
+		if (off < 0) return CompilerMessageLocation.create(fe.name)
+		val lc = fe.getLineAndColumnNumbers(off)
+		return CompilerMessageLocation.create(fe.name, lc.line, lc.column, null)
+	}
+
+	/**
+	 * Report an unsupported Kotlin construct as a clear, source-located compile error and return a placeholder
+	 * BIR node. The build fails (hadError), so this placeholder never reaches ilemit. `what` names the construct;
+	 * `detail` is a plain-language explanation of why / what to do — NOT the word "deferred".
+	 */
+	private fun unsupported(node: IrElement?, what: String, detail: String): String {
+		hadError = true
+		messageCollector?.report(CompilerMessageSeverity.ERROR,
+			"the .NET backend does not support $what yet: $detail", locationOf(node))
+		return """{"k":"unsupportedExpr","of":${str("$what — $detail")}}"""
+	}
 
 	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
 	private val valSubst = HashMap<String, String>()
@@ -264,6 +293,7 @@ class BirEmitter {
 	private val SCOPE_FUNCTIONS = setOf("kotlin.let", "kotlin.run", "kotlin.with", "kotlin.apply", "kotlin.also")
 
 	fun emitFile(file: IrFile): String {
+		fileEntry = file.fileEntry
 		// The `@ClrAwait` await intrinsic (`fun <T> Task<T>.await(): T`) is never emitted as a real method —
 		// its call sites are lowered to coroutine suspension points (see suspendMethod). Skip it.
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>().filter { !isAwaitIntrinsic(it) }
@@ -860,7 +890,7 @@ class BirEmitter {
 		// IrComposite: a scope-less statement container (e.g. a desugared loop body) -> a flat block.
 		is IrComposite -> """{"k":"block","body":[${node.statements.joinToString(",") { stmt(it) }}]}"""
 		is IrExpression -> """{"k":"exprStmt","expr":${expr(node)}}"""
-		else -> """{"k":"unsupportedStmt","of":${str(node::class.simpleName ?: "?")}}"""
+		else -> unsupported(node, "this statement", "the IR node ${node::class.simpleName} has no .NET lowering")
 	}
 
 	/** A loop label (Kotlin `outer@`) as JSON, or null. break/continue target loops by this label. */
@@ -1111,7 +1141,7 @@ class BirEmitter {
 				}
 			}
 		}
-		else -> """{"k":"unsupportedExpr","of":${str(node::class.simpleName ?: "?")}}"""
+		else -> unsupported(node, "this expression", "the IR node ${node::class.simpleName} has no .NET lowering")
 	}
 
 	/**
@@ -1173,10 +1203,21 @@ class BirEmitter {
 				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
 				return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${ps.joinToString(",") { birTypeDeleg(it.type) }}"}"""
 			}
-			return """{"k":"unsupportedExpr","of":"ConstructorReference(non-user)"}"""
+			// `::NetType` — a lifted factory `__ctorref(args) = new NetType(args)` (clrNew), bound as a delegate.
+			if (klass != null) {
+				val ps = ctor.parameters.filter { it.kind == IrParameterKind.Regular }
+				val lname = "__ctorref${lambdaCounter++}"
+				val psJson = ps.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
+				val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+				val retT = birType(ctor.returnType)
+				val newE = """{"k":"clrNew","type":${str(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { str(netType(it.type)) }}],"args":[$argsJson]}"""
+				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
+				return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${ps.joinToString(",") { birTypeDeleg(it.type) }}"}"""
+			}
+			return unsupported(node, "this constructor reference", "the constructor's class could not be resolved")
 		}
 		val fn = node.symbol.owner as? IrSimpleFunction
-			?: return """{"k":"unsupportedExpr","of":"FunctionReference(non-simple)"}"""
+			?: return unsupported(node, "this function reference", "only references to plain (simple) functions are supported")
 		val dispatchIdx = fn.parameters.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
 		val hasExt = fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }
 		// `::topLevelFun` — no receiver: a delegate over the static file-class method (FindStatic resolves it).
@@ -1207,7 +1248,8 @@ class BirEmitter {
 			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
 			return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${(listOf(selfT) + ps.map { birTypeDeleg(it.type) }).joinToString(",")}"}"""
 		}
-		return """{"k":"unsupportedExpr","of":"FunctionReference(bound/member ${fn.name.asString()})"}"""
+		return unsupported(node, "a method reference to a .NET method (`::${fn.name}`)",
+			"wrap the call in a lambda instead, e.g. `{ a -> x.${fn.name}(a) }`")
 	}
 
 	/** The kickoff/return BIR type for a `suspend (...) -> T`: `Task<T>` (or non-generic `Task` for Unit). */
@@ -1570,9 +1612,10 @@ class BirEmitter {
 				val cname = "<>dotkt_obj${scopeCounter++}"
 				anonNames[anon] = cname
 				val captured = capturedVarsForObject(anon)
-				// Mutable capture (writing an outer local through the object) needs ref cells -> defer cleanly.
+				// Mutable capture (writing an outer local through the object) would need heap ref-cells.
 				if (captured.any { it in mutatedValues(anon) })
-					return """{"k":"unsupportedExpr","of":"capturing-object-literal-mutable"}"""
+					return unsupported(block, "an object expression that writes to a captured outer variable",
+						"read-only capture works; to mutate shared state, use a small class with a field instead")
 				val capPairs = captured.map { it to captureFieldName(it) }
 				capPairs.forEach { (decl, fname) ->
 					captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
@@ -1842,10 +1885,20 @@ class BirEmitter {
 						val sel = synthLambda("array:$t", listT) { x -> clrGen(EN, "ToList", listOf(t), listOf("ienum"), listOf(x)) }
 						toList(clrGen(EN, "Select", listOf("array:$t", listT), listOf("ienum", "func:2"), listOf(chunk, sel)), listT)
 					}
-					// `filterNotNull()` -> Where(x => x != null). Reference elements only (value `T?` -> Nullable<T> unwrap deferred).
-					"filterNotNull" -> if (t.startsWith("nullable:")) """{"k":"unsupportedExpr","of":"filterNotNull on a value-type T?"}""" else {
-						val pred = synthLambda(t, "bool") { x -> """{"k":"un","op":"!","e":{"k":"objEq","l":$x,"r":{"k":"const","type":"void","value":null}}}""" }
-						toList(clrGen(EN, "Where", listOf(t), EF, listOf(src, pred)), t)
+					// `filterNotNull()`. The receiver element is `T?`; the result is `T`. Value-type `T?` (Nullable<T>) ->
+					// Where(x => x.HasValue).Select(x => x.Value); reference `T?` -> Where(x => x != null).
+					"filterNotNull" -> {
+						val srcElem = collectionElemType(recv.type)   // "nullable:int" (value) or e.g. "string" (ref)
+						if (srcElem.startsWith("nullable:")) {
+							val inner = srcElem.removePrefix("nullable:")
+							val hasVal = synthLambda(srcElem, "bool") { x -> """{"k":"clrPropGet","type":${str(srcElem)},"name":"HasValue","retType":"bool","static":false,"recv":$x}""" }
+							val getVal = synthLambda(srcElem, inner) { x -> """{"k":"clrPropGet","type":${str(srcElem)},"name":"Value","retType":${str(inner)},"static":false,"recv":$x}""" }
+							val filtered = clrGen(EN, "Where", listOf(srcElem), EF, listOf(src, hasVal))
+							toList(clrGen(EN, "Select", listOf(srcElem, inner), EF, listOf(filtered, getVal)), inner)
+						} else {
+							val pred = synthLambda(srcElem, "bool") { x -> """{"k":"un","op":"!","e":{"k":"objEq","l":$x,"r":{"k":"const","type":"void","value":null}}}""" }
+							toList(clrGen(EN, "Where", listOf(srcElem), EF, listOf(src, pred)), srcElem)
+						}
 					}
 					"toList" -> clrGen(EN, "ToList", listOf(t), EI, listOf(src))
 					"toSet" -> clrGen(EN, "ToHashSet", listOf(t), EI, listOf(src))
@@ -2198,7 +2251,8 @@ class BirEmitter {
 					"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"setValue","args":[$recv,$kprop,${expr(regularArgs(call).first())}]}"""
 				else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue","args":[$recv,$kprop]}"""
 			}
-			return """{"k":"unsupportedExpr","of":"delegated-property-non-lazy"}"""
+			return unsupported(call, "this delegated property",
+				"its delegate type could not be resolved to a supported form (lazy, a custom getValue/setValue, or a Map)")
 		}
 		if (property != null && declaringClass != null) {
 			val recvExpr = dispatchReceiver(call)
@@ -2284,7 +2338,9 @@ class BirEmitter {
 						val arr = """{"k":"newArray","elem":"object","elems":[${elems.joinToString(",") { expr(it) }}]}"""
 						return """{"k":"clrStatic","type":"System.String","method":"Format","argTypes":["System.String","array:object"],"ret":"System.String","args":[{"k":"const","type":"string","value":${str(net)}},$arr]}"""
 					}
-					if (fmtConst != null) return """{"k":"unsupportedExpr","of":"String.format: unsupported printf spec in '${fmtConst}'"}"""
+					return unsupported(call, "String.format with this format",
+						if (fmtConst == null) "the format must be a string literal (e.g. \"%d items\"), not a variable"
+						else "an unsupported printf specifier in \"$fmtConst\" (supported: %d %s %f %.Nf %0Nd %x %%)")
 				}
 			}
 			// Exhaustive-when synthetic else / uninitialized property -> throw (the branch is unreachable).

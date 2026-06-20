@@ -72,7 +72,7 @@
 - [x] **スプレッド `*array`**（**`IrSpreadElement`**）— ✅ 2026-06-20（`il-mapdes`）単独 `f(*a)`（配列転送）＋全リテラル `f(1,2,3)`＋**混在 `f(1,*a,2)`**（`spreadConcat`＝`List<elem>` に Add/AddRange→ToArray）。`IrVararg` が spread を `filterIsInstance<IrExpression>` で落としていたバグも修正。
 - [x] **`value class` / `inline class`** — ✅ 2026-06-20 `@JvmInline value class`（フィールドアクセス・メソッド・引数/戻り値渡し）動作（`il-valclass`、CLR 実機正＋ilverify-clean）。※JVM 差分は環境都合（`@JvmInline` の JVM codegen が kotlinx-coroutines を要求し oracle が `NoClassDefFoundError`）で verify-il のみに収録。box/unwrap 最適化は将来。
 - [x] **非ローカル return**（inline ラムダからの `return`）✅(2026-06-20) — lambda 引数あり inline fun の実インライン化（`inlineCall`/`spliceLambdaCall`、body を `valueBlock`=インラインで splice）で解決。IR の IrReturn は既に呼び元 fun を target するので、splice すれば呼び元から return。**可変キャプチャも同時に解決**（呼び元の `var` を直接書込）。`samples/il-inline2`（findFirstEven=4／computed=42／sum=3）。残: crossinline・lambda を変数経由で渡す inline 呼出（リテラル渡しのみ inline）。
-- [ ] **部分式/ループ条件内 suspend** — CFG/SSA（E-0.5）依存（D トラック）
+- [x] **部分式/ループ条件内 suspend** — ✅ 2026-06-20 D トラックで実装済（`spillExpr`／`emitWhileCps`／`emitWhenCps`、`il-coro`）。下記 D セクション参照。
 
 ### 設計上わざと非対応（CLR では破棄・[[clr-not-jvm-discard-jvmisms]]）
 - `dynamic` 型（Kotlin/JS 専用、CLR 文脈で不要）／ `@Jvm*` アノテーション群 ／ JVM 固有 reflection 面
