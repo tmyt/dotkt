@@ -139,6 +139,11 @@ sealed class Emitter
                     // abstract members). Kotlin `sealed` is also abstract at the CLR level.
                     if (!isIface && t.TryGetProperty("abstract", out var clsAbs) && clsAbs.GetBoolean()) attrs |= TypeAttributes.Abstract;
                     var tb = _mod.DefineType(name, attrs);
+                    // Compiler-generated synthetic types (`<>dotkt_*`: KProperty, Result, KIterator_*, …) get
+                    // [CompilerGenerated] (and can't collide with user types — the `<>` prefix isn't source-legal).
+                    if (name.StartsWith("<>dotkt_"))
+                        tb.SetCustomAttribute(new CustomAttributeBuilder(
+                            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
                     var nti = new TypeInfo
                     {
                         TB = tb,

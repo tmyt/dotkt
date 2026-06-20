@@ -121,7 +121,11 @@ class BirEmitter {
 	private var needsKProperty = false
 
 	/** A user/anon class's emitted name (anon "<no name provided>" -> its synthetic lifted name). */
-	private fun typeName(k: IrClass): String = anonNames[k] ?: k.name.asString()
+	private fun typeName(k: IrClass): String =
+		// kotlin.Result -> the compiler-generated synthetic class name, so member ownerTypes (isSuccess field,
+		// accessor calls via ownerSpec) match the synthesized `<>dotkt_Result` definition.
+		if (k.fqNameWhenAvailable?.asString() == "kotlin.Result") "<>dotkt_Result"
+		else anonNames[k] ?: k.name.asString()
 
 	// Synthesized stdlib delegate classes for Delegates.observable/vetoable/notNull (their stdlib bodies are
 	// absent from our IR, so we compiler-generate equivalents, monomorphized by value type, each implementing
@@ -133,10 +137,10 @@ class BirEmitter {
 	private fun synthDelegate(kind: String, v: String): String = synthDelegates.getOrPut("$kind:$v") {
 		needsKProperty = true
 		val safe = v.replace(Regex("[^A-Za-z0-9]"), "_")
-		val cname = "${kind}Delegate_$safe"
+		val cname = "<>dotkt_${kind}Delegate_$safe"
 		val iface = propIface0("kotlin.properties.ReadWriteProperty", v)   // RWProperty_<V>; registers it
 		val thisRef = """{"name":"thisRef","type":"object"}"""
-		val kp = """{"name":"property","type":"@KProperty"}"""
+		val kp = """{"name":"property","type":"@<>dotkt_KProperty"}"""
 		val fieldVal = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":"value"}"""
 		val setVal = { e: String -> """{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":"value","value":$e}""" }
 		val getter = """{"name":"getValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp],"ret":${str(v)},"body":[{"k":"return","value":$fieldVal}]}"""
@@ -176,15 +180,15 @@ class BirEmitter {
 	private fun kPropertyDefs(): List<String> {
 		if (!needsKProperty) return emptyList()
 		val ifaceName = """{"name":"get_name","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":"string","body":[]}"""
-		val iface = """{"name":"KProperty","kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$ifaceName]}"""
-		val getName = """{"name":"get_name","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":"string","body":[{"k":"return","value":{"k":"field","ownerType":"KPropertyImpl","recv":{"k":"this"},"name":"name"}}]}"""
-		val ctorBody = """{"k":"setField","ownerType":"KPropertyImpl","recv":{"k":"this"},"name":"name","value":{"k":"local","name":"name"}}"""
-		val impl = """{"name":"KPropertyImpl","kind":"class","vis":"public","base":null,"interfaces":["KProperty"],"fields":[{"name":"name","type":"string"}],"ctors":[{"params":[{"name":"name","type":"string"}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[$ctorBody]}],"methods":[$getName]}"""
+		val iface = """{"name":"<>dotkt_KProperty","kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$ifaceName]}"""
+		val getName = """{"name":"get_name","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":"string","body":[{"k":"return","value":{"k":"field","ownerType":"<>dotkt_KPropertyImpl","recv":{"k":"this"},"name":"name"}}]}"""
+		val ctorBody = """{"k":"setField","ownerType":"<>dotkt_KPropertyImpl","recv":{"k":"this"},"name":"name","value":{"k":"local","name":"name"}}"""
+		val impl = """{"name":"<>dotkt_KPropertyImpl","kind":"class","vis":"public","base":null,"interfaces":["<>dotkt_KProperty"],"fields":[{"name":"name","type":"string"}],"ctors":[{"params":[{"name":"name","type":"string"}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[$ctorBody]}],"methods":[$getName]}"""
 		return listOf(iface, impl)
 	}
 
 	private fun kIteratorName(elemBir: String): String =
-		iterIfaces.getOrPut(elemBir) { "KIterator_" + elemBir.replace(Regex("[^A-Za-z0-9]"), "_") }
+		iterIfaces.getOrPut(elemBir) { "<>dotkt_KIterator_" + elemBir.replace(Regex("[^A-Za-z0-9]"), "_") }
 
 	/** `kotlin.collections.(Mutable)Iterator<E>` -> the monomorphized synthetic interface name, else null. */
 	private fun iteratorElemIface(t: IrType): String? {
@@ -212,15 +216,15 @@ class BirEmitter {
 	private fun propIface0(fq: String, v: String): String {
 		needsKProperty = true
 		val safe = v.replace(Regex("[^A-Za-z0-9]"), "_")
-		return if (fq == "kotlin.properties.ReadWriteProperty") rwPropIfaces.getOrPut(v) { "RWProperty_$safe" }
-		else roPropIfaces.getOrPut(v) { "ROProperty_$safe" }
+		return if (fq == "kotlin.properties.ReadWriteProperty") rwPropIfaces.getOrPut(v) { "<>dotkt_RWProperty_$safe" }
+		else roPropIfaces.getOrPut(v) { "<>dotkt_ROProperty_$safe" }
 	}
 
 	/** BIR defs for every synthesized Read(Write)Property interface (getValue/setValue over (thisRef, KProperty)). */
 	private fun propIfaceDefs(): List<String> {
 		fun m(name: String, params: String, ret: String) =
 			"""{"name":${str(name)},"static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[$params],"ret":${str(ret)},"body":[]}"""
-		val kp = """{"name":"property","type":"@KProperty"}"""
+		val kp = """{"name":"property","type":"@<>dotkt_KProperty"}"""
 		val thisRef = """{"name":"thisRef","type":"object"}"""
 		val out = ArrayList<String>()
 		roPropIfaces.forEach { (v, name) ->
@@ -249,12 +253,12 @@ class BirEmitter {
 	private fun resultDefs(): List<String> {
 		if (!needsResult) return emptyList()
 		val f = { n: String, t: String -> """{"name":${str(n)},"type":${str(t)}}""" }
-		val sf = { n: String -> """{"k":"setField","ownerType":"Result","recv":{"k":"this"},"name":${str(n)},"value":{"k":"local","name":${str(n)}}}""" }
+		val sf = { n: String -> """{"k":"setField","ownerType":"<>dotkt_Result","recv":{"k":"this"},"name":${str(n)},"value":{"k":"local","name":${str(n)}}}""" }
 		// isFailure is also accessed as a field (Kotlin property -> backing field); compute it = !isSuccess in the ctor.
-		val sfFailFlag = """{"k":"setField","ownerType":"Result","recv":{"k":"this"},"name":"isFailure","value":{"k":"un","op":"!","e":{"k":"local","name":"isSuccess"}}}"""
+		val sfFailFlag = """{"k":"setField","ownerType":"<>dotkt_Result","recv":{"k":"this"},"name":"isFailure","value":{"k":"un","op":"!","e":{"k":"local","name":"isSuccess"}}}"""
 		val fields = "${f("value", "gp:T")},${f("failure", "clr:System.Exception")},${f("isSuccess", "bool")},${f("isFailure", "bool")}"
 		val ctor = """{"params":[${f("value", "gp:T")},${f("failure", "clr:System.Exception")},${f("isSuccess", "bool")}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[${sf("value")},${sf("failure")},${sf("isSuccess")},$sfFailFlag]}"""
-		return listOf("""{"name":"Result","kind":"class","abstract":false,"vis":"public","typeParams":["T"],"base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}""")
+		return listOf("""{"name":"<>dotkt_Result","kind":"class","abstract":false,"vis":"public","typeParams":["T"],"base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}""")
 	}
 
 	private val SCOPE_FUNCTIONS = setOf("kotlin.let", "kotlin.run", "kotlin.with", "kotlin.apply", "kotlin.also")
@@ -1073,7 +1077,7 @@ class BirEmitter {
 		// A property reference passed to a delegate's getValue/setValue -> a `new KPropertyImpl("<name>")`.
 		is IrPropertyReference -> {
 			needsKProperty = true
-			"""{"k":"new","type":"KPropertyImpl","args":[{"k":"const","type":"string","value":${str(node.symbol.owner.name.asString())}}]}"""
+			"""{"k":"new","type":"<>dotkt_KPropertyImpl","args":[{"k":"const","type":"string","value":${str(node.symbol.owner.name.asString())}}]}"""
 		}
 		is IrFunctionExpression -> lambda(node)
 		// A callable reference `::foo` -> a delegate bound to the referenced function (same Func/Action as a lambda).
@@ -1124,7 +1128,7 @@ class BirEmitter {
 		// Capturing: build a closure class. Captures rewrite to `this.<field>` (by symbol identity, so the
 		// enclosing `this` — captured when the lambda reads a member — maps to a `__outer` field, not the
 		// closure's own `this`).
-		val cname = "__Closure${closureCounter++}"
+		val cname = "<>dotkt_Closure${closureCounter++}"
 		val capPairs = captures.map { it to captureFieldName(it) }
 		capPairs.forEach { (decl, fname) ->
 			captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
@@ -1555,7 +1559,7 @@ class BirEmitter {
 		if (block.origin?.toString() == "OBJECT_LITERAL") {
 			val anon = block.statements.filterIsInstance<IrClass>().firstOrNull()
 			if (anon != null) {
-				val cname = "__obj${scopeCounter++}"
+				val cname = "<>dotkt_obj${scopeCounter++}"
 				anonNames[anon] = cname
 				val captured = capturedVarsForObject(anon)
 				// Mutable capture (writing an outer local through the object) needs ref cells -> defer cleanly.
@@ -1633,7 +1637,7 @@ class BirEmitter {
 			}
 			if (ownerName != null) {
 				needsKProperty = true
-				val kprop = """{"k":"new","type":"KPropertyImpl","args":[{"k":"const","type":"string","value":${str(ldp.name.asString())}}]}"""
+				val kprop = """{"k":"new","type":"<>dotkt_KPropertyImpl","args":[{"k":"const","type":"string","value":${str(ldp.name.asString())}}]}"""
 				val nullRef = """{"k":"const","type":"void","value":null}"""
 				return if (callee === ldp.setter)
 					"""{"k":"callInstance","ownerType":${str(ownerName)},"virtual":true,"recv":$dlocal,"method":"setValue","args":[$nullRef,$kprop,${expr(regularArgs(call).first())}]}"""
@@ -1714,7 +1718,7 @@ class BirEmitter {
 				needsResult = true
 				var elem = (call.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
 				if (elem == "void") elem = "object"
-				val spec = "Result[$elem]"
+				val spec = "<>dotkt_Result[$elem]"
 				val rcVar = "__rc${scopeCounter++}"
 				val rcLoc = """{"k":"local","name":${str(rcVar)}}"""
 				val pre = ArrayList<String>()
@@ -2130,7 +2134,7 @@ class BirEmitter {
 			declaringClass?.fqNameWhenAvailable?.asString()?.startsWith("kotlin.reflect.KProperty") == true) {
 			needsKProperty = true
 			val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
-			return """{"k":"callInstance","ownerType":"KProperty","virtual":true,"recv":$recv,"method":"get_name","args":[]}"""
+			return """{"k":"callInstance","ownerType":"<>dotkt_KProperty","virtual":true,"recv":$recv,"method":"get_name","args":[]}"""
 		}
 		// Delegated property access. `by lazy`: `obj.x` -> `obj.x$delegate.Value` (System.Lazy<T>.Value),
 		// dropping thisRef/KProperty. Custom (duck-typed) delegate: route to its getValue/setValue, passing
@@ -2165,7 +2169,7 @@ class BirEmitter {
 			if (delegate != null && ownerName != null) {
 				needsKProperty = true
 				val owner = str(ownerName)
-				val kprop = """{"k":"new","type":"KPropertyImpl","args":[{"k":"const","type":"string","value":${str(property.name.asString())}}]}"""
+				val kprop = """{"k":"new","type":"<>dotkt_KPropertyImpl","args":[{"k":"const","type":"string","value":${str(property.name.asString())}}]}"""
 				// callvirt: getValue/setValue is virtual (interface impl) or final (duck-typed) — callvirt fits both.
 				return if (callee === property.setter)
 					"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"setValue","args":[$recv,$kprop,${expr(regularArgs(call).first())}]}"""
@@ -2545,7 +2549,7 @@ class BirEmitter {
 		if (fqp == "kotlin.Result") {
 			needsResult = true
 			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			return "@Result[$arg]"
+			return "@<>dotkt_Result[$arg]"
 		}
 		// `by lazy` delegate: kotlin.Lazy<T> -> System.Lazy<T>.
 		if (fqp == "kotlin.Lazy") {
@@ -2554,7 +2558,7 @@ class BirEmitter {
 		}
 		// kotlin.reflect.KProperty* (delegated-property metadata) -> the synthetic compiler-generated `KProperty`.
 		if (fqp != null && (fqp.startsWith("kotlin.reflect.KProperty") || fqp.startsWith("kotlin.reflect.KMutableProperty"))) {
-			needsKProperty = true; return "@KProperty"
+			needsKProperty = true; return "@<>dotkt_KProperty"
 		}
 		// kotlin.properties.Read(Write)Property<T,V> -> the monomorphized synthetic interface.
 		propIface(t)?.let { return "@$it" }
