@@ -1660,12 +1660,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	private fun ternary(node: IrWhen): String {
-		// Fold right-to-left into nested conditionals.
+		// Fold right-to-left into nested conditionals. The branches carry the when's result type, so a value-type
+		// nullable result (`Int?`) gets its `T`/`null` branches coerced to Nullable<T> at emit (see EmitCond).
+		val ty = str(birType(node.type))
 		var acc = """{"k":"const","type":"void","value":null}"""
 		for (b in node.branches.asReversed()) {
 			val isElse = (b.condition as? IrConst)?.value == true
 			acc = if (isElse) expr(b.result)
-			else """{"k":"cond","cond":${expr(b.condition)},"then":${expr(b.result)},"else":$acc}"""
+			else """{"k":"cond","type":$ty,"cond":${expr(b.condition)},"then":${expr(b.result)},"else":$acc}"""
 		}
 		return acc
 	}
@@ -1820,11 +1822,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (recvExpr != null && lambda != null) return inlineScope(calleeFq!!, recvExpr, lambda)
 		}
 
-		// Collection factories `listOf`/`setOf` -> a `listNew`/`setNew` (List<elem>/HashSet<elem>).
+		// Collection factories `listOf`/`setOf` -> a `listNew`/`setNew` (List<elem>/HashSet<elem>). Handles both the
+		// vararg overload (`listOf(a, b, …)`) and the single-element overload (`listOf(x)` is NOT a vararg). The
+		// element type comes from the call's `List<T>` return so a single-element `listOf(3)` is List<Int>, not <object>.
 		if (calleeFq in LIST_FACTORIES || calleeFq in SET_FACTORIES) {
-			val v = call.arguments.firstOrNull() as? IrVararg
-			val elems = v?.elements?.filterIsInstance<IrExpression>().orEmpty()
-			val elemT = v?.let { birType(it.varargElementType) } ?: "object"
+			val elems = (call.arguments.firstOrNull() as? IrVararg)?.elements?.filterIsInstance<IrExpression>()
+				?: regularArgs(call)
+			val elemT = collectionElemType(call.type)
 			val kind = if (calleeFq in SET_FACTORIES) "setNew" else "listNew"
 			return """{"k":${str(kind)},"elem":${str(elemT)},"elems":[${elems.joinToString(",") { expr(it) }}]}"""
 		}
@@ -1870,6 +1874,36 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						toList(clrGen(EN, "Zip", listOf("int", t, tr), listOf("ienum", "ienum", "func:3"), listOf(range, src, arg())), tr)
 					}
 					"filter" -> toList(clrGen(EN, "Where", listOf(t), EF, listOf(src, arg())), t)
+					// `mapNotNull { … }` -> Select(sel) then drop nulls. Value-type R? unwraps Nullable<R>.
+					"mapNotNull" -> {
+						val tr = lambdaRet(a0)                                  // R? (the selector's return)
+						val mapped = clrGen(EN, "Select", listOf(t, tr), EF, listOf(src, arg()))
+						if (tr.startsWith("nullable:")) {
+							val inner = tr.removePrefix("nullable:")
+							val hasVal = synthLambda(tr, "bool") { x -> """{"k":"clrPropGet","type":${str(tr)},"name":"HasValue","retType":"bool","static":false,"recv":$x}""" }
+							val getVal = synthLambda(tr, inner) { x -> """{"k":"clrPropGet","type":${str(tr)},"name":"Value","retType":${str(inner)},"static":false,"recv":$x}""" }
+							toList(clrGen(EN, "Select", listOf(tr, inner), EF, listOf(clrGen(EN, "Where", listOf(tr), EF, listOf(mapped, hasVal)), getVal)), inner)
+						} else {
+							val pred = synthLambda(tr, "bool") { x -> """{"k":"un","op":"!","e":{"k":"objEq","l":$x,"r":{"k":"const","type":"void","value":null}}}""" }
+							toList(clrGen(EN, "Where", listOf(tr), EF, listOf(mapped, pred)), tr)
+						}
+					}
+					// `flatMap { … }` -> SelectMany(Select(sel), identity). The user selector returns a List<R> (exact
+					// Select), then a synthetic identity (List<R> -> IEnumerable<R>) flattens — keeps delegate types exact.
+					"flatMap" -> {
+						val r = collectionElemType(call.type)
+						val listR = lambdaRet(a0)
+						val mapped = clrGen(EN, "Select", listOf(t, listR), EF, listOf(src, arg()))
+						val identity = synthLambda(listR, "clrg:System.Collections.Generic.IEnumerable[$r]") { x -> x }
+						toList(clrGen(EN, "SelectMany", listOf(listR, r), listOf("ienum", "func:2"), listOf(mapped, identity)), r)
+					}
+					// `flatten()` -> SelectMany(identity) (the outer element IS an IEnumerable of the inner).
+					"flatten" -> {
+						val r = collectionElemType(call.type)
+						val listR = collectionElemType(recv.type)
+						val identity = synthLambda(listR, "clrg:System.Collections.Generic.IEnumerable[$r]") { x -> x }
+						toList(clrGen(EN, "SelectMany", listOf(listR, r), listOf("ienum", "func:2"), listOf(src, identity)), r)
+					}
 					"take" -> toList(clrGen(EN, "Take", listOf(t), listOf("ienum", "int"), listOf(src, arg())), t)
 					"drop" -> toList(clrGen(EN, "Skip", listOf(t), listOf("ienum", "int"), listOf(src, arg())), t)
 					"takeWhile" -> toList(clrGen(EN, "TakeWhile", listOf(t), EF, listOf(src, arg())), t)
@@ -2758,6 +2792,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"maxByOrNull", "minByOrNull", "zip", "associateWith", "associateBy", "groupBy",
 			"asSequence", "toSet", "takeWhile", "dropWhile", "single", "singleOrNull",
 			"sortedDescending", "sortedBy", "sortedByDescending", "mapIndexed", "chunked", "filterNotNull",
+			"mapNotNull", "flatMap", "flatten",
 		)
 
 		// Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.

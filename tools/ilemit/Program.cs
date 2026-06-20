@@ -2117,13 +2117,37 @@ sealed class Emitter
         return typeof(string);
     }
 
+    // Emit an expression, coercing a bare `T` (or a null literal) to `Nullable<T>` when `want` is a Nullable<T>.
+    // Shared by EmitArg and EmitCond so value-type `T?` flows correctly through args and if/when branches.
+    Type EmitNullableCoerced(JsonElement node, Type want)
+    {
+        bool wantNullable = want != null && want.IsGenericType && want.GetGenericTypeDefinition() == typeof(Nullable<>);
+        if (wantNullable && node.TryGetProperty("k", out var k) && k.GetString() == "const"
+            && node.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Null)
+        {
+            var loc = _il.DeclareLocal(want);
+            _il.Emit(OpCodes.Ldloca, loc); _il.Emit(OpCodes.Initobj, want); _il.Emit(OpCodes.Ldloc, loc);
+            return want;
+        }
+        var got = EmitExpr(node);
+        if (wantNullable && got != null && want.GetGenericArguments()[0] == got)
+        {
+            _il.Emit(OpCodes.Newobj, want.GetConstructor(new[] { got }));
+            return want;
+        }
+        return got;
+    }
+
     Type EmitCond(JsonElement e)
     {
+        // A value-type-nullable if/when (`Int?`) tags its result type so each branch's `T`/`null` coerces to Nullable<T>.
+        Type want = null;
+        if (e.TryGetProperty("type", out var tt)) { try { want = ClrRef(tt.GetString()); } catch { } }
         var elseL = _il.DefineLabel(); var end = _il.DefineLabel();
         EmitExpr(e.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, elseL);
-        var t = EmitExpr(e.GetProperty("then")); _il.Emit(OpCodes.Br, end);
-        _il.MarkLabel(elseL); EmitExpr(e.GetProperty("else")); _il.MarkLabel(end);
-        return t;
+        var t = EmitNullableCoerced(e.GetProperty("then"), want); _il.Emit(OpCodes.Br, end);
+        _il.MarkLabel(elseL); EmitNullableCoerced(e.GetProperty("else"), want); _il.MarkLabel(end);
+        return want ?? t;
     }
 
     // Kotlin structural `==`: `if (a == null) b == null else a.Equals((object)b)`.
@@ -2315,23 +2339,12 @@ sealed class Emitter
     }
     void EmitArg(JsonElement a, Type want)
     {
-        // A null literal passed to a Nullable<T> slot -> default(Nullable<T>) (an empty Nullable), not ldnull.
-        if (want.IsGenericType && want.GetGenericTypeDefinition() == typeof(Nullable<>)
-            && a.TryGetProperty("k", out var ak) && ak.GetString() == "const"
-            && a.TryGetProperty("value", out var av) && av.ValueKind == JsonValueKind.Null)
-        {
-            var loc = _il.DeclareLocal(want);
-            _il.Emit(OpCodes.Ldloca, loc); _il.Emit(OpCodes.Initobj, want); _il.Emit(OpCodes.Ldloc, loc);
-            return;
-        }
-        var got = EmitExpr(a);
+        // `T`/null passed to a `T?` slot -> Nullable<T> wrap / default(Nullable<T>) (shared with EmitCond).
+        var got = EmitNullableCoerced(a, want);
         if (got == null) return;
-        // `T` passed to a `T?` param -> wrap in Nullable<T>; value passed to a reference param -> box.
-        if (want.IsGenericType && want.GetGenericTypeDefinition() == typeof(Nullable<>) && want.GetGenericArguments()[0] == got)
-            _il.Emit(OpCodes.Newobj, want.GetConstructor(new[] { got }));
         // Box a value/generic-param arg passed to a reference param — but NOT when the param is itself a generic
         // param (passing `T` to a `T` slot flows the value as-is at the instantiation).
-        else if (NeedsBoxToRef(got) && !want.IsValueType && !want.IsGenericParameter)
+        if (NeedsBoxToRef(got) && !want.IsValueType && !want.IsGenericParameter)
             _il.Emit(OpCodes.Box, got);
     }
 
