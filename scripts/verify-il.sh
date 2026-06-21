@@ -179,6 +179,7 @@ il_check_ref coro Coro "$ROOT/samples/il-coro" "$(printf 'tryOk = 11\ntryCatch =
 il_check_ref c1net C1Net "$ROOT/samples/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
 il_check_inject firgap FirGap "$ROOT/samples/il-firgap" "$(printf '42\n60\n3\n20')" P
 il_check_inject outref Outref "$ROOT/samples/il-outref" "$(printf 'ok=5\nfail\n2 1')" OutR
+il_check_inject netattr NetAttr "$ROOT/samples/il-netattr" "$(printf 'widget#7\n42')" Lbl
 
 # Reverse interop: a .NET (C#) host loads the IL-emitted Kotlin assembly and calls a Kotlin class + top-level
 # fun. Proves the IL output is a consumable .NET assembly. (Compile-time <Reference> needs per-type contract-

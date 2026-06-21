@@ -516,13 +516,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"name":${str(typeName(klass))},"kind":"class","abstract":false,"vis":"public","base":"clr:System.Attribute","interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
 	}
 
-	/** The `attrs` JSON for a declaration: each user annotation `@Ann(consts)` -> a .NET custom attribute application. */
+	/** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. A Kotlin-authored
+	 *  annotation uses its synthesized `: System.Attribute` type (#46); an imported .NET attribute uses its real type
+	 *  via a `clr:` marker so ilemit binds the existing .NET constructor (#54). Kotlin built-in annotations are dropped. */
 	private fun attrsJson(anns: List<IrConstructorCall>): String =
 		anns.mapNotNull { ann ->
 			val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
-			if (ac.kind != ClassKind.ANNOTATION_CLASS || clrName(ac) != null || ac.fqNameWhenAvailable?.asString()?.startsWith("kotlin.") == true) return@mapNotNull null
+			if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
+			val clr = clrName(ac)
+			if (clr == null && ac.fqNameWhenAvailable?.asString()?.startsWith("kotlin.") == true) return@mapNotNull null
+			val attrType = if (clr != null) "clr:$clr" else typeName(ac)
 			val args = regularArgs(ann)
-			"""{"attr":${str(typeName(ac))},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
+			"""{"attr":${str(attrType)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
 		}.joinToString(",")
 
 	private fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {

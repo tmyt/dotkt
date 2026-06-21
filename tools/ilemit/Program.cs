@@ -2504,9 +2504,20 @@ sealed class Emitter
     // class's ctor + compile-time-constant args.
     CustomAttributeBuilder BuildCab(JsonElement a)
     {
-        var at = _types[a.GetProperty("attr").GetString()];
-        var ctor = at.Ctors.Count > 0 ? at.Ctors[0] : at.TB.DefineDefaultConstructor(MethodAttributes.Public);
+        var attr = a.GetProperty("attr").GetString();
         var args = a.GetProperty("args").EnumerateArray().Select(ConstArgValue).ToArray();
+        if (attr.StartsWith("clr:"))
+        {
+            // An imported .NET attribute (#54): bind its real constructor (resolved by the declared arg types,
+            // falling back to arity) and apply it with the constant args.
+            var at = ClrRef(attr);
+            var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s.GetString())).ToArray();
+            var nctor = at.GetConstructor(argTypes)
+                        ?? at.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == args.Length);
+            return new CustomAttributeBuilder(nctor, args);
+        }
+        var ti = _types[attr];
+        var ctor = ti.Ctors.Count > 0 ? ti.Ctors[0] : ti.TB.DefineDefaultConstructor(MethodAttributes.Public);
         return new CustomAttributeBuilder(ctor, args);
     }
 

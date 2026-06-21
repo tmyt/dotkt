@@ -56,6 +56,7 @@ private class ClrType(
 	val dotNetName: String,
 	val isObject: Boolean,
 	val isInterface: Boolean,          // .NET interface => Kotlin can implement it
+	val isAnnotation: Boolean,         // System.Attribute-derived => Kotlin annotation class (apply on decls)
 	val open: Boolean,                 // .NET non-sealed => Kotlin can extend it
 	val typeParams: List<String>,      // generic type parameter names (`Collection<T>` -> ["T"])
 	val methods: List<ClrMethod>,
@@ -78,12 +79,12 @@ private object ClrMetadataHolder {
 	private fun load(file: File): ClrModule? {
 		if (!file.isFile) return null
 		val types = ArrayList<ClrType>()
-		var name = ""; var dotNet = ""; var isObject = false; var isInterface = false; var isOpen = false
+		var name = ""; var dotNet = ""; var isObject = false; var isInterface = false; var isOpen = false; var isAnnotation = false
 		var tparams = emptyList<String>()
 		val methods = ArrayList<ClrMethod>(); val ctors = ArrayList<List<ClrParam>>()
 		val props = ArrayList<ClrProperty>(); val events = ArrayList<ClrEvent>()
 		var indexer: ClrIndexer? = null
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isOpen, tparams, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer)) }
+		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer)) }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
 			if (line.isEmpty()) continue
@@ -92,10 +93,17 @@ private object ClrMetadataHolder {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
 					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null
-					name = tok[1]; dotNet = tok[2]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"
+					name = tok[1]; dotNet = tok[2]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"; isAnnotation = false
 					isOpen = !isObject && !isInterface && tok.getOrNull(3) == "open"
 					// `class <Name> <DotNet> <open|sealed> [<TypeParam>...]` -> trailing tokens are type params.
 					tparams = if (tok[0] == "class") tok.drop(4) else emptyList()
+				}
+				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
+				// trailing params (from its longest ctor) become the single annotation constructor.
+				"annotation" -> {
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null
+					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
+					ctors.add(parseParams(tok.drop(3)))
 				}
 				// fun <Name> <ret> <open|final> [<TypeParam>...] [<param>:<type>]* — bare trailing tokens (no `:`)
 				// are method type parameters; tokens with `:` are value params.
@@ -169,7 +177,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 
 	override fun generateTopLevelClassLikeDeclaration(classId: ClassId): FirClassLikeSymbol<*>? {
 		val type = byClassId[classId] ?: return null
-		val kind = when { type.isObject -> ClassKind.OBJECT; type.isInterface -> ClassKind.INTERFACE; else -> ClassKind.CLASS }
+		val kind = when { type.isAnnotation -> ClassKind.ANNOTATION_CLASS; type.isObject -> ClassKind.OBJECT; type.isInterface -> ClassKind.INTERFACE; else -> ClassKind.CLASS }
 		// A non-sealed .NET class is `open` so Kotlin can inherit it (the basis of framework-direct UI).
 		return createTopLevelClass(classId, ClrGeneratedKey, kind) {
 			if (type.open || type.isInterface) modality = Modality.OPEN

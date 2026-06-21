@@ -148,6 +148,19 @@ static class FacadeGen
                 Console.WriteLine($"meta: {t.FullName} (interface)");
                 continue;
             }
+            // A .NET attribute type (System.Attribute-derived) -> a Kotlin annotation class, so the author can apply
+            // `@TheAttr(args)` on Kotlin declarations and the backend re-applies the real .NET attribute (#54). The
+            // longest constructor whose params are all supported defines the annotation's parameters.
+            if (IsAttribute(t) && !t.IsAbstract)
+            {
+                var actor = t.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(c => c.GetParameters().All(p => Supported(p.ParameterType)))
+                    .OrderByDescending(c => c.GetParameters().Length).FirstOrDefault();
+                var aps = actor?.GetParameters() ?? Array.Empty<ParameterInfo>();
+                sb.Append($"annotation {t.Name} {t.FullName} {MetaParams(aps, t)}".TrimEnd() + "\n");
+                Console.WriteLine($"meta: {t.FullName} (annotation)");
+                continue;
+            }
             var isStatic = t.IsAbstract && t.IsSealed;
             // A generic type definition (`Collection`1`) -> simple name `Collection`, OPEN .NET name (namespace +
             // simple, no `1` — the backend appends the arity), and the type parameter names as trailing tokens.
@@ -231,6 +244,14 @@ static class FacadeGen
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
         File.WriteAllText(outFile, sb.ToString());
         return 0;
+    }
+
+    // Walk the base chain by FullName (LoadFrom'd reference assemblies give System.Attribute a different identity
+    // than the runtime's typeof, so `typeof(Attribute).IsAssignableFrom` would miss — see Map's I2 note).
+    static bool IsAttribute(Type t)
+    {
+        for (var b = t; b != null; b = b.BaseType) if (b.FullName == "System.Attribute") return true;
+        return false;
     }
 
     static string MetaParams(ParameterInfo[] ps, Type self) =>
