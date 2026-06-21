@@ -45,6 +45,26 @@ namespace DotKt.Coroutines
         void ResumeWith(Result<T> result);
     }
 
+    /// Adapts the object-typed state machine to a typed `Continuation<T>` for the raw
+    /// `suspendCoroutineUninterceptedOrReturn { c -> ... }` intrinsic (the block receives `Continuation<T>`, but the
+    /// SM is `Continuation<object>`). Boxes on resume. Confines the reified-T friction to this one hop.
+    public sealed class TypedCont<T> : Continuation<T>
+    {
+        readonly Continuation<object> _raw;
+        public TypedCont(Continuation<object> raw) { _raw = raw; }
+        public CoroutineContext Context => _raw.Context;
+        public void ResumeWith(Result<T> r) =>
+            _raw.ResumeWith(r.IsFailure ? Result<object>.Failure(r.ExceptionOrNull) : Result<object>.Success(r.GetOrThrow()));
+    }
+
+    /// kotlin.coroutines.{resume,resumeWithException} — the resume API over `Continuation<T>`, hiding Result from
+    /// emitted user code (the compiler maps the stdlib extension funs onto these).
+    public static class Continuations
+    {
+        public static void Resume<T>(Continuation<T> c, T value) => c.ResumeWith(Result<T>.Success(value));
+        public static void ResumeWithException<T>(Continuation<T> c, Exception e) => c.ResumeWith(Result<T>.Failure(e));
+    }
+
     public static class Intrinsics
     {
         /// kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED — the sentinel a suspension point returns (by ===
@@ -123,5 +143,19 @@ namespace DotKt.Coroutines
 
         static Exception Unwrap(AggregateException ae) =>
             ae != null && ae.InnerExceptions.Count == 1 ? ae.InnerException : ae;
+
+        /// Kotlin-facing await leaf: register a typed continuation to be resumed when `task` completes. Used by a
+        /// `suspend fun await(t): T = suspendCoroutineUninterceptedOrReturn { c -> onComplete(t, c); COROUTINE_SUSPENDED }`.
+        public static void OnComplete<T>(Task<T> task, Continuation<T> cont)
+        {
+            task.GetAwaiter().OnCompleted(() =>
+            {
+                if (task.IsFaulted) Continuations.ResumeWithException(cont, Unwrap(task.Exception));
+                else Continuations.Resume(cont, task.Result);
+            });
+        }
+
+        /// Monomorphic Int convenience for facades that can't yet call a generic .NET method (Phase 2 sample).
+        public static void OnCompleteInt(Task<int> task, Continuation<int> cont) => OnComplete(task, cont);
     }
 }

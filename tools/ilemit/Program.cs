@@ -799,7 +799,7 @@ sealed class Emitter
             foreach (var st in steps)
             {
                 var kind = st.GetProperty("k").GetString();
-                if (kind == "coSuspend") resume[st.GetProperty("state").GetInt32()] = _il.DefineLabel();
+                if (kind == "coSuspend" || kind == "coSuspendIntrinsic") resume[st.GetProperty("state").GetInt32()] = _il.DefineLabel();
                 else if (kind == "coLabel" || kind == "coGoto" || kind == "coCondGoto") { int id = st.GetProperty("id").GetInt32(); if (!coLabel.ContainsKey(id)) coLabel[id] = _il.DefineLabel(); }
             }
             var tryStart = new Dictionary<int, Label>();
@@ -808,7 +808,7 @@ sealed class Emitter
             { int open = -1; foreach (var st in steps) { var kind = st.GetProperty("k").GetString();
                 if (kind == "coTryBegin") { int id = st.GetProperty("id").GetInt32(); open = id; tryStart[id] = _il.DefineLabel(); tryStates[id] = new List<int>(); }
                 else if (kind == "coTryEnd") open = -1;
-                else if (kind == "coSuspend" && open >= 0) { int k = st.GetProperty("state").GetInt32(); stateTry[k] = open; tryStates[open].Add(k); } } }
+                else if ((kind == "coSuspend" || kind == "coSuspendIntrinsic") && open >= 0) { int k = st.GetProperty("state").GetInt32(); stateTry[k] = open; tryStates[open].Add(k); } } }
             _coExit = _il.DefineLabel(); _coTryDepth = 0;
 
             foreach (var kv in resume)
@@ -833,6 +833,7 @@ sealed class Emitter
                         var el = _il.DeclareLocal(ct); _locals[st.GetProperty("var").GetString()] = el; _il.Emit(OpCodes.Stloc, el); break; }
                     case "coTryEnd": { int id = st.GetProperty("id").GetInt32(); if (fell) _il.Emit(OpCodes.Leave, tryEnd[id]); _il.EndExceptionBlock(); _coTryDepth--; break; }
                     case "coSuspend": EmitCoSuspendClass(st, fState, fParam, fErr, resume, coFields, builders, fSuspended, outcome); break;
+                    case "coSuspendIntrinsic": EmitCoSuspendIntrinsicClass(st, fState, fParam, fErr, resume, coFields, fSuspended, outcome); break;
                     case "coLabel": _il.MarkLabel(coLabel[st.GetProperty("id").GetInt32()]); break;
                     case "coGoto": _il.Emit(OpCodes.Br, coLabel[st.GetProperty("id").GetInt32()]); break;
                     case "coCondGoto": EmitExpr(st.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, coLabel[st.GetProperty("id").GetInt32()]); break;
@@ -920,6 +921,49 @@ sealed class Emitter
         _il.Emit(OpCodes.Ldloc, lTask); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Call, awaitOnto);
         _il.Emit(OpCodes.Ldsfld, fSuspended); _il.Emit(OpCodes.Stloc, outcome);
         if (_coTryDepth > 0) _il.Emit(OpCodes.Leave, _coExit); else _il.Emit(OpCodes.Br, _coExit);
+
+        _il.MarkLabel(resume[k]);
+        var noErr = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fErr); _il.Emit(OpCodes.Brfalse, noErr);
+        _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fErr); _il.Emit(OpCodes.Throw);
+        _il.MarkLabel(noErr);
+        var assignTo = st.GetProperty("assignTo").ValueKind == JsonValueKind.Null ? null : st.GetProperty("assignTo").GetString();
+        var resType = st.GetProperty("resultType").GetString();
+        if (assignTo != null && resType != "void")
+        {
+            var tk = MapType(resType);
+            if (coFields.TryGetValue(assignTo, out var destF))
+            {
+                _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fParam);
+                _il.Emit(tk.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stfld, destF);
+            }
+            else
+            {
+                var tmp = _il.DeclareLocal(tk); _locals[assignTo] = tmp;
+                _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fParam);
+                _il.Emit(tk.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stloc, tmp);
+            }
+        }
+    }
+
+    // The raw `suspendCoroutineUninterceptedOrReturn` leaf in the class form: set the resume state, run the block's
+    // leading statements (which typically register `this` to be resumed), then evaluate its result — if it is
+    // COROUTINE_SUSPENDED, suspend; otherwise resume synchronously with that value. On resume, rethrow a faulted
+    // result or unbox <>param. State is set BEFORE the block runs, so a same-thread resume during registration is safe.
+    void EmitCoSuspendIntrinsicClass(JsonElement st, FieldBuilder fState, FieldBuilder fParam, FieldBuilder fErr,
+        Dictionary<int, Label> resume, Dictionary<string, FieldBuilder> coFields, FieldInfo fSuspended, LocalBuilder outcome)
+    {
+        int k = st.GetProperty("state").GetInt32();
+        _il.Emit(OpCodes.Ldarg_0); EmitLdcI4(k); _il.Emit(OpCodes.Stfld, fState);
+        foreach (var pre in st.GetProperty("pre").EnumerateArray()) EmitStmt(pre);
+        var gt = EmitExpr(st.GetProperty("value")); if (gt != null && gt.IsValueType) _il.Emit(OpCodes.Box, gt);
+        var vTmp = _il.DeclareLocal(typeof(object)); _il.Emit(OpCodes.Stloc, vTmp);
+        var notSusp = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldloc, vTmp); _il.Emit(OpCodes.Ldsfld, fSuspended); _il.Emit(OpCodes.Bne_Un, notSusp);
+        _il.Emit(OpCodes.Ldsfld, fSuspended); _il.Emit(OpCodes.Stloc, outcome);
+        if (_coTryDepth > 0) _il.Emit(OpCodes.Leave, _coExit); else _il.Emit(OpCodes.Br, _coExit);
+        _il.MarkLabel(notSusp);                                  // synchronous return: stash the value as the resume param
+        _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldloc, vTmp); _il.Emit(OpCodes.Stfld, fParam);
 
         _il.MarkLabel(resume[k]);
         var noErr = _il.DefineLabel();
@@ -1532,6 +1576,17 @@ sealed class Emitter
             case "this":
                 if (_coThis != null) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, _coThis); return _coThis.FieldType; }   // instance coroutine: captured receiver
                 _il.Emit(OpCodes.Ldarg_0); return typeof(object);
+            case "coSuspendedSentinel":   // kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+                { var f = ResolveType("DotKt.Coroutines.Intrinsics").GetField("COROUTINE_SUSPENDED"); _il.Emit(OpCodes.Ldsfld, f); return typeof(object); }
+            case "coSelfCont":   // the coroutine's own continuation (the SM), as a typed Continuation<T>: new TypedCont<T>(this)
+                {
+                    var tk = MapType(e.GetProperty("resultType").GetString());
+                    var typed = ResolveType("DotKt.Coroutines.TypedCont`1").MakeGenericType(tk);
+                    var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
+                    _il.Emit(OpCodes.Ldarg_0);   // the SM (Continuation<object>)
+                    _il.Emit(OpCodes.Newobj, typed.GetConstructor(new[] { contObj }));
+                    return typed;
+                }
             case "local":
             {
                 var name = e.GetProperty("name").GetString();

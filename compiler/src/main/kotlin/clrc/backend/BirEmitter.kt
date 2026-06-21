@@ -849,10 +849,38 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		})
 	}
 
+	/** The raw `kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn { c -> ... }` leaf intrinsic. */
+	private fun isSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
+		e is IrCall && e.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn"
+
 	/** A suspension point: start the awaitable; if incomplete, save state and return; on resume read the result. */
 	private fun emitSuspend(call: IrCall, assignTo: String?, steps: MutableList<String>) {
+		if (isSuspendIntrinsic(call)) { emitSuspendIntrinsic(call, assignTo, steps); return }
 		val k = ++coState
 		steps.add("""{"k":"coSuspend","state":$k,"awaitable":${coAwaitable(call)},"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(birType(call.type))}}""")
+	}
+
+	/**
+	 * `suspendCoroutineUninterceptedOrReturn { c -> body }` (Path B leaf): the block receives the coroutine's OWN
+	 * continuation and returns a value (resume synchronously) or COROUTINE_SUSPENDED (suspend). We inline the block:
+	 * bind `c` to the SM itself (`coSelfCont` = a typed adapter over `this`), emit the body's leading statements,
+	 * and carry its result expr into a `coSuspendIntrinsic` step (ilemit does the value-or-suspend at the SM). Only
+	 * the Continuation-class form (@KCont) handles this; the struct/Task form emits a loud error.
+	 */
+	private fun emitSuspendIntrinsic(call: IrCall, assignTo: String?, steps: MutableList<String>) {
+		val k = ++coState
+		val resultT = birType(call.type)
+		val block = regularArgs(call).firstOrNull() as? IrFunctionExpression
+			?: run { steps.add(coUnsupported("suspendCoroutineUninterceptedOrReturn without a literal block")); return }
+		val cParam = block.function.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
+		if (cParam != null) captureSubst[cParam] = """{"k":"coSelfCont","resultType":${str(resultT)}}"""
+		val pre = ArrayList<String>()
+		var valueExpr = """{"k":"coSuspendedSentinel"}"""
+		for (s in (block.function.body as? IrBlockBody)?.statements.orEmpty()) {
+			if (s is IrReturn) valueExpr = expr(s.value) else pre.add(stmt(s))
+		}
+		if (cParam != null) captureSubst.remove(cParam)
+		steps.add("""{"k":"coSuspendIntrinsic","state":$k,"pre":[${pre.joinToString(",")}],"value":$valueExpr,"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(resultT)}}""")
 	}
 
 	private fun emitCpsBlock(e: IrExpression, ret: IrType, steps: MutableList<String>) =
@@ -1983,6 +2011,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	private fun call(call: IrCall): String {
 		val callee = call.symbol.owner
+		val calleeFqEarly = callee.fqNameWhenAvailable?.asString()
+		// `kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED` (a top-level val getter) -> the runtime sentinel.
+		if (callee.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED")
+			return """{"k":"coSuspendedSentinel"}"""
+		// kotlin.coroutines.{resume,resumeWithException}(value/e) on a Continuation<T> -> the runtime resume helpers
+		// (they wrap a kotlin.Result, kept off the emitted surface).
+		if (calleeFqEarly == "kotlin.coroutines.resume" || calleeFqEarly == "kotlin.coroutines.resumeWithException") {
+			val recv = extensionReceiver(call) ?: dispatchReceiver(call)!!
+			val contT = ((recv.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
+			val method = if (calleeFqEarly == "kotlin.coroutines.resume") "Resume" else "ResumeWithException"
+			val argT = if (method == "Resume") contT else "clr:System.Exception"
+			return """{"k":"clrStatic","type":"DotKt.Coroutines.Continuations","method":${str(method)},"typeArgs":[${str(contT)}],"argTypes":["clrg:DotKt.Coroutines.Continuation[$contT]",${str(argT)}],"ret":"System.Void","args":[${expr(recv)},${expr(regularArgs(call).first())}]}"""
+		}
 		// `kotlinx.coroutines.runBlocking { … }` -> drive the coroutine synchronously. Only a TRIVIAL block
 		// (`{ suspendFun() }`, a single tail suspend call) is supported here (a non-trivial block needs suspend-lambda
 		// CPS). The block's kickoff Task is awaited via GetAwaiter().GetResult().
@@ -2949,6 +2990,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.Char" -> "System.Char"
 		"kotlin.String" -> "System.String"
 		"kotlin.Unit" -> "System.Void"
+		"kotlin.coroutines.Continuation" -> "clrg:DotKt.Coroutines.Continuation[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		else -> NET_EXCEPTIONS[fq]
 			?: (t.classifierOrNull?.owner as? IrClass)?.let { clrName(it) }
 			?: "System.Object"
@@ -3091,6 +3133,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
 		// kotlin.Throwable -> System.Exception (the common base; `.message` -> .Message).
 		if (fqp == "kotlin.Throwable") return "clr:System.Exception"
+		// kotlin.coroutines.Continuation<T> -> the shared DotKt.Coroutines.Continuation<T> (Path B; cross-assembly
+		// identity so a user assembly and dotktx.coroutines share one Continuation). See docs §13b.
+		if (fqp == "kotlin.coroutines.Continuation") {
+			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+			return "clrg:DotKt.Coroutines.Continuation[$arg]"
+		}
 		// kotlin.Result<T> -> the synthetic generic `Result<T>` (registers it for synthesis).
 		if (fqp == "kotlin.Result") {
 			needsResult = true

@@ -240,6 +240,20 @@ NOT yet the raw `suspendCoroutineUninterceptedOrReturn` — that frontend intrin
 handing the SM out as a typed `Continuation`) is **Phase 2**, and is what lets a coroutine hand its continuation
 to arbitrary Kotlin code (required to compile upstream).
 
+## 13c. Phase 2 status (2026-06-22) — raw intrinsics
+
+**Phase 2 ✅ (core) DONE.** The raw leaf intrinsic `suspendCoroutineUninterceptedOrReturn { c -> ... }` is
+recognized (`BirEmitter.emitSuspendIntrinsic`): the block is inlined with `c` bound to the coroutine's OWN
+continuation (`coSelfCont` = `new TypedCont<T>(this)`), its leading statements run, and its result drives a
+`coSuspendIntrinsic` step where ilemit does the value-or-`COROUTINE_SUSPENDED` branch (`EmitCoSuspendIntrinsicClass`;
+state set BEFORE the block runs so a same-thread resume during registration is safe). Mapped: `kotlin.coroutines.
+Continuation<T>` → `clrg:DotKt.Coroutines.Continuation` (birType+netType), `COROUTINE_SUSPENDED` →
+`coSuspendedSentinel`, `resume`/`resumeWithException` → `DotKt.Coroutines.Continuations.*`. Runtime gained
+`TypedCont<T>` (the reified-T adapter), `Continuations`, `Builders.OnComplete`/`OnCompleteInt`. Proof:
+`samples/il-kintrin` (7/42/72 — real suspension via the intrinsic, sync-return leaf, composition), ilverify-clean.
+Deferred (arrive when compiling upstream): generic suspend funs (generic SM class), `kotlin.Result` mapping,
+`startCoroutine`/`createCoroutineUnintercepted`/`intercepted`, `suspendCancellableCoroutine` (compiles on top).
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi
