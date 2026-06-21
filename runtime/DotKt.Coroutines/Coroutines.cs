@@ -177,5 +177,10 @@ namespace DotKt.Coroutines
 
         /// Monomorphic Int convenience for facades that can't yet call a generic .NET method (Phase 2 sample).
         public static void OnCompleteInt(Task<int> task, Continuation<int> cont) => OnComplete(task, cont);
+
+        /// Register a callback to run with the Task's result when it completes (lets Kotlin do the resume itself,
+        /// e.g. `onCompleteCb(task) { v -> c.resume(v) }`). Exercises the Kotlin-side resume API (A2).
+        public static void OnCompleteCbInt(Task<int> task, Action<int> cb) =>
+            task.GetAwaiter().OnCompleted(() => cb(task.Result));
     }
 }

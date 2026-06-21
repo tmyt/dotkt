@@ -1447,6 +1447,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// captures the closure `this` into the state machine so resume can still read the captured-var fields.
 		val cname = "<>dotkt_Closure${closureCounter++}"
 		val capPairs = captures.map { it to captureFieldName(it) }
+		// Save any prior substitution for each captured decl so the OUTER binding (e.g. an intrinsic block's `c`
+		// bound to the coroutine's own continuation) is restored after the body — not blown away — so the capture
+		// VALUE (capValueExpr below) is still evaluated correctly in the enclosing context.
+		val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
 		capPairs.forEach { (decl, fname) ->
 			captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 		}
@@ -1458,7 +1462,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 			invoke = """{"name":"invoke","static":false,"override":false,"virtual":false,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}"""
 		}
-		capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
+		capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 		val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
 		liftedTypes.add("""{"name":${str(cname)},"kind":"class","base":null,"interfaces":[],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$invoke]}""")
@@ -1872,7 +1876,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** A capture's value at the `new` site (in the enclosing context): the outer `this`, or an outer local. */
 	private fun capValueExpr(d: IrValueDeclaration): String =
-		if (d.name.asString() == "<this>") """{"k":"this"}""" else """{"k":"local","name":${str(d.name.asString())}}"""
+		// Evaluate the capture VALUE in the enclosing context: honor an active substitution (e.g. an intrinsic
+		// block's `c` bound to the coroutine's own continuation, or an outer capture field) before falling back.
+		captureSubst[d] ?: if (d.name.asString() == "<this>") """{"k":"this"}""" else """{"k":"local","name":${str(d.name.asString())}}"""
 
 	/** The BIR function-type string `func:<ret>:<arg1>,<arg2>,...` for a lambda's signature. */
 	private fun funcTypeOf(fn: IrSimpleFunction): String {
@@ -2097,20 +2103,38 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"clrInstance","type":${str(clrType)},"method":${str(m)},"argTypes":[$argTs],"ret":${str(netType(call.type))},"recv":${expr(recv)},"args":[$argsJson]}"""
 	}
 
+	/** A `DotKt.Coroutines.Continuations.{Resume,ResumeWithException}<T>(cont, arg)` call (the resume API). Uses the
+	 *  generic-static path (MakeGenericMethod over T) matched by param shapes: Continuation<T>="generic", value=T="gp",
+	 *  Exception="Exception". */
+	private fun resumeHelper(method: String, contT: String, recvJson: String, argJson: String, argShape: String): String =
+		"""{"k":"clrGenericStatic","type":"DotKt.Coroutines.Continuations","method":${str(method)},"typeArgs":[${str(contT)}],"shapes":["generic",${str(argShape)}],"args":[$recvJson,$argJson]}"""
+
 	private fun call(call: IrCall): String {
 		val callee = call.symbol.owner
 		val calleeFqEarly = callee.fqNameWhenAvailable?.asString()
 		// `kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED` (a top-level val getter) -> the runtime sentinel.
 		if (callee.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED")
 			return """{"k":"coSuspendedSentinel"}"""
+		// kotlin.coroutines.Continuation.resumeWith(Result.success(v) / Result.failure(e)) -> the resume helpers
+		// (the common pattern; a non-literal Result forwarded to resumeWith is not yet supported — loud error).
+		if (calleeFqEarly == "kotlin.coroutines.Continuation.resumeWith") {
+			val recv = dispatchReceiver(call)!!
+			val contT = ((recv.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
+			val arg = regularArgs(call).first()
+			val af = (arg as? IrCall)?.symbol?.owner?.fqNameWhenAvailable?.asString()
+			if (af == "kotlin.Result.Companion.success")
+				return resumeHelper("Resume", contT, expr(recv), expr(regularArgs(arg).first()), "gp")
+			if (af == "kotlin.Result.Companion.failure")
+				return resumeHelper("ResumeWithException", contT, expr(recv), expr(regularArgs(arg).first()), "Exception")
+			return unsupported(call, "resumeWith with a non-literal Result", "use resume(v) / resumeWithException(e), or resumeWith(Result.success(v))")
+		}
 		// kotlin.coroutines.{resume,resumeWithException}(value/e) on a Continuation<T> -> the runtime resume helpers
 		// (they wrap a kotlin.Result, kept off the emitted surface).
 		if (calleeFqEarly == "kotlin.coroutines.resume" || calleeFqEarly == "kotlin.coroutines.resumeWithException") {
 			val recv = extensionReceiver(call) ?: dispatchReceiver(call)!!
 			val contT = ((recv.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
-			val method = if (calleeFqEarly == "kotlin.coroutines.resume") "Resume" else "ResumeWithException"
-			val argT = if (method == "Resume") contT else "clr:System.Exception"
-			return """{"k":"clrStatic","type":"DotKt.Coroutines.Continuations","method":${str(method)},"typeArgs":[${str(contT)}],"argTypes":["clrg:DotKt.Coroutines.Continuation[$contT]",${str(argT)}],"ret":"System.Void","args":[${expr(recv)},${expr(regularArgs(call).first())}]}"""
+			val resume = calleeFqEarly == "kotlin.coroutines.resume"
+			return resumeHelper(if (resume) "Resume" else "ResumeWithException", contT, expr(recv), expr(regularArgs(call).first()), if (resume) "gp" else "Exception")
 		}
 		atomicfuCall(call)?.let { return it }
 		// `kotlin.sequences.sequence { yield(…) }` -> a lazy IEnumerable<T> backed by a yield state machine that
