@@ -187,6 +187,7 @@ il_check_inject outref Outref "$ROOT/samples/il-outref" "$(printf 'ok=5\nfail\n2
 il_check_inject netattr NetAttr "$ROOT/samples/il-netattr" "$(printf 'widget#7\n42')" Lbl
 il_check_inject stackalloc Sa "$ROOT/samples/il-stackalloc" "$(printf '16\n30\n-1\n10\n21')" SpanRt
 il_check fmt Fmt "$ROOT/samples/il-fmt" "$(printf '42 items, 87.5%% (ok)\n00007-ff\n[a   ]\n[bb  ]')"
+il_check_inject mref Mr "$ROOT/samples/il-mref" "$(printf 'hello world\n0')" MrRt
 
 # Reverse interop: a .NET (C#) host loads the IL-emitted Kotlin assembly and calls a Kotlin class + top-level
 # fun. Proves the IL output is a consumable .NET assembly. (Compile-time <Reference> needs per-type contract-

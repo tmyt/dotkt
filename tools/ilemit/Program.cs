@@ -2087,6 +2087,21 @@ sealed class Emitter
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
                 return ft;
             }
+            case "boundClrDelegateNew":
+            {
+                // `netObj::method` -> a delegate bound to a .NET instance method (resolved by reflection).
+                var ft = MapType(e.GetProperty("funcType").GetString());
+                var type = ClrRef(e.GetProperty("clrType").GetString());
+                var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => ClrRef(a.GetString())).ToArray();
+                var mi = type.GetMethod(e.GetProperty("method").GetString(),
+                    BindingFlags.Public | BindingFlags.Instance, null, argTypes, null)
+                    ?? type.GetMethod(e.GetProperty("method").GetString());
+                EmitExpr(e.GetProperty("recv"));
+                if (e.GetProperty("virtual").GetBoolean()) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mi); }
+                else _il.Emit(OpCodes.Ldftn, mi);
+                _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
+                return ft;
+            }
             case "delegateInvoke":
             {
                 var ft = MapType(e.GetProperty("funcType").GetString());

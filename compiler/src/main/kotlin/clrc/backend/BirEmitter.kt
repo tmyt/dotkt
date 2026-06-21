@@ -1411,6 +1411,30 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
 			return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${(listOf(selfT) + ps.map { birTypeDeleg(it.type) }).joinToString(",")}"}"""
 		}
+		// A .NET method reference. Bound `obj::m` -> a delegate over the .NET instance method (ldftn). Unbound
+		// `NetType::m` -> a lifted static `__mref(self, args) = self.m(args)` via clrInstance.
+		val clrOwner = ownerClass?.let { clrName(it) }
+		if (clrOwner != null && !hasExt) {
+			val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }
+			val argTypes = regs.joinToString(",") { str(netType(it.type)) }
+			val member = clrName(fn) ?: fn.name.asString()
+			val virtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT
+			if (boundRecv != null)
+				return """{"k":"boundClrDelegateNew","clrType":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${str(funcTypeOf(fn))}}"""
+			if (dispatchIdx >= 0) {
+				val selfT = birType(fn.parameters[dispatchIdx].type)
+				val lname = "__mref${lambdaCounter++}"
+				val psJson = (listOf("""{"name":"__self","type":${str(selfT)}}""") +
+					regs.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }).joinToString(",")
+				val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+				val retVoid = fn.returnType.isUnit()
+				val retT = if (retVoid) "void" else birType(fn.returnType)
+				val callE = """{"k":"clrInstance","type":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${str(netType(fn.returnType))},"recv":{"k":"local","name":"__self"},"args":[$argsJson]}"""
+				val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
+				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
+				return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${(listOf(selfT) + regs.map { birTypeDeleg(it.type) }).joinToString(",")}"}"""
+			}
+		}
 		return unsupported(node, "a method reference to a .NET method (`::${fn.name}`)",
 			"wrap the call in a lambda instead, e.g. `{ a -> x.${fn.name}(a) }`")
 	}
