@@ -2132,7 +2132,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		run {
 			val recv = extensionReceiver(call) ?: dispatchReceiver(call)
 			val op = name
-			if (recv != null && (isCollectionType(recv.type) || isSequenceType(recv.type)) && op in COLLECTION_OPS) {
+			if (recv != null && (isCollectionType(recv.type) || isSequenceType(recv.type) || isArrayType(recv.type)) && op in COLLECTION_OPS) {
 				val EN = "System.Linq.Enumerable"
 				// A `Sequence<T>` receiver is LAZY: intermediate list-producing ops (map/filter/…) stay deferred
 				// (no ToList), matching Kotlin's lazy sequence semantics. The explicit `toList`/`toSet` terminals
@@ -2141,7 +2141,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// Element/result types come from FIR's resolved type arguments (map<T,R>/filter<T>/…);
 				// member ops (contains) aren't generic, so fall back to the receiver's element type.
 				val targs = call.typeArguments.mapNotNull { it?.let(::birType) }
-				val t = targs.getOrNull(0) ?: collectionElemType(recv.type)
+				val t = targs.getOrNull(0) ?: (if (isArrayType(recv.type)) arrayElemType(recv.type) else collectionElemType(recv.type))
 				val src = expr(recv)
 				val a0 = regularArgs(call).getOrNull(0)
 				fun arg() = expr(a0!!)
@@ -2232,8 +2232,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					"all" -> clrGen(EN, "All", listOf(t), EF, listOf(src, arg()))
 					"first" -> if (a0 != null) clrGen(EN, "First", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "First", listOf(t), EI, listOf(src))
 					"last" -> if (a0 != null) clrGen(EN, "Last", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "Last", listOf(t), EI, listOf(src))
-					"firstOrNull" -> if (a0 != null) clrGen(EN, "FirstOrDefault", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "FirstOrDefault", listOf(t), EI, listOf(src))
-					"lastOrNull" -> if (a0 != null) clrGen(EN, "LastOrDefault", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "LastOrDefault", listOf(t), EI, listOf(src))
+					// `firstOrNull`/`lastOrNull`: for a REFERENCE element, FirstOrDefault is correct (null for empty). For a
+					// VALUE element, FirstOrDefault returns 0 for empty (conflating with the first element), so emit
+					// `seq.Any() ? Nullable(seq.First()) : null` (the source is bound once to avoid double-enumeration).
+					"firstOrNull", "lastOrNull" -> {
+						val dm = if (op == "firstOrNull") "FirstOrDefault" else "LastOrDefault"
+						val fm = if (op == "firstOrNull") "First" else "Last"
+						val velem = nullableElem(call.type)
+						if (velem == null) (if (a0 != null) clrGen(EN, dm, listOf(t), EF, listOf(src, arg())) else clrGen(EN, dm, listOf(t), EI, listOf(src)))
+						else {
+							val tmp = "__on${scopeCounter++}"; val tl = """{"k":"local","name":${str(tmp)}}"""
+							val anyE = if (a0 != null) clrGen(EN, "Any", listOf(t), EF, listOf(tl, arg())) else clrGen(EN, "Any", listOf(t), EI, listOf(tl))
+							val firstE = if (a0 != null) clrGen(EN, fm, listOf(t), EF, listOf(tl, arg())) else clrGen(EN, fm, listOf(t), EI, listOf(tl))
+							"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(tmp)},"type":${str(birType(recv.type))},"init":$src}],"result":{"k":"cond","cond":$anyE,"then":{"k":"nullableWrap","elem":${str(velem)},"e":$firstE},"else":{"k":"nullableNull","elem":${str(velem)}}}}"""
+						}
+					}
 					"contains" -> clrGen(EN, "Contains", listOf(t), listOf("ienum", "gp"), listOf(src, arg()))
 					"isEmpty" -> """{"k":"un","op":"!","e":${clrGen(EN, "Any", listOf(t), EI, listOf(src))}}"""
 					"isNotEmpty" -> clrGen(EN, "Any", listOf(t), EI, listOf(src))
@@ -2302,7 +2315,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString() == "kotlin") {
 			val v = call.arguments.firstOrNull() as? IrVararg
 			val elems = v?.elements?.filterIsInstance<IrExpression>().orEmpty()
-			val elemT = v?.let { birType(it.varargElementType) } ?: "object"
+			// Prefer the generic `arrayOf<T>`'s type argument (reliable even when EMPTY); fall back to the vararg's
+			// element type (for the non-generic primitive factories like intArrayOf).
+			val elemT = call.typeArguments.getOrNull(0)?.let { birType(it) } ?: v?.let { birType(it.varargElementType) } ?: "object"
 			return """{"k":"newArray","elem":${str(elemT)},"elems":[${elems.joinToString(",") { expr(it) }}]}"""
 		}
 		// `e!!` (not-null assertion) -> the value itself (the use site throws on null anyway).

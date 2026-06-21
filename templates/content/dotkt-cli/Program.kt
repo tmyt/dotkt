@@ -1,4 +1,4 @@
 fun main(args: Array<String>) {
-    val who = if (args.size > 0) args[0] else "World"
+    val who = args.firstOrNull() ?: "World"
     println("Hello, $who, from DotKt — Kotlin on .NET!")
 }
