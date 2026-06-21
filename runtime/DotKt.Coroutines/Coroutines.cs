@@ -53,38 +53,75 @@ namespace DotKt.Coroutines
     }
 
     /// The boundary sinks between the Continuation core and the CLR `Task` world.
+    ///
+    /// A compiler-generated state machine implements `Continuation<object>` (Any? internally — it is resumed with
+    /// heterogeneous results across its suspension points). The TYPED public result (`Task<T>`) is recovered only
+    /// at the boundary, by the root continuation casting object→T. This mirrors the JVM where every coroutine is
+    /// `Continuation<Any?>` and reified-T friction is confined to the boundary.
     public static class Builders
     {
         /// future{}: run a coroutine to a Task<T>. `start` kicks the state machine with a root continuation whose
         /// ResumeWith completes the TCS (normal→SetResult, OperationCanceled→SetCanceled, other→SetException).
         /// This is the default public surface that makes a `suspend fun` appear as `Task<T>` from C#/F#.
-        public static Task<T> Future<T>(CoroutineContext ctx, Action<Continuation<T>> start)
+        public static Task<T> Future<T>(CoroutineContext ctx, Action<Continuation<object>> start)
         {
-            var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-            try { start(new Root<T>(ctx ?? EmptyCoroutineContext.Instance, tcs)); }
-            catch (Exception e) { tcs.TrySetException(e); }
-            return tcs.Task;
+            var root = new Root<T>(ctx ?? EmptyCoroutineContext.Instance);
+            try { start(root); }
+            catch (Exception e) { root.ResumeWith(Result<object>.Failure(e)); }
+            return root.Task;
         }
 
-        sealed class Root<T> : Continuation<T>
+        /// The Task-sink root continuation. The compiler-generated kickoff builds the state machine, sets its
+        /// completion to a `NewRoot<T>()`, drives `ResumeWith(success(null))`, and returns `root.Task` — no IL
+        /// closure required. `T` is the suspend fun's result type; the coroutine drives as `Continuation<object>`
+        /// and the root casts object→T at the boundary.
+        public sealed class Root<T> : Continuation<object>
         {
-            readonly TaskCompletionSource<T> _tcs;
+            readonly TaskCompletionSource<T> _tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
             public CoroutineContext Context { get; }
-            public Root(CoroutineContext c, TaskCompletionSource<T> t) { Context = c; _tcs = t; }
-            public void ResumeWith(Result<T> r)
+            public Root(CoroutineContext c) { Context = c; }
+            public Task<T> Task => _tcs.Task;
+            public void ResumeWith(Result<object> r)
             {
                 if (r.IsFailure)
                 {
                     if (r.ExceptionOrNull is OperationCanceledException) _tcs.TrySetCanceled();
                     else _tcs.TrySetException(r.ExceptionOrNull);
                 }
-                else _tcs.TrySetResult(r.GetOrThrow());
+                else _tcs.TrySetResult((T)r.GetOrThrow());
             }
         }
 
+        /// Build a fresh Task-sink root (used by the emitted kickoff).
+        public static Root<T> NewRoot<T>(CoroutineContext ctx) => new Root<T>(ctx ?? EmptyCoroutineContext.Instance);
+
         /// runBlocking: drive a coroutine to completion on the calling thread (a real event loop replaces this
         /// blocking GetResult in Phase 4, once dispatchers exist).
-        public static T RunBlocking<T>(Action<Continuation<T>> start) =>
+        public static T RunBlocking<T>(Action<Continuation<object>> start) =>
             Future<T>(EmptyCoroutineContext.Instance, start).GetAwaiter().GetResult();
+
+        /// The leaf .NET-Task suspension, callable from a state machine's InvokeSuspend: register `cont` to be
+        /// resumed when `task` completes (boxing the result to object), then the machine returns COROUTINE_SUSPENDED.
+        /// Encapsulates the awaiter + completion closure that is awkward to emit in raw IL. (This is `await(Task)`
+        /// expressed on the Continuation core; the genuine intrinsic-based form arrives with Phase 2.)
+        public static void AwaitOnto<T>(Task<T> task, Continuation<object> cont)
+        {
+            task.GetAwaiter().OnCompleted(() =>
+                cont.ResumeWith(task.IsFaulted
+                    ? Result<object>.Failure(Unwrap(task.Exception))
+                    : Result<object>.Success(task.Result)));
+        }
+
+        /// Unit-result overload (a non-generic Task suspension, e.g. `delay`).
+        public static void AwaitOnto(Task task, Continuation<object> cont)
+        {
+            task.GetAwaiter().OnCompleted(() =>
+                cont.ResumeWith(task.IsFaulted
+                    ? Result<object>.Failure(Unwrap(task.Exception))
+                    : Result<object>.Success(null)));
+        }
+
+        static Exception Unwrap(AggregateException ae) =>
+            ae != null && ae.InnerExceptions.Count == 1 ? ae.InnerException : ae;
     }
 }

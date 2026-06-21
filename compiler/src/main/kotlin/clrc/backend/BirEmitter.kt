@@ -748,11 +748,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return CoroutineBody(resultType, cpsFields, steps.joinToString(","))
 	}
 
+	/** Opt-in to the Continuation-class coroutine form (Path B) via `@KCont`; default stays the struct/Task form. */
+	private fun isCoClass(fn: IrSimpleFunction): Boolean =
+		fn.annotations.any { it.type.classFqName?.shortName()?.asString() == "KCont" }
+
 	private fun suspendMethod(fn: IrSimpleFunction, static: Boolean): String {
 		val co = emitCoroutineBody(fn)
 		val ps = paramsJsonList(fn.parameters).joinToString(",")
 		val vis = visOf(fn)
-		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)},"suspend":true,"resultType":${str(co.resultType)},"cpsFields":[${co.cpsFields}],"params":[$ps],"steps":[${co.steps}]}"""
+		val coClass = if (isCoClass(fn)) ""","coClass":true""" else ""
+		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)},"suspend":true,"resultType":${str(co.resultType)}$coClass,"cpsFields":[${co.cpsFields}],"params":[$ps],"steps":[${co.steps}]}"""
 	}
 
 	/**

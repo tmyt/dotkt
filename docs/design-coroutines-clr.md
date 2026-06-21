@@ -229,6 +229,17 @@ the Result, calls `InvokeSuspend`, returns on `COROUTINE_SUSPENDED` else `_compl
 verifiable unit. Phase 2 then = the rest (`startCoroutine`/`createCoroutineUnintercepted`/`intercepted` +
 `suspendCancellableCoroutine` on top).
 
+**Status: Phase 1 ✅ DONE (2026-06-22).** The Continuation-class codegen + shared runtime + Task sink are
+implemented and ilverify-clean. `ilemit.EmitCoroutineClass`/`EmitCoSuspendClass` emit a class implementing
+`DotKt.Coroutines.Continuation<object>` (`ResumeWith`→`InvokeSuspend` label switch; `COROUTINE_SUSPENDED`
+sentinel; cps fields + `<>4__this` capture; try/catch-around-await), with the kickoff binding a `NewRoot<T>`
+Task sink. Selected by `"coClass":true` (backend `@KCont` opt-in; struct/Task form stays default). Proof:
+`samples/il-kcont` (30/14/6/15/10/-99) in `scripts/verify-il.sh`, ilverify clean. NOTE: the leaf suspension is
+currently realized via the existing `.await()` → `Builders.AwaitOnto` (a Task awaiter registering `ResumeWith`),
+NOT yet the raw `suspendCoroutineUninterceptedOrReturn` — that frontend intrinsic (+ `kotlin.Result` mapping +
+handing the SM out as a typed `Continuation`) is **Phase 2**, and is what lets a coroutine hand its continuation
+to arbitrary Kotlin code (required to compile upstream).
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi

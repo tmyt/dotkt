@@ -26,6 +26,11 @@ dotnet build "$ROOT/tools/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --
 dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runtime" -v q --nologo >/dev/null 2>&1
 DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
 
+# DotKt.Coroutines: the shared Continuation core (Path B) for @KCont/`suspend fun` lowered to a class. Passed
+# globally to ilemit + ilverify (harmless when unreferenced); copied next to each emitted dll for the run phase.
+dotnet build "$ROOT/runtime/DotKt.Coroutines" -c Release -o "$ROOT/build/dotkt-coroutines" -v q --nologo >/dev/null 2>&1
+DOTKT_CO="$ROOT/build/dotkt-coroutines/DotKt.Coroutines.dll"
+
 # S5 FIR-injection metadata for samples that inherit a real .NET base type (façade-free).
 dotnet build "$ROOT/tools/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo >/dev/null 2>&1
 EXCMETA="$ROOT/build/exc.meta"
@@ -174,14 +179,15 @@ il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" --ref "$refdll" "$birdir"/*.bir.json >/dev/null 2>&1; then
+		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" --ref "$DOTKT_CO" --ref "$refdll" "$birdir"/*.bir.json >/dev/null 2>&1; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		cp "$refdll" "$ildir/"
+		cp "$refdll" "$ildir/"; cp "$DOTKT_CO" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
 		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
 			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
 	} &
 }
+il_check_ref kcont KCont "$ROOT/samples/il-kcont" "$(printf '30\n14\n6\n15\n10\n-99')" KfcK
 il_check_ref coro Coro "$ROOT/samples/il-coro" "$(printf 'tryOk = 11\ntryCatch = -99\ntryFallthrough = 8\nloopCond = 3\ncondBranch = 6\nspillSum = 30\nspillNested = 17\nspillArg = 16\nchain = 30\nfetchDouble(7) = 14\nuseChain = 35\nsumLoop(4) = 6\nbranch(true) = 15\nbranch(false) = 10')" Kfc
 il_check_ref colam Colam "$ROOT/samples/il-colam" "$(printf '30\n6\n105\n18')" KfcLam
 il_check_ref c1net C1Net "$ROOT/samples/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
@@ -229,13 +235,13 @@ ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
 REFDIR="$(dirname "$(find /usr/share/dotnet/shared/Microsoft.NETCore.App -name System.Private.CoreLib.dll 2>/dev/null | sort | tail -1)")"
 if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 	echo "--- ilverify ---"
-	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [refcell]=RefCell [annot]=Annot [props]=Props [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [coro]=Coro [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob [arrops]=Arro )
+	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [refcell]=RefCell [annot]=Annot [props]=Props [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [coro]=Coro [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob [arrops]=Arro [colam]=Colam [kcont]=KCont )
 	for n in "${!ASMS[@]}"; do
 		dll="$ROOT/build/il-$n/${ASMS[$n]}.dll"
 		[[ -f "$dll" ]] || continue
 		# A sample that references an external runtime dll needs it on ilverify's resolve path too.
 		refarg=(); [[ -n "${REFDLL[$n]:-}" ]] && refarg=(-r "${REFDLL[$n]}")
-		if dotnet "$ILV" "$dll" -r "$REFDIR/*.dll" -r "$DOTKT_RT" "${refarg[@]}" 2>&1 | grep -qi 'Verified\.'; then echo "VERIFY  $n"; else echo "VERIFY FAIL  $n"; fail=1; fi
+		if dotnet "$ILV" "$dll" -r "$REFDIR/*.dll" -r "$DOTKT_RT" -r "$DOTKT_CO" "${refarg[@]}" 2>&1 | grep -qi 'Verified\.'; then echo "VERIFY  $n"; else echo "VERIFY FAIL  $n"; fail=1; fi
 	done
 else
 	echo "(ilverify not installed; skipping formal verification — 'dotnet tool install -g dotnet-ilverify')"

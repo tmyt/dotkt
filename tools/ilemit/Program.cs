@@ -485,7 +485,12 @@ sealed class Emitter
         _methodRetType = mb.ReturnType;
         _curTypeParams = ti.TypeParams;
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
-        if (m.TryGetProperty("suspend", out var su) && su.GetBoolean()) { EmitCoroutine(ti, mb, m); return; }
+        if (m.TryGetProperty("suspend", out var su) && su.GetBoolean())
+        {
+            if (m.TryGetProperty("coClass", out var cc) && cc.GetBoolean()) EmitCoroutineClass(ti, mb, m);
+            else EmitCoroutine(ti, mb, m);
+            return;
+        }
         BeginMethod(mb.GetILGenerator(), m, isStatic: mb.IsStatic);
         PrescanCfgLabels(m.GetProperty("body"));
         foreach (var s in m.GetProperty("body").EnumerateArray()) EmitStmt(s);
@@ -731,6 +736,213 @@ sealed class Emitter
         }
 
         sm.CreateType();
+    }
+
+    // Continuation-core state machine (Path B / B2-as-generalization, docs §13b): a CLASS implementing
+    // DotKt.Coroutines.Continuation<object>, driven by ResumeWith -> InvokeSuspend (label switch). The default
+    // Task sink (future{}, via NewRoot<T>) is the kickoff. Selected by "coClass":true (opt-in `@KCont` while the
+    // struct/Task IAsyncStateMachine path remains the default). Reuses the same coSuspend/coLabel/coGoto/coReturn
+    // step stream as the struct form; only the lowered runtime form differs.
+    void EmitCoroutineClass(TypeInfo ti, MethodBuilder mb, JsonElement m)
+    {
+        var rs = m.GetProperty("resultType").GetString();
+        if (rs == "void") throw new NotSupportedException("@KCont coroutine with Unit result not yet supported (Phase 1 scope)");
+        Type resultT = MapType(rs);
+        var steps = m.GetProperty("steps").EnumerateArray().ToList();
+
+        var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
+        var resObj = ResolveType("DotKt.Coroutines.Result`1").MakeGenericType(typeof(object));
+        var ctxType = ResolveType("DotKt.Coroutines.CoroutineContext");
+        var builders = ResolveType("DotKt.Coroutines.Builders");
+        var fSuspended = ResolveType("DotKt.Coroutines.Intrinsics").GetField("COROUTINE_SUSPENDED");
+        var mResSuccess = resObj.GetMethod("Success");
+        var mResFailure = resObj.GetMethod("Failure");
+        var mResIsFailure = resObj.GetMethod("get_IsFailure");
+        var mResExOrNull = resObj.GetMethod("get_ExceptionOrNull");
+        var mResGetOrThrow = resObj.GetMethod("GetOrThrow");
+        var mContResume = contObj.GetMethod("ResumeWith");
+        var mContGetCtx = contObj.GetMethod("get_Context");
+
+        var sm = _mod.DefineType(ti.TB.Name + "_" + mb.Name + "__sm",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, typeof(object));
+        sm.AddInterfaceImplementation(contObj);
+        var fState = sm.DefineField("<>1__state", typeof(int), FieldAttributes.Public);
+        var fCompletion = sm.DefineField("<>completion", contObj, FieldAttributes.Public);
+        var fParam = sm.DefineField("<>param", typeof(object), FieldAttributes.Public);
+        var fErr = sm.DefineField("<>err", typeof(Exception), FieldAttributes.Public);
+
+        var coFields = new Dictionary<string, FieldBuilder>();
+        foreach (var f in m.GetProperty("cpsFields").EnumerateArray())
+            coFields[f.GetProperty("name").GetString()] = sm.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), FieldAttributes.Public);
+        var fThis = mb.IsStatic ? null : sm.DefineField("<>4__this", ti.TB, FieldAttributes.Public);
+
+        var ctor = sm.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        { var il = ctor.GetILGenerator(); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)); il.Emit(OpCodes.Ret); }
+
+        // CoroutineContext get_Context => <>completion.Context
+        var getCtx = sm.DefineMethod("get_Context", MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.HideBySig | MethodAttributes.SpecialName, ctxType, Type.EmptyTypes);
+        { var il = getCtx.GetILGenerator(); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, fCompletion); il.Emit(OpCodes.Callvirt, mContGetCtx); il.Emit(OpCodes.Ret); }
+        sm.DefineMethodOverride(getCtx, mContGetCtx);
+
+        // object InvokeSuspend(): the label-switch body. Returns the result value, or COROUTINE_SUSPENDED.
+        var invoke = sm.DefineMethod("InvokeSuspend", MethodAttributes.Public | MethodAttributes.HideBySig, typeof(object), Type.EmptyTypes);
+        {
+            _il = invoke.GetILGenerator();
+            _args.Clear(); _argTypes.Clear(); _locals.Clear();
+            _methodRetType = typeof(object);
+            _coFields = coFields; _coThis = fThis;
+            PrescanCfgLabels(m.GetProperty("steps"));
+            var outcome = _il.DeclareLocal(typeof(object));
+
+            var resume = new Dictionary<int, Label>();
+            var coLabel = new Dictionary<int, Label>();
+            foreach (var st in steps)
+            {
+                var kind = st.GetProperty("k").GetString();
+                if (kind == "coSuspend") resume[st.GetProperty("state").GetInt32()] = _il.DefineLabel();
+                else if (kind == "coLabel" || kind == "coGoto" || kind == "coCondGoto") { int id = st.GetProperty("id").GetInt32(); if (!coLabel.ContainsKey(id)) coLabel[id] = _il.DefineLabel(); }
+            }
+            var tryStart = new Dictionary<int, Label>();
+            var tryStates = new Dictionary<int, List<int>>();
+            var stateTry = new Dictionary<int, int>();
+            { int open = -1; foreach (var st in steps) { var kind = st.GetProperty("k").GetString();
+                if (kind == "coTryBegin") { int id = st.GetProperty("id").GetInt32(); open = id; tryStart[id] = _il.DefineLabel(); tryStates[id] = new List<int>(); }
+                else if (kind == "coTryEnd") open = -1;
+                else if (kind == "coSuspend" && open >= 0) { int k = st.GetProperty("state").GetInt32(); stateTry[k] = open; tryStates[open].Add(k); } } }
+            _coExit = _il.DefineLabel(); _coTryDepth = 0;
+
+            foreach (var kv in resume)
+            {
+                _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fState); EmitLdcI4(kv.Key);
+                _il.Emit(OpCodes.Beq, stateTry.TryGetValue(kv.Key, out var otid) ? tryStart[otid] : kv.Value);
+            }
+
+            var tryEnd = new Dictionary<int, Label>();
+            bool fell = true;
+            foreach (var st in steps)
+            {
+                var kind = st.GetProperty("k").GetString();
+                switch (kind)
+                {
+                    case "coTryBegin": { int id = st.GetProperty("id").GetInt32(); _il.MarkLabel(tryStart[id]); _il.Emit(OpCodes.Nop);
+                        tryEnd[id] = _il.BeginExceptionBlock(); _coTryDepth++;
+                        foreach (var k in tryStates[id]) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fState); EmitLdcI4(k); _il.Emit(OpCodes.Beq, resume[k]); }
+                        break; }
+                    case "coCatchBegin": { int id = st.GetProperty("id").GetInt32(); if (fell) _il.Emit(OpCodes.Leave, tryEnd[id]);
+                        var ct = ResolveType(st.GetProperty("excType").GetString()); _il.BeginCatchBlock(ct);
+                        var el = _il.DeclareLocal(ct); _locals[st.GetProperty("var").GetString()] = el; _il.Emit(OpCodes.Stloc, el); break; }
+                    case "coTryEnd": { int id = st.GetProperty("id").GetInt32(); if (fell) _il.Emit(OpCodes.Leave, tryEnd[id]); _il.EndExceptionBlock(); _coTryDepth--; break; }
+                    case "coSuspend": EmitCoSuspendClass(st, fState, fParam, fErr, resume, coFields, builders, fSuspended, outcome); break;
+                    case "coLabel": _il.MarkLabel(coLabel[st.GetProperty("id").GetInt32()]); break;
+                    case "coGoto": _il.Emit(OpCodes.Br, coLabel[st.GetProperty("id").GetInt32()]); break;
+                    case "coCondGoto": EmitExpr(st.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, coLabel[st.GetProperty("id").GetInt32()]); break;
+                    case "coReturn":
+                        if (st.TryGetProperty("value", out var rv) && rv.ValueKind != JsonValueKind.Null) { var gt = EmitExpr(rv); if (gt != null && gt.IsValueType) _il.Emit(OpCodes.Box, gt); }
+                        else _il.Emit(OpCodes.Ldnull);
+                        _il.Emit(OpCodes.Stloc, outcome);
+                        if (_coTryDepth > 0) _il.Emit(OpCodes.Leave, _coExit); else _il.Emit(OpCodes.Br, _coExit);
+                        break;
+                    case "coUnsupported": throw new NotSupportedException("coroutine feature not supported by the .NET backend: " + st.GetProperty("of").GetString());
+                    default: EmitStmt(st); break;
+                }
+                fell = !(kind == "coReturn" || kind == "coGoto");
+            }
+            _il.MarkLabel(_coExit);
+            _il.Emit(OpCodes.Ldloc, outcome);
+            _il.Emit(OpCodes.Ret);
+            _coFields = null; _coThis = null;
+        }
+
+        // void ResumeWith(Result<object>): unpack the result, drive InvokeSuspend, route the outcome to <>completion.
+        var resumeWith = sm.DefineMethod("ResumeWith", MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.HideBySig, typeof(void), new[] { resObj });
+        {
+            var il = resumeWith.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldarga_S, (byte)1); il.Emit(OpCodes.Call, mResExOrNull); il.Emit(OpCodes.Stfld, fErr);
+            var setNull = il.DefineLabel(); var afterParam = il.DefineLabel();
+            il.Emit(OpCodes.Ldarga_S, (byte)1); il.Emit(OpCodes.Call, mResIsFailure); il.Emit(OpCodes.Brtrue, setNull);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldarga_S, (byte)1); il.Emit(OpCodes.Call, mResGetOrThrow); il.Emit(OpCodes.Stfld, fParam); il.Emit(OpCodes.Br, afterParam);
+            il.MarkLabel(setNull); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Stfld, fParam);
+            il.MarkLabel(afterParam);
+            var lOut = il.DeclareLocal(typeof(object)); var lFaulted = il.DeclareLocal(typeof(bool)); var lEx = il.DeclareLocal(typeof(Exception));
+            il.BeginExceptionBlock();
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, invoke); il.Emit(OpCodes.Stloc, lOut);
+            il.BeginCatchBlock(typeof(Exception));
+            il.Emit(OpCodes.Stloc, lEx);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, fCompletion); il.Emit(OpCodes.Ldloc, lEx); il.Emit(OpCodes.Call, mResFailure); il.Emit(OpCodes.Callvirt, mContResume);
+            il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stloc, lFaulted);
+            il.EndExceptionBlock();
+            var ret = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, lFaulted); il.Emit(OpCodes.Brtrue, ret);
+            il.Emit(OpCodes.Ldloc, lOut); il.Emit(OpCodes.Ldsfld, fSuspended); il.Emit(OpCodes.Beq, ret);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, fCompletion); il.Emit(OpCodes.Ldloc, lOut); il.Emit(OpCodes.Call, mResSuccess); il.Emit(OpCodes.Callvirt, mContResume);
+            il.MarkLabel(ret); il.Emit(OpCodes.Ret);
+        }
+        sm.DefineMethodOverride(resumeWith, mContResume);
+
+        // kickoff: build SM, copy params/this, bind a NewRoot<T> sink, drive ResumeWith(success(null)), return root.Task.
+        {
+            _il = mb.GetILGenerator();
+            _args.Clear(); _argTypes.Clear(); _locals.Clear();
+            var locSm = _il.DeclareLocal(sm);
+            _il.Emit(OpCodes.Newobj, ctor); _il.Emit(OpCodes.Stloc, locSm);
+            int ai = mb.IsStatic ? 0 : 1;
+            if (fThis != null) { _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Stfld, fThis); }
+            foreach (var p in m.GetProperty("params").EnumerateArray())
+            {
+                var pn = p.GetProperty("name").GetString();
+                _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldarg, ai++); _il.Emit(OpCodes.Stfld, coFields[pn]);
+            }
+            var newRoot = builders.GetMethod("NewRoot").MakeGenericMethod(resultT);
+            var emptyCtx = ResolveType("DotKt.Coroutines.EmptyCoroutineContext").GetField("Instance");
+            var locRoot = _il.DeclareLocal(newRoot.ReturnType);
+            _il.Emit(OpCodes.Ldsfld, emptyCtx); _il.Emit(OpCodes.Call, newRoot); _il.Emit(OpCodes.Stloc, locRoot);
+            _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldloc, locRoot); _il.Emit(OpCodes.Stfld, fCompletion);
+            _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldnull); _il.Emit(OpCodes.Call, mResSuccess); _il.Emit(OpCodes.Callvirt, mContResume);
+            _il.Emit(OpCodes.Ldloc, locRoot); _il.Emit(OpCodes.Callvirt, newRoot.ReturnType.GetMethod("get_Task")); _il.Emit(OpCodes.Ret);
+        }
+
+        sm.CreateType();
+    }
+
+    // A suspension point in the class form: register the awaited Task to resume this continuation (AwaitOnto), set
+    // the resume state, and return COROUTINE_SUSPENDED; on resume, rethrow a faulted result or unbox <>param.
+    void EmitCoSuspendClass(JsonElement st, FieldBuilder fState, FieldBuilder fParam, FieldBuilder fErr,
+        Dictionary<int, Label> resume, Dictionary<string, FieldBuilder> coFields, Type builders, FieldInfo fSuspended, LocalBuilder outcome)
+    {
+        int k = st.GetProperty("state").GetInt32();
+        var taskType = EmitExpr(st.GetProperty("awaitable"));
+        var lTask = _il.DeclareLocal(taskType); _il.Emit(OpCodes.Stloc, lTask);
+        _il.Emit(OpCodes.Ldarg_0); EmitLdcI4(k); _il.Emit(OpCodes.Stfld, fState);
+        bool genericTask = taskType.IsGenericType && taskType.GetGenericTypeDefinition() == typeof(System.Threading.Tasks.Task<>);
+        MethodInfo awaitOnto = genericTask
+            ? builders.GetMethods().First(mm => mm.Name == "AwaitOnto" && mm.IsGenericMethodDefinition).MakeGenericMethod(taskType.GetGenericArguments()[0])
+            : builders.GetMethods().First(mm => mm.Name == "AwaitOnto" && !mm.IsGenericMethodDefinition);
+        _il.Emit(OpCodes.Ldloc, lTask); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Call, awaitOnto);
+        _il.Emit(OpCodes.Ldsfld, fSuspended); _il.Emit(OpCodes.Stloc, outcome);
+        if (_coTryDepth > 0) _il.Emit(OpCodes.Leave, _coExit); else _il.Emit(OpCodes.Br, _coExit);
+
+        _il.MarkLabel(resume[k]);
+        var noErr = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fErr); _il.Emit(OpCodes.Brfalse, noErr);
+        _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fErr); _il.Emit(OpCodes.Throw);
+        _il.MarkLabel(noErr);
+        var assignTo = st.GetProperty("assignTo").ValueKind == JsonValueKind.Null ? null : st.GetProperty("assignTo").GetString();
+        var resType = st.GetProperty("resultType").GetString();
+        if (assignTo != null && resType != "void")
+        {
+            var tk = MapType(resType);
+            if (coFields.TryGetValue(assignTo, out var destF))
+            {
+                _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fParam);
+                _il.Emit(tk.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stfld, destF);
+            }
+            else
+            {
+                var tmp = _il.DeclareLocal(tk); _locals[assignTo] = tmp;
+                _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fParam);
+                _il.Emit(tk.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stloc, tmp);
+            }
+        }
     }
 
     void EmitCoSuspend(JsonElement st, FieldBuilder fState, FieldBuilder fBuilder, Type builderT, TypeBuilder sm,
