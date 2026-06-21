@@ -2268,11 +2268,53 @@ sealed class Emitter
         }
     }
 
+    static int NumRank(Type t) =>
+        t == typeof(double) ? 5 : t == typeof(float) ? 4 :
+        (t == typeof(long) || t == typeof(ulong)) ? 3 :
+        (t == typeof(int) || t == typeof(uint)) ? 2 :
+        (t == typeof(short) || t == typeof(ushort) || t == typeof(char)) ? 1 :
+        (t == typeof(byte) || t == typeof(sbyte)) ? 0 : -1;
+
+    // The common numeric type of two operands (the wider), or null if no coercion is needed / they're not numeric.
+    static Type NumericCommon(Type a, Type b)
+    {
+        if (a == b) return null;
+        int ra = NumRank(a), rb = NumRank(b);
+        if (ra < 0 || rb < 0) return null;
+        return ra >= rb ? a : b;
+    }
+
+    void ConvTo(Type t)
+    {
+        if (t == typeof(double)) _il.Emit(OpCodes.Conv_R8);
+        else if (t == typeof(float)) _il.Emit(OpCodes.Conv_R4);
+        else if (t == typeof(long)) _il.Emit(OpCodes.Conv_I8);
+        else if (t == typeof(ulong)) _il.Emit(OpCodes.Conv_U8);
+        else if (t == typeof(int)) _il.Emit(OpCodes.Conv_I4);
+        else if (t == typeof(uint)) _il.Emit(OpCodes.Conv_U4);
+    }
+
     Type EmitBin(JsonElement e)
     {
         var op = e.GetProperty("op").GetString();
         var lt = EmitExpr(e.GetProperty("l"));
-        EmitExpr(e.GetProperty("r"));
+        var rt = EmitExpr(e.GetProperty("r"));
+        // Mixed numeric operands (e.g. `Double / Int`, `Int + Long`) -> coerce both to the wider type. Shifts keep
+        // their int shift-amount operand, so they're excluded.
+        if (op != "<<" && op != ">>" && op != ">>>")
+        {
+            var common = NumericCommon(lt, rt);
+            if (common != null)
+            {
+                if (rt != common) ConvTo(common);                       // coerce r (top of stack)
+                if (lt != common)                                       // coerce l (below r): stash r, conv l, restore
+                {
+                    var tmp = _il.DeclareLocal(common);
+                    _il.Emit(OpCodes.Stloc, tmp); ConvTo(common); _il.Emit(OpCodes.Ldloc, tmp);
+                }
+                lt = common;
+            }
+        }
         switch (op)
         {
             case "+": _il.Emit(OpCodes.Add); return lt;
