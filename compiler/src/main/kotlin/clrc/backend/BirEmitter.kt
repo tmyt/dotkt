@@ -371,9 +371,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val nested = classes.flatMap { nestedClasses(it) }
 		// `inner class`es flatten to top-level types that capture the enclosing instance (`__outer`).
 		val inners = classes.flatMap { innerClasses(it) }
+		// User `annotation class`es -> .NET `: System.Attribute` classes (so reflection / reverse interop sees them).
+		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS && clrName(it) == null }
 		val typeDefs = basicEnums.map { enumDef(it) } + interfaces.map { interfaceDef(it) } +
 			classes.map { typeDef(it) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
-			richEnums.map { richEnumDef(it) }
+			richEnums.map { richEnumDef(it) } + annClasses.map { annotationDef(it) }
 		val methods = (fnMethods + liftedMethods).joinToString(",")
 		// Synthetic types (iterator/Read(Write)Property interfaces, synthesized Delegates.* classes, KProperty)
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
@@ -485,6 +487,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return def
 	}
 
+	/** A user `annotation class Ann(val v: Int, …)` -> a `class Ann : System.Attribute` (ctor params -> public fields). */
+	private fun annotationDef(klass: IrClass): String {
+		val ctorParams = klass.declarations.filterIsInstance<IrConstructor>().firstOrNull { it.isPrimary }
+			?.parameters?.filter { it.kind == IrParameterKind.Regular }.orEmpty()
+		val fields = ctorParams.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
+		val assigns = ctorParams.joinToString(",") { """{"k":"setField","ownerType":${str(typeName(klass))},"recv":{"k":"this"},"name":${str(it.name.asString())},"value":{"k":"local","name":${str(it.name.asString())}}}""" }
+		val ctor = """{"params":[$fields],"baseArgs":[],"thisArgs":null,"vis":"public","body":[$assigns]}"""
+		return """{"name":${str(typeName(klass))},"kind":"class","abstract":false,"vis":"public","base":"clr:System.Attribute","interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
+	}
+
+	/** The `attrs` JSON for a declaration: each user annotation `@Ann(consts)` -> a .NET custom attribute application. */
+	private fun attrsJson(anns: List<IrConstructorCall>): String =
+		anns.mapNotNull { ann ->
+			val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
+			if (ac.kind != ClassKind.ANNOTATION_CLASS || clrName(ac) != null || ac.fqNameWhenAvailable?.asString()?.startsWith("kotlin.") == true) return@mapNotNull null
+			val args = regularArgs(ann)
+			"""{"attr":${str(typeName(ac))},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
+		}.joinToString(",")
+
 	private fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {
 		val baseType = klass.superTypes
 			.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
@@ -528,7 +549,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Anonymous objects (lifted, tracked in anonNames) are synthetic -> keep public.
 		val vis = if (anonNames.containsKey(klass)) "public" else visOf(klass)
 		val isAbstract = klass.modality == Modality.ABSTRACT || klass.modality == Modality.SEALED
-		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}${typeParamsJson(klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods]}"""
+		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}${typeParamsJson(klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"attrs":[${attrsJson(klass.annotations)}]}"""
 	}
 
 	private fun ctor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {
@@ -596,7 +617,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Object-overrides / interface members must stay public for virtual dispatch.
 		val vis = if (objName != null) "public" else visOf(fn)
 		val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
-		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)},"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body]}"""
+		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)},"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]}"""
 	}
 
 	// ===== Coroutine (suspend fun) -> CLR-native async state machine (strategy B) =====

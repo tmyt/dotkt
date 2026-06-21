@@ -251,6 +251,19 @@ sealed class Emitter
             if (!ti.IsInterface && !ti.IsEnum)
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) EmitMethodBody(ti, m);
 
+        // User annotations -> .NET custom attributes, applied on the type and its methods (the ctor builder of the
+        // synthesized `: System.Attribute` class already exists). Args are compile-time constants.
+        foreach (var ti in _types.Values)
+        {
+            if (ti.Def.TryGetProperty("attrs", out var tattrs))
+                foreach (var a in tattrs.EnumerateArray()) ti.TB.SetCustomAttribute(BuildCab(a));
+            if (ti.Def.TryGetProperty("methods", out var ms))
+                foreach (var m in ms.EnumerateArray())
+                    if (m.TryGetProperty("attrs", out var mattrs) && mattrs.GetArrayLength() > 0
+                        && ti.Methods.TryGetValue(m.GetProperty("name").GetString(), out var mb))
+                        foreach (var a in mattrs.EnumerateArray()) mb.SetCustomAttribute(BuildCab(a));
+        }
+
         // Pass 4b: static-field initializers (companion `val`s) -> a type initializer (.cctor).
         foreach (var ti in _types.Values)
         {
@@ -2468,6 +2481,39 @@ sealed class Emitter
     {
         for (int i = 0; i < args.Length; i++) EmitArg(args[i], ps[i].ParameterType);
     }
+    // Build a .NET custom attribute from a BIR `attr` node (a user annotation): the synthesized `: System.Attribute`
+    // class's ctor + compile-time-constant args.
+    CustomAttributeBuilder BuildCab(JsonElement a)
+    {
+        var at = _types[a.GetProperty("attr").GetString()];
+        var ctor = at.Ctors.Count > 0 ? at.Ctors[0] : at.TB.DefineDefaultConstructor(MethodAttributes.Public);
+        var args = a.GetProperty("args").EnumerateArray().Select(ConstArgValue).ToArray();
+        return new CustomAttributeBuilder(ctor, args);
+    }
+
+    static object ConstArgValue(JsonElement e)
+    {
+        // Annotation arguments are always compile-time constants (const nodes).
+        if (!e.TryGetProperty("value", out var v)) return null;
+        switch (v.ValueKind)
+        {
+            case JsonValueKind.String: return v.GetString();
+            case JsonValueKind.True: return true;
+            case JsonValueKind.False: return false;
+            case JsonValueKind.Number:
+                return e.GetProperty("type").GetString() switch
+                {
+                    "long" => (object)v.GetInt64(),
+                    "double" => v.GetDouble(),
+                    "float" => (float)v.GetDouble(),
+                    "short" => (short)v.GetInt32(),
+                    "byte" => (byte)v.GetInt32(),
+                    _ => v.GetInt32(),
+                };
+            default: return null;
+        }
+    }
+
     void EmitArg(JsonElement a, Type want)
     {
         // `T`/null passed to a `T?` slot -> Nullable<T> wrap / default(Nullable<T>) (shared with EmitCond).
