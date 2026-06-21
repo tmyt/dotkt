@@ -712,9 +712,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** The `Task<T>` an await/suspend-call awaits: the `.await()` receiver, or the direct suspend call itself. */
-	private fun coAwaitable(call: IrCall): String =
-		if (isAwaitIntrinsic(call.symbol.owner)) expr(extensionReceiver(call) ?: dispatchReceiver(call)!!)
+	private fun coAwaitable(call: IrCall): String {
+		val callee = call.symbol.owner
+		// `kotlinx.coroutines.delay(ms)` -> `Task.Delay((int)ms)` (the awaitable; a non-generic Task -> void result).
+		if (callee.fqNameWhenAvailable?.asString() == "kotlinx.coroutines.delay")
+			return """{"k":"clrStatic","type":"System.Threading.Tasks.Task","method":"Delay","argTypes":["System.Int32"],"ret":"clr:System.Threading.Tasks.Task","args":[{"k":"conv","to":"int","e":${expr(regularArgs(call).first())}}]}"""
+		return if (isAwaitIntrinsic(callee)) expr(extensionReceiver(call) ?: dispatchReceiver(call)!!)
 		else expr(call)   // a direct suspend call: its kickoff returns Task<T>
+	}
 
 	private fun suspendMethod(fn: IrSimpleFunction, static: Boolean): String {
 		coState = 0; coLabelN = 0
@@ -1929,6 +1934,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	private fun call(call: IrCall): String {
 		val callee = call.symbol.owner
+		// `kotlinx.coroutines.runBlocking { … }` -> drive the coroutine synchronously. Only a TRIVIAL block
+		// (`{ suspendFun() }`, a single tail suspend call) is supported here (a non-trivial block needs suspend-lambda
+		// CPS). The block's kickoff Task is awaited via GetAwaiter().GetResult().
+		if (callee.fqNameWhenAvailable?.asString() == "kotlinx.coroutines.runBlocking") {
+			val block = regularArgs(call).lastOrNull() as? IrFunctionExpression
+			val stmts = (block?.function?.body as? IrBlockBody)?.statements.orEmpty()
+			val tail = stmts.singleOrNull()?.let { if (it is IrReturn) it.value else it as? IrExpression }
+			if (block != null && tail is IrCall && tail.symbol.owner.isSuspend) {
+				val unit = call.type.isUnit()
+				val taskT = "clrg:System.Threading.Tasks.Task" + (if (unit) "" else "[${birType(tail.type)}]")
+				val awaiterT = "clrg:System.Runtime.CompilerServices.TaskAwaiter" + (if (unit) "" else "[${birType(tail.type)}]")
+				val getAwaiter = """{"k":"clrInstance","type":${str(taskT)},"method":"GetAwaiter","argTypes":[],"ret":${str(awaiterT)},"recv":${expr(tail)},"args":[]}"""
+				return """{"k":"clrInstance","type":${str(awaiterT)},"method":"GetResult","argTypes":[],"ret":${str(if (unit) "System.Void" else netType(tail.type))},"recv":$getAwaiter,"args":[]}"""
+			}
+			return unsupported(call, "this runBlocking block",
+				"only a trivial block `{ suspendFun() }` is supported; extract the body into a `suspend fun` and call that")
+		}
 		// `stackBuffer(n) { … }` intrinsic -> scoped stack allocation (splice the block into the caller's frame).
 		if (callee.name.asString() == "stackBuffer" && callee.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
 			return emitStackBuffer(call)

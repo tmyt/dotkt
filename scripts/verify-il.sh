@@ -4,6 +4,8 @@ set -euo pipefail
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STDLIB="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.2.0.jar' | head -1)"
+CORO="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-1.8.0.jar' | head -1)"
+CP="$STDLIB:$CORO"
 fail=0
 
 # Build the compiler launcher ONCE (a plain Java app). Per-sample invokes then cost ~2s of JVM startup instead
@@ -57,7 +59,7 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
 		dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';');$refdll" --scan "$src"/*.kt >/dev/null 2>&1
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1; then
+		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
 		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" --ref "$refdll" "$birdir"/*.bir.json >/dev/null 2>&1; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
@@ -73,7 +75,7 @@ il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 	{ name="$1"; asm="$2"; src="$3"; expected="$4"; meta="${5:-}"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1; then
+		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
 		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" "$birdir"/*.bir.json >/dev/null 2>&1; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
@@ -170,7 +172,7 @@ il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"
 		refdll="$(build_runtime "$src" "$rasm")"; echo "$refdll" > "$ROOT/build/refdll-$name"
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-		if ! "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1; then
+		if ! "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
 		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" --ref "$refdll" "$birdir"/*.bir.json >/dev/null 2>&1; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
@@ -188,6 +190,7 @@ il_check_inject netattr NetAttr "$ROOT/samples/il-netattr" "$(printf 'widget#7\n
 il_check_inject stackalloc Sa "$ROOT/samples/il-stackalloc" "$(printf '16\n30\n-1\n10\n21')" SpanRt
 il_check fmt Fmt "$ROOT/samples/il-fmt" "$(printf '42 items, 87.5%% (ok)\n00007-ff\n[a   ]\n[bb  ]')"
 il_check_inject mref Mr "$ROOT/samples/il-mref" "$(printf 'hello world\n0')" MrRt
+il_check cobuild Cob "$ROOT/samples/il-cobuild" "25"
 
 # Reverse interop: a .NET (C#) host loads the IL-emitted Kotlin assembly and calls a Kotlin class + top-level
 # fun. Proves the IL output is a consumable .NET assembly. (Compile-time <Reference> needs per-type contract-
@@ -196,7 +199,7 @@ il_revinterop() {
 	local asm=KotlinLib src="$ROOT/samples/il-revinterop"
 	local birdir="$ROOT/build/bir-revinterop" ildir="$ROOT/build/il-revinterop"
 	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-	"$LAUNCHER" $src/lib.kt -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1 \
+	"$LAUNCHER" $src/lib.kt -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1 \
 		|| { echo "FAIL  il:$name (compile error)"; fail=1; return; }
 	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" "$birdir"/*.bir.json >/dev/null
 	cp "$src/Program.cs" "$ildir/Program.cs"
@@ -224,7 +227,7 @@ ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
 REFDIR="$(dirname "$(find /usr/share/dotnet/shared/Microsoft.NETCore.App -name System.Private.CoreLib.dll 2>/dev/null | sort | tail -1)")"
 if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 	echo "--- ilverify ---"
-	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [refcell]=RefCell [annot]=Annot [props]=Props [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [coro]=Coro [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt )
+	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [refcell]=RefCell [annot]=Annot [props]=Props [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [coro]=Coro [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob )
 	for n in "${!ASMS[@]}"; do
 		dll="$ROOT/build/il-$n/${ASMS[$n]}.dll"
 		[[ -f "$dll" ]] || continue
