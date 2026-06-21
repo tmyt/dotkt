@@ -94,11 +94,14 @@ sealed class Emitter
 
     public void EmitAssembly(List<JsonElement> files)
     {
-        // NOTE (reverse-interop polish, 5.2): the emitted assembly's core type refs point at System.Private.CoreLib
-        // (the impl assembly) because BCL types are resolved by runtime reflection. A standalone exe runs fine and
-        // any .NET host can reflection-load it, but a C# project that <Reference>s it at COMPILE time hits CS0012
-        // (Object lives in an unreferenced assembly). The proper fix is to resolve BCL types via a MetadataLoadContext
-        // over reference assemblies so refs become System.Runtime — deferred (docs/csharp-retirement-design.md 5.2).
+        // NOTE (R-1, reverse-interop): the emitted assembly's core type refs point at System.Private.CoreLib (the
+        // impl assembly) because BCL types resolve via runtime reflection (typeof/Type.GetType, ~176 sites). A
+        // standalone exe runs fine and any .NET host can reflection-load it (samples/il-revinterop), but a C# project
+        // that <Reference>s it at COMPILE time hits CS0012 (Object lives in the unreferenced System.Private.CoreLib).
+        // Investigated 2026-06-21: adding a consumer <Reference> to System.Private.CoreLib does NOT work either
+        // (CS0433 — attributes exist in both it and System.Runtime). The proper fix is to resolve ALL BCL types
+        // through a MetadataLoadContext over the REFERENCE assemblies and pass that core to PersistedAssemblyBuilder,
+        // so refs become System.Runtime — a large, contained refactor (every typeof(Bcl) -> mlc lookup). Tracked #50.
         var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName), typeof(object).Assembly);
         _mod = ab.DefineDynamicModule(_asmName);
 
