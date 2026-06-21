@@ -395,6 +395,22 @@ resume API, structured async/await/runBlocking, multi-shot sync `sequence{}`, mu
 proven on the foundation. What remains is bringing in the literal upstream library (its internal Continuation
 impls, dispatchers, JobSupport, the full Flow/Channel operator set) — quantity on a proven foundation.
 
+## 13k. Generic Flow<T> done — a real compiler feature, not "quantity" (2026-06-22)
+
+Correction to §13j's framing: generic `Flow<T>` was NOT just upstream quantity — it needed two genuine compiler
+fixes (the monomorphic-Int Flow slice had masked them):
+1. **Member access on a generic type instantiated with an emitted generic parameter** (`FlowCol<T>.emitRaw`,
+   `Deferred<T>.task`): runtime reflection (`GetProperty`/`GetMethod`) refuses a `TypeBuilderInstantiation`, so
+   ilemit re-anchors the open definition's member onto the constructed type via `TypeBuilder.GetMethod`
+   (`PropAccessor`; `EmitClrCall` fallback). This was the kstruct blocker that forced the monomorphic pivot.
+2. **Suspend-call return type**: a call to a `suspend fun` resolves to its kickoff returning `Task<T>`; the
+   `retType` hint (used by ilemit on generic calls) must be `coTaskType`, not the result `T`, else an awaited
+   GENERIC suspend call is typed as the result and `GetAwaiter` isn't found (`retHintStr`/`effRet`).
+Proof: `samples/il-kgflow` — `flow<String> { emit("a"); emit("bb"); emit("ccc") }.collect { println(it.length) }`
+→ 1/2/3, ilverify-clean. So generic facade types + generic suspend funs + generic-instantiated member access all
+work now. (The genuinely-upstream-coupled remainder is still A3/B/C per §13j — but the generic-Flow machinery is
+a finished compiler feature.)
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi
