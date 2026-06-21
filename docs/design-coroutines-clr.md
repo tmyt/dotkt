@@ -254,6 +254,20 @@ Continuation<T>` → `clrg:DotKt.Coroutines.Continuation` (birType+netType), `CO
 Deferred (arrive when compiling upstream): generic suspend funs (generic SM class), `kotlin.Result` mapping,
 `startCoroutine`/`createCoroutineUnintercepted`/`intercepted`, `suspendCancellableCoroutine` (compiles on top).
 
+## 13d. Phase 3 status (2026-06-22) — driver expect/actual + atomicfu
+
+**Phase 3 ✅ DONE.** (a) **expect/actual**: `Main.kt` sets `arguments.multiPlatform = true`; the common fragment is
+designated per-invocation via the standard `-Xcommon-sources=<files>` CLI flag (a flat one-module compile is
+REJECTED by the frontend — expect & actual must be different fragments). commonMain + a CLR `actual` set thus
+compile in ONE invocation; expects emit no `.bir.json`, actuals do. No HMPP/klib. (b) **atomicfu**: `kotlinx.
+atomicfu.{AtomicInt,AtomicLong,AtomicBoolean,AtomicRef}` map (birType/netType) to `DotKt.Coroutines.Atomic*`
+Interlocked/Volatile wrappers (`runtime/DotKt.Coroutines/Atomics.cs`); `BirEmitter.atomicfuCall` maps the
+`atomic(x)` factory (by arg type) + member ops (`.value`, `compareAndSet`, `incrementAndGet`, `addAndGet`, …).
+Proof: `samples/il-expect` (expect/actual + AtomicInt + AtomicRef), ilverify-clean, in `verify-il.sh`
+(`il_check_mpp`). NOTE: atomicfu wrappers are the correct "thin actual set" (not the JVM field-erasure) — revisit
+for perf only if needed. The real `kotlinx-atomicfu` jar isn't on the test classpath; a facade with matching
+fqNames stands in (the backend maps identically for the real jar).
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi

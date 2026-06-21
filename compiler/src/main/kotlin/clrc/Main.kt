@@ -15,6 +15,10 @@ import org.jetbrains.kotlin.util.PerformanceManagerImpl
  */
 fun main(args: Array<String>) {
 	val arguments = parseCommandLineArguments<K2JVMCompilerArguments>(args.toList())
+	// Enable expect/actual matching so a library's commonMain + a CLR `actual` source set compile together as one
+	// flat module (the pragmatic minimum for building kotlinx libraries — no HMPP/klib). Harmless for single-
+	// platform code. See docs/design-coroutines-clr.md §13a (resolution 4).
+	arguments.multiPlatform = true
 	val collector = PrintingMessageCollector(
 		System.err,
 		MessageRenderer.PLAIN_RELATIVE_PATHS,

@@ -2009,6 +2009,45 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return acc
 	}
 
+	/**
+	 * kotlinx.atomicfu -> the DotKt.Coroutines Interlocked/Volatile wrappers: the `atomic(x)` factory -> a wrapper
+	 * ctor (by arg type), and member ops (`.value`, `compareAndSet`, `incrementAndGet`, …) -> the wrapper's methods.
+	 * Returns null for non-atomicfu calls. See docs §13a resolution 5.
+	 */
+	private fun atomicfuCall(call: IrCall): String? {
+		val callee = call.symbol.owner
+		if (callee.fqNameWhenAvailable?.asString() == "kotlinx.atomicfu.atomic") {
+			val arg = regularArgs(call).first()
+			return when (arg.type.classFqName?.asString()) {
+				"kotlin.Int" -> """{"k":"clrNew","type":"DotKt.Coroutines.AtomicInt","argTypes":["System.Int32"],"args":[${expr(arg)}]}"""
+				"kotlin.Long" -> """{"k":"clrNew","type":"DotKt.Coroutines.AtomicLong","argTypes":["System.Int64"],"args":[${expr(arg)}]}"""
+				"kotlin.Boolean" -> """{"k":"clrNew","type":"DotKt.Coroutines.AtomicBoolean","argTypes":["System.Boolean"],"args":[${expr(arg)}]}"""
+				else -> {
+					val typeArg = ((call.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
+					val elemBir = typeArg?.let { birType(it) } ?: "object"
+					val elemNet = typeArg?.let { netType(it) } ?: "System.Object"   // argTypes resolve via ResolveType, not the BIR alias
+					"""{"k":"clrNew","type":"clrg:DotKt.Coroutines.AtomicRef[$elemBir]","argTypes":[${str(elemNet)}],"args":[${expr(arg)}]}"""
+				}
+			}
+		}
+		val recv = dispatchReceiver(call) ?: return null
+		val recvFq = recv.type.classFqName?.asString() ?: return null
+		if (recvFq !in ATOMICFU_TYPES) return null
+		val clrType = birType(recv.type)
+		if (callee.correspondingPropertySymbol?.owner?.name?.asString() == "value") {
+			return if (callee.name.asString().startsWith("<get"))
+				"""{"k":"clrPropGet","type":${str(clrType)},"name":"Value","retType":${str(netType(call.type))},"static":false,"recv":${expr(recv)}}"""
+			else {
+				val v = regularArgs(call).first()
+				"""{"k":"clrInstance","type":${str(clrType)},"method":"set_Value","argTypes":[${str(netType(v.type))}],"ret":"System.Void","recv":${expr(recv)},"args":[${expr(v)}]}"""
+			}
+		}
+		val m = callee.name.asString().replaceFirstChar { it.uppercaseChar() }
+		val argTs = callee.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { str(netType(it.type)) }
+		val argsJson = regularArgs(call).joinToString(",") { expr(it) }
+		return """{"k":"clrInstance","type":${str(clrType)},"method":${str(m)},"argTypes":[$argTs],"ret":${str(netType(call.type))},"recv":${expr(recv)},"args":[$argsJson]}"""
+	}
+
 	private fun call(call: IrCall): String {
 		val callee = call.symbol.owner
 		val calleeFqEarly = callee.fqNameWhenAvailable?.asString()
@@ -2024,6 +2063,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val argT = if (method == "Resume") contT else "clr:System.Exception"
 			return """{"k":"clrStatic","type":"DotKt.Coroutines.Continuations","method":${str(method)},"typeArgs":[${str(contT)}],"argTypes":["clrg:DotKt.Coroutines.Continuation[$contT]",${str(argT)}],"ret":"System.Void","args":[${expr(recv)},${expr(regularArgs(call).first())}]}"""
 		}
+		atomicfuCall(call)?.let { return it }
 		// `kotlinx.coroutines.runBlocking { … }` -> drive the coroutine synchronously. Only a TRIVIAL block
 		// (`{ suspendFun() }`, a single tail suspend call) is supported here (a non-trivial block needs suspend-lambda
 		// CPS). The block's kickoff Task is awaited via GetAwaiter().GetResult().
@@ -2991,6 +3031,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.String" -> "System.String"
 		"kotlin.Unit" -> "System.Void"
 		"kotlin.coroutines.Continuation" -> "clrg:DotKt.Coroutines.Continuation[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
+		"kotlinx.atomicfu.AtomicInt" -> "DotKt.Coroutines.AtomicInt"
+		"kotlinx.atomicfu.AtomicLong" -> "DotKt.Coroutines.AtomicLong"
+		"kotlinx.atomicfu.AtomicBoolean" -> "DotKt.Coroutines.AtomicBoolean"
+		"kotlinx.atomicfu.AtomicRef" -> "clrg:DotKt.Coroutines.AtomicRef[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		else -> NET_EXCEPTIONS[fq]
 			?: (t.classifierOrNull?.owner as? IrClass)?.let { clrName(it) }
 			?: "System.Object"
@@ -3138,6 +3182,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (fqp == "kotlin.coroutines.Continuation") {
 			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
 			return "clrg:DotKt.Coroutines.Continuation[$arg]"
+		}
+		// kotlinx.atomicfu atomics -> the DotKt.Coroutines Interlocked/Volatile wrappers (Phase 3 / §13a res. 5).
+		if (fqp == "kotlinx.atomicfu.AtomicInt") return "clr:DotKt.Coroutines.AtomicInt"
+		if (fqp == "kotlinx.atomicfu.AtomicLong") return "clr:DotKt.Coroutines.AtomicLong"
+		if (fqp == "kotlinx.atomicfu.AtomicBoolean") return "clr:DotKt.Coroutines.AtomicBoolean"
+		if (fqp == "kotlinx.atomicfu.AtomicRef") {
+			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+			return "clrg:DotKt.Coroutines.AtomicRef[$arg]"
 		}
 		// kotlin.Result<T> -> the synthetic generic `Result<T>` (registers it for synthesis).
 		if (fqp == "kotlin.Result") {
@@ -3309,6 +3361,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"java.lang.IllegalStateException" to "System.InvalidOperationException",
 			"java.lang.IndexOutOfBoundsException" to "System.IndexOutOfRangeException",
 			"java.lang.NullPointerException" to "System.NullReferenceException",
+		)
+		private val ATOMICFU_TYPES = setOf(
+			"kotlinx.atomicfu.AtomicInt", "kotlinx.atomicfu.AtomicLong",
+			"kotlinx.atomicfu.AtomicBoolean", "kotlinx.atomicfu.AtomicRef",
 		)
 	}
 }
