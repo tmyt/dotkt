@@ -93,3 +93,76 @@ from stdlib on the Continuation primitives.)
 2. suspend-lambda CPS.
 3. expect/actual + atomicfu + a minimal CLR actual set; compile a small slice of kotlinx-coroutines-core.
 4. Full kotlinx-coroutines-core (Flow/Channel); fold in `sequence`/`generateSequence` (#42).
+
+---
+
+# Refinements (2026-06-21 design discussion)
+
+## 9. Arity is the organizing axis
+
+The confusion dissolves once you split by **cardinality**, not by "Kotlin vs .NET". Each side has a single-shot
+and a multi-shot member, and they pair up cleanly:
+
+| arity | Kotlin | .NET (cold / backpressured) | .NET (hot / push) | callback primitive |
+|---|---|---|---|---|
+| 0..1 (single) | `suspend fun` / `Deferred<T>` | `Task<T>` | — | **`Continuation<T>`** |
+| 0..N (multi)  | `Flow<T>` | **`IAsyncEnumerable<T>`** | `IObservable<T>` (Rx) | `FlowCollector` / `IObserver` |
+
+- **Single-shot:** `Continuation` and `Task` are the SAME arity, which is exactly why they integrate trivially —
+  `Task` ≈ a reified, started `Continuation`-completion. Bridge: `await` = `suspendCoroutine { c ->
+  task.GetAwaiter().OnCompleted { c.resumeWith(...) } }`; `future{}` = a `TaskCompletionSource` resumed by the
+  coroutine's `Continuation`. (Literally kotlinx-coroutines-jdk8's `future`/`await`.)
+- **Multi-shot:** `Flow` is COLD + suspend-based (backpressure = the collector suspends). Its closest .NET analog
+  is **`IAsyncEnumerable<T>`** (cold, `await MoveNextAsync`, backpressured) — NOT Rx `IObservable` (hot, push, no
+  backpressure, which needs an impedance layer). `flow{emit}` ⟷ `async IAsyncEnumerable`+`yield return`;
+  `flow.collect{}` ⟷ `await foreach`. Rx interop stays opt-in.
+- `Continuation` is structurally a *single-shot Observer* (`resumeWith` = `OnNext`+`OnCompleted` once); `Observable`
+  is its N-shot generalization — so "Observable is the general form" is true, but it belongs to the Flow LAYER, not
+  the single-shot core. Don't unify the core on Observable (over-general: every single-shot would carry a 0..1
+  constraint). Unify single on `Continuation`/`Task`, multi on `Flow`/`IAsyncEnumerable`.
+
+## 10. The ABI delta is "generalize", not "rewrite"
+
+The current `suspend fun → Task<T>` (CLR `IAsyncStateMachine`) is ALREADY a continuation-passing state machine:
+at a suspension point, `builder.AwaitUnsafeOnCompleted(awaiter, ref sm)` registers `sm.MoveNext` as the awaiter's
+**continuation**. The CPS front-end (`emitCps`, flat steps, await spilling) — the genuinely hard part — is done.
+The only thing hardwired is the **completion sink**: `AsyncTaskMethodBuilder` (completes a `Task`). Generalize
+that sink and the standard model appears: `Task` = "a `Continuation` whose sink is a `TaskCompletionSource`".
+
+So the work is INCREMENTAL, and **`Task` is NOT retired — it stays as the default sink / one impl of `Continuation`**,
+so existing Task-based coroutine code keeps working alongside the exposed Continuation form. This shrinks the
+breaking surface (0.9.0 remains the prudent version, but 1.0 may not be strongly blocked by it). Remaining delta:
+1. ilemit: a `Continuation`-driven state-machine form (completion sink pluggable: Task default OR a supplied `Continuation`).
+2. expose the intrinsics: `kotlin.coroutines.Continuation`, `COROUTINE_SUSPENDED`, `suspendCoroutineUninterceptedOrReturn`.
+3. **suspend-lambda CPS** (extend `emitCps` to lambda bodies; today only trivial `{ f() }` works — see `lambda()`).
+4. dispatcher mapping: `CoroutineDispatcher` → `SynchronizationContext` / `TaskScheduler`.
+
+## 11. Two product goals (decide LATER, not now)
+
+- **A — Kotlin-flavored structured async on Task.** Hand-write a thin scope library on the existing `suspend→Task`:
+  `CoroutineScope`/`Job` ≈ `CancellationTokenSource` + child-Task tracking, `launch`/`async` spawn child Tasks,
+  `coroutineScope{}` ≈ `Task.WhenAll(children)`, cancellation propagates. NO ABI change. Not the literal kotlinx
+  library (no exact semantics / Flow operator set), but covers most structured-async needs.
+- **B — compile the real `kotlinx.coroutines`.** §1–§5. Full API, the Continuation ABI work + library-build prereqs.
+
+Crucially the two share the SAME .NET mapping (§9, §12): A hand-writes it, B compiles kotlinx and maps its
+primitives to the same `Task`/`IAsyncEnumerable`/scheduler targets. So the choice can be deferred — it does not
+change the foundation.
+
+## 12. Scope decomposition (not two equal scopes)
+
+- The **Task-version scope** (`CoroutineScope`/`Job`) is the real structured-concurrency engine (children +
+  `CancellationToken`, `WhenAll`, cancel propagation).
+- The **`IAsyncEnumerator`-version "scope"** (a `Flow` collection) is mostly just the cold `IAsyncEnumerable`
+  correspondence with NO scope of its own (1 `collect` = 1 `IAsyncEnumerator`, its lifetime = the iterator frame,
+  dispose = cancel). Only the CONCURRENT bits of Flow (`channelFlow`/`produce`/`flatMapMerge`/buffer) need a scope —
+  and they **delegate to the Task scope** (launch a child producer that writes to a `System.Threading.Channels`
+  channel). So it is **one real scope (Task) + the `Flow = IAsyncEnumerable` correspondence**, with multi-value
+  concurrency borrowing the single-value scope — same shape for A and B.
+
+## 13. The single concrete next step
+
+Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi
+statements }`). So the one irreducible, design-independent task is **suspend-lambda CPS** — extend `emitCps` from
+suspend funs to lambda bodies. It unblocks both paths and both arities; the big ABI/A-vs-B questions can wait until
+that real code exists. **Recommended first implementation step for #55.**
