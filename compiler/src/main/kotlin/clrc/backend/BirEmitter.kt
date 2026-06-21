@@ -991,6 +991,34 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun bodyStmts(e: IrExpression): String =
 		if (e is IrBlock) e.statements.joinToString(",") { stmt(it) } else stmt(e)
 
+	/** `try`/`catch` in value position -> a temp local assigned in each branch, returned via a valueBlock. */
+	private fun tryExpr(node: IrTry): String {
+		val tv = "<>dotkt_tryval${scopeCounter++}"
+		val tryBody = bodyStmtsAssign(node.tryResult, tv)
+		val catches = node.catches.joinToString(",") { c ->
+			val p = c.catchParameter
+			"""{"excType":${str(netType(p.type))},"var":${str(p.name.asString())},"body":[${bodyStmtsAssign(c.result, tv)}]}"""
+		}
+		val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
+		val tryS = """{"k":"try","type":"void","body":[$tryBody],"catches":[$catches]$finally}"""
+		return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tv)},"type":${str(birType(node.type))}},$tryS],"result":{"k":"local","name":${str(tv)}}}"""
+	}
+
+	/** Like [bodyStmts], but the branch's final value-expression is assigned to `tv` (a value already throws/returns
+	 *  -> emitted as-is). For try-as-expression: each branch leaves its result in the temp. */
+	private fun bodyStmtsAssign(e: IrExpression, tv: String): String {
+		val stmts = if (e is IrBlock) e.statements else listOf(e)
+		val pre = stmts.dropLast(1).joinToString(",") { stmt(it) }
+		val last = stmts.lastOrNull()
+		val tail = when {
+			last is IrExpression && !last.type.isUnit() && last.type.classFqName?.asString() != "kotlin.Nothing" ->
+				"""{"k":"setLocal","name":${str(tv)},"value":${expr(last)}}"""
+			last != null -> stmt(last)
+			else -> ""
+		}
+		return listOf(pre, tail).filter { it.isNotEmpty() }.joinToString(",")
+	}
+
 	/**
 	 * Statement-position `if`/`when` -> CFG branches (E-0.5 §5.3): each non-else branch is
 	 * `brIf NEXT (!cond); body; goto END; NEXT:`; the else body falls through to `END:`. Expression-position
@@ -1102,6 +1130,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			else -> expr(node.argument)
 		}
 		is IrWhen -> ternary(node)
+		// `try { … } catch { … }` in VALUE position (`val x = try …`, `return try …`, a try in a lambda) -> a temp
+		// local assigned in each branch, wrapped in a valueBlock (a CLR try/catch leaves no value on the stack).
+		is IrTry -> tryExpr(node)
 		// `T::class` / `Foo::class` -> a System.Type token. For a generic param `T` this is `ldtoken !!0` in the
 		// generic method (CLR reified generics); `Foo::class` is a concrete `ldtoken Foo`.
 		is IrClassReference -> """{"k":"classRef","type":${str(birType(node.classType))}}"""
