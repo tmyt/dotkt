@@ -89,6 +89,7 @@ sealed class Emitter
     // `invoke`), the original receiver is stored in an SM field so MoveNext can still reach it after a resume.
     // Non-null only while emitting such a MoveNext; `this` then loads this field instead of ldarg.0 (the SM).
     FieldInfo _coThis;
+    int _seqCounter;   // unique suffix for emitted sequence{} state-machine types
     // try-around-await: inside a try region of a MoveNext, `ret` is illegal — suspension/return `leave` to the
     // single method exit instead. Depth > 0 while emitting steps between coTryBegin and coTryEnd.
     int _coTryDepth;
@@ -1003,6 +1004,102 @@ sealed class Emitter
         }
     }
 
+    // `sequence { yield(…) }` -> a state machine implementing DotKt.Coroutines.ISeqStep<elem> (MoveNext advances to
+    // the next yield; Current holds it), wrapped by Seq.Of into a lazy IEnumerable<elem>. The yield SM reuses the
+    // coYield/coLabel/coGoto/coCondGoto step stream. Emitted inline at the call site (state is saved/restored so the
+    // enclosing method's IL emission resumes afterward). See docs §13h.
+    Type EmitSequenceSm(JsonElement e)
+    {
+        var elem = MapType(e.GetProperty("elem").GetString());
+        var steps = e.GetProperty("steps").EnumerateArray().ToList();
+        var iseq = ResolveType("DotKt.Coroutines.ISeqStep`1").MakeGenericType(elem);
+
+        var sm = _mod.DefineType("<>dotkt_SeqSm" + (_seqCounter++),
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, typeof(object));
+        sm.AddInterfaceImplementation(iseq);
+        var fState = sm.DefineField("<>state", typeof(int), FieldAttributes.Public);
+        var fCurrent = sm.DefineField("<>current", elem, FieldAttributes.Public);
+        var coFields = new Dictionary<string, FieldInfo>();
+        foreach (var f in e.GetProperty("cpsFields").EnumerateArray())
+            coFields[f.GetProperty("name").GetString()] = sm.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), FieldAttributes.Public);
+
+        var ctor = sm.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        { var il = ctor.GetILGenerator(); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)); il.Emit(OpCodes.Ret); }
+
+        var getCur = sm.DefineMethod("get_Current", MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.HideBySig | MethodAttributes.SpecialName, elem, Type.EmptyTypes);
+        { var il = getCur.GetILGenerator(); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, fCurrent); il.Emit(OpCodes.Ret); }
+        sm.DefineMethodOverride(getCur, iseq.GetMethod("get_Current"));
+
+        var mv = sm.DefineMethod("MoveNext", MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.HideBySig, typeof(bool), Type.EmptyTypes);
+        sm.DefineMethodOverride(mv, iseq.GetMethod("MoveNext"));
+
+        // Save the enclosing method's emit state (the shared _il / locals / coField context is reused for the SM body).
+        var sIl = _il; var sFields = _coFields; var sThis = _coThis; var sRet = _methodRetType;
+        var sCfg = _cfgLabels; var sExit = _coExit; var sTryDepth = _coTryDepth;
+        var sLocals = new Dictionary<string, LocalBuilder>(_locals);
+        var sArgs = new Dictionary<string, int>(_args); var sArgTypes = new Dictionary<string, Type>(_argTypes);
+        {
+            _il = mv.GetILGenerator();
+            _args.Clear(); _argTypes.Clear(); _locals.Clear(); _methodRetType = typeof(bool);
+            _coFields = coFields; _coThis = null;
+            PrescanCfgLabels(e.GetProperty("steps"));
+            var resume = new Dictionary<int, Label>();
+            var coLabel = new Dictionary<int, Label>();
+            foreach (var st in steps)
+            {
+                var kind = st.GetProperty("k").GetString();
+                if (kind == "coYield") resume[st.GetProperty("state").GetInt32()] = _il.DefineLabel();
+                else if (kind == "coLabel" || kind == "coGoto" || kind == "coCondGoto") { int id = st.GetProperty("id").GetInt32(); if (!coLabel.ContainsKey(id)) coLabel[id] = _il.DefineLabel(); }
+            }
+            var endL = _il.DefineLabel();
+            // if (<>state == -1) return false;   (exhausted)
+            var notDone = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fState); _il.Emit(OpCodes.Ldc_I4_M1); _il.Emit(OpCodes.Bne_Un, notDone);
+            _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ret);
+            _il.MarkLabel(notDone);
+            // dispatch to the resume point after the saved yield (state 0 = start, falls through)
+            foreach (var kv in resume) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fState); EmitLdcI4(kv.Key); _il.Emit(OpCodes.Beq, kv.Value); }
+            foreach (var st in steps)
+            {
+                var kind = st.GetProperty("k").GetString();
+                switch (kind)
+                {
+                    case "coYield":
+                    {
+                        int k = st.GetProperty("state").GetInt32();
+                        _il.Emit(OpCodes.Ldarg_0); var vt = EmitExpr(st.GetProperty("value"));
+                        if (vt != null && (vt.IsValueType || vt.IsGenericParameter) && !elem.IsValueType && !elem.IsGenericParameter) _il.Emit(OpCodes.Box, vt);
+                        _il.Emit(OpCodes.Stfld, fCurrent);
+                        _il.Emit(OpCodes.Ldarg_0); EmitLdcI4(k); _il.Emit(OpCodes.Stfld, fState);
+                        _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Ret);
+                        _il.MarkLabel(resume[k]);
+                        break;
+                    }
+                    case "coLabel": _il.MarkLabel(coLabel[st.GetProperty("id").GetInt32()]); break;
+                    case "coGoto": _il.Emit(OpCodes.Br, coLabel[st.GetProperty("id").GetInt32()]); break;
+                    case "coCondGoto": EmitExpr(st.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, coLabel[st.GetProperty("id").GetInt32()]); break;
+                    case "coReturn": _il.Emit(OpCodes.Br, endL); break;   // `return` from the block ends the sequence
+                    case "coUnsupported": throw new NotSupportedException("sequence feature not supported: " + st.GetProperty("of").GetString());
+                    default: EmitStmt(st); break;
+                }
+            }
+            _il.MarkLabel(endL);
+            _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldc_I4_M1); _il.Emit(OpCodes.Stfld, fState);   // mark exhausted
+            _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ret);
+        }
+        _il = sIl; _coFields = sFields; _coThis = sThis; _methodRetType = sRet;
+        _cfgLabels = sCfg; _coExit = sExit; _coTryDepth = sTryDepth;
+        _locals.Clear(); foreach (var kv in sLocals) _locals[kv.Key] = kv.Value;
+        _args.Clear(); foreach (var kv in sArgs) _args[kv.Key] = kv.Value;
+        _argTypes.Clear(); foreach (var kv in sArgTypes) _argTypes[kv.Key] = kv.Value;
+        sm.CreateType();
+
+        // call site: Seq.Of<elem>(new SeqSm())
+        _il.Emit(OpCodes.Newobj, ctor);
+        _il.Emit(OpCodes.Call, ResolveType("DotKt.Coroutines.Seq").GetMethod("Of").MakeGenericMethod(elem));
+        return ResolveType("System.Collections.Generic.IEnumerable`1").MakeGenericType(elem);
+    }
+
     // The raw `suspendCoroutineUninterceptedOrReturn` leaf in the class form: set the resume state, run the block's
     // leading statements (which typically register `this` to be resumed), then evaluate its result — if it is
     // COROUTINE_SUSPENDED, suspend; otherwise resume synchronously with that value. On resume, rethrow a faulted
@@ -1635,6 +1732,7 @@ sealed class Emitter
                 _il.Emit(OpCodes.Ldarg_0); return typeof(object);
             case "coSuspendedSentinel":   // kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
                 { var f = ResolveType("DotKt.Coroutines.Intrinsics").GetField("COROUTINE_SUSPENDED"); _il.Emit(OpCodes.Ldsfld, f); return typeof(object); }
+            case "sequenceNew": return EmitSequenceSm(e);
             case "coSelfCont":   // the coroutine's own continuation (the SM), as a typed Continuation<T>: new TypedCont<T>(this)
                 {
                     var tk = MapType(e.GetProperty("resultType").GetString());

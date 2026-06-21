@@ -337,6 +337,19 @@ the real sources, `JobSupport` (atomicfu-heavy), `Channel`→`System.Threading.C
 `startCoroutine` / `intercepted` / dispatcher actuals. The single-shot core (suspend funs, generic + Unit,
 intrinsics, structured async on the Task sink) now works end-to-end.
 
+## 13h. Phase 6 status (2026-06-22) — `sequence { yield }` builder ✅ DONE (#42)
+
+The restricted-suspension (multi-shot) coroutine builder works: `sequence { yield(…) }` → a lazy .NET
+`IEnumerable<T>`. The block's `yield(v)` calls CPS-linearize to **`coYield`** steps; ilemit emits a state machine
+implementing the trivial `DotKt.Coroutines.ISeqStep<T>` (`MoveNext` advances to the next yield and sets
+`Current`, returning true; resume after each yield; end → false), and `DotKt.Coroutines.Seq.Of` (a C# iterator)
+wraps it into `IEnumerable<T>` — keeping the awkward `IEnumerator<T>` dual-interface boilerplate in C#, not IL.
+`kotlin.sequences.Sequence<T>` maps to `IEnumerable<T>` (ops ride the existing LINQ mapping). The SM is emitted
+inline at the call site (enclosing emit state saved/restored). Proof: `samples/il-kseq` — straight-line yields
+(1,2,3), yield-in-loop with a live local (1,4,9,16), and an **infinite** `sequence{ while(true) yield(i++) }`
+`.take(2)` (0,1 — proves laziness; doesn't hang), ilverify-clean. v1: non-capturing blocks (loud error otherwise);
+`yieldAll`/`generateSequence` not yet. Restricted-suspension thus rides the same CPS front as suspend funs (§6).
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi

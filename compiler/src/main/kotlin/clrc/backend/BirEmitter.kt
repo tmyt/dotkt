@@ -869,9 +869,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun isSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
 		e is IrCall && e.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn"
 
+	/** `SequenceScope.yield(value)` inside a `sequence { … }` builder — a multi-shot (restricted) suspension. */
+	private fun isYield(call: IrCall): Boolean =
+		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yield"
+
 	/** A suspension point: start the awaitable; if incomplete, save state and return; on resume read the result. */
 	private fun emitSuspend(call: IrCall, assignTo: String?, steps: MutableList<String>) {
 		if (isSuspendIntrinsic(call)) { emitSuspendIntrinsic(call, assignTo, steps); return }
+		if (isYield(call)) { val k = ++coState; steps.add("""{"k":"coYield","state":$k,"value":${expr(regularArgs(call).first())}}"""); return }
 		val k = ++coState
 		steps.add("""{"k":"coSuspend","state":$k,"awaitable":${coAwaitable(call)},"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(birType(call.type))}}""")
 	}
@@ -2087,6 +2092,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"k":"clrStatic","type":"DotKt.Coroutines.Continuations","method":${str(method)},"typeArgs":[${str(contT)}],"argTypes":["clrg:DotKt.Coroutines.Continuation[$contT]",${str(argT)}],"ret":"System.Void","args":[${expr(recv)},${expr(regularArgs(call).first())}]}"""
 		}
 		atomicfuCall(call)?.let { return it }
+		// `kotlin.sequences.sequence { yield(…) }` -> a lazy IEnumerable<T> backed by a yield state machine that
+		// implements ISeqStep<T>, wrapped by DotKt.Coroutines.Seq.Of. The block's yields CPS-linearize to coYield
+		// steps (multi-shot). See docs §13h. v1: the block must not capture outer state (loud error otherwise).
+		if (calleeFqEarly == "kotlin.sequences.sequence") {
+			val block = regularArgs(call).firstOrNull() as? IrFunctionExpression
+				?: return unsupported(call, "this sequence{} block", "expected a literal lambda")
+			if (capturedVars(block.function, includeThis = true).isNotEmpty())
+				return unsupported(call, "a capturing sequence{} block", "v1 supports only non-capturing sequence builders")
+			val elem = ((call.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
+			val co = emitCoroutineBody(block.function)   // yields -> coYield steps; live locals -> cpsFields
+			val smName = "<>dotkt_Seq${closureCounter++}"
+			return """{"k":"sequenceNew","sm":${str(smName)},"elem":${str(elem)},"cpsFields":[${co.cpsFields}],"steps":[${co.steps}]}"""
+		}
 		// `kotlinx.coroutines.runBlocking { … }` -> drive the coroutine synchronously. Only a TRIVIAL block
 		// (`{ suspendFun() }`, a single tail suspend call) is supported here (a non-trivial block needs suspend-lambda
 		// CPS). The block's kickoff Task is awaited via GetAwaiter().GetResult().
@@ -3054,6 +3072,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.String" -> "System.String"
 		"kotlin.Unit" -> "System.Void"
 		"kotlin.coroutines.Continuation" -> "clrg:DotKt.Coroutines.Continuation[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
+		"kotlin.sequences.Sequence" -> "clrg:System.Collections.Generic.IEnumerable[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlinx.atomicfu.AtomicInt" -> "DotKt.Coroutines.AtomicInt"
 		"kotlinx.atomicfu.AtomicLong" -> "DotKt.Coroutines.AtomicLong"
 		"kotlinx.atomicfu.AtomicBoolean" -> "DotKt.Coroutines.AtomicBoolean"
@@ -3200,6 +3219,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
 		// kotlin.Throwable -> System.Exception (the common base; `.message` -> .Message).
 		if (fqp == "kotlin.Throwable") return "clr:System.Exception"
+		// kotlin.sequences.Sequence<T> -> a lazy .NET IEnumerable<T> (sequence{} builds one; ops map to LINQ).
+		if (fqp == "kotlin.sequences.Sequence") {
+			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+			return "clrg:System.Collections.Generic.IEnumerable[$arg]"
+		}
 		// kotlin.coroutines.Continuation<T> -> the shared DotKt.Coroutines.Continuation<T> (Path B; cross-assembly
 		// identity so a user assembly and dotktx.coroutines share one Continuation). See docs §13b.
 		if (fqp == "kotlin.coroutines.Continuation") {
