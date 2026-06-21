@@ -38,6 +38,7 @@
 # A. Kotlin 言語 breadth（codegen）
 
 ## A-0 言語機能カバレッジ表（網羅トラッキング・1.0 言語ゲートの正本）
+> **BIR が処理しない FIR/IR 構文の正本チェックリストは [`docs/bir-coverage.md`](bir-coverage.md)**（IR ノード型レベルの gap 一覧）。
 > 1.0 では **Kotlin 言語構文を漏れなく**追跡する。本表が正本（A-1〜A-3 は補足）。判定根拠＝(1) BirEmitter/ilemit の IR ノードハンドラ有無、(2) パスしているサンプル（verify-il / verify-differential＝IL 経路、verify-all＝C# 経路）。**未対応ノードは `unsupportedStmt`/`unsupportedExpr` でクリーンに停止**（誤コンパイルしない）。確信度: ✅ サンプル実証 / ⚠️ 未検証（サンプル無し・要サンプル追加で確定） / ❌ 未対応（IR ノード未ハンドル or 既知の穴）。更新時はこの表を必ず同期。
 
 ### ✅ 対応済（IL 経路でサンプル実証）
