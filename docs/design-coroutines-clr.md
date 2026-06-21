@@ -201,6 +201,34 @@ intrinsics → 3 flat expect/actual + atomicfu → 4 first real slice (Job/launc
 withContext/coroutineScope/runBlocking) → 5 full commonMain (Flow/Channel) = headline compat gate → 6
 sequence{} fold-in (#42) + UI dispatcher. Full plan: `~/.claude/plans/eager-tinkering-scroll.md`.
 
+## 13b. Phase 1 locked design (2026-06-21, PoC-proven)
+
+**Continuation runtime = a shared DLL `DotKt.Coroutines`** (`runtime/DotKt.Coroutines/`). The backend maps the
+`kotlin.coroutines.*` / `kotlin.Result` fqnames onto its types (like `kotlin.Throwable`→`System.Exception` and
+the `DotKt.Fmt` promotion), NOT per-assembly synthesis (`<>dotkt_Result` would break cross-assembly identity —
+the user assembly and `dotktx.coroutines` must share one `Continuation`). Criterion: cross-assembly identity →
+DLL (`dotkt-naming-and-runtime-split`). This is the conscious introduction of a coroutine runtime DLL that the
+pure-BCL Task ABI didn't need.
+
+Shapes (PoC-proven, `/tmp/coro-poc`, `chain=30`/`runBlocking=30` with a cross-thread resume + Task bridge):
+- `Result<T>` struct (Success/Failure/IsFailure/ExceptionOrNull/GetOrThrow).
+- `CoroutineContext` interface + `EmptyCoroutineContext.Instance` (Element/Key/dispatcher later).
+- `Continuation<T>` — **INVARIANT** on CLR (JVM erases `in T`; invariance is the CLR-safe choice): `Context`
+  getter + `ResumeWith(Result<T>)`.
+- `Intrinsics.COROUTINE_SUSPENDED` (reference-identity sentinel).
+- `Builders.Future<T>(ctx, start)` [Task sink — the default public surface] / `RunBlocking<T>(start)`.
+
+Generated state machine = a **class implementing `Continuation<T>`**: fields `_label`/`_param`(resume value)/
+`_err`/`_completion`(parent Continuation) + cps fields; `Context => _completion.Context`; `ResumeWith` unpacks
+the Result, calls `InvokeSuspend`, returns on `COROUTINE_SUSPENDED` else `_completion.ResumeWith(Success(v))`
+(catch → `Failure(e)`); `InvokeSuspend` is the label switch (reuses the existing `coSuspend`/`coLabel`/`coGoto`/
+`coReturn` step stream) where a suspension point returns the sentinel if it suspends.
+
+**Phase boundary refinement:** the leaf intrinsic `suspendCoroutineUninterceptedOrReturn` **folds into Phase 1**
+(was Phase 2) — the Continuation form is only exercisable by intrinsic-using code, so they are one natural,
+verifiable unit. Phase 2 then = the rest (`startCoroutine`/`createCoroutineUnintercepted`/`intercepted` +
+`suspendCancellableCoroutine` on top).
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi
