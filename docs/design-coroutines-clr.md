@@ -367,6 +367,34 @@ declared set) — this was a latent capture bug that the Flow nesting (`flow{ co
 `Flow`↔`IAsyncEnumerable` boundary bridge, `JobSupport` (atomicfu-heavy), and the full stdlib breadth across the
 real sources — still the large asymptote. But the Flow CORE mechanism is proven to ride the foundation.
 
+## 13j. A1/A2 done; A3/B/C are the coupled literal-upstream effort (2026-06-22)
+
+**A1 ✅** auto-route intrinsic-using suspend funs to the Continuation class form (no `@KCont`; `isCoClass` =
+@KCont OR generic OR body-uses-`suspendCoroutineUninterceptedOrReturn`). Proven by dropping @KCont from
+il-kintrin/kstruct/kflow.
+**A2 ✅ (resume side)** `resume`/`resumeWithException`/`resumeWith(Result.success|failure)` → `DotKt.Coroutines.
+Continuations.{Resume,ResumeWithException}<T>` (generic-static, MakeGenericMethod). Sample il-kresume (5, 107).
+Also fixed capValueExpr/closure-teardown to honor captureSubst.
+
+**Why A3/B/C don't separate cleanly (the honest structure):**
+- The general `kotlin.Result` (runCatching / `getOrNull(): T?`) is best kept as the per-assembly field-inlined
+  `<>dotkt_Result` — `getOrNull` returns `Nullable<T>` for value T and value-or-null for ref T, resolved
+  per-type at the call site. Unifying it with the coroutine `DotKt.Coroutines.Result` would break that `T?`
+  semantics. So the two Result representations should stay separate.
+- Consequence: a USER implementing `Continuation<T>.resumeWith(Result<T>)` in Kotlin needs the result param to
+  be `DotKt.Coroutines.Result` — only relevant when compiling upstream's internal Continuation impls
+  (CancellableContinuationImpl, DispatchedContinuation). Our hand-written structured layer never implements
+  Continuation in Kotlin (the SM is compiler-generated; completions are runtime C# Root/RootUnit), so it doesn't
+  need this.
+- Therefore **A3 (`startCoroutine`/`createCoroutineUnintercepted`/`intercepted`), B (dispatcher actuals), and C
+  (Flow/Channel/JobSupport breadth) are mutually coupled AND only meaningfully testable against real upstream
+  sources** — they are the literal-upstream-compilation asymptote, not independently-shippable standalone steps.
+
+**Net:** every coroutine mechanism (single-shot suspend funs incl. generic/Unit/extension, raw intrinsics +
+resume API, structured async/await/runBlocking, multi-shot sync `sequence{}`, multi-shot async push `Flow`) is
+proven on the foundation. What remains is bringing in the literal upstream library (its internal Continuation
+impls, dispatchers, JobSupport, the full Flow/Channel operator set) — quantity on a proven foundation.
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi
