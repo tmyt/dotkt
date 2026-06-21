@@ -755,13 +755,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		fn.annotations.any { it.type.classFqName?.shortName()?.asString() == "KCont" }
 
 	private fun suspendMethod(fn: IrSimpleFunction, static: Boolean): String {
+		// An extension `suspend fun T.f()` -> a static kickoff whose first param `__self` is the receiver, captured
+		// into the state machine like any other param; receiver references (`<this>`) resolve to `__self`.
+		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+		if (extRecv != null) valSubst[extRecv.name.asString()] = """{"k":"local","name":"__self"}"""
 		val co = emitCoroutineBody(fn)
-		val ps = paramsJsonList(fn.parameters).joinToString(",")
+		if (extRecv != null) valSubst.remove(extRecv.name.asString())
+		val selfJson = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
+		val ps = (listOfNotNull(selfJson) + paramsJsonList(fn.parameters)).joinToString(",")
+		val cps = (listOfNotNull(selfJson) + listOf(co.cpsFields).filter { it.isNotEmpty() }).joinToString(",")
 		val vis = visOf(fn)
 		// Generic suspend funs (`suspend fun <T>`) always use the Continuation-class form: its state machine is a
 		// generic type over the method's type params (the struct/Task form has no generic-SM path). See docs §13f.
 		val coClass = if (isCoClass(fn) || fn.typeParameters.isNotEmpty()) ""","coClass":true""" else ""
-		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(fn.typeParameters)},"suspend":true,"resultType":${str(co.resultType)}$coClass,"cpsFields":[${co.cpsFields}],"params":[$ps],"steps":[${co.steps}]}"""
+		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(fn.typeParameters)},"suspend":true,"resultType":${str(co.resultType)}$coClass,"cpsFields":[$cps],"params":[$ps],"steps":[${co.steps}]}"""
 	}
 
 	/**

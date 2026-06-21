@@ -322,15 +322,20 @@ Three correctness items cleared on the way to structured concurrency:
   via a new `Builders.RootUnit`/`NewRootUnit` sink. Proof: `samples/il-kunit` (a Unit `warmUp` awaited by
   `useUnit` → 42), ilverify-clean.
 
-**Structured-concurrency demo (launch/async/await on the foundation) is NOT yet landed** — building it surfaced
-three more bounded codegen bugs that are the next concrete Phase-4 work (each independently fixable):
-1. **Extension suspend funs**: inside the SM, the extension RECEIVER (`this`) maps to the SM itself instead of
-   the receiver cps field (a `suspendCancellableCoroutine`-style leaf written as `suspend fun Task<T>.await()`
-   passing `this` mis-resolves). Flow operators are extension suspend funs, so this is important for upstream.
-2. **Trivial suspend-lambda forward with a receiver**: `{ api().awaitI() }` leaves the receiver on the stack
-   (ReturnEmpty) — the trivial-forward path assumes a receiver-less tail call.
-3. **Struct-form suspend lambda calling a builder**: `val a = async{…}` inside a struct-form `runBlocking{}`
-   lambda leaves the builder result on the stack in `MoveNext` (sync-stmt value not consumed/stored).
+**Structured-concurrency demo ✅ LANDED** (`samples/il-kstruct`, ilverify-clean): `async` starts concurrent
+children, `await` (a suspend extension fun built from the raw intrinsic) joins them, `runBlocking` drives the
+root — `runBlocking { val a=async{fetch…}; val b=async{fetch…}; a.await()+b.await() } == 30` (concurrent) and a
+sequential `== 42`. The fix was **extension suspend funs**: `suspendMethod` now prepends the extension receiver
+as a `__self` param + cps field (mirroring `method()`) and binds `<this>`→`__self`, so the receiver is captured
+into the state machine instead of mis-resolving to the SM. (This also resolved the trivial-forward-with-receiver
+and struct-lambda-builder issues, which were downstream of the receiver not being a real arg.) Flow operators are
+extension suspend funs, so this is a key upstream enabler.
+
+**Remaining for literal upstream commonMain (Phase 5+)**: the breadth — full kotlin-stdlib call coverage across
+the real sources, `JobSupport` (atomicfu-heavy), `Channel`→`System.Threading.Channels`, `Flow`→`IAsyncEnumerable`,
+`select`; plus the Continuation form as the DEFAULT (upstream isn't `@KCont`-annotated) and `kotlin.Result` /
+`startCoroutine` / `intercepted` / dispatcher actuals. The single-shot core (suspend funs, generic + Unit,
+intrinsics, structured async on the Task sink) now works end-to-end.
 
 ## 13. The single concrete next step
 
