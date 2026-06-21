@@ -487,6 +487,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return def
 	}
 
+	/** A property accessor with a user-written body (`get() = …` / `set(v) { … }`), not the default field passthrough. */
+	private fun isCustomAccessor(acc: IrSimpleFunction?): Boolean =
+		acc != null && acc.origin.toString() == "DEFINED" && acc.body != null && acc.overriddenSymbols.isEmpty()
+	private fun hasCustomAccessor(prop: IrProperty): Boolean = isCustomAccessor(prop.getter) || isCustomAccessor(prop.setter)
+
+	/** Emit a custom property accessor as a `get_<prop>`/`set_<prop>` method (the `field` identifier -> the backing field). */
+	private fun accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
+		val mname = (if (isGetter) "get_" else "set_") + propName
+		val ps = acc.parameters.filter { it.kind == IrParameterKind.Regular }
+			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
+		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		val ret = if (isGetter) birType(acc.returnType) else "void"
+		val virtual = acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT
+		return """{"name":${str(mname)},"static":false,"override":false,"virtual":$virtual,"abstract":false,"objectOverride":false,"vis":${str(visOf(acc))},"params":[$ps],"ret":${str(ret)},"body":[$body]}"""
+	}
+
 	/** A user `annotation class Ann(val v: Int, …)` -> a `class Ann : System.Attribute` (ctor params -> public fields). */
 	private fun annotationDef(klass: IrClass): String {
 		val ctorParams = klass.declarations.filterIsInstance<IrConstructor>().firstOrNull { it.isPrimary }
@@ -536,7 +552,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Property accessors that override a .NET base virtual property -> emitted as get_/set_ override methods.
 		val clrAccessors = klass.declarations.filterIsInstance<IrProperty>()
 			.flatMap { p -> listOfNotNull(clrAccessorMethod(p, p.getter), clrAccessorMethod(p, p.setter)) }
-		val methods = (instMethods + statMethods + clrAccessors).joinToString(",")
+		// User custom accessors (`get() = …`/`set(v){…}`) -> get_/set_ methods (the access site routes through them).
+		val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
+			listOfNotNull(
+				p.getter?.takeIf { isCustomAccessor(it) }?.let { accessorMethod(it, p.name.asString(), true) },
+				p.setter?.takeIf { isCustomAccessor(it) }?.let { accessorMethod(it, p.name.asString(), false) })
+		}
+		val methods = (instMethods + statMethods + clrAccessors + userAccessors).joinToString(",")
 		// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
 		// type spec (via birType) that ilemit resolves by reflection; a Kotlin-user base stays a bare type name.
 		val baseJson = base?.let { if (clrName(it) != null) str(birType(baseType!!)) else str(typeName(it)) } ?: "null"
@@ -1175,6 +1197,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				"""{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
 			} else if (clr != null)
 				"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"retType":${str(netType(node.type))},"static":false,"recv":$recvJson}"""
+			// A `lateinit var` backing-field read -> throw if still uninitialized (null) — proper lateinit semantics.
+			else if (node.symbol.owner.correspondingPropertySymbol?.owner?.isLateinit == true)
+				"""{"k":"lateinitGet","ownerType":${str(ownerSpec(ownerClass, node.receiver?.type))},"recv":$recvJson,"name":${str(fldName)}}"""
 			else
 				"""{"k":"field","ownerType":${str(ownerSpec(ownerClass, node.receiver?.type))},"recv":$recvJson,"name":${str(fldName)}}"""
 		}
@@ -2469,8 +2494,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val recv = recvExpr?.let { expr(it) } ?: """{"k":"this"}"""
 			val ownerStr = ownerSpec(declaringClass, recvExpr?.type)
 			val owner = str(ownerStr)
+			// A property with a custom accessor -> route through the get_/set_ method (not the backing field).
+			if (hasCustomAccessor(property)) {
+				val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
+				return if (callee === property.setter)
+					"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("set_" + property.name.asString())},"args":[${expr(regularArgs(call).first())}]}"""
+				else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("get_" + property.name.asString())},"args":[]${retHint('[' in ownerStr, call.type)}}"""
+			}
 			return if (callee === property.setter)
 				"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+			// `lateinit var` read -> throw if still uninitialized (the field is null) — proper lateinit semantics.
+			else if (property.isLateinit)
+				"""{"k":"lateinitGet","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())}}"""
 			else """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())}${retHint('[' in ownerStr, call.type)}}"""
 		}
 

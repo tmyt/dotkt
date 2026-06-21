@@ -1334,6 +1334,22 @@ sealed class Emitter
                 _il.Emit(OpCodes.Stfld, ResolveField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString(), out _));
                 return typeof(void);
             }
+            case "lateinitGet":
+            {
+                // `lateinit var` read: load the field; if still null (uninitialized), throw.
+                EmitExpr(e.GetProperty("recv"));
+                var fld = ResolveField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString(), out _);
+                _il.Emit(OpCodes.Ldfld, fld);
+                _il.Emit(OpCodes.Dup);
+                var ok = _il.DefineLabel();
+                _il.Emit(OpCodes.Brtrue, ok);
+                _il.Emit(OpCodes.Pop);
+                _il.Emit(OpCodes.Ldstr, "lateinit property " + e.GetProperty("name").GetString() + " has not been initialized");
+                _il.Emit(OpCodes.Newobj, typeof(InvalidOperationException).GetConstructor(new[] { typeof(string) }));
+                _il.Emit(OpCodes.Throw);
+                _il.MarkLabel(ok);
+                return fld.FieldType;
+            }
             case "new":
             {
                 var (open, constructed) = ParseOwner(e.GetProperty("type").GetString());
