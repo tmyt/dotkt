@@ -1,0 +1,1 @@
+# stackalloc sample: no .NET imports, just activates the CLR intrinsics (byref/StackBuffer)

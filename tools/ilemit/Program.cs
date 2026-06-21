@@ -2126,6 +2126,38 @@ sealed class Emitter
                 EmitAddr(inner);
                 return null;
             }
+            case "stackAlloc":
+            {
+                // `localloc` a zero-initialized stack buffer of `count * sizeof(elem)` bytes, leaving its pointer.
+                // (Unverifiable, like C#'s own stackalloc.)
+                var elem = MapType(e.GetProperty("elem").GetString());
+                var bc = _il.DeclareLocal(typeof(int));
+                EmitExpr(e.GetProperty("count"));
+                _il.Emit(OpCodes.Sizeof, elem);
+                _il.Emit(OpCodes.Mul);
+                _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Stloc, bc);   // keep byteCount for initblk
+                _il.Emit(OpCodes.Conv_U);
+                _il.Emit(OpCodes.Localloc);
+                _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ldloc, bc); _il.Emit(OpCodes.Initblk);
+                return typeof(byte).MakePointerType();
+            }
+            case "stackGet":
+            {
+                EmitStackBounds(e);
+                var elem = MapType(e.GetProperty("elem").GetString());
+                EmitStackAddr(e, elem);
+                _il.Emit(OpCodes.Ldobj, elem);
+                return elem;
+            }
+            case "stackSet":
+            {
+                EmitStackBounds(e);
+                var elem = MapType(e.GetProperty("elem").GetString());
+                EmitStackAddr(e, elem);
+                EmitArg(e.GetProperty("value"), elem);
+                _il.Emit(OpCodes.Stobj, elem);
+                return typeof(void);
+            }
             case "byrefLoad":
             {
                 // Read through a byref local (the ClrRef delegate): ldloc the pointer, ldobj to dereference.
@@ -2146,6 +2178,29 @@ sealed class Emitter
             case "unsupportedExpr": throw new NotSupportedException("the .NET backend does not support this Kotlin construct: " + e.GetProperty("of").GetString());
             default: throw new NotSupportedException("expr " + e.GetProperty("k").GetString());
         }
+    }
+
+    // Throw IndexOutOfRangeException unless 0 <= index < len (unsigned compare catches negatives too).
+    void EmitStackBounds(JsonElement e)
+    {
+        EmitExpr(e.GetProperty("index"));
+        EmitExpr(e.GetProperty("len"));
+        var ok = _il.DefineLabel();
+        _il.Emit(OpCodes.Blt_Un, ok);
+        _il.Emit(OpCodes.Ldstr, "StackBuffer index out of bounds");
+        _il.Emit(OpCodes.Newobj, typeof(IndexOutOfRangeException).GetConstructor(new[] { typeof(string) }));
+        _il.Emit(OpCodes.Throw);
+        _il.MarkLabel(ok);
+    }
+
+    // Push the address `ptr + index * sizeof(elem)` (a byte* into the stack buffer).
+    void EmitStackAddr(JsonElement e, Type elem)
+    {
+        EmitExpr(e.GetProperty("ptr"));
+        EmitExpr(e.GetProperty("index"));
+        _il.Emit(OpCodes.Sizeof, elem);
+        _il.Emit(OpCodes.Mul);
+        _il.Emit(OpCodes.Add);
     }
 
     MethodBuilder FindStatic(string name)
@@ -2707,6 +2762,7 @@ sealed class Emitter
     Type MapType(string t)
     {
         if (t != null && t.StartsWith("byref:")) return MapType(t.Substring(6)).MakeByRefType();   // a `ref T` local
+        if (t == "stackptr") return typeof(byte).MakePointerType();   // a localloc'd stack buffer pointer (unverifiable)
         if (t != null && t.StartsWith("clr:")) return ResolveType(t.Substring(4));
         if (t != null && t.StartsWith("array:")) return MapType(t.Substring(6)).MakeArrayType();
         if (t != null && t.StartsWith("func:")) return FuncType(t);

@@ -143,6 +143,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// A local delegated property's getter/setter function -> the IrLocalDelegatedProperty, so call() rewrites a
 	// `<get-x>`/`<set-x>` call to access on the delegate local (mirrors the member-property delegate path).
 	private val localDelegates = java.util.IdentityHashMap<IrSimpleFunction, IrLocalDelegatedProperty>()
+	// The `buf` parameter of an active `stackBuffer { buf -> … }` block -> its stack allocation (ptr local + length
+	// local + element type), so `buf[i]`/`buf[i]=v`/`buf.size` rewrite to stack ops while the block is spliced.
+	private class StackBufInfo(val ptrName: String, val lenName: String, val elemT: String)
+	private val stackBufSubst = java.util.IdentityHashMap<IrValueDeclaration, StackBufInfo>()
 	// Synthetic monomorphized interfaces for the Kotlin iterator protocol. IL can't define a generic
 	// interface yet, so per concrete element type we emit a non-generic `KIterator_<elem>` with
 	// `hasNext():bool` / `next():<elem>` (Codex-advised monomorphization). elemBir -> interface name.
@@ -342,9 +346,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// The `byref` out/ref marker is an intrinsic consumed at its call sites (the arg becomes a `byref:` param) —
 		// never emitted as a real method.
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
-			.filter { !isAwaitIntrinsic(it) && it.name.asString() != "byref" }
+			.filter { !isAwaitIntrinsic(it) && it.name.asString() !in setOf("byref", "stackBuffer") }
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
-		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null && it.name.asString() != "ClrRef" }
+		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null && it.name.asString() !in setOf("ClrRef", "StackBuffer") }
 		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && clrName(it) == null }
 		val topProps = file.declarations.filterIsInstance<IrProperty>()
 		if (functions.isEmpty() && classes.isEmpty() && interfaces.isEmpty() && topProps.isEmpty()) return ""
@@ -1588,6 +1592,40 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
 	}
 
+	/** `stackBuffer(n) { buf -> body }` -> a scoped CLR stack allocation: declare a length + a localloc'd pointer,
+	 *  splice the (inline) block with `buf` bound to that allocation, return the block's result R. */
+	private fun emitStackBuffer(call: IrCall): String {
+		val args = regularArgs(call)
+		val lambda = args.getOrNull(1) as? IrFunctionExpression
+			?: return unsupported(call, "stackBuffer", "its block must be a literal lambda (so it can be inlined into the caller's frame)")
+		val fn = lambda.function
+		val bufParam = fn.parameters.first { it.kind == IrParameterKind.Regular }
+		val elemT = call.typeArguments.getOrNull(0)?.let { birType(it) } ?: "object"
+		val c = scopeCounter++
+		val ptrName = "__sbp$c"; val lenName = "__sbl$c"
+		val pre = arrayListOf(
+			"""{"k":"var","name":${str(lenName)},"type":"int","init":${expr(args[0])}}""",
+			"""{"k":"var","name":${str(ptrName)},"type":"stackptr","init":{"k":"stackAlloc","count":{"k":"local","name":${str(lenName)}},"elem":${str(elemT)}}}""")
+		stackBufSubst[bufParam] = StackBufInfo(ptrName, lenName, elemT)
+		val result = spliceBody(bodyStatements(fn.body), fn.returnType.isUnit() || call.type.isUnit(), pre)
+		stackBufSubst.remove(bufParam)
+		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
+	}
+
+	/** A `StackBuffer<T>` member access (`buf[i]` / `buf[i]=v` / `buf.size`) inside the spliced block -> a stack op. */
+	private fun emitStackBufferOp(call: IrCall, callee: IrSimpleFunction, info: StackBufInfo): String {
+		val ptr = """{"k":"local","name":${str(info.ptrName)}}"""
+		val len = """{"k":"local","name":${str(info.lenName)}}"""
+		return when {
+			callee.correspondingPropertySymbol?.owner?.name?.asString() == "size" -> len
+			callee.name.asString() == "get" ->
+				"""{"k":"stackGet","ptr":$ptr,"len":$len,"index":${expr(regularArgs(call)[0])},"elem":${str(info.elemT)}}"""
+			callee.name.asString() == "set" ->
+				"""{"k":"stackSet","ptr":$ptr,"len":$len,"index":${expr(regularArgs(call)[0])},"elem":${str(info.elemT)},"value":${expr(regularArgs(call)[1])}}"""
+			else -> unsupported(call, "StackBuffer.${callee.name.asString()}", "only size / indexing / asSpan are supported")
+		}
+	}
+
 	/** Inline `forEach { it -> body }` into an enumerator loop: bind `it` to a unique loop var, splice the body. */
 	private fun inlineForEach(elemT: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
 		val fn = lambda.function
@@ -1865,6 +1903,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	private fun call(call: IrCall): String {
 		val callee = call.symbol.owner
+		// `stackBuffer(n) { … }` intrinsic -> scoped stack allocation (splice the block into the caller's frame).
+		if (callee.name.asString() == "stackBuffer" && callee.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+			return emitStackBuffer(call)
+		// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
+		((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }
 		// A `<get-x>`/`<set-x>` call for a LOCAL delegated property -> access on the delegate local (thisRef=null,
 		// no enclosing instance). `by lazy`: the local's `.Value`; custom delegate: getValue/setValue(null, KProperty).
 		localDelegates[callee]?.let { ldp ->

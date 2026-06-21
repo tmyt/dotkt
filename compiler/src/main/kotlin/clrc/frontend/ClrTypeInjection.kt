@@ -171,19 +171,25 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// parameter and of a ref-returning method; it is `by`-delegatable (getValue/setValue) so a ref return reads as
 	// `var x by m()`. The argument path erases it (the byref(x) marker emits the lvalue's address).
 	private val clrRefClassId = ClassId(FqName.ROOT, Name.identifier("ClrRef"))
+	// `stackBuffer(n) { buf -> … }` + `StackBuffer<T>`: a scoped stack allocation (CLR `localloc`). The block is
+	// splice-inlined so the buffer lives in the caller's frame; `StackBuffer<T>` (size/get/set/asSpan) is erased.
+	private val stackBufferName = "stackBuffer"
+	private val stackBufferClassId = ClassId(FqName.ROOT, Name.identifier("StackBuffer"))
+	// The intrinsics are CLR-context features -> available whenever .NET interop is active (metadata loaded).
+	private val clrActive = module != null
 
 	override fun hasPackage(packageFqName: FqName): Boolean =
-		byClassId.isNotEmpty() && (packageFqName in packages || packageFqName.isRoot)
+		clrActive && (packageFqName in packages || packageFqName.isRoot)
 
 	override fun getTopLevelCallableIds(): Set<CallableId> =
-		if (byClassId.isEmpty()) emptySet() else hashSetOf(CallableId(FqName.ROOT, Name.identifier(byrefName)))
+		if (!clrActive) emptySet() else hashSetOf(CallableId(FqName.ROOT, Name.identifier(byrefName)), CallableId(FqName.ROOT, Name.identifier(stackBufferName)))
 
 	override fun getTopLevelClassIds(): Set<ClassId> =
-		if (byClassId.isEmpty()) byClassId.keys else byClassId.keys + clrRefClassId
+		if (!clrActive) byClassId.keys else byClassId.keys + clrRefClassId + stackBufferClassId
 
 	override fun generateTopLevelClassLikeDeclaration(classId: ClassId): FirClassLikeSymbol<*>? {
 		// The intrinsic `ClrRef<T>` carries getValue/setValue (so a ref return is `by`-delegatable).
-		if (classId == clrRefClassId) return createTopLevelClass(classId, ClrGeneratedKey, ClassKind.CLASS) {
+		if (classId == clrRefClassId || classId == stackBufferClassId) return createTopLevelClass(classId, ClrGeneratedKey, ClassKind.CLASS) {
 			typeParameter(Name.identifier("T"), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
 		}.symbol
 		val type = byClassId[classId] ?: return null
@@ -199,6 +205,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	override fun getCallableNamesForClass(classSymbol: FirClassSymbol<*>, context: MemberGenerationContext): Set<Name> {
 		// `ClrRef<T>` exposes getValue/setValue so a ref return is `by`-delegatable (`var x by byref(m())`).
 		if (classSymbol.classId == clrRefClassId) return hashSetOf(Name.identifier("getValue"), Name.identifier("setValue"))
+		// `StackBuffer<T>`: size (val), get/set (operators). (asSpan -> System.Span<T> is added in stage 2.)
+		if (classSymbol.classId == stackBufferClassId)
+			return hashSetOf(Name.identifier("size"), Name.identifier("get"), Name.identifier("set"))
 		val type = byClassId[classSymbol.classId] ?: return emptySet()
 		val names = type.methods.mapTo(HashSet()) { Name.identifier(it.name) }
 		type.properties.forEach { names.add(Name.identifier(it.name)) }
@@ -210,6 +219,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 
 	override fun generateProperties(callableId: CallableId, context: MemberGenerationContext?): List<FirPropertySymbol> {
 		val owner = context?.owner ?: return emptyList()
+		// `StackBuffer<T>.size: Int` (the element count).
+		if (owner.classId == stackBufferClassId && callableId.callableName.asString() == "size")
+			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.intType.coneType, true, false).symbol)
 		val type = byClassId[owner.classId] ?: return emptyList()
 		val prop = type.properties.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
 		// Property name == .NET name verbatim, so the backend emits `recv.<Name>` directly.
@@ -241,7 +253,33 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				}
 				return listOf(fn.symbol)
 			}
+			// `inline fun <T, R> stackBuffer(n: Int, block: (StackBuffer<T>) -> R): R` — scoped stack allocation.
+			if (callableId.callableName.asString() == stackBufferName) {
+				val fn = createTopLevelFunction(ClrGeneratedKey, callableId,
+					{ tps -> tps[1].symbol.constructType(emptyArray(), false) }) {
+					typeParameter(Name.identifier("T"), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+					typeParameter(Name.identifier("R"), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+					valueParameter(Name.identifier("n"), session.builtinTypes.intType.coneType)
+					valueParameter(Name.identifier("block"), { tps ->
+						coneFunctionType(listOf(stackBufferOf(tps[0].symbol.constructType(emptyArray(), false))), tps[1].symbol.constructType(emptyArray(), false))
+					})
+				}
+				return listOf(fn.symbol)
+			}
 			return emptyList()
+		}
+		// `StackBuffer<T>` size/get/set: size is a property (generateProperties); get/set are indexing operators.
+		if (owner.classId == stackBufferClassId) {
+			val tOf = owner.typeParameterSymbols.first().constructType(emptyArray(), false)
+			val intT = session.builtinTypes.intType.coneType
+			val fn = if (callableId.callableName.asString() == "get")
+				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, tOf) {
+					status { isOperator = true }; valueParameter(Name.identifier("index"), intT)
+				}
+			else createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.unitType.coneType) {
+				status { isOperator = true }; valueParameter(Name.identifier("index"), intT); valueParameter(Name.identifier("value"), tOf)
+			}
+			return listOf(fn.symbol)
 		}
 		// `ClrRef<T>` operator getValue/setValue (a managed-reference `by`-delegate). The backend inlines them to
 		// ldobj/stobj on the stored byref local; here they only need to type-check the `var x by byref(m())` form.
@@ -334,6 +372,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	/** The intrinsic `ClrRef<arg>` cone type (the surfaced form of a .NET out/ref param or ref return). */
 	private fun clrRefOf(arg: ConeKotlinType): ConeKotlinType =
 		session.symbolProvider.getClassLikeSymbolByClassId(clrRefClassId)?.constructType(arrayOf(arg), false)
+			?: session.builtinTypes.nullableAnyType.coneType
+
+	/** The intrinsic `StackBuffer<arg>` cone type (the block parameter of `stackBuffer`). */
+	private fun stackBufferOf(arg: ConeKotlinType): ConeKotlinType =
+		session.symbolProvider.getClassLikeSymbolByClassId(stackBufferClassId)?.constructType(arrayOf(arg), false)
 			?: session.builtinTypes.nullableAnyType.coneType
 
 	private fun coneOf(typeName: String, owner: FirClassSymbol<*>): ConeKotlinType {
