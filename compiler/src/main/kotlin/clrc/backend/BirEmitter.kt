@@ -2640,19 +2640,24 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `"%d %s".format(a, b)` (printf) -> System.String.Format(translated, object[]{a,b}). Only a LITERAL
 			// format with supported specs is translated; otherwise a clean error (printf != .NET composite format).
 			if (name == "format") {
-				val fmtExpr = extensionReceiver(call) ?: regularArgs(call).getOrNull(0)
+				// Two forms: instance `fmt.format(args)` (the receiver IS the format) and companion
+				// `String.format(fmt, args)` (the format is the first arg; the receiver is String.Companion).
+				val extRecv = extensionReceiver(call)
+				val instanceForm = extRecv?.type?.classFqName?.asString() == "kotlin.String"
+				val fmtExpr = if (instanceForm) extRecv else regularArgs(call).getOrNull(0)
 				if (fmtExpr?.type?.classFqName?.asString() == "kotlin.String") {
-					val fmtConst = (fmtExpr as? IrConst)?.value as? String
-					val net = fmtConst?.let { translatePrintf(it) }
-					if (net != null) {
-						val fmtArgs = if (extensionReceiver(call) != null) regularArgs(call) else regularArgs(call).drop(1)
-						val elems = (fmtArgs.getOrNull(0) as? IrVararg)?.elements?.filterIsInstance<IrExpression>() ?: fmtArgs
-						val arr = """{"k":"newArray","elem":"object","elems":[${elems.joinToString(",") { expr(it) }}]}"""
-						return """{"k":"clrStatic","type":"System.String","method":"Format","argTypes":["System.String","array:object"],"ret":"System.String","args":[{"k":"const","type":"string","value":${str(net)}},$arr]}"""
-					}
-					return unsupported(call, "String.format with this format",
-						if (fmtConst == null) "the format must be a string literal (e.g. \"%d items\"), not a variable"
-						else "an unsupported printf specifier in \"$fmtConst\" (supported: %d %s %f %.Nf %0Nd %x %%)")
+					val fmtArgs = if (instanceForm) regularArgs(call) else regularArgs(call).drop(1)
+					val elems = (fmtArgs.getOrNull(0) as? IrVararg)?.elements?.filterIsInstance<IrExpression>() ?: fmtArgs
+					val arr = """{"k":"newArray","elem":"object","elems":[${elems.joinToString(",") { expr(it) }}]}"""
+					val net = ((fmtExpr as? IrConst)?.value as? String)?.let { translatePrintf(it) }
+					return if (net != null)
+						// A LITERAL format with supported specs -> translate to a .NET composite at compile time (no
+						// runtime dependency for the common case) and call System.String.Format.
+						"""{"k":"clrStatic","type":"System.String","method":"Format","argTypes":["System.String","array:object"],"ret":"System.String","args":[{"k":"const","type":"string","value":${str(net)}},$arr]}"""
+					else
+						// A non-literal (or untranslatable) format -> defer the printf->composite conversion to runtime.
+						// First promotion to DotKt.Runtime — see [[dotkt-naming-and-runtime-split]].
+						"""{"k":"clrStatic","type":"DotKt.Fmt","method":"format","argTypes":["System.String","array:object"],"ret":"System.String","args":[${expr(fmtExpr)},$arr]}"""
 				}
 			}
 			// Exhaustive-when synthetic else / uninitialized property -> throw (the branch is unreachable).
