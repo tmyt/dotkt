@@ -375,6 +375,9 @@ static class FacadeGen
         // (I2) have a different assembly identity than the runtime's, so `t == typeof(...)` would miss.
         if (t.FullName == "System.Void") return "Unit";
         if (t.IsGenericParameter) return t.Name;
+        // A .NET `Span<T>` parameter -> the intrinsic `Span<T>` (meta `span:T`); the caller can pass `buf.asSpan()`.
+        if (t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Span`1")
+            return "span:" + Map(t.GetGenericArguments()[0], self);
         if (t.FullName == self.FullName) return self.Name.Contains('`') ? self.Name.Substring(0, self.Name.IndexOf('`')) : self.Name;
         return t.FullName switch
         {

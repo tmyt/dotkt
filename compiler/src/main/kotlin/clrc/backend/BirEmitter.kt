@@ -348,7 +348,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { !isAwaitIntrinsic(it) && it.name.asString() !in setOf("byref", "stackBuffer") }
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
-		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null && it.name.asString() !in setOf("ClrRef", "StackBuffer") }
+		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
 		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && clrName(it) == null }
 		val topProps = file.declarations.filterIsInstance<IrProperty>()
 		if (functions.isEmpty() && classes.isEmpty() && interfaces.isEmpty() && topProps.isEmpty()) return ""
@@ -1622,6 +1622,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				"""{"k":"stackGet","ptr":$ptr,"len":$len,"index":${expr(regularArgs(call)[0])},"elem":${str(info.elemT)}}"""
 			callee.name.asString() == "set" ->
 				"""{"k":"stackSet","ptr":$ptr,"len":$len,"index":${expr(regularArgs(call)[0])},"elem":${str(info.elemT)},"value":${expr(regularArgs(call)[1])}}"""
+			// `buf.asSpan()` -> `new System.Span<T>(ptr, size)` over the stack memory (for .NET Span APIs).
+			callee.name.asString() == "asSpan" -> """{"k":"stackAsSpan","ptr":$ptr,"len":$len,"elem":${str(info.elemT)}}"""
 			else -> unsupported(call, "StackBuffer.${callee.name.asString()}", "only size / indexing / asSpan are supported")
 		}
 	}
@@ -2820,6 +2822,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun netType(t: IrType): String = when (val fq = t.classFqName?.asString()) {
 		// The intrinsic `ClrRef<T>` is a managed reference -> `byref:<T>` (selects the out/ref overload in ilemit).
 		"ClrRef" -> "byref:" + ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) }.orEmpty()
+		// The intrinsic `Span<T>` -> the real `System.Span<T>`.
+		"Span" -> "clrg:System.Span[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlin.Int" -> "System.Int32"
 		"kotlin.Long" -> "System.Int64"
 		"kotlin.Short" -> "System.Int16"
@@ -2937,6 +2941,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// The intrinsic `ClrRef<T>` -> `byref:T` (a managed reference; a ref-cell delegate local is a `ref T` local).
 		if (t.classFqName?.asString() == "ClrRef")
 			return "byref:" + ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) }.orEmpty()
+		// The intrinsic `Span<T>` -> the real `System.Span<T>`.
+		if (t.classFqName?.asString() == "Span")
+			return "clrg:System.Span[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object") + "]"
 		// Nullable value type `Int?` -> System.Nullable<int> (reference nullables stay as the ref type).
 		nullableElem(t)?.let { return "nullable:$it" }
 		if (isArrayType(t)) return "array:" + arrayElemType(t)

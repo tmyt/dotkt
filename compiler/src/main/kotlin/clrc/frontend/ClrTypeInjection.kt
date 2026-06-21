@@ -175,6 +175,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// splice-inlined so the buffer lives in the caller's frame; `StackBuffer<T>` (size/get/set/asSpan) is erased.
 	private val stackBufferName = "stackBuffer"
 	private val stackBufferClassId = ClassId(FqName.ROOT, Name.identifier("StackBuffer"))
+	// `Span<T>`: a root-package intrinsic that maps to the real `System.Span<T>` (netType/birType -> clrg:System.Span)
+	// — the surfaced form of a .NET Span parameter and the result of `StackBuffer.asSpan()`.
+	private val spanClassId = ClassId(FqName.ROOT, Name.identifier("Span"))
 	// The intrinsics are CLR-context features -> available whenever .NET interop is active (metadata loaded).
 	private val clrActive = module != null
 
@@ -185,11 +188,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		if (!clrActive) emptySet() else hashSetOf(CallableId(FqName.ROOT, Name.identifier(byrefName)), CallableId(FqName.ROOT, Name.identifier(stackBufferName)))
 
 	override fun getTopLevelClassIds(): Set<ClassId> =
-		if (!clrActive) byClassId.keys else byClassId.keys + clrRefClassId + stackBufferClassId
+		if (!clrActive) byClassId.keys else byClassId.keys + clrRefClassId + stackBufferClassId + spanClassId
 
 	override fun generateTopLevelClassLikeDeclaration(classId: ClassId): FirClassLikeSymbol<*>? {
 		// The intrinsic `ClrRef<T>` carries getValue/setValue (so a ref return is `by`-delegatable).
-		if (classId == clrRefClassId || classId == stackBufferClassId) return createTopLevelClass(classId, ClrGeneratedKey, ClassKind.CLASS) {
+		if (classId == clrRefClassId || classId == stackBufferClassId || classId == spanClassId) return createTopLevelClass(classId, ClrGeneratedKey, ClassKind.CLASS) {
 			typeParameter(Name.identifier("T"), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
 		}.symbol
 		val type = byClassId[classId] ?: return null
@@ -205,9 +208,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	override fun getCallableNamesForClass(classSymbol: FirClassSymbol<*>, context: MemberGenerationContext): Set<Name> {
 		// `ClrRef<T>` exposes getValue/setValue so a ref return is `by`-delegatable (`var x by byref(m())`).
 		if (classSymbol.classId == clrRefClassId) return hashSetOf(Name.identifier("getValue"), Name.identifier("setValue"))
-		// `StackBuffer<T>`: size (val), get/set (operators). (asSpan -> System.Span<T> is added in stage 2.)
+		// `StackBuffer<T>`: size (val), get/set (operators), asSpan (-> Span<T> = the real System.Span<T>).
 		if (classSymbol.classId == stackBufferClassId)
-			return hashSetOf(Name.identifier("size"), Name.identifier("get"), Name.identifier("set"))
+			return hashSetOf(Name.identifier("size"), Name.identifier("get"), Name.identifier("set"), Name.identifier("asSpan"))
 		val type = byClassId[classSymbol.classId] ?: return emptySet()
 		val names = type.methods.mapTo(HashSet()) { Name.identifier(it.name) }
 		type.properties.forEach { names.add(Name.identifier(it.name)) }
@@ -272,12 +275,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		if (owner.classId == stackBufferClassId) {
 			val tOf = owner.typeParameterSymbols.first().constructType(emptyArray(), false)
 			val intT = session.builtinTypes.intType.coneType
-			val fn = if (callableId.callableName.asString() == "get")
-				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, tOf) {
+			val fn = when (callableId.callableName.asString()) {
+				"get" -> createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, tOf) {
 					status { isOperator = true }; valueParameter(Name.identifier("index"), intT)
 				}
-			else createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.unitType.coneType) {
-				status { isOperator = true }; valueParameter(Name.identifier("index"), intT); valueParameter(Name.identifier("value"), tOf)
+				"asSpan" -> createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, spanOf(tOf)) {}
+				else -> createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.unitType.coneType) {
+					status { isOperator = true }; valueParameter(Name.identifier("index"), intT); valueParameter(Name.identifier("value"), tOf)
+				}
 			}
 			return listOf(fn.symbol)
 		}
@@ -379,9 +384,16 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		session.symbolProvider.getClassLikeSymbolByClassId(stackBufferClassId)?.constructType(arrayOf(arg), false)
 			?: session.builtinTypes.nullableAnyType.coneType
 
+	/** The intrinsic `Span<arg>` cone type (-> the real System.Span<arg>). */
+	private fun spanOf(arg: ConeKotlinType): ConeKotlinType =
+		session.symbolProvider.getClassLikeSymbolByClassId(spanClassId)?.constructType(arrayOf(arg), false)
+			?: session.builtinTypes.nullableAnyType.coneType
+
 	private fun coneOf(typeName: String, owner: FirClassSymbol<*>): ConeKotlinType {
 		// A .NET out/ref param / ref return (`byref:Int`) -> the intrinsic `ClrRef<Int>`.
 		if (typeName.startsWith("byref:")) return clrRefOf(coneOf(typeName.removePrefix("byref:"), owner))
+		// A .NET `Span<T>` param (`span:Int`) -> the intrinsic `Span<Int>` (the real System.Span<Int>).
+		if (typeName.startsWith("span:")) return spanOf(coneOf(typeName.removePrefix("span:"), owner))
 		// A reference to the owner's own generic type parameter (`T` in `Collection<T>.Add(item: T)`).
 		owner.typeParameterSymbols.firstOrNull { it.name.identifier == typeName }
 			?.let { return it.constructType(emptyArray(), false) }

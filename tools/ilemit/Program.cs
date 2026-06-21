@@ -2158,6 +2158,17 @@ sealed class Emitter
                 _il.Emit(OpCodes.Stobj, elem);
                 return typeof(void);
             }
+            case "stackAsSpan":
+            {
+                // `new System.Span<T>(void* ptr, int length)` over the stack buffer -> a real Span for .NET APIs.
+                var elem = MapType(e.GetProperty("elem").GetString());
+                var spanT = typeof(System.Span<>).MakeGenericType(elem);
+                var ctor = spanT.GetConstructor(new[] { typeof(void*), typeof(int) });
+                EmitExpr(e.GetProperty("ptr"));
+                EmitExpr(e.GetProperty("len"));
+                _il.Emit(OpCodes.Newobj, ctor);
+                return spanT;
+            }
             case "byrefLoad":
             {
                 // Read through a byref local (the ClrRef delegate): ldloc the pointer, ldobj to dereference.
