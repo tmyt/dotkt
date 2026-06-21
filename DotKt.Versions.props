@@ -1,13 +1,18 @@
 <!-- Shared version for all DotKt packages (Sdk / Toolchain / Runtime / Templates).
-     The PACKAGE version is plain SemVer 0.9.0 with NO build metadata: NuGet's template engine (dotnet new install
-     from a feed) does a strict version comparison and rejects a package whose nupkg version is `0.9.0+kotlin-2.2.0`
-     while the feed index lists `0.9.0`. So the embedded Kotlin compiler version lives in the assembly
-     InformationalVersion + a package tag instead of the version string. AssemblyVersion/FileVersion = 0.9.0.0. -->
+     The PACKAGE version carries the embedded Kotlin compiler version as SemVer build metadata: 0.9.0+kotlin-2.2.0.
+     CAVEAT: NuGet normalizes that away — index/search/registration/restore/the .nupkg FILENAME all show plain
+     `0.9.0`; the `+kotlin-2.2.0` survives only in the raw nuspec <version>, invisible to nearly all tooling. So we
+     ALSO carry it in the assembly InformationalVersion (visible via reflection / AssemblyInformationalVersion) and
+     a `kotlin-2.2.0` PackageTag (searchable) — those are the only surfaces where it actually shows. AssemblyVersion/
+     FileVersion take the numeric prefix (0.9.0.0).
+     (History: this was briefly dropped to plain `0.9.0` on a wrong diagnosis — see commit 8c088a4 — but the real
+     `dotnet new install` failure was the feed advertising its search service under an unrecognized @type, NOT the
+     build metadata. A controlled folder-feed A/B confirmed metadata installs fine, so it is restored here.) -->
 <Project>
   <PropertyGroup>
     <DotKtVersionPrefix>0.9.0</DotKtVersionPrefix>
     <DotKtKotlinVersion>2.2.0</DotKtKotlinVersion>
-    <Version>$(DotKtVersionPrefix)</Version>
+    <Version>$(DotKtVersionPrefix)+kotlin-$(DotKtKotlinVersion)</Version>
     <InformationalVersion>$(DotKtVersionPrefix)+kotlin-$(DotKtKotlinVersion)</InformationalVersion>
     <PackageTags>kotlin clr dotnet kotlin-$(DotKtKotlinVersion)</PackageTags>
     <AssemblyVersion>$(DotKtVersionPrefix).0</AssemblyVersion>
