@@ -163,19 +163,29 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	private val classIdByName: Map<String, ClassId> =
 		byClassId.entries.associate { (id, t) -> t.kotlinName to id }
 
-	// `__clrout(x)`/`__clrref(x)`: generic identity intrinsics (root package) marking a call arg as a .NET out/ref
-	// param. The backend reads the marker and passes the lvalue's address with a `byref:` param type.
-	private val intrinsicNames = setOf("__clrout", "__clrref")
+	// `byref(x)`: a root-package intrinsic marking a call arg as a .NET out/ref parameter. It returns `ClrRef<T>`
+	// (the surfaced type of any .NET byref param), so the signature is self-documenting. The backend reads the
+	// marker and passes the lvalue's address; `netType(ClrRef<T>)` is `byref:T`.
+	private val byrefName = "byref"
+	// `ClrRef<T>`: an intrinsic generic type for a managed reference (T&). It is the surfaced type of a .NET out/ref
+	// parameter and of a ref-returning method; it is `by`-delegatable (getValue/setValue) so a ref return reads as
+	// `var x by m()`. The argument path erases it (the byref(x) marker emits the lvalue's address).
+	private val clrRefClassId = ClassId(FqName.ROOT, Name.identifier("ClrRef"))
 
 	override fun hasPackage(packageFqName: FqName): Boolean =
 		byClassId.isNotEmpty() && (packageFqName in packages || packageFqName.isRoot)
 
 	override fun getTopLevelCallableIds(): Set<CallableId> =
-		if (byClassId.isEmpty()) emptySet() else intrinsicNames.mapTo(HashSet()) { CallableId(FqName.ROOT, Name.identifier(it)) }
+		if (byClassId.isEmpty()) emptySet() else hashSetOf(CallableId(FqName.ROOT, Name.identifier(byrefName)))
 
-	override fun getTopLevelClassIds(): Set<ClassId> = byClassId.keys
+	override fun getTopLevelClassIds(): Set<ClassId> =
+		if (byClassId.isEmpty()) byClassId.keys else byClassId.keys + clrRefClassId
 
 	override fun generateTopLevelClassLikeDeclaration(classId: ClassId): FirClassLikeSymbol<*>? {
+		// The intrinsic `ClrRef<T>` carries getValue/setValue (so a ref return is `by`-delegatable).
+		if (classId == clrRefClassId) return createTopLevelClass(classId, ClrGeneratedKey, ClassKind.CLASS) {
+			typeParameter(Name.identifier("T"), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+		}.symbol
 		val type = byClassId[classId] ?: return null
 		val kind = when { type.isAnnotation -> ClassKind.ANNOTATION_CLASS; type.isObject -> ClassKind.OBJECT; type.isInterface -> ClassKind.INTERFACE; else -> ClassKind.CLASS }
 		// A non-sealed .NET class is `open` so Kotlin can inherit it (the basis of framework-direct UI).
@@ -220,10 +230,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	override fun generateFunctions(callableId: CallableId, context: MemberGenerationContext?): List<FirNamedFunctionSymbol> {
 		val owner = context?.owner
 		if (owner == null) {
-			// Top-level intrinsics `__clrout`/`__clrref`: `fun <T> __clrout(x: T): T` (an identity marker).
-			if (callableId.callableName.asString() in intrinsicNames) {
+			// Top-level intrinsic `byref`: `fun <T> byref(x: T): ClrRef<T>` (marks a call arg as a .NET out/ref param).
+			if (callableId.callableName.asString() == byrefName) {
 				val fn = createTopLevelFunction(ClrGeneratedKey, callableId,
-					{ tps -> tps[0].symbol.constructType(emptyArray(), false) }) {
+					{ tps -> clrRefOf(tps[0].symbol.constructType(emptyArray(), false)) }) {
 					typeParameter(Name.identifier("T"), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
 					valueParameter(Name.identifier("x"), { tps -> tps[0].symbol.constructType(emptyArray(), false) })
 				}
@@ -300,7 +310,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	}
 
 	/** Map a metadata type name to a ConeKotlinType: primitives, the owner itself, another injected type, else Any?. */
+	/** The intrinsic `ClrRef<arg>` cone type (the surfaced form of a .NET out/ref param or ref return). */
+	private fun clrRefOf(arg: ConeKotlinType): ConeKotlinType =
+		session.symbolProvider.getClassLikeSymbolByClassId(clrRefClassId)?.constructType(arrayOf(arg), false)
+			?: session.builtinTypes.nullableAnyType.coneType
+
 	private fun coneOf(typeName: String, owner: FirClassSymbol<*>): ConeKotlinType {
+		// A .NET out/ref param / ref return (`byref:Int`) -> the intrinsic `ClrRef<Int>`.
+		if (typeName.startsWith("byref:")) return clrRefOf(coneOf(typeName.removePrefix("byref:"), owner))
 		// A reference to the owner's own generic type parameter (`T` in `Collection<T>.Add(item: T)`).
 		owner.typeParameterSymbols.firstOrNull { it.name.identifier == typeName }
 			?.let { return it.constructType(emptyArray(), false) }

@@ -2387,6 +2387,14 @@ sealed class Emitter
         if (instance) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitArgs(e.GetProperty("args"), mi.GetParameters());
         _il.Emit(instance && mi.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, mi);
+        // A `ref T`-returning method used as a value -> dereference the managed pointer (value copy). The live-ref
+        // form (`var x by byref(m())`) is handled separately and keeps the pointer.
+        if (mi.ReturnType.IsByRef)
+        {
+            var elem = mi.ReturnType.GetElementType();
+            _il.Emit(OpCodes.Ldobj, elem);
+            return elem;
+        }
         return mi.ReturnType;
     }
 

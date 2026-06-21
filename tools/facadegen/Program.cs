@@ -143,7 +143,7 @@ static class FacadeGen
                     if (m.IsSpecialName || m.IsGenericMethod) continue;
                     var ps = m.GetParameters();
                     if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
-                    sb.Append($"fun {m.Name} {Map(m.ReturnType, t)} abstract {MetaParams(ps, t)}".TrimEnd() + "\n");
+                    sb.Append($"fun {m.Name} {MapRet(m.ReturnType, t)} abstract {MetaParams(ps, t)}".TrimEnd() + "\n");
                 }
                 Console.WriteLine($"meta: {t.FullName} (interface)");
                 continue;
@@ -234,7 +234,7 @@ static class FacadeGen
                 // `fun <Name> <ret> <open|final> [<TypeParam>...] [<param>:<type>]*` — bare trailing tokens (no `:`)
                 // are method type parameters; tokens with `:` are value params.
                 var virt = m.IsVirtual && !m.IsFinal;
-                var toks = new List<string> { "fun", m.Name, Map(m.ReturnType, t), virt ? "open" : "final" };
+                var toks = new List<string> { "fun", m.Name, MapRet(m.ReturnType, t), virt ? "open" : "final" };
                 toks.AddRange(gp);
                 toks.AddRange(ps.Select((p, i) => $"{MetaParamName(p, i)}:{Map(p.ParameterType, t)}"));
                 sb.Append(string.Join(" ", toks) + "\n");
@@ -253,6 +253,10 @@ static class FacadeGen
         for (var b = t; b != null; b = b.BaseType) if (b.FullName == "System.Attribute") return true;
         return false;
     }
+
+    // A method's RETURN type: a `ref T` return surfaces as plain `T` (a plain `val x = m()` is a value copy; the live
+    // ref is captured only via `byref(m())`). Parameters keep their byref (-> ClrRef<T>) via Map.
+    static string MapRet(Type t, Type self) => Map(t.IsByRef ? t.GetElementType() : t, self);
 
     static string MetaParams(ParameterInfo[] ps, Type self) =>
         string.Join(" ", ps.Select((p, i) => $"{MetaParamName(p, i)}:{Map(p.ParameterType, self)}"));
@@ -364,8 +368,9 @@ static class FacadeGen
     // name (T); the type itself maps to its façade; everything else degrades to Any?.
     static string Map(Type t, Type self)
     {
-        // An `out`/`ref` param (T&) is surfaced as its element type (the caller wraps it in __clrout/__clrref).
-        if (t.IsByRef) return Map(t.GetElementType(), self);
+        // An `out`/`ref` param or a `ref`-returning method (T&) surfaces as the intrinsic `ClrRef<T>` (meta `byref:T`):
+        // the caller wraps an arg in `byref(x)`, and a ref return is `by`-delegatable.
+        if (t.IsByRef) return "byref:" + Map(t.GetElementType(), self);
         // Compare by FullName, not typeof identity: types reflected from LoadFrom'd reference assemblies
         // (I2) have a different assembly identity than the runtime's, so `t == typeof(...)` would miss.
         if (t.FullName == "System.Void") return "Unit";

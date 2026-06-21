@@ -1,6 +1,6 @@
 namespace P
 {
-    // A .NET type with `out` and `ref` parameters, exercised from Kotlin via __clrout/__clrref markers.
+    // out/ref parameters and a ref-returning method, exercised from Kotlin via byref / value-copy.
     public class Calc
     {
         public bool TryDivide(int a, int b, out int quotient)
@@ -11,5 +11,8 @@ namespace P
         }
 
         public void Swap(ref int x, ref int y) { var t = x; x = y; y = t; }
+
+        private int[] data = new int[] { 10, 20, 30 };
+        public ref int Slot(int i) => ref data[i];   // ref return
     }
 }

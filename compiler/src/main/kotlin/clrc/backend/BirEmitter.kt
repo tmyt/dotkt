@@ -339,11 +339,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		fileEntry = file.fileEntry
 		// The `@ClrAwait` await intrinsic (`fun <T> Task<T>.await(): T`) is never emitted as a real method —
 		// its call sites are lowered to coroutine suspension points (see suspendMethod). Skip it.
-		// The `__clrout`/`__clrref` out/ref markers are intrinsics consumed at their call sites (the arg becomes a
-		// `byref:` param) — never emitted as real methods.
+		// The `byref` out/ref marker is an intrinsic consumed at its call sites (the arg becomes a `byref:` param) —
+		// never emitted as a real method.
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
-			.filter { !isAwaitIntrinsic(it) && it.name.asString() !in setOf("__clrout", "__clrref") }
-		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null }
+			.filter { !isAwaitIntrinsic(it) && it.name.asString() != "byref" }
+		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
+		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null && it.name.asString() != "ClrRef" }
 		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && clrName(it) == null }
 		val topProps = file.declarations.filterIsInstance<IrProperty>()
 		if (functions.isEmpty() && classes.isEmpty() && interfaces.isEmpty() && topProps.isEmpty()) return ""
@@ -2762,6 +2763,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** A type's fully-qualified .NET name, for IL reflection-based member resolution. */
 	private fun netType(t: IrType): String = when (val fq = t.classFqName?.asString()) {
+		// The intrinsic `ClrRef<T>` is a managed reference -> `byref:<T>` (selects the out/ref overload in ilemit).
+		"ClrRef" -> "byref:" + ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) }.orEmpty()
 		"kotlin.Int" -> "System.Int32"
 		"kotlin.Long" -> "System.Int64"
 		"kotlin.Short" -> "System.Int16"
@@ -2781,20 +2784,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		callee.parameters.filter { it.kind == IrParameterKind.Regular }
 			.joinToString(",") { str(netType(it.type)) }
 
-	/** The `__clrout(x)`/`__clrref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. */
+	/** The `byref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. */
 	private fun byrefMarker(a: IrExpression): IrExpression? =
-		if (a is IrCall && a.symbol.owner.name.asString().let { it == "__clrout" || it == "__clrref" }) regularArgs(a).firstOrNull() else null
+		if (a is IrCall && a.symbol.owner.name.asString() == "byref") regularArgs(a).firstOrNull() else null
 
-	/** (argsJson, argTypesJson) for an injected .NET call; a `__clrout`/`__clrref` arg becomes a `byref:` param.
-	 *  argTypes spans ALL params (like paramNetTypes — so optional params resolve + get default-filled); only the
-	 *  param positions whose provided arg is a marker are flipped to `byref:`. args spans the provided args only. */
+	/** (argsJson, argTypesJson) for an injected .NET call. A `ClrRef<T>` param already maps to `byref:T` via netType
+	 *  (so the out/ref overload resolves + optional params still default-fill); a `byref(x)` arg unwraps to its lvalue
+	 *  `x`, which ilemit passes by address (EmitArg routes an IsByRef param through EmitAddr). */
 	private fun clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
 		val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
-		val args = regularArgs(call)
-		val tj = params.mapIndexed { i, p ->
-			if (args.getOrNull(i)?.let { byrefMarker(it) } != null) str("byref:" + netType(p.type)) else str(netType(p.type))
-		}
-		val aj = args.map { val inner = byrefMarker(it); if (inner != null) expr(inner) else expr(it) }
+		val tj = params.map { str(netType(it.type)) }
+		val aj = regularArgs(call).map { val inner = byrefMarker(it); if (inner != null) expr(inner) else expr(it) }
 		return aj.joinToString(",") to tj.joinToString(",")
 	}
 
