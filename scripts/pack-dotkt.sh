@@ -24,5 +24,6 @@ dotnet pack "$ROOT/runtime/DotKt.Runtime" -c Release -o "$FEED" -v q --nologo
 echo "== pack DotKt.Toolchain + DotKt.Sdk =="
 dotnet pack "$ROOT/packaging/DotKt.Toolchain/DotKt.Toolchain.pack.csproj" -o "$FEED" -v q --nologo
 dotnet pack "$ROOT/packaging/DotKt.Sdk/DotKt.Sdk.pack.csproj" -o "$FEED" -v q --nologo
+dotnet pack "$ROOT/templates/DotKt.Templates.csproj" -o "$FEED" -v q --nologo
 
 echo "== feed =="; ls -1 "$FEED"

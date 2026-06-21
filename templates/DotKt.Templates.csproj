@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('DotKt.Versions.props', '$(MSBuildThisFileDirectory)'))" />
+  <PropertyGroup>
+    <PackageType>Template</PackageType>
+    <PackageId>DotKt.Templates</PackageId>
+    <Title>DotKt project templates</Title>
+    <Description>`dotnet new` templates for DotKt (Kotlin -&gt; .NET). Includes dotkt-cli.</Description>
+    <Authors>DotKt</Authors>
+    <TargetFramework>net10.0</TargetFramework>
+    <IncludeContentInPack>true</IncludeContentInPack>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <ContentTargetFolders>content</ContentTargetFolders>
+    <NoWarn>NU5128</NoWarn>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="content/**/*" Exclude="content/**/bin/**;content/**/obj/**" />
+    <Compile Remove="**/*" />
+  </ItemGroup>
+</Project>

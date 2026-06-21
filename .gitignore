@@ -17,3 +17,5 @@ packaging/DotKt.Toolchain/tools/
 packaging/**/obj/
 packaging/**/bin/
 build/nuget-feed/
+templates/**/obj/
+templates/**/bin/
