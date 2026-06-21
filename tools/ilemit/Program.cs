@@ -774,7 +774,7 @@ sealed class Emitter
     void EmitCoroutineClass(TypeInfo ti, MethodBuilder mb, JsonElement m)
     {
         var rs = m.GetProperty("resultType").GetString();
-        if (rs == "void") throw new NotSupportedException("@KCont coroutine with Unit result not yet supported (Phase 1 scope)");
+        bool unitResult = rs == "void";   // a `suspend fun … : Unit` surfaces as a non-generic Task (RootUnit sink)
         var steps = m.GetProperty("steps").EnumerateArray().ToList();
 
         var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
@@ -949,7 +949,7 @@ sealed class Emitter
                 var pn = p.GetProperty("name").GetString();
                 _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldarg, ai++); _il.Emit(OpCodes.Stfld, SmField(smInst, coDefs[pn]));
             }
-            var newRoot = builders.GetMethod("NewRoot").MakeGenericMethod(MapType(rs));
+            var newRoot = unitResult ? builders.GetMethod("NewRootUnit") : builders.GetMethod("NewRoot").MakeGenericMethod(MapType(rs));
             var emptyCtx = ResolveType("DotKt.Coroutines.EmptyCoroutineContext").GetField("Instance");
             var locRoot = _il.DeclareLocal(newRoot.ReturnType);
             _il.Emit(OpCodes.Ldsfld, emptyCtx); _il.Emit(OpCodes.Call, newRoot); _il.Emit(OpCodes.Stloc, locRoot);

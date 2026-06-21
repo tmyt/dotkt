@@ -685,6 +685,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		e.acceptVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
 				if (found) return
+				// A nested lambda / local fun is a SEPARATE coroutine — its suspensions are not the enclosing one's.
+				if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
 				if (isSuspensionCall(element)) { found = true; return }
 				element.acceptChildrenVoid(this)
 			}
@@ -843,6 +845,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun spillExpr(e: org.jetbrains.kotlin.ir.IrElement, steps: MutableList<String>) {
 		e.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
+				// Don't spill suspensions that live inside a nested lambda / local fun (a separate coroutine).
+				if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
 				element.acceptChildrenVoid(this)   // receiver/args (earlier in eval order) spill first
 				if (element is IrCall && isSuspensionCall(element) && !coSpill.containsKey(element)) {
 					val t = coFresh()
@@ -1896,15 +1900,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * before `MakeGenericMethod`. A method type parameter is `gp`; primitives/strings/known generics get their
 	 * canonical token; everything else is the .NET simple name (`Object`, `Int64`, ...).
 	 */
+	/** A parameter shape matching ilemit's `Shape()` (for resolving a generic .NET overload by name+arity+shapes). */
 	private fun clrMethodShape(t: IrType): String {
-		if (t.classifierOrNull is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) return "gp"
+		if (t.classifierOrNull is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) return "gp"   // bare type param
 		if (isArrayType(t)) return "array"
-		return when (t.classFqName?.asString()) {
-			"kotlin.String" -> "string"
-			"kotlin.Char" -> "char"
-			"kotlin.Int" -> "int"
-			else -> netType(t).substringAfterLast('.')
+		val fq = t.classFqName?.asString()
+		when (fq) {
+			"kotlin.String" -> return "string"
+			"kotlin.Char" -> return "char"
+			"kotlin.Int" -> return "int"
 		}
+		// Kotlin function types ((P..)->R / suspend (P..)->R) -> a CLR Func/Action -> ilemit "func:<argcount>".
+		if (fq != null && (fq.startsWith("kotlin.Function") || fq.startsWith("kotlin.coroutines.SuspendFunction")))
+			return "func:" + ((t as? IrSimpleType)?.arguments?.size ?: 1)
+		// Any other parameterized generic .NET type (Task<T>, Continuation<T>, …) -> "generic" (ilemit's IsGenericType default).
+		if ((t as? IrSimpleType)?.arguments?.isNotEmpty() == true) return "generic"
+		return netType(t).substringAfterLast('.')
 	}
 
 	private fun extensionReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {

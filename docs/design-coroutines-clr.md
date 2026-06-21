@@ -309,6 +309,29 @@ now unwraps a type-operator wrapper around a suspension (generic substitution / 
 `samples/il-kgen` (`awaitTwice`/`second` with `T=Int` and `T=String` → 7/hi/2/b), ilverify-clean, in verify-il.sh.
 Remaining for literal upstream: blockers #2–#6 (§13e).
 
+## 13g. Phase 4b status (2026-06-22) — CPS fixes + Unit-result class coroutines
+
+Three correctness items cleared on the way to structured concurrency:
+- **Nested-lambda CPS isolation**: `containsSuspend`/`spillExpr` no longer descend into nested lambdas/local funs
+  — a suspension inside an inner `async{…}` lambda is that inner coroutine's, not the enclosing one's (it was
+  being mis-spilled into the outer SM).
+- **Generic facade method shapes**: `clrMethodShape` now matches ilemit's `Shape()` — parameterized generics
+  (`Task<T>`, `Continuation<T>`) → `"generic"`, function types → `"func:N"` (bare param stays `"gp"`, array `"array"`).
+  This makes generic `@Clr` method calls over generic-typed params resolve.
+- **Unit-result class coroutines**: `suspend fun … : Unit` in the class form surfaces as a non-generic `Task`
+  via a new `Builders.RootUnit`/`NewRootUnit` sink. Proof: `samples/il-kunit` (a Unit `warmUp` awaited by
+  `useUnit` → 42), ilverify-clean.
+
+**Structured-concurrency demo (launch/async/await on the foundation) is NOT yet landed** — building it surfaced
+three more bounded codegen bugs that are the next concrete Phase-4 work (each independently fixable):
+1. **Extension suspend funs**: inside the SM, the extension RECEIVER (`this`) maps to the SM itself instead of
+   the receiver cps field (a `suspendCancellableCoroutine`-style leaf written as `suspend fun Task<T>.await()`
+   passing `this` mis-resolves). Flow operators are extension suspend funs, so this is important for upstream.
+2. **Trivial suspend-lambda forward with a receiver**: `{ api().awaitI() }` leaves the receiver on the stack
+   (ReturnEmpty) — the trivial-forward path assumes a receiver-less tail call.
+3. **Struct-form suspend lambda calling a builder**: `val a = async{…}` inside a struct-form `runBlocking{}`
+   lambda leaves the builder result on the stack in `MoveNext` (sync-stmt value not consumed/stored).
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi

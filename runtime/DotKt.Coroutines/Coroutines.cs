@@ -115,6 +115,26 @@ namespace DotKt.Coroutines
         /// Build a fresh Task-sink root (used by the emitted kickoff).
         public static Root<T> NewRoot<T>(CoroutineContext ctx) => new Root<T>(ctx ?? EmptyCoroutineContext.Instance);
 
+        /// The Unit-result Task sink: a `suspend fun … : Unit` surfaces as a non-generic `Task`.
+        public sealed class RootUnit : Continuation<object>
+        {
+            readonly TaskCompletionSource _tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            public CoroutineContext Context { get; }
+            public RootUnit(CoroutineContext c) { Context = c; }
+            public Task Task => _tcs.Task;
+            public void ResumeWith(Result<object> r)
+            {
+                if (r.IsFailure)
+                {
+                    if (r.ExceptionOrNull is OperationCanceledException) _tcs.TrySetCanceled();
+                    else _tcs.TrySetException(r.ExceptionOrNull);
+                }
+                else _tcs.TrySetResult();
+            }
+        }
+
+        public static RootUnit NewRootUnit(CoroutineContext ctx) => new RootUnit(ctx ?? EmptyCoroutineContext.Instance);
+
         /// runBlocking: drive a coroutine to completion on the calling thread (a real event loop replaces this
         /// blocking GetResult in Phase 4, once dispatchers exist).
         public static T RunBlocking<T>(Action<Continuation<object>> start) =>
