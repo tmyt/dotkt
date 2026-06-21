@@ -350,6 +350,23 @@ inline at the call site (enclosing emit state saved/restored). Proof: `samples/i
 `.take(2)` (0,1 — proves laziness; doesn't hang), ilverify-clean. v1: non-capturing blocks (loud error otherwise);
 `yieldAll`/`generateSequence` not yet. Restricted-suspension thus rides the same CPS front as suspend funs (§6).
 
+## 13i. Phase 5 (slice) status (2026-06-22) — Flow works on the foundation
+
+**Flow needs NO new state-machine form** — it is push-based, so it composes from plain suspend funs/lambdas on
+the Task foundation (the user's intuition). A `Flow` wraps a `suspend (collector) -> …` block; `collect` runs the
+block with a collector whose `emit` is the consumer action; `emit` awaits the action's Task (backpressure = the
+producer suspends until the collector returns). `samples/il-kflow`: `flow { emit(1); emit(2); emit(3) }.collect
+{ println(it) }` → 1/2/3, ilverify-clean. Runtime `DotKt.Coroutines/Flows.cs` (FlowColI/FlowI/Flows, Int slice);
+`emit`/`collect` are suspend extension funs built from the raw intrinsic (like the structured-async `await`).
+Two enabling compiler fixes (both general): birType maps function TYPES used as values (`kotlin.FunctionN` /
+`kotlin.coroutines.SuspendFunctionN` → `Func<…,Task<R>>`); and **`capturedVars` no longer treats a nested
+lambda's own parameters as captures of the enclosing lambda** (it now adds nested `IrValueParameter`s to the
+declared set) — this was a latent capture bug that the Flow nesting (`flow{ col -> }` / `collect{ v -> }`) exposed.
+
+**Remaining for full Phase 5 (literal upstream commonMain)**: generic Flow<T>/Channel/select/SharedFlow/StateFlow,
+`Flow`↔`IAsyncEnumerable` boundary bridge, `JobSupport` (atomicfu-heavy), and the full stdlib breadth across the
+real sources — still the large asymptote. But the Flow CORE mechanism is proven to ride the foundation.
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi

@@ -1801,6 +1801,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			override fun visitElement(element: IrElement) {
 				when (element) {
 					is IrVariable -> declared.add(element)
+					// A nested lambda/local-fun's own parameters are declared there, not captured by `fn`.
+					is IrValueParameter -> declared.add(element)
 					is IrGetValue -> referenced.add(element.symbol.owner)
 					is IrSetValue -> referenced.add(element.symbol.owner)
 				}
@@ -3219,6 +3221,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
 		// kotlin.Throwable -> System.Exception (the common base; `.message` -> .Message).
 		if (fqp == "kotlin.Throwable") return "clr:System.Exception"
+		// A function type as a value (e.g. a `block: suspend (P)->R` parameter): `kotlin.FunctionN` -> Func/Action,
+		// `kotlin.coroutines.SuspendFunctionN` -> Func<P..,Task<R>> (suspend lambdas are Func<..,Task<R>> in the ABI).
+		if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.Function"))) {
+			val suspend = fqp.startsWith("kotlin.coroutines.SuspendFunction")
+			val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
+			if (args.isNotEmpty()) {
+				val ret = args.last(); val ps = args.dropLast(1)
+				val retEnc = if (suspend) coTaskType(ret) else if (ret.isUnit()) "void" else birTypeDeleg(ret)
+				return "func:$retEnc:${ps.joinToString(",") { birTypeDeleg(it) }}"
+			}
+		}
 		// kotlin.sequences.Sequence<T> -> a lazy .NET IEnumerable<T> (sequence{} builds one; ops map to LINQ).
 		if (fqp == "kotlin.sequences.Sequence") {
 			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
