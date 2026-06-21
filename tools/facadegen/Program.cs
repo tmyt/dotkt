@@ -117,6 +117,7 @@ static class FacadeGen
 
     static int EmitMeta(string outFile, IEnumerable<string> typeNames)
     {
+        MetaMode = true;   // enable array/cross-type member support for the FIR-injection path
         var sb = new StringBuilder();
         // types resolve at their real .NET namespace; no synthetic package header
         foreach (var typeName in typeNames)
@@ -325,8 +326,15 @@ static class FacadeGen
 
     // A bare generic parameter (T) is fine as a Kotlin type parameter; constructed generics
     // containing parameters (List<T>) are not yet emittable -> Any?.
+    // Array/cross-type member support is for the FIR-injection (--meta) path only. The legacy façade-.kt path
+    // (GenerateType) needs valid Kotlin source, so it keeps the conservative behavior (arrays skipped, cross-type
+    // -> Any?). MetaMode is set true while EmitMeta runs.
+    static bool MetaMode = false;
+
     static bool Supported(Type t) =>
-        !t.IsByRef && !t.IsPointer && !t.IsArray && (t.IsGenericParameter || !t.ContainsGenericParameters);
+        !t.IsByRef && !t.IsPointer
+        && ((MetaMode && t.IsArray) ? Supported(t.GetElementType())
+            : (!t.IsArray && (t.IsGenericParameter || !t.ContainsGenericParameters)));
 
     // Map a .NET type to a Kotlin façade type. Primitives map precisely; generic params map to their
     // name (T); the type itself maps to its façade; everything else degrades to Any?.
@@ -348,8 +356,19 @@ static class FacadeGen
             "System.Single" => "Float",
             "System.Char" => "Char",
             "System.String" => "String",
-            _ => "Any?",
+            "System.Object" => "Any?",
+            _ => MetaMode ? CrossType(t) : "Any?",
         };
+    }
+
+    // A reference to another .NET type -> emit its SIMPLE name. The FIR injector resolves it to that type IF it is
+    // also injected (imported); otherwise it falls back to Any?. Generics/arrays/byref/global types stay Any? here.
+    static string CrossType(Type t)
+    {
+        if (t.IsArray) { var e = Map(t.GetElementType(), t); return e == "Any?" ? "Any?" : "array:" + e; }
+        if (t.IsGenericType || t.IsByRef || t.IsPointer || t.IsGenericParameter || string.IsNullOrEmpty(t.Namespace)) return "Any?";
+        var n = t.Name;
+        return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? n : "Any?";
     }
 
     static string Sig(ParameterInfo[] ps, Type self) => string.Join(",", ps.Select(p => Map(p.ParameterType, self)));

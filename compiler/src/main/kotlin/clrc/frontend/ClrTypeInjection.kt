@@ -277,6 +277,16 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		owner.typeParameterSymbols.firstOrNull { it.name.identifier == typeName }
 			?.let { return it.constructType(emptyArray(), false) }
 		val bt = session.builtinTypes
+		// A .NET array param/return (`array:String` -> Kotlin `Array<String>` / primitive `IntArray`).
+		if (typeName.startsWith("array:")) {
+			val elem = coneOf(typeName.removePrefix("array:"), owner)
+			val prim = mapOf("Int" to "IntArray", "Long" to "LongArray", "Double" to "DoubleArray", "Float" to "FloatArray",
+				"Short" to "ShortArray", "Byte" to "ByteArray", "Boolean" to "BooleanArray", "Char" to "CharArray")[typeName.removePrefix("array:")]
+			val cid = if (prim != null) ClassId(FqName("kotlin"), Name.identifier(prim))
+				else ClassId(FqName("kotlin"), Name.identifier("Array"))
+			val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return bt.nullableAnyType.coneType
+			return sym.constructType(if (prim != null) emptyArray() else arrayOf(elem), false)
+		}
 		return when (typeName) {
 			"Int" -> bt.intType.coneType
 			"Long" -> bt.longType.coneType
