@@ -160,6 +160,47 @@ change the foundation.
   channel). So it is **one real scope (Task) + the `Flow = IAsyncEnumerable` correspondence**, with multi-value
   concurrency borrowing the single-value scope — same shape for A and B.
 
+## 13a. DECISION (2026-06-21, user-confirmed) — Path B, B2-as-generalization
+
+**Goal locked: compile the real upstream `kotlinx-coroutines-core` into an assembly `dotktx.coroutines`.**
+User rationale: *"being able to build upstream IS the proof of compatibility."* (1.0 ship-gating is out of scope
+for this effort.)
+
+**Architecture = B2-as-generalization** (own the CPS end-to-end, generalize the completion *sink*). Rejected B1
+(insert `AbstractSuspendFunctionsLowering`/`JsSuspendFunctionsLowering`): `buildStateMachine` is abstract so the
+CPS core is ours regardless; B1 would force consuming a relooped goto-free IR we don't need and pull in the whole
+`backend.common` lowering-context the pipeline deliberately avoids (no IR lowerings run between Fir2Ir and
+`ClrBackendPhase`). B3's "two engines" dissolves into **one engine, two sinks**.
+
+**ABI (user-confirmed): internally suspend-centric / Continuation-universal; CLR-facing appearance stays
+`Task<T>`.** Every `suspend fun`/suspend lambda lowers to the standard Continuation form (state-machine class
+implementing `kotlin.coroutines.Continuation<T>`, `label` + `invokeSuspend`/`resumeWith`, value-or-
+`COROUTINE_SUSPENDED`). The *default public surface* of a `suspend fun` remains a `Task<T>`-returning kickoff =
+`future { internalForm }`, so `coroutine-abi-decision` (suspend fun == Task<T>) is **preserved as the surface**;
+only the internal lowering gains Continuation. Reconciling insight (user): **"Continuation can be regarded as
+Task"** — the boundary continuation's sink IS a `TaskCompletionSource` (Task ≈ a reified, started
+Continuation-completion; same single-shot arity, §9). The existing struct+`AsyncTaskMethodBuilder` path is
+**refactored into the Task sink**, not deleted.
+
+**Resolutions:** (1) `future{}`=root Continuation→TCS; `await(Task)`=`suspendCancellableCoroutine`. (2)
+Continuation = real CLR interface implemented by emitted SM classes. (3) Dispatchers: Default/IO→ThreadPool,
+Main→SynchronizationContext (WPF/WinUI), runBlocking→blocking event loop, delay→event-loop timer. (4)
+expect/actual = pragmatic minimum: commonMain + a CLR `actual` set compiled as ONE flat module (no HMPP/klib).
+(5) atomicfu = recognize intrinsics in the backend → Interlocked/Volatile. (6) Flow⟷IAsyncEnumerable,
+Channel⟷System.Threading.Channels (cold/backpressured, not Rx); most of Flow compiles as-is.
+
+**Status:** Phase 0 ✅ DONE (2026-06-21). Non-trivial suspend lambdas (capturing & non-capturing, loops/
+multi-suspension) now CPS-linearize: `BirEmitter.lambda` routes them through the shared `emitCoroutineBody`
+(extracted from `suspendMethod`) so the lifted method / closure `invoke` carries `suspend`+steps+cpsFields and
+`ilemit.EmitCoroutine` emits the SM + `Task<T>` kickoff. Capturing lambdas → the closure `invoke` is an INSTANCE
+coroutine: ilemit captures the receiver into an SM field `<>4__this` (`_coThis`) so resume reaches captured-var
+fields. Proof: `samples/il-colam` (30/6/105/18) in `scripts/verify-il.sh`; full IL suite green.
+
+**Phasing (each = a verifiable gate):** 0 suspend-lambda CPS → 1 Continuation core + pluggable sink → 2 raw
+intrinsics → 3 flat expect/actual + atomicfu → 4 first real slice (Job/launch/async/Dispatchers/delay/
+withContext/coroutineScope/runBlocking) → 5 full commonMain (Flow/Channel) = headline compat gate → 6
+sequence{} fold-in (#42) + UI dispatcher. Full plan: `~/.claude/plans/eager-tinkering-scroll.md`.
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi

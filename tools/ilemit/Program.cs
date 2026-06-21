@@ -85,6 +85,10 @@ sealed class Emitter
     // Coroutine context: inside a state-machine MoveNext, a reference to a param/live-local (a "cpsField") is a
     // field of the SM struct, not an IL local/arg. Non-null only while emitting MoveNext. See EmitCoroutine.
     Dictionary<string, FieldBuilder> _coFields;
+    // Coroutine `this` capture: for an INSTANCE suspend method/lambda (e.g. a capturing suspend lambda's closure
+    // `invoke`), the original receiver is stored in an SM field so MoveNext can still reach it after a resume.
+    // Non-null only while emitting such a MoveNext; `this` then loads this field instead of ldarg.0 (the SM).
+    FieldBuilder _coThis;
     // try-around-await: inside a try region of a MoveNext, `ret` is illegal — suspension/return `leave` to the
     // single method exit instead. Depth > 0 while emitting steps between coTryBegin and coTryEnd.
     int _coTryDepth;
@@ -538,6 +542,10 @@ sealed class Emitter
         foreach (var f in cpsDefs)
             coFields[f.GetProperty("name").GetString()] = sm.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), FieldAttributes.Public);
 
+        // Instance coroutine (e.g. a capturing suspend lambda's closure `invoke`): capture the receiver so resume
+        // can reach the declaring type's fields (the lambda's captured vars). `this` in MoveNext reads this field.
+        var fThis = mb.IsStatic ? null : sm.DefineField("<>4__this", ti.TB, FieldAttributes.Public);
+
         // One awaiter cache field + type per suspension point (keyed by state). Task<Tk> -> TaskAwaiter<Tk>.
         var awaiterType = new Dictionary<int, Type>();
         var awaiterField = new Dictionary<int, FieldBuilder>();
@@ -574,6 +582,7 @@ sealed class Emitter
             _args.Clear(); _argTypes.Clear(); _locals.Clear();
             _methodRetType = typeof(void);
             _coFields = coFields;
+            _coThis = fThis;
             PrescanCfgLabels(m.GetProperty("steps"));   // a non-suspending while inside a suspend fun lowers to CFG
 
             // labels: one resume + one "after" per suspension; one per coLabel id; awaiter local per suspension.
@@ -697,6 +706,7 @@ sealed class Emitter
             _il.MarkLabel(_coExit);
             _il.Emit(OpCodes.Ret);   // single exit; suspension/return inside a try `leave` here, others `ret` directly
             _coFields = null;
+            _coThis = null;
         }
 
         // ---- kickoff body (the original method `mb`): start the machine, return its Task ----
@@ -705,6 +715,7 @@ sealed class Emitter
             _args.Clear(); _argTypes.Clear(); _locals.Clear();
             var locSm = _il.DeclareLocal(sm);
             int ai = mb.IsStatic ? 0 : 1;
+            if (fThis != null) { _il.Emit(OpCodes.Ldloca, locSm); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Stfld, fThis); }
             foreach (var p in m.GetProperty("params").EnumerateArray())
             {
                 var pn = p.GetProperty("name").GetString();
@@ -1270,7 +1281,10 @@ sealed class Emitter
                 if (_args.TryGetValue(name, out var a)) { _il.Emit(OpCodes.Ldarga, a); return; }
                 break;
             }
-            case "this": _il.Emit(OpCodes.Ldarg_0); return;
+            case "this":
+                if (_coThis != null) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, _coThis); }   // instance coroutine: captured receiver
+                else _il.Emit(OpCodes.Ldarg_0);
+                return;
             case "field":
                 EmitExpr(e.GetProperty("recv"));
                 _il.Emit(OpCodes.Ldflda, ResolveField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString(), out _));
@@ -1303,7 +1317,9 @@ sealed class Emitter
         switch (e.GetProperty("k").GetString())
         {
             case "const": return EmitConst(e);
-            case "this": _il.Emit(OpCodes.Ldarg_0); return typeof(object);
+            case "this":
+                if (_coThis != null) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, _coThis); return _coThis.FieldType; }   // instance coroutine: captured receiver
+                _il.Emit(OpCodes.Ldarg_0); return typeof(object);
             case "local":
             {
                 var name = e.GetProperty("name").GetString();

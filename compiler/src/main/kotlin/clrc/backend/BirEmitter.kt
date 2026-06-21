@@ -721,7 +721,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		else expr(call)   // a direct suspend call: its kickoff returns Task<T>
 	}
 
-	private fun suspendMethod(fn: IrSimpleFunction, static: Boolean): String {
+	/** CPS state captured by [emitCoroutineBody] for the caller to assemble the method/lambda JSON. */
+	private class CoroutineBody(val resultType: String, val cpsFields: String, val steps: String)
+
+	/**
+	 * CPS-linearize a suspend function/lambda body into (resultType, cpsFields, steps) JSON. Shared by
+	 * [suspendMethod] and the suspend-lambda path in [lambda] so both lower identically (`emitCps`/`spillExpr`/
+	 * `collectCpsVars` → flat steps + state-machine fields = params + live locals + spill temps).
+	 */
+	private fun emitCoroutineBody(fn: IrSimpleFunction): CoroutineBody {
 		coState = 0; coLabelN = 0
 		coSpill.clear(); coSpillFields.clear()
 		val params = regularParams(fn)
@@ -737,9 +745,29 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val cpsFields = (params.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" } +
 			liveVars.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" } +
 			coSpillFields.map { """{"name":${str(it.first)},"type":${str(birType(it.second))}}""" }).joinToString(",")
+		return CoroutineBody(resultType, cpsFields, steps.joinToString(","))
+	}
+
+	private fun suspendMethod(fn: IrSimpleFunction, static: Boolean): String {
+		val co = emitCoroutineBody(fn)
 		val ps = paramsJsonList(fn.parameters).joinToString(",")
 		val vis = visOf(fn)
-		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)},"suspend":true,"resultType":${str(resultType)},"cpsFields":[$cpsFields],"params":[$ps],"steps":[${steps.joinToString(",")}]}"""
+		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)},"suspend":true,"resultType":${str(co.resultType)},"cpsFields":[${co.cpsFields}],"params":[$ps],"steps":[${co.steps}]}"""
+	}
+
+	/**
+	 * A suspend lambda body is "trivial" when it is a single tail suspend call (`{ f() }` / `{ return f() }`)
+	 * whose arguments don't themselves suspend: the kickoff Task is just forwarded, so no state machine is needed
+	 * and the body emits as-is. Anything else needs CPS lowering (Phase 0). See [lambda].
+	 */
+	private fun isTrivialSuspendLambda(fn: IrSimpleFunction): Boolean {
+		val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
+		val single = stmts.singleOrNull() ?: return false
+		val e = when (single) { is IrReturn -> single.value; is IrExpression -> single; else -> return false }
+		return e is IrCall && e.symbol.owner.isSuspend && e.let { call ->
+			regularArgs(call).none { containsSuspend(it) } &&
+				(extensionReceiver(call) ?: dispatchReceiver(call))?.let { !containsSuspend(it) } ?: true
+		}
 	}
 
 	private fun coFresh(): String = "__cor${coLabelN++}"
@@ -1323,27 +1351,43 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// emitted body is correct as-is — only the declared return type / delegate type become Task<T> / Func<Task<T>>.
 		val ret = if (fn.isSuspend) coTaskType(fn.returnType) else if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
 		val ftype = if (fn.isSuspend) coSuspendFuncType(fn) else funcTypeOf(fn)
+		// A non-trivial suspend lambda body is itself a coroutine: CPS-linearize it (Phase 0) so ilemit emits a
+		// state machine + Task<T> kickoff for the lifted method / closure `invoke`, exactly like a `suspend fun`.
+		// Trivial `{ f() }` lambdas just forward f()'s kickoff Task and emit as-is. See isTrivialSuspendLambda.
+		val cps = fn.isSuspend && !isTrivialSuspendLambda(fn)
 		// A lambda has no `this` of its own, so a referenced `<this>` is the enclosing instance -> capture it.
 		val captures = capturedVars(fn, includeThis = true)
 		if (captures.isEmpty()) {
 			val lname = "__lambda${lambdaCounter++}"
-			val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
+			if (cps) {
+				val co = emitCoroutineBody(fn)
+				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"suspend":true,"resultType":${str(co.resultType)},"cpsFields":[${co.cpsFields}],"params":[${lambdaParamsJson(fn.parameters)}],"steps":[${co.steps}]}""")
+			} else {
+				val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
+			}
 			return """{"k":"delegateNew","method":${str(lname)},"funcType":${str(ftype)}}"""
 		}
 		// Capturing: build a closure class. Captures rewrite to `this.<field>` (by symbol identity, so the
 		// enclosing `this` — captured when the lambda reads a member — maps to a `__outer` field, not the
-		// closure's own `this`).
+		// closure's own `this`). For a CPS suspend lambda the closure `invoke` is an INSTANCE coroutine; ilemit
+		// captures the closure `this` into the state machine so resume can still read the captured-var fields.
 		val cname = "<>dotkt_Closure${closureCounter++}"
 		val capPairs = captures.map { it to captureFieldName(it) }
 		capPairs.forEach { (decl, fname) ->
 			captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 		}
-		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		val invoke: String
+		if (cps) {
+			val co = emitCoroutineBody(fn)
+			invoke = """{"name":"invoke","static":false,"override":false,"virtual":false,"suspend":true,"resultType":${str(co.resultType)},"cpsFields":[${co.cpsFields}],"params":[${lambdaParamsJson(fn.parameters)}],"steps":[${co.steps}]}"""
+		} else {
+			val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+			invoke = """{"name":"invoke","static":false,"override":false,"virtual":false,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}"""
+		}
 		capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
 		val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
-		val invoke = """{"name":"invoke","static":false,"override":false,"virtual":false,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}"""
 		liftedTypes.add("""{"name":${str(cname)},"kind":"class","base":null,"interfaces":[],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$invoke]}""")
 		// Capture values are evaluated in the enclosing context (the outer `this`, or an outer local).
 		val capExprs = captures.joinToString(",") { capValueExpr(it) }
