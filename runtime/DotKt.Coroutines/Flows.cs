@@ -31,3 +31,29 @@ namespace DotKt.Coroutines
         }
     }
 }
+
+namespace DotKt.Coroutines
+{
+    // Generic Flow<T> (the real shape). emit returns the consumer action's Task (Int dummy result to dodge Unit
+    // in generics for now); the VALUE type T is fully generic.
+    public interface FlowCol<T> { Task<int> EmitRaw(T value); }
+
+    public sealed class Flow<T>
+    {
+        readonly Func<FlowCol<T>, Task<int>> _block;
+        public Flow(Func<FlowCol<T>, Task<int>> block) { _block = block; }
+        public Task<int> Collect(FlowCol<T> collector) => _block(collector);
+    }
+
+    public static class GFlows
+    {
+        public static Flow<T> Create<T>(Func<FlowCol<T>, Task<int>> block) => new Flow<T>(block);
+        public static Task<int> Collect<T>(Flow<T> flow, Func<T, Task<int>> action) => flow.Collect(new AC<T>(action));
+        sealed class AC<T> : FlowCol<T>
+        {
+            readonly Func<T, Task<int>> _action;
+            public AC(Func<T, Task<int>> action) { _action = action; }
+            public Task<int> EmitRaw(T value) => _action(value);
+        }
+    }
+}

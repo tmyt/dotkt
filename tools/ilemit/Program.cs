@@ -2967,11 +2967,23 @@ sealed class Emitter
         // Exact overload resolution when every arg type resolves (ClrRef handles array:/clrg:/nullable:/func: too,
         // so e.g. `array:object` -> object[] selects String.Format(string, params object[]) over (string, object)).
         var resolved = argSpecs.Select(s => { try { return ClrRef(s); } catch { return (Type)null; } }).ToArray();
-        if (resolved.All(x => x != null))
-            mi = type.GetMethod(name, flags, null, resolved, null);
-        // Fall back to name + arity — e.g. a generic-parameter arg type (`Add(T)` on `Collection<int>`) that
-        // doesn't name a plain .NET type; on the constructed type GetMethods returns the substituted overload.
-        mi ??= type.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);
+        try
+        {
+            if (resolved.All(x => x != null))
+                mi = type.GetMethod(name, flags, null, resolved, null);
+            // Fall back to name + arity — e.g. a generic-parameter arg type (`Add(T)` on `Collection<int>`) that
+            // doesn't name a plain .NET type; on the constructed type GetMethods returns the substituted overload.
+            mi ??= type.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);
+        }
+        catch (NotSupportedException) { }
+        // A constructed generic type whose arg is an emitted generic parameter (TypeBuilderInstantiation) refuses
+        // reflection — re-anchor the open definition's method onto the constructed type via TypeBuilder.GetMethod.
+        if (mi == null && type.IsGenericType && !type.IsGenericTypeDefinition)
+        {
+            var open = type.GetGenericTypeDefinition();
+            var om = open.GetMethods(flags).First(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);
+            mi = TypeBuilder.GetMethod(type, om);
+        }
         // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
         if (instance) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitArgs(e.GetProperty("args"), mi.GetParameters());
@@ -2994,11 +3006,22 @@ sealed class Emitter
         try { return ResolveType(name); } catch (NotSupportedException) { return null; }
     }
 
+    // A property getter/setter on a (possibly emitted-generic-instantiated) type. On a constructed generic type
+    // whose arg is an emitted generic parameter (TypeBuilderInstantiation), runtime reflection refuses
+    // GetProperty — re-anchor the open definition's accessor onto the constructed type via TypeBuilder.GetMethod.
+    static MethodInfo PropAccessor(Type type, string name, bool getter)
+    {
+        try { var pi = type.GetProperty(name); var m = getter ? pi.GetGetMethod() : pi.GetSetMethod(); if (m != null) return m; }
+        catch (NotSupportedException) { }
+        var open = type.GetGenericTypeDefinition();
+        var openPi = open.GetProperty(name);
+        return TypeBuilder.GetMethod(type, getter ? openPi.GetGetMethod() : openPi.GetSetMethod());
+    }
+
     Type EmitClrPropGet(JsonElement e)
     {
         var type = ClrRef(e.GetProperty("type").GetString());
-        var pi = type.GetProperty(e.GetProperty("name").GetString());
-        var getter = pi.GetGetMethod();
+        var getter = PropAccessor(type, e.GetProperty("name").GetString(), getter: true);
         // A property getter on a VALUE type (e.g. KeyValuePair.Key/.Value) needs the receiver by managed pointer.
         if (!e.GetProperty("static").GetBoolean())
         {
@@ -3011,8 +3034,7 @@ sealed class Emitter
     Type EmitClrPropSet(JsonElement e)
     {
         var type = ClrRef(e.GetProperty("type").GetString());
-        var pi = type.GetProperty(e.GetProperty("name").GetString());
-        var setter = pi.GetSetMethod();
+        var setter = PropAccessor(type, e.GetProperty("name").GetString(), getter: false);
         if (!e.GetProperty("static").GetBoolean()) EmitExpr(e.GetProperty("recv"));
         EmitArgs2(new[] { e.GetProperty("value") }, setter.GetParameters());
         _il.Emit(setter.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, setter);

@@ -3049,12 +3049,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val args = filledArgs(call).joinToString(",")
 		// A generic method `fun <T> id(...)` -> carry the resolved type args so ilemit can MakeGenericMethod.
 		val ta = typeArgsJson(call)
+		// A call to a `suspend fun` resolves to its kickoff, which returns `Task<T>` (not the result T). The retType
+		// hint (used by ilemit when typeArgs are present) must reflect that, else an awaited generic suspend call
+		// is typed as the result T and `GetAwaiter` can't be found. See docs §13k.
+		val effRet = if (callee.isSuspend) coTaskType(call.type) else birType(call.type)
 		val recv = dispatchReceiver(call)
 		// User extension function `fun T.f(...)` -> static `f(receiver, args...)` (receiver is the __self param).
 		val extRecv = extensionReceiver(call)
 		if (extRecv != null) {
 			val all = (listOf(expr(extRecv)) + filledArgs(call)).joinToString(",")
-			return """{"k":"callStatic","owner":null,"method":${str(name)}$ta${retHint(ta.isNotEmpty(), call.type)},"args":[$all]}"""
+			return """{"k":"callStatic","owner":null,"method":${str(name)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]}"""
 		}
 		// Instance method on a user class, or a sibling top-level call.
 		return if (recv != null) {
@@ -3065,8 +3069,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val ownerStr = ownerSpec(declaringClass, recv.type)
 			val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
 			val mname = objectMethodName(callee) ?: name
-			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}$ta${retHint(ta.isNotEmpty() || '[' in ownerStr, call.type)},"args":[$args]}"""
-		} else """{"k":"callStatic","owner":null,"method":${str(name)}$ta${retHint(ta.isNotEmpty(), call.type)},"args":[$args]}"""
+			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}$ta${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]}"""
+		} else """{"k":"callStatic","owner":null,"method":${str(name)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]}"""
 	}
 
 	/**
@@ -3076,6 +3080,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 */
 	private fun retHint(generic: Boolean, t: IrType): String =
 		if (generic) ""","retType":${str(birType(t))}""" else ""
+
+	/** Like [retHint] but with a pre-computed return-type string (e.g. a suspend call's kickoff `Task<T>`). */
+	private fun retHintStr(generic: Boolean, retStr: String): String =
+		if (generic) ""","retType":${str(retStr)}""" else ""
 
 	/** `,"typeArgs":["int"]` when the callee is a generic method (its own type params resolved at this call). */
 	private fun typeArgsJson(call: IrCall): String {
