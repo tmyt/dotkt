@@ -55,22 +55,34 @@ coroutine 内部 (e) 専用パスで処理／定数畳み込み済み のいず�
 - [x] **`try`/`catch` を式として使う**（`val x = try{}catch{}` / `return try` / ラムダ内 try）— ✅ 2026-06-21（`il-tryexpr`、JVM 差分一致）。`IrTry` を value 位置で valueBlock + temp 代入に降ろす。→ **式 else 到達不能化**。
 - [x] **関数ローカルクラス**（`fun f(){ class L(...){...} }`、local data class 含む）— ✅ 2026-06-21（`il-localclass`、JVM 差分一致）。`liftLocalClass`: トップレベル合成型 `<>dotkt_<Name>_N` に平坦化、参照する外側ローカル（囲み `this` 含む）を先頭 ctor 引数＋capture フィールドに（無名オブジェクトの機構を流用）、構築点 `L(args)` は capture 値を前置。複数インスタンス・loop 内宣言・data class equals まで対応。残: 可変キャプチャ（外側ローカルへ書込）は clean error（ref-cell 要）。→ **文 else 到達不能化**。
 
-### B. 特定構文の named edges（稀／回避策あり）
-- [ ] **.NET メソッド参照** `obj::netMethod` / `NetType::method` — `BirEmitter:1282`。回避: ラムダ `{ a -> x.m(a) }`。**(S–M)**
-- [ ] **解決不能なコンストラクタ参照** `::Ctor`（class 解決不可）— `BirEmitter:1248`。ユーザ/注入型の `::Ctor` は対応済み、これは残エッジ。**(S)**
-- [ ] **非 simple 関数参照**（fake override 等）— `BirEmitter:1251`。**(S)**
-- [ ] **可変キャプチャするオブジェクト式**（object 式から外側ローカルへ書込）— `BirEmitter:1648`。要 heap ref-cell。回避: フィールドを持つ小クラス。**(M)**
-- [ ] **解決不能な委譲プロパティ**（lazy/カスタム getValue/Map 以外に解決できない delegate）— `BirEmitter:2323`。**(S)**
-- [ ] **非リテラル `String.format`**（format がリテラルでない／未対応 printf 指定子）— `BirEmitter:2410`。printf↔.NET composite 変換はコンパイル時のみ。**(S)**
-- [ ] **未実装 stdlib 関数**（free/extension）— `BirEmitter:2520` のガードが `kotlin.collections/sequences/text/ranges/comparisons` の未対応関数を拒否。現状の主な未対応:
-  - [ ] `partition`（→ `(List, List)` の Pair）
-  - [ ] `windowed`（LINQ 等価なし＝sliding window 合成）
-  - [ ] `associate`（→ ToDictionary、Pair セレクタ分解）
-  - [ ] `getOrElse(index){default}`
-  - [ ] `runningFold` / `scan`
-  - [ ] `withIndex`（→ `IndexedValue<T>`）
-  - [ ] `sortedWith(compareBy{})`（compareBy が key を `Comparable<*>` に erase。単一キーは `sortedBy`/`sortedByDescending` で対応済）
-  - 注: `map/filter/flatMap/flatten/mapNotNull/filterNotNull/mapIndexed/chunked/average/indexOf/zip/groupBy/associateWith/associateBy/fold/reduce/sum/sumOf/...` 等 40+ は対応済み（B トラック）。
+### B. 🛑 意図的にクリーンエラーにしている構文（recognized-but-refused・実装可能だが設計判断で保留）
+**FIR は解決でき backend も認識するが、設計判断で実装せずソース位置付きエラーにしているもの。** 各々「なぜ保留か」と
+「実装に要るもの」を明記。実装したら `[x]` にする。
+
+| # | 構文 | 箇所 | なぜ保留（理由） | 実装に要るもの | 優先 |
+|---|---|---|---|---|---|
+| B1 | **オブジェクト式から外側ローカルへ書込**（可変キャプチャ） | `BirEmitter:1679` | 値のキャプチャはコピー＝書込が外に伝播しない。正しくやるには **heap ref-cell**（`Ref<T>` クラスに昇格して共有）が要る | 各可変キャプチャを `<>dotkt_Ref<T>{ var v }` に昇格し、読書を `.v` に書換（closure/object/local-fn 横断） | M |
+| B2 | **ローカルクラスから外側ローカルへ書込**（可変キャプチャ） | `BirEmitter:1656` | 同上（B1 と同じ heap ref-cell 問題） | B1 と同一機構を流用 | M |
+| B3 | **.NET メソッド参照** `obj::netMethod` / `NetType::method` | `BirEmitter:1289` | .NET メソッドの delegate 束縛は稀＋自明な回避策あり | lifted `__mref`/`boundDelegateNew` を .NET 受け手にも対応。回避: ラムダ `{ a -> x.m(a) }` | S–M |
+| B4 | **非リテラル `String.format`** | `BirEmitter:2441` | printf↔.NET composite（`%d`↔`{0}`）は非互換。実行時変換には runtime helper が要る | DotKt.Runtime に printf→composite 変換器、または `String.Format` 直叩き | S |
+| B5 | **`out`/`ref` パラメータ**（facadegen で非 surface） | `facadegen Supported()` | Kotlin に out/ref 構文が無い。`TryParse` 等の最頻ユースは `toIntOrNull()` で充足済 | holder/`Pair` 返しへ reshape する façade 規約の設計 | M |
+
+> 回避策のある B3、最頻ユースが別 API で足りる B4/B5 は実害が小さい。B1/B2（heap ref-cell）は同一機構で一括解決可能。
+
+### B'. 未実装 stdlib 関数（実装すれば動く・ガードがクリーンエラー化）
+`BirEmitter:2551` のガードが `kotlin.collections/sequences/text/ranges/comparisons` の未対応 free/extension 関数を拒否。
+- [ ] `partition`（→ `(List, List)` の Pair）
+- [ ] `windowed`（LINQ 等価なし＝sliding window 合成）
+- [ ] `associate`（→ ToDictionary、Pair セレクタ分解）
+- [ ] `getOrElse(index){default}` / `runningFold` / `scan`
+- [ ] `withIndex`（→ `IndexedValue<T>`）
+- [ ] `sortedWith(compareBy{})`（compareBy が key を `Comparable<*>` に erase。単一キーは `sortedBy`/`sortedByDescending` で対応済）
+- 注: `map/filter/flatMap/flatten/mapNotNull/filterNotNull/mapIndexed/chunked/average/indexOf/zip/groupBy/associate{With,By}/fold/reduce/sum/sumOf/...` 等 40+ は対応済み。
+
+### B''. 稀な解決不能エッジ（ほぼ書けない・clean error）
+- [ ] **解決不能なコンストラクタ参照** `::Ctor`（class 解決不可）— `BirEmitter:1255`。ユーザ/注入型の `::Ctor` は対応済み。
+- [ ] **非 simple 関数参照**（fake override 等）— `BirEmitter:1258`。
+- [ ] **解決不能な委譲プロパティ**（lazy/カスタム getValue/Map 以外）— `BirEmitter:2354`。
 
 ### C. 設計上 BIR に現れない IR 型（対応不要）
 - `IrDynamicOperatorExpression` / `IrDynamicMemberExpression` — Kotlin/JS 専用、CLR 文脈に出ない。
@@ -81,17 +93,19 @@ coroutine 内部 (e) 専用パスで処理／定数畳み込み済み のいず�
 
 ---
 
-## `unsupported()` 呼び出し一覧（9）= 上記 gap の発生点
+## `unsupported()` 呼び出し一覧（10）= 上記 gap の発生点
 | # | 位置 | 種別 | 上記項目 |
 |---|---|---|---|
-| 1 | `BirEmitter:893`  | 汎用 statement フォールバック | A（ローカルクラス等） |
-| 2 | `BirEmitter:1175` | 汎用 expression フォールバック | A |
-| 3 | `BirEmitter:1248` | コンストラクタ参照（class 解決不可） | B |
-| 4 | `BirEmitter:1251` | 非 simple 関数参照 | B |
-| 5 | `BirEmitter:1282` | .NET メソッド参照 | B |
-| 6 | `BirEmitter:1648` | 可変キャプチャ object 式 | B |
-| 7 | `BirEmitter:2323` | 解決不能な委譲プロパティ | B |
-| 8 | `BirEmitter:2410` | 非リテラル String.format | B |
-| 9 | `BirEmitter:2520` | 未実装 stdlib 関数 | B |
+| 1 | `BirEmitter:898`  | 汎用 statement フォールバック（**有効 Kotlin からは到達不能**） | A |
+| 2 | `BirEmitter:1182` | 汎用 expression フォールバック（**到達不能**） | A |
+| 3 | `BirEmitter:1255` | コンストラクタ参照（class 解決不可） | B'' |
+| 4 | `BirEmitter:1258` | 非 simple 関数参照 | B'' |
+| 5 | `BirEmitter:1289` | .NET メソッド参照 | B3 |
+| 6 | `BirEmitter:1656` | 可変キャプチャ・ローカルクラス | B2 |
+| 7 | `BirEmitter:1679` | 可変キャプチャ・object 式 | B1 |
+| 8 | `BirEmitter:2354` | 解決不能な委譲プロパティ | B'' |
+| 9 | `BirEmitter:2441` | 非リテラル String.format | B4 |
+| 10 | `BirEmitter:2551` | 未実装 stdlib 関数 | B' |
 
 > 行番号は更新で動く。再取得: `grep -n 'unsupported(' compiler/src/main/kotlin/clrc/backend/BirEmitter.kt`
+> facadegen 側の意図的省略（out/ref=非 surface、façade-.kt 経路のクロス型=Any? 縮退）は B5 と §A 表に記載。
