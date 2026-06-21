@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>DotKt.Toolchain</id>
+    <version>$version$</version>
+    <authors>DotKt</authors>
+    <description>DotKt compiler toolchain: the Kotlin-&gt;CLR compiler (JVM, requires a JRE), ilemit, facadegen, and kotlin-stdlib.</description>
+    <tags>kotlin clr dotnet compiler</tags>
+  </metadata>
+  <files>
+    <file src="tools/**" target="tools" />
+    <file src="build/DotKt.Toolchain.props" target="build/DotKt.Toolchain.props" />
+  </files>
+</package>

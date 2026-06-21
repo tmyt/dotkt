@@ -4,9 +4,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <!-- The runtime assembly the DotKt SDK auto-references. Holds lowerings that need cross-assembly identity/ABI
-         (printf->composite format, sequence builder, coroutine/Flow helpers) — see dotkt-naming-and-runtime-split. -->
     <AssemblyName>DotKt.Runtime</AssemblyName>
     <RootNamespace>DotKt</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>DotKt.Runtime</PackageId>
+    <Description>DotKt runtime: helpers for Kotlin lowerings that need cross-assembly identity/ABI (printf format, …).</Description>
+    <Authors>DotKt</Authors>
   </PropertyGroup>
 </Project>

@@ -99,7 +99,8 @@ static class FacadeGen
     // excludes wildcard (`.*`), aliased (`as`), and Kotlin/own-façade imports — those aren't injectable .NET types.
     static IEnumerable<string> ScanImports(IEnumerable<string> ktFiles)
     {
-        var re = new System.Text.RegularExpressions.Regex(@"^\s*import\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)\s*$");
+        // `import A.B.C` (dotted, >=2 segments), allowing a trailing line comment (`// …`) and trailing whitespace.
+        var re = new System.Text.RegularExpressions.Regex(@"^\s*import\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)\s*(?://.*)?$");
         var seen = new HashSet<string>();
         foreach (var f in ktFiles)
         {

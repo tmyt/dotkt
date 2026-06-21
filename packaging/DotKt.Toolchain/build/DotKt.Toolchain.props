@@ -1,0 +1,11 @@
+<Project>
+  <!-- The compiler toolchain binaries, at package-internal paths (no repo dependency). The compiler is JVM-based,
+       so a JRE must be on PATH. -->
+  <PropertyGroup>
+    <DotKtToolchainDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../tools/'))</DotKtToolchainDir>
+    <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(DotKtToolchainDir)compiler/bin/compiler</DotKtCompiler>
+    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(DotKtToolchainDir)kotlin-stdlib.jar</DotKtStdlib>
+    <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(DotKtToolchainDir)ilemit/ilemit.dll</DotKtIlEmit>
+    <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(DotKtToolchainDir)facadegen/facadegen.dll</DotKtFacadeGen>
+  </PropertyGroup>
+</Project>
