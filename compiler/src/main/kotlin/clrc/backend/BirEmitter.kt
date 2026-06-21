@@ -756,8 +756,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val co = emitCoroutineBody(fn)
 		val ps = paramsJsonList(fn.parameters).joinToString(",")
 		val vis = visOf(fn)
-		val coClass = if (isCoClass(fn)) ""","coClass":true""" else ""
-		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)},"suspend":true,"resultType":${str(co.resultType)}$coClass,"cpsFields":[${co.cpsFields}],"params":[$ps],"steps":[${co.steps}]}"""
+		// Generic suspend funs (`suspend fun <T>`) always use the Continuation-class form: its state machine is a
+		// generic type over the method's type params (the struct/Task form has no generic-SM path). See docs §13f.
+		val coClass = if (isCoClass(fn) || fn.typeParameters.isNotEmpty()) ""","coClass":true""" else ""
+		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(fn.typeParameters)},"suspend":true,"resultType":${str(co.resultType)}$coClass,"cpsFields":[${co.cpsFields}],"params":[$ps],"steps":[${co.steps}]}"""
 	}
 
 	/**
@@ -815,6 +817,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else -> steps.add("""{"k":"exprStmt","expr":${expr(stmt)}}""")
 			}
 			is IrSetValue -> if (containsSuspend(stmt)) { spillExpr(stmt, steps); steps.add(stmt(stmt)) } else steps.add(stmt(stmt))
+			// A type-operator wrapper around a suspension (e.g. `b.await()` discarded -> IMPLICIT_COERCION_TO_UNIT,
+			// or an implicit cast from a generic substitution) -> recurse on the inner expression.
+			is IrTypeOperatorCall -> if (containsSuspend(stmt)) emitCps(stmt.argument, ret, steps) else steps.add(stmt(stmt))
 			is IrTry -> if (containsSuspend(stmt)) emitTryCps(stmt, ret, steps) else steps.add(stmt(stmt))
 			else -> {
 				if (stmt is IrExpression && containsSuspend(stmt)) steps.add(coUnsupported("suspension in an unsupported position (${stmt::class.simpleName})"))

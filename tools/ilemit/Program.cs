@@ -84,11 +84,11 @@ sealed class Emitter
     Dictionary<string, GenericTypeParameterBuilder> _curMethodParams;
     // Coroutine context: inside a state-machine MoveNext, a reference to a param/live-local (a "cpsField") is a
     // field of the SM struct, not an IL local/arg. Non-null only while emitting MoveNext. See EmitCoroutine.
-    Dictionary<string, FieldBuilder> _coFields;
+    Dictionary<string, FieldInfo> _coFields;   // FieldInfo (not FieldBuilder) so a generic SM's self-instantiated fields fit
     // Coroutine `this` capture: for an INSTANCE suspend method/lambda (e.g. a capturing suspend lambda's closure
     // `invoke`), the original receiver is stored in an SM field so MoveNext can still reach it after a resume.
     // Non-null only while emitting such a MoveNext; `this` then loads this field instead of ldarg.0 (the SM).
-    FieldBuilder _coThis;
+    FieldInfo _coThis;
     // try-around-await: inside a try region of a MoveNext, `ret` is illegal — suspension/return `leave` to the
     // single method exit instead. Depth > 0 while emitting steps between coTryBegin and coTryEnd.
     int _coTryDepth;
@@ -360,10 +360,33 @@ sealed class Emitter
         if (m.TryGetProperty("suspend", out var su) && su.GetBoolean())
         {
             var rs = m.GetProperty("resultType").GetString();
+            var sTps = m.TryGetProperty("typeParams", out var stp) && stp.GetArrayLength() > 0 ? (JsonElement?)stp : null;
+            MethodBuilder smb;
+            if (sTps != null)
+            {
+                // Generic `suspend fun <T>`: define the kickoff's type params first so `Task<T>`/param types resolve;
+                // EmitCoroutineClass then builds a generic state-machine TYPE mirroring them. (Generic suspend funs
+                // always take the class form — see BirEmitter.suspendMethod.)
+                var gn = TpNames(sTps.Value);
+                smb = ti.TB.DefineMethod(name, attrs);
+                var gps = smb.DefineGenericParameters(gn);
+                var map = new Dictionary<string, GenericTypeParameterBuilder>();
+                for (int gi = 0; gi < gn.Length; gi++) map[gn[gi]] = gps[gi];
+                _methodTypeParams[smb] = map;
+                _curMethodParams = map;
+                ApplyConstraints(sTps.Value, map, false);
+                var sps2 = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
+                smb.SetParameters(sps2);
+                smb.SetReturnType(rs == "void" ? typeof(System.Threading.Tasks.Task) : typeof(System.Threading.Tasks.Task<>).MakeGenericType(MapType(rs)));
+                _curMethodParams = null;
+                ti.Methods[name] = smb;
+                _mparams[smb] = sps2;
+                return;
+            }
             var taskRet = rs == "void" ? typeof(System.Threading.Tasks.Task)
                 : typeof(System.Threading.Tasks.Task<>).MakeGenericType(MapType(rs));
             var sps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
-            var smb = ti.TB.DefineMethod(name, attrs, taskRet, sps);
+            smb = ti.TB.DefineMethod(name, attrs, taskRet, sps);
             ti.Methods[name] = smb;
             _mparams[smb] = sps;
             return;
@@ -542,7 +565,7 @@ sealed class Emitter
         var fState = sm.DefineField("<>1__state", typeof(int), FieldAttributes.Public);
         var fBuilder = sm.DefineField("<>t__builder", builderT, FieldAttributes.Public);
 
-        var coFields = new Dictionary<string, FieldBuilder>();
+        var coFields = new Dictionary<string, FieldInfo>();
         var cpsDefs = m.GetProperty("cpsFields").EnumerateArray().ToList();
         foreach (var f in cpsDefs)
             coFields[f.GetProperty("name").GetString()] = sm.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), FieldAttributes.Public);
@@ -743,11 +766,15 @@ sealed class Emitter
     // Task sink (future{}, via NewRoot<T>) is the kickoff. Selected by "coClass":true (opt-in `@KCont` while the
     // struct/Task IAsyncStateMachine path remains the default). Reuses the same coSuspend/coLabel/coGoto/coReturn
     // step stream as the struct form; only the lowered runtime form differs.
+    // A field/ctor on the (possibly generic) state-machine type: on a constructed generic SM, accesses go through
+    // TypeBuilder.GetField/GetConstructor(constructed, def); on a non-generic SM, the def itself.
+    static FieldInfo SmField(Type inst, FieldBuilder def) => inst.IsGenericType ? TypeBuilder.GetField(inst, def) : def;
+    static ConstructorInfo SmCtor(Type inst, ConstructorBuilder def) => inst.IsGenericType ? TypeBuilder.GetConstructor(inst, def) : def;
+
     void EmitCoroutineClass(TypeInfo ti, MethodBuilder mb, JsonElement m)
     {
         var rs = m.GetProperty("resultType").GetString();
         if (rs == "void") throw new NotSupportedException("@KCont coroutine with Unit result not yet supported (Phase 1 scope)");
-        Type resultT = MapType(rs);
         var steps = m.GetProperty("steps").EnumerateArray().ToList();
 
         var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
@@ -765,16 +792,41 @@ sealed class Emitter
 
         var sm = _mod.DefineType(ti.TB.Name + "_" + mb.Name + "__sm",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, typeof(object));
+        // Generic suspend fun -> a generic state-machine type mirroring the method's type params (so `gp:T`-typed
+        // cps fields resolve to the SM's own params; the kickoff instantiates sm<methodT>). See docs §13f.
+        var sTps = m.TryGetProperty("typeParams", out var stpC) && stpC.GetArrayLength() > 0 ? (JsonElement?)stpC : null;
+        Dictionary<string, GenericTypeParameterBuilder> smMap = null;
+        string[] smNames = null;
+        GenericTypeParameterBuilder[] smGps = null;
+        if (sTps != null)
+        {
+            smNames = TpNames(sTps.Value);
+            smGps = sm.DefineGenericParameters(smNames);
+            smMap = new Dictionary<string, GenericTypeParameterBuilder>();
+            for (int gi = 0; gi < smNames.Length; gi++) smMap[smNames[gi]] = smGps[gi];
+        }
         sm.AddInterfaceImplementation(contObj);
-        var fState = sm.DefineField("<>1__state", typeof(int), FieldAttributes.Public);
-        var fCompletion = sm.DefineField("<>completion", contObj, FieldAttributes.Public);
-        var fParam = sm.DefineField("<>param", typeof(object), FieldAttributes.Public);
-        var fErr = sm.DefineField("<>err", typeof(Exception), FieldAttributes.Public);
-
-        var coFields = new Dictionary<string, FieldBuilder>();
+        // Inside a GENERIC SM's own methods, references to its own fields/methods must go through the
+        // self-instantiation sm<itsOwnParams> (Reflection.Emit rule), else "type is not fully instantiated".
+        Type selfInst = smGps == null ? (Type)sm : sm.MakeGenericType(smGps.Cast<Type>().ToArray());
+        FieldInfo SelfF(FieldBuilder f) => smGps == null ? f : TypeBuilder.GetField(selfInst, f);
+        var savedTP = _curTypeParams; var savedMP = _curMethodParams;
+        _curTypeParams = smMap; _curMethodParams = null;   // `gp:T` inside the SM resolves to the SM's own params
+        // Field DEFINITIONS (open generic). The kickoff resolves these against sm<methodT>; the SM's own method
+        // bodies use the self-instantiated (SelfF) forms below.
+        var fStateD = sm.DefineField("<>1__state", typeof(int), FieldAttributes.Public);
+        var fCompletionD = sm.DefineField("<>completion", contObj, FieldAttributes.Public);
+        var fParamD = sm.DefineField("<>param", typeof(object), FieldAttributes.Public);
+        var fErrD = sm.DefineField("<>err", typeof(Exception), FieldAttributes.Public);
+        var coDefs = new Dictionary<string, FieldBuilder>();
         foreach (var f in m.GetProperty("cpsFields").EnumerateArray())
-            coFields[f.GetProperty("name").GetString()] = sm.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), FieldAttributes.Public);
-        var fThis = mb.IsStatic ? null : sm.DefineField("<>4__this", ti.TB, FieldAttributes.Public);
+            coDefs[f.GetProperty("name").GetString()] = sm.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), FieldAttributes.Public);
+        var fThisD = mb.IsStatic ? null : sm.DefineField("<>4__this", ti.TB, FieldAttributes.Public);
+        // Self-instantiated views used inside the SM's own methods (= the defs when non-generic).
+        FieldInfo fState = SelfF(fStateD), fCompletion = SelfF(fCompletionD), fParam = SelfF(fParamD), fErr = SelfF(fErrD);
+        FieldInfo fThis = fThisD == null ? null : SelfF(fThisD);
+        var coFields = new Dictionary<string, FieldInfo>();
+        foreach (var kv in coDefs) coFields[kv.Key] = SelfF(kv.Value);
 
         var ctor = sm.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
         { var il = ctor.GetILGenerator(); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)); il.Emit(OpCodes.Ret); }
@@ -838,7 +890,7 @@ sealed class Emitter
                     case "coGoto": _il.Emit(OpCodes.Br, coLabel[st.GetProperty("id").GetInt32()]); break;
                     case "coCondGoto": EmitExpr(st.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, coLabel[st.GetProperty("id").GetInt32()]); break;
                     case "coReturn":
-                        if (st.TryGetProperty("value", out var rv) && rv.ValueKind != JsonValueKind.Null) { var gt = EmitExpr(rv); if (gt != null && gt.IsValueType) _il.Emit(OpCodes.Box, gt); }
+                        if (st.TryGetProperty("value", out var rv) && rv.ValueKind != JsonValueKind.Null) { var gt = EmitExpr(rv); if (gt != null && (gt.IsValueType || gt.IsGenericParameter)) _il.Emit(OpCodes.Box, gt); }   // box value types AND generic params (T)
                         else _il.Emit(OpCodes.Ldnull);
                         _il.Emit(OpCodes.Stloc, outcome);
                         if (_coTryDepth > 0) _il.Emit(OpCodes.Leave, _coExit); else _il.Emit(OpCodes.Br, _coExit);
@@ -866,7 +918,7 @@ sealed class Emitter
             il.MarkLabel(afterParam);
             var lOut = il.DeclareLocal(typeof(object)); var lFaulted = il.DeclareLocal(typeof(bool)); var lEx = il.DeclareLocal(typeof(Exception));
             il.BeginExceptionBlock();
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, invoke); il.Emit(OpCodes.Stloc, lOut);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, smGps == null ? (MethodInfo)invoke : TypeBuilder.GetMethod(selfInst, invoke)); il.Emit(OpCodes.Stloc, lOut);
             il.BeginCatchBlock(typeof(Exception));
             il.Emit(OpCodes.Stloc, lEx);
             il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, fCompletion); il.Emit(OpCodes.Ldloc, lEx); il.Emit(OpCodes.Call, mResFailure); il.Emit(OpCodes.Callvirt, mContResume);
@@ -879,27 +931,32 @@ sealed class Emitter
             il.MarkLabel(ret); il.Emit(OpCodes.Ret);
         }
         sm.DefineMethodOverride(resumeWith, mContResume);
+        _curTypeParams = savedTP; _curMethodParams = savedMP;
 
-        // kickoff: build SM, copy params/this, bind a NewRoot<T> sink, drive ResumeWith(success(null)), return root.Task.
+        // kickoff: build the SM (sm<methodT> when generic), copy params/this, bind a NewRoot<T> sink, drive
+        // ResumeWith(success(null)), return root.Task. Runs in the METHOD's generic context (mb's own type params).
         {
+            _curTypeParams = ti.TypeParams; _curMethodParams = sTps != null ? _methodTypeParams[mb] : null;
+            Type smInst = smMap == null ? sm : sm.MakeGenericType(smNames.Select(n => (Type)_methodTypeParams[mb][n]).ToArray());
             _il = mb.GetILGenerator();
             _args.Clear(); _argTypes.Clear(); _locals.Clear();
-            var locSm = _il.DeclareLocal(sm);
-            _il.Emit(OpCodes.Newobj, ctor); _il.Emit(OpCodes.Stloc, locSm);
+            var locSm = _il.DeclareLocal(smInst);
+            _il.Emit(OpCodes.Newobj, SmCtor(smInst, ctor)); _il.Emit(OpCodes.Stloc, locSm);
             int ai = mb.IsStatic ? 0 : 1;
-            if (fThis != null) { _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Stfld, fThis); }
+            if (fThisD != null) { _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Stfld, SmField(smInst, fThisD)); }
             foreach (var p in m.GetProperty("params").EnumerateArray())
             {
                 var pn = p.GetProperty("name").GetString();
-                _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldarg, ai++); _il.Emit(OpCodes.Stfld, coFields[pn]);
+                _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldarg, ai++); _il.Emit(OpCodes.Stfld, SmField(smInst, coDefs[pn]));
             }
-            var newRoot = builders.GetMethod("NewRoot").MakeGenericMethod(resultT);
+            var newRoot = builders.GetMethod("NewRoot").MakeGenericMethod(MapType(rs));
             var emptyCtx = ResolveType("DotKt.Coroutines.EmptyCoroutineContext").GetField("Instance");
             var locRoot = _il.DeclareLocal(newRoot.ReturnType);
             _il.Emit(OpCodes.Ldsfld, emptyCtx); _il.Emit(OpCodes.Call, newRoot); _il.Emit(OpCodes.Stloc, locRoot);
-            _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldloc, locRoot); _il.Emit(OpCodes.Stfld, fCompletion);
+            _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldloc, locRoot); _il.Emit(OpCodes.Stfld, SmField(smInst, fCompletionD));
             _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldnull); _il.Emit(OpCodes.Call, mResSuccess); _il.Emit(OpCodes.Callvirt, mContResume);
             _il.Emit(OpCodes.Ldloc, locRoot); _il.Emit(OpCodes.Callvirt, newRoot.ReturnType.GetMethod("get_Task")); _il.Emit(OpCodes.Ret);
+            _curTypeParams = savedTP; _curMethodParams = savedMP;
         }
 
         sm.CreateType();
@@ -907,8 +964,8 @@ sealed class Emitter
 
     // A suspension point in the class form: register the awaited Task to resume this continuation (AwaitOnto), set
     // the resume state, and return COROUTINE_SUSPENDED; on resume, rethrow a faulted result or unbox <>param.
-    void EmitCoSuspendClass(JsonElement st, FieldBuilder fState, FieldBuilder fParam, FieldBuilder fErr,
-        Dictionary<int, Label> resume, Dictionary<string, FieldBuilder> coFields, Type builders, FieldInfo fSuspended, LocalBuilder outcome)
+    void EmitCoSuspendClass(JsonElement st, FieldInfo fState, FieldInfo fParam, FieldInfo fErr,
+        Dictionary<int, Label> resume, Dictionary<string, FieldInfo> coFields, Type builders, FieldInfo fSuspended, LocalBuilder outcome)
     {
         int k = st.GetProperty("state").GetInt32();
         var taskType = EmitExpr(st.GetProperty("awaitable"));
@@ -935,13 +992,13 @@ sealed class Emitter
             if (coFields.TryGetValue(assignTo, out var destF))
             {
                 _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fParam);
-                _il.Emit(tk.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stfld, destF);
+                _il.Emit((tk.IsValueType || tk.IsGenericParameter) ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stfld, destF);
             }
             else
             {
                 var tmp = _il.DeclareLocal(tk); _locals[assignTo] = tmp;
                 _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fParam);
-                _il.Emit(tk.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stloc, tmp);
+                _il.Emit((tk.IsValueType || tk.IsGenericParameter) ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stloc, tmp);
             }
         }
     }
@@ -950,13 +1007,13 @@ sealed class Emitter
     // leading statements (which typically register `this` to be resumed), then evaluate its result — if it is
     // COROUTINE_SUSPENDED, suspend; otherwise resume synchronously with that value. On resume, rethrow a faulted
     // result or unbox <>param. State is set BEFORE the block runs, so a same-thread resume during registration is safe.
-    void EmitCoSuspendIntrinsicClass(JsonElement st, FieldBuilder fState, FieldBuilder fParam, FieldBuilder fErr,
-        Dictionary<int, Label> resume, Dictionary<string, FieldBuilder> coFields, FieldInfo fSuspended, LocalBuilder outcome)
+    void EmitCoSuspendIntrinsicClass(JsonElement st, FieldInfo fState, FieldInfo fParam, FieldInfo fErr,
+        Dictionary<int, Label> resume, Dictionary<string, FieldInfo> coFields, FieldInfo fSuspended, LocalBuilder outcome)
     {
         int k = st.GetProperty("state").GetInt32();
         _il.Emit(OpCodes.Ldarg_0); EmitLdcI4(k); _il.Emit(OpCodes.Stfld, fState);
         foreach (var pre in st.GetProperty("pre").EnumerateArray()) EmitStmt(pre);
-        var gt = EmitExpr(st.GetProperty("value")); if (gt != null && gt.IsValueType) _il.Emit(OpCodes.Box, gt);
+        var gt = EmitExpr(st.GetProperty("value")); if (gt != null && (gt.IsValueType || gt.IsGenericParameter)) _il.Emit(OpCodes.Box, gt);   // box value types AND generic params (T)
         var vTmp = _il.DeclareLocal(typeof(object)); _il.Emit(OpCodes.Stloc, vTmp);
         var notSusp = _il.DefineLabel();
         _il.Emit(OpCodes.Ldloc, vTmp); _il.Emit(OpCodes.Ldsfld, fSuspended); _il.Emit(OpCodes.Bne_Un, notSusp);
@@ -978,20 +1035,20 @@ sealed class Emitter
             if (coFields.TryGetValue(assignTo, out var destF))
             {
                 _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fParam);
-                _il.Emit(tk.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stfld, destF);
+                _il.Emit((tk.IsValueType || tk.IsGenericParameter) ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stfld, destF);
             }
             else
             {
                 var tmp = _il.DeclareLocal(tk); _locals[assignTo] = tmp;
                 _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fParam);
-                _il.Emit(tk.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stloc, tmp);
+                _il.Emit((tk.IsValueType || tk.IsGenericParameter) ? OpCodes.Unbox_Any : OpCodes.Castclass, tk); _il.Emit(OpCodes.Stloc, tmp);
             }
         }
     }
 
     void EmitCoSuspend(JsonElement st, FieldBuilder fState, FieldBuilder fBuilder, Type builderT, TypeBuilder sm,
         Dictionary<int, Type> awaiterType, Dictionary<int, FieldBuilder> awaiterField, Dictionary<int, LocalBuilder> awaiterLocal,
-        Dictionary<int, Label> resume, Dictionary<int, Label> after, Dictionary<string, FieldBuilder> coFields)
+        Dictionary<int, Label> resume, Dictionary<int, Label> after, Dictionary<string, FieldInfo> coFields)
     {
         int k = st.GetProperty("state").GetInt32();
         var at = awaiterType[k];

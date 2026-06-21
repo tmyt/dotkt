@@ -296,6 +296,19 @@ composition `chainViaIntrinsic=72`). CONCURRENT structured concurrency (launch/a
 2–5; literal upstream needs all of 1–6. Recommended next increment: **(1) generic suspend-fun state machines**,
 then **(4)+(5)** a minimal dispatcher/scope, then attempt a hand-picked upstream slice.
 
+## 13f. Phase 4a status (2026-06-22) — generic suspend functions ✅ DONE
+
+Blocker #1 cleared. `suspend fun <T>` now lowers to a **generic state-machine TYPE** over the fun's type params
+(class form; BirEmitter routes all generic suspend funs to `coClass`). `DeclareMethod` defines the kickoff's
+generic params (so `Task<T>`/param types resolve); `EmitCoroutineClass` defines matching SM generic params, sets
+`_curTypeParams` to them while emitting the SM bodies, and — per the Reflection.Emit rule — routes the SM's own
+field/method self-references through the self-instantiation `sm<ownParams>` (`SelfF`/`TypeBuilder.GetMethod`),
+while the kickoff resolves against `sm<methodT>` (`SmField`/`SmCtor`). Generic-param values box via `box T` and
+unbox via `unbox.any T` (NOT castclass — the value/ref distinction is only known at runtime). Also: `emitCps`
+now unwraps a type-operator wrapper around a suspension (generic substitution / coercion-to-Unit). Proof:
+`samples/il-kgen` (`awaitTwice`/`second` with `T=Int` and `T=String` → 7/hi/2/b), ilverify-clean, in verify-il.sh.
+Remaining for literal upstream: blockers #2–#6 (§13e).
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi
