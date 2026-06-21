@@ -61,13 +61,13 @@ coroutine 内部 (e) 専用パスで処理／定数畳み込み済み のいず�
 
 | # | 構文 | 箇所 | なぜ保留（理由） | 実装に要るもの | 優先 |
 |---|---|---|---|---|---|
-| B1 | **オブジェクト式から外側ローカルへ書込**（可変キャプチャ） | `BirEmitter:1679` | 値のキャプチャはコピー＝書込が外に伝播しない。正しくやるには **heap ref-cell**（`Ref<T>` クラスに昇格して共有）が要る | 各可変キャプチャを `<>dotkt_Ref<T>{ var v }` に昇格し、読書を `.v` に書換（closure/object/local-fn 横断） | M |
-| B2 | **ローカルクラスから外側ローカルへ書込**（可変キャプチャ） | `BirEmitter:1656` | 同上（B1 と同じ heap ref-cell 問題） | B1 と同一機構を流用 | M |
+| ~~B1~~ | ~~object 式から外側ローカルへ書込~~ ✅ 2026-06-21 実装（`il-refcell`） | — | heap ref-cell 実装済 | 単型化 `<>dotkt_Ref_<elem>{ var v }` に昇格、読書を `.v` に。lambda/object/local-class 横断、++/+= 含む | done |
+| ~~B2~~ | ~~ローカルクラスから外側ローカルへ書込~~ ✅ 2026-06-21 実装（`il-refcell`） | — | B1 と同一機構 | — | done |
 | B3 | **.NET メソッド参照** `obj::netMethod` / `NetType::method` | `BirEmitter:1289` | .NET メソッドの delegate 束縛は稀＋自明な回避策あり | lifted `__mref`/`boundDelegateNew` を .NET 受け手にも対応。回避: ラムダ `{ a -> x.m(a) }` | S–M |
 | B4 | **非リテラル `String.format`** | `BirEmitter:2441` | printf↔.NET composite（`%d`↔`{0}`）は非互換。実行時変換には runtime helper が要る | DotKt.Runtime に printf→composite 変換器、または `String.Format` 直叩き | S |
 | B5 | **`out`/`ref` パラメータ**（facadegen で非 surface） | `facadegen Supported()` | Kotlin に out/ref 構文が無い。`TryParse` 等の最頻ユースは `toIntOrNull()` で充足済 | holder/`Pair` 返しへ reshape する façade 規約の設計 | M |
 
-> 回避策のある B3、最頻ユースが別 API で足りる B4/B5 は実害が小さい。B1/B2（heap ref-cell）は同一機構で一括解決可能。
+> B1/B2（heap ref-cell）✅ 実装済（`il-refcell`）。回避策のある B3、最頻ユースが別 API で足りる B4/B5 は実害が小さい。
 
 ### B'. 未実装 stdlib 関数（実装すれば動く・ガードがクリーンエラー化）
 `BirEmitter:2551` のガードが `kotlin.collections/sequences/text/ranges/comparisons` の未対応 free/extension 関数を拒否。

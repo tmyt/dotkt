@@ -293,6 +293,46 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return listOf("""{"name":"<>dotkt_Result","kind":"class","abstract":false,"vis":"public","typeParams":["T"],"base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}""")
 	}
 
+	// heap ref-cell: local `var`s captured-and-mutated by a (non-inline) closure / object / local class are promoted
+	// to a shared `<>dotkt_Ref<T>{ var v }` so the mutation is visible across the capture boundary. Per top-level
+	// function (set in `method`/`ctor`); all reads/writes of such a var go through `.v`.
+	private var refCellVars: Set<IrValueDeclaration> = emptySet()
+	private val refTypes = LinkedHashMap<String, String>()   // element birType -> monomorphized Ref class name
+	private fun refTypeName(d: IrValueDeclaration): String {
+		val elem = birType(d.type)
+		return refTypes.getOrPut(elem) { "<>dotkt_Ref_" + elem.replace(Regex("[^A-Za-z0-9]"), "_") }
+	}
+	private fun refDefs(): List<String> = refTypes.map { (elem, name) ->
+		// A monomorphized heap cell `class <>dotkt_Ref_<elem>(var v: elem)` (non-generic -> trivial field access).
+		val ctor = """{"params":[{"name":"v","type":${str(elem)}}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[{"k":"setField","ownerType":${str(name)},"recv":{"k":"this"},"name":"v","value":{"k":"local","name":"v"}}]}"""
+		"""{"name":${str(name)},"kind":"class","abstract":false,"vis":"public","typeParams":[],"base":null,"interfaces":[],"fields":[{"name":"v","type":${str(elem)}}],"ctors":[$ctor],"methods":[]}"""
+	}
+	private fun isRefCell(d: IrValueDeclaration) = d in refCellVars
+	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
+	private fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: """{"k":"local","name":${str(d.name.asString())}}"""
+	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
+	private fun captureFieldType(d: IrValueDeclaration) = if (isRefCell(d)) "@" + refTypeName(d) else birType(d.type)
+
+	/** Local `var`s captured AND mutated by a closure/object/local class within [node] (-> need a heap ref-cell). */
+	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
+		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
+		node.acceptChildrenVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: IrElement) {
+				val caps: List<IrValueDeclaration>? = when (element) {
+					is IrClass -> capturedVarsForObject(element)
+					is IrFunctionExpression -> capturedVars(element.function)
+					else -> null
+				}
+				if (caps != null) {
+					val muts = mutatedIn(element)
+					out.addAll(caps.filter { it is IrVariable && it.isVar && it in muts })
+				}
+				element.acceptChildrenVoid(this)
+			}
+		})
+		return out
+	}
+
 	private val SCOPE_FUNCTIONS = setOf("kotlin.let", "kotlin.run", "kotlin.with", "kotlin.apply", "kotlin.also")
 
 	fun emitFile(file: IrFile): String {
@@ -339,7 +379,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
 		// kPropertyDefs/propIfaceDefs, which read flags/maps the producers populate).
 		val synthDelegateTypes = synthDelegateDefs.joinToString(",").let { if (it.isEmpty()) emptyList() else listOf(it) }
-		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + propIfaceDefs() + kPropertyDefs() + resultDefs()).joinToString(",")
+		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + propIfaceDefs() + kPropertyDefs() + resultDefs() + refDefs()).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
 
@@ -460,7 +500,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))},"static":true,"init":$init}"""
 		}.orEmpty()
 		// A capturing object literal carries its captured outer values as extra instance fields.
-		val capFields = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(birType(decl.type))}}""" }
+		val capFields = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val fields = (instFields + statFields + capFields).joinToString(",")
 		val ctors = klass.declarations.filterIsInstance<IrConstructor>().joinToString(",") { ctor(klass, it, captures) }
 		val instMethods = klass.declarations.filterIsInstance<IrSimpleFunction>()
@@ -494,7 +534,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun ctor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {
 		// Captured outer values arrive as leading ctor params and are stored into the capture fields first
 		// (the instance initializers below read them, e.g. `var cur = from` -> `this.__outer.from`).
-		val capParams = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(birType(decl.type))}}""" }
+		val capParams = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val capAssigns = captures.map { (_, fname) ->
 			"""{"k":"setField","ownerType":${str(typeName(klass))},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}"""
 		}
@@ -540,7 +580,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// body references to the receiver resolve to `__self` (via valSubst).
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 		if (extRecv != null) valSubst[extRecv.name.asString()] = """{"k":"local","name":"__self"}"""
+		// Promote captured-mutated `var`s to ref-cells; accumulate (a nested closure inherits the enclosing set).
+		val savedRefCells = refCellVars
+		refCellVars = refCellVars + computeRefCells(fn)
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		refCellVars = savedRefCells
 		if (extRecv != null) valSubst.remove(extRecv.name.asString())
 		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
 		val ps = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters)).joinToString(",")
@@ -846,7 +890,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 
 	private fun stmt(node: org.jetbrains.kotlin.ir.IrElement): String = when (node) {
-		is IrVariable -> """{"k":"var","name":${str(node.name.asString())},"type":${str(birType(node.type))},"init":${node.initializer?.let { expr(it) } ?: "null"}}"""
+		// A ref-cell var: `var x = init` -> `val x = new <>dotkt_Ref_<elem>(init)` (the heap cell).
+		is IrVariable -> if (isRefCell(node)) {
+			val rt = refTypeName(node)
+			val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${str(birType(node.type))}}"""
+			"""{"k":"var","name":${str(node.name.asString())},"type":${str("@$rt")},"init":{"k":"new","type":${str(rt)},"args":[$init]}}"""
+		} else {
+			// Evaluate the initializer FIRST so an object-expr init registers its synthetic name before the var's
+			// type is read (`val x = object {}` whose type IS that anonymous class).
+			val init = node.initializer?.let { expr(it) } ?: "null"
+			"""{"k":"var","name":${str(node.name.asString())},"type":${str(birType(node.type))},"init":$init}"""
+		}
 		// `val x by <delegate>` declared INSIDE a function (IrLocalDelegatedProperty): emit the delegate as a
 		// local var; its getter/setter calls (`<get-x>`) are rewritten to delegate access in call() (localDelegates).
 		is IrLocalDelegatedProperty -> {
@@ -854,7 +908,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			node.setter?.let { localDelegates[it] = node }
 			stmt(node.delegate)
 		}
-		is IrSetValue -> """{"k":"setLocal","name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
+		// A ref-cell var write `x = e` -> `x.v = e` (through the shared heap cell, via the capture field inside a closure).
+		is IrSetValue -> if (isRefCell(node.symbol.owner))
+			"""{"k":"setField","ownerType":${str(refTypeName(node.symbol.owner))},"recv":${refBase(node.symbol.owner)},"name":"v","value":${expr(node.value)}}"""
+		else """{"k":"setLocal","name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
 		is IrSetField -> {
 			val ownerClass = node.symbol.owner.parent as? IrClass
 			val clr = ownerClass?.let { clrName(it) }
@@ -1061,6 +1118,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val owner = node.symbol.owner
 			val name = owner.name.asString()
 			when {
+				// A ref-cell var read `x` -> `x.v` (the heap cell, reached via the capture field inside a closure).
+				isRefCell(owner) -> """{"k":"field","ownerType":${str(refTypeName(owner))},"recv":${refBase(owner)},"name":"v"}"""
 				captureSubst.containsKey(owner) -> captureSubst[owner]!!
 				valSubst.containsKey(name) -> valSubst[name]!!
 				name == "<this>" -> """{"k":"this"}"""
@@ -1211,7 +1270,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
-		val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(birType(decl.type))}}""" }
+		val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
 		val invoke = """{"name":"invoke","static":false,"override":false,"virtual":false,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}"""
 		liftedTypes.add("""{"name":${str(cname)},"kind":"class","base":null,"interfaces":[],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$invoke]}""")
@@ -1459,7 +1518,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val capPairs = captures.map { it to captureFieldName(it) }
 		// A captured `<this>` arrives as an `__outer` param; rewrite `this` refs in the body to that local.
 		capPairs.forEach { (decl, fname) -> if (decl.name.asString() == "<this>") captureSubst[decl] = """{"k":"local","name":${str(fname)}}""" }
-		val capParams = capPairs.map { (decl, fname) -> pj(fname, decl.type) }
+		val capParams = capPairs.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val ownParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { pj(it.name.asString(), it.type) }
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		capPairs.forEach { (decl, _) -> if (decl.name.asString() == "<this>") captureSubst.remove(decl) }
@@ -1546,9 +1605,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Value declarations assigned (IrSetValue) anywhere inside an object literal (for mutable-capture detection). */
-	private fun mutatedValues(anon: IrClass): Set<IrValueDeclaration> {
+	private fun mutatedIn(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
-		anon.acceptChildrenVoid(object : IrVisitorVoid() {
+		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
 				if (element is IrSetValue) out.add(element.symbol.owner)
 				element.acceptChildrenVoid(this)
@@ -1652,7 +1711,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		anonNames[klass] = cname
 		val captured = capturedVarsForObject(klass)
 		// Writing a captured outer local from the class needs heap ref-cells (same as the object-literal case).
-		if (captured.any { it in mutatedValues(klass) })
+		if (captured.any { it in mutatedIn(klass) && !isRefCell(it) })
 			return unsupported(klass, "a local class that writes to a captured outer variable",
 				"read-only capture works; pass the value in by constructor, or use a class field")
 		val capPairs = captured.map { it to captureFieldName(it) }
@@ -1675,7 +1734,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				anonNames[anon] = cname
 				val captured = capturedVarsForObject(anon)
 				// Mutable capture (writing an outer local through the object) would need heap ref-cells.
-				if (captured.any { it in mutatedValues(anon) })
+				if (captured.any { it in mutatedIn(anon) && !isRefCell(it) })
 					return unsupported(block, "an object expression that writes to a captured outer variable",
 						"read-only capture works; to mutate shared state, use a small class with a field instead")
 				val capPairs = captured.map { it to captureFieldName(it) }
@@ -1718,7 +1777,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			valSubst.remove(key)
 			return result
 		}
-		return (block.statements.lastOrNull() as? IrExpression)?.let { expr(it) } ?: """{"k":"const","type":"void","value":null}"""
+		// A general block in value position: emit its preceding (side-effecting) statements, then the last value.
+		// e.g. `{ counter++ }` lowers to `{ val <unary> = counter; counter = counter + 1; <unary> }` — dropping the
+		// leading statements would lose the temp + the assignment.
+		val last = block.statements.lastOrNull()
+		if (block.statements.size > 1 && last is IrExpression) {
+			val pre = block.statements.dropLast(1).joinToString(",") { stmt(it) }
+			return """{"k":"valueBlock","stmts":[$pre],"result":${expr(last)}}"""
+		}
+		return (last as? IrExpression)?.let { expr(it) } ?: """{"k":"const","type":"void","value":null}"""
 	}
 
 	private fun ternary(node: IrWhen): String {
