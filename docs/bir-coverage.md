@@ -48,12 +48,12 @@ coroutine 内部 (e) 専用パスで処理／定数畳み込み済み のいず�
 | `IrConstantPrimitive` `IrConstantArray` `IrConstantObject` | const-eval（注釈は drop／定数は `IrConst` に畳む） | ✗（probe: const val/注釈配列 OK） |
 | `IrLocalDelegatedPropertyReference` | `::localProp` は Kotlin で書けない | ✗（frontend reject） |
 
-**文の `else`（`BirEmitter:893`）= `IrClass`（関数ローカルクラス）だけが到達。** probe で実 `Impl` = `IrClassImpl` を確認
-（local class / local data class / capture あり / ローカルクラス内 nested・inner すべて同一の到達点）。ローカル fun/
-val/var/lambda/object 式/typealias は handled。
+**文の `else`（`BirEmitter:893`）= かつて `IrClass`（関数ローカルクラス）だけが到達。✅ 2026-06-21 実装済みで到達不能化。**
 
-- [x] **`try`/`catch` を式として使う**（`val x = try{}catch{}` / `return try` / ラムダ内 try）— ✅ 2026-06-21 実装（`il-tryexpr`、JVM 差分一致）。`IrTry` を value 位置で valueBlock + temp 代入に降ろす。これで**式 else は到達不能化**。
-- [ ] **関数ローカルクラス**（`fun f(){ class L(...){...} }`、local data class 含む）— **文 else に落ちる唯一の到達型 `IrClassImpl`**。対応案: 無名オブジェクト/inner class の lift 機構を流用（ローカルをキャプチャしてトップレベル合成型へ平坦化）。**(M)**
+> **結論: 両方の汎用 else は、有効な Kotlin からは到達不能になった（純粋なセーフティネット）。**
+
+- [x] **`try`/`catch` を式として使う**（`val x = try{}catch{}` / `return try` / ラムダ内 try）— ✅ 2026-06-21（`il-tryexpr`、JVM 差分一致）。`IrTry` を value 位置で valueBlock + temp 代入に降ろす。→ **式 else 到達不能化**。
+- [x] **関数ローカルクラス**（`fun f(){ class L(...){...} }`、local data class 含む）— ✅ 2026-06-21（`il-localclass`、JVM 差分一致）。`liftLocalClass`: トップレベル合成型 `<>dotkt_<Name>_N` に平坦化、参照する外側ローカル（囲み `this` 含む）を先頭 ctor 引数＋capture フィールドに（無名オブジェクトの機構を流用）、構築点 `L(args)` は capture 値を前置。複数インスタンス・loop 内宣言・data class equals まで対応。残: 可変キャプチャ（外側ローカルへ書込）は clean error（ref-cell 要）。→ **文 else 到達不能化**。
 
 ### B. 特定構文の named edges（稀／回避策あり）
 - [ ] **.NET メソッド参照** `obj::netMethod` / `NetType::method` — `BirEmitter:1282`。回避: ラムダ `{ a -> x.m(a) }`。**(S–M)**

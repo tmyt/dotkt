@@ -137,6 +137,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// Captured outer values inside a capturing object literal -> `this.<field>`. Keyed by value-declaration
 	// IDENTITY (not name): the anon's own `<this>` and a captured outer `<this>` share the name "<this>".
 	private val captureSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
+	// ctor at construction sites). Keyed by the IrClass.
+	private val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()
 	// A local delegated property's getter/setter function -> the IrLocalDelegatedProperty, so call() rewrites a
 	// `<get-x>`/`<set-x>` call to access on the delegate local (mirrors the member-property delegate path).
 	private val localDelegates = java.util.IdentityHashMap<IrSimpleFunction, IrLocalDelegatedProperty>()
@@ -885,6 +888,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		} else """{"k":"exprStmt","expr":${expr(node)}}"""
 		// A local (nested) function -> lift it to a file-class static method (captures become leading params).
 		is IrSimpleFunction -> { liftLocalFn(node); """{"k":"block","body":[]}""" }
+		// A function-local class -> lift it to a top-level synthetic type (captures become leading ctor params).
+		is IrClass -> liftLocalClass(node)
 		is IrBlock -> (if (node.origin?.toString() == "FOR_LOOP") birForLoop(node) else null)
 			?: """{"k":"block","body":[${node.statements.joinToString(",") { stmt(it) }}]}"""
 		// IrComposite: a scope-less statement container (e.g. a desugared loop body) -> a flat block.
@@ -1108,7 +1113,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			else {
 				// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg.
 				val outerArg = if (klass?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
-				val args = (listOfNotNull(outerArg) + regularArgs(node).map { expr(it) }).joinToString(",")
+				// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
+				val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
+				val args = (listOfNotNull(outerArg) + capArgs + regularArgs(node).map { expr(it) }).joinToString(",")
 				"""{"k":"new","type":${str(klass?.let { ownerSpec(it, node.type) } ?: "object")},"args":[$args]}"""
 			}
 		}
@@ -1632,6 +1639,30 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return null
 		val idx = params.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
 		return if (idx in 0 until call.arguments.size) call.arguments[idx] else null
+	}
+
+	/**
+	 * Lift a function-local class to a top-level synthetic type. Referenced outer locals (incl. the enclosing
+	 * `this`) become leading ctor params / capture fields; construction sites prepend those values (see the
+	 * IrConstructorCall handler). Returns a no-op statement (the declaration emits nothing inline).
+	 */
+	private fun liftLocalClass(klass: IrClass): String {
+		if (anonNames.containsKey(klass)) return """{"k":"block","body":[]}"""   // already lifted
+		val cname = "<>dotkt_${klass.name.asString()}_${scopeCounter++}"
+		anonNames[klass] = cname
+		val captured = capturedVarsForObject(klass)
+		// Writing a captured outer local from the class needs heap ref-cells (same as the object-literal case).
+		if (captured.any { it in mutatedValues(klass) })
+			return unsupported(klass, "a local class that writes to a captured outer variable",
+				"read-only capture works; pass the value in by constructor, or use a class field")
+		val capPairs = captured.map { it to captureFieldName(it) }
+		capPairs.forEach { (decl, fname) ->
+			captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
+		}
+		liftedTypes.add(typeDef(klass, capPairs))
+		capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
+		localClassCaptures[klass] = captured
+		return """{"k":"block","body":[]}"""
 	}
 
 	private fun blockExpr(block: IrBlock): String {
