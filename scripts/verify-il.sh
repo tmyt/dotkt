@@ -11,6 +11,12 @@ fail=0
 "$ROOT/gradlew" -q :compiler:installDist >/dev/null 2>&1
 LAUNCHER="$ROOT/compiler/build/install/compiler/bin/compiler"
 
+# Run samples concurrently (each compile is an independent ~2s JVM startup). A job pool caps parallelism; results
+# (FAIL markers, runtime-dll paths for the ilverify phase) cross back from the subshells via files.
+JOBS="$(nproc 2>/dev/null || echo 4)"; (( JOBS > 6 )) && JOBS=6
+gate() { while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n 2>/dev/null || true; done; }
+rm -f "$ROOT"/build/fail-* "$ROOT"/build/refdll-* 2>/dev/null || true
+
 dotnet build "$ROOT/tools/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null
 
 # S5 FIR-injection metadata for samples that inherit a real .NET base type (façade-free).
@@ -39,34 +45,37 @@ build_runtime() { # <srcDir> <runtimeAsm>
 # Inject (façade-free) a sample's own runtime types AND reference the runtime dll: build runtime.cs, scan the
 # .kt imports into a metadata file (facadegen --meta --scan), compile with it, then ilemit with --ref.
 il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
-	local name="$1" asm="$2" src="$3" expected="$4" rasm="$5"
-	local birdir="$ROOT/build/bir-$name" ildir="$ROOT/build/il-$name" meta="$ROOT/build/$name.meta"
-	local refdll; refdll="$(build_runtime "$src" "$rasm")"
-	REFDLL["$name"]="$refdll"
-	local RD; RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
-	dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';');$refdll" --scan "$src"/*.kt >/dev/null 2>&1
-	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-	CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1 \
-		|| { echo "FAIL  il:$name (compile error)"; fail=1; return; }
-	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$refdll" "$birdir"/*.bir.json >/dev/null
-	cp "$refdll" "$ildir/"
-	local actual; actual="$(dotnet "$ildir/$asm.dll")"
-	if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
-		echo "FAIL  il:$name"; echo "--- expected ---"; echo "$expected"; echo "--- actual ---"; echo "$actual"; fail=1
-	fi
+	gate
+	{ name="$1"; asm="$2"; src="$3"; expected="$4"; rasm="$5"
+		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
+		refdll="$(build_runtime "$src" "$rasm")"; echo "$refdll" > "$ROOT/build/refdll-$name"
+		RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
+		dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';');$refdll" --scan "$src"/*.kt >/dev/null 2>&1
+		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
+		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1; then
+			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
+		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$refdll" "$birdir"/*.bir.json >/dev/null 2>&1; then
+			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
+		cp "$refdll" "$ildir/"
+		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
+		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
+			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
+	} &
 }
 
 il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
-	local name="$1" asm="$2" src="$3" expected="$4" meta="${5:-}"
-	local birdir="$ROOT/build/bir-$name" ildir="$ROOT/build/il-$name"
-	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-	CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1 \
-		|| { echo "FAIL  il:$name (compile error)"; fail=1; return; }
-	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" "$birdir"/*.bir.json >/dev/null
-	local actual; actual="$(dotnet "$ildir/$asm.dll")"
-	if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
-		echo "FAIL  il:$name"; echo "--- expected ---"; echo "$expected"; echo "--- actual ---"; echo "$actual"; fail=1
-	fi
+	gate
+	{ name="$1"; asm="$2"; src="$3"; expected="$4"; meta="${5:-}"
+		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"
+		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
+		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1; then
+			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
+		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" "$birdir"/*.bir.json >/dev/null 2>&1; then
+			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
+		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
+		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
+			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
+	} &
 }
 
 il_check m0    M0Kt  "$ROOT/samples/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2')"
@@ -145,19 +154,20 @@ il_check netgen3 Ng3 "$ROOT/samples/il-netgen3" "$(printf '4\n8\n8\nFalse\nTrue\
 
 # Coroutines: a suspend fun lowered to a CLR-native IAsyncStateMachine, driven by an external runtime (--ref).
 il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
-	local name="$1" asm="$2" src="$3" expected="$4" rasm="$5"
-	local birdir="$ROOT/build/bir-$name" ildir="$ROOT/build/il-$name"
-	local refdll; refdll="$(build_runtime "$src" "$rasm")"
-	REFDLL["$name"]="$refdll"
-	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-	"$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1 \
-		|| { echo "FAIL  il:$name (compile error)"; fail=1; return; }
-	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$refdll" "$birdir"/*.bir.json >/dev/null
-	cp "$refdll" "$ildir/"
-	local actual; actual="$(dotnet "$ildir/$asm.dll")"
-	if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
-		echo "FAIL  il:$name"; echo "--- expected ---"; echo "$expected"; echo "--- actual ---"; echo "$actual"; fail=1
-	fi
+	gate
+	{ name="$1"; asm="$2"; src="$3"; expected="$4"; rasm="$5"
+		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"
+		refdll="$(build_runtime "$src" "$rasm")"; echo "$refdll" > "$ROOT/build/refdll-$name"
+		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
+		if ! "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1; then
+			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
+		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$refdll" "$birdir"/*.bir.json >/dev/null 2>&1; then
+			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
+		cp "$refdll" "$ildir/"
+		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
+		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
+			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
+	} &
 }
 il_check_ref coro Coro "$ROOT/samples/il-coro" "$(printf 'tryOk = 11\ntryCatch = -99\ntryFallthrough = 8\nloopCond = 3\ncondBranch = 6\nspillSum = 30\nspillNested = 17\nspillArg = 16\nchain = 30\nfetchDouble(7) = 14\nuseChain = 35\nsumLoop(4) = 6\nbranch(true) = 15\nbranch(false) = 10')" Kfc
 il_check_ref c1net C1Net "$ROOT/samples/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
@@ -185,6 +195,12 @@ EOF
 		echo "FAIL  il:revinterop"; echo "--- expected ---"; echo "$expected"; echo "--- actual ---"; echo "$actual"; fail=1
 	fi
 }
+
+wait   # let every backgrounded sample check finish before aggregating + the ilverify phase
+# Aggregate the parallel results: a FAIL marker -> overall failure; runtime-dll paths -> the ilverify phase's -r.
+for f in "$ROOT"/build/fail-*;   do [[ -e "$f" ]] && fail=1; done
+for f in "$ROOT"/build/refdll-*; do [[ -e "$f" ]] || continue; REFDLL["$(basename "$f" | sed 's/^refdll-//')"]="$(cat "$f")"; done
+
 il_revinterop
 
 # Formal IL verification (ilverify), if the tool is available.

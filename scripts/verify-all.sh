@@ -15,30 +15,32 @@ fail=0
 "$ROOT/gradlew" -q :compiler:installDist >/dev/null 2>&1
 LAUNCHER="$ROOT/compiler/build/install/compiler/bin/compiler"
 
+# Run the console samples concurrently (each is an independent compile + `dotnet run`). The ktproj/MSBuild tests
+# below stay sequential (they'd race on shared MSBuild state). Failures cross back via /tmp/all-fail-* markers.
+JOBS="$(nproc 2>/dev/null || echo 4)"; (( JOBS > 6 )) && JOBS=6
+gate() { while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n 2>/dev/null || true; done; }
+rm -f /tmp/all-fail-* 2>/dev/null || true
+
 check() { # <sample-dir> <out-dir> <expected>
-	local src="$ROOT/samples/$1" out="$ROOT/build/$2" expected="$3"
-	"$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $out >/dev/null 2>&1 || true
-	local actual
-	actual="$(dotnet run --project "$src/runner.csproj" -v q --nologo 2>/dev/null | grep -vE "warning |error |\\.cs\\(")"
-	if [[ "$actual" == "$expected" ]]; then
-		echo "PASS  $1"
-	else
-		echo "FAIL  $1"; echo "--- expected ---"; echo "$expected"; echo "--- actual ---"; echo "$actual"
-		fail=1
-	fi
-	rm -rf "$src/bin" "$src/obj"
+	gate
+	{ src="$ROOT/samples/$1"; out="$ROOT/build/$2"; expected="$3"
+	  "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $out >/dev/null 2>&1 || true
+	  actual="$(dotnet run --project "$src/runner.csproj" -v q --nologo 2>/dev/null | grep -vE "warning |error |\\.cs\\(")"
+	  if [[ "$actual" == "$expected" ]]; then echo "PASS  $1"; else
+		echo "FAIL  $1"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "/tmp/all-fail-$1"; fi
+	  rm -rf "$src/bin" "$src/obj"
+	} &
 }
 
 check_multi() { # <sample-name> <out-dir> <source-roots> <expected>
-	local name="$1" out="$ROOT/build/$2" roots="$3" expected="$4"
-	local src="$ROOT/samples/$name"
-	"$LAUNCHER" $roots -no-stdlib -classpath $STDLIB -d $out >/dev/null 2>&1 || true
-	local actual
-	actual="$(dotnet run --project "$src/runner.csproj" -v q --nologo 2>/dev/null | grep -vE "warning |error |\\.cs\\(")"
-	if [[ "$actual" == "$expected" ]]; then echo "PASS  $name"; else
-		echo "FAIL  $name"; echo "--- expected ---"; echo "$expected"; echo "--- actual ---"; echo "$actual"; fail=1
-	fi
-	rm -rf "$src/bin" "$src/obj"
+	gate
+	{ name="$1"; out="$ROOT/build/$2"; roots="$3"; expected="$4"; src="$ROOT/samples/$name"
+	  "$LAUNCHER" $roots -no-stdlib -classpath $STDLIB -d $out >/dev/null 2>&1 || true
+	  actual="$(dotnet run --project "$src/runner.csproj" -v q --nologo 2>/dev/null | grep -vE "warning |error |\\.cs\\(")"
+	  if [[ "$actual" == "$expected" ]]; then echo "PASS  $name"; else
+		echo "FAIL  $name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "/tmp/all-fail-$name"; fi
+	  rm -rf "$src/bin" "$src/obj"
+	} &
 }
 
 check m0   clr-out "$(printf 'sum = 5\nzero\nn=1\nn=2')"
@@ -133,6 +135,9 @@ check_multi m-i4 clr-mi4 "$ROOT/samples/m-i4/app.kt $ROOT/build/gen-facades" "$(
 # S4: compile against an AUTO-GENERATED GENERIC façade (List<T>).
 "$ROOT/scripts/gen-facades.sh" "$ROOT/build/gen-gen" System.Collections.Generic.List >/dev/null 2>&1
 check_multi m-s4 clr-ms4 "$ROOT/samples/m-s4/app.kt $ROOT/build/gen-gen" "$(printf 'count = 3\nfirst = 10, last = 30\nsum = 139')"
+
+wait   # let all backgrounded console checks finish before the (sequential) ktproj/MSBuild tests
+for f in /tmp/all-fail-*; do [[ -e "$f" ]] && fail=1; done
 
 # MSBuild: build & run a real .ktproj end-to-end via dotnet.
 ktexpected="$(printf 'Hello, Visual Studio, from a .ktproj!\nsum 1..5 = 15')"

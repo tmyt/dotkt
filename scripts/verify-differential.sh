@@ -30,31 +30,35 @@ LAUNCHER="$ROOT/compiler/build/install/compiler/bin/compiler"
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 il-seq il-char il-sort il-funref il-getclass il-localdeleg il-langfeat il-mapdes il-ctorref il-collmore"
 fail=0
 
+# Run samples concurrently (each does a JVM oracle compile+run plus a CLR compile+run — all independent).
+JOBS="$(nproc 2>/dev/null || echo 4)"; (( JOBS > 6 )) && JOBS=6
+gate() { while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n 2>/dev/null || true; done; }
+rm -f /tmp/diff-fail-* 2>/dev/null || true
+# Kotlin.NET primitive formatting is CLR-native by design; normalize platform-cosmetic differences
+# (boolean case true/True, double trailing `.0`) so the harness validates LOGIC, not host formatting.
+norm() { sed -E 's/\bTrue\b/true/g; s/\bFalse\b/false/g; s/([0-9])\.0\b/\1/g'; }
+
 for s in $PURE; do
-	src="$ROOT/samples/$s"
-	# main class = file (with `fun main`) name, first letter upper-cased + "Kt" (app.kt -> AppKt).
-	mainfile="$(grep -lE '^fun main' "$src"/*.kt 2>/dev/null | head -1)"
-	[[ -z "$mainfile" ]] && { echo "SKIP  $s (no main)"; continue; }
-	base="$(basename "$mainfile" .kt)"; mainclass="${base^}Kt"
-
-	# (a) kotlin/jvm oracle
-	jout="/tmp/diff-jvm-$s"; rm -rf "$jout"; mkdir -p "$jout"
-	"$JAVA" -cp "$CCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler "$src"/*.kt -no-stdlib -classpath "$STDLIBJ" -d "$jout" >/dev/null 2>&1
-	jvm="$("$JAVA" -cp "$jout:$STDLIBJ" "$mainclass" 2>/dev/null)"
-
-	# (b) kotlin/clr via the SHIPPING IL backend: compile to BIR, emit CIL with ilemit, run the dll.
-	cout="$ROOT/build/diff-clr-$s"; rm -rf "$cout"; mkdir -p "$cout"
-	"$LAUNCHER" $src -no-stdlib -classpath $STDLIBJ -d $cout >/dev/null 2>&1
-	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$cout" "$mainclass" "$cout"/*.bir.json >/dev/null 2>&1
-	clr="$(dotnet "$cout/$mainclass.dll" 2>/dev/null)"
-
-	# Kotlin.NET primitive formatting is CLR-native by design; normalize platform-cosmetic differences
-	# (boolean case true/True, double trailing `.0`) so the harness validates LOGIC, not host formatting.
-	norm() { sed -E 's/\bTrue\b/true/g; s/\bFalse\b/false/g; s/([0-9])\.0\b/\1/g'; }
-	if [[ "$(norm <<<"$jvm")" == "$(norm <<<"$clr")" ]]; then echo "MATCH $s"; else
-		echo "DIFF  $s"; echo "--- jvm ---"; echo "$jvm"; echo "--- clr ---"; echo "$clr"; fail=1
-	fi
+	gate
+	{ src="$ROOT/samples/$s"
+	  mainfile="$(grep -lE '^fun main' "$src"/*.kt 2>/dev/null | head -1)"
+	  if [[ -z "$mainfile" ]]; then echo "SKIP  $s (no main)"; exit 0; fi
+	  base="$(basename "$mainfile" .kt)"; mainclass="${base^}Kt"
+	  # (a) kotlin/jvm oracle
+	  jout="/tmp/diff-jvm-$s"; rm -rf "$jout"; mkdir -p "$jout"
+	  "$JAVA" -cp "$CCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler "$src"/*.kt -no-stdlib -classpath "$STDLIBJ" -d "$jout" >/dev/null 2>&1
+	  jvm="$("$JAVA" -cp "$jout:$STDLIBJ" "$mainclass" 2>/dev/null)"
+	  # (b) kotlin/clr via the SHIPPING IL backend: compile to BIR, emit CIL with ilemit, run the dll.
+	  cout="$ROOT/build/diff-clr-$s"; rm -rf "$cout"; mkdir -p "$cout"
+	  "$LAUNCHER" $src -no-stdlib -classpath $STDLIBJ -d $cout >/dev/null 2>&1
+	  dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$cout" "$mainclass" "$cout"/*.bir.json >/dev/null 2>&1
+	  clr="$(dotnet "$cout/$mainclass.dll" 2>/dev/null)"
+	  if [[ "$(norm <<<"$jvm")" == "$(norm <<<"$clr")" ]]; then echo "MATCH $s"; else
+		echo "DIFF  $s"; echo "--- jvm ---"; echo "$jvm"; echo "--- clr ---"; echo "$clr"; touch "/tmp/diff-fail-$s"; fi
+	} &
 done
+wait
+for f in /tmp/diff-fail-*; do [[ -e "$f" ]] && fail=1; done
 
 echo "------------------------------------"
 [[ $fail -eq 0 ]] && echo "ALL MATCH (clr == kotlin/jvm)" || { echo "SOME DIFFER"; exit 1; }
