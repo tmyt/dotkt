@@ -20,6 +20,16 @@
 
   <!-- Every .kt under the project is a Kotlin source. -->
   <ItemGroup>
-    <DotKtCompile Include="**/*.kt" Exclude="$(BaseIntermediateOutputPath)**;$(IntermediateOutputPath)**;bin/**;obj/**" />
+    <KotlinCompile Include="**/*.kt" Exclude="$(BaseIntermediateOutputPath)**;$(IntermediateOutputPath)**;bin/**;obj/**" />
+  </ItemGroup>
+
+  <!-- Teach VS's fast up-to-date check (FUTDC) that .kt files are build inputs. FUTDC runs BEFORE MSBuild on
+       Build (Ctrl+B) / Run (F5) and only tracks Compile/Content/None/references + explicit UpToDateCheckInput
+       items. Our sources live in the custom KotlinCompile item, which FUTDC doesn't know about — so without this it
+       sees no tracked input change after a .kt edit, declares the project up-to-date, and skips the build (running
+       a stale assembly). Mapping KotlinCompile -> UpToDateCheckInput makes "edit .kt -> Ctrl+B/Run rebuilds" reliable.
+       Must be a top-level ItemGroup (evaluation time): FUTDC reads evaluated items, not target-produced ones. -->
+  <ItemGroup>
+    <UpToDateCheckInput Include="@(KotlinCompile)" />
   </ItemGroup>
 </Project>

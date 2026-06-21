@@ -7,26 +7,26 @@
   <!-- C-2: import-driven, façade-FREE .NET type injection. Scan the .kt sources for `import Ns.Type` and inject
        those .NET types straight into FIR (no .kt produced). @(ReferencePath) (BCL + PackageReference/Reference)
        makes any referenced assembly's types injectable. -->
-  <Target Name="DotKtInjectTypes" BeforeTargets="DotKtCompile" DependsOnTargets="ResolveReferences"
-          Condition="'@(DotKtCompile)' != ''">
+  <Target Name="DotKtInjectTypes" BeforeTargets="KotlinCompile" DependsOnTargets="ResolveReferences"
+          Condition="'@(KotlinCompile)' != ''">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(DotKtTypeMeta)'))" />
-    <Message Importance="high" Text="DotKt: resolving .NET imports (scan @(DotKtCompile) + @(DotKtImport))" />
-    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --scan @(DotKtCompile->'%(FullPath)', ' ')" />
+    <Message Importance="high" Text="DotKt: resolving .NET imports (scan @(KotlinCompile) + @(DotKtImport))" />
+    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --scan @(KotlinCompile->'%(FullPath)', ' ')" />
   </Target>
 
   <!-- Compile every .kt to BIR. CLR_TYPES_METADATA tells the FIR injector which façade-free .NET types to synthesize. -->
-  <Target Name="DotKtCompile" BeforeTargets="CoreCompile" DependsOnTargets="DotKtInjectTypes"
-          Inputs="@(DotKtCompile)" Outputs="$(DotKtOut)/.stamp">
+  <Target Name="KotlinCompile" BeforeTargets="CoreCompile" DependsOnTargets="DotKtInjectTypes"
+          Inputs="@(KotlinCompile)" Outputs="$(DotKtOut)/.stamp">
     <MakeDir Directories="$(DotKtOut)" />
-    <Message Importance="high" Text="DotKt: compiling @(DotKtCompile->Count()) .kt file(s) -> BIR" />
-    <Exec Command="&quot;$(DotKtCompiler)&quot; @(DotKtCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(DotKtStdlib)&quot; -d &quot;$(DotKtOut)&quot;"
+    <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
+    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(DotKtStdlib)&quot; -d &quot;$(DotKtOut)&quot;"
           EnvironmentVariables="CLR_TYPES_METADATA=$(DotKtTypeMeta)" />
     <Touch Files="$(DotKtOut)/.stamp" AlwaysCreate="true" />
   </Target>
 
   <!-- Give csc a trivial valid assembly to produce; ilemit overwrites it. The user's entry (e.g. AppKt) doesn't
        exist in the placeholder, so point csc at the placeholder's Main for this throwaway compile. -->
-  <Target Name="DotKtIlPlaceholder" BeforeTargets="CoreCompile" DependsOnTargets="DotKtCompile">
+  <Target Name="DotKtIlPlaceholder" BeforeTargets="CoreCompile" DependsOnTargets="KotlinCompile">
     <PropertyGroup>
       <StartupObject Condition="'$(StartupObject)' != '' or '$(OutputType)' == 'Exe'">_DotKtPlaceholder</StartupObject>
     </PropertyGroup>
@@ -41,7 +41,7 @@
   <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from BIR. The
        copy-local references (DotKt.Runtime + the project's package/project references, NOT the BCL, which ilemit
        resolves by runtime reflection) are preloaded into ilemit as references. -->
-  <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtCompile">
+  <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="KotlinCompile">
     <ItemGroup>
       <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
       <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
