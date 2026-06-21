@@ -11,10 +11,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STDLIB="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.2.0.jar' | head -1)"
 fail=0
 
+# Build the compiler launcher once (plain Java app); per-sample compiles cost ~2s instead of ~9s for gradlew.
+"$ROOT/gradlew" -q :compiler:installDist >/dev/null 2>&1
+LAUNCHER="$ROOT/compiler/build/install/compiler/bin/compiler"
+
 check() { # <sample-dir> <out-dir> <expected>
 	local src="$ROOT/samples/$1" out="$ROOT/build/$2" expected="$3"
-	"$ROOT/gradlew" -q --no-daemon :compiler:run \
-		--args="$src -no-stdlib -classpath $STDLIB -d $out" >/dev/null 2>&1
+	"$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $out >/dev/null 2>&1 || true
 	local actual
 	actual="$(dotnet run --project "$src/runner.csproj" -v q --nologo 2>/dev/null | grep -vE "warning |error |\\.cs\\(")"
 	if [[ "$actual" == "$expected" ]]; then
@@ -29,8 +32,7 @@ check() { # <sample-dir> <out-dir> <expected>
 check_multi() { # <sample-name> <out-dir> <source-roots> <expected>
 	local name="$1" out="$ROOT/build/$2" roots="$3" expected="$4"
 	local src="$ROOT/samples/$name"
-	"$ROOT/gradlew" -q --no-daemon :compiler:run \
-		--args="$roots -no-stdlib -classpath $STDLIB -d $out" >/dev/null 2>&1
+	"$LAUNCHER" $roots -no-stdlib -classpath $STDLIB -d $out >/dev/null 2>&1 || true
 	local actual
 	actual="$(dotnet run --project "$src/runner.csproj" -v q --nologo 2>/dev/null | grep -vE "warning |error |\\.cs\\(")"
 	if [[ "$actual" == "$expected" ]]; then echo "PASS  $name"; else

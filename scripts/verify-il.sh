@@ -6,6 +6,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STDLIB="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.2.0.jar' | head -1)"
 fail=0
 
+# Build the compiler launcher ONCE (a plain Java app). Per-sample invokes then cost ~2s of JVM startup instead
+# of ~9s for `gradlew --no-daemon :compiler:run` — a ~4x speedup on the dominant compile step.
+"$ROOT/gradlew" -q :compiler:installDist >/dev/null 2>&1
+LAUNCHER="$ROOT/compiler/build/install/compiler/bin/compiler"
+
 dotnet build "$ROOT/tools/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null
 
 # S5 FIR-injection metadata for samples that inherit a real .NET base type (façade-free).
@@ -31,12 +36,32 @@ build_runtime() { # <srcDir> <runtimeAsm>
 	echo "$rt/out/$rasm.dll"
 }
 
+# Inject (façade-free) a sample's own runtime types AND reference the runtime dll: build runtime.cs, scan the
+# .kt imports into a metadata file (facadegen --meta --scan), compile with it, then ilemit with --ref.
+il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
+	local name="$1" asm="$2" src="$3" expected="$4" rasm="$5"
+	local birdir="$ROOT/build/bir-$name" ildir="$ROOT/build/il-$name" meta="$ROOT/build/$name.meta"
+	local refdll; refdll="$(build_runtime "$src" "$rasm")"
+	REFDLL["$name"]="$refdll"
+	local RD; RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
+	dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';');$refdll" --scan "$src"/*.kt >/dev/null 2>&1
+	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
+	CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1 \
+		|| { echo "FAIL  il:$name (compile error)"; fail=1; return; }
+	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$refdll" "$birdir"/*.bir.json >/dev/null
+	cp "$refdll" "$ildir/"
+	local actual; actual="$(dotnet "$ildir/$asm.dll")"
+	if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
+		echo "FAIL  il:$name"; echo "--- expected ---"; echo "$expected"; echo "--- actual ---"; echo "$actual"; fail=1
+	fi
+}
+
 il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 	local name="$1" asm="$2" src="$3" expected="$4" meta="${5:-}"
 	local birdir="$ROOT/build/bir-$name" ildir="$ROOT/build/il-$name"
 	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-	CLR_TYPES_METADATA="$meta" "$ROOT/gradlew" -q --no-daemon :compiler:run \
-		--args="$src -no-stdlib -classpath $STDLIB -d $birdir" >/dev/null 2>&1
+	CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1 \
+		|| { echo "FAIL  il:$name (compile error)"; fail=1; return; }
 	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" "$birdir"/*.bir.json >/dev/null
 	local actual; actual="$(dotnet "$ildir/$asm.dll")"
 	if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
@@ -125,7 +150,8 @@ il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 	local refdll; refdll="$(build_runtime "$src" "$rasm")"
 	REFDLL["$name"]="$refdll"
 	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-	"$ROOT/gradlew" -q --no-daemon :compiler:run --args="$src -no-stdlib -classpath $STDLIB -d $birdir" >/dev/null 2>&1
+	"$LAUNCHER" $src -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1 \
+		|| { echo "FAIL  il:$name (compile error)"; fail=1; return; }
 	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$refdll" "$birdir"/*.bir.json >/dev/null
 	cp "$refdll" "$ildir/"
 	local actual; actual="$(dotnet "$ildir/$asm.dll")"
@@ -135,6 +161,7 @@ il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 }
 il_check_ref coro Coro "$ROOT/samples/il-coro" "$(printf 'tryOk = 11\ntryCatch = -99\ntryFallthrough = 8\nloopCond = 3\ncondBranch = 6\nspillSum = 30\nspillNested = 17\nspillArg = 16\nchain = 30\nfetchDouble(7) = 14\nuseChain = 35\nsumLoop(4) = 6\nbranch(true) = 15\nbranch(false) = 10')" Kfc
 il_check_ref c1net C1Net "$ROOT/samples/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
+il_check_inject firgap FirGap "$ROOT/samples/il-firgap" "$(printf '42\n60\n3\n20')" P
 
 # Reverse interop: a .NET (C#) host loads the IL-emitted Kotlin assembly and calls a Kotlin class + top-level
 # fun. Proves the IL output is a consumable .NET assembly. (Compile-time <Reference> needs per-type contract-
@@ -143,7 +170,8 @@ il_revinterop() {
 	local asm=KotlinLib src="$ROOT/samples/il-revinterop"
 	local birdir="$ROOT/build/bir-revinterop" ildir="$ROOT/build/il-revinterop"
 	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-	"$ROOT/gradlew" -q --no-daemon :compiler:run --args="$src/lib.kt -no-stdlib -classpath $STDLIB -d $birdir" >/dev/null 2>&1
+	"$LAUNCHER" $src/lib.kt -no-stdlib -classpath $STDLIB -d $birdir >/dev/null 2>&1 \
+		|| { echo "FAIL  il:$name (compile error)"; fail=1; return; }
 	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" "$birdir"/*.bir.json >/dev/null
 	cp "$src/Program.cs" "$ildir/Program.cs"
 	cat > "$ildir/consumer.csproj" <<EOF
@@ -164,7 +192,7 @@ ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
 REFDIR="$(dirname "$(find /usr/share/dotnet/shared/Microsoft.NETCore.App -name System.Private.CoreLib.dll 2>/dev/null | sort | tail -1)")"
 if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 	echo "--- ilverify ---"
-	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk [collmore]=CollMore [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [coro]=Coro [loopjump]=LjT [inline2]=Inl2 [c1net]=C1Net )
+	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk [collmore]=CollMore [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [coro]=Coro [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap )
 	for n in "${!ASMS[@]}"; do
 		dll="$ROOT/build/il-$n/${ASMS[$n]}.dll"
 		[[ -f "$dll" ]] || continue

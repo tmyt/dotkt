@@ -22,6 +22,10 @@ CCP="$EMB:$STDLIBJ:$COR:$REFLECT:$SCRIPT:$ANNOT"   # classpath to RUN the kotlin
 # validates the actual shipping path against real Kotlin semantics. Build ilemit once.
 dotnet build "$ROOT/tools/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null 2>&1
 
+# Build the compiler launcher once (plain Java app) — per-sample compiles cost ~2s instead of ~9s for gradlew.
+"$ROOT/gradlew" -q :compiler:installDist >/dev/null 2>&1
+LAUNCHER="$ROOT/compiler/build/install/compiler/bin/compiler"
+
 # Pure-Kotlin samples only (no @Clr / injected .NET types — those can't run on the JVM).
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 il-seq il-char il-sort il-funref il-getclass il-localdeleg il-langfeat il-mapdes il-ctorref il-collmore"
 fail=0
@@ -40,7 +44,7 @@ for s in $PURE; do
 
 	# (b) kotlin/clr via the SHIPPING IL backend: compile to BIR, emit CIL with ilemit, run the dll.
 	cout="$ROOT/build/diff-clr-$s"; rm -rf "$cout"; mkdir -p "$cout"
-	"$ROOT/gradlew" -q --no-daemon :compiler:run --args="$src -no-stdlib -classpath $STDLIBJ -d $cout" >/dev/null 2>&1
+	"$LAUNCHER" $src -no-stdlib -classpath $STDLIBJ -d $cout >/dev/null 2>&1
 	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$cout" "$mainclass" "$cout"/*.bir.json >/dev/null 2>&1
 	clr="$(dotnet "$cout/$mainclass.dll" 2>/dev/null)"
 
