@@ -49,8 +49,9 @@ object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArti
 			if (birJson.isNotBlank()) File(outputDir, "$baseName.bir.json").writeText(birJson)
 		}
 
-		// An unsupported construct was reported (with source location) -> fail the compile here, so the build
-		// stops with a clear diagnostic instead of producing BIR that crashes ilemit downstream.
-		return ClrBackendArtifact(if (bir.hadError) ExitCode.COMPILATION_ERROR else ExitCode.OK)
+		// An unsupported construct was reported (with source location) -> fail the compile here in the shipping IL
+		// path, so the build stops with a clear diagnostic instead of producing BIR that crashes ilemit downstream.
+		// In C#-oracle mode (KOTLIN_CLR_EMIT_CS=1) the C# backend is authoritative, so an IL-only gap doesn't fail it.
+		return ClrBackendArtifact(if (bir.hadError && !emitCs) ExitCode.COMPILATION_ERROR else ExitCode.OK)
 	}
 }

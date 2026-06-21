@@ -12,4 +12,7 @@ fun main() {
     fun pick(n: Int): Int? = if (n > 0) n * 2 else null
     println(pick(7) ?: -1)                                       // 14
     println(pick(-1) ?: -1)                                      // -1
+
+    println(xs.average())                                        // 3  (CLR prints 3.0 as 3)
+    println(xs.indexOf(4))                                       // 3
 }

@@ -1970,6 +1970,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						toList(clrGen(EN, "Zip", listOf(t, ot), listOf("ienum", "ienum"), listOf(src, expr(other))), "clrg:System.ValueTuple[$t,$ot]")
 					}
 					"reduce" -> clrGen(EN, "Aggregate", listOf(t), listOf("ienum", "func:3"), listOf(src, arg()))
+					// average -> Enumerable.Average (a per-numeric-type overload, not generic; always returns Double).
+					"average" -> """{"k":"clrStatic","type":"System.Linq.Enumerable","method":"Average","argTypes":["clrg:System.Collections.Generic.IEnumerable[$t]"],"ret":"double","args":[$src]}"""
+					// indexOf(e) -> List<T>.IndexOf (an instance method; LINQ has no IndexOf).
+					"indexOf" -> """{"k":"clrInstance","type":${str(birType(recv.type))},"method":"IndexOf","argTypes":[${str(t)}],"ret":"System.Int32","recv":$src,"args":[${arg()}]}"""
 					// forEach { it -> body } -> inline body into an enumerator loop (no closure; body uses enclosing locals).
 					"forEach" -> {
 						val lam = a0 as? IrFunctionExpression
@@ -2475,6 +2479,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
+		// An unhandled Kotlin-stdlib FREE/EXTENSION function (e.g. `partition`, `windowed`) reaching the generic
+		// fallthrough would emit a callStatic that ilemit can't resolve. Report a clear, source-located compile
+		// error instead. Restricted to no-dispatch-receiver calls so instance methods (`Iterator.next()` etc.,
+		// handled by the callInstance path below) are NOT caught. Handled ops already returned earlier.
+		if (dispatchReceiver(call) == null) callee.fqNameWhenAvailable?.asString()?.let { fqn ->
+			if (callee.body == null && (fqn.startsWith("kotlin.collections.") || fqn.startsWith("kotlin.sequences.")
+					|| fqn.startsWith("kotlin.text.") || fqn.startsWith("kotlin.ranges.") || fqn.startsWith("kotlin.comparisons.")))
+				return unsupported(call, "the Kotlin stdlib function `$name`",
+					"it isn't lowered to .NET yet — use a supported equivalent, or wrap the logic by hand")
+		}
 		// Fill omitted constant default arguments at the call site (IL methods have no default mechanism).
 		val args = filledArgs(call).joinToString(",")
 		// A generic method `fun <T> id(...)` -> carry the resolved type args so ilemit can MakeGenericMethod.
@@ -2778,12 +2792,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		)
 		private val LIST_FACTORIES = setOf(
 			"kotlin.collections.listOf", "kotlin.collections.mutableListOf", "kotlin.collections.arrayListOf",
+			"kotlin.collections.emptyList",
 		)
 		private val SET_FACTORIES = setOf(
 			"kotlin.collections.setOf", "kotlin.collections.mutableSetOf", "kotlin.collections.hashSetOf",
+			"kotlin.collections.emptySet",
 		)
 		private val MAP_FACTORIES = setOf(
 			"kotlin.collections.mapOf", "kotlin.collections.mutableMapOf", "kotlin.collections.hashMapOf",
+			"kotlin.collections.emptyMap",
 		)
 		private val COLLECTION_OPS = setOf(
 			"map", "filter", "take", "drop", "reversed", "distinct", "toList",
@@ -2792,7 +2809,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"maxByOrNull", "minByOrNull", "zip", "associateWith", "associateBy", "groupBy",
 			"asSequence", "toSet", "takeWhile", "dropWhile", "single", "singleOrNull",
 			"sortedDescending", "sortedBy", "sortedByDescending", "mapIndexed", "chunked", "filterNotNull",
-			"mapNotNull", "flatMap", "flatten",
+			"mapNotNull", "flatMap", "flatten", "average", "indexOf",
 		)
 
 		// Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.

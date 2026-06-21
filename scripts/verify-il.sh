@@ -74,7 +74,7 @@ il_check regex Regex "$ROOT/samples/il-regex" "$(printf 'True\nFalse\na#b#c#\na_
 il_check result Result "$ROOT/samples/il-result" "$(printf 'True\n10\n10\nTrue\n\n-99\nneg -1\n\nfb')"
 il_check bmore BMore "$ROOT/samples/il-bmore" "$(printf '5 items\nx = 42\n3.14\n00007\nff\n100%% ok: yes\n0:a,1:b,2:c\n0,20,60')"
 il_check chunk Chunk "$ROOT/samples/il-chunk" "$(printf '3,7,5\n3\n1-2-3 4-5\na,b,c\n3\n1,3,5\n9')"
-il_check collmore CollMore "$ROOT/samples/il-collmore" "$(printf '20,40\n1,10,2,20,3,30,4,40,5,50\n1,2,3,4,5\n15\n14\n-1')"
+il_check collmore CollMore "$ROOT/samples/il-collmore" "$(printf '20,40\n1,10,2,20,3,30,4,40,5,50\n1,2,3,4,5\n15\n14\n-1\n3\n3')"
 il_check valcls ValCls "$ROOT/samples/il-valclass" "$(printf '1250\n12\n1250\nff\n1010\nff')"
 il_check ctorref CtorRef "$ROOT/samples/il-ctorref" "$(printf '(1,2)\n(3,4)\n(9,9)')"
 il_check getcls GetClass "$ROOT/samples/il-getclass" "$(printf 'String\nWidget\nWidget\nString')"
