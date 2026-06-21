@@ -339,7 +339,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		fileEntry = file.fileEntry
 		// The `@ClrAwait` await intrinsic (`fun <T> Task<T>.await(): T`) is never emitted as a real method —
 		// its call sites are lowered to coroutine suspension points (see suspendMethod). Skip it.
-		val functions = file.declarations.filterIsInstance<IrSimpleFunction>().filter { !isAwaitIntrinsic(it) }
+		// The `__clrout`/`__clrref` out/ref markers are intrinsics consumed at their call sites (the arg becomes a
+		// `byref:` param) — never emitted as real methods.
+		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
+			.filter { !isAwaitIntrinsic(it) && it.name.asString() !in setOf("__clrout", "__clrref") }
 		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null }
 		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && clrName(it) == null }
 		val topProps = file.declarations.filterIsInstance<IrProperty>()
@@ -2384,10 +2387,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val allArgTypes = (listOf(str(netType(extRecv.type))) + regularArgs(call).map { str(netType(it.type)) }).joinToString(",")
 				return """{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]}"""
 			}
+			val (cArgs, cArgTypes) = clrCallArgs(call, callee)
 			return if (isStatic)
-				"""{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[${paramNetTypes(callee)}],"ret":$ret,"args":[$argsJson]}"""
+				"""{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]}"""
 			else
-				"""{"k":"clrInstance","type":${str(memberType)},"method":${str(member)},"argTypes":[${paramNetTypes(callee)}],"ret":$ret,"recv":${expr(recv!!)},"args":[$argsJson]}"""
+				"""{"k":"clrInstance","type":${str(memberType)},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]}"""
 		}
 
 		// Companion-object member -> a static member of the enclosing class (precedes user-property field access).
@@ -2771,6 +2775,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun paramNetTypes(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
 		callee.parameters.filter { it.kind == IrParameterKind.Regular }
 			.joinToString(",") { str(netType(it.type)) }
+
+	/** The `__clrout(x)`/`__clrref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. */
+	private fun byrefMarker(a: IrExpression): IrExpression? =
+		if (a is IrCall && a.symbol.owner.name.asString().let { it == "__clrout" || it == "__clrref" }) regularArgs(a).firstOrNull() else null
+
+	/** (argsJson, argTypesJson) for an injected .NET call; a `__clrout`/`__clrref` arg becomes a `byref:` param.
+	 *  argTypes spans ALL params (like paramNetTypes — so optional params resolve + get default-filled); only the
+	 *  param positions whose provided arg is a marker are flipped to `byref:`. args spans the provided args only. */
+	private fun clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
+		val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
+		val args = regularArgs(call)
+		val tj = params.mapIndexed { i, p ->
+			if (args.getOrNull(i)?.let { byrefMarker(it) } != null) str("byref:" + netType(p.type)) else str(netType(p.type))
+		}
+		val aj = args.map { val inner = byrefMarker(it); if (inner != null) expr(inner) else expr(it) }
+		return aj.joinToString(",") to tj.joinToString(",")
+	}
 
 	private fun constJson(c: IrConst): String = when (val v = c.value) {
 		is String -> str(v)

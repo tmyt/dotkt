@@ -23,6 +23,7 @@ import org.jetbrains.kotlin.fir.plugin.createConstructor
 import org.jetbrains.kotlin.fir.plugin.createMemberFunction
 import org.jetbrains.kotlin.fir.plugin.createMemberProperty
 import org.jetbrains.kotlin.fir.plugin.createTopLevelClass
+import org.jetbrains.kotlin.fir.plugin.createTopLevelFunction
 import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassLikeSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassSymbol
@@ -154,8 +155,15 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	private val classIdByName: Map<String, ClassId> =
 		byClassId.entries.associate { (id, t) -> t.kotlinName to id }
 
+	// `__clrout(x)`/`__clrref(x)`: generic identity intrinsics (root package) marking a call arg as a .NET out/ref
+	// param. The backend reads the marker and passes the lvalue's address with a `byref:` param type.
+	private val intrinsicNames = setOf("__clrout", "__clrref")
+
 	override fun hasPackage(packageFqName: FqName): Boolean =
-		byClassId.isNotEmpty() && packageFqName in packages
+		byClassId.isNotEmpty() && (packageFqName in packages || packageFqName.isRoot)
+
+	override fun getTopLevelCallableIds(): Set<CallableId> =
+		if (byClassId.isEmpty()) emptySet() else intrinsicNames.mapTo(HashSet()) { CallableId(FqName.ROOT, Name.identifier(it)) }
 
 	override fun getTopLevelClassIds(): Set<ClassId> = byClassId.keys
 
@@ -202,7 +210,19 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	}
 
 	override fun generateFunctions(callableId: CallableId, context: MemberGenerationContext?): List<FirNamedFunctionSymbol> {
-		val owner = context?.owner ?: return emptyList()
+		val owner = context?.owner
+		if (owner == null) {
+			// Top-level intrinsics `__clrout`/`__clrref`: `fun <T> __clrout(x: T): T` (an identity marker).
+			if (callableId.callableName.asString() in intrinsicNames) {
+				val fn = createTopLevelFunction(ClrGeneratedKey, callableId,
+					{ tps -> tps[0].symbol.constructType(emptyArray(), false) }) {
+					typeParameter(Name.identifier("T"), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+					valueParameter(Name.identifier("x"), { tps -> tps[0].symbol.constructType(emptyArray(), false) })
+				}
+				return listOf(fn.symbol)
+			}
+			return emptyList()
+		}
 		val type = byClassId[owner.classId] ?: return emptyList()
 		val callName = callableId.callableName.asString()
 

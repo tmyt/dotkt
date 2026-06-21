@@ -332,7 +332,10 @@ static class FacadeGen
     static bool MetaMode = false;
 
     static bool Supported(Type t) =>
-        !t.IsByRef && !t.IsPointer
+        // `out`/`ref` params (T&) surface as their element type on the injection path; the Kotlin caller wraps the
+        // arg in `__clrout(x)`/`__clrref(x)` and the backend re-applies the byref via a `byref:` param type.
+        t.IsByRef ? (MetaMode && Supported(t.GetElementType()))
+        : !t.IsPointer
         && ((MetaMode && t.IsArray) ? Supported(t.GetElementType())
             : (!t.IsArray && (t.IsGenericParameter || !t.ContainsGenericParameters)));
 
@@ -340,6 +343,8 @@ static class FacadeGen
     // name (T); the type itself maps to its façade; everything else degrades to Any?.
     static string Map(Type t, Type self)
     {
+        // An `out`/`ref` param (T&) is surfaced as its element type (the caller wraps it in __clrout/__clrref).
+        if (t.IsByRef) return Map(t.GetElementType(), self);
         // Compare by FullName, not typeof identity: types reflected from LoadFrom'd reference assemblies
         // (I2) have a different assembly identity than the runtime's, so `t == typeof(...)` would miss.
         if (t.FullName == "System.Void") return "Unit";

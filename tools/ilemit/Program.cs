@@ -2535,6 +2535,8 @@ sealed class Emitter
 
     void EmitArg(JsonElement a, Type want)
     {
+        // A by-ref parameter (`out`/`ref`, from a `__clrout`/`__clrref` marker) -> pass the lvalue's address.
+        if (want.IsByRef) { EmitAddr(a); return; }
         // `T`/null passed to a `T?` slot -> Nullable<T> wrap / default(Nullable<T>) (shared with EmitCond).
         var got = EmitNullableCoerced(a, want);
         if (got == null) return;
@@ -2595,6 +2597,7 @@ sealed class Emitter
     // Resolve a .NET type reference that may be a plain name (ResolveType), a generic `clrg:Open[args]`,
     // or a func/closed encoding (MapType). Used by clrNew/clrPropGet so they accept generic types (System.Lazy<T>).
     Type ClrRef(string s) =>
+        s.StartsWith("byref:") ? ClrRef(s.Substring(6)).MakeByRefType() :   // `out`/`ref` param type (T&)
         s.StartsWith("clrg:") ? GenericType(s.Substring(5)) :
         (s.StartsWith("func:") || s.StartsWith("clr:") || s.StartsWith("array:") || s.StartsWith("nullable:") || s.StartsWith("@")) ? MapType(s) :
         ResolveType(s);

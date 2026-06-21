@@ -6,7 +6,7 @@
 
 **重要な不変条件**: 未対応構文は黙ってクラッシュ/誤コンパイルせず、**必ずソース位置付きのコンパイルエラー**になる
 （`BirEmitter.unsupported(node, what, detail)` が message collector に ERROR を報告し、`ClrBackendPhase` が
-`COMPILATION_ERROR` を返す）。`unsupported()` 呼び出しは現在 **9 箇所**。
+`COMPILATION_ERROR` を返す）。`unsupported()` 呼び出しは現在 **8 箇所**（B5 out/ref が surface 化）。
 
 最終更新: 2026-06-21。検証方法: 広範な構文 probe ＋ 全サンプルコーパス（IL ~80 + 差分 ~36、すべて緑）。
 
@@ -65,9 +65,9 @@ coroutine 内部 (e) 専用パスで処理／定数畳み込み済み のいず�
 | ~~B2~~ | ~~ローカルクラスから外側ローカルへ書込~~ ✅ 2026-06-21 実装（`il-refcell`） | — | B1 と同一機構 | — | done |
 | B3 | **.NET メソッド参照** `obj::netMethod` / `NetType::method` | `BirEmitter:1289` | .NET メソッドの delegate 束縛は稀＋自明な回避策あり | lifted `__mref`/`boundDelegateNew` を .NET 受け手にも対応。回避: ラムダ `{ a -> x.m(a) }` | S–M |
 | B4 | **非リテラル `String.format`** | `BirEmitter:2441` | printf↔.NET composite（`%d`↔`{0}`）は非互換。実行時変換には runtime helper が要る | DotKt.Runtime に printf→composite 変換器、または `String.Format` 直叩き | S |
-| B5 | **`out`/`ref` パラメータ**（facadegen で非 surface） | `facadegen Supported()` | Kotlin に out/ref 構文が無い。`TryParse` 等の最頻ユースは `toIntOrNull()` で充足済 | holder/`Pair` 返しへ reshape する façade 規約の設計 | M |
+| ~~B5~~ | ~~`out`/`ref` パラメータ~~ ✅ 2026-06-21 実装（`il-outref`） | — | __clrout/__clrref マーカー方式で実装済 | frontend に `fun <T>__clrout/__clrref(x:T):T` を注入→backend がマーカーを読み arg を `byref:` 型＋lvalue アドレス渡し、ilemit が `MakeByRefType`+`ldloca`。out/ref 両対応 | done |
 
-> B1/B2（heap ref-cell）✅ 実装済（`il-refcell`）。回避策のある B3、最頻ユースが別 API で足りる B4/B5 は実害が小さい。
+> B1/B2（heap ref-cell）✅・B5（out/ref）✅ 実装済。残: 回避策のある B3（.NET メソッド参照）、B4（非リテラル String.format）。
 
 ### B'. 未実装 stdlib 関数（実装すれば動く・ガードがクリーンエラー化）
 `BirEmitter:2551` のガードが `kotlin.collections/sequences/text/ranges/comparisons` の未対応 free/extension 関数を拒否。
