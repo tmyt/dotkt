@@ -1379,7 +1379,13 @@ sealed class Emitter
             }
             case "console":
             {
-                var t = EmitExpr(e.GetProperty("args").EnumerateArray().First());
+                var cargs = e.GetProperty("args").EnumerateArray().ToList();
+                if (cargs.Count == 0)   // bare `println()` -> Console.WriteLine() (blank line)
+                {
+                    _il.Emit(OpCodes.Call, typeof(Console).GetMethod(e.GetProperty("method").GetString(), Type.EmptyTypes));
+                    return typeof(void);
+                }
+                var t = EmitExpr(cargs[0]);
                 if (NeedsBoxToRef(t)) _il.Emit(OpCodes.Box, t);
                 _il.Emit(OpCodes.Call, typeof(Console).GetMethod(e.GetProperty("method").GetString(), new[] { typeof(object) }));
                 return typeof(void);
@@ -1771,6 +1777,131 @@ sealed class Emitter
                 });
                 _il.Emit(OpCodes.Ldloc, d);
                 return dt;
+            }
+            case "linqPartition":
+            {
+                // `partition { pred }` -> (matched, unmatched) : ValueTuple<List<T>, List<T>>.
+                var elemT = MapType(e.GetProperty("elem").GetString());
+                var listT = typeof(System.Collections.Generic.List<>).MakeGenericType(elemT);
+                var predFn = typeof(Func<,>).MakeGenericType(elemT, typeof(bool));
+                EmitExpr(e.GetProperty("pred")); var p = _il.DeclareLocal(predFn); _il.Emit(OpCodes.Stloc, p);
+                _il.Emit(OpCodes.Newobj, listT.GetConstructor(Type.EmptyTypes)); var m = _il.DeclareLocal(listT); _il.Emit(OpCodes.Stloc, m);
+                _il.Emit(OpCodes.Newobj, listT.GetConstructor(Type.EmptyTypes)); var u = _il.DeclareLocal(listT); _il.Emit(OpCodes.Stloc, u);
+                var add = listT.GetMethod("Add");
+                EmitForEachOf(e.GetProperty("src"), elemT, x =>
+                {
+                    var elseL = _il.DefineLabel(); var end = _il.DefineLabel();
+                    _il.Emit(OpCodes.Ldloc, p); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, predFn.GetMethod("Invoke"));
+                    _il.Emit(OpCodes.Brfalse, elseL);
+                    _il.Emit(OpCodes.Ldloc, m); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, add); _il.Emit(OpCodes.Br, end);
+                    _il.MarkLabel(elseL); _il.Emit(OpCodes.Ldloc, u); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, add);
+                    _il.MarkLabel(end);
+                });
+                var vtP = ResolveType("System.ValueTuple`2").MakeGenericType(listT, listT);
+                _il.Emit(OpCodes.Ldloc, m); _il.Emit(OpCodes.Ldloc, u); _il.Emit(OpCodes.Newobj, vtP.GetConstructor(new[] { listT, listT }));
+                return vtP;
+            }
+            case "linqWithIndex":
+            {
+                // `withIndex()` -> List<ValueTuple<int,T>>; `for ((i,v) in …)` destructures (component1/2 -> Item1/2).
+                var elemT = MapType(e.GetProperty("elem").GetString());
+                var vtW = ResolveType("System.ValueTuple`2").MakeGenericType(typeof(int), elemT);
+                var listT = typeof(System.Collections.Generic.List<>).MakeGenericType(vtW);
+                _il.Emit(OpCodes.Newobj, listT.GetConstructor(Type.EmptyTypes)); var l = _il.DeclareLocal(listT); _il.Emit(OpCodes.Stloc, l);
+                var i = _il.DeclareLocal(typeof(int)); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Stloc, i);
+                var add = listT.GetMethod("Add");
+                EmitForEachOf(e.GetProperty("src"), elemT, x =>
+                {
+                    _il.Emit(OpCodes.Ldloc, l);
+                    _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Newobj, vtW.GetConstructor(new[] { typeof(int), elemT }));
+                    _il.Emit(OpCodes.Callvirt, add);
+                    _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, i);
+                });
+                _il.Emit(OpCodes.Ldloc, l); return listT;
+            }
+            case "linqAssociate":
+            {
+                // `associate { it to (k,v) }` -> Dictionary<K,V> from a selector returning a Pair (ValueTuple<K,V>).
+                var elemT = MapType(e.GetProperty("elem").GetString());
+                var kt = MapType(e.GetProperty("keyType").GetString());
+                var vt2 = MapType(e.GetProperty("valType").GetString());
+                var pairT = ResolveType("System.ValueTuple`2").MakeGenericType(kt, vt2);
+                var selFn = typeof(Func<,>).MakeGenericType(elemT, pairT);
+                var dt = typeof(System.Collections.Generic.Dictionary<,>).MakeGenericType(kt, vt2);
+                EmitExpr(e.GetProperty("sel")); var f = _il.DeclareLocal(selFn); _il.Emit(OpCodes.Stloc, f);
+                _il.Emit(OpCodes.Newobj, dt.GetConstructor(Type.EmptyTypes)); var d = _il.DeclareLocal(dt); _il.Emit(OpCodes.Stloc, d);
+                var pair = _il.DeclareLocal(pairT);
+                EmitForEachOf(e.GetProperty("src"), elemT, x =>
+                {
+                    _il.Emit(OpCodes.Ldloc, f); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, selFn.GetMethod("Invoke")); _il.Emit(OpCodes.Stloc, pair);
+                    _il.Emit(OpCodes.Ldloc, d);
+                    _il.Emit(OpCodes.Ldloca, pair); _il.Emit(OpCodes.Ldfld, pairT.GetField("Item1"));
+                    _il.Emit(OpCodes.Ldloca, pair); _il.Emit(OpCodes.Ldfld, pairT.GetField("Item2"));
+                    _il.Emit(OpCodes.Callvirt, dt.GetMethod("set_Item"));
+                });
+                _il.Emit(OpCodes.Ldloc, d); return dt;
+            }
+            case "linqScan":
+            {
+                // `scan/runningFold(init){acc,e -> }` -> List<acc> = [init, op(init,e0), op(prev,e1), …].
+                var elemT = MapType(e.GetProperty("elem").GetString());
+                var accT = MapType(e.GetProperty("accType").GetString());
+                var listT = typeof(System.Collections.Generic.List<>).MakeGenericType(accT);
+                var opFn = typeof(Func<,,>).MakeGenericType(accT, elemT, accT);
+                EmitExpr(e.GetProperty("op")); var f = _il.DeclareLocal(opFn); _il.Emit(OpCodes.Stloc, f);
+                _il.Emit(OpCodes.Newobj, listT.GetConstructor(Type.EmptyTypes)); var l = _il.DeclareLocal(listT); _il.Emit(OpCodes.Stloc, l);
+                EmitArg(e.GetProperty("init"), accT); var acc = _il.DeclareLocal(accT); _il.Emit(OpCodes.Stloc, acc);
+                var add = listT.GetMethod("Add");
+                _il.Emit(OpCodes.Ldloc, l); _il.Emit(OpCodes.Ldloc, acc); _il.Emit(OpCodes.Callvirt, add);
+                EmitForEachOf(e.GetProperty("src"), elemT, x =>
+                {
+                    _il.Emit(OpCodes.Ldloc, f); _il.Emit(OpCodes.Ldloc, acc); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, opFn.GetMethod("Invoke")); _il.Emit(OpCodes.Stloc, acc);
+                    _il.Emit(OpCodes.Ldloc, l); _il.Emit(OpCodes.Ldloc, acc); _il.Emit(OpCodes.Callvirt, add);
+                });
+                _il.Emit(OpCodes.Ldloc, l); return listT;
+            }
+            case "linqWindowed":
+            {
+                // `windowed(size)` -> List<List<T>> sliding windows (step 1, no partial windows).
+                var elemT = MapType(e.GetProperty("elem").GetString());
+                var listT = typeof(System.Collections.Generic.List<>).MakeGenericType(elemT);
+                var outerT = typeof(System.Collections.Generic.List<>).MakeGenericType(listT);
+                var toList = typeof(System.Linq.Enumerable).GetMethods().First(mm => mm.Name == "ToList" && mm.GetParameters().Length == 1).MakeGenericMethod(elemT);
+                EmitExpr(e.GetProperty("src")); _il.Emit(OpCodes.Call, toList); var arr = _il.DeclareLocal(listT); _il.Emit(OpCodes.Stloc, arr);
+                EmitExpr(e.GetProperty("size")); var size = _il.DeclareLocal(typeof(int)); _il.Emit(OpCodes.Stloc, size);
+                _il.Emit(OpCodes.Newobj, outerT.GetConstructor(Type.EmptyTypes)); var outl = _il.DeclareLocal(outerT); _il.Emit(OpCodes.Stloc, outl);
+                var getRange = listT.GetMethod("GetRange", new[] { typeof(int), typeof(int) });
+                var getCount = listT.GetMethod("get_Count");
+                var iw = _il.DeclareLocal(typeof(int)); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Stloc, iw);
+                // test-at-top loop (the back-branch target has a known stack height via the fall-through from init).
+                var top = _il.DefineLabel(); var done = _il.DefineLabel();
+                _il.MarkLabel(top);
+                _il.Emit(OpCodes.Ldloc, iw); _il.Emit(OpCodes.Ldloc, size); _il.Emit(OpCodes.Add);
+                _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Callvirt, getCount);
+                _il.Emit(OpCodes.Bgt, done);     // (iw + size) > count -> stop
+                _il.Emit(OpCodes.Ldloc, outl); _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, iw); _il.Emit(OpCodes.Ldloc, size); _il.Emit(OpCodes.Callvirt, getRange); _il.Emit(OpCodes.Callvirt, outerT.GetMethod("Add"));
+                _il.Emit(OpCodes.Ldloc, iw); _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, iw);
+                _il.Emit(OpCodes.Br, top);
+                _il.MarkLabel(done);
+                _il.Emit(OpCodes.Ldloc, outl); return outerT;
+            }
+            case "linqGetOrElse":
+            {
+                // `getOrElse(index){ default(index) }` -> in-bounds ? src[index] : default(index).
+                var elemT = MapType(e.GetProperty("elem").GetString());
+                var listT = typeof(System.Collections.Generic.List<>).MakeGenericType(elemT);
+                var defFn = typeof(Func<,>).MakeGenericType(typeof(int), elemT);
+                var toList = typeof(System.Linq.Enumerable).GetMethods().First(mm => mm.Name == "ToList" && mm.GetParameters().Length == 1).MakeGenericMethod(elemT);
+                EmitExpr(e.GetProperty("src")); _il.Emit(OpCodes.Call, toList); var arr = _il.DeclareLocal(listT); _il.Emit(OpCodes.Stloc, arr);
+                EmitExpr(e.GetProperty("index")); var idx = _il.DeclareLocal(typeof(int)); _il.Emit(OpCodes.Stloc, idx);
+                EmitExpr(e.GetProperty("default")); var df = _il.DeclareLocal(defFn); _il.Emit(OpCodes.Stloc, df);
+                var elseL = _il.DefineLabel(); var end = _il.DefineLabel();
+                _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Blt, elseL);
+                _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Callvirt, listT.GetMethod("get_Count")); _il.Emit(OpCodes.Bge, elseL);
+                _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Callvirt, listT.GetMethod("get_Item")); _il.Emit(OpCodes.Br, end);
+                _il.MarkLabel(elseL); _il.Emit(OpCodes.Ldloc, df); _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Callvirt, defFn.GetMethod("Invoke"));
+                _il.MarkLabel(end);
+                return elemT;
             }
             case "mapNew":
             {

@@ -2032,6 +2032,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						toList(clrGen(EN, "Zip", listOf(t, ot), listOf("ienum", "ienum"), listOf(src, expr(other))), "clrg:System.ValueTuple[$t,$ot]")
 					}
 					"reduce" -> clrGen(EN, "Aggregate", listOf(t), listOf("ienum", "func:3"), listOf(src, arg()))
+					// partition { pred } -> a (matched, unmatched) Pair of Lists (ValueTuple<List<T>,List<T>>).
+					"partition" -> """{"k":"linqPartition","elem":${str(t)},"src":$src,"pred":${arg()}}"""
+					// withIndex() -> List<IndexedValue> as ValueTuple<int,T> (so `for ((i,v) in …)` destructures).
+					"withIndex" -> """{"k":"linqWithIndex","elem":${str(t)},"src":$src}"""
+					// associate { it to (k,v) } -> Dictionary<K,V> from a selector returning a Pair (ValueTuple<K,V>).
+					"associate" -> { val (kt, vt) = mapKV(call.type); """{"k":"linqAssociate","elem":${str(t)},"keyType":${str(kt)},"valType":${str(vt)},"src":$src,"sel":${arg()}}""" }
+					// scan/runningFold(init){acc,e -> } -> List<acc> = [init, op(init,e0), op(prev,e1), …].
+					"scan", "runningFold" -> {
+						val accT = collectionElemType(call.type)
+						"""{"k":"linqScan","elem":${str(t)},"accType":${str(accT)},"init":${expr(regularArgs(call)[0])},"src":$src,"op":${expr(regularArgs(call)[1])}}"""
+					}
+					// windowed(size) -> List<List<T>> sliding windows (step 1, no partial windows = Kotlin default).
+					"windowed" -> """{"k":"linqWindowed","elem":${str(t)},"size":${expr(regularArgs(call)[0])},"src":$src}"""
+					// getOrElse(index){ default(index) } -> in-bounds ? src[index] : default(index).
+					"getOrElse" -> """{"k":"linqGetOrElse","elem":${str(t)},"index":${expr(regularArgs(call)[0])},"src":$src,"default":${expr(regularArgs(call)[1])}}"""
 					// average -> Enumerable.Average (a per-numeric-type overload, not generic; always returns Double).
 					"average" -> """{"k":"clrStatic","type":"System.Linq.Enumerable","method":"Average","argTypes":["clrg:System.Collections.Generic.IEnumerable[$t]"],"ret":"double","args":[$src]}"""
 					// indexOf(e) -> List<T>.IndexOf (an instance method; LINQ has no IndexOf).
@@ -2119,7 +2134,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (a != null && b != null)
 				return """{"k":"tupleNew","elems":[${str(birType(a.type))},${str(birType(b.type))}],"args":[${expr(a)},${expr(b)}]}"""
 		}
-		if ((declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.Pair" || declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.Triple")
+		if (declaringClass?.fqNameWhenAvailable?.asString() in setOf("kotlin.Pair", "kotlin.Triple", "kotlin.collections.IndexedValue")
 			&& name.startsWith("component") && name.drop("component".length).all { it.isDigit() }) {
 			dispatchReceiver(call)?.let { r ->
 				return """{"k":"tupleItem","tupleType":${str(birType(r.type))},"index":${name.removePrefix("component")},"recv":${expr(r)}}"""
@@ -2289,6 +2304,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val pfq = (callee.parent as? IrClass)?.fqNameWhenAvailable?.asString()
 			if (pfq == "kotlin.Pair" || pfq == "kotlin.Triple") {
 				val idx = when (p.name.asString()) { "first" -> 1; "second" -> 2; "third" -> 3; else -> 0 }
+				if (idx > 0) dispatchReceiver(call)?.let { r ->
+					return """{"k":"tupleItem","tupleType":${str(birType(r.type))},"index":$idx,"recv":${expr(r)}}"""
+				}
+			}
+			// `IndexedValue.index`/`.value` -> Item1/Item2 of the ValueTuple<int,T>.
+			if (pfq == "kotlin.collections.IndexedValue") {
+				val idx = when (p.name.asString()) { "index" -> 1; "value" -> 2; else -> 0 }
 				if (idx > 0) dispatchReceiver(call)?.let { r ->
 					return """{"k":"tupleItem","tupleType":${str(birType(r.type))},"index":$idx,"recv":${expr(r)}}"""
 				}
@@ -2725,6 +2747,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
 			return "clrg:System.ValueTuple[" + args.joinToString(",") + "]"
 		}
+		// `IndexedValue<T>` (the element of `for ((i,v) in xs.withIndex())`) -> ValueTuple<int,T>; .index/.value
+		// and component1/2 map to Item1/Item2.
+		if (fqp == "kotlin.collections.IndexedValue") {
+			val a = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
+			return "clrg:System.ValueTuple[int,${a.getOrNull(0) ?: "object"}]"
+		}
 		// kotlin.Comparable<T> -> System.IComparable<T> (bound for `<T : Comparable<T>>`, and `a.compareTo(b)`).
 		if (fqp == "kotlin.Comparable") {
 			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
@@ -2872,6 +2900,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"asSequence", "toSet", "takeWhile", "dropWhile", "single", "singleOrNull",
 			"sortedDescending", "sortedBy", "sortedByDescending", "mapIndexed", "chunked", "filterNotNull",
 			"mapNotNull", "flatMap", "flatten", "average", "indexOf",
+			"partition", "withIndex", "associate", "scan", "runningFold", "windowed", "getOrElse",
 		)
 
 		// Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.

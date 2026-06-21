@@ -71,12 +71,8 @@ coroutine 内部 (e) 専用パスで処理／定数畳み込み済み のいず�
 
 ### B'. 未実装 stdlib 関数（実装すれば動く・ガードがクリーンエラー化）
 `BirEmitter:2551` のガードが `kotlin.collections/sequences/text/ranges/comparisons` の未対応 free/extension 関数を拒否。
-- [ ] `partition`（→ `(List, List)` の Pair）
-- [ ] `windowed`（LINQ 等価なし＝sliding window 合成）
-- [ ] `associate`（→ ToDictionary、Pair セレクタ分解）
-- [ ] `getOrElse(index){default}` / `runningFold` / `scan`
-- [ ] `withIndex`（→ `IndexedValue<T>`）
-- [ ] `sortedWith(compareBy{})`（compareBy が key を `Comparable<*>` に erase。単一キーは `sortedBy`/`sortedByDescending` で対応済）
+- [x] `partition` / `withIndex`（→ ValueTuple、`for ((i,v) in …)` 分解）/ `associate` / `scan`・`runningFold` / `windowed` / `getOrElse(index){}` — ✅ 2026-06-21（`il-collops2`、custom ilemit ノード linqPartition/WithIndex/Associate/Scan/Windowed/GetOrElse、JVM 差分一致）。併せて `IndexedValue<T>`→`ValueTuple<int,T>`（.index/.value/component1/2）と bare `println()` の修正。
+- [ ] `sortedWith(compareBy{})`（compareBy が key を `Comparable<*>` に erase＝実キー型が取れない。単一キーは `sortedBy`/`sortedByDescending` で対応済＝**唯一の残**）
 - 注: `map/filter/flatMap/flatten/mapNotNull/filterNotNull/mapIndexed/chunked/average/indexOf/zip/groupBy/associate{With,By}/fold/reduce/sum/sumOf/...` 等 40+ は対応済み。
 
 ### B''. 稀な解決不能エッジ（ほぼ書けない・clean error）
