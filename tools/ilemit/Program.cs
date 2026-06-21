@@ -2115,6 +2115,34 @@ sealed class Emitter
             case "clrPropSet": return EmitClrPropSet(e);
             case "clrEventAdd": return EmitClrEvent(e, add: true);
             case "clrEventRemove": return EmitClrEvent(e, add: false);
+            case "byrefOf":
+            {
+                // The live managed pointer behind `byref(...)` in a `var x by` delegate: keep a ref return's pointer
+                // (deref:false), or take the address of a local/field lvalue.
+                var inner = e.GetProperty("inner");
+                var ik = inner.GetProperty("k").GetString();
+                if (ik == "clrInstance") return EmitClrCall(inner, instance: true, deref: false);
+                if (ik == "clrStatic") return EmitClrCall(inner, instance: false, deref: false);
+                EmitAddr(inner);
+                return null;
+            }
+            case "byrefLoad":
+            {
+                // Read through a byref local (the ClrRef delegate): ldloc the pointer, ldobj to dereference.
+                _il.Emit(OpCodes.Ldloc, _locals[e.GetProperty("local").GetString()]);
+                var elem = MapType(e.GetProperty("elem").GetString());
+                _il.Emit(OpCodes.Ldobj, elem);
+                return elem;
+            }
+            case "byrefStore":
+            {
+                // Write through a byref local: ldloc the pointer, push the value, stobj.
+                _il.Emit(OpCodes.Ldloc, _locals[e.GetProperty("local").GetString()]);
+                var elem = MapType(e.GetProperty("elem").GetString());
+                EmitArg(e.GetProperty("value"), elem);
+                _il.Emit(OpCodes.Stobj, elem);
+                return typeof(void);
+            }
             case "unsupportedExpr": throw new NotSupportedException("the .NET backend does not support this Kotlin construct: " + e.GetProperty("of").GetString());
             default: throw new NotSupportedException("expr " + e.GetProperty("k").GetString());
         }
@@ -2367,7 +2395,7 @@ sealed class Emitter
         return type;
     }
 
-    Type EmitClrCall(JsonElement e, bool instance)
+    Type EmitClrCall(JsonElement e, bool instance, bool deref = true)
     {
         // `ClrRef` (not `ResolveType`) so a method on a constructed generic .NET type (`Collection<int>`) resolves.
         var type = ClrRef(e.GetProperty("type").GetString());
@@ -2388,9 +2416,10 @@ sealed class Emitter
         EmitArgs(e.GetProperty("args"), mi.GetParameters());
         _il.Emit(instance && mi.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, mi);
         // A `ref T`-returning method used as a value -> dereference the managed pointer (value copy). The live-ref
-        // form (`var x by byref(m())`) is handled separately and keeps the pointer.
+        // form (`byrefOf(m())`, behind `var x by byref(m())`) passes deref:false to keep the pointer.
         if (mi.ReturnType.IsByRef)
         {
+            if (!deref) return mi.ReturnType;
             var elem = mi.ReturnType.GetElementType();
             _il.Emit(OpCodes.Ldobj, elem);
             return elem;
@@ -2677,6 +2706,7 @@ sealed class Emitter
 
     Type MapType(string t)
     {
+        if (t != null && t.StartsWith("byref:")) return MapType(t.Substring(6)).MakeByRefType();   // a `ref T` local
         if (t != null && t.StartsWith("clr:")) return ResolveType(t.Substring(4));
         if (t != null && t.StartsWith("array:")) return MapType(t.Substring(6)).MakeArrayType();
         if (t != null && t.StartsWith("func:")) return FuncType(t);

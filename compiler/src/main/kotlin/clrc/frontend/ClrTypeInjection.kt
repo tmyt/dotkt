@@ -197,6 +197,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	}
 
 	override fun getCallableNamesForClass(classSymbol: FirClassSymbol<*>, context: MemberGenerationContext): Set<Name> {
+		// `ClrRef<T>` exposes getValue/setValue so a ref return is `by`-delegatable (`var x by byref(m())`).
+		if (classSymbol.classId == clrRefClassId) return hashSetOf(Name.identifier("getValue"), Name.identifier("setValue"))
 		val type = byClassId[classSymbol.classId] ?: return emptySet()
 		val names = type.methods.mapTo(HashSet()) { Name.identifier(it.name) }
 		type.properties.forEach { names.add(Name.identifier(it.name)) }
@@ -240,6 +242,25 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				return listOf(fn.symbol)
 			}
 			return emptyList()
+		}
+		// `ClrRef<T>` operator getValue/setValue (a managed-reference `by`-delegate). The backend inlines them to
+		// ldobj/stobj on the stored byref local; here they only need to type-check the `var x by byref(m())` form.
+		if (owner.classId == clrRefClassId) {
+			val tOf = owner.typeParameterSymbols.first().constructType(emptyArray(), false)
+			val anyN = session.builtinTypes.nullableAnyType.coneType
+			val kProp = session.symbolProvider.getClassLikeSymbolByClassId(ClassId(FqName("kotlin.reflect"), Name.identifier("KProperty")))
+				?.constructType(arrayOf(org.jetbrains.kotlin.fir.types.ConeStarProjection), false) ?: anyN
+			val fn = if (callableId.callableName.asString() == "getValue")
+				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, tOf) {
+					status { isOperator = true }
+					valueParameter(Name.identifier("thisRef"), anyN); valueParameter(Name.identifier("property"), kProp)
+				}
+			else createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.unitType.coneType) {
+				status { isOperator = true }
+				valueParameter(Name.identifier("thisRef"), anyN); valueParameter(Name.identifier("property"), kProp)
+				valueParameter(Name.identifier("value"), tOf)
+			}
+			return listOf(fn.symbol)
 		}
 		val type = byClassId[owner.classId] ?: return emptyList()
 		val callName = callableId.callableName.asString()

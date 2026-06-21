@@ -1,6 +1,7 @@
 // out/ref interop. `byref(v)` marks an argument as a .NET out/ref parameter (surfaced type ClrRef<T>); the backend
-// passes the variable's address and selects the out/ref overload. `out` and `ref` unify to one `byref`. A
-// ref-returning method received WITHOUT byref is a simple value copy (the managed pointer is dereferenced). (#52)
+// passes the variable's address and selects the out/ref overload. `out` and `ref` unify to one `byref`.
+// A ref-returning method received plainly is a value copy; received via `var x by byref(m())` it is a LIVE ref
+// (a `ref T` local, getValue/setValue inline to ldobj/stobj) so writes flow back into the .NET storage. (#52)
 import P.Calc
 
 fun main() {
@@ -18,4 +19,9 @@ fun main() {
 
     val v = c.Slot(1)                            // ref return WITHOUT byref -> value copy
     println(v)                                   // 20
+
+    var slot by byref(c.Slot(1))                 // ref return via `by byref` -> live ref
+    println(slot)                                // 20
+    slot = 99                                    // write through the ref
+    println(c.Slot(0) + c.Slot(1))               // 10 + 99 = 109
 }

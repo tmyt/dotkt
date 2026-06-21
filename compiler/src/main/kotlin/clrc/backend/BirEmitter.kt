@@ -942,8 +942,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 
 	private fun stmt(node: org.jetbrains.kotlin.ir.IrElement): String = when (node) {
+		// A `ClrRef<T>` delegate local (`var x by byref(m())`) -> a `ref T` local holding the live managed pointer
+		// (byrefOf keeps the ref-return's pointer instead of deref'ing it). getValue/setValue inline to ldobj/stobj.
+		is IrVariable -> if (birType(node.type).startsWith("byref:")) {
+			val inner = node.initializer?.let { byrefMarker(it) ?: it }
+			val init = inner?.let { """{"k":"byrefOf","inner":${expr(it)}}""" } ?: "null"
+			"""{"k":"var","name":${str(node.name.asString())},"type":${str(birType(node.type))},"init":$init}"""
+		}
 		// A ref-cell var: `var x = init` -> `val x = new <>dotkt_Ref_<elem>(init)` (the heap cell).
-		is IrVariable -> if (isRefCell(node)) {
+		else if (isRefCell(node)) {
 			val rt = refTypeName(node)
 			val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${str(birType(node.type))}}"""
 			"""{"k":"var","name":${str(node.name.asString())},"type":${str("@$rt")},"init":{"k":"new","type":${str(rt)},"args":[$init]}}"""
@@ -1864,6 +1871,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val dvar = ldp.delegate
 			val dlocal = """{"k":"local","name":${str(dvar.name.asString())}}"""
 			val elem = birType(ldp.getter.returnType)
+			// A `ClrRef<T>` delegate (byref local): getValue/setValue inline to ldobj/stobj through the managed pointer.
+			if (birType(dvar.type).startsWith("byref:"))
+				return if (callee === ldp.setter)
+					"""{"k":"byrefStore","local":${str(dvar.name.asString())},"elem":${str(elem)},"value":${expr(regularArgs(call).first())}}"""
+				else """{"k":"byrefLoad","local":${str(dvar.name.asString())},"elem":${str(elem)}}"""
 			if (dvar.type.classFqName?.asString() == "kotlin.Lazy" && callee === ldp.getter)
 				return """{"k":"clrPropGet","type":${str("clrg:System.Lazy[$elem]")},"name":"Value","retType":${str(elem)},"static":false,"recv":$dlocal}"""
 			val delegateClass = dvar.type.classifierOrNull?.owner as? IrClass
@@ -2879,6 +2891,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		(t.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.let { tp ->
 			return "gp:" + tp.owner.name.asString()
 		}
+		// The intrinsic `ClrRef<T>` -> `byref:T` (a managed reference; a ref-cell delegate local is a `ref T` local).
+		if (t.classFqName?.asString() == "ClrRef")
+			return "byref:" + ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) }.orEmpty()
 		// Nullable value type `Int?` -> System.Nullable<int> (reference nullables stay as the ref type).
 		nullableElem(t)?.let { return "nullable:$it" }
 		if (isArrayType(t)) return "array:" + arrayElemType(t)

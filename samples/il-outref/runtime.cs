@@ -1,6 +1,6 @@
 namespace P
 {
-    // out/ref parameters and a ref-returning method, exercised from Kotlin via byref / value-copy.
+    // out/ref parameters and a ref-returning method, exercised from Kotlin via byref / value-copy / live-ref.
     public class Calc
     {
         public bool TryDivide(int a, int b, out int quotient)
