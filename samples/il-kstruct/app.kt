@@ -4,16 +4,15 @@ import clr.Api
 import clr.Co
 import clr.DeferredI
 import clr.Task
-import clr.KCont
 import clr.Bridge.onComplete
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
-@KCont suspend fun DeferredI.await(): Int = suspendCoroutineUninterceptedOrReturn { c ->
+suspend fun DeferredI.await(): Int = suspendCoroutineUninterceptedOrReturn { c ->
     onComplete(this.task, c)
     COROUTINE_SUSPENDED
 }
-@KCont suspend fun Task<Int>.awaitI(): Int = suspendCoroutineUninterceptedOrReturn { c ->
+suspend fun Task<Int>.awaitI(): Int = suspendCoroutineUninterceptedOrReturn { c ->
     onComplete(this, c)
     COROUTINE_SUSPENDED
 }

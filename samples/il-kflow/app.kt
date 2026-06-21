@@ -5,17 +5,16 @@ import clr.FlowColI
 import clr.FlowI
 import clr.Flows
 import clr.Co
-import clr.KCont
 import clr.Bridge.onComplete
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
-@KCont suspend fun FlowColI.emit(value: Int): Int = suspendCoroutineUninterceptedOrReturn { c ->
+suspend fun FlowColI.emit(value: Int): Int = suspendCoroutineUninterceptedOrReturn { c ->
     onComplete(this.emitRaw(value), c)
     COROUTINE_SUSPENDED
 }
 
-@KCont suspend fun FlowI.collect(action: suspend (Int) -> Int): Int = suspendCoroutineUninterceptedOrReturn { c ->
+suspend fun FlowI.collect(action: suspend (Int) -> Int): Int = suspendCoroutineUninterceptedOrReturn { c ->
     onComplete(Flows.collectRaw(this, action), c)
     COROUTINE_SUSPENDED
 }

@@ -4,14 +4,13 @@
 import clr.Api2
 import clr.Task
 import clr.Coro
-import clr.KCont
 import clr.CoBridge.onComplete
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 // A real suspension built from the intrinsic: pass `c` to onComplete (which resumes it when the Task finishes),
 // then return COROUTINE_SUSPENDED to actually suspend.
-@KCont suspend fun awaitInt(task: Task<Int>): Int {
+suspend fun awaitInt(task: Task<Int>): Int {
     return suspendCoroutineUninterceptedOrReturn { c ->
         onComplete(task, c)
         COROUTINE_SUSPENDED
@@ -19,12 +18,12 @@ import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 }
 
 // A synchronously-completing intrinsic leaf (returns a value, never suspends) — proves the value-or-suspend branch.
-@KCont suspend fun immediate(): Int {
+suspend fun immediate(): Int {
     return suspendCoroutineUninterceptedOrReturn { c -> 42 }
 }
 
 // Compose: a suspend fun that suspends twice via the intrinsic-based awaitInt, plus a sync leaf.
-@KCont suspend fun chainViaIntrinsic(): Int {
+suspend fun chainViaIntrinsic(): Int {
     val a = awaitInt(Api2.step(10))
     val b = awaitInt(Api2.step(20))
     val c = immediate()

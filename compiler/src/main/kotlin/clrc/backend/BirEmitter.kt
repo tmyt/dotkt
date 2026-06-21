@@ -750,9 +750,30 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return CoroutineBody(resultType, cpsFields, steps.joinToString(","))
 	}
 
-	/** Opt-in to the Continuation-class coroutine form (Path B) via `@KCont`; default stays the struct/Task form. */
+	/**
+	 * Select the Continuation-class coroutine form (Path B) when: `@KCont` (explicit), the fun is generic (needs a
+	 * generic SM type), or its body directly uses the raw intrinsic `suspendCoroutineUninterceptedOrReturn` (a leaf
+	 * that hands out its own continuation — the struct/Task form can't). Ordinary suspend funs stay the struct/Task
+	 * form (and just await the leaves' Tasks), keeping that path's IsCompleted fast-path. See docs §13e A1.
+	 */
 	private fun isCoClass(fn: IrSimpleFunction): Boolean =
-		fn.annotations.any { it.type.classFqName?.shortName()?.asString() == "KCont" }
+		fn.annotations.any { it.type.classFqName?.shortName()?.asString() == "KCont" } ||
+			fn.typeParameters.isNotEmpty() ||
+			(fn.body?.let { bodyUsesSuspendIntrinsic(it) } == true)
+
+	/** True if `e` directly calls `suspendCoroutineUninterceptedOrReturn` (not inside a nested lambda/local fun). */
+	private fun bodyUsesSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement): Boolean {
+		var found = false
+		e.acceptVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
+				if (found) return
+				if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
+				if (element is IrCall && isSuspendIntrinsic(element)) { found = true; return }
+				element.acceptChildrenVoid(this)
+			}
+		})
+		return found
+	}
 
 	private fun suspendMethod(fn: IrSimpleFunction, static: Boolean): String {
 		// An extension `suspend fun T.f()` -> a static kickoff whose first param `__self` is the receiver, captured
@@ -765,9 +786,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val ps = (listOfNotNull(selfJson) + paramsJsonList(fn.parameters)).joinToString(",")
 		val cps = (listOfNotNull(selfJson) + listOf(co.cpsFields).filter { it.isNotEmpty() }).joinToString(",")
 		val vis = visOf(fn)
-		// Generic suspend funs (`suspend fun <T>`) always use the Continuation-class form: its state machine is a
-		// generic type over the method's type params (the struct/Task form has no generic-SM path). See docs §13f.
-		val coClass = if (isCoClass(fn) || fn.typeParameters.isNotEmpty()) ""","coClass":true""" else ""
+		val coClass = if (isCoClass(fn)) ""","coClass":true""" else ""
 		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(fn.typeParameters)},"suspend":true,"resultType":${str(co.resultType)}$coClass,"cpsFields":[$cps],"params":[$ps],"steps":[${co.steps}]}"""
 	}
 
