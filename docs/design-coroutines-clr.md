@@ -268,6 +268,34 @@ Proof: `samples/il-expect` (expect/actual + AtomicInt + AtomicRef), ilverify-cle
 for perf only if needed. The real `kotlinx-atomicfu` jar isn't on the test classpath; a facade with matching
 fqNames stands in (the backend maps identically for the real jar).
 
+## 13e. Phase 4+ status (2026-06-22) — the wall to literal-upstream compilation
+
+**Foundation (Phases 0–3) is DONE and verified.** Phases 4–6 = compiling the LITERAL upstream
+`kotlinx-coroutines-core` sources, which is a large multi-step effort beyond the foundation. Concrete blockers
+identified (in priority order), each a bounded compiler feature:
+
+1. **Generic suspend functions / generic state machines** (DEMONSTRATED blocker). `@KCont suspend fun <T>` fails
+   in `ilemit` (`unresolved generic type parameter T` — the kickoff `Task<T>` signature, then the SM type, must
+   carry the method's generic params). Upstream is pervasively generic (`suspendCancellableCoroutine<T>`,
+   `Deferred<T>.await()`, `withContext<T>`, `Flow<T>`), so this is the #1 prerequisite. Needs: define generic
+   params on the kickoff; make the SM a generic type over them; thread through Continuation<object> boundary.
+2. **Default Continuation form** — upstream code isn't `@KCont`-annotated. Once linked with the runtime, ALL
+   suspend funs need the class form by default (the struct/Task form can't hand out a `Continuation`). Flip the
+   default (or auto-select when a fun uses the raw intrinsics / is library code).
+3. **`kotlin.Result` mapping** → `DotKt.Coroutines.Result` (upstream calls `resumeWith(Result)` directly, not
+   only the `resume`/`resumeWithException` extensions already mapped).
+4. **`startCoroutine` / `createCoroutineUnintercepted` / `intercepted`** + `CoroutineContext` element/key/
+   `ContinuationInterceptor` — needed for `launch`/`async`/dispatchers.
+5. **CLR actual source set** for the library: `CoroutineDispatcher` actuals (Default/IO→ThreadPool, Main→
+   SynchronizationContext), the `runBlocking` event loop, `delay` time source, `CancellableContinuation`.
+6. **Breadth**: full kotlin-stdlib call coverage across the real sources; `JobSupport` (atomicfu-heavy + intricate
+   state machine); `Channel`→`System.Threading.Channels`; `Flow`→`IAsyncEnumerable`; `select`. This is the bulk.
+
+**Single-shot SEQUENTIAL semantics already work** on the foundation (`samples/il-kintrin`: intrinsic suspension +
+composition `chainViaIntrinsic=72`). CONCURRENT structured concurrency (launch/async/cancellation) needs items
+2–5; literal upstream needs all of 1–6. Recommended next increment: **(1) generic suspend-fun state machines**,
+then **(4)+(5)** a minimal dispatcher/scope, then attempt a hand-picked upstream slice.
+
 ## 13. The single concrete next step
 
 Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{…}`, `flow{…}`, `runBlocking{ multi
