@@ -201,11 +201,19 @@ static class FacadeGen
                 var iseen = new HashSet<string>();
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
                 {
-                    if (m.IsSpecialName || m.IsGenericMethod) continue;
+                    if (m.IsSpecialName) continue;
+                    // A GENERIC interface method (`U Convert<U>(object)`) is emitted with its own method type-parameter
+                    // tokens, same as the class path: the frontend declares the type params and resolves the
+                    // return/params against them, and fir2ir fake-overrides it onto an implementing class.
+                    if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
+                    var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                     var ps = m.GetParameters();
                     if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
-                    if (!iseen.Add(m.Name + "(" + Sig(ps, t) + ")")) continue;
-                    sb.Append($"fun {m.Name} {MapRet(m.ReturnType, t)} abstract {MetaParams(ps, t)}".TrimEnd() + "\n");
+                    if (!iseen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
+                    var toks = new List<string> { "fun", m.Name, MapRet(m.ReturnType, t), "abstract" };
+                    toks.AddRange(gp);
+                    toks.AddRange(ps.Select((p, i) => $"{MetaParamName(p, i)}:{Map(p.ParameterType, t)}"));
+                    sb.Append(string.Join(" ", toks) + "\n");
                 }
                 // Interface properties (Count, IsReadOnly, ...) + indexer (`this[i]`) -> abstract members so member
                 // access resolves on an interface-typed receiver.
@@ -542,27 +550,16 @@ static class FacadeGen
         return supers;
     }
 
-    // Whether class `c` can SAFELY declare it implements interface `i`. We check `i` + its GENERIC base interfaces
-    // only — exactly the chain the injector emits (InterfaceSuperTypes links generic interfaces only); the NON-generic
-    // shadows (`IEnumerable<T> : IEnumerable`) aren't in the injected scope, so their covariantly-implemented members
-    // (`IEnumerable.GetEnumerator(): IEnumerator`, `IList.Add(object)`) must NOT be required. Each EMITTABLE member of
-    // that chain must be concretely provided by a PUBLIC member of `c` with the same name, params and EXACT return:
-    // - a non-emittable member (`GetEnumerator(): IEnumerator<T>`, filtered) isn't in scope -> skipped;
-    // - an EXPLICIT (non-public) impl (`Collection<T>.IsReadOnly`) is missing -> the interface is rejected, so a user
-    //   subclass never inherits an unimplemented abstract member.
     // Whether class `c` can declare it implements interface `i`. `c : I` in .NET GUARANTEES `c` implements every
-    // member of I (public or explicit), and EmitExplicitInterfaceStubs emits the non-public ones, so the only thing
-    // we can't represent is a GENERIC interface method (no way to thread its own type parameters through fir2ir's
-    // fake-override builder). Check `i` + its GENERIC base interfaces only (the chain the injector actually emits).
+    // member of I (public or explicit): EmitExplicitInterfaceStubs emits the non-public ones, and fir2ir fake-overrides
+    // the rest — INCLUDING generic interface methods (`U Convert<U>(object)`), which the frontend declares with their
+    // own method type parameters. So the only failure is `i` not being reflectable; we walk the generic chain (exactly
+    // what the injector emits) to surface a reflection error early and reject just that interface.
     static bool ClassSatisfies(Type c, Type i)
     {
         var chain = new List<Type> { i };
         try { chain.AddRange(i.GetInterfaces().Where(x => x.IsGenericType)); } catch { return false; }
-        foreach (var iface in chain)
-        {
-            MethodInfo[] ims; try { ims = iface.GetMethods(); } catch { return false; }
-            if (ims.Any(im => !im.IsStatic && im.IsGenericMethod)) return false;
-        }
+        foreach (var iface in chain) { try { iface.GetMethods(); } catch { return false; } }
         return true;
     }
 
