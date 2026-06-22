@@ -158,6 +158,16 @@ private object ClrMetadataHolder {
 		module?.types?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
 	}
 	val classIdByName: Map<String, ClassId> by lazy { byClassId.entries.associate { (id, t) -> t.kotlinName to id } }
+	// Generic and non-generic types share a simple name (`IEnumerable<T>` vs `IEnumerable`) — resolve by (name, arity)
+	// so `generic:IEnumerable:Item` picks the generic one and a bare `IEnumerable` picks the non-generic one.
+	private val byNameArity: Map<Pair<String, Int>, ClassId> by lazy {
+		byClassId.entries.associate { (id, t) -> (t.kotlinName to t.typeParams.size) to id }
+	}
+	// STRICT on arity: a generic supertype/type must resolve to a type with the MATCHING number of type parameters.
+	// Falling back to a different-arity type (e.g. resolving `generic:IEnumerable:Item` to non-generic IEnumerable)
+	// builds a generic type with the wrong number of arguments and crashes the fir2ir fake-override builder
+	// ("typeParameters size != typeArguments size"). Only arity 0 falls back to the simple-name map (always non-generic).
+	fun classIdFor(name: String, arity: Int): ClassId? = byNameArity[name to arity] ?: if (arity == 0) classIdByName[name] else null
 }
 
 /**
@@ -225,8 +235,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// `Add` surface — item 3). A spec is either a simple name or `generic:Open:arg,arg` (args are the owner's
 			// type params, resolved against `tps` below). Deferred provider form -> lazy cross-generation.
 			for (spec in type.superTypes) {
-				val openName = if (spec.startsWith("generic:")) spec.removePrefix("generic:").substringBefore(':') else spec
-				val scid = classIdByName[openName] ?: continue
+				val (openName, arity) = if (spec.startsWith("generic:")) {
+					val rest = spec.removePrefix("generic:")
+					rest.substringBefore(':') to rest.substringAfter(':', "").let { if (it.isEmpty()) 0 else it.split(',').size }
+				} else spec to 0
+				val scid = ClrMetadataHolder.classIdFor(openName, arity) ?: continue
 				superType { tps -> superTypeCone(spec, scid, tps) }
 			}
 		}.symbol
@@ -409,7 +422,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			"Int" -> bt.intType.coneType; "Long" -> bt.longType.coneType; "Double" -> bt.doubleType.coneType
 			"Float" -> bt.floatType.coneType; "Short" -> bt.shortType.coneType; "Byte" -> bt.byteType.coneType
 			"Boolean" -> bt.booleanType.coneType; "Char" -> bt.charType.coneType; "String" -> bt.stringType.coneType
-			else -> classIdByName[name]?.let { session.symbolProvider.getClassLikeSymbolByClassId(it)?.constructType(emptyArray(), false) } ?: bt.nullableAnyType.coneType
+			else -> ClrMetadataHolder.classIdFor(name, 0)?.let { session.symbolProvider.getClassLikeSymbolByClassId(it)?.constructType(emptyArray(), false) } ?: bt.nullableAnyType.coneType
 		}
 	}
 
@@ -464,9 +477,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		if (typeName.startsWith("generic:")) {
 			val rest = typeName.removePrefix("generic:")
 			val open = rest.substringBefore(':'); val argStr = rest.substringAfter(':', "")
-			val cid = classIdByName[open] ?: return session.builtinTypes.nullableAnyType.coneType
+			val argNames = if (argStr.isEmpty()) emptyList() else argStr.split(',')
+			val cid = ClrMetadataHolder.classIdFor(open, argNames.size) ?: return session.builtinTypes.nullableAnyType.coneType
 			val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return session.builtinTypes.nullableAnyType.coneType
-			val args = if (argStr.isEmpty()) emptyList() else argStr.split(',').map { coneOf(it, owner) }
+			val args = argNames.map { coneOf(it, owner) }
 			@Suppress("UNCHECKED_CAST")
 			return sym.constructType(args.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, false)
 		}
@@ -496,7 +510,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			"String" -> bt.stringType.coneType
 			"Unit" -> bt.unitType.coneType
 			else -> {
-				val cid = classIdByName[typeName]
+				val cid = ClrMetadataHolder.classIdFor(typeName, 0)   // a bare cross-type name is non-generic (arity 0)
 				val sym = when {
 					cid == null -> null
 					cid == owner.classId -> owner
