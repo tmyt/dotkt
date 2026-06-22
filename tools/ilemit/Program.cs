@@ -3168,6 +3168,17 @@ sealed class Emitter
     {
         // A by-ref parameter (`out`/`ref`, from a `__clrout`/`__clrref` marker) -> pass the lvalue's address.
         if (want.IsByRef) { EmitAddr(a); return; }
+        // (4) A LAMBDA passed to a .NET DELEGATE parameter -> build that SPECIFIC delegate (the FIR types the param
+        // as a Kotlin function type; the real delegate is `want`, resolved here from the target method's signature).
+        // Mirrors the event path; covers custom delegates (ApplicationInitializationCallback, ThreadStart) and BCL
+        // Func/Action alike. Scoped to literal lambdas (delegateNew/closureNew) so stored delegate/Func values keep
+        // their existing pass-through path.
+        if (typeof(System.Delegate).IsAssignableFrom(want) && want != typeof(System.Delegate) && want != typeof(System.MulticastDelegate)
+            && a.TryGetProperty("k", out var dk) && (dk.GetString() == "delegateNew" || dk.GetString() == "closureNew"))
+        {
+            EmitHandlerAsDelegate(a, want);
+            return;
+        }
         // `T`/null passed to a `T?` slot -> Nullable<T> wrap / default(Nullable<T>) (shared with EmitCond).
         var got = EmitNullableCoerced(a, want);
         if (got == null) return;

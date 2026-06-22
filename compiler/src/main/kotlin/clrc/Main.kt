@@ -14,6 +14,13 @@ import org.jetbrains.kotlin.util.PerformanceManagerImpl
  * reused frontend resolves against a real stdlib jar without any custom argument plumbing.
  */
 fun main(args: Array<String>) {
+	// `--scan-imports --output <file> <src.kt>...` — a pre-compile subcommand that extracts the .NET-injectable
+	// imports with the real Kotlin PSI parser (the metadata pre-step facadegen consumes). Reuses this same jar/
+	// launcher so no extra distribution is needed; returns before the normal compile path.
+	if (args.firstOrNull() == "--scan-imports") {
+		clrc.tools.ImportScan.run(args)
+		return
+	}
 	val arguments = parseCommandLineArguments<K2JVMCompilerArguments>(args.toList())
 	// Enable expect/actual matching so a library's commonMain + a CLR `actual` source set compile together as one
 	// flat module (the pragmatic minimum for building kotlinx libraries — no HMPP/klib). Harmless for single-

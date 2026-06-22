@@ -13,6 +13,8 @@
     <!-- S5: façade-FREE .NET types listed via <KotlinClrType Include="System.X"/> are injected straight
          into FIR (no .kt). The metadata file is handed to the compiler via the CLR_TYPES_METADATA env. -->
     <KotlinClrTypeMeta>$(BaseIntermediateOutputPath)clrtypes.meta</KotlinClrTypeMeta>
+    <!-- The .NET import list extracted from the .kt sources by `clrc --scan-imports` (PSI parser, not regex). -->
+    <KotlinClrImportList>$(BaseIntermediateOutputPath)clrimports.txt</KotlinClrImportList>
     <!-- Backend: "il" (default: kt->BIR->ilemit, emit CIL directly — no C#) or "cs" (kt->C#->csc, the
          retired dev/oracle path). E-5: the shipping default is now IL; C# is opt-in. -->
     <KotlinClrBackend Condition="'$(KotlinClrBackend)' == ''">il</KotlinClrBackend>
@@ -58,12 +60,17 @@
        Runs whenever there are sources. DependsOnTargets=ResolveReferences populates @(ReferencePath) (BCL plus
        PackageReference/ProjectReference/Reference) so any referenced assembly's types become injectable. -->
   <Target Name="KotlinClrInjectTypes" BeforeTargets="KotlinClrCompile"
-          DependsOnTargets="ResolveReferences" Condition="'@(KotlinCompile)' != ''">
+          DependsOnTargets="ResolveReferences;EnsureKotlinClrCompiler" Condition="'@(KotlinCompile)' != ''">
     <Exec Condition="!Exists('$(KotlinClrFacadeGen)')"
           Command="dotnet build &quot;$(KotlinClrRoot)/tools/facadegen&quot; -c Release -o &quot;$(KotlinClrRoot)/build/facadegen-bin&quot; -v q --nologo" />
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(KotlinClrTypeMeta)'))" />
-    <Message Importance="high" Text="kotlin/clr: resolving .NET imports (scan @(KotlinCompile) + @(DotKtImport))" />
-    <Exec Command="dotnet &quot;$(KotlinClrFacadeGen)&quot; --meta &quot;$(KotlinClrTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --scan @(KotlinCompile->'%(FullPath)', ' ')" />
+    <!-- 1. Extract the .NET imports with the real Kotlin parser (PSI), not a regex — handles aliases, `.*`,
+            multi-line, comments and backtick identifiers (interop feedback item 5). -->
+    <Message Importance="high" Text="kotlin/clr: scanning .NET imports from @(KotlinCompile->Count()) .kt file(s) (PSI parser)" />
+    <Exec Command="&quot;$(KotlinClrLauncher)&quot; --scan-imports --output &quot;$(KotlinClrImportList)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ')" />
+    <!-- 2. Reflect over the imported (+ explicit <DotKtImport>) types -> FIR-injection metadata. -->
+    <Message Importance="high" Text="kotlin/clr: resolving .NET types (import list + @(DotKtImport))" />
+    <Exec Command="dotnet &quot;$(KotlinClrFacadeGen)&quot; --meta &quot;$(KotlinClrTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(KotlinClrImportList)&quot;" />
   </Target>
 
   <!-- Compile all .kt to .cs, then hand the generated C# to CoreCompile. CLR_TYPES_METADATA tells the

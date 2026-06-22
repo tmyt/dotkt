@@ -62,7 +62,9 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
 		refdll="$(build_runtime "$src" "$rasm")"; echo "$refdll" > "$ROOT/build/refdll-$name"
 		RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
-		dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';');$refdll" --scan "$src"/*.kt >/dev/null 2>&1
+		implist="$ROOT/build/$name.imports"
+		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1
+		dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';');$refdll" --import-list "$implist" >/dev/null 2>&1
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
@@ -220,6 +222,9 @@ il_check_ref coro Coro "$ROOT/samples/il-coro" "$(printf 'tryOk = 11\ntryCatch =
 il_check_ref colam Colam "$ROOT/samples/il-colam" "$(printf '30\n6\n105\n18')" KfcLam
 il_check_ref c1net C1Net "$ROOT/samples/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
 il_check_inject firgap FirGap "$ROOT/samples/il-firgap" "$(printf '42\n60\n3\n20')" P
+il_check_inject inherit Inherit "$ROOT/samples/il-inherit" "$(printf 'run:derived\nshow:button\nbutton')" PInh
+il_check_inject geninj GenInj "$ROOT/samples/il-geninj" "$(printf '2\na')" PGI
+il_check_inject cbk Cbk "$ROOT/samples/il-cbk" "$(printf '=v42\nran')" PCbk
 il_check_inject outref Outref "$ROOT/samples/il-outref" "$(printf 'ok=5\nfail\n2 1\n20\n20\n109')" OutR
 il_check_inject netattr NetAttr "$ROOT/samples/il-netattr" "$(printf 'widget#7\n42')" Lbl
 il_check_inject stackalloc Sa "$ROOT/samples/il-stackalloc" "$(printf '16\n30\n-1\n10\n21')" SpanRt

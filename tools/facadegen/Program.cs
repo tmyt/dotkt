@@ -28,13 +28,14 @@ static class FacadeGen
                 LoadRefs(rest[1].Split(';', StringSplitOptions.RemoveEmptyEntries));
                 rest = rest.Skip(2).ToList();
             }
-            // C-2: explicit type names, then optionally `--scan <ktfile>...` which extracts `import Ns.Type` lines
-            // from the Kotlin sources. Merge both. EmitMeta silently skips non-.NET imports (kotlin.*, own
-            // packages), so a bare `import System.Text.StringBuilder` resolves — no manual <DotKtImport> needed.
-            var scanAt = rest.IndexOf("--scan");
-            var explicitTypes = scanAt < 0 ? rest : rest.Take(scanAt).ToList();
-            var scanned = scanAt < 0 ? Enumerable.Empty<string>() : ScanImports(rest.Skip(scanAt + 1));
-            return EmitMeta(args[1], explicitTypes.Concat(scanned).Distinct());
+            // C-2: explicit type names, then optionally `--import-list <file>` — the type list produced by the
+            // compiler's `clrc --scan-imports` PSI pass (a real parser, not a regex: handles aliases, `.*`,
+            // multi-line, comments, backtick identifiers — interop feedback item 5). Merge both; EmitMeta warns
+            // on any .NET-looking name that resolves to nothing (no silent drop).
+            var listAt = rest.IndexOf("--import-list");
+            var explicitTypes = listAt < 0 ? rest : rest.Take(listAt).ToList();
+            var imported = listAt < 0 || listAt + 1 >= rest.Count ? Enumerable.Empty<string>() : ReadImportList(rest[listAt + 1]);
+            return EmitMeta(args[1], explicitTypes.Concat(imported).Distinct());
         }
         var clrDir = Path.Combine(args[0], "clr");
         Directory.CreateDirectory(clrDir);
@@ -95,23 +96,39 @@ static class FacadeGen
     // Kotlin member names = .NET names verbatim (no per-member mapping needed in the backend).
     // A static .NET class (abstract+sealed, e.g. System.Math) -> Kotlin `object` (static call site);
     // an instance class -> Kotlin `class` with constructors + instance methods.
-    // C-2: extract explicit `.NET` imports from Kotlin sources. Matches `import A.B.C` (dotted, >=2 segments);
-    // excludes wildcard (`.*`), aliased (`as`), and Kotlin/own-façade imports — those aren't injectable .NET types.
-    static IEnumerable<string> ScanImports(IEnumerable<string> ktFiles)
+    // C-2: read the .NET import list produced by `clrc --scan-imports` (the compiler's PSI-based pre-pass — see
+    // ImportScan.kt). Each line is a fully-qualified type name, or `Namespace.*` for a wildcard import, expanded
+    // here to every public type directly in that namespace across the loaded reference assemblies.
+    static IEnumerable<string> ReadImportList(string file)
     {
-        // `import A.B.C` (dotted, >=2 segments), allowing a trailing line comment (`// …`) and trailing whitespace.
-        var re = new System.Text.RegularExpressions.Regex(@"^\s*import\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)\s*(?://.*)?$");
-        var seen = new HashSet<string>();
-        foreach (var f in ktFiles)
+        if (!File.Exists(file)) yield break;
+        foreach (var raw in File.ReadLines(file))
         {
-            if (!File.Exists(f)) continue;
-            foreach (var line in File.ReadLines(f))
+            var line = raw.Trim();
+            if (line.Length == 0) continue;
+            if (line.EndsWith(".*"))
+                foreach (var tn in TypesInNamespace(line.Substring(0, line.Length - 2))) yield return tn;
+            else
+                yield return line;
+        }
+    }
+
+    // Every public, non-nested type directly in `ns` (no sub-namespaces), across loaded reference assemblies.
+    // Generic definitions are yielded without their arity suffix (`...List`, not `...List`1`) so Resolve's
+    // arity probing picks them up consistently with explicitly-imported names.
+    static IEnumerable<string> TypesInNamespace(string ns)
+    {
+        var asms = Mlc != null ? Mlc.GetAssemblies() : Enumerable.Empty<Assembly>();
+        var seen = new HashSet<string>();
+        foreach (var asm in asms)
+        {
+            Type[] types;
+            try { types = asm.GetTypes(); } catch { continue; }
+            foreach (var t in types)
             {
-                var m = re.Match(line);
-                if (!m.Success) continue;
-                var imp = m.Groups[1].Value;
-                if (imp.StartsWith("kotlin") || imp.StartsWith("clr.") || imp.StartsWith("java.")) continue;
-                if (seen.Add(imp)) yield return imp;
+                if (t.Namespace != ns || !t.IsPublic || t.IsNested || t.FullName == null) continue;
+                var name = t.FullName.Contains('`') ? t.FullName.Substring(0, t.FullName.IndexOf('`')) : t.FullName;
+                if (seen.Add(name)) yield return name;
             }
         }
     }
@@ -120,12 +137,43 @@ static class FacadeGen
     {
         MetaMode = true;   // enable array/cross-type member support for the FIR-injection path
         var sb = new StringBuilder();
-        // types resolve at their real .NET namespace; no synthetic package header
+        // (6) Reachable-closure auto-injection: the imported types are SEEDS; we BFS out to every type their API
+        // surface references (base class chain, implemented interfaces, member return/param/element/generic-arg
+        // types) and inject the whole reachable closure. This is what makes chained access (`panel.Children.Add`)
+        // and cross-type assignability work without the user importing every intermediate type — see
+        // docs/dotkt-interop-feedback.md (6). Bounded by resolvability + a hard cap (runaway backstop).
+        const int CAP = 5000;
+        var queue = new Queue<Type>();
+        var enqueued = new HashSet<string>();   // by FullName — guards the queue
+        var done = new HashSet<string>();        // by FullName — already emitted
+        void Enqueue(Type ty) { var fn = ty?.FullName; if (fn != null && enqueued.Add(fn)) queue.Enqueue(ty); }
+        var seeds = 0;
         foreach (var typeName in typeNames)
         {
             // Resolve a plain type, or a generic type definition (Collection -> Collection`1, etc.).
-            var t = Resolve(typeName) ?? Resolve(typeName + "`1") ?? Resolve(typeName + "`2") ?? Resolve(typeName + "`3");
-            if (t == null) { Console.Error.WriteLine($"type not found: {typeName}"); continue; }
+            var seed = Resolve(typeName) ?? Resolve(typeName + "`1") ?? Resolve(typeName + "`2") ?? Resolve(typeName + "`3");
+            if (seed == null) { Console.Error.WriteLine($"warning: .NET import resolved to no type (injected nothing): {typeName}"); continue; }
+            seeds++; Enqueue(seed);
+        }
+        while (queue.Count > 0)
+        {
+            var t = queue.Dequeue();
+            if (!done.Add(t.FullName!)) continue;
+            EmitOneType(t, sb);
+            if (done.Count >= CAP) { Console.Error.WriteLine($"warning: injection closure hit cap {CAP}; truncating reachable set"); break; }
+            foreach (var r in ReferencedTypes(t))
+                foreach (var u in Unwrap(r))
+                    if (ShouldInject(u)) Enqueue(u);
+        }
+        Console.WriteLine($"closure: {seeds} seed(s) -> {done.Count} injected type(s)");
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
+        File.WriteAllText(outFile, sb.ToString());
+        return 0;
+    }
+
+    // Emit one type's FIR-injection metadata (enum/interface/annotation/object/class + members).
+    static void EmitOneType(Type t, StringBuilder sb)
+    {
             // A .NET enum -> an object whose members are `val` properties typed as the enum itself
             // (avoids FIR enum-entry synthesis; `DayOfWeek.Friday` still maps to the real enum value).
             if (t.IsEnum)
@@ -133,12 +181,17 @@ static class FacadeGen
                 sb.Append($"object {t.Name} {t.FullName}\n");
                 foreach (var nm in Enum.GetNames(t)) sb.Append($"prop {nm} {t.Name} ro final\n");
                 Console.WriteLine($"meta: {t.FullName} (enum)");
-                continue;
+                return;
             }
-            // A .NET interface -> Kotlin can IMPLEMENT it (methods become abstract members).
+            // A .NET interface -> Kotlin can IMPLEMENT it (methods become abstract members). Generic interfaces
+            // (`IList`1`) -> simple name + OPEN .NET name + type-parameter tokens, mirroring the class path, so
+            // `generic:IList:Foo` resolves to a real `interface IList<T>` (P1-2). `interface <Name> <DotNet> [<TP>...]`.
             if (t.IsInterface)
             {
-                sb.Append($"interface {t.Name} {t.FullName}\n");
+                var iname = SimpleName(t);
+                var idot = t.IsGenericTypeDefinition ? (t.Namespace + "." + iname) : t.FullName;
+                var itp = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
+                sb.Append($"interface {iname} {idot}{itp}\n");
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (m.IsSpecialName || m.IsGenericMethod) continue;
@@ -147,7 +200,7 @@ static class FacadeGen
                     sb.Append($"fun {m.Name} {MapRet(m.ReturnType, t)} abstract {MetaParams(ps, t)}".TrimEnd() + "\n");
                 }
                 Console.WriteLine($"meta: {t.FullName} (interface)");
-                continue;
+                return;
             }
             // A .NET attribute type (System.Attribute-derived) -> a Kotlin annotation class, so the author can apply
             // `@TheAttr(args)` on Kotlin declarations and the backend re-applies the real .NET attribute (#54). The
@@ -160,7 +213,7 @@ static class FacadeGen
                 var aps = actor?.GetParameters() ?? Array.Empty<ParameterInfo>();
                 sb.Append($"annotation {t.Name} {t.FullName} {MetaParams(aps, t)}".TrimEnd() + "\n");
                 Console.WriteLine($"meta: {t.FullName} (annotation)");
-                continue;
+                return;
             }
             var isStatic = t.IsAbstract && t.IsSealed;
             // A generic type definition (`Collection`1`) -> simple name `Collection`, OPEN .NET name (namespace +
@@ -171,27 +224,44 @@ static class FacadeGen
             // `class <Name> <DotNetName> <open|sealed> [<TypeParam>...]` carries inheritability + generic arity.
             sb.Append(isStatic ? $"object {simpleName} {dotNet}\n"
                                : $"class {simpleName} {dotNet} {(t.IsSealed ? "sealed" : "open")}{tparams}\n");
-            var seen = new HashSet<string>();
+            // (1)(2) Supertypes: emit the injectable base class + interfaces so subtype assignability and inherited-
+            // member access hold. Members declared in the contiguous injectable base chain ("covered") arrive via
+            // those supertypes, so we skip re-declaring them (avoids fake-override clashes). `IM` includes protected.
+            var covered = isStatic ? new HashSet<string>() : CoveredAncestors(t);
+            const BindingFlags IM = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
             if (!isStatic)
             {
-                foreach (var c in t.GetConstructors(BindingFlags.Public | BindingFlags.Instance))
+                var supers = SuperTypes(t);
+                if (supers.Count > 0) sb.Append("super " + string.Join(" ", supers) + "\n");
+            }
+            var seen = new HashSet<string>();
+            bool Covered(MemberInfo m) => m.DeclaringType?.FullName != null && covered.Contains(m.DeclaringType.FullName);
+            if (!isStatic)
+            {
+                // Constructors: include protected ones so a Kotlin subclass can chain to a `protected` base ctor.
+                foreach (var c in t.GetConstructors(IM))
                 {
+                    if (Vis(c) == null) continue;
                     var ps = c.GetParameters();
                     if (!ps.All(p => Supported(p.ParameterType))) continue;
                     if (!seen.Add("ctor(" + Sig(ps, t) + ")")) continue;
                     sb.Append($"ctor {MetaParams(ps, t)}".TrimEnd() + "\n");
                 }
-                // Instance properties (non-indexer). `prop <Name> <KType> <ro|rw> <open|final>`.
-                foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                // Instance properties (non-indexer). `prop <Name> <KType> <ro|rw> <prot-?open|final|abstract>`.
+                foreach (var p in t.GetProperties(IM))
                 {
-                    if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType)) continue;
+                    if (Covered(p) || p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType)) continue;
+                    var prot = Vis(p.GetMethod); if (prot == null) continue;
                     if (!p.CanRead || !seen.Add("prop:" + p.Name)) continue;
-                    var virt = (p.GetMethod?.IsVirtual ?? false) && !(p.GetMethod?.IsFinal ?? false);
-                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} {(virt ? "open" : "final")}\n");
+                    var get = p.GetMethod;
+                    var isAbstract = get?.IsAbstract ?? false;
+                    var virt = (get?.IsVirtual ?? false) && !(get?.IsFinal ?? false);
+                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} {Modifier(prot.Value, isAbstract, virt)}\n");
                 }
                 // Events (I4). `event <Name> <handlerRetKType> <handlerParams...>` from the delegate's Invoke.
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
                 {
+                    if (Covered(ev)) continue;
                     var inv = ev.EventHandlerType?.GetMethod("Invoke");
                     if (inv == null || !seen.Add("event:" + ev.Name)) continue;
                     var ps = inv.GetParameters();
@@ -219,12 +289,14 @@ static class FacadeGen
                     sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} final\n");
                 }
             }
-            var flags = BindingFlags.Public | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
             foreach (var m in t.GetMethods(flags))
             {
                 if (m.IsSpecialName) continue;
                 if (OBJECT_MEMBERS.Contains(m.Name)) continue;
                 if (m.DeclaringType?.FullName == "System.Object") continue;
+                if (Covered(m)) continue;                 // arrives via an injected supertype
+                var prot = Vis(m); if (prot == null) continue;   // skip private/internal; keep public + protected
                 // A generic method (`SizeOf<T>()`) is now emitted: its method type params + any T-typed param/return
                 // map to the param names (Map returns the generic-parameter Name). Only simple shapes survive Supported.
                 if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
@@ -232,19 +304,15 @@ static class FacadeGen
                 var ps = m.GetParameters();
                 if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
                 if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-                // `fun <Name> <ret> <open|final> [<TypeParam>...] [<param>:<type>]*` — bare trailing tokens (no `:`)
-                // are method type parameters; tokens with `:` are value params.
+                // `fun <Name> <ret> <prot-?open|final|abstract> [<TypeParam>...] [<param>:<type>]*` — bare trailing
+                // tokens (no `:`) are method type parameters; tokens with `:` are value params.
                 var virt = m.IsVirtual && !m.IsFinal;
-                var toks = new List<string> { "fun", m.Name, MapRet(m.ReturnType, t), virt ? "open" : "final" };
+                var toks = new List<string> { "fun", m.Name, MapRet(m.ReturnType, t), Modifier(prot.Value, m.IsAbstract, virt) };
                 toks.AddRange(gp);
                 toks.AddRange(ps.Select((p, i) => $"{MetaParamName(p, i)}:{Map(p.ParameterType, t)}"));
                 sb.Append(string.Join(" ", toks) + "\n");
             }
             Console.WriteLine($"meta: {t.FullName} ({(isStatic ? "object" : "class")})");
-        }
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
-        File.WriteAllText(outFile, sb.ToString());
-        return 0;
     }
 
     // Walk the base chain by FullName (LoadFrom'd reference assemblies give System.Attribute a different identity
@@ -254,6 +322,127 @@ static class FacadeGen
         for (var b = t; b != null; b = b.BaseType) if (b.FullName == "System.Attribute") return true;
         return false;
     }
+
+    // A .NET delegate type (System.MulticastDelegate-derived) -> surfaced as a Kotlin function type (item 4).
+    static bool IsDelegate(Type t)
+    {
+        for (var b = t; b != null; b = b.BaseType) if (b.FullName == "System.MulticastDelegate") return true;
+        return false;
+    }
+
+    // (6) closure: the types `t`'s API surface references — base class, implemented interfaces, and the
+    // return/parameter/element types of its public members. Over-collects (ignores Supported) so the injected
+    // closure is a SUPERSET of what the emitted metadata cross-references; extra types are harmless. Mirrors the
+    // emission's `System.Object`-member skip — otherwise `GetType()` -> System.Type drags in the whole reflection
+    // graph and the closure explodes.
+    static IEnumerable<Type> ReferencedTypes(Type t)
+    {
+        if (t.BaseType != null) yield return t.BaseType;
+        Type[] ifaces; try { ifaces = t.GetInterfaces(); } catch { ifaces = Array.Empty<Type>(); }
+        foreach (var i in ifaces) yield return i;
+        const BindingFlags PUB = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static;
+        ConstructorInfo[] ctors; try { ctors = t.GetConstructors(BindingFlags.Public | BindingFlags.Instance); } catch { ctors = Array.Empty<ConstructorInfo>(); }
+        foreach (var c in ctors) foreach (var p in c.GetParameters()) yield return p.ParameterType;
+        PropertyInfo[] props; try { props = t.GetProperties(PUB); } catch { props = Array.Empty<PropertyInfo>(); }
+        foreach (var p in props) { yield return p.PropertyType; foreach (var ip in p.GetIndexParameters()) yield return ip.ParameterType; }
+        EventInfo[] evs; try { evs = t.GetEvents(PUB); } catch { evs = Array.Empty<EventInfo>(); }
+        foreach (var e in evs) { var inv = e.EventHandlerType?.GetMethod("Invoke"); if (inv != null) { yield return inv.ReturnType; foreach (var p in inv.GetParameters()) yield return p.ParameterType; } }
+        MethodInfo[] ms; try { ms = t.GetMethods(PUB); } catch { ms = Array.Empty<MethodInfo>(); }
+        foreach (var m in ms)
+        {
+            if (m.IsSpecialName || OBJECT_MEMBERS.Contains(m.Name) || m.DeclaringType?.FullName == "System.Object") continue;
+            yield return m.ReturnType;
+            foreach (var p in m.GetParameters()) yield return p.ParameterType;
+        }
+    }
+
+    // Strip byref/array/pointer wrappers; for a constructed generic, yield its open definition AND each type
+    // argument (recursively). A bare type yields itself.
+    static IEnumerable<Type> Unwrap(Type t)
+    {
+        while (t.IsByRef || t.IsArray || t.IsPointer) { t = t.GetElementType(); if (t == null) yield break; }
+        if (t.IsGenericType)
+        {
+            yield return t.GetGenericTypeDefinition();
+            foreach (var a in t.GetGenericArguments()) foreach (var u in Unwrap(a)) yield return u;
+        }
+        else yield return t;
+    }
+
+    // Kotlin-builtin scalars (mapped directly by Map) + intrinsics surfaced specially (Span) + the special CLR base
+    // types (Delegate/MulticastDelegate/ValueType/Enum/Array) that can't be injected as ordinary classes nor used as
+    // supertypes — synthesizing a subclass ctor chaining to e.g. System.Delegate (no parameterless ctor) crashes
+    // codegen. Members referencing them degrade to Any?, exactly as if never reached.
+    static readonly HashSet<string> NO_INJECT = new()
+    { "System.Void", "System.Object", "System.String", "System.Int32", "System.Int64", "System.Int16",
+      "System.Byte", "System.Boolean", "System.Double", "System.Single", "System.Char", "System.Span`1",
+      "System.Delegate", "System.MulticastDelegate", "System.ValueType", "System.Enum", "System.Array" };
+
+    // Inject only real, named, resolvable types — including generic DEFINITIONS (List`1, IList`1) so a
+    // `generic:List:Foo` member type resolves to a real `class List<T>` (P1-2). Constructed generics are unwrapped
+    // to (open def + args) by [Unwrap] before this check.
+    static bool ShouldInject(Type t)
+    {
+        if (t == null || t.IsGenericParameter || t.IsPointer || t.IsByRef) return false;
+        if (string.IsNullOrEmpty(t.Namespace) || t.FullName == null) return false;
+        return !NO_INJECT.Contains(t.FullName);
+    }
+
+    // (1) A type usable as an injected supertype: a real, non-generic, co-injectable class/interface (not Object).
+    // Generic bases/interfaces (`Bar<int>`) wait for P1-2; until then `t` keeps the inherited members flattened.
+    static bool IsInjectableSupertype(Type t) =>
+        t != null && !t.IsGenericType && !string.IsNullOrEmpty(t.Namespace) && t.FullName != null
+        && t.FullName != "System.Object" && !NO_INJECT.Contains(t.FullName);
+
+    // A base CLASS is emittable as a supertype only if it has an accessible parameterless constructor: the injected
+    // subclass's (possibly synthesized) ctor chains to `super()`, and a base without a no-arg ctor (Delegate,
+    // SafeHandle, abstract bases with only parameterized ctors) would make that chain fail in codegen. Interfaces
+    // have no ctors so they're always fine.
+    static bool HasAccessibleNoArgCtor(Type t)
+    {
+        try { return t.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Any(c => c.GetParameters().Length == 0 && (c.IsPublic || c.IsFamily || c.IsFamilyOrAssembly)); }
+        catch { return false; }
+    }
+    static bool EmittableBase(Type t) => IsInjectableSupertype(t) && HasAccessibleNoArgCtor(t);
+
+    static string SimpleName(Type t) => t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name;
+
+    // The contiguous run of base classes from t.BaseType upward whose supertype edge IS emitted — members declared
+    // there reach `t` through the injected supertype chain, so `t` must NOT re-declare them (fake-override clash).
+    // The chain stops at the first ancestor we don't link (Object, a generic base, or a base with no no-arg ctor);
+    // members above the break are still flattened onto `t` so nothing is lost. Mirrors [SuperTypes] exactly.
+    static HashSet<string> CoveredAncestors(Type t)
+    {
+        var set = new HashSet<string>();
+        for (var b = t.BaseType; b != null && EmittableBase(b); b = b.BaseType) set.Add(b.FullName!);
+        return set;
+    }
+
+    // The supertypes to emit: the direct base CLASS only (if linkable). Interface supertypes are deferred: a class
+    // implementing an interface must satisfy ALL its abstract members, but the injected concrete members don't
+    // always line up with the interface contract (e.g. a generic `Collection<T>` vs the non-generic `IList.Add`),
+    // which would leave "unimplemented abstract member" errors. Class-hierarchy assignability (the WinUI control
+    // pass-through case — feedback item 1) is the priority; interfaces come with the P1-2 generic work.
+    static List<string> SuperTypes(Type t)
+    {
+        var supers = new List<string>();
+        if (t.BaseType != null && EmittableBase(t.BaseType)) supers.Add(SimpleName(t.BaseType));
+        return supers;
+    }
+
+    // (2) Combined visibility+modality token for a member: optional `prot-` (protected) prefix + abstract|open|final.
+    // A single space-free token so it can't be mistaken for a trailing type-parameter token in the `fun` line.
+    static string Modifier(bool prot, bool isAbstract, bool isVirtual)
+    {
+        var m = isAbstract ? "abstract" : (isVirtual ? "open" : "final");
+        return prot ? "prot-" + m : m;
+    }
+
+    // null => skip (private/internal); false => public; true => protected (Family / protected-internal). Frameworks
+    // (WinUI/WPF/Avalonia) override protected virtual lifecycle methods, so these MUST be injected (item 2).
+    static bool? Vis(MethodBase m) =>
+        m == null ? null : m.IsPublic ? false : (m.IsFamily || m.IsFamilyOrAssembly) ? true : (bool?)null;
 
     // A method's RETURN type: a `ref T` return surfaces as plain `T` (a plain `val x = m()` is a value copy; the live
     // ref is captured only via `byref(m())`). Parameters keep their byref (-> ClrRef<T>) via Map.
@@ -379,6 +568,22 @@ static class FacadeGen
         // A .NET `Span<T>` parameter -> the intrinsic `Span<T>` (meta `span:T`); the caller can pass `buf.asSpan()`.
         if (t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Span`1")
             return "span:" + Map(t.GetGenericArguments()[0], self);
+        // (4) A .NET delegate type -> a Kotlin function type `func:<ret>:<arg>,<arg>` (meta/injection path only).
+        // A lambda then binds to the delegate parameter and overloads disambiguate by arity; the backend builds the
+        // SPECIFIC delegate from the parameter type resolved at the call site (so the delegate name isn't needed in
+        // the metadata). Simple signatures only (no generic/array/byref args) — others degrade to Any?.
+        if (MetaMode && IsDelegate(t))
+        {
+            var inv = t.GetMethod("Invoke");
+            if (inv != null && inv.GetParameters().All(p => Supported(p.ParameterType)) && Supported(inv.ReturnType))
+            {
+                var dret = MapRet(inv.ReturnType, self);
+                var dps = inv.GetParameters().Select(p => Map(p.ParameterType, self)).ToList();
+                if (dret != "Any?" && !dret.Contains(':') && !dret.Contains(',') && dps.All(a => a != "Any?" && !a.Contains(':') && !a.Contains(',')))
+                    return "func:" + dret + ":" + string.Join(",", dps);
+            }
+            return "Any?";
+        }
         if (t.FullName == self.FullName) return self.Name.Contains('`') ? self.Name.Substring(0, self.Name.IndexOf('`')) : self.Name;
         return t.FullName switch
         {
@@ -401,7 +606,21 @@ static class FacadeGen
     static string CrossType(Type t)
     {
         if (t.IsArray) { var e = Map(t.GetElementType(), t); return e == "Any?" ? "Any?" : "array:" + e; }
-        if (t.IsGenericType || t.IsByRef || t.IsPointer || t.IsGenericParameter || string.IsNullOrEmpty(t.Namespace)) return "Any?";
+        if (t.IsByRef || t.IsPointer || t.IsGenericParameter || string.IsNullOrEmpty(t.Namespace)) return "Any?";
+        // (3) A constructed generic (`IList<ResourceDictionary>`) -> `generic:<OpenSimple>:<arg>,<arg>` so the
+        // injector resolves it to `IList<ResourceDictionary>` (chained `.Add`/`for-in` work). Requires the open def
+        // injectable and every arg resolvable to a simple name/primitive; nested generics/arrays in args (a Map
+        // result carrying ':' or ',') are deferred -> Any?.
+        if (t.IsGenericType)
+        {
+            var open = t.GetGenericTypeDefinition();
+            var openName = SimpleName(open);
+            if (string.IsNullOrEmpty(open.Namespace) || NO_INJECT.Contains(open.FullName ?? "")
+                || !openName.All(c => char.IsLetterOrDigit(c) || c == '_')) return "Any?";
+            var args = t.GetGenericArguments().Select(a => Map(a, t)).ToList();
+            if (args.Any(a => a == "Any?" || a.Contains(':') || a.Contains(','))) return "Any?";
+            return "generic:" + openName + ":" + string.Join(",", args);
+        }
         var n = t.Name;
         return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? n : "Any?";
     }

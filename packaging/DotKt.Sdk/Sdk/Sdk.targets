@@ -2,16 +2,22 @@
   <PropertyGroup>
     <DotKtOut>$(BaseIntermediateOutputPath)dotkt-bir</DotKtOut>
     <DotKtTypeMeta>$(BaseIntermediateOutputPath)dotkt-clrtypes.meta</DotKtTypeMeta>
+    <!-- The .NET import list extracted from the .kt sources by `clrc --scan-imports` (PSI parser, not regex). -->
+    <DotKtImportList>$(BaseIntermediateOutputPath)dotkt-clrimports.txt</DotKtImportList>
   </PropertyGroup>
 
-  <!-- C-2: import-driven, façade-FREE .NET type injection. Scan the .kt sources for `import Ns.Type` and inject
-       those .NET types straight into FIR (no .kt produced). @(ReferencePath) (BCL + PackageReference/Reference)
-       makes any referenced assembly's types injectable. -->
+  <!-- C-2: import-driven, façade-FREE .NET type injection. The .kt sources' imports are extracted with the real
+       Kotlin parser (PSI) and those .NET types injected straight into FIR (no .kt produced). @(ReferencePath)
+       (BCL + PackageReference/Reference) makes any referenced assembly's types injectable. -->
   <Target Name="DotKtInjectTypes" BeforeTargets="KotlinCompile" DependsOnTargets="ResolveReferences"
           Condition="'@(KotlinCompile)' != ''">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(DotKtTypeMeta)'))" />
-    <Message Importance="high" Text="DotKt: resolving .NET imports (scan @(KotlinCompile) + @(DotKtImport))" />
-    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --scan @(KotlinCompile->'%(FullPath)', ' ')" />
+    <!-- 1. Extract .NET imports via the compiler's PSI pass (robust where the old regex was not — item 5). -->
+    <Message Importance="high" Text="DotKt: scanning .NET imports from @(KotlinCompile->Count()) .kt file(s) (PSI parser)" />
+    <Exec Command="&quot;$(DotKtCompiler)&quot; --scan-imports --output &quot;$(DotKtImportList)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ')" />
+    <!-- 2. Reflect over the imported (+ explicit <DotKtImport>) types -> FIR-injection metadata. -->
+    <Message Importance="high" Text="DotKt: resolving .NET types (import list + @(DotKtImport))" />
+    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
   </Target>
 
   <!-- Compile every .kt to BIR. CLR_TYPES_METADATA tells the FIR injector which façade-free .NET types to synthesize. -->

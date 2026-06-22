@@ -14,6 +14,7 @@ import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
+import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.extensions.FirDeclarationGenerationExtension
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
@@ -45,9 +46,11 @@ object ClrGeneratedKey : GeneratedDeclarationKey()
 // ----- metadata model (produced by `facadegen --meta`, read here) -----
 
 private class ClrParam(val name: String, val type: String)
+// `open`/`abstract` = .NET virtual/abstract (Kotlin OPEN/ABSTRACT modality, overridable); `protected` = .NET
+// Family/FamORAssem (so a Kotlin subclass can override a protected virtual lifecycle method — feedback item 2).
 // `typeParams` = method-level generic parameters (`SizeOf<T>()` -> ["T"]); empty for ordinary methods.
-private class ClrMethod(val name: String, val returnType: String, val open: Boolean, val params: List<ClrParam>, val typeParams: List<String> = emptyList())
-private class ClrProperty(val name: String, val type: String, val mutable: Boolean, val open: Boolean)
+private class ClrMethod(val name: String, val returnType: String, val open: Boolean, val abstract: Boolean, val protected: Boolean, val params: List<ClrParam>, val typeParams: List<String> = emptyList())
+private class ClrProperty(val name: String, val type: String, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean)
 private class ClrEvent(val name: String, val handlerReturn: String, val handlerParams: List<ClrParam>)
 // A `this[i]` indexer -> Kotlin `operator fun get/set` (`set` only when mutable).
 private class ClrIndexer(val indexType: String, val valueType: String, val mutable: Boolean)
@@ -59,6 +62,7 @@ private class ClrType(
 	val isAnnotation: Boolean,         // System.Attribute-derived => Kotlin annotation class (apply on decls)
 	val open: Boolean,                 // .NET non-sealed => Kotlin can extend it
 	val typeParams: List<String>,      // generic type parameter names (`Collection<T>` -> ["T"])
+	val superTypes: List<String>,      // injectable base class + interfaces (simple names) — wired by ClrSupertypeInjector
 	val methods: List<ClrMethod>,
 	val ctors: List<List<ClrParam>>,
 	val properties: List<ClrProperty>,
@@ -80,11 +84,11 @@ private object ClrMetadataHolder {
 		if (!file.isFile) return null
 		val types = ArrayList<ClrType>()
 		var name = ""; var dotNet = ""; var isObject = false; var isInterface = false; var isOpen = false; var isAnnotation = false
-		var tparams = emptyList<String>()
+		var tparams = emptyList<String>(); var supers = emptyList<String>()
 		val methods = ArrayList<ClrMethod>(); val ctors = ArrayList<List<ClrParam>>()
 		val props = ArrayList<ClrProperty>(); val events = ArrayList<ClrEvent>()
 		var indexer: ClrIndexer? = null
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer)) }
+		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer)) }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
 			if (line.isEmpty()) continue
@@ -92,26 +96,35 @@ private object ClrMetadataHolder {
 			when (tok[0]) {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; supers = emptyList()
 					name = tok[1]; dotNet = tok[2]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"; isAnnotation = false
 					isOpen = !isObject && !isInterface && tok.getOrNull(3) == "open"
-					// `class <Name> <DotNet> <open|sealed> [<TypeParam>...]` -> trailing tokens are type params.
-					tparams = if (tok[0] == "class") tok.drop(4) else emptyList()
+					// `class <Name> <DotNet> <open|sealed> [<TP>...]` (TPs at 4, after the modality token) vs
+					// `interface <Name> <DotNet> [<TP>...]` (TPs at 3, no modality token). `object` has none.
+					tparams = when (tok[0]) { "class" -> tok.drop(4); "interface" -> tok.drop(3); else -> emptyList() }
 				}
 				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
 				// trailing params (from its longest ctor) become the single annotation constructor.
 				"annotation" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; supers = emptyList()
 					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
 					ctors.add(parseParams(tok.drop(3)))
 				}
-				// fun <Name> <ret> <open|final> [<TypeParam>...] [<param>:<type>]* — bare trailing tokens (no `:`)
-				// are method type parameters; tokens with `:` are value params.
-				"fun" -> methods.add(ClrMethod(tok[1], tok[2], tok.getOrNull(3) == "open",
-					parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }))
+				// super <SimpleName>... — the injectable base class (first) + interfaces; wired by ClrSupertypeInjector.
+				"super" -> supers = tok.drop(1)
+				// fun <Name> <ret> <prot-?open|final|abstract> [<TypeParam>...] [<param>:<type>]* — the modifier is a
+				// single token (so it never looks like a type param); bare trailing tokens (no `:`) are type params.
+				"fun" -> {
+					val mod = tok.getOrNull(3) ?: "final"; val prot = mod.startsWith("prot-"); val bare = mod.removePrefix("prot-")
+					methods.add(ClrMethod(tok[1], tok[2], bare == "open", bare == "abstract", prot,
+						parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }))
+				}
 				"ctor" -> ctors.add(parseParams(tok.drop(1)))
-				// prop <Name> <type> <ro|rw> <open|final>
-				"prop" -> props.add(ClrProperty(tok[1], tok[2], tok.getOrNull(3) == "rw", tok.getOrNull(4) == "open"))
+				// prop <Name> <type> <ro|rw> <prot-?open|final|abstract>
+				"prop" -> {
+					val mod = tok.getOrNull(4) ?: "final"; val prot = mod.startsWith("prot-"); val bare = mod.removePrefix("prot-")
+					props.add(ClrProperty(tok[1], tok[2], tok.getOrNull(3) == "rw", bare == "open", bare == "abstract", prot))
+				}
 				// event <Name> <handlerRet> <handlerParams...>
 				"event" -> events.add(ClrEvent(tok[1], tok[2], parseParams(tok.drop(3))))
 				// index <indexType> <valueType> <ro|rw> — `this[i]` indexer -> operator get/set.
@@ -136,6 +149,15 @@ private object ClrMetadataHolder {
 
 	private fun parseParams(tokens: List<String>): List<ClrParam> =
 		tokens.filter { it.contains(':') }.map { ClrParam(it.substringBefore(':'), it.substringAfter(':')) }
+
+	// Shared lookups (also used by ClrSupertypeInjector). Each .NET type resolves at its REAL namespace, so
+	// `import System.Text.StringBuilder` works through Kotlin's normal package machinery (the .NET namespace IS the
+	// Kotlin package); nested "+" and generic arity are already stripped in the metadata.
+	fun namespaceOf(dotNet: String): String = dotNet.substringBefore('+').substringBeforeLast('.', "")
+	val byClassId: Map<ClassId, ClrType> by lazy {
+		module?.types?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
+	}
+	val classIdByName: Map<String, ClassId> by lazy { byClassId.entries.associate { (id, t) -> t.kotlinName to id } }
 }
 
 /**
@@ -153,15 +175,11 @@ private object ClrMetadataHolder {
  */
 class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(session) {
 	private val module = ClrMetadataHolder.module
-	// C-2: each .NET type resolves at its REAL namespace, so `import System.Text.StringBuilder` works through
-	// Kotlin's normal package machinery — the .NET namespace IS the Kotlin package. (e.g.
-	// "System.Text.StringBuilder" -> package "System.Text"; nested "+" and generic arity already stripped.)
-	private fun namespaceOf(dotNet: String): String = dotNet.substringBefore('+').substringBeforeLast('.', "")
-	private val byClassId: Map<ClassId, ClrType> =
-		module?.types?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
+	// C-2: each .NET type resolves at its REAL namespace (shared lookups live on ClrMetadataHolder so the supertype
+	// extension reuses them) — `import System.Text.StringBuilder` works through Kotlin's normal package machinery.
+	private val byClassId: Map<ClassId, ClrType> = ClrMetadataHolder.byClassId
 	private val packages: Set<FqName> = byClassId.keys.map { it.packageFqName }.toSet()
-	private val classIdByName: Map<String, ClassId> =
-		byClassId.entries.associate { (id, t) -> t.kotlinName to id }
+	private val classIdByName: Map<String, ClassId> = ClrMetadataHolder.classIdByName
 
 	// `byref(x)`: a root-package intrinsic marking a call arg as a .NET out/ref parameter. It returns `ClrRef<T>`
 	// (the surfaced type of any .NET byref param), so the signature is self-documenting. The backend reads the
@@ -202,6 +220,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			if (type.open || type.isInterface) modality = Modality.OPEN
 			// Generic .NET type (`Collection<T>`) -> declare its type parameters (invariant; bounds omitted).
 			for (tp in type.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+			// (1)(2) Base class + interfaces -> real Kotlin supertypes, so a `Button` is assignable where a
+			// `Widget` is expected AND inherited members (incl. protected virtuals) surface for `override`. Only
+			// co-injected, non-generic supertypes are present in the metadata (others were skipped by facadegen).
+			// Deferred provider form: the supertype symbol is resolved lazily (avoids eager cross-generation).
+			for (sname in type.superTypes) {
+				val scid = classIdByName[sname] ?: continue
+				superType { _ -> session.symbolProvider.getClassLikeSymbolByClassId(scid)?.constructType(emptyArray(), false) ?: session.builtinTypes.anyType.coneType }
+			}
 		}.symbol
 	}
 
@@ -229,7 +255,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		val prop = type.properties.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
 		// Property name == .NET name verbatim, so the backend emits `recv.<Name>` directly.
 		return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, coneOf(prop.type, owner), !prop.mutable, false) {
-			if (prop.open) modality = Modality.OPEN
+			if (type.isInterface || prop.abstract) modality = Modality.ABSTRACT
+			else if (prop.open && !type.isObject) modality = Modality.OPEN
+			if (prop.protected) visibility = Visibilities.Protected
 		}.symbol)
 	}
 
@@ -337,8 +365,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		return overloads.map { m ->
 			if (m.typeParams.isEmpty()) {
 				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
-					if (type.isInterface) modality = Modality.ABSTRACT          // interface members: implement in Kotlin
-					else if (m.open && !type.isObject) modality = Modality.OPEN // .NET virtual => overridable
+					// interface members + .NET abstract => ABSTRACT (must implement); .NET virtual => OPEN (overridable).
+					if (type.isInterface || m.abstract) modality = Modality.ABSTRACT
+					else if (m.open && !type.isObject) modality = Modality.OPEN
+					if (m.protected) visibility = Visibilities.Protected   // overridable protected lifecycle methods (item 2)
 					for (p in m.params) valueParameter(Name.identifier(p.name), coneOf(p.type, owner))
 				}.symbol
 			} else {
@@ -348,7 +378,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				// so the backend just emits a generic .NET method call (MakeGenericMethod) — see [[clr-not-jvm-discard-jvmisms]].
 				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName,
 					{ tps -> coneOfMethod(m.returnType, owner, m.typeParams, tps) }) {
-					if (m.open && !type.isObject) modality = Modality.OPEN
+					if (m.abstract) modality = Modality.ABSTRACT
+					else if (m.open && !type.isObject) modality = Modality.OPEN
+					if (m.protected) visibility = Visibilities.Protected
 					for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
 					for (p in m.params) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
 				}.symbol
@@ -394,6 +426,25 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		if (typeName.startsWith("byref:")) return clrRefOf(coneOf(typeName.removePrefix("byref:"), owner))
 		// A .NET `Span<T>` param (`span:Int`) -> the intrinsic `Span<Int>` (the real System.Span<Int>).
 		if (typeName.startsWith("span:")) return spanOf(coneOf(typeName.removePrefix("span:"), owner))
+		// (4) A .NET delegate parameter (`func:<ret>:<arg>,<arg>`) -> a Kotlin function type `(args) -> ret`, so a
+		// lambda binds and overloads disambiguate. The backend builds the real delegate from the call-site param type.
+		if (typeName.startsWith("func:")) {
+			val rest = typeName.removePrefix("func:")
+			val ret = rest.substringBefore(':'); val argStr = rest.substringAfter(':', "")
+			val args = if (argStr.isEmpty()) emptyList() else argStr.split(',').map { coneOf(it, owner) }
+			return coneFunctionType(args, coneOf(ret, owner))
+		}
+		// (3) A constructed generic (`generic:IList:ResourceDictionary`) -> the injected open type applied to the
+		// (recursively resolved) args, so `x.MergedDictionaries.Add(..)` / `for (d in coll)` reach real members.
+		if (typeName.startsWith("generic:")) {
+			val rest = typeName.removePrefix("generic:")
+			val open = rest.substringBefore(':'); val argStr = rest.substringAfter(':', "")
+			val cid = classIdByName[open] ?: return session.builtinTypes.nullableAnyType.coneType
+			val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return session.builtinTypes.nullableAnyType.coneType
+			val args = if (argStr.isEmpty()) emptyList() else argStr.split(',').map { coneOf(it, owner) }
+			@Suppress("UNCHECKED_CAST")
+			return sym.constructType(args.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, false)
+		}
 		// A reference to the owner's own generic type parameter (`T` in `Collection<T>.Add(item: T)`).
 		owner.typeParameterSymbols.firstOrNull { it.name.identifier == typeName }
 			?.let { return it.constructType(emptyArray(), false) }
@@ -432,7 +483,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	}
 }
 
-/** Registers [ClrTypeInjector] as a FIR class-generation extension. */
+/** Registers [ClrTypeInjector] as a FIR class-generation extension (supertypes are declared in its class builder). */
 class ClrFirExtensionRegistrar : FirExtensionRegistrar() {
 	override fun ExtensionRegistrarContext.configurePlugin() {
 		+::ClrTypeInjector
