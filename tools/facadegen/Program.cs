@@ -251,7 +251,9 @@ static class FacadeGen
             const BindingFlags IM = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
             if (!isStatic)
             {
-                var supers = SuperTypes(t);
+                // Base class (assignability + inherited/protected members) + the interfaces this class fully and
+                // publicly implements (assignable to an interface parameter, e.g. `Circle` -> `IShape`).
+                var supers = SuperTypes(t).Concat(ClassInterfaceSuperTypes(t)).ToList();
                 if (supers.Count > 0) sb.Append("super " + string.Join(" ", supers) + "\n");
             }
             var seen = new HashSet<string>();
@@ -456,6 +458,65 @@ static class FacadeGen
             if (enc.StartsWith("generic:") && seen.Add(enc)) supers.Add(enc);
         }
         return supers;
+    }
+
+    // Interface supertypes a CLASS can safely declare: each DIRECT interface whose entire (transitive) member set is
+    // matched by a public, Supported, EXACT-RETURN member of the class. Declaring `C : I` makes Kotlin require C to
+    // implement all of I's abstract members, so we only link interfaces C fully and publicly provides — this emits
+    // the normal `Circle : IShape` (assignability to an interface parameter) while safely skipping interfaces C
+    // implements EXPLICITLY (non-public targets) or with a COVARIANT return (e.g. `List<T>.GetEnumerator(): Enumerator`
+    // vs `IEnumerable<T>.GetEnumerator(): IEnumerator<T>`), which Kotlin would reject as unimplemented/mismatched.
+    static List<string> ClassInterfaceSuperTypes(Type c)
+    {
+        // Only declare interface implementations for NON-FRAMEWORK classes — the user's own types (which they
+        // control and keep simple). Reflected BCL/framework classes (System.*/Microsoft.*) implement large, intricate
+        // interface sets (covariance, explicit impls, ISerializable/ICloneable everywhere) that break the fir2ir
+        // fake-override builder, and a user almost never needs to pass e.g. a DateTime as one of its interfaces.
+        var ns = c.Namespace ?? "";
+        if (ns.StartsWith("System") || ns.StartsWith("Microsoft") || ns.StartsWith("Internal") || ns.StartsWith("Windows")) return new List<string>();
+        Type[] all; try { all = c.GetInterfaces(); } catch { return new List<string>(); }
+        var implied = new HashSet<Type>();
+        foreach (var i in all) { try { foreach (var s in i.GetInterfaces()) implied.Add(s); } catch { } }
+        var supers = new List<string>(); var seen = new HashSet<string>();
+        foreach (var i in all)
+        {
+            if (implied.Contains(i)) continue;                              // direct interfaces only
+            // NON-GENERIC interfaces only. A class implementing a GENERIC interface (List<T> : IEnumerable<T>) stresses
+            // the fir2ir fake-override builder (covariant returns / explicit impls / generic methods) in ways the
+            // synthetic injected members can't reconcile; non-generic interfaces (IShape, IDisposable, custom callback
+            // interfaces) are the common "pass a class as an interface" case and link cleanly.
+            if (i.IsGenericType) continue;
+            if (string.IsNullOrEmpty(i.Namespace) || NO_INJECT.Contains(i.FullName ?? "") || !SimpleName(i).All(ch => char.IsLetterOrDigit(ch) || ch == '_')) continue;
+            if (!ClassSatisfies(c, i)) continue;
+            if (seen.Add(i.FullName!)) supers.Add(SimpleName(i));
+        }
+        return supers;
+    }
+
+    // True if class `c` publicly and completely implements interface `i` (and all of i's base interfaces): every
+    // interface method has a PUBLIC instance method on c with the same name, parameter types, and EXACT return type.
+    // Metadata-only (GetMethods, not GetInterfaceMap — the latter is unavailable under MetadataLoadContext).
+    static bool ClassSatisfies(Type c, Type i)
+    {
+        MethodInfo[] cmethods; try { cmethods = c.GetMethods(BindingFlags.Public | BindingFlags.Instance); } catch { return false; }
+        var chain = new List<Type> { i };
+        try { chain.AddRange(i.GetInterfaces()); } catch { return false; }
+        foreach (var iface in chain)
+        {
+            MethodInfo[] ims; try { ims = iface.GetMethods(); } catch { return false; }
+            foreach (var im in ims)
+            {
+                if (im.IsStatic) continue;
+                if (im.IsGenericMethod) return false;   // generic interface methods: matching is uncertain -> don't link
+                if (!Supported(im.ReturnType) || !im.GetParameters().All(p => Supported(p.ParameterType))) return false;
+                var ips = im.GetParameters().Select(p => p.ParameterType).ToArray();
+                var ok = cmethods.Any(cm => cm.Name == im.Name && cm.ReturnType == im.ReturnType
+                    && cm.GetParameters().Length == ips.Length
+                    && cm.GetParameters().Select(p => p.ParameterType).SequenceEqual(ips));
+                if (!ok) return false;
+            }
+        }
+        return true;
     }
 
     // The supertypes to emit: the direct base CLASS only (if linkable). Interface supertypes are deferred: a class
