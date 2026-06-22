@@ -8,7 +8,7 @@
     <RootNamespace>DotKt</RootNamespace>
     <IsPackable>true</IsPackable>
     <PackageId>DotKt.Runtime</PackageId>
-    <Description>DotKt runtime: helpers for Kotlin lowerings that need cross-assembly identity/ABI (printf format, …).</Description>
+    <Description>DotKt runtime: the CLR forms of the Kotlin language/stdlib lowerings that need cross-assembly identity/ABI — printf format, plus kotlin.coroutines (Continuation, CoroutineContext, Result, Unit, COROUTINE_SUSPENDED, intercepted, sequence/Flow/Channel/select helpers, Task sink) in the DotKt.Coroutines namespace. (kotlinx.* libraries ship as their own dotktx.* assemblies.)</Description>
     <Authors>DotKt</Authors>
   </PropertyGroup>
 </Project>

@@ -595,3 +595,16 @@ il-kintercept -> 1 / 7 (intercepted finds the dispatcher, wraps; resume dispatch
 **T3 COMPLETE** (a coroutineContext, b context element algebra, c interceptor/intercepted+dispatcher) — and with it
 ALL of Track-1. A real `Dispatchers.Default`/`Main` (ThreadPool / SynchronizationContext) is just a richer
 `ContinuationInterceptor` on this exact seam — that lands with Track 2's CLR actual source set.
+
+## 14. Runtime assembly refactor — DotKt.Coroutines.dll folded into DotKt.Runtime.dll (2026-06-23)
+
+Per the namespace=boundary principle (`kotlin.*` → DotKt.Runtime; `kotlinx.*` → its own dotktx.* assembly), the
+stray `DotKt.Coroutines.dll` ASSEMBLY (it held `kotlin.coroutines` lowerings — Continuation/CoroutineContext/Result/
+Unit/intrinsics/intercepted + the sequence/Flow/Channel/select stopgap helpers) is folded into `DotKt.Runtime.dll`.
+The `DotKt.Coroutines` NAMESPACE is unchanged, so the compiler's type maps (`clr:DotKt.Coroutines.X`) need NO change
+— this was purely a build/packaging move: the 7 .cs files moved into runtime/DotKt.Runtime/, the DotKt.Coroutines
+project deleted, and verify-il.sh drops the separate DOTKT_CO build/ref/copy (the types resolve via DOTKT_RT, which
+is now copied next to each emitted dll for the run). `DotKt.Coroutines.dll` was never packaged (pack-dotkt only
+packs DotKt.Runtime), so the distribution naturally gains the coroutine runtime. Full suite green, ilverify-clean.
+(When the real kotlinx-coroutines-core is compiled — Track 2 — it ships as its own `dotktx.coroutines`, and the
+stopgap kotlinx-ish helpers here are superseded.)
