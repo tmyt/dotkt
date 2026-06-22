@@ -549,3 +549,16 @@ finally only with NO catch clauses; a suspending finally / catch is a loud error
 Observed but ORTHOGONAL: the finally also runs on the exception-unwind path (cleanup printed before the throw), but
 a DIRECT throw in a struct-form coroutine body isn't routed to its Task (escapes MoveNext) — a separate pre-existing
 exception-routing gap, not T10. Remaining hard tail: T9 select, T3 CoroutineContext Key<E> algebra + intercepted.
+
+## 13w. T9 (select) done — NO new compiler machinery (2026-06-22)
+
+`select { onAwait(t) { … } }` works (il-kselect → 2000: two clauses race, the 10ms one beats the 80ms one, its
+`v*1000` handler wins). KEY FINDING: select needed ZERO compiler changes — modeled as a runtime `Selector<R>`
+(collects (Task, suspend-handler) clauses) + `Selectors.Select` (awaits `Task.WhenAny`, runs the winner's handler),
+it composes purely from already-working features: the `select { … }` block is a receiver lambda (T11) registering
+clauses via a member call, the handlers are suspend lambdas, plus generics + await. Only friction: a
+`Selector<R>.() -> Unit` receiver lambda is emitted as `Func`2` ("func:2"), so the runtime block param is
+`Func<Selector<R>, int>` (Int-result dummy, the Flow convention), not `Action`1`. (This is purely a CLR-native
+select over Task.WhenAny; real kotlinx select's exact clause DSL — `SelectClause1`/atomic registration — would come
+with literal upstream, Track 2.) Track-1 standalone compiler features are now ALL done; only T3 (CoroutineContext
+Key<E> algebra + intercepted) remains, and it belongs with Track 2 (dispatchers / real upstream).
