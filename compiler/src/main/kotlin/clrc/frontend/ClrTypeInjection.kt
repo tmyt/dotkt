@@ -163,11 +163,12 @@ private object ClrMetadataHolder {
 	private val byNameArity: Map<Pair<String, Int>, ClassId> by lazy {
 		byClassId.entries.associate { (id, t) -> (t.kotlinName to t.typeParams.size) to id }
 	}
-	// STRICT on arity: a generic supertype/type must resolve to a type with the MATCHING number of type parameters.
-	// Falling back to a different-arity type (e.g. resolving `generic:IEnumerable:Item` to non-generic IEnumerable)
+	// STRICT on arity, NO fallback. .NET allows a generic and a non-generic type with the same name+namespace
+	// (`IComparable` and `IComparable<T>`); Kotlin's ClassId can't tell them apart, so byClassId keeps only one and
+	// the other arity is simply absent. Resolving a reference to the ABSENT arity by falling back to the present one
 	// builds a generic type with the wrong number of arguments and crashes the fir2ir fake-override builder
-	// ("typeParameters size != typeArguments size"). Only arity 0 falls back to the simple-name map (always non-generic).
-	fun classIdFor(name: String, arity: Int): ClassId? = byNameArity[name to arity] ?: if (arity == 0) classIdByName[name] else null
+	// ("typeParameters size != typeArguments size"). Returning null instead just skips that reference (-> Any?/no edge).
+	fun classIdFor(name: String, arity: Int): ClassId? = byNameArity[name to arity]
 }
 
 /**
