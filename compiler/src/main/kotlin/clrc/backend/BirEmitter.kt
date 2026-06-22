@@ -1880,9 +1880,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// block's `c` bound to the coroutine's own continuation, or an outer capture field) before falling back.
 		captureSubst[d] ?: if (d.name.asString() == "<this>") """{"k":"this"}""" else """{"k":"local","name":${str(d.name.asString())}}"""
 
-	/** The BIR function-type string `func:<ret>:<arg1>,<arg2>,...` for a lambda's signature. */
+	/**
+	 * The lambda's value parameters in delegate order: the EXTENSION RECEIVER first (a receiver lambda
+	 * `Scope.() -> Unit` is `Function1<Scope, Unit>`, so its receiver is the first delegate argument — and the body's
+	 * implicit-receiver references resolve to it), then the regular params. Keeping this consistent with `birType`'s
+	 * view of the function type (which derives args from the FunctionN type arguments, receiver included) is what
+	 * makes `build { ... }` receiver-lambda DSLs work (feedback item 7).
+	 */
+	private fun orderedLambdaParams(fn: IrSimpleFunction): List<IrValueParameter> =
+		fn.parameters.filter { it.kind == IrParameterKind.ExtensionReceiver } +
+			fn.parameters.filter { it.kind == IrParameterKind.Regular }
+
+	/** The BIR function-type string `func:<ret>:<arg1>,<arg2>,...` for a lambda's signature (receiver first). */
 	private fun funcTypeOf(fn: IrSimpleFunction): String {
-		val ps = fn.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birTypeDeleg(it.type) }
+		val ps = orderedLambdaParams(fn).joinToString(",") { birTypeDeleg(it.type) }
 		val ret = if (fn.returnType.isUnit()) "void" else birTypeDeleg(fn.returnType)
 		return "func:$ret:$ps"
 	}
@@ -1899,9 +1910,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return birType(t)
 	}
 
-	/** Lambda/closure method params with KProperty erased to object (must agree with funcTypeOf for delegates). */
+	/** Lambda/closure method params with KProperty erased to object (must agree with funcTypeOf for delegates):
+	 *  extension receiver first (so a receiver lambda's `$this$build` is bound), then regular params. */
 	private fun lambdaParamsJson(params: List<IrValueParameter>): String =
-		params.filter { it.kind == IrParameterKind.Regular }
+		(params.filter { it.kind == IrParameterKind.ExtensionReceiver } + params.filter { it.kind == IrParameterKind.Regular })
 			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birTypeDeleg(it.type))}}""" }
 
 	/** Regular args, filling omitted constant default arguments (IL has no default-parameter mechanism). */
