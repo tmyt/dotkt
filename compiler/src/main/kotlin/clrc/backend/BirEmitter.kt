@@ -783,7 +783,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
 				if (found) return
 				if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
-				if (element is IrCall && isSuspendIntrinsic(element)) { found = true; return }
+				if (element is IrCall && (isSuspendIntrinsic(element) || isSuspendCancellable(element))) { found = true; return }
 				element.acceptChildrenVoid(this)
 			}
 		})
@@ -907,32 +907,43 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun isYield(call: IrCall): Boolean =
 		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yield"
 
+	/** `kotlinx.coroutines.suspendCancellableCoroutine { c -> … }` — like the raw intrinsic but `c` is a
+	 *  CancellableContinuation and the block ALWAYS suspends (returns Unit, not the sentinel). */
+	private fun isSuspendCancellable(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
+		e is IrCall && e.symbol.owner.fqNameWhenAvailable?.asString() == "kotlinx.coroutines.suspendCancellableCoroutine"
+
 	/** A suspension point: start the awaitable; if incomplete, save state and return; on resume read the result. */
 	private fun emitSuspend(call: IrCall, assignTo: String?, steps: MutableList<String>) {
-		if (isSuspendIntrinsic(call)) { emitSuspendIntrinsic(call, assignTo, steps); return }
+		if (isSuspendIntrinsic(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = false, selfKind = "coSelfCont"); return }
+		if (isSuspendCancellable(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = true, selfKind = "coSelfCancellable"); return }
 		if (isYield(call)) { val k = ++coState; steps.add("""{"k":"coYield","state":$k,"value":${expr(regularArgs(call).first())}}"""); return }
 		val k = ++coState
 		steps.add("""{"k":"coSuspend","state":$k,"awaitable":${coAwaitable(call)},"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(birType(call.type))}}""")
 	}
 
 	/**
-	 * `suspendCoroutineUninterceptedOrReturn { c -> body }` (Path B leaf): the block receives the coroutine's OWN
-	 * continuation and returns a value (resume synchronously) or COROUTINE_SUSPENDED (suspend). We inline the block:
-	 * bind `c` to the SM itself (`coSelfCont` = a typed adapter over `this`), emit the body's leading statements,
-	 * and carry its result expr into a `coSuspendIntrinsic` step (ilemit does the value-or-suspend at the SM). Only
-	 * the Continuation-class form (@KCont) handles this; the struct/Task form emits a loud error.
+	 * The raw suspension intrinsics: the block receives the coroutine's OWN continuation. For
+	 * `suspendCoroutineUninterceptedOrReturn` (alwaysSuspend=false) the block returns a value (resume synchronously)
+	 * or COROUTINE_SUSPENDED; for `suspendCancellableCoroutine` (alwaysSuspend=true) it returns Unit and always
+	 * suspends. We inline the block: bind `c` to the SM itself (`selfKind` = a typed adapter over `this`), emit the
+	 * body statements, and carry the result into a `coSuspendIntrinsic` step. Continuation-class form only.
 	 */
-	private fun emitSuspendIntrinsic(call: IrCall, assignTo: String?, steps: MutableList<String>) {
+	private fun emitSuspendIntrinsic(call: IrCall, assignTo: String?, steps: MutableList<String>, alwaysSuspend: Boolean, selfKind: String) {
 		val k = ++coState
 		val resultT = birType(call.type)
 		val block = regularArgs(call).firstOrNull() as? IrFunctionExpression
-			?: run { steps.add(coUnsupported("suspendCoroutineUninterceptedOrReturn without a literal block")); return }
+			?: run { steps.add(coUnsupported("a raw suspension intrinsic without a literal block")); return }
 		val cParam = block.function.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
-		if (cParam != null) captureSubst[cParam] = """{"k":"coSelfCont","resultType":${str(resultT)}}"""
+		if (cParam != null) captureSubst[cParam] = """{"k":"$selfKind","resultType":${str(resultT)}}"""
 		val pre = ArrayList<String>()
 		var valueExpr = """{"k":"coSuspendedSentinel"}"""
 		for (s in (block.function.body as? IrBlockBody)?.statements.orEmpty()) {
-			if (s is IrReturn) valueExpr = expr(s.value) else pre.add(stmt(s))
+			when {
+				// alwaysSuspend: the block returns Unit — keep its (possibly side-effecting) tail as a pre-statement.
+				alwaysSuspend && s is IrReturn -> s.value?.takeIf { !it.type.isUnit() }?.let { pre.add("""{"k":"exprStmt","expr":${expr(it)}}""") }
+				s is IrReturn -> valueExpr = expr(s.value)
+				else -> pre.add(stmt(s))
+			}
 		}
 		if (cParam != null) captureSubst.remove(cParam)
 		steps.add("""{"k":"coSuspendIntrinsic","state":$k,"pre":[${pre.joinToString(",")}],"value":$valueExpr,"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(resultT)}}""")
@@ -3184,6 +3195,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.String" -> "System.String"
 		"kotlin.Unit" -> "System.Void"
 		"kotlin.coroutines.Continuation" -> "clrg:DotKt.Coroutines.Continuation[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
+		"kotlinx.coroutines.CancellableContinuation" -> "clrg:DotKt.Coroutines.CancellableCont[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlin.sequences.Sequence" -> "clrg:System.Collections.Generic.IEnumerable[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlinx.atomicfu.AtomicInt" -> "DotKt.Coroutines.AtomicInt"
 		"kotlinx.atomicfu.AtomicLong" -> "DotKt.Coroutines.AtomicLong"
@@ -3352,6 +3364,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (fqp == "kotlin.coroutines.Continuation") {
 			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
 			return "clrg:DotKt.Coroutines.Continuation[$arg]"
+		}
+		if (fqp == "kotlinx.coroutines.CancellableContinuation") {
+			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+			return "clrg:DotKt.Coroutines.CancellableCont[$arg]"
 		}
 		// kotlinx.atomicfu atomics -> the DotKt.Coroutines Interlocked/Volatile wrappers (Phase 3 / §13a res. 5).
 		if (fqp == "kotlinx.atomicfu.AtomicInt") return "clr:DotKt.Coroutines.AtomicInt"

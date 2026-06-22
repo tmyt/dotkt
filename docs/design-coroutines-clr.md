@@ -431,3 +431,13 @@ generic-interface dispatch, which looked like a deep CLR bug but was just the wr
 no monomorphic special-case needed. Proof: `samples/il-kstart` (a suspending `produce` started into a runtime
 `CaptureI` sink → 42), ilverify-clean. `createCoroutine`/`createCoroutineUnintercepted` (non-starting forms) not
 yet — add when upstream needs them.
+
+## 13m. T2 done — suspendCancellableCoroutine (2026-06-22)
+
+`kotlinx.coroutines.suspendCancellableCoroutine { c -> … }` recognized (shares `emitSuspendIntrinsic` with the raw
+intrinsic, `alwaysSuspend=true`): the block always suspends (returns Unit, not the sentinel), and `c` is a
+`CancellableContinuation<T>` = `coSelfCancellable` → `new CancellableCont<T>(new TypedCont<T>(this))`.
+`runtime/DotKt.Coroutines` gained `CancellableCont<T> : Continuation<T>` (forwards resume; cancel/
+invokeOnCancellation minimal — real cancellation lands with the dispatcher). `c.resume(v)` rides the existing
+`kotlin.coroutines.resume` mapping. Type map: `kotlinx.coroutines.CancellableContinuation` → `CancellableCont`.
+Proof: `samples/il-kcancel` (`awaitC` via suspendCancellableCoroutine, composed → 30), ilverify-clean.

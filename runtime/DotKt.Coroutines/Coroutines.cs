@@ -75,6 +75,21 @@ namespace DotKt.Coroutines
         public int Await() => _tcs.Task.GetAwaiter().GetResult();
     }
 
+    /// kotlinx.coroutines.CancellableContinuation<T> — a Continuation<T> with cancellation hooks. v1: forwards
+    /// resume to the underlying continuation; cancel/invokeOnCancellation are minimal (real cancellation lands with
+    /// the dispatcher work). `c.resume(v)` rides the kotlin.coroutines.resume extension (Continuations.Resume).
+    public sealed class CancellableCont<T> : Continuation<T>
+    {
+        readonly Continuation<T> _inner;
+        Action<Exception> _onCancel;
+        public CancellableCont(Continuation<T> inner) { _inner = inner; }
+        public CoroutineContext Context => _inner.Context;
+        public void ResumeWith(Result<T> result) => _inner.ResumeWith(result);
+        public bool IsActive => true;
+        public void Cancel(Exception cause) { _onCancel?.Invoke(cause); }
+        public void InvokeOnCancellation(Action<Exception> handler) { _onCancel = handler; }
+    }
+
     public static class Intrinsics
     {
         /// kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED — the sentinel a suspension point returns (by ===

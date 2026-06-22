@@ -1789,6 +1789,18 @@ sealed class Emitter
                     _il.Emit(OpCodes.Newobj, typed.GetConstructor(new[] { contObj }));
                     return typed;
                 }
+            case "coSelfCancellable":   // the SM as a CancellableContinuation<T>: new CancellableCont<T>(new TypedCont<T>(this))
+                {
+                    var tk = MapType(e.GetProperty("resultType").GetString());
+                    var typed = ResolveType("DotKt.Coroutines.TypedCont`1").MakeGenericType(tk);
+                    var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
+                    var contT = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(tk);
+                    var cancel = ResolveType("DotKt.Coroutines.CancellableCont`1").MakeGenericType(tk);
+                    _il.Emit(OpCodes.Ldarg_0);
+                    _il.Emit(OpCodes.Newobj, typed.GetConstructor(new[] { contObj }));
+                    _il.Emit(OpCodes.Newobj, cancel.GetConstructor(new[] { contT }));
+                    return cancel;
+                }
             case "local":
             {
                 var name = e.GetProperty("name").GetString();
