@@ -5,13 +5,13 @@ import kotlin.coroutines.Continuation
 
 @Clr("System.Threading.Tasks.Task") class Task<T>
 
-@Clr("DotKt.Coroutines.FlowColI") class FlowColI { @Clr("EmitRaw") fun emitRaw(value: Int): Task<Int> = TODO() }
-@Clr("DotKt.Coroutines.FlowI") class FlowI
-@Clr("DotKt.Coroutines.Flows") object Flows {
+@Clr("DotKtx.Coroutines.FlowColI") class FlowColI { @Clr("EmitRaw") fun emitRaw(value: Int): Task<Int> = TODO() }
+@Clr("DotKtx.Coroutines.FlowI") class FlowI
+@Clr("DotKtx.Coroutines.Flows") object Flows {
 	@Clr("CreateI") fun flow(block: suspend (FlowColI) -> Int): FlowI = TODO()
 	@Clr("CollectI") fun collectRaw(flow: FlowI, action: suspend (Int) -> Int): Task<Int> = TODO()
 }
-@Clr("DotKt.Coroutines.Structured") object Co {
+@Clr("DotKtx.Coroutines.Structured") object Co {
 	@Clr("RunBlockingI") fun runBlocking(block: suspend () -> Int): Int = TODO()
 }
 @Clr("DotKt.Coroutines.Builders") object Bridge {

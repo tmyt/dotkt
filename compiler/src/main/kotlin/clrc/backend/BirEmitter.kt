@@ -2185,14 +2185,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (callee.fqNameWhenAvailable?.asString() == "kotlinx.atomicfu.atomic") {
 			val arg = regularArgs(call).first()
 			return when (arg.type.classFqName?.asString()) {
-				"kotlin.Int" -> """{"k":"clrNew","type":"DotKt.Coroutines.AtomicInt","argTypes":["System.Int32"],"args":[${expr(arg)}]}"""
-				"kotlin.Long" -> """{"k":"clrNew","type":"DotKt.Coroutines.AtomicLong","argTypes":["System.Int64"],"args":[${expr(arg)}]}"""
-				"kotlin.Boolean" -> """{"k":"clrNew","type":"DotKt.Coroutines.AtomicBoolean","argTypes":["System.Boolean"],"args":[${expr(arg)}]}"""
+				"kotlin.Int" -> """{"k":"clrNew","type":"DotKtx.Atomicfu.AtomicInt","argTypes":["System.Int32"],"args":[${expr(arg)}]}"""
+				"kotlin.Long" -> """{"k":"clrNew","type":"DotKtx.Atomicfu.AtomicLong","argTypes":["System.Int64"],"args":[${expr(arg)}]}"""
+				"kotlin.Boolean" -> """{"k":"clrNew","type":"DotKtx.Atomicfu.AtomicBoolean","argTypes":["System.Boolean"],"args":[${expr(arg)}]}"""
 				else -> {
 					val typeArg = ((call.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
 					val elemBir = typeArg?.let { birType(it) } ?: "object"
 					val elemNet = typeArg?.let { netType(it) } ?: "System.Object"   // argTypes resolve via ResolveType, not the BIR alias
-					"""{"k":"clrNew","type":"clrg:DotKt.Coroutines.AtomicRef[$elemBir]","argTypes":[${str(elemNet)}],"args":[${expr(arg)}]}"""
+					"""{"k":"clrNew","type":"clrg:DotKtx.Atomicfu.AtomicRef[$elemBir]","argTypes":[${str(elemNet)}],"args":[${expr(arg)}]}"""
 				}
 			}
 		}
@@ -3320,16 +3320,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.String" -> "System.String"
 		"kotlin.Unit" -> "System.Void"
 		"kotlin.coroutines.Continuation" -> "clrg:DotKt.Coroutines.Continuation[${firstArgNet(t)}]"
-		"kotlinx.coroutines.CancellableContinuation" -> "clrg:DotKt.Coroutines.CancellableCont[${firstArgNet(t)}]"
+		"kotlinx.coroutines.CancellableContinuation" -> "clrg:DotKtx.Coroutines.CancellableCont[${firstArgNet(t)}]"
 		"kotlin.Result" -> "clrg:DotKt.Result[${firstArgNet(t)}]"
 		"kotlin.coroutines.CoroutineContext", "kotlin.coroutines.EmptyCoroutineContext" -> "clr:DotKt.Coroutines.CoroutineContext"
 		"kotlin.coroutines.CoroutineContext.Element" -> "clr:DotKt.Coroutines.Element"
 		"kotlin.coroutines.CoroutineContext.Key" -> "clrg:DotKt.Coroutines.Key[${firstArgNet(t)}]"
 		"kotlin.sequences.Sequence" -> "clrg:System.Collections.Generic.IEnumerable[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
-		"kotlinx.atomicfu.AtomicInt" -> "DotKt.Coroutines.AtomicInt"
-		"kotlinx.atomicfu.AtomicLong" -> "DotKt.Coroutines.AtomicLong"
-		"kotlinx.atomicfu.AtomicBoolean" -> "DotKt.Coroutines.AtomicBoolean"
-		"kotlinx.atomicfu.AtomicRef" -> "clrg:DotKt.Coroutines.AtomicRef[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
+		"kotlinx.atomicfu.AtomicInt" -> "DotKtx.Atomicfu.AtomicInt"
+		"kotlinx.atomicfu.AtomicLong" -> "DotKtx.Atomicfu.AtomicLong"
+		"kotlinx.atomicfu.AtomicBoolean" -> "DotKtx.Atomicfu.AtomicBoolean"
+		"kotlinx.atomicfu.AtomicRef" -> "clrg:DotKtx.Atomicfu.AtomicRef[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		else -> NET_EXCEPTIONS[fq]
 			?: (t.classifierOrNull?.owner as? IrClass)?.let { clrName(it) }
 			?: "System.Object"
@@ -3498,18 +3498,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// kotlin.coroutines.Continuation<T> -> the shared DotKt.Coroutines.Continuation<T> (Path B; cross-assembly
 		// identity so a user assembly and dotktx.coroutines share one Continuation). See docs §13b.
 		if (fqp == "kotlin.coroutines.Continuation") return "clrg:DotKt.Coroutines.Continuation[${firstArgBir(t)}]"
-		if (fqp == "kotlinx.coroutines.CancellableContinuation") return "clrg:DotKt.Coroutines.CancellableCont[${firstArgBir(t)}]"
+		if (fqp == "kotlinx.coroutines.CancellableContinuation") return "clrg:DotKtx.Coroutines.CancellableCont[${firstArgBir(t)}]"
 		if (fqp == "kotlin.coroutines.CoroutineContext" || fqp == "kotlin.coroutines.EmptyCoroutineContext")
 			return "clr:DotKt.Coroutines.CoroutineContext"
 		if (fqp == "kotlin.coroutines.CoroutineContext.Element") return "clr:DotKt.Coroutines.Element"
 		if (fqp == "kotlin.coroutines.CoroutineContext.Key") return "clrg:DotKt.Coroutines.Key[${firstArgBir(t)}]"
 		// kotlinx.atomicfu atomics -> the DotKt.Coroutines Interlocked/Volatile wrappers (Phase 3 / §13a res. 5).
-		if (fqp == "kotlinx.atomicfu.AtomicInt") return "clr:DotKt.Coroutines.AtomicInt"
-		if (fqp == "kotlinx.atomicfu.AtomicLong") return "clr:DotKt.Coroutines.AtomicLong"
-		if (fqp == "kotlinx.atomicfu.AtomicBoolean") return "clr:DotKt.Coroutines.AtomicBoolean"
+		if (fqp == "kotlinx.atomicfu.AtomicInt") return "clr:DotKtx.Atomicfu.AtomicInt"
+		if (fqp == "kotlinx.atomicfu.AtomicLong") return "clr:DotKtx.Atomicfu.AtomicLong"
+		if (fqp == "kotlinx.atomicfu.AtomicBoolean") return "clr:DotKtx.Atomicfu.AtomicBoolean"
 		if (fqp == "kotlinx.atomicfu.AtomicRef") {
 			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			return "clrg:DotKt.Coroutines.AtomicRef[$arg]"
+			return "clrg:DotKtx.Atomicfu.AtomicRef[$arg]"
 		}
 		// kotlin.Result<T> -> the shared DotKt.Result<T> struct (one type, cross-assembly identity, so it
 		// serves both runCatching AND the Continuation.resumeWith parameter). See docs §13n.

@@ -140,36 +140,9 @@ namespace DotKt.Coroutines
         public int Await() => _tcs.Task.GetAwaiter().GetResult();
     }
 
-    /// kotlinx.coroutines.Channel<T> over System.Threading.Channels (T8). suspend send/receive map to awaiting
-    /// the Task forms; capacity<=0 -> unbounded. (A genuine kotlinx Channel has more — close semantics, fan-out,
-    /// rendezvous — but this is the CLR-native core: produce/consume across the Task ABI.)
-    public sealed class Chan<T>
-    {
-        readonly System.Threading.Channels.Channel<T> _ch;
-        public Chan(int capacity) =>
-            _ch = capacity <= 0
-                ? System.Threading.Channels.Channel.CreateUnbounded<T>()
-                : System.Threading.Channels.Channel.CreateBounded<T>(capacity);
-        public Task<int> SendAsync(T v) => _ch.Writer.WriteAsync(v).AsTask().ContinueWith(_ => 0);
-        public Task<T> ReceiveAsync() => _ch.Reader.ReadAsync().AsTask();
-        public void Close() => _ch.Writer.Complete();
-    }
-
-
-    /// kotlinx.coroutines.CancellableContinuation<T> — a Continuation<T> with cancellation hooks. v1: forwards
-    /// resume to the underlying continuation; cancel/invokeOnCancellation are minimal (real cancellation lands with
-    /// the dispatcher work). `c.resume(v)` rides the kotlin.coroutines.resume extension (Continuations.Resume).
-    public sealed class CancellableCont<T> : Continuation<T>
-    {
-        readonly Continuation<T> _inner;
-        Action<Exception> _onCancel;
-        public CancellableCont(Continuation<T> inner) { _inner = inner; }
-        public CoroutineContext Context => _inner.Context;
-        public void ResumeWith(Result<T> result) => _inner.ResumeWith(result);
-        public bool IsActive => true;
-        public void Cancel(Exception cause) { _onCancel?.Invoke(cause); }
-        public void InvokeOnCancellation(Action<Exception> handler) { _onCancel = handler; }
-    }
+    // NOTE: kotlinx.coroutines types (Channel -> Chan, CancellableContinuation -> CancellableCont, Flow/select/
+    // structured concurrency) are NOT kotlin.coroutines — they live in the DotKtx.Coroutines namespace (Kotlinx.cs
+    // and the Flows/Select/Structured files). This namespace projects `kotlin.coroutines.*` only.
 
     public static class Intrinsics
     {

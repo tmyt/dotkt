@@ -608,3 +608,19 @@ is now copied next to each emitted dll for the run). `DotKt.Coroutines.dll` was 
 packs DotKt.Runtime), so the distribution naturally gains the coroutine runtime. Full suite green, ilverify-clean.
 (When the real kotlinx-coroutines-core is compiled — Track 2 — it ships as its own `dotktx.coroutines`, and the
 stopgap kotlinx-ish helpers here are superseded.)
+
+## 14a. Namespace hygiene — DotKt.Coroutines projects kotlin.coroutines ONLY (2026-06-23)
+
+The runtime namespaces now mirror the Kotlin source namespaces (user principle: a DotKt namespace is the projection
+of the corresponding Kotlin namespace):
+- `DotKt`            ← `kotlin.*` root: `Result`, `Unit`.
+- `DotKt.Coroutines` ← `kotlin.coroutines.*` ONLY: Continuation, CoroutineContext/Element/Key, Intrinsics
+  (COROUTINE_SUSPENDED), Continuations (resume), TypedCont, ContinuationInterceptor, Interceptors (intercepted),
+  Builders (the Task sink) + kotlin.coroutines test scaffolds (CaptureI/IntTag/RecordingDispatcher/SinkI).
+- `DotKt.Sequences`  ← `kotlin.sequences.*`: Seq, ISeqStep (the sequence{}/generateSequence builder helpers).
+- `DotKtx.Coroutines`← `kotlinx.coroutines.*` (stopgaps): CancellableCont, Chan, Flow*/GFlows, Selector(s),
+  Structured/DeferredI.
+- `DotKtx.Atomicfu`  ← `kotlinx.atomicfu.*`: AtomicInt/Long/Boolean/Ref.
+All still ship in DotKt.Runtime.dll for now; the `DotKtx.*` (kotlinx) sets graduate to their own `dotktx.*`
+assemblies when the real upstream is compiled (Track 2). Compiler type maps + sample @Clr facades updated to match;
+full suite green, ilverify-clean.

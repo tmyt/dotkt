@@ -6,7 +6,10 @@
 using System;
 using System.Threading.Tasks;
 
-namespace DotKt.Coroutines
+using DotKt;
+using DotKt.Coroutines;
+
+namespace DotKtx.Coroutines
 {
     public sealed class DeferredI
     {

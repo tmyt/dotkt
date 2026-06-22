@@ -1,7 +1,7 @@
 package clr
 import kotlin.coroutines.CoroutineContext
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY) annotation class Clr(val name: String)
-@Clr("DotKt.Coroutines.Structured") object Co { @Clr("RunBlockingI") fun runBlocking(block: suspend () -> Int): Int = TODO() }
+@Clr("DotKtx.Coroutines.Structured") object Co { @Clr("RunBlockingI") fun runBlocking(block: suspend () -> Int): Int = TODO() }
 // A runtime Element carrying an Int. @Clr maps it to the runtime type (body not emitted); the supertype + members
 // are only for frontend type-checking, like the Continuation facade in T5.
 @Clr("DotKt.Coroutines.IntTag") class IntTag(value: Int) : CoroutineContext.Element {

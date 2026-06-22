@@ -1874,7 +1874,7 @@ sealed class Emitter
                 {
                     var tk = MapType(e.GetProperty("resultType").GetString());
                     var typed = ResolveType("DotKt.Coroutines.TypedCont`1").MakeGenericType(tk);
-                    var cancel = ResolveType("DotKt.Coroutines.CancellableCont`1").MakeGenericType(tk);
+                    var cancel = ResolveType("DotKtx.Coroutines.CancellableCont`1").MakeGenericType(tk);
                     _il.Emit(OpCodes.Ldarg_0);
                     _il.Emit(OpCodes.Newobj, CtorOf(typed));
                     _il.Emit(OpCodes.Newobj, CtorOf(cancel));

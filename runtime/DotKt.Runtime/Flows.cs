@@ -5,7 +5,10 @@
 using System;
 using System.Threading.Tasks;
 
-namespace DotKt.Coroutines
+using DotKt;
+using DotKt.Coroutines;
+
+namespace DotKtx.Coroutines
 {
     /// FlowCollector<Int>: `emit` returns the consumer's Task (awaited by the producer for backpressure).
     public interface FlowColI { Task<int> EmitRaw(int value); }
@@ -32,7 +35,7 @@ namespace DotKt.Coroutines
     }
 }
 
-namespace DotKt.Coroutines
+namespace DotKtx.Coroutines
 {
     // Generic Flow<T> (the real shape). emit returns the consumer action's Task (Int dummy result to dodge Unit
     // in generics for now); the VALUE type T is fully generic.

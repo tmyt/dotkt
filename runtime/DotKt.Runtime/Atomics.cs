@@ -4,7 +4,7 @@
 // `kotlinx.atomicfu.*` fqnames onto these and `atomic(x)` onto the matching ctor.
 using System.Threading;
 
-namespace DotKt.Coroutines
+namespace DotKtx.Atomicfu
 {
     public sealed class AtomicInt
     {
