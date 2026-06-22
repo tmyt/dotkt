@@ -804,7 +804,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
 				if (found) return
 				if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
-				if (element is IrCall && (isSuspendIntrinsic(element) || isSuspendCancellable(element))) { found = true; return }
+				if (element is IrCall && (isSuspendIntrinsic(element) || isSuspendCancellable(element) ||
+						element.symbol.owner.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.coroutineContext")) { found = true; return }
 				element.acceptChildrenVoid(this)
 			}
 		})
@@ -2225,6 +2226,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED` (a top-level val getter) -> the runtime sentinel.
 		if (callee.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED")
 			return """{"k":"coSuspendedSentinel"}"""
+		// `kotlin.coroutines.coroutineContext` (the suspend top-level property) -> the current coroutine's context =
+		// the state machine's own Context (the SM IS a Continuation<object>). Forces the Continuation-class form. T3.
+		if (callee.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.coroutineContext")
+			return """{"k":"coContext"}"""
 		// `Result.success(v)` / `Result.failure(e)` as a VALUE -> DotKt.Coroutines.Result.Success/Failure (so a Result
 		// can be constructed and forwarded anywhere, e.g. into a user `Continuation.resumeWith`). T4 / docs §13n.
 		if (calleeFqEarly == "kotlin.Result.Companion.success" || calleeFqEarly == "kotlin.Result.Companion.failure") {

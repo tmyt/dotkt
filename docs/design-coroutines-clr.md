@@ -562,3 +562,14 @@ clauses via a member call, the handlers are suspend lambdas, plus generics + awa
 select over Task.WhenAny; real kotlinx select's exact clause DSL — `SelectClause1`/atomic registration — would come
 with literal upstream, Track 2.) Track-1 standalone compiler features are now ALL done; only T3 (CoroutineContext
 Key<E> algebra + intercepted) remains, and it belongs with Track 2 (dispatchers / real upstream).
+
+## 13x. T3(a) done — coroutineContext; T3 is Track-2-INDEPENDENT (2026-06-22)
+
+CORRECTION (user, 2026-06-22): T3 is NOT gated on building upstream — dispatchers are a CLR **actual set**
+buildable standalone NOW; "needs dispatchers" ≠ "needs upstream" (the same conflation corrected earlier). T3 is
+needed regardless and proceeds independently, Track-1-style (synthetic samples).
+T3(a): `kotlin.coroutines.coroutineContext` (the suspend top-level property) -> the SM's own Context (the class-form
+SM IS a `Continuation<object>`, so `coContext` = `ldarg.0; callvirt get_Context`). Accessing it forces the
+Continuation-class form (added to the isCoClass body scan). il-kctx → 1 (`coroutineContext === EmptyCoroutineContext`,
+the default). Next T3 increments: (b) the `CoroutineContext` element algebra (Element/Key/get/plus/fold/minusKey/
+CombinedContext); (c) `ContinuationInterceptor`/`intercepted` + a minimal `CoroutineDispatcher`.

@@ -1863,6 +1863,13 @@ sealed class Emitter
                     _il.Emit(OpCodes.Newobj, CtorOf(typed));
                     return typed;
                 }
+            case "coContext":   // kotlin.coroutines.coroutineContext -> the SM's own Context (the SM is Continuation<object>)
+                {
+                    var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
+                    _il.Emit(OpCodes.Ldarg_0);
+                    _il.Emit(OpCodes.Callvirt, contObj.GetMethod("get_Context"));
+                    return ResolveType("DotKt.Coroutines.CoroutineContext");
+                }
             case "coSelfCancellable":   // the SM as a CancellableContinuation<T>: new CancellableCont<T>(new TypedCont<T>(this))
                 {
                     var tk = MapType(e.GetProperty("resultType").GetString());
