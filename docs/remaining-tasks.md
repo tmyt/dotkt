@@ -191,6 +191,7 @@
   - 実装案B: 参照アセンブリから classId をオンデマンド解決する **FIR symbol provider**（宣言生成拡張より強力）。総称も含め一経路化。
 - [x] **宣言の一本化** ✅: 明示が要る場合のみ `<DotKtImport>`（escape hatch、注入経路）。`<KotlinClrType>` は撤廃しサンプルから削除（import scan で代替）。`<KotlinClrFacade>` は内部実装（auto-façade）に降格。**(M)**
 - [x] 検証: BCL（`ktproj-import`/`ktproj-inject` = import のみ）・外部アセンブリ（`ktproj-extlib` ProjectReference・`ktproj-avalonia` PackageReference、いずれも import のみ）を verify-all で常設。
+- [x] **Forward `<Reference>`（Kotlin → .NET）= 実装済 ✅**: `.ktproj` の `<Reference>` / `<PackageReference>` / `<ProjectReference>` で参照した .NET アセンブリの型は、そのまま `import` で Kotlin から使える（`msbuild/KotlinClr.targets` の `ResolveReferences` → @(ReferencePath) → facadegen `--refs`）。**※逆向き（.NET が Kotlin の IL アセンブリをコンパイル時 `<Reference>`）は別物で未実装＝R-1（下記 R セクション）。** 「`<Reference>` は実装済み？」は forward の話なら Yes、reverse なら R-1。
 
 ---
 
@@ -271,7 +272,10 @@ C# 生成は単なる出力フォーマットではなく、以下3役を兼ね�
 - **→ E トラック完了。** 詳細・各フェーズの設計は `docs/csharp-retirement-design.md`。残る磨き（5.2 コンパイル時 `<Reference>`）は下記 **R-1** に 1.0 出荷タスクとして移管。
 
 ## R. 逆 interop の磨き（1.0 出荷タスク・脱却ブロッカーではない）
-- [ ] **R-1 コンパイル時 `<Reference>` retargeting（M-L）**: C# 等が IL 出力アセンブリを**コンパイル時 `<Reference>`** で消費できるようにする（現状は reflection-load のみ可＝`samples/il-revinterop`）。
+> **⚠ `<Reference>` は方向で状況が真逆（混同注意）**:
+> - **Forward（Kotlin → .NET）＝実装済 ✅**: `.ktproj` の `<Reference>`/`<PackageReference>`/`<ProjectReference>` で .NET アセンブリを参照すると、その型が Kotlin から使える（`ResolveReferences` が @(ReferencePath) を埋め、facadegen `--refs` が型を inject／C-2 import 駆動解決。`msbuild/KotlinClr.targets`、`samples/ktproj-ref`）。下記 C-1 参照。
+> - **Reverse（.NET → Kotlin）＝R-1 で未実装 ❌**: C# 等が「Kotlin が emit した IL アセンブリ」を**コンパイル時 `<Reference>`** することは未。下記が R-1。
+- [ ] **R-1 コンパイル時 `<Reference>` retargeting（M-L、REVERSE 方向 .NET→Kotlin のみ）**: C# 等が IL 出力アセンブリを**コンパイル時 `<Reference>`** で消費できるようにする（現状の reverse 経路は reflection-load のみ可＝`samples/il-revinterop`、または生成 C# ソースを `<Compile>`＝`samples/revinterop`）。
   - **根本原因**: ilemit は BCL を runtime reflection 型で解決するため、出力では **CoreLib の全型（Object/String/`List`/`Dictionary`/`Task`…）が単一の `System.Private.CoreLib` AssemblyRef を共有**。コンパイル時参照には型ごとに正しいコントラクトアセンブリ（Object/String/Task→System.Runtime、`List`/`Dictionary`→System.Collections、LINQ→System.Linq…）へ**per-ref 分離**が必要。
   - **不可と実証済の2案**（2026-06-18）: ① **MetadataLoadContext 型**で emit → MLC のジェネリック型/メソッドに**ユーザ TypeBuilder 型引数**を渡すと "not loaded by the MLC" 例外（lambda→`Func<UserT>`・closure・`List<UserT>`・コルーチン `Start<SM>` が全滅）。② **単一 AssemblyRef の PE in-place 書換**で CoreLib→System.Runtime → `Object`/`String` は通るが `List<T>` が `TypeLoadException`（System.Runtime は List を forward しない）。両方撤回。
   - **残る実装案**: 出力 PE の**メタデータ全面再構築**で TypeRef ごとの ResolutionScope を正しいコントラクト AssemblyRef に振り分け（型→コントラクトの対応は ref パックを引いて決定。Reflection.Emit を介さない純メタデータ変換なので TypeBuilder 制約を回避）。あるいは Reflection.Emit の参照アセンブリ対応 API を待つ。**(M-L, 出荷の磨き)**
