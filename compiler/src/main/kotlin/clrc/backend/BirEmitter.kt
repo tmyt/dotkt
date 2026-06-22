@@ -3623,6 +3623,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"kotlin.Any" -> return "object"
 			"kotlin.Int" -> return "int"
 			"kotlin.Long" -> return "long"
+			"kotlin.Short" -> return "short"
+			"kotlin.Byte" -> return "byte"
 			"kotlin.Double" -> return "double"
 			"kotlin.Float" -> return "float"
 			"kotlin.Boolean" -> return "bool"

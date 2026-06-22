@@ -2913,6 +2913,10 @@ sealed class Emitter
             case "ulong": _il.Emit(OpCodes.Ldc_I8, v.GetInt64()); return typeof(ulong);
             case "ubyte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(byte);
             case "ushort": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(ushort);
+            // Signed Byte/Short (Kotlin Byte = sbyte, Short = Int16). Without these a `const byte`/`const short`
+            // fell to default -> Ldnull -> InvalidProgramException when passed to a byte/short parameter.
+            case "byte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(sbyte);
+            case "short": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(short);
             case "double": _il.Emit(OpCodes.Ldc_R8, v.GetDouble()); return typeof(double);
             case "float": _il.Emit(OpCodes.Ldc_R4, v.GetSingle()); return typeof(float);
             case "bool": _il.Emit(v.GetBoolean() ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); return typeof(bool);
@@ -3376,7 +3380,7 @@ sealed class Emitter
                     "double" => v.GetDouble(),
                     "float" => (float)v.GetDouble(),
                     "short" => (short)v.GetInt32(),
-                    "byte" => (byte)v.GetInt32(),
+                    "byte" => (sbyte)v.GetInt32(),
                     _ => v.GetInt32(),
                 };
             default: return null;
@@ -3550,7 +3554,8 @@ sealed class Emitter
             "double" => typeof(double), "float" => typeof(float), "bool" => typeof(bool),
             "char" => typeof(char), "string" => typeof(string),
             "uint" => typeof(uint), "ulong" => typeof(ulong), "ubyte" => typeof(byte), "ushort" => typeof(ushort),
-            "short" => typeof(short), "byte" => typeof(byte), _ => typeof(object),
+            // Kotlin Byte is SIGNED (sbyte, -128..127); UByte is the unsigned `byte`.
+            "short" => typeof(short), "byte" => typeof(sbyte), _ => typeof(object),
         };
     }
 
