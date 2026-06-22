@@ -65,6 +65,16 @@ namespace DotKt.Coroutines
         public static void ResumeWithException<T>(Continuation<T> c, Exception e) => c.ResumeWith(Result<T>.Failure(e));
     }
 
+    /// A test completion: a `Continuation<int>` that captures the resumed value and lets a caller block for it
+    /// (used to observe `startCoroutine` standalone, without a real dispatcher/runBlocking).
+    public sealed class CaptureI : Continuation<int>
+    {
+        readonly System.Threading.Tasks.TaskCompletionSource<int> _tcs = new System.Threading.Tasks.TaskCompletionSource<int>();
+        public CoroutineContext Context => EmptyCoroutineContext.Instance;
+        public void ResumeWith(Result<int> r) { if (r.IsFailure) _tcs.SetException(r.ExceptionOrNull); else _tcs.SetResult(r.GetOrThrow()); }
+        public int Await() => _tcs.Task.GetAwaiter().GetResult();
+    }
+
     public static class Intrinsics
     {
         /// kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED — the sentinel a suspension point returns (by ===
@@ -182,5 +192,30 @@ namespace DotKt.Coroutines
         /// e.g. `onCompleteCb(task) { v -> c.resume(v) }`). Exercises the Kotlin-side resume API (A2).
         public static void OnCompleteCbInt(Task<int> task, Action<int> cb) =>
             task.GetAwaiter().OnCompleted(() => cb(task.Result));
+
+        /// `(suspend ()->T).startCoroutine(completion)` — start the block (its kickoff Task) and route its result
+        /// into the supplied completion continuation (normal→resume, throw→resumeWithException). Eager start.
+        public static void StartCoroutine<T>(Func<Task<T>> block, Continuation<T> completion)
+        {
+            Task<T> t;
+            try { t = block(); } catch (Exception e) { Continuations.ResumeWithException(completion, e); return; }
+            CompleteOnto(t, completion);
+        }
+
+        /// `(suspend R.()->T).startCoroutine(receiver, completion)` — the receiver-lambda overload.
+        public static void StartCoroutineR<R, T>(Func<R, Task<T>> block, R receiver, Continuation<T> completion)
+        {
+            Task<T> t;
+            try { t = block(receiver); } catch (Exception e) { Continuations.ResumeWithException(completion, e); return; }
+            CompleteOnto(t, completion);
+        }
+
+        // Route a Task's outcome into a completion (normal→resume, throw→resumeWithException).
+        static void CompleteOnto<T>(Task<T> t, Continuation<T> completion) =>
+            t.GetAwaiter().OnCompleted(() =>
+            {
+                if (t.IsFaulted) Continuations.ResumeWithException(completion, Unwrap(t.Exception));
+                else Continuations.Resume(completion, t.Result);
+            });
     }
 }

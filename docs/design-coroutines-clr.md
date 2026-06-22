@@ -417,3 +417,17 @@ Across §10/§11/§12, every scope/producer body is a `suspend` lambda (`launch{
 statements }`). So the one irreducible, design-independent task is **suspend-lambda CPS** — extend `emitCps` from
 suspend funs to lambda bodies. It unblocks both paths and both arities; the big ABI/A-vs-B questions can wait until
 that real code exists. **Recommended first implementation step for #55.**
+
+## 13l. T1 done — startCoroutine (2026-06-22)
+
+`(suspend ()->T).startCoroutine(completion)` and the receiver overload `(suspend R.()->T).startCoroutine(receiver,
+completion)` now lower (`BirEmitter` call() early-dispatch) to `DotKt.Coroutines.Builders.StartCoroutine<T>` /
+`StartCoroutineR<R,T>`: run the block's kickoff Task and route its outcome into the supplied `Continuation<T>`
+(normal→`Continuations.Resume`, throw→`ResumeWithException`). The completion's `T` comes from the
+`startCoroutine<T>` **call type argument** (NOT the completion arg's declared type — it may be a concrete
+`Continuation<T>` implementor like the runtime `CaptureI`, whose own type args aren't `T`; mis-reading it as
+`object` passed `Continuation<Int>` where `Continuation<object>` was expected → an EntryPointNotFound on the
+generic-interface dispatch, which looked like a deep CLR bug but was just the wrong type arg). Generic path works;
+no monomorphic special-case needed. Proof: `samples/il-kstart` (a suspending `produce` started into a runtime
+`CaptureI` sink → 42), ilverify-clean. `createCoroutine`/`createCoroutineUnintercepted` (non-starting forms) not
+yet — add when upstream needs them.

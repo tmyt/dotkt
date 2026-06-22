@@ -2176,6 +2176,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val resume = calleeFqEarly == "kotlin.coroutines.resume"
 			return resumeHelper(if (resume) "Resume" else "ResumeWithException", contT, expr(recv), expr(regularArgs(call).first()), if (resume) "gp" else "Exception")
 		}
+		// `(suspend ()->T).startCoroutine(completion)` / `(suspend R.()->T).startCoroutine(receiver, completion)`
+		// -> drive the block's kickoff Task into the supplied Continuation (T1). The block is the extension receiver
+		// (a suspend lambda -> Func<…,Task<T>>); the completion's Continuation<T> gives T.
+		if (calleeFqEarly == "kotlin.coroutines.startCoroutine") {
+			val block = extensionReceiver(call)!!
+			val regs = regularArgs(call)
+			val completion = regs.last()
+			// T from the startCoroutine<T> instantiation (the completion ARG's declared type may be a concrete
+			// Continuation<T> implementor, not Continuation<T> itself, so its type args aren't T).
+			val t = call.typeArguments.lastOrNull()?.let { birType(it) } ?: "object"
+			return if (regs.size == 1)
+				"""{"k":"clrGenericStatic","type":"DotKt.Coroutines.Builders","method":"StartCoroutine","typeArgs":[${str(t)}],"shapes":["func:1","generic"],"args":[${expr(block)},${expr(completion)}]}"""
+			else {
+				val r = birType(regs.first().type)
+				"""{"k":"clrGenericStatic","type":"DotKt.Coroutines.Builders","method":"StartCoroutineR","typeArgs":[${str(r)},${str(t)}],"shapes":["func:2","gp","generic"],"args":[${expr(block)},${expr(regs.first())},${expr(completion)}]}"""
+			}
+		}
 		atomicfuCall(call)?.let { return it }
 		// `kotlin.sequences.sequence { yield(…) }` -> a lazy IEnumerable<T> backed by a yield state machine that
 		// implements ISeqStep<T>, wrapped by DotKt.Coroutines.Seq.Of. The block's yields CPS-linearize to coYield
