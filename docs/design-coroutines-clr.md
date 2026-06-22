@@ -527,3 +527,12 @@ the collector (await = backpressure); `GFlows.ToAsync<T>(Flow<T>) : IAsyncEnumer
 the flow into an unbounded Channel and exposes the reader as an async stream (push→pull). Sample il-kasflow:
 `Flows.fromAsync(Kfc.Api.range(4)).collect { println(it*10) }` → 0/10/20/30 (a C# `async IAsyncEnumerable<int>`
 bridged into a Kotlin Flow). T8 (Channel + Flow↔IAsyncEnumerable) done; full suite green.
+
+## 13u. generateSequence done — T6 complete (2026-06-22)
+
+`generateSequence(seed?, next)` and `generateSequence(next)` lower to `DotKt.Coroutines.Seq.Generate{Ref,Val}` /
+`Generate{Ref,Val}N` (il-kgenseq → 1,2,3,4,5 / a,aa,aaa / 1,2,3). The nullable-in-generics issue (`(T) -> T?` is
+`Func<T, Nullable<T>>` for a value T vs `Func<T, T>` for a reference T) is solved by the COMPILER picking the
+value- vs reference-variant from T's kind at the call site (T is known) — two helpers, one chosen, instead of one
+impossible unified signature. Lazy (take short-circuits the infinite seedless form). With yieldAll (§13q), T6 is
+done. (The same value/ref-split trick is the general answer for nullable-T-in-generics elsewhere.)

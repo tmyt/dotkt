@@ -2277,6 +2277,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val smName = "<>dotkt_Seq${closureCounter++}"
 			return """{"k":"sequenceNew","sm":${str(smName)},"elem":${str(elem)},"cpsFields":[${co.cpsFields}],"steps":[${co.steps}]}"""
 		}
+		// `generateSequence(seed?, next)` / `generateSequence(next)` -> a lazy IEnumerable<T> from Seq.Generate*.
+		// Pick the value- vs reference-T variant at compile time (the `(T)->T?` delegate shape differs); see §13u.
+		if (calleeFqEarly == "kotlin.sequences.generateSequence") {
+			val args = regularArgs(call)
+			val elem = call.typeArguments.firstOrNull()?.let { birType(it) } ?: "object"
+			// Value-type T -> the GenerateVal variant (next is Func<T, Nullable<T>>); reference T -> GenerateRef.
+			val isVal = elem in setOf("int", "long", "short", "byte", "bool", "char", "double", "float")
+			return if (args.size == 2) {
+				val method = if (isVal) "GenerateVal" else "GenerateRef"
+				val seedShape = if (isVal) "generic" else "gp"   // value seed is Nullable<T> (generic), ref seed is bare T
+				"""{"k":"clrGenericStatic","type":"DotKt.Coroutines.Seq","method":${str(method)},"typeArgs":[${str(elem)}],"shapes":["$seedShape","func:2"],"args":[${expr(args[0])},${expr(args[1])}]}"""
+			} else {
+				val method = if (isVal) "GenerateValN" else "GenerateRefN"
+				"""{"k":"clrGenericStatic","type":"DotKt.Coroutines.Seq","method":${str(method)},"typeArgs":[${str(elem)}],"shapes":["func:1"],"args":[${expr(args[0])}]}"""
+			}
+		}
 		// `kotlinx.coroutines.runBlocking { … }` -> drive the coroutine synchronously. Only a TRIVIAL block
 		// (`{ suspendFun() }`, a single tail suspend call) is supported here (a non-trivial block needs suspend-lambda
 		// CPS). The block's kickoff Task is awaited via GetAwaiter().GetResult().
