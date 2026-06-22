@@ -720,13 +720,8 @@ sealed class Emitter
                         break;
                     }
                     case "coTryEnd":
-                    {
-                        int id = st.GetProperty("id").GetInt32();
-                        if (fell) _il.Emit(OpCodes.Leave, tryEnd[id]);   // close the last catch
-                        _il.EndExceptionBlock();
-                        _coTryDepth--;
+                        EmitCoTryEnd(st, tryEnd[st.GetProperty("id").GetInt32()], fell);
                         break;
-                    }
                     case "coSuspend":
                         EmitCoSuspend(st, fState, fBuilder, builderT, sm, awaiterType, awaiterField, awaiterLocal, resume, after, coFields);
                         break;
@@ -795,6 +790,29 @@ sealed class Emitter
     // TypeBuilder.GetField/GetConstructor(constructed, def); on a non-generic SM, the def itself.
     static FieldInfo SmField(Type inst, FieldBuilder def) => inst.IsGenericType ? TypeBuilder.GetField(inst, def) : def;
     static ConstructorInfo SmCtor(Type inst, ConstructorBuilder def) => inst.IsGenericType ? TypeBuilder.GetConstructor(inst, def) : def;
+
+    // Close a coroutine try region (shared by the struct & class SM forms). A `finally` around a suspension is NOT
+    // emitted as a CLR finally clause (a suspend `leave`s the .try, which would run a real finally on every
+    // suspend); instead the finally body runs explicitly on the normal-exit path and in a synthesized catch-all
+    // that rethrows (T10). v1: fall-through try body only — a `return` inside the try skips the finally.
+    void EmitCoTryEnd(JsonElement st, Label tryEndL, bool fell)
+    {
+        if (st.TryGetProperty("finally", out var fin) && fin.GetArrayLength() > 0)
+        {
+            if (fell) { foreach (var f in fin.EnumerateArray()) EmitStmt(f); _il.Emit(OpCodes.Leave, tryEndL); }
+            _il.BeginCatchBlock(ResolveType("System.Exception"));
+            _il.Emit(OpCodes.Pop);                                  // discard the caught exception (we rethrow)
+            foreach (var f in fin.EnumerateArray()) EmitStmt(f);
+            _il.Emit(OpCodes.Rethrow);
+            _il.EndExceptionBlock();
+        }
+        else
+        {
+            if (fell) _il.Emit(OpCodes.Leave, tryEndL);
+            _il.EndExceptionBlock();
+        }
+        _coTryDepth--;
+    }
 
     // The single ctor of a constructed generic reflected type, re-anchored via TypeBuilder.GetConstructor when a
     // type arg is an emitted generic param / TypeBuilder (e.g. TypedCont<T> in a generic suspend fun whose result
@@ -916,7 +934,7 @@ sealed class Emitter
                     case "coCatchBegin": { int id = st.GetProperty("id").GetInt32(); if (fell) _il.Emit(OpCodes.Leave, tryEnd[id]);
                         var ct = ResolveType(st.GetProperty("excType").GetString()); _il.BeginCatchBlock(ct);
                         var el = _il.DeclareLocal(ct); _locals[st.GetProperty("var").GetString()] = el; _il.Emit(OpCodes.Stloc, el); break; }
-                    case "coTryEnd": { int id = st.GetProperty("id").GetInt32(); if (fell) _il.Emit(OpCodes.Leave, tryEnd[id]); _il.EndExceptionBlock(); _coTryDepth--; break; }
+                    case "coTryEnd": EmitCoTryEnd(st, tryEnd[st.GetProperty("id").GetInt32()], fell); break;
                     case "coSuspend": EmitCoSuspendClass(st, fState, fParam, fErr, resume, coFields, builders, fSuspended, outcome); break;
                     case "coSuspendIntrinsic": EmitCoSuspendIntrinsicClass(st, fState, fParam, fErr, resume, coFields, fSuspended, outcome); break;
                     case "coLabel": _il.MarkLabel(coLabel[st.GetProperty("id").GetInt32()]); break;

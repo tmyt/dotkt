@@ -1011,7 +1011,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * (not inside a catch) — both else clean `coUnsupported` (resume-into-catch / finally-aware leave deferred).
 	 */
 	private fun emitTryCps(t: IrTry, ret: IrType, steps: MutableList<String>) {
-		if (t.finallyExpression != null) { steps.add(coUnsupported("finally around a suspension point")); return }
+		val hasFinally = t.finallyExpression != null
+		// `finally` around a suspension is NOT a CLR finally clause (a suspend `leave`s the .try, which would run a
+		// real finally on every suspend). Instead ilemit emits the finally body explicitly on the normal-exit path
+		// AND in a synthesized catch-all that rethrows (T10 / docs §13v). v1: finally only when there are no `catch`
+		// clauses, and neither the finally nor any catch suspends.
+		if (hasFinally && t.catches.isNotEmpty()) { steps.add(coUnsupported("try with both catch and finally around a suspension")); return }
+		if (hasFinally && containsSuspend(t.finallyExpression!!)) { steps.add(coUnsupported("a suspension inside a finally")); return }
 		if (t.catches.any { containsSuspend(it.result) }) { steps.add(coUnsupported("suspension inside a catch clause")); return }
 		val tid = coLabelN++
 		steps.add("""{"k":"coTryBegin","id":$tid}""")
@@ -1021,7 +1027,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			steps.add("""{"k":"coCatchBegin","id":$tid,"excType":${str(netType(c.catchParameter.type))},"var":${str(v)}}""")
 			emitCpsBlock(c.result, ret, steps)
 		}
-		steps.add("""{"k":"coTryEnd","id":$tid}""")
+		val finallyJson = if (hasFinally) {
+			val fin = ArrayList<String>(); emitCpsBlock(t.finallyExpression!!, ret, fin)
+			""","finally":[${fin.joinToString(",")}]"""
+		} else ""
+		steps.add("""{"k":"coTryEnd","id":$tid$finallyJson}""")
 	}
 
 	private fun emitWhileCps(loop: IrWhileLoop, ret: IrType, steps: MutableList<String>) {

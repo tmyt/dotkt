@@ -536,3 +536,16 @@ bridged into a Kotlin Flow). T8 (Channel + Flow↔IAsyncEnumerable) done; full s
 value- vs reference-variant from T's kind at the call site (T is known) — two helpers, one chosen, instead of one
 impossible unified signature. Lazy (take short-circuits the infinite seedless form). With yieldAll (§13q), T6 is
 done. (The same value/ref-split trick is the general answer for nullable-T-in-generics elsewhere.)
+
+## 13v. T10 (finally-around-await) done — suspension-in-catch / catch+finally still loud (2026-06-22)
+
+`try { …suspend… } finally { … }` now works (il-kfinally → cleanup / 15, with TWO suspensions inside the try and
+the finally running exactly once after, never on a suspend). The mechanism: a `finally` around a suspension is NOT
+emitted as a CLR finally clause — a suspend `leave`s the .try to return from MoveNext, which would run a real
+finally on every suspend. Instead `emitTryCps` carries the finally steps on `coTryEnd`, and ilemit's `EmitCoTryEnd`
+(shared by struct + class SM forms) emits them on the normal-exit path AND in a synthesized `catch(Exception){
+<finally>; rethrow }`. v1 scope: fall-through try body (a `return` inside the try skips the finally — known gap);
+finally only with NO catch clauses; a suspending finally / catch is a loud error.
+Observed but ORTHOGONAL: the finally also runs on the exception-unwind path (cleanup printed before the throw), but
+a DIRECT throw in a struct-form coroutine body isn't routed to its Task (escapes MoveNext) — a separate pre-existing
+exception-routing gap, not T10. Remaining hard tail: T9 select, T3 CoroutineContext Key<E> algebra + intercepted.
