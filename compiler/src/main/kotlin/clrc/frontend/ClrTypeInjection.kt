@@ -34,6 +34,8 @@ import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.fir.types.constructType
+import org.jetbrains.kotlin.fir.types.impl.ConeClassLikeTypeImpl
+import org.jetbrains.kotlin.fir.symbols.impl.ConeClassLikeLookupTagImpl
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
@@ -423,7 +425,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			"Int" -> bt.intType.coneType; "Long" -> bt.longType.coneType; "Double" -> bt.doubleType.coneType
 			"Float" -> bt.floatType.coneType; "Short" -> bt.shortType.coneType; "Byte" -> bt.byteType.coneType
 			"Boolean" -> bt.booleanType.coneType; "Char" -> bt.charType.coneType; "String" -> bt.stringType.coneType
-			else -> ClrMetadataHolder.classIdFor(name, 0)?.let { session.symbolProvider.getClassLikeSymbolByClassId(it)?.constructType(emptyArray(), false) } ?: bt.nullableAnyType.coneType
+			// Build the cross-type arg from its ClassId LOOKUP TAG, not by resolving the symbol. A self-referential
+			// supertype (`Money : IComparable<Money>`) runs THIS lambda synchronously while `Money` is still being
+			// built (not yet cached), so resolving its symbol here re-enters generation -> StackOverflow. A lookup-tag
+			// cone is a lazy by-ClassId reference; the symbol resolves later, once `Money` is fully built.
+			else -> ClrMetadataHolder.classIdFor(name, 0)?.let { ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(it), emptyArray(), false) } ?: bt.nullableAnyType.coneType
 		}
 	}
 

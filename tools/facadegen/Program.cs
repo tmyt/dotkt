@@ -501,9 +501,11 @@ static class FacadeGen
     // the normal `Circle : IShape` (assignability to an interface parameter) while safely skipping interfaces C
     // implements EXPLICITLY (non-public targets) or with a COVARIANT return (e.g. `List<T>.GetEnumerator(): Enumerator`
     // vs `IEnumerable<T>.GetEnumerator(): IEnumerator<T>`), which Kotlin would reject as unimplemented/mismatched.
-    // The interfaces `c` can be declared to implement: injectable, not self-referential, no generic interface method,
-    // and — for a NON-generic interface — not shadowed by a same-named generic one (so we drop the legacy
-    // `IList`/`ICollection`/`IEnumerable` that sit alongside `IList<T>` etc. and only bring `object`-typed members).
+    // The interfaces `c` can be declared to implement: injectable, no generic interface method, and — for a NON-generic
+    // interface — not shadowed by a same-named generic one (so we drop the legacy `IList`/`ICollection`/`IEnumerable`
+    // that sit alongside `IList<T>` etc. and only bring `object`-typed members). Self-referential generic interfaces
+    // (`Money : IComparable<Money>`, the BCL value-type norm) ARE emitted — the injector resolves the self-argument
+    // via a lazy lookup-tag cone, so it no longer recurses into the type being built.
     static List<Type> SatisfiableInterfaces(Type c)
     {
         Type[] all; try { all = c.GetInterfaces(); } catch { return new List<Type>(); }
@@ -514,7 +516,6 @@ static class FacadeGen
             var openi = i.IsGenericType ? i.GetGenericTypeDefinition() : i;
             if (string.IsNullOrEmpty(openi.Namespace) || NO_INJECT.Contains(openi.FullName ?? "")
                 || !SimpleName(openi).All(ch => char.IsLetterOrDigit(ch) || ch == '_')) continue;
-            if (i.IsGenericType && i.GetGenericArguments().Any(a => a.FullName != null && a.FullName == c.FullName)) continue;   // self-ref
             if (!i.IsGenericType && genericNames.Contains(SimpleName(i))) continue;   // legacy non-generic shadow
             if (ClassSatisfies(c, i)) res.Add(i);
         }
