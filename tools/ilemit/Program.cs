@@ -3142,11 +3142,51 @@ sealed class Emitter
     Type EmitClrNew(JsonElement e)
     {
         var type = ClrRef(e.GetProperty("type").GetString());
-        var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => ClrRef(a.GetString())).ToArray();
-        var ci = type.GetConstructor(argTypes) ?? type.GetConstructor(Type.EmptyTypes);
-        EmitArgs(e.GetProperty("args"), ci.GetParameters());
+        var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => { try { return ClrRef(a.GetString()); } catch { return (Type)null; } }).ToArray();
+        var args = e.GetProperty("args");
+        // Exact match first; else fall back to arity-based selection. The latter matters when a lambda arg's type was
+        // erased to `object` by the façade (the param is really a delegate, e.g. `new Thread(ThreadStart)`): the real
+        // ctor param type is recovered here so EmitArg can build the specific delegate.
+        var ci = (argTypes.All(t => t != null) ? type.GetConstructor(argTypes) : null) ?? PickClrCtor(type, args);
+        if (ci == null) throw new NotSupportedException($"no matching constructor for {type.FullName} with {args.GetArrayLength()} arg(s)");
+        EmitArgs(args, ci.GetParameters());
         _il.Emit(OpCodes.Newobj, ci);
         return type;
+    }
+
+    /** Pick a ctor by arity when exact type match fails; among equal-arity ctors prefer the one whose delegate-typed
+     *  params match the arity of the lambda (delegateNew/closureNew) args — disambiguates ThreadStart (`()->`) from
+     *  ParameterizedThreadStart (`(object)->`). */
+    ConstructorInfo PickClrCtor(Type type, JsonElement args)
+    {
+        int n = args.GetArrayLength();
+        var cands = type.GetConstructors().Where(c => c.GetParameters().Length == n).ToList();
+        if (cands.Count == 0) return n == 0 ? type.GetConstructor(Type.EmptyTypes) : null;
+        if (cands.Count == 1) return cands[0];
+        return cands.OrderByDescending(c =>
+        {
+            var ps = c.GetParameters(); int score = 0, i = 0;
+            foreach (var a in args.EnumerateArray())
+            {
+                var p = ps[i++].ParameterType;
+                if (a.TryGetProperty("k", out var k) && (k.GetString() == "delegateNew" || k.GetString() == "closureNew")
+                    && typeof(System.Delegate).IsAssignableFrom(p) && a.TryGetProperty("funcType", out var ft))
+                {
+                    var invoke = p.GetMethod("Invoke");
+                    if (invoke != null && invoke.GetParameters().Length == FuncArity(ft.GetString())) score += 2;
+                }
+            }
+            return score;
+        }).First();
+    }
+
+    /** Arity of a `func:<ret>:<p1,p2,...>` encoding (`func:void:` -> 0, `func:void:object` -> 1). */
+    static int FuncArity(string funcType)
+    {
+        var c = funcType.IndexOf(':'); if (c < 0) return 0;
+        var c2 = funcType.IndexOf(':', c + 1); if (c2 < 0) return 0;
+        var ps = funcType.Substring(c2 + 1);
+        return ps.Length == 0 ? 0 : SplitTopLevel(ps).Count();
     }
 
     Type EmitClrCall(JsonElement e, bool instance, bool deref = true)
