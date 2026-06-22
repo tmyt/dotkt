@@ -1630,6 +1630,24 @@ sealed class Emitter
         return TypeBuilder.GetMethod(constructed, mb);
     }
 
+    // A BCL constructed generic (List<T>, HashSet<T>, Dictionary<K,V>) whose type argument is an EMITTED type
+    // (a TypeBuilderInstantiation) refuses reflection — `GetConstructor`/`GetMethod` throw "does not support
+    // resolving members" (feedback item 12). Re-anchor the OPEN definition's member onto the constructed type via
+    // the static TypeBuilder.GetX helpers, exactly like ResolveField/ResolveMethod do for emitted generics.
+    static bool IsTbInstantiation(Type t) =>
+        t.IsGenericType && !t.IsGenericTypeDefinition &&
+        t.GetGenericArguments().Any(a => a is TypeBuilder || a is GenericTypeParameterBuilder || (a.IsGenericType && IsTbInstantiation(a)));
+
+    static ConstructorInfo GenericCtor(Type constructed, params Type[] argTypes) =>
+        IsTbInstantiation(constructed)
+            ? TypeBuilder.GetConstructor(constructed, constructed.GetGenericTypeDefinition().GetConstructor(argTypes))
+            : constructed.GetConstructor(argTypes);
+
+    static MethodInfo GenericMethod(Type constructed, string name) =>
+        IsTbInstantiation(constructed)
+            ? TypeBuilder.GetMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
+            : constructed.GetMethod(name);
+
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
     // `retType`/`paramTypes` give the SUBSTITUTED (concrete) signature, since the instantiation's own reflection
     // still reports `!!0` (and throws pre-bake) — needed so value args to `object`/concrete params get boxed.
@@ -1875,8 +1893,8 @@ sealed class Emitter
                 // `listOf(...)` -> new List<elem> { ... } via repeated Add.
                 var elem = MapType(e.GetProperty("elem").GetString());
                 var listT = typeof(List<>).MakeGenericType(elem);
-                _il.Emit(OpCodes.Newobj, listT.GetConstructor(Type.EmptyTypes));
-                var add = listT.GetMethod("Add");
+                _il.Emit(OpCodes.Newobj, GenericCtor(listT));
+                var add = GenericMethod(listT, "Add");
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Dup);
@@ -2379,8 +2397,8 @@ sealed class Emitter
                 var kt = MapType(e.GetProperty("keyType").GetString());
                 var vt = MapType(e.GetProperty("valType").GetString());
                 var dt = typeof(System.Collections.Generic.Dictionary<,>).MakeGenericType(kt, vt);
-                _il.Emit(OpCodes.Newobj, dt.GetConstructor(Type.EmptyTypes));
-                var setItem = dt.GetMethod("set_Item");
+                _il.Emit(OpCodes.Newobj, GenericCtor(dt));
+                var setItem = GenericMethod(dt, "set_Item");
                 foreach (var en in e.GetProperty("entries").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Dup);
@@ -2441,8 +2459,8 @@ sealed class Emitter
                 // `setOf(...)` -> new HashSet<elem> { ... } via repeated Add (Add returns bool -> pop).
                 var elem = MapType(e.GetProperty("elem").GetString());
                 var setT = typeof(System.Collections.Generic.HashSet<>).MakeGenericType(elem);
-                _il.Emit(OpCodes.Newobj, setT.GetConstructor(Type.EmptyTypes));
-                var add = setT.GetMethod("Add");
+                _il.Emit(OpCodes.Newobj, GenericCtor(setT));
+                var add = GenericMethod(setT, "Add");
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Dup);
