@@ -485,3 +485,13 @@ implicit `$this$flow` was an unknown var). EXCLUDES the `kotlin.sequences.Sequen
 the restricted-suspension builder whose scope IS the state machine (synthetic, not a passed value), lowered by the
 sequence-special path; including it broke il-kseq. `sequence { yield(x) }` already proved receiver-style for the
 member-call case; this adds the extension-on-receiver case. Full suite green.
+
+## 13q. T6 (yieldAll) done — generateSequence pending (2026-06-22)
+
+`SequenceScope.yieldAll(elements)` works (il-kseq → 0,1,2,3,4,5,6, incl. a nested `yieldAll(sequence{…})`): a new
+`coYieldAll` step lowers in the sequence SM to an inner enumerator loop — get the Iterable/Sequence's
+IEnumerable<elem> enumerator into a per-step SM field ONCE (the resume dispatch jumps past the init), then each
+MoveNext advances it (current=Current; state=k; return true) until exhausted. Also fixed: `emitCoroutineBody` now
+SAVES/RESTORES the CPS state (coState/coLabelN/coSpill*/coFields) — a `sequence{}` nested inside a `yieldAll` reset
+the outer's state ids, causing duplicate resume labels. `generateSequence` is deferred: its `nextFunction: (T)->T?`
+hits the same nullable-in-generics issue as T7 (value-type T? = Nullable<T> vs ref-type T-or-null) — fold it into T7.

@@ -112,7 +112,7 @@ il_check_mpp() { # <name> <asm> <srcDir> <commonFile> <expected>
 }
 il_check_mpp expect Expect "$ROOT/samples/il-expect" common.kt "$(printf 'CLR\n42\nhello from CLR\n2\nTrue\n10\n15\nTrue\nhi')"
 
-il_check kseq  KSeq  "$ROOT/samples/il-kseq"  "$(printf '1,2,3\n1,4,9,16\n0,1')"
+il_check kseq  KSeq  "$ROOT/samples/il-kseq"  "$(printf '1,2,3\n1,4,9,16\n0,1\n0,1,2,3,4,5,6')"
 il_check kflow KFlow "$ROOT/samples/il-kflow"  "$(printf '1\n2\n3')"
 il_check kgflow KGFlow "$ROOT/samples/il-kgflow" "$(printf '1\n2\n3')"
 il_check m0    M0Kt  "$ROOT/samples/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2')"

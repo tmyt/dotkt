@@ -754,6 +754,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * `collectCpsVars` → flat steps + state-machine fields = params + live locals + spill temps).
 	 */
 	private fun emitCoroutineBody(fn: IrSimpleFunction): CoroutineBody {
+		// Save/restore CPS state: a coroutine body can be lowered NESTED inside another (e.g. a `sequence{}` passed to
+		// `yieldAll` inside an enclosing `sequence{}`); without this the inner reset corrupts the outer's state ids.
+		val savedState = coState; val savedLabelN = coLabelN
+		val savedSpill = HashMap(coSpill); val savedSpillFields = ArrayList(coSpillFields); val savedCoFields = coFields
 		coState = 0; coLabelN = 0
 		coSpill.clear(); coSpillFields.clear()
 		// Include the extension receiver (a `suspend Scope.() -> R` lambda's implicit `$this$...`) as a leading
@@ -772,11 +776,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val steps = ArrayList<String>()
 		for (s in body) emitCps(s, fn.returnType, steps)
 		if (body.lastOrNull() !is IrReturn) steps.add("""{"k":"coReturn","value":null}""")
-		coFields = emptySet()
 		val resultType = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
 		val cpsFields = (params.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" } +
 			liveVars.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" } +
 			coSpillFields.map { """{"name":${str(it.first)},"type":${str(birType(it.second))}}""" }).joinToString(",")
+		// Restore the enclosing coroutine's CPS state (no-op at the top level).
+		coState = savedState; coLabelN = savedLabelN
+		coSpill.clear(); coSpill.putAll(savedSpill); coSpillFields.clear(); coSpillFields.addAll(savedSpillFields); coFields = savedCoFields
 		return CoroutineBody(resultType, cpsFields, steps.joinToString(","))
 	}
 
@@ -922,6 +928,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun isYield(call: IrCall): Boolean =
 		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yield"
 
+	/** `SequenceScope.yieldAll(elements)` — yield every element of an Iterable/Sequence (lowered as an inner
+	 *  enumerator loop in the sequence state machine). */
+	private fun isYieldAll(call: IrCall): Boolean =
+		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yieldAll"
+
 	/** `kotlinx.coroutines.suspendCancellableCoroutine { c -> … }` — like the raw intrinsic but `c` is a
 	 *  CancellableContinuation and the block ALWAYS suspends (returns Unit, not the sentinel). */
 	private fun isSuspendCancellable(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
@@ -932,6 +943,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (isSuspendIntrinsic(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = false, selfKind = "coSelfCont"); return }
 		if (isSuspendCancellable(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = true, selfKind = "coSelfCancellable"); return }
 		if (isYield(call)) { val k = ++coState; steps.add("""{"k":"coYield","state":$k,"value":${expr(regularArgs(call).first())}}"""); return }
+		if (isYieldAll(call)) {
+			val k = ++coState
+			val arg = regularArgs(call).first()   // Iterable<T>/Sequence<T> -> IEnumerable<T>
+			steps.add("""{"k":"coYieldAll","state":$k,"iterable":${expr(arg)},"iterType":${str(birType(arg.type))}}""")
+			return
+		}
 		val k = ++coState
 		steps.add("""{"k":"coSuspend","state":$k,"awaitable":${coAwaitable(call)},"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(birType(call.type))}}""")
 	}

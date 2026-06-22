@@ -28,4 +28,13 @@ fun main() {
         }
     }.take(2).toList()
     println(firstTwo.joinToString(","))       // 0,1
+
+    // yieldAll: splice every element of an Iterable into the sequence (an inner enumerator loop in the SM).
+    val mixed = sequence {
+        yield(0)
+        yieldAll(listOf(1, 2, 3))
+        yieldAll(sequence { yield(4); yield(5) })
+        yield(6)
+    }
+    println(mixed.toList().joinToString(","))  // 0,1,2,3,4,5,6
 }

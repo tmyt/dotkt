@@ -1069,10 +1069,14 @@ sealed class Emitter
             PrescanCfgLabels(e.GetProperty("steps"));
             var resume = new Dictionary<int, Label>();
             var coLabel = new Dictionary<int, Label>();
+            var enumFields = new Dictionary<int, FieldInfo>();   // coYieldAll: per-step IEnumerator<elem> field
+            var ienumerable = ResolveType("System.Collections.Generic.IEnumerable`1").MakeGenericType(elem);
+            var ienumerator = ResolveType("System.Collections.Generic.IEnumerator`1").MakeGenericType(elem);
             foreach (var st in steps)
             {
                 var kind = st.GetProperty("k").GetString();
                 if (kind == "coYield") resume[st.GetProperty("state").GetInt32()] = _il.DefineLabel();
+                else if (kind == "coYieldAll") { int k2 = st.GetProperty("state").GetInt32(); resume[k2] = _il.DefineLabel(); enumFields[k2] = sm.DefineField("<>e" + k2, ienumerator, FieldAttributes.Public); }
                 else if (kind == "coLabel" || kind == "coGoto" || kind == "coCondGoto") { int id = st.GetProperty("id").GetInt32(); if (!coLabel.ContainsKey(id)) coLabel[id] = _il.DefineLabel(); }
             }
             var endL = _il.DefineLabel();
@@ -1102,6 +1106,30 @@ sealed class Emitter
                     case "coLabel": _il.MarkLabel(coLabel[st.GetProperty("id").GetInt32()]); break;
                     case "coGoto": _il.Emit(OpCodes.Br, coLabel[st.GetProperty("id").GetInt32()]); break;
                     case "coCondGoto": EmitExpr(st.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, coLabel[st.GetProperty("id").GetInt32()]); break;
+                    case "coYieldAll":
+                    {
+                        // Yield every element of an IEnumerable<elem>. Get its enumerator into a field ONCE (the
+                        // resume dispatch jumps PAST this init), then on each MoveNext call advance the inner
+                        // enumerator: fe.MoveNext() ? (current = fe.Current; state = k; return true) : fall through.
+                        int k = st.GetProperty("state").GetInt32();
+                        var fe = enumFields[k];
+                        _il.Emit(OpCodes.Ldarg_0);
+                        EmitExpr(st.GetProperty("iterable"));
+                        _il.Emit(OpCodes.Callvirt, ienumerable.GetMethod("GetEnumerator"));
+                        _il.Emit(OpCodes.Stfld, fe);
+                        _il.MarkLabel(resume[k]);
+                        var afterAll = _il.DefineLabel();
+                        _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fe);
+                        _il.Emit(OpCodes.Callvirt, ResolveType("System.Collections.IEnumerator").GetMethod("MoveNext"));
+                        _il.Emit(OpCodes.Brfalse, afterAll);
+                        _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fe);
+                        _il.Emit(OpCodes.Callvirt, ienumerator.GetMethod("get_Current"));
+                        _il.Emit(OpCodes.Stfld, fCurrent);
+                        _il.Emit(OpCodes.Ldarg_0); EmitLdcI4(k); _il.Emit(OpCodes.Stfld, fState);
+                        _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Ret);
+                        _il.MarkLabel(afterAll);
+                        break;
+                    }
                     case "coReturn": _il.Emit(OpCodes.Br, endL); break;   // `return` from the block ends the sequence
                     case "coUnsupported": throw new NotSupportedException("sequence feature not supported: " + st.GetProperty("of").GetString());
                     default: EmitStmt(st); break;
