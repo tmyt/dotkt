@@ -497,14 +497,29 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun hasCustomAccessor(prop: IrProperty): Boolean = isCustomAccessor(prop.getter) || isCustomAccessor(prop.setter)
 
 	/** Emit a custom property accessor as a `get_<prop>`/`set_<prop>` method (the `field` identifier -> the backing field). */
+	/** If `fn` overrides a member of a .NET-mapped Kotlin interface (kotlin.coroutines.Continuation), the .NET
+	 *  member name to emit (Kotlin camelCase -> .NET PascalCase), so a user `class C : Continuation<T>` binds to the
+	 *  real interface slots. Returns null for ordinary members. */
+	private fun clrIfaceMemberName(fn: IrSimpleFunction): String? =
+		fn.overriddenSymbols.firstNotNullOfOrNull { s ->
+			val owner = s.owner
+			if ((owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.Continuation") when {
+				owner.name.asString() == "resumeWith" -> "ResumeWith"
+				owner.correspondingPropertySymbol?.owner?.name?.asString() == "context" -> "get_Context"
+				else -> null
+			} else null
+		}
+
 	private fun accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
-		val mname = (if (isGetter) "get_" else "set_") + propName
+		val mname = clrIfaceMemberName(acc) ?: (if (isGetter) "get_" else "set_") + propName
 		val ps = acc.parameters.filter { it.kind == IrParameterKind.Regular }
 			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		val ret = if (isGetter) birType(acc.returnType) else "void"
-		val virtual = acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT
-		return """{"name":${str(mname)},"static":false,"override":false,"virtual":$virtual,"abstract":false,"objectOverride":false,"vis":${str(visOf(acc))},"params":[$ps],"ret":${str(ret)},"body":[$body]}"""
+		val clrIface = clrIfaceMemberName(acc) != null
+		val virtual = clrIface || acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT
+		val vis = if (clrIface) "public" else visOf(acc)
+		return """{"name":${str(mname)},"static":false,"override":$clrIface,"virtual":$virtual,"abstract":false,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]}"""
 	}
 
 	/** A user `annotation class Ann(val v: Int, …)` -> a `class Ann : System.Attribute` (ctor params -> public fields). */
@@ -569,8 +584,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// User custom accessors (`get() = …`/`set(v){…}`) -> get_/set_ methods (the access site routes through them).
 		val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 			listOfNotNull(
-				p.getter?.takeIf { isCustomAccessor(it) }?.let { accessorMethod(it, p.name.asString(), true) },
-				p.setter?.takeIf { isCustomAccessor(it) }?.let { accessorMethod(it, p.name.asString(), false) })
+				p.getter?.takeIf { isCustomAccessor(it) || clrIfaceMemberName(it) != null }?.let { accessorMethod(it, p.name.asString(), true) },
+				p.setter?.takeIf { isCustomAccessor(it) || clrIfaceMemberName(it) != null }?.let { accessorMethod(it, p.name.asString(), false) })
 		}
 		val methods = (instMethods + statMethods + clrAccessors + userAccessors).joinToString(",")
 		// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
@@ -580,7 +595,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// a user generic interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
 		val ifaces = klass.superTypes
 			.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
-			.mapNotNull { st -> iteratorElemIface(st) ?: propIface(st) ?: (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) } }
+			.mapNotNull { st ->
+				val ifq = (st.classifierOrNull?.owner as? IrClass)?.fqNameWhenAvailable?.asString()
+				// .NET-mapped interfaces (e.g. kotlin.coroutines.Continuation) -> their clrg: spec via birType.
+				if (ifq == "kotlin.coroutines.Continuation" || ifq == "kotlinx.coroutines.CancellableContinuation") birType(st)
+				else iteratorElemIface(st) ?: propIface(st) ?: (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
+			}
 			.joinToString(",") { str(it) }
 		// Anonymous objects (lifted, tracked in anonNames) are synthetic -> keep public.
 		val vis = if (anonNames.containsKey(klass)) "public" else visOf(klass)
@@ -632,7 +652,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun method(fn: IrSimpleFunction, static: Boolean): String {
 		if (fn.isSuspend) return suspendMethod(fn, static)
 		val isOverride = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.CLASS }
-		val isVirtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT
+		val isVirtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT || clrIfaceMemberName(fn) != null
 		// An extension function `fun T.f()` -> static method whose first param `__self` is the receiver;
 		// body references to the receiver resolve to `__self` (via valSubst).
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
@@ -648,10 +668,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `override fun toString()/equals()/hashCode()` -> System.Object.ToString/Equals/GetHashCode so that
 		// CLR virtual dispatch (Console.WriteLine, structural `==`) finds the override.
 		val objName = objectMethodName(fn)
-		val emitName = objName ?: fn.name.asString()
-		val isOvr = isOverride || objName != null
+		val clrIfaceName = clrIfaceMemberName(fn)   // e.g. resumeWith -> ResumeWith when implementing Continuation<T>
+		val emitName = clrIfaceName ?: objName ?: fn.name.asString()
+		val isOvr = isOverride || objName != null || clrIfaceName != null
 		// Object-overrides / interface members must stay public for virtual dispatch.
-		val vis = if (objName != null) "public" else visOf(fn)
+		val vis = if (objName != null || clrIfaceName != null) "public" else visOf(fn)
 		val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
 		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)},"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]}"""
 	}
@@ -1322,7 +1343,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (.NET-injected objects
 		// like Math are static call sites handled at the call site; only user singletons reach here as a value.)
-		is IrGetObjectValue -> """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
+		is IrGetObjectValue ->
+			if (node.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.coroutines.EmptyCoroutineContext")
+				"""{"k":"clrStaticField","type":"DotKt.Coroutines.EmptyCoroutineContext","name":"Instance"}"""
+			else """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
 		is IrBlock -> blockExpr(node)
 		is IrGetField -> {
 			val ownerClass = node.symbol.owner.parent as? IrClass
@@ -3152,7 +3176,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			val ownerStr = ownerSpec(declaringClass, recv.type)
 			val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
-			val mname = objectMethodName(callee) ?: name
+			// A call to an override of a .NET-mapped interface member (e.g. a user Continuation's resumeWith) uses
+			// the .NET member name (ResumeWith), matching what the class emitted.
+			val mname = clrIfaceMemberName(callee) ?: objectMethodName(callee) ?: name
 			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}$ta${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]}"""
 		} else """{"k":"callStatic","owner":null,"method":${str(name)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]}"""
 	}
@@ -3211,6 +3237,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.coroutines.Continuation" -> "clrg:DotKt.Coroutines.Continuation[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlinx.coroutines.CancellableContinuation" -> "clrg:DotKt.Coroutines.CancellableCont[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlin.Result" -> "clrg:DotKt.Coroutines.Result[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
+		"kotlin.coroutines.CoroutineContext", "kotlin.coroutines.EmptyCoroutineContext" -> "clr:DotKt.Coroutines.CoroutineContext"
 		"kotlin.sequences.Sequence" -> "clrg:System.Collections.Generic.IEnumerable[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlinx.atomicfu.AtomicInt" -> "DotKt.Coroutines.AtomicInt"
 		"kotlinx.atomicfu.AtomicLong" -> "DotKt.Coroutines.AtomicLong"
@@ -3384,6 +3411,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
 			return "clrg:DotKt.Coroutines.CancellableCont[$arg]"
 		}
+		if (fqp == "kotlin.coroutines.CoroutineContext" || fqp == "kotlin.coroutines.EmptyCoroutineContext")
+			return "clr:DotKt.Coroutines.CoroutineContext"
 		// kotlinx.atomicfu atomics -> the DotKt.Coroutines Interlocked/Volatile wrappers (Phase 3 / §13a res. 5).
 		if (fqp == "kotlinx.atomicfu.AtomicInt") return "clr:DotKt.Coroutines.AtomicInt"
 		if (fqp == "kotlinx.atomicfu.AtomicLong") return "clr:DotKt.Coroutines.AtomicLong"

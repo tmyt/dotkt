@@ -453,7 +453,7 @@ accessors (getOrNull/getOrThrow/getOrDefault/exceptionOrNull) inline in `call()`
 property path (stdlib getter bodies absent → not a custom accessor); plus a standalone `Result.success/failure`
 value mapping. `il-result` green, full suite green.
 
-## 13o. T5 blocked on interface member-name casing (next)
+## 13o. T5 done — a user Kotlin class implements Continuation<T> (2026-06-22)
 
 A user Kotlin `class C : Continuation<Int>` does NOT yet emit: (a) the class supertype lists the interface as the
 bare `Continuation` not `clrg:DotKt.Coroutines.Continuation[int]` (the class-supertype path uses ownerSpec, not
@@ -461,3 +461,17 @@ the .NET mapping — needs a Continuation special-case there), and (b) deeper �
 `context` (camelCase) must bind to the .NET interface's `ResumeWith`/`Context` (PascalCase). So: a user class
 implementing a .NET-mapped interface needs Kotlin→.NET member-name mapping in the override emission. This is the
 remaining T5 work (T4 unblocked the Result param type; this casing piece is separate).
+
+## 13o-done. T5 resolved (2026-06-22)
+
+A user `class C : Continuation<Int>` now compiles and runs (samples/il-kcont2 → 42 / boom), closing the §13j gap
+(user Continuation impls). What it took, all general "Kotlin class implements a .NET-mapped interface" machinery:
+- class supertype list maps kotlin.coroutines.Continuation -> `clrg:DotKt.Coroutines.Continuation[int]` (was bare).
+- Kotlin members bind to the .NET PascalCase slots via `clrIfaceMemberName`: `resumeWith`->`ResumeWith`,
+  `context` getter -> `get_Context`; applied at method/accessor emission AND the call site; the accessor is emitted
+  even though it `override`s (isCustomAccessor excludes overrides).
+- type maps: `kotlin.coroutines.CoroutineContext`/`EmptyCoroutineContext` -> `DotKt.Coroutines.CoroutineContext`;
+  the `EmptyCoroutineContext` object value -> a `clrStaticField` load of `.Instance` (new ilemit expr kind).
+- ilemit: the interface-impl site, the interface-linking (DefineMethodOverride by .NET name via reflection), and
+  the type-ordering Visit all learned to resolve `clr:`/`clrg:` interfaces by reflection (not `_types`).
+Result<T> param works because T4 already unified kotlin.Result -> the shared struct.

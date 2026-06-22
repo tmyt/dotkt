@@ -197,9 +197,13 @@ sealed class Emitter
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
                 foreach (var i in ifs.EnumerateArray())
                 {
-                    // `Container[int]` -> implement the constructed generic interface, not the open definition.
-                    var (open, constructed) = ParseOwner(i.GetString());
-                    ti.TB.AddInterfaceImplementation(constructed ?? (Type)_types[open].TB);
+                    var spec = i.GetString();
+                    // A .NET-mapped interface (`clr:`/`clrg:...[..]`, e.g. DotKt.Coroutines.Continuation<int>) is
+                    // resolved by reflection; a Kotlin-user interface `Container[int]` comes from _types.
+                    Type itype = (spec.StartsWith("clr:") || spec.StartsWith("clrg:"))
+                        ? MapType(spec)
+                        : ParseOwner(spec) is var (open, constructed) ? (constructed ?? (Type)_types[open].TB) : null;
+                    ti.TB.AddInterfaceImplementation(itype);
                 }
         }
         _curTypeParams = null;
@@ -247,7 +251,19 @@ sealed class Emitter
             if (!ti.IsFileClass && !ti.IsInterface && ti.Def.TryGetProperty("interfaces", out var ifs))
                 foreach (var i in ifs.EnumerateArray())
                 {
-                    var (open, constructed) = ParseOwner(i.GetString());
+                    var spec = i.GetString();
+                    // A .NET-mapped interface (DotKt.Coroutines.Continuation<int>): bind each interface method to the
+                    // class method of the same .NET name via reflection (the class emits PascalCase names already).
+                    if (spec.StartsWith("clr:") || spec.StartsWith("clrg:"))
+                    {
+                        var itype = MapType(spec);
+                        var have = ti.Methods.Keys.ToHashSet();
+                        foreach (var im in itype.GetMethods())
+                            if (have.Contains(im.Name))
+                                ti.TB.DefineMethodOverride(FindMethod(ti.TB.Name, im.Name), im);
+                        continue;
+                    }
+                    var (open, constructed) = ParseOwner(spec);
                     var iface = _types[open];
                     foreach (var im in iface.Methods)
                     {
@@ -321,7 +337,11 @@ sealed class Emitter
             // (PersistedAssemblyBuilder materializes the instantiation at the implementer's CreateType).
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
                 foreach (var i in ifs.EnumerateArray())
-                    if (_types.TryGetValue(ParseOwner(i.GetString()).open, out var inf)) Visit(inf);
+                {
+                    var spec = i.GetString();
+                    if (spec.StartsWith("clr:") || spec.StartsWith("clrg:")) continue;  // .NET iface — not a user-type dep
+                    if (_types.TryGetValue(ParseOwner(spec).open, out var inf)) Visit(inf);
+                }
             result.Add(ti);
         }
         foreach (var ti in _types.Values) Visit(ti);
@@ -1899,6 +1919,13 @@ sealed class Emitter
                 var f = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString());
                 _il.Emit(OpCodes.Ldsfld, f);
                 return f.FieldType;
+            }
+            case "clrStaticField":   // a static field on a .NET (reflected) type, e.g. EmptyCoroutineContext.Instance
+            {
+                var ct = ResolveType(e.GetProperty("type").GetString());
+                var cf = ct.GetField(e.GetProperty("name").GetString(), BindingFlags.Public | BindingFlags.Static);
+                _il.Emit(OpCodes.Ldsfld, cf);
+                return cf.FieldType;
             }
             case "staticFieldSet":
             {
