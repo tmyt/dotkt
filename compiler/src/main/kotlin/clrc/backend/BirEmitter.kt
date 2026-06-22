@@ -435,20 +435,40 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			userParams.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }).joinToString(",")
 		val ctorBody = (listOf(setThis("__name", loc("__name")), setThis("__ordinal", loc("__ordinal"))) +
 			userParams.map { setThis(it.name.asString(), loc(it.name.asString())) }).joinToString(",")
-		val ctor = """{"params":[$ctorParams],"baseArgs":null,"thisArgs":null,"vis":"private","body":[$ctorBody]}"""
+		// Per-entry bodies (`PLUS { override fun apply(…)=… }`): the base enum is abstract with abstract members, and
+		// each such entry is its own subclass overriding them. Detect them + the abstract members. (T A-109.)
+		val hasPerEntry = entries.any { it.correspondingClass != null }
+		val absMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
+			.filter { it.correspondingPropertySymbol == null && it.body == null && it.modality == Modality.ABSTRACT }
+		val baseAbstract = hasPerEntry || absMethods.isNotEmpty()
+		// base ctor must be callable from the entry subclasses -> protected (was private for the flat form).
+		val ctor = """{"params":[$ctorParams],"baseArgs":null,"thisArgs":null,"vis":${str(if (hasPerEntry) "protected" else "private")},"body":[$ctorBody]}"""
 		// instance fields: metadata + user props.
 		val fields = (listOf("""{"name":"__name","type":"string"}""", """{"name":"__ordinal","type":"int"}""") + userFields).toMutableList()
-		// per-entry static singleton, init = new <Enum>("NAME", ordinal, <entry ctor args>).
+		// per-entry static singleton, init = new <Enum-or-entry-subclass>("NAME", ordinal, <entry ctor args>).
+		val subDefs = ArrayList<String>()
+		val nameOrd = { i: Int, ent: IrEnumEntry -> listOf("""{"k":"const","type":"string","value":${str(ent.name.asString())}}""", """{"k":"const","type":"int","value":$i}""") }
 		entries.forEachIndexed { i, ent ->
-			val cc = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
-			val entryArgs = cc?.let { regularArgs(it).map { a -> expr(a) } }.orEmpty()
-			val newArgs = (listOf("""{"k":"const","type":"string","value":${str(ent.name.asString())}}""", """{"k":"const","type":"int","value":$i}""") + entryArgs).joinToString(",")
-			fields.add("""{"name":${str(ent.name.asString())},"type":${str("@$name")},"static":true,"init":{"k":"new","type":${str(name)},"args":[$newArgs]}}""")
+			val cc = ent.correspondingClass
+			if (cc != null) {
+				// A body entry `NAME(args) { override … }` is its own subclass `<>Enum_NAME : Enum`. The enum-super
+				// args (the `args`) are baked into the subclass's base() call; the entry field constructs it with
+				// just (__name, __ordinal) so the subclass ctor is uniform regardless of user params.
+				val sub = "<>${name}_${ent.name.asString()}"
+				subDefs.add(enumEntrySubclass(sub, name, cc, enumSuperArgs(cc)))
+				fields.add("""{"name":${str(ent.name.asString())},"type":${str("@$name")},"static":true,"init":{"k":"new","type":${str(sub)},"args":[${nameOrd(i, ent).joinToString(",")}]}}""")
+			} else {
+				val ecc = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
+				val entryArgs = ecc?.let { regularArgs(it).map { a -> expr(a) } }.orEmpty()
+				val newArgs = (nameOrd(i, ent) + entryArgs).joinToString(",")
+				fields.add("""{"name":${str(ent.name.asString())},"type":${str("@$name")},"static":true,"init":{"k":"new","type":${str(name)},"args":[$newArgs]}}""")
+			}
 		}
-		// methods: user methods + ToString + values() + valueOf().
+		// methods: concrete user methods + abstract member decls + ToString + values() + valueOf().
 		val userMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.origin.toString() == "DEFINED" && it.correspondingPropertySymbol == null && it.body != null }
-			.map { method(it, static = false) }
+			.map { method(it, static = false) } +
+			absMethods.map { m -> """{"name":${str(m.name.asString())},"static":false,"override":false,"virtual":true,"abstract":true,"vis":"public","params":[${paramsJsonList(m.parameters).joinToString(",")}],"ret":${str(birType(m.returnType))},"body":[]}""" }
 		val sf = { e: IrEnumEntry -> """{"k":"staticField","ownerType":${str(name)},"name":${str(e.name.asString())}}""" }
 		val toStr = """{"name":"ToString","static":false,"override":true,"virtual":true,"objectOverride":true,"vis":"public","params":[],"ret":"string","body":[{"k":"return","value":{"k":"field","ownerType":${str(name)},"recv":{"k":"this"},"name":"__name"}}]}"""
 		val valuesArr = """{"k":"newArray","elem":${str("@$name")},"elems":[${entries.joinToString(",") { sf(it) }}]}"""
@@ -460,7 +480,28 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val voBody = """{"k":"if","branches":[$voBranches,{"else":true,"body":[{"k":"exprStmt","expr":$voThrow}]}]}"""
 		val valueOfM = """{"name":"valueOf","static":true,"override":false,"virtual":false,"vis":"public","params":[{"name":"name","type":"string"}],"ret":${str("@$name")},"body":[$voBody]}"""
 		val methods = (userMethods + listOf(toStr, valuesM, valueOfM)).joinToString(",")
-		return """{"name":${str(name)},"kind":"class","vis":${str(visOf(ec))},"base":null,"interfaces":[],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods]}"""
+		val baseDef = """{"name":${str(name)},"kind":"class","abstract":$baseAbstract,"vis":${str(visOf(ec))},"base":null,"interfaces":[],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods]}"""
+		// Emit the base enum class first, then each per-entry subclass.
+		return (listOf(baseDef) + subDefs).joinToString(",")
+	}
+
+	/** The enum-super args a per-entry body's anonymous subclass passes (the `NAME(args)` args), as expr JSON. */
+	private fun enumSuperArgs(cc: IrClass): List<String> {
+		val ctor = cc.declarations.filterIsInstance<IrConstructor>().firstOrNull() ?: return emptyList()
+		val call = (ctor.body as? IrBlockBody)?.statements?.firstNotNullOfOrNull { it as? IrEnumConstructorCall }
+			?: return emptyList()
+		return regularArgs(call).map { expr(it) }
+	}
+
+	/** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
+	 *  (__name, __ordinal) and forwards them plus the baked-in `args` to the base ctor; carries the overriding methods. */
+	private fun enumEntrySubclass(subName: String, baseName: String, cc: IrClass, userArgs: List<String>): String {
+		val overrides = cc.declarations.filterIsInstance<IrSimpleFunction>()
+			.filter { it.body != null && it.correspondingPropertySymbol == null }
+			.joinToString(",") { method(it, static = false) }
+		val baseArgs = (listOf("""{"k":"local","name":"__name"}""", """{"k":"local","name":"__ordinal"}""") + userArgs).joinToString(",")
+		val subCtor = """{"params":[{"name":"__name","type":"string"},{"name":"__ordinal","type":"int"}],"baseArgs":[$baseArgs],"thisArgs":null,"vis":"public","body":[]}"""
+		return """{"name":${str(subName)},"kind":"class","abstract":false,"vis":"public","base":${str(baseName)},"interfaces":[],"fields":[],"ctors":[$subCtor],"methods":[$overrides]}"""
 	}
 
 	/** Nested non-inner user classes inside [c] (recursively); excludes companion/inner/anonymous/@Clr. */
@@ -651,7 +692,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	private fun method(fn: IrSimpleFunction, static: Boolean): String {
 		if (fn.isSuspend) return suspendMethod(fn, static)
-		val isOverride = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.CLASS }
+		// An override of a CLASS or ENUM_CLASS member (the latter: a per-entry enum body overriding an abstract enum
+		// member) reuses the base virtual slot. (Interface members bind by name/signature, handled elsewhere.)
+		val isOverride = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS } }
 		val isVirtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT || clrIfaceMemberName(fn) != null
 		// An extension function `fun T.f()` -> static method whose first param `__self` is the receiver;
 		// body references to the receiver resolve to `__self` (via valSubst).
