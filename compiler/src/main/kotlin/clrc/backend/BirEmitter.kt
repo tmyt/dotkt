@@ -164,10 +164,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** A user/anon class's emitted name (anon "<no name provided>" -> its synthetic lifted name). */
 	private fun typeName(k: IrClass): String =
-		// kotlin.Result -> the compiler-generated synthetic class name, so member ownerTypes (isSuccess field,
-		// accessor calls via ownerSpec) match the synthesized `<>dotkt_Result` definition.
-		if (k.fqNameWhenAvailable?.asString() == "kotlin.Result") "<>dotkt_Result"
-		else anonNames[k] ?: k.name.asString()
+		anonNames[k] ?: k.name.asString()
 
 	// Synthesized stdlib delegate classes for Delegates.observable/vetoable/notNull (their stdlib bodies are
 	// absent from our IR, so we compiler-generate equivalents, monomorphized by value type, each implementing
@@ -288,20 +285,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$hasNext,$next]}"""
 	}
 
-	// `kotlin.Result<T>` -> a synthetic generic `Result<T>` (per-assembly, like KProperty): holds value/failure/
-	// isSuccess. runCatching constructs it; member accessors (getOrNull/getOrThrow/…) are inlined in call() over
-	// these fields, so no methods are synthesized (avoids the `getOrNull(): T?` generic-return problem).
-	private var needsResult = false
-	private fun resultDefs(): List<String> {
-		if (!needsResult) return emptyList()
-		val f = { n: String, t: String -> """{"name":${str(n)},"type":${str(t)}}""" }
-		val sf = { n: String -> """{"k":"setField","ownerType":"<>dotkt_Result","recv":{"k":"this"},"name":${str(n)},"value":{"k":"local","name":${str(n)}}}""" }
-		// isFailure is also accessed as a field (Kotlin property -> backing field); compute it = !isSuccess in the ctor.
-		val sfFailFlag = """{"k":"setField","ownerType":"<>dotkt_Result","recv":{"k":"this"},"name":"isFailure","value":{"k":"un","op":"!","e":{"k":"local","name":"isSuccess"}}}"""
-		val fields = "${f("value", "gp:T")},${f("failure", "clr:System.Exception")},${f("isSuccess", "bool")},${f("isFailure", "bool")}"
-		val ctor = """{"params":[${f("value", "gp:T")},${f("failure", "clr:System.Exception")},${f("isSuccess", "bool")}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[${sf("value")},${sf("failure")},${sf("isSuccess")},$sfFailFlag]}"""
-		return listOf("""{"name":"<>dotkt_Result","kind":"class","abstract":false,"vis":"public","typeParams":["T"],"base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}""")
-	}
+	// `kotlin.Result<T>` -> the shared `DotKt.Coroutines.Result<T>` struct (T4): runCatching builds it via
+	// Success/Failure; accessors inline in call()/expr() over its IsSuccess/Value/ExceptionOrNull properties. No
+	// per-assembly synthesis (the earlier `<>dotkt_Result` is retired — one cross-assembly type, see docs §13n).
 
 	// heap ref-cell: local `var`s captured-and-mutated by a (non-inline) closure / object / local class are promoted
 	// to a shared `<>dotkt_Ref<T>{ var v }` so the mutation is visible across the capture boundary. Per top-level
@@ -399,7 +385,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
 		// kPropertyDefs/propIfaceDefs, which read flags/maps the producers populate).
 		val synthDelegateTypes = synthDelegateDefs.joinToString(",").let { if (it.isEmpty()) emptyList() else listOf(it) }
-		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + propIfaceDefs() + kPropertyDefs() + resultDefs() + refDefs()).joinToString(",")
+		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
 
@@ -1352,6 +1338,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (isThrowableProp) {
 				val (prop, rt) = if (fldName == "message") "Message" to "System.String" else "InnerException" to "System.Exception"
 				"""{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
+			} else if (ownerFq == "kotlin.Result" || recvFq == "kotlin.Result") {
+				// kotlin.Result is an inline value class -> isSuccess/isFailure/value/failure arrive as IrGetField.
+				// Map onto the shared DotKt.Coroutines.Result<T> struct properties (see T4 / docs §13n).
+				val spec = node.receiver?.type?.let { birType(it) } ?: "clrg:DotKt.Coroutines.Result[object]"
+				val (prop, rt) = when (fldName) {
+					"isSuccess" -> "IsSuccess" to "bool"
+					"isFailure" -> "IsFailure" to "bool"
+					"failure" -> "ExceptionOrNull" to "clr:System.Exception"
+					else -> "Value" to netType(node.type)
+				}
+				"""{"k":"clrPropGet","type":${str(spec)},"name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
 			} else if (clr != null)
 				"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"retType":${str(netType(node.type))},"static":false,"recv":$recvJson}"""
 			// A `lateinit var` backing-field read -> throw if still uninitialized (null) — proper lateinit semantics.
@@ -2166,6 +2163,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED` (a top-level val getter) -> the runtime sentinel.
 		if (callee.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED")
 			return """{"k":"coSuspendedSentinel"}"""
+		// `Result.success(v)` / `Result.failure(e)` as a VALUE -> DotKt.Coroutines.Result.Success/Failure (so a Result
+		// can be constructed and forwarded anywhere, e.g. into a user `Continuation.resumeWith`). T4 / docs §13n.
+		if (calleeFqEarly == "kotlin.Result.Companion.success" || calleeFqEarly == "kotlin.Result.Companion.failure") {
+			val t = (call.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+			val spec = "clrg:DotKt.Coroutines.Result[$t]"
+			return if (calleeFqEarly.endsWith("success"))
+				"""{"k":"clrStatic","type":${str(spec)},"method":"Success","argTypes":[${str(t)}],"ret":${str(spec)},"args":[${expr(regularArgs(call).first())}]}"""
+			else
+				"""{"k":"clrStatic","type":${str(spec)},"method":"Failure","argTypes":["clr:System.Exception"],"ret":${str(spec)},"args":[${expr(regularArgs(call).first())}]}"""
+		}
 		// kotlin.coroutines.Continuation.resumeWith(Result.success(v) / Result.failure(e)) -> the resume helpers
 		// (the common pattern; a non-literal Result forwarded to resumeWith is not yet supported — loud error).
 		if (calleeFqEarly == "kotlin.coroutines.Continuation.resumeWith") {
@@ -2339,37 +2346,36 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Result(default, e, false) }; r`. Result is the synthetic generic type; the block is spliced inline.
 		if ((calleeFq == "kotlin.runCatching" || name == "runCatching") && call.type.classFqName?.asString() == "kotlin.Result") {
 			(regularArgs(call).getOrNull(0) as? IrFunctionExpression)?.let { lam ->
-				needsResult = true
 				var elem = (call.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
 				if (elem == "void") elem = "object"
-				val spec = "<>dotkt_Result[$elem]"
+				val spec = "clrg:DotKt.Coroutines.Result[$elem]"
 				val rcVar = "__rc${scopeCounter++}"
 				val rcLoc = """{"k":"local","name":${str(rcVar)}}"""
 				val pre = ArrayList<String>()
 				val unit = lam.function.returnType.isUnit()
-				val v = if (unit) { spliceBody(bodyStatements(lam.function.body), true, pre); """{"k":"const","type":"void","value":null}""" }
+				val v = if (unit) { spliceBody(bodyStatements(lam.function.body), true, pre); """{"k":"const","type":"object","value":null}""" }
 					else spliceBody(bodyStatements(lam.function.body), false, pre)
-				val valArg = if (unit) """{"k":"const","type":"void","value":null}""" else v
-				val nullExc = """{"k":"const","type":"void","value":null}"""
-				val mkOk = """{"k":"new","type":${str(spec)},"args":[$valArg,$nullExc,{"k":"const","type":"bool","value":true}]}"""
-				val mkErr = """{"k":"new","type":${str(spec)},"args":[{"k":"default","type":${str(elem)}},{"k":"local","name":"e"},{"k":"const","type":"bool","value":false}]}"""
+				// ok -> Result.Success(value); err -> Result.Failure(e). (Unit block -> Success(null-as-object).)
+				val mkOk = """{"k":"clrStatic","type":${str(spec)},"method":"Success","argTypes":[${str(elem)}],"ret":${str(spec)},"args":[$v]}"""
+				val mkErr = """{"k":"clrStatic","type":${str(spec)},"method":"Failure","argTypes":["clr:System.Exception"],"ret":${str(spec)},"args":[{"k":"local","name":"e"}]}"""
 				val tryBody = (pre + """{"k":"setLocal","name":${str(rcVar)},"value":$mkOk}""").joinToString(",")
 				val tryN = """{"k":"try","type":"void","body":[$tryBody],"catches":[{"excType":"System.Exception","var":"e","body":[{"k":"setLocal","name":${str(rcVar)},"value":$mkErr}]}]}"""
-				val decl = """{"k":"var","name":${str(rcVar)},"type":${str("@$spec")},"init":null}"""
+				val decl = """{"k":"var","name":${str(rcVar)},"type":${str(spec)},"init":null}"""
 				return """{"k":"valueBlock","stmts":[$decl,$tryN],"result":$rcLoc}"""
 			}
 		}
-		// Result accessors -> inline over the synthetic fields (value/failure/isSuccess). No methods synthesized.
-		// (getOrNull/getOrThrow/exceptionOrNull are members; getOrDefault is an extension -> check both receivers.)
+		// Result method-accessors -> inline over the DotKt.Coroutines.Result struct's properties (IsSuccess/Value/
+		// ExceptionOrNull). (getOrNull/getOrThrow/exceptionOrNull are members; getOrDefault is an extension.) The
+		// property getters isSuccess/isFailure arrive instead as IrGetField (inline value class) — see expr().
 		if ((dispatchReceiver(call) ?: extensionReceiver(call))?.type?.classFqName?.asString() == "kotlin.Result" &&
-			name in setOf("getOrNull", "getOrThrow", "getOrDefault", "exceptionOrNull", "isFailure")) {
+			name in setOf("getOrNull", "getOrThrow", "getOrDefault", "exceptionOrNull", "isFailure", "isSuccess")) {
 			val r = dispatchReceiver(call) ?: extensionReceiver(call)!!
-			val spec = ownerSpec(r.type.classifierOrNull?.owner as? IrClass, r.type)
-			val elem = (r.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+			val spec = birType(r.type)
 			val rv = expr(r)
-			fun fld(n: String, rt: String) = """{"k":"field","ownerType":${str(spec)},"recv":$rv,"name":${str(n)},"retType":${str(rt)}}"""
-			val succ = fld("isSuccess", "bool"); val value = fld("value", elem); val fail = fld("failure", "clr:System.Exception")
+			fun prop(n: String, rt: String) = """{"k":"clrPropGet","type":${str(spec)},"name":${str(n)},"retType":${str(rt)},"static":false,"recv":$rv}"""
+			val succ = prop("IsSuccess", "bool"); val value = prop("Value", birType((r.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type } ?: r.type)); val fail = prop("ExceptionOrNull", "clr:System.Exception")
 			return when (name) {
+				"isSuccess" -> succ
 				"isFailure" -> """{"k":"un","op":"!","e":$succ}"""
 				"exceptionOrNull" -> fail
 				"getOrDefault" -> """{"k":"cond","cond":$succ,"then":$value,"else":${expr(regularArgs(call).first())}}"""
@@ -2846,6 +2852,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 		// Property get/set on a user class -> field access.
 		val property = callee.correspondingPropertySymbol?.owner
+		// kotlin.Result.isSuccess/isFailure getters (stdlib bodies absent, so they reach the generic property path) ->
+		// the shared DotKt.Coroutines.Result<T> struct properties (T4 / docs §13n).
+		if (property != null && declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.Result") {
+			(dispatchReceiver(call) ?: extensionReceiver(call))?.let { r ->
+				val pn = when (property.name.asString()) { "isSuccess" -> "IsSuccess"; "isFailure" -> "IsFailure"; else -> null }
+				if (pn != null) return """{"k":"clrPropGet","type":${str(birType(r.type))},"name":${str(pn)},"retType":"bool","static":false,"recv":${expr(r)}}"""
+			}
+		}
 		// `.size` -> CIL array length (arrays) or `Enumerable.Count` (collections).
 		if (property?.name?.asString() == "size") dispatchReceiver(call)?.let { r ->
 			if (isArrayType(r.type)) return """{"k":"arrayLen","array":${expr(r)}}"""
@@ -3196,6 +3210,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.Unit" -> "System.Void"
 		"kotlin.coroutines.Continuation" -> "clrg:DotKt.Coroutines.Continuation[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlinx.coroutines.CancellableContinuation" -> "clrg:DotKt.Coroutines.CancellableCont[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
+		"kotlin.Result" -> "clrg:DotKt.Coroutines.Result[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlin.sequences.Sequence" -> "clrg:System.Collections.Generic.IEnumerable[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlinx.atomicfu.AtomicInt" -> "DotKt.Coroutines.AtomicInt"
 		"kotlinx.atomicfu.AtomicLong" -> "DotKt.Coroutines.AtomicLong"
@@ -3377,11 +3392,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
 			return "clrg:DotKt.Coroutines.AtomicRef[$arg]"
 		}
-		// kotlin.Result<T> -> the synthetic generic `Result<T>` (registers it for synthesis).
+		// kotlin.Result<T> -> the shared DotKt.Coroutines.Result<T> struct (one type, cross-assembly identity, so it
+		// serves both runCatching AND the Continuation.resumeWith parameter). See docs §13n.
 		if (fqp == "kotlin.Result") {
-			needsResult = true
 			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			return "@<>dotkt_Result[$arg]"
+			return "clrg:DotKt.Coroutines.Result[$arg]"
 		}
 		// `by lazy` delegate: kotlin.Lazy<T> -> System.Lazy<T>.
 		if (fqp == "kotlin.Lazy") {

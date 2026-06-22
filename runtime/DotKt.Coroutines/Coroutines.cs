@@ -23,7 +23,9 @@ namespace DotKt.Coroutines
         public static Result<T> Success(T v) => new Result<T>(v, null);
         public static Result<T> Failure(Exception e) => new Result<T>(default, e);
         public bool IsFailure => _ex != null;
-        public Exception ExceptionOrNull => _ex;
+        public bool IsSuccess => _ex == null;            // kotlin.Result.isSuccess
+        public T Value => _value;                        // the success value (read on the success branch)
+        public Exception ExceptionOrNull => _ex;         // kotlin.Result.exceptionOrNull()
         public T GetOrThrow() { if (_ex != null) throw _ex; return _value; }
     }
 

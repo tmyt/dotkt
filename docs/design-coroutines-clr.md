@@ -441,3 +441,23 @@ intrinsic, `alwaysSuspend=true`): the block always suspends (returns Unit, not t
 invokeOnCancellation minimal — real cancellation lands with the dispatcher). `c.resume(v)` rides the existing
 `kotlin.coroutines.resume` mapping. Type map: `kotlinx.coroutines.CancellableContinuation` → `CancellableCont`.
 Proof: `samples/il-kcancel` (`awaitC` via suspendCancellableCoroutine, composed → 30), ilverify-clean.
+
+## 13n. T4 done — kotlin.Result unified onto DotKt.Coroutines.Result (2026-06-22)
+
+Retired the per-assembly synthetic `<>dotkt_Result`; `kotlin.Result<T>` now maps (birType/netType) to the shared
+`DotKt.Coroutines.Result<T>` struct — ONE cross-assembly type, so it serves both `runCatching` AND (next) the
+`Continuation.resumeWith` parameter. Changes: `runCatching` builds via `Result.Success/Failure`; the method
+accessors (getOrNull/getOrThrow/getOrDefault/exceptionOrNull) inline in `call()` over `IsSuccess`/`Value`/
+`ExceptionOrNull`; the property getters `isSuccess`/`isFailure` arrive two ways and both are mapped — directly as
+**`IrGetField`** (kotlin.Result is an inline `value class`) and as a getter `IrCall` reaching the generic
+property path (stdlib getter bodies absent → not a custom accessor); plus a standalone `Result.success/failure`
+value mapping. `il-result` green, full suite green.
+
+## 13o. T5 blocked on interface member-name casing (next)
+
+A user Kotlin `class C : Continuation<Int>` does NOT yet emit: (a) the class supertype lists the interface as the
+bare `Continuation` not `clrg:DotKt.Coroutines.Continuation[int]` (the class-supertype path uses ownerSpec, not
+the .NET mapping — needs a Continuation special-case there), and (b) deeper — the Kotlin override `resumeWith`/
+`context` (camelCase) must bind to the .NET interface's `ResumeWith`/`Context` (PascalCase). So: a user class
+implementing a .NET-mapped interface needs Kotlin→.NET member-name mapping in the override emission. This is the
+remaining T5 work (T4 unblocked the Result param type; this casing piece is separate).
