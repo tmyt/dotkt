@@ -2230,6 +2230,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// the state machine's own Context (the SM IS a Continuation<object>). Forces the Continuation-class form. T3.
 		if (callee.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.coroutineContext")
 			return """{"k":"coContext"}"""
+		// CoroutineContext algebra: the Kotlin members map to the .NET CoroutineContext methods (PascalCase). `plus`/
+		// `minusKey` are non-generic; `fold<R>`/`get<E>` are generic instance calls. T3(b).
+		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.plus") {
+			val recv = dispatchReceiver(call)!!
+			return """{"k":"clrInstance","type":"DotKt.Coroutines.CoroutineContext","method":"Plus","argTypes":["clr:DotKt.Coroutines.CoroutineContext"],"ret":"clr:DotKt.Coroutines.CoroutineContext","recv":${expr(recv)},"args":[${expr(regularArgs(call).first())}]}"""
+		}
+		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.minusKey") {
+			val recv = dispatchReceiver(call)!!
+			return """{"k":"clrInstance","type":"DotKt.Coroutines.CoroutineContext","method":"MinusKey","argTypes":["clr:DotKt.Coroutines.IKey"],"ret":"clr:DotKt.Coroutines.CoroutineContext","recv":${expr(recv)},"args":[${expr(regularArgs(call).first())}]}"""
+		}
+		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.fold") {
+			val recv = dispatchReceiver(call)!!; val args = regularArgs(call)
+			return """{"k":"clrGenericInstance","type":"DotKt.Coroutines.CoroutineContext","method":"Fold","typeArgs":[${str(birType(call.type))}],"shapes":["gp","func:3"],"recv":${expr(recv)},"args":[${expr(args[0])},${expr(args[1])}]}"""
+		}
 		// `Result.success(v)` / `Result.failure(e)` as a VALUE -> DotKt.Coroutines.Result.Success/Failure (so a Result
 		// can be constructed and forwarded anywhere, e.g. into a user `Continuation.resumeWith`). T4 / docs §13n.
 		if (calleeFqEarly == "kotlin.Result.Companion.success" || calleeFqEarly == "kotlin.Result.Companion.failure") {
@@ -3297,6 +3311,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlinx.coroutines.CancellableContinuation" -> "clrg:DotKt.Coroutines.CancellableCont[${firstArgNet(t)}]"
 		"kotlin.Result" -> "clrg:DotKt.Coroutines.Result[${firstArgNet(t)}]"
 		"kotlin.coroutines.CoroutineContext", "kotlin.coroutines.EmptyCoroutineContext" -> "clr:DotKt.Coroutines.CoroutineContext"
+		"kotlin.coroutines.CoroutineContext.Element" -> "clr:DotKt.Coroutines.Element"
+		"kotlin.coroutines.CoroutineContext.Key" -> "clrg:DotKt.Coroutines.Key[${firstArgNet(t)}]"
 		"kotlin.sequences.Sequence" -> "clrg:System.Collections.Generic.IEnumerable[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlinx.atomicfu.AtomicInt" -> "DotKt.Coroutines.AtomicInt"
 		"kotlinx.atomicfu.AtomicLong" -> "DotKt.Coroutines.AtomicLong"
@@ -3473,6 +3489,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (fqp == "kotlinx.coroutines.CancellableContinuation") return "clrg:DotKt.Coroutines.CancellableCont[${firstArgBir(t)}]"
 		if (fqp == "kotlin.coroutines.CoroutineContext" || fqp == "kotlin.coroutines.EmptyCoroutineContext")
 			return "clr:DotKt.Coroutines.CoroutineContext"
+		if (fqp == "kotlin.coroutines.CoroutineContext.Element") return "clr:DotKt.Coroutines.Element"
+		if (fqp == "kotlin.coroutines.CoroutineContext.Key") return "clrg:DotKt.Coroutines.Key[${firstArgBir(t)}]"
 		// kotlinx.atomicfu atomics -> the DotKt.Coroutines Interlocked/Volatile wrappers (Phase 3 / §13a res. 5).
 		if (fqp == "kotlinx.atomicfu.AtomicInt") return "clr:DotKt.Coroutines.AtomicInt"
 		if (fqp == "kotlinx.atomicfu.AtomicLong") return "clr:DotKt.Coroutines.AtomicLong"

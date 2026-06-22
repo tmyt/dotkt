@@ -29,13 +29,78 @@ namespace DotKt.Coroutines
         public T GetOrThrow() { if (_ex != null) throw _ex; return _value; }
     }
 
-    /// kotlin.coroutines.CoroutineContext. Minimal for now (Element/Key/dispatcher land in later phases — the
-    /// dispatcher set is part of dotktx.coroutines' CLR actuals). `EmptyCoroutineContext` is the unit element.
-    public interface CoroutineContext { }
+    /// kotlin.coroutines.CoroutineContext — the indexed set of Elements (the kotlin stdlib algebra, mirrored in C#):
+    /// get(key)/plus/minusKey/fold, with EmptyCoroutineContext the unit and CombinedContext the cons cell. (T3.)
+    public interface CoroutineContext
+    {
+        E Get<E>(Key<E> key) where E : class, Element;
+        R Fold<R>(R initial, Func<R, Element, R> operation);
+        CoroutineContext Plus(CoroutineContext context);
+        CoroutineContext MinusKey(IKey key);
+    }
+
+    /// CoroutineContext.Key<E> erased to a non-generic marker (for minusKey / an element's own key).
+    public interface IKey { }
+    /// CoroutineContext.Key<E> — the typed lookup key for an element of type E.
+    public interface Key<E> : IKey where E : class, Element { }
+    /// CoroutineContext.Element — a single-entry context that knows its own Key.
+    public interface Element : CoroutineContext { IKey Key { get; } }
+
+    /// AbstractCoroutineContextElement — the base most user Elements extend (default get/fold/plus/minusKey).
+    public abstract class AbstractElement : Element
+    {
+        public IKey Key { get; }
+        protected AbstractElement(IKey key) { Key = key; }
+        public E Get<E>(Key<E> key) where E : class, Element => ReferenceEquals(Key, key) ? (E)(object)this : null;
+        public R Fold<R>(R initial, Func<R, Element, R> op) => op(initial, this);
+        public CoroutineContext Plus(CoroutineContext context) => Contexts.Plus(this, context);
+        public CoroutineContext MinusKey(IKey key) => ReferenceEquals(Key, key) ? EmptyCoroutineContext.Instance : (CoroutineContext)this;
+    }
 
     public sealed class EmptyCoroutineContext : CoroutineContext
     {
         public static readonly EmptyCoroutineContext Instance = new EmptyCoroutineContext();
+        EmptyCoroutineContext() { }
+        public E Get<E>(Key<E> key) where E : class, Element => null;
+        public R Fold<R>(R initial, Func<R, Element, R> op) => initial;
+        public CoroutineContext Plus(CoroutineContext context) => context;
+        public CoroutineContext MinusKey(IKey key) => this;
+    }
+
+    /// The cons cell: a left context plus one more element (the standard kotlin representation).
+    public sealed class CombinedContext : CoroutineContext
+    {
+        readonly CoroutineContext _left; readonly Element _element;
+        public CombinedContext(CoroutineContext left, Element element) { _left = left; _element = element; }
+        public E Get<E>(Key<E> key) where E : class, Element
+        {
+            CoroutineContext cur = this;
+            while (true)
+            {
+                if (cur is CombinedContext cc) { var e = cc._element.Get(key); if (e != null) return e; cur = cc._left; }
+                else return cur.Get(key);
+            }
+        }
+        public R Fold<R>(R initial, Func<R, Element, R> op) => op(_left.Fold(initial, op), _element);
+        public CoroutineContext Plus(CoroutineContext context) => Contexts.Plus(this, context);
+        public CoroutineContext MinusKey(IKey key)
+        {
+            if (ReferenceEquals(_element.Key, key)) return _left;
+            var nl = _left.MinusKey(key);
+            if (ReferenceEquals(nl, _left)) return this;
+            return ReferenceEquals(nl, EmptyCoroutineContext.Instance) ? (CoroutineContext)_element : new CombinedContext(nl, _element);
+        }
+    }
+
+    public static class Contexts
+    {
+        public static CoroutineContext Plus(CoroutineContext left, CoroutineContext right) =>
+            ReferenceEquals(right, EmptyCoroutineContext.Instance) ? left
+            : right.Fold(left, (acc, el) =>
+            {
+                var removed = acc.MinusKey(el.Key);
+                return ReferenceEquals(removed, EmptyCoroutineContext.Instance) ? (CoroutineContext)el : new CombinedContext(removed, el);
+            });
     }
 
     /// kotlin.coroutines.Continuation<T>. INVARIANT on the CLR: the JVM declares `in T` but erases it; invariance

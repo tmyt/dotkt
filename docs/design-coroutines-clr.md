@@ -573,3 +573,14 @@ SM IS a `Continuation<object>`, so `coContext` = `ldarg.0; callvirt get_Context`
 Continuation-class form (added to the isCoClass body scan). il-kctx → 1 (`coroutineContext === EmptyCoroutineContext`,
 the default). Next T3 increments: (b) the `CoroutineContext` element algebra (Element/Key/get/plus/fold/minusKey/
 CombinedContext); (c) `ContinuationInterceptor`/`intercepted` + a minimal `CoroutineDispatcher`.
+
+## 13y. T3(b) — CoroutineContext element algebra (2026-06-23)
+
+Runtime: the kotlin stdlib `CoroutineContext` algebra mirrored in C# — `get(key)`/`fold`/`plus`/`minusKey`,
+`Element`/`Key<E>`/`IKey`, `AbstractElement`, `EmptyCoroutineContext`, `CombinedContext`, `Contexts.Plus` (the
+fold-based merge). Compiler: the Kotlin members map to the .NET PascalCase methods — `plus`/`minusKey` (non-generic,
+`clrInstance`), `fold<R>` (generic instance, `clrGenericInstance`, op = `Func<R,Element,R>` "func:3"); `get<E>` is
+next. Type maps: `CoroutineContext.Element` → `clr:DotKt.Coroutines.Element`, `.Key` → `clrg:…Key[…]`. il-kctx → 15
+(`coroutineContext.fold(10){…}` = 10 over the empty context, `c.plus(c)` identity → +5). Remaining T3: a real
+Element-with-value + `get<E>(Key)` (user/runtime element); then (c) `ContinuationInterceptor`/`intercepted` + a
+minimal `CoroutineDispatcher`.
