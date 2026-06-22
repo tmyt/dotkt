@@ -651,7 +651,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Anonymous objects (lifted, tracked in anonNames) are synthetic -> keep public.
 		val vis = if (anonNames.containsKey(klass)) "public" else visOf(klass)
 		val isAbstract = klass.modality == Modality.ABSTRACT || klass.modality == Modality.SEALED
-		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}${typeParamsJson(klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"attrs":[${attrsJson(klass.annotations)}]}"""
+		// A `nested`/`inner` class is emitted as a true CLR nested type of its enclosing user class (`Outer+Inner`),
+		// so it retains Kotlin's access to the enclosing class's private members (instead of flattening to a separate
+		// top-level type, which forced an assembly-visibility workaround). `inner` additionally captures `__outer`.
+		val nestedIn = (klass.parent as? IrClass)?.takeIf { it.kind == ClassKind.CLASS && clrName(it) == null && !anonNames.containsKey(klass) }
+			?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
+		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn${typeParamsJson(klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"attrs":[${attrsJson(klass.annotations)}]}"""
 	}
 
 	private fun ctor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {

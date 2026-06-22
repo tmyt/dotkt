@@ -141,16 +141,20 @@ sealed class Emitter
                         continue;
                     }
                     var isIface = kind == "interface";
-                    // Top-level CLR types are Public or NotPublic (assembly-internal); private/internal -> NotPublic.
-                    var typeAccess = (t.TryGetProperty("vis", out var tv) ? tv.GetString() : "public") == "public"
-                        ? TypeAttributes.Public : TypeAttributes.NotPublic;
+                    var visStr = t.TryGetProperty("vis", out var tv) ? tv.GetString() : "public";
+                    // A nested type (`nestedIn`) is defined on the enclosing type's builder with Nested* access, so it
+                    // keeps CLR access to the enclosing type's private members; otherwise a top-level Public/NotPublic.
+                    var nested = t.TryGetProperty("nestedIn", out var niEl) && _types.TryGetValue(niEl.GetString(), out var parentTi);
+                    var typeAccess = nested
+                        ? visStr switch { "internal" => TypeAttributes.NestedAssembly, "protected" => TypeAttributes.NestedFamily, "private" => TypeAttributes.NestedPrivate, _ => TypeAttributes.NestedPublic }
+                        : (visStr == "public" ? TypeAttributes.Public : TypeAttributes.NotPublic);
                     var attrs = isIface
                         ? typeAccess | TypeAttributes.Interface | TypeAttributes.Abstract
                         : typeAccess | TypeAttributes.Class;
                     // An `abstract`/`sealed`(Kotlin) class -> a CLR abstract class (cannot be instantiated; may hold
                     // abstract members). Kotlin `sealed` is also abstract at the CLR level.
                     if (!isIface && t.TryGetProperty("abstract", out var clsAbs) && clsAbs.GetBoolean()) attrs |= TypeAttributes.Abstract;
-                    var tb = _mod.DefineType(name, attrs);
+                    var tb = nested ? _types[niEl.GetString()].TB.DefineNestedType(name, attrs) : _mod.DefineType(name, attrs);
                     // Compiler-generated synthetic types (`<>dotkt_*`: KProperty, Result, KIterator_*, …) get
                     // [CompilerGenerated] (and can't collide with user types — the `<>` prefix isn't source-legal).
                     if (name.StartsWith("<>dotkt_"))
@@ -227,13 +231,14 @@ sealed class Emitter
                 if (!ti.IsInterface)
                     foreach (var f in ti.Def.GetProperty("fields").EnumerateArray())
                     {
-                        // Non-public Kotlin properties map to ASSEMBLY (internal) at the IL field level, not true
-                        // CLR-private: `inner`/local classes flatten to separate same-assembly types that legally
-                        // access the enclosing class's private members in Kotlin, which CLR-private would forbid.
-                        // Assembly visibility still hides the field from OTHER assemblies (the API-surface goal).
+                        // A property's visibility maps to the field's CLR access. True CLR-private is now correct
+                        // because `inner`/`nested` classes are emitted as real nested types, which retain access to the
+                        // enclosing type's privates. (internal -> Assembly, protected -> FamORAssem so same-assembly
+                        // nested/local types and subclasses both reach it.)
                         var fattrs = (f.TryGetProperty("vis", out var fv) ? fv.GetString() : "public") switch
                         {
-                            "private" or "internal" => FieldAttributes.Assembly,
+                            "private" => FieldAttributes.Private,
+                            "internal" => FieldAttributes.Assembly,
                             "protected" => FieldAttributes.FamORAssem,
                             _ => FieldAttributes.Public,
                         };
@@ -351,6 +356,13 @@ sealed class Emitter
                     if (spec.StartsWith("clr:") || spec.StartsWith("clrg:")) continue;  // .NET iface — not a user-type dep
                     if (_types.TryGetValue(ParseOwner(spec).open, out var inf)) Visit(inf);
                 }
+            // A nested type must be CreateType()'d BEFORE its enclosing type (Reflection.Emit bakes children into the
+            // parent). `done` already holds `ti` (added at entry), so a child whose base IS `ti` won't recurse forever.
+            var myName = ti.IsFileClass ? null : (ti.Def.TryGetProperty("name", out var nm) ? nm.GetString() : null);
+            if (myName != null)
+                foreach (var child in _types.Values)
+                    if (!child.IsFileClass && !child.IsEnum && child.Def.TryGetProperty("nestedIn", out var cni) && cni.GetString() == myName)
+                        Visit(child);
             result.Add(ti);
         }
         foreach (var ti in _types.Values) Visit(ti);

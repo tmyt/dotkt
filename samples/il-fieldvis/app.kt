@@ -13,6 +13,6 @@ fun main() {
     a.deposit(50)
     println(a.show())                            // 150  (private field works within the class)
     println(a.owner)                             // me
-    println(Refl.fieldVis(a, "balance"))         // Internal (Kotlin private -> IL assembly; see note)
+    println(Refl.fieldVis(a, "balance"))         // Private (true CLR-private; nested types still reach it)
     println(Refl.fieldVis(a, "owner"))           // Public
 }
