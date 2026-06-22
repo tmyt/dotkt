@@ -72,7 +72,7 @@
 - [x] **`式::class`**（インスタンスの実行時クラス・**`IrGetClass`**）— ✅ 2026-06-20 `obj.GetType()` へ（値型/generic param は box してから `callvirt object.GetType()`）。`.simpleName`/`.qualifiedName` は既存の `T::class` 経路（→`Type.Name`/`FullName`）にそのまま乗る。`il-getclass`（`"hi"::class.simpleName`=String、ユーザ class Widget、`Any` 経由の実行時クラス回復）実機正＋ilverify-clean＋JVM 差分一致（名前が一致する String/ユーザ型のみ＝primitive は CLR 名 Int32≠Kotlin Int なので除外）。`T::class`(静的)は既存対応。
 - [x] **スプレッド `*array`**（**`IrSpreadElement`**）— ✅ 2026-06-20（`il-mapdes`）単独 `f(*a)`（配列転送）＋全リテラル `f(1,2,3)`＋**混在 `f(1,*a,2)`**（`spreadConcat`＝`List<elem>` に Add/AddRange→ToArray）。`IrVararg` が spread を `filterIsInstance<IrExpression>` で落としていたバグも修正。
 - [x] **`value class` / `inline class`** — ✅ 2026-06-20 `@JvmInline value class`（フィールドアクセス・メソッド・引数/戻り値渡し）動作（`il-valclass`、CLR 実機正＋ilverify-clean）。※JVM 差分は環境都合（`@JvmInline` の JVM codegen が kotlinx-coroutines を要求し oracle が `NoClassDefFoundError`）で verify-il のみに収録。box/unwrap 最適化は将来。
-- [x] **非ローカル return**（inline ラムダからの `return`）✅(2026-06-20) — lambda 引数あり inline fun の実インライン化（`inlineCall`/`spliceLambdaCall`、body を `valueBlock`=インラインで splice）で解決。IR の IrReturn は既に呼び元 fun を target するので、splice すれば呼び元から return。**可変キャプチャも同時に解決**（呼び元の `var` を直接書込）。`samples/il-inline2`（findFirstEven=4／computed=42／sum=3）。残: crossinline・lambda を変数経由で渡す inline 呼出（リテラル渡しのみ inline）。
+- [x] **非ローカル return**（inline ラムダからの `return`）✅(2026-06-20) — lambda 引数あり inline fun の実インライン化（`inlineCall`/`spliceLambdaCall`、body を `valueBlock`=インラインで splice）で解決。IR の IrReturn は既に呼び元 fun を target するので、splice すれば呼び元から return。**可変キャプチャも同時に解決**（呼び元の `var` を直接書込）。`samples/il-inline2`（findFirstEven=4／computed=42／sum=3）。**crossinline/noinline も済**（2026-06-22、`il-xinline`）: ネストしたラムダ/オブジェクトから呼ばれる crossinline ラムダは splice せず実デリゲート local に束縛（非ローカル return が無いと保証済み＝splice 不要）、ネスト側は通常のクロージャキャプチャで取り込む（`capValueExpr` が `valSubst` を尊重）。残: lambda を変数経由で渡す inline 呼出（リテラル渡しのみ inline）。
 - [x] **部分式/ループ条件内 suspend** — ✅ 2026-06-20 D トラックで実装済（`spillExpr`／`emitWhileCps`／`emitWhenCps`、`il-coro`）。下記 D セクション参照。
 
 ### 設計上わざと非対応（CLR では破棄・[[clr-not-jvm-discard-jvmisms]]）
@@ -119,8 +119,9 @@
 | 遅延サブ機能 | 親項目 | コードのマーカ／状態 | 想定対応タイミング |
 |---|---|---|---|
 | 可変キャプチャ（**inline ラムダ**から外側ローカルへ書込）✅ | — | inline 展開で呼び元の `var` を直接書込（`il-inline2` sum=3）。非 inline ラムダ/object/local fn の可変キャプチャ（ref セル）は残 | inline 経由は済。残りは closure の ref-cell |
-| 非ローカル return（inline ラムダから外側関数）✅(2026-06-20) | — | lambda 引数あり inline の実インライン化で解決（`il-inline2`） | 済（[[function-inlining-spike]]）。残: crossinline |
-| crossinline / stdlib inline 本体 | A-2 inline / B | stdlib 本体は IR 不在＝(b)直写像で代替 | inlining スパイク後（本体入手可否次第） |
+| 非ローカル return（inline ラムダから外側関数）✅(2026-06-20) | — | lambda 引数あり inline の実インライン化で解決（`il-inline2`） | 済（[[function-inlining-spike]]） |
+| crossinline / noinline ✅(2026-06-22) | A-2 inline | 実デリゲート local 化（splice 回避、`il-xinline`） | 済 |
+| stdlib inline 本体 | A-2 inline / B | stdlib 本体は IR 不在＝(b)直写像で代替 | 本体入手可否次第（実用は手写像で代替済み） |
 | ~~ダックタイプ カスタム委譲 `getValue`/`setValue`~~ | A-2 by lazy | **✅ 実装済**（compiler-generated `KProperty`） | — |
 | ~~stdlib インターフェース委譲（`ReadWriteProperty`/`ReadOnlyProperty` 実装）~~ | A-2 by lazy | **✅ 実装済**（V-モノモーフ化合成インターフェース） | — |
 | ~~`by map`・`Delegates.observable/vetoable/notNull`~~ | A-2 by lazy | **✅ 実装済**（map 直写像／合成委譲クラス） | — |

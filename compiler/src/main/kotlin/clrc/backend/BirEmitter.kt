@@ -1705,7 +1705,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val pre = ArrayList<String>()
 		val boundVals = ArrayList<String>(); val boundLams = ArrayList<org.jetbrains.kotlin.ir.declarations.IrValueDeclaration>()
 		for ((p, arg) in params.zip(args)) {
-			if (arg is IrFunctionExpression) { inlineLambdas[p] = arg; boundLams.add(p) }
+			// A `crossinline`/`noinline` lambda is NOT spliced: crossinline guarantees no non-local return (the only
+			// reason to splice — see [[clr-not-jvm-discard-jvmisms]]) and noinline forbids inlining outright, and both
+			// may be invoked from a nested lambda/object. Bind them to a real delegate local (the `else` path): the
+			// arg emits as a closure, `block()` falls through to the delegate-invoke path, and a nested lambda/object
+			// captures the local via the normal closure machinery.
+			if (arg is IrFunctionExpression && !p.isCrossinline && !p.isNoinline) { inlineLambdas[p] = arg; boundLams.add(p) }
 			else {
 				val tmp = "__inl${inlCounter++}"
 				pre.add("""{"k":"var","name":${str(tmp)},"type":${str(birType(p.type))},"init":${expr(arg)}}""")
@@ -1898,7 +1903,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun capValueExpr(d: IrValueDeclaration): String =
 		// Evaluate the capture VALUE in the enclosing context: honor an active substitution (e.g. an intrinsic
 		// block's `c` bound to the coroutine's own continuation, or an outer capture field) before falling back.
-		captureSubst[d] ?: if (d.name.asString() == "<this>") """{"k":"this"}""" else """{"k":"local","name":${str(d.name.asString())}}"""
+		// `valSubst` is checked next so a captured inline parameter (a crossinline/noinline lambda bound to a
+		// `__inl<N>` delegate local) is captured by its substituted local, mirroring IrGetValue's resolution order.
+		captureSubst[d] ?: valSubst[d.name.asString()]
+			?: if (d.name.asString() == "<this>") """{"k":"this"}""" else """{"k":"local","name":${str(d.name.asString())}}"""
 
 	/**
 	 * The lambda's value parameters in delegate order: the EXTENSION RECEIVER first (a receiver lambda

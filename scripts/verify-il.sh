@@ -165,6 +165,7 @@ il_check op    OpT   "$ROOT/samples/il-op/app.kt" "$(printf '(4, 6)\n(2, 2)\n(6,
 il_check dataq Dq    "$ROOT/samples/m-s2/app.kt" "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4\na==b: True\na==c: False\nhash eq: True')"
 il_check inline InlF "$ROOT/samples/il-inline/app.kt" "$(printf '5\n40\n3\n0')"
 il_check inline2 Inl2 "$ROOT/samples/il-inline2" "$(printf '4\n42\n3')"
+il_check xinline XInl "$ROOT/samples/il-xinline" "$(printf '20\n42\n105')"
 il_check ctor  CtorT "$ROOT/samples/il-ctor/app.kt" "$(printf '12\n25\n5x5\nhi=7\nsolo=0')"
 il_check objex Oe    "$ROOT/samples/il-objexpr/app.kt" "$(printf 'hello from anon\n105')"
 il_check nest  Nst   "$ROOT/samples/il-nested/app.kt" "$(printf 'outer:root\nnode(7)\n14\nleaf 3')"
