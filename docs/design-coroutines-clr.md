@@ -475,3 +475,13 @@ A user `class C : Continuation<Int>` now compiles and runs (samples/il-kcont2 �
 - ilemit: the interface-impl site, the interface-linking (DefineMethodOverride by .NET name via reflection), and
   the type-ordering Visit all learned to resolve `clr:`/`clrg:` interfaces by reflection (not `_types`).
 Result<T> param works because T4 already unified kotlin.Result -> the shared struct.
+
+## 13p. T11 done — suspend receiver lambdas (2026-06-22)
+
+The idiomatic `flow { emit(x) }` form now works (sample il-kflow2 → 1/2/3): a `suspend FlowCol<T>.() -> Int`
+lambda whose body calls a suspend EXTENSION (`emit`) on the implicit receiver. Fix: `emitCoroutineBody` now
+includes a suspend lambda's extension receiver as a leading param/field (it was using only `regularParams`, so the
+implicit `$this$flow` was an unknown var). EXCLUDES the `kotlin.sequences.SequenceScope` receiver — `sequence{}` is
+the restricted-suspension builder whose scope IS the state machine (synthetic, not a passed value), lowered by the
+sequence-special path; including it broke il-kseq. `sequence { yield(x) }` already proved receiver-style for the
+member-call case; this adds the extension-on-receiver case. Full suite green.

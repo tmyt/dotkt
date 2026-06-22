@@ -756,7 +756,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun emitCoroutineBody(fn: IrSimpleFunction): CoroutineBody {
 		coState = 0; coLabelN = 0
 		coSpill.clear(); coSpillFields.clear()
-		val params = regularParams(fn)
+		// Include the extension receiver (a `suspend Scope.() -> R` lambda's implicit `$this$...`) as a leading
+		// param/field, so receiver references inside the CPS body resolve to a state-machine field (T11). It is also
+		// the first entry in lambdaParamsJson, so the SM constructor receives it in the same position. EXCLUDE the
+		// SequenceScope receiver: `sequence{}` is the restricted-suspension builder whose scope IS the SM (the
+		// receiver is synthetic, not a passed value), and its block is lowered by the sequence-special path.
+		val realExtRecv = fn.parameters.filter {
+			it.kind == IrParameterKind.ExtensionReceiver && it.type.classFqName?.asString() != "kotlin.sequences.SequenceScope"
+		}
+		val params = realExtRecv + regularParams(fn)
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty()
 		val liveVars = ArrayList<IrVariable>()
 		if (fn.body?.let { containsSuspend(it) } == true) collectCpsVars(body, liveVars)
