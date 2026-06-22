@@ -55,5 +55,31 @@ namespace DotKt.Coroutines
             public AC(Func<T, Task<int>> action) { _action = action; }
             public Task<int> EmitRaw(T value) => _action(value);
         }
+
+        // Flow <-> IAsyncEnumerable bridge (T8). `IAsyncEnumerable<T>.asFlow()`: a Flow whose block drains the .NET
+        // async stream, emitting each element (await the consumer's Task = backpressure). `Flow<T>.asAsyncEnumerable()`
+        // runs the flow into a Channel and exposes the reader as an async stream (push -> pull).
+        public static Flow<T> FromAsync<T>(System.Collections.Generic.IAsyncEnumerable<T> src) =>
+            new Flow<T>(col => Drain(src, col));
+        static async Task<int> Drain<T>(System.Collections.Generic.IAsyncEnumerable<T> src, FlowCol<T> col)
+        {
+            await foreach (var x in src) await col.EmitRaw(x);
+            return 0;
+        }
+
+        public static async System.Collections.Generic.IAsyncEnumerable<T> ToAsync<T>(Flow<T> flow)
+        {
+            var ch = System.Threading.Channels.Channel.CreateUnbounded<T>();
+            var producer = flow.Collect(new ChanCollector<T>(ch.Writer))
+                .ContinueWith(_ => ch.Writer.Complete());
+            await foreach (var x in ch.Reader.ReadAllAsync()) yield return x;
+            await producer;
+        }
+        sealed class ChanCollector<T> : FlowCol<T>
+        {
+            readonly System.Threading.Channels.ChannelWriter<T> _w;
+            public ChanCollector(System.Threading.Channels.ChannelWriter<T> w) { _w = w; }
+            public Task<int> EmitRaw(T value) => _w.WriteAsync(value).AsTask().ContinueWith(_ => 0);
+        }
     }
 }

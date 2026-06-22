@@ -519,3 +519,11 @@ the ctor on that instantiation. Added `CtorOf` (re-anchor via `TypeBuilder.GetCo
 TypeBuilder/generic-param), used by coSelfCont/coSelfCancellable. (kgflow's emit<T> returned the Int dummy, so its
 TypedCont<Int> was concrete and dodged this.) STILL PENDING in T8: the `Flow`↔`IAsyncEnumerable` bridge; full
 Channel close/iteration/fan-out semantics (needs dispatchers — Track 2).
+
+## 13t. T8 complete — Flow <-> IAsyncEnumerable bridge (2026-06-22)
+
+`GFlows.FromAsync<T>(IAsyncEnumerable<T>) : Flow<T>` (asFlow) drains a .NET async stream, emitting each element to
+the collector (await = backpressure); `GFlows.ToAsync<T>(Flow<T>) : IAsyncEnumerable<T>` (asAsyncEnumerable) runs
+the flow into an unbounded Channel and exposes the reader as an async stream (push→pull). Sample il-kasflow:
+`Flows.fromAsync(Kfc.Api.range(4)).collect { println(it*10) }` → 0/10/20/30 (a C# `async IAsyncEnumerable<int>`
+bridged into a Kotlin Flow). T8 (Channel + Flow↔IAsyncEnumerable) done; full suite green.
