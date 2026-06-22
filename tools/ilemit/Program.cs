@@ -227,7 +227,16 @@ sealed class Emitter
                 if (!ti.IsInterface)
                     foreach (var f in ti.Def.GetProperty("fields").EnumerateArray())
                     {
-                        var fattrs = FieldAttributes.Public;
+                        // Non-public Kotlin properties map to ASSEMBLY (internal) at the IL field level, not true
+                        // CLR-private: `inner`/local classes flatten to separate same-assembly types that legally
+                        // access the enclosing class's private members in Kotlin, which CLR-private would forbid.
+                        // Assembly visibility still hides the field from OTHER assemblies (the API-surface goal).
+                        var fattrs = (f.TryGetProperty("vis", out var fv) ? fv.GetString() : "public") switch
+                        {
+                            "private" or "internal" => FieldAttributes.Assembly,
+                            "protected" => FieldAttributes.FamORAssem,
+                            _ => FieldAttributes.Public,
+                        };
                         if (f.TryGetProperty("static", out var st) && st.GetBoolean()) fattrs |= FieldAttributes.Static;
                         ti.Fields[f.GetProperty("name").GetString()] =
                             ti.TB.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), fattrs);

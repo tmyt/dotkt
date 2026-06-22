@@ -592,8 +592,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
 		val base = baseType?.classifierOrNull?.owner as? IrClass
 		val companion = klass.declarations.filterIsInstance<IrClass>().firstOrNull { it.isCompanion }
-		val instFields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { it.backingField }
-			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
+		val instFields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { p ->
+			val bf = p.backingField ?: return@mapNotNull null
+			// Honor the property's visibility on its backing field (A-108): a `private`/`internal`/`protected`
+			// property gets a non-public field. (Kotlin's own access rules already keep same-class field reads valid.)
+			val v = visOf(p); val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
+			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))}$visJson}"""
+		}
 		// Companion non-const `val`/`var` -> static fields (with initializer run in a static ctor); const is inlined.
 		val statFields = companion?.declarations?.filterIsInstance<IrProperty>()?.mapNotNull { p ->
 			val bf = p.backingField ?: return@mapNotNull null
