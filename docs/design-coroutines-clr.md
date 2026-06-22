@@ -495,3 +495,15 @@ MoveNext advances it (current=Current; state=k; return true) until exhausted. Al
 SAVES/RESTORES the CPS state (coState/coLabelN/coSpill*/coFields) — a `sequence{}` nested inside a `yieldAll` reset
 the outer's state ids, causing duplicate resume labels. `generateSequence` is deferred: its `nextFunction: (T)->T?`
 hits the same nullable-in-generics issue as T7 (value-type T? = Nullable<T> vs ref-type T-or-null) — fold it into T7.
+
+## 13r. T7 (Unit as a type argument) done — generateSequence's nullable-T still pending (2026-06-22)
+
+Unit as a generic TYPE ARGUMENT now works: `Continuation<Unit>` / `Result<Unit>` (il-kunit2 → true). A CLR generic
+arg can't be `System.Void`, so a `Unit` type argument erases to the new `DotKt.Coroutines.Unit` singleton (in
+return/statement position Unit still lowers to `void` — those sites are guarded by `isUnit()` BEFORE birType/
+netType, so this only affects the previously-broken type-arg path). `firstArgBir`/`firstArgNet` helpers map a Unit
+first-arg to `clr:DotKt.Coroutines.Unit`, used by the Continuation/CancellableCont/Result maps + the standalone
+`Result.success/failure` value; the `Unit` object value -> `clrStaticField DotKt.Coroutines.Unit.Instance`.
+STILL PENDING (the other half of the old T6/T7 conflation): `generateSequence`'s `nextFunction: (T) -> T?` — the
+nullable-in-generics representation (value-type `T?` = `Nullable<T>` vs reference `T`-or-null) is a DISTINCT problem
+from Unit-as-arg and isn't addressed here.

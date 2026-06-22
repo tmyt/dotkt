@@ -77,6 +77,16 @@ namespace DotKt.Coroutines
         public int Await() => _tcs.Task.GetAwaiter().GetResult();
     }
 
+    /// kotlin.Unit as a real type — needed when Unit is a generic TYPE ARGUMENT (Continuation<Unit>, Result<Unit>,
+    /// Deferred<Unit>): a CLR generic arg can't be System.Void, so it erases to this singleton. (In return/statement
+    /// position Unit still lowers to `void`.) See T7 / docs §13r.
+    public sealed class Unit
+    {
+        public static readonly Unit Instance = new Unit();
+        Unit() { }
+        public override string ToString() => "kotlin.Unit";
+    }
+
     /// kotlinx.coroutines.CancellableContinuation<T> — a Continuation<T> with cancellation hooks. v1: forwards
     /// resume to the underlying continuation; cancel/invokeOnCancellation are minimal (real cancellation lands with
     /// the dispatcher work). `c.resume(v)` rides the kotlin.coroutines.resume extension (Continuations.Resume).

@@ -1369,9 +1369,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (.NET-injected objects
 		// like Math are static call sites handled at the call site; only user singletons reach here as a value.)
 		is IrGetObjectValue ->
-			if (node.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.coroutines.EmptyCoroutineContext")
-				"""{"k":"clrStaticField","type":"DotKt.Coroutines.EmptyCoroutineContext","name":"Instance"}"""
-			else """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
+			when (node.symbol.owner.fqNameWhenAvailable?.asString()) {
+				"kotlin.coroutines.EmptyCoroutineContext" -> """{"k":"clrStaticField","type":"DotKt.Coroutines.EmptyCoroutineContext","name":"Instance"}"""
+				// The `Unit` object as a VALUE (e.g. `Result.success(Unit)`) -> the DotKt.Coroutines.Unit singleton.
+				"kotlin.Unit" -> """{"k":"clrStaticField","type":"DotKt.Coroutines.Unit","name":"Instance"}"""
+				else -> """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
+			}
 		is IrBlock -> blockExpr(node)
 		is IrGetField -> {
 			val ownerClass = node.symbol.owner.parent as? IrClass
@@ -2215,7 +2218,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `Result.success(v)` / `Result.failure(e)` as a VALUE -> DotKt.Coroutines.Result.Success/Failure (so a Result
 		// can be constructed and forwarded anywhere, e.g. into a user `Continuation.resumeWith`). T4 / docs §13n.
 		if (calleeFqEarly == "kotlin.Result.Companion.success" || calleeFqEarly == "kotlin.Result.Companion.failure") {
-			val t = (call.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+			val t = firstArgBir(call.type)   // Unit-aware (Result<Unit> -> DotKt.Coroutines.Unit, not void)
 			val spec = "clrg:DotKt.Coroutines.Result[$t]"
 			return if (calleeFqEarly.endsWith("success"))
 				"""{"k":"clrStatic","type":${str(spec)},"method":"Success","argTypes":[${str(t)}],"ret":${str(spec)},"args":[${expr(regularArgs(call).first())}]}"""
@@ -3259,9 +3262,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.Char" -> "System.Char"
 		"kotlin.String" -> "System.String"
 		"kotlin.Unit" -> "System.Void"
-		"kotlin.coroutines.Continuation" -> "clrg:DotKt.Coroutines.Continuation[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
-		"kotlinx.coroutines.CancellableContinuation" -> "clrg:DotKt.Coroutines.CancellableCont[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
-		"kotlin.Result" -> "clrg:DotKt.Coroutines.Result[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
+		"kotlin.coroutines.Continuation" -> "clrg:DotKt.Coroutines.Continuation[${firstArgNet(t)}]"
+		"kotlinx.coroutines.CancellableContinuation" -> "clrg:DotKt.Coroutines.CancellableCont[${firstArgNet(t)}]"
+		"kotlin.Result" -> "clrg:DotKt.Coroutines.Result[${firstArgNet(t)}]"
 		"kotlin.coroutines.CoroutineContext", "kotlin.coroutines.EmptyCoroutineContext" -> "clr:DotKt.Coroutines.CoroutineContext"
 		"kotlin.sequences.Sequence" -> "clrg:System.Collections.Generic.IEnumerable[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlinx.atomicfu.AtomicInt" -> "DotKt.Coroutines.AtomicInt"
@@ -3366,6 +3369,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 	}
 
+	/** The first type argument of a constructed type, as a generic-arg-safe spec: a `Unit` argument erases to the
+	 *  real `DotKt.Coroutines.Unit` (a CLR generic arg can't be `void`/`System.Void`); else birType/netType. T7. */
+	private fun firstArgBir(t: IrType): String = ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
+		?.let { if (it.isUnit()) "clr:DotKt.Coroutines.Unit" else birType(it) } ?: "object"
+	private fun firstArgNet(t: IrType): String = ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
+		?.let { if (it.isUnit()) "clr:DotKt.Coroutines.Unit" else netType(it) } ?: "object"
+
 	private fun birType(t: IrType): String {
 		// A type parameter `T` is a real generic parameter -> `gp:<name>` (resolved in IL context). On the CLR,
 		// generics are reified, so even `reified T` rides on this (no inlining) — see [[clr-not-jvm-discard-jvmisms]].
@@ -3428,14 +3438,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		// kotlin.coroutines.Continuation<T> -> the shared DotKt.Coroutines.Continuation<T> (Path B; cross-assembly
 		// identity so a user assembly and dotktx.coroutines share one Continuation). See docs §13b.
-		if (fqp == "kotlin.coroutines.Continuation") {
-			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			return "clrg:DotKt.Coroutines.Continuation[$arg]"
-		}
-		if (fqp == "kotlinx.coroutines.CancellableContinuation") {
-			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			return "clrg:DotKt.Coroutines.CancellableCont[$arg]"
-		}
+		if (fqp == "kotlin.coroutines.Continuation") return "clrg:DotKt.Coroutines.Continuation[${firstArgBir(t)}]"
+		if (fqp == "kotlinx.coroutines.CancellableContinuation") return "clrg:DotKt.Coroutines.CancellableCont[${firstArgBir(t)}]"
 		if (fqp == "kotlin.coroutines.CoroutineContext" || fqp == "kotlin.coroutines.EmptyCoroutineContext")
 			return "clr:DotKt.Coroutines.CoroutineContext"
 		// kotlinx.atomicfu atomics -> the DotKt.Coroutines Interlocked/Volatile wrappers (Phase 3 / §13a res. 5).
@@ -3448,10 +3452,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		// kotlin.Result<T> -> the shared DotKt.Coroutines.Result<T> struct (one type, cross-assembly identity, so it
 		// serves both runCatching AND the Continuation.resumeWith parameter). See docs §13n.
-		if (fqp == "kotlin.Result") {
-			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			return "clrg:DotKt.Coroutines.Result[$arg]"
-		}
+		if (fqp == "kotlin.Result") return "clrg:DotKt.Coroutines.Result[${firstArgBir(t)}]"
 		// `by lazy` delegate: kotlin.Lazy<T> -> System.Lazy<T>.
 		if (fqp == "kotlin.Lazy") {
 			val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
