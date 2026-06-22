@@ -127,6 +127,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private var inlCounter = 0
 	private var scopeCounter = 0
 	private var fileClass = ""   // current file's static class name (for top-level property access)
+	/** The `<File>Kt` class name of a top-level declaration's DEFINING file (so cross-file top-level property
+	 *  access targets the owning file class, not whichever file is being emitted). */
+	private fun fileClassOf(decl: org.jetbrains.kotlin.ir.declarations.IrDeclaration): String {
+		val f = decl.parent as? IrFile ?: return fileClass
+		return File(f.fileEntry.name).name.removeSuffix(".kt").replaceFirstChar { it.uppercaseChar() } + "Kt"
+	}
 	// Local functions: lifted to file-class statics; captured vars become leading params (calls prepend them).
 	private val localFns = HashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, Pair<String, List<IrValueDeclaration>>>()
 
@@ -349,6 +355,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			.filter { !isAwaitIntrinsic(it) && it.name.asString() !in setOf("byref", "stackBuffer") }
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
 		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
+		// `object Foo { ... }` (non-companion) -> a singleton class with a static `INSTANCE` field; `IrGetObjectValue`
+		// loads it. The shared-state-via-`object` case (feedback item 10). Companion/anonymous objects are handled
+		// elsewhere; .NET-injected `object`s (Math, …) are static call sites, not user singletons.
+		val objects = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.OBJECT && !it.isCompanion && clrName(it) == null }
 		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && clrName(it) == null }
 		val topProps = file.declarations.filterIsInstance<IrProperty>()
 		if (functions.isEmpty() && classes.isEmpty() && interfaces.isEmpty() && topProps.isEmpty()) return ""
@@ -382,7 +392,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// User `annotation class`es -> .NET `: System.Attribute` classes (so reflection / reverse interop sees them).
 		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS && clrName(it) == null }
 		val typeDefs = basicEnums.map { enumDef(it) } + interfaces.map { interfaceDef(it) } +
-			classes.map { typeDef(it) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
+			classes.map { typeDef(it) } + objects.map { typeDef(it, isObject = true) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
 			richEnums.map { richEnumDef(it) } + annClasses.map { annotationDef(it) }
 		val methods = (fnMethods + liftedMethods).joinToString(",")
 		// Synthetic types (iterator/Read(Write)Property interfaces, synthesized Delegates.* classes, KProperty)
@@ -535,7 +545,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"""{"attr":${str(attrType)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
 		}.joinToString(",")
 
-	private fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {
+	private fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false): String {
 		val baseType = klass.superTypes
 			.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
 		val base = baseType?.classifierOrNull?.owner as? IrClass
@@ -551,7 +561,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}.orEmpty()
 		// A capturing object literal carries its captured outer values as extra instance fields.
 		val capFields = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
-		val fields = (instFields + statFields + capFields).joinToString(",")
+		// `object` singleton: a static `INSTANCE` field initialized to `new Foo()` (run in the .cctor) — same shape
+		// as an enum entry. `IrGetObjectValue` loads it; member access then routes as normal instance access.
+		val instanceField = if (isObject)
+			listOf("""{"name":"INSTANCE","type":${str("@" + typeName(klass))},"static":true,"init":{"k":"new","type":${str(typeName(klass))},"args":[]}}""")
+		else emptyList()
+		val fields = (instFields + statFields + capFields + instanceField).joinToString(",")
 		val ctors = klass.declarations.filterIsInstance<IrConstructor>().joinToString(",") { ctor(klass, it, captures) }
 		val instMethods = klass.declarations.filterIsInstance<IrSimpleFunction>()
 			// Include `abstract fun`s (body == null): they emit as CLR abstract methods so subclass overrides bind
@@ -1016,8 +1031,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val name = typeName(klass)
 		if (klass.typeParameters.isEmpty()) return name
 		val args = (recvType as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }
-		if (args.isNullOrEmpty() || args.any { it.classifierOrNull is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol })
-			return name
+		// A type-parameter argument is emitted via its `gp:T` form (resolvable by ilemit in the enclosing generic
+		// method/class context) — NOT dropped to the raw open type, which would make `new State<T>(i)` inside a
+		// generic factory `fun <T> state(i:T): State<T>` emit a `newobj` on the open generic (invalid IL; item 13).
+		if (args.isNullOrEmpty()) return name
 		return "$name[${args.joinToString(",") { birType(it) }}]"
 	}
 
@@ -1306,6 +1323,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				"""{"k":"enumValue","type":${str("@" + parent?.name?.asString())},"ordinal":$ord}"""
 			}
 		}
+		// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (.NET-injected objects
+		// like Math are static call sites handled at the call site; only user singletons reach here as a value.)
+		is IrGetObjectValue -> """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
 		is IrBlock -> blockExpr(node)
 		is IrGetField -> {
 			val ownerClass = node.symbol.owner.parent as? IrClass
@@ -2756,11 +2776,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)},"args":[${filledArgs(call).joinToString(",")}]}"""
 		}
 
-		// Top-level property (parent is the file/package, not a class) -> a static field of the file class.
+		// Top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING file's
+		// class. Use the property's own file, NOT the file currently being emitted — else a cross-file reference
+		// looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
-			if (declaringClass == null) return if (callee === p.setter)
-				"""{"k":"staticFieldSet","ownerType":${str(fileClass)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
-			else """{"k":"staticField","ownerType":${str(fileClass)},"name":${str(p.name.asString())}}"""
+			if (declaringClass == null) { val owner = fileClassOf(p); return if (callee === p.setter)
+				"""{"k":"staticFieldSet","ownerType":${str(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+			else """{"k":"staticField","ownerType":${str(owner)},"name":${str(p.name.asString())}}""" }
 		}
 
 		// `s.length` on a String -> System.String.Length (CLR property).
@@ -3374,8 +3396,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// generic carries concrete args ("@Box[int]"). Anon objects resolve through `typeName`.
 		if (klass != null && (klass.kind == ClassKind.CLASS || klass.kind == ClassKind.INTERFACE)) {
 			if (klass.typeParameters.isNotEmpty()) {
+				// Carry concrete args ("@Box[int]"); a type-parameter arg rides on its `gp:T` form (resolvable in the
+				// enclosing generic context) rather than collapsing to the open type — so `State<T>` as a generic
+				// factory's return type stays constructed and the emitted IL is verifiable (item 13).
 				val args = (t as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }
-				if (!args.isNullOrEmpty() && args.none { it.classifierOrNull is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol })
+				if (!args.isNullOrEmpty())
 					return "@" + typeName(klass) + "[" + args.joinToString(",") { birType(it) } + "]"
 			}
 			return "@" + typeName(klass)

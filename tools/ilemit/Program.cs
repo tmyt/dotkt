@@ -114,7 +114,11 @@ sealed class Emitter
         foreach (var file in files)
         {
             var fileClass = file.GetProperty("fileClass").GetString();
-            if (file.GetProperty("methods").GetArrayLength() > 0)
+            // Create the file class if it has methods OR top-level static fields — a file that only declares
+            // top-level `val`/`var`s (no functions) still needs its class so OTHER files can reference those
+            // fields (`StateKt.counter`); otherwise cross-file top-level property access fails (item 11).
+            if (file.GetProperty("methods").GetArrayLength() > 0 ||
+                (file.TryGetProperty("fields", out var ffl) && ffl.GetArrayLength() > 0))
                 _types[fileClass] = new TypeInfo
                 {
                     TB = _mod.DefineType(fileClass, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract),
