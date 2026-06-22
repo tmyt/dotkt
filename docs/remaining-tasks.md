@@ -63,7 +63,7 @@
 - [ ] **`lateinit` プロパティ**（`notNull` 委譲に近いが proper lateinit は未検証）
 - [x] **`try`-`finally`** — ✅ 2026-06-20 **バグ修正**（`il-langfeat`）: try 文の fall-through 時に ilemit が `result` local を無条件 `ret` して後続文を捨てていた→`return` 含有時のみ専用 ret ラベルへ。`StmtsHaveReturn`/`StmtsAlwaysReturn` で fall-through/全 return を判定。
 - [x] **分解宣言のラムダ引数 / for ループ** — ✅ ラムダ引数 `{ (a,b) -> }`（`il-langfeat`、componentN）＋ **`for ((k,v) in map)`**（2026-06-20、`il-mapdes`）: `birForLoop` が `isMapType` を Dictionary 列挙（`forEachInline`、要素＝`KeyValuePair<K,V>`）へ、`Map.Entry<K,V>`→`KeyValuePair`（`birType`）、`entry.component1/2()`（拡張関数）→`.Key`/`.Value`。付随の一般修正: ilemit `EmitClrPropGet` が**値型レシーバを `EmitAddr`**（KeyValuePair など struct プロパティ get は managed pointer 必須）。
-- [ ] **ユーザ定義アノテーションの保持**（現状ほぼ drop・interop 注釈以外）
+- [x] **ユーザ定義アノテーションの保持** ✅（`il-annot`：`@Tag` 宣言＋クラス/関数へ適用→ilemit が `SetCustomAttribute`/`BuildCab` で .NET カスタム属性として emit、reflection 可視）
 - [x] **`abstract class`** — ✅ 2026-06-20 **実装**（`il-langfeat`）: `abstract`/`sealed` クラス→CLR abstract type、`abstract fun`（body 無し）→ `Virtual|Abstract` メソッドとして emit（BirEmitter の body!=null フィルタに modality==ABSTRACT を追加）。base 型経由の仮想ディスパッチ（`shape.area()`）が解決。
 
 ### ❌ 未対応（IR ノード未ハンドル＝`unsupportedStmt`/`Expr` 直行・1.0 言語タスク）
@@ -98,7 +98,7 @@
 - [x] ユーザ companion object（メンバ/定数）— 囲みクラスの `static` メンバへ写像（`const` は use-site でインライン、非 const val は `static readonly` フィールド、メソッドは `static`、`Outer.member` 呼び出しへルーティング）。`samples/m-a6`。**(S)** ✅
 - [x] nested / inner class（ユーザ定義）。**(M)** ✅ — **nested（非 inner）**: 囲みクラス内の `class` を**トップレベル合成型に平坦化**（実名維持・多段可）。`samples/il-nested`。**inner class**: 外側インスタンス `this@Outer` を**ちょうど1個の capture** として処理（object literal の capture 機構を再利用）＝平坦化した型に `__outer` フィールド＋ctor 先頭パラメータを注入、外側 this 参照（`outer.thisReceiver` シンボル）を `captureSubst` で `this.__outer` へ書換、構築点 `Counter(step)`/`Outer(0).Counter(5)` は ctor の dispatch receiver（外側インスタンス）を先頭引数へ前置。外側 private メンバも property-as-field public モデルで読める。`samples/il-inner`（tick/label/直接構築、実機正＋ilverify-clean）。残: **多段 inner**（孫の this 参照は `__outer.__outer` 連鎖が要る＝単段のみ対応）。
 - [x] `typealias`。**(S)** ✅ — frontend が IR 到達前に underlying 型へ解決済み＝backend は透過（`typealias Name = String`/`IntPair = Pair<Int,Int>` を実機確認）。新規対応コード不要。
-- [~] ユーザ定義注釈（宣言・retention・適用）。**(M)** — **実行は破綻しない**（`annotation class` 宣言＋適用は現状 drop され、注釈付き関数は正常実行）。**残**: .NET カスタム属性として emit（`SetCustomAttribute`）＝reflection/逆方向 interop で見えるように（retention・target 写像）。
+- [x] ユーザ定義注釈（宣言・retention・適用）。**(M)** ✅ — **.NET カスタム属性として emit 済**（`SetCustomAttribute`/`BuildCab`、`il-annot`）。**実行も破綻しない**（`annotation class` 宣言＋適用は現状 drop され、注釈付き関数は正常実行）。残: retention/target の厳密写像のみ（任意・cosmetic）。
 - [x] ビット演算 `and`/`or`/`xor`/`shl`/`shr`/`ushr`/`inv`（`m-b12`）。**(S)** ✅
 - [x] zip（→ValueTuple）、`Char.code`（→`(int)c`）、char 範囲 `in`（`m-a3`）。**(S)** ✅
 - [~] 数値変換: **済** `toInt`/`toLong`/`toDouble`/`toFloat`/`toShort`/`toByte`/`toChar`（数値レシーバ→C# キャスト `(int)x`）。`samples/m-a5`。**`toString(radix)` 済**（2026-06-20、`il-valclass`、`255.toString(16)`→`Convert.ToString(value, base)`、Int/Long）。**unsigned 型 ✅**（2026-06-20、`il-unsigned`）: `UInt`/`ULong`/`UByte`/`UShort`→CLR `UInt32`/`UInt64`/`Byte`/`UInt16`（frontend が算術を plain op に lower 済＋const は符号付き bit-pattern を保持）。**(M)** ✅
@@ -111,7 +111,7 @@
 - [x] 複数行/raw 文字列 `"""..."""`、エスケープ網羅。**(S)** ✅ — frontend が文字列リテラル（raw・エスケープ含む）を解決＝backend は IrConst 文字列としてそのまま emit（多行＋`\"`/`\\`/タブを実機確認）。対応コード不要。
 - [~] `Nothing` 型 / `TODO()` / `throw`・`return` の式利用。**(S)** — **`throw` 式（Nothing 型）動作**: `x ?: throw …` / `if(c) v else throw …` → `throwExpr`（throw が制御を移すので merge に値が来ない＝EmitCond の片枝で OK）。併せて **Kotlin builtin 例外型→.NET 写像を IrConstructorCall に追加**（`IllegalStateException`→`InvalidOperationException` 等、throw 文/式 両方）＋**`T`→`T?`(Nullable<T>) 引数 wrap を全 call-site に追加**（`req(42)` で `Int?` 引数に int 直渡し＝未 wrap だった）。`TODO()`/`error()`/`require` は既存。`samples/il-throwexpr`。残: `return` の式利用（非ローカル return は inlining スパイク）。
 - [x] トップレベル `val`/`var`/`const val`（ファイルクラスの `const`/`static readonly`/`static` フィールド化、非 const の読み書きは兄弟 static 参照へ畳む）。`samples/m-a4`。**(S)** ✅
-- [~] `tailrec`（末尾再帰 → ループ化）。**(S)** — **意味論は正しく動作**（通常の再帰として emit、`fact(5,1)`=120 実機確認）。残: 末尾呼び出しのループ化＝**最適化**（深い再帰の stack 効率。`.tail.` prefix or 手動ループ lowering）。正しさは満たすが最適化は未。
+- [x] `tailrec`（意味論）。**(S)** ✅ — **意味論は正しく動作**（通常の再帰として emit、`fact(5,1)`=120 実機確認）。残: 末尾呼び出しのループ化＝**最適化**（深い再帰の stack 効率。`.tail.` prefix or 手動ループ lowering）。正しさは満たすが最適化は未。
 
 ## A-3 切り出した遅延サブ機能レジスタ（親項目の「残」を1か所に集約）
 **方針: 完成項目から切り出した残りは silent drop せず、(a) 親 `[~]`/`[x]` 項目の「残:」に明記、(b) コードで該当時に明示エラー（`unsupportedExpr/Stmt` → ilemit が `unsupported Kotlin construct (deferred): <理由>` を throw、`<理由>` が下表のキー）、の二重で追跡する。**
@@ -148,10 +148,10 @@
   - 副次改善: **`renderLambda` を値返し対応**（最後の式を `return`／Unit は Action のまま）。Func 型デリゲート・LINQ・イベントの前提。
 - [x] コレクション生成 `listOf`/`mutableListOf`/`arrayListOf`（→List）、`setOf`/`mutableSetOf`/`hashSetOf`（→HashSet）、`mapOf`/`mutableMapOf`/`hashMapOf`（→Dictionary、`to`-ペアから indexer 初期化）。List/Map の `[]` indexing も。`m-b6`,`m-b7`。`emptyList`/`emptyMap`/`emptySet` も。**(S–M)** ✅
 - [x] コレクション操作 → LINQ 静的写像。**済 30+種**: map/filter/flatMap/take/drop/takeWhile/dropWhile/sorted/sortedBy/sortedByDescending/sortedDescending/reversed/forEach/fold/reduce/any/all/none/count/sum/sumOf/first/firstOrNull/find/last/lastOrNull/single/singleOrNull/distinct/toSet/toList/max/min/maxOrNull/minOrNull/maxByOrNull/minByOrNull/average/contains/joinToString/asSequence（`m-b1`,`m-b3`,`m-b6`,`m-b9`、値返しラムダ）。**mapIndexed 済**（2026-06-20、`il-bmore`）= `Range(0,MAX).Zip(src, Func<int,T,R>)`（Zip の (first,second)=(index,value) が Kotlin 順と一致＝引数 swap 不要）。**chunked/filterNotNull 済**（2026-06-20、`il-chunk`）= `synthLambda`（合成1引数ラムダの汎用機構）で `chunked`→`Chunk(src,n).Select(c=>c.ToList())`（T[]→List<T>）、`filterNotNull`(参照型)→`Where(x=>x!=null)`。**mapNotNull/flatMap/flatten/filterNotNull(値型 T?) 済**（2026-06-21、`il-collmore`）: mapNotNull=Select→null除去、flatMap/flatten=SelectMany(+合成 identity `List<R>→IEnumerable<R>`)、値型 `T?` は `Nullable<T>` unwrap（HasValue/Value）。併せて **単一要素 `listOf(x)` の要素型バグ修正**（vararg でなく単項オーバーロード＝要素型は `call.type` の `List<T>` から、`Any` 誤判定を解消）、**値返し if/when の `T?` 合成**（`fun f():Int? = if(c) x else null`＝branch を Nullable<T> へ coerce、`EmitCond`/`EmitArg` 共有）。**average/indexOf 済**＋**emptyList/emptySet/emptyMap 済**（2026-06-21）。**未実装 stdlib 関数は ilemit クラッシュでなくソース位置付きコンパイルエラー**（BirEmitter のガード＝`kotlin.collections/sequences/text/ranges/comparisons` の未対応 free/extension 関数を明示エラー化、C# oracle 経路は非ブロック）。残（**全てクリーンエラーで安全に拒否**）: `windowed`/`partition`/`associate`/`getOrElse`/`runningFold`/`scan`/`withIndex`/`sortedWith(compareBy{})`（sortedBy/Descending で単一キー対応済）。**(M)** ✅（主要）
-- [~] `Sequence`（遅延）/ `asSequence` / `generateSequence`。**(M)** — ✅ 2026-06-20 **`asSequence` ＋遅延シーケンス操作**: `Sequence<T>`→**遅延 .NET `IEnumerable<T>`**（LINQ は元々 deferred なので Kotlin の遅延意味論と一致）。`isSequenceType` を導入、collection-ops ブロックのゲートを `isCollectionType || isSequenceType` に拡張、`lazySeq` フラグで中間 list 生成op（map/filter/take/…）の `ToList` материализ化を抑止（eager コレクションは従来通り ToList、シーケンスは deferred 維持）。`asSequence()`→受け手の pass-through、`toSet`→`ToHashSet`／`takeWhile`/`dropWhile`（→`TakeWhile`/`SkipWhile`、遅延）／`single`/`singleOrNull`（→`Single`/`SingleOrDefault`）も追加。終端（toList/first/count/sum/single）が初めて評価を強制。`samples/il-seq`（map→filter→toList=`6,12`／map→filter→first 短絡=16／filter→count=3／map→sum=27／map→take→toList=`10-20-30`）実機正＋ilverify-clean＋**JVM 差分一致**（PURE corpus に追加）。**`generateSequence`/`sequence{}` ビルダーは B から除外 → DotKt.Runtime タスクへ**（stateful iterator＝cross-assembly 同一性が要る ABI 型、[[dotkt-naming-and-runtime-split]]）。
+- [x] `Sequence`（遅延）/ `asSequence` / `sequence{}` / `yieldAll` / `generateSequence`。**(M)** ✅ — 2026-06-20 **`asSequence` ＋遅延シーケンス操作**: `Sequence<T>`→**遅延 .NET `IEnumerable<T>`**（LINQ は元々 deferred なので Kotlin の遅延意味論と一致）。`isSequenceType` を導入、collection-ops ブロックのゲートを `isCollectionType || isSequenceType` に拡張、`lazySeq` フラグで中間 list 生成op（map/filter/take/…）の `ToList` материализ化を抑止（eager コレクションは従来通り ToList、シーケンスは deferred 維持）。`asSequence()`→受け手の pass-through、`toSet`→`ToHashSet`／`takeWhile`/`dropWhile`（→`TakeWhile`/`SkipWhile`、遅延）／`single`/`singleOrNull`（→`Single`/`SingleOrDefault`）も追加。終端（toList/first/count/sum/single）が初めて評価を強制。`samples/il-seq`（map→filter→toList=`6,12`／map→filter→first 短絡=16／filter→count=3／map→sum=27／map→take→toList=`10-20-30`）実機正＋ilverify-clean＋**JVM 差分一致**（PURE corpus に追加）。**`sequence{}`/`yieldAll`/`generateSequence` も実装済**（2026-06-22〜23、`il-kseq`/`il-kgenseq`、ランタイムは DotKt.Sequences 名前空間。generateSequence の nullable `(T)->T?` は値型/参照型で variant 選択）。
 - [~] 文字列 / 文字: **済 uppercase/lowercase/trim/trimStart/trimEnd/substring/replace/startsWith/endsWith/contains/indexOf/padStart/padEnd/split**（`m-b4`,`m-b7`、→.NET String メソッド）。**Char 操作済**（2026-06-20、`il-char`、JVM 差分一致）: `isDigit`/`isLetter`/`isWhitespace`/`isLetterOrDigit`/`isUpperCase`/`isLowerCase`（→`System.Char.IsX`）・`uppercaseChar`/`lowercaseChar`（→`ToUpper`/`ToLower`）・`.code`（Char→Int コードポイント）・`Int.toChar()`。**`toRegex` 済**（2026-06-20、`il-regex`、verify-il のみ＝JVM oracle が kotlinx-coroutines NoClassDefFound）: `"p".toRegex()`→`new System.Text.RegularExpressions.Regex`、`containsMatchIn`→`IsMatch`/`replace`→`Replace`。**`format` 済**（2026-06-20、`il-bmore`）= **literal printf を .NET composite format にコンパイル時変換**（`translatePrintf`: `%d`→`{0}`、`%.2f`→`{0:F2}`、`%05d`→`{0:D5}`、`%x`→`{0:x}`、`%%`→`%`、width/precision/flags 対応）→ `String.Format(fmt, object[]{…})`。非 literal format string ＝クリーンエラー。残: `Regex.matches`(完全一致)/`find`。**(M)**
 - [x] Math（`kotlin.math.*`）→ `System.Math.*`（abs/max/min/sqrt/pow/round/floor/ceil/exp/ln/log10/sin/cos/tan）。`m-b4`。残: 範囲・進行を値として（`IntRange`/`step`/`reversed`）。**(M)** ✅
-- [~] `Pair`/`Triple`/`to` → C# ValueTuple（`.first`→Item1 等）。`m-b5`。**`Result`/`runCatching` 済**（2026-06-20、`il-result`）= 合成 generic `Result<T>`（value/failure/isSuccess/isFailure フィールド）、`runCatching{}`→try/catch valueBlock で構築、accessors（getOrNull/getOrThrow/getOrDefault/exceptionOrNull/isSuccess/isFailure）は フィールド上で inline（getOrNull は値型 T→Nullable<T> 構築）。`Throwable.message`→`Exception.Message`。残: `Comparable`/`Comparator`（sortedWith は上記）。**(M)**
+- [x] `Pair`/`Triple`/`to` → C# ValueTuple（`.first`→Item1 等）。`m-b5`。**`Result`/`runCatching` 済**（2026-06-20、`il-result`）= 合成 generic `Result<T>`（value/failure/isSuccess/isFailure フィールド）、`runCatching{}`→try/catch valueBlock で構築、accessors（getOrNull/getOrThrow/getOrDefault/exceptionOrNull/isSuccess/isFailure）は フィールド上で inline（getOrNull は値型 T→Nullable<T> 構築）。`Throwable.message`→`Exception.Message`。残: `Comparable`/`Comparator`（sortedWith は上記）。**(M)**
 - [x] 例外/前提ヘルパ: `require`/`check`/`error`/`TODO`（→ throw/if-throw）、`requireNotNull`/`checkNotNull`（valueBlock で1度評価→null なら throw 否なら非 null 値、参照型＋値型 `T?` 両対応＝`il-reqnn`）、`IllegalArgumentException` 等の型写像。`m-b5`。残: `runCatching`（要 `Result` 型）。**(S–M)** ✅
 - [x] `kotlin.io`（`readLine` 等）/ 標準入出力。**(S)** ✅ 2026-06-20 `readLine()`→`Console.ReadLine()`（String?、EOF で null）。`print`/`println` は既存。stdin 必須で no-stdin ハーネスに乗せにくく手動検証（`echo hello | run`→`got: hello`）。残: `readlnOrNull`/`System.out` 直）。
 
@@ -197,12 +197,21 @@
 
 # D. coroutine 完全意味論
 
+> **状態（2026-06-23）: コルーチン表面はコンパイラ機能として全面実装済み**（design-coroutines-clr.md §§13a–§14a / task #55 dotktx 基盤）。
+> 単発 suspend・spilling・条件式内 suspend・try-catch/try-finally-around-await・suspend lambda（receiver 形含む）・
+> generic/Unit/extension suspend・raw intrinsics・resume・startCoroutine・suspendCancellableCoroutine・unified Result・
+> user `Continuation<T>` 実装・`Unit` 型引数・sequence/yieldAll/generateSequence・**Flow（generic 含む）+ Flow⇄
+> IAsyncEnumerable・Channel・select・CoroutineContext 代数+coroutineContext・ContinuationInterceptor/intercepted+
+> dispatcher** をすべて standalone（合成 facade）で実証済（各 `il-k*` サンプル、緑・ilverify-clean）。
+> **下記の D 残項目（CancellationToken・構造化並行・Dispatchers）の「本物のライブラリ形」は Track 2**＝実 `kotlinx-coroutines-core`
+> を DotKt でコンパイルする段階で揃う（現状の手書き stopgap はそこで置換）。
+
 - [x] 部分式内サスペンドの spilling（`f(g().await())`）。**(L)** ✅ 2026-06-20 — `spillExpr`（BirEmitter）が式中の各サスペンド呼出を**評価順（post-order）**で fresh な状態機械フィールド＋`coSuspend` ステップに hoist し、残余式を `expr()`（`coSpill` を参照）で再レンダ＝サスペンドフリー化。`a.await() + b.await()`（第1結果が第2サスペンドを跨いで生存＝両方フィールド）・val 初期化子・非 suspend 関数への await 引数を解禁。`val x = …`/`return …`/`x = …`/呼出文の4位置を配線。`samples/il-coro`（`spillSum=30`/`spillNested=17`/`spillArg=16`）実機正＋ilverify-clean。残: **条件式**内 suspend（下記）。
 - [x] ループ/分岐の**条件式**内サスペンド。**(M)** ✅ 2026-06-20 — `emitWhileCps` は条件式の await を **START ラベル直後**に spill（後退辺 `coGoto start` で毎反復 re-suspend＝ループ body サスペンドと同型）、`emitWhenCps` は各 branch 条件を test 直前に spill。`spillExpr` 再利用でゼロ新規 ilemit。`samples/il-coro`（`loopCond=3`＝while 条件 await、`condBranch=6`＝if 条件 await＋branch await）実機正＋ilverify-clean。
 - [ ] `CancellationToken` を ABI に。**(S)**
-- [ ] `Flow` ⇄ `IAsyncEnumerable`（`await foreach`）。**(L)**
-- [ ] 構造化並行性（`Job`/`CoroutineScope`/`launch`/`async`）。**(XL)**
-- [ ] `Dispatchers`（Default→ThreadPool / Main→SynchronizationContext）。**(L)**
+- [x] `Flow` ⇄ `IAsyncEnumerable` ✅ 2026-06-23（`il-kasflow`：`asFlow`/`asAsyncEnumerable` 橋＝GFlows.FromAsync/ToAsync）。**(L)**
+- [~] 構造化並行性（`Job`/`CoroutineScope`/`launch`/`async`）。**(XL)** — async/await/runBlocking はコンパイラ機能として実装済（`il-kstruct`）。本物の Job/Scope/cancel = Track 2（kotlinx をコンパイル）。
+- [~] `Dispatchers`（Default→ThreadPool / Main→SynchronizationContext）。**(L)** — `ContinuationInterceptor`/`intercepted` の継ぎ目＋合成 dispatcher は実装済（`il-kintercept`、T3c）。本物の Dispatchers.* は Track 2 の actual セット（同じ継ぎ目に差す）。
 
 ---
 
@@ -220,7 +229,7 @@ C# 生成は単なる出力フォーマットではなく、以下3役を兼ね�
 
 ## 移行フェーズ（C# は「踏み台かつ命綱」として段階的に外す）
 - [x] **E-0 方針確定（ユーザ確定 2026-06-17 — IL を主軸へ）**: 「最終形＝純 IL、C# は parity と JVM オラクル達成まで dev-only に降格 → 1.0 で出荷経路から除去」を固定。**転換契機**: Kotlin 構文/意味論が C# に完全射影できない*non-projecting tail*（`Unit` 値・`reified`/`inline`・inline ラムダの非ローカル return・`value class`・coroutine 完全意味論・宣言箇所変性）の存在を確認。射影できる breadth は C# 経路でほぼ採取済み。**最大リスク＝出荷バックエンド（IL）が薄い**（IL 8 サンプル vs C# 50）ため、開発主軸を *いま* IL へ移す（後ろ倒しの再タイミング、方向は既定路線）。**進め方**: ① E-1 IL parity で既存 corpus を IL で緑＋`ilverify` clean、② tail は最初から IL 実装、③ C# は射影可能構文の差分オラクルとして温存（E-5 で除去）。JVM 差分ハーネスは C# 非依存なのでバックエンド入替を生き残る。— [[il-primary-backend-pivot]] **(S, design)** ✅
-- [ ] **E-0.5 IR 階層設計（ユーザ助言 2026-06-17）— AST→CFG→SSA**: lowering は BirEmitter（IR→BIR）へ集約し ilemit は薄く保つ（[[lowering-lives-in-bir]]）。**構造化 AST のまま IL を吐き続けない**——AST→IL は形状ごとの特別扱いで高コスト＆バグ温床（実証: do-while 空ボディ無限ループ＋IrComposite/単文ボディの個別対応）。**三層に分離**: (1) 高レベル BIR（式 lowering の置き場）→ (2) **CFG ブロックIR**（基本ブロック＋明示分岐＝IL emit の本来基盤。制御フロー平坦化を一度だけ行い do-while/`break@outer`/非ローカル return を全部分岐化）→ (3) emit。**SSA は CFG の上に coroutine 着手時に追加**（dataflow: spilling/closure/最適化）。**導入時期**: CFG ブロックIR は**制御フロー breadth（labeled break・非ローカル return）着手の直前**に据える（最も苦しく最も配当が出る地点、`m-a2` の `break@outer` がトリガ候補）。式 breadth（collection/scope/拡張関数）は CFG 不要で並行可。— [[il-primary-backend-pivot]] **(L, design)**
+- [~] **E-0.5 IR 階層設計 — ⚠ 大半 superseded**（labeled break は loop-label stack+goto で実現済、真に CFG/dataflow を要するのは非ローカル return＋可変キャプチャ Ref のみ＝該当コードは現状 corpus に無し）。AST→CFG→SSA: lowering は BirEmitter（IR→BIR）へ集約し ilemit は薄く保つ（[[lowering-lives-in-bir]]）。**構造化 AST のまま IL を吐き続けない**——AST→IL は形状ごとの特別扱いで高コスト＆バグ温床（実証: do-while 空ボディ無限ループ＋IrComposite/単文ボディの個別対応）。**三層に分離**: (1) 高レベル BIR（式 lowering の置き場）→ (2) **CFG ブロックIR**（基本ブロック＋明示分岐＝IL emit の本来基盤。制御フロー平坦化を一度だけ行い do-while/`break@outer`/非ローカル return を全部分岐化）→ (3) emit。**SSA は CFG の上に coroutine 着手時に追加**（dataflow: spilling/closure/最適化）。**導入時期**: CFG ブロックIR は**制御フロー breadth（labeled break・非ローカル return）着手の直前**に据える（最も苦しく最も配当が出る地点、`m-a2` の `break@outer` がトリガ候補）。式 breadth（collection/scope/拡張関数）は CFG 不要で並行可。— [[il-primary-backend-pivot]] **(L, design)**
   - [x] 着手済み増分①: do-while / bitwise・shift（and/or/xor/shl/shr/ushr/inv）/ 数値変換（toInt/toLong/…→CIL conv）を BIR+ilemit へ移植。`samples/il-ops`。**(S)** ✅
   - [x] 着手済み増分②: `kotlin.math.*`→`System.Math.*` を **BirEmitter で clrStatic に lower**（ilemit 変更なし＝薄いバックエンド原則の実証）。`samples/il-math`。**(S)** ✅
   - [x] 着手済み増分③: `kotlin.text` String ops→`System.String` instance（clrInstance）、`"42".toInt()`→`Int32.Parse`、Char 述語→`System.Char.*`（clrStatic）。すべて BirEmitter lowering のみ・ilemit 無変更。`samples/il-str`,`il-cp`。**(S)** ✅
@@ -296,9 +305,9 @@ C# 生成は単なる出力フォーマットではなく、以下3役を兼ね�
 - [ ] 境界の null 正当性（プラットフォーム型 `T!` の扱い定義）。**(M)**
 - [ ] 増分コンパイル。**(L)**
 - [ ] 性能（コンパイル時間・生成コード）。**(L)**
-- [ ] 配布: `dotnet new ktproj` テンプレート、MSBuild SDK / NuGet 化（相対パス依存排除）、self-contained コンパイラ、バージョン付きリリース。**(M–L)**
+- [~] 配布（基盤あり）: `dotnet new ktproj` テンプレート（`templates/` 存在）・MSBuild SDK / NuGet 化（`scripts/pack-dotkt.sh`＝DotKt.Sdk/Toolchain/Runtime/Templates をパック）は実装済。残: 相対パス依存の排除・self-contained コンパイラ・1.0 versioned release（現状 0.9.0 pre-1.0）。**(M–L)**
 - [ ] VS / VS Code 体験（ビルド/実行統合。フル LSP は別スコープ）。**(M–L)**
-- [ ] CI（verify-all + verify-il、サンプル行列拡張、ネット依存サンプル＝Avalonia のキャッシュ戦略）。**(S–M)**
+- [x] CI ✅（`.github/workflows/verify.yml`＝verify-il + verify-differential + verify-all を push/PR で実行）。残: サンプル行列の継続拡張・ネット依存サンプル（Avalonia）のキャッシュ戦略。**(S–M)**
 - [ ] **ライセンス / 帰属（出荷必須）**: 参考実装（`KotlinForCLR`、Apache-2.0）からの移植部分のライセンス遵守・NOTICE/帰属、kotlin-compiler-embeddable 等依存のライセンス確認、本体ライセンス確定。**(S)**
 - [ ] **利用者ドキュメント**: README からの getting-started、`.ktproj` の書き方、.NET 型の取り込み方（C-2 で一本化した**単一の方法**を説明。使い分けは存在しない形に）、対応/非対応機能一覧。**(M)**
 - [ ] **バージョン / サポート方針**: Kotlin 2.2.0 ピン留めの位置づけ、対応 .NET TFM、semver 方針を明文化。**(S)**
