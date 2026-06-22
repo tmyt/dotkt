@@ -2629,6 +2629,29 @@ sealed class Emitter
                 _il.Emit(OpCodes.Throw);
                 return typeof(object);
             }
+            case "returnExpr":
+            {
+                // `return` in expression position: emit the method return; no value reaches the surrounding merge
+                // (mirrors the "return" statement, incl. the protected-region leave).
+                if (_tryStack.Count > 0)
+                {
+                    var ctx = _tryStack.Peek();
+                    if (e.TryGetProperty("value", out var trv)) { EmitExpr(trv); if (ctx.result != null) _il.Emit(OpCodes.Stloc, ctx.result); else _il.Emit(OpCodes.Pop); }
+                    _il.Emit(OpCodes.Leave, ctx.end);
+                }
+                else
+                {
+                    if (e.TryGetProperty("value", out var rv))
+                    {
+                        var got = EmitExpr(rv);
+                        if (got != null && _methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == typeof(Nullable<>)
+                            && _methodRetType.GetGenericArguments()[0] == got)
+                            _il.Emit(OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
+                    }
+                    _il.Emit(OpCodes.Ret);
+                }
+                return typeof(object);
+            }
             case "tupleNew":
             {
                 // `a to b` -> new System.ValueTuple<A,B>(a, b) (value type; newobj leaves the struct on the stack).

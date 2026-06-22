@@ -1363,7 +1363,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				captureSubst.containsKey(owner) -> captureSubst[owner]!!
 				valSubst.containsKey(name) -> valSubst[name]!!
 				name == "<this>" -> """{"k":"this"}"""
-				else -> """{"k":"local","name":${str(name)}}"""
+				else -> {
+					// Smart-cast narrowing carried directly on the IrGetValue (no IMPLICIT_CAST node — e.g. the `&&`
+					// RHS / a compound condition: `x is Int && x > 10`): the use-site type is narrower than the
+					// declared type, so emit a cast (ilemit unboxes Any->Int / castclass for refs). Without it the
+					// value keeps its boxed/declared form and ops like `>` compare the wrong thing.
+					val ut = birType(node.type); val dt = birType(owner.type)
+					if (ut != dt && dt == "object") """{"k":"cast","type":${str(ut)},"e":{"k":"local","name":${str(name)}}}"""
+					else """{"k":"local","name":${str(name)}}"""
+				}
 			}
 		}
 		is IrGetEnumValue -> {
@@ -1471,6 +1479,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `throw` in expression position (e.g. `x ?: throw ...`, `if (c) v else throw ...`): type Nothing,
 		// transfers control so no value reaches the surrounding merge point.
 		is IrThrow -> throwExpr(expr(node.value))
+		// `return` used in expression position (`val x = if (c) a else return`; `x ?: return -1`). Like throwExpr,
+		// it transfers control so no value reaches the surrounding merge.
+		is IrReturn -> if (node.value.type.isUnit()) """{"k":"returnExpr"}""" else """{"k":"returnExpr","value":${expr(node.value)}}"""
 		is IrCall -> call(node)
 		// A property reference passed to a delegate's getValue/setValue -> a `new KPropertyImpl("<name>")`.
 		is IrPropertyReference -> {
@@ -2230,6 +2241,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// the state machine's own Context (the SM IS a Continuation<object>). Forces the Continuation-class form. T3.
 		if (callee.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.coroutineContext")
 			return """{"k":"coContext"}"""
+		// kotlin.text.MatchResult.value -> System.Text.RegularExpressions.Match.Value (find(s)?.value). Handled early
+		// because it's a property getter (the generic property->field path would otherwise emit a bare-name field).
+		if (callee.correspondingPropertySymbol?.owner?.name?.asString() == "value" &&
+			dispatchReceiver(call)?.type?.classFqName?.asString() == "kotlin.text.MatchResult")
+			return """{"k":"clrPropGet","type":"System.Text.RegularExpressions.Match","name":"Value","retType":"System.String","static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
 		// CoroutineContext algebra: the Kotlin members map to the .NET CoroutineContext methods (PascalCase). `plus`/
 		// `minusKey` are non-generic; `fold<R>`/`get<E>` are generic instance calls. T3(b).
 		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.plus") {
@@ -3076,7 +3092,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			if (name == "EQEQEQ" && operands.size == 2)
 				return """{"k":"bin","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
-			BINARY[name]?.let { if (operands.size == 2) return """{"k":"bin","op":${str(it)},"l":${expr(operands[0])},"r":${expr(operands[1])}}""" }
+			BINARY[name]?.let { op -> if (operands.size == 2) {
+				// A boxed (Any) operand via an un-narrowed smart-cast (`x is Int && x > 10`) against a primitive:
+				// cast it to the other operand's type so the numeric/compare op sees the right value, not the box.
+				fun operand(o: IrExpression, other: IrExpression): String {
+					val ot = birType(o.type); val tt = birType(other.type)
+					return if (ot == "object" && tt != "object") """{"k":"cast","type":${str(tt)},"e":${expr(o)}}""" else expr(o)
+				}
+				return """{"k":"bin","op":${str(op)},"l":${operand(operands[0], operands[1])},"r":${operand(operands[1], operands[0])}}"""
+			} }
 			UNARY[name]?.let { if (operands.size == 1) return """{"k":"un","op":${str(it)},"e":${expr(operands[0])}}""" }
 			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) -> `(i + 1)`/`(i - 1)`.
 			if (name == "inc" && operands.size == 1) return """{"k":"bin","op":"+","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
@@ -3100,12 +3124,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (name == "toRegex") extensionReceiver(call)?.let { p ->
 				return """{"k":"clrNew","type":${str(RX)},"argTypes":["System.String"],"args":[${expr(p)}]}"""
 			}
-			if ((name == "containsMatchIn" || name == "replace") &&
+			if ((name == "containsMatchIn" || name == "replace" || name == "matches" || name == "find") &&
 				dispatchReceiver(call)?.type?.classFqName?.asString() == "kotlin.text.Regex") {
 				val r = dispatchReceiver(call)!!; val a = regularArgs(call)
-				return if (name == "containsMatchIn")
-					"""{"k":"clrInstance","type":${str(RX)},"method":"IsMatch","argTypes":["System.String"],"ret":"System.Boolean","recv":${expr(r)},"args":[${expr(a[0])}]}"""
-				else """{"k":"clrInstance","type":${str(RX)},"method":"Replace","argTypes":["System.String","System.String"],"ret":"System.String","recv":${expr(r)},"args":[${expr(a[0])},${expr(a[1])}]}"""
+				return when (name) {
+					"containsMatchIn" -> """{"k":"clrInstance","type":${str(RX)},"method":"IsMatch","argTypes":["System.String"],"ret":"System.Boolean","recv":${expr(r)},"args":[${expr(a[0])}]}"""
+					"replace" -> """{"k":"clrInstance","type":${str(RX)},"method":"Replace","argTypes":["System.String","System.String"],"ret":"System.String","recv":${expr(r)},"args":[${expr(a[0])},${expr(a[1])}]}"""
+					// matches = FULL match, find = first MatchResult-or-null -> the DotKt.Text.Regexes shims.
+					"matches" -> """{"k":"clrStatic","type":"DotKt.Text.Regexes","method":"Matches","argTypes":[${str(RX)},"System.String"],"ret":"System.Boolean","args":[${expr(r)},${expr(a[0])}]}"""
+					else -> """{"k":"clrStatic","type":"DotKt.Text.Regexes","method":"Find","argTypes":[${str(RX)},"System.String"],"ret":"clr:System.Text.RegularExpressions.Match","args":[${expr(r)},${expr(a[0])}]}"""
+				}
 			}
 			// `"%d %s".format(a, b)` (printf) -> System.String.Format(translated, object[]{a,b}). Only a LITERAL
 			// format with supported specs is translated; otherwise a clean error (printf != .NET composite format).
@@ -3477,6 +3505,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		// kotlin.text.Regex -> System.Text.RegularExpressions.Regex.
 		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
+		if (fqp == "kotlin.text.MatchResult") return "clr:System.Text.RegularExpressions.Match"
 		// kotlin.Throwable -> System.Exception (the common base; `.message` -> .Message).
 		if (fqp == "kotlin.Throwable") return "clr:System.Exception"
 		// A function type as a value (e.g. a `block: suspend (P)->R` parameter): `kotlin.FunctionN` -> Func/Action,
