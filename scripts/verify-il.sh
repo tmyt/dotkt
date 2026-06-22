@@ -227,7 +227,7 @@ il_check_inject geninj GenInj "$ROOT/samples/il-geninj" "$(printf '2\na')" PGI
 il_check_inject cbk Cbk "$ROOT/samples/il-cbk" "$(printf '=v42\nran')" PCbk
 il_check_inject clriface ClrIface "$ROOT/samples/il-clriface" "$(printf '2\na')" PIf
 il_check_inject clrimpl ClrImpl "$ROOT/samples/il-clrimpl" "$(printf 'draw:circle\ndraw:square\ncircle')" PImpl
-il_check_inject clrasm ClrAsm "$ROOT/samples/il-clrasm" "3" PAsm
+il_check_inject clrasm ClrAsm "$ROOT/samples/il-clrasm" "$(printf '2\n2\n2')" PAsm
 il_check_inject outref Outref "$ROOT/samples/il-outref" "$(printf 'ok=5\nfail\n2 1\n20\n20\n109')" OutR
 il_check_inject netattr NetAttr "$ROOT/samples/il-netattr" "$(printf 'widget#7\n42')" Lbl
 il_check_inject stackalloc Sa "$ROOT/samples/il-stackalloc" "$(printf '16\n30\n-1\n10\n21')" SpanRt

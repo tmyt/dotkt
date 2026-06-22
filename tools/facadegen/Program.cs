@@ -334,7 +334,42 @@ static class FacadeGen
                 toks.AddRange(ps.Select((p, i) => $"{MetaParamName(p, i)}:{Map(p.ParameterType, t)}"));
                 sb.Append(string.Join(" ", toks) + "\n");
             }
+            // (explicit impl) Emit concrete stubs for in-scope members of the generic interfaces this class implements
+            // but doesn't expose PUBLICLY (e.g. `List<T>.IsReadOnly`, an explicit `ICollection<T>` impl). `c : I` in
+            // .NET guarantees `c` implements every member of `I`, so we can always stub the non-public ones — that
+            // makes the injected class satisfy `ICollection<T>`/`IList<T>` (so `List<T>` is assignable to them) with no
+            // abstract member left for a user subclass. The backend resolves the call through the interface (P1-2).
+            if (!isStatic) EmitExplicitInterfaceStubs(t, sb, seen);
             Console.WriteLine($"meta: {t.FullName} ({(isStatic ? "object" : "class")})");
+    }
+
+    static void EmitExplicitInterfaceStubs(Type t, StringBuilder sb, HashSet<string> seen)
+    {
+        var pubProps = new HashSet<string>();
+        try { foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance)) if (p.GetIndexParameters().Length == 0) pubProps.Add(p.Name); } catch { }
+        var done = new HashSet<string>();
+        foreach (var i in SatisfiableInterfaces(t))   // exactly the interfaces we emit edges for
+        {
+            if (!done.Add(i.FullName ?? i.Name)) continue;
+            try
+            {
+                foreach (var p in i.GetProperties())
+                {
+                    if (p.GetIndexParameters().Length > 0 || !p.CanRead || !Supported(p.PropertyType)) continue;
+                    if (pubProps.Contains(p.Name) || !seen.Add("prop:" + p.Name)) continue;
+                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} final\n");
+                }
+                foreach (var m in i.GetMethods())
+                {
+                    if (m.IsSpecialName || m.IsStatic || m.IsGenericMethod) continue;
+                    var ps = m.GetParameters();
+                    if (!ps.All(x => Supported(x.ParameterType)) || !Supported(m.ReturnType)) continue;
+                    if (!seen.Add(m.Name + "<>(" + Sig(ps, t) + ")")) continue;   // already a public member -> skip
+                    sb.Append($"fun {m.Name} {MapRet(m.ReturnType, t)} final {MetaParams(ps, t)}".TrimEnd() + "\n");
+                }
+            }
+            catch { }
+        }
     }
 
     // Walk the base chain by FullName (LoadFrom'd reference assemblies give System.Attribute a different identity
@@ -466,24 +501,32 @@ static class FacadeGen
     // the normal `Circle : IShape` (assignability to an interface parameter) while safely skipping interfaces C
     // implements EXPLICITLY (non-public targets) or with a COVARIANT return (e.g. `List<T>.GetEnumerator(): Enumerator`
     // vs `IEnumerable<T>.GetEnumerator(): IEnumerator<T>`), which Kotlin would reject as unimplemented/mismatched.
-    static List<string> ClassInterfaceSuperTypes(Type c)
+    // The interfaces `c` can be declared to implement: injectable, not self-referential, no generic interface method,
+    // and — for a NON-generic interface — not shadowed by a same-named generic one (so we drop the legacy
+    // `IList`/`ICollection`/`IEnumerable` that sit alongside `IList<T>` etc. and only bring `object`-typed members).
+    static List<Type> SatisfiableInterfaces(Type c)
     {
-        Type[] all; try { all = c.GetInterfaces(); } catch { return new List<string>(); }
-        // The MAXIMAL set of interfaces `c` satisfies (see ClassSatisfies). We consider ALL implemented interfaces,
-        // not just "direct" ones: if `List<T> : IList<T>` is unsatisfiable (an explicit-impl `IsReadOnly`), we still
-        // emit the satisfiable `IReadOnlyList<T>` — keeping `List<T>` assignable to `IEnumerable<T>` via the chain
-        // while a user subclass sees no unimplemented abstract member.
-        var sat = new List<Type>();
+        Type[] all; try { all = c.GetInterfaces(); } catch { return new List<Type>(); }
+        var genericNames = new HashSet<string>(all.Where(x => x.IsGenericType).Select(x => SimpleName(x.GetGenericTypeDefinition())));
+        var res = new List<Type>();
         foreach (var i in all)
         {
             var openi = i.IsGenericType ? i.GetGenericTypeDefinition() : i;
             if (string.IsNullOrEmpty(openi.Namespace) || NO_INJECT.Contains(openi.FullName ?? "")
                 || !SimpleName(openi).All(ch => char.IsLetterOrDigit(ch) || ch == '_')) continue;
-            // A SELF-REFERENTIAL generic interface (`C : IComparable<C>`) makes the supertype resolver recurse into
-            // the type being defined (StackOverflow). Skip those edges.
-            if (i.IsGenericType && i.GetGenericArguments().Any(a => a.FullName != null && a.FullName == c.FullName)) continue;
-            if (ClassSatisfies(c, i)) sat.Add(i);
+            if (i.IsGenericType && i.GetGenericArguments().Any(a => a.FullName != null && a.FullName == c.FullName)) continue;   // self-ref
+            if (!i.IsGenericType && genericNames.Contains(SimpleName(i))) continue;   // legacy non-generic shadow
+            if (ClassSatisfies(c, i)) res.Add(i);
         }
+        return res;
+    }
+
+    static List<string> ClassInterfaceSuperTypes(Type c)
+    {
+        // The MAXIMAL set of interfaces `c` satisfies. We consider ALL implemented interfaces, not just "direct" ones,
+        // so e.g. `List<T>` links every interface it implements (`IList<T>`, `IReadOnlyList<T>`, ...); the explicit
+        // members (`IsReadOnly`) are filled by EmitExplicitInterfaceStubs.
+        var sat = SatisfiableInterfaces(c);
         // Drop any satisfiable interface implied by another satisfiable one (avoid redundant supertype edges).
         var implied = new HashSet<Type>();
         foreach (var i in sat) { try { foreach (var s in i.GetInterfaces()) implied.Add(s); } catch { } }
@@ -506,25 +549,18 @@ static class FacadeGen
     // - a non-emittable member (`GetEnumerator(): IEnumerator<T>`, filtered) isn't in scope -> skipped;
     // - an EXPLICIT (non-public) impl (`Collection<T>.IsReadOnly`) is missing -> the interface is rejected, so a user
     //   subclass never inherits an unimplemented abstract member.
+    // Whether class `c` can declare it implements interface `i`. `c : I` in .NET GUARANTEES `c` implements every
+    // member of I (public or explicit), and EmitExplicitInterfaceStubs emits the non-public ones, so the only thing
+    // we can't represent is a GENERIC interface method (no way to thread its own type parameters through fir2ir's
+    // fake-override builder). Check `i` + its GENERIC base interfaces only (the chain the injector actually emits).
     static bool ClassSatisfies(Type c, Type i)
     {
-        MethodInfo[] cmethods; try { cmethods = c.GetMethods(BindingFlags.Public | BindingFlags.Instance); } catch { return false; }
         var chain = new List<Type> { i };
         try { chain.AddRange(i.GetInterfaces().Where(x => x.IsGenericType)); } catch { return false; }
         foreach (var iface in chain)
         {
             MethodInfo[] ims; try { ims = iface.GetMethods(); } catch { return false; }
-            foreach (var im in ims)
-            {
-                if (im.IsStatic) continue;
-                if (im.IsGenericMethod) return false;   // generic interface method -> fir2ir fake-override can't thread it
-                if (!Supported(im.ReturnType) || !im.GetParameters().All(p => Supported(p.ParameterType))) continue;   // not in scope
-                var ips = im.GetParameters().Select(p => p.ParameterType).ToArray();
-                var ok = cmethods.Any(cm => cm.Name == im.Name && cm.ReturnType == im.ReturnType
-                    && cm.GetParameters().Length == ips.Length
-                    && cm.GetParameters().Select(p => p.ParameterType).SequenceEqual(ips));
-                if (!ok) return false;
-            }
+            if (ims.Any(im => !im.IsStatic && im.IsGenericMethod)) return false;
         }
         return true;
     }
