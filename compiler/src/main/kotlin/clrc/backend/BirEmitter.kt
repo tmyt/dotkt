@@ -2244,6 +2244,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val recv = dispatchReceiver(call)!!; val args = regularArgs(call)
 			return """{"k":"clrGenericInstance","type":"DotKt.Coroutines.CoroutineContext","method":"Fold","typeArgs":[${str(birType(call.type))}],"shapes":["gp","func:3"],"recv":${expr(recv)},"args":[${expr(args[0])},${expr(args[1])}]}"""
 		}
+		// `ctx.get(key)` / `ctx[key]` -> Get<E>(Key<E>): E. E is the element type (the call's type argument).
+		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.get") {
+			val recv = dispatchReceiver(call)!!
+			val e = call.typeArguments.firstOrNull()?.let { birType(it) } ?: "object"
+			return """{"k":"clrGenericInstance","type":"DotKt.Coroutines.CoroutineContext","method":"Get","typeArgs":[${str(e)}],"shapes":["generic"],"recv":${expr(recv)},"args":[${expr(regularArgs(call).first())}]}"""
+		}
 		// `Result.success(v)` / `Result.failure(e)` as a VALUE -> DotKt.Coroutines.Result.Success/Failure (so a Result
 		// can be constructed and forwarded anywhere, e.g. into a user `Continuation.resumeWith`). T4 / docs §13n.
 		if (calleeFqEarly == "kotlin.Result.Companion.success" || calleeFqEarly == "kotlin.Result.Companion.failure") {

@@ -215,7 +215,7 @@ il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 	} &
 }
 il_check kcont2 KCont2 "$ROOT/samples/il-kcont2" "$(printf '42\nboom')"
-il_check kctx KCtx "$ROOT/samples/il-kctx" "15"
+il_check kctx KCtx "$ROOT/samples/il-kctx" "53"
 il_check kunit2 KUnit2 "$ROOT/samples/il-kunit2" "True"
 il_check_ref kcont KCont "$ROOT/samples/il-kcont" "$(printf '30\n14\n6\n15\n10\n-99')" KfcK
 il_check_ref kintrin KIntrin "$ROOT/samples/il-kintrin" "$(printf '7\n42\n72')" KfcI

@@ -3163,7 +3163,16 @@ sealed class Emitter
     {
         try { var pi = type.GetProperty(name); var m = getter ? pi?.GetGetMethod() : pi?.GetSetMethod(); if (m != null) return m; }
         catch (NotSupportedException) { }
-        var open = type.GetGenericTypeDefinition();
+        // A non-generic type with the property on a base class (e.g. an Element's inherited members) — walk up.
+        if (!type.IsGenericType)
+        {
+            for (var b = type.BaseType; b != null; b = b.BaseType)
+            {
+                var pi = b.GetProperty(name); var m = getter ? pi?.GetGetMethod() : pi?.GetSetMethod();
+                if (m != null) return m;
+            }
+        }
+        var open = type.IsGenericType ? type.GetGenericTypeDefinition() : type;
         var openPi = open.GetProperty(name);
         if (openPi != null) return TypeBuilder.GetMethod(type, getter ? openPi.GetGetMethod() : openPi.GetSetMethod());
         // Inherited interface property (`ICollection<T>.Count` accessed on `IList<T>`): interface GetProperty

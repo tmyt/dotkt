@@ -92,6 +92,16 @@ namespace DotKt.Coroutines
         }
     }
 
+    /// A test Element carrying an Int (a stand-in for e.g. CoroutineName) — used to exercise get<E>(Key) standalone.
+    public sealed class IntTag : AbstractElement
+    {
+        public static readonly Key<IntTag> TagKey = new TagKeyImpl();
+        sealed class TagKeyImpl : Key<IntTag> { }
+        public int Value { get; }
+        public IntTag(int value) : base(TagKey) { Value = value; }
+    }
+    public static class Tags { public static Key<IntTag> TagKey() => IntTag.TagKey; }
+
     public static class Contexts
     {
         public static CoroutineContext Plus(CoroutineContext left, CoroutineContext right) =>
