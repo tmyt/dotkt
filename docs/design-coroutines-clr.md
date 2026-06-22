@@ -584,3 +584,14 @@ next. Type maps: `CoroutineContext.Element` → `clr:DotKt.Coroutines.Element`, 
 (`coroutineContext.fold(10){…}` = 10 over the empty context, `c.plus(c)` identity → +5). Remaining T3: a real
 Element-with-value + `get<E>(Key)` (user/runtime element); then (c) `ContinuationInterceptor`/`intercepted` + a
 minimal `CoroutineDispatcher`.
+
+## 13z. T3(c) done — ContinuationInterceptor / intercepted + dispatcher; T3 COMPLETE (2026-06-23)
+
+`intercepted()` (kotlin.coroutines.intrinsics.intercepted) -> `Interceptors.Intercepted<T>(cont)`: look up the
+`ContinuationInterceptor` in the continuation's own context (by key) and apply it. Runtime: `ContinuationInterceptor
+: Element` with `InterceptContinuation<T>`, `Interceptors.Key`/`Intercepted`, + a synthetic `RecordingDispatcher`
+(wraps the continuation so resume bumps a recorder then forwards) and a `SinkI` whose context carries it.
+il-kintercept -> 1 / 7 (intercepted finds the dispatcher, wraps; resume dispatches through it then to the sink).
+**T3 COMPLETE** (a coroutineContext, b context element algebra, c interceptor/intercepted+dispatcher) — and with it
+ALL of Track-1. A real `Dispatchers.Default`/`Main` (ThreadPool / SynchronizationContext) is just a richer
+`ContinuationInterceptor` on this exact seam — that lands with Track 2's CLR actual source set.

@@ -2244,6 +2244,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val recv = dispatchReceiver(call)!!; val args = regularArgs(call)
 			return """{"k":"clrGenericInstance","type":"DotKt.Coroutines.CoroutineContext","method":"Fold","typeArgs":[${str(birType(call.type))}],"shapes":["gp","func:3"],"recv":${expr(recv)},"args":[${expr(args[0])},${expr(args[1])}]}"""
 		}
+		// `cont.intercepted()` -> Interceptors.Intercepted<T>(cont): apply the context's ContinuationInterceptor. T3(c).
+		if (calleeFqEarly == "kotlin.coroutines.intrinsics.intercepted") {
+			val recv = extensionReceiver(call)!!
+			val t = ((recv.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
+			return """{"k":"clrGenericStatic","type":"DotKt.Coroutines.Interceptors","method":"Intercepted","typeArgs":[${str(t)}],"shapes":["generic"],"args":[${expr(recv)}]}"""
+		}
 		// `ctx.get(key)` / `ctx[key]` -> Get<E>(Key<E>): E. E is the element type (the call's type argument).
 		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.get") {
 			val recv = dispatchReceiver(call)!!
