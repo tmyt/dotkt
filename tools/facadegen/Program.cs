@@ -468,47 +468,57 @@ static class FacadeGen
     // vs `IEnumerable<T>.GetEnumerator(): IEnumerator<T>`), which Kotlin would reject as unimplemented/mismatched.
     static List<string> ClassInterfaceSuperTypes(Type c)
     {
-        // Only declare interface implementations for NON-FRAMEWORK classes — the user's own types (which they
-        // control and keep simple). Reflected BCL/framework classes (System.*/Microsoft.*) implement large, intricate
-        // interface sets (covariance, explicit impls, ISerializable/ICloneable everywhere) that break the fir2ir
-        // fake-override builder, and a user almost never needs to pass e.g. a DateTime as one of its interfaces.
-        var ns = c.Namespace ?? "";
-        if (ns.StartsWith("System") || ns.StartsWith("Microsoft") || ns.StartsWith("Internal") || ns.StartsWith("Windows")) return new List<string>();
         Type[] all; try { all = c.GetInterfaces(); } catch { return new List<string>(); }
-        var implied = new HashSet<Type>();
-        foreach (var i in all) { try { foreach (var s in i.GetInterfaces()) implied.Add(s); } catch { } }
-        var supers = new List<string>(); var seen = new HashSet<string>();
+        // The MAXIMAL set of interfaces `c` satisfies (see ClassSatisfies). We consider ALL implemented interfaces,
+        // not just "direct" ones: if `List<T> : IList<T>` is unsatisfiable (an explicit-impl `IsReadOnly`), we still
+        // emit the satisfiable `IReadOnlyList<T>` — keeping `List<T>` assignable to `IEnumerable<T>` via the chain
+        // while a user subclass sees no unimplemented abstract member.
+        var sat = new List<Type>();
         foreach (var i in all)
         {
-            if (implied.Contains(i)) continue;                              // direct interfaces only
-            // NON-GENERIC interfaces only. A class implementing a GENERIC interface (List<T> : IEnumerable<T>) stresses
-            // the fir2ir fake-override builder (covariant returns / explicit impls / generic methods) in ways the
-            // synthetic injected members can't reconcile; non-generic interfaces (IShape, IDisposable, custom callback
-            // interfaces) are the common "pass a class as an interface" case and link cleanly.
-            if (i.IsGenericType) continue;
-            if (string.IsNullOrEmpty(i.Namespace) || NO_INJECT.Contains(i.FullName ?? "") || !SimpleName(i).All(ch => char.IsLetterOrDigit(ch) || ch == '_')) continue;
-            if (!ClassSatisfies(c, i)) continue;
-            if (seen.Add(i.FullName!)) supers.Add(SimpleName(i));
+            var openi = i.IsGenericType ? i.GetGenericTypeDefinition() : i;
+            if (string.IsNullOrEmpty(openi.Namespace) || NO_INJECT.Contains(openi.FullName ?? "")
+                || !SimpleName(openi).All(ch => char.IsLetterOrDigit(ch) || ch == '_')) continue;
+            // A SELF-REFERENTIAL generic interface (`C : IComparable<C>`) makes the supertype resolver recurse into
+            // the type being defined (StackOverflow). Skip those edges.
+            if (i.IsGenericType && i.GetGenericArguments().Any(a => a.FullName != null && a.FullName == c.FullName)) continue;
+            if (ClassSatisfies(c, i)) sat.Add(i);
+        }
+        // Drop any satisfiable interface implied by another satisfiable one (avoid redundant supertype edges).
+        var implied = new HashSet<Type>();
+        foreach (var i in sat) { try { foreach (var s in i.GetInterfaces()) implied.Add(s); } catch { } }
+        var supers = new List<string>(); var seen = new HashSet<string>();
+        foreach (var i in sat)
+        {
+            if (implied.Contains(i)) continue;
+            var enc = i.IsGenericType ? Map(i, c) : SimpleName(i);
+            if (enc == "Any?" || (i.IsGenericType && !enc.StartsWith("generic:"))) continue;
+            if (seen.Add(enc)) supers.Add(enc);
         }
         return supers;
     }
 
-    // True if class `c` publicly and completely implements interface `i` (and all of i's base interfaces): every
-    // interface method has a PUBLIC instance method on c with the same name, parameter types, and EXACT return type.
-    // Metadata-only (GetMethods, not GetInterfaceMap — the latter is unavailable under MetadataLoadContext).
+    // Whether class `c` can SAFELY declare it implements interface `i`. We check `i` + its GENERIC base interfaces
+    // only — exactly the chain the injector emits (InterfaceSuperTypes links generic interfaces only); the NON-generic
+    // shadows (`IEnumerable<T> : IEnumerable`) aren't in the injected scope, so their covariantly-implemented members
+    // (`IEnumerable.GetEnumerator(): IEnumerator`, `IList.Add(object)`) must NOT be required. Each EMITTABLE member of
+    // that chain must be concretely provided by a PUBLIC member of `c` with the same name, params and EXACT return:
+    // - a non-emittable member (`GetEnumerator(): IEnumerator<T>`, filtered) isn't in scope -> skipped;
+    // - an EXPLICIT (non-public) impl (`Collection<T>.IsReadOnly`) is missing -> the interface is rejected, so a user
+    //   subclass never inherits an unimplemented abstract member.
     static bool ClassSatisfies(Type c, Type i)
     {
         MethodInfo[] cmethods; try { cmethods = c.GetMethods(BindingFlags.Public | BindingFlags.Instance); } catch { return false; }
         var chain = new List<Type> { i };
-        try { chain.AddRange(i.GetInterfaces()); } catch { return false; }
+        try { chain.AddRange(i.GetInterfaces().Where(x => x.IsGenericType)); } catch { return false; }
         foreach (var iface in chain)
         {
             MethodInfo[] ims; try { ims = iface.GetMethods(); } catch { return false; }
             foreach (var im in ims)
             {
                 if (im.IsStatic) continue;
-                if (im.IsGenericMethod) return false;   // generic interface methods: matching is uncertain -> don't link
-                if (!Supported(im.ReturnType) || !im.GetParameters().All(p => Supported(p.ParameterType))) return false;
+                if (im.IsGenericMethod) return false;   // generic interface method -> fir2ir fake-override can't thread it
+                if (!Supported(im.ReturnType) || !im.GetParameters().All(p => Supported(p.ParameterType))) continue;   // not in scope
                 var ips = im.GetParameters().Select(p => p.ParameterType).ToArray();
                 var ok = cmethods.Any(cm => cm.Name == im.Name && cm.ReturnType == im.ReturnType
                     && cm.GetParameters().Length == ips.Length
