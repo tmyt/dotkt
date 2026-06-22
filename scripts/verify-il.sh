@@ -225,6 +225,7 @@ il_check_inject firgap FirGap "$ROOT/samples/il-firgap" "$(printf '42\n60\n3\n20
 il_check_inject inherit Inherit "$ROOT/samples/il-inherit" "$(printf 'run:derived\nshow:button\nbutton')" PInh
 il_check_inject geninj GenInj "$ROOT/samples/il-geninj" "$(printf '2\na')" PGI
 il_check_inject cbk Cbk "$ROOT/samples/il-cbk" "$(printf '=v42\nran')" PCbk
+il_check_inject clriface ClrIface "$ROOT/samples/il-clriface" "$(printf '2\na')" PIf
 il_check_inject outref Outref "$ROOT/samples/il-outref" "$(printf 'ok=5\nfail\n2 1\n20\n20\n109')" OutR
 il_check_inject netattr NetAttr "$ROOT/samples/il-netattr" "$(printf 'widget#7\n42')" Lbl
 il_check_inject stackalloc Sa "$ROOT/samples/il-stackalloc" "$(printf '16\n30\n-1\n10\n21')" SpanRt

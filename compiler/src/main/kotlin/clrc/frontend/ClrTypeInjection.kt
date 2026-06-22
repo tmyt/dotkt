@@ -220,13 +220,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			if (type.open || type.isInterface) modality = Modality.OPEN
 			// Generic .NET type (`Collection<T>`) -> declare its type parameters (invariant; bounds omitted).
 			for (tp in type.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
-			// (1)(2) Base class + interfaces -> real Kotlin supertypes, so a `Button` is assignable where a
-			// `Widget` is expected AND inherited members (incl. protected virtuals) surface for `override`. Only
-			// co-injected, non-generic supertypes are present in the metadata (others were skipped by facadegen).
-			// Deferred provider form: the supertype symbol is resolved lazily (avoids eager cross-generation).
-			for (sname in type.superTypes) {
-				val scid = classIdByName[sname] ?: continue
-				superType { _ -> session.symbolProvider.getClassLikeSymbolByClassId(scid)?.constructType(emptyArray(), false) ?: session.builtinTypes.anyType.coneType }
+			// Supertypes: a class's base (`Button` -> `Widget`, for assignability + inherited/protected members),
+			// and an interface's GENERIC base interfaces (`IList<T>` -> `ICollection<T>`, so inherited members like
+			// `Add` surface — item 3). A spec is either a simple name or `generic:Open:arg,arg` (args are the owner's
+			// type params, resolved against `tps` below). Deferred provider form -> lazy cross-generation.
+			for (spec in type.superTypes) {
+				val openName = if (spec.startsWith("generic:")) spec.removePrefix("generic:").substringBefore(':') else spec
+				val scid = classIdByName[openName] ?: continue
+				superType { tps -> superTypeCone(spec, scid, tps) }
 			}
 		}.symbol
 	}
@@ -385,6 +386,30 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					for (p in m.params) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
 				}.symbol
 			}
+		}
+	}
+
+	/** Resolve a supertype spec (a simple injected name, or `generic:Open:arg,arg`) to a ConeKotlinType, mapping
+	 *  type-argument names to the owner's own type parameters (`tps`, available in the class-builder superType form). */
+	private fun superTypeCone(spec: String, scid: ClassId, tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType {
+		val sym = session.symbolProvider.getClassLikeSymbolByClassId(scid) ?: return session.builtinTypes.anyType.coneType
+		if (!spec.startsWith("generic:")) return sym.constructType(emptyArray(), false)
+		val argStr = spec.removePrefix("generic:").substringAfter(':', "")
+		val args = if (argStr.isEmpty()) emptyList() else argStr.split(',').map { superArgCone(it, tps) }
+		@Suppress("UNCHECKED_CAST")
+		return sym.constructType(args.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, false)
+	}
+
+	/** A supertype type-argument: the owner's type parameter (matched by name in [tps]), else a primitive or another
+	 *  injected type. (Interface supertype args are almost always the owner's own type params, e.g. `ICollection<T>`.) */
+	private fun superArgCone(name: String, tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType {
+		tps.firstOrNull { it.symbol.name.identifier == name }?.let { return it.symbol.constructType(emptyArray(), false) }
+		val bt = session.builtinTypes
+		return when (name) {
+			"Int" -> bt.intType.coneType; "Long" -> bt.longType.coneType; "Double" -> bt.doubleType.coneType
+			"Float" -> bt.floatType.coneType; "Short" -> bt.shortType.coneType; "Byte" -> bt.byteType.coneType
+			"Boolean" -> bt.booleanType.coneType; "Char" -> bt.charType.coneType; "String" -> bt.stringType.coneType
+			else -> classIdByName[name]?.let { session.symbolProvider.getClassLikeSymbolByClassId(it)?.constructType(emptyArray(), false) } ?: bt.nullableAnyType.coneType
 		}
 	}
 

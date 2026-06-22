@@ -192,13 +192,33 @@ static class FacadeGen
                 var idot = t.IsGenericTypeDefinition ? (t.Namespace + "." + iname) : t.FullName;
                 var itp = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
                 sb.Append($"interface {iname} {idot}{itp}\n");
+                // Interface->interface supertypes (GENERIC only) so an injected `IList<T>` carries its inherited
+                // members (`ICollection<T>.Add`, `IEnumerable<T>.GetEnumerator`) — the `IList<ResourceDictionary>.Add`
+                // case (item 3). Non-generic shadows (IEnumerable) are skipped to avoid GetEnumerator generic-vs-
+                // nongeneric overload clashes. Interface inheritance needs no member satisfaction, so it's safe.
+                var isup = InterfaceSuperTypes(t);
+                if (isup.Count > 0) sb.Append("super " + string.Join(" ", isup) + "\n");
+                var iseen = new HashSet<string>();
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (m.IsSpecialName || m.IsGenericMethod) continue;
                     var ps = m.GetParameters();
                     if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
+                    if (!iseen.Add(m.Name + "(" + Sig(ps, t) + ")")) continue;
                     sb.Append($"fun {m.Name} {MapRet(m.ReturnType, t)} abstract {MetaParams(ps, t)}".TrimEnd() + "\n");
                 }
+                // Interface properties (Count, IsReadOnly, ...) + indexer (`this[i]`) -> abstract members so member
+                // access resolves on an interface-typed receiver.
+                foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType) || !p.CanRead || !iseen.Add("prop:" + p.Name)) continue;
+                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} abstract\n");
+                }
+                var iix = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(p => p.GetIndexParameters().Length == 1
+                        && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));
+                if (iix != null)
+                    sb.Append($"index {Map(iix.GetIndexParameters()[0].ParameterType, t)} {Map(iix.PropertyType, t)} {(iix.CanWrite ? "rw" : "ro")}\n");
                 Console.WriteLine($"meta: {t.FullName} (interface)");
                 return;
             }
@@ -417,6 +437,25 @@ static class FacadeGen
         var set = new HashSet<string>();
         for (var b = t.BaseType; b != null && EmittableBase(b); b = b.BaseType) set.Add(b.FullName!);
         return set;
+    }
+
+    // Interface->interface supertypes for an injected interface: its DIRECT, GENERIC interfaces, encoded as
+    // `generic:Open:args` (via Map). Non-generic interfaces are skipped — they'd reintroduce the non-generic
+    // GetEnumerator/etc. alongside the generic one (an overload clash). Interface inheritance imposes no member-
+    // satisfaction obligation, so (unlike class-implements-interface) this is safe.
+    static List<string> InterfaceSuperTypes(Type t)
+    {
+        Type[] all; try { all = t.GetInterfaces(); } catch { return new List<string>(); }
+        var implied = new HashSet<Type>();
+        foreach (var i in all) { try { foreach (var sub in i.GetInterfaces()) implied.Add(sub); } catch { } }
+        var supers = new List<string>(); var seen = new HashSet<string>();
+        foreach (var i in all)
+        {
+            if (implied.Contains(i) || !i.IsGenericType) continue;   // direct + generic only
+            var enc = Map(i, t);                                      // -> "generic:Open:args" for a constructed generic
+            if (enc.StartsWith("generic:") && seen.Add(enc)) supers.Add(enc);
+        }
+        return supers;
     }
 
     // The supertypes to emit: the direct base CLASS only (if linkable). Interface supertypes are deferred: a class

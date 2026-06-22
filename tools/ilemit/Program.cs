@@ -1652,6 +1652,31 @@ sealed class Emitter
             ? TypeBuilder.GetMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
             : constructed.GetMethod(name);
 
+    // An interface member inherited through the interface chain (`IList<T>.Add` -> `ICollection<T>.Add`). Interface
+    // `GetMethods` excludes base-interface members, so search the open def's transitively-flattened base interfaces,
+    // construct the declaring one with `typeArgs` (the SHARED type parameters of a generic interface chain like
+    // IList<T> : ICollection<T> : IEnumerable<T>) and re-anchor the method onto it. Null if not found.
+    static MethodInfo ResolveInheritedIfaceMethod(Type open, Type[] typeArgs, string name, int argc, BindingFlags flags)
+    {
+        foreach (var bi in open.GetInterfaces())
+        {
+            if (!bi.IsGenericType)
+            {
+                var nm = bi.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argc);
+                if (nm != null) return nm;
+                continue;
+            }
+            var biOpen = bi.GetGenericTypeDefinition();
+            if (biOpen.GetGenericArguments().Length != typeArgs.Length) continue;   // shared-arity chains only
+            var bom = biOpen.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argc);
+            if (bom == null) continue;
+            var biCon = biOpen.MakeGenericType(typeArgs);
+            return IsTbInstantiation(biCon) ? TypeBuilder.GetMethod(biCon, bom)
+                : biCon.GetMethods(flags).First(m => m.Name == name && m.GetParameters().Length == argc);
+        }
+        return null;
+    }
+
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
     // `retType`/`paramTypes` give the SUBSTITUTED (concrete) signature, since the instantiation's own reflection
     // still reports `!!0` (and throws pre-bake) — needed so value args to `object`/concrete params get boxed.
@@ -3003,8 +3028,13 @@ sealed class Emitter
         if (mi == null && type.IsGenericType && !type.IsGenericTypeDefinition)
         {
             var open = type.GetGenericTypeDefinition();
-            var om = open.GetMethods(flags).First(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);
-            mi = TypeBuilder.GetMethod(type, om);
+            var typeArgs = type.GetGenericArguments();
+            var om = open.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);
+            if (om != null) mi = TypeBuilder.GetMethod(type, om);
+            // An inherited INTERFACE member (`IList<T>.Add` lives on the base `ICollection<T>`): interface GetMethods
+            // doesn't include base-interface methods, so walk the (transitively-flattened) base interfaces, find the
+            // declaring one, construct it with this type's args (shared type parameters) and re-anchor. See item 3.
+            else mi = ResolveInheritedIfaceMethod(open, typeArgs, name, argSpecs.Count, flags);
         }
         // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
         if (instance) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
@@ -3033,11 +3063,27 @@ sealed class Emitter
     // GetProperty — re-anchor the open definition's accessor onto the constructed type via TypeBuilder.GetMethod.
     static MethodInfo PropAccessor(Type type, string name, bool getter)
     {
-        try { var pi = type.GetProperty(name); var m = getter ? pi.GetGetMethod() : pi.GetSetMethod(); if (m != null) return m; }
+        try { var pi = type.GetProperty(name); var m = getter ? pi?.GetGetMethod() : pi?.GetSetMethod(); if (m != null) return m; }
         catch (NotSupportedException) { }
         var open = type.GetGenericTypeDefinition();
         var openPi = open.GetProperty(name);
-        return TypeBuilder.GetMethod(type, getter ? openPi.GetGetMethod() : openPi.GetSetMethod());
+        if (openPi != null) return TypeBuilder.GetMethod(type, getter ? openPi.GetGetMethod() : openPi.GetSetMethod());
+        // Inherited interface property (`ICollection<T>.Count` accessed on `IList<T>`): interface GetProperty
+        // doesn't traverse base interfaces, so walk them and re-anchor (mirrors ResolveInheritedIfaceMethod).
+        var typeArgs = type.GetGenericArguments();
+        foreach (var bi in open.GetInterfaces())
+        {
+            var biOpen = bi.IsGenericType ? bi.GetGenericTypeDefinition() : bi;
+            var bp = biOpen.GetProperty(name);
+            var acc = getter ? bp?.GetGetMethod() : bp?.GetSetMethod();
+            if (acc == null) continue;
+            if (!bi.IsGenericType) return acc;
+            if (biOpen.GetGenericArguments().Length != typeArgs.Length) continue;
+            var biCon = biOpen.MakeGenericType(typeArgs);
+            return IsTbInstantiation(biCon) ? TypeBuilder.GetMethod(biCon, acc)
+                : (getter ? biCon.GetProperty(name).GetGetMethod() : biCon.GetProperty(name).GetSetMethod());
+        }
+        return null;
     }
 
     Type EmitClrPropGet(JsonElement e)
