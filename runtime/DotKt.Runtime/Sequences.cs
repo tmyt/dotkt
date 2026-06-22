@@ -1,10 +1,10 @@
-// `sequence { yield(…) }` — a restricted-suspension (multi-shot) coroutine producing a lazy Sequence<T>, mapped
+// `sequence { yield(…) }` — a restricted-suspension (multi-shot) coroutine producing a lazy Sequence<T>, mapped (kotlin.sequences projection -> DotKt.Sequences, NOT kotlin.coroutines).
 // to a lazy .NET IEnumerable<T>. The compiler lowers the block to a state machine implementing the trivial
 // ISeqStep<T> (MoveNext advances to the next yield, Current holds it); `Seq.Of` wraps it into IEnumerable<T> so
 // the awkward IEnumerator<T> dual-interface boilerplate stays in C#, not in emitted IL. See docs §13h / #42.
 using System.Collections.Generic;
 
-namespace DotKt.Coroutines
+namespace DotKt.Sequences
 {
     /// The minimal step protocol a compiler-generated sequence state machine implements.
     public interface ISeqStep<out T>

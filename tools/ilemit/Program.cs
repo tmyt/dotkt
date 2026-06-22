@@ -829,7 +829,7 @@ sealed class Emitter
         var steps = m.GetProperty("steps").EnumerateArray().ToList();
 
         var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
-        var resObj = ResolveType("DotKt.Coroutines.Result`1").MakeGenericType(typeof(object));
+        var resObj = ResolveType("DotKt.Result`1").MakeGenericType(typeof(object));
         var ctxType = ResolveType("DotKt.Coroutines.CoroutineContext");
         var builders = ResolveType("DotKt.Coroutines.Builders");
         var fSuspended = ResolveType("DotKt.Coroutines.Intrinsics").GetField("COROUTINE_SUSPENDED");
@@ -1054,7 +1054,7 @@ sealed class Emitter
         }
     }
 
-    // `sequence { yield(…) }` -> a state machine implementing DotKt.Coroutines.ISeqStep<elem> (MoveNext advances to
+    // `sequence { yield(…) }` -> a state machine implementing DotKt.Sequences.ISeqStep<elem> (MoveNext advances to
     // the next yield; Current holds it), wrapped by Seq.Of into a lazy IEnumerable<elem>. The yield SM reuses the
     // coYield/coLabel/coGoto/coCondGoto step stream. Emitted inline at the call site (state is saved/restored so the
     // enclosing method's IL emission resumes afterward). See docs §13h.
@@ -1062,7 +1062,7 @@ sealed class Emitter
     {
         var elem = MapType(e.GetProperty("elem").GetString());
         var steps = e.GetProperty("steps").EnumerateArray().ToList();
-        var iseq = ResolveType("DotKt.Coroutines.ISeqStep`1").MakeGenericType(elem);
+        var iseq = ResolveType("DotKt.Sequences.ISeqStep`1").MakeGenericType(elem);
 
         var sm = _mod.DefineType("<>dotkt_SeqSm" + (_seqCounter++),
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, typeof(object));
@@ -1174,7 +1174,7 @@ sealed class Emitter
 
         // call site: Seq.Of<elem>(new SeqSm())
         _il.Emit(OpCodes.Newobj, ctor);
-        _il.Emit(OpCodes.Call, ResolveType("DotKt.Coroutines.Seq").GetMethod("Of").MakeGenericMethod(elem));
+        _il.Emit(OpCodes.Call, ResolveType("DotKt.Sequences.Seq").GetMethod("Of").MakeGenericMethod(elem));
         return ResolveType("System.Collections.Generic.IEnumerable`1").MakeGenericType(elem);
     }
 

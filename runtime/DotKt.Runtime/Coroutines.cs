@@ -13,21 +13,9 @@ using System.Threading.Tasks;
 
 namespace DotKt.Coroutines
 {
-    /// kotlin.Result<T> — a success value or a failure exception. Carried by Continuation.ResumeWith.
-    /// Kept a plain struct (no boxing of the success value into a sentinel wrapper as on JVM).
-    public readonly struct Result<T>
-    {
-        readonly T _value;
-        readonly Exception _ex;
-        Result(T v, Exception e) { _value = v; _ex = e; }
-        public static Result<T> Success(T v) => new Result<T>(v, null);
-        public static Result<T> Failure(Exception e) => new Result<T>(default, e);
-        public bool IsFailure => _ex != null;
-        public bool IsSuccess => _ex == null;            // kotlin.Result.isSuccess
-        public T Value => _value;                        // the success value (read on the success branch)
-        public Exception ExceptionOrNull => _ex;         // kotlin.Result.exceptionOrNull()
-        public T GetOrThrow() { if (_ex != null) throw _ex; return _value; }
-    }
+    // NOTE: kotlin.Result and kotlin.Unit are NOT kotlin.coroutines types — they live in the `DotKt` root namespace
+    // (projection of the `kotlin.*` root), in Stdlib.cs. They resolve here unqualified because DotKt.Coroutines is
+    // nested under DotKt. This namespace is the projection of `kotlin.coroutines.*` only.
 
     /// kotlin.coroutines.CoroutineContext — the indexed set of Elements (the kotlin stdlib algebra, mirrored in C#):
     /// get(key)/plus/minusKey/fold, with EmptyCoroutineContext the unit and CombinedContext the cons cell. (T3.)
@@ -167,15 +155,6 @@ namespace DotKt.Coroutines
         public void Close() => _ch.Writer.Complete();
     }
 
-    /// kotlin.Unit as a real type — needed when Unit is a generic TYPE ARGUMENT (Continuation<Unit>, Result<Unit>,
-    /// Deferred<Unit>): a CLR generic arg can't be System.Void, so it erases to this singleton. (In return/statement
-    /// position Unit still lowers to `void`.) See T7 / docs §13r.
-    public sealed class Unit
-    {
-        public static readonly Unit Instance = new Unit();
-        Unit() { }
-        public override string ToString() => "kotlin.Unit";
-    }
 
     /// kotlinx.coroutines.CancellableContinuation<T> — a Continuation<T> with cancellation hooks. v1: forwards
     /// resume to the underlying continuation; cancel/invokeOnCancellation are minimal (real cancellation lands with
