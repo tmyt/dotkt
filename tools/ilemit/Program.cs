@@ -3341,7 +3341,7 @@ sealed class Emitter
 
     void EmitArg(JsonElement a, Type want)
     {
-        // A by-ref parameter (`out`/`ref`, from a `__clrout`/`__clrref` marker) -> pass the lvalue's address.
+        // A by-ref parameter (`out`/`ref`, from the `byref(x)` marker) -> pass the lvalue's address.
         if (want.IsByRef) { EmitAddr(a); return; }
         // (4) A LAMBDA passed to a .NET DELEGATE parameter -> build that SPECIFIC delegate (the FIR types the param
         // as a Kotlin function type; the real delegate is `want`, resolved here from the target method's signature).

@@ -1,7 +1,16 @@
 # Design groundwork: coroutines on CLR / building kotlinx.coroutines
 
-Status: **design-first, not yet implemented** (task #55). This file locks the problem shape and the proposed
-two-layer ABI before any code. See memory `dotkt-compile-kotlin-libraries`, `coroutine-abi-decision`.
+Status: **the coroutine compiler surface is FULLY IMPLEMENTED** (2026-06-22…06-23), all green + ilverify-clean.
+Done (each with an `il-*` sample in scripts/verify-il.sh): suspend funs (linear/loop/branch/spilling/
+condition-position suspension/try-catch- AND try-finally-around-await), suspend lambdas incl. receiver-style
+(`flow { emit(x) }`), generic/Unit-result/extension suspend funs, raw intrinsics, resume API, `startCoroutine`,
+`suspendCancellableCoroutine`, unified `kotlin.Result`, user classes implementing `Continuation<T>`, `Unit` as a
+generic type argument, `sequence{}`/`yieldAll`/`generateSequence`, `Flow` (incl. generic) + `Flow`↔`IAsyncEnumerable`,
+`Channel`, `select`, the `CoroutineContext` element algebra + `coroutineContext`, `ContinuationInterceptor`/
+`intercepted` + a dispatcher. **§§1–12 below are the original design rationale (historical, written design-first);
+the AS-BUILT status is recorded incrementally in §§13a–§14a.** The only remaining axis is Track 2 — compiling the
+real upstream `kotlinx-coroutines-core` (everything above was proven standalone with synthetic facades, no upstream).
+See memory `dotktx-coroutines-path-b`.
 
 ## 1. Goal & strategy
 
@@ -203,7 +212,8 @@ sequence{} fold-in (#42) + UI dispatcher. Full plan: `~/.claude/plans/eager-tink
 
 ## 13b. Phase 1 locked design (2026-06-21, PoC-proven)
 
-**Continuation runtime = a shared DLL `DotKt.Coroutines`** (`runtime/DotKt.Coroutines/`). The backend maps the
+**Continuation runtime = shared types in the `DotKt.Coroutines` NAMESPACE** (originally a separate `DotKt.Coroutines.dll`;
+folded into `DotKt.Runtime.dll` 2026-06-23, see §14 — and split by Kotlin namespace per §14a). The backend maps the
 `kotlin.coroutines.*` / `kotlin.Result` fqnames onto its types (like `kotlin.Throwable`→`System.Exception` and
 the `DotKt.Fmt` promotion), NOT per-assembly synthesis (`<>dotkt_Result` would break cross-assembly identity —
 the user assembly and `dotktx.coroutines` must share one `Continuation`). Criterion: cross-assembly identity →
@@ -261,7 +271,7 @@ designated per-invocation via the standard `-Xcommon-sources=<files>` CLI flag (
 REJECTED by the frontend — expect & actual must be different fragments). commonMain + a CLR `actual` set thus
 compile in ONE invocation; expects emit no `.bir.json`, actuals do. No HMPP/klib. (b) **atomicfu**: `kotlinx.
 atomicfu.{AtomicInt,AtomicLong,AtomicBoolean,AtomicRef}` map (birType/netType) to `DotKt.Coroutines.Atomic*`
-Interlocked/Volatile wrappers (`runtime/DotKt.Coroutines/Atomics.cs`); `BirEmitter.atomicfuCall` maps the
+Interlocked/Volatile wrappers (`runtime/DotKt.Runtime/Atomics.cs (now namespace DotKtx.Atomicfu)`); `BirEmitter.atomicfuCall` maps the
 `atomic(x)` factory (by arg type) + member ops (`.value`, `compareAndSet`, `incrementAndGet`, `addAndGet`, …).
 Proof: `samples/il-expect` (expect/actual + AtomicInt + AtomicRef), ilverify-clean, in `verify-il.sh`
 (`il_check_mpp`). NOTE: atomicfu wrappers are the correct "thin actual set" (not the JVM field-erasure) — revisit
@@ -437,7 +447,7 @@ yet — add when upstream needs them.
 `kotlinx.coroutines.suspendCancellableCoroutine { c -> … }` recognized (shares `emitSuspendIntrinsic` with the raw
 intrinsic, `alwaysSuspend=true`): the block always suspends (returns Unit, not the sentinel), and `c` is a
 `CancellableContinuation<T>` = `coSelfCancellable` → `new CancellableCont<T>(new TypedCont<T>(this))`.
-`runtime/DotKt.Coroutines` gained `CancellableCont<T> : Continuation<T>` (forwards resume; cancel/
+`runtime/DotKt.Runtime` gained `CancellableCont<T> : Continuation<T>` (forwards resume; cancel/
 invokeOnCancellation minimal — real cancellation lands with the dispatcher). `c.resume(v)` rides the existing
 `kotlin.coroutines.resume` mapping. Type map: `kotlinx.coroutines.CancellableContinuation` → `CancellableCont`.
 Proof: `samples/il-kcancel` (`awaitC` via suspendCancellableCoroutine, composed → 30), ilverify-clean.

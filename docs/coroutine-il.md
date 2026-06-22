@@ -1,5 +1,9 @@
 # 設計スパイク: コルーチン（suspend）の IL 化 — 戦略 A/B 決定
 
+> **状態（2026-06-23）: 本書は 2026-06-18 時点の設計スパイク（歴史的記録）。** 戦略 B（CLR-native IAsyncStateMachine／
+> Continuation-class）に確定し、IL コルーチン lowering は全面実装済み。AS-BUILT の状況は
+> [[design-coroutines-clr]] §§13a–§14a を参照（「IL 経路はゼロ」等の現状記述は当時のもの）。
+
 フェーズ3（[[csharp-retirement-design]] §3.1）着手前の設計固定。ABI は不変（[[coroutine-abi-decision]]）:
 `suspend fun f(args): T` ⇔ CLR `Task<T> F(args)`（Unit→`Task`）、`Continuation` は公開 ABI に漏らさない。
 実装戦略を入れ替えても ABI は固定。本書で A/B を決め、ユーザ判断を仰ぐ（[[design-first-on-hard-features]]）。

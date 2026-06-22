@@ -8,7 +8,10 @@
 （`BirEmitter.unsupported(node, what, detail)` が message collector に ERROR を報告し、`ClrBackendPhase` が
 `COMPILATION_ERROR` を返す）。`unsupported()` 呼び出しは現在 **8 箇所**（B5 out/ref が surface 化）。
 
-最終更新: 2026-06-21。検証方法: 広範な構文 probe ＋ 全サンプルコーパス（IL ~80 + 差分 ~36、すべて緑）。
+最終更新: 2026-06-23。検証方法: 広範な構文 probe ＋ 全サンプルコーパス（IL ~95 + 差分 ~36、すべて緑）。
+コルーチン表面は全面実装済み（suspend fun/lambda・raw intrinsics・startCoroutine・suspendCancellableCoroutine・
+Result/Unit・user Continuation 実装・sequence/yieldAll/generateSequence・Flow/Channel/select・CoroutineContext/
+intercepted）。AS-BUILT は design-coroutines-clr.md §§13a–§14a。残るは Track 2（本物の upstream のコンパイル）のみ。
 
 ---
 
@@ -65,7 +68,7 @@ coroutine 内部 (e) 専用パスで処理／定数畳み込み済み のいず�
 | ~~B2~~ | ~~ローカルクラスから外側ローカルへ書込~~ ✅ 2026-06-21 実装（`il-refcell`） | — | B1 と同一機構 | — | done |
 | B3 | **.NET メソッド参照** `obj::netMethod` / `NetType::method` | `BirEmitter:1289` | .NET メソッドの delegate 束縛は稀＋自明な回避策あり | lifted `__mref`/`boundDelegateNew` を .NET 受け手にも対応。回避: ラムダ `{ a -> x.m(a) }` | S–M |
 | B4 | **非リテラル `String.format`** | `BirEmitter:2441` | printf↔.NET composite（`%d`↔`{0}`）は非互換。実行時変換には runtime helper が要る | DotKt.Runtime に printf→composite 変換器、または `String.Format` 直叩き | S |
-| ~~B5~~ | ~~`out`/`ref` パラメータ~~ ✅ 2026-06-21 実装（`il-outref`） | — | __clrout/__clrref マーカー方式で実装済 | frontend に `fun <T>__clrout/__clrref(x:T):T` を注入→backend がマーカーを読み arg を `byref:` 型＋lvalue アドレス渡し、ilemit が `MakeByRefType`+`ldloca`。out/ref 両対応 | done |
+| ~~B5~~ | ~~`out`/`ref` パラメータ~~ ✅ 2026-06-21 実装（`il-outref`） | — | 単一 `byref` マーカー方式（out/ref を統合） | frontend に `fun <T> byref(x:T): ClrRef<T>` を注入→backend がマーカーを読み arg を `byref:` 型＋lvalue アドレス渡し、ilemit が `MakeByRefType`+`ldloca`。out/ref 両対応 | done |
 
 > B1/B2（heap ref-cell）✅・B5（out/ref）✅ 実装済。残: 回避策のある B3（.NET メソッド参照）、B4（非リテラル String.format）。
 

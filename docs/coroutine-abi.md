@@ -86,4 +86,4 @@ Kotlin の suspend lowering を再利用して state machine を IR で入手し
 - **状態機械**: 各サスペンド点 = 1 state（ループ内でも static に 1）。`switch(__label){ case k: goto __Rk; }` で再入ディスパッチ。
 - 実機: `samples/m-d2-sm` の `sumLoop(4)=6`（**ループ内サスペンド**）, `branch(true/false)=15/10`（**分岐内・パスごとに異なるサスペンド数**）。生成形は教科書的 CPS（`__L0:` ループ頭 → `if(!cond) goto __L1` → `__R1` サスペンド → 後退辺 `goto __L0`）。
 
-**残（明示的に loud error で拒否＝silent miscompile を出さない）**: ① 部分式にネストしたサスペンド（`f(g().await())` 等＝spilling が必要）, ② ループ/分岐の**条件式**内サスペンド。①②が stdlib 完全 lowering との最後の差分。ABI（§1）は不変なので、これらに当たるコードは戦略 A（`async Task`）で書ける。
+**更新（2026-06-22）: かつての残項目 ① 部分式にネストしたサスペンド（`f(g().await())`＝spilling）, ② ループ/分岐の条件式内サスペンド は両方とも実装済み**（`BirEmitter.spillExpr`/`emitWhileCps`/`emitWhenCps`）。さらに try-catch- および try-finally-around-await も対応済み（design-coroutines-clr.md §13v）。コルーチン表面は全面実装済 — AS-BUILT は design-coroutines-clr.md §§13a–§14a を参照。残るは Track 2（本物の upstream のコンパイル）のみ。

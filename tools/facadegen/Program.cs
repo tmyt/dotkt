@@ -692,7 +692,7 @@ static class FacadeGen
 
     static bool Supported(Type t) =>
         // `out`/`ref` params (T&) surface as their element type on the injection path; the Kotlin caller wraps the
-        // arg in `__clrout(x)`/`__clrref(x)` and the backend re-applies the byref via a `byref:` param type.
+        // arg in the `byref(x)` marker and the backend re-applies the byref via a `byref:` param type.
         t.IsByRef ? (MetaMode && Supported(t.GetElementType()))
         : !t.IsPointer
         && ((MetaMode && t.IsArray) ? Supported(t.GetElementType())
