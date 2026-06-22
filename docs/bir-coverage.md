@@ -8,7 +8,7 @@
 （`BirEmitter.unsupported(node, what, detail)` が message collector に ERROR を報告し、`ClrBackendPhase` が
 `COMPILATION_ERROR` を返す）。`unsupported()` 呼び出しは現在 **8 箇所**（B5 out/ref が surface 化）。
 
-最終更新: 2026-06-23。検証方法: 広範な構文 probe ＋ 全サンプルコーパス（IL ~98 + 差分 ~36、すべて緑）。
+最終更新: 2026-06-23。検証方法: 広範な構文 probe ＋ 全サンプルコーパス（IL ~100 + 差分 ~36、すべて緑）。
 言語/stdlib long-tail も網羅: 複合条件 smart-cast・`return` 式利用・enum per-entry 本体（abstract 基底＋サブクラス）・
 Regex matches/find・フィールド可視性（真の private）・**inner/nested は真の CLR ネスト型**（`Outer+Inner`、flatten 廃止）。
 コルーチン表面は全面実装済み（suspend fun/lambda・raw intrinsics・startCoroutine・suspendCancellableCoroutine・

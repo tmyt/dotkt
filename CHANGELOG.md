@@ -3,6 +3,23 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
+## 0.9.2 — unreleased
+
+Interop/primitive bug fixes found after 0.9.1 shipped.
+
+### Fixed
+- **Signed `Byte` / `Short`** as parameters, locals, fields, and constant args threw
+  `InvalidProgramException` (or crashed ilemit). They were omitted from the primitive
+  paths (Int/Long/unsigned were present): `birType` fell to the user-type fallback
+  `@Byte`/`@Short`, and ilemit `EmitConst` had no `byte`/`short` case so a `const byte`
+  pushed `null`. Kotlin `Byte` = signed `sbyte`, `Short` = `Int16` (UByte stays
+  unsigned). Fixes `MemoryStream().WriteByte(65)` too. (`il-bytearg`)
+- **Lambda passed to a .NET constructor's delegate parameter** (`new Thread({ … })`)
+  crashed ilemit with a `NullReferenceException` (`EmitClrNew`): the façade erases the
+  delegate param, so the exact-type ctor lookup found nothing. `EmitClrNew` now selects
+  the ctor by arity (preferring delegate-param/lambda-arity matches) and builds the
+  specific delegate. (`il-delegatearg`)
+
 ## 0.9.1 — 2026-06-23
 
 Language/stdlib long-tail completion + a type-emission correctness refactor. The
