@@ -77,6 +77,21 @@ namespace DotKt.Coroutines
         public int Await() => _tcs.Task.GetAwaiter().GetResult();
     }
 
+    /// kotlinx.coroutines.Channel<T> over System.Threading.Channels (T8). suspend send/receive map to awaiting
+    /// the Task forms; capacity<=0 -> unbounded. (A genuine kotlinx Channel has more — close semantics, fan-out,
+    /// rendezvous — but this is the CLR-native core: produce/consume across the Task ABI.)
+    public sealed class Chan<T>
+    {
+        readonly System.Threading.Channels.Channel<T> _ch;
+        public Chan(int capacity) =>
+            _ch = capacity <= 0
+                ? System.Threading.Channels.Channel.CreateUnbounded<T>()
+                : System.Threading.Channels.Channel.CreateBounded<T>(capacity);
+        public Task<int> SendAsync(T v) => _ch.Writer.WriteAsync(v).AsTask().ContinueWith(_ => 0);
+        public Task<T> ReceiveAsync() => _ch.Reader.ReadAsync().AsTask();
+        public void Close() => _ch.Writer.Complete();
+    }
+
     /// kotlin.Unit as a real type — needed when Unit is a generic TYPE ARGUMENT (Continuation<Unit>, Result<Unit>,
     /// Deferred<Unit>): a CLR generic arg can't be System.Void, so it erases to this singleton. (In return/statement
     /// position Unit still lowers to `void`.) See T7 / docs §13r.

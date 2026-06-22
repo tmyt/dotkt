@@ -507,3 +507,15 @@ first-arg to `clr:DotKt.Coroutines.Unit`, used by the Continuation/CancellableCo
 STILL PENDING (the other half of the old T6/T7 conflation): `generateSequence`'s `nextFunction: (T) -> T?` — the
 nullable-in-generics representation (value-type `T?` = `Nullable<T>` vs reference `T`-or-null) is a DISTINCT problem
 from Unit-as-arg and isn't addressed here.
+
+## 13s. T8 (Channel) done — Flow↔IAsyncEnumerable bridge still pending (2026-06-22)
+
+`kotlinx.coroutines.Channel<T>` maps to `DotKt.Coroutines.Chan<T>` over `System.Threading.Channels` (il-kchan →
+6): suspend `send`/`receive` await the Task forms (`Writer.WriteAsync(...).AsTask()` / `Reader.ReadAsync().AsTask()`);
+capacity<=0 → unbounded. A bounded channel lets a single coroutine send N then receive N (no dispatcher needed).
+Enabling fix (general): `receive<T>(): T` is the first raw-intrinsic leaf whose result is the method's own type
+param T, so `coSelfCont` builds `new TypedCont<T>(this)` with T an EMITTED generic param — reflection can't resolve
+the ctor on that instantiation. Added `CtorOf` (re-anchor via `TypeBuilder.GetConstructor` when a type arg is a
+TypeBuilder/generic-param), used by coSelfCont/coSelfCancellable. (kgflow's emit<T> returned the Int dummy, so its
+TypedCont<Int> was concrete and dodged this.) STILL PENDING in T8: the `Flow`↔`IAsyncEnumerable` bridge; full
+Channel close/iteration/fan-out semantics (needs dispatchers — Track 2).

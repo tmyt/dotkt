@@ -796,6 +796,14 @@ sealed class Emitter
     static FieldInfo SmField(Type inst, FieldBuilder def) => inst.IsGenericType ? TypeBuilder.GetField(inst, def) : def;
     static ConstructorInfo SmCtor(Type inst, ConstructorBuilder def) => inst.IsGenericType ? TypeBuilder.GetConstructor(inst, def) : def;
 
+    // The single ctor of a constructed generic reflected type, re-anchored via TypeBuilder.GetConstructor when a
+    // type arg is an emitted generic param / TypeBuilder (e.g. TypedCont<T> in a generic suspend fun whose result
+    // is the method's own type param T — reflection can't resolve members on such an instantiation).
+    static ConstructorInfo CtorOf(Type constructed) =>
+        constructed.GetGenericArguments().Any(a => a is TypeBuilder || a.IsGenericParameter)
+            ? TypeBuilder.GetConstructor(constructed, constructed.GetGenericTypeDefinition().GetConstructors()[0])
+            : constructed.GetConstructors()[0];
+
     void EmitCoroutineClass(TypeInfo ti, MethodBuilder mb, JsonElement m)
     {
         var rs = m.GetProperty("resultType").GetString();
@@ -1834,19 +1842,17 @@ sealed class Emitter
                     var typed = ResolveType("DotKt.Coroutines.TypedCont`1").MakeGenericType(tk);
                     var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
                     _il.Emit(OpCodes.Ldarg_0);   // the SM (Continuation<object>)
-                    _il.Emit(OpCodes.Newobj, typed.GetConstructor(new[] { contObj }));
+                    _il.Emit(OpCodes.Newobj, CtorOf(typed));
                     return typed;
                 }
             case "coSelfCancellable":   // the SM as a CancellableContinuation<T>: new CancellableCont<T>(new TypedCont<T>(this))
                 {
                     var tk = MapType(e.GetProperty("resultType").GetString());
                     var typed = ResolveType("DotKt.Coroutines.TypedCont`1").MakeGenericType(tk);
-                    var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
-                    var contT = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(tk);
                     var cancel = ResolveType("DotKt.Coroutines.CancellableCont`1").MakeGenericType(tk);
                     _il.Emit(OpCodes.Ldarg_0);
-                    _il.Emit(OpCodes.Newobj, typed.GetConstructor(new[] { contObj }));
-                    _il.Emit(OpCodes.Newobj, cancel.GetConstructor(new[] { contT }));
+                    _il.Emit(OpCodes.Newobj, CtorOf(typed));
+                    _il.Emit(OpCodes.Newobj, CtorOf(cancel));
                     return cancel;
                 }
             case "local":
