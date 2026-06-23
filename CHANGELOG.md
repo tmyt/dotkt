@@ -80,6 +80,14 @@ Interop/primitive bug fixes, most surfaced building a real WinUI app from Kotlin
   - `ilemit` gained an `ILEMIT_TRACE` env switch that prints each emission step (ref load,
     parents, signatures, bodies, createType, save) flushed to stderr — so a Reflection.Emit
     hard-crash (uncatchable AV, exit 0xC0000005) can be localized to the culprit type/method.
+- **Per-file lifted state leaked across files (multi-file)** — one `BirEmitter` instance
+  processes every file, but its per-file lifted collections (`liftedMethods`/`liftedTypes`/
+  synthesized delegate classes/ref cells/iterator+property+CharSequence+KProperty synthetics)
+  were never reset, so each file's BIR ACCUMULATED the prior files' lifted lambdas/types —
+  duplicating e.g. `App.kt`'s `__lambda*` into ControlsKt/DslKt/LayoutKt/ReactiveKt. The
+  `<>dotkt_*` types are de-duplicated by ilemit, but lifted `__lambdaN` are file-class methods
+  that are not, so this was real metadata bloat (and a corruption hazard surfaced building a
+  multi-file WinUI app). `emitFile` now resets all per-file lifted state up front. (`il-mflambda`)
 - **Overloaded user functions resolved to the wrong method** — ilemit keyed methods by NAME
   only, so `f(String)` and `f(() -> String)` collided in one dictionary: the last-declared
   overwrote, a body was emitted into the wrong overload's `MethodBuilder`, and calls picked

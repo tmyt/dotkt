@@ -370,6 +370,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	fun emitFile(file: IrFile): String {
 		fileEntry = file.fileEntry
+		// Per-FILE lifted state. One BirEmitter instance processes every file in turn, so these MUST be reset here —
+		// otherwise each file's BIR accumulates the previous files' lifted lambdas/types, duplicating them into every
+		// file class (e.g. App.kt's `__lambda*` reappearing in ControlsKt/DslKt/…). The `<>dotkt_*` types are
+		// de-duplicated by ilemit, but lifted `__lambdaN` are file-class methods that are NOT — so the duplication is
+		// real metadata bloat and a correctness hazard.
+		liftedMethods.clear(); liftedTypes.clear(); synthDelegateDefs.clear(); refTypes.clear()
+		iterIfaces.clear(); iterableIfaces.clear(); roPropIfaces.clear(); rwPropIfaces.clear()
+		usesCharSeq = false; needsKProperty = false
 		// The `@ClrAwait` await intrinsic (`fun <T> Task<T>.await(): T`) is never emitted as a real method —
 		// its call sites are lowered to coroutine suspension points (see suspendMethod). Skip it.
 		// The `byref` out/ref marker is an intrinsic consumed at its call sites (the arg becomes a `byref:` param) —
