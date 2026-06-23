@@ -136,7 +136,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  access targets the owning file class, not whichever file is being emitted). */
 	private fun fileClassOf(decl: org.jetbrains.kotlin.ir.declarations.IrDeclaration): String {
 		val f = decl.parent as? IrFile ?: return fileClass
-		return File(f.fileEntry.name).name.removeSuffix(".kt").replaceFirstChar { it.uppercaseChar() } + "Kt"
+		return fileClassName(f)
+	}
+	// The `<File>Kt` facade class name, qualified with the file's package as the .NET namespace (so top-level
+	// declarations live in the package's namespace, and two same-named files in different packages don't collide).
+	private fun fileClassName(f: IrFile): String {
+		val base = File(f.fileEntry.name).name.removeSuffix(".kt").replaceFirstChar { it.uppercaseChar() } + "Kt"
+		val pkg = f.packageFqName.asString()
+		return if (pkg.isEmpty()) base else "$pkg.$base"
 	}
 	// Local functions: lifted to file-class statics; captured vars become leading params (calls prepend them).
 	private val localFns = HashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, Pair<String, List<IrValueDeclaration>>>()
@@ -168,8 +175,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private var needsKProperty = false
 
 	/** A user/anon class's emitted name (anon "<no name provided>" -> its synthetic lifted name). */
+	// A user type's .NET name = its Kotlin package projected as the .NET namespace (`alpha.Box`), so classes with the
+	// same simple name in different packages don't collide in the assembly (they did — they all flattened to the root
+	// namespace). NESTED types stay simple-named (their outer carries the namespace); anon/synthetic names are already
+	// unique. Root-package types are unchanged (fqName has no dot), so existing code is unaffected. birType references
+	// user types through here, so the def name and every reference stay consistent.
 	private fun typeName(k: IrClass): String =
-		anonNames[k] ?: k.name.asString()
+		anonNames[k] ?: if (k.parent is IrClass) k.name.asString()
+		else (k.fqNameWhenAvailable?.asString() ?: k.name.asString())
 
 	// Synthesized stdlib delegate classes for Delegates.observable/vetoable/notNull (their stdlib bodies are
 	// absent from our IR, so we compiler-generate equivalents, monomorphized by value type, each implementing
@@ -440,14 +453,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			.joinToString(",") {
 				"""{"name":${str(it.name.asString())},"static":false,"override":false,"virtual":true,"params":[${paramsJson(it.parameters)}],"ret":${str(birType(it.returnType))},"body":[]}"""
 			}
-		return """{"name":${str(iface.name.asString())},"kind":"interface"${typeParamsJson(iface.typeParameters)},"base":null,"fields":[],"ctors":[],"methods":[$methods]}"""
+		return """{"name":${str(typeName(iface))},"kind":"interface"${typeParamsJson(iface.typeParameters)},"base":null,"fields":[],"ctors":[],"methods":[$methods]}"""
 	}
 
 	/** A Kotlin `enum class` -> a real .NET enum (ilemit DefineEnum + literals). */
 	private fun enumDef(e: IrClass): String {
 		val entries = e.declarations.filterIsInstance<IrEnumEntry>()
 			.mapIndexed { i, ent -> """{"name":${str(ent.name.asString())},"ordinal":$i}""" }
-		return """{"name":${str(e.name.asString())},"kind":"enum","entries":[${entries.joinToString(",")}]}"""
+		return """{"name":${str(typeName(e))},"kind":"enum","entries":[${entries.joinToString(",")}]}"""
 	}
 
 	/** A "rich" enum has ctor params, user instance methods, or per-entry bodies -> can't be a CLR enum. */
@@ -467,7 +480,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * in the `.cctor`; `ToString`->`__name`; `values()`->fresh array; `valueOf(name)`->linear match.
 	 */
 	private fun richEnumDef(ec: IrClass): String {
-		val name = ec.name.asString()
+		val name = typeName(ec)
 		val entries = ec.declarations.filterIsInstance<IrEnumEntry>()
 		val primaryCtor = ec.declarations.filterIsInstance<IrConstructor>().first { it.isPrimary }
 		val userParams = primaryCtor.parameters.filter { it.kind == IrParameterKind.Regular }
@@ -956,7 +969,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val cps = (listOfNotNull(selfJson) + listOf(co.cpsFields).filter { it.isNotEmpty() }).joinToString(",")
 		val vis = visOf(fn)
 		val coClass = if (isCoClass(fn)) ""","coClass":true""" else ""
-		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(fn.typeParameters)},"suspend":true,"resultType":${str(co.resultType)}$coClass,"cpsFields":[$cps],"params":[$ps],"steps":[${co.steps}]}"""
+		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}${kotlinModsJson(fn)},"suspend":true,"resultType":${str(co.resultType)}$coClass,"cpsFields":[$cps],"params":[$ps],"steps":[${co.steps}]}"""
 	}
 
 	/**
@@ -1984,6 +1997,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val result = spliceBody(bodyStatements(callee.body), callee.returnType.isUnit(), pre)
 		boundVals.forEach { valSubst.remove(it) }; boundLams.forEach { inlineLambdas.remove(it) }
 		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
+	}
+
+	/** CROSS-MODULE inline splice: a call to an injected `inline fun` (its body lives in [KotlinInline] on the
+	 *  referenced assembly, read by ilemit at splice time). We carry the call's bindings — each regular param's arg
+	 *  value, or for a lambda param the lambda's param name + body (emitted in the CALLER's scope, so a non-local
+	 *  `return` in it becomes the caller's return). ilemit substitutes these into the carried body. */
+	private fun inlineSpliceCall(call: IrCall, fileClass: String): String {
+		val callee = call.symbol.owner
+		val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
+		val args = regularArgs(call)
+		val bindings = params.mapIndexed { i, p ->
+			val arg = args.getOrNull(i)
+			if (arg is IrFunctionExpression) {
+				val lamParam = arg.function.parameters.firstOrNull { it.kind == IrParameterKind.Regular }?.name?.asString() ?: "it"
+				val body = bodyStatements(arg.function.body).joinToString(",") { stmt(it) }
+				"""{"name":${str(p.name.asString())},"lambdaParam":${str(lamParam)},"lambdaBody":[$body]}"""
+			} else """{"name":${str(p.name.asString())},"value":${arg?.let { expr(it) } ?: "null"}}"""
+		}.joinToString(",")
+		return """{"k":"inlineSplice","type":${str(fileClass)},"method":${str(callee.name.asString())},"bindings":[$bindings]}"""
 	}
 
 	/** Splice an invoked inlined lambda `f(args)`: bind its params to the invoke args, then splice its body. */
@@ -3111,7 +3143,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			val member = clrName(callee) ?: name
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
-			val ret = str(netType(callee.returnType))
+			// A restored `suspend` member's .NET method returns Task<T> (awaited via the coroutine machinery), not T.
+			val ret = str(if (callee.isSuspend) coTaskType(call.type) else netType(callee.returnType))
 			// A .NET operator/conversion (`op_Addition`/`op_Equality`/`op_Implicit`…) is a STATIC method; a Kotlin
 			// `operator fun` models it as an instance member, so prepend the receiver as the first argument.
 			if (member.startsWith("op_") && !isStatic && recv != null) {
@@ -3136,7 +3169,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 		// Companion-object member -> a static member of the enclosing class (precedes user-property field access).
 		(callee.parent as? IrClass)?.takeIf { it.isCompanion }?.let { comp ->
-			val enclosing = (comp.parent as IrClass).name.asString()
+			val enclosing = typeName(comp.parent as IrClass)
 			val prop = callee.correspondingPropertySymbol?.owner
 			if (prop != null) return if (callee === prop.setter)
 				"""{"k":"staticFieldSet","ownerType":${str(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
@@ -3819,8 +3852,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val args = (t as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
 			return if (args.isNullOrEmpty()) "clr:$netName" else "clrg:$netName[${args.joinToString(",")}]"
 		}
-		// Enums -> the real .NET enum type reference.
-		if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return "@" + klass.name.asString()
+		// Enums -> the real .NET enum type reference (package-qualified, like other user types).
+		if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return "@" + typeName(klass)
 		// A user-declared class/interface becomes a reference to that BIR type ("@Name"); a constructed user
 		// generic carries concrete args ("@Box[int]"). Anon objects resolve through `typeName`.
 		if (klass != null && (klass.kind == ClassKind.CLASS || klass.kind == ClassKind.INTERFACE)) {

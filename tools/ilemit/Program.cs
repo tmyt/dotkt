@@ -80,6 +80,11 @@ sealed class Emitter
     readonly Dictionary<string, int> _args = new();
     readonly Dictionary<string, Type> _argTypes = new();
     readonly Dictionary<string, LocalBuilder> _locals = new();
+    // Cross-module inline splice substitution: a callee-body `local` referencing one of these names emits the bound
+    // value instead; a `delegateInvoke` on a lambda-param name splices the caller's lambda body (binding its param).
+    readonly Dictionary<string, JsonElement> _inlineSubst = new();
+    readonly Dictionary<string, (string lamParam, JsonElement body)> _inlineLambdas = new();
+    readonly List<JsonDocument> _inlineDocs = new();   // keep parsed [KotlinInline] bodies alive
     readonly Dictionary<MethodInfo, Type[]> _mparams = new();   // declared param types per method (for call-site boxing)
     // active try blocks: a `return` inside stores to the result local and leaves to the end label.
     readonly Stack<(LocalBuilder result, Label end)> _tryStack = new();
@@ -105,7 +110,8 @@ sealed class Emitter
     int _coTryDepth;
     Label _coExit;
 
-    public Emitter(string outDir, string asmName) { _outDir = outDir; _asmName = asmName; }
+    readonly List<(string kotlin, string dotNet)> _nsProj;
+    public Emitter(string outDir, string asmName, List<(string, string)> nsProj = null) { _outDir = outDir; _asmName = asmName; _nsProj = nsProj ?? new(); }
 
     public void EmitAssembly(List<JsonElement> files)
     {
@@ -691,7 +697,7 @@ sealed class Emitter
         {
             var il = setSm.GetILGenerator();
             il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldflda, fBuilder); il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Call, builderT.GetMethod("SetStateMachine", new[] { iasm }));
+            il.Emit(OpCodes.Call, GenM(builderT, "SetStateMachine"));
             il.Emit(OpCodes.Ret);
         }
         sm.DefineMethodOverride(setSm, iasm.GetMethod("SetStateMachine"));
@@ -809,9 +815,9 @@ sealed class Emitter
                         {
                             var gt = EmitExpr(rv);
                             if (gt != null && NeedsBoxToRef(gt) && !resultT.IsValueType && !resultT.IsGenericParameter) _il.Emit(OpCodes.Box, gt);
-                            _il.Emit(OpCodes.Call, builderT.GetMethod("SetResult"));
+                            _il.Emit(OpCodes.Call, GenM(builderT, "SetResult"));
                         }
-                        else _il.Emit(OpCodes.Call, builderT.GetMethod("SetResult"));
+                        else _il.Emit(OpCodes.Call, GenM(builderT, "SetResult"));
                         if (_coTryDepth > 0) _il.Emit(OpCodes.Leave, _coExit); else _il.Emit(OpCodes.Ret);
                         break;
                     case "coUnsupported":
@@ -840,12 +846,12 @@ sealed class Emitter
                 var pn = p.GetProperty("name").GetString();
                 _il.Emit(OpCodes.Ldloca, locSm); _il.Emit(OpCodes.Ldarg, ai++); _il.Emit(OpCodes.Stfld, coFields[pn]);
             }
-            _il.Emit(OpCodes.Ldloca, locSm); _il.Emit(OpCodes.Call, builderT.GetMethod("Create")); _il.Emit(OpCodes.Stfld, fBuilder);
+            _il.Emit(OpCodes.Ldloca, locSm); _il.Emit(OpCodes.Call, GenM(builderT, "Create")); _il.Emit(OpCodes.Stfld, fBuilder);
             _il.Emit(OpCodes.Ldloca, locSm); EmitLdcI4(-1); _il.Emit(OpCodes.Stfld, fState);
             _il.Emit(OpCodes.Ldloca, locSm); _il.Emit(OpCodes.Ldflda, fBuilder); _il.Emit(OpCodes.Ldloca, locSm);
-            _il.Emit(OpCodes.Call, builderT.GetMethod("Start").MakeGenericMethod(sm));
+            _il.Emit(OpCodes.Call, GenM(builderT, "Start").MakeGenericMethod(sm));
             _il.Emit(OpCodes.Ldloca, locSm); _il.Emit(OpCodes.Ldflda, fBuilder);
-            _il.Emit(OpCodes.Call, builderT.GetMethod("get_Task"));
+            _il.Emit(OpCodes.Call, GenM(builderT, "get_Task"));
             _il.Emit(OpCodes.Ret);
         }
 
@@ -1302,17 +1308,17 @@ sealed class Emitter
 
         // awaiter = (awaitable).GetAwaiter();
         var taskType = EmitExpr(st.GetProperty("awaitable"));
-        _il.Emit(OpCodes.Callvirt, taskType.GetMethod("GetAwaiter"));
+        _il.Emit(OpCodes.Callvirt, GenM(taskType, "GetAwaiter"));
         _il.Emit(OpCodes.Stloc, aLoc);
         // if (awaiter.IsCompleted) goto after;
-        _il.Emit(OpCodes.Ldloca, aLoc); _il.Emit(OpCodes.Call, at.GetMethod("get_IsCompleted"));
+        _il.Emit(OpCodes.Ldloca, aLoc); _il.Emit(OpCodes.Call, GenM(at, "get_IsCompleted"));
         _il.Emit(OpCodes.Brtrue, after[k]);
         // suspend: state=k; <>u__k=awaiter; builder.AwaitUnsafeOnCompleted(ref awaiter, ref this); return;
         _il.Emit(OpCodes.Ldarg_0); EmitLdcI4(k); _il.Emit(OpCodes.Stfld, fState);
         _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldloc, aLoc); _il.Emit(OpCodes.Stfld, awaiterField[k]);
         _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldflda, fBuilder);
         _il.Emit(OpCodes.Ldloca, aLoc); _il.Emit(OpCodes.Ldarg_0);
-        _il.Emit(OpCodes.Call, builderT.GetMethod("AwaitUnsafeOnCompleted").MakeGenericMethod(at, sm));
+        _il.Emit(OpCodes.Call, GenM(builderT, "AwaitUnsafeOnCompleted").MakeGenericMethod(at, sm));
         if (_coTryDepth > 0) _il.Emit(OpCodes.Leave, _coExit); else _il.Emit(OpCodes.Ret);   // `ret` is illegal inside a .try
         // resume: awaiter = <>u__k; <>u__k = default; state = -1;
         _il.MarkLabel(resume[k]);
@@ -1322,7 +1328,7 @@ sealed class Emitter
         // after: <assignTo> = awaiter.GetResult();
         _il.MarkLabel(after[k]);
         var assignTo = st.GetProperty("assignTo").ValueKind == JsonValueKind.Null ? null : st.GetProperty("assignTo").GetString();
-        var getResult = at.GetMethod("GetResult");
+        var getResult = GenM(at, "GetResult");
         bool voidResult = getResult.ReturnType == typeof(void);
         if (assignTo != null && coFields.TryGetValue(assignTo, out var destF))
         {
@@ -1333,7 +1339,7 @@ sealed class Emitter
         else if (assignTo != null && !voidResult)
         {
             // A non-field temp (e.g. `return await(...)`): a fresh IL local read by the following coReturn.
-            var tmp = _il.DeclareLocal(at.GetMethod("GetResult").ReturnType);
+            var tmp = _il.DeclareLocal(GenM(at, "GetResult").ReturnType);
             _locals[assignTo] = tmp;
             _il.Emit(OpCodes.Ldloca, aLoc); _il.Emit(OpCodes.Call, getResult);
             _il.Emit(OpCodes.Stloc, tmp);
@@ -1963,6 +1969,8 @@ sealed class Emitter
             case "local":
             {
                 var name = e.GetProperty("name").GetString();
+                // Inside a cross-module inline splice, a callee param reference emits the bound arg/value instead.
+                if (_inlineSubst.TryGetValue(name, out var sub)) return EmitExpr(sub);
                 // In a coroutine, a param/live-local reference is a load of the SM struct field.
                 if (_coFields != null && _coFields.TryGetValue(name, out var cf)) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, cf); return cf.FieldType; }
                 if (_locals.TryGetValue(name, out var l)) { _il.Emit(OpCodes.Ldloc, l); return l.LocalType; }
@@ -2792,12 +2800,26 @@ sealed class Emitter
             }
             case "delegateInvoke":
             {
+                // A splice's invocation of a lambda PARAM -> inline the caller's lambda body (binding its param to the
+                // invoke arg) right here, so a non-local `return` in it returns from THIS (the caller's) method.
+                var recv0 = e.GetProperty("recv");
+                if (recv0.TryGetProperty("k", out var rk) && rk.GetString() == "local"
+                    && _inlineLambdas.TryGetValue(recv0.GetProperty("name").GetString(), out var lam))
+                {
+                    var iargs = e.GetProperty("args").EnumerateArray().ToList();
+                    var had = _inlineSubst.TryGetValue(lam.lamParam, out var prev);
+                    if (iargs.Count > 0) _inlineSubst[lam.lamParam] = iargs[0];   // bind the lambda's param to the invoke arg
+                    EmitSplicedStmts(lam.body);
+                    if (had) _inlineSubst[lam.lamParam] = prev; else _inlineSubst.Remove(lam.lamParam);
+                    return typeof(void);
+                }
                 var ft = MapType(e.GetProperty("funcType").GetString());
                 EmitExpr(e.GetProperty("recv"));
                 foreach (var a in e.GetProperty("args").EnumerateArray()) EmitExpr(a);
                 _il.Emit(OpCodes.Callvirt, InvokeOf(ft));
                 return FuncRetType(e.GetProperty("funcType").GetString());
             }
+            case "inlineSplice": return EmitInlineSplice(e);
             case "closureNew":
             {
                 // Capturing lambda: `new Closure(captures)` then bind its `invoke` instance method as a delegate.
@@ -3270,6 +3292,54 @@ sealed class Emitter
         return ps.Length == 0 ? 0 : SplitTopLevel(ps).Count();
     }
 
+    // Cross-module inline splice: read the callee's carried BIR body from its [KotlinInline] (on a --ref'd assembly)
+    // and emit it HERE with the call's bindings substituted (param `local`s -> bound values; lambda-param invokes ->
+    // the caller's lambda body). A non-local `return` in a spliced lambda body emits a `ret` from the caller. Scope:
+    // lambda-taking inline funcs (the only ones whose body must travel); callee-local name scoping is not handled yet.
+    // Emit spliced statements giving their CFG labels FRESH Label objects for THIS emission (the BIR's label ids are
+    // baked, so re-splicing a body — or one whose ids collide with the caller's — would MarkLabel a Label twice).
+    void EmitSplicedStmts(JsonElement stmts)
+    {
+        var ids = new List<int>();
+        void Collect(JsonElement el)
+        {
+            if (el.ValueKind == JsonValueKind.Object)
+            {
+                if (el.TryGetProperty("k", out var k) && k.GetString() == "label") ids.Add(el.GetProperty("id").GetInt32());
+                foreach (var p in el.EnumerateObject()) Collect(p.Value);
+            }
+            else if (el.ValueKind == JsonValueKind.Array) foreach (var c in el.EnumerateArray()) Collect(c);
+        }
+        foreach (var st in stmts.EnumerateArray()) Collect(st);
+        var saved = new Dictionary<int, Label?>();
+        foreach (var id in ids) { saved[id] = _cfgLabels.TryGetValue(id, out var L) ? L : (Label?)null; _cfgLabels[id] = _il.DefineLabel(); }
+        foreach (var st in stmts.EnumerateArray()) EmitStmt(st);
+        foreach (var kv in saved) { if (kv.Value.HasValue) _cfgLabels[kv.Key] = kv.Value.Value; else _cfgLabels.Remove(kv.Key); }
+    }
+
+    Type EmitInlineSplice(JsonElement e)
+    {
+        var typeName = e.GetProperty("type").GetString();
+        var method = e.GetProperty("method").GetString();
+        var mi = ResolveType(typeName).GetMethod(method)
+                 ?? throw new NotSupportedException($"inline splice: method {typeName}.{method} not found");
+        var cad = mi.GetCustomAttributesData().FirstOrDefault(c => c.AttributeType.FullName == "DotKt.Metadata.KotlinInlineAttribute")
+                  ?? throw new NotSupportedException($"inline splice: [KotlinInline] body missing on {typeName}.{method}");
+        var doc = JsonDocument.Parse((string)cad.ConstructorArguments[0].Value);
+        _inlineDocs.Add(doc);
+        var addedVals = new List<string>(); var addedLams = new List<string>();
+        foreach (var b in e.GetProperty("bindings").EnumerateArray())
+        {
+            var pn = b.GetProperty("name").GetString();
+            if (b.TryGetProperty("lambdaParam", out var lp)) { _inlineLambdas[pn] = (lp.GetString(), b.GetProperty("lambdaBody")); addedLams.Add(pn); }
+            else { _inlineSubst[pn] = b.GetProperty("value"); addedVals.Add(pn); }
+        }
+        EmitSplicedStmts(doc.RootElement.GetProperty("body"));
+        foreach (var s in addedVals) _inlineSubst.Remove(s);
+        foreach (var s in addedLams) _inlineLambdas.Remove(s);
+        return typeof(void);
+    }
+
     Type EmitClrCall(JsonElement e, bool instance, bool deref = true)
     {
         // `ClrRef` (not `ResolveType`) so a method on a constructed generic .NET type (`Collection<int>`) resolves.
@@ -3316,8 +3386,21 @@ sealed class Emitter
             _il.Emit(OpCodes.Ldobj, elem);
             return elem;
         }
+        // TypeBuilder.GetMethod re-anchors the call onto the instantiation but leaves the method's RETURN type open
+        // (e.g. `Task<Vec>::GetAwaiter()` reports `TaskAwaiter`1<!0>`, not `<Vec>`). The IL token is correct, but the
+        // STATIC type we hand back must be the substituted one or the caller mis-types its temp/local — so trust the
+        // BIR `ret` hint, which already carries the substituted type. (Only when the reflected return is still open.)
+        if ((mi.ReturnType.IsGenericParameter || mi.ReturnType.ContainsGenericParameters)
+            && e.TryGetProperty("ret", out var rh) && rh.ValueKind == JsonValueKind.String)
+        {
+            var hinted = TryResolveClr(rh.GetString());
+            if (hinted != null) return hinted;
+        }
         return mi.ReturnType;
     }
+
+    // ClrRef (generic-aware type resolution) that returns null instead of throwing.
+    Type TryResolveClr(string spec) { try { return ClrRef(spec); } catch { return null; } }
 
     // ResolveType but returns null instead of throwing (for optional/best-effort overload resolution).
     static Type TryResolveType(string name)
@@ -3411,6 +3494,16 @@ sealed class Emitter
         var setter = PropAccessor(type, propName, getter: false);
         if (setter == null)
         {
+            // A DotKt custom-accessor property's `set_<name>` METHOD (no PropertyDef) -> call it.
+            var sm = type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
+                .FirstOrDefault(mm => mm.Name == "set_" + propName && mm.GetParameters().Length == 1);
+            if (sm != null)
+            {
+                if (!isStatic && !sm.IsStatic) EmitExpr(e.GetProperty("recv"));
+                EmitArgs2(new[] { e.GetProperty("value") }, sm.GetParameters());
+                _il.Emit(sm.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, sm);
+                return typeof(void);
+            }
             // A writable .NET FIELD surfaced as a Kotlin (mutable) property -> field store.
             var fld = type.GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
                 ?? throw new InvalidOperationException($"ilemit: no writable property OR field '{propName}' on .NET type '{type}' (spec '{typeName}'). Available properties: [{PropList(type)}]");

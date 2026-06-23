@@ -174,6 +174,8 @@ static class FacadeGen
     // Emit one type's FIR-injection metadata (enum/interface/annotation/object/class + members).
     static void EmitOneType(Type t, StringBuilder sb)
     {
+            // A Kotlin file-facade ([KotlinFile]) -> its statics become TOP-LEVEL Kotlin functions, not a class.
+            if (HasKotlinFile(t)) { EmitKotlinFile(t, sb); return; }
             // A .NET enum -> an object whose members are `val` properties typed as the enum itself
             // (avoids FIR enum-entry synthesis; `DayOfWeek.Friday` still maps to the real enum value).
             if (t.IsEnum)

@@ -7,6 +7,7 @@
 package clrc.frontend
 
 import clrc.ClrEventRegistry
+import clrc.ClrTopLevelRegistry
 import clrc.ClrTypeRegistry
 import java.io.File
 import org.jetbrains.kotlin.GeneratedDeclarationKey
@@ -107,7 +108,7 @@ private object ClrMetadataHolder {
 			when (tok[0]) {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); supers = emptyList()
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); supers = emptyList(); filePkg = null
 					name = tok[1]; dotNet = tok[2]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"; isAnnotation = false
 					isOpen = !isObject && !isInterface && tok.getOrNull(3) == "open"
 					// `class <Name> <DotNet> <open|sealed> [<TP>...]` (TPs at 4, after the modality token) vs
@@ -129,9 +130,9 @@ private object ClrMetadataHolder {
 				// fun <Name> <ret> <prot-?open|final|abstract> [<TypeParam>...] [<param>:<type>]* — the modifier is a
 				// single token (so it never looks like a type param); bare trailing tokens (no `:`) are type params.
 				"fun" -> {
-					val mod = tok.getOrNull(3) ?: "final"; val prot = mod.startsWith("prot-"); val bare = mod.removePrefix("prot-")
-					methods.add(ClrMethod(tok[1], tok[2], bare == "open", bare == "abstract", prot,
-						parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }))
+					val fm = parseFunMods(tok.getOrNull(3))
+					methods.add(ClrMethod(tok[1], tok[2], fm.open, fm.abstract, fm.protected,
+						parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }, fm.infix, fm.operator, fm.suspend))
 				}
 				"ctor" -> ctors.add(parseParams(tok.drop(1)))
 				// sfun <Name> <ret> [<param>:<type>]* — a public STATIC method of a normal class (-> companion).
@@ -480,7 +481,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
 					for (p in m.params) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
 				}.symbol
-			}
+			)
 		}
 	}
 
@@ -518,8 +519,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		}
 	}
 
-	/** Like [coneOf], but also resolves a reference to one of the method's own generic parameters (`T`). */
-	private fun coneOfMethod(typeName: String, owner: FirClassSymbol<*>, methodTypeParams: List<String>,
+	/** Like [coneOf], but also resolves a reference to one of the method's own generic parameters (`T`). owner is
+	 *  null for a top-level function (no enclosing class type params). */
+	private fun coneOfMethod(typeName: String, owner: FirClassSymbol<*>?, methodTypeParams: List<String>,
 	                         tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType {
 		val i = methodTypeParams.indexOf(typeName)
 		if (i >= 0 && i < tps.size) return tps[i].symbol.constructType(emptyArray(), false)
@@ -577,7 +579,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			return sym.constructType(args.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, false)
 		}
 		// A reference to the owner's own generic type parameter (`T` in `Collection<T>.Add(item: T)`).
-		owner.typeParameterSymbols.firstOrNull { it.name.identifier == typeName }
+		owner?.typeParameterSymbols?.firstOrNull { it.name.identifier == typeName }
 			?.let { return it.constructType(emptyArray(), false) }
 		val bt = session.builtinTypes
 		// A .NET array param/return (`array:String` -> Kotlin `Array<String>` / primitive `IntArray`).
@@ -610,7 +612,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				else ClrMetadataHolder.classIdFor(typeName, 0)
 				val sym = when {
 					cid == null -> null
-					cid == owner.classId -> owner
+					cid == owner?.classId -> owner
 					else -> session.symbolProvider.getClassLikeSymbolByClassId(cid)
 				}
 				sym?.constructType(emptyArray(), false) ?: bt.nullableAnyType.coneType
