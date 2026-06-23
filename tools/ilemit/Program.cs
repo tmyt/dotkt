@@ -733,7 +733,7 @@ sealed class Emitter
                     {
                         int id = st.GetProperty("id").GetInt32();
                         if (fell) _il.Emit(OpCodes.Leave, tryEnd[id]);   // close the try body / previous catch
-                        var ct = ResolveType(st.GetProperty("excType").GetString());
+                        var ct = MapType(st.GetProperty("excType").GetString());
                         _il.BeginCatchBlock(ct);
                         var el = _il.DeclareLocal(ct);                   // bind the caught exception to the catch var
                         _locals[st.GetProperty("var").GetString()] = el;
@@ -953,7 +953,7 @@ sealed class Emitter
                         foreach (var k in tryStates[id]) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, fState); EmitLdcI4(k); _il.Emit(OpCodes.Beq, resume[k]); }
                         break; }
                     case "coCatchBegin": { int id = st.GetProperty("id").GetInt32(); if (fell) _il.Emit(OpCodes.Leave, tryEnd[id]);
-                        var ct = ResolveType(st.GetProperty("excType").GetString()); _il.BeginCatchBlock(ct);
+                        var ct = MapType(st.GetProperty("excType").GetString()); _il.BeginCatchBlock(ct);
                         var el = _il.DeclareLocal(ct); _locals[st.GetProperty("var").GetString()] = el; _il.Emit(OpCodes.Stloc, el); break; }
                     case "coTryEnd": EmitCoTryEnd(st, tryEnd[st.GetProperty("id").GetInt32()], fell); break;
                     case "coSuspend": EmitCoSuspendClass(st, fState, fParam, fErr, resume, coFields, builders, fSuspended, outcome); break;
@@ -1459,7 +1459,7 @@ sealed class Emitter
                 foreach (var b in bodyArr.EnumerateArray()) EmitStmt(b);
                 foreach (var c in catchesArr.EnumerateArray())
                 {
-                    var ct = ResolveType(c.GetProperty("excType").GetString());
+                    var ct = MapType(c.GetProperty("excType").GetString());
                     _il.BeginCatchBlock(ct);
                     // Bind the caught exception to the catch variable (a local); referenced by the handler body.
                     if (c.TryGetProperty("var", out var cv) && cv.ValueKind == JsonValueKind.String)
@@ -3595,7 +3595,9 @@ sealed class Emitter
             "char" => typeof(char), "string" => typeof(string),
             "uint" => typeof(uint), "ulong" => typeof(ulong), "ubyte" => typeof(byte), "ushort" => typeof(ushort),
             // Kotlin Byte is SIGNED (sbyte, -128..127); UByte is the unsigned `byte`.
-            "short" => typeof(short), "byte" => typeof(sbyte), _ => typeof(object),
+            "short" => typeof(short), "byte" => typeof(sbyte),
+            // A bare .NET FQN (e.g. a hardcoded `System.Exception` catch type) -> resolve by reflection; otherwise object.
+            _ => (t != null && t.Contains('.')) ? ResolveType(t) : typeof(object),
         };
     }
 

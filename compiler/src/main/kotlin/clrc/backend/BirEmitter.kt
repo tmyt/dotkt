@@ -559,14 +559,37 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** If `fn` overrides a member of a .NET-mapped Kotlin interface (kotlin.coroutines.Continuation), the .NET
 	 *  member name to emit (Kotlin camelCase -> .NET PascalCase), so a user `class C : Continuation<T>` binds to the
 	 *  real interface slots. Returns null for ordinary members. */
+	/** True if [t]'s class transitively extends kotlin.Throwable / a .NET-mapped exception (so `.message`/`.cause` on
+	 *  a user exception subclass route to System.Exception.Message/.InnerException). */
+	private fun isThrowableType(t: IrType?): Boolean {
+		val start = t?.classifierOrNull?.owner as? IrClass ?: return false
+		val seen = HashSet<IrClass>()
+		fun walk(c: IrClass): Boolean {
+			if (!seen.add(c)) return false
+			val fq = c.fqNameWhenAvailable?.asString()
+			if (fq == "kotlin.Throwable" || (fq != null && NET_EXCEPTIONS.containsKey(fq))) return true
+			return c.superTypes.any { (it.classifierOrNull?.owner as? IrClass)?.let(::walk) == true }
+		}
+		return walk(start)
+	}
+
 	private fun clrIfaceMemberName(fn: IrSimpleFunction): String? =
 		fn.overriddenSymbols.firstNotNullOfOrNull { s ->
 			val owner = s.owner
-			if ((owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.Continuation") when {
-				owner.name.asString() == "resumeWith" -> "ResumeWith"
-				owner.correspondingPropertySymbol?.owner?.name?.asString() == "context" -> "get_Context"
+			val ifaceFq = (owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
+			val mn = owner.name.asString()
+			when (ifaceFq) {
+				"kotlin.coroutines.Continuation" -> when {
+					mn == "resumeWith" -> "ResumeWith"
+					owner.correspondingPropertySymbol?.owner?.name?.asString() == "context" -> "get_Context"
+					else -> null
+				}
+				// Stdlib interfaces mapped to .NET (see birType): the override must carry the .NET member name.
+				"kotlin.Comparable" -> if (mn == "compareTo") "CompareTo" else null
+				"kotlin.Comparator", "java.util.Comparator" -> if (mn == "compare") "Compare" else null
+				"kotlin.AutoCloseable", "java.lang.AutoCloseable", "java.io.Closeable", "kotlin.io.Closeable" -> if (mn == "close") "Dispose" else null
 				else -> null
-			} else null
+			}
 		}
 
 	private fun accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
@@ -654,15 +677,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val methods = (instMethods + statMethods + clrAccessors + userAccessors).joinToString(",")
 		// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
 		// type spec (via birType) that ilemit resolves by reflection; a Kotlin-user base stays a bare type name.
-		val baseJson = base?.let { if (clrName(it) != null) str(birType(baseType!!)) else str(typeName(it)) } ?: "null"
+		val baseJson = base?.let {
+			val bt = birType(baseType!!)
+			// A .NET base: an @Clr-injected type, or a Kotlin stdlib type birType maps to .NET (`Exception` -> clr:
+			// System.Exception, etc.). Otherwise a Kotlin-user base stays a bare type name.
+			if (clrName(it) != null || bt.startsWith("clr:") || bt.startsWith("clrg:")) str(bt) else str(typeName(it))
+		} ?: "null"
 		// Stdlib interface supertypes (Iterator, Read(Write)Property) -> their monomorphized synthetic interfaces;
 		// a user generic interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
 		val ifaces = klass.superTypes
 			.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
 			.mapNotNull { st ->
-				val ifq = (st.classifierOrNull?.owner as? IrClass)?.fqNameWhenAvailable?.asString()
-				// .NET-mapped interfaces (e.g. kotlin.coroutines.Continuation) -> their clrg: spec via birType.
-				if (ifq == "kotlin.coroutines.Continuation" || ifq == "kotlinx.coroutines.CancellableContinuation") birType(st)
+				// A stdlib interface birType maps to .NET (Continuation, Comparable, Comparator, AutoCloseable, …) ->
+				// its clr:/clrg: spec; the Kotlin iterator/iterable protocol -> a synthetic interface; a user generic
+				// interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
+				val bt = birType(st)
+				if (bt.startsWith("clr:") || bt.startsWith("clrg:")) bt
 				else iteratorElemIface(st) ?: iterableElemIface(st) ?: propIface(st) ?: (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
 			}
 			.joinToString(",") { str(it) }
@@ -1355,7 +1385,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun tryStmt(node: IrTry): String {
 		val catches = node.catches.joinToString(",") { c ->
 			val p = c.catchParameter
-			"""{"excType":${str(netType(p.type))},"var":${str(p.name.asString())},"body":[${bodyStmts(c.result)}]}"""
+			// birType (not netType) so a USER exception class catches as its own type (`@AppErr`), not `object` —
+			// netType has no mapping for user classes and degrades to System.Object (unverifiable catch).
+			"""{"excType":${str(birType(p.type))},"var":${str(p.name.asString())},"body":[${bodyStmts(c.result)}]}"""
 		}
 		val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
 		return """{"k":"try","type":${str(birType(node.type))},"body":[${bodyStmts(node.tryResult)}],"catches":[$catches]$finally}"""
@@ -1474,7 +1506,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val ownerFq = ownerClass?.fqNameWhenAvailable?.asString()
 			val recvFq = node.receiver?.type?.classFqName?.asString()
 			val isThrowableProp = (fldName == "message" || fldName == "cause") &&
-				(ownerFq == "kotlin.Throwable" || ownerClass?.name?.asString() == "Throwable" || recvFq == "kotlin.Throwable")
+				(ownerFq == "kotlin.Throwable" || ownerClass?.name?.asString() == "Throwable" || recvFq == "kotlin.Throwable"
+					|| isThrowableType(node.receiver?.type))
 			// `Throwable.message`/`.cause` -> System.Exception.Message/.InnerException. A .NET member (e.g. inherited
 			// `Exception.Message`) is modeled as a field by the FIR injector but is really a property getter call.
 			if (isThrowableProp) {
@@ -2317,6 +2350,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (callee.correspondingPropertySymbol?.owner?.name?.asString() == "value" &&
 			dispatchReceiver(call)?.type?.classFqName?.asString() == "kotlin.text.MatchResult")
 			return """{"k":"clrPropGet","type":"System.Text.RegularExpressions.Match","name":"Value","retType":"System.String","static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
+		// `.message`/`.cause` on a Throwable subclass (incl. a user `class E : Exception`) -> System.Exception
+		// .Message/.InnerException. Handled early because for a user subclass the getter resolves to a fake-override
+		// whose owner is the user class, so the generic property->field path would emit a bare (missing) field.
+		callee.correspondingPropertySymbol?.owner?.name?.asString()?.let { pn ->
+			if ((pn == "message" || pn == "cause") && isThrowableType(dispatchReceiver(call)?.type)) {
+				val (prop, rt) = if (pn == "message") "Message" to "System.String" else "InnerException" to "System.Exception"
+				return """{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
+			}
+		}
 		// CoroutineContext algebra: the Kotlin members map to the .NET CoroutineContext methods (PascalCase). `plus`/
 		// `minusKey` are non-generic; `fold<R>`/`get<E>` are generic instance calls. T3(b).
 		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.plus") {
@@ -3578,8 +3620,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// kotlin.text.Regex -> System.Text.RegularExpressions.Regex.
 		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
 		if (fqp == "kotlin.text.MatchResult") return "clr:System.Text.RegularExpressions.Match"
-		// kotlin.Throwable -> System.Exception (the common base; `.message` -> .Message).
-		if (fqp == "kotlin.Throwable") return "clr:System.Exception"
+		// Kotlin/Java throwables -> their .NET counterpart (the common base; `.message` -> .Message). Covers a custom
+		// exception base (`class E : Exception(msg)`) as well as a `Throwable`-typed value.
+		if (fqp != null) NET_EXCEPTIONS[fqp]?.let { return "clr:$it" }
+		// kotlin.Comparator<T> -> System.Collections.Generic.IComparer<T>; AutoCloseable/Closeable -> IDisposable.
+		if (fqp == "kotlin.Comparator" || fqp == "java.util.Comparator") {
+			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+			return "clrg:System.Collections.Generic.IComparer[$arg]"
+		}
+		if (fqp == "kotlin.AutoCloseable" || fqp == "java.lang.AutoCloseable" || fqp == "java.io.Closeable" || fqp == "kotlin.io.Closeable")
+			return "clr:System.IDisposable"
 		// A function type as a value (e.g. a `block: suspend (P)->R` parameter): `kotlin.FunctionN` -> Func/Action,
 		// `kotlin.coroutines.SuspendFunctionN` -> Func<P..,Task<R>> (suspend lambdas are Func<..,Task<R>> in the ABI).
 		if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.Function"))) {
@@ -3781,11 +3831,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"java.lang.Throwable" to "System.Exception", "kotlin.Throwable" to "System.Exception",
 			"java.lang.Exception" to "System.Exception", "kotlin.Exception" to "System.Exception",
 			"java.lang.RuntimeException" to "System.Exception", "kotlin.RuntimeException" to "System.Exception",
+			"java.lang.Error" to "System.Exception", "kotlin.Error" to "System.Exception",
 			"java.lang.ArithmeticException" to "System.ArithmeticException",
-			"java.lang.IllegalArgumentException" to "System.ArgumentException",
-			"java.lang.IllegalStateException" to "System.InvalidOperationException",
-			"java.lang.IndexOutOfBoundsException" to "System.IndexOutOfRangeException",
-			"java.lang.NullPointerException" to "System.NullReferenceException",
+			"java.lang.IllegalArgumentException" to "System.ArgumentException", "kotlin.IllegalArgumentException" to "System.ArgumentException",
+			"java.lang.IllegalStateException" to "System.InvalidOperationException", "kotlin.IllegalStateException" to "System.InvalidOperationException",
+			"java.lang.IndexOutOfBoundsException" to "System.IndexOutOfRangeException", "kotlin.IndexOutOfBoundsException" to "System.IndexOutOfRangeException",
+			"java.lang.NullPointerException" to "System.NullReferenceException", "kotlin.NullPointerException" to "System.NullReferenceException",
+			"java.lang.UnsupportedOperationException" to "System.NotSupportedException", "kotlin.UnsupportedOperationException" to "System.NotSupportedException",
+			"java.util.NoSuchElementException" to "System.InvalidOperationException", "kotlin.NoSuchElementException" to "System.InvalidOperationException",
 		)
 		private val ATOMICFU_TYPES = setOf(
 			"kotlinx.atomicfu.AtomicInt", "kotlinx.atomicfu.AtomicLong",

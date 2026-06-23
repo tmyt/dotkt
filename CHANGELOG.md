@@ -30,6 +30,19 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   synthetic interface but `Iterable<T>` did not. Added `KIterable_<elem>`
   (`operator fun iterator(): KIterator_<elem>`), parallel to the existing
   `KIterator_<elem>`; both the `for` loop and explicit `.iterator()` now work. (`il-iterable`)
+- **User class implementing/extending a .NET-mapped Kotlin stdlib supertype** crashed
+  ilemit (`KeyNotFound`) — the supertype emission didn't route these through their
+  .NET mapping. A whole cluster:
+  - **Custom exceptions** `class E(msg) : Exception(msg)` / `RuntimeException` -> a CLR
+    class `: System.Exception` (ctor chains to `System.Exception(string)`, `.message`/
+    `.cause` -> `.Message`/`.InnerException`, catchable by base type). (`il-customexc`)
+  - **`Comparator<T>`** -> `IComparer<T>` (`compare` -> `Compare`). (`il-comparator`)
+  - **`AutoCloseable`/`Closeable`** -> `IDisposable` (`close` -> `Dispose`).
+  Mechanism: supertype base/interface emission now routes through `birType` when it
+  maps to a `clr:`/`clrg:` spec; `clrIfaceMemberName` renames the overridden members;
+  the `catch` clause types via `birType` (a user exception catches as its own type, not
+  `object`); `MapType` resolves bare .NET FQNs. (Comparable<T> as a self-referential
+  generic supertype, and the `use{}` builder, remain — deeper, tracked separately.)
 
 ## 0.9.1 — 2026-06-23
 
