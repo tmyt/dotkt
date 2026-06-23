@@ -2947,6 +2947,23 @@ sealed class Emitter
         }
     }
 
+    // Push a .NET CONSTANT (literal field) value, inlined — mirrors how C# emits a `const` read. `ft` is the field's
+    // declared type (its underlying type if it's an enum). Returns `ft` (the stack type).
+    Type EmitLiteralValue(object cv, Type ft)
+    {
+        var ut = ft.IsEnum ? Enum.GetUnderlyingType(ft) : ft;
+        if (cv == null) { _il.Emit(OpCodes.Ldnull); return ft; }
+        if (ut == typeof(string)) { _il.Emit(OpCodes.Ldstr, (string)cv); return ft; }
+        if (ut == typeof(bool)) { _il.Emit((bool)cv ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); return ft; }
+        if (ut == typeof(float)) { _il.Emit(OpCodes.Ldc_R4, Convert.ToSingle(cv)); return ft; }
+        if (ut == typeof(double)) { _il.Emit(OpCodes.Ldc_R8, Convert.ToDouble(cv)); return ft; }
+        if (ut == typeof(long) || ut == typeof(ulong)) { _il.Emit(OpCodes.Ldc_I8, unchecked((long)Convert.ToUInt64(cv))); return ft; }
+        // char and every <=32-bit integer load via ldc.i4 (the bit pattern).
+        if (ut == typeof(char)) { _il.Emit(OpCodes.Ldc_I4, (int)(char)cv); return ft; }
+        if (ut == typeof(uint)) { _il.Emit(OpCodes.Ldc_I4, unchecked((int)Convert.ToUInt32(cv))); return ft; }
+        _il.Emit(OpCodes.Ldc_I4, Convert.ToInt32(cv)); return ft;   // sbyte/byte/short/ushort/int
+    }
+
     static int NumRank(Type t) =>
         t == typeof(double) ? 5 : t == typeof(float) ? 4 :
         (t == typeof(long) || t == typeof(ulong)) ? 3 :
@@ -3324,6 +3341,9 @@ sealed class Emitter
             // public instance fields, as `sprop`). Emit a field access instead of a getter call.
             var fld = type.GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
                 ?? throw new InvalidOperationException($"ilemit: no readable property OR field '{propName}' on .NET type '{type}' (spec '{typeName}'). Available properties: [{PropList(type)}]");
+            // A `const` (literal) field has no storage — `ldsfld` is invalid (and a memberref to it fails). Inline its
+            // value, exactly as C# does. Covers .NET consts surfaced by facadegen as `sprop` (e.g. WinRT constants).
+            if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), fld.FieldType);
             if (!isStatic && !fld.IsStatic)
             {
                 if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv"));

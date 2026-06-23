@@ -73,9 +73,10 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   - A .NET **FIELD surfaced as a Kotlin property** (facadegen records static/const fields
     and public instance fields as `sprop`) crashed ilemit with a `NullReferenceException`
     (later a 0xC0000005 access-violation via MSBuild) — `clrPropGet`/`clrPropSet` only looked
-    up a property accessor. They now fall back to `ldfld`/`ldsfld` / `stfld`/`stsfld`, and
-    otherwise throw an actionable "no property OR field" error. Static field via companion
-    verified (`il-injstatic` → `App.Companion.Answer` = 99).
+    up a property accessor. They now fall back to `ldfld`/`ldsfld` / `stfld`/`stsfld` — and a `const`/literal field is
+    INLINED (its value pushed, as C# does, since a literal has no storage and can't be
+    `ldsfld`'d) — otherwise an actionable "no property OR field" error. Verified via
+    `il-injstatic` (`App.Companion.Answer`=99 static readonly; `App.Companion.Magic`=123 const).
   - `ilemit` gained an `ILEMIT_TRACE` env switch that prints each emission step (ref load,
     parents, signatures, bodies, createType, save) flushed to stderr — so a Reflection.Emit
     hard-crash (uncatchable AV, exit 0xC0000005) can be localized to the culprit type/method.

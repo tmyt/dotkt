@@ -7,4 +7,5 @@ fun main() {
     App.Companion.start({ p -> println("p=" + p) })   // -> p=42
     println(App.Companion.Count)                       // -> 7
     println(App.Companion.Answer)                      // -> 99  (static FIELD, surfaced as a property -> ldsfld)
+    println(App.Companion.Magic)                       // -> 123 (const/literal FIELD -> inlined value)
 }
