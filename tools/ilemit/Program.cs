@@ -3303,12 +3303,36 @@ sealed class Emitter
         return null;
     }
 
+    // List a .NET type's public property names (instance+static, incl. inherited) — for an actionable "no such
+    // property" diagnostic instead of a bare NullReferenceException.
+    static string PropList(Type t)
+    {
+        try { return string.Join(", ", t.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static).Select(p => p.Name).Distinct().OrderBy(s => s)); }
+        catch { return "?"; }
+    }
+
     Type EmitClrPropGet(JsonElement e)
     {
-        var type = ClrRef(e.GetProperty("type").GetString());
-        var getter = PropAccessor(type, e.GetProperty("name").GetString(), getter: true);
+        var typeName = e.GetProperty("type").GetString();
+        var propName = e.GetProperty("name").GetString();
+        var type = ClrRef(typeName);
+        var isStatic = e.GetProperty("static").GetBoolean();
+        var getter = PropAccessor(type, propName, getter: true);
+        if (getter == null)
+        {
+            // Not a property: a .NET FIELD surfaced as a Kotlin property (facadegen records static/const fields, and
+            // public instance fields, as `sprop`). Emit a field access instead of a getter call.
+            var fld = type.GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
+                ?? throw new InvalidOperationException($"ilemit: no readable property OR field '{propName}' on .NET type '{type}' (spec '{typeName}'). Available properties: [{PropList(type)}]");
+            if (!isStatic && !fld.IsStatic)
+            {
+                if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv"));
+            }
+            _il.Emit(fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
+            return fld.FieldType;
+        }
         // A property getter on a VALUE type (e.g. KeyValuePair.Key/.Value) needs the receiver by managed pointer.
-        if (!e.GetProperty("static").GetBoolean())
+        if (!isStatic)
         {
             if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv"));
         }
@@ -3318,9 +3342,22 @@ sealed class Emitter
 
     Type EmitClrPropSet(JsonElement e)
     {
-        var type = ClrRef(e.GetProperty("type").GetString());
-        var setter = PropAccessor(type, e.GetProperty("name").GetString(), getter: false);
-        if (!e.GetProperty("static").GetBoolean()) EmitExpr(e.GetProperty("recv"));
+        var typeName = e.GetProperty("type").GetString();
+        var propName = e.GetProperty("name").GetString();
+        var type = ClrRef(typeName);
+        var isStatic = e.GetProperty("static").GetBoolean();
+        var setter = PropAccessor(type, propName, getter: false);
+        if (setter == null)
+        {
+            // A writable .NET FIELD surfaced as a Kotlin (mutable) property -> field store.
+            var fld = type.GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
+                ?? throw new InvalidOperationException($"ilemit: no writable property OR field '{propName}' on .NET type '{type}' (spec '{typeName}'). Available properties: [{PropList(type)}]");
+            if (!isStatic && !fld.IsStatic) EmitExpr(e.GetProperty("recv"));
+            EmitNullableCoerced(e.GetProperty("value"), fld.FieldType);
+            _il.Emit(fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
+            return typeof(void);
+        }
+        if (!isStatic) EmitExpr(e.GetProperty("recv"));
         EmitArgs2(new[] { e.GetProperty("value") }, setter.GetParameters());
         _il.Emit(setter.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, setter);
         return typeof(void);
