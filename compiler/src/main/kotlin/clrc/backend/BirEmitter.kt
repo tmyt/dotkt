@@ -1248,13 +1248,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		params.filter { it.kind == IrParameterKind.Regular }
 			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 
-	/** The parameter-type signature of a callee, MATCHING how `method()` emits the def's `params` ([ext receiver?] +
-	 *  regular params, each `birType`). Carried on a call so ilemit resolves the right OVERLOAD (e.g. `text(String)` vs
-	 *  `text(()->String)`) instead of colliding on the bare name. */
-	private fun overloadSig(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
+	/** A `,"sig":"<paramtypes>"` field for a call, but ONLY when the callee is genuinely OVERLOADED (more than one
+	 *  function of that name in its scope). For a non-overloaded callee this returns "" so the call's BIR is byte-for-
+	 *  byte identical to before overload support — ilemit then resolves by name (its long-standing path), avoiding any
+	 *  behavior change for the overwhelming majority of calls. When emitted, the signature MATCHES how `method()` lays
+	 *  out the def's `params` ([ext receiver?] + regular params, each `birType`) so ilemit's overload key lines up. */
+	private fun overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
+		val simple = fn as? IrSimpleFunction ?: return ""
+		val siblings = when (val p = fn.parent) {
+			is IrClass -> p.declarations
+			is org.jetbrains.kotlin.ir.declarations.IrFile -> p.declarations
+			else -> return ""
+		}
+		if (siblings.count { it is IrSimpleFunction && it.name == simple.name } <= 1) return ""   // not overloaded
 		val ext = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
 		val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type) }
-		return (listOfNotNull(ext) + regs).joinToString(",")
+		return ""","sig":${str((listOfNotNull(ext) + regs).joinToString(","))}"""
 	}
 
 	private fun stmt(node: org.jetbrains.kotlin.ir.IrElement): String = when (node) {
@@ -3132,7 +3141,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (prop != null) return if (callee === prop.setter)
 				"""{"k":"staticFieldSet","ownerType":${str(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 			else """{"k":"staticField","ownerType":${str(enclosing)},"name":${str(prop.name.asString())}}"""
-			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)},"sig":${str(overloadSig(callee))},"args":[${filledArgs(call).joinToString(",")}]}"""
+			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)}${overloadSigField(callee)},"args":[${filledArgs(call).joinToString(",")}]}"""
 		}
 
 		// Top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING file's
@@ -3483,7 +3492,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val extRecv = extensionReceiver(call)
 		if (extRecv != null) {
 			val all = (listOf(expr(extRecv)) + filledArgs(call)).joinToString(",")
-			return """{"k":"callStatic","owner":null,"method":${str(name)},"sig":${str(overloadSig(callee))}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]}"""
+			return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]}"""
 		}
 		// Instance method on a user class, or a sibling top-level call.
 		return if (recv != null) {
@@ -3497,8 +3506,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A call to an override of a .NET-mapped interface member (e.g. a user Continuation's resumeWith) uses
 			// the .NET member name (ResumeWith), matching what the class emitted.
 			val mname = clrIfaceMemberName(callee) ?: objectMethodName(callee) ?: name
-			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)},"sig":${str(overloadSig(callee))}$ta${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]}"""
-		} else """{"k":"callStatic","owner":null,"method":${str(name)},"sig":${str(overloadSig(callee))}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]}"""
+			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]}"""
+		} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]}"""
 	}
 
 	/**
