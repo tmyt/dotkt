@@ -22,14 +22,18 @@ static class IlEmit
         // `--ref <dll>`: preload an external .NET assembly (e.g. a coroutine runtime, a framework like Avalonia)
         // so its types resolve at emit time; the runtime dll must sit beside the emitted assembly to run.
         var bir = new List<string>();
+        var nsProj = new List<(string, string)>();
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
             if (rest[i] == "--ref" && i + 1 < rest.Count) { var rp = Path.GetFullPath(rest[++i]); Emitter.T($"ref: {rp}"); try { Assembly.LoadFrom(rp); } catch { } }
+            // `--ns-projection <kotlinPrefix>=<dotNetPrefix>`: stamp [assembly: DotKtNamespaceProjection] so a consumer
+            // can import this library under <kotlinPrefix> though its types live in the .NET <dotNetPrefix> namespace.
+            else if (rest[i] == "--ns-projection" && i + 1 < rest.Count) { var kv = rest[++i].Split('=', 2); if (kv.Length == 2) nsProj.Add((kv[0], kv[1])); }
             else bir.Add(rest[i]);
         }
         var files = bir.Select(p => JsonDocument.Parse(File.ReadAllText(p))).ToList();
-        new Emitter(outDir, asmName).EmitAssembly(files.Select(d => d.RootElement).ToList());
+        new Emitter(outDir, asmName, nsProj).EmitAssembly(files.Select(d => d.RootElement).ToList());
         return 0;
     }
 }
@@ -124,6 +128,14 @@ sealed class Emitter
         // through a MetadataLoadContext over the REFERENCE assemblies and pass that core to PersistedAssemblyBuilder,
         // so refs become System.Runtime — a large, contained refactor (every typeof(Bcl) -> mlc lookup). Tracked #50.
         var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName), typeof(object).Assembly);
+        // [assembly: DotKtNamespaceProjection(kotlin, dotNet)] for each --ns-projection — so a consumer can import this
+        // library's types under a Kotlin package different from their .NET namespace (e.g. kotlinx.coroutines).
+        foreach (var (kotlin, dotNet) in _nsProj)
+        {
+            ResolveKotlinAttrs();
+            var ctor = _kNsProjAttr?.GetConstructor(new[] { typeof(string), typeof(string) });
+            if (ctor != null) ab.SetCustomAttribute(new CustomAttributeBuilder(ctor, new object[] { kotlin, dotNet }));
+        }
         _mod = ab.DefineDynamicModule(_asmName);
 
         // Pass 1: DefineType for every file-static-class and every user class.
@@ -3678,6 +3690,68 @@ sealed class Emitter
     }
     // Build a .NET custom attribute from a BIR `attr` node (a user annotation): the synthesized `: System.Attribute`
     // class's ctor + compile-time-constant args.
+    // DotKt metadata attribute types (from DotKt.Runtime, --ref'd). Null when not referenced -> stamping is skipped.
+    static bool _kAttrsResolved;
+    static Type _kFuncAttr, _kFuncFlags, _kFileAttr, _kInlineAttr, _kNullableAttr, _kReadOnlyAttr, _kNsProjAttr;
+    static void ResolveKotlinAttrs()
+    {
+        if (_kAttrsResolved) return;
+        _kAttrsResolved = true;
+        _kFuncAttr = TryResolveType("DotKt.Metadata.KotlinFunctionAttribute");
+        _kFuncFlags = TryResolveType("DotKt.Metadata.KotlinFunctionFlags");
+        _kFileAttr = TryResolveType("DotKt.Metadata.KotlinFileAttribute");
+        _kInlineAttr = TryResolveType("DotKt.Metadata.KotlinInlineAttribute");
+        _kNullableAttr = TryResolveType("DotKt.Metadata.KotlinNullableAttribute");
+        _kReadOnlyAttr = TryResolveType("DotKt.Metadata.KotlinReadOnlyAttribute");
+        _kNsProjAttr = TryResolveType("DotKt.Metadata.DotKtNamespaceProjectionAttribute");
+    }
+
+    // [KotlinNullable(mask)] — the Kotlin nullability of the signature (bit 0 = return, bit i+1 = param i).
+    static void ApplyKotlinNullable(MethodBuilder mb, uint mask)
+    {
+        ResolveKotlinAttrs();
+        var ctor = _kNullableAttr?.GetConstructor(new[] { typeof(uint) });
+        if (ctor == null) return;
+        mb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new object[] { mask }));
+    }
+
+    // [KotlinReadOnly] — a public backing field whose Kotlin property isn't publicly settable (restore as `val`).
+    static void ApplyKotlinReadOnly(FieldBuilder fb)
+    {
+        ResolveKotlinAttrs();
+        var ctor = _kReadOnlyAttr?.GetConstructor(Type.EmptyTypes);
+        if (ctor == null) return;
+        fb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new object[0]));
+    }
+
+    // [KotlinInline(body)] — the inline+lambda fn's BIR body, for cross-module splicing.
+    static void ApplyKotlinInline(MethodBuilder mb, string body)
+    {
+        ResolveKotlinAttrs();
+        var ctor = _kInlineAttr?.GetConstructor(new[] { typeof(string) });
+        if (ctor == null) return;
+        mb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new object[] { body }));
+    }
+
+    // [KotlinFunction(flags)] — Kotlin modifiers with no .NET analog (infix/operator/suspend), for Kotlin re-consumption.
+    static void ApplyKotlinFunction(MethodBuilder mb, int flags)
+    {
+        ResolveKotlinAttrs();
+        if (_kFuncAttr == null || _kFuncFlags == null) return;
+        var ctor = _kFuncAttr.GetConstructor(new[] { _kFuncFlags });
+        if (ctor == null) return;
+        mb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new[] { Enum.ToObject(_kFuncFlags, flags) }));
+    }
+
+    // [KotlinFile] — marks a `<File>Kt` facade so its statics restore as top-level Kotlin functions.
+    static void ApplyKotlinFile(TypeBuilder tb)
+    {
+        ResolveKotlinAttrs();
+        var ctor = _kFileAttr?.GetConstructor(Type.EmptyTypes);
+        if (ctor == null) return;
+        tb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new object[0]));
+    }
+
     CustomAttributeBuilder BuildCab(JsonElement a)
     {
         var attr = a.GetProperty("attr").GetString();

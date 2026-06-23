@@ -44,21 +44,29 @@ DotKt が出した dll を、別の Kotlin コンパイルから `import` して
 > 関連: メモリ `r1-compiletime-reference-blocker`（compile-time `<Reference>` の MetadataLoadContext 課題）、
 > `csharp-retirement-design`（R-1）。
 
-## 3. 名前空間の自動射影（assembly 単位）
+## 3. 名前空間の自動射影（assembly 単位）— ✅ 実装済み（2026-06-24）
 
-`kotlinx.coroutines` ⇔ `DotKt.Coroutines` のような **名前空間の読み替え**を、コンパイラに全部ハードコード登録
-するのは無理（ライブラリごとに増える）。→ **アセンブリ単位で一括射影を宣言**できるようにする:
+`kotlinx.coroutines` ⇔ `DotKt.Coroutines` のような **名前空間の読み替え**をアセンブリ単位で宣言できる:
 
-```csharp
-[assembly: DotKtNamespaceProjection("kotlinx.coroutines")]   // 例。実引数の形は要設計
+```kotlin
+// producer 側（.ktproj）— ライブラリは .NET 名前空間 DotKt.Coroutines に出るが Kotlin では kotlinx.coroutines として見せる
+// <ItemGroup><DotKtNamespaceProjection Include="kotlinx.coroutines=DotKt.Coroutines" /></ItemGroup>
 ```
 
-- 消費側は、参照アセンブリの assembly 属性を読み、`import kotlinx.coroutines.*` を実体（`DotKt.Coroutines.*`）へ
-  解決する。
-- 単純な prefix 読み替えで足りるか、型単位のマップが要るか（`kotlinx.coroutines.flow.Flow` →
-  `DotKt.Coroutines.Flow` 等）は設計事項。`[DotKtNamespaceProjection(from, to)]` の2引数形も候補。
-- これは「kotlinx ライブラリを CLR 向けにコンパイルして配布する」構想（メモリ `dotkt-compile-kotlin-libraries`
-  / `dotktx-coroutines-path-b`）の消費体験を素直にする鍵。
+実装（**2 引数の prefix 射影** `[assembly: DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]`、AllowMultiple）:
+- **属性**: `DotKt.Metadata.DotKtNamespaceProjectionAttribute`（assembly 対象）。
+- **producer**: `ilemit --ns-projection <kotlinPrefix>=<dotNetPrefix>` が刻む（SDK は `@(DotKtNamespaceProjection)` から渡す）。
+- **消費側 facadegen**: 参照アセンブリの属性を読み、メタに `nsproj <k> <d>` 行を出力。import 解決で **逆射影**
+  （`kotlinx.coroutines.X` → 実体 `DotKt.Coroutines.X`、ワイルドカード `import kotlinx.coroutines.*` も `TypesInNamespace` で射影）。
+- **消費側 injector**: `nsproj` を読み、`namespaceOf`（.NET 名前空間 → Kotlin パッケージ）で **順射影**。型は Kotlin パッケージ
+  `kotlinx.coroutines` 配下に登録され、バックエンドはレジストリ（Kotlin fqn → 実 .NET 名）で実体を呼ぶ。
+- **ImportScan 修正**: `kotlinx.*` は stdlib ではなく外部ライブラリなので、スキャナの除外を `kotlin.`（stdlib のみ）に絞った
+  （以前は `startsWith("kotlin")` で `kotlinx` も巻き込んでいた）。
+- prefix ベースなので sub-package（`kotlinx.coroutines.flow`）も自動追従。`scripts/verify-roundtrip.sh` の `roundtrip-nsproj` で常設。
+- これで「kotlinx ライブラリを CLR 向けにコンパイルして配布する」構想（メモリ `dotkt-compile-kotlin-libraries`
+  / `dotktx-coroutines-path-b`）の消費体験が `import kotlinx.coroutines.*` で素直になる。
+  （前提: ライブラリ側が実際に `DotKt.Coroutines` 名前空間に出ること。`package DotKt.Coroutines` で書くか、将来の
+  ビルド時 namespace リネーム機能で実現。）
 
 ## 4. 推移的（transitive / on-demand）型注入
 

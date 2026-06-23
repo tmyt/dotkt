@@ -73,6 +73,34 @@ static class FacadeGen
         Mlc = new System.Reflection.MetadataLoadContext(new System.Reflection.PathAssemblyResolver(paths), core);
         foreach (var p in paths)
             try { Mlc.LoadFromAssemblyPath(p); } catch { /* skip unloadable */ }
+        ScanProjections();
+    }
+
+    // Kotlin-package <-> .NET-namespace projections declared by [assembly: DotKtNamespaceProjection] on the refs, so a
+    // library in `DotKt.Coroutines` is consumed via `import kotlinx.coroutines.*`. Longest dotNet prefix first (so a
+    // more specific mapping wins). Read once after the refs load.
+    const string KNsProjAttr = "DotKt.Metadata.DotKtNamespaceProjectionAttribute";
+    static readonly List<(string kotlin, string dotNet)> Projections = new();
+    static void ScanProjections()
+    {
+        if (Mlc == null) return;
+        foreach (var asm in Mlc.GetAssemblies())
+            try
+            {
+                foreach (var c in asm.GetCustomAttributesData())
+                    if (c.AttributeType.FullName == KNsProjAttr && c.ConstructorArguments.Count == 2)
+                        Projections.Add(((string)c.ConstructorArguments[0].Value, (string)c.ConstructorArguments[1].Value));
+            }
+            catch { }
+        Projections.Sort((a, b) => b.dotNet.Length.CompareTo(a.dotNet.Length));
+    }
+
+    // A consumer's import `kotlinx.coroutines.X` -> the real .NET name `DotKt.Coroutines.X` (reverse projection).
+    static string ToDotNet(string kotlinName)
+    {
+        foreach (var (k, d) in Projections)
+            if (kotlinName == k || kotlinName.StartsWith(k + ".")) return d + kotlinName.Substring(k.Length);
+        return kotlinName;
     }
 
     static Type Resolve(string name)
@@ -118,6 +146,7 @@ static class FacadeGen
     // arity probing picks them up consistently with explicitly-imported names.
     static IEnumerable<string> TypesInNamespace(string ns)
     {
+        var dns = ToDotNet(ns);   // `import kotlinx.foo.*` scans the real .NET namespace `DotKt.Foo`
         var asms = Mlc != null ? Mlc.GetAssemblies() : Enumerable.Empty<Assembly>();
         var seen = new HashSet<string>();
         foreach (var asm in asms)
@@ -168,11 +197,19 @@ static class FacadeGen
         var enqueued = new HashSet<string>();   // by FullName — guards the queue
         var done = new HashSet<string>();        // by FullName — already emitted
         void Enqueue(Type ty) { var fn = ty?.FullName; if (fn != null && enqueued.Add(fn)) queue.Enqueue(ty); }
+        // Namespace projection: emit the active mappings so the injector exposes projected types under their Kotlin
+        // package (`nsproj <kotlinPrefix> <dotNetPrefix>`), and resolve each import through the reverse projection.
+        foreach (var (k, d) in Projections) sb.Append($"nsproj {k} {d}\n");
         var seeds = 0;
         foreach (var typeName in typeNames)
         {
+            var dn = ToDotNet(typeName);   // `kotlinx.coroutines.X` -> the real .NET `DotKt.Coroutines.X` (identity if no projection)
             // Resolve a plain type, or a generic type definition (Collection -> Collection`1, etc.).
-            var seed = Resolve(typeName) ?? Resolve(typeName + "`1") ?? Resolve(typeName + "`2") ?? Resolve(typeName + "`3");
+            var seed = Resolve(dn) ?? Resolve(dn + "`1") ?? Resolve(dn + "`2") ?? Resolve(dn + "`3");
+            // A top-level function import (`import geom.greet`) isn't a type — resolve it to the [KotlinFile] facade
+            // class that holds it (EmitOneType then emits `file`/`tlfun`). `import geom.*` already yields the facade
+            // type directly via TypesInNamespace, so this only covers the single-function form.
+            if (seed == null) seed = ResolveTopLevelFacade(dn);
             if (seed == null) { Console.Error.WriteLine($"warning: .NET import resolved to no type (injected nothing): {typeName}"); continue; }
             seeds++; Enqueue(seed);
         }

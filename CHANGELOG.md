@@ -3,6 +3,108 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
+## Unreleased
+
+### Added
+- **Consume a DotKt assembly AS KOTLIN — Kotlin-modifier round-trip.** Kotlin-language facts with no native .NET
+  representation now survive compilation and are restored on a consuming module's FIR, so a `.ktproj` can use
+  another DotKt-compiled assembly with idiomatic Kotlin syntax (the basis for shipping compiled kotlinx-* libraries
+  for the CLR). New `DotKt.Metadata` attributes (`[KotlinFunction(Infix|Operator|Suspend)]`, `[KotlinFile]`) are
+  stamped onto the IL by ilemit, read back by `facadegen --meta`, and restored by the FIR injector:
+  - `infix fun` / `operator fun` — restored as `status { isInfix/isOperator }` (call notation + operator resolution).
+  - `suspend fun` — emitted as `Task<T>`; restored as `suspend fun(): T` (the Task is unwrapped and re-awaited by the
+    coroutine machinery), for both members and top-level functions.
+  - top-level functions — a `<File>Kt` facade carries `[KotlinFile]`; its statics restore as top-level package
+    functions, called via a new `ClrTopLevelRegistry` as a static call on the file class. **Generic** top-level
+    functions are restored with their type parameters and called via `clrGenericStatic`, so a cross-module
+    `inline fun <reified T>` is consumed as a generic method (`f<Int>()`) — CLR generics are reified, so no inlining
+    or carried body is needed. (The only cross-module inline case that can't degrade — a lambda with a non-local
+    `return` — fails with a clean compile error; see docs/design-kotlin-metadata-attributes.md.)
+  - `final`/`open`/`abstract`, visibility, and **`reified`** need no attribute — they ride plain .NET metadata (CLR
+    generics are reified, so `inline fun <reified T>` is just a generic method).
+  - **`inline` (with a lambda) — cross-module non-local `return`.** DotKt inlines at EMIT time (BirEmitter, no JVM
+    `FunctionInlining` lowering), so a cross-module inline call to a body-less injected stub can't be inlined — which
+    means a non-local `return` through the lambda (the one inline case that can't degrade to a regular call) was a
+    compile error. Now: `ilemit` stamps `[KotlinInline(birJson)]` with the function's own BIR body; the injector
+    marks it `inline`; and the consumer's `ilemit` reads that body from the referenced assembly and splices it at the
+    call site (param + lambda-body substitution), so the lambda's `return` becomes the caller's `return`. Lighter than
+    JVM's `@Metadata` (BIR, emit-time, no IR deserializer). Verified by `scripts/verify-roundtrip.sh`.
+
+- **Bidirectional `ProjectReference` (R-1, reverse interop)** — a C# project can now
+  `<ProjectReference>`/`<Reference>` a Kotlin `.ktproj` at **compile time** (not just
+  reflection-load), so a Visual Studio solution can split code across C# and Kotlin
+  projects that reference each other. New build-time tool **`tools/retarget`**
+  (Mono.Cecil) repoints the emitted assembly's BCL `TypeRef`s off the single
+  `System.Private.CoreLib` onto the real contract assemblies (`Object`/`Task` →
+  `System.Runtime`, `List`/`Dictionary` → `System.Collections`, …) — the type→contract
+  map is the forward path's machinery in reverse (the ref pack via `MetadataLoadContext`).
+  This is pure post-emit metadata surgery, so it sidesteps the Reflection.Emit/MLC
+  generic-instantiation limits that sank the two earlier attempts; `List`/`Dictionary`
+  and `suspend fun` → `Task<T>` all consume cleanly from C#. New sample
+  **`samples/ktproj-bidir`** (cslib.csproj ← klib.ktproj ← app.csproj: forward + reverse
+  in one graph) is green in `verify-ktproj.sh`. Default ON; opt out with
+  `<KotlinClrRetarget>false</KotlinClrRetarget>` / `<DotKtRetarget>false</DotKtRetarget>`.
+
+### Fixed
+- **Kotlin packages are now projected to .NET namespaces** (`package geom; class Vec` → `.NET geom.Vec`, file facade
+  `geom.LibKt`). Previously every type was flattened to the **root** namespace — a correctness bug: two classes with
+  the same simple name in different packages (e.g. `alpha.Box` + `beta.Box`) both emitted as `.NET Box` and **collided**
+  (ilemit crash), and a packaged library couldn't be consumed across an assembly boundary (`import geom.Vec` resolved
+  nothing). `BirEmitter` now qualifies top-level classes/interfaces/enums and the file facade with `packageFqName`
+  (nested types stay simple-named — their outer carries the namespace; root-package code is unchanged by construction).
+  This unblocks consuming a packaged DotKt library via MSBuild, including its top-level functions (`import geom.greet`).
+- **Member `suspend fun` returning a user type** crashed ilemit (`AsyncTaskMethodBuilder<T>`/`Task<T>`/`TaskAwaiter<T>`
+  are TypeBuilder instantiations whose `GetMethod` throws). A `GenM` helper re-anchors those members via
+  `TypeBuilder.GetMethod`, and `EmitClrCall` now substitutes the open return type (`TaskAwaiter`1<!0>`) from the BIR
+  `ret` hint so the await temp is typed correctly. Works through both a `suspend fun` and a `runBlocking { … }` lambda.
+- **Parameter names** weren't emitted into the IL (ilemit defined methods by type only), so cross-assembly callers
+  couldn't use named arguments. ilemit now writes them via `DefineParameter` (the names were always in the BIR).
+- **Forward `ProjectReference`/`PackageReference` under the IL backend** — the dev-path
+  `msbuild/KotlinClr.targets` never passed copy-local references to `ilemit`, so a
+  `.ktproj` consuming a referenced non-BCL .NET type (e.g. a C# project's `Theme.Palette`,
+  `Ext.Widget`) crashed at emit on the default IL backend (`ktproj-extlib` was broken).
+  ilemit now receives `@(ReferenceCopyLocalPaths)` as `--ref`, matching the packaged SDK.
+- **`ProduceReferenceAssembly` for `.ktproj`** — the SDK built its `obj/ref` reference
+  assembly from our placeholder `.cs` (which holds no Kotlin types), so a downstream C#
+  `<ProjectReference>` bound the empty ref assembly (CS0246). Disabled for `.ktproj` so
+  consumers reference the real, retargeted output.
+
+### Added (round-trip interop — consume a DotKt assembly AS KOTLIN)
+All identified round-trip gaps resolved; guarded by `scripts/verify-roundtrip.sh` (roundtrip-pkg), each kept verify-il green.
+- **Properties** (`val`/`var`/custom getters) — facadegen surfaces public instance fields and non-special `get_`/`set_`
+  methods as Kotlin `prop`s; ilemit's `clrPropGet/Set` falls back to a field then a `get_`/`set_` method. This also makes
+  **data classes** consumable (property access + already-round-tripping `componentN` operators + `equals`/`toString`).
+- **Asymmetric visibility** (`val`, `var ... private set`) — a not-publicly-settable property's backing field is stamped
+  `[KotlinReadOnly]`; the consumer restores it read-only (rejecting external writes). Fixes `val x` being exposed writable.
+- **Extension functions, extension properties & top-level extension operators** — an extension's `__self` receiver is
+  marked and restored as an extension receiver; `operator fun Vec.plus` is usable as `a + b`; `val T.p` round-trips as an
+  extension property (BirEmitter emits its `get_/set_(__self)` statics; the backend routes `x.p` to them). Also fixed
+  `isBuiltin` defaulting top-level functions to "builtin", which had lowered a restored `Vec + Vec` to a primitive `bin`.
+- **vararg** — ilemit stamps `[ParamArray]`, facadegen encodes `vararg:<elem>`, the injector restores `isVararg`; `f(1,2,3)`
+  and empty `f()` both work.
+- **Default arguments** (constant, trailing) — restored @JvmOverloads-style (one overload per trailing default omitted);
+  ilemit stamps `[DefaultParameterValue]` so the omitted args are filled at the call site.
+- **Nullable types** — a `[KotlinNullable]` bitmask carries the signature's nullability; the consumer restores `T?`
+  (type-level: passing null to a non-null parameter is rejected).
+- Named-argument calls also work (ilemit emits parameter names). New metadata attributes: `[KotlinNullable]`, `[KotlinReadOnly]`.
+  Remaining known limits (not round-trip blockers): default-arg named middle-omission (`copy(y=5)`, needs `copy$default`),
+  generic-class consumption, object singletons — see docs/future-work-interop.md §5.
+- **Namespace projection** (`[assembly: DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]`) — a DotKt library whose
+  types live in one .NET namespace (e.g. `DotKt.Coroutines`) can be consumed under a different Kotlin package (e.g.
+  `import kotlinx.coroutines.*`). The producer stamps it via `ilemit --ns-projection k=d` (SDK: a `<DotKtNamespaceProjection>`
+  item); the consumer's facadegen reverse-projects each import to the real .NET type and the FIR injector forward-projects
+  the .NET namespace to the Kotlin package, so types resolve under the imported package while the backend calls the real
+  type. Prefix-based (sub-packages follow). The import scanner no longer drops `kotlinx.*` (external libs, not stdlib);
+  only `kotlin.*` is filtered. Verified by `scripts/verify-roundtrip.sh` (roundtrip-nsproj).
+
+### Removed
+- **C# backend regression suite (`scripts/verify-all.sh`)** — the C# backend was retired
+  in 0.x (2026-06-18); regression-testing a backend we no longer ship has no value, and the
+  harness had rotted (the generated C#/façade path no longer compiles). The valuable
+  MSBuild/.ktproj end-to-end coverage it carried moved to the new **`scripts/verify-ktproj.sh`**,
+  which runs those samples on the shipping **IL backend** (and adds `ktproj-bidir`). CI runs
+  `verify-il` + `verify-differential` + `verify-ktproj`.
+
 ## 0.9.2 — 2026-06-23
 
 Interop/primitive bug fixes, most surfaced building a real WinUI app from Kotlin.

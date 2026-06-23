@@ -108,6 +108,14 @@ private fun parseFunMods(tok: String?): FunMods {
  */
 private object ClrMetadataHolder {
 	val module: ClrModule? by lazy { System.getenv("CLR_TYPES_METADATA")?.let { load(File(it)) } }
+	// Namespace projections (.NET prefix -> Kotlin prefix), from `nsproj` meta lines. Set during load (before the
+	// registration loop), so namespaceOf can map a projected .NET namespace back to the Kotlin package the user imports.
+	private var projections: List<Pair<String, String>> = emptyList()
+	/** A .NET namespace -> the Kotlin package it's exposed as (`DotKt.Coroutines` -> `kotlinx.coroutines`); identity if unprojected. */
+	private fun toKotlinPkg(dotNetNs: String): String {
+		for ((dotNet, kotlin) in projections) if (dotNetNs == dotNet || dotNetNs.startsWith("$dotNet.")) return kotlin + dotNetNs.substring(dotNet.length)
+		return dotNetNs
+	}
 
 	private fun load(file: File): ClrModule? {
 		if (!file.isFile) return null
@@ -120,6 +128,8 @@ private object ClrMetadataHolder {
 		var iteratorElem: String? = null
 		var baseNoArgCtor = true
 		val staticMethods = ArrayList<ClrMethod>(); val staticProps = ArrayList<ClrProperty>()
+		val topLevel = ArrayList<ClrTopLevel>(); val topLevelProps = ArrayList<ClrTopLevelProp>(); var filePkg: FqName? = null; var fileClass = ""   // current [KotlinFile] section
+		val projList = ArrayList<Pair<String, String>>()   // (dotNetPrefix, kotlinPrefix) from `nsproj` lines
 		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, iteratorElem, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps))) }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
@@ -138,10 +148,31 @@ private object ClrMetadataHolder {
 				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
 				// trailing params (from its longest ctor) become the single annotation constructor.
 				"annotation" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); supers = emptyList()
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); supers = emptyList(); filePkg = null
 					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
 					ctors.add(parseParams(tok.drop(3)))
 				}
+				// nsproj <kotlinPrefix> <dotNetPrefix> — a Kotlin-package <-> .NET-namespace projection (a referenced
+				// assembly declared via [DotKtNamespaceProjection]); applied when deriving Kotlin packages below.
+				"nsproj" -> { if (tok.size >= 3) projList.add(tok[2] to tok[1]); projections = projList }
+				// file <package> <fileClassFqn> — a Kotlin file facade ([KotlinFile]); subsequent `tlfun` lines are
+				// TOP-LEVEL functions in <package> (`-` = root), restored as a .NET static call to <fileClassFqn>.
+				"file" -> {
+					flush(); name = ""; supers = emptyList()
+					// The package may be a .NET namespace that projects to a Kotlin package (e.g. DotKt.Coroutines -> kotlinx.coroutines).
+					filePkg = if (tok.getOrNull(1) == "-" || tok.getOrNull(1).isNullOrEmpty()) FqName.ROOT else FqName(toKotlinPkg(tok[1]))
+					fileClass = tok.getOrNull(2) ?: ""
+				}
+				// tlfun <Name> <ret> <prot-?open|final|abstract>[,infix][,operator][,suspend] [<TP>...] [<param>:<type>]*
+				"tlfun" -> {
+					val fm = parseFunMods(tok.getOrNull(3))
+					val m = ClrMethod(tok[1], tok[2], fm.open, fm.abstract, fm.protected,
+						parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }, fm.infix, fm.operator, fm.suspend, fm.inline, fm.ext)
+					topLevel.add(ClrTopLevel(filePkg ?: FqName.ROOT, fileClass, m))
+				}
+				// tlextprop <Name> <type> <ro|rw> <receiverType> — a top-level EXTENSION property (`val T.p`); the file
+				// class holds its get_/set_<Name>(__self) accessors. Restored as a top-level extension property.
+				"tlextprop" -> topLevelProps.add(ClrTopLevelProp(filePkg ?: FqName.ROOT, fileClass, tok[1], tok[2], tok.getOrNull(3) == "rw", tok[4]))
 				// super <SimpleName>... — the injectable base class (first) + interfaces; wired by ClrSupertypeInjector.
 				"super" -> supers = tok.drop(1)
 				// basector none — the base class has no accessible no-arg ctor (still linked for assignability, but a
@@ -173,11 +204,21 @@ private object ClrMetadataHolder {
 			}
 		}
 		flush()
-		val module = ClrModule(types)
+		val module = ClrModule(types, topLevel, topLevelProps)
+		// Record each restored top-level function so the backend emits its call as a .NET static on the file class.
+		for (tl in topLevel) {
+			val fqn = if (tl.pkg.isRoot) tl.fn.name else "${tl.pkg.asString()}.${tl.fn.name}"
+			ClrTopLevelRegistry.register(fqn, tl.fileClassDotNet, tl.fn.suspend)
+		}
+		// Record each restored top-level extension property so the backend emits its get_/set_ as a .NET static call.
+		for (tp in topLevelProps) {
+			val fqn = if (tp.pkg.isRoot) tp.name else "${tp.pkg.asString()}.${tp.name}"
+			ClrTopLevelRegistry.registerProp(fqn, tp.fileClassDotNet)
+		}
 		for (t in types) {
 			// Register at the real .NET-namespace fqn (e.g. System.Text.StringBuilder), so the backend's clrName
 			// resolves the .NET type for `import System.Text.StringBuilder`. Namespace-less types fall back to bare name.
-			val ns = t.dotNetName.substringBefore('+').substringBeforeLast('.', "")
+			val ns = namespaceOf(t.dotNetName)   // projected Kotlin package (== .NET namespace when unprojected)
 			val fqn = if (ns.isNotEmpty()) "$ns.${t.kotlinName}" else t.kotlinName
 			ClrTypeRegistry.register(fqn, t.dotNetName)
 			for (e in t.events) {
@@ -194,7 +235,7 @@ private object ClrMetadataHolder {
 	// Shared lookups (also used by ClrSupertypeInjector). Each .NET type resolves at its REAL namespace, so
 	// `import System.Text.StringBuilder` works through Kotlin's normal package machinery (the .NET namespace IS the
 	// Kotlin package); nested "+" and generic arity are already stripped in the metadata.
-	fun namespaceOf(dotNet: String): String = dotNet.substringBefore('+').substringBeforeLast('.', "")
+	fun namespaceOf(dotNet: String): String = toKotlinPkg(dotNet.substringBefore('+').substringBeforeLast('.', ""))
 	val byClassId: Map<ClassId, ClrType> by lazy {
 		module?.types?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
 	}
