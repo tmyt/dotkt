@@ -25,7 +25,7 @@ static class IlEmit
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
-            if (rest[i] == "--ref" && i + 1 < rest.Count) { try { Assembly.LoadFrom(Path.GetFullPath(rest[++i])); } catch { } }
+            if (rest[i] == "--ref" && i + 1 < rest.Count) { var rp = Path.GetFullPath(rest[++i]); Emitter.T($"ref: {rp}"); try { Assembly.LoadFrom(rp); } catch { } }
             else bir.Add(rest[i]);
         }
         var files = bir.Select(p => JsonDocument.Parse(File.ReadAllText(p))).ToList();
@@ -64,6 +64,12 @@ sealed class Emitter
     readonly string _asmName;
     readonly Dictionary<string, TypeInfo> _types = new();
     ModuleBuilder _mod;
+
+    // Crash localizer: Reflection.Emit can hard-CRASH the process (access violation, 0xC0000005) — uncatchable — on a
+    // pathological reference (e.g. a WinRT/COM projection type) rather than throwing. With ILEMIT_TRACE set, each pass
+    // step prints (flushed) to stderr, so the LAST line before the crash names the culprit type/method.
+    static readonly bool Trace = Environment.GetEnvironmentVariable("ILEMIT_TRACE") != null;
+    internal static void T(string m) { if (Trace) { Console.Error.WriteLine("[ilemit] " + m); Console.Error.Flush(); } }
 
     // per-method context
     ILGenerator _il;
@@ -188,6 +194,7 @@ sealed class Emitter
         // generic base/interface that references the type's own params resolves).
         foreach (var ti in _types.Values)
         {
+            T($"pass2 parent/iface: {ti.TB?.Name}");
             _curTypeParams = ti.TypeParams;
             // Bounds may reference any type (now all defined) and the type's own params (now in _curTypeParams).
             if (ti.IsGeneric && ti.Def.TryGetProperty("typeParams", out var tps2)) ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface);
@@ -216,6 +223,7 @@ sealed class Emitter
         foreach (var ti in _types.Values)
         {
             if (ti.IsEnum) continue;   // enums are fully defined (literals) in pass 1
+            T($"pass3 signatures: {ti.TB?.Name}");
             _curTypeParams = ti.TypeParams;   // so `gp:T` in field/ctor/method signatures resolves
             if (ti.IsFileClass)
             {
@@ -300,10 +308,10 @@ sealed class Emitter
 
         // Pass 4: emit all bodies (every ctor/method signature already exists).
         foreach (var ti in _types.Values)
-            for (int ci = 0; ci < ti.Ctors.Count; ci++) EmitCtorBody(ti, ti.Ctors[ci], ti.CtorDefs[ci]);
+            for (int ci = 0; ci < ti.Ctors.Count; ci++) { T($"pass4 ctor body: {ti.TB?.Name}#{ci}"); EmitCtorBody(ti, ti.Ctors[ci], ti.CtorDefs[ci]); }
         foreach (var ti in _types.Values)
             if (!ti.IsInterface && !ti.IsEnum)
-                foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) EmitMethodBody(ti, m);
+                foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) { T($"pass4 method body: {ti.TB?.Name}.{(m.TryGetProperty("name", out var mn) ? mn.GetString() : "?")}"); EmitMethodBody(ti, m); }
 
         // User annotations -> .NET custom attributes, applied on the type and its methods (the ctor builder of the
         // synthesized `: System.Attribute` class already exists). Args are compile-time constants.
@@ -345,9 +353,11 @@ sealed class Emitter
             }
 
         // Pass 6: bake types (base before derived). Enums were already baked up front.
-        foreach (var ti in Ordered()) { if (!ti.IsEnum) ti.TB.CreateType(); }
+        foreach (var ti in Ordered()) { if (!ti.IsEnum) { T($"pass6 createType: {ti.TB?.Name}"); ti.TB.CreateType(); } }
 
+        T("save: writing PE");
         Save(ab, entry);
+        T("save: done");
     }
 
     IEnumerable<TypeInfo> Ordered()
