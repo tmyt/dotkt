@@ -50,6 +50,18 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   TypeBuilderInstantiation (throws). Interface-impl linking now enumerates the OPEN
   generic definition and re-anchors each method via `TypeBuilder.GetMethod` (same
   pattern as the self-ref base ctor). `<`/`>`/`<=`/`compareTo`/`sorted()` all work. (`il-comparable`)
+- **`class S : CharSequence`** -> a synthetic `<>dotkt_CharSequence` interface (length
+  getter + get(i) operator + subSequence); no faithful BCL equivalent exists. (`il-charseq`)
+- **`String.substring(start, end)`** used .NET `Substring(start, LENGTH)` directly, but
+  Kotlin's `end` is an EXCLUSIVE INDEX -> the 2-arg form now converts `end -> end - start`
+  (`"hello".substring(1,4)` = "ell", was "ello"). (`il-substr`)
+- **Type-injector metadata** (façade generation), found building a WinUI-on-Kotlin library:
+  - Assignability edge no longer dropped for a non-constructible base (WinRT `UIElement`,
+    `SafeHandle`): the supertype edge is emitted for is-a regardless of a base no-arg ctor;
+    a `basector none` marker suppresses the synthesized `: super()` only. (`il-injbase`)
+  - Member signature types now use the FULLY-QUALIFIED name, so a same-simple-name type from
+    another namespace (`Microsoft.UI.Xaml.LaunchActivatedEventArgs` vs the UWP one) no longer
+    shadows the right one — fixes overrides that "override nothing". (`il-injfqn`)
 
 ## 0.9.1 — 2026-06-23
 
