@@ -25,6 +25,11 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   `operator fun iterator(): Iterator<T>` for any type implementing `IEnumerable<T>`;
   the backend bypasses it and enumerates via GetEnumerator/MoveNext/Current
   (forEachInline). (`il-netenum`)
+- **User class implementing Kotlin `Iterable<T>`** (`class R : Iterable<T>`) crashed
+  ilemit (`KeyNotFoundException 'Iterable'`): `Iterator<T>` had a monomorphized
+  synthetic interface but `Iterable<T>` did not. Added `KIterable_<elem>`
+  (`operator fun iterator(): KIterator_<elem>`), parallel to the existing
+  `KIterator_<elem>`; both the `for` loop and explicit `.iterator()` now work. (`il-iterable`)
 
 ## 0.9.1 — 2026-06-23
 

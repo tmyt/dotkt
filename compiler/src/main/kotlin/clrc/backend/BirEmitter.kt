@@ -238,6 +238,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return kIteratorName(elem)
 	}
 
+	// `kotlin.collections.(Mutable)Iterable<E>` -> a monomorphized synthetic interface `<>dotkt_KIterable_<elem>`
+	// with `operator fun iterator(): KIterator_<elem>` (same IL-can't-define-generic-interface workaround as
+	// Iterator). Lets a user `class R : Iterable<T>` link a real supertype and a `for (x in r)` resolve its iterator.
+	private val iterableIfaces = LinkedHashMap<String, String>()
+	private fun kIterableName(elemBir: String): String =
+		iterableIfaces.getOrPut(elemBir) { kIteratorName(elemBir); "<>dotkt_KIterable_" + elemBir.replace(Regex("[^A-Za-z0-9]"), "_") }
+	private fun iterableElemIface(t: IrType): String? {
+		val fq = t.classFqName?.asString() ?: return null
+		if (fq != "kotlin.collections.Iterable" && fq != "kotlin.collections.MutableIterable") return null
+		val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()
+			?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+		return kIterableName(elem)
+	}
+
 	// kotlin.properties.Read(Write)Property<T,V> -> monomorphized-by-V synthetic interfaces (like the iterator
 	// protocol). The user delegate class implements one of these; getValue/setValue take (thisRef, KProperty[, V]).
 	private val roPropIfaces = LinkedHashMap<String, String>()   // V (birType) -> interface name
@@ -283,6 +297,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val hasNext = """{"name":"hasNext","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":"bool","body":[]}"""
 		val next = """{"name":"next","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":${str(elem)},"body":[]}"""
 		"""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$hasNext,$next]}"""
+	} + iterableIfaces.entries.map { (elem, name) ->
+		// `KIterable_<elem>` -> `iterator(): KIterator_<elem>` (kIterableName already registered the KIterator).
+		val iter = """{"name":"iterator","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":${str("@" + kIteratorName(elem))},"body":[]}"""
+		"""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$iter]}"""
 	}
 
 	// `kotlin.Result<T>` -> the shared `DotKt.Result<T>` struct (T4): runCatching builds it via
@@ -645,7 +663,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val ifq = (st.classifierOrNull?.owner as? IrClass)?.fqNameWhenAvailable?.asString()
 				// .NET-mapped interfaces (e.g. kotlin.coroutines.Continuation) -> their clrg: spec via birType.
 				if (ifq == "kotlin.coroutines.Continuation" || ifq == "kotlinx.coroutines.CancellableContinuation") birType(st)
-				else iteratorElemIface(st) ?: propIface(st) ?: (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
+				else iteratorElemIface(st) ?: iterableElemIface(st) ?: propIface(st) ?: (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
 			}
 			.joinToString(",") { str(it) }
 		// Anonymous objects (lifted, tracked in anonNames) are synthetic -> keep public.
@@ -3336,8 +3354,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		// Instance method on a user class, or a sibling top-level call.
 		return if (recv != null) {
-			// `it.hasNext()`/`it.next()` on a Kotlin iterator -> dispatch on the monomorphized synthetic interface.
-			iteratorElemIface(recv.type)?.let { ifaceName ->
+			// `it.hasNext()`/`it.next()` on a Kotlin iterator, `xs.iterator()` on a Kotlin iterable -> dispatch on the
+			// monomorphized synthetic interface (KIterator_<elem> / KIterable_<elem>).
+			(iteratorElemIface(recv.type) ?: iterableElemIface(recv.type))?.let { ifaceName ->
 				return """{"k":"callInstance","ownerType":${str(ifaceName)},"virtual":true,"recv":${expr(recv)},"method":${str(name)},"args":[$args]}"""
 			}
 			val ownerStr = ownerSpec(declaringClass, recv.type)
@@ -3637,8 +3656,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"kotlin.UByte" -> return "ubyte"
 			"kotlin.UShort" -> return "ushort"
 		}
-		// The Kotlin iterator protocol type -> a monomorphized synthetic interface (`@KIterator_<elem>`).
+		// The Kotlin iterator/iterable protocol types -> a monomorphized synthetic interface (`@KIterator_<elem>` /
+		// `@KIterable_<elem>`).
 		iteratorElemIface(t)?.let { return "@$it" }
+		iterableElemIface(t)?.let { return "@$it" }
 		val klass = t.classifierOrNull?.owner as? IrClass
 		// A @Clr / FIR-injected .NET type ("clr:System.Text.StringBuilder"); a constructed generic .NET type
 		// (`Collection<Int>`) carries its concrete args as `clrg:<openName>[int]`.
