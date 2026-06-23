@@ -1287,7 +1287,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			else
 				"""{"k":"setField","ownerType":${str(ownerSpec(ownerClass, node.receiver?.type))},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
 		}
-		is IrReturn -> if (node.value.type.isUnit()) """{"k":"return"}""" else """{"k":"return","value":${expr(node.value)}}"""
+		is IrReturn ->
+			// A Unit-typed return VALUE can still be a side-effecting expression — e.g. an expression-body
+			// `fun main() = winUiApp { … }` or `return doCleanup()`. It must be EVALUATED, then a bare return; emitting
+			// a bare `{"k":"return"}` (the old behavior) silently dropped the call. A plain Unit reference
+			// (`return` / `return Unit`, an IrGetObjectValue) has nothing to evaluate.
+			if (!node.value.type.isUnit()) """{"k":"return","value":${expr(node.value)}}"""
+			else if (node.value is IrGetObjectValue) """{"k":"return"}"""
+			else """{"k":"exprStmt","expr":${expr(node.value)}},{"k":"return"}"""
 		// E-0.5: `while`/`do-while` lower to a CFG block (label/brIf/goto) — the natural IL substrate; break/continue
 		// inside become `goto` to the loop's break/continue label (incl. `break@outer`, matched by loop identity).
 		// `for`/range stays structured (birForLoop) until §5.4; its break/continue fall to the structured nodes.

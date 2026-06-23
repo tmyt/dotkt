@@ -80,6 +80,12 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   - `ilemit` gained an `ILEMIT_TRACE` env switch that prints each emission step (ref load,
     parents, signatures, bodies, createType, save) flushed to stderr — so a Reflection.Emit
     hard-crash (uncatchable AV, exit 0xC0000005) can be localized to the culprit type/method.
+- **Expression-body function with a Unit-typed body dropped the call** — `IrReturn(<expr>)`
+  emitted a bare `{"k":"return"}` when the value's type was `Unit`, discarding the
+  expression. So `fun main() = winUiApp { … }` (and `fun f() = sideEffect()`, or an explicit
+  `return doCleanup()`) launched/ran NOTHING. A Unit-typed return value is now EVALUATED
+  (`exprStmt`) before the bare return; only a plain Unit reference (`return`/`return Unit`)
+  stays a bare return. (`il-exprbody`)
 - **Unsigned .NET parameter types weren't mapped to Kotlin unsigned types** — facadegen's
   primitive map had `System.Int32→Int` etc. but no `System.UInt32`/`UInt64`/`UInt16`, so a
   `uint` parameter surfaced as the bare name `UInt32`, which doesn't unify with `kotlin.UInt`
