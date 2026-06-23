@@ -339,9 +339,35 @@ sealed class Emitter
                 foreach (var a in tattrs.EnumerateArray()) ti.TB.SetCustomAttribute(BuildCab(a));
             if (ti.Def.TryGetProperty("methods", out var ms))
                 foreach (var m in ms.EnumerateArray())
-                    if (m.TryGetProperty("attrs", out var mattrs) && mattrs.GetArrayLength() > 0
-                        && ti.Methods.TryGetValue(m.GetProperty("name").GetString(), out var mb))
-                        foreach (var a in mattrs.EnumerateArray()) mb.SetCustomAttribute(BuildCab(a));
+                {
+                    if (!(m.TryGetProperty("attrs", out var mattrs) && mattrs.GetArrayLength() > 0)
+                        || !ti.Methods.TryGetValue(m.GetProperty("name").GetString(), out var mb)) continue;
+                    foreach (var a in mattrs.EnumerateArray()) mb.SetCustomAttribute(BuildCab(a));
+                }
+            // DotKt metadata: stamp Kotlin modifiers with no .NET analog so a consuming Kotlin module can restore
+            // them. [KotlinFile] on a file-facade class -> its statics are top-level fns; [KotlinFunction(flags)] on
+            // methods carrying infix/operator/suspend. No-op when DotKt.Runtime isn't referenced (attrs unresolved).
+            if (ti.IsFileClass) ApplyKotlinFile(ti.TB);
+            if (ti.Def.TryGetProperty("methods", out var kms))
+                foreach (var m in kms.EnumerateArray())
+                {
+                    int kf = 0;
+                    if (m.TryGetProperty("infix", out var inf) && inf.GetBoolean()) kf |= 1;       // KotlinFunctionFlags.Infix
+                    if (m.TryGetProperty("operator", out var op) && op.GetBoolean()) kf |= 2;       // .Operator
+                    if (m.TryGetProperty("suspend", out var su) && su.GetBoolean()) kf |= 4;        // .Suspend
+                    bool inl = m.TryGetProperty("inline", out var il) && il.GetBoolean();
+                    // Nullability mask: bit 0 = return nullable, bit (i+1) = param i nullable.
+                    uint nmask = 0;
+                    if (m.TryGetProperty("retNullable", out var rn) && rn.GetBoolean()) nmask |= 1u;
+                    if (m.TryGetProperty("params", out var nps)) { int pi = 0; foreach (var p in nps.EnumerateArray()) { if (p.TryGetProperty("nullable", out var pn) && pn.GetBoolean()) nmask |= 1u << (pi + 1); pi++; } }
+                    if (kf == 0 && !inl && nmask == 0) continue;
+                    var name = m.GetProperty("name").GetString();
+                    if (!ti.MethodsBySig.TryGetValue(SigKey(name, m), out var mb) && !ti.Methods.TryGetValue(name, out mb)) continue;
+                    if (kf != 0) ApplyKotlinFunction(mb, kf);
+                    // [KotlinInline(body)]: carry this inline+lambda fn's BIR (params + body) so a consumer can splice it.
+                    if (inl) ApplyKotlinInline(mb, "{\"params\":" + m.GetProperty("params").GetRawText() + ",\"body\":" + m.GetProperty("body").GetRawText() + "}");
+                    if (nmask != 0) ApplyKotlinNullable(mb, nmask);
+                }
         }
 
         // Pass 4b: static-field initializers (companion `val`s) -> a type initializer (.cctor).
@@ -481,6 +507,7 @@ sealed class Emitter
                 _curMethodParams = null;
                 ti.Methods[name] = smb; ti.MethodsBySig[SigKey(name, m)] = smb;
                 _mparams[smb] = sps2;
+                DefineParamNames(smb, m);
                 return;
             }
             var taskRet = rs == "void" ? typeof(System.Threading.Tasks.Task)
@@ -489,6 +516,7 @@ sealed class Emitter
             smb = ti.TB.DefineMethod(name, attrs, taskRet, sps);
             ti.Methods[name] = smb; ti.MethodsBySig[SigKey(name, m)] = smb;
             _mparams[smb] = sps;
+            DefineParamNames(smb, m);
             return;
         }
 
@@ -519,6 +547,7 @@ sealed class Emitter
         }
         ti.Methods[name] = mb; ti.MethodsBySig[SigKey(name, m)] = mb;
         _mparams[mb] = ps;   // MethodBuilder.GetParameters() throws pre-bake; record param types for call-site boxing
+        DefineParamNames(mb, m);
         if (objOverride)
         {
             var objM = name switch
@@ -869,6 +898,40 @@ sealed class Emitter
     // TypeBuilder.GetField/GetConstructor(constructed, def); on a non-generic SM, the def itself.
     static FieldInfo SmField(Type inst, FieldBuilder def) => inst.IsGenericType ? TypeBuilder.GetField(inst, def) : def;
     static ConstructorInfo SmCtor(Type inst, ConstructorBuilder def) => inst.IsGenericType ? TypeBuilder.GetConstructor(inst, def) : def;
+
+    // Resolve a (unique-by-name) method on a possibly TypeBuilder-instantiated generic type. When the result type of
+    // a `suspend fun` is a USER type, AsyncTaskMethodBuilder<UserT>/Task<UserT>/TaskAwaiter<UserT> are
+    // TypeBuilderInstantiations, whose GetMethod throws "use TypeBuilder.GetMethod instead" — so re-anchor the open
+    // definition's method onto the instantiation. Baked instantiations / non-generic types resolve directly. This is
+    // the method-side counterpart of SmCtor; it unblocks member `suspend fun`s returning a user class.
+    static MethodInfo GenM(Type t, string name)
+    {
+        try { return t.GetMethod(name); }
+        catch (NotSupportedException) { return TypeBuilder.GetMethod(t, t.GetGenericTypeDefinition().GetMethod(name)); }
+    }
+
+    // Emit parameter NAMES into the metadata (DefineParameter is 1-based; 0 = return). ilemit otherwise defines
+    // methods by type only, so the names are lost — and facadegen falls back to arg0/arg1, which blocks named-argument
+    // calls across an assembly boundary. The names come straight from the BIR params.
+    static void DefineParamNames(MethodBuilder mb, JsonElement m)
+    {
+        if (!m.TryGetProperty("params", out var ps)) return;
+        int i = 1;
+        foreach (var p in ps.EnumerateArray())
+        {
+            var name = (p.TryGetProperty("name", out var nn) ? nn.GetString() : null) ?? "";
+            bool vararg = p.TryGetProperty("vararg", out var vv) && vv.GetBoolean();
+            bool hasDefault = p.TryGetProperty("default", out var dflt);
+            if (name.Length == 0 && !vararg && !hasDefault) { i++; continue; }
+            // A constant default -> [Optional] + DefaultParameterValue, so a cross-module caller can omit the arg.
+            var attrs = hasDefault ? ParameterAttributes.Optional | ParameterAttributes.HasDefault : ParameterAttributes.None;
+            var pb = mb.DefineParameter(i, attrs, name.Length > 0 ? name : null);
+            // `vararg xs: T` -> [ParamArray] so the .NET signature is a params array (a C# OR Kotlin consumer can spread).
+            if (vararg) pb.SetCustomAttribute(new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+            if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
+            i++;
+        }
+    }
 
     // Close a coroutine try region (shared by the struct & class SM forms). A `finally` around a suspension is NOT
     // emitted as a CLR finally clause (a suspend `leave`s the .try, which would run a real finally on every
@@ -3375,6 +3438,9 @@ sealed class Emitter
             // declaring one, construct it with this type's args (shared type parameters) and re-anchor. See item 3.
             else mi = ResolveInheritedIfaceMethod(open, typeArgs, name, argSpecs.Count, flags);
         }
+        // Last resort: a UNIQUELY-named method (covers e.g. a `params`/vararg method called with one array arg whose
+        // static argType — `object` — didn't match the `T[]` param, so neither exact nor arity resolution hit).
+        if (mi == null) { var named = type.GetMethods(flags).Where(m => m.Name == name).ToList(); if (named.Count == 1) mi = named[0]; }
         // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
         if (instance) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitArgs(e.GetProperty("args"), mi.GetParameters());
@@ -3590,6 +3656,8 @@ sealed class Emitter
     void EmitDefaultArg(ParameterInfo p)
     {
         var pt = p.ParameterType;
+        // An omitted `vararg` ([ParamArray]) -> an EMPTY array, not null (the callee iterates it).
+        if (pt.IsArray && p.IsDefined(typeof(ParamArrayAttribute), false)) { EmitLdcI4(0); _il.Emit(OpCodes.Newarr, pt.GetElementType()); return; }
         var dv = p.HasDefaultValue ? p.DefaultValue : null;
         switch (dv)
         {

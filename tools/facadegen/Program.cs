@@ -235,7 +235,7 @@ static class FacadeGen
                     if (!iseen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
                     var toks = new List<string> { "fun", m.Name, MapRet(m.ReturnType, t), "abstract" };
                     toks.AddRange(gp);
-                    toks.AddRange(ps.Select((p, i) => $"{MetaParamName(p, i)}:{Map(p.ParameterType, t)}"));
+                    toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t)));
                     sb.Append(string.Join(" ", toks) + "\n");
                 }
                 // Interface properties (Count, IsReadOnly, ...) + indexer (`this[i]`) -> abstract members so member
@@ -411,14 +411,19 @@ static class FacadeGen
                 if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
                 var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                 var ps = m.GetParameters();
-                if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
+                // DotKt round-trip: a `suspend fun` is emitted returning Task<T>; restore the result type T and gate on it.
+                var k = KotlinFun(m);
+                var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
+                if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
                 if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-                // `fun <Name> <ret> <prot-?open|final|abstract> [<TypeParam>...] [<param>:<type>]*` — bare trailing
-                // tokens (no `:`) are method type parameters; tokens with `:` are value params.
+                // `fun <Name> <ret> <prot-?open|final|abstract>[,infix][,operator][,suspend] [<TypeParam>...] [<param>:<type>]*`
+                // — the modifier stays a single whitespace-free token; bare trailing tokens (no `:`) are type params.
                 var virt = m.IsVirtual && !m.IsFinal;
-                var toks = new List<string> { "fun", m.Name, MapRet(m.ReturnType, t), Modifier(prot.Value, m.IsAbstract, virt) };
+                var nmask = KotlinNullMask(m);   // Kotlin nullability ([KotlinNullable]): `?` on return (bit 0) / params (bit i+1)
+                var retTok = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + NullSuffix(nmask, 0);
+                var toks = new List<string> { "fun", m.Name, retTok, FunModifier(Modifier(prot.Value, m.IsAbstract, virt), k) };
                 toks.AddRange(gp);
-                toks.AddRange(ps.Select((p, i) => $"{MetaParamName(p, i)}:{Map(p.ParameterType, t)}"));
+                toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t, nmask)));
                 sb.Append(string.Join(" ", toks) + "\n");
             }
             // (explicit impl) Emit concrete stubs for in-scope members of the generic interfaces this class implements
@@ -806,7 +811,28 @@ static class FacadeGen
     static string MapRet(Type t, Type self) => Map(t.IsByRef ? t.GetElementType() : t, self);
 
     static string MetaParams(ParameterInfo[] ps, Type self) =>
-        string.Join(" ", ps.Select((p, i) => $"{MetaParamName(p, i)}:{Map(p.ParameterType, self)}"));
+        string.Join(" ", ps.Select((p, i) => ParamTok(p, i, self)));
+
+    // `<name>:<type>` for a meta param; a [ParamArray] (Kotlin `vararg`) -> `<name>:vararg:<elementType>` so the
+    // injector restores a `vararg <name>: <elem>` (a cross-module consumer can then call `f(1, 2, 3)`).
+    static string ParamTok(ParameterInfo p, int i, Type self, uint nmask = 0)
+    {
+        // `?` (nullable) rides the END of the type token (the injector strips it); param i is bit (i+1) of the mask.
+        var nul = NullSuffix(nmask, i + 1);
+        if (p.ParameterType.IsArray && IsParamArray(p))
+            return $"{MetaParamName(p, i)}:vararg:{Map(p.ParameterType.GetElementType(), self)}{nul}";
+        var t = Map(p.ParameterType, self);
+        // A Kotlin default arg ([Optional]+DefaultParameterValue) -> `opt:<type>` so the injector lets the consumer
+        // omit it (ilemit then fills the .NET default value at the call site).
+        if (HasDefault(p)) t = "opt:" + t;
+        return $"{MetaParamName(p, i)}:{t}{nul}";
+    }
+    static bool HasDefault(ParameterInfo p) { try { return p.HasDefaultValue && !p.IsOut; } catch { return false; } }
+    static bool IsParamArray(ParameterInfo p)
+    {
+        try { return p.GetCustomAttributesData().Any(c => c.AttributeType.FullName == "System.ParamArrayAttribute"); }
+        catch { return false; }
+    }
 
     static string MetaParamName(ParameterInfo p, int i)
     {

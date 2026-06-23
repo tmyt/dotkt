@@ -848,8 +848,26 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Object-overrides / interface members must stay public for virtual dispatch.
 		val vis = if (objName != null || clrIfaceName != null) "public" else visOf(fn)
 		val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
-		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)},"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]}"""
+		// Kotlin modifiers with no .NET analog -> stamped as [KotlinFunction] by ilemit so a consuming Kotlin module
+		// can restore them (infix/operator call resolution). `final/open/abstract` ride .NET virtual-ness already.
+		val kmods = kotlinModsJson(fn)
+		// A user `inline fun` that takes a lambda param: ilemit additionally stamps [KotlinInlineBody] with this body
+		// (this method def IS the body), so a consuming module can splice it at the call site — the only way a
+		// cross-module non-local `return` through the lambda can work (DotKt inlines at emit, needing the body).
+		val inlineFlag = if (isInlineWithLambda(fn)) ""","inline":true""" else ""
+		// Return nullability (`fun f(): String?`) — the params carry their own `nullable` flag; ilemit folds both into [KotlinNullable].
+		val retNull = if (fn.returnType.isMarkedNullable()) ""","retNullable":true""" else ""
+		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]}"""
 	}
+
+	/** `infix`/`operator` flags as BIR JSON fragments (only emitted when set), shared by the regular + suspend paths. */
+	private fun kotlinModsJson(fn: IrSimpleFunction): String =
+		(if (fn.isInfix) ""","infix":true""" else "") + (if (fn.isOperator) ""","operator":true""" else "")
+
+	/** An `inline fun` with at least one (inlinable) lambda parameter — the only inline shape whose body must travel
+	 *  for cross-module consumption (lambda-less inline funs degrade to ordinary calls; the JIT inlines those). */
+	private fun isInlineWithLambda(fn: IrSimpleFunction): Boolean =
+		fn.isInline && fn.parameters.any { it.kind == IrParameterKind.Regular && !it.isNoinline && birType(it.type).startsWith("func:") }
 
 	// ===== Coroutine (suspend fun) -> CLR-native async state machine (strategy B) =====
 	// A `suspend fun f(args): T` lowers to a kickoff `Task<T> f(args)` + a struct IAsyncStateMachine (emitted by
@@ -1296,7 +1314,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	private fun paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): List<String> =
 		params.filter { it.kind == IrParameterKind.Regular }
-			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
+			.map {
+				// `vararg xs: T` -> mark the param so ilemit stamps [ParamArray] (native .NET varargs; a cross-module
+				// consumer can then call `f(1, 2, 3)`). A nullable type rides a `nullable` flag (ref types are nullable
+				// in IL anyway; the flag is for the consumer's FIR to restore `T?`).
+				val vararg = if (it.varargElementType != null) ""","vararg":true""" else ""
+				val nullable = if (it.type.isMarkedNullable()) ""","nullable":true""" else ""
+				// A CONSTANT default arg -> carry it so ilemit stamps [DefaultParameterValue]; a cross-module caller can
+				// then omit the arg (ilemit's EmitDefaultArg fills it from the .NET metadata). Non-const defaults are dropped.
+				val default = (it.defaultValue?.expression as? org.jetbrains.kotlin.ir.expressions.IrConst)?.let { c -> ""","default":${expr(c)}""" } ?: ""
+				"""{"name":${str(it.name.asString())},"type":${str(birType(it.type))}$vararg$nullable$default}"""
+			}
 
 	/** A `,"sig":"<paramtypes>"` field carried on a call so ilemit resolves the right OVERLOAD by name+signature. Emit
 	 *  it ALWAYS: for a non-overloaded callee it's harmless (ilemit's `MethodsBySig` lookup hits the sole method, or

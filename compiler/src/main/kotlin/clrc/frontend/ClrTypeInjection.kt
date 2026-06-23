@@ -38,6 +38,8 @@ import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.fir.types.constructType
+import org.jetbrains.kotlin.fir.types.typeContext
+import org.jetbrains.kotlin.fir.types.withNullability
 import org.jetbrains.kotlin.fir.types.impl.ConeClassLikeTypeImpl
 import org.jetbrains.kotlin.fir.symbols.impl.ConeClassLikeLookupTagImpl
 import org.jetbrains.kotlin.name.CallableId
@@ -530,16 +532,26 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 
 		val overloads = type.methods.filter { it.name == callName }
 		// Member name == .NET name verbatim, so the backend emits the call as-is (no per-member map).
-		return overloads.map { m ->
+		return overloads.flatMap { m ->
 			if (m.typeParams.isEmpty()) {
+				// Default args: @JvmOverloads-style — one overload per trailing contiguous default param omitted (a plugin
+				// `hasDefaultValue` would insert a fir2ir-crashing STUB). The consumer resolves by arity; ilemit fills the
+				// omitted args from [DefaultParameterValue]. trailingOpt==0 (the common case) => exactly one function.
+				val trailingOpt = m.params.reversed().takeWhile { it.type.startsWith("opt:") }.count()
+				((m.params.size - trailingOpt)..m.params.size).map { arity ->
 				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
 					// interface members + .NET abstract => ABSTRACT (must implement); .NET virtual => OPEN (overridable).
 					if (type.isInterface || m.abstract) modality = Modality.ABSTRACT
 					else if (m.open && !type.isObject) modality = Modality.OPEN
 					if (m.protected) visibility = Visibilities.Protected   // overridable protected lifecycle methods (item 2)
-					for (p in m.params) valueParameter(Name.identifier(p.name), coneOf(p.type, owner))
+					// DotKt round-trip: Kotlin modifiers with no .NET analog, restored from [KotlinFunction].
+					if (m.infix || m.operator || m.suspend) status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
+					for (p in m.params.take(arity))
+						if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), coneOf("array:" + p.type.removePrefix("vararg:"), owner), isVararg = true)
+						else valueParameter(Name.identifier(p.name), coneOf(p.type, owner))
 				}.symbol
-			} else {
+				}
+			} else listOf(
 				// A generic .NET method (`SizeOf<T>()`, `As<T>(o): T`). Declare its method type parameters, then
 				// resolve the return type and any T-typed value params against THOSE params (via the provider forms,
 				// since the type params don't exist until the function is being built). The CLR has reified generics,
@@ -624,7 +636,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		session.symbolProvider.getClassLikeSymbolByClassId(spanClassId)?.constructType(arrayOf(arg), false)
 			?: session.builtinTypes.nullableAnyType.coneType
 
-	private fun coneOf(typeName: String, owner: FirClassSymbol<*>): ConeKotlinType {
+	private fun coneOf(typeName: String, owner: FirClassSymbol<*>?): ConeKotlinType {
+		// A trailing `?` -> the Kotlin nullable form `T?` (so a consumer can pass/handle null). Carried by [KotlinNullable].
+		if (typeName.endsWith("?")) return coneOf(typeName.dropLast(1), owner).withNullability(true, session.typeContext)
+		// `opt:T` marks a default-arg param (the optionality is set via hasDefaultValue at the param; the type is T).
+		if (typeName.startsWith("opt:")) return coneOf(typeName.removePrefix("opt:"), owner)
 		// A .NET out/ref param / ref return (`byref:Int`) -> the intrinsic `ClrRef<Int>`.
 		if (typeName.startsWith("byref:")) return clrRefOf(coneOf(typeName.removePrefix("byref:"), owner))
 		// A .NET `Span<T>` param (`span:Int`) -> the intrinsic `Span<Int>` (the real System.Span<Int>).
