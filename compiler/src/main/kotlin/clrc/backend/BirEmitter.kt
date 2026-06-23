@@ -252,6 +252,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return kIterableName(elem)
 	}
 
+	// kotlin.CharSequence has no faithful .NET equivalent (it's a read-only INDEXED polymorphic char view — neither
+	// IEnumerable<char>, char[], nor IReadOnlyList<char> fits, and String doesn't implement any of them as a common
+	// supertype). So a user `class S : CharSequence` gets a synthetic monomorphized interface `<>dotkt_CharSequence`
+	// (length getter + get(i) operator + subSequence). To pass a .NET string API, call `.toString()`.
+	private var usesCharSeq = false
+	private fun charSeqIface(t: IrType): String? =
+		if (t.classFqName?.asString() == "kotlin.CharSequence") { usesCharSeq = true; "<>dotkt_CharSequence" } else null
+	private fun charSeqIfaceDefs(): List<String> = if (!usesCharSeq) emptyList() else listOf({
+		val getLen = """{"name":"get_length","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":"int","body":[]}"""
+		val get = """{"name":"get","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[{"name":"index","type":"int"}],"ret":"char","body":[]}"""
+		val subSeq = """{"name":"subSequence","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[{"name":"startIndex","type":"int"},{"name":"endIndex","type":"int"}],"ret":"@<>dotkt_CharSequence","body":[]}"""
+		"""{"name":"<>dotkt_CharSequence","kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$getLen,$get,$subSeq]}"""
+	}())
+
 	// kotlin.properties.Read(Write)Property<T,V> -> monomorphized-by-V synthetic interfaces (like the iterator
 	// protocol). The user delegate class implements one of these; getValue/setValue take (thisRef, KProperty[, V]).
 	private val roPropIfaces = LinkedHashMap<String, String>()   // V (birType) -> interface name
@@ -403,7 +417,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
 		// kPropertyDefs/propIfaceDefs, which read flags/maps the producers populate).
 		val synthDelegateTypes = synthDelegateDefs.joinToString(",").let { if (it.isEmpty()) emptyList() else listOf(it) }
-		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
+		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
 
@@ -573,9 +587,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return walk(start)
 	}
 
+	// Considers the function itself AND any member it overrides — so it maps both a user override of a .NET-mapped
+	// iface member AND a direct call on an iface-typed value (e.g. `cs.length` where cs: CharSequence).
 	private fun clrIfaceMemberName(fn: IrSimpleFunction): String? =
-		fn.overriddenSymbols.firstNotNullOfOrNull { s ->
-			val owner = s.owner
+		(sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).firstNotNullOfOrNull { owner ->
 			val ifaceFq = (owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
 			val mn = owner.name.asString()
 			when (ifaceFq) {
@@ -588,6 +603,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				"kotlin.Comparable" -> if (mn == "compareTo") "CompareTo" else null
 				"kotlin.Comparator", "java.util.Comparator" -> if (mn == "compare") "Compare" else null
 				"kotlin.AutoCloseable", "java.lang.AutoCloseable", "java.io.Closeable", "kotlin.io.Closeable" -> if (mn == "close") "Dispose" else null
+				// CharSequence -> synthetic <>dotkt_CharSequence: the `length` property getter must be emitted (the
+				// override has a non-empty overriddenSymbols so isCustomAccessor is false). get/subSequence keep names.
+				"kotlin.CharSequence" -> if (owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
 				else -> null
 			}
 		}
@@ -693,7 +711,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
 				val bt = birType(st)
 				if (bt.startsWith("clr:") || bt.startsWith("clrg:")) bt
-				else iteratorElemIface(st) ?: iterableElemIface(st) ?: propIface(st) ?: (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
+				else iteratorElemIface(st) ?: iterableElemIface(st) ?: charSeqIface(st) ?: propIface(st) ?: (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
 			}
 			.joinToString(",") { str(it) }
 		// Anonymous objects (lifted, tracked in anonNames) are synthetic -> keep public.
@@ -1183,6 +1201,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 */
 	private fun ownerSpec(klass: IrClass?, recvType: IrType?): String {
 		klass ?: return "?"
+		// CharSequence (declaring class of a call on a CharSequence-typed value) -> the synthetic interface name.
+		if (klass.fqNameWhenAvailable?.asString() == "kotlin.CharSequence") { usesCharSeq = true; return "<>dotkt_CharSequence" }
 		val name = typeName(klass)
 		if (klass.typeParameters.isEmpty()) return name
 		val args = (recvType as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }
@@ -3195,12 +3215,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val recv = recvExpr?.let { expr(it) } ?: """{"k":"this"}"""
 			val ownerStr = ownerSpec(declaringClass, recvExpr?.type)
 			val owner = str(ownerStr)
-			// A property with a custom accessor -> route through the get_/set_ method (not the backing field).
-			if (hasCustomAccessor(property)) {
+			// A property with a custom accessor — OR one overriding a .NET/synthetic-mapped iface property (e.g.
+			// CharSequence.length -> get_length) — routes through the get_/set_ method, not the backing field.
+			val ifaceAcc = clrIfaceMemberName(callee)
+			if (hasCustomAccessor(property) || ifaceAcc != null) {
 				val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
 				return if (callee === property.setter)
-					"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("set_" + property.name.asString())},"args":[${expr(regularArgs(call).first())}]}"""
-				else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("get_" + property.name.asString())},"args":[]${retHint('[' in ownerStr, call.type)}}"""
+					"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "set_" + property.name.asString())},"args":[${expr(regularArgs(call).first())}]}"""
+				else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "get_" + property.name.asString())},"args":[]${retHint('[' in ownerStr, call.type)}}"""
 			}
 			return if (callee === property.setter)
 				"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
@@ -3366,6 +3388,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				if (name == "split") extensionReceiver(call)?.let { recv ->
 					val seps = (regularArgs(call).firstOrNull() as? IrVararg)?.elements?.filterIsInstance<IrExpression>().orEmpty()
 					return """{"k":"split","recv":${expr(recv)},"seps":[${seps.joinToString(",") { expr(it) }}]}"""
+				}
+				// Kotlin `substring(start, end)` takes an END index (exclusive); .NET `Substring(start, LENGTH)`.
+				// Convert end -> (end - start). (1-arg `substring(start)` matches .NET Substring(start) as-is.)
+				if (name == "substring" && regularArgs(call).size == 2) {
+					val recv = extensionReceiver(call) ?: dispatchReceiver(call)
+					if (recv != null) {
+						val a = regularArgs(call)
+						val len = """{"k":"bin","op":"-","l":${expr(a[1])},"r":${expr(a[0])}}"""
+						return """{"k":"clrInstance","type":"System.String","method":"Substring","argTypes":["System.Int32","System.Int32"],"ret":"System.String","recv":${expr(recv)},"args":[${expr(a[0])},$len]}"""
+					}
 				}
 				// String ops -> `System.String` instance methods (clrInstance; ilemit resolves overload).
 				STRING_OPS[name]?.let { m ->
@@ -3665,6 +3697,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		if (fqp == "kotlin.AutoCloseable" || fqp == "java.lang.AutoCloseable" || fqp == "java.io.Closeable" || fqp == "kotlin.io.Closeable")
 			return "clr:System.IDisposable"
+		// kotlin.CharSequence -> a synthetic interface (no faithful .NET equivalent). See charSeqIface.
+		charSeqIface(t)?.let { return "@$it" }
 		// A function type as a value (e.g. a `block: suspend (P)->R` parameter): `kotlin.FunctionN` -> Func/Action,
 		// `kotlin.coroutines.SuspendFunctionN` -> Func<P..,Task<R>> (suspend lambdas are Func<..,Task<R>> in the ABI).
 		if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.Function"))) {
