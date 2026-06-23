@@ -267,8 +267,10 @@ sealed class Emitter
                             _ => FieldAttributes.Public,
                         };
                         if (f.TryGetProperty("static", out var st) && st.GetBoolean()) fattrs |= FieldAttributes.Static;
-                        ti.Fields[f.GetProperty("name").GetString()] =
-                            ti.TB.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), fattrs);
+                        var fb = ti.TB.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), fattrs);
+                        // A not-publicly-settable property's backing field -> [KotlinReadOnly] (consumer restores it as `val`).
+                        if (f.TryGetProperty("readOnly", out var ro) && ro.GetBoolean()) ApplyKotlinReadOnly(fb);
+                        ti.Fields[f.GetProperty("name").GetString()] = fb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: false);
                 var ctors = ti.Def.GetProperty("ctors");
@@ -3462,8 +3464,17 @@ sealed class Emitter
         var getter = PropAccessor(type, propName, getter: true);
         if (getter == null)
         {
-            // Not a property: a .NET FIELD surfaced as a Kotlin property (facadegen records static/const fields, and
-            // public instance fields, as `sprop`). Emit a field access instead of a getter call.
+            // Not a .NET property. A DotKt custom-accessor property is a plain `get_<name>` METHOD (no PropertyDef) ->
+            // call it. (A backing-field property is a public FIELD -> field access below.)
+            var gm = type.GetMethod("get_" + propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            if (gm != null)
+            {
+                if (!isStatic && !gm.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
+                _il.Emit(gm.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, gm);
+                return gm.ReturnType;
+            }
+            // A .NET FIELD surfaced as a Kotlin property (facadegen records static/const fields, public instance fields,
+            // and Kotlin backing-field properties). Emit a field access instead of a getter call.
             var fld = type.GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
                 ?? throw new InvalidOperationException($"ilemit: no readable property OR field '{propName}' on .NET type '{type}' (spec '{typeName}'). Available properties: [{PropList(type)}]");
             // A `const` (literal) field has no storage — `ldsfld` is invalid (and a memberref to it fails). Inline its

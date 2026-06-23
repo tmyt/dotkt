@@ -73,6 +73,35 @@ DotKt が出した dll を、別の Kotlin コンパイルから `import` して
 
 現状の運用は「触る型は明示 import」。優先度は中（WinUI のような型リッチな相互運用で効く）。
 
+## 5. ラウンドトリップ抜け漏れ一覧（検証済み 2026-06-24）
+
+#2 のうち **infix / operator（`+` `<` `in` `()` `[]`…）/ suspend / top-level / inline（non-local return 含む）/
+reified（落とす）** は実装済み（`docs/design-kotlin-metadata-attributes.md`、`scripts/verify-roundtrip.sh`）。
+クロスモジュール消費を実機プローブした結果、**まだ Kotlin 形へ復元されない**もの:
+
+**完了（2026-06-24 ✅ 全解消）**: 下表の構文はすべてクロスモジュールで Kotlin 形に復元される。`scripts/verify-roundtrip.sh`
+roundtrip-pkg で常設、各実装で verify-il 緑。
+
+| 構文 | 復元方法 |
+|---|---|
+| **プロパティ** `val`/`var`・カスタム getter | facadegen が public field / 非 special な `get_`/`set_` を `prop` 化、ilemit `clrPropGet/Set` が field→`get_`/`set_` フォールバック（emit refactor 不要・既存 field-fallback 活用） |
+| **非対称可視性** `val` / `var ... private set` | not-publicly-settable な backing field に `[KotlinReadOnly]`、facadegen が `ro` で出す → 消費側は `val`（外部書込拒否）。`val x` が `rw` で出ていた健全性バグも同時解消 |
+| **拡張関数** `fun T.f()` / **トップレベル拡張演算子** `operator fun T.plus` | facadegen `__self`→`,ext`、injector `extensionReceiverType`（operator と合成）。`isBuiltin` の top-level 誤判定（`+`→`bin`）も修正 |
+| **拡張プロパティ** `val T.p` | BirEmitter が backing-field 無しトップレベルプロパティの `get_/set_<name>(__self)` を static 出力、facadegen `tlextprop`、injector `createTopLevelProperty + extensionReceiverType`、backend が `x.p`→`clrStatic get_/set_(receiver)` |
+| **vararg** `vararg xs: T` | ilemit `[ParamArray]`、facadegen `vararg:<elem>`、injector `isVararg`。空 `f()` は ilemit が空配列を補填 |
+| **デフォルト引数** `f(x = 5)`（定数・末尾省略） | @JvmOverloads 方式：末尾デフォルト T 個 → T+1 オーバーロード注入（`hasDefaultValue` は fir2ir を STUB で落とすため不可）。ilemit `[DefaultParameterValue]` を `EmitDefaultArg` が呼出側で補填 |
+| **nullable** `String?` | BIR の param/return nullable → ilemit `[KotlinNullable(mask)]`（bit0=戻り, biti+1=param i）→ facadegen `?` サフィックス → injector `withNullability`。型レベルで本物（null 非許容 param への null は拒否） |
+| **data class** | 派生で自動成立（プロパティ + componentN operator〔往復済〕 + equals/toString〔.NET ディスパッチ〕）。`data` 修飾子は復元しない（消費側 fir2ir が二重合成して衝突するため・メンバ駆動で十分） |
+
+**残る既知の限界**（往復のブロッカーではない）: デフォルト引数の**名前付き中間省略**（`copy(y=5)` は非定数デフォルト `this.x`
+を要し JVM の `copy$default` 相当が必要）・**ジェネリッククラスの消費側**・**object シングルト**ンは別途。`private`/`internal`
+メンバは非エクスポートで往復対象外。
+
+**設計メモ**: プロパティ往復は emit 側の .NET プロパティ化（private backing + PropertyDef + accessor）も選択肢だったが、
+ilemit の既存 field-fallback を活かす facadegen 側復元の方が低リスクで全 property サンプル無回帰を達成。`private set` の
+非対称可視性は `[KotlinReadOnly]` マーカーで運ぶ（フィールドは public のまま＝同一モジュール/C# 書込は可、Kotlin 消費側
+のみ読取専用）。新メタ属性は `[KotlinNullable]`・`[KotlinReadOnly]`（`DotKt.Runtime/Metadata.cs`）。
+
 ## メモ
 
 - #2/#3 は対で、「DotKt 製ライブラリ（dotktx.* 含む）を Kotlin から自然に使う」体験を作る。

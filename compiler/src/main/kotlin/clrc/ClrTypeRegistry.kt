@@ -20,6 +20,27 @@ object ClrTypeRegistry {
 }
 
 /**
+ * DotKt round-trip: a Kotlin top-level function compiles to a static method of a `<File>Kt` facade class. When
+ * such an assembly is consumed AS KOTLIN, the FIR injector restores those statics as top-level functions (read
+ * from a [KotlinFile]-marked class) and records here that a call to one means a .NET STATIC call to the file class.
+ * The backend consults this in `call()` (and the suspend path) and emits `LibKt.greet(...)`.
+ */
+object ClrTopLevelRegistry {
+	// key = the restored top-level function's FQN ("greet" in root, or "com.foo.greet")  ->  (.NET file class, suspend?)
+	private val funs = HashMap<String, Pair<String, Boolean>>()
+	// key = a restored top-level EXTENSION property's FQN  ->  .NET file class (its get_/set_<name> static accessors).
+	private val props = HashMap<String, String>()
+
+	fun register(fqn: String, fileClassDotNet: String, suspend: Boolean) { funs[fqn] = fileClassDotNet to suspend }
+	fun registerProp(fqn: String, fileClassDotNet: String) { props[fqn] = fileClassDotNet }
+
+	/** (.NET file class, isSuspend) for an injected top-level function FQN, or null if not one. */
+	fun lookup(fqn: String?): Pair<String, Boolean>? = fqn?.let { funs[it] }
+	/** .NET file class for an injected top-level extension-property FQN (accessors are get_/set_<name>), or null. */
+	fun lookupProp(fqn: String?): String? = fqn?.let { props[it] }
+}
+
+/**
  * I4: .NET events have no Kotlin syntax, so the FIR injector synthesizes `add_<E>`/`remove_<E>`
  * methods and records here that a call to one means `receiver.<E> += handler` / `-= handler`. The
  * backend consults this in `genCallInner` and emits the C# event-subscription operator.

@@ -404,10 +404,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// elsewhere; .NET-injected `object`s (Math, …) are static call sites, not user singletons.
 		val objects = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.OBJECT && !it.isCompanion && clrName(it) == null }
 		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && clrName(it) == null }
-		val topProps = file.declarations.filterIsInstance<IrProperty>()
+		// Only USER properties (origin DEFINED) — a consuming module's FIR also holds plugin-INJECTED top-level props
+		// (restored extension properties from a referenced DotKt assembly); those are the library's, not ours to emit.
+		val topProps = file.declarations.filterIsInstance<IrProperty>().filter { it.origin.toString() == "DEFINED" }
 		if (functions.isEmpty() && classes.isEmpty() && interfaces.isEmpty() && topProps.isEmpty()) return ""
-		val className = File(file.fileEntry.name).name.removeSuffix(".kt")
-			.replaceFirstChar { it.uppercaseChar() } + "Kt"
+		val className = fileClassName(file)
 		fileClass = className
 		// Entry point: top-level `fun main()` or `fun main(args: Array<String>)`.
 		val hasMain = functions.any {
@@ -425,6 +426,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		// Emit functions and types first (this lifts lambdas into liftedMethods/liftedTypes), then append them.
 		val fnMethods = functions.map { method(it, static = true) }
+		// A top-level property with NO backing field (an EXTENSION property `val T.p`, or a computed `val p get() = …`)
+		// -> emit its get_/set_<name> as STATIC methods (the receiver, if any, rides `__self`). A backing-field top-level
+		// property stays a static field (above).
+		val topPropAccessors = topProps.filter { it.backingField == null }.flatMap { p ->
+			listOfNotNull(
+				p.getter?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
+				p.setter?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
+		}
 		val enums = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ENUM_CLASS }
 		// Basic enums -> real CLR enums (int-backed, for .NET interop); rich enums -> plain singleton classes.
 		val (richEnums, basicEnums) = enums.partition { isRichEnum(it) }
@@ -438,7 +447,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val typeDefs = basicEnums.map { enumDef(it) } + interfaces.map { interfaceDef(it) } +
 			classes.map { typeDef(it) } + objects.map { typeDef(it, isObject = true) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
 			richEnums.map { richEnumDef(it) } + annClasses.map { annotationDef(it) }
-		val methods = (fnMethods + liftedMethods).joinToString(",")
+		val methods = (fnMethods + topPropAccessors + liftedMethods).joinToString(",")
 		// Synthetic types (iterator/Read(Write)Property interfaces, synthesized Delegates.* classes, KProperty)
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
 		// kPropertyDefs/propIfaceDefs, which read flags/maps the producers populate).
@@ -636,6 +645,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
+	/** A TOP-LEVEL property's accessor as a STATIC `get_<name>`/`set_<name>` method (extension receiver -> `__self`).
+	 *  Used for extension properties (`val T.p`) and computed top-level properties (no backing field). */
+	private fun topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
+		val extRecv = acc.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+		if (extRecv != null) valSubst[extRecv.name.asString()] = """{"k":"local","name":"__self"}"""
+		val savedRefCells = refCellVars
+		refCellVars = refCellVars + computeRefCells(acc)
+		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		refCellVars = savedRefCells
+		if (extRecv != null) valSubst.remove(extRecv.name.asString())
+		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
+		val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
+		val name = (if (isGetter) "get_" else "set_") + propName
+		val ret = if (isGetter) birType(acc.returnType) else "void"
+		return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public","params":[$ps],"ret":${str(ret)},"body":[$body]}"""
+	}
+
 	private fun accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 		val mname = clrIfaceMemberName(acc) ?: (if (isGetter) "get_" else "set_") + propName
 		val ps = acc.parameters.filter { it.kind == IrParameterKind.Regular }
@@ -682,7 +708,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// Honor the property's visibility on its backing field (A-108): a `private`/`internal`/`protected`
 			// property gets a non-public field. (Kotlin's own access rules already keep same-class field reads valid.)
 			val v = visOf(p); val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
-			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))}$visJson}"""
+			// A property that isn't publicly SETTABLE (`val`, or `var ... private/protected set`) -> mark the public
+			// backing field read-only so a consuming Kotlin module restores it as `val` (rejecting external writes).
+			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")) ""","readOnly":true""" else ""
+			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))}$visJson$ro}"""
 		}
 		// Companion non-const `val`/`var` -> static fields (with initializer run in a static ctor); const is inlined.
 		val statFields = companion?.declarations?.filterIsInstance<IrProperty>()?.mapNotNull { p ->
@@ -2625,7 +2654,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		val name = callee.name.asString()
 		val declaringClass = callee.parent as? IrClass
-		val isBuiltin = declaringClass?.fqNameWhenAvailable?.asString()?.startsWith("kotlin") ?: true
+		// A top-level fn has no declaringClass; fall back to the callee's OWN package so an injected/user top-level
+		// operator (e.g. a restored `operator fun Vec.plus`) isn't mistaken for a kotlin builtin and lowered to a `bin`.
+		val isBuiltin = (declaringClass?.fqNameWhenAvailable?.asString() ?: callee.fqNameWhenAvailable?.asString())?.startsWith("kotlin") ?: true
 		val pkgFqName = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
 		val calleeFq = if (declaringClass == null && pkgFqName != null) "$pkgFqName.$name" else null
 
@@ -3177,6 +3208,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)}${overloadSigField(callee)},"args":[${filledArgs(call).joinToString(",")}]}"""
 		}
 
+			// An INJECTED top-level EXTENSION property (`val T.p` from a DotKt assembly) -> its get_/set_<name>(__self)
+			// statics on the file class, with the extension receiver passed as `__self`. (body==null = injected stub.)
+			(callee.correspondingPropertySymbol?.owner)?.let { p ->
+				if (declaringClass == null) clrc.ClrTopLevelRegistry.lookupProp(p.fqNameWhenAvailable?.asString())?.let { fileClass ->
+					val recv = extensionReceiver(call)
+					if (callee === p.setter) {
+						val args = listOfNotNull(recv) + regularArgs(call)
+						return """{"k":"clrStatic","type":${str(fileClass)},"method":${str("set_" + p.name.asString())},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"ret":"System.Void","args":[${args.joinToString(",") { expr(it) }}]}"""
+					}
+					return """{"k":"clrStatic","type":${str(fileClass)},"method":${str("get_" + p.name.asString())},"argTypes":[${recv?.let { str(netType(it.type)) } ?: ""}],"ret":${str(netType(callee.returnType))},"args":[${recv?.let { expr(it) } ?: ""}]}"""
+				}
+			}
+
 		// Top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING file's
 		// class. Use the property's own file, NOT the file currently being emitted — else a cross-file reference
 		// looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
@@ -3511,6 +3555,33 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					|| fqn.startsWith("kotlin.text.") || fqn.startsWith("kotlin.ranges.") || fqn.startsWith("kotlin.comparisons.")))
 				return unsupported(call, "the Kotlin stdlib function `$name`",
 					"it isn't lowered to .NET yet — use a supported equivalent, or wrap the logic by hand")
+		}
+		// DotKt round-trip: a call to a top-level function restored from a [KotlinFile] facade in a referenced
+		// assembly -> a .NET static call on that file-facade class. `body == null` distinguishes the injected symbol
+		// from a same-named local top-level fun. (A suspend top-level fun awaits via the coroutine path, not here.)
+		if (callee.body == null && dispatchReceiver(call) == null) {
+			val extRecv = extensionReceiver(call)
+			clrc.ClrTopLevelRegistry.lookup(callee.fqNameWhenAvailable?.asString())?.let { (fileClass, _) ->
+				// A cross-module `inline fun` taking a lambda (body==null here = injected stub) -> splice its carried
+				// [KotlinInline] body at this call site (the only way a non-local `return` through the lambda works).
+				if (callee.isInline && hasLambdaArg(call) && extRecv == null) return inlineSpliceCall(call, fileClass)
+				// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
+				val a = listOfNotNull(extRecv) + regularArgs(call)
+				// A GENERIC top-level fun (e.g. a `reified` inline restored as a generic method) -> a generic static
+				// call carrying the type args, so ilemit MakeGenericMethods it (the reified `typeof(T)`/`is T` body
+				// then sees the concrete type). CLR generics are reified, so no inlining is needed across assemblies.
+				if (callee.typeParameters.isNotEmpty()) {
+					val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
+					if (targs.all { it != null }) {
+						val taJson = targs.joinToString(",") { str(birType(it!!)) }
+						val shapes = regularParams(callee).joinToString(",") { str(clrMethodShape(it.type)) }
+						return """{"k":"clrGenericStatic","type":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapes":[$shapes],"args":[${a.joinToString(",") { expr(it) }}]}"""
+					}
+				}
+				// A suspend top-level fun's .NET method returns Task<T> (awaited by the coroutine machinery via expr(call)).
+				val ret = if (callee.isSuspend) coTaskType(call.type) else netType(callee.returnType)
+				return """{"k":"clrStatic","type":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { str(netType(it.type)) }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]}"""
+			}
 		}
 		// Fill omitted constant default arguments at the call site (IL methods have no default mechanism).
 		val args = filledArgs(call).joinToString(",")

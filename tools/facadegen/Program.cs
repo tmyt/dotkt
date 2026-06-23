@@ -126,11 +126,32 @@ static class FacadeGen
             try { types = asm.GetTypes(); } catch { continue; }
             foreach (var t in types)
             {
-                if (t.Namespace != ns || !t.IsPublic || t.IsNested || t.FullName == null) continue;
+                if (t.Namespace != dns || !t.IsPublic || t.IsNested || t.FullName == null) continue;
                 var name = t.FullName.Contains('`') ? t.FullName.Substring(0, t.FullName.IndexOf('`')) : t.FullName;
                 if (seen.Add(name)) yield return name;
             }
         }
+    }
+
+    // A top-level function import (`import geom.greet`) -> the [KotlinFile] facade class in that package that holds a
+    // matching static method, so the FIR injector restores `greet` as a top-level function. Null if none.
+    static Type ResolveTopLevelFacade(string fqn)
+    {
+        if (Mlc == null) return null;
+        int dot = fqn.LastIndexOf('.');
+        var ns = dot < 0 ? "" : fqn.Substring(0, dot);
+        var fn = dot < 0 ? fqn : fqn.Substring(dot + 1);
+        foreach (var asm in Mlc.GetAssemblies())
+        {
+            Type[] types; try { types = asm.GetTypes(); } catch { continue; }
+            foreach (var t in types)
+            {
+                if ((t.Namespace ?? "") != ns || !HasKotlinFile(t)) continue;
+                // `import pkg.foo` matches a top-level function `foo` OR an extension property whose getter is `get_foo`.
+                if (t.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(mm => mm.Name == fn || mm.Name == "get_" + fn)) return t;
+            }
+        }
+        return null;
     }
 
     static int EmitMeta(string outFile, IEnumerable<string> typeNames)
@@ -272,6 +293,7 @@ static class FacadeGen
                     sb.Append("basector none\n");
             }
             var seen = new HashSet<string>();
+            var accessorMembers = new HashSet<string>();   // get_/set_ method names surfaced as `prop` (skip in the fun loop)
             bool Covered(MemberInfo m) => m.DeclaringType?.FullName != null && covered.Contains(m.DeclaringType.FullName);
             if (!isStatic)
             {
@@ -294,6 +316,29 @@ static class FacadeGen
                     var isAbstract = get?.IsAbstract ?? false;
                     var virt = (get?.IsVirtual ?? false) && !(get?.IsFinal ?? false);
                     sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} {Modifier(prot.Value, isAbstract, virt)}\n");
+                }
+                // DotKt round-trip: a Kotlin property's BACKING FIELD is emitted as a plain public field (no .NET
+                // PropertyDef), and a CUSTOM-ACCESSOR property as `get_X`/`set_X` methods. Surface both as Kotlin `prop`s
+                // (the consumer's clrPropGet/Set falls back to the field or calls the accessor). `accessorMembers` keeps
+                // the get_/set_ methods out of the `fun` loop below.
+                accessorMembers.Clear();
+                foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (Covered(f) || !Supported(f.FieldType) || !seen.Add("prop:" + f.Name)) continue;
+                    // `val`/`var ... private set` carries [KotlinReadOnly] -> `ro` (not publicly settable); initonly too.
+                    var rw = (f.IsInitOnly || IsKotlinReadOnly(f)) ? "ro" : "rw";
+                    sb.Append($"prop {f.Name} {Map(f.FieldType, t)} {rw} final\n");
+                }
+                foreach (var g in t.GetMethods(IM))
+                {
+                    if (g.IsSpecialName || !g.Name.StartsWith("get_") || g.GetParameters().Length != 0) continue;
+                    if (Covered(g) || Vis(g) == null || !Supported(g.ReturnType)) continue;
+                    var pn = g.Name.Substring(4);
+                    if (!seen.Add("prop:" + pn)) continue;
+                    var setter = t.GetMethods(IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn && m.GetParameters().Length == 1 && Vis(m) != null);
+                    accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
+                    var pv = Vis(g).Value;
+                    sb.Append($"prop {pn} {MapRet(g.ReturnType, t)} {(setter != null ? "rw" : "ro")} {Modifier(pv, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
                 }
                 // Events (I4). `event <Name> <handlerRetKType> <handlerParams...>` from the delegate's Invoke.
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
@@ -356,6 +401,7 @@ static class FacadeGen
             foreach (var m in t.GetMethods(flags))
             {
                 if (m.IsSpecialName) continue;
+                if (accessorMembers.Contains(m.Name)) continue;   // already surfaced as a `prop`
                 if (OBJECT_MEMBERS.Contains(m.Name)) continue;
                 if (m.DeclaringType?.FullName == "System.Object") continue;
                 if (Covered(m)) continue;                 // arrives via an injected supertype
@@ -619,6 +665,135 @@ static class FacadeGen
     {
         var m = isAbstract ? "abstract" : (isVirtual ? "open" : "final");
         return prot ? "prot-" + m : m;
+    }
+
+    // ----- DotKt metadata: restore Kotlin modifiers a DotKt-compiled assembly stamped (no .NET analog) -----
+    const string KFuncAttr = "DotKt.Metadata.KotlinFunctionAttribute";
+    const string KFileAttr = "DotKt.Metadata.KotlinFileAttribute";
+
+    // The KotlinFunctionFlags carried by a method's [KotlinFunction] (Infix=1, Operator=2, Suspend=4), or 0/none.
+    static (bool infix, bool op, bool suspend) KotlinFun(MethodInfo m)
+    {
+        try
+        {
+            foreach (var cad in m.GetCustomAttributesData())
+                if (cad.AttributeType.FullName == KFuncAttr && cad.ConstructorArguments.Count == 1)
+                {
+                    var f = Convert.ToInt32(cad.ConstructorArguments[0].Value);
+                    return ((f & 1) != 0, (f & 2) != 0, (f & 4) != 0);
+                }
+        }
+        catch { /* DotKt.Runtime not in the resolver set -> no Kotlin modifiers to restore */ }
+        return (false, false, false);
+    }
+
+    static bool HasKotlinFile(Type t)
+    {
+        try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KFileAttr); }
+        catch { return false; }
+    }
+
+    const string KReadOnlyAttr = "DotKt.Metadata.KotlinReadOnlyAttribute";
+    static bool IsKotlinReadOnly(FieldInfo f)
+    {
+        try { return f.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KReadOnlyAttr); }
+        catch { return false; }
+    }
+
+    const string KNullableAttr = "DotKt.Metadata.KotlinNullableAttribute";
+    // The Kotlin nullability bitmask carried by [KotlinNullable] (bit 0 = return, bit i+1 = param i), or 0.
+    static uint KotlinNullMask(MethodInfo m)
+    {
+        try
+        {
+            foreach (var c in m.GetCustomAttributesData())
+                if (c.AttributeType.FullName == KNullableAttr && c.ConstructorArguments.Count == 1)
+                    return Convert.ToUInt32(c.ConstructorArguments[0].Value);
+        }
+        catch { }
+        return 0;
+    }
+    static string NullSuffix(uint mask, int bit) => ((mask >> bit) & 1) != 0 ? "?" : "";
+
+    const string KInlineAttr = "DotKt.Metadata.KotlinInlineAttribute";
+    // The carried BIR body of an inline+lambda fn ([KotlinInline]), or null. Splice-able by a consuming module.
+    static string KotlinInlineBody(MethodInfo m)
+    {
+        try
+        {
+            foreach (var cad in m.GetCustomAttributesData())
+                if (cad.AttributeType.FullName == KInlineAttr && cad.ConstructorArguments.Count == 1)
+                    return cad.ConstructorArguments[0].Value as string;
+        }
+        catch { }
+        return null;
+    }
+
+    // A `suspend fun` is emitted returning Task / Task<T>; restore the Kotlin result type and gate Supported on it.
+    static bool IsTask1(Type t) => t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Threading.Tasks.Task`1";
+    static bool SuspendRetSupported(Type ret) => IsTask1(ret) ? Supported(ret.GetGenericArguments()[0]) : ret.FullName == "System.Threading.Tasks.Task";
+    static string SuspendRetToken(Type ret, Type self) => IsTask1(ret) ? MapRet(ret.GetGenericArguments()[0], self) : "Unit";
+
+    // Build the `fun`/`tlfun`/`sfun` modifier token, folding in the no-.NET-analog Kotlin flags as comma-suffixes
+    // (`final,infix`, `open,suspend`, ...) — kept a SINGLE whitespace-free token so the meta parser's type-param
+    // split (bare trailing tokens) is unaffected.
+    static string FunModifier(string baseMod, (bool infix, bool op, bool suspend) k)
+    {
+        if (k.infix) baseMod += ",infix";
+        if (k.op) baseMod += ",operator";
+        if (k.suspend) baseMod += ",suspend";
+        return baseMod;
+    }
+
+    // Emit a Kotlin file-facade class ([KotlinFile]) as TOP-LEVEL functions in its .NET namespace (= Kotlin package),
+    // instead of a class: `file <package>` then a `tlfun` per public static method (Main and object members skipped).
+    static void EmitKotlinFile(Type t, StringBuilder sb)
+    {
+        // `file <package> <fileClassFqn>` — the package is the Kotlin namespace; the .NET FQN is where the backend
+        // emits the static call for each restored top-level function. Empty package ("") is the root package.
+        sb.Append($"file {(string.IsNullOrEmpty(t.Namespace) ? "-" : t.Namespace)} {t.FullName}\n");
+        var seen = new HashSet<string>();
+        // Extension properties (`val T.p`) compile to top-level `get_p(__self: T)` (+ `set_p(__self, v)` for `var`). Surface
+        // them as `tlextprop <name> <type> <ro|rw> <receiverType>` so the injector restores `val/var T.p`; the consumer's
+        // `x.p` then routes to the static get_/set_. These accessor methods are kept out of the `tlfun` loop below.
+        var extPropMembers = new HashSet<string>();
+        foreach (var g in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
+        {
+            if (g.IsSpecialName || !g.Name.StartsWith("get_")) continue;
+            var gps = g.GetParameters();
+            if (gps.Length != 1 || gps[0].Name != "__self" || !Supported(g.ReturnType) || !Supported(gps[0].ParameterType)) continue;
+            var pn = g.Name.Substring(4);
+            if (!seen.Add("tlextprop:" + pn)) continue;
+            var setter = t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .FirstOrDefault(s => !s.IsSpecialName && s.Name == "set_" + pn && s.GetParameters().Length == 2 && s.GetParameters()[0].Name == "__self");
+            extPropMembers.Add(g.Name); if (setter != null) extPropMembers.Add(setter.Name);
+            var nm = KotlinNullMask(g);
+            sb.Append($"tlextprop {pn} {MapRet(g.ReturnType, t)}{NullSuffix(nm, 0)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)}\n");
+        }
+        foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
+        {
+            if (m.IsSpecialName || m.Name == "Main" || OBJECT_MEMBERS.Contains(m.Name) || extPropMembers.Contains(m.Name)) continue;
+            if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
+            var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
+            var ps = m.GetParameters();
+            var k = KotlinFun(m);
+            var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
+            if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
+            if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
+            var nmask = KotlinNullMask(m);   // Kotlin nullability ([KotlinNullable]): `?` on return (bit 0) / params (bit i+1)
+            var ret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + NullSuffix(nmask, 0);
+            // `,inline` tells the injector to mark the fn `inline` (so a non-local return through the lambda is accepted);
+            // the body itself stays in the assembly's [KotlinInline] and is read by the consumer's ilemit at splice time.
+            // An extension fun's receiver is emitted as the first param `__self` (DotKt convention) -> mark `,ext` so the
+            // injector restores it as an extension receiver (composes with operator -> top-level extension operators).
+            var isExt = ps.Length > 0 && ps[0].Name == "__self";
+            var mod = FunModifier("final", k) + (KotlinInlineBody(m) != null ? ",inline" : "") + (isExt ? ",ext" : "");
+            var toks = new List<string> { "tlfun", m.Name, ret, mod };
+            toks.AddRange(gp);
+            toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t, nmask)));
+            sb.Append(string.Join(" ", toks) + "\n");
+        }
+        Console.WriteLine($"meta: {t.FullName} (kotlin file -> top-level)");
     }
 
     // null => skip (private/internal); false => public; true => protected (Family / protected-internal). Frameworks

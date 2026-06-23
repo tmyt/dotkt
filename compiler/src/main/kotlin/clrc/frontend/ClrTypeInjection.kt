@@ -26,6 +26,7 @@ import org.jetbrains.kotlin.fir.plugin.createCompanionObject
 import org.jetbrains.kotlin.fir.plugin.createConstructor
 import org.jetbrains.kotlin.fir.plugin.createMemberFunction
 import org.jetbrains.kotlin.fir.plugin.createMemberProperty
+import org.jetbrains.kotlin.fir.plugin.createTopLevelProperty
 import org.jetbrains.kotlin.fir.plugin.createTopLevelClass
 import org.jetbrains.kotlin.fir.plugin.createTopLevelFunction
 import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
@@ -54,7 +55,14 @@ private class ClrParam(val name: String, val type: String)
 // `open`/`abstract` = .NET virtual/abstract (Kotlin OPEN/ABSTRACT modality, overridable); `protected` = .NET
 // Family/FamORAssem (so a Kotlin subclass can override a protected virtual lifecycle method — feedback item 2).
 // `typeParams` = method-level generic parameters (`SizeOf<T>()` -> ["T"]); empty for ordinary methods.
-private class ClrMethod(val name: String, val returnType: String, val open: Boolean, val abstract: Boolean, val protected: Boolean, val params: List<ClrParam>, val typeParams: List<String> = emptyList())
+// `infix`/`operator`/`suspend` = Kotlin modifiers with no .NET analog, restored from a DotKt assembly's
+// [KotlinFunction] (carried in the `fun`/`tlfun` modifier token as comma-suffixes). For a `suspend` fun the
+// returnType is already the unwrapped result T (facadegen unwrapped the emitted Task<T>).
+private class ClrMethod(val name: String, val returnType: String, val open: Boolean, val abstract: Boolean, val protected: Boolean, val params: List<ClrParam>, val typeParams: List<String> = emptyList(),
+	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false)
+// A restored top-level Kotlin function: its package, the .NET file-facade class to call, and the function itself.
+private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
+private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: String, val mutable: Boolean, val receiver: String)
 private class ClrProperty(val name: String, val type: String, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean)
 private class ClrEvent(val name: String, val handlerReturn: String, val handlerParams: List<ClrParam>)
 // A `this[i]` indexer -> Kotlin `operator fun get/set` (`set` only when mutable).
@@ -78,7 +86,17 @@ private class ClrType(
 	val staticMethods: List<ClrMethod>,// public static methods of a NORMAL class -> companion-object members (App.Start)
 	val staticProps: List<ClrProperty>,// public static props/fields of a NORMAL class -> companion-object members
 )
-private class ClrModule(val types: List<ClrType>)
+private class ClrModule(val types: List<ClrType>, val topLevel: List<ClrTopLevel> = emptyList(), val topLevelProps: List<ClrTopLevelProp> = emptyList())
+
+// Parse a `fun`/`tlfun` modifier token: `[prot-]<open|final|abstract>[,infix][,operator][,suspend]` — a single
+// whitespace-free token (so the meta parser's type-param split is unaffected), the flags as comma-suffixes.
+private class FunMods(val open: Boolean, val abstract: Boolean, val protected: Boolean, val infix: Boolean, val operator: Boolean, val suspend: Boolean, val inline: Boolean, val ext: Boolean)
+private fun parseFunMods(tok: String?): FunMods {
+	val parts = (tok ?: "final").split(',')
+	val mod = parts[0]; val prot = mod.startsWith("prot-"); val bare = mod.removePrefix("prot-")
+	val f = parts.drop(1).toHashSet()
+	return FunMods(bare == "open", bare == "abstract", prot, "infix" in f, "operator" in f, "suspend" in f, "inline" in f, "ext" in f)
+}
 
 /**
  * Loads the .NET type metadata to inject, once per process. The path comes from `CLR_TYPES_METADATA`
@@ -211,6 +229,15 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// extension reuses them) — `import System.Text.StringBuilder` works through Kotlin's normal package machinery.
 	private val byClassId: Map<ClassId, ClrType> = ClrMetadataHolder.byClassId
 	private val packages: Set<FqName> = byClassId.keys.map { it.packageFqName }.toSet()
+	// DotKt round-trip: top-level functions restored from [KotlinFile] facades, keyed by their CallableId (a package
+	// may hold several; overloads share a CallableId). Their packages augment hasPackage/getTopLevelCallableIds.
+	private val topLevelByCallable: Map<CallableId, List<ClrTopLevel>> =
+		(module?.topLevel ?: emptyList()).groupBy { CallableId(it.pkg, Name.identifier(it.fn.name)) }
+	// DotKt round-trip: top-level extension properties (`val T.p`), keyed by CallableId.
+	private val topLevelPropByCallable: Map<CallableId, ClrTopLevelProp> =
+		(module?.topLevelProps ?: emptyList()).associateBy { CallableId(it.pkg, Name.identifier(it.name)) }
+	private val topLevelPackages: Set<FqName> =
+		((module?.topLevel ?: emptyList()).map { it.pkg } + (module?.topLevelProps ?: emptyList()).map { it.pkg }).toSet()
 	private val classIdByName: Map<String, ClassId> = ClrMetadataHolder.classIdByName
 
 	// `byref(x)`: a root-package intrinsic marking a call arg as a .NET out/ref parameter. It returns `ClrRef<T>`
@@ -232,10 +259,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	private val clrActive = module != null
 
 	override fun hasPackage(packageFqName: FqName): Boolean =
-		clrActive && (packageFqName in packages || packageFqName.isRoot)
+		clrActive && (packageFqName in packages || packageFqName in topLevelPackages || packageFqName.isRoot)
 
 	override fun getTopLevelCallableIds(): Set<CallableId> =
-		if (!clrActive) emptySet() else hashSetOf(CallableId(FqName.ROOT, Name.identifier(byrefName)), CallableId(FqName.ROOT, Name.identifier(stackBufferName)))
+		if (!clrActive) emptySet()
+		else hashSetOf(CallableId(FqName.ROOT, Name.identifier(byrefName)), CallableId(FqName.ROOT, Name.identifier(stackBufferName))) + topLevelByCallable.keys + topLevelPropByCallable.keys
 
 	override fun getTopLevelClassIds(): Set<ClassId> =
 		if (!clrActive) byClassId.keys else byClassId.keys + clrRefClassId + stackBufferClassId + spanClassId
@@ -312,6 +340,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	}
 
 	override fun generateProperties(callableId: CallableId, context: MemberGenerationContext?): List<FirPropertySymbol> {
+		// DotKt round-trip: a top-level EXTENSION property (`val T.p`) — no owner; the backend routes `x.p` to the
+		// file class's get_/set_<p>(__self) statics. No backing field (the accessors carry the value).
+		topLevelPropByCallable[callableId]?.let { tp ->
+			return listOf(createTopLevelProperty(ClrGeneratedKey, callableId, coneOf(tp.type, null), !tp.mutable, false) {
+				extensionReceiverType(coneOf(tp.receiver, null))
+			}.symbol)
+		}
 		val owner = context?.owner ?: return emptyList()
 		// `StackBuffer<T>.size: Int` (the element count).
 		if (owner.classId == stackBufferClassId && callableId.callableName.asString() == "size")
@@ -369,6 +404,42 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					})
 				}
 				return listOf(fn.symbol)
+			}
+			// DotKt round-trip: top-level functions restored from a [KotlinFile] facade. infix/operator are member-only,
+			// so a top-level fun carries at most `suspend`; the backend (ClrTopLevelRegistry) emits the static call.
+			topLevelByCallable[callableId]?.let { tls ->
+				return tls.flatMap { tl ->
+					val m = tl.fn
+					if (m.typeParams.isEmpty()) {
+						// An extension fun: the first param `__self` is the receiver (rest are value params).
+						val extRecv = if (m.ext && m.params.isNotEmpty()) m.params[0] else null
+						val vps = if (extRecv != null) m.params.drop(1) else m.params
+						// Default args have no .NET analog that fir2ir can lower (a plugin `hasDefaultValue` inserts a STUB
+						// expression that crashes fir2ir). Restore them @JvmOverloads-style: one overload per trailing
+						// contiguous default param omitted; the consumer resolves by arity and ilemit fills the rest from
+						// [DefaultParameterValue]. coneOf strips the `opt:` marker, so each overload's params are required.
+						val trailingOpt = vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
+						((vps.size - trailingOpt)..vps.size).map { arity ->
+							createTopLevelFunction(ClrGeneratedKey, callableId, coneOf(m.returnType, null)) {
+								if (m.suspend) status { isSuspend = true }
+								if (m.inline) status { isInline = true }   // accept non-local return; ilemit splices the carried body
+								if (m.infix || m.operator) status { isInfix = m.infix; isOperator = m.operator }   // top-level extension operators
+								if (extRecv != null) extensionReceiverType(coneOf(extRecv.type, null))
+								for (p in vps.take(arity))
+									if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), coneOf("array:" + p.type.removePrefix("vararg:"), null), isVararg = true)
+									else valueParameter(Name.identifier(p.name), coneOf(p.type, null))
+							}.symbol
+						}
+					} else listOf(
+						// A generic top-level fun (e.g. a `reified` inline restored as a generic method): declare its
+						// type params, then resolve the return/param types against them — mirrors the member-generic path.
+						createTopLevelFunction(ClrGeneratedKey, callableId, { tps -> coneOfMethod(m.returnType, null, m.typeParams, tps) }) {
+							if (m.suspend) status { isSuspend = true }
+							for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+							for (p in m.params) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, null, m.typeParams, tps) })
+						}.symbol
+					)
+				}
 			}
 			return emptyList()
 		}
