@@ -135,6 +135,12 @@ sealed class Emitter
                 {
                     var name = t.GetProperty("name").GetString();
                     var kind = t.GetProperty("kind").GetString();
+                    // Shared synthetic types (`<>dotkt_Result`/`KProperty`/`KIterator_*`/`CharSequence`/…) are emitted
+                    // identically by EVERY file that uses them; in a multi-file assembly they'd redefine the same name
+                    // and collide in `_types` (orphaning a TypeBuilder -> Save crash). They're structurally identical,
+                    // so the first definition serves all references — skip the duplicates. (Per-file-DISTINCT synthetics
+                    // — closures, ref cells, seq SMs — are now uniquely named by BirEmitter, so they never land here.)
+                    if (name.StartsWith("<>dotkt_") && _types.ContainsKey(name)) continue;
                     if (kind == "enum")
                     {
                         // A real .NET enum: each entry is a literal field of the int-backed enum.
@@ -354,6 +360,18 @@ sealed class Emitter
 
         // Pass 6: bake types (base before derived). Enums were already baked up front.
         foreach (var ti in Ordered()) { if (!ti.IsEnum) { T($"pass6 createType: {ti.TB?.Name}"); ti.TB.CreateType(); } }
+        // Safety net: any user type Ordered() somehow missed (so Save won't throw "not supported before the type is
+        // created"). Repeat until stable, since creating one may be a prerequisite for another.
+        for (bool again = true; again;)
+        {
+            again = false;
+            foreach (var ti in _types.Values)
+                if (!ti.IsEnum && ti.TB != null && !ti.TB.IsCreated())
+                {
+                    T($"pass6 createType (leftover): {ti.TB.Name}");
+                    ti.TB.CreateType(); again = true;
+                }
+        }
 
         T("save: writing PE");
         Save(ab, entry);
@@ -362,12 +380,14 @@ sealed class Emitter
 
     IEnumerable<TypeInfo> Ordered()
     {
-        var done = new HashSet<string>();
+        // Dedup by type IDENTITY, not simple name: two distinct types can share a simple name (a top-level `State`
+        // and a nested `X.State`, or same-named types in different files). Keying by name dropped the second from the
+        // create order -> it was never CreateType()'d -> Save threw "not supported before the type is created".
+        var done = new HashSet<TypeInfo>();
         var result = new List<TypeInfo>();
         void Visit(TypeInfo ti)
         {
-            var key = ti.AsType.Name;
-            if (!done.Add(key)) return;
+            if (!done.Add(ti)) return;
             if (ti.BaseName != null && _types.TryGetValue(ti.BaseName, out var b)) Visit(b);
             // A generic interface used as a constructed parent/interface must be created before its implementers
             // (PersistedAssemblyBuilder materializes the instantiation at the implementer's CreateType).

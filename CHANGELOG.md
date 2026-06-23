@@ -80,6 +80,17 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   - `ilemit` gained an `ILEMIT_TRACE` env switch that prints each emission step (ref load,
     parents, signatures, bodies, createType, save) flushed to stderr — so a Reflection.Emit
     hard-crash (uncatchable AV, exit 0xC0000005) can be localized to the culprit type/method.
+- **Synthetic type names collided across files in a multi-file assembly** — every file's
+  `BirEmitter` used a fresh counter, so `<>dotkt_Closure0…`, `<>dotkt_Ref_<elem>`, and
+  `<>dotkt_Seq…` repeated across files. Linking all BIR into one assembly overwrote them in
+  ilemit's `_types`, orphaning a `TypeBuilder` that was never `CreateType()`'d →
+  `NotSupportedException` ("not supported before the type is created") at `Save`, or a
+  `0xC0000005` via MSBuild. (Single-file samples never hit it.) BirEmitter now prefixes these
+  per-file-DISTINCT synthetics with the file class (`<>dotkt_<FileKt>_Closure0`); ilemit
+  de-dups per-file-IDENTICAL shared synthetics (`<>dotkt_Result`/`KProperty`/`KIterator_*`/…)
+  by name; and `Ordered()`/a pre-Save sweep make every defined TypeBuilder get created.
+  (`il-mfclosure` — two files, capturing closures + ref cells.) Found building a WinUI app
+  whose `.ktproj` source-includes the whole library.
 
 ## 0.9.1 — 2026-06-23
 

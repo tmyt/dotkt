@@ -127,6 +127,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private var inlCounter = 0
 	private var scopeCounter = 0
 	private var fileClass = ""   // current file's static class name (for top-level property access)
+	// Per-file prefix for SYNTHETIC type names (closures, ref cells, sequence SMs). Each file is compiled by its own
+	// BirEmitter with a fresh `closureCounter`, so unprefixed names like `<>dotkt_Closure0` COLLIDE across files when
+	// ilemit links all BIR into one assembly (the dup overwrites in `_types` -> orphaned TypeBuilder -> Save crash).
+	// `fileClass` is unique per file, so it disambiguates. Stays under the `<>dotkt_` prefix (ilemit marks those).
+	private val synthScope: String get() = fileClass.replace(Regex("[^A-Za-z0-9]"), "_")
 	/** The `<File>Kt` class name of a top-level declaration's DEFINING file (so cross-file top-level property
 	 *  access targets the owning file class, not whichever file is being emitted). */
 	private fun fileClassOf(decl: org.jetbrains.kotlin.ir.declarations.IrDeclaration): String {
@@ -328,7 +333,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private val refTypes = LinkedHashMap<String, String>()   // element birType -> monomorphized Ref class name
 	private fun refTypeName(d: IrValueDeclaration): String {
 		val elem = birType(d.type)
-		return refTypes.getOrPut(elem) { "<>dotkt_Ref_" + elem.replace(Regex("[^A-Za-z0-9]"), "_") }
+		return refTypes.getOrPut(elem) { "<>dotkt_${synthScope}_Ref_" + elem.replace(Regex("[^A-Za-z0-9]"), "_") }
 	}
 	private fun refDefs(): List<String> = refTypes.map { (elem, name) ->
 		// A monomorphized heap cell `class <>dotkt_Ref_<elem>(var v: elem)` (non-generic -> trivial field access).
@@ -1671,7 +1676,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// enclosing `this` — captured when the lambda reads a member — maps to a `__outer` field, not the
 		// closure's own `this`). For a CPS suspend lambda the closure `invoke` is an INSTANCE coroutine; ilemit
 		// captures the closure `this` into the state machine so resume can still read the captured-var fields.
-		val cname = "<>dotkt_Closure${closureCounter++}"
+		val cname = "<>dotkt_${synthScope}_Closure${closureCounter++}"
 		val capPairs = captures.map { it to captureFieldName(it) }
 		// Save any prior substitution for each captured decl so the OUTER binding (e.g. an intrinsic block's `c`
 		// bound to the coroutine's own continuation) is restored after the body — not blown away — so the capture
@@ -2492,7 +2497,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return unsupported(call, "a capturing sequence{} block", "v1 supports only non-capturing sequence builders")
 			val elem = ((call.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
 			val co = emitCoroutineBody(block.function)   // yields -> coYield steps; live locals -> cpsFields
-			val smName = "<>dotkt_Seq${closureCounter++}"
+			val smName = "<>dotkt_${synthScope}_Seq${closureCounter++}"
 			return """{"k":"sequenceNew","sm":${str(smName)},"elem":${str(elem)},"cpsFields":[${co.cpsFields}],"steps":[${co.steps}]}"""
 		}
 		// `generateSequence(seed?, next)` / `generateSequence(next)` -> a lazy IEnumerable<T> from Seq.Generate*.
