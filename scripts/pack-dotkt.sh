@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 FEED="$ROOT/build/nuget-feed"; rm -rf "$FEED"; mkdir -p "$FEED"
-VER="0.9.1+kotlin-2.2.0"
+VER="0.9.2+kotlin-2.2.0"
 
 echo "== build compiler (installDist) + tools + runtime =="
 ( cd "$ROOT" && ./gradlew -q :compiler:installDist )

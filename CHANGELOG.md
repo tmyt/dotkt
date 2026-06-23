@@ -3,9 +3,9 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
-## 0.9.2 — unreleased
+## 0.9.2 — 2026-06-23
 
-Interop/primitive bug fixes found after 0.9.1 shipped.
+Interop/primitive bug fixes, most surfaced building a real WinUI app from Kotlin.
 
 ### Fixed
 - **Signed `Byte` / `Short`** as parameters, locals, fields, and constant args threw

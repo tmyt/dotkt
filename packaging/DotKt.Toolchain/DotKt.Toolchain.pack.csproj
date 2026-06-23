@@ -3,7 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <NuspecFile>DotKt.Toolchain.nuspec</NuspecFile>
-    <NuspecProperties>version=0.9.1+kotlin-2.2.0</NuspecProperties>
+    <NuspecProperties>version=0.9.2+kotlin-2.2.0</NuspecProperties>
     <NoWarn>NU5128;NU5100</NoWarn>
   </PropertyGroup>
 </Project>
