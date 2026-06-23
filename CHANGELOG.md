@@ -42,7 +42,9 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   maps to a `clr:`/`clrg:` spec; `clrIfaceMemberName` renames the overridden members;
   the `catch` clause types via `birType` (a user exception catches as its own type, not
   `object`); `MapType` resolves bare .NET FQNs. (Comparable<T> as a self-referential
-  generic supertype, and the `use{}` builder, remain — deeper, tracked separately.)
+  generic supertype remains — deeper, tracked separately.)
+- **`use {}`** (Closeable/AutoCloseable) now lowers to `try { block(it) } finally { close()/Dispose() }`
+  returning the block value — the CLR analogue of C# `using`. (`il-use`)
 
 ## 0.9.1 — 2026-06-23
 

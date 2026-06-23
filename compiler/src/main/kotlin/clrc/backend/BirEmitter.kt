@@ -1815,6 +1815,34 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"valueBlock","stmts":[${init.joinToString(",")}],"result":$result}"""
 	}
 
+	/** `r.use { block }` -> a value-block: `var r; var res; try { res = block(r) } finally { r.Dispose() }; res`. */
+	private fun inlineUse(recvExpr: IrExpression, lambda: IrFunctionExpression, retType: String): String {
+		val fn = lambda.function
+		val uname = "__use${scopeCounter++}"; val rname = "__useRes${scopeCounter++}"
+		val recvInit = expr(recvExpr)
+		val itParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
+		itParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(uname)}}""" }
+		val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
+		val unit = retType == "void"
+		val tryBody = ArrayList<String>()
+		stmts.dropLast(1).forEach { tryBody.add(stmt(it)) }
+		when (val last = stmts.lastOrNull()) {
+			is IrReturn -> if (!unit) tryBody.add("""{"k":"setLocal","name":${str(rname)},"value":${expr(last.value)}}""") else last.value.takeIf { !it.type.isUnit() }?.let { tryBody.add("""{"k":"exprStmt","expr":${expr(it)}}""") }
+			is IrExpression -> if (!unit) tryBody.add("""{"k":"setLocal","name":${str(rname)},"value":${expr(last)}}""") else tryBody.add("""{"k":"exprStmt","expr":${expr(last)}}""")
+			else -> last?.let { tryBody.add(stmt(it)) }
+		}
+		itParam?.let { valSubst.remove(it.name.asString()) }
+		// close() -> IDisposable.Dispose() (Kotlin (Auto)Closeable maps to IDisposable; callvirt works for any impl).
+		val dispose = """{"k":"exprStmt","expr":{"k":"clrInstance","type":"System.IDisposable","method":"Dispose","argTypes":[],"ret":"System.Void","virtual":true,"recv":{"k":"local","name":${str(uname)}},"args":[]}}"""
+		val tryNode = """{"k":"try","type":"void","body":[${tryBody.joinToString(",")}],"catches":[],"finally":[$dispose]}"""
+		val init = ArrayList<String>()
+		init.add("""{"k":"var","name":${str(uname)},"type":${str(birType(recvExpr.type))},"init":$recvInit}""")
+		if (!unit) init.add("""{"k":"var","name":${str(rname)},"type":${str(retType)}}""")
+		init.add(tryNode)
+		val result = if (unit) """{"k":"const","type":"void","value":null}""" else """{"k":"local","name":${str(rname)}}"""
+		return """{"k":"valueBlock","stmts":[${init.joinToString(",")}],"result":$result}"""
+	}
+
 	private var synthCounter = 0
 	/**
 	 * A synthetic one-arg lambda `(__x: paramType) -> bodyOf("__x")` lifted to a static method + delegate. Used for
@@ -2635,6 +2663,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val recvExpr = if (isWith) regularArgs(call).getOrNull(0) else extensionReceiver(call)
 			val lambda = (if (isWith) regularArgs(call).getOrNull(1) else regularArgs(call).getOrNull(0)) as? IrFunctionExpression
 			if (recvExpr != null && lambda != null) return inlineScope(calleeFq!!, recvExpr, lambda)
+		}
+		// `r.use { block }` (Closeable/AutoCloseable) -> `try { block(r) } finally { r.close()/Dispose() }`, returning
+		// the block's value. The CLR analogue of C# `using` (close -> IDisposable.Dispose). T : (Auto)Closeable.
+		if (calleeFq == "kotlin.io.use" || calleeFq == "kotlin.use") {
+			val recvExpr = extensionReceiver(call)
+			val lambda = regularArgs(call).getOrNull(0) as? IrFunctionExpression
+			if (recvExpr != null && lambda != null) return inlineUse(recvExpr, lambda, birType(call.type))
 		}
 
 		// Collection factories `listOf`/`setOf` -> a `listNew`/`setNew` (List<elem>/HashSet<elem>). Handles both the
