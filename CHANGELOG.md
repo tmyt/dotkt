@@ -62,6 +62,13 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   - Member signature types now use the FULLY-QUALIFIED name, so a same-simple-name type from
     another namespace (`Microsoft.UI.Xaml.LaunchActivatedEventArgs` vs the UWP one) no longer
     shadows the right one — fixes overrides that "override nothing". (`il-injfqn`)
+  - Public **static members of a normal class** (one with instance members too) are now
+    injected — they were dropped, so `Application.Start(cb)` / `Application.Current` were
+    unresolved. Surfaced on a synthesized companion: facadegen emits `sfun`/`sprop`, the
+    injector generates the companion, the backend emits .NET static calls (lambda args bind
+    to the .NET delegate). Reachable as `App.Companion.Start(cb)` today (`il-injstatic`);
+    the bare `App.Start` form awaits implicit-companion resolution for plugin-generated
+    classes (a FIR-resolver follow-up).
 
 ## 0.9.1 — 2026-06-23
 
