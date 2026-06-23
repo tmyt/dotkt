@@ -13,7 +13,7 @@
     <!-- S5: façade-FREE .NET types listed via <KotlinClrType Include="System.X"/> are injected straight
          into FIR (no .kt). The metadata file is handed to the compiler via the CLR_TYPES_METADATA env. -->
     <KotlinClrTypeMeta>$(BaseIntermediateOutputPath)clrtypes.meta</KotlinClrTypeMeta>
-    <!-- The .NET import list extracted from the .kt sources by `clrc --scan-imports` (PSI parser, not regex). -->
+    <!-- The .NET import list extracted from the .kt sources by the clrc scan-imports pass (PSI parser, not regex). -->
     <KotlinClrImportList>$(BaseIntermediateOutputPath)clrimports.txt</KotlinClrImportList>
     <!-- Backend: "il" (default: kt->BIR->ilemit, emit CIL directly — no C#) or "cs" (kt->C#->csc, the
          retired dev/oracle path). E-5: the shipping default is now IL; C# is opt-in. -->
