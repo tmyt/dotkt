@@ -19,6 +19,12 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   delegate param, so the exact-type ctor lookup found nothing. `EmitClrNew` now selects
   the ctor by arity (preferring delegate-param/lambda-arity matches) and builds the
   specific delegate. (`il-delegatearg`)
+- **`for (x in <.NET IEnumerable<T>>)`** over a raw .NET enumerable (not a Kotlin
+  collection) failed to compile: `iterator()` was ambiguous (only the clashing stdlib
+  extension `iterator()`s applied). facadegen now injects a frontend-only
+  `operator fun iterator(): Iterator<T>` for any type implementing `IEnumerable<T>`;
+  the backend bypasses it and enumerates via GetEnumerator/MoveNext/Current
+  (forEachInline). (`il-netenum`)
 
 ## 0.9.1 — 2026-06-23
 
