@@ -10,6 +10,7 @@ echo "== build compiler (installDist) + tools + runtime =="
 ( cd "$ROOT" && ./gradlew -q :compiler:installDist )
 dotnet build "$ROOT/tools/ilemit"   -c Release -o "$ROOT/build/ilemit-bin"   -v q --nologo
 dotnet build "$ROOT/tools/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo
+dotnet build "$ROOT/tools/retarget" -c Release -o "$ROOT/build/retarget-bin" -v q --nologo
 
 echo "== assemble DotKt.Toolchain/tools =="
 TC="$ROOT/packaging/DotKt.Toolchain/tools"; rm -rf "$TC"; mkdir -p "$TC"
@@ -17,6 +18,7 @@ cp -r "$ROOT/compiler/build/install/compiler" "$TC/compiler"
 cp "$ROOT/runtime/kotlin/kotlin-stdlib.jar" "$TC/kotlin-stdlib.jar"
 cp -r "$ROOT/build/ilemit-bin"   "$TC/ilemit"
 cp -r "$ROOT/build/facadegen-bin" "$TC/facadegen"
+cp -r "$ROOT/build/retarget-bin" "$TC/retarget"
 
 echo "== pack DotKt.Runtime =="
 dotnet pack "$ROOT/runtime/DotKt.Runtime" -c Release -o "$FEED" -v q --nologo

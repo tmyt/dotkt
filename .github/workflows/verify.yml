@@ -1,7 +1,7 @@
 # CI: the three regression harnesses that lock kotlin/clr.
 #  - verify-il          : the SHIPPING IL backend (BIR -> ilemit -> CIL) over the full sample corpus + ilverify.
 #  - verify-differential: the IL path vs real kotlin/jvm semantics (the C#-independent oracle).
-#  - verify-all         : the retired C# backend, kept as a dev/oracle regression.
+#  - verify-ktproj      : MSBuild/.ktproj end-to-end integration on the IL backend (incl. bidirectional ProjectReference).
 name: verify
 
 on:
@@ -43,6 +43,8 @@ jobs:
           ./gradlew --no-daemon :compiler:installDist
           dotnet build tools/ilemit   -c Release -o build/ilemit-bin   --nologo
           dotnet build tools/facadegen -c Release -o build/facadegen-bin --nologo
+          dotnet build tools/retarget  -c Release -o build/retarget-bin  --nologo
+          dotnet build runtime/DotKt.Runtime -c Release -o build/dotkt-runtime --nologo
 
       # The shipping IL backend (functional + ilverify) — the primary gate.
       - name: verify-il (IL backend + ilverify)
@@ -52,6 +54,10 @@ jobs:
       - name: verify-differential (IL path vs kotlin/jvm)
         run: bash scripts/verify-differential.sh
 
-      # The retired C# backend, kept green as a dev/oracle reference.
-      - name: verify-all (C# oracle)
-        run: bash scripts/verify-all.sh
+      # MSBuild/.ktproj end-to-end on the IL backend (forward + reverse/bidirectional ProjectReference).
+      - name: verify-ktproj (IL MSBuild integration)
+        run: bash scripts/verify-ktproj.sh
+
+      # Consume a DotKt assembly AS KOTLIN: infix/operator/suspend/top-level restored via DotKt.Metadata attributes.
+      - name: verify-roundtrip (Kotlin-modifier round-trip)
+        run: bash scripts/verify-roundtrip.sh

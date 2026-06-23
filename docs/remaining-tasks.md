@@ -17,7 +17,7 @@
 
 ## 運用原則（各タスク共通の Done 条件）
 - end-to-end で動く（frontend だけ通っても不可。**生成コードが `dotnet run` で期待出力**＝移行期は C#→csc、1.0 ゴールは IL 単独）。
-- `scripts/verify-all.sh` に最低1サンプルを追加し緑（IL 対応分は `verify-il.sh` も）。
+- サンプルを追加し緑にする（IL 経路＝`scripts/verify-il.sh`、MSBuild/.ktproj 統合＝`scripts/verify-ktproj.sh`）。※旧 C# バックエンドのスイート `verify-all.sh` は引退済みバックエンドのテストに意味がないため削除。
 - 想定外入力は**明示エラー**（silent miscompile 禁止）。— [[no-half-baked-public-state]]
 - コアは**純バインディング**を保つ（UI 等のライブラリを同梱しない）。— [[kotlin-net-is-pure-binding]]
 - サイズ目安: S=数時間 / M=1–2日 / L=数日 / XL=1週間超。
@@ -283,13 +283,14 @@ C# 生成は単なる出力フォーマットではなく、以下3役を兼ね�
 ## R. 逆 interop の磨き（1.0 出荷タスク・脱却ブロッカーではない）
 > **⚠ `<Reference>` は方向で状況が真逆（混同注意）**:
 > - **Forward（Kotlin → .NET）＝実装済 ✅**: `.ktproj` の `<Reference>`/`<PackageReference>`/`<ProjectReference>` で .NET アセンブリを参照すると、その型が Kotlin から使える（`ResolveReferences` が @(ReferencePath) を埋め、facadegen `--refs` が型を inject／C-2 import 駆動解決。`msbuild/KotlinClr.targets`、`samples/ktproj-ref`）。下記 C-1 参照。
-> - **Reverse（.NET → Kotlin）＝R-1 で未実装 ❌**: C# 等が「Kotlin が emit した IL アセンブリ」を**コンパイル時 `<Reference>`** することは未。下記が R-1。
-- [ ] **R-1 コンパイル時 `<Reference>` retargeting（M-L、REVERSE 方向 .NET→Kotlin のみ）**: C# 等が IL 出力アセンブリを**コンパイル時 `<Reference>`** で消費できるようにする（現状の reverse 経路は reflection-load のみ可＝`samples/il-revinterop`、または生成 C# ソースを `<Compile>`＝`samples/revinterop`）。
+> - **Reverse（.NET → Kotlin）＝R-1 実装済 ✅**（2026-06-23）: C# 等が「Kotlin が emit した IL アセンブリ」を**コンパイル時 `<Reference>`/`<ProjectReference>`** で消費できる。下記参照。
+- [x] **R-1 コンパイル時 `<Reference>` retargeting（実装済 2026-06-23、REVERSE 方向 .NET→Kotlin）**: C# 等が IL 出力アセンブリを**コンパイル時 `<Reference>`/`<ProjectReference>`** で消費できる。**双方向 ProjectReference サンプル＝`samples/ktproj-bidir`**（cslib.csproj ← klib.ktproj ← app.csproj：forward と reverse を 1 グラフで、既定 IL 経路・`dotnet run` で緑）。旧 reverse 経路（reflection-load＝`samples/il-revinterop`、生成 C# `<Compile>`＝`samples/revinterop`）も温存。
   - **根本原因**: ilemit は BCL を runtime reflection 型で解決するため、出力では **CoreLib の全型（Object/String/`List`/`Dictionary`/`Task`…）が単一の `System.Private.CoreLib` AssemblyRef を共有**。コンパイル時参照には型ごとに正しいコントラクトアセンブリ（Object/String/Task→System.Runtime、`List`/`Dictionary`→System.Collections、LINQ→System.Linq…）へ**per-ref 分離**が必要。
   - **不可と実証済の2案**（2026-06-18）: ① **MetadataLoadContext 型**で emit → MLC のジェネリック型/メソッドに**ユーザ TypeBuilder 型引数**を渡すと "not loaded by the MLC" 例外（lambda→`Func<UserT>`・closure・`List<UserT>`・コルーチン `Start<SM>` が全滅）。② **単一 AssemblyRef の PE in-place 書換**で CoreLib→System.Runtime → `Object`/`String` は通るが `List<T>` が `TypeLoadException`（System.Runtime は List を forward しない）。両方撤回。
-  - **残る実装案**: 出力 PE の**メタデータ全面再構築**で TypeRef ごとの ResolutionScope を正しいコントラクト AssemblyRef に振り分け（型→コントラクトの対応は ref パックを引いて決定。Reflection.Emit を介さない純メタデータ変換なので TypeBuilder 制約を回避）。あるいは Reflection.Emit の参照アセンブリ対応 API を待つ。**(M-L, 出荷の磨き)**
-  - 併せて **nullability 注釈 `[Nullable]`** の出力（任意）。
-  - **受入**: C# プロジェクトが IL 出力アセンブリを `<Reference>` してコンパイル＋実行でき、`List`/`Dictionary`/コルーチンを使うアセンブリでも壊れない（全 IL サンプル緑を維持）。
+  - **採用した実装**（docs 記載の「残る実装案」の最短形）: **emit 完了後の純メタデータ変換**で TypeRef ごとの ResolutionScope を正しいコントラクト AssemblyRef に振り分ける、後処理ツール **`tools/retarget`**（Mono.Cecil）。Reflection.Emit/MLC の「生きた型」を介さないので①②の TypeBuilder/MLC 制約を完全回避。型→コントラクトの対応は forward と同じ **ref パックを MetadataLoadContext で逆引き**（facadegen の鏡像）。`List`/`Dictionary`/コルーチン（`Task`/`AsyncTaskMethodBuilder`/`IAsyncStateMachine`）すべて実機で C# から消費・コンパイル・実行を確認。
+  - **MSBuild 配線**: `KotlinClrIlEmit`/`DotKtIlEmit` 後に `retarget` を in-place 実行（既定 ON、`<KotlinClrRetarget>false</KotlinClrRetarget>` / `<DotKtRetarget>false</DotKtRetarget>` で opt-out）。併せて **(a)** ilemit に copy-local 参照を `--ref` で渡す穴を dev 経路 `KotlinClr.targets` にも追加（forward ProjectReference を IL 経路で修復＝`ktproj-extlib` 復活）、**(b)** `ProduceReferenceAssembly=false`（プレースホルダ由来の空 ref アセンブリを下流が掴む CS0246 を回避）。
+  - 残（任意）: **nullability 注釈 `[Nullable]`** の出力。
+  - **受入（達成）**: C# プロジェクトが IL 出力アセンブリを `<Reference>`/`<ProjectReference>` してコンパイル＋実行でき、`List`/`Dictionary`/コルーチンを使うアセンブリでも壊れない。`samples/ktproj-bidir` が CI（`scripts/verify-ktproj.sh`）で緑。
 
 ## リスク / 緩和
 - IL の stack 型規律・例外領域・generics 具体化・box 境界が難所。**緩和**: 移行期は C# 差分でバグを即検知、parity 後は JVM オラクル＋`ilverify` の二重ゲート。C# 経路は削除せず「壊れた時の参照実装」として温存可（出荷からは外すが repo には残す選択肢）。
@@ -307,7 +308,7 @@ C# 生成は単なる出力フォーマットではなく、以下3役を兼ね�
 - [ ] 性能（コンパイル時間・生成コード）。**(L)**
 - [~] 配布（基盤あり）: `dotnet new ktproj` テンプレート（`templates/` 存在）・MSBuild SDK / NuGet 化（`scripts/pack-dotkt.sh`＝DotKt.Sdk/Toolchain/Runtime/Templates をパック）は実装済。残: 相対パス依存の排除・self-contained コンパイラ・1.0 versioned release（現状 0.9.0 pre-1.0）。**(M–L)**
 - [ ] VS / VS Code 体験（ビルド/実行統合。フル LSP は別スコープ）。**(M–L)**
-- [x] CI ✅（`.github/workflows/verify.yml`＝verify-il + verify-differential + verify-all を push/PR で実行）。残: サンプル行列の継続拡張・ネット依存サンプル（Avalonia）のキャッシュ戦略。**(S–M)**
+- [x] CI ✅（`.github/workflows/verify.yml`＝verify-il + verify-differential + verify-ktproj を push/PR で実行。旧 C# オラクル `verify-all` は引退済みバックエンドのため除去）。残: サンプル行列の継続拡張・ネット依存サンプル（Avalonia）のキャッシュ戦略。**(S–M)**
 - [ ] **ライセンス / 帰属（出荷必須）**: 参考実装（`KotlinForCLR`、Apache-2.0）からの移植部分のライセンス遵守・NOTICE/帰属、kotlin-compiler-embeddable 等依存のライセンス確認、本体ライセンス確定。**(S)**
 - [ ] **利用者ドキュメント**: README からの getting-started、`.ktproj` の書き方、.NET 型の取り込み方（C-2 で一本化した**単一の方法**を説明。使い分けは存在しない形に）、対応/非対応機能一覧。**(M)**
 - [ ] **バージョン / サポート方針**: Kotlin 2.2.0 ピン留めの位置づけ、対応 .NET TFM、semver 方針を明文化。**(S)**
@@ -321,5 +322,5 @@ C# 生成は単なる出力フォーマットではなく、以下3役を兼ね�
 
 ## 進め方メモ
 - **A と B は相互依存**（stdlib は拡張関数＋lambda-with-receiver で構成）。A-1（拡張関数・スコープ関数・配列・網羅 when・デフォルト引数）と B（コレクション/stdlib 写像）はセットで詰めると効率的。
-- 横断で `verify-all.sh` 緑を維持、IL 追加分は C# 経路と差分一致を必須ゲート。
+- 横断で `verify-il.sh`／`verify-ktproj.sh` 緑を維持、IL 出力は kotlin/jvm 差分一致（`verify-differential.sh`）を必須ゲート。
 - 大物（B の方針、D の構造化並行性、C のジェネリック注入）は着手前に設計を `docs/` に固定。

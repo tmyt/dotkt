@@ -7,5 +7,7 @@
     <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(DotKtToolchainDir)kotlin-stdlib.jar</DotKtStdlib>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(DotKtToolchainDir)ilemit/ilemit.dll</DotKtIlEmit>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(DotKtToolchainDir)facadegen/facadegen.dll</DotKtFacadeGen>
+    <!-- Repoints the emitted dll's BCL refs off System.Private.CoreLib so a C# project can <ProjectReference> it. -->
+    <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(DotKtToolchainDir)retarget/retarget.dll</DotKtRetargetTool>
   </PropertyGroup>
 </Project>

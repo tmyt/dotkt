@@ -4,7 +4,7 @@
     <id>DotKt.Toolchain</id>
     <version>$version$</version>
     <authors>DotKt</authors>
-    <description>DotKt compiler toolchain: the Kotlin-&gt;CLR compiler (JVM, requires a JRE), ilemit, facadegen, and kotlin-stdlib.</description>
+    <description>DotKt compiler toolchain: the Kotlin-&gt;CLR compiler (JVM, requires a JRE), ilemit, facadegen, retarget, and kotlin-stdlib.</description>
     <tags>kotlin clr dotnet compiler kotlin-2.2.0</tags>
   </metadata>
   <files>

@@ -103,7 +103,8 @@ assembly via the chosen backend. See `samples/ktproj/` (C# path), `samples/ktpro
 `samples/ktproj-ref/` and `samples/ktproj-inject/` (.NET type injection).
 
 ```bash
-./scripts/verify-all.sh   # compile+run+assert all console + .ktproj samples (C# path)
+./scripts/verify-il.sh      # the shipping IL backend over the sample corpus + ilverify
+./scripts/verify-ktproj.sh  # MSBuild/.ktproj end-to-end (forward + bidirectional ProjectReference)
 ```
 
 ## Layout
@@ -120,7 +121,8 @@ assembly via the chosen backend. See `samples/ktproj/` (C# path), `samples/ktpro
 | `runtime/csharp/` | C# UI runtime shells (Avalonia/WPF) for windowing samples |
 | `samples/` | `il-*` (IL-backend samples), `m-*` (language/interop), `ktproj-*`, `win*` |
 | `scripts/verify-il.sh` | IL differential + `ilverify` gate |
-| `scripts/verify-all.sh` | C#-path sample matrix |
+| `scripts/verify-ktproj.sh` | MSBuild/.ktproj integration (IL backend) |
+| `docs/dotkt-semantics.md` | **how Kotlin maps to the CLR + where DotKt deliberately differs from Kotlin/JVM** |
 | `docs/remaining-tasks.md` | the 1.0 ship checklist |
 
 ## How it works (design)
