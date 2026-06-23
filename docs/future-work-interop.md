@@ -60,6 +60,19 @@ DotKt が出した dll を、別の Kotlin コンパイルから `import` して
 - これは「kotlinx ライブラリを CLR 向けにコンパイルして配布する」構想（メモリ `dotkt-compile-kotlin-libraries`
   / `dotktx-coroutines-path-b`）の消費体験を素直にする鍵。
 
+## 4. 推移的（transitive / on-demand）型注入
+
+**問題（ユーザー指摘 2026-06-23）**: 注入は **import 駆動**（C-2 / [[s5-fir-injection-seam]]）なので、`import` した型しか FIR に materialize されない。ある注入型のメンバ・シグネチャに**間接的に出るだけの型**（イベントハンドラ引数、戻り値、プロパティ型）は自動注入されず、`e.Message` のように「値の型は分かっているのにメンバが見えない」という直感に反する挙動になる（facadegen は簡易名で出すが、未 import だと injector が解決できず実質 `Any?`）。
+
+**あるべき姿**: 型 A を注入したら、A のメンバの引数/戻り値/プロパティ型を**連鎖的に注入**。そうすれば中間型を import せずに `a.member().memberOfB()` が通る。
+
+**注意/設計事項**: WinUI 等は参照型が数百に膨れるので素朴な全推移は爆発する。要・制御:
+- 深さ制限（1〜2 段）、または
+- 「実際にアクセスされたメンバ経由のみ遅延注入」（オンデマンド）、または
+- import 集合のスキャン段で member-signature 型を集合に足す（facadegen 側でクロージャを取る）。
+
+現状の運用は「触る型は明示 import」。優先度は中（WinUI のような型リッチな相互運用で効く）。
+
 ## メモ
 
 - #2/#3 は対で、「DotKt 製ライブラリ（dotktx.* 含む）を Kotlin から自然に使う」体験を作る。
