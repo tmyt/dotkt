@@ -1248,6 +1248,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		params.filter { it.kind == IrParameterKind.Regular }
 			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 
+	/** The parameter-type signature of a callee, MATCHING how `method()` emits the def's `params` ([ext receiver?] +
+	 *  regular params, each `birType`). Carried on a call so ilemit resolves the right OVERLOAD (e.g. `text(String)` vs
+	 *  `text(()->String)`) instead of colliding on the bare name. */
+	private fun overloadSig(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
+		val ext = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
+		val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type) }
+		return (listOfNotNull(ext) + regs).joinToString(",")
+	}
+
 	private fun stmt(node: org.jetbrains.kotlin.ir.IrElement): String = when (node) {
 		// A `ClrRef<T>` delegate local (`var x by byref(m())`) -> a `ref T` local holding the live managed pointer
 		// (byrefOf keeps the ref-return's pointer instead of deref'ing it). getValue/setValue inline to ldobj/stobj.
@@ -3123,7 +3132,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (prop != null) return if (callee === prop.setter)
 				"""{"k":"staticFieldSet","ownerType":${str(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 			else """{"k":"staticField","ownerType":${str(enclosing)},"name":${str(prop.name.asString())}}"""
-			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)},"args":[${filledArgs(call).joinToString(",")}]}"""
+			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)},"sig":${str(overloadSig(callee))},"args":[${filledArgs(call).joinToString(",")}]}"""
 		}
 
 		// Top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING file's
@@ -3474,7 +3483,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val extRecv = extensionReceiver(call)
 		if (extRecv != null) {
 			val all = (listOf(expr(extRecv)) + filledArgs(call)).joinToString(",")
-			return """{"k":"callStatic","owner":null,"method":${str(name)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]}"""
+			return """{"k":"callStatic","owner":null,"method":${str(name)},"sig":${str(overloadSig(callee))}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]}"""
 		}
 		// Instance method on a user class, or a sibling top-level call.
 		return if (recv != null) {
@@ -3488,8 +3497,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A call to an override of a .NET-mapped interface member (e.g. a user Continuation's resumeWith) uses
 			// the .NET member name (ResumeWith), matching what the class emitted.
 			val mname = clrIfaceMemberName(callee) ?: objectMethodName(callee) ?: name
-			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}$ta${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]}"""
-		} else """{"k":"callStatic","owner":null,"method":${str(name)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]}"""
+			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)},"sig":${str(overloadSig(callee))}$ta${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]}"""
+		} else """{"k":"callStatic","owner":null,"method":${str(name)},"sig":${str(overloadSig(callee))}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]}"""
 	}
 
 	/**

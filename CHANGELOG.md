@@ -80,6 +80,16 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   - `ilemit` gained an `ILEMIT_TRACE` env switch that prints each emission step (ref load,
     parents, signatures, bodies, createType, save) flushed to stderr — so a Reflection.Emit
     hard-crash (uncatchable AV, exit 0xC0000005) can be localized to the culprit type/method.
+- **Overloaded user functions resolved to the wrong method** — ilemit keyed methods by NAME
+  only, so `f(String)` and `f(() -> String)` collided in one dictionary: the last-declared
+  overwrote, a body was emitted into the wrong overload's `MethodBuilder`, and calls picked
+  the wrong target. Manifested as a WinUI crash — the DSL's `text(String)` / `text(() -> String)`
+  caused `text(() -> String)` to run `tb.Text = <the Func itself>` (the String overload's body),
+  so CsWinRT marshaled a `Func` object as a string (`WindowsCreateStringReference` AV / OOM).
+  ilemit now keys methods by name + parameter-type signature (`MethodsBySig`); BirEmitter emits
+  that signature on each call (callStatic/callInstance, incl. extension and companion calls) so
+  body emission AND call resolution pick the right overload. Covers top-level and member
+  overloads, by arity and by parameter type. (`il-overload`)
 - **Expression-body function with a Unit-typed body dropped the call** — `IrReturn(<expr>)`
   emitted a bare `{"k":"return"}` when the value's type was `Unit`, discarding the
   expression. So `fun main() = winUiApp { … }` (and `fun f() = sideEffect()`, or an explicit

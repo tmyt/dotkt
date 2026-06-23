@@ -44,6 +44,10 @@ sealed class TypeInfo
     public Type ClrBase;   // set when the base is a .NET type (`clr:`/`clrg:`); resolved by reflection, not in _types
     public readonly Dictionary<string, FieldBuilder> Fields = new();
     public readonly Dictionary<string, MethodBuilder> Methods = new();
+    // Overloaded methods share a name, so `Methods` (name-keyed) collides — the last-declared wins, and the others'
+    // bodies/calls get misrouted. `MethodsBySig` keys by name + parameter-type signature so each overload is distinct
+    // (e.g. `text(string)` vs `text(func:string:)`). Both body emission and call resolution prefer it.
+    public readonly Dictionary<string, MethodBuilder> MethodsBySig = new();
     public ConstructorBuilder Ctor;       // primary ctor (Ctors[0]) — convenience for the common single-ctor path
     public JsonElement CtorDef;
     public readonly List<ConstructorBuilder> Ctors = new();   // all ctors (primary + secondary)
@@ -467,7 +471,7 @@ sealed class Emitter
                 smb.SetParameters(sps2);
                 smb.SetReturnType(rs == "void" ? typeof(System.Threading.Tasks.Task) : typeof(System.Threading.Tasks.Task<>).MakeGenericType(MapType(rs)));
                 _curMethodParams = null;
-                ti.Methods[name] = smb;
+                ti.Methods[name] = smb; ti.MethodsBySig[SigKey(name, m)] = smb;
                 _mparams[smb] = sps2;
                 return;
             }
@@ -475,7 +479,7 @@ sealed class Emitter
                 : typeof(System.Threading.Tasks.Task<>).MakeGenericType(MapType(rs));
             var sps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
             smb = ti.TB.DefineMethod(name, attrs, taskRet, sps);
-            ti.Methods[name] = smb;
+            ti.Methods[name] = smb; ti.MethodsBySig[SigKey(name, m)] = smb;
             _mparams[smb] = sps;
             return;
         }
@@ -505,7 +509,7 @@ sealed class Emitter
             ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
             mb = ti.TB.DefineMethod(name, attrs, MapType(m.GetProperty("ret").GetString()), ps);
         }
-        ti.Methods[name] = mb;
+        ti.Methods[name] = mb; ti.MethodsBySig[SigKey(name, m)] = mb;
         _mparams[mb] = ps;   // MethodBuilder.GetParameters() throws pre-bake; record param types for call-site boxing
         if (objOverride)
         {
@@ -592,7 +596,11 @@ sealed class Emitter
     {
         // An abstract method has no IL body (subclasses provide it); GetILGenerator would throw.
         if (m.TryGetProperty("abstract", out var amb) && amb.GetBoolean()) return;
-        var mb = ti.Methods[m.GetProperty("name").GetString()];
+        var mname = m.GetProperty("name").GetString();
+        // Pick THIS def's own MethodBuilder by signature (overloads share `mname`; the name-keyed map holds only the
+        // last, so emitting by name alone routes a body into the wrong overload — the WinUI `text(String)` /
+        // `text(()->String)` bug).
+        var mb = ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var bm) ? bm : ti.Methods[mname];
         _methodRetType = mb.ReturnType;
         _curTypeParams = ti.TypeParams;
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
@@ -1762,10 +1770,10 @@ sealed class Emitter
     }
 
     // Resolve a method for emit; out-param gives the substituted (concrete) return type for boxing decisions.
-    MethodInfo ResolveMethod(string spec, string name, out Type retType)
+    MethodInfo ResolveMethod(string spec, string name, out Type retType, string sig = null)
     {
         var (open, constructed) = ParseOwner(spec);
-        var mb = FindMethod(open, name);
+        var mb = FindMethod(open, name, sig);
         if (constructed == null) { retType = mb.ReturnType; return mb; }
         retType = Subst(mb.ReturnType, constructed.GetGenericArguments());
         return TypeBuilder.GetMethod(constructed, mb);
@@ -1898,10 +1906,19 @@ sealed class Emitter
         throw new NotSupportedException($"field {typeName}.{name} not found");
     }
 
-    MethodBuilder FindMethod(string typeName, string name)
+    // name + parameter-type signature -> the overload key. `m` is a method DEF (or a call carrying "sig"); the param
+    // types are the BIR `type` strings, which match across def and call (same birType of the same function's params).
+    static string SigKey(string name, JsonElement methodDef) =>
+        name + "(" + string.Join(",", methodDef.GetProperty("params").EnumerateArray().Select(p => p.GetProperty("type").GetString())) + ")";
+    static string SigKey(string name, string sig) => name + "(" + sig + ")";
+
+    MethodBuilder FindMethod(string typeName, string name, string sig = null)
     {
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
+        {
+            if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
             if (ti.Methods.TryGetValue(name, out var m)) return m;
+        }
         throw new NotSupportedException($"method {typeName}.{name} not found");
     }
 
@@ -2005,7 +2022,8 @@ sealed class Emitter
             }
             case "callInstance":
             {
-                var m0 = ResolveMethod(e.GetProperty("ownerType").GetString(), e.GetProperty("method").GetString(), out var rt);
+                var cisig = e.TryGetProperty("sig", out var ciEl) && ciEl.ValueKind == JsonValueKind.String ? ciEl.GetString() : null;
+                var m0 = ResolveMethod(e.GetProperty("ownerType").GetString(), e.GetProperty("method").GetString(), out var rt, cisig);
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
                 EmitExpr(e.GetProperty("recv"));
                 if (m == m0) EmitCallArgs(e.GetProperty("args"), m); else EmitArgsTyped(e.GetProperty("args"), mps);
@@ -2028,9 +2046,10 @@ sealed class Emitter
             case "callStatic":
             {
                 var name = e.GetProperty("method").GetString();
+                var csig = e.TryGetProperty("sig", out var csEl) && csEl.ValueKind == JsonValueKind.String ? csEl.GetString() : null;
                 // owner present -> a static method on that named class (companion); else a file-class sibling.
                 var mb = ApplyTypeArgs((e.TryGetProperty("owner", out var ow) && ow.ValueKind == JsonValueKind.String)
-                    ? FindMethod(ow.GetString(), name) : FindStatic(name), e, out var srt, out var sps);
+                    ? FindMethod(ow.GetString(), name, csig) : FindStatic(name, csig), e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps);
                 else EmitCallArgs(e.GetProperty("args"), mb);
                 _il.Emit(OpCodes.Call, mb);
@@ -2898,8 +2917,11 @@ sealed class Emitter
         _il.Emit(OpCodes.Add);
     }
 
-    MethodBuilder FindStatic(string name)
+    MethodBuilder FindStatic(string name, string sig = null)
     {
+        if (sig != null)
+            foreach (var ti in _types.Values)
+                if (ti.IsFileClass && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
         foreach (var ti in _types.Values)
             if (ti.IsFileClass && ti.Methods.TryGetValue(name, out var mb)) return mb;
         throw new NotSupportedException("static method not found: " + name);
