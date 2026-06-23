@@ -272,9 +272,21 @@ sealed class Emitter
                     {
                         var itype = MapType(spec);
                         var have = ti.Methods.Keys.ToHashSet();
-                        foreach (var im in itype.GetMethods())
-                            if (have.Contains(im.Name))
-                                ti.TB.DefineMethodOverride(FindMethod(ti.TB.Name, im.Name), im);
+                        // A SELF-REFERENTIAL constructed generic interface (e.g. `V : IComparable<V>`, V the emitted
+                        // type) is a TypeBuilderInstantiation whose .GetMethods() throws. Enumerate the OPEN
+                        // definition's methods and re-anchor each to the instantiation via TypeBuilder.GetMethod
+                        // (same pattern as the self-ref base-ctor below).
+                        if (itype.IsGenericType && itype.GetGenericArguments().Any(a => a is TypeBuilder || a.IsGenericParameter))
+                        {
+                            var openDef = itype.GetGenericTypeDefinition();
+                            foreach (var im in openDef.GetMethods())
+                                if (have.Contains(im.Name))
+                                    ti.TB.DefineMethodOverride(FindMethod(ti.TB.Name, im.Name), TypeBuilder.GetMethod(itype, im));
+                        }
+                        else
+                            foreach (var im in itype.GetMethods())
+                                if (have.Contains(im.Name))
+                                    ti.TB.DefineMethodOverride(FindMethod(ti.TB.Name, im.Name), im);
                         continue;
                     }
                     var (open, constructed) = ParseOwner(spec);

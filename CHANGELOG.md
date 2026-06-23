@@ -42,9 +42,14 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   maps to a `clr:`/`clrg:` spec; `clrIfaceMemberName` renames the overridden members;
   the `catch` clause types via `birType` (a user exception catches as its own type, not
   `object`); `MapType` resolves bare .NET FQNs. (Comparable<T> as a self-referential
-  generic supertype remains — deeper, tracked separately.)
+  generic supertype is now handled too — see below.)
 - **`use {}`** (Closeable/AutoCloseable) now lowers to `try { block(it) } finally { close()/Dispose() }`
   returning the block value — the CLR analogue of C# `using`. (`il-use`)
+- **`Comparable<T>`** (`class V : Comparable<V>`) — the self-referential generic interface
+  `IComparable<V>` (V the emitted type) made ilemit call `.GetMethods()` on a
+  TypeBuilderInstantiation (throws). Interface-impl linking now enumerates the OPEN
+  generic definition and re-anchors each method via `TypeBuilder.GetMethod` (same
+  pattern as the self-ref base ctor). `<`/`>`/`<=`/`compareTo`/`sorted()` all work. (`il-comparable`)
 
 ## 0.9.1 — 2026-06-23
 
