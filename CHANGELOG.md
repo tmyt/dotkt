@@ -5,6 +5,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.3 — 2026-06-24
+
+Round-trip interop: a DotKt-compiled assembly can now be consumed **as Kotlin** by another
+`.ktproj` (the basis for shipping compiled kotlinx-* libraries for the CLR), plus bidirectional
+compile-time `ProjectReference` between C# and Kotlin projects.
+
 ### Added
 - **Consume a DotKt assembly AS KOTLIN — Kotlin-modifier round-trip.** Kotlin-language facts with no native .NET
   representation now survive compilation and are restored on a consuming module's FIR, so a `.ktproj` can use

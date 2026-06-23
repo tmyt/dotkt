@@ -5,7 +5,7 @@
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
 
   <PropertyGroup>
-    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.2</DotKtVersion>
+    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.3</DotKtVersion>
     <!-- We generate the assembly ourselves (kt -> BIR -> CIL); don't let the .NET SDK glob .cs and don't infer
          a language from the project file. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
