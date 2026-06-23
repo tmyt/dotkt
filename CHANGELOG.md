@@ -70,6 +70,15 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
     (`il-injstatic`). NOTE: the bare `App.Start` form is NOT supported — the current
     compiler doesn't resolve the implicit companion of a plugin-generated class, so the
     `.Companion` qualifier is required (accepted rule).
+  - A .NET **FIELD surfaced as a Kotlin property** (facadegen records static/const fields
+    and public instance fields as `sprop`) crashed ilemit with a `NullReferenceException`
+    (later a 0xC0000005 access-violation via MSBuild) — `clrPropGet`/`clrPropSet` only looked
+    up a property accessor. They now fall back to `ldfld`/`ldsfld` / `stfld`/`stsfld`, and
+    otherwise throw an actionable "no property OR field" error. Static field via companion
+    verified (`il-injstatic` → `App.Companion.Answer` = 99).
+  - `ilemit` gained an `ILEMIT_TRACE` env switch that prints each emission step (ref load,
+    parents, signatures, bodies, createType, save) flushed to stderr — so a Reflection.Emit
+    hard-crash (uncatchable AV, exit 0xC0000005) can be localized to the culprit type/method.
 
 ## 0.9.1 — 2026-06-23
 

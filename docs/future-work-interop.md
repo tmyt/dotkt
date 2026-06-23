@@ -1,0 +1,68 @@
+# Future work — interop / consuming DotKt-built assemblies from Kotlin
+
+後々やりたいことのメモ（2026-06-23 起票）。まだ未着手。優先度・設計は未確定。
+
+## 1. ktproj の `ProjectReference`
+
+`.ktproj` から別プロジェクト（`.csproj` / 別の `.ktproj`）を `<ProjectReference>` で参照できるようにする。
+現状は `<PackageReference>` / `<Reference>`（= 解決済みアセンブリ）経由の .NET 型注入は通る（`@(ReferencePath)`
+を facadegen に渡す）が、`ProjectReference` の出力をビルド順序込みで正しく食わせる導線が要る。
+
+- ビルド順序: 参照先プロジェクトを先にビルドし、その出力 dll を `@(ReferencePath)` に載せる（MSBuild の
+  `ResolveProjectReferences` 連携）。
+- 別 `.ktproj` を参照する場合は「DotKt でビルドしたアセンブリを Kotlin 側から再 Emit/消費する」(#2) と直結。
+
+## 2. DotKt でビルドしたアセンブリを Kotlin 側で正しく消費（再 Emit）する仕組み
+
+DotKt が出した dll を、別の Kotlin コンパイルから `import` して使うとき、.NET の素朴な型/メンバ射影では
+**Kotlin 固有の構造が落ちる**。次を復元できるようにする:
+
+- **top level function**（Kotlin のトップレベル関数 = .NET では `XxxKt` クラスの static メソッド）
+- **suspend fun**（ABI: `suspend ⇔ Task<T>`。呼ぶ側で suspend として認識し直す必要がある）
+- **inline fun**（インライン本体／`reified`／`crossinline`・`noinline` の情報）
+- **infix fun / operator fun** など（呼び出し構文に効くメタ情報）
+- **名前空間の自動射影**（下記 #3）
+
+### 方針: メタ情報を .NET 属性でフラグして相互運用
+
+.NET の素のシグネチャだけでは上記の Kotlin 性質が判別できないので、**DotKt が emit する時に属性で印を付け、
+消費する時に読む**。属性の例（名前は仮）:
+
+- `[DotKtSuspendable]` … この static メソッドは元 `suspend fun`（`Task<T>` 戻りを suspend として再射影）
+- top level function / inline / infix なども同様に属性でフラグ:
+  - `[DotKtTopLevel]`（`XxxKt` の static を Kotlin トップレベル関数として見せる）
+  - `[DotKtInline]`（+ 必要なら本体やインライン種別。`reified` は別途）
+    - ⚠️ **そもそも `inline` をアセンブリ境界に切り出す意味があるか自体が別問題**。実インライン展開には
+      呼び出し側に**本体（IR）が必要**で、属性フラグだけでは展開できない（JVM の kotlinx は `@Metadata` に
+      本体を持つ）。選択肢: (a) 本体を何らかの形で同梱して跨ぎインラインする（重い）／(b) 跨ぎでは普通の
+      呼び出しに格下げ（`inline` の non-local return・`reified` 等が絡むと不可な場合あり）。属性は「意図の
+      記録」に留まる可能性が高い。要設計。
+  - `[DotKtInfix]` / `[DotKtOperator(...)]`
+- 消費側コンパイル（FIR 注入）で、これらの属性を見て元の Kotlin 宣言形へ復元する。
+
+> 既存の forward 方向（`@Clr*` で .NET → Kotlin）と対になる reverse 方向のメタ。
+> 関連: メモリ `r1-compiletime-reference-blocker`（compile-time `<Reference>` の MetadataLoadContext 課題）、
+> `csharp-retirement-design`（R-1）。
+
+## 3. 名前空間の自動射影（assembly 単位）
+
+`kotlinx.coroutines` ⇔ `DotKt.Coroutines` のような **名前空間の読み替え**を、コンパイラに全部ハードコード登録
+するのは無理（ライブラリごとに増える）。→ **アセンブリ単位で一括射影を宣言**できるようにする:
+
+```csharp
+[assembly: DotKtNamespaceProjection("kotlinx.coroutines")]   // 例。実引数の形は要設計
+```
+
+- 消費側は、参照アセンブリの assembly 属性を読み、`import kotlinx.coroutines.*` を実体（`DotKt.Coroutines.*`）へ
+  解決する。
+- 単純な prefix 読み替えで足りるか、型単位のマップが要るか（`kotlinx.coroutines.flow.Flow` →
+  `DotKt.Coroutines.Flow` 等）は設計事項。`[DotKtNamespaceProjection(from, to)]` の2引数形も候補。
+- これは「kotlinx ライブラリを CLR 向けにコンパイルして配布する」構想（メモリ `dotkt-compile-kotlin-libraries`
+  / `dotktx-coroutines-path-b`）の消費体験を素直にする鍵。
+
+## メモ
+
+- #2/#3 は対で、「DotKt 製ライブラリ（dotktx.* 含む）を Kotlin から自然に使う」体験を作る。
+- forward interop（.NET → Kotlin、`s5-fir-injection-seam`）は完成済み。これは reverse（Kotlin製 → Kotlin）方向。
+- 静的メンバの companion 必須ルール（メモリ `injected-static-members-need-companion`）と同様、ここでも
+  「.NET の素の形」と「Kotlin の意図した形」のギャップを属性メタで埋めるのが基本戦略。

@@ -238,7 +238,7 @@ il_check_inject delegatearg Dlg "$ROOT/samples/il-delegatearg" "$(printf '42\n20
 il_check_inject netenum NetEnum "$ROOT/samples/il-netenum" "$(printf '60\n6\nabbccc')" KfcNetEnum
 il_check_inject injbase InjBase "$ROOT/samples/il-injbase" "placed:0" KfcInjB
 il_check_inject injfqn InjFqn "$ROOT/samples/il-injfqn" "42" KfcInjF
-il_check_inject injstatic InjStatic "$ROOT/samples/il-injstatic" "$(printf 'p=42\n7')" KfcStatic
+il_check_inject injstatic InjStatic "$ROOT/samples/il-injstatic" "$(printf 'p=42\n7\n99')" KfcStatic
 il_check_ref kfinally KFinally "$ROOT/samples/il-kfinally" "$(printf 'cleanup\n15')" KfcFin
 il_check_ref kselect KSelect "$ROOT/samples/il-kselect" "2000" KfcSel
 il_check_ref kasflow KAsFlow "$ROOT/samples/il-kasflow" "$(printf '0\n10\n20\n30')" KfcAsf
