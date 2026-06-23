@@ -1256,19 +1256,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		params.filter { it.kind == IrParameterKind.Regular }
 			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 
-	/** A `,"sig":"<paramtypes>"` field for a call, but ONLY when the callee is genuinely OVERLOADED (more than one
-	 *  function of that name in its scope). For a non-overloaded callee this returns "" so the call's BIR is byte-for-
-	 *  byte identical to before overload support — ilemit then resolves by name (its long-standing path), avoiding any
-	 *  behavior change for the overwhelming majority of calls. When emitted, the signature MATCHES how `method()` lays
-	 *  out the def's `params` ([ext receiver?] + regular params, each `birType`) so ilemit's overload key lines up. */
+	/** A `,"sig":"<paramtypes>"` field carried on a call so ilemit resolves the right OVERLOAD by name+signature. Emit
+	 *  it ALWAYS: for a non-overloaded callee it's harmless (ilemit's `MethodsBySig` lookup hits the sole method, or
+	 *  falls back to the name), and emitting unconditionally avoids any overload-detection edge case. The signature
+	 *  MATCHES how `method()` lays out the def's `params` ([ext receiver?] + regular params, each `birType`). */
 	private fun overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
-		val simple = fn as? IrSimpleFunction ?: return ""
-		val siblings = when (val p = fn.parent) {
-			is IrClass -> p.declarations
-			is org.jetbrains.kotlin.ir.declarations.IrFile -> p.declarations
-			else -> return ""
-		}
-		if (siblings.count { it is IrSimpleFunction && it.name == simple.name } <= 1) return ""   // not overloaded
 		val ext = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
 		val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type) }
 		return ""","sig":${str((listOfNotNull(ext) + regs).joinToString(","))}"""
