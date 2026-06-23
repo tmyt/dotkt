@@ -1,0 +1,9 @@
+namespace Kfc {
+    public delegate void InitCb(int p);
+    public class App {                                  // a NORMAL class (has instance members) with STATIC members
+        public int inst = 1;
+        public void run() { }
+        public static int start(InitCb cb) { cb(42); return 0; }   // static method w/ delegate arg
+        public static int Count => 7;                              // static property
+    }
+}

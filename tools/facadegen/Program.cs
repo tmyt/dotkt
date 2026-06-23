@@ -318,6 +318,23 @@ static class FacadeGen
                     && Supported(i.GetGenericArguments()[0])); } catch { }
                 if (ienum != null)
                     sb.Append($"iterator {Map(ienum.GetGenericArguments()[0], t)}\n");
+                // Public STATIC members of a NORMAL class (it also has instance members) -> companion-object members,
+                // so `App.Start(cb)` / `App.Current` resolve. `sfun`/`sprop` lines; the injector puts them on a
+                // synthesized companion and the backend emits .NET static calls. (Feedback: WinUI Application.Start.)
+                foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Static))
+                    if (Supported(f.FieldType) && seen.Add("sfield:" + f.Name))
+                        sb.Append($"sprop {f.Name} {Map(f.FieldType, t)} ro\n");
+                foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
+                    if (p.GetIndexParameters().Length == 0 && Supported(p.PropertyType) && p.CanRead && seen.Add("sprop:" + p.Name))
+                        sb.Append($"sprop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")}\n");
+                foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                {
+                    if (m.IsSpecialName || OBJECT_MEMBERS.Contains(m.Name) || m.IsGenericMethod) continue;
+                    var sps = m.GetParameters();
+                    if (!sps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
+                    if (!seen.Add("sm:" + m.Name + "(" + Sig(sps, t) + ")")) continue;
+                    sb.Append($"sfun {m.Name} {MapRet(m.ReturnType, t)} {MetaParams(sps, t)}".TrimEnd() + "\n");
+                }
             }
             else
             {

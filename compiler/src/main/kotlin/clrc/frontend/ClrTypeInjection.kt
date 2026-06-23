@@ -20,6 +20,8 @@ import org.jetbrains.kotlin.fir.extensions.FirDeclarationGenerationExtension
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrarAdapter
 import org.jetbrains.kotlin.fir.extensions.MemberGenerationContext
+import org.jetbrains.kotlin.fir.extensions.NestedClassGenerationContext
+import org.jetbrains.kotlin.fir.plugin.createCompanionObject
 import org.jetbrains.kotlin.fir.plugin.createConstructor
 import org.jetbrains.kotlin.fir.plugin.createMemberFunction
 import org.jetbrains.kotlin.fir.plugin.createMemberProperty
@@ -72,6 +74,8 @@ private class ClrType(
 	val indexer: ClrIndexer?,
 	val iteratorElem: String?,         // IEnumerable<T> element -> a frontend-only `operator fun iterator(): Iterator<T>`
 	val baseNoArgCtor: Boolean,        // false ("basector none"): base lacks a no-arg ctor -> don't synthesize `: super()`
+	val staticMethods: List<ClrMethod>,// public static methods of a NORMAL class -> companion-object members (App.Start)
+	val staticProps: List<ClrProperty>,// public static props/fields of a NORMAL class -> companion-object members
 )
 private class ClrModule(val types: List<ClrType>)
 
@@ -94,7 +98,8 @@ private object ClrMetadataHolder {
 		var indexer: ClrIndexer? = null
 		var iteratorElem: String? = null
 		var baseNoArgCtor = true
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, iteratorElem, baseNoArgCtor)) }
+		val staticMethods = ArrayList<ClrMethod>(); val staticProps = ArrayList<ClrProperty>()
+		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, iteratorElem, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps))) }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
 			if (line.isEmpty()) continue
@@ -102,7 +107,7 @@ private object ClrMetadataHolder {
 			when (tok[0]) {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; supers = emptyList()
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); supers = emptyList()
 					name = tok[1]; dotNet = tok[2]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"; isAnnotation = false
 					isOpen = !isObject && !isInterface && tok.getOrNull(3) == "open"
 					// `class <Name> <DotNet> <open|sealed> [<TP>...]` (TPs at 4, after the modality token) vs
@@ -112,7 +117,7 @@ private object ClrMetadataHolder {
 				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
 				// trailing params (from its longest ctor) become the single annotation constructor.
 				"annotation" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; supers = emptyList()
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); supers = emptyList()
 					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
 					ctors.add(parseParams(tok.drop(3)))
 				}
@@ -129,6 +134,10 @@ private object ClrMetadataHolder {
 						parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }))
 				}
 				"ctor" -> ctors.add(parseParams(tok.drop(1)))
+				// sfun <Name> <ret> [<param>:<type>]* — a public STATIC method of a normal class (-> companion).
+				"sfun" -> staticMethods.add(ClrMethod(tok[1], tok[2], false, false, false, parseParams(tok.drop(3))))
+				// sprop <Name> <type> <ro|rw> — a public STATIC prop/field of a normal class (-> companion).
+				"sprop" -> staticProps.add(ClrProperty(tok[1], tok[2], tok.getOrNull(3) == "rw", false, false, false))
 				// prop <Name> <type> <ro|rw> <prot-?open|final|abstract>
 				"prop" -> {
 					val mod = tok.getOrNull(4) ?: "final"; val prot = mod.startsWith("prot-"); val bare = mod.removePrefix("prot-")
@@ -257,12 +266,40 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		}.symbol
 	}
 
+	/** The owner ClrType of a companion symbol (its static members live here), or null if not a companion-with-statics. */
+	private fun companionOwnerType(classId: ClassId): ClrType? =
+		if (classId.shortClassName == SpecialNames.DEFAULT_NAME_FOR_COMPANION_OBJECT)
+			classId.outerClassId?.let { byClassId[it] }?.takeIf { it.staticMethods.isNotEmpty() || it.staticProps.isNotEmpty() }
+		else null
+
+	// A normal class with public STATIC members gets a synthesized companion object holding them, so `App.Start(..)`/
+	// `App.Current` resolve (Kotlin has no bare statics). The backend emits .NET static calls for these.
+	override fun getNestedClassifiersNames(classSymbol: FirClassSymbol<*>, context: NestedClassGenerationContext): Set<Name> {
+		val type = byClassId[classSymbol.classId] ?: return emptySet()
+		return if (type.staticMethods.isNotEmpty() || type.staticProps.isNotEmpty())
+			setOf(SpecialNames.DEFAULT_NAME_FOR_COMPANION_OBJECT) else emptySet()
+	}
+
+	override fun generateNestedClassLikeDeclaration(owner: FirClassSymbol<*>, name: Name, context: NestedClassGenerationContext): FirClassLikeSymbol<*>? {
+		if (name != SpecialNames.DEFAULT_NAME_FOR_COMPANION_OBJECT) return null
+		val type = byClassId[owner.classId] ?: return null
+		if (type.staticMethods.isEmpty() && type.staticProps.isEmpty()) return null
+		return createCompanionObject(owner, ClrGeneratedKey).symbol
+	}
+
 	override fun getCallableNamesForClass(classSymbol: FirClassSymbol<*>, context: MemberGenerationContext): Set<Name> {
 		// `ClrRef<T>` exposes getValue/setValue so a ref return is `by`-delegatable (`var x by byref(m())`).
 		if (classSymbol.classId == clrRefClassId) return hashSetOf(Name.identifier("getValue"), Name.identifier("setValue"))
 		// `StackBuffer<T>`: size (val), get/set (operators), asSpan (-> Span<T> = the real System.Span<T>).
 		if (classSymbol.classId == stackBufferClassId)
 			return hashSetOf(Name.identifier("size"), Name.identifier("get"), Name.identifier("set"), Name.identifier("asSpan"))
+		// A companion object: its callables are the owner class's static methods/props.
+		companionOwnerType(classSymbol.classId)?.let { ct ->
+			val n = HashSet<Name>()
+			ct.staticMethods.forEach { n.add(Name.identifier(it.name)) }
+			ct.staticProps.forEach { n.add(Name.identifier(it.name)) }
+			return n
+		}
 		val type = byClassId[classSymbol.classId] ?: return emptySet()
 		val names = type.methods.mapTo(HashSet()) { Name.identifier(it.name) }
 		type.properties.forEach { names.add(Name.identifier(it.name)) }
@@ -278,6 +315,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// `StackBuffer<T>.size: Int` (the element count).
 		if (owner.classId == stackBufferClassId && callableId.callableName.asString() == "size")
 			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.intType.coneType, true, false).symbol)
+		// A companion object holds the owner class's STATIC props/fields (App.Current). Backend emits .NET static get.
+		companionOwnerType(owner.classId)?.let { ct ->
+			val sp = ct.staticProps.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
+			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, coneOf(sp.type, owner), !sp.mutable, false).symbol)
+		}
 		val type = byClassId[owner.classId] ?: return emptyList()
 		val prop = type.properties.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
 		// Property name == .NET name verbatim, so the backend emits `recv.<Name>` directly.
@@ -362,6 +404,15 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				valueParameter(Name.identifier("value"), tOf)
 			}
 			return listOf(fn.symbol)
+		}
+		// A companion object holds the owner class's STATIC methods (App.Start(..)). The backend emits .NET static calls.
+		companionOwnerType(owner.classId)?.let { ct ->
+			val cn = callableId.callableName.asString()
+			return ct.staticMethods.filter { it.name == cn }.map { m ->
+				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
+					for (p in m.params) valueParameter(Name.identifier(p.name), coneOf(p.type, owner))
+				}.symbol
+			}
 		}
 		val type = byClassId[owner.classId] ?: return emptyList()
 		val callName = callableId.callableName.asString()

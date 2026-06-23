@@ -3025,6 +3025,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Kotlin subclass, so resolve through the fake override to find the real .NET declaring type.
 		val clrType = declaringClass?.let { clrName(it) }
 			?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrName(it) }
+			// A synthesized companion of an injected .NET type holds its STATIC members (`App.Start`) -> a static call
+			// on the .NET type itself.
+			?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrName(it) }
 		if (clrType != null) {
 			val recv = dispatchReceiver(call)
 			val isStatic = recv == null || recv is IrGetObjectValue
