@@ -71,6 +71,7 @@ private class ClrType(
 	val events: List<ClrEvent>,
 	val indexer: ClrIndexer?,
 	val iteratorElem: String?,         // IEnumerable<T> element -> a frontend-only `operator fun iterator(): Iterator<T>`
+	val baseNoArgCtor: Boolean,        // false ("basector none"): base lacks a no-arg ctor -> don't synthesize `: super()`
 )
 private class ClrModule(val types: List<ClrType>)
 
@@ -92,7 +93,8 @@ private object ClrMetadataHolder {
 		val props = ArrayList<ClrProperty>(); val events = ArrayList<ClrEvent>()
 		var indexer: ClrIndexer? = null
 		var iteratorElem: String? = null
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, iteratorElem)) }
+		var baseNoArgCtor = true
+		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, iteratorElem, baseNoArgCtor)) }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
 			if (line.isEmpty()) continue
@@ -100,7 +102,7 @@ private object ClrMetadataHolder {
 			when (tok[0]) {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; supers = emptyList()
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; supers = emptyList()
 					name = tok[1]; dotNet = tok[2]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"; isAnnotation = false
 					isOpen = !isObject && !isInterface && tok.getOrNull(3) == "open"
 					// `class <Name> <DotNet> <open|sealed> [<TP>...]` (TPs at 4, after the modality token) vs
@@ -110,12 +112,15 @@ private object ClrMetadataHolder {
 				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
 				// trailing params (from its longest ctor) become the single annotation constructor.
 				"annotation" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; supers = emptyList()
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; supers = emptyList()
 					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
 					ctors.add(parseParams(tok.drop(3)))
 				}
 				// super <SimpleName>... — the injectable base class (first) + interfaces; wired by ClrSupertypeInjector.
 				"super" -> supers = tok.drop(1)
+				// basector none — the base class has no accessible no-arg ctor (still linked for assignability, but a
+				// synthesized `: super()` delegating call must be suppressed).
+				"basector" -> if (tok.getOrNull(1) == "none") baseNoArgCtor = false
 				// fun <Name> <ret> <prot-?open|final|abstract> [<TypeParam>...] [<param>:<type>]* — the modifier is a
 				// single token (so it never looks like a type param); bare trailing tokens (no `:`) are type params.
 				"fun" -> {
@@ -288,7 +293,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		if (type.isObject) return emptyList()
 		val ctors = type.ctors.ifEmpty { listOf(emptyList()) }   // a class with no listed ctor still needs one
 		return ctors.mapIndexed { i, params ->
-			createConstructor(context.owner, ClrGeneratedKey, i == 0, true) {
+			// Only synthesize a `: super()` delegating call when the base actually has a no-arg ctor; a base linked
+			// purely for assignability (e.g. WinUI UIElement, SafeHandle) has none, and the façade ctor is never
+			// lowered (construction is native clrNew) so the missing delegation is harmless.
+			createConstructor(context.owner, ClrGeneratedKey, i == 0, type.baseNoArgCtor) {
 				for (p in params) valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner))
 			}.symbol
 		}
@@ -449,7 +457,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// supertype (`Money : IComparable<Money>`) runs THIS lambda synchronously while `Money` is still being
 			// built (not yet cached), so resolving its symbol here re-enters generation -> StackOverflow. A lookup-tag
 			// cone is a lazy by-ClassId reference; the symbol resolves later, once `Money` is fully built.
-			else -> ClrMetadataHolder.classIdFor(name, 0)?.let { ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(it), emptyArray(), false) } ?: bt.nullableAnyType.coneType
+			else -> {
+				// A fully-qualified arg (`P.Money`, from the FQN member/arg encoding) resolves to that exact ClassId;
+				// a bare name resolves by (simpleName, arity 0). Both via a lazy lookup-tag cone (self-ref safe).
+				val cid = if ('.' in name) ClassId(FqName(name.substringBeforeLast('.')), Name.identifier(name.substringAfterLast('.')))
+					else ClrMetadataHolder.classIdFor(name, 0)
+				cid?.let { ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(it), emptyArray(), false) } ?: bt.nullableAnyType.coneType
+			}
 		}
 	}
 
@@ -537,7 +551,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			"String" -> bt.stringType.coneType
 			"Unit" -> bt.unitType.coneType
 			else -> {
-				val cid = ClrMetadataHolder.classIdFor(typeName, 0)   // a bare cross-type name is non-generic (arity 0)
+				// A fully-qualified cross-type (`Microsoft.UI.Xaml.LaunchActivatedEventArgs`) resolves to that EXACT
+				// ClassId — disambiguating same-simple-name types from different namespaces. A bare name (legacy /
+				// nested fallback) resolves by (simpleName, arity 0).
+				val cid = if ('.' in typeName)
+					ClassId(FqName(typeName.substringBeforeLast('.')), Name.identifier(typeName.substringAfterLast('.')))
+				else ClrMetadataHolder.classIdFor(typeName, 0)
 				val sym = when {
 					cid == null -> null
 					cid == owner.classId -> owner

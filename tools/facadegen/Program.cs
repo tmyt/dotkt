@@ -263,6 +263,11 @@ static class FacadeGen
                 // publicly implements (assignable to an interface parameter, e.g. `Circle` -> `IShape`).
                 var supers = SuperTypes(t).Concat(ClassInterfaceSuperTypes(t)).ToList();
                 if (supers.Count > 0) sb.Append("super " + string.Join(" ", supers) + "\n");
+                // The base edge is emitted for assignability even when the base has no accessible no-arg ctor (e.g.
+                // WinUI UIElement, SafeHandle). In that case the injector must NOT synthesize a `: super()` delegating
+                // call (it would fail — no no-arg base ctor); a façade ctor is never lowered anyway (clrNew). Mark it.
+                if (t.BaseType != null && EmittableBase(t.BaseType) && !HasAccessibleNoArgCtor(t.BaseType))
+                    sb.Append("basector none\n");
             }
             var seen = new HashSet<string>();
             bool Covered(MemberInfo m) => m.DeclaringType?.FullName != null && covered.Contains(m.DeclaringType.FullName);
@@ -468,17 +473,22 @@ static class FacadeGen
         t != null && !t.IsGenericType && !string.IsNullOrEmpty(t.Namespace) && t.FullName != null
         && t.FullName != "System.Object" && !NO_INJECT.Contains(t.FullName);
 
-    // A base CLASS is emittable as a supertype only if it has an accessible parameterless constructor: the injected
-    // subclass's (possibly synthesized) ctor chains to `super()`, and a base without a no-arg ctor (Delegate,
-    // SafeHandle, abstract bases with only parameterized ctors) would make that chain fail in codegen. Interfaces
-    // have no ctors so they're always fine.
+    // A base CLASS supertype edge is emitted purely for ASSIGNABILITY (is-a): e.g. a WinUI `TextBlock` must be usable
+    // where `UIElement` is expected. This is INDEPENDENT of whether the base is constructible — injected façade
+    // instances come from .NET (method returns etc.), and `Foo()` lowers to native `new Foo()` (clrNew, which chains
+    // base ctors internally), so no Kotlin `: Base()` super-chain is synthesized for injected types. (A non-activatable
+    // WinRT base like `UIElement` has no no-arg ctor; requiring one here dropped the FrameworkElement->UIElement edge
+    // and broke assignability for every control below it — feedback item 1.)
+    static bool EmittableBase(Type t) => IsInjectableSupertype(t);
+
+    // Whether [t] has an accessible parameterless ctor — used only to decide if an injected subclass may synthesize a
+    // `: super()` delegating call (NOT to gate the assignability edge; see EmittableBase / feedback item 1).
     static bool HasAccessibleNoArgCtor(Type t)
     {
         try { return t.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             .Any(c => c.GetParameters().Length == 0 && (c.IsPublic || c.IsFamily || c.IsFamilyOrAssembly)); }
         catch { return false; }
     }
-    static bool EmittableBase(Type t) => IsInjectableSupertype(t) && HasAccessibleNoArgCtor(t);
 
     static string SimpleName(Type t) => t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name;
 
@@ -774,6 +784,12 @@ static class FacadeGen
             if (args.Any(a => a == "Any?" || a.Contains(':') || a.Contains(','))) return "Any?";
             return "generic:" + openName + ":" + string.Join(",", args);
         }
+        // Emit the FULLY-QUALIFIED name so the injector resolves the EXACT type, not whichever same-simple-name type
+        // from another namespace won the dedup (e.g. Microsoft.UI.Xaml.LaunchActivatedEventArgs vs the UWP
+        // Windows.ApplicationModel.Activation.LaunchActivatedEventArgs — feedback item 2). Fall back to the simple
+        // name for nested types (FullName has '+') so they at least resolve as before.
+        var fqn = t.FullName;
+        if (fqn != null && fqn.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.')) return fqn;
         var n = t.Name;
         return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? n : "Any?";
     }
