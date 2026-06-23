@@ -66,9 +66,10 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
     injected — they were dropped, so `Application.Start(cb)` / `Application.Current` were
     unresolved. Surfaced on a synthesized companion: facadegen emits `sfun`/`sprop`, the
     injector generates the companion, the backend emits .NET static calls (lambda args bind
-    to the .NET delegate). Reachable as `App.Companion.Start(cb)` today (`il-injstatic`);
-    the bare `App.Start` form awaits implicit-companion resolution for plugin-generated
-    classes (a FIR-resolver follow-up).
+    to the .NET delegate). Accessed via `App.Companion.Start(cb)` / `App.Companion.Current`
+    (`il-injstatic`). NOTE: the bare `App.Start` form is NOT supported — the current
+    compiler doesn't resolve the implicit companion of a plugin-generated class, so the
+    `.Companion` qualifier is required (accepted rule).
 
 ## 0.9.1 — 2026-06-23
 
