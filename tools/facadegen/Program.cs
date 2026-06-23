@@ -770,6 +770,16 @@ static class FacadeGen
             "System.Int32" => "Int",
             "System.Int64" => "Long",
             "System.Int16" => "Short",
+            // Unsigned .NET primitives map to Kotlin's unsigned types (System.UInt32 == kotlin.UInt, etc.). Without
+            // these they fell to CrossType -> the bare name "UInt32", which doesn't unify with `UInt` (e.g. a `uint`
+            // parameter like WinUI's `Bootstrap.Initialize(uint)`).
+            "System.UInt32" => "UInt",
+            "System.UInt64" => "ULong",
+            "System.UInt16" => "UShort",
+            // Kotlin `Byte` is signed (== System.SByte). System.Byte is unsigned (strictly Kotlin `UByte`), but we map
+            // it to `Byte` so Int literals stay assignable (e.g. `Stream.WriteByte(65)`); the bit pattern matches for
+            // 0..127. (Revisit if a use needs the full 0..255 range typed as UByte.)
+            "System.SByte" => "Byte",
             "System.Byte" => "Byte",
             "System.Boolean" => "Boolean",
             "System.Double" => "Double",

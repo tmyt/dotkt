@@ -80,6 +80,12 @@ Interop/primitive bug fixes found after 0.9.1 shipped.
   - `ilemit` gained an `ILEMIT_TRACE` env switch that prints each emission step (ref load,
     parents, signatures, bodies, createType, save) flushed to stderr — so a Reflection.Emit
     hard-crash (uncatchable AV, exit 0xC0000005) can be localized to the culprit type/method.
+- **Unsigned .NET parameter types weren't mapped to Kotlin unsigned types** — facadegen's
+  primitive map had `System.Int32→Int` etc. but no `System.UInt32`/`UInt64`/`UInt16`, so a
+  `uint` parameter surfaced as the bare name `UInt32`, which doesn't unify with `kotlin.UInt`
+  ("argument type mismatch: actual 'UInt', expected 'UInt32'") — hit calling WinUI's
+  `Bootstrap.Initialize(uint majorMinorVersion)`. Added `UInt32→UInt`, `UInt64→ULong`,
+  `UInt16→UShort`, `SByte→Byte`. (`il-injuint`)
 - **Synthetic type names collided across files in a multi-file assembly** — every file's
   `BirEmitter` used a fresh counter, so `<>dotkt_Closure0…`, `<>dotkt_Ref_<elem>`, and
   `<>dotkt_Seq…` repeated across files. Linking all BIR into one assembly overwrote them in
