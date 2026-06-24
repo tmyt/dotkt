@@ -910,9 +910,21 @@ sealed partial class Emitter
             {
                 // Capturing lambda: `new Closure(captures)` then bind its `invoke` instance method as a delegate.
                 var ct = _types[e.GetProperty("closureType").GetString()];
+                ConstructorInfo ctor = ct.Ctor;
+                MethodInfo invoke = ct.Methods[e.GetProperty("method").GetString()];
+                // A closure that captures an enclosing type parameter is a GENERIC class: construct it with the actual
+                // type arguments (the enclosing method/class type params, live here) and re-anchor its ctor/invoke onto
+                // the constructed type (TypeBuilder.GetX — a TypeBuilder instantiation can't resolve members directly).
+                if (e.TryGetProperty("typeArgs", out var taProp) && taProp.GetArrayLength() > 0)
+                {
+                    var typeArgs = taProp.EnumerateArray().Select(a => MapType(a.GetString())).ToArray();
+                    var constructed = ct.TB.MakeGenericType(typeArgs);
+                    ctor = TypeBuilder.GetConstructor(constructed, ct.Ctor);
+                    invoke = TypeBuilder.GetMethod(constructed, invoke);
+                }
                 foreach (var c in e.GetProperty("captures").EnumerateArray()) EmitExpr(c);
-                _il.Emit(OpCodes.Newobj, ct.Ctor);           // closure instance is the delegate target
-                _il.Emit(OpCodes.Ldftn, ct.Methods[e.GetProperty("method").GetString()]);
+                _il.Emit(OpCodes.Newobj, ctor);              // closure instance is the delegate target
+                _il.Emit(OpCodes.Ldftn, invoke);
                 var ft = MapType(e.GetProperty("funcType").GetString());
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
                 return ft;

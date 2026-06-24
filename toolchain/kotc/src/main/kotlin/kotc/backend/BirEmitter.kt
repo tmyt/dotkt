@@ -59,6 +59,7 @@ import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
+import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
@@ -1591,6 +1592,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * A lambda -> a delegate. Non-capturing lambdas lift to a static method (`delegateNew`); capturing
 	 * lambdas synthesize a closure class (fields = captured vars, instance `invoke` method) (`closureNew`).
 	 */
+	/**
+	 * The enclosing type parameters a synthesized closure CLASS must be generic over: those referenced by its capture
+	 * field types (and its own parameter/return types). On the CLR generics are reified, so a closure that captures a
+	 * `T`-typed value (or a `List<T>` / `(T)->Unit`) becomes a SEPARATE class with a `gp:T` field — and `T` (an
+	 * enclosing *method* type parameter) is not in scope from inside that class. The closure class must therefore
+	 * declare `T` itself and be instantiated with the enclosing `T` at `closureNew`, or `MapType` fails to resolve it.
+	 */
+	private fun freeTypeParams(types: List<IrType>): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
+		val acc = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
+		fun walk(t: IrType) {
+			(t.classifierOrNull as? IrTypeParameterSymbol)?.let { acc.add(it.owner) }
+			if (t is IrSimpleType) t.arguments.forEach { (it as? IrTypeProjection)?.type?.let(::walk) }
+		}
+		types.forEach(::walk)
+		return acc.toList()
+	}
+
 	internal fun lambda(node: IrFunctionExpression): String {
 		val fn = node.function
 		// A `suspend () -> T` lambda is a coroutine; in the CLR ABI it is a `Func<Task<T>>` (coroutine-abi-decision).
@@ -1639,10 +1657,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 		val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
-		liftedTypes.add("""{"name":${str(cname)},"kind":"class","base":null,"interfaces":[],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$invoke]}""")
+		// The closure must be GENERIC over any enclosing type parameters it captures (reified CLR generics — a `gp:T`
+		// field is unresolved otherwise). Declare them on the class and pass them as type arguments at `closureNew`.
+		val freeTps = freeTypeParams(capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType))
+		liftedTypes.add("""{"name":${str(cname)},"kind":"class"${typeParamsJson(freeTps)},"base":null,"interfaces":[],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$invoke]}""")
 		// Capture values are evaluated in the enclosing context (the outer `this`, or an outer local).
 		val capExprs = captures.joinToString(",") { capValueExpr(it) }
-		return """{"k":"closureNew","closureType":${str(cname)},"captures":[$capExprs],"method":"invoke","funcType":${str(ftype)}}"""
+		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
+		return """{"k":"closureNew","closureType":${str(cname)},"captures":[$capExprs],"method":"invoke","funcType":${str(ftype)}$typeArgs}"""
 	}
 
 	/**
