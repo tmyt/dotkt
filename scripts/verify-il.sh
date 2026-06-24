@@ -107,102 +107,102 @@ il_check_mpp() { # <name> <asm> <srcDir> <commonFile> <expected>
 			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
 	} &
 }
-il_check_mpp expect Expect "$ROOT/samples/il-expect" common.kt "$(printf 'CLR\n42\nhello from CLR\n2\nTrue\n10\n15\nTrue\nhi')"
+il_check_mpp expect Expect "$ROOT/cases/il-expect" common.kt "$(printf 'CLR\n42\nhello from CLR\n2\nTrue\n10\n15\nTrue\nhi')"
 
-il_check kseq  KSeq  "$ROOT/samples/il-kseq"  "$(printf '1,2,3\n1,4,9,16\n0,1\n0,1,2,3,4,5,6')"
-il_check kgenseq KGenSeq "$ROOT/samples/il-kgenseq" "$(printf '1,2,3,4,5\na,aa,aaa\n1,2,3')"
-il_check kflow KFlow "$ROOT/samples/il-kflow"  "$(printf '1\n2\n3')"
-il_check kgflow KGFlow "$ROOT/samples/il-kgflow" "$(printf '1\n2\n3')"
-il_check m0    M0Kt  "$ROOT/samples/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2')"
-il_check mc1   MC1   "$ROOT/samples/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
-il_check iface Iface "$ROOT/samples/il-iface"  "$(printf 'Hello\nKonnichiwa')"
-il_check enum  Enum  "$ROOT/samples/il-enum"   "$(printf 'red\ngreen\nblue')"
-il_check m2    M2    "$ROOT/samples/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"
-il_check mi1   MI1   "$ROOT/samples/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
-il_check for   ForT  "$ROOT/samples/il-for"     "$(printf 'sum 1..5 = 15\ncountdown 5 = 54321')"
-il_check exc   Exc   "$ROOT/samples/il-exc"     "$(printf 'safeDiv(10,2) = 5\nsafeDiv(1,0) = -1')"
-il_check ops   Ops   "$ROOT/samples/il-ops"     "$(printf '3\n2\n7\n3\n16\n15\n-1\n3\n5')"
-il_check math  MathT "$ROOT/samples/il-math"    "$(printf '9\n7\n3\n4')"
-il_check str   Str   "$ROOT/samples/il-str"     "$(printf 'HELLO\nhello\nhi\nello\nTrue\nTrue')"
-il_check cp    Cp    "$ROOT/samples/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX')"
-il_check ext   Ext   "$ROOT/samples/il-ext"     "$(printf '21\nHI')"
-il_check arr   Arr   "$ROOT/samples/il-arr"     "$(printf '10\n30\n99\n3\n139\n139')"
-il_check lam   Lam   "$ROOT/samples/il-lambda"  "$(printf '42\n12')"
-il_check clo   Clo   "$ROOT/samples/il-closure" "$(printf '15\n105\n17')"
-il_check scope Sc    "$ROOT/samples/il-scope"   "$(printf '10\n6\n9\n10\n10\n7')"
-il_check coll  Coll  "$ROOT/samples/il-coll"    "$(printf '5\n5\n3\n2\n3\nTrue\nTrue\n3\n1\n4\nTrue\n5')"
-il_check coll2 Coll2 "$ROOT/samples/il-coll2"   "$(printf '10\n1-2-3-4\n1, 2, 3, 4\n100')"
-il_check coll3 Coll3 "$ROOT/samples/il-coll3"   "$(printf '60\n6')"
-il_check seq   Seq   "$ROOT/samples/il-seq"     "$(printf '6,12\n16\n3\n27\n10-20-30\n1,2,3\n4,5,6\n3')"
-il_check char  Char  "$ROOT/samples/il-char"    "$(printf 'True\nTrue\nTrue\nTrue\nA\nz\nTrue\nTrue\n97\nb')"
-il_check sort  Sort  "$ROOT/samples/il-sort"    "$(printf '9,6,5,4,3,2,1,1\na,dd,bbb,cccc\ncccc,bbb,dd,a')"
-il_check funref Funref "$ROOT/samples/il-funref" "$(printf '2,4,6\n1,4,9,16,25,36\nHi, Kotlin\n105\n107\ncalc100\n203\n42')"
-il_check mapdes MapDes "$ROOT/samples/il-mapdes" "$(printf '10\n60\n13\nx=1\ny=2\nz=3\ntotal=6')"
-il_check unsgn Unsigned "$ROOT/samples/il-unsigned" "$(printf '4000000100\n4000000000\n18000000000000000000\n60000\n250')"
-il_check regex Regex "$ROOT/samples/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_c\nTrue\nFalse\n42\n')"
-il_check langtail LangTail "$ROOT/samples/il-langtail" "$(printf '6\nhi\nint:42\nstr:3\nbig:5\nsmall\n700\n9')"
-il_check enumbody EnumBody "$ROOT/samples/il-enumbody" "$(printf '+: 8\n-: 4\n*: 12\nPLUS\n9')"
-il_check bytearg ByteArg "$ROOT/samples/il-bytearg" "$(printf '5\n3\n7\n9\n4\n100\n-2')"
-il_check iterable Iterable "$ROOT/samples/il-iterable" "$(printf '321\n6\n6')"
-il_check customexc CustomExc "$ROOT/samples/il-customexc" "$(printf 'error -5\ncode=-5\ncaught:boom\n42')"
-il_check comparator Comparator "$ROOT/samples/il-comparator" "$(printf -- '-3\n5\n0')"
-il_check use Use "$ROOT/samples/il-use" "$(printf 'close abcd\nn=4\nclose x\ncaught:boom')"
-il_check comparable Comparable "$ROOT/samples/il-comparable" "$(printf 'a<b\nc>b\na<=a\n-3\n1.2,1.5,2.0')"
-il_check charseq CS "$ROOT/samples/il-charseq" "$(printf '5\ne\n3\ne\n5')"
-il_check substr Substr "$ROOT/samples/il-substr" "$(printf 'ell\nworld\nhello\nworld')"
-il_check result Result "$ROOT/samples/il-result" "$(printf 'True\n10\n10\nTrue\n\n-99\nneg -1\n\nfb')"
-il_check bmore BMore "$ROOT/samples/il-bmore" "$(printf '5 items\nx = 42\n3.14\n00007\nff\n100%% ok: yes\n0:a,1:b,2:c\n0,20,60')"
-il_check chunk Chunk "$ROOT/samples/il-chunk" "$(printf '3,7,5\n3\n1-2-3 4-5\na,b,c\n3\n1,3,5\n9')"
-il_check collmore CollMore "$ROOT/samples/il-collmore" "$(printf '20,40\n1,10,2,20,3,30,4,40,5,50\n1,2,3,4,5\n15\n14\n-1\n3\n3')"
-il_check tryexpr TryExpr "$ROOT/samples/il-tryexpr" "$(printf '42\n-1\n5\n-7\n4')"
-il_check localclass LocalClass "$ROOT/samples/il-localclass" "$(printf '10\n42\n101\n3,4\nTrue\n60')"
-il_check collops2 CollOps2 "$ROOT/samples/il-collops2" "$(printf '2,4,6 | 1,3,5\n0:a 1:b 2:c \n1,2,3\n0,1,3,6,10\n100,101,103,106,110\n6,9,12\n3\n-99')"
-il_check refcell RefCell "$ROOT/samples/il-refcell" "$(printf '3\n30\nab\n10')"
-il_check annot Annot "$ROOT/samples/il-annot" "$(printf 'widget#7\n42')"
-il_check props Props "$ROOT/samples/il-props" "$(printf '20\n8\n16\nnot initialized\nready')"
-il_check valcls ValCls "$ROOT/samples/il-valclass" "$(printf '1250\n12\n1250\nff\n1010\nff')"
-il_check ctorref CtorRef "$ROOT/samples/il-ctorref" "$(printf '(1,2)\n(3,4)\n(9,9)')"
-il_check getcls GetClass "$ROOT/samples/il-getclass" "$(printf 'String\nWidget\nWidget\nString')"
-il_check forin Forin "$ROOT/samples/il-forin" "$(printf '60\n10,20,30,\n3')"
-il_check ldeleg LocalDeleg "$ROOT/samples/il-localdeleg" "$(printf '42\n42\nHI\nWORLD')"
-il_check langf LangFeat "$ROOT/samples/il-langfeat" "$(printf '7\n1024\n120\ntf\ncircle=12\nsq=25\n1a\n2b')"
-il_check pair  Pair  "$ROOT/samples/il-pair"    "$(printf '3\n4\nx\n10\n11')"
-il_check null  Null  "$ROOT/samples/il-null"    "$(printf 'none\nHI\nfallback\nABC\n5')"
-il_check nullv MS1   "$ROOT/samples/m-s1/app.kt" "$(printf 'fallback\npresent\nforced\nlen null = -1\nlen hello = 5')"
-il_check op    OpT   "$ROOT/samples/il-op/app.kt" "$(printf '(4, 6)\n(2, 2)\n(6, 8)\n(-3, -4)\n3\n4\nTrue\nTrue\nFalse\nTrue\n7\n15')"
-il_check dataq Dq    "$ROOT/samples/m-s2/app.kt" "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4\na==b: True\na==c: False\nhash eq: True')"
-il_check inline InlF "$ROOT/samples/il-inline/app.kt" "$(printf '5\n40\n3\n0')"
-il_check inline2 Inl2 "$ROOT/samples/il-inline2" "$(printf '4\n42\n3')"
-il_check xinline XInl "$ROOT/samples/il-xinline" "$(printf '20\n42\n105')"
-il_check ctor  CtorT "$ROOT/samples/il-ctor/app.kt" "$(printf '12\n25\n5x5\nhi=7\nsolo=0')"
-il_check objex Oe    "$ROOT/samples/il-objexpr/app.kt" "$(printf 'hello from anon\n105')"
-il_check nest  Nst   "$ROOT/samples/il-nested/app.kt" "$(printf 'outer:root\nnode(7)\n14\nleaf 3')"
-il_check scast Sc2   "$ROOT/samples/il-smartcast/app.kt" "$(printf 'int:42\nother\nyo\nnone')"
-il_check vis   VisT  "$ROOT/samples/il-vis/app.kt" "$(printf '98\nacct\n99')"
-il_check throwx Tx   "$ROOT/samples/il-throwexpr/app.kt" "$(printf 'pos\n42\n3')"
-il_check enumr Er    "$ROOT/samples/il-enumrich/app.kt" "$(printf '5\nTrue\nFalse\nJUPITER\n1\n9\nEARTH\nMARS\nJUPITER\nTrue\nFalse')"
-il_check reqnn Rn    "$ROOT/samples/il-reqnn/app.kt" "$(printf 'h\n7')"
-il_check reif  Rf    "$ROOT/samples/il-reified/app.kt" "$(printf 'String\nInt32\nTrue\nFalse\nTrue\nyo\nno')"
-il_check iter  Iter  "$ROOT/samples/il-iter"    "$(printf 'x=10\nx=20\nx=30\nsum = 60\nn=3\nn=2\nn=1\nacc = 6')"
-il_check inner Inner "$ROOT/samples/il-inner"   "$(printf '110\n120\nT2\n5')"
-il_check lazy  Lazy  "$ROOT/samples/il-lazy"    "$(printf 'before\ncomputing...\nVALUE\nVALUE\n42\n42')"
-il_check deleg Deleg "$ROOT/samples/il-deleg"   "$(printf 'set count = 7\nget count\n7')"
-il_check rwp   Rwp   "$ROOT/samples/il-rwp"     "$(printf 'set n = 5\nget n\n5')"
-il_check bymap Bm    "$ROOT/samples/il-bymap"   "$(printf 'Alice\n30')"
-il_check del2  D2    "$ROOT/samples/il-deleg2"  "$(printf '0 -> 1\n1 -> 2\n5\nhi')"
-il_check gen   Gen   "$ROOT/samples/il-generic" "$(printf '42\n42\nhello\n7\nworld\n3\nthree')"
-il_check gen2  Gen2  "$ROOT/samples/il-generic2" "$(printf '99\nIntBox holding an Int\ntag\nNamed holding a String')"
-il_check gen3  Gen3  "$ROOT/samples/il-generic3" "$(printf '7\nbanana\n10')"
-il_check gen4  Gen4  "$ROOT/samples/il-generic4" "$(printf '42\n42 & hi\n42 & 99\nx')"
-il_check gen5  Gen5  "$ROOT/samples/il-generic5" "$(printf '10\n20\n99\nz')"
-il_check gen6  Gen6  "$ROOT/samples/il-generic6" "$(printf 'hello\nconsumed: world')"
-il_check netbase  Nb  "$ROOT/samples/il-netbase"  "$(printf 'app error\n7')" "$EXCMETA"
-il_check netbase2 Nb2 "$ROOT/samples/il-netbase2" "$(printf 'AppError #7\nAppError #21')" "$EXCMETA"
-il_check netgen  Ng  "$ROOT/samples/il-netgen"  "$(printf '3\nTrue\n2')" "$COLLMETA"
-il_check netgen2 Ng2 "$ROOT/samples/il-netgen2" "$(printf '3\nTrue\n2')" "$COLLMETA"
-il_check event   Ev  "$ROOT/samples/il-event"   "$(printf 'changed\nchanged\n2\nchanged\nh fired\nchanged\n4')" "$OBSCOLLMETA"
-il_check loopjump LjT "$ROOT/samples/il-loopjump" "$(printf 'break at 3\nsumOdd=9\nouter break at 1,2')"
-il_check netgen3 Ng3 "$ROOT/samples/il-netgen3" "$(printf '4\n8\n8\nFalse\nTrue\n20\n99\n3')" "$GMMETA"
+il_check kseq  KSeq  "$ROOT/cases/il-kseq"  "$(printf '1,2,3\n1,4,9,16\n0,1\n0,1,2,3,4,5,6')"
+il_check kgenseq KGenSeq "$ROOT/cases/il-kgenseq" "$(printf '1,2,3,4,5\na,aa,aaa\n1,2,3')"
+il_check kflow KFlow "$ROOT/cases/il-kflow"  "$(printf '1\n2\n3')"
+il_check kgflow KGFlow "$ROOT/cases/il-kgflow" "$(printf '1\n2\n3')"
+il_check m0    M0Kt  "$ROOT/cases/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2')"
+il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
+il_check iface Iface "$ROOT/cases/il-iface"  "$(printf 'Hello\nKonnichiwa')"
+il_check enum  Enum  "$ROOT/cases/il-enum"   "$(printf 'red\ngreen\nblue')"
+il_check m2    M2    "$ROOT/cases/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"
+il_check mi1   MI1   "$ROOT/cases/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
+il_check for   ForT  "$ROOT/cases/il-for"     "$(printf 'sum 1..5 = 15\ncountdown 5 = 54321')"
+il_check exc   Exc   "$ROOT/cases/il-exc"     "$(printf 'safeDiv(10,2) = 5\nsafeDiv(1,0) = -1')"
+il_check ops   Ops   "$ROOT/cases/il-ops"     "$(printf '3\n2\n7\n3\n16\n15\n-1\n3\n5')"
+il_check math  MathT "$ROOT/cases/il-math"    "$(printf '9\n7\n3\n4')"
+il_check str   Str   "$ROOT/cases/il-str"     "$(printf 'HELLO\nhello\nhi\nello\nTrue\nTrue')"
+il_check cp    Cp    "$ROOT/cases/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX')"
+il_check ext   Ext   "$ROOT/cases/il-ext"     "$(printf '21\nHI')"
+il_check arr   Arr   "$ROOT/cases/il-arr"     "$(printf '10\n30\n99\n3\n139\n139')"
+il_check lam   Lam   "$ROOT/cases/il-lambda"  "$(printf '42\n12')"
+il_check clo   Clo   "$ROOT/cases/il-closure" "$(printf '15\n105\n17')"
+il_check scope Sc    "$ROOT/cases/il-scope"   "$(printf '10\n6\n9\n10\n10\n7')"
+il_check coll  Coll  "$ROOT/cases/il-coll"    "$(printf '5\n5\n3\n2\n3\nTrue\nTrue\n3\n1\n4\nTrue\n5')"
+il_check coll2 Coll2 "$ROOT/cases/il-coll2"   "$(printf '10\n1-2-3-4\n1, 2, 3, 4\n100')"
+il_check coll3 Coll3 "$ROOT/cases/il-coll3"   "$(printf '60\n6')"
+il_check seq   Seq   "$ROOT/cases/il-seq"     "$(printf '6,12\n16\n3\n27\n10-20-30\n1,2,3\n4,5,6\n3')"
+il_check char  Char  "$ROOT/cases/il-char"    "$(printf 'True\nTrue\nTrue\nTrue\nA\nz\nTrue\nTrue\n97\nb')"
+il_check sort  Sort  "$ROOT/cases/il-sort"    "$(printf '9,6,5,4,3,2,1,1\na,dd,bbb,cccc\ncccc,bbb,dd,a')"
+il_check funref Funref "$ROOT/cases/il-funref" "$(printf '2,4,6\n1,4,9,16,25,36\nHi, Kotlin\n105\n107\ncalc100\n203\n42')"
+il_check mapdes MapDes "$ROOT/cases/il-mapdes" "$(printf '10\n60\n13\nx=1\ny=2\nz=3\ntotal=6')"
+il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000000\n18000000000000000000\n60000\n250')"
+il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_c\nTrue\nFalse\n42\n')"
+il_check langtail LangTail "$ROOT/cases/il-langtail" "$(printf '6\nhi\nint:42\nstr:3\nbig:5\nsmall\n700\n9')"
+il_check enumbody EnumBody "$ROOT/cases/il-enumbody" "$(printf '+: 8\n-: 4\n*: 12\nPLUS\n9')"
+il_check bytearg ByteArg "$ROOT/cases/il-bytearg" "$(printf '5\n3\n7\n9\n4\n100\n-2')"
+il_check iterable Iterable "$ROOT/cases/il-iterable" "$(printf '321\n6\n6')"
+il_check customexc CustomExc "$ROOT/cases/il-customexc" "$(printf 'error -5\ncode=-5\ncaught:boom\n42')"
+il_check comparator Comparator "$ROOT/cases/il-comparator" "$(printf -- '-3\n5\n0')"
+il_check use Use "$ROOT/cases/il-use" "$(printf 'close abcd\nn=4\nclose x\ncaught:boom')"
+il_check comparable Comparable "$ROOT/cases/il-comparable" "$(printf 'a<b\nc>b\na<=a\n-3\n1.2,1.5,2.0')"
+il_check charseq CS "$ROOT/cases/il-charseq" "$(printf '5\ne\n3\ne\n5')"
+il_check substr Substr "$ROOT/cases/il-substr" "$(printf 'ell\nworld\nhello\nworld')"
+il_check result Result "$ROOT/cases/il-result" "$(printf 'True\n10\n10\nTrue\n\n-99\nneg -1\n\nfb')"
+il_check bmore BMore "$ROOT/cases/il-bmore" "$(printf '5 items\nx = 42\n3.14\n00007\nff\n100%% ok: yes\n0:a,1:b,2:c\n0,20,60')"
+il_check chunk Chunk "$ROOT/cases/il-chunk" "$(printf '3,7,5\n3\n1-2-3 4-5\na,b,c\n3\n1,3,5\n9')"
+il_check collmore CollMore "$ROOT/cases/il-collmore" "$(printf '20,40\n1,10,2,20,3,30,4,40,5,50\n1,2,3,4,5\n15\n14\n-1\n3\n3')"
+il_check tryexpr TryExpr "$ROOT/cases/il-tryexpr" "$(printf '42\n-1\n5\n-7\n4')"
+il_check localclass LocalClass "$ROOT/cases/il-localclass" "$(printf '10\n42\n101\n3,4\nTrue\n60')"
+il_check collops2 CollOps2 "$ROOT/cases/il-collops2" "$(printf '2,4,6 | 1,3,5\n0:a 1:b 2:c \n1,2,3\n0,1,3,6,10\n100,101,103,106,110\n6,9,12\n3\n-99')"
+il_check refcell RefCell "$ROOT/cases/il-refcell" "$(printf '3\n30\nab\n10')"
+il_check annot Annot "$ROOT/cases/il-annot" "$(printf 'widget#7\n42')"
+il_check props Props "$ROOT/cases/il-props" "$(printf '20\n8\n16\nnot initialized\nready')"
+il_check valcls ValCls "$ROOT/cases/il-valclass" "$(printf '1250\n12\n1250\nff\n1010\nff')"
+il_check ctorref CtorRef "$ROOT/cases/il-ctorref" "$(printf '(1,2)\n(3,4)\n(9,9)')"
+il_check getcls GetClass "$ROOT/cases/il-getclass" "$(printf 'String\nWidget\nWidget\nString')"
+il_check forin Forin "$ROOT/cases/il-forin" "$(printf '60\n10,20,30,\n3')"
+il_check ldeleg LocalDeleg "$ROOT/cases/il-localdeleg" "$(printf '42\n42\nHI\nWORLD')"
+il_check langf LangFeat "$ROOT/cases/il-langfeat" "$(printf '7\n1024\n120\ntf\ncircle=12\nsq=25\n1a\n2b')"
+il_check pair  Pair  "$ROOT/cases/il-pair"    "$(printf '3\n4\nx\n10\n11')"
+il_check null  Null  "$ROOT/cases/il-null"    "$(printf 'none\nHI\nfallback\nABC\n5')"
+il_check nullv MS1   "$ROOT/cases/m-s1/app.kt" "$(printf 'fallback\npresent\nforced\nlen null = -1\nlen hello = 5')"
+il_check op    OpT   "$ROOT/cases/il-op/app.kt" "$(printf '(4, 6)\n(2, 2)\n(6, 8)\n(-3, -4)\n3\n4\nTrue\nTrue\nFalse\nTrue\n7\n15')"
+il_check dataq Dq    "$ROOT/cases/m-s2/app.kt" "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4\na==b: True\na==c: False\nhash eq: True')"
+il_check inline InlF "$ROOT/cases/il-inline/app.kt" "$(printf '5\n40\n3\n0')"
+il_check inline2 Inl2 "$ROOT/cases/il-inline2" "$(printf '4\n42\n3')"
+il_check xinline XInl "$ROOT/cases/il-xinline" "$(printf '20\n42\n105')"
+il_check ctor  CtorT "$ROOT/cases/il-ctor/app.kt" "$(printf '12\n25\n5x5\nhi=7\nsolo=0')"
+il_check objex Oe    "$ROOT/cases/il-objexpr/app.kt" "$(printf 'hello from anon\n105')"
+il_check nest  Nst   "$ROOT/cases/il-nested/app.kt" "$(printf 'outer:root\nnode(7)\n14\nleaf 3')"
+il_check scast Sc2   "$ROOT/cases/il-smartcast/app.kt" "$(printf 'int:42\nother\nyo\nnone')"
+il_check vis   VisT  "$ROOT/cases/il-vis/app.kt" "$(printf '98\nacct\n99')"
+il_check throwx Tx   "$ROOT/cases/il-throwexpr/app.kt" "$(printf 'pos\n42\n3')"
+il_check enumr Er    "$ROOT/cases/il-enumrich/app.kt" "$(printf '5\nTrue\nFalse\nJUPITER\n1\n9\nEARTH\nMARS\nJUPITER\nTrue\nFalse')"
+il_check reqnn Rn    "$ROOT/cases/il-reqnn/app.kt" "$(printf 'h\n7')"
+il_check reif  Rf    "$ROOT/cases/il-reified/app.kt" "$(printf 'String\nInt32\nTrue\nFalse\nTrue\nyo\nno')"
+il_check iter  Iter  "$ROOT/cases/il-iter"    "$(printf 'x=10\nx=20\nx=30\nsum = 60\nn=3\nn=2\nn=1\nacc = 6')"
+il_check inner Inner "$ROOT/cases/il-inner"   "$(printf '110\n120\nT2\n5')"
+il_check lazy  Lazy  "$ROOT/cases/il-lazy"    "$(printf 'before\ncomputing...\nVALUE\nVALUE\n42\n42')"
+il_check deleg Deleg "$ROOT/cases/il-deleg"   "$(printf 'set count = 7\nget count\n7')"
+il_check rwp   Rwp   "$ROOT/cases/il-rwp"     "$(printf 'set n = 5\nget n\n5')"
+il_check bymap Bm    "$ROOT/cases/il-bymap"   "$(printf 'Alice\n30')"
+il_check del2  D2    "$ROOT/cases/il-deleg2"  "$(printf '0 -> 1\n1 -> 2\n5\nhi')"
+il_check gen   Gen   "$ROOT/cases/il-generic" "$(printf '42\n42\nhello\n7\nworld\n3\nthree')"
+il_check gen2  Gen2  "$ROOT/cases/il-generic2" "$(printf '99\nIntBox holding an Int\ntag\nNamed holding a String')"
+il_check gen3  Gen3  "$ROOT/cases/il-generic3" "$(printf '7\nbanana\n10')"
+il_check gen4  Gen4  "$ROOT/cases/il-generic4" "$(printf '42\n42 & hi\n42 & 99\nx')"
+il_check gen5  Gen5  "$ROOT/cases/il-generic5" "$(printf '10\n20\n99\nz')"
+il_check gen6  Gen6  "$ROOT/cases/il-generic6" "$(printf 'hello\nconsumed: world')"
+il_check netbase  Nb  "$ROOT/cases/il-netbase"  "$(printf 'app error\n7')" "$EXCMETA"
+il_check netbase2 Nb2 "$ROOT/cases/il-netbase2" "$(printf 'AppError #7\nAppError #21')" "$EXCMETA"
+il_check netgen  Ng  "$ROOT/cases/il-netgen"  "$(printf '3\nTrue\n2')" "$COLLMETA"
+il_check netgen2 Ng2 "$ROOT/cases/il-netgen2" "$(printf '3\nTrue\n2')" "$COLLMETA"
+il_check event   Ev  "$ROOT/cases/il-event"   "$(printf 'changed\nchanged\n2\nchanged\nh fired\nchanged\n4')" "$OBSCOLLMETA"
+il_check loopjump LjT "$ROOT/cases/il-loopjump" "$(printf 'break at 3\nsumOdd=9\nouter break at 1,2')"
+il_check netgen3 Ng3 "$ROOT/cases/il-netgen3" "$(printf '4\n8\n8\nFalse\nTrue\n20\n99\n3')" "$GMMETA"
 
 # Coroutines: a suspend fun lowered to a CLR-native IAsyncStateMachine, driven by an external runtime (--ref).
 il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
@@ -221,63 +221,63 @@ il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
 	} &
 }
-il_check kcont2 KCont2 "$ROOT/samples/il-kcont2" "$(printf '42\nboom')"
-il_check kctx KCtx "$ROOT/samples/il-kctx" "53"
-il_check kintercept KIntercept "$ROOT/samples/il-kintercept" "$(printf '1\n7')"
-il_check kunit2 KUnit2 "$ROOT/samples/il-kunit2" "True"
-il_check_ref kcont KCont "$ROOT/samples/il-kcont" "$(printf '30\n14\n6\n15\n10\n-99')" KfcK
-il_check_ref kintrin KIntrin "$ROOT/samples/il-kintrin" "$(printf '7\n42\n72')" KfcI
-il_check_ref kgen KGen "$ROOT/samples/il-kgen" "$(printf '7\nhi\n2\nb')" KfcG
-il_check_ref kresume KResume "$ROOT/samples/il-kresume" "$(printf '5\n107')" KfcR
-il_check kflow2 KFlow2 "$ROOT/samples/il-kflow2" "$(printf '1\n2\n3')"
-il_check kchan KChan "$ROOT/samples/il-kchan" "6"
-il_check_ref kstart KStart "$ROOT/samples/il-kstart" "42" KfcSt
-il_check_ref kcancel KCancel "$ROOT/samples/il-kcancel" "30" KfcCa
-il_check_ref fieldvis FieldVis "$ROOT/samples/il-fieldvis" "$(printf '150\nme\nPrivate\nPublic')" KfcFv
-il_check_inject delegatearg Dlg "$ROOT/samples/il-delegatearg" "$(printf '42\n20\n81')" KfcDel
-il_check_inject netenum NetEnum "$ROOT/samples/il-netenum" "$(printf '60\n6\nabbccc')" KfcNetEnum
-il_check_inject injbase InjBase "$ROOT/samples/il-injbase" "placed:0" KfcInjB
-il_check_inject injfqn InjFqn "$ROOT/samples/il-injfqn" "42" KfcInjF
-il_check_inject injstatic InjStatic "$ROOT/samples/il-injstatic" "$(printf 'p=42\n7\n99\n123')" KfcStatic
-il_check_inject injuint InjUint "$ROOT/samples/il-injuint" "$(printf '65542\n42')" Boot
-il_check_ref kfinally KFinally "$ROOT/samples/il-kfinally" "$(printf 'cleanup\n15')" KfcFin
-il_check_ref kselect KSelect "$ROOT/samples/il-kselect" "2000" KfcSel
-il_check_ref kasflow KAsFlow "$ROOT/samples/il-kasflow" "$(printf '0\n10\n20\n30')" KfcAsf
-il_check_ref kunit KUnit "$ROOT/samples/il-kunit" "42" KfcU
-il_check_ref kstruct KStruct "$ROOT/samples/il-kstruct" "$(printf '30\n42')" KfcS
-il_check_ref coro Coro "$ROOT/samples/il-coro" "$(printf 'tryOk = 11\ntryCatch = -99\ntryFallthrough = 8\nloopCond = 3\ncondBranch = 6\nspillSum = 30\nspillNested = 17\nspillArg = 16\nchain = 30\nfetchDouble(7) = 14\nuseChain = 35\nsumLoop(4) = 6\nbranch(true) = 15\nbranch(false) = 10')" Kfc
-il_check_ref colam Colam "$ROOT/samples/il-colam" "$(printf '30\n6\n105\n18')" KfcLam
-il_check_ref c1net C1Net "$ROOT/samples/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
-il_check_inject firgap FirGap "$ROOT/samples/il-firgap" "$(printf '42\n60\n3\n20')" P
-il_check_inject inherit Inherit "$ROOT/samples/il-inherit" "$(printf 'run:derived\nshow:button\nbutton')" PInh
-il_check_inject geninj GenInj "$ROOT/samples/il-geninj" "$(printf '2\na')" PGI
-il_check_inject cbk Cbk "$ROOT/samples/il-cbk" "$(printf '=v42\nran')" PCbk
-il_check_inject clriface ClrIface "$ROOT/samples/il-clriface" "$(printf '2\na')" PIf
-il_check_inject clrimpl ClrImpl "$ROOT/samples/il-clrimpl" "$(printf 'draw:circle\ndraw:square\ncircle')" PImpl
-il_check_inject clrasm ClrAsm "$ROOT/samples/il-clrasm" "$(printf '2\n2\n2')" PAsm
-il_check_inject selfref SelfRef "$ROOT/samples/il-selfref" "4" PSelf
-il_check_inject genim GenIM "$ROOT/samples/il-genim" "$(printf 'hello\nworld')" PGenIM
-il_check_inject outref Outref "$ROOT/samples/il-outref" "$(printf 'ok=5\nfail\n2 1\n20\n20\n109')" OutR
-il_check_inject netattr NetAttr "$ROOT/samples/il-netattr" "$(printf 'widget#7\n42')" Lbl
-il_check_inject stackalloc Sa "$ROOT/samples/il-stackalloc" "$(printf '16\n30\n-1\n10\n21')" SpanRt
-il_check fmt Fmt "$ROOT/samples/il-fmt" "$(printf '42 items, 87.5%% (ok)\n00007-ff\n[a   ]\n[bb  ]')"
-il_check_inject mref Mr "$ROOT/samples/il-mref" "$(printf 'hello world\n0')" MrRt
-il_check cobuild Cob "$ROOT/samples/il-cobuild" "25"
-il_check dsl Dsl "$ROOT/samples/il-dsl" "a[Pb]c"
-il_check object TObj "$ROOT/samples/il-object" "3"
-il_check gfac TGfac "$ROOT/samples/il-gfac" "$(printf '42\nhi')"
-il_check xprop Xprop "$ROOT/samples/il-xprop" "7"
-il_check exprbody EB "$ROOT/samples/il-exprbody" "$(printf 'greet\nviaLambda\ncleanup\npos')"
-il_check overload OV "$ROOT/samples/il-overload" "$(printf 'S:x\nF:y\nI:7\nbs:p\nbf:q')"
-il_check mfclosure MfClosure "$ROOT/samples/il-mfclosure" "$(printf '10\n20')"
-il_check mflambda MFL "$ROOT/samples/il-mflambda" "$(printf 'A1\nA2\nB1')"
-il_check arrops Arro "$ROOT/samples/il-arrops" "$(printf '3\n6,8,10\n14\n2\n-1\n10\n30')"
+il_check kcont2 KCont2 "$ROOT/cases/il-kcont2" "$(printf '42\nboom')"
+il_check kctx KCtx "$ROOT/cases/il-kctx" "53"
+il_check kintercept KIntercept "$ROOT/cases/il-kintercept" "$(printf '1\n7')"
+il_check kunit2 KUnit2 "$ROOT/cases/il-kunit2" "True"
+il_check_ref kcont KCont "$ROOT/cases/il-kcont" "$(printf '30\n14\n6\n15\n10\n-99')" KfcK
+il_check_ref kintrin KIntrin "$ROOT/cases/il-kintrin" "$(printf '7\n42\n72')" KfcI
+il_check_ref kgen KGen "$ROOT/cases/il-kgen" "$(printf '7\nhi\n2\nb')" KfcG
+il_check_ref kresume KResume "$ROOT/cases/il-kresume" "$(printf '5\n107')" KfcR
+il_check kflow2 KFlow2 "$ROOT/cases/il-kflow2" "$(printf '1\n2\n3')"
+il_check kchan KChan "$ROOT/cases/il-kchan" "6"
+il_check_ref kstart KStart "$ROOT/cases/il-kstart" "42" KfcSt
+il_check_ref kcancel KCancel "$ROOT/cases/il-kcancel" "30" KfcCa
+il_check_ref fieldvis FieldVis "$ROOT/cases/il-fieldvis" "$(printf '150\nme\nPrivate\nPublic')" KfcFv
+il_check_inject delegatearg Dlg "$ROOT/cases/il-delegatearg" "$(printf '42\n20\n81')" KfcDel
+il_check_inject netenum NetEnum "$ROOT/cases/il-netenum" "$(printf '60\n6\nabbccc')" KfcNetEnum
+il_check_inject injbase InjBase "$ROOT/cases/il-injbase" "placed:0" KfcInjB
+il_check_inject injfqn InjFqn "$ROOT/cases/il-injfqn" "42" KfcInjF
+il_check_inject injstatic InjStatic "$ROOT/cases/il-injstatic" "$(printf 'p=42\n7\n99\n123')" KfcStatic
+il_check_inject injuint InjUint "$ROOT/cases/il-injuint" "$(printf '65542\n42')" Boot
+il_check_ref kfinally KFinally "$ROOT/cases/il-kfinally" "$(printf 'cleanup\n15')" KfcFin
+il_check_ref kselect KSelect "$ROOT/cases/il-kselect" "2000" KfcSel
+il_check_ref kasflow KAsFlow "$ROOT/cases/il-kasflow" "$(printf '0\n10\n20\n30')" KfcAsf
+il_check_ref kunit KUnit "$ROOT/cases/il-kunit" "42" KfcU
+il_check_ref kstruct KStruct "$ROOT/cases/il-kstruct" "$(printf '30\n42')" KfcS
+il_check_ref coro Coro "$ROOT/cases/il-coro" "$(printf 'tryOk = 11\ntryCatch = -99\ntryFallthrough = 8\nloopCond = 3\ncondBranch = 6\nspillSum = 30\nspillNested = 17\nspillArg = 16\nchain = 30\nfetchDouble(7) = 14\nuseChain = 35\nsumLoop(4) = 6\nbranch(true) = 15\nbranch(false) = 10')" Kfc
+il_check_ref colam Colam "$ROOT/cases/il-colam" "$(printf '30\n6\n105\n18')" KfcLam
+il_check_ref c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
+il_check_inject firgap FirGap "$ROOT/cases/il-firgap" "$(printf '42\n60\n3\n20')" P
+il_check_inject inherit Inherit "$ROOT/cases/il-inherit" "$(printf 'run:derived\nshow:button\nbutton')" PInh
+il_check_inject geninj GenInj "$ROOT/cases/il-geninj" "$(printf '2\na')" PGI
+il_check_inject cbk Cbk "$ROOT/cases/il-cbk" "$(printf '=v42\nran')" PCbk
+il_check_inject clriface ClrIface "$ROOT/cases/il-clriface" "$(printf '2\na')" PIf
+il_check_inject clrimpl ClrImpl "$ROOT/cases/il-clrimpl" "$(printf 'draw:circle\ndraw:square\ncircle')" PImpl
+il_check_inject clrasm ClrAsm "$ROOT/cases/il-clrasm" "$(printf '2\n2\n2')" PAsm
+il_check_inject selfref SelfRef "$ROOT/cases/il-selfref" "4" PSelf
+il_check_inject genim GenIM "$ROOT/cases/il-genim" "$(printf 'hello\nworld')" PGenIM
+il_check_inject outref Outref "$ROOT/cases/il-outref" "$(printf 'ok=5\nfail\n2 1\n20\n20\n109')" OutR
+il_check_inject netattr NetAttr "$ROOT/cases/il-netattr" "$(printf 'widget#7\n42')" Lbl
+il_check_inject stackalloc Sa "$ROOT/cases/il-stackalloc" "$(printf '16\n30\n-1\n10\n21')" SpanRt
+il_check fmt Fmt "$ROOT/cases/il-fmt" "$(printf '42 items, 87.5%% (ok)\n00007-ff\n[a   ]\n[bb  ]')"
+il_check_inject mref Mr "$ROOT/cases/il-mref" "$(printf 'hello world\n0')" MrRt
+il_check cobuild Cob "$ROOT/cases/il-cobuild" "25"
+il_check dsl Dsl "$ROOT/cases/il-dsl" "a[Pb]c"
+il_check object TObj "$ROOT/cases/il-object" "3"
+il_check gfac TGfac "$ROOT/cases/il-gfac" "$(printf '42\nhi')"
+il_check xprop Xprop "$ROOT/cases/il-xprop" "7"
+il_check exprbody EB "$ROOT/cases/il-exprbody" "$(printf 'greet\nviaLambda\ncleanup\npos')"
+il_check overload OV "$ROOT/cases/il-overload" "$(printf 'S:x\nF:y\nI:7\nbs:p\nbf:q')"
+il_check mfclosure MfClosure "$ROOT/cases/il-mfclosure" "$(printf '10\n20')"
+il_check mflambda MFL "$ROOT/cases/il-mflambda" "$(printf 'A1\nA2\nB1')"
+il_check arrops Arro "$ROOT/cases/il-arrops" "$(printf '3\n6,8,10\n14\n2\n-1\n10\n30')"
 
 # Reverse interop: a .NET (C#) host loads the IL-emitted Kotlin assembly and calls a Kotlin class + top-level
 # fun. Proves the IL output is a consumable .NET assembly. (Compile-time <Reference> needs per-type contract-
 # assembly retargeting — blocked by a Reflection.Emit limitation; see design 5.2. Reflection load works today.)
 il_revinterop() {
-	local asm=KotlinLib src="$ROOT/samples/il-revinterop"
+	local asm=KotlinLib src="$ROOT/cases/il-revinterop"
 	local birdir="$ROOT/build/bir-revinterop" ildir="$ROOT/build/il-revinterop"
 	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 	"$LAUNCHER" $src/lib.kt -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1 \

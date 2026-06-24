@@ -57,7 +57,7 @@ Kotlin の suspend lowering を再利用して state machine を IR で入手し
 ## 5. 着手順（この ABI を前提に）
 
 1. **ABI 契約を固定**（本書）。← 完全実装の前提。✅ 確定
-2. 戦略 A で Task interop を提供（**済**: `samples/m-d2`、非ブロッキング `await`）。
+2. 戦略 A で Task interop を提供（**済**: `cases/m-d2`、非ブロッキング `await`）。
 3. **CancellationToken を ABI に追加**（小）: suspend → `Task<T> Foo(args, CancellationToken)`。A でも `ct` を末尾引数として透過し、`@ClrAwait` 側で `task.WaitAsync(ct)` 等に渡せる。
 4. 戦略 B（自前ランタイム + TCS ブリッジ + state machine lowering）へ移行。**公開 ABI 不変**のまま意味論を Kotlin 準拠へ。
 5. `Flow` ⇔ `IAsyncEnumerable<T>` は B の上に別途。
@@ -71,8 +71,8 @@ Kotlin の suspend lowering を再利用して state machine を IR で入手し
 **検証**: `ref/StateMachineRef.cs` が「lowering が生成すべき状態機械」を手書きで再現し、2段サスペンドの coroutine を **C# async/await を使わず** `IContinuation`+`Future`+TCS だけで非ブロッキング駆動 → `chain = 30`。**戦略B のエンジンが実動作することを実証**（戦略Aとは別経路）。この手書き state machine が **D2.1 の codegen ターゲット形**。
 
 ### D2.1a — 制約付き状態機械 codegen（✅ 達成・実機）
-`@Sm` でオプトインした suspend fun（**線形 await 列**: `val xi = ei.await()` の並び + `return`）を、**コンパイラが state machine クラス（`IContinuation<T>` 実装 + label/locals フィールド + `ResumeWith` の label switch）へ変換**し、公開 `Task<T>` ブリッジ（`Future` 経由・Continuation 隠蔽）を生成。`samples/m-d2-sm`：`chain = 30` を **C# async/await 非使用**・D2.0 ランタイム（Continuation/TCS）の非ブロッキング駆動で達成。**「Kotlin suspend → コンパイラ生成状態機械 → 純ランタイム」が end-to-end で実動作**（strategy A/手書きと別）。
-引数付き suspend も対応（パラメータを state machine フィールド化、`samples/m-d2-sm` の `fetchDouble(7)=14`）。
+`@Sm` でオプトインした suspend fun（**線形 await 列**: `val xi = ei.await()` の並び + `return`）を、**コンパイラが state machine クラス（`IContinuation<T>` 実装 + label/locals フィールド + `ResumeWith` の label switch）へ変換**し、公開 `Task<T>` ブリッジ（`Future` 経由・Continuation 隠蔽）を生成。`cases/m-d2-sm`：`chain = 30` を **C# async/await 非使用**・D2.0 ランタイム（Continuation/TCS）の非ブロッキング駆動で達成。**「Kotlin suspend → コンパイラ生成状態機械 → 純ランタイム」が end-to-end で実動作**（strategy A/手書きと別）。
+引数付き suspend も対応（パラメータを state machine フィールド化、`cases/m-d2-sm` の `fetchDouble(7)=14`）。
 コルーチン合成（suspend が別 suspend を直接呼ぶ＝サスペンド点）も対応（`useChain=35`）。
 
 ### D2.1b — 一般 CPS lowering（✅ 達成・実機 / 自前実装）
@@ -84,6 +84,6 @@ Kotlin の suspend lowering を再利用して state machine を IR で入手し
 - **サスペンド点**: `val x = e`／`e`／`return e`。任意のネスト（block / `if`・`when` 分岐 / `while` ボディ）内で可。
 - **field 昇格**: サスペンド `return` を跨いで生存するローカルは field 化（`collectCpsVars`）。C# ローカルは `ResumeWith` 呼び出し間で生存しないため。完全同期な島内のローカルはそのまま。
 - **状態機械**: 各サスペンド点 = 1 state（ループ内でも static に 1）。`switch(__label){ case k: goto __Rk; }` で再入ディスパッチ。
-- 実機: `samples/m-d2-sm` の `sumLoop(4)=6`（**ループ内サスペンド**）, `branch(true/false)=15/10`（**分岐内・パスごとに異なるサスペンド数**）。生成形は教科書的 CPS（`__L0:` ループ頭 → `if(!cond) goto __L1` → `__R1` サスペンド → 後退辺 `goto __L0`）。
+- 実機: `cases/m-d2-sm` の `sumLoop(4)=6`（**ループ内サスペンド**）, `branch(true/false)=15/10`（**分岐内・パスごとに異なるサスペンド数**）。生成形は教科書的 CPS（`__L0:` ループ頭 → `if(!cond) goto __L1` → `__R1` サスペンド → 後退辺 `goto __L0`）。
 
 **更新（2026-06-22）: かつての残項目 ① 部分式にネストしたサスペンド（`f(g().await())`＝spilling）, ② ループ/分岐の条件式内サスペンド は両方とも実装済み**（`BirEmitter.spillExpr`/`emitWhileCps`/`emitWhenCps`）。さらに try-catch- および try-finally-around-await も対応済み（design-coroutines-clr.md §13v）。コルーチン表面は全面実装済 — AS-BUILT は design-coroutines-clr.md §§13a–§14a を参照。残るは Track 2（本物の upstream のコンパイル）のみ。

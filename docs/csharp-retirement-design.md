@@ -142,7 +142,7 @@ IL 出力は通常の .NET アセンブリ＝C# から `ProjectReference` で消
 - [x] **1.1** BirEmitter: `ClrEventRegistry.lookup(declFq, name)` で injected `add_`/`remove_` 呼出を検出。`declFq` = resolveFakeOverride 経由の実 .NET 宣言型 FQN。
 - [x] **1.2** BirEmitter: `clrEventAdd`/`clrEventRemove` ノードを emit（`type`=構築済 .NET 型, `event`=イベント名, `recv`, `handler`=既存 lambda→delegate 経路の delegateNew/closureNew or 保存ローカル）。
 - [x] **1.3** ilemit: `EmitClrEvent`＝`ClrRef(type).GetEvent(name).GetAddMethod()/GetRemoveMethod()` を `callvirt`。`EmitHandlerAsDelegate` がハンドラを**イベント固有のデリゲート型**へバインド（リテラルは直接、保存値は `Invoke` 経由で再ラップ＝デリゲート等価性を保ち `-=` を成立）。
-- [x] **1.4** サンプル `samples/il-event`（`ObservableCollection<Int>` の `CollectionChanged` を `+=`/`-=`、同期発火）＋ `verify-il.sh` 投入（`il:event` PASS, `VERIFY event` clean）。
+- [x] **1.4** サンプル `cases/il-event`（`ObservableCollection<Int>` の `CollectionChanged` を `+=`/`-=`、同期発火）＋ `verify-il.sh` 投入（`il:event` PASS, `VERIFY event` clean）。
 - [~] **1.5** Avalonia/WPF サンプルを **IL 経路で点灯**: イベント機構は IL で完成（基盤確立）。実 UI 点灯は Avalonia アセンブリ注入（`--refs`/`<KotlinClrType>`）の IL 経路配線が要るため E-5 サンプル整備時に実施。
 - **受入**: ✅ il-event 実機正＋ilverify-clean（53 サンプル回帰なし）。windowing 完全 IL 化の中核（イベント）は IL で動作。
 
@@ -151,7 +151,7 @@ IL 出力は通常の .NET アセンブリ＝C# から `ProjectReference` で消
 - [x] **2.2** injector: generic method を `createMemberFunction(returnTypeProvider)` ＋ `typeParameter(...)` で合成。ret/param の `T` 参照を `coneOfMethod`（メソッド型パラメータ→provider 形）で解決。
 - [x] **2.3** backend: `callee.typeParameters.isNotEmpty()` を検出し `clrGenericStatic`（static）/`clrGenericInstance`（instance）を emit。ilemit `ResolveGenericMethod`（name+型アリティ+param shape）→ `MakeGenericMethod`（既存 LINQ 経路を一般化、`instance` フラグ追加）。
 - [x] **2.4** 注入型 indexer: meta `index <idxT> <valT> <ro|rw>` → injector が `operator fun get/set`（`status{isOperator=true}`）合成。backend は `get`/`set` operator を構築済 .NET 型の `get_Item`/`set_Item`（clrInstance）へ。
-- [x] **2.5** サンプル `samples/il-netgen3`（`Unsafe.SizeOf<Int/Long/Double>`＝4/8/8、`RuntimeHelpers.IsReferenceOrContainsReferences<Int/String>`＝False/True、`Collection<Int>` の `c[i]`/`c[i]=v`）＋ verify-il 投入。
+- [x] **2.5** サンプル `cases/il-netgen3`（`Unsafe.SizeOf<Int/Long/Double>`＝4/8/8、`RuntimeHelpers.IsReferenceOrContainsReferences<Int/String>`＝False/True、`Collection<Int>` の `c[i]`/`c[i]=v`）＋ verify-il 投入。
 - **受入**: ✅ 実機正＋ilverify-clean。**注記**: generic **instance** メソッドは `clrGenericInstance` を実装済（static 経路の `MakeGenericMethod` コアを共有する忠実なミラー）だが、BCL にプリミティブ signature の generic インスタンスメソッドが皆無のため専用回帰テストは無し→フレームワーク型を `--refs` で注入するフェーズ5 で回帰投入。
 
 ### フェーズ 3 — コルーチン IL 化（XL・最大）✅ 2026-06-18 完了（戦略B）
@@ -162,7 +162,7 @@ IL 出力は通常の .NET アセンブリ＝C# から `ProjectReference` で消
 - [x] **3.5** BirEmitter: CPS lowering（`emitCps`/`emitWhenCps`/`emitWhileCps` 移植）→ フラットな `coSuspend`/`coLabel`/`coGoto`/`coCondGoto`/`coReturn` ステップ列。
 - [x] **3.6** ilemit: `EmitCoroutine`＝struct SM 合成＋`AsyncTaskMethodBuilder<T>` プロトコル＋`__state` の `beq` dispatch＋cpsField リダイレクト。kickoff は Create/Start/return Task。`suspend ()->T` ラムダ⇔`Func<Task<T>>`（ABI）。`--ref` で外部ランタイムをロード。
 - [x] **3.7** ランタイム不要（戦略B＝`AsyncTaskMethodBuilder` 直生成、pure-binding 維持）。
-- [x] **3.8/3.9** サンプル `samples/il-coro`（線形マルチawait・param→field・直接suspend呼出・ループ内suspension・分岐内suspension）＝m-d2/m-d2-sm の手書きlowering能力を **IL で** カバー、実機正＋ilverify-clean。
+- [x] **3.8/3.9** サンプル `cases/il-coro`（線形マルチawait・param→field・直接suspend呼出・ループ内suspension・分岐内suspension）＝m-d2/m-d2-sm の手書きlowering能力を **IL で** カバー、実機正＋ilverify-clean。
 - **受入**: ✅ il-coro 実機正＋ilverify-clean、ABI（`Task<T>`）維持。**残（CFG/SSA=E-0.5 後段、C# も手書きlowering未対応）**: try/catch-around-await（例外リージョン）・部分式 suspension・ループ条件 suspension → クリーンエラー（`coUnsupported`）。
 
 ### フェーズ 4 — E-2 オラクル常設（M）✅ 2026-06-18（4.1/4.2 完了、4.3 任意）
@@ -172,7 +172,7 @@ IL 出力は通常の .NET アセンブリ＝C# から `ProjectReference` で消
 - **受入**: ✅ 全 pure サンプルが **IL 経路で** kotlin/jvm 一致（25 MATCH）、全 IL ilverify-clean、3 ハーネスを CI 化。
 
 ### フェーズ 5 — 逆 interop（S-M）✅ 2026-06-18（5.1 完了、5.2 はアーキ制約でブロック）
-- [x] **5.1** IL 出力を **.NET（C#）ホストが消費**：`samples/il-revinterop`（C# `Program.cs` が `KotlinLib.dll` を reflection ロードし `Greeter("World").greet()`＝"Hi, World"、`LibKt.add(2,3)`＝5 を呼ぶ）＋ verify-il `il_revinterop`。IL 出力が**一級の消費可能 .NET アセンブリ**であることを実機実証。
+- [x] **5.1** IL 出力を **.NET（C#）ホストが消費**：`cases/il-revinterop`（C# `Program.cs` が `KotlinLib.dll` を reflection ロードし `Greeter("World").greet()`＝"Hi, World"、`LibKt.add(2,3)`＝5 を呼ぶ）＋ verify-il `il_revinterop`。IL 出力が**一級の消費可能 .NET アセンブリ**であることを実機実証。
 - [ ] **5.2 コンパイル時 `<Reference>`（根本ブロック・要 Reflection.Emit 新 API）**：ilemit は BCL を runtime reflection 型で解決するため、出力の **CoreLib 型全部（Object/String/`List`/`Dictionary`/`Task`…）が単一の `System.Private.CoreLib` AssemblyRef を共有**。C# の コンパイル時 `<Reference>` には型ごとに**正しいコントラクトアセンブリ**（Object/String→System.Runtime、`List`→System.Collections…）への分離が要る。
   - **正攻法 MetadataLoadContext は不適合と実証**：MLC のジェネリック型/メソッドに**ユーザ TypeBuilder 型引数**を渡すと "not loaded by the MLC" 例外＝lambda→`Func<UserT>`・closure・`List<UserT>`・コルーチン `Start<SM>` 等が全滅。
   - **単一 AssemblyRef の PE 書換も不可と実証**：単一 CoreLib ref を System.Runtime に向けると `Object`/`String` は通るが `List<T>` が `TypeLoadException`（System.Runtime は List を forward しない＝System.Collections の管轄）。→ **撤回**。
@@ -187,9 +187,9 @@ PDB/sequence point は C# 脱却のブロッカーでなく（IL 経路は元々
 - [x] **7.1** MSBuild `<KotlinClrBackend>` 既定を `cs`→`il`（`msbuild/KotlinClr.targets`）。`StartupObject` を持つ .ktproj も il で動くよう、il プレースホルダ target が csc 用に `StartupObject=_IlPlaceholder` へ上書き（ilemit が最終 entry を設定）。
 - [x] **7.2** `KotlinClrCollect`（cs のみ）/`KotlinClrIlEmit`（il 既定）は条件分岐済。既定が il なので IL 経路が標準。
 - [x] **7.3** `ClrBackendPhase` の C# codegen を **opt-in**（`KOTLIN_CLR_EMIT_CS=1`）に降格。既定は BIR のみ出力＝CSharpCodegen を一切呼ばない（出荷経路から C# 完全排除、IL 専用機能が凍結済 C# backend を破壊しない）。
-- [x] **7.4** `samples/ktproj`（StartupObject 付き）が IL 既定で実機正。`verify-all.sh` は C# オラクルとして明示 `KotlinClrBackend=cs`＋`KOTLIN_CLR_EMIT_CS=1` を export し継続。
+- [x] **7.4** `cases/ktproj`（StartupObject 付き）が IL 既定で実機正。`verify-all.sh` は C# オラクルとして明示 `KotlinClrBackend=cs`＋`KOTLIN_CLR_EMIT_CS=1` を export し継続。
 - [x] **7.5** `CSharpCodegen.kt` は repo 温存（呼出を opt-in 化しただけ）。
-- **受入**: ✅ 出荷経路に csc/C# 依存ゼロ（既定ビルドは BIR→ilemit のみ、Kotlin 由来 .cs を生成しない）、`samples/ktproj` 既定 il で緑、`KotlinClrBackend=cs` は明示時のみ。
+- **受入**: ✅ 出荷経路に csc/C# 依存ゼロ（既定ビルドは BIR→ilemit のみ、Kotlin 由来 .cs を生成しない）、`cases/ktproj` 既定 il で緑、`KotlinClrBackend=cs` は明示時のみ。
 
 ### 横断（全フェーズ共通の規律）
 - [ ] 各機能追加は `verify-il.sh` に専用サンプルを投入し、**実機正＋ilverify-clean** を必須ゲートに。

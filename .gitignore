@@ -23,3 +23,9 @@ templates/**/bin/
 # Local dev artifacts (symlinks to NuGet cache; reference IL dumps) — not source
 /dist/
 /refs/
+
+# DotKt per-project build outputs (custom names not covered by bin/obj)
+**/kotlin-cs/
+**/kotlin-bir/
+**/dotkt-bir/
+**/kotlin-facades/

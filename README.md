@@ -66,7 +66,7 @@ dotnet build toolchain/ilemit -c Release -o build/ilemit-bin
 
 # 1. Kotlin → BIR (JSON).  One run also writes Foo.cs (the C# oracle) + KIR@Raw.txt (IR dump)
 STDLIB=$(find ~/.gradle/caches -name 'kotlin-stdlib-2.2.0.jar' | head -1)
-./gradlew :kotc:run --args="$PWD/samples/m0/M0.kt -no-stdlib -classpath $STDLIB -d $PWD/build/out"
+./gradlew :kotc:run --args="$PWD/cases/m0/M0.kt -no-stdlib -classpath $STDLIB -d $PWD/build/out"
 
 # 2. BIR → CIL assembly
 dotnet build/ilemit-bin/ilemit.dll build/out M0Kt build/out/*.bir.json
@@ -96,8 +96,8 @@ A Kotlin.NET project builds with plain `dotnet build` / `dotnet run` (and thus i
 ```
 
 `dotnet build foo.ktproj` runs the kotlin/clr compiler on the `.kt` files, then finishes the
-assembly via the chosen backend. See `samples/ktproj/` (C# path), `samples/ktproj-il/` (IL path),
-`samples/ktproj-ref/` and `samples/ktproj-inject/` (.NET type injection).
+assembly via the chosen backend. See `cases/ktproj/` (C# path), `cases/ktproj-il/` (IL path),
+`cases/ktproj-ref/` and `cases/ktproj-inject/` (.NET type injection).
 
 ```bash
 ./scripts/verify-il.sh      # the shipping IL backend over the sample corpus + ilverify
@@ -116,7 +116,7 @@ assembly via the chosen backend. See `samples/ktproj/` (C# path), `samples/ktpro
 | `toolchain/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
 | `runtime/DotKt.Runtime/` | .NET runtime helpers + the `[Kotlin*]` round-trip metadata attributes |
 | `packaging/` | NuGet packages: `DotKt.Sdk` (thin), `DotKt.Toolchain` (tools + the build pipeline), `DotKt.Runtime` |
-| `samples/` | `il-*` (IL-backend samples), `m-*` (language/interop), `ktproj-*` (MSBuild) |
+| `cases/` | `il-*` (IL-backend samples), `m-*` (language/interop), `ktproj-*` (MSBuild) |
 | `scripts/verify-il.sh` | IL differential + `ilverify` gate |
 | `scripts/verify-ktproj.sh` | MSBuild/.ktproj integration (IL backend) |
 | `docs/dotkt-semantics.md` | **how Kotlin maps to the CLR + where DotKt deliberately differs from Kotlin/JVM** |

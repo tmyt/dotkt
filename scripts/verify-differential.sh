@@ -40,7 +40,7 @@ norm() { sed -E 's/\bTrue\b/true/g; s/\bFalse\b/false/g; s/([0-9])\.0\b/\1/g'; }
 
 for s in $PURE; do
 	gate
-	{ src="$ROOT/samples/$s"
+	{ src="$ROOT/cases/$s"
 	  mainfile="$(grep -lE '^fun main' "$src"/*.kt 2>/dev/null | head -1)"
 	  if [[ -z "$mainfile" ]]; then echo "SKIP  $s (no main)"; exit 0; fi
 	  base="$(basename "$mainfile" .kt)"; mainclass="${base^}Kt"

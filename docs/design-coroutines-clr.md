@@ -203,7 +203,7 @@ multi-suspension) now CPS-linearize: `BirEmitter.lambda` routes them through the
 (extracted from `suspendMethod`) so the lifted method / closure `invoke` carries `suspend`+steps+cpsFields and
 `ilemit.EmitCoroutine` emits the SM + `Task<T>` kickoff. Capturing lambdas → the closure `invoke` is an INSTANCE
 coroutine: ilemit captures the receiver into an SM field `<>4__this` (`_coThis`) so resume reaches captured-var
-fields. Proof: `samples/il-colam` (30/6/105/18) in `scripts/verify-il.sh`; full IL suite green.
+fields. Proof: `cases/il-colam` (30/6/105/18) in `scripts/verify-il.sh`; full IL suite green.
 
 **Phasing (each = a verifiable gate):** 0 suspend-lambda CPS → 1 Continuation core + pluggable sink → 2 raw
 intrinsics → 3 flat expect/actual + atomicfu → 4 first real slice (Job/launch/async/Dispatchers/delay/
@@ -244,7 +244,7 @@ implemented and ilverify-clean. `ilemit.EmitCoroutineClass`/`EmitCoSuspendClass`
 `DotKt.Coroutines.Continuation<object>` (`ResumeWith`→`InvokeSuspend` label switch; `COROUTINE_SUSPENDED`
 sentinel; cps fields + `<>4__this` capture; try/catch-around-await), with the kickoff binding a `NewRoot<T>`
 Task sink. Selected by `"coClass":true` (backend `@KCont` opt-in; struct/Task form stays default). Proof:
-`samples/il-kcont` (30/14/6/15/10/-99) in `scripts/verify-il.sh`, ilverify clean. NOTE: the leaf suspension is
+`cases/il-kcont` (30/14/6/15/10/-99) in `scripts/verify-il.sh`, ilverify clean. NOTE: the leaf suspension is
 currently realized via the existing `.await()` → `Builders.AwaitOnto` (a Task awaiter registering `ResumeWith`),
 NOT yet the raw `suspendCoroutineUninterceptedOrReturn` — that frontend intrinsic (+ `kotlin.Result` mapping +
 handing the SM out as a typed `Continuation`) is **Phase 2**, and is what lets a coroutine hand its continuation
@@ -260,7 +260,7 @@ state set BEFORE the block runs so a same-thread resume during registration is s
 Continuation<T>` → `clrg:DotKt.Coroutines.Continuation` (birType+netType), `COROUTINE_SUSPENDED` →
 `coSuspendedSentinel`, `resume`/`resumeWithException` → `DotKt.Coroutines.Continuations.*`. Runtime gained
 `TypedCont<T>` (the reified-T adapter), `Continuations`, `Builders.OnComplete`/`OnCompleteInt`. Proof:
-`samples/il-kintrin` (7/42/72 — real suspension via the intrinsic, sync-return leaf, composition), ilverify-clean.
+`cases/il-kintrin` (7/42/72 — real suspension via the intrinsic, sync-return leaf, composition), ilverify-clean.
 Deferred (arrive when compiling upstream): generic suspend funs (generic SM class), `kotlin.Result` mapping,
 `startCoroutine`/`createCoroutineUnintercepted`/`intercepted`, `suspendCancellableCoroutine` (compiles on top).
 
@@ -273,7 +273,7 @@ compile in ONE invocation; expects emit no `.bir.json`, actuals do. No HMPP/klib
 atomicfu.{AtomicInt,AtomicLong,AtomicBoolean,AtomicRef}` map (birType/netType) to `DotKt.Coroutines.Atomic*`
 Interlocked/Volatile wrappers (`runtime/DotKt.Runtime/Atomics.cs (now namespace DotKtx.Atomicfu)`); `BirEmitter.atomicfuCall` maps the
 `atomic(x)` factory (by arg type) + member ops (`.value`, `compareAndSet`, `incrementAndGet`, `addAndGet`, …).
-Proof: `samples/il-expect` (expect/actual + AtomicInt + AtomicRef), ilverify-clean, in `verify-il.sh`
+Proof: `cases/il-expect` (expect/actual + AtomicInt + AtomicRef), ilverify-clean, in `verify-il.sh`
 (`il_check_mpp`). NOTE: atomicfu wrappers are the correct "thin actual set" (not the JVM field-erasure) — revisit
 for perf only if needed. The real `kotlinx-atomicfu` jar isn't on the test classpath; a facade with matching
 fqNames stands in (the backend maps identically for the real jar).
@@ -301,7 +301,7 @@ identified (in priority order), each a bounded compiler feature:
 6. **Breadth**: full kotlin-stdlib call coverage across the real sources; `JobSupport` (atomicfu-heavy + intricate
    state machine); `Channel`→`System.Threading.Channels`; `Flow`→`IAsyncEnumerable`; `select`. This is the bulk.
 
-**Single-shot SEQUENTIAL semantics already work** on the foundation (`samples/il-kintrin`: intrinsic suspension +
+**Single-shot SEQUENTIAL semantics already work** on the foundation (`cases/il-kintrin`: intrinsic suspension +
 composition `chainViaIntrinsic=72`). CONCURRENT structured concurrency (launch/async/cancellation) needs items
 2–5; literal upstream needs all of 1–6. Recommended next increment: **(1) generic suspend-fun state machines**,
 then **(4)+(5)** a minimal dispatcher/scope, then attempt a hand-picked upstream slice.
@@ -316,7 +316,7 @@ field/method self-references through the self-instantiation `sm<ownParams>` (`Se
 while the kickoff resolves against `sm<methodT>` (`SmField`/`SmCtor`). Generic-param values box via `box T` and
 unbox via `unbox.any T` (NOT castclass — the value/ref distinction is only known at runtime). Also: `emitCps`
 now unwraps a type-operator wrapper around a suspension (generic substitution / coercion-to-Unit). Proof:
-`samples/il-kgen` (`awaitTwice`/`second` with `T=Int` and `T=String` → 7/hi/2/b), ilverify-clean, in verify-il.sh.
+`cases/il-kgen` (`awaitTwice`/`second` with `T=Int` and `T=String` → 7/hi/2/b), ilverify-clean, in verify-il.sh.
 Remaining for literal upstream: blockers #2–#6 (§13e).
 
 ## 13g. Phase 4b status (2026-06-22) — CPS fixes + Unit-result class coroutines
@@ -329,10 +329,10 @@ Three correctness items cleared on the way to structured concurrency:
   (`Task<T>`, `Continuation<T>`) → `"generic"`, function types → `"func:N"` (bare param stays `"gp"`, array `"array"`).
   This makes generic `@Clr` method calls over generic-typed params resolve.
 - **Unit-result class coroutines**: `suspend fun … : Unit` in the class form surfaces as a non-generic `Task`
-  via a new `Builders.RootUnit`/`NewRootUnit` sink. Proof: `samples/il-kunit` (a Unit `warmUp` awaited by
+  via a new `Builders.RootUnit`/`NewRootUnit` sink. Proof: `cases/il-kunit` (a Unit `warmUp` awaited by
   `useUnit` → 42), ilverify-clean.
 
-**Structured-concurrency demo ✅ LANDED** (`samples/il-kstruct`, ilverify-clean): `async` starts concurrent
+**Structured-concurrency demo ✅ LANDED** (`cases/il-kstruct`, ilverify-clean): `async` starts concurrent
 children, `await` (a suspend extension fun built from the raw intrinsic) joins them, `runBlocking` drives the
 root — `runBlocking { val a=async{fetch…}; val b=async{fetch…}; a.await()+b.await() } == 30` (concurrent) and a
 sequential `== 42`. The fix was **extension suspend funs**: `suspendMethod` now prepends the extension receiver
@@ -355,7 +355,7 @@ implementing the trivial `DotKt.Coroutines.ISeqStep<T>` (`MoveNext` advances to 
 `Current`, returning true; resume after each yield; end → false), and `DotKt.Coroutines.Seq.Of` (a C# iterator)
 wraps it into `IEnumerable<T>` — keeping the awkward `IEnumerator<T>` dual-interface boilerplate in C#, not IL.
 `kotlin.sequences.Sequence<T>` maps to `IEnumerable<T>` (ops ride the existing LINQ mapping). The SM is emitted
-inline at the call site (enclosing emit state saved/restored). Proof: `samples/il-kseq` — straight-line yields
+inline at the call site (enclosing emit state saved/restored). Proof: `cases/il-kseq` — straight-line yields
 (1,2,3), yield-in-loop with a live local (1,4,9,16), and an **infinite** `sequence{ while(true) yield(i++) }`
 `.take(2)` (0,1 — proves laziness; doesn't hang), ilverify-clean. v1: non-capturing blocks (loud error otherwise);
 `yieldAll`/`generateSequence` not yet. Restricted-suspension thus rides the same CPS front as suspend funs (§6).
@@ -365,7 +365,7 @@ inline at the call site (enclosing emit state saved/restored). Proof: `samples/i
 **Flow needs NO new state-machine form** — it is push-based, so it composes from plain suspend funs/lambdas on
 the Task foundation (the user's intuition). A `Flow` wraps a `suspend (collector) -> …` block; `collect` runs the
 block with a collector whose `emit` is the consumer action; `emit` awaits the action's Task (backpressure = the
-producer suspends until the collector returns). `samples/il-kflow`: `flow { emit(1); emit(2); emit(3) }.collect
+producer suspends until the collector returns). `cases/il-kflow`: `flow { emit(1); emit(2); emit(3) }.collect
 { println(it) }` → 1/2/3, ilverify-clean. Runtime `DotKt.Coroutines/Flows.cs` (FlowColI/FlowI/Flows, Int slice);
 `emit`/`collect` are suspend extension funs built from the raw intrinsic (like the structured-async `await`).
 Two enabling compiler fixes (both general): birType maps function TYPES used as values (`kotlin.FunctionN` /
@@ -416,7 +416,7 @@ fixes (the monomorphic-Int Flow slice had masked them):
 2. **Suspend-call return type**: a call to a `suspend fun` resolves to its kickoff returning `Task<T>`; the
    `retType` hint (used by ilemit on generic calls) must be `coTaskType`, not the result `T`, else an awaited
    GENERIC suspend call is typed as the result and `GetAwaiter` isn't found (`retHintStr`/`effRet`).
-Proof: `samples/il-kgflow` — `flow<String> { emit("a"); emit("bb"); emit("ccc") }.collect { println(it.length) }`
+Proof: `cases/il-kgflow` — `flow<String> { emit("a"); emit("bb"); emit("ccc") }.collect { println(it.length) }`
 → 1/2/3, ilverify-clean. So generic facade types + generic suspend funs + generic-instantiated member access all
 work now. (The genuinely-upstream-coupled remainder is still A3/B/C per §13j — but the generic-Flow machinery is
 a finished compiler feature.)
@@ -438,7 +438,7 @@ completion)` now lower (`BirEmitter` call() early-dispatch) to `DotKt.Coroutines
 `Continuation<T>` implementor like the runtime `CaptureI`, whose own type args aren't `T`; mis-reading it as
 `object` passed `Continuation<Int>` where `Continuation<object>` was expected → an EntryPointNotFound on the
 generic-interface dispatch, which looked like a deep CLR bug but was just the wrong type arg). Generic path works;
-no monomorphic special-case needed. Proof: `samples/il-kstart` (a suspending `produce` started into a runtime
+no monomorphic special-case needed. Proof: `cases/il-kstart` (a suspending `produce` started into a runtime
 `CaptureI` sink → 42), ilverify-clean. `createCoroutine`/`createCoroutineUnintercepted` (non-starting forms) not
 yet — add when upstream needs them.
 
@@ -450,7 +450,7 @@ intrinsic, `alwaysSuspend=true`): the block always suspends (returns Unit, not t
 `runtime/DotKt.Runtime` gained `CancellableCont<T> : Continuation<T>` (forwards resume; cancel/
 invokeOnCancellation minimal — real cancellation lands with the dispatcher). `c.resume(v)` rides the existing
 `kotlin.coroutines.resume` mapping. Type map: `kotlinx.coroutines.CancellableContinuation` → `CancellableCont`.
-Proof: `samples/il-kcancel` (`awaitC` via suspendCancellableCoroutine, composed → 30), ilverify-clean.
+Proof: `cases/il-kcancel` (`awaitC` via suspendCancellableCoroutine, composed → 30), ilverify-clean.
 
 ## 13n. T4 done — kotlin.Result unified onto DotKt.Coroutines.Result (2026-06-22)
 
@@ -474,7 +474,7 @@ remaining T5 work (T4 unblocked the Result param type; this casing piece is sepa
 
 ## 13o-done. T5 resolved (2026-06-22)
 
-A user `class C : Continuation<Int>` now compiles and runs (samples/il-kcont2 → 42 / boom), closing the §13j gap
+A user `class C : Continuation<Int>` now compiles and runs (cases/il-kcont2 → 42 / boom), closing the §13j gap
 (user Continuation impls). What it took, all general "Kotlin class implements a .NET-mapped interface" machinery:
 - class supertype list maps kotlin.coroutines.Continuation -> `clrg:DotKt.Coroutines.Continuation[int]` (was bare).
 - Kotlin members bind to the .NET PascalCase slots via `clrIfaceMemberName`: `resumeWith`->`ResumeWith`,

@@ -43,7 +43,7 @@
 
 **=> M-D1（CIL 直接出力）D1.0–D1.9 完了。** `scripts/verify-il.sh` が 8 サンプル差分一致 + 全 ilverify clean。残（小）: 総称/indexer の IL 化。
 - **D1.8 — MSBuild 統合（M）✅ 達成.**
-  `<KotlinClrBackend>il</KotlinClrBackend>` で `KotlinClr.targets` が、csc には placeholder Main を与えて valid assembly を作らせ、`AfterTargets CoreCompile` で `ilemit` が BIR→CIL を emit してアセンブリを上書き。`samples/ktproj-il` が `dotnet build`/`run` で純 IL アセンブリを生成・実行（`Hello, ktproj, from IL!`）。※コンパイラ変更後は `installDist` 更新が前提。
+  `<KotlinClrBackend>il</KotlinClrBackend>` で `KotlinClr.targets` が、csc には placeholder Main を与えて valid assembly を作らせ、`AfterTargets CoreCompile` で `ilemit` が BIR→CIL を emit してアセンブリを上書き。`cases/ktproj-il` が `dotnet build`/`run` で純 IL アセンブリを生成・実行（`Hello, ktproj, from IL!`）。※コンパイラ変更後は `installDist` 更新が前提。
 - **D1.9 — 健全性（L）✅ 達成（ilverify clean）.**
   `verify-il.sh` に `ilverify` パス追加、生成 6 アセンブリ全て **"Verified"**。ilverify が「interface 引数を object 型にしていた」検証エラーを検出 → `birType` を interface→`@Name` へ修正。差分一致＋形式検証の両方が緑。残: PDB/sequence point（任意）、`conv.*` 数値変換の網羅。
 
@@ -67,7 +67,7 @@ state machine lowering の代わりに、より実用的な **`suspend` → C# `
 - `suspend fun` → `async global::System.Threading.Tasks.Task<T>`、suspend 呼び出し → `await`、suspend ラムダ → `async (...) =>`。
 - **汎用 interop ポイント `@ClrAwait suspend fun <T> Task<T>.await(): T`**（WinRT `AsTask()` 着想の逆向き橋）。codegen は `@ClrAwait` 注釈の呼び出しを「拡張レシーバ＝awaitable」に畳み、suspend ラッパが `await <receiver>` を生成。→ **任意の .NET `Task<T>` を返す素の API をラップ無しで await 可能**（`IAsyncOperation`/`ValueTask` も同型注釈で拡張可）。
 - `runBlocking` 相当 = 境界で `body().GetAwaiter().GetResult()`。
-- `samples/m-d2`：素の .NET async API `Api.FetchAsync(): Task<int>` を `task.await()` で await、`result = 42`（非ブロッキング）。
+- `cases/m-d2`：素の .NET async API `Api.FetchAsync(): Task<int>` を `task.await()` で await、`result = 42`（非ブロッキング）。
 
 **達成範囲**: suspend/await/Task の基本相互運用（非ブロッキング）。**残**: 完全な Kotlin coroutine 意味論（state machine lowering, `Dispatchers`, 構造化並行性, cancellation, `Flow`）は C# async 写像では近似に留まり、下記の正攻法（lowering 再利用）が要る。
 
@@ -97,15 +97,15 @@ coroutine lowering は compiler 内部・stdlib intrinsics に密結合。phase 
 
 # M-S: 前提となる言語/stdlib 補強（M-D2 と実用化の下地）
 
-- **S1 — null 安全（M）✅ 達成.** `?:`（elvis → C# `(a ?? b)`）、`!!`（CHECK_NOT_NULL → 値）、`?.`（safe-call → `(a == null ? (T?)null : a.b)`、値型メンバ対応）。`String.length`→`.Length`。`samples/m-s1`（`len hello = 5`）。
-- **S2 — data class（S）✅ 達成.** `toString`/`copy`/`componentN`、フィールドから値等価 `Equals`/`GetHashCode` を生成、`==`(EQEQ) を値型/string/enum は `==`・参照型は `System.Object.Equals` へ写像、Object メソッド名を C# 名へ。`samples/m-s2`（`a==b` 構造等価が True）。
-- **S3 — collections stdlib（M）— 部分達成.** `listOf`/`mutableListOf`/`arrayListOf` → `new List<T>{...}`、`kotlin.collections.List/Set/Map` → BCL generics、`.size`→`.Count`、for-in→`foreach` 達成（`samples/m-s3`）。残: `mapOf`/`setOf`、`map`/`filter`/`forEach` 等拡張。
-- **S4 — generic 型の façade 自動生成（M）✅ 達成.** `facadegen` が generic type definition（`List\`1`）から `class List<T>` を自動生成（型パラメータ、indexer→operator get/set、generic param→T）。`samples/m-s4` が生成 façード経由で `List<Int>` を使用（count/indexer/add）。手書き m-i3 façード相当を自動化。
-- **S5 — FIR シンボル直接注入（✅ 達成・メタデータ駆動・実機）.** `import clrgen.Math; Math.Abs(-9)` / `Console.WriteLine(...)` を **façade .kt 無し**で解決 → `global::System.Math.Abs(-9)` 等 → 実行（`samples/m-s5`：`abs(-9)=9 / max(3,7)=7 / min(3,7)=3`、`verify-all` 常設）。
+- **S1 — null 安全（M）✅ 達成.** `?:`（elvis → C# `(a ?? b)`）、`!!`（CHECK_NOT_NULL → 値）、`?.`（safe-call → `(a == null ? (T?)null : a.b)`、値型メンバ対応）。`String.length`→`.Length`。`cases/m-s1`（`len hello = 5`）。
+- **S2 — data class（S）✅ 達成.** `toString`/`copy`/`componentN`、フィールドから値等価 `Equals`/`GetHashCode` を生成、`==`(EQEQ) を値型/string/enum は `==`・参照型は `System.Object.Equals` へ写像、Object メソッド名を C# 名へ。`cases/m-s2`（`a==b` 構造等価が True）。
+- **S3 — collections stdlib（M）— 部分達成.** `listOf`/`mutableListOf`/`arrayListOf` → `new List<T>{...}`、`kotlin.collections.List/Set/Map` → BCL generics、`.size`→`.Count`、for-in→`foreach` 達成（`cases/m-s3`）。残: `mapOf`/`setOf`、`map`/`filter`/`forEach` 等拡張。
+- **S4 — generic 型の façade 自動生成（M）✅ 達成.** `facadegen` が generic type definition（`List\`1`）から `class List<T>` を自動生成（型パラメータ、indexer→operator get/set、generic param→T）。`cases/m-s4` が生成 façード経由で `List<Int>` を使用（count/indexer/add）。手書き m-i3 façード相当を自動化。
+- **S5 — FIR シンボル直接注入（✅ 達成・メタデータ駆動・実機）.** `import clrgen.Math; Math.Abs(-9)` / `Console.WriteLine(...)` を **façade .kt 無し**で解決 → `global::System.Math.Abs(-9)` 等 → 実行（`cases/m-s5`：`abs(-9)=9 / max(3,7)=7 / min(3,7)=3`、`verify-all` 常設）。
   - **機構**: `toolchain/kotc/.../frontend/ClrTypeInjection.kt` の `FirDeclarationGenerationExtension` が .NET 型を FIR に合成（object=静的メソッド / class=コンストラクタ+インスタンスメソッド、オーバーロード対応）。`ClrCompilerPluginRegistrar`→`COMPILER_PLUGIN_REGISTRARS` 経由で**再利用中の JVM frontend に登録**（`ClrPluginRegistrationPhase`、frontend 差し替え不要）。合成 FIR には注釈を付けず `ClrTypeRegistry`（Kotlin-FQN→.NET 名）を backend `clrName` が参照（注釈の Fir2Ir 透過問題を回避）。
   - **メタデータ駆動**: 注入型集合はハードコードでなく、`facadegen --meta`（既存 reflection を再利用）が**実 .NET アセンブリ**から生成する metadata ファイルから読む（環境変数 `CLR_TYPES_METADATA`）。
-  - **対応メンバ（穴なし）**: object(静的メソッド) / class(コンストラクタ + インスタンスメソッド + **プロパティ**) / オーバーロード / 自己・他注入型参照。`samples/m-s5` は System.Math(90 メソッド)+System.Console+**System.Text.StringBuilder**(ctor/`Append` 自己返し/`Length` プロパティ/`ToString`) を façade 無しで実行。
-  - **MSBuild 統合**: `.ktproj` に `<KotlinClrType Include="System.X"/>` を書くと façade 無しで注入（`KotlinClrInjectTypes` ターゲットが metadata を生成し `CLR_TYPES_METADATA` を渡す）。`samples/ktproj-inject` が `dotnet build/run` で実動作。**総称型**は `<KotlinClrType>` では明示メッセージで `<KotlinClrFacade>`（実証済 façade 経路・`m-s4` の List<T>）へ誘導＝穴のない一体運用。
+  - **対応メンバ（穴なし）**: object(静的メソッド) / class(コンストラクタ + インスタンスメソッド + **プロパティ**) / オーバーロード / 自己・他注入型参照。`cases/m-s5` は System.Math(90 メソッド)+System.Console+**System.Text.StringBuilder**(ctor/`Append` 自己返し/`Length` プロパティ/`ToString`) を façade 無しで実行。
+  - **MSBuild 統合**: `.ktproj` に `<KotlinClrType Include="System.X"/>` を書くと façade 無しで注入（`KotlinClrInjectTypes` ターゲットが metadata を生成し `CLR_TYPES_METADATA` を渡す）。`cases/ktproj-inject` が `dotnet build/run` で実動作。**総称型**は `<KotlinClrType>` では明示メッセージで `<KotlinClrFacade>`（実証済 façade 経路・`m-s4` の List<T>）へ誘導＝穴のない一体運用。
   - **残（内部最適化・ユーザ可視な穴ではない）**: 総称型の FIR 直接注入（現状は façade 経路で網羅）、`AssemblyResolver`（参照アセンブリ走査）化。
   - **確認済み seam（実装の土台）:**
     1. `FirDeclarationGenerationExtension`（`getTopLevelClassIds`/`generateTopLevelClassLikeDeclaration`/`generateConstructors`/`generateFunctions`/`generateProperties`/`getCallableNamesForClass`/`hasPackage`）で .NET 型を **FIR に合成**。`createTopLevelClass`/`createMemberFunction`/`createConstructor` ヘルパが合成を補助。
@@ -145,7 +145,7 @@ M-D1 / M-D2 / M-S(S1–S5) は達成。ここからは「サンプルが動く�
 **原則2（スコープ＝純粋な .NET バインディング）.** Kotlin.NET は **Kotlin→.NET の「バインディング」（言語コンパイラ＋包括 interop）に徹し、独自ライブラリ（特に UI ライブラリ）を同梱しない**。
 - Windowing は `System.Windows`/XAML・WPF・WinUI・Avalonia の**実型を `import` して直接**使う。Kotlin.NET 提供の UI ランタイムに依存させない。
 - Kotlin らしい UI DSL（Avalonia/WPF/WinUI ラッパ）は、Kotlin.NET の**上に乗る別の派生プロダクト**（KMP が Kotlin の上に立つのと同じ関係）として分離。コアには入れない。
-- **帰結（✅ 実施済）**: `runtime/csharp/KfcUi`（C# 製 UI shim）と依存サンプル（`samples/win*`）・`scripts/run-window.sh` を**削除**。windowing は framework-direct（実型を import）のみ。下記 Track W は I2/I3/I4 の上の「バインディング検証」。
+- **帰結（✅ 実施済）**: `runtime/csharp/KfcUi`（C# 製 UI shim）と依存サンプル（`cases/win*`）・`scripts/run-window.sh` を**削除**。windowing は framework-direct（実型を import）のみ。下記 Track W は I2/I3/I4 の上の「バインディング検証」。
 
 ## Track P — production 基盤（信頼性。最優先）
 - **P1 差分テストハーネス（M）**: 同一 `.kt` を kotlin/jvm と kotlin/clr で実行し stdout 一致を自動 assert。corpus を増やし回帰の正本を JVM oracle に。＝「デモ」と「コンパイラ」を分ける核。M0 からの積み残し。
@@ -155,9 +155,9 @@ M-D1 / M-D2 / M-S(S1–S5) は達成。ここからは「サンプルが動く�
 
 ## Track I — interop 完全化（穴を残さない）
 - **I1 総称型の FIR 直接注入（L）**: `<KotlinClrType>` で `List<T>`/`Dictionary<K,V>` を façade 無し注入（現状は façade 経路へ誘導）。型パラメータ付き FIR 合成＋ codegen 総称。これで注入経路の最後の穴が閉じる。
-- **I2 AssemblyResolver（M）— ✅ 達成・実機.** facadegen が `--refs <参照アセンブリパス;…>` を受け、`Assembly.LoadFrom`＋`AssemblyResolve` で**任意の参照アセンブリ**から型解決（BCL の `Type.GetType` プローブに加え）。型比較は assembly identity 非依存の FullName ベースへ。MSBuild は `KotlinClrInjectTypes`（`DependsOnTargets=ResolveReferences`）で `@(ReferencePath)` を渡す。`samples/ktproj-extlib`：外部 C# アセンブリ（`Ext.Widget`）を `ProjectReference`＋`<KotlinClrType>` で **façade-free 消費**（`dotnet build/run` で `Add(2,3)=5`）。これで Avalonia/WPF を `<PackageReference>` から注入する道が通った。
-- **I3 .NET 基底クラス継承（L）— ✅ メカニズム達成・実機.** 注入型を Kotlin class が継承（`class Sub : Base()`）、base ctor 呼び出し、継承メンバ参照、**.NET virtual メンバの override（virtual dispatch）**、継承チェーンまで実機動作。`samples/m-i5`（façade-free で `System.Exception` を継承し `Message` を override、`FatalError : AppError : Exception` の多態）。実装: 注入型/メンバを .NET sealed/virtual に応じて `open`(modality) 化（`ClrTypeInjection`）、property の `override`/`virtual` 修飾子を codegen 追加。残: ジェネリック基底（`List<T>` 継承）。これで `class App : Application()` の前提が立つ。
-- **I4 delegate/event interop（M）— ✅ イベント subscribe/unsubscribe 達成・実機.** .NET event を façade-free 注入型が `add_<E>`/`remove_<E>`（ハンドラ＝Kotlin 関数型 `kotlin.FunctionN`）として公開、codegen が `recv.<E> += handler` / `-= handler` を生成（`ClrEventRegistry`）。`samples/ktproj-extlib`：外部アセンブリの `event Action<int> Changed` を **Kotlin ラムダで購読**し発火（`changed: 5 / changed: 9`）。これでフレームワークの click/イベント駆動 UI を純 Kotlin で書ける。残: `out`/`ref`、nullable 値型、.NET enum 取り込み、総称 delegate の網羅。
+- **I2 AssemblyResolver（M）— ✅ 達成・実機.** facadegen が `--refs <参照アセンブリパス;…>` を受け、`Assembly.LoadFrom`＋`AssemblyResolve` で**任意の参照アセンブリ**から型解決（BCL の `Type.GetType` プローブに加え）。型比較は assembly identity 非依存の FullName ベースへ。MSBuild は `KotlinClrInjectTypes`（`DependsOnTargets=ResolveReferences`）で `@(ReferencePath)` を渡す。`cases/ktproj-extlib`：外部 C# アセンブリ（`Ext.Widget`）を `ProjectReference`＋`<KotlinClrType>` で **façade-free 消費**（`dotnet build/run` で `Add(2,3)=5`）。これで Avalonia/WPF を `<PackageReference>` から注入する道が通った。
+- **I3 .NET 基底クラス継承（L）— ✅ メカニズム達成・実機.** 注入型を Kotlin class が継承（`class Sub : Base()`）、base ctor 呼び出し、継承メンバ参照、**.NET virtual メンバの override（virtual dispatch）**、継承チェーンまで実機動作。`cases/m-i5`（façade-free で `System.Exception` を継承し `Message` を override、`FatalError : AppError : Exception` の多態）。実装: 注入型/メンバを .NET sealed/virtual に応じて `open`(modality) 化（`ClrTypeInjection`）、property の `override`/`virtual` 修飾子を codegen 追加。残: ジェネリック基底（`List<T>` 継承）。これで `class App : Application()` の前提が立つ。
+- **I4 delegate/event interop（M）— ✅ イベント subscribe/unsubscribe 達成・実機.** .NET event を façade-free 注入型が `add_<E>`/`remove_<E>`（ハンドラ＝Kotlin 関数型 `kotlin.FunctionN`）として公開、codegen が `recv.<E> += handler` / `-= handler` を生成（`ClrEventRegistry`）。`cases/ktproj-extlib`：外部アセンブリの `event Action<int> Changed` を **Kotlin ラムダで購読**し発火（`changed: 5 / changed: 9`）。これでフレームワークの click/イベント駆動 UI を純 Kotlin で書ける。残: `out`/`ref`、nullable 値型、.NET enum 取り込み、総称 delegate の網羅。
 
 ## Track L — 言語/stdlib breadth（実プログラム網羅）
 - **L1 collections stdlib（M）**: `map`/`filter`/`fold`/`forEach`/`associate`/`mapOf`/`setOf` 等を BCL/LINQ へ写像。
@@ -177,8 +177,8 @@ M-D1 / M-D2 / M-S(S1–S5) は達成。ここからは「サンプルが動く�
 
 ## Track W — framework-direct windowing（= バインディングの完全性テスト。UI ライブラリは作らない）
 原則2 に従い、これは「Kotlin.NET の windowing 機能」ではなく **「実 UI フレームワークを Kotlin から丸ごと消費できるか」のバインディング検証**。
-- **W0 KfcUi 撤去（M）— ✅ 達成**: C# 製 UI shim・`samples/win*`・`run-window.sh` を削除。
-- **W1 純 Kotlin App（L）— ✅ コア達成・実機（描画はスコープ外）.** `<PackageReference Include="Avalonia"/>` の実型 `Avalonia.Application` を façade-free 注入し、**Kotlin が直接継承** `class MyApp : Application()`＋virtual `Initialize()` を override → `dotnet build/run` で実行（`samples/ktproj-avalonia`）。I2 は ref アセンブリ（`ref/`）を読むため `MetadataLoadContext` 化（`Assembly.LoadFrom` は ref を拒否）。**PackageReference 型を Kotlin 基底にできることを実証**＝framework-direct windowing の中核成立。Avalonia の実描画は目標外（Kotlin.NET は純バインディングであることの確認が目的）。
+- **W0 KfcUi 撤去（M）— ✅ 達成**: C# 製 UI shim・`cases/win*`・`run-window.sh` を削除。
+- **W1 純 Kotlin App（L）— ✅ コア達成・実機（描画はスコープ外）.** `<PackageReference Include="Avalonia"/>` の実型 `Avalonia.Application` を façade-free 注入し、**Kotlin が直接継承** `class MyApp : Application()`＋virtual `Initialize()` を override → `dotnet build/run` で実行（`cases/ktproj-avalonia`）。I2 は ref アセンブリ（`ref/`）を読むため `MetadataLoadContext` 化（`Assembly.LoadFrom` は ref を拒否）。**PackageReference 型を Kotlin 基底にできることを実証**＝framework-direct windowing の中核成立。Avalonia の実描画は目標外（Kotlin.NET は純バインディングであることの確認が目的）。
 - **W2 XAML/WPF・WinUI（M〜L, Windows）**: `System.Windows`/XAML 名前空間の import と XAML ロード。WPF はコンパイル可、Windows 実行で点灯。
 - **W3（別プロダクト）Kotlin-idiomatic UI DSL**: Avalonia/WPF/WinUI をラップした KMP 的派生プロダクト。**Kotlin.NET コア外**。リポジトリ/パッケージを分離。
 
