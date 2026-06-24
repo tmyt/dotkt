@@ -87,9 +87,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// Diagnostics: a construct the .NET backend can't lower yet is a COMPILE-TIME error with source location
 	// (file:line:col) — never a silent BIR node that crashes ilemit later. `hadError` fails the build.
 	var hadError = false; private set
-	private var fileEntry: IrFileEntry? = null
+	internal var fileEntry: IrFileEntry? = null
 
-	private fun locationOf(node: IrElement?): CompilerMessageLocation? {
+	internal fun locationOf(node: IrElement?): CompilerMessageLocation? {
 		val fe = fileEntry ?: return null
 		val off = node?.startOffset ?: return CompilerMessageLocation.create(fe.name)
 		if (off < 0) return CompilerMessageLocation.create(fe.name)
@@ -102,7 +102,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * BIR node. The build fails (hadError), so this placeholder never reaches ilemit. `what` names the construct;
 	 * `detail` is a plain-language explanation of why / what to do — NOT the word "deferred".
 	 */
-	private fun unsupported(node: IrElement?, what: String, detail: String): String {
+	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
 		hadError = true
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
 			"the .NET backend does not support $what yet: $detail", locationOf(node))
@@ -110,73 +110,73 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
-	private val valSubst = HashMap<String, String>()
+	internal val valSubst = HashMap<String, String>()
 
 	// Lambda lifting: non-capturing lambdas become named static methods appended to the file class;
 	// capturing lambdas become synthesized closure classes appended to the file's types.
-	private val liftedMethods = ArrayList<String>()
-	private val liftedTypes = ArrayList<String>()
-	private var lambdaCounter = 0
-	private var closureCounter = 0
+	internal val liftedMethods = ArrayList<String>()
+	internal val liftedTypes = ArrayList<String>()
+	internal var lambdaCounter = 0
+	internal var closureCounter = 0
 	// CFG block-IR (E-0.5): file-global unique label ids (never reset) so ids never collide across methods/lambdas.
-	private var cfgLabelN = 0
-	private fun cfgFresh(): Int = cfgLabelN++
+	internal var cfgLabelN = 0
+	internal fun cfgFresh(): Int = cfgLabelN++
 	// Inlining ([[function-inlining-spike]]): lambda params currently being inlined -> the lambda passed for them.
-	private val inlineLambdas = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueDeclaration, IrFunctionExpression>()
-	private var inlCounter = 0
-	private var scopeCounter = 0
-	private var fileClass = ""   // current file's static class name (for top-level property access)
+	internal val inlineLambdas = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueDeclaration, IrFunctionExpression>()
+	internal var inlCounter = 0
+	internal var scopeCounter = 0
+	internal var fileClass = ""   // current file's static class name (for top-level property access)
 	// Per-file prefix for SYNTHETIC type names (closures, ref cells, sequence SMs). Each file is compiled by its own
 	// BirEmitter with a fresh `closureCounter`, so unprefixed names like `<>dotkt_Closure0` COLLIDE across files when
 	// ilemit links all BIR into one assembly (the dup overwrites in `_types` -> orphaned TypeBuilder -> Save crash).
 	// `fileClass` is unique per file, so it disambiguates. Stays under the `<>dotkt_` prefix (ilemit marks those).
-	private val synthScope: String get() = fileClass.replace(Regex("[^A-Za-z0-9]"), "_")
+	internal val synthScope: String get() = fileClass.replace(Regex("[^A-Za-z0-9]"), "_")
 	/** The `<File>Kt` class name of a top-level declaration's DEFINING file (so cross-file top-level property
 	 *  access targets the owning file class, not whichever file is being emitted). */
-	private fun fileClassOf(decl: org.jetbrains.kotlin.ir.declarations.IrDeclaration): String {
+	internal fun fileClassOf(decl: org.jetbrains.kotlin.ir.declarations.IrDeclaration): String {
 		val f = decl.parent as? IrFile ?: return fileClass
 		return fileClassName(f)
 	}
 	// The `<File>Kt` facade class name, qualified with the file's package as the .NET namespace (so top-level
 	// declarations live in the package's namespace, and two same-named files in different packages don't collide).
-	private fun fileClassName(f: IrFile): String {
+	internal fun fileClassName(f: IrFile): String {
 		val base = File(f.fileEntry.name).name.removeSuffix(".kt").replaceFirstChar { it.uppercaseChar() } + "Kt"
 		val pkg = f.packageFqName.asString()
 		return if (pkg.isEmpty()) base else "$pkg.$base"
 	}
 	// Local functions: lifted to file-class statics; captured vars become leading params (calls prepend them).
-	private val localFns = HashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, Pair<String, List<IrValueDeclaration>>>()
+	internal val localFns = HashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, Pair<String, List<IrValueDeclaration>>>()
 
 	// Anonymous objects (`object : I { }`) are lifted to synthetic top-level classes. Their IR name is
 	// "<no name provided>" (not a valid IL identifier), so map the IrClass identity -> its assigned name;
 	// every self-reference (ownerType / `@<no name>` type) is routed through `typeName`.
-	private val anonNames = java.util.IdentityHashMap<IrClass, String>()
+	internal val anonNames = java.util.IdentityHashMap<IrClass, String>()
 	// Captured outer values inside a capturing object literal -> `this.<field>`. Keyed by value-declaration
 	// IDENTITY (not name): the anon's own `<this>` and a captured outer `<this>` share the name "<this>".
-	private val captureSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	internal val captureSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
 	// An extension-function `__self` receiver -> the `__self` arg. Keyed by IDENTITY: in a MEMBER extension
 	// (`class C { fun T.f() }`) the extension receiver and the dispatch receiver BOTH have name "<this>", so a
 	// name-keyed map can't tell them apart (it would capture C's `this` too). The dispatch `<this>` then falls
 	// through to `{"k":"this"}` and the extension receiver resolves here.
-	private val selfSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	internal val selfSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.
-	private val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()
+	internal val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()
 	// A local delegated property's getter/setter function -> the IrLocalDelegatedProperty, so call() rewrites a
 	// `<get-x>`/`<set-x>` call to access on the delegate local (mirrors the member-property delegate path).
-	private val localDelegates = java.util.IdentityHashMap<IrSimpleFunction, IrLocalDelegatedProperty>()
+	internal val localDelegates = java.util.IdentityHashMap<IrSimpleFunction, IrLocalDelegatedProperty>()
 	// The `buf` parameter of an active `stackBuffer { buf -> … }` block -> its stack allocation (ptr local + length
 	// local + element type), so `buf[i]`/`buf[i]=v`/`buf.size` rewrite to stack ops while the block is spliced.
-	private class StackBufInfo(val ptrName: String, val lenName: String, val elemT: String)
-	private val stackBufSubst = java.util.IdentityHashMap<IrValueDeclaration, StackBufInfo>()
+	internal class StackBufInfo(val ptrName: String, val lenName: String, val elemT: String)
+	internal val stackBufSubst = java.util.IdentityHashMap<IrValueDeclaration, StackBufInfo>()
 	// Synthetic monomorphized interfaces for the Kotlin iterator protocol. IL can't define a generic
 	// interface yet, so per concrete element type we emit a non-generic `KIterator_<elem>` with
 	// `hasNext():bool` / `next():<elem>` (Codex-advised monomorphization). elemBir -> interface name.
-	private val iterIfaces = LinkedHashMap<String, String>()
+	internal val iterIfaces = LinkedHashMap<String, String>()
 	// A custom (non-lazy) delegated property passes a `KProperty<*>` to getValue/setValue. KProperty has no
 	// BCL equivalent (pure binding), so — like Kotlin/JVM's PropertyReferenceImpl — we compiler-generate a
 	// minimal `KProperty` interface (`name`) + `KPropertyImpl(name)` class into the user's assembly.
-	private var needsKProperty = false
+	internal var needsKProperty = false
 
 	/** A user/anon class's emitted name (anon "<no name provided>" -> its synthetic lifted name). */
 	// A user type's .NET name = its Kotlin package projected as the .NET namespace (`alpha.Box`), so classes with the
@@ -184,18 +184,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// namespace). NESTED types stay simple-named (their outer carries the namespace); anon/synthetic names are already
 	// unique. Root-package types are unchanged (fqName has no dot), so existing code is unaffected. birType references
 	// user types through here, so the def name and every reference stay consistent.
-	private fun typeName(k: IrClass): String =
+	internal fun typeName(k: IrClass): String =
 		anonNames[k] ?: if (k.parent is IrClass) k.name.asString()
 		else (k.fqNameWhenAvailable?.asString() ?: k.name.asString())
 
 	// Synthesized stdlib delegate classes for Delegates.observable/vetoable/notNull (their stdlib bodies are
 	// absent from our IR, so we compiler-generate equivalents, monomorphized by value type, each implementing
 	// the synthetic RWProperty_<V>). Keyed "<kind>:<V>" -> class name; defs accumulated for emission.
-	private val synthDelegates = LinkedHashMap<String, String>()
-	private val synthDelegateDefs = ArrayList<String>()
+	internal val synthDelegates = LinkedHashMap<String, String>()
+	internal val synthDelegateDefs = ArrayList<String>()
 
 	/** Register (once) a synthesized observable/vetoable/notNull delegate class for value type V; return its name. */
-	private fun synthDelegate(kind: String, v: String): String = synthDelegates.getOrPut("$kind:$v") {
+	internal fun synthDelegate(kind: String, v: String): String = synthDelegates.getOrPut("$kind:$v") {
 		needsKProperty = true
 		val safe = v.replace(Regex("[^A-Za-z0-9]"), "_")
 		val cname = "<>dotkt_${kind}Delegate_$safe"
@@ -238,7 +238,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** The compiler-generated `KProperty` interface + `KPropertyImpl` class, if any delegated property used one. */
-	private fun kPropertyDefs(): List<String> {
+	internal fun kPropertyDefs(): List<String> {
 		if (!needsKProperty) return emptyList()
 		val ifaceName = """{"name":"get_name","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":"string","body":[]}"""
 		val iface = """{"name":"<>dotkt_KProperty","kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$ifaceName]}"""
@@ -248,11 +248,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return listOf(iface, impl)
 	}
 
-	private fun kIteratorName(elemBir: String): String =
+	internal fun kIteratorName(elemBir: String): String =
 		iterIfaces.getOrPut(elemBir) { "<>dotkt_KIterator_" + elemBir.replace(Regex("[^A-Za-z0-9]"), "_") }
 
 	/** `kotlin.collections.(Mutable)Iterator<E>` -> the monomorphized synthetic interface name, else null. */
-	private fun iteratorElemIface(t: IrType): String? {
+	internal fun iteratorElemIface(t: IrType): String? {
 		val fq = t.classFqName?.asString() ?: return null
 		if (fq != "kotlin.collections.Iterator" && fq != "kotlin.collections.MutableIterator") return null
 		val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()
@@ -263,10 +263,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// `kotlin.collections.(Mutable)Iterable<E>` -> a monomorphized synthetic interface `<>dotkt_KIterable_<elem>`
 	// with `operator fun iterator(): KIterator_<elem>` (same IL-can't-define-generic-interface workaround as
 	// Iterator). Lets a user `class R : Iterable<T>` link a real supertype and a `for (x in r)` resolve its iterator.
-	private val iterableIfaces = LinkedHashMap<String, String>()
-	private fun kIterableName(elemBir: String): String =
+	internal val iterableIfaces = LinkedHashMap<String, String>()
+	internal fun kIterableName(elemBir: String): String =
 		iterableIfaces.getOrPut(elemBir) { kIteratorName(elemBir); "<>dotkt_KIterable_" + elemBir.replace(Regex("[^A-Za-z0-9]"), "_") }
-	private fun iterableElemIface(t: IrType): String? {
+	internal fun iterableElemIface(t: IrType): String? {
 		val fq = t.classFqName?.asString() ?: return null
 		if (fq != "kotlin.collections.Iterable" && fq != "kotlin.collections.MutableIterable") return null
 		val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()
@@ -278,10 +278,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// IEnumerable<char>, char[], nor IReadOnlyList<char> fits, and String doesn't implement any of them as a common
 	// supertype). So a user `class S : CharSequence` gets a synthetic monomorphized interface `<>dotkt_CharSequence`
 	// (length getter + get(i) operator + subSequence). To pass a .NET string API, call `.toString()`.
-	private var usesCharSeq = false
-	private fun charSeqIface(t: IrType): String? =
+	internal var usesCharSeq = false
+	internal fun charSeqIface(t: IrType): String? =
 		if (t.classFqName?.asString() == "kotlin.CharSequence") { usesCharSeq = true; "<>dotkt_CharSequence" } else null
-	private fun charSeqIfaceDefs(): List<String> = if (!usesCharSeq) emptyList() else listOf({
+	internal fun charSeqIfaceDefs(): List<String> = if (!usesCharSeq) emptyList() else listOf({
 		val getLen = """{"name":"get_length","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":"int","body":[]}"""
 		val get = """{"name":"get","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[{"name":"index","type":"int"}],"ret":"char","body":[]}"""
 		val subSeq = """{"name":"subSequence","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[{"name":"startIndex","type":"int"},{"name":"endIndex","type":"int"}],"ret":"@<>dotkt_CharSequence","body":[]}"""
@@ -290,11 +290,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	// kotlin.properties.Read(Write)Property<T,V> -> monomorphized-by-V synthetic interfaces (like the iterator
 	// protocol). The user delegate class implements one of these; getValue/setValue take (thisRef, KProperty[, V]).
-	private val roPropIfaces = LinkedHashMap<String, String>()   // V (birType) -> interface name
-	private val rwPropIfaces = LinkedHashMap<String, String>()
+	internal val roPropIfaces = LinkedHashMap<String, String>()   // V (birType) -> interface name
+	internal val rwPropIfaces = LinkedHashMap<String, String>()
 
 	/** `kotlin.properties.Read(Write)Property<T,V>` -> the monomorphized synthetic interface name, else null. */
-	private fun propIface(t: IrType): String? {
+	internal fun propIface(t: IrType): String? {
 		val fq = t.classFqName?.asString() ?: return null
 		if (fq != "kotlin.properties.ReadWriteProperty" && fq != "kotlin.properties.ReadOnlyProperty") return null
 		val v = (t as? IrSimpleType)?.arguments?.getOrNull(1)?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
@@ -302,7 +302,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Register (once) the synthetic Read(Write)Property interface for value type `v`; return its name. */
-	private fun propIface0(fq: String, v: String): String {
+	internal fun propIface0(fq: String, v: String): String {
 		needsKProperty = true
 		val safe = v.replace(Regex("[^A-Za-z0-9]"), "_")
 		return if (fq == "kotlin.properties.ReadWriteProperty") rwPropIfaces.getOrPut(v) { "<>dotkt_RWProperty_$safe" }
@@ -310,7 +310,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** BIR defs for every synthesized Read(Write)Property interface (getValue/setValue over (thisRef, KProperty)). */
-	private fun propIfaceDefs(): List<String> {
+	internal fun propIfaceDefs(): List<String> {
 		fun m(name: String, params: String, ret: String) =
 			"""{"name":${str(name)},"static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[$params],"ret":${str(ret)},"body":[]}"""
 		val kp = """{"name":"property","type":"@<>dotkt_KProperty"}"""
@@ -329,7 +329,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** BIR defs for every synthesized Kotlin-iterator interface seen while emitting this file. */
-	private fun iteratorIfaceDefs(): List<String> = iterIfaces.entries.map { (elem, name) ->
+	internal fun iteratorIfaceDefs(): List<String> = iterIfaces.entries.map { (elem, name) ->
 		val hasNext = """{"name":"hasNext","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":"bool","body":[]}"""
 		val next = """{"name":"next","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":${str(elem)},"body":[]}"""
 		"""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$hasNext,$next]}"""
@@ -346,25 +346,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// heap ref-cell: local `var`s captured-and-mutated by a (non-inline) closure / object / local class are promoted
 	// to a shared `<>dotkt_Ref<T>{ var v }` so the mutation is visible across the capture boundary. Per top-level
 	// function (set in `method`/`ctor`); all reads/writes of such a var go through `.v`.
-	private var refCellVars: Set<IrValueDeclaration> = emptySet()
-	private val refTypes = LinkedHashMap<String, String>()   // element birType -> monomorphized Ref class name
-	private fun refTypeName(d: IrValueDeclaration): String {
+	internal var refCellVars: Set<IrValueDeclaration> = emptySet()
+	internal val refTypes = LinkedHashMap<String, String>()   // element birType -> monomorphized Ref class name
+	internal fun refTypeName(d: IrValueDeclaration): String {
 		val elem = birType(d.type)
 		return refTypes.getOrPut(elem) { "<>dotkt_${synthScope}_Ref_" + elem.replace(Regex("[^A-Za-z0-9]"), "_") }
 	}
-	private fun refDefs(): List<String> = refTypes.map { (elem, name) ->
+	internal fun refDefs(): List<String> = refTypes.map { (elem, name) ->
 		// A monomorphized heap cell `class <>dotkt_Ref_<elem>(var v: elem)` (non-generic -> trivial field access).
 		val ctor = """{"params":[{"name":"v","type":${str(elem)}}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[{"k":"setField","ownerType":${str(name)},"recv":{"k":"this"},"name":"v","value":{"k":"local","name":"v"}}]}"""
 		"""{"name":${str(name)},"kind":"class","abstract":false,"vis":"public","typeParams":[],"base":null,"interfaces":[],"fields":[{"name":"v","type":${str(elem)}}],"ctors":[$ctor],"methods":[]}"""
 	}
-	private fun isRefCell(d: IrValueDeclaration) = d in refCellVars
+	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
-	private fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: """{"k":"local","name":${str(d.name.asString())}}"""
+	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: """{"k":"local","name":${str(d.name.asString())}}"""
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
-	private fun captureFieldType(d: IrValueDeclaration) = if (isRefCell(d)) "@" + refTypeName(d) else birType(d.type)
+	internal fun captureFieldType(d: IrValueDeclaration) = if (isRefCell(d)) "@" + refTypeName(d) else birType(d.type)
 
 	/** Local `var`s captured AND mutated by a closure/object/local class within [node] (-> need a heap ref-cell). */
-	private fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
+	internal fun computeRefCells(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
@@ -383,11 +383,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return out
 	}
 
-	private val SCOPE_FUNCTIONS = setOf("kotlin.let", "kotlin.run", "kotlin.with", "kotlin.apply", "kotlin.also")
+	internal val SCOPE_FUNCTIONS = setOf("kotlin.let", "kotlin.run", "kotlin.with", "kotlin.apply", "kotlin.also")
 
 	/** A scope-function call (`with(c){…}`, `c.let/run/apply/also {…}`) -> (fqName, receiver, lambda). These are INLINE,
 	 *  so a suspension in the lambda body is the ENCLOSING coroutine's — the CPS path linearizes them (emitScopeCps). */
-	private fun scopeCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? {
+	internal fun scopeCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? {
 		val call = e as? IrCall ?: return null
 		val fq = call.symbol.owner.fqNameWhenAvailable?.asString() ?: return null
 		if (fq !in SCOPE_FUNCTIONS) return null
@@ -399,7 +399,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** A scope-function call whose lambda body DIRECTLY contains a suspension (so it must be CPS-inlined, not rendered
 	 *  as a value-block). The receiver expression is checked too (`with(suspendExpr()){…}`). */
-	private fun scopeSuspendCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? =
+	internal fun scopeSuspendCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? =
 		scopeCall(e)?.takeIf { (_, recv, lambda) -> lambda.function.body?.let { containsSuspend(it) } == true || containsSuspend(recv) }
 
 	fun emitFile(file: IrFile): String {
@@ -477,7 +477,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
 
-	private fun interfaceDef(iface: IrClass): String {
+	internal fun interfaceDef(iface: IrClass): String {
 		val methods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride }
 			.joinToString(",") {
@@ -487,14 +487,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** A Kotlin `enum class` -> a real .NET enum (ilemit DefineEnum + literals). */
-	private fun enumDef(e: IrClass): String {
+	internal fun enumDef(e: IrClass): String {
 		val entries = e.declarations.filterIsInstance<IrEnumEntry>()
 			.mapIndexed { i, ent -> """{"name":${str(ent.name.asString())},"ordinal":$i}""" }
 		return """{"name":${str(typeName(e))},"kind":"enum","entries":[${entries.joinToString(",")}]}"""
 	}
 
 	/** A "rich" enum has ctor params, user instance methods, or per-entry bodies -> can't be a CLR enum. */
-	private fun isRichEnum(ec: IrClass): Boolean {
+	internal fun isRichEnum(ec: IrClass): Boolean {
 		if (ec.kind != ClassKind.ENUM_CLASS) return false
 		val ctorParams = ec.declarations.filterIsInstance<IrConstructor>()
 			.any { c -> c.parameters.any { it.kind == IrParameterKind.Regular } }
@@ -509,7 +509,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * `__name`/`__ordinal` (Kotlin Enum metadata) + user props; per-entry `static readonly` field initialized
 	 * in the `.cctor`; `ToString`->`__name`; `values()`->fresh array; `valueOf(name)`->linear match.
 	 */
-	private fun richEnumDef(ec: IrClass): String {
+	internal fun richEnumDef(ec: IrClass): String {
 		val name = typeName(ec)
 		val entries = ec.declarations.filterIsInstance<IrEnumEntry>()
 		val primaryCtor = ec.declarations.filterIsInstance<IrConstructor>().first { it.isPrimary }
@@ -574,7 +574,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** The enum-super args a per-entry body's anonymous subclass passes (the `NAME(args)` args), as expr JSON. */
-	private fun enumSuperArgs(cc: IrClass): List<String> {
+	internal fun enumSuperArgs(cc: IrClass): List<String> {
 		val ctor = cc.declarations.filterIsInstance<IrConstructor>().firstOrNull() ?: return emptyList()
 		val call = (ctor.body as? IrBlockBody)?.statements?.firstNotNullOfOrNull { it as? IrEnumConstructorCall }
 			?: return emptyList()
@@ -583,7 +583,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
 	 *  (__name, __ordinal) and forwards them plus the baked-in `args` to the base ctor; carries the overriding methods. */
-	private fun enumEntrySubclass(subName: String, baseName: String, cc: IrClass, userArgs: List<String>): String {
+	internal fun enumEntrySubclass(subName: String, baseName: String, cc: IrClass, userArgs: List<String>): String {
 		val overrides = cc.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.body != null && it.correspondingPropertySymbol == null }
 			.joinToString(",") { method(it, static = false) }
@@ -593,7 +593,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Nested non-inner user classes inside [c] (recursively); excludes companion/inner/anonymous/@Clr. */
-	private fun nestedClasses(c: IrClass): List<IrClass> {
+	internal fun nestedClasses(c: IrClass): List<IrClass> {
 		val out = ArrayList<IrClass>()
 		c.declarations.filterIsInstance<IrClass>()
 			.filter { it.kind == ClassKind.CLASS && !it.isCompanion && !it.isInner && clrName(it) == null && it.name.asString() != "<no name provided>" }
@@ -602,7 +602,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** `inner class`es nested (recursively) inside a class -> flattened to top-level synthetic types. */
-	private fun innerClasses(c: IrClass): List<IrClass> {
+	internal fun innerClasses(c: IrClass): List<IrClass> {
 		val out = ArrayList<IrClass>()
 		c.declarations.filterIsInstance<IrClass>()
 			.filter { it.kind == ClassKind.CLASS && !it.isCompanion && clrName(it) == null && it.name.asString() != "<no name provided>" }
@@ -611,7 +611,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Emit a flattened `inner class`: it captures the enclosing instance as a leading `__outer` ctor param/field. */
-	private fun innerClassDef(inner: IrClass): String {
+	internal fun innerClassDef(inner: IrClass): String {
 		val outerThis = (inner.parent as? IrClass)?.thisReceiver
 			?: return typeDef(inner)   // not actually inner-of-class; emit plainly
 		captureSubst[outerThis] = """{"k":"field","ownerType":${str(typeName(inner))},"recv":{"k":"this"},"name":"__outer"}"""
@@ -621,9 +621,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** A property accessor with a user-written body (`get() = …` / `set(v) { … }`), not the default field passthrough. */
-	private fun isCustomAccessor(acc: IrSimpleFunction?): Boolean =
+	internal fun isCustomAccessor(acc: IrSimpleFunction?): Boolean =
 		acc != null && acc.origin.toString() == "DEFINED" && acc.body != null && acc.overriddenSymbols.isEmpty()
-	private fun hasCustomAccessor(prop: IrProperty): Boolean = isCustomAccessor(prop.getter) || isCustomAccessor(prop.setter)
+	internal fun hasCustomAccessor(prop: IrProperty): Boolean = isCustomAccessor(prop.getter) || isCustomAccessor(prop.setter)
 
 	/** Emit a custom property accessor as a `get_<prop>`/`set_<prop>` method (the `field` identifier -> the backing field). */
 	/** If `fn` overrides a member of a .NET-mapped Kotlin interface (kotlin.coroutines.Continuation), the .NET
@@ -631,7 +631,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  real interface slots. Returns null for ordinary members. */
 	/** True if [t]'s class transitively extends kotlin.Throwable / a .NET-mapped exception (so `.message`/`.cause` on
 	 *  a user exception subclass route to System.Exception.Message/.InnerException). */
-	private fun isThrowableType(t: IrType?): Boolean {
+	internal fun isThrowableType(t: IrType?): Boolean {
 		val start = t?.classifierOrNull?.owner as? IrClass ?: return false
 		val seen = HashSet<IrClass>()
 		fun walk(c: IrClass): Boolean {
@@ -645,7 +645,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	// Considers the function itself AND any member it overrides — so it maps both a user override of a .NET-mapped
 	// iface member AND a direct call on an iface-typed value (e.g. `cs.length` where cs: CharSequence).
-	private fun clrIfaceMemberName(fn: IrSimpleFunction): String? =
+	internal fun clrIfaceMemberName(fn: IrSimpleFunction): String? =
 		(sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).firstNotNullOfOrNull { owner ->
 			val ifaceFq = (owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
 			val mn = owner.name.asString()
@@ -668,7 +668,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** A TOP-LEVEL property's accessor as a STATIC `get_<name>`/`set_<name>` method (extension receiver -> `__self`).
 	 *  Used for extension properties (`val T.p`) and computed top-level properties (no backing field). */
-	private fun topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
+	internal fun topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 		val extRecv = acc.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
 		val savedRefCells = refCellVars
@@ -683,7 +683,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public","params":[$ps],"ret":${str(ret)},"body":[$body]}"""
 	}
 
-	private fun accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
+	internal fun accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 		val mname = clrIfaceMemberName(acc) ?: (if (isGetter) "get_" else "set_") + propName
 		// A MEMBER extension property (`class C { val T.p get() }`) has BOTH a dispatch and an extension receiver -> the
 		// extension receiver rides a leading `__self` param (mirrors a member extension function); body refs to it
@@ -703,7 +703,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** A user `annotation class Ann(val v: Int, …)` -> a `class Ann : System.Attribute` (ctor params -> public fields). */
-	private fun annotationDef(klass: IrClass): String {
+	internal fun annotationDef(klass: IrClass): String {
 		val ctorParams = klass.declarations.filterIsInstance<IrConstructor>().firstOrNull { it.isPrimary }
 			?.parameters?.filter { it.kind == IrParameterKind.Regular }.orEmpty()
 		val fields = ctorParams.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
@@ -715,7 +715,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. A Kotlin-authored
 	 *  annotation uses its synthesized `: System.Attribute` type (#46); an imported .NET attribute uses its real type
 	 *  via a `clr:` marker so ilemit binds the existing .NET constructor (#54). Kotlin built-in annotations are dropped. */
-	private fun attrsJson(anns: List<IrConstructorCall>): String =
+	internal fun attrsJson(anns: List<IrConstructorCall>): String =
 		anns.mapNotNull { ann ->
 			val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
 			if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
@@ -726,7 +726,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"""{"attr":${str(attrType)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
 		}.joinToString(",")
 
-	private fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false): String {
+	internal fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false): String {
 		val baseType = klass.superTypes
 			.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
 		val base = baseType?.classifierOrNull?.owner as? IrClass
@@ -808,7 +808,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn${typeParamsJson(klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"attrs":[${attrsJson(klass.annotations)}]}"""
 	}
 
-	private fun ctor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {
+	internal fun ctor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {
 		// Captured outer values arrive as leading ctor params and are stored into the capture fields first
 		// (the instance initializers below read them, e.g. `var cur = from` -> `this.__outer.from`).
 		val capParams = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
@@ -849,7 +849,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"params":[$params],"baseArgs":$baseJson,"thisArgs":$thisJson,"vis":${str(visOf(ctor))},"body":[${stmts.joinToString(",")}]}"""
 	}
 
-	private fun method(fn: IrSimpleFunction, static: Boolean): String {
+	internal fun method(fn: IrSimpleFunction, static: Boolean): String {
 		if (fn.isSuspend) return suspendMethod(fn, static)
 		// An override of a CLASS or ENUM_CLASS member (the latter: a per-entry enum body overriding an abstract enum
 		// member) reuses the base virtual slot. (Interface members bind by name/signature, handled elsewhere.)
@@ -889,12 +889,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** `infix`/`operator` flags as BIR JSON fragments (only emitted when set), shared by the regular + suspend paths. */
-	private fun kotlinModsJson(fn: IrSimpleFunction): String =
+	internal fun kotlinModsJson(fn: IrSimpleFunction): String =
 		(if (fn.isInfix) ""","infix":true""" else "") + (if (fn.isOperator) ""","operator":true""" else "")
 
 	/** An `inline fun` with at least one (inlinable) lambda parameter — the only inline shape whose body must travel
 	 *  for cross-module consumption (lambda-less inline funs degrade to ordinary calls; the JIT inlines those). */
-	private fun isInlineWithLambda(fn: IrSimpleFunction): Boolean =
+	internal fun isInlineWithLambda(fn: IrSimpleFunction): Boolean =
 		fn.isInline && fn.parameters.any { it.kind == IrParameterKind.Regular && !it.isNoinline && birType(it.type).startsWith("func:") }
 
 	// ===== Coroutine (suspend fun) -> CLR-native async state machine (strategy B) =====
@@ -904,24 +904,24 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// suspension points become `coSuspend`, and if/while linearize to `coLabel`/`coGoto`/`coCondGoto`. The lowered
 	// FORM is Task/awaiter-based. See docs/coroutine-il.md. Capability bar: linear / loop / branch /
 	// direct-suspend-call; try-catch-around-await needs exception regions (E-0.5) -> loud error.
-	private var coState = 0
-	private var coLabelN = 0
-	private var coFields: Set<String> = emptySet()
+	internal var coState = 0
+	internal var coLabelN = 0
+	internal var coFields: Set<String> = emptySet()
 
 	// await spilling (D): a nested suspending call -> a fresh state-machine field holding its result, plus a
 	// suspension step assigning it. coSpill maps the call node to that field so expr() renders a field reference
 	// instead of the call; coSpillFields accumulates (field, type) to declare alongside the params/live-vars.
-	private val coSpill = java.util.IdentityHashMap<IrCall, String>()
-	private val coSpillFields = ArrayList<Pair<String, IrType>>()
+	internal val coSpill = java.util.IdentityHashMap<IrCall, String>()
+	internal val coSpillFields = ArrayList<Pair<String, IrType>>()
 
-	private fun isAwaitIntrinsic(fn: IrSimpleFunction): Boolean =
+	internal fun isAwaitIntrinsic(fn: IrSimpleFunction): Boolean =
 		fn.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrAwait" }
 
 	/** A suspension point: any call to a suspend function (the `.await()` intrinsic or a direct suspend call). */
-	private fun isSuspensionCall(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
+	internal fun isSuspensionCall(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
 		e is IrCall && e.symbol.owner.isSuspend
 
-	private fun containsSuspend(e: org.jetbrains.kotlin.ir.IrElement): Boolean {
+	internal fun containsSuspend(e: org.jetbrains.kotlin.ir.IrElement): Boolean {
 		var found = false
 		e.acceptVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
@@ -939,14 +939,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return found
 	}
 
-	private fun coStmtsOf(e: IrExpression): List<org.jetbrains.kotlin.ir.IrStatement> = when (e) {
+	internal fun coStmtsOf(e: IrExpression): List<org.jetbrains.kotlin.ir.IrStatement> = when (e) {
 		is IrBlock -> e.statements
 		is IrComposite -> e.statements
 		else -> listOf(e)
 	}
 
 	/** Variables declared on any suspension-bearing path -> state-machine fields (survive across resume). */
-	private fun collectCpsVars(stmts: List<org.jetbrains.kotlin.ir.IrStatement>, out: MutableList<IrVariable>) {
+	internal fun collectCpsVars(stmts: List<org.jetbrains.kotlin.ir.IrStatement>, out: MutableList<IrVariable>) {
 		for (s in stmts) when (s) {
 			is IrVariable -> out.add(s)
 			is IrWhen -> if (containsSuspend(s)) s.branches.forEach { collectCpsVars(coStmtsOf(it.result), out) }
@@ -959,7 +959,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** The `Task<T>` an await/suspend-call awaits: the `.await()` receiver, or the direct suspend call itself. */
-	private fun coAwaitable(call: IrCall): String {
+	internal fun coAwaitable(call: IrCall): String {
 		val callee = call.symbol.owner
 		// `kotlinx.coroutines.delay(ms)` -> `Task.Delay((int)ms)` (the awaitable; a non-generic Task -> void result).
 		if (callee.fqNameWhenAvailable?.asString() == "kotlinx.coroutines.delay")
@@ -969,14 +969,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** CPS state captured by [emitCoroutineBody] for the caller to assemble the method/lambda JSON. */
-	private class CoroutineBody(val resultType: String, val cpsFields: String, val steps: String)
+	internal class CoroutineBody(val resultType: String, val cpsFields: String, val steps: String)
 
 	/**
 	 * CPS-linearize a suspend function/lambda body into (resultType, cpsFields, steps) JSON. Shared by
 	 * [suspendMethod] and the suspend-lambda path in [lambda] so both lower identically (`emitCps`/`spillExpr`/
 	 * `collectCpsVars` → flat steps + state-machine fields = params + live locals + spill temps).
 	 */
-	private fun emitCoroutineBody(fn: IrSimpleFunction): CoroutineBody {
+	internal fun emitCoroutineBody(fn: IrSimpleFunction): CoroutineBody {
 		// Save/restore CPS state: a coroutine body can be lowered NESTED inside another (e.g. a `sequence{}` passed to
 		// `yieldAll` inside an enclosing `sequence{}`); without this the inner reset corrupts the outer's state ids.
 		val savedState = coState; val savedLabelN = coLabelN
@@ -1015,13 +1015,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * that hands out its own continuation — the struct/Task form can't). Ordinary suspend funs stay the struct/Task
 	 * form (and just await the leaves' Tasks), keeping that path's IsCompleted fast-path. See docs §13e A1.
 	 */
-	private fun isCoClass(fn: IrSimpleFunction): Boolean =
+	internal fun isCoClass(fn: IrSimpleFunction): Boolean =
 		fn.annotations.any { it.type.classFqName?.shortName()?.asString() == "KCont" } ||
 			fn.typeParameters.isNotEmpty() ||
 			(fn.body?.let { bodyUsesSuspendIntrinsic(it) } == true)
 
 	/** True if `e` directly calls `suspendCoroutineUninterceptedOrReturn` (not inside a nested lambda/local fun). */
-	private fun bodyUsesSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement): Boolean {
+	internal fun bodyUsesSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement): Boolean {
 		var found = false
 		e.acceptVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
@@ -1035,7 +1035,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return found
 	}
 
-	private fun suspendMethod(fn: IrSimpleFunction, static: Boolean): String {
+	internal fun suspendMethod(fn: IrSimpleFunction, static: Boolean): String {
 		// An extension `suspend fun T.f()` -> a static kickoff whose first param `__self` is the receiver, captured
 		// into the state machine like any other param; receiver references (`<this>`) resolve to `__self`.
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
@@ -1055,7 +1055,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * whose arguments don't themselves suspend: the kickoff Task is just forwarded, so no state machine is needed
 	 * and the body emits as-is. Anything else needs CPS lowering (Phase 0). See [lambda].
 	 */
-	private fun isTrivialSuspendLambda(fn: IrSimpleFunction): Boolean {
+	internal fun isTrivialSuspendLambda(fn: IrSimpleFunction): Boolean {
 		val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
 		val single = stmts.singleOrNull() ?: return false
 		val e = when (single) { is IrReturn -> single.value; is IrExpression -> single; else -> return false }
@@ -1065,9 +1065,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 	}
 
-	private fun coFresh(): String = "__cor${coLabelN++}"
+	internal fun coFresh(): String = "__cor${coLabelN++}"
 
-	private fun emitCps(stmt: org.jetbrains.kotlin.ir.IrElement, ret: IrType, steps: MutableList<String>) {
+	internal fun emitCps(stmt: org.jetbrains.kotlin.ir.IrElement, ret: IrType, steps: MutableList<String>) {
 		when (stmt) {
 			is IrVariable -> {
 				val init = stmt.initializer
@@ -1119,12 +1119,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 	}
 
-	private fun coReturnJson(ret: IrType, value: String): String =
+	internal fun coReturnJson(ret: IrType, value: String): String =
 		if (ret.isUnit()) """{"k":"coReturn","value":null}""" else """{"k":"coReturn","value":$value}"""
 
 	/** Emit `assignTo = e` (assignTo a CPS field name) — or `return e` (assignTo==null, isReturn) — as coroutine steps,
 	 *  routing a suspending value (incl. a scope-function call) through the state machine. Shared by emitCps/emitScopeCps. */
-	private fun emitCpsValue(e: IrExpression, ret: IrType, steps: MutableList<String>, assignTo: String?, isReturn: Boolean) {
+	internal fun emitCpsValue(e: IrExpression, ret: IrType, steps: MutableList<String>, assignTo: String?, isReturn: Boolean) {
 		fun store(json: String) = when {
 			assignTo != null -> steps.add("""{"k":"var","name":${str(assignTo)},"type":${str(birType(e.type))},"init":$json}""")
 			ret.isUnit() || e.type.isUnit() -> { steps.add("""{"k":"exprStmt","expr":$json}"""); steps.add("""{"k":"coReturn","value":null}""") }
@@ -1144,7 +1144,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Return/forward an already-spilled suspend temp `t` (only the return case reaches here). */
-	private fun store0Local(t: String, ty: IrType, ret: IrType, steps: MutableList<String>, isReturn: Boolean) {
+	internal fun store0Local(t: String, ty: IrType, ret: IrType, steps: MutableList<String>, isReturn: Boolean) {
 		if (ret.isUnit() || ty.isUnit()) steps.add("""{"k":"coReturn","value":null}""")
 		else steps.add(coReturnJson(ret, """{"k":"local","name":${str(t)}}"""))
 	}
@@ -1152,7 +1152,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** Inline a suspend-bearing scope function (`with(c){…}`, `c.run/let/apply/also {…}`) into the coroutine step list:
 	 *  bind the receiver to a CPS field, substitute `this`/`it`, linearize the lambda body (so inner suspensions become
 	 *  real await steps), then hand the result (last expr, or the receiver for apply/also) to emitCpsValue. */
-	private fun emitScopeCps(sc: Triple<String, IrExpression, IrFunctionExpression>, ret: IrType, steps: MutableList<String>, assignTo: String?, isReturn: Boolean) {
+	internal fun emitScopeCps(sc: Triple<String, IrExpression, IrFunctionExpression>, ret: IrType, steps: MutableList<String>, assignTo: String?, isReturn: Boolean) {
 		val (fq, recvExpr, lambda) = sc
 		val fn = lambda.function
 		val vname = "__coscope${coLabelN++}"
@@ -1184,7 +1184,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 	}
 
-	private fun coUnsupported(of: String): String = """{"k":"coUnsupported","of":${str(of)}}"""
+	internal fun coUnsupported(of: String): String = """{"k":"coUnsupported","of":${str(of)}}"""
 
 	/**
 	 * await spilling: hoist every nested suspending sub-call of `e` into its own state-machine field + suspension
@@ -1193,7 +1193,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * and `a.await() + b.await()` both linearize correctly. Each spilled value lives in a field because another
 	 * suspension may follow before the residual reads it (e.g. `a.await() + b.await()` resumes twice).
 	 */
-	private fun spillExpr(e: org.jetbrains.kotlin.ir.IrElement, steps: MutableList<String>) {
+	internal fun spillExpr(e: org.jetbrains.kotlin.ir.IrElement, steps: MutableList<String>) {
 		e.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
 				// Don't spill suspensions that live inside a nested lambda / local fun (a separate coroutine).
@@ -1210,25 +1210,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** The raw `kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn { c -> ... }` leaf intrinsic. */
-	private fun isSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
+	internal fun isSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
 		e is IrCall && e.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn"
 
 	/** `SequenceScope.yield(value)` inside a `sequence { … }` builder — a multi-shot (restricted) suspension. */
-	private fun isYield(call: IrCall): Boolean =
+	internal fun isYield(call: IrCall): Boolean =
 		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yield"
 
 	/** `SequenceScope.yieldAll(elements)` — yield every element of an Iterable/Sequence (lowered as an inner
 	 *  enumerator loop in the sequence state machine). */
-	private fun isYieldAll(call: IrCall): Boolean =
+	internal fun isYieldAll(call: IrCall): Boolean =
 		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yieldAll"
 
 	/** `kotlinx.coroutines.suspendCancellableCoroutine { c -> … }` — like the raw intrinsic but `c` is a
 	 *  CancellableContinuation and the block ALWAYS suspends (returns Unit, not the sentinel). */
-	private fun isSuspendCancellable(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
+	internal fun isSuspendCancellable(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
 		e is IrCall && e.symbol.owner.fqNameWhenAvailable?.asString() == "kotlinx.coroutines.suspendCancellableCoroutine"
 
 	/** A suspension point: start the awaitable; if incomplete, save state and return; on resume read the result. */
-	private fun emitSuspend(call: IrCall, assignTo: String?, steps: MutableList<String>) {
+	internal fun emitSuspend(call: IrCall, assignTo: String?, steps: MutableList<String>) {
 		if (isSuspendIntrinsic(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = false, selfKind = "coSelfCont"); return }
 		if (isSuspendCancellable(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = true, selfKind = "coSelfCancellable"); return }
 		if (isYield(call)) { val k = ++coState; steps.add("""{"k":"coYield","state":$k,"value":${expr(regularArgs(call).first())}}"""); return }
@@ -1249,7 +1249,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * suspends. We inline the block: bind `c` to the SM itself (`selfKind` = a typed adapter over `this`), emit the
 	 * body statements, and carry the result into a `coSuspendIntrinsic` step. Continuation-class form only.
 	 */
-	private fun emitSuspendIntrinsic(call: IrCall, assignTo: String?, steps: MutableList<String>, alwaysSuspend: Boolean, selfKind: String) {
+	internal fun emitSuspendIntrinsic(call: IrCall, assignTo: String?, steps: MutableList<String>, alwaysSuspend: Boolean, selfKind: String) {
 		val k = ++coState
 		val resultT = birType(call.type)
 		val block = regularArgs(call).firstOrNull() as? IrFunctionExpression
@@ -1270,10 +1270,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		steps.add("""{"k":"coSuspendIntrinsic","state":$k,"pre":[${pre.joinToString(",")}],"value":$valueExpr,"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(resultT)}}""")
 	}
 
-	private fun emitCpsBlock(e: IrExpression, ret: IrType, steps: MutableList<String>) =
+	internal fun emitCpsBlock(e: IrExpression, ret: IrType, steps: MutableList<String>) =
 		coStmtsOf(e).forEach { emitCps(it, ret, steps) }
 
-	private fun emitWhenCps(w: IrWhen, ret: IrType, steps: MutableList<String>) {
+	internal fun emitWhenCps(w: IrWhen, ret: IrType, steps: MutableList<String>) {
 		val end = coLabelN++
 		for (branch in w.branches) {
 			val isElse = branch.condition.let { it is IrConst && it.value == true }
@@ -1299,7 +1299,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * `leave` not `ret`). v1 scope: catch clauses only (no `finally`), and the suspension must be in the TRY body
 	 * (not inside a catch) — both else clean `coUnsupported` (resume-into-catch / finally-aware leave deferred).
 	 */
-	private fun emitTryCps(t: IrTry, ret: IrType, steps: MutableList<String>) {
+	internal fun emitTryCps(t: IrTry, ret: IrType, steps: MutableList<String>) {
 		val hasFinally = t.finallyExpression != null
 		// `finally` around a suspension is NOT a CLR finally clause (a suspend `leave`s the .try, which would run a
 		// real finally on every suspend). Instead ilemit emits the finally body explicitly on the normal-exit path
@@ -1323,7 +1323,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		steps.add("""{"k":"coTryEnd","id":$tid$finallyJson}""")
 	}
 
-	private fun emitWhileCps(loop: IrWhileLoop, ret: IrType, steps: MutableList<String>) {
+	internal fun emitWhileCps(loop: IrWhileLoop, ret: IrType, steps: MutableList<String>) {
 		val start = coLabelN++; val end = coLabelN++
 		steps.add("""{"k":"coLabel","id":$start}""")
 		// await in the condition -> spilled AFTER the loop-start label, so it re-runs (re-suspends) each iteration.
@@ -1339,7 +1339,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * is a bare name string `"T"`; a bounded one (`<T : Comparable<T>>`) is `{"name":"T","constraints":[...]}`
 	 * (each constraint a BIR type, e.g. `clrg:System.IComparable[gp:T]`). `kotlin.Any` bounds are dropped.
 	 */
-	private fun typeParamsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String {
+	internal fun typeParamsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String {
 		if (tps.isEmpty()) return ""
 		val entries = tps.joinToString(",") { tp ->
 			val bounds = tp.superTypes.filter { it.classFqName?.asString() != "kotlin.Any" }.map { birType(it) }
@@ -1368,7 +1368,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * the type's own parameters) -> bare name, so members resolve against the open FieldBuilder/MethodBuilder
 	 * directly (the correct `!0`-typed reference), not a self-instantiation.
 	 */
-	private fun ownerSpec(klass: IrClass?, recvType: IrType?): String {
+	internal fun ownerSpec(klass: IrClass?, recvType: IrType?): String {
 		klass ?: return "?"
 		// CharSequence (declaring class of a call on a CharSequence-typed value) -> the synthetic interface name.
 		if (klass.fqNameWhenAvailable?.asString() == "kotlin.CharSequence") { usesCharSeq = true; return "<>dotkt_CharSequence" }
@@ -1382,7 +1382,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return "$name[${args.joinToString(",") { birType(it) }}]"
 	}
 
-	private fun paramsJson(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): String =
+	internal fun paramsJson(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): String =
 		paramsJsonList(params).joinToString(",")
 
 	/**
@@ -1391,7 +1391,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * (ilemit marks it Virtual + DefineMethodOverride against the .NET getter). Normal Kotlin properties stay
 	 * field-modeled; only .NET-overriding accessors with a body need this. Returns null otherwise.
 	 */
-	private fun clrAccessorMethod(prop: IrProperty, acc: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction?): String? {
+	internal fun clrAccessorMethod(prop: IrProperty, acc: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction?): String? {
 		acc ?: return null
 		if (acc.body == null) return null
 		// The accessor overrides a member whose (real) declaring type is a .NET type.
@@ -1408,7 +1408,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"name":${str(emitName)},"static":false,"override":true,"virtual":true,"objectOverride":false,"clrOverride":${str(clrOwner)},"vis":"public","params":[$ps],"ret":${str(ret)},"body":[$body]}"""
 	}
 
-	private fun paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): List<String> =
+	internal fun paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): List<String> =
 		params.filter { it.kind == IrParameterKind.Regular }
 			.map {
 				// `vararg xs: T` -> mark the param so ilemit stamps [ParamArray] (native .NET varargs; a cross-module
@@ -1426,97 +1426,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  it ALWAYS: for a non-overloaded callee it's harmless (ilemit's `MethodsBySig` lookup hits the sole method, or
 	 *  falls back to the name), and emitting unconditionally avoids any overload-detection edge case. The signature
 	 *  MATCHES how `method()` lays out the def's `params` ([ext receiver?] + regular params, each `birType`). */
-	private fun overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
+	internal fun overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
 		val ext = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
 		val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type) }
 		return ""","sig":${str((listOfNotNull(ext) + regs).joinToString(","))}"""
 	}
 
-	private fun stmt(node: org.jetbrains.kotlin.ir.IrElement): String = when (node) {
-		// A `ClrRef<T>` delegate local (`var x by byref(m())`) -> a `ref T` local holding the live managed pointer
-		// (byrefOf keeps the ref-return's pointer instead of deref'ing it). getValue/setValue inline to ldobj/stobj.
-		is IrVariable -> if (birType(node.type).startsWith("byref:")) {
-			val inner = node.initializer?.let { byrefMarker(it) ?: it }
-			val init = inner?.let { """{"k":"byrefOf","inner":${expr(it)}}""" } ?: "null"
-			"""{"k":"var","name":${str(node.name.asString())},"type":${str(birType(node.type))},"init":$init}"""
-		}
-		// A ref-cell var: `var x = init` -> `val x = new <>dotkt_Ref_<elem>(init)` (the heap cell).
-		else if (isRefCell(node)) {
-			val rt = refTypeName(node)
-			val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${str(birType(node.type))}}"""
-			"""{"k":"var","name":${str(node.name.asString())},"type":${str("@$rt")},"init":{"k":"new","type":${str(rt)},"args":[$init]}}"""
-		} else {
-			// Evaluate the initializer FIRST so an object-expr init registers its synthetic name before the var's
-			// type is read (`val x = object {}` whose type IS that anonymous class).
-			val init = node.initializer?.let { expr(it) } ?: "null"
-			"""{"k":"var","name":${str(node.name.asString())},"type":${str(birType(node.type))},"init":$init}"""
-		}
-		// `val x by <delegate>` declared INSIDE a function (IrLocalDelegatedProperty): emit the delegate as a
-		// local var; its getter/setter calls (`<get-x>`) are rewritten to delegate access in call() (localDelegates).
-		is IrLocalDelegatedProperty -> {
-			localDelegates[node.getter] = node
-			node.setter?.let { localDelegates[it] = node }
-			stmt(node.delegate)
-		}
-		// A ref-cell var write `x = e` -> `x.v = e` (through the shared heap cell, via the capture field inside a closure).
-		is IrSetValue -> if (isRefCell(node.symbol.owner))
-			"""{"k":"setField","ownerType":${str(refTypeName(node.symbol.owner))},"recv":${refBase(node.symbol.owner)},"name":"v","value":${expr(node.value)}}"""
-		else """{"k":"setLocal","name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
-		is IrSetField -> {
-			val ownerClass = node.symbol.owner.parent as? IrClass
-			val clr = ownerClass?.let { clrName(it) }
-			val recvJson = node.receiver?.let { expr(it) } ?: """{"k":"this"}"""
-			if (clr != null)
-				"""{"k":"clrPropSet","type":${str(clr)},"name":${str(node.symbol.owner.name.asString())},"static":false,"recv":$recvJson,"value":${expr(node.value)}}"""
-			else
-				"""{"k":"setField","ownerType":${str(ownerSpec(ownerClass, node.receiver?.type))},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
-		}
-		is IrReturn ->
-			// A Unit-typed return VALUE can still be a side-effecting expression — e.g. an expression-body
-			// `fun main() = winUiApp { … }` or `return doCleanup()`. It must be EVALUATED, then a bare return; emitting
-			// a bare `{"k":"return"}` (the old behavior) silently dropped the call. A plain Unit reference
-			// (`return` / `return Unit`, an IrGetObjectValue) has nothing to evaluate.
-			if (!node.value.type.isUnit()) """{"k":"return","value":${expr(node.value)}}"""
-			else if (node.value is IrGetObjectValue) """{"k":"return"}"""
-			else """{"k":"exprStmt","expr":${expr(node.value)}},{"k":"return"}"""
-		// E-0.5: `while`/`do-while` lower to a CFG block (label/brIf/goto) — the natural IL substrate; break/continue
-		// inside become `goto` to the loop's break/continue label (incl. `break@outer`, matched by loop identity).
-		// `for`/range stays structured (birForLoop) until §5.4; its break/continue fall to the structured nodes.
-		is IrWhileLoop -> cfgWhile(node)
-		is IrDoWhileLoop -> cfgDoWhile(node)
-		// A break/continue targeting a CFG loop (on the stack) -> `goto` its label; otherwise (a structured
-		// for-loop target) the structured node, which ilemit's loop stack resolves.
-		is IrBreak -> cfgLoopStack.lastOrNull { it.first === node.loop }?.let { """{"k":"goto","id":${it.third}}""" }
-			?: """{"k":"break","label":${labelJson(node.label)}}"""
-		is IrContinue -> cfgLoopStack.lastOrNull { it.first === node.loop }?.let { """{"k":"goto","id":${it.second}}""" }
-			?: """{"k":"continue","label":${labelJson(node.label)}}"""
-		is IrWhen -> cfgWhen(node)
-		is IrTry -> tryStmt(node)
-		is IrThrow -> """{"k":"throw","value":${expr(node.value)}}"""
-		// A value coerced to Unit in statement position (e.g. `i++`) -> emit its inner block as statements
-		// (otherwise the side effects — the `<unary>` temp + the assignment — would be dropped).
-		is IrTypeOperatorCall -> if (node.operator == IrTypeOperator.IMPLICIT_COERCION_TO_UNIT) {
-			val arg = node.argument
-			if (arg is IrBlock) """{"k":"block","body":[${arg.statements.joinToString(",") { stmt(it) }}]}"""
-			else stmt(arg)
-		} else """{"k":"exprStmt","expr":${expr(node)}}"""
-		// A local (nested) function -> lift it to a file-class static method (captures become leading params).
-		is IrSimpleFunction -> { liftLocalFn(node); """{"k":"block","body":[]}""" }
-		// A function-local class -> lift it to a top-level synthetic type (captures become leading ctor params).
-		is IrClass -> liftLocalClass(node)
-		is IrBlock -> (if (node.origin?.toString() == "FOR_LOOP") birForLoop(node) else null)
-			?: """{"k":"block","body":[${node.statements.joinToString(",") { stmt(it) }}]}"""
-		// IrComposite: a scope-less statement container (e.g. a desugared loop body) -> a flat block.
-		is IrComposite -> """{"k":"block","body":[${node.statements.joinToString(",") { stmt(it) }}]}"""
-		is IrExpression -> """{"k":"exprStmt","expr":${expr(node)}}"""
-		else -> unsupported(node, "this statement", "the IR node ${node::class.simpleName} has no .NET lowering")
-	}
 
 	/** A loop label (Kotlin `outer@`) as JSON, or null. break/continue target loops by this label. */
-	private fun labelJson(label: String?): String = label?.let { str(it) } ?: "null"
+	internal fun labelJson(label: String?): String = label?.let { str(it) } ?: "null"
 
 	/** A loop body: a block's statements, or a single bare statement (single-statement loop bodies). */
-	private fun loopBody(body: IrExpression?): String = when (body) {
+	internal fun loopBody(body: IrExpression?): String = when (body) {
 		null -> ""
 		is IrBlock -> body.statements.joinToString(",") { stmt(it) }
 		else -> stmt(body)
@@ -1524,10 +1445,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	// Active CFG loops: (loop, continueLabelId, breakLabelId). A break/continue is matched to its target by
 	// loop reference identity (so `break@outer` resolves), then emitted as `goto` the right label.
-	private val cfgLoopStack = ArrayList<Triple<org.jetbrains.kotlin.ir.expressions.IrLoop, Int, Int>>()
+	internal val cfgLoopStack = ArrayList<Triple<org.jetbrains.kotlin.ir.expressions.IrLoop, Int, Int>>()
 
 	/** `while(c){B}` -> CFG block: `START: if(!c) goto END; B; goto START; END:`. continue->START, break->END. */
-	private fun cfgWhile(node: IrWhileLoop): String {
+	internal fun cfgWhile(node: IrWhileLoop): String {
 		val start = cfgFresh(); val end = cfgFresh()
 		cfgLoopStack.add(Triple(node, start, end))
 		val body = loopBody(node.body)
@@ -1542,7 +1463,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** `do{B}while(c)` -> CFG: `START: B; CONT: if(c) goto START; END:`. continue->CONT, break->END. */
-	private fun cfgDoWhile(node: IrDoWhileLoop): String {
+	internal fun cfgDoWhile(node: IrDoWhileLoop): String {
 		val start = cfgFresh(); val cont = cfgFresh(); val end = cfgFresh()
 		cfgLoopStack.add(Triple(node, cont, end))
 		val body = loopBody(node.body)
@@ -1557,7 +1478,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** A Kotlin `for (x in a..b / array)` -> a BIR counter loop / indexed array loop, or null. */
-	private fun birForLoop(block: IrBlock): String? {
+	internal fun birForLoop(block: IrBlock): String? {
 		val iterVar = block.statements.getOrNull(0) as? IrVariable
 		val whileLoop = block.statements.getOrNull(1) as? IrWhileLoop
 		val bodyBlock = whileLoop?.body as? IrBlock
@@ -1598,7 +1519,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"for","label":$lbl,"var":${str(loopVar.name.asString())},"from":${expr(ops[0])},"to":${expr(ops[1])},"cmp":${str(cmp)},"step":$step,"body":[$body]}"""
 	}
 
-	private fun tryStmt(node: IrTry): String {
+	internal fun tryStmt(node: IrTry): String {
 		val catches = node.catches.joinToString(",") { c ->
 			val p = c.catchParameter
 			// birType (not netType) so a USER exception class catches as its own type (`@AppErr`), not `object` —
@@ -1609,11 +1530,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"try","type":${str(birType(node.type))},"body":[${bodyStmts(node.tryResult)}],"catches":[$catches]$finally}"""
 	}
 
-	private fun bodyStmts(e: IrExpression): String =
+	internal fun bodyStmts(e: IrExpression): String =
 		if (e is IrBlock) e.statements.joinToString(",") { stmt(it) } else stmt(e)
 
 	/** `try`/`catch` in value position -> a temp local assigned in each branch, returned via a valueBlock. */
-	private fun tryExpr(node: IrTry): String {
+	internal fun tryExpr(node: IrTry): String {
 		val tv = "<>dotkt_tryval${scopeCounter++}"
 		val tryBody = bodyStmtsAssign(node.tryResult, tv)
 		val catches = node.catches.joinToString(",") { c ->
@@ -1627,7 +1548,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** Like [bodyStmts], but the branch's final value-expression is assigned to `tv` (a value already throws/returns
 	 *  -> emitted as-is). For try-as-expression: each branch leaves its result in the temp. */
-	private fun bodyStmtsAssign(e: IrExpression, tv: String): String {
+	internal fun bodyStmtsAssign(e: IrExpression, tv: String): String {
 		val stmts = if (e is IrBlock) e.statements else listOf(e)
 		val pre = stmts.dropLast(1).joinToString(",") { stmt(it) }
 		val last = stmts.lastOrNull()
@@ -1645,7 +1566,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * `brIf NEXT (!cond); body; goto END; NEXT:`; the else body falls through to `END:`. Expression-position
 	 * if/when keep the value form (`ternary`, via expr). Mixes freely with CFG loops (break/return inside work).
 	 */
-	private fun cfgWhen(node: IrWhen): String {
+	internal fun cfgWhen(node: IrWhen): String {
 		val end = cfgFresh()
 		val parts = ArrayList<String>()
 		for (br in node.branches) {
@@ -1664,183 +1585,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"block","body":[${parts.joinToString(",")}]}"""
 	}
 
-	private fun expr(node: IrExpression): String {
-		// Spilled suspension: a nested `.await()` already hoisted into a state-machine field by spillExpr; the
-		// residual expression references that field instead of re-evaluating the suspension. (await spilling, D)
-		coSpill[node]?.let { return """{"k":"local","name":${str(it)}}""" }
-		return exprInner(node)
-	}
 
-	private fun exprInner(node: IrExpression): String = when (node) {
-		is IrConst -> """{"k":"const","type":${str(birType(node.type))},"value":${constJson(node)}}"""
-		is IrGetValue -> {
-			val owner = node.symbol.owner
-			val name = owner.name.asString()
-			when {
-				// A ref-cell var read `x` -> `x.v` (the heap cell, reached via the capture field inside a closure).
-				isRefCell(owner) -> """{"k":"field","ownerType":${str(refTypeName(owner))},"recv":${refBase(owner)},"name":"v"}"""
-				captureSubst.containsKey(owner) -> captureSubst[owner]!!
-				selfSubst.containsKey(owner) -> selfSubst[owner]!!   // extension `__self` (by identity, before name-based `<this>`)
-				valSubst.containsKey(name) -> valSubst[name]!!
-				name == "<this>" -> """{"k":"this"}"""
-				else -> {
-					// Smart-cast narrowing carried directly on the IrGetValue (no IMPLICIT_CAST node — e.g. the `&&`
-					// RHS / a compound condition: `x is Int && x > 10`): the use-site type is narrower than the
-					// declared type, so emit a cast (ilemit unboxes Any->Int / castclass for refs). Without it the
-					// value keeps its boxed/declared form and ops like `>` compare the wrong thing.
-					val ut = birType(node.type); val dt = birType(owner.type)
-					if (ut != dt && dt == "object") """{"k":"cast","type":${str(ut)},"e":{"k":"local","name":${str(name)}}}"""
-					else """{"k":"local","name":${str(name)}}"""
-				}
-			}
-		}
-		is IrGetEnumValue -> {
-			val entry = node.symbol.owner
-			val parent = entry.parent as? IrClass
-			// Rich enum -> the static singleton field; basic enum -> ordinal const typed as the CLR enum.
-			if (parent != null && isRichEnum(parent))
-				"""{"k":"staticField","ownerType":${str(parent.name.asString())},"name":${str(entry.name.asString())}}"""
-			else {
-				val ord = parent?.declarations?.filterIsInstance<IrEnumEntry>()?.indexOf(entry) ?: 0
-				"""{"k":"enumValue","type":${str("@" + parent?.name?.asString())},"ordinal":$ord}"""
-			}
-		}
-		// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (.NET-injected objects
-		// like Math are static call sites handled at the call site; only user singletons reach here as a value.)
-		is IrGetObjectValue ->
-			when (node.symbol.owner.fqNameWhenAvailable?.asString()) {
-				"kotlin.coroutines.EmptyCoroutineContext" -> """{"k":"clrStaticField","type":"DotKt.Coroutines.EmptyCoroutineContext","name":"Instance"}"""
-				// The `Unit` object as a VALUE (e.g. `Result.success(Unit)`) -> the DotKt.Unit singleton.
-				"kotlin.Unit" -> """{"k":"clrStaticField","type":"DotKt.Unit","name":"Instance"}"""
-				else -> """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
-			}
-		is IrBlock -> blockExpr(node)
-		is IrGetField -> {
-			val ownerClass = node.symbol.owner.parent as? IrClass
-			val clr = ownerClass?.let { clrName(it) }
-			val recvJson = node.receiver?.let { expr(it) } ?: """{"k":"this"}"""
-			val fldName = node.symbol.owner.name.asString()
-			val ownerFq = ownerClass?.fqNameWhenAvailable?.asString()
-			val recvFq = node.receiver?.type?.classFqName?.asString()
-			val isThrowableProp = (fldName == "message" || fldName == "cause") &&
-				(ownerFq == "kotlin.Throwable" || ownerClass?.name?.asString() == "Throwable" || recvFq == "kotlin.Throwable"
-					|| isThrowableType(node.receiver?.type))
-			// `Throwable.message`/`.cause` -> System.Exception.Message/.InnerException. A .NET member (e.g. inherited
-			// `Exception.Message`) is modeled as a field by the FIR injector but is really a property getter call.
-			if (isThrowableProp) {
-				val (prop, rt) = if (fldName == "message") "Message" to "System.String" else "InnerException" to "System.Exception"
-				"""{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
-			} else if (ownerFq == "kotlin.Result" || recvFq == "kotlin.Result") {
-				// kotlin.Result is an inline value class -> isSuccess/isFailure/value/failure arrive as IrGetField.
-				// Map onto the shared DotKt.Result<T> struct properties (see T4 / docs §13n).
-				val spec = node.receiver?.type?.let { birType(it) } ?: "clrg:DotKt.Result[object]"
-				val (prop, rt) = when (fldName) {
-					"isSuccess" -> "IsSuccess" to "bool"
-					"isFailure" -> "IsFailure" to "bool"
-					"failure" -> "ExceptionOrNull" to "clr:System.Exception"
-					else -> "Value" to netType(node.type)
-				}
-				"""{"k":"clrPropGet","type":${str(spec)},"name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
-			} else if (clr != null)
-				"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"retType":${str(netType(node.type))},"static":false,"recv":$recvJson}"""
-			// A `lateinit var` backing-field read -> throw if still uninitialized (null) — proper lateinit semantics.
-			else if (node.symbol.owner.correspondingPropertySymbol?.owner?.isLateinit == true)
-				"""{"k":"lateinitGet","ownerType":${str(ownerSpec(ownerClass, node.receiver?.type))},"recv":$recvJson,"name":${str(fldName)}}"""
-			else
-				"""{"k":"field","ownerType":${str(ownerSpec(ownerClass, node.receiver?.type))},"recv":$recvJson,"name":${str(fldName)}}"""
-		}
-		is IrConstructorCall -> {
-			val klass = node.symbol.owner.parent as? IrClass
-			// A generic .NET type (`Collection<Int>()`) -> a constructed `clrg:` spec; non-generic stays plain.
-			val clr = klass?.let { clrName(it) }?.let { net ->
-				val args = (node.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
-				if (args.isNullOrEmpty()) net else "clrg:$net[${args.joinToString(",")}]"
-			}
-			// Kotlin builtin exceptions (IllegalStateException etc.) -> their .NET counterpart.
-			val netExc = klass?.fqNameWhenAvailable?.asString()?.let { NET_EXCEPTIONS[it] }
-			val mapped = clr ?: netExc
-			if (mapped != null)
-				"""{"k":"clrNew","type":${str(mapped)},"argTypes":[${paramNetTypes(node.symbol.owner)}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
-			else {
-				// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg.
-				val outerArg = if (klass?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
-				// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
-				val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
-				val args = (listOfNotNull(outerArg) + capArgs + filledArgExprs(node).map { expr(it) }).joinToString(",")
-				"""{"k":"new","type":${str(klass?.let { ownerSpec(it, node.type) } ?: "object")},"args":[$args]}"""
-			}
-		}
-		is IrStringConcatenation -> """{"k":"concat","parts":[${node.arguments.joinToString(",") { expr(it) }}]}"""
-		is IrTypeOperatorCall -> when (node.operator) {
-			// `x is T` (exhaustive when matching) -> isinst + not-null check.
-			IrTypeOperator.INSTANCEOF -> """{"k":"isinst","type":${str(birType(node.typeOperand))},"e":${expr(node.argument)}}"""
-			IrTypeOperator.NOT_INSTANCEOF -> """{"k":"un","op":"!","e":{"k":"isinst","type":${str(birType(node.typeOperand))},"e":${expr(node.argument)}}}"""
-			// `x as T` / smart-cast downcast -> castclass (or unbox for value types). Throws on mismatch.
-			IrTypeOperator.CAST, IrTypeOperator.IMPLICIT_CAST ->
-				"""{"k":"cast","type":${str(birType(node.typeOperand))},"e":${expr(node.argument)}}"""
-			// `x as? T` -> null on mismatch. Reference T: `isinst T` (null or ref). Value T: `T?` (Nullable<T>).
-			IrTypeOperator.SAFE_CAST -> {
-				val velem = VALUE_PRIM_BIR[node.typeOperand.classFqName?.asString()]
-				if (velem != null) """{"k":"safeCastValue","elem":${str(velem)},"e":${expr(node.argument)}}"""
-				else """{"k":"isinstRef","type":${str(birType(node.typeOperand))},"e":${expr(node.argument)}}"""
-			}
-			// Coercions to Unit / not-null pass the value through.
-			else -> expr(node.argument)
-		}
-		is IrWhen -> ternary(node)
-		// `try { … } catch { … }` in VALUE position (`val x = try …`, `return try …`, a try in a lambda) -> a temp
-		// local assigned in each branch, wrapped in a valueBlock (a CLR try/catch leaves no value on the stack).
-		is IrTry -> tryExpr(node)
-		// `T::class` / `Foo::class` -> a System.Type token. For a generic param `T` this is `ldtoken !!0` in the
-		// generic method (CLR reified generics); `Foo::class` is a concrete `ldtoken Foo`.
-		is IrClassReference -> """{"k":"classRef","type":${str(birType(node.classType))}}"""
-		// `x::class` (runtime class of an instance) -> `x.GetType()` (a System.Type); `.simpleName`/`.qualifiedName`
-		// on the result route to Type.Name/FullName, same as the `T::class` literal path.
-		is IrGetClass -> """{"k":"getType","e":${expr(node.argument)}}"""
-		// `throw` in expression position (e.g. `x ?: throw ...`, `if (c) v else throw ...`): type Nothing,
-		// transfers control so no value reaches the surrounding merge point.
-		is IrThrow -> throwExpr(expr(node.value))
-		// `return` used in expression position (`val x = if (c) a else return`; `x ?: return -1`). Like throwExpr,
-		// it transfers control so no value reaches the surrounding merge.
-		is IrReturn -> if (node.value.type.isUnit()) """{"k":"returnExpr"}""" else """{"k":"returnExpr","value":${expr(node.value)}}"""
-		is IrCall -> call(node)
-		// A property reference passed to a delegate's getValue/setValue -> a `new KPropertyImpl("<name>")`.
-		is IrPropertyReference -> {
-			needsKProperty = true
-			"""{"k":"new","type":"<>dotkt_KPropertyImpl","args":[{"k":"const","type":"string","value":${str(node.symbol.owner.name.asString())}}]}"""
-		}
-		is IrFunctionExpression -> lambda(node)
-		// A callable reference `::foo` -> a delegate bound to the referenced function (same Func/Action as a lambda).
-		is IrFunctionReference -> functionRef(node)
-		// A `vararg` argument -> a newArray. A spread `*a` (IrSpreadElement) passes an existing array: a lone
-		// spread is forwarded as-is; all-literal builds a fresh array; mixed `f(1,*a,2)` is a clean deferral.
-		is IrVararg -> {
-			val spreads = node.elements.filterIsInstance<IrSpreadElement>()
-			val directs = node.elements.filterIsInstance<IrExpression>()
-			when {
-				spreads.size == 1 && directs.isEmpty() -> expr(spreads[0].expression)
-				spreads.isEmpty() -> """{"k":"newArray","elem":${str(birType(node.varargElementType))},"elems":[${directs.joinToString(",") { expr(it) }}]}"""
-				// `f(1, *a, 2)` -> build a List<elem> (Add literals / AddRange spreads), then ToArray.
-				else -> {
-					val parts = node.elements.joinToString(",") { e ->
-						when (e) {
-							is IrSpreadElement -> """{"spread":true,"e":${expr(e.expression)}}"""
-							is IrExpression -> """{"spread":false,"e":${expr(e)}}"""
-							else -> """{"spread":false,"e":{"k":"const","type":"void","value":null}}"""
-						}
-					}
-					"""{"k":"spreadConcat","elem":${str(birType(node.varargElementType))},"parts":[$parts]}"""
-				}
-			}
-		}
-		else -> unsupported(node, "this expression", "the IR node ${node::class.simpleName} has no .NET lowering")
-	}
 
 	/**
 	 * A lambda -> a delegate. Non-capturing lambdas lift to a static method (`delegateNew`); capturing
 	 * lambdas synthesize a closure class (fields = captured vars, instance `invoke` method) (`closureNew`).
 	 */
-	private fun lambda(node: IrFunctionExpression): String {
+	internal fun lambda(node: IrFunctionExpression): String {
 		val fn = node.function
 		// A `suspend () -> T` lambda is a coroutine; in the CLR ABI it is a `Func<Task<T>>` (coroutine-abi-decision).
 		// The trivial builder lambda `{ f() }` (a single tail suspend call) just returns f()'s kickoff Task, so the
@@ -1900,7 +1651,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * emitted as static file-class methods, so `FindStatic(name)` resolves the `ldftn` target. Bound-instance
 	 * (`obj::method`), member, and constructor references are deferred (clean `unsupportedExpr`).
 	 */
-	private fun functionRef(node: IrFunctionReference): String {
+	internal fun functionRef(node: IrFunctionReference): String {
 		// `::Ctor` (constructor reference) -> a lifted static factory `__ctorref_N(args) = new T(args)`, bound as a
 		// delegate (delegates can't bind a ctor directly). `Func<…,UserType>` now resolves via DelegateCtor.
 		(node.symbol.owner as? IrConstructor)?.let { ctor ->
@@ -1989,11 +1740,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** The kickoff/return BIR type for a `suspend (...) -> T`: `Task<T>` (or non-generic `Task` for Unit). */
-	private fun coTaskType(ret: IrType): String =
+	internal fun coTaskType(ret: IrType): String =
 		if (ret.isUnit()) "clr:System.Threading.Tasks.Task" else "clrg:System.Threading.Tasks.Task[${birType(ret)}]"
 
 	/** The delegate type for a `suspend (P...) -> T`: `Func<P..., Task<T>>` encoded as `func:<Task<T>>:<P...>`. */
-	private fun coSuspendFuncType(fn: IrSimpleFunction): String {
+	internal fun coSuspendFuncType(fn: IrSimpleFunction): String {
 		val ps = fn.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birTypeDeleg(it.type) }
 		return "func:${coTaskType(fn.returnType)}:$ps"
 	}
@@ -2003,7 +1754,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * a unique local, rewrite `it`/`this` to it, then yield the lambda's last expression (let/run/with) or
 	 * the receiver (apply/also). No delegate — the lambda body is spliced in directly.
 	 */
-	private fun inlineScope(fq: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
+	internal fun inlineScope(fq: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
 		val fn = lambda.function
 		// A suspending call inside a scope-function lambda is CPS-linearized in STATEMENT position (emitScopeCps) — but
 		// reaching here means the scope fn is in a SUB-EXPRESSION position (e.g. `c.apply{ s() }.x`), which inlines to a
@@ -2039,7 +1790,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** `r.use { block }` -> a value-block: `var r; var res; try { res = block(r) } finally { r.Dispose() }; res`. */
-	private fun inlineUse(recvExpr: IrExpression, lambda: IrFunctionExpression, retType: String): String {
+	internal fun inlineUse(recvExpr: IrExpression, lambda: IrFunctionExpression, retType: String): String {
 		val fn = lambda.function
 		val uname = "__use${scopeCounter++}"; val rname = "__useRes${scopeCounter++}"
 		val recvInit = expr(recvExpr)
@@ -2066,27 +1817,27 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"valueBlock","stmts":[${init.joinToString(",")}],"result":$result}"""
 	}
 
-	private var synthCounter = 0
+	internal var synthCounter = 0
 	/**
 	 * A synthetic one-arg lambda `(__x: paramType) -> bodyOf("__x")` lifted to a static method + delegate. Used for
 	 * LINQ ops that need a transform Kotlin doesn't supply as a user lambda (e.g. `chunked` -> `Select(c => c.ToList())`,
 	 * `filterNotNull` -> `Where(x => x != null)`). `bodyOf` builds the body expression from the param-ref BIR.
 	 */
-	private fun synthLambda(paramType: String, retType: String, bodyOf: (String) -> String): String {
+	internal fun synthLambda(paramType: String, retType: String, bodyOf: (String) -> String): String {
 		val lname = "__synth${synthCounter++}"
 		val pref = """{"k":"local","name":"__x"}"""
 		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[{"name":"__x","type":${str(paramType)}}],"ret":${str(retType)},"body":[{"k":"return","value":${bodyOf(pref)}}]}""")
 		return """{"k":"delegateNew","method":${str(lname)},"funcType":${str("func:$retType:$paramType")}}"""
 	}
 
-	private fun hasLambdaArg(call: IrCall): Boolean = regularArgs(call).any { it is IrFunctionExpression }
+	internal fun hasLambdaArg(call: IrCall): Boolean = regularArgs(call).any { it is IrFunctionExpression }
 
 	/**
 	 * Translate a LITERAL printf-style format (`%d`/`%s`/`%.2f`/`%05d`/`%x`/`%%`) to a .NET composite format
 	 * (`{0}`/`{0:F2}`/`{0:D5}`/`{0:x}`). Returns null for an unsupported spec (caller falls back). Kotlin's
 	 * `String.format` is printf (`%`), .NET's `String.Format` is `{0}` — genuinely incompatible, so we rewrite.
 	 */
-	private fun translatePrintf(fmt: String): String? {
+	internal fun translatePrintf(fmt: String): String? {
 		val sb = StringBuilder(); var i = 0; var arg = 0
 		while (i < fmt.length) {
 			val c = fmt[i]
@@ -2121,7 +1872,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Statements of a function/lambda body (block body, or a single-expression `= expr` body). */
-	private fun bodyStatements(body: org.jetbrains.kotlin.ir.IrElement?): List<org.jetbrains.kotlin.ir.IrStatement> = when (body) {
+	internal fun bodyStatements(body: org.jetbrains.kotlin.ir.IrElement?): List<org.jetbrains.kotlin.ir.IrStatement> = when (body) {
 		is IrBlockBody -> body.statements
 		is IrExpressionBody -> listOf(body.expression)
 		else -> emptyList()
@@ -2135,7 +1886,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * inline. This also fixes mutable capture (the captured `var` is the caller's own local). lambda-less inline funs
 	 * never reach here — they emit as ordinary delegate-taking calls (the JIT inlines them).
 	 */
-	private fun inlineCall(call: IrCall): String {
+	internal fun inlineCall(call: IrCall): String {
 		val callee = call.symbol.owner
 		val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
 		val args = regularArgs(call)
@@ -2163,7 +1914,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  referenced assembly, read by ilemit at splice time). We carry the call's bindings — each regular param's arg
 	 *  value, or for a lambda param the lambda's param name + body (emitted in the CALLER's scope, so a non-local
 	 *  `return` in it becomes the caller's return). ilemit substitutes these into the carried body. */
-	private fun inlineSpliceCall(call: IrCall, fileClass: String): String {
+	internal fun inlineSpliceCall(call: IrCall, fileClass: String): String {
 		val callee = call.symbol.owner
 		val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
 		val args = regularArgs(call)
@@ -2179,7 +1930,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Splice an invoked inlined lambda `f(args)`: bind its params to the invoke args, then splice its body. */
-	private fun spliceLambdaCall(lambda: IrFunctionExpression, call: IrCall): String {
+	internal fun spliceLambdaCall(lambda: IrFunctionExpression, call: IrCall): String {
 		val fn = lambda.function
 		val params = fn.parameters.filter { it.kind == IrParameterKind.Regular }
 		val args = regularArgs(call)
@@ -2195,7 +1946,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Emit body statements into `pre`, returning the value expression (Unit -> void const; else the last expr). */
-	private fun spliceBody(stmts: List<org.jetbrains.kotlin.ir.IrStatement>, unit: Boolean, pre: MutableList<String>): String {
+	internal fun spliceBody(stmts: List<org.jetbrains.kotlin.ir.IrStatement>, unit: Boolean, pre: MutableList<String>): String {
 		if (unit) { stmts.forEach { pre.add(stmt(it)) }; return """{"k":"const","type":"void","value":null}""" }
 		stmts.dropLast(1).forEach { pre.add(stmt(it)) }
 		return when (val last = stmts.lastOrNull()) {
@@ -2206,7 +1957,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Lift a local function to a file-class static method; captured vars become leading params (by their own names). */
-	private fun liftLocalFn(fn: IrSimpleFunction) {
+	internal fun liftLocalFn(fn: IrSimpleFunction) {
 		// Captured vars (incl. the enclosing `this`) become leading params; the call site prepends their values.
 		val captures = capturedVars(fn, includeThis = true)
 		val lname = "__local${scopeCounter++}_${fn.name.asString()}"
@@ -2225,7 +1976,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** `stackBuffer(n) { buf -> body }` -> a scoped CLR stack allocation: declare a length + a localloc'd pointer,
 	 *  splice the (inline) block with `buf` bound to that allocation, return the block's result R. */
-	private fun emitStackBuffer(call: IrCall): String {
+	internal fun emitStackBuffer(call: IrCall): String {
 		val args = regularArgs(call)
 		val lambda = args.getOrNull(1) as? IrFunctionExpression
 			?: return unsupported(call, "stackBuffer", "its block must be a literal lambda (so it can be inlined into the caller's frame)")
@@ -2244,7 +1995,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** A `StackBuffer<T>` member access (`buf[i]` / `buf[i]=v` / `buf.size`) inside the spliced block -> a stack op. */
-	private fun emitStackBufferOp(call: IrCall, callee: IrSimpleFunction, info: StackBufInfo): String {
+	internal fun emitStackBufferOp(call: IrCall, callee: IrSimpleFunction, info: StackBufInfo): String {
 		val ptr = """{"k":"local","name":${str(info.ptrName)}}"""
 		val len = """{"k":"local","name":${str(info.lenName)}}"""
 		return when {
@@ -2260,7 +2011,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Inline `forEach { it -> body }` into an enumerator loop: bind `it` to a unique loop var, splice the body. */
-	private fun inlineForEach(elemT: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
+	internal fun inlineForEach(elemT: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
 		val fn = lambda.function
 		val src = expr(recvExpr)
 		val vname = "__fe${scopeCounter++}"
@@ -2273,11 +2024,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** First type argument's BIR type (element type of List<T>/Set<T>/etc.). */
-	private fun collectionElemType(t: IrType): String =
+	internal fun collectionElemType(t: IrType): String =
 		(t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
 
 	/** A lambda argument's return BIR type (for inferring LINQ result element types). */
-	private fun lambdaRet(arg: IrExpression?): String {
+	internal fun lambdaRet(arg: IrExpression?): String {
 		val fn = (arg as? IrFunctionExpression)?.function
 		return if (fn == null || fn.returnType.isUnit()) "void" else birType(fn.returnType)
 	}
@@ -2287,17 +2038,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * (ienum/func:N/string/gp/int/…) so ilemit picks it deterministically — no heuristic overload guessing.
 	 */
 	/** A `new <ExceptionType>(msg?)` node (msgJson is an already-quoted JSON string, or null for the no-arg ctor). */
-	private fun newExc(type: String, msgJson: String?): String =
+	internal fun newExc(type: String, msgJson: String?): String =
 		if (msgJson != null) """{"k":"clrNew","type":${str(type)},"argTypes":["System.String"],"args":[{"k":"const","type":"string","value":$msgJson}]}"""
 		else """{"k":"clrNew","type":${str(type)},"argTypes":[],"args":[]}"""
 
-	private fun throwExpr(exc: String): String = """{"k":"throwExpr","value":$exc}"""
+	internal fun throwExpr(exc: String): String = """{"k":"throwExpr","value":$exc}"""
 
-	private fun clrGen(type: String, method: String, typeArgs: List<String>, shapes: List<String>, args: List<String>): String =
+	internal fun clrGen(type: String, method: String, typeArgs: List<String>, shapes: List<String>, args: List<String>): String =
 		"""{"k":"clrGenericStatic","type":${str(type)},"method":${str(method)},"typeArgs":[${typeArgs.joinToString(",") { str(it) }}],"shapes":[${shapes.joinToString(",") { str(it) }}],"args":[${args.joinToString(",")}]}"""
 
 	/** Free value references in a lambda body (referenced but not declared inside) = its captured vars. */
-	private fun capturedVars(fn: IrSimpleFunction, includeThis: Boolean = false): List<IrValueDeclaration> {
+	internal fun capturedVars(fn: IrSimpleFunction, includeThis: Boolean = false): List<IrValueDeclaration> {
 		val declared = HashSet<IrValueDeclaration>()
 		fn.parameters.forEach { declared.add(it) }
 		val referenced = LinkedHashSet<IrValueDeclaration>()
@@ -2322,7 +2073,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * are excluded by identity — crucially this keeps the captured enclosing `this` (same name "<this>" as
 	 * the anon's own receiver, distinguished only by symbol identity).
 	 */
-	private fun capturedVarsForObject(anon: IrClass): List<IrValueDeclaration> {
+	internal fun capturedVarsForObject(anon: IrClass): List<IrValueDeclaration> {
 		val own = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 		val referenced = LinkedHashSet<IrValueDeclaration>()
 		anon.acceptChildrenVoid(object : IrVisitorVoid() {
@@ -2340,7 +2091,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Value declarations assigned (IrSetValue) anywhere inside an object literal (for mutable-capture detection). */
-	private fun mutatedIn(node: IrElement): Set<IrValueDeclaration> {
+	internal fun mutatedIn(node: IrElement): Set<IrValueDeclaration> {
 		val out = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrValueDeclaration, Boolean>())
 		node.acceptChildrenVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
@@ -2352,11 +2103,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** A capture's field name: the enclosing `this` -> `__outer`, an outer local/param -> its own name. */
-	private fun captureFieldName(d: IrValueDeclaration): String =
+	internal fun captureFieldName(d: IrValueDeclaration): String =
 		if (d.name.asString() == "<this>") "__outer" else d.name.asString()
 
 	/** A capture's value at the `new` site (in the enclosing context): the outer `this`, or an outer local. */
-	private fun capValueExpr(d: IrValueDeclaration): String =
+	internal fun capValueExpr(d: IrValueDeclaration): String =
 		// Evaluate the capture VALUE in the enclosing context: honor an active substitution (e.g. an intrinsic
 		// block's `c` bound to the coroutine's own continuation, or an outer capture field) before falling back.
 		// `valSubst` is checked next so a captured inline parameter (a crossinline/noinline lambda bound to a
@@ -2371,12 +2122,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * view of the function type (which derives args from the FunctionN type arguments, receiver included) is what
 	 * makes `build { ... }` receiver-lambda DSLs work (feedback item 7).
 	 */
-	private fun orderedLambdaParams(fn: IrSimpleFunction): List<IrValueParameter> =
+	internal fun orderedLambdaParams(fn: IrSimpleFunction): List<IrValueParameter> =
 		fn.parameters.filter { it.kind == IrParameterKind.ExtensionReceiver } +
 			fn.parameters.filter { it.kind == IrParameterKind.Regular }
 
 	/** The BIR function-type string `func:<ret>:<arg1>,<arg2>,...` for a lambda's signature (receiver first). */
-	private fun funcTypeOf(fn: IrSimpleFunction): String {
+	internal fun funcTypeOf(fn: IrSimpleFunction): String {
 		val ps = orderedLambdaParams(fn).joinToString(",") { birTypeDeleg(it.type) }
 		val ret = if (fn.returnType.isUnit()) "void" else birTypeDeleg(fn.returnType)
 		return "func:$ret:$ps"
@@ -2388,7 +2139,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * ("TypeBuilder generic instantiation does not support resolving members"); `Delegates.observable`'s
 	 * callback takes a `KProperty` it almost always ignores, so erasing it sidesteps the issue.
 	 */
-	private fun birTypeDeleg(t: IrType): String {
+	internal fun birTypeDeleg(t: IrType): String {
 		val fq = t.classFqName?.asString()
 		if (fq != null && (fq.startsWith("kotlin.reflect.KProperty") || fq.startsWith("kotlin.reflect.KMutableProperty"))) return "object"
 		return birType(t)
@@ -2396,18 +2147,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** Lambda/closure method params with KProperty erased to object (must agree with funcTypeOf for delegates):
 	 *  extension receiver first (so a receiver lambda's `$this$build` is bound), then regular params. */
-	private fun lambdaParamsJson(params: List<IrValueParameter>): String =
+	internal fun lambdaParamsJson(params: List<IrValueParameter>): String =
 		(params.filter { it.kind == IrParameterKind.ExtensionReceiver } + params.filter { it.kind == IrParameterKind.Regular })
 			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birTypeDeleg(it.type))}}""" }
 
 	/** Regular args, filling omitted constant default arguments (IL has no default-parameter mechanism). */
-	private fun filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> =
+	internal fun filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> =
 		filledArgExprs(call).map { expr(it) }
 
 	/** The call's regular args IN ORDER, filling an omitted default-arg param with its callee's default-value
 	 *  expression. A restored function/ctor carries a real constant default (applyDefaults), so the consumer can omit a
 	 *  default arg ANYWHERE — trailing, named-middle (`f(c=9)`), or reordered — and the value is filled here. */
-	private fun filledArgExprs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
+	internal fun filledArgExprs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
 		val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 		val calleeLocals = callee.parameters.map { it.symbol }.toHashSet()
 		val out = ArrayList<IrExpression>()
@@ -2433,7 +2184,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** True if `expr` reads any of `locals` — detects a default-arg expression that references the callee's own
 	 *  parameters/receiver (e.g. `b = a * 10`, or a data class `copy`'s `this.x`), which can't be inlined at a call site. */
-	private fun refsAny(expr: IrExpression, locals: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>): Boolean {
+	internal fun refsAny(expr: IrExpression, locals: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>): Boolean {
 		var found = false
 		expr.acceptVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: IrElement) {
@@ -2445,21 +2196,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return found
 	}
 
-	private fun regularArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
+	internal fun regularArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
 		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: emptyList()
 		return call.arguments.mapIndexedNotNull { i, a ->
 			if (a != null && i < params.size && params[i].kind == IrParameterKind.Regular) a else null
 		}
 	}
 
-	private fun dispatchReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {
+	internal fun dispatchReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {
 		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return null
 		val idx = params.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
 		return if (idx in 0 until call.arguments.size) call.arguments[idx] else null
 	}
 
 	/** The callee's ordinary (non-receiver) value parameters, in order. */
-	private fun regularParams(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): List<IrValueParameter> =
+	internal fun regularParams(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): List<IrValueParameter> =
 		callee.parameters.filter { it.kind == IrParameterKind.Regular }
 
 	/**
@@ -2468,7 +2219,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * canonical token; everything else is the .NET simple name (`Object`, `Int64`, ...).
 	 */
 	/** A parameter shape matching ilemit's `Shape()` (for resolving a generic .NET overload by name+arity+shapes). */
-	private fun clrMethodShape(t: IrType): String {
+	internal fun clrMethodShape(t: IrType): String {
 		if (t.classifierOrNull is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) return "gp"   // bare type param
 		if (isArrayType(t)) return "array"
 		val fq = t.classFqName?.asString()
@@ -2485,7 +2236,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return netType(t).substringAfterLast('.')
 	}
 
-	private fun extensionReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {
+	internal fun extensionReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {
 		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return null
 		val idx = params.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
 		return if (idx in 0 until call.arguments.size) call.arguments[idx] else null
@@ -2496,7 +2247,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * `this`) become leading ctor params / capture fields; construction sites prepend those values (see the
 	 * IrConstructorCall handler). Returns a no-op statement (the declaration emits nothing inline).
 	 */
-	private fun liftLocalClass(klass: IrClass): String {
+	internal fun liftLocalClass(klass: IrClass): String {
 		if (anonNames.containsKey(klass)) return """{"k":"block","body":[]}"""   // already lifted
 		val cname = "<>dotkt_${klass.name.asString()}_${scopeCounter++}"
 		anonNames[klass] = cname
@@ -2515,7 +2266,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"block","body":[]}"""
 	}
 
-	private fun blockExpr(block: IrBlock): String {
+	internal fun blockExpr(block: IrBlock): String {
 		// `object : I { … }` -> a synthetic named class (lifted) + `new`. Instance fields are real fields;
 		// captured outer values (incl. the enclosing `this`) become extra ctor params / capture fields.
 		if (block.origin?.toString() == "OBJECT_LITERAL") {
@@ -2579,7 +2330,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return (last as? IrExpression)?.let { expr(it) } ?: """{"k":"const","type":"void","value":null}"""
 	}
 
-	private fun ternary(node: IrWhen): String {
+	internal fun ternary(node: IrWhen): String {
 		// Fold right-to-left into nested conditionals. The branches carry the when's result type, so a value-type
 		// nullable result (`Int?`) gets its `T`/`null` branches coerced to Nullable<T> at emit (see EmitCond).
 		val ty = str(birType(node.type))
@@ -2597,7 +2348,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * ctor (by arg type), and member ops (`.value`, `compareAndSet`, `incrementAndGet`, …) -> the wrapper's methods.
 	 * Returns null for non-atomicfu calls. See docs §13a resolution 5.
 	 */
-	private fun atomicfuCall(call: IrCall): String? {
+	internal fun atomicfuCall(call: IrCall): String? {
 		val callee = call.symbol.owner
 		if (callee.fqNameWhenAvailable?.asString() == "kotlinx.atomicfu.atomic") {
 			val arg = regularArgs(call).first()
@@ -2634,10 +2385,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** A `DotKt.Coroutines.Continuations.{Resume,ResumeWithException}<T>(cont, arg)` call (the resume API). Uses the
 	 *  generic-static path (MakeGenericMethod over T) matched by param shapes: Continuation<T>="generic", value=T="gp",
 	 *  Exception="Exception". */
-	private fun resumeHelper(method: String, contT: String, recvJson: String, argJson: String, argShape: String): String =
+	internal fun resumeHelper(method: String, contT: String, recvJson: String, argJson: String, argShape: String): String =
 		"""{"k":"clrGenericStatic","type":"DotKt.Coroutines.Continuations","method":${str(method)},"typeArgs":[${str(contT)}],"shapes":["generic",${str(argShape)}],"args":[$recvJson,$argJson]}"""
 
-	private fun call(call: IrCall): String {
+	internal fun call(call: IrCall): String {
 		val callee = call.symbol.owner
 		val calleeFqEarly = callee.fqNameWhenAvailable?.asString()
 		// `kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED` (a top-level val getter) -> the runtime sentinel.
@@ -3813,15 +3564,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * `call.type`), so ilemit need not reflect the un-baked builder's return type (which stays `!0`/`!!0` and
 	 * would mis-drive value-type boxing). Only emitted for the generic/constructed paths to stay non-invasive.
 	 */
-	private fun retHint(generic: Boolean, t: IrType): String =
+	internal fun retHint(generic: Boolean, t: IrType): String =
 		if (generic) ""","retType":${str(birType(t))}""" else ""
 
 	/** Like [retHint] but with a pre-computed return-type string (e.g. a suspend call's kickoff `Task<T>`). */
-	private fun retHintStr(generic: Boolean, retStr: String): String =
+	internal fun retHintStr(generic: Boolean, retStr: String): String =
 		if (generic) ""","retType":${str(retStr)}""" else ""
 
 	/** `,"typeArgs":["int"]` when the callee is a generic method (its own type params resolved at this call). */
-	private fun typeArgsJson(call: IrCall): String {
+	internal fun typeArgsJson(call: IrCall): String {
 		val tps = call.symbol.owner.typeParameters
 		if (tps.isEmpty()) return ""
 		val args = tps.indices.map { call.typeArguments.getOrNull(it) }
@@ -3835,7 +3586,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * backend, like the C# backend, must consult the registry so injected types resolve as real .NET types
 	 * (otherwise they leak in as user classes and their members mis-route as fields). See [[s5-fir-injection-seam]].
 	 */
-	private fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
+	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
 		for (a in decl.annotations) {
 			if ((a as? IrConstructorCall)?.type?.classFqName?.asString() == "clr.Clr")
 				return (a.arguments.firstOrNull() as? IrConst)?.value as? String
@@ -3844,7 +3595,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** A type's fully-qualified .NET name, for IL reflection-based member resolution. */
-	private fun netType(t: IrType): String = when (val fq = t.classFqName?.asString()) {
+	internal fun netType(t: IrType): String = when (val fq = t.classFqName?.asString()) {
 		// The intrinsic `ClrRef<T>` is a managed reference -> `byref:<T>` (selects the out/ref overload in ilemit).
 		"ClrRef" -> "byref:" + ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) }.orEmpty()
 		// The intrinsic `Span<T>` -> the real `System.Span<T>`.
@@ -3875,25 +3626,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			?: "System.Object"
 	}
 
-	private fun paramNetTypes(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
+	internal fun paramNetTypes(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
 		callee.parameters.filter { it.kind == IrParameterKind.Regular }
 			.joinToString(",") { str(netType(it.type)) }
 
 	/** The `byref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. */
-	private fun byrefMarker(a: IrExpression): IrExpression? =
+	internal fun byrefMarker(a: IrExpression): IrExpression? =
 		if (a is IrCall && a.symbol.owner.name.asString() == "byref") regularArgs(a).firstOrNull() else null
 
 	/** (argsJson, argTypesJson) for an injected .NET call. A `ClrRef<T>` param already maps to `byref:T` via netType
 	 *  (so the out/ref overload resolves + optional params still default-fill); a `byref(x)` arg unwraps to its lvalue
 	 *  `x`, which ilemit passes by address (EmitArg routes an IsByRef param through EmitAddr). */
-	private fun clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
+	internal fun clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
 		val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
 		val tj = params.map { str(netType(it.type)) }
 		val aj = regularArgs(call).map { val inner = byrefMarker(it); if (inner != null) expr(inner) else expr(it) }
 		return aj.joinToString(",") to tj.joinToString(",")
 	}
 
-	private fun constJson(c: IrConst): String = when (val v = c.value) {
+	internal fun constJson(c: IrConst): String = when (val v = c.value) {
 		is String -> str(v)
 		is Boolean -> v.toString()
 		is Char -> str(v.toString())
@@ -3902,12 +3653,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Kotlin `Array<T>` / primitive arrays -> a BIR `array:<elem>` type (ilemit -> `T[]`). */
-	private fun isArrayType(t: IrType): Boolean {
+	internal fun isArrayType(t: IrType): Boolean {
 		val fq = t.classFqName?.asString()
 		return fq == "kotlin.Array" || fq in PRIMITIVE_ARRAY_ELEM
 	}
 
-	private fun arrayElemType(t: IrType): String {
+	internal fun arrayElemType(t: IrType): String {
 		val fq = t.classFqName?.asString()
 		PRIMITIVE_ARRAY_ELEM[fq]?.let { return it }
 		if (fq == "kotlin.Array")
@@ -3916,7 +3667,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Kotlin List/MutableList/Collection/Iterable -> a .NET `List<T>` (works as IEnumerable<T> for LINQ). */
-	private fun isCollectionType(t: IrType): Boolean =
+	internal fun isCollectionType(t: IrType): Boolean =
 		t.classFqName?.asString() in setOf(
 			"kotlin.collections.List", "kotlin.collections.MutableList",
 			"kotlin.collections.Collection", "kotlin.collections.Iterable",
@@ -3925,28 +3676,28 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** A Kotlin `Sequence<T>` -> a LAZY .NET `IEnumerable<T>` (deferred LINQ). Distinct from collections, whose
 	 *  intermediate ops materialize via ToList (Kotlin lists are eager); sequence ops stay deferred. */
-	private fun isSequenceType(t: IrType): Boolean =
+	internal fun isSequenceType(t: IrType): Boolean =
 		t.classFqName?.asString() == "kotlin.sequences.Sequence"
 
 	/** A Kotlin Set type -> .NET HashSet<T>; List-family -> List<T>. */
-	private fun isSetType(t: IrType): Boolean =
+	internal fun isSetType(t: IrType): Boolean =
 		t.classFqName?.asString() in setOf("kotlin.collections.Set", "kotlin.collections.MutableSet")
 
-	private fun isMapType(t: IrType): Boolean =
+	internal fun isMapType(t: IrType): Boolean =
 		t.classFqName?.asString() in setOf("kotlin.collections.Map", "kotlin.collections.MutableMap")
 
 	/** (keyType, valType) BIR types of a Map<K,V>. */
-	private fun mapKV(t: IrType): Pair<String, String> {
+	internal fun mapKV(t: IrType): Pair<String, String> {
 		val a = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
 		return (a.getOrNull(0) ?: "object") to (a.getOrNull(1) ?: "object")
 	}
 
 	/** Kotlin nullable VALUE type (`Int?`/`Double?`…) -> the BIR element type (int/double…), else null. */
-	private fun nullableElem(t: IrType): String? =
+	internal fun nullableElem(t: IrType): String? =
 		if (t.isMarkedNullable()) VALUE_PRIM_BIR[t.classFqName?.asString()] else null
 
 	/** Kotlin visibility -> BIR access keyword (public/private/internal/protected). */
-	private fun visOf(d: IrDeclarationWithVisibility): String = when (d.visibility.delegate) {
+	internal fun visOf(d: IrDeclarationWithVisibility): String = when (d.visibility.delegate) {
 		Visibilities.Private, Visibilities.PrivateToThis -> "private"
 		Visibilities.Internal -> "internal"
 		Visibilities.Protected -> "protected"
@@ -3954,11 +3705,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Non-nullable primitive whose `==` is CIL `ceq` (else `==` is structural `Object.Equals`). */
-	private fun isPrimitiveEqType(t: IrType): Boolean =
+	internal fun isPrimitiveEqType(t: IrType): Boolean =
 		!t.isMarkedNullable() && t.classFqName?.asString() in PRIMITIVE_EQ_FQ
 
 	/** A Kotlin `Any`-override -> its System.Object method name (`toString`->`ToString`…), else null. */
-	private fun objectMethodName(fn: IrSimpleFunction): String? {
+	internal fun objectMethodName(fn: IrSimpleFunction): String? {
 		val reg = fn.parameters.count { it.kind == IrParameterKind.Regular }
 		return when (fn.name.asString()) {
 			"toString" -> if (reg == 0) "ToString" else null
@@ -3970,12 +3721,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** The first type argument of a constructed type, as a generic-arg-safe spec: a `Unit` argument erases to the
 	 *  real `DotKt.Unit` (a CLR generic arg can't be `void`/`System.Void`); else birType/netType. T7. */
-	private fun firstArgBir(t: IrType): String = ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
+	internal fun firstArgBir(t: IrType): String = ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
 		?.let { if (it.isUnit()) "clr:DotKt.Unit" else birType(it) } ?: "object"
-	private fun firstArgNet(t: IrType): String = ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
+	internal fun firstArgNet(t: IrType): String = ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
 		?.let { if (it.isUnit()) "clr:DotKt.Unit" else netType(it) } ?: "object"
 
-	private fun birType(t: IrType): String {
+	internal fun birType(t: IrType): String {
 		// A type parameter `T` is a real generic parameter -> `gp:<name>` (resolved in IL context). On the CLR,
 		// generics are reified, so even `reified T` rides on this (no inlining) — see [[clr-not-jvm-discard-jvmisms]].
 		(t.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.let { tp ->
@@ -4135,114 +3886,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return "object"
 	}
 
-	private fun str(s: String): String =
+	internal fun str(s: String): String =
 		"\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\t", "\\t") + "\""
 
-	companion object {
-		private val BINARY = mapOf(
-			"plus" to "+", "minus" to "-", "times" to "*", "div" to "/", "rem" to "%",
-			"less" to "<", "lessOrEqual" to "<=", "greater" to ">", "greaterOrEqual" to ">=",
-			"EQEQ" to "==", "EQEQEQ" to "==",
-			// Bitwise / shift infix functions (Int/Long/Boolean).
-			"and" to "&", "or" to "|", "xor" to "^", "shl" to "<<", "shr" to ">>", "ushr" to ">>>",
-		)
-		private val UNARY = mapOf("unaryMinus" to "-", "unaryPlus" to "+", "not" to "!", "inv" to "~")
-
-		// kotlin.math.* -> System.Math.* (ilemit picks the int/double overload by argTypes).
-		private val MATH_FUNCS = mapOf(
-			"abs" to "Abs", "max" to "Max", "min" to "Min", "sqrt" to "Sqrt", "pow" to "Pow",
-			"round" to "Round", "floor" to "Floor", "ceil" to "Ceiling", "exp" to "Exp",
-			"ln" to "Log", "log10" to "Log10", "sin" to "Sin", "cos" to "Cos", "tan" to "Tan",
-		)
-
-		// kotlin.text String ops -> .NET System.String instance methods.
-		private val STRING_OPS = mapOf(
-			"uppercase" to "ToUpper", "lowercase" to "ToLower", "trim" to "Trim",
-			"trimStart" to "TrimStart", "trimEnd" to "TrimEnd", "substring" to "Substring",
-			"replace" to "Replace", "startsWith" to "StartsWith", "endsWith" to "EndsWith",
-			"contains" to "Contains", "indexOf" to "IndexOf", "padStart" to "PadLeft", "padEnd" to "PadRight",
-		)
-
-		// `"42".toInt()` etc. -> a static `Parse` on the target .NET numeric type.
-		private val NUMBER_PARSE = mapOf(
-			"toInt" to "System.Int32", "toLong" to "System.Int64", "toDouble" to "System.Double",
-			"toFloat" to "System.Single", "toShort" to "System.Int16", "toByte" to "System.Byte",
-		)
-		// Char predicates / conversions -> static methods on System.Char.
-		private val CHAR_OPS = mapOf(
-			"isDigit" to "IsDigit", "isLetter" to "IsLetter", "isWhitespace" to "IsWhiteSpace",
-			"isLetterOrDigit" to "IsLetterOrDigit", "uppercaseChar" to "ToUpper", "lowercaseChar" to "ToLower",
-			"isUpperCase" to "IsUpper", "isLowerCase" to "IsLower",
-		)
-
-		private val PRIMITIVE_ARRAY_ELEM = mapOf(
-			"kotlin.IntArray" to "int", "kotlin.LongArray" to "long", "kotlin.DoubleArray" to "double",
-			"kotlin.FloatArray" to "float", "kotlin.BooleanArray" to "bool", "kotlin.CharArray" to "char",
-			"kotlin.ByteArray" to "byte", "kotlin.ShortArray" to "short",
-		)
-		private val ARRAY_FACTORY_NAMES = setOf(
-			"arrayOf", "intArrayOf", "longArrayOf", "doubleArrayOf",
-			"floatArrayOf", "booleanArrayOf", "charArrayOf", "byteArrayOf", "shortArrayOf",
-		)
-		private val LIST_FACTORIES = setOf(
-			"kotlin.collections.listOf", "kotlin.collections.mutableListOf", "kotlin.collections.arrayListOf",
-			"kotlin.collections.emptyList",
-		)
-		private val SET_FACTORIES = setOf(
-			"kotlin.collections.setOf", "kotlin.collections.mutableSetOf", "kotlin.collections.hashSetOf",
-			"kotlin.collections.emptySet",
-		)
-		private val MAP_FACTORIES = setOf(
-			"kotlin.collections.mapOf", "kotlin.collections.mutableMapOf", "kotlin.collections.hashMapOf",
-			"kotlin.collections.emptyMap",
-		)
-		private val COLLECTION_OPS = setOf(
-			"map", "filter", "take", "drop", "reversed", "distinct", "toList",
-			"count", "any", "none", "all", "first", "last", "contains", "fold", "joinToString", "forEach",
-			"firstOrNull", "lastOrNull", "isEmpty", "isNotEmpty", "sum", "sumOf", "sorted", "maxOrNull", "minOrNull", "reduce",
-			"maxByOrNull", "minByOrNull", "zip", "associateWith", "associateBy", "groupBy",
-			"asSequence", "toSet", "takeWhile", "dropWhile", "single", "singleOrNull",
-			"sortedDescending", "sortedBy", "sortedByDescending", "mapIndexed", "chunked", "filterNotNull",
-			"mapNotNull", "flatMap", "flatten", "average", "indexOf",
-			"partition", "withIndex", "associate", "scan", "runningFold", "windowed", "getOrElse",
-		)
-
-		// Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.
-		private val NUMBER_CONV = mapOf(
-			"toInt" to "int", "toLong" to "long", "toDouble" to "double", "toFloat" to "float",
-			"toShort" to "short", "toByte" to "byte", "toChar" to "char",
-		)
-		private val NUMERIC_FQ = setOf(
-			"kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte",
-			"kotlin.Double", "kotlin.Float", "kotlin.Char",
-		)
-		// Value-type primitives -> BIR element type (for Nullable<T> representation of `T?`).
-		private val PRIMITIVE_EQ_FQ = setOf(
-			"kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte",
-			"kotlin.Double", "kotlin.Float", "kotlin.Boolean", "kotlin.Char",
-		)
-
-		private val VALUE_PRIM_BIR = mapOf(
-			"kotlin.Int" to "int", "kotlin.Long" to "long", "kotlin.Short" to "short", "kotlin.Byte" to "byte",
-			"kotlin.Double" to "double", "kotlin.Float" to "float", "kotlin.Boolean" to "bool", "kotlin.Char" to "char",
-		)
-
-		private val NET_EXCEPTIONS = mapOf(
-			"java.lang.Throwable" to "System.Exception", "kotlin.Throwable" to "System.Exception",
-			"java.lang.Exception" to "System.Exception", "kotlin.Exception" to "System.Exception",
-			"java.lang.RuntimeException" to "System.Exception", "kotlin.RuntimeException" to "System.Exception",
-			"java.lang.Error" to "System.Exception", "kotlin.Error" to "System.Exception",
-			"java.lang.ArithmeticException" to "System.ArithmeticException",
-			"java.lang.IllegalArgumentException" to "System.ArgumentException", "kotlin.IllegalArgumentException" to "System.ArgumentException",
-			"java.lang.IllegalStateException" to "System.InvalidOperationException", "kotlin.IllegalStateException" to "System.InvalidOperationException",
-			"java.lang.IndexOutOfBoundsException" to "System.IndexOutOfRangeException", "kotlin.IndexOutOfBoundsException" to "System.IndexOutOfRangeException",
-			"java.lang.NullPointerException" to "System.NullReferenceException", "kotlin.NullPointerException" to "System.NullReferenceException",
-			"java.lang.UnsupportedOperationException" to "System.NotSupportedException", "kotlin.UnsupportedOperationException" to "System.NotSupportedException",
-			"java.util.NoSuchElementException" to "System.InvalidOperationException", "kotlin.NoSuchElementException" to "System.InvalidOperationException",
-		)
-		private val ATOMICFU_TYPES = setOf(
-			"kotlinx.atomicfu.AtomicInt", "kotlinx.atomicfu.AtomicLong",
-			"kotlinx.atomicfu.AtomicBoolean", "kotlinx.atomicfu.AtomicRef",
-		)
-	}
 }
