@@ -306,7 +306,7 @@ C# 生成は単なる出力フォーマットではなく、以下3役を兼ね�
 - [ ] 境界の null 正当性（プラットフォーム型 `T!` の扱い定義）。**(M)**
 - [ ] 増分コンパイル。**(L)**
 - [ ] 性能（コンパイル時間・生成コード）。**(L)**
-- [~] 配布（基盤あり）: `dotnet new ktproj` テンプレート（`templates/` 存在）・MSBuild SDK / NuGet 化（`scripts/pack-dotkt.sh`＝DotKt.Sdk/Toolchain/Runtime/Templates をパック）は実装済。残: 相対パス依存の排除・self-contained コンパイラ・1.0 versioned release（現状 0.9.0 pre-1.0）。**(M–L)**
+- [~] 配布（基盤あり）: `dotnet new ktproj` テンプレート（`packaging/DotKt.Templates/` 存在）・MSBuild SDK / NuGet 化（`scripts/pack-dotkt.sh`＝DotKt.Sdk/Toolchain/Runtime/Templates をパック）は実装済。残: 相対パス依存の排除・self-contained コンパイラ・1.0 versioned release（現状 0.9.0 pre-1.0）。**(M–L)**
 - [ ] VS / VS Code 体験（ビルド/実行統合。フル LSP は別スコープ）。**(M–L)**
 - [x] CI ✅（`.github/workflows/verify.yml`＝verify-il + verify-differential + verify-ktproj を push/PR で実行。旧 C# オラクル `verify-all` は引退済みバックエンドのため除去）。残: サンプル行列の継続拡張・ネット依存サンプル（Avalonia）のキャッシュ戦略。**(S–M)**
 - [ ] **ライセンス / 帰属（出荷必須）**: 参考実装（`KotlinForCLR`、Apache-2.0）からの移植部分のライセンス遵守・NOTICE/帰属、kotlin-compiler-embeddable 等依存のライセンス確認、本体ライセンス確定。**(S)**
