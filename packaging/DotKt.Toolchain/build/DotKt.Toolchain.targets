@@ -1,7 +1,7 @@
 <!-- DotKt build pipeline (kt -> BIR -> CIL) — the SINGLE source of truth, shipped WITH the toolchain that it
      drives. NuGet auto-imports this (build/<PackageId>.targets) for any project referencing DotKt.Toolchain,
      so the DotKt.Sdk just references the toolchain and the pipeline comes along. The in-repo dev entry
-     (msbuild/KotlinClr.targets) imports it explicitly. Tool paths come from DotKt.Toolchain.props ($(DotKt*)). -->
+     (cases/KotlinClr.targets) imports it explicitly. Tool paths come from DotKt.Toolchain.props ($(DotKt*)). -->
 <Project>
   <PropertyGroup>
     <DotKtOut>$(BaseIntermediateOutputPath)dotkt-bir</DotKtOut>

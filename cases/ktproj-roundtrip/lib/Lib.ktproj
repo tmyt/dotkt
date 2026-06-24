@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Library</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>disable</Nullable></PropertyGroup>
-  <Import Project="../../../toolchain/KotlinClr.targets" />
+  <Import Project="../../KotlinClr.targets" />
 </Project>

@@ -12,6 +12,6 @@
     <KotlinClrFacade Include="System.Text.StringBuilder" />
   </ItemGroup>
 
-  <Import Project="../../toolchain/KotlinClr.targets" />
+  <Import Project="../KotlinClr.targets" />
 
 </Project>

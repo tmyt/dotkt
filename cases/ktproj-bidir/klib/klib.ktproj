@@ -11,5 +11,5 @@
     <ProjectReference Include="../cslib/cslib.csproj" />
   </ItemGroup>
 
-  <Import Project="../../../toolchain/KotlinClr.targets" />
+  <Import Project="../../KotlinClr.targets" />
 </Project>
