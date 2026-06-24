@@ -280,7 +280,10 @@ sealed partial class Emitter
 
         // Link interface implementations: every class method that satisfies an interface method. For a constructed
         // generic interface `Container[int]`, the override target is the method on the instantiation (static helper).
-        foreach (var ti in _types.Values)
+        // Iterate with the registry KEY (the BIR/full name, e.g. `p.Impl` for a packaged type, `Box` for a generic):
+        // FindMethod looks the type up in `_types` by that key, NOT by `ti.TB.Name` (the *simple* name, which only
+        // coincides with the key for a non-generic root-package type — so namespaced/generic types broke with KeyNotFound).
+        foreach (var (typeKey, ti) in _types)
             if (!ti.IsFileClass && !ti.IsInterface && ti.Def.TryGetProperty("interfaces", out var ifs))
                 foreach (var i in ifs.EnumerateArray())
                 {
@@ -300,12 +303,12 @@ sealed partial class Emitter
                             var openDef = itype.GetGenericTypeDefinition();
                             foreach (var im in openDef.GetMethods())
                                 if (have.Contains(im.Name))
-                                    ti.TB.DefineMethodOverride(FindMethod(ti.TB.Name, im.Name), TypeBuilder.GetMethod(itype, im));
+                                    ti.TB.DefineMethodOverride(FindMethod(typeKey, im.Name), TypeBuilder.GetMethod(itype, im));
                         }
                         else
                             foreach (var im in itype.GetMethods())
                                 if (have.Contains(im.Name))
-                                    ti.TB.DefineMethodOverride(FindMethod(ti.TB.Name, im.Name), im);
+                                    ti.TB.DefineMethodOverride(FindMethod(typeKey, im.Name), im);
                         continue;
                     }
                     var (open, constructed) = ParseOwner(spec);
@@ -313,7 +316,7 @@ sealed partial class Emitter
                     foreach (var im in iface.Methods)
                     {
                         var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, im.Value) : (MethodInfo)im.Value;
-                        ti.TB.DefineMethodOverride(FindMethod(ti.TB.Name, im.Key), ifaceMethod);
+                        ti.TB.DefineMethodOverride(FindMethod(typeKey, im.Key), ifaceMethod);
                     }
                 }
 
