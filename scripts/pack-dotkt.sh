@@ -15,7 +15,7 @@ dotnet build "$ROOT/tools/retarget" -c Release -o "$ROOT/build/retarget-bin" -v 
 echo "== assemble DotKt.Toolchain/tools =="
 TC="$ROOT/packaging/DotKt.Toolchain/tools"; rm -rf "$TC"; mkdir -p "$TC"
 cp -r "$ROOT/kotc/build/install/kotc" "$TC/kotc"
-cp "$ROOT/runtime/kotlin/kotlin-stdlib.jar" "$TC/kotlin-stdlib.jar"
+cp "$ROOT/kotc/vendor/kotlin-stdlib.jar" "$TC/kotlin-stdlib.jar"
 cp -r "$ROOT/build/ilemit-bin"   "$TC/ilemit"
 cp -r "$ROOT/build/facadegen-bin" "$TC/facadegen"
 cp -r "$ROOT/build/retarget-bin" "$TC/retarget"

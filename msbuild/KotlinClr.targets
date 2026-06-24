@@ -9,7 +9,7 @@
 
     <!-- Tool locations: the in-repo source builds (the shared pipeline reads these $(DotKt*) vars). -->
     <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(KotlinClrRoot)/kotc/build/install/kotc/bin/kotc</DotKtCompiler>
-    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/runtime/kotlin/kotlin-stdlib.jar</DotKtStdlib>
+    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/kotc/vendor/kotlin-stdlib.jar</DotKtStdlib>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</DotKtFacadeGen>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
     <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</DotKtRetargetTool>
