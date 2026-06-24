@@ -88,7 +88,11 @@ This is the single most surprising deviation, so it gets the most detail.
 ## 6. Consuming a DotKt assembly AS KOTLIN — what rides metadata vs. needs an attribute
 
 When another `.ktproj` consumes a DotKt assembly, the Kotlin facts with **no native .NET representation** are carried
-by `DotKt.Metadata` attributes and restored on the consumer's FIR; the rest round-trips through plain .NET metadata.
+by `DotKt.Runtime.CompilerServices` attributes and restored on the consumer's FIR; the rest round-trips through plain
+.NET metadata. Those attributes are **compiler-EMBEDDED** into each emitted assembly (internal types, like csc's own
+`NullableAttribute`/`IsReadOnlyAttribute`) — they are metadata-only, never executed, so they don't live in a referenced
+runtime. The sole exception is `[DotKtNamespaceProjection]` (assembly-level), which stays a real type in `DotKt.Runtime`
+because PersistedAssemblyBuilder corrupts the image when an assembly attribute references a module-internal type.
 
 | Kotlin construct | carrier |
 |---|---|
@@ -96,6 +100,7 @@ by `DotKt.Metadata` attributes and restored on the consumer's FIR; the rest roun
 | `suspend` | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
 | top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
+| **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
 | `final`/`open`/`abstract`, visibility | **none** — ride .NET virtual-ness / accessibility |
 | generics, `reified` | **none** — CLR generics are reified (§2) |
 | parameter names (named-argument calls) | emitted via `DefineParameter` (were dropped before; not a FIR limitation) |
@@ -128,6 +133,26 @@ which it also emits, so C#/VB/F# consumers get the defaults natively). Consequen
   injects the referenced types into FIR). See `docs/design-kotlin-metadata-attributes.md` and memory
   `c2-import-driven-resolution`, `s5-fir-injection-seam`.
 
+## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
+
+A Kotlin value-type `X?` is the structural `System.Nullable<X>` (§ value types). A **reference-type** `X?` has no
+structural form on the CLR (a reference is always null-capable), so it rides **.NET's own nullable-reference metadata**:
+ilemit stamps `[NullableContext(1)]` per type (reference positions default to non-null) and `[Nullable(2)]` on each
+nullable reference return/parameter — the exact encoding the C# compiler uses, so a **C# consumer also sees** DotKt's
+`String?` as nullable. There is no DotKt-specific nullability attribute.
+
+Reading the other direction, consuming **any** .NET assembly:
+
+| the .NET reference type's NRT info | injected Kotlin type |
+|---|---|
+| `[Nullable(2)]` / nullable context | `T?` |
+| `[Nullable(1)]` / non-null context | `T` |
+| **none** (assembly never opted into NRT) | `T!` — a **platform type** |
+
+`T!` is a flexible type `(T..T?)` (`ConeFlexibleType`): the consumer may use it as `T` or `T?` and the compiler
+enforces neither — exactly how Kotlin/JVM treats un-annotated Java. This avoids the unsound alternative of forcing a
+possibly-null .NET value into a Kotlin non-null type.
+
 ---
 
 ## Quick "this surprised me" index
@@ -139,3 +164,4 @@ which it also emits, so C#/VB/F# consumers get the defaults natively). Consequen
 - `println(true)` prints `True`, `println(4.0)` prints `4`. §5.
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`. §4.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
+- A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
