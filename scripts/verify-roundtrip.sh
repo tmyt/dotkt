@@ -344,7 +344,7 @@ open class Lib(val k: Int) {
 EOF
 cat > "$MP/app/app.kt" <<'EOF'
 import kotlinx.coroutines.runBlocking
-suspend fun doFetch(lib: Lib, b: Box<Int>): Int = lib.useFetch(b)
+suspend fun doFetch(lib: Lib, b: Box<Int>): Int = with(lib) { b.fetch() }   // suspend member ext via with() (scope-fn CPS)
 suspend fun doHidden(lib: Lib, b: Box<Int>): Int = lib.useHidden(b)
 fun main() {
     val lib = Lib(10)
@@ -355,7 +355,7 @@ fun main() {
         println(last)             // 15
     }
     println(lib.peek(Box(2)))                       // 1002 (protected member ext property)
-    println(runBlocking { doFetch(lib, Box(5)) })   // 15   (suspend member ext via helper)
+    println(runBlocking { doFetch(lib, Box(5)) })   // 15   (suspend member ext consumed via with(lib){ b.fetch() })
     println(runBlocking { doHidden(lib, Box(2)) })  // 210  (protected suspend member ext via helper)
 }
 EOF

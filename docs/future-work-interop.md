@@ -124,15 +124,14 @@ dispatch して拡張レシーバを先頭に付与。facadegen がメンバ `fu
 `get_p(__self)`/`set_p(__self,v)` メンバアクセサを運び、injector が拡張レシーバ付きメンバプロパティとして復元、`with(c)` 内の
 `x.p` 読書は C の `get_`/`set_` に拡張レシーバを先頭付与してルーティング。`verify-roundtrip.sh`（roundtrip-memext2）。
 
-**`suspend` メンバ拡張の往復も成立**（2026-06-24）: `class C { suspend fun T.f() }`（public+protected）。**一般の coroutine バグ
-も修正**: 状態機械が top-level 型だったため、本体が owner の protected/private メンバに触れると SM から `MethodAccessException` に
-なっていた→**SM を owner にネスト**（非ジェネリック owner）して到達可能に。消費は「往復ライブラリが通常 suspend メンバで公開→
-呼び手が await」の形。`verify-roundtrip.sh`（roundtrip-memext2）。
+**`suspend` メンバ拡張の往復も成立**（2026-06-24）: `class C { suspend fun T.f() }`（public+protected）を自然な
+`with(c){ x.f() }` で消費。2つの一般 coroutine 修正で実現: ①状態機械が top-level 型で owner の protected/private に触れると
+`MethodAccessException`→**SM を owner にネスト**（非ジェネリック owner）して到達可能に。②**inline スコープ関数内の suspend 呼び出し**
+（`with(x){ f() }`・`run`/`let`/`apply`/`also`）を**状態機械へ CPS 線形化**（旧 `InvalidProgram`）: スコープのレシーバを SM フィールドに
+束縛、`this`/`it` を置換、ラムダ本体の suspend を本物の await ポイントに（ネストしたスコープ関数・suspend 引数・複数文本体も対応）。
+`verify-roundtrip.sh`（roundtrip-memext2）。残: スコープ関数を**部分式**で使う（`c.apply{ f() }.x`）はクリーンエラー（先に `val` に束縛）。
 
 **残る既知の限界**（往復のブロッカーではない・いずれもソース位置付きクリーンエラー）:
-- **スコープ関数内の suspend 呼び出し**（`with(x){ f() }`・`run`/`let`/`apply`/`also` のラムダ内で suspend を直接呼ぶ）—
-  **メンバ拡張固有ではない一般の coroutine 限界**（平の suspend 呼び出しでも同じ）。スコープ関数は valueBlock にインライン化されるが
-  CPS linearizer がそこへ降りないため未 await（旧 `InvalidProgram`）。スコープブロックの外で呼ぶか、本体を別 `suspend fun` に切り出す。
 - **コンテキストレシーバ/パラメータ**（`context(B) fun A.f()`）— フロントエンドが実験的機能として拒否（`-Xcontext-parameters` 必須）。
   「優勝」級の `protected inline suspend fun <reified T> ...context(B)...` はそもそもコンパイルされない。
 - デフォルト引数の**名前付き中間省略**（`copy(y=5)`）・**object シングルトン**。

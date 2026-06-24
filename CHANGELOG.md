@@ -138,14 +138,16 @@ All identified round-trip gaps resolved; guarded by `scripts/verify-roundtrip.sh
   `memextprop` metadata line carries the `get_p(__self)`/`set_p(__self, v)` member accessors; the injector restores a
   member property with an extension receiver, and a `x.p` read/write inside `with(c)` routes to C's `get_`/`set_` method
   with the extension receiver prepended.
-- **Suspend member extensions** (`class C { suspend fun T.f() }`) — public + protected. Fixes a **general** coroutine
-  bug: a `suspend fun`'s state machine was a top-level type and so threw `MethodAccessException` when its body touched a
-  `protected`/`private` member of the owner; the SM is now **nested in its owner** (non-generic owners), which can reach
-  those members. Consumed via a normal suspend member the caller awaits. Guarded by `scripts/verify-roundtrip.sh`
-  (roundtrip-memext2). Known **general** coroutine limitation (NOT member-extension-specific — it hits a plain suspend
-  call too): a suspending call **directly inside a scope function** (`with(x){ f() }`, `run`/`let`/`apply`/`also`) isn't
-  threaded through the state machine and is now a **source-located compile error** (was a silent `InvalidProgram`); call
-  the suspend fun outside the scope block, or extract the body into its own `suspend fun`.
+- **Suspend member extensions** (`class C { suspend fun T.f() }`) — public + protected, consumed via the natural
+  `with(c) { x.f() }`. Two general coroutine fixes enable it: (1) a `suspend fun`'s state machine was a top-level type
+  and so threw `MethodAccessException` when its body touched a `protected`/`private` member of the owner — the SM is now
+  **nested in its owner** (non-generic owners), which can reach those members; (2) a **suspending call inside an inline
+  scope function** (`with(x){ f() }`, `run`/`let`/`apply`/`also`) is now **CPS-linearized through the state machine**
+  instead of emitting an un-awaited `Task` (was a silent `InvalidProgram`). The scope function's receiver is bound to a
+  state-machine field, `this`/`it` is substituted, and the lambda body's suspensions become real await points (handles
+  nested scope functions, suspending args, and multi-statement bodies). Guarded by `scripts/verify-roundtrip.sh`
+  (roundtrip-memext2). Remaining edge: a scope function used as a **sub-expression** (`c.apply{ f() }.x`) is a clean
+  compile error — bind it to a `val` first.
 - **Namespace projection** (`[assembly: DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]`) — a DotKt library whose
   types live in one .NET namespace (e.g. `DotKt.Coroutines`) can be consumed under a different Kotlin package (e.g.
   `import kotlinx.coroutines.*`). The producer stamps it via `ilemit --ns-projection k=d` (SDK: a `<DotKtNamespaceProjection>`

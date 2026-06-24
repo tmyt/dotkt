@@ -386,6 +386,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	private val SCOPE_FUNCTIONS = setOf("kotlin.let", "kotlin.run", "kotlin.with", "kotlin.apply", "kotlin.also")
 
+	/** A scope-function call (`with(c){…}`, `c.let/run/apply/also {…}`) -> (fqName, receiver, lambda). These are INLINE,
+	 *  so a suspension in the lambda body is the ENCLOSING coroutine's — the CPS path linearizes them (emitScopeCps). */
+	private fun scopeCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? {
+		val call = e as? IrCall ?: return null
+		val fq = call.symbol.owner.fqNameWhenAvailable?.asString() ?: return null
+		if (fq !in SCOPE_FUNCTIONS) return null
+		val isWith = fq == "kotlin.with"
+		val recv = (if (isWith) regularArgs(call).getOrNull(0) else extensionReceiver(call)) ?: return null
+		val lambda = (if (isWith) regularArgs(call).getOrNull(1) else regularArgs(call).getOrNull(0)) as? IrFunctionExpression ?: return null
+		return Triple(fq, recv, lambda)
+	}
+
+	/** A scope-function call whose lambda body DIRECTLY contains a suspension (so it must be CPS-inlined, not rendered
+	 *  as a value-block). The receiver expression is checked too (`with(suspendExpr()){…}`). */
+	private fun scopeSuspendCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? =
+		scopeCall(e)?.takeIf { (_, recv, lambda) -> lambda.function.body?.let { containsSuspend(it) } == true || containsSuspend(recv) }
+
 	fun emitFile(file: IrFile): String {
 		fileEntry = file.fileEntry
 		// Per-FILE lifted state. One BirEmitter instance processes every file in turn, so these MUST be reset here —
@@ -911,7 +928,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		e.acceptVoid(object : IrVisitorVoid() {
 			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
 				if (found) return
-				// A nested lambda / local fun is a SEPARATE coroutine — its suspensions are not the enclosing one's.
+				// A scope function (`with`/`run`/`let`/`apply`/`also`) is INLINE -> a suspension in its lambda IS the
+				// enclosing coroutine's. Descend into the lambda body (the receiver/other children are visited normally).
+				scopeCall(element)?.let { (_, _, lambda) -> lambda.function.body?.let { if (containsSuspend(it)) { found = true; return } } }
+				if (found) return
+				// A non-inline nested lambda / local fun is a SEPARATE coroutine — its suspensions aren't the enclosing one's.
 				if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
 				if (isSuspensionCall(element)) { found = true; return }
 				element.acceptChildrenVoid(this)
@@ -1053,6 +1074,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			is IrVariable -> {
 				val init = stmt.initializer
 				when {
+					init != null && scopeSuspendCall(init) != null -> emitCpsValue(init, ret, steps, stmt.name.asString(), false)
 					init != null && isSuspensionCall(init) -> emitSuspend(init as IrCall, stmt.name.asString(), steps)
 					init != null && containsSuspend(init) -> { spillExpr(init, steps); steps.add(stmt(stmt)) }
 					else -> steps.add(stmt(stmt))   // sync var; ilemit redirects a cpsField name to a field store
@@ -1061,6 +1083,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			is IrReturn -> {
 				val v = stmt.value
 				when {
+					scopeSuspendCall(v) != null -> emitCpsValue(v, ret, steps, null, true)
 					isSuspensionCall(v) -> {
 						val t = coFresh()
 						emitSuspend(v as IrCall, t, steps)
@@ -1081,6 +1104,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			is IrBlock -> if (containsSuspend(stmt)) stmt.statements.forEach { emitCps(it, ret, steps) } else steps.add(stmt(stmt))
 			is IrComposite -> if (containsSuspend(stmt)) stmt.statements.forEach { emitCps(it, ret, steps) } else steps.add(stmt(stmt))
 			is IrCall -> when {
+				scopeSuspendCall(stmt) != null -> emitScopeCps(scopeSuspendCall(stmt)!!, ret, steps, null, false)   // discard result
 				isSuspensionCall(stmt) -> emitSuspend(stmt, null, steps)
 				containsSuspend(stmt) -> { spillExpr(stmt, steps); steps.add("""{"k":"exprStmt","expr":${expr(stmt)}}""") }
 				else -> steps.add("""{"k":"exprStmt","expr":${expr(stmt)}}""")
@@ -1099,6 +1123,68 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	private fun coReturnJson(ret: IrType, value: String): String =
 		if (ret.isUnit()) """{"k":"coReturn","value":null}""" else """{"k":"coReturn","value":$value}"""
+
+	/** Emit `assignTo = e` (assignTo a CPS field name) — or `return e` (assignTo==null, isReturn) — as coroutine steps,
+	 *  routing a suspending value (incl. a scope-function call) through the state machine. Shared by emitCps/emitScopeCps. */
+	private fun emitCpsValue(e: IrExpression, ret: IrType, steps: MutableList<String>, assignTo: String?, isReturn: Boolean) {
+		fun store(json: String) = when {
+			assignTo != null -> steps.add("""{"k":"var","name":${str(assignTo)},"type":${str(birType(e.type))},"init":$json}""")
+			ret.isUnit() || e.type.isUnit() -> { steps.add("""{"k":"exprStmt","expr":$json}"""); steps.add("""{"k":"coReturn","value":null}""") }
+			else -> steps.add(coReturnJson(ret, json))
+		}
+		when {
+			scopeSuspendCall(e) != null -> emitScopeCps(scopeSuspendCall(e)!!, ret, steps, assignTo, isReturn)
+			isSuspensionCall(e) -> {
+				// `add(plain())`: spill the suspending args/receiver first (no-op if none), THEN await the call itself.
+				spillExpr(e, steps)
+				if (assignTo != null) emitSuspend(e as IrCall, assignTo, steps)
+				else { val t = coFresh(); emitSuspend(e as IrCall, t, steps); store0Local(t, e.type, ret, steps, isReturn) }
+			}
+			containsSuspend(e) -> { spillExpr(e, steps); store(expr(e)) }
+			else -> store(expr(e))
+		}
+	}
+
+	/** Return/forward an already-spilled suspend temp `t` (only the return case reaches here). */
+	private fun store0Local(t: String, ty: IrType, ret: IrType, steps: MutableList<String>, isReturn: Boolean) {
+		if (ret.isUnit() || ty.isUnit()) steps.add("""{"k":"coReturn","value":null}""")
+		else steps.add(coReturnJson(ret, """{"k":"local","name":${str(t)}}"""))
+	}
+
+	/** Inline a suspend-bearing scope function (`with(c){…}`, `c.run/let/apply/also {…}`) into the coroutine step list:
+	 *  bind the receiver to a CPS field, substitute `this`/`it`, linearize the lambda body (so inner suspensions become
+	 *  real await steps), then hand the result (last expr, or the receiver for apply/also) to emitCpsValue. */
+	private fun emitScopeCps(sc: Triple<String, IrExpression, IrFunctionExpression>, ret: IrType, steps: MutableList<String>, assignTo: String?, isReturn: Boolean) {
+		val (fq, recvExpr, lambda) = sc
+		val fn = lambda.function
+		val vname = "__coscope${coLabelN++}"
+		coSpillFields.add(vname to recvExpr.type); coFields = coFields + vname   // a CPS field: survives the body's suspensions
+		if (containsSuspend(recvExpr)) spillExpr(recvExpr, steps)
+		steps.add("""{"k":"var","name":${str(vname)},"type":${str(birType(recvExpr.type))},"init":${expr(recvExpr)}}""")
+		val recvParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+		val itParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
+		recvParam?.let { selfSubst[it] = """{"k":"local","name":${str(vname)}}""" }
+		itParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(vname)}}""" }
+		val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
+		val returnsRecv = fq == "kotlin.apply" || fq == "kotlin.also"
+		if (returnsRecv) {
+			stmts.forEach { if (it !is IrReturn) emitCps(it, ret, steps) }
+			recvParam?.let { selfSubst.remove(it) }; itParam?.let { valSubst.remove(it.name.asString()) }
+			// result = the receiver field
+			val recvLocal = """{"k":"local","name":${str(vname)}}"""
+			when {
+				assignTo != null -> steps.add("""{"k":"var","name":${str(assignTo)},"type":${str(birType(recvExpr.type))},"init":$recvLocal}""")
+				isReturn -> steps.add(coReturnJson(ret, recvLocal))
+			}
+		} else {
+			stmts.dropLast(1).forEach { emitCps(it, ret, steps) }
+			val last = stmts.lastOrNull()
+			val lastE = when (last) { is IrReturn -> last.value; is IrExpression -> last; else -> { last?.let { emitCps(it, ret, steps) }; null } }
+			if (lastE != null) emitCpsValue(lastE, ret, steps, assignTo, isReturn)
+			else if (isReturn) steps.add("""{"k":"coReturn","value":null}""")
+			recvParam?.let { selfSubst.remove(it) }; itParam?.let { valSubst.remove(it.name.asString()) }
+		}
+	}
 
 	private fun coUnsupported(of: String): String = """{"k":"coUnsupported","of":${str(of)}}"""
 
@@ -1921,13 +2007,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 */
 	private fun inlineScope(fq: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
 		val fn = lambda.function
-		// A suspending call DIRECTLY inside a scope-function lambda isn't threaded through the coroutine state machine
-		// (the scope fn inlines to a value-block, and the CPS linearizer doesn't descend into it) -> reject cleanly
-		// rather than emit an un-awaited Task (InvalidProgram). Workaround: call the suspend fun outside the scope
-		// block, or wrap the body in its own `suspend fun`. (A general coroutine limitation, not scope-fn-specific.)
+		// A suspending call inside a scope-function lambda is CPS-linearized in STATEMENT position (emitScopeCps) — but
+		// reaching here means the scope fn is in a SUB-EXPRESSION position (e.g. `c.apply{ s() }.x`), which inlines to a
+		// value-block the CPS path can't open. Reject cleanly (rare). Workaround: bind it to a `val` first.
 		if (fn.body?.let { containsSuspend(it) } == true)
-			return unsupported(lambda, "a suspending call inside a `${fq.substringAfterLast('.')}` scope function",
-				"it isn't lowered through the coroutine state machine yet — call the suspend function outside the scope block, or extract the body into its own `suspend fun`")
+			return unsupported(lambda, "a suspending call inside a `${fq.substringAfterLast('.')}` scope function used as a sub-expression",
+				"bind the scope-function result to a `val` first (it's CPS-linearized in statement position), or extract the body into its own `suspend fun`")
 		val vname = "__scope${scopeCounter++}"
 		val recvInit = expr(recvExpr)   // emit the receiver expression before binding `it`/`this`
 		val recvParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
