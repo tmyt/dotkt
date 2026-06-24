@@ -32,8 +32,9 @@ kt ktproj-inject "cases/ktproj-inject/inject.ktproj" \
 	"no-facade via import scan; abs(-5)=5"
 
 # FORWARD ProjectReference + AssemblyResolver + .NET event subscription from a referenced C# project.
+# Also: assign a plain Boolean to the C# `bool?` (Nullable<bool>) property Enabled — facadegen maps Nullable<X> -> X?.
 kt ktproj-extlib "cases/ktproj-extlib/app.ktproj" \
-	"$(printf 'Add(2,3) = 5\nchanged: 5\nchanged: 9')"
+	"$(printf 'Add(2,3) = 5\nenabled: True\nchanged: 5\nchanged: 9')"
 
 # BIDIRECTIONAL ProjectReference (R-1): cslib.csproj <- klib.ktproj <- app.csproj in one graph.
 # forward = Kotlin imports the C# Theme.Palette; reverse = C# consumes the Kotlin Greeter + its List<String>

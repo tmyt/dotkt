@@ -1026,6 +1026,14 @@ static class FacadeGen
         // A .NET `Span<T>` parameter -> the intrinsic `Span<T>` (meta `span:T`); the caller can pass `buf.asSpan()`.
         if (t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Span`1")
             return "span:" + Map(t.GetGenericArguments()[0], self);
+        // A .NET `X?` (Nullable<X>, a nullable value type — e.g. WinUI CheckBox.IsChecked is `bool?`) -> Kotlin's
+        // nullable form `X?`, NOT the literal generic `Nullable<X>` (Kotlin treats that as a distinct type, so a plain
+        // `X` couldn't be assigned to it). The backend already represents a value-type `X?` as System.Nullable<X>.
+        if (t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Nullable`1")
+        {
+            var inner = Map(t.GetGenericArguments()[0], self);
+            return inner == "Any?" ? "Any?" : inner + "?";
+        }
         // (4) A .NET delegate type -> a Kotlin function type `func:<ret>:<arg>,<arg>` (meta/injection path only).
         // A lambda then binds to the delegate parameter and overloads disambiguate by arity; the backend builds the
         // SPECIFIC delegate from the parameter type resolved at the call site (so the delegate name isn't needed in
