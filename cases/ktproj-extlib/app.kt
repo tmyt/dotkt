@@ -4,6 +4,10 @@ import Ext.Widget
 fun main() {
 	val w = Widget("gadget")
 	println("Add(2,3) = ${w.Add(2, 3)}")
+	// Widget.Name is a .NET reference type from a NON-NRT (oblivious) assembly -> Kotlin PLATFORM type `String!`,
+	// usable without null ceremony (and freely assignable to String?). Exercises the injector's ConeFlexibleType.
+	val name: String = w.Name
+	println("name: $name (len ${name.length})")
 	w.Enabled = true                                 // assign a plain Boolean to a .NET `bool?` property (Nullable<bool>)
 	println("enabled: ${w.Enabled}")
 	w.add_Changed { n -> println("changed: $n") }   // .NET event += Kotlin handler

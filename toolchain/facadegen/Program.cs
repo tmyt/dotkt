@@ -280,7 +280,7 @@ static class FacadeGen
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType) || !p.CanRead || !iseen.Add("prop:" + p.Name)) continue;
-                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} abstract\n");
+                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p, t)} {(p.CanWrite ? "rw" : "ro")} abstract\n");
                 }
                 var iix = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .FirstOrDefault(p => p.GetIndexParameters().Length == 1
@@ -352,7 +352,7 @@ static class FacadeGen
                     var get = p.GetMethod;
                     var isAbstract = get?.IsAbstract ?? false;
                     var virt = (get?.IsVirtual ?? false) && !(get?.IsFinal ?? false);
-                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} {Modifier(prot.Value, isAbstract, virt)}\n");
+                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p, t)} {(p.CanWrite ? "rw" : "ro")} {Modifier(prot.Value, isAbstract, virt)}\n");
                 }
                 // DotKt round-trip: a Kotlin property's BACKING FIELD is emitted as a plain public field (no .NET
                 // PropertyDef), and a CUSTOM-ACCESSOR property as `get_X`/`set_X` methods. Surface both as Kotlin `prop`s
@@ -375,7 +375,7 @@ static class FacadeGen
                     var setter = t.GetMethods(IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn && m.GetParameters().Length == 1 && Vis(m) != null);
                     accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
                     var pv = Vis(g).Value;
-                    sb.Append($"prop {pn} {MapRet(g.ReturnType, t)} {(setter != null ? "rw" : "ro")} {Modifier(pv, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
+                    sb.Append($"prop {pn} {MapRet(g.ReturnType, t)}{RetSuffix(g, t, KotlinNullMask(g))} {(setter != null ? "rw" : "ro")} {Modifier(pv, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
                 }
                 // MEMBER extension properties (`class C { val T.p get() }`): their accessors are `get_X(__self)` /
                 // `set_X(__self, v)` member methods (a leading `__self` extension receiver, so the 0-param loop above
@@ -391,7 +391,7 @@ static class FacadeGen
                     var setter = t.GetMethods(IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn
                         && m.GetParameters().Length == 2 && m.GetParameters()[0].Name == "__self" && Vis(m) != null);
                     accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
-                    sb.Append($"memextprop {pn} {MapRet(g.ReturnType, t)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)} {Modifier(prot.Value, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
+                    sb.Append($"memextprop {pn} {MapRet(g.ReturnType, t)}{RetSuffix(g, t, KotlinNullMask(g))} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)} {Modifier(prot.Value, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
                 }
                 // Events (I4). `event <Name> <handlerRetKType> <handlerParams...>` from the delegate's Invoke.
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
@@ -426,7 +426,7 @@ static class FacadeGen
                         sb.Append($"sprop {f.Name} {Map(f.FieldType, t)} ro\n");
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
                     if (p.GetIndexParameters().Length == 0 && Supported(p.PropertyType) && p.CanRead && seen.Add("sprop:" + p.Name))
-                        sb.Append($"sprop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")}\n");
+                        sb.Append($"sprop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p, t)} {(p.CanWrite ? "rw" : "ro")}\n");
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
                 {
                     if (m.IsSpecialName || OBJECT_MEMBERS.Contains(m.Name) || m.IsGenericMethod) continue;
@@ -447,7 +447,7 @@ static class FacadeGen
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
                 {
                     if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType) || !p.CanRead || !seen.Add("sprop:" + p.Name)) continue;
-                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} final\n");
+                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p, t)} {(p.CanWrite ? "rw" : "ro")} final\n");
                 }
             }
             var flags = BindingFlags.Public | BindingFlags.NonPublic | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
@@ -473,7 +473,7 @@ static class FacadeGen
                 // — the modifier stays a single whitespace-free token; bare trailing tokens (no `:`) are type params.
                 var virt = m.IsVirtual && !m.IsFinal;
                 var nmask = KotlinNullMask(m);   // Kotlin nullability ([KotlinNullable]): `?` on return (bit 0) / params (bit i+1)
-                var retTok = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + NullSuffix(nmask, 0);
+                var retTok = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + RetSuffix(m, t, nmask);
                 // A MEMBER extension function (`class C { fun T.f() }`) -> first param `__self`; `,ext` so the injector
                 // restores the extension receiver. `,inline` carries the spliceable body (composes with suspend/generic).
                 var isExt = ps.Length > 0 && ps[0].Name == "__self";
@@ -506,7 +506,7 @@ static class FacadeGen
                 {
                     if (p.GetIndexParameters().Length > 0 || !p.CanRead || !Supported(p.PropertyType)) continue;
                     if (pubProps.Contains(p.Name) || !seen.Add("prop:" + p.Name)) continue;
-                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)} {(p.CanWrite ? "rw" : "ro")} final\n");
+                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p, t)} {(p.CanWrite ? "rw" : "ro")} final\n");
                 }
                 foreach (var m in i.GetMethods())
                 {
@@ -782,6 +782,64 @@ static class FacadeGen
     }
     static string NullSuffix(uint mask, int bit) => ((mask >> bit) & 1) != 0 ? "?" : "";
 
+    // Is `t` from a DotKt-emitted assembly? (It embeds the DotKt.Runtime.CompilerServices.* attribute types.) For those
+    // we trust the [KotlinNullable] mask; for any OTHER .NET assembly we read .NET's own nullable-reference metadata.
+    static readonly Dictionary<Assembly, bool> _dotktAsm = new();
+    static bool IsDotKtAsm(Type t)
+    {
+        var a = t.Assembly;
+        if (_dotktAsm.TryGetValue(a, out var v)) return v;
+        bool dk; try { dk = a.GetType("DotKt.Runtime.CompilerServices.KotlinFileClassAttribute") != null; } catch { dk = false; }
+        return _dotktAsm[a] = dk;
+    }
+
+    // .NET nullable-reference metadata (NRT): the C# compiler stamps [Nullable(b)] per element (1=not-null, 2=nullable,
+    // 0=oblivious; a byte[] for nested generics, top level is [0]) and [NullableContext(b)] as a method/type default.
+    static byte NrtByteOf(IList<CustomAttributeData> attrs)
+    {
+        foreach (var c in attrs)
+            if (c.AttributeType.FullName == "System.Runtime.CompilerServices.NullableAttribute" && c.ConstructorArguments.Count == 1)
+            {
+                var a = c.ConstructorArguments[0];
+                if (a.Value is byte b) return b;
+                if (a.Value is IReadOnlyList<CustomAttributeTypedArgument> arr && arr.Count > 0 && arr[0].Value is byte b0) return b0;
+            }
+        return 255; // no [Nullable] on this element
+    }
+    static byte NrtContextOf(MemberInfo m)
+    {
+        for (MemberInfo cur = m; cur != null; cur = cur.DeclaringType)
+            foreach (var c in CustomAttributeData.GetCustomAttributes(cur))
+                if (c.AttributeType.FullName == "System.Runtime.CompilerServices.NullableContextAttribute"
+                    && c.ConstructorArguments.Count == 1 && c.ConstructorArguments[0].Value is byte b) return b;
+        return 0; // no context -> oblivious (the assembly didn't opt into NRT)
+    }
+
+    // The nullability suffix on a REFERENCE-type position's token: "" non-null, "?" nullable, "!" platform/flexible
+    // (the .NET type carries no nullability info, à la Kotlin/JVM's `T!`). Value types / byref / generic params get no
+    // suffix — a value-type `X?` is the structural `Nullable<X>` token, and generics resolve via the type system.
+    static string RefSuffix(Type t, IList<CustomAttributeData> elementAttrs, MemberInfo context, bool isDotKt, uint kotlinMask, int bit)
+    {
+        // For a DotKt-emitted assembly the [KotlinNullable] mask is authoritative for EVERY position (incl. a nullable
+        // generic param `T?`) — preserve the exact prior behavior. The reference-type guard + NRT decode only gate the
+        // third-party path (NRT marks reference types; a value-type `X?` is already the structural Nullable<X> token).
+        if (isDotKt) return ((kotlinMask >> bit) & 1) != 0 ? "?" : "";
+        if (t.IsValueType || t.IsByRef || t.IsPointer || t.IsGenericParameter) return "";
+        byte b = NrtByteOf(elementAttrs);
+        if (b == 255) b = NrtContextOf(context);
+        return b == 2 ? "?" : b == 0 ? "!" : "";
+    }
+
+    // The nullability suffix for a method/getter RETURN value (its [Nullable] lives on the return parameter).
+    static string RetSuffix(MethodInfo m, Type self, uint nmask) =>
+        RefSuffix(m.ReturnType, CustomAttributeData.GetCustomAttributes(m.ReturnParameter), m, IsDotKtAsm(self), nmask, 0);
+
+    // The nullability suffix for a .NET property (third-party: NRT [Nullable] sits on the property; DotKt: the
+    // [KotlinNullable] mask sits on its getter).
+    static string PropSuffix(PropertyInfo p, Type self) =>
+        RefSuffix(p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p, IsDotKtAsm(self),
+                  p.GetMethod != null ? KotlinNullMask(p.GetMethod) : 0u, 0);
+
     const string KInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     // The carried BIR body of an inline+lambda fn ([KotlinInline]), or null. Splice-able by a consuming module.
     static string KotlinInlineBody(MethodInfo m)
@@ -835,7 +893,7 @@ static class FacadeGen
                 .FirstOrDefault(s => !s.IsSpecialName && s.Name == "set_" + pn && s.GetParameters().Length == 2 && s.GetParameters()[0].Name == "__self");
             extPropMembers.Add(g.Name); if (setter != null) extPropMembers.Add(setter.Name);
             var nm = KotlinNullMask(g);
-            sb.Append($"tlextprop {pn} {MapRet(g.ReturnType, t)}{NullSuffix(nm, 0)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)}\n");
+            sb.Append($"tlextprop {pn} {MapRet(g.ReturnType, t)}{RetSuffix(g, t, nm)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)}\n");
         }
         foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
@@ -848,7 +906,7 @@ static class FacadeGen
             if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
             if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
             var nmask = KotlinNullMask(m);   // Kotlin nullability ([KotlinNullable]): `?` on return (bit 0) / params (bit i+1)
-            var ret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + NullSuffix(nmask, 0);
+            var ret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + RetSuffix(m, t, nmask);
             // `,inline` tells the injector to mark the fn `inline` (so a non-local return through the lambda is accepted);
             // the body itself stays in the assembly's [KotlinInline] and is read by the consumer's ilemit at splice time.
             // An extension fun's receiver is emitted as the first param `__self` (DotKt convention) -> mark `,ext` so the
@@ -879,8 +937,10 @@ static class FacadeGen
     // injector restores a `vararg <name>: <elem>` (a cross-module consumer can then call `f(1, 2, 3)`).
     static string ParamTok(ParameterInfo p, int i, Type self, uint nmask = 0)
     {
-        // `?` (nullable) rides the END of the type token (the injector strips it); param i is bit (i+1) of the mask.
-        var nul = NullSuffix(nmask, i + 1);
+        // The nullability suffix (`?` nullable / `!` platform) rides the END of the type token (the injector strips it).
+        // DotKt-emitted assemblies carry it in the [KotlinNullable] mask (bit i+1); any other .NET assembly carries it in
+        // the standard NRT metadata read by RefSuffix.
+        var nul = RefSuffix(p.ParameterType, CustomAttributeData.GetCustomAttributes(p), p.Member as MemberInfo, IsDotKtAsm(self), nmask, i + 1);
         if (p.ParameterType.IsArray && IsParamArray(p))
             return $"{MetaParamName(p, i)}:vararg:{Map(p.ParameterType.GetElementType(), self)}{nul}";
         var t = Map(p.ParameterType, self);

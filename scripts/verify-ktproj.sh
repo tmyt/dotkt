@@ -33,8 +33,9 @@ kt ktproj-inject "cases/ktproj-inject/inject.ktproj" \
 
 # FORWARD ProjectReference + AssemblyResolver + .NET event subscription from a referenced C# project.
 # Also: assign a plain Boolean to the C# `bool?` (Nullable<bool>) property Enabled — facadegen maps Nullable<X> -> X?.
+# Also: consume Widget.Name, a reference type from a NON-NRT assembly -> platform type String! (injector flexible type).
 kt ktproj-extlib "cases/ktproj-extlib/app.ktproj" \
-	"$(printf 'Add(2,3) = 5\nenabled: True\nchanged: 5\nchanged: 9')"
+	"$(printf 'Add(2,3) = 5\nname: gadget (len 6)\nenabled: True\nchanged: 5\nchanged: 9')"
 
 # BIDIRECTIONAL ProjectReference (R-1): cslib.csproj <- klib.ktproj <- app.csproj in one graph.
 # forward = Kotlin imports the C# Theme.Palette; reverse = C# consumes the Kotlin Greeter + its List<String>

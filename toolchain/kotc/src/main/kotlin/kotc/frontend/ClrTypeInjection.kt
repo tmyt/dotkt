@@ -41,6 +41,8 @@ import org.jetbrains.kotlin.fir.expressions.builder.buildLiteralExpression
 import org.jetbrains.kotlin.types.ConstantValueKind
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.coneType
+import org.jetbrains.kotlin.fir.types.ConeFlexibleType
+import org.jetbrains.kotlin.fir.types.ConeRigidType
 import org.jetbrains.kotlin.fir.types.constructType
 import org.jetbrains.kotlin.fir.types.typeContext
 import org.jetbrains.kotlin.fir.types.withNullability
@@ -766,6 +768,15 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	private fun coneOf(typeName: String, owner: FirClassSymbol<*>?, tv: ((String) -> ConeKotlinType?)? = null): ConeKotlinType {
 		// A trailing `?` -> the Kotlin nullable form `T?` (so a consumer can pass/handle null). Carried by [KotlinNullable].
 		if (typeName.endsWith("?")) return coneOf(typeName.dropLast(1), owner, tv).withNullability(true, session.typeContext)
+		// A trailing `!` -> a Kotlin PLATFORM (flexible) type `T!` = (T..T?): the .NET reference type carried NO nullability
+		// metadata (an assembly that never opted into NRT), so we neither force non-null nor nullable — the consumer
+		// decides, exactly as Kotlin/JVM treats un-annotated Java. Modeled as ConeFlexibleType(lower = T, upper = T?).
+		if (typeName.endsWith("!")) {
+			val lower = coneOf(typeName.dropLast(1), owner, tv)
+			val upper = lower.withNullability(true, session.typeContext)
+			if (lower is ConeRigidType && upper is ConeRigidType) return ConeFlexibleType(lower, upper, false)
+			return lower
+		}
 		// `opt:T=<const>` marks a default-arg param: the type is T (the `=<const>` default value is applied separately
 		// via applyDefaults -> replaceDefaultValue). Strip both the prefix and the trailing `=<const>`.
 		if (typeName.startsWith("opt:")) return coneOf(typeName.removePrefix("opt:").substringBefore('='), owner, tv)
