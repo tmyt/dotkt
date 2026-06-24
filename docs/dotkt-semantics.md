@@ -102,7 +102,22 @@ by `DotKt.Metadata` attributes and restored on the consumer's FIR; the rest roun
 
 Deep dive: `docs/design-kotlin-metadata-attributes.md`.
 
-## 7. Reverse / cross-assembly interop
+## 7. Default arguments are filled at the CALL site (constants only)
+
+Kotlin's default arguments are semantically **callee-side** (the default expression is evaluated inside the function, in
+its scope) — Kotlin/JVM implements this with a synthetic `f$default(…, mask)` method. The .NET backend instead fills an
+omitted argument by **inlining the default expression at the call site** (like C#'s `[Optional]`/`[DefaultParameterValue]`,
+which it also emits, so C#/VB/F# consumers get the defaults natively). Consequences:
+
+- **Constant defaults work everywhere** — including named-middle and reordered omission (`greet("C", punct = "?")`,
+  `box(1, c = 9)`, `Pt(y = 4)`): call-site inlining and caller-side evaluation agree for a constant.
+- **A non-constant default that references the callee's own parameters/receiver is rejected** at the omitting call with
+  a clean source-located error (`b: Int = a * 10`; a data class `copy`'s `x = this.x` when you write `p.copy(y = 9)`).
+  `a`/`this` aren't in scope at the call site, so it can't be inlined there — it needs callee-side evaluation, which the
+  backend doesn't do yet. Rejected at the **call** (not the declaration): a data class always *declares* `copy` with
+  `this.x` defaults, but compiles fine as long as you don't arg-omit `copy`.
+
+## 8. Reverse / cross-assembly interop
 
 - A DotKt assembly is a first-class .NET assembly; C# can reflection-load it. For **compile-time** `<Reference>`/
   `<ProjectReference>`, the emitted BCL `TypeRef`s (all scoped to the single `System.Private.CoreLib` that
