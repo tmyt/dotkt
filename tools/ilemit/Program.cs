@@ -109,6 +109,7 @@ sealed class Emitter
     // Non-null only while emitting such a MoveNext; `this` then loads this field instead of ldarg.0 (the SM).
     FieldInfo _coThis;
     int _seqCounter;   // unique suffix for emitted sequence{} state-machine types
+    int _smCounter;    // unique suffix for coroutine state-machine types (nested-in-owner to reach protected members)
     // try-around-await: inside a try region of a MoveNext, `ret` is illegal — suspension/return `leave` to the
     // single method exit instead. Depth > 0 while emitting steps between coTryBegin and coTryEnd.
     int _coTryDepth;
@@ -708,9 +709,16 @@ sealed class Emitter
         var steps = m.GetProperty("steps").EnumerateArray().ToList();
 
         // ---- struct SM : IAsyncStateMachine ----
-        var sm = _mod.DefineType(ti.TB.Name + "_" + mb.Name + "__sm",
-            TypeAttributes.Public | TypeAttributes.SequentialLayout | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
-            typeof(ValueType));
+        // Nest the SM in its OWNER (non-generic owners only — a nested type of a generic owner would inherit its
+        // type params): a nested type can reach the owner's PRIVATE/PROTECTED members, so a `suspend fun` whose body
+        // touches a protected member (e.g. a protected member-extension) no longer throws MethodAccessException from
+        // the SM. Generic owners keep the top-level SM (the generic-owner suspend path is unchanged).
+        var smName = (mb.Name + "__sm" + (_smCounter++));
+        var sm = ti.IsGeneric
+            ? _mod.DefineType(ti.TB.Name + "_" + smName,
+                TypeAttributes.Public | TypeAttributes.SequentialLayout | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, typeof(ValueType))
+            : ti.TB.DefineNestedType(smName,
+                TypeAttributes.NestedAssembly | TypeAttributes.SequentialLayout | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, typeof(ValueType));
         sm.AddInterfaceImplementation(iasm);
         var fState = sm.DefineField("<>1__state", typeof(int), FieldAttributes.Public);
         var fBuilder = sm.DefineField("<>t__builder", builderT, FieldAttributes.Public);

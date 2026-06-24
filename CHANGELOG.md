@@ -133,9 +133,19 @@ All identified round-trip gaps resolved; guarded by `scripts/verify-roundtrip.sh
   identity, and a member-extension call dispatches on the enclosing instance with the extension receiver prepended.
   facadegen stamps `,ext`/`,inline` on the member `fun` line; the injector restores the extension receiver on the member
   path (the `fun`-line parser had also been dropping `,ext`/`,inline`). Guarded by `scripts/verify-roundtrip.sh`
-  (roundtrip-memext). **Rejected with a source-located compile error** (not a miscompile): a member extension *property*
-  (`val T.p` in a class) and a *`suspend`* member extension (needs coroutine-state-machine work) — see
-  docs/future-work-interop.md.
+  (roundtrip-memext).
+- **Member-declared extension properties** (`class C { val T.p }`, `var` too) now round-trip — public + protected. A new
+  `memextprop` metadata line carries the `get_p(__self)`/`set_p(__self, v)` member accessors; the injector restores a
+  member property with an extension receiver, and a `x.p` read/write inside `with(c)` routes to C's `get_`/`set_` method
+  with the extension receiver prepended.
+- **Suspend member extensions** (`class C { suspend fun T.f() }`) — public + protected. Fixes a **general** coroutine
+  bug: a `suspend fun`'s state machine was a top-level type and so threw `MethodAccessException` when its body touched a
+  `protected`/`private` member of the owner; the SM is now **nested in its owner** (non-generic owners), which can reach
+  those members. Consumed via a normal suspend member the caller awaits. Guarded by `scripts/verify-roundtrip.sh`
+  (roundtrip-memext2). Known **general** coroutine limitation (NOT member-extension-specific — it hits a plain suspend
+  call too): a suspending call **directly inside a scope function** (`with(x){ f() }`, `run`/`let`/`apply`/`also`) isn't
+  threaded through the state machine and is now a **source-located compile error** (was a silent `InvalidProgram`); call
+  the suspend fun outside the scope block, or extract the body into its own `suspend fun`.
 - **Namespace projection** (`[assembly: DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]`) — a DotKt library whose
   types live in one .NET namespace (e.g. `DotKt.Coroutines`) can be consumed under a different Kotlin package (e.g.
   `import kotlinx.coroutines.*`). The producer stamps it via `ilemit --ns-projection k=d` (SDK: a `<DotKtNamespaceProjection>`

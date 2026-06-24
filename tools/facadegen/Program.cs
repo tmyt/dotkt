@@ -377,6 +377,22 @@ static class FacadeGen
                     var pv = Vis(g).Value;
                     sb.Append($"prop {pn} {MapRet(g.ReturnType, t)} {(setter != null ? "rw" : "ro")} {Modifier(pv, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
                 }
+                // MEMBER extension properties (`class C { val T.p get() }`): their accessors are `get_X(__self)` /
+                // `set_X(__self, v)` member methods (a leading `__self` extension receiver, so the 0-param loop above
+                // skipped them). `memextprop <name> <type> <ro|rw> <receiverType> <prot-?final>`.
+                foreach (var g in t.GetMethods(IM))
+                {
+                    if (g.IsSpecialName || !g.Name.StartsWith("get_")) continue;
+                    var gps = g.GetParameters();
+                    if (gps.Length != 1 || gps[0].Name != "__self" || !Supported(g.ReturnType) || !Supported(gps[0].ParameterType)) continue;
+                    var prot = Vis(g); if (prot == null) continue;
+                    var pn = g.Name.Substring(4);
+                    if (!seen.Add("prop:" + pn)) continue;
+                    var setter = t.GetMethods(IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn
+                        && m.GetParameters().Length == 2 && m.GetParameters()[0].Name == "__self" && Vis(m) != null);
+                    accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
+                    sb.Append($"memextprop {pn} {MapRet(g.ReturnType, t)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)} {Modifier(prot.Value, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
+                }
                 // Events (I4). `event <Name> <handlerRetKType> <handlerParams...>` from the delegate's Invoke.
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
                 {

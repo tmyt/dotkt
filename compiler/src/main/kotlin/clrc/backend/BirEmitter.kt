@@ -669,17 +669,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	private fun accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 		val mname = clrIfaceMemberName(acc) ?: (if (isGetter) "get_" else "set_") + propName
-		// A MEMBER extension property (`class C { val T.p get() }`) has BOTH a dispatch and an extension receiver. Its
-		// read/write lowering (dual-receiver getter call) isn't implemented — report cleanly rather than mis-emit
-		// (a member extension *function* covers the same need). The reported ERROR fails the compile with a location.
-		if (acc.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }) {
-			val node = unsupported(acc, "member extension property `$propName`",
-				"a property with an extension receiver declared inside a class isn't supported yet — use a member extension function")
-			return """{"name":${str(mname)},"static":false,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public","params":[],"ret":${str(if (isGetter) birType(acc.returnType) else "void")},"body":[{"k":"exprStmt","expr":$node}]}"""
-		}
-		val ps = acc.parameters.filter { it.kind == IrParameterKind.Regular }
-			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
+		// A MEMBER extension property (`class C { val T.p get() }`) has BOTH a dispatch and an extension receiver -> the
+		// extension receiver rides a leading `__self` param (mirrors a member extension function); body refs to it
+		// resolve via selfSubst (by identity, so it isn't confused with the dispatch `<this>`).
+		val extRecv = acc.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
+		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
+		val ps = (listOfNotNull(selfParam) + acc.parameters.filter { it.kind == IrParameterKind.Regular }
+			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }).joinToString(",")
 		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		if (extRecv != null) selfSubst.remove(extRecv)
 		val ret = if (isGetter) birType(acc.returnType) else "void"
 		val clrIface = clrIfaceMemberName(acc) != null
 		val virtual = clrIface || acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT
@@ -1021,14 +1020,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// An extension `suspend fun T.f()` -> a static kickoff whose first param `__self` is the receiver, captured
 		// into the state machine like any other param; receiver references (`<this>`) resolve to `__self`.
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-		// A MEMBER suspend extension (`class C { suspend fun T.f() }`, non-static) needs the state machine to thread
-		// BOTH receivers AND reach protected members from the SM — not implemented. Reject cleanly (a non-suspend
-		// member extension or a top-level suspend extension both work). Avoids the InvalidProgram/MethodAccess miscompile.
-		if (extRecv != null && !static) {
-			val node = unsupported(fn, "suspend member extension function `${fn.name.asString()}`",
-				"a `suspend` function with an extension receiver declared inside a class isn't supported yet — use a top-level suspend extension or a non-suspend member extension")
-			return """{"name":${str(fn.name.asString())},"static":false,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public","params":[{"name":"__self","type":${str(birType(extRecv.type))}}],"ret":"clr:System.Threading.Tasks.Task","body":[{"k":"exprStmt","expr":$node}]}"""
-		}
 		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
 		val co = emitCoroutineBody(fn)
 		if (extRecv != null) selfSubst.remove(extRecv)
@@ -1930,6 +1921,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 */
 	private fun inlineScope(fq: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
 		val fn = lambda.function
+		// A suspending call DIRECTLY inside a scope-function lambda isn't threaded through the coroutine state machine
+		// (the scope fn inlines to a value-block, and the CPS linearizer doesn't descend into it) -> reject cleanly
+		// rather than emit an un-awaited Task (InvalidProgram). Workaround: call the suspend fun outside the scope
+		// block, or wrap the body in its own `suspend fun`. (A general coroutine limitation, not scope-fn-specific.)
+		if (fn.body?.let { containsSuspend(it) } == true)
+			return unsupported(lambda, "a suspending call inside a `${fq.substringAfterLast('.')}` scope function",
+				"it isn't lowered through the coroutine state machine yet — call the suspend function outside the scope block, or extract the body into its own `suspend fun`")
 		val vname = "__scope${scopeCounter++}"
 		val recvInit = expr(recvExpr)   // emit the receiver expression before binding `it`/`this`
 		val recvParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
@@ -3222,6 +3220,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (prop != null) {
 				val pn = clrName(prop) ?: prop.name.asString()
 				val recvJson = if (isStatic) "null" else expr(recv!!)
+				// A restored MEMBER extension property (`class C { val T.p }`): no .NET property exists — it's a
+				// `get_p(__self)`/`set_p(__self, v)` method on the dispatch type, the extension receiver as `__self`.
+				extensionReceiver(call)?.let { pExt ->
+					return if (callee === prop.setter)
+						"""{"k":"clrInstance","type":${str(memberType)},"method":${str("set_$pn")},"argTypes":[${str(netType(pExt.type))},${str(netType(regularArgs(call).first().type))}],"ret":"System.Void","recv":$recvJson,"args":[${expr(pExt)},${expr(regularArgs(call).first())}]}"""
+					else """{"k":"clrInstance","type":${str(memberType)},"method":${str("get_$pn")},"argTypes":[${str(netType(pExt.type))}],"ret":${str(netType(callee.returnType))},"recv":$recvJson,"args":[${expr(pExt)}]}"""
+				}
 				return if (callee === prop.setter)
 					"""{"k":"clrPropSet","type":${str(memberType)},"name":${str(pn)},"static":$isStatic,"recv":$recvJson,"value":${expr(regularArgs(call).first())}}"""
 				else """{"k":"clrPropGet","type":${str(memberType)},"name":${str(pn)},"retType":${str(netType(callee.returnType))},"static":$isStatic,"recv":$recvJson}"""
@@ -3391,9 +3396,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val ifaceAcc = clrIfaceMemberName(callee)
 			if (hasCustomAccessor(property) || ifaceAcc != null) {
 				val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
+				// A MEMBER extension property (`class C { val T.p get() }`): dispatch on the enclosing C, but its `get_p`/
+				// `set_p` method takes the extension receiver as a leading `__self` arg -> prepend it.
+				val pExt = extensionReceiver(call)?.let { expr(it) }
 				return if (callee === property.setter)
-					"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "set_" + property.name.asString())},"args":[${expr(regularArgs(call).first())}]}"""
-				else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "get_" + property.name.asString())},"args":[]${retHint('[' in ownerStr, call.type)}}"""
+					"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "set_" + property.name.asString())},"args":[${listOfNotNull(pExt, expr(regularArgs(call).first())).joinToString(",")}]}"""
+				else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "get_" + property.name.asString())},"args":[${pExt ?: ""}]${retHint('[' in ownerStr, call.type)}}"""
 			}
 			return if (callee === property.setter)
 				"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""

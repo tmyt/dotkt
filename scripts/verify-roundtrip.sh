@@ -278,8 +278,8 @@ fi
 # ----- MEMBER-declared extension functions: `class C { fun T.f() }` consumed via `with(c) { x.f() }` -----
 # Covers the cross-product: plain / infix / operator / inline+generic-method / protected, on a generic user receiver.
 # Restored via the `,ext` marker (the first param `__self` becomes the extension receiver); the consumer dispatches on
-# the enclosing instance with the extension receiver prepended. (A member extension PROPERTY and a SUSPEND member
-# extension are rejected with a source-located compile error — see docs/future-work-interop.md.)
+# the enclosing instance with the extension receiver prepended. (Member extension PROPERTIES and SUSPEND member
+# extensions are covered by the next section.)
 ME="$ROOT/build/roundtrip-memext"; rm -rf "$ME"; mkdir -p "$ME/lib" "$ME/app" "$ME/libbir" "$ME/libil" "$ME/appbir" "$ME/appil"
 cat > "$ME/lib/lib.kt" <<'EOF'
 class Box<T>(val value: T) { fun get(): T = value }
@@ -317,4 +317,59 @@ if [[ "$meactual" == "$meexpected" ]]; then
     echo "PASS  roundtrip-memext (member extension functions: plain/infix/operator/inline-generic/protected, consumed via with)"
 else
     echo "FAIL  roundtrip-memext"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$meexpected" "$meactual"; exit 1
+fi
+
+# ----- MEMBER-declared extension PROPERTIES + SUSPEND member extensions -----
+# Member extension property (`class C { val T.p }`): restored via a `memextprop` meta line (a `get_p(__self)`/
+# `set_p(__self,v)` member method) as a member property with an extension receiver; read/write inside `with(c)` routes
+# to C's get_/set_ with the extension receiver prepended. Suspend member extension (`suspend fun T.f()` in a class):
+# emitted with the SM nested in C (so it reaches PROTECTED members), exposed via a normal suspend member the consumer
+# awaits. Both at public + protected visibility.
+MP="$ROOT/build/roundtrip-memext2"; rm -rf "$MP"; mkdir -p "$MP/lib" "$MP/app" "$MP/libbir" "$MP/libil" "$MP/appbir" "$MP/appil"
+cat > "$MP/lib/lib.kt" <<'EOF'
+class Box<T>(val value: T) { fun get(): T = value }
+open class Lib(val k: Int) {
+    val Box<Int>.lbl: String get() = "lbl:" + (get() + k)        // member extension property (val)
+    var Box<Int>.scaled: Int                                      // member extension property (var)
+        get() = get() * k
+        set(v) { last = v + k }
+    var last: Int = 0
+    protected val Box<Int>.secret: Int get() = get() + 1000      // protected member extension property
+    fun peek(b: Box<Int>): Int = b.secret
+    suspend fun Box<Int>.fetch(): Int = get() + k               // suspend member extension (public)
+    protected suspend fun Box<Int>.hidden(): Int = get() * 100 + k  // protected suspend member ext
+    suspend fun useFetch(b: Box<Int>): Int = b.fetch()         // exposed via a normal suspend member
+    suspend fun useHidden(b: Box<Int>): Int = b.hidden()
+}
+EOF
+cat > "$MP/app/app.kt" <<'EOF'
+import kotlinx.coroutines.runBlocking
+suspend fun doFetch(lib: Lib, b: Box<Int>): Int = lib.useFetch(b)
+suspend fun doHidden(lib: Lib, b: Box<Int>): Int = lib.useHidden(b)
+fun main() {
+    val lib = Lib(10)
+    with(lib) {
+        println(Box(7).lbl)       // lbl:17
+        println(Box(3).scaled)    // 30
+        Box(0).scaled = 5         // last = 15
+        println(last)             // 15
+    }
+    println(lib.peek(Box(2)))                       // 1002 (protected member ext property)
+    println(runBlocking { doFetch(lib, Box(5)) })   // 15   (suspend member ext via helper)
+    println(runBlocking { doHidden(lib, Box(2)) })  // 210  (protected suspend member ext via helper)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$MP/lib" -no-stdlib -classpath "$CP" -d "$MP/libbir" >/dev/null 2>&1
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$MP/libil" KLib --ref "$DOTKT_RT" "$MP/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$MP/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$MP/k.meta" --refs "$REFS$MP/libil/KLib.dll;$DOTKT_RT" Box Lib >/dev/null 2>&1
+CLR_TYPES_METADATA="$MP/k.meta" "$LAUNCHER" "$MP/app" -no-stdlib -classpath "$CP" -d "$MP/appbir" >/dev/null 2>&1
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$MP/appil" KApp --ref "$MP/libil/KLib.dll" --ref "$DOTKT_RT" "$MP/appbir"/*.bir.json >/dev/null 2>&1
+cp "$MP/libil/KLib.dll" "$DOTKT_RT" "$MP/appil/"
+mpexpected="$(printf 'lbl:17\n30\n15\n1002\n15\n210')"
+mpactual="$(dotnet "$MP/appil/KApp.dll" 2>/dev/null)"
+if [[ "$mpactual" == "$mpexpected" ]]; then
+    echo "PASS  roundtrip-memext2 (member extension properties + suspend member extensions, public + protected)"
+else
+    echo "FAIL  roundtrip-memext2"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$mpexpected" "$mpactual"; exit 1
 fi

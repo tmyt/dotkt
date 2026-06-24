@@ -66,6 +66,8 @@ private class ClrMethod(val name: String, val returnType: String, val open: Bool
 private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
 private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: String, val mutable: Boolean, val receiver: String)
 private class ClrProperty(val name: String, val type: String, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean)
+// A MEMBER extension property (`class C { val T.p }`): restored as a member property of C with an extension receiver.
+private class ClrMemberExtProp(val name: String, val type: String, val mutable: Boolean, val receiver: String, val protected: Boolean)
 private class ClrEvent(val name: String, val handlerReturn: String, val handlerParams: List<ClrParam>)
 // A `this[i]` indexer -> Kotlin `operator fun get/set` (`set` only when mutable).
 private class ClrIndexer(val indexType: String, val valueType: String, val mutable: Boolean)
@@ -87,6 +89,7 @@ private class ClrType(
 	val baseNoArgCtor: Boolean,        // false ("basector none"): base lacks a no-arg ctor -> don't synthesize `: super()`
 	val staticMethods: List<ClrMethod>,// public static methods of a NORMAL class -> companion-object members (App.Start)
 	val staticProps: List<ClrProperty>,// public static props/fields of a NORMAL class -> companion-object members
+	val memberExtProps: List<ClrMemberExtProp> = emptyList(),  // `class C { val T.p }` member extension properties
 )
 private class ClrModule(val types: List<ClrType>, val topLevel: List<ClrTopLevel> = emptyList(), val topLevelProps: List<ClrTopLevelProp> = emptyList())
 
@@ -128,9 +131,10 @@ private object ClrMetadataHolder {
 		var iteratorElem: String? = null
 		var baseNoArgCtor = true
 		val staticMethods = ArrayList<ClrMethod>(); val staticProps = ArrayList<ClrProperty>()
+		val memberExtProps = ArrayList<ClrMemberExtProp>()
 		val topLevel = ArrayList<ClrTopLevel>(); val topLevelProps = ArrayList<ClrTopLevelProp>(); var filePkg: FqName? = null; var fileClass = ""   // current [KotlinFile] section
 		val projList = ArrayList<Pair<String, String>>()   // (dotNetPrefix, kotlinPrefix) from `nsproj` lines
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, iteratorElem, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps))) }
+		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, iteratorElem, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(memberExtProps))) }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
 			if (line.isEmpty()) continue
@@ -138,7 +142,7 @@ private object ClrMetadataHolder {
 			when (tok[0]) {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); supers = emptyList(); filePkg = null
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null
 					name = tok[1]; dotNet = tok[2]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"; isAnnotation = false
 					isOpen = !isObject && !isInterface && tok.getOrNull(3) == "open"
 					// `class <Name> <DotNet> <open|sealed> [<TP>...]` (TPs at 4, after the modality token) vs
@@ -148,7 +152,7 @@ private object ClrMetadataHolder {
 				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
 				// trailing params (from its longest ctor) become the single annotation constructor.
 				"annotation" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); supers = emptyList(); filePkg = null
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null
 					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
 					ctors.add(parseParams(tok.drop(3)))
 				}
@@ -195,6 +199,8 @@ private object ClrMetadataHolder {
 					val mod = tok.getOrNull(4) ?: "final"; val prot = mod.startsWith("prot-"); val bare = mod.removePrefix("prot-")
 					props.add(ClrProperty(tok[1], tok[2], tok.getOrNull(3) == "rw", bare == "open", bare == "abstract", prot))
 				}
+				// memextprop <Name> <type> <ro|rw> <receiverType> <prot-?final> — a member extension property `val T.p`
+				"memextprop" -> memberExtProps.add(ClrMemberExtProp(tok[1], tok[2], tok.getOrNull(3) == "rw", tok[4], (tok.getOrNull(5) ?: "final").startsWith("prot-")))
 				// event <Name> <handlerRet> <handlerParams...>
 				"event" -> events.add(ClrEvent(tok[1], tok[2], parseParams(tok.drop(3))))
 				// index <indexType> <valueType> <ro|rw> — `this[i]` indexer -> operator get/set.
@@ -377,6 +383,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		val type = byClassId[classSymbol.classId] ?: return emptySet()
 		val names = type.methods.mapTo(HashSet()) { Name.identifier(it.name) }
 		type.properties.forEach { names.add(Name.identifier(it.name)) }
+		type.memberExtProps.forEach { names.add(Name.identifier(it.name)) }
 		type.events.forEach { names.add(Name.identifier("add_${it.name}")); names.add(Name.identifier("remove_${it.name}")) }
 		type.indexer?.let { names.add(Name.identifier("get")); if (it.mutable) names.add(Name.identifier("set")) }
 		if (type.iteratorElem != null) names.add(Name.identifier("iterator"))
@@ -402,6 +409,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, coneOf(sp.type, owner), !sp.mutable, false).symbol)
 		}
 		val type = byClassId[owner.classId] ?: return emptyList()
+		// A MEMBER extension property (`class C { val T.p }`): a member property of C with an extension receiver; the
+		// backend routes `x.p` (inside `with(c)`) to C's get_/set_<p>(__self) method (dispatch on C, receiver as __self).
+		type.memberExtProps.firstOrNull { it.name == callableId.callableName.asString() }?.let { mp ->
+			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, coneOf(mp.type, owner), !mp.mutable, false) {
+				extensionReceiverType(coneOf(mp.receiver, owner))
+				if (mp.protected) visibility = Visibilities.Protected
+			}.symbol)
+		}
 		val prop = type.properties.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
 		// Property name == .NET name verbatim, so the backend emits `recv.<Name>` directly.
 		return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, coneOf(prop.type, owner), !prop.mutable, false) {
