@@ -94,7 +94,7 @@ by `DotKt.Metadata` attributes and restored on the consumer's FIR; the rest roun
 |---|---|
 | `infix` / `operator` | `[KotlinFunction(Infix\|Operator)]` |
 | `suspend` | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
-| top-level functions | `[KotlinFile]` on the `<File>Kt` facade → restored as package-level functions |
+| top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
 | `final`/`open`/`abstract`, visibility | **none** — ride .NET virtual-ness / accessibility |
 | generics, `reified` | **none** — CLR generics are reified (§2) |

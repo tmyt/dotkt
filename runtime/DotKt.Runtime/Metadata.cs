@@ -93,8 +93,8 @@ namespace DotKt.Metadata
     /// package = the class's .NET namespace, instead of as members of a class.
     /// </summary>
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
-    public sealed class KotlinFileAttribute : Attribute
+    public sealed class KotlinFileClassAttribute : Attribute
     {
-        public KotlinFileAttribute() { }
+        public KotlinFileClassAttribute() { }
     }
 }

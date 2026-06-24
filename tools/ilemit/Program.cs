@@ -365,9 +365,9 @@ sealed class Emitter
                     foreach (var a in mattrs.EnumerateArray()) mb.SetCustomAttribute(BuildCab(a));
                 }
             // DotKt metadata: stamp Kotlin modifiers with no .NET analog so a consuming Kotlin module can restore
-            // them. [KotlinFile] on a file-facade class -> its statics are top-level fns; [KotlinFunction(flags)] on
+            // them. [KotlinFileClass] on a file-facade class -> its statics are top-level fns; [KotlinFunction(flags)] on
             // methods carrying infix/operator/suspend. No-op when DotKt.Runtime isn't referenced (attrs unresolved).
-            if (ti.IsFileClass) ApplyKotlinFile(ti.TB);
+            if (ti.IsFileClass) ApplyKotlinFileClass(ti.TB);
             if (ti.Def.TryGetProperty("methods", out var kms))
                 foreach (var m in kms.EnumerateArray())
                 {
@@ -3718,7 +3718,7 @@ sealed class Emitter
         _kAttrsResolved = true;
         _kFuncAttr = TryResolveType("DotKt.Metadata.KotlinFunctionAttribute");
         _kFuncFlags = TryResolveType("DotKt.Metadata.KotlinFunctionFlags");
-        _kFileAttr = TryResolveType("DotKt.Metadata.KotlinFileAttribute");
+        _kFileAttr = TryResolveType("DotKt.Metadata.KotlinFileClassAttribute");
         _kInlineAttr = TryResolveType("DotKt.Metadata.KotlinInlineAttribute");
         _kNullableAttr = TryResolveType("DotKt.Metadata.KotlinNullableAttribute");
         _kReadOnlyAttr = TryResolveType("DotKt.Metadata.KotlinReadOnlyAttribute");
@@ -3762,8 +3762,8 @@ sealed class Emitter
         mb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new[] { Enum.ToObject(_kFuncFlags, flags) }));
     }
 
-    // [KotlinFile] — marks a `<File>Kt` facade so its statics restore as top-level Kotlin functions.
-    static void ApplyKotlinFile(TypeBuilder tb)
+    // [KotlinFileClass] — marks a `<File>Kt` facade so its statics restore as top-level Kotlin functions.
+    static void ApplyKotlinFileClass(TypeBuilder tb)
     {
         ResolveKotlinAttrs();
         var ctor = _kFileAttr?.GetConstructor(Type.EmptyTypes);

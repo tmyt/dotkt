@@ -15,12 +15,12 @@ compile-time `ProjectReference` between C# and Kotlin projects.
 - **Consume a DotKt assembly AS KOTLIN — Kotlin-modifier round-trip.** Kotlin-language facts with no native .NET
   representation now survive compilation and are restored on a consuming module's FIR, so a `.ktproj` can use
   another DotKt-compiled assembly with idiomatic Kotlin syntax (the basis for shipping compiled kotlinx-* libraries
-  for the CLR). New `DotKt.Metadata` attributes (`[KotlinFunction(Infix|Operator|Suspend)]`, `[KotlinFile]`) are
+  for the CLR). New `DotKt.Metadata` attributes (`[KotlinFunction(Infix|Operator|Suspend)]`, `[KotlinFileClass]`) are
   stamped onto the IL by ilemit, read back by `facadegen --meta`, and restored by the FIR injector:
   - `infix fun` / `operator fun` — restored as `status { isInfix/isOperator }` (call notation + operator resolution).
   - `suspend fun` — emitted as `Task<T>`; restored as `suspend fun(): T` (the Task is unwrapped and re-awaited by the
     coroutine machinery), for both members and top-level functions.
-  - top-level functions — a `<File>Kt` facade carries `[KotlinFile]`; its statics restore as top-level package
+  - top-level functions — a `<File>Kt` facade carries `[KotlinFileClass]`; its statics restore as top-level package
     functions, called via a new `ClrTopLevelRegistry` as a static call on the file class. **Generic** top-level
     functions are restored with their type parameters and called via `clrGenericStatic`, so a cross-module
     `inline fun <reified T>` is consumed as a generic method (`f<Int>()`) — CLR generics are reified, so no inlining
@@ -52,6 +52,22 @@ compile-time `ProjectReference` between C# and Kotlin projects.
   `<KotlinClrRetarget>false</KotlinClrRetarget>` / `<DotKtRetarget>false</DotKtRetarget>`.
 
 ### Fixed
+- **Kotlin → Kotlin `ProjectReference` round-trip — a library's top-level functions vanished.** A `.ktproj` consuming
+  another `.ktproj` as Kotlin got `unresolved reference` on the library's top-level functions (`import mylib.boxed`),
+  while classes resolved fine. The MSBuild `ilemit` step built its `--ref` list from `@(ReferenceCopyLocalPaths)`, which
+  doesn't contain `DotKt.Runtime` (a compile reference, not copy-local) — so ilemit couldn't resolve the metadata
+  attribute types and **silently skipped stamping** `[KotlinFileClass]`/`[KotlinFunction]`. The file facade then looked
+  like a plain class to the consumer, which finds top-level functions only on `[KotlinFileClass]`-marked classes. ilemit
+  is now passed `DotKt.Runtime` from `@(ReferencePath)` (SDK + in-repo targets). New regression test
+  `samples/ktproj-roundtrip` (this Kotlin→Kotlin `ProjectReference` path had no coverage before).
+- Renamed the metadata attribute `[KotlinFile]` → **`[KotlinFileClass]`** (clearer: it marks the `<File>Kt` *class* that
+  holds a file's top-level declarations). Pre-1.0, no compat shim.
+- **Omitting a non-constant default argument is a clean compile error instead of a backend crash.** A default that reads
+  the callee's own parameters/receiver (`b: Int = a * 10`, or a data class `copy`'s `x = this.x`) can't be filled by
+  inlining it at the call site (`a`/`this` aren't in scope there) — it needs callee-side evaluation (Kotlin/JVM's
+  `$default`), not yet implemented on the .NET backend. Such an omission previously crashed ilemit with
+  `InvalidProgram`/`NotSupported`; it now reports a source-located error at the omitting call. Detected at the call site,
+  not the declaration, so a data class whose `copy` is never arg-omitted still compiles.
 - **Kotlin packages are now projected to .NET namespaces** (`package geom; class Vec` → `.NET geom.Vec`, file facade
   `geom.LibKt`). Previously every type was flattened to the **root** namespace — a correctness bug: two classes with
   the same simple name in different packages (e.g. `alpha.Box` + `beta.Box`) both emitted as `.NET Box` and **collided**

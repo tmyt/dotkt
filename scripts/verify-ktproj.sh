@@ -48,7 +48,7 @@ kt ktproj-avalonia "samples/ktproj-avalonia/app.ktproj" \
 
 # KOTLIN -> KOTLIN ProjectReference round-trip: app.ktproj consumes lib.ktproj AS KOTLIN (top-level generic/plain
 # functions + a top-level extension infix + classes). The round-trip path through MSBuild; it regressed because ilemit
-# wasn't passed --ref DotKt.Runtime, so it silently skipped stamping [KotlinFile]/[KotlinFunction] and the consumer's
+# wasn't passed --ref DotKt.Runtime, so it silently skipped stamping [KotlinFileClass]/[KotlinFunction] and the consumer's
 # `import mylib.boxed` resolved to nothing.
 kt ktproj-roundtrip "samples/ktproj-roundtrip/app/App.ktproj" \
 	"$(printf '7\n5\nhi\n3\n40')"

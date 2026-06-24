@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # DotKt round-trip: a Kotlin assembly compiled by DotKt, consumed AS KOTLIN by another module — the Kotlin
 # modifiers with no .NET analog (infix / operator / suspend / top-level) survive the trip. They're stamped onto the
-# emitted IL as DotKt.Metadata attributes ([KotlinFunction]/[KotlinFile]) by ilemit, then read back by facadegen
+# emitted IL as DotKt.Metadata attributes ([KotlinFunction]/[KotlinFileClass]) by ilemit, then read back by facadegen
 # (--meta) and restored on the synthesized FIR by ClrTypeInjection. This is the basis of consuming compiled Kotlin
 # libraries (kotlinx-*) as Kotlin. See docs/design-kotlin-metadata-attributes.md.
 set -euo pipefail
@@ -50,7 +50,7 @@ fun main() {
 }
 EOF
 
-# 1. compile + emit + retarget the library (the emit stamps [KotlinFunction]/[KotlinFile]).
+# 1. compile + emit + retarget the library (the emit stamps [KotlinFunction]/[KotlinFileClass]).
 CLR_TYPES_METADATA="" "$LAUNCHER" "$R/lib" -no-stdlib -classpath "$CP" -d "$R/libbir" >/dev/null 2>&1
 dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$R/libil" KLib --ref "$DOTKT_RT" "$R/libbir"/*.bir.json >/dev/null 2>&1
 dotnet "$ROOT/build/retarget-bin/retarget.dll" "$R/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1

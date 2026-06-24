@@ -19,7 +19,7 @@ Only modifiers .NET metadata **can't already express**:
 | `infix fun` | ordinary method | no (pure call-syntax modifier) | `[KotlinFunction(Infix)]` |
 | `operator fun` | ordinary method | no (convention-name resolution) | `[KotlinFunction(Operator)]` |
 | `suspend fun` | `Task<T>`-returning method | no (the Task ABI hides the suspend-ness) | `[KotlinFunction(Suspend)]` |
-| top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFile]` on the file class |
+| top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFileClass]` on the file class |
 | `final`/`open`/`abstract` (modality) | non-virtual / virtual / abstract | **yes** — rides .NET virtual-ness | (none) |
 | visibility | public/assembly/family | **yes** | (none) |
 | generics, including `reified` | real CLR generic method `<T>` | **yes** — CLR generics are reified | (none) |
@@ -31,7 +31,7 @@ assembly already references it ([[dotkt-naming-and-runtime-split]]).
 
 ```
   emit:   BirEmitter records infix/operator/suspend + the file class
-            -> ilemit stamps [KotlinFunction(flags)] / [KotlinFile]   (skipped if DotKt.Runtime absent)
+            -> ilemit stamps [KotlinFunction(flags)] / [KotlinFileClass]   (skipped if DotKt.Runtime absent)
   retarget: dotkt-retarget repoints BCL refs (also needed so facadegen can MLC-load the dll)
   read:   facadegen --meta reads the attributes -> meta tokens
             `fun <name> <ret> final,infix|operator|suspend ...`   (suspend: Task<T> unwrapped to T)

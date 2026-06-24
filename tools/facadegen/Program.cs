@@ -162,7 +162,7 @@ static class FacadeGen
         }
     }
 
-    // A top-level function import (`import geom.greet`) -> the [KotlinFile] facade class in that package that holds a
+    // A top-level function import (`import geom.greet`) -> the [KotlinFileClass] facade class in that package that holds a
     // matching static method, so the FIR injector restores `greet` as a top-level function. Null if none.
     static Type ResolveTopLevelFacade(string fqn)
     {
@@ -175,7 +175,7 @@ static class FacadeGen
             Type[] types; try { types = asm.GetTypes(); } catch { continue; }
             foreach (var t in types)
             {
-                if ((t.Namespace ?? "") != ns || !HasKotlinFile(t)) continue;
+                if ((t.Namespace ?? "") != ns || !HasKotlinFileClass(t)) continue;
                 // `import pkg.foo` matches a top-level function `foo` OR an extension property whose getter is `get_foo`.
                 if (t.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(mm => mm.Name == fn || mm.Name == "get_" + fn)) return t;
             }
@@ -206,7 +206,7 @@ static class FacadeGen
             var dn = ToDotNet(typeName);   // `kotlinx.coroutines.X` -> the real .NET `DotKt.Coroutines.X` (identity if no projection)
             // Resolve a plain type, or a generic type definition (Collection -> Collection`1, etc.).
             var seed = Resolve(dn) ?? Resolve(dn + "`1") ?? Resolve(dn + "`2") ?? Resolve(dn + "`3");
-            // A top-level function import (`import geom.greet`) isn't a type — resolve it to the [KotlinFile] facade
+            // A top-level function import (`import geom.greet`) isn't a type — resolve it to the [KotlinFileClass] facade
             // class that holds it (EmitOneType then emits `file`/`tlfun`). `import geom.*` already yields the facade
             // type directly via TypesInNamespace, so this only covers the single-function form.
             if (seed == null) seed = ResolveTopLevelFacade(dn);
@@ -232,8 +232,8 @@ static class FacadeGen
     // Emit one type's FIR-injection metadata (enum/interface/annotation/object/class + members).
     static void EmitOneType(Type t, StringBuilder sb)
     {
-            // A Kotlin file-facade ([KotlinFile]) -> its statics become TOP-LEVEL Kotlin functions, not a class.
-            if (HasKotlinFile(t)) { EmitKotlinFile(t, sb); return; }
+            // A Kotlin file-facade ([KotlinFileClass]) -> its statics become TOP-LEVEL Kotlin functions, not a class.
+            if (HasKotlinFileClass(t)) { EmitKotlinFileClass(t, sb); return; }
             // A .NET enum -> an object whose members are `val` properties typed as the enum itself
             // (avoids FIR enum-entry synthesis; `DayOfWeek.Friday` still maps to the real enum value).
             if (t.IsEnum)
@@ -736,7 +736,7 @@ static class FacadeGen
 
     // ----- DotKt metadata: restore Kotlin modifiers a DotKt-compiled assembly stamped (no .NET analog) -----
     const string KFuncAttr = "DotKt.Metadata.KotlinFunctionAttribute";
-    const string KFileAttr = "DotKt.Metadata.KotlinFileAttribute";
+    const string KFileAttr = "DotKt.Metadata.KotlinFileClassAttribute";
 
     // The KotlinFunctionFlags carried by a method's [KotlinFunction] (Infix=1, Operator=2, Suspend=4), or 0/none.
     static (bool infix, bool op, bool suspend) KotlinFun(MethodInfo m)
@@ -754,7 +754,7 @@ static class FacadeGen
         return (false, false, false);
     }
 
-    static bool HasKotlinFile(Type t)
+    static bool HasKotlinFileClass(Type t)
     {
         try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KFileAttr); }
         catch { return false; }
@@ -812,9 +812,9 @@ static class FacadeGen
         return baseMod;
     }
 
-    // Emit a Kotlin file-facade class ([KotlinFile]) as TOP-LEVEL functions in its .NET namespace (= Kotlin package),
+    // Emit a Kotlin file-facade class ([KotlinFileClass]) as TOP-LEVEL functions in its .NET namespace (= Kotlin package),
     // instead of a class: `file <package>` then a `tlfun` per public static method (Main and object members skipped).
-    static void EmitKotlinFile(Type t, StringBuilder sb)
+    static void EmitKotlinFileClass(Type t, StringBuilder sb)
     {
         // `file <package> <fileClassFqn>` — the package is the Kotlin namespace; the .NET FQN is where the backend
         // emits the static call for each restored top-level function. Empty package ("") is the root package.
