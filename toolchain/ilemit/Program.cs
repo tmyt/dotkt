@@ -102,15 +102,12 @@ sealed partial class Emitter
         // through a MetadataLoadContext over the REFERENCE assemblies and pass that core to PersistedAssemblyBuilder,
         // so refs become System.Runtime — a large, contained refactor (every typeof(Bcl) -> mlc lookup). Tracked #50.
         var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName), typeof(object).Assembly);
-        // [assembly: DotKtNamespaceProjection(kotlin, dotNet)] for each --ns-projection — so a consumer can import this
-        // library's types under a Kotlin package different from their .NET namespace (e.g. kotlinx.coroutines).
-        foreach (var (kotlin, dotNet) in _nsProj)
-        {
-            ResolveKotlinAttrs();
-            var ctor = _kNsProjAttr?.GetConstructor(new[] { typeof(string), typeof(string) });
-            if (ctor != null) ab.SetCustomAttribute(new CustomAttributeBuilder(ctor, new object[] { kotlin, dotNet }));
-        }
         _mod = ab.DefineDynamicModule(_asmName);
+        // Embed the DotKt.Runtime.CompilerServices.* metadata attribute types into this module up front (so they exist
+        // before any type/member that stamps one). No --ref DotKt.Runtime needed to resolve them. The assembly-level
+        // [DotKtNamespaceProjection] is applied LATE (just before Save) — applying an assembly attribute whose type is a
+        // module-internal embedded type before the module's other types exist corrupts the image.
+        EnsureKotlinAttrs();
 
         // Pass 1: DefineType for every file-static-class and every user class.
         foreach (var file in files)
@@ -405,6 +402,15 @@ sealed partial class Emitter
                     T($"pass6 createType (leftover): {ti.TB.Name}");
                     ti.TB.CreateType(); again = true;
                 }
+        }
+
+        // [assembly: DotKtNamespaceProjection(kotlin, dotNet)] for each --ns-projection — so a consumer can import this
+        // library's types under a Kotlin package different from their .NET namespace (e.g. kotlinx.coroutines). Applied
+        // here (after all module types are created) because the attribute type is a module-internal embedded type.
+        foreach (var (kotlin, dotNet) in _nsProj)
+        {
+            var nsCtor = _kNsProjAttr?.GetConstructor(new[] { typeof(string), typeof(string) });
+            if (nsCtor != null) ab.SetCustomAttribute(new CustomAttributeBuilder(nsCtor, new object[] { kotlin, dotNet }));
         }
 
         T("save: writing PE");
@@ -1409,7 +1415,7 @@ sealed partial class Emitter
         var method = e.GetProperty("method").GetString();
         var mi = ResolveType(typeName).GetMethod(method)
                  ?? throw new NotSupportedException($"inline splice: method {typeName}.{method} not found");
-        var cad = mi.GetCustomAttributesData().FirstOrDefault(c => c.AttributeType.FullName == "DotKt.Metadata.KotlinInlineAttribute")
+        var cad = mi.GetCustomAttributesData().FirstOrDefault(c => c.AttributeType.FullName == "DotKt.Runtime.CompilerServices.KotlinInlineAttribute")
                   ?? throw new NotSupportedException($"inline splice: [KotlinInline] body missing on {typeName}.{method}");
         var doc = JsonDocument.Parse((string)cad.ConstructorArguments[0].Value);
         _inlineDocs.Add(doc);

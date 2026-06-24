@@ -79,7 +79,7 @@ static class FacadeGen
     // Kotlin-package <-> .NET-namespace projections declared by [assembly: DotKtNamespaceProjection] on the refs, so a
     // library in `DotKt.Coroutines` is consumed via `import kotlinx.coroutines.*`. Longest dotNet prefix first (so a
     // more specific mapping wins). Read once after the refs load.
-    const string KNsProjAttr = "DotKt.Metadata.DotKtNamespaceProjectionAttribute";
+    const string KNsProjAttr = "DotKt.Runtime.CompilerServices.DotKtNamespaceProjectionAttribute";
     static readonly List<(string kotlin, string dotNet)> Projections = new();
     static void ScanProjections()
     {
@@ -735,8 +735,8 @@ static class FacadeGen
     }
 
     // ----- DotKt metadata: restore Kotlin modifiers a DotKt-compiled assembly stamped (no .NET analog) -----
-    const string KFuncAttr = "DotKt.Metadata.KotlinFunctionAttribute";
-    const string KFileAttr = "DotKt.Metadata.KotlinFileClassAttribute";
+    const string KFuncAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
+    const string KFileAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
 
     // The KotlinFunctionFlags carried by a method's [KotlinFunction] (Infix=1, Operator=2, Suspend=4), or 0/none.
     static (bool infix, bool op, bool suspend) KotlinFun(MethodInfo m)
@@ -760,14 +760,14 @@ static class FacadeGen
         catch { return false; }
     }
 
-    const string KReadOnlyAttr = "DotKt.Metadata.KotlinReadOnlyAttribute";
+    const string KReadOnlyAttr = "DotKt.Runtime.CompilerServices.KotlinReadOnlyAttribute";
     static bool IsKotlinReadOnly(FieldInfo f)
     {
         try { return f.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KReadOnlyAttr); }
         catch { return false; }
     }
 
-    const string KNullableAttr = "DotKt.Metadata.KotlinNullableAttribute";
+    const string KNullableAttr = "DotKt.Runtime.CompilerServices.KotlinNullableAttribute";
     // The Kotlin nullability bitmask carried by [KotlinNullable] (bit 0 = return, bit i+1 = param i), or 0.
     static uint KotlinNullMask(MethodInfo m)
     {
@@ -782,7 +782,7 @@ static class FacadeGen
     }
     static string NullSuffix(uint mask, int bit) => ((mask >> bit) & 1) != 0 ? "?" : "";
 
-    const string KInlineAttr = "DotKt.Metadata.KotlinInlineAttribute";
+    const string KInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     // The carried BIR body of an inline+lambda fn ([KotlinInline]), or null. Splice-able by a consuming module.
     static string KotlinInlineBody(MethodInfo m)
     {

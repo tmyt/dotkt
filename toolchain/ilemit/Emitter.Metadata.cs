@@ -9,68 +9,44 @@ using System.Text.Json;
 // The `[Kotlin*]` round-trip metadata attributes (from DotKt.Runtime) and the BIR `attr`-node constant decoding.
 sealed partial class Emitter
 {
-    // Build a .NET custom attribute from a BIR `attr` node (a user annotation): the synthesized `: System.Attribute`
-    // class's ctor + compile-time-constant args.
-    // DotKt metadata attribute types (from DotKt.Runtime, --ref'd). Null when not referenced -> stamping is skipped.
-    static bool _kAttrsResolved;
-    static Type _kFuncAttr, _kFuncFlags, _kFileAttr, _kInlineAttr, _kNullableAttr, _kReadOnlyAttr, _kNsProjAttr;
-    static void ResolveKotlinAttrs()
-    {
-        if (_kAttrsResolved) return;
-        _kAttrsResolved = true;
-        _kFuncAttr = TryResolveType("DotKt.Metadata.KotlinFunctionAttribute");
-        _kFuncFlags = TryResolveType("DotKt.Metadata.KotlinFunctionFlags");
-        _kFileAttr = TryResolveType("DotKt.Metadata.KotlinFileClassAttribute");
-        _kInlineAttr = TryResolveType("DotKt.Metadata.KotlinInlineAttribute");
-        _kNullableAttr = TryResolveType("DotKt.Metadata.KotlinNullableAttribute");
-        _kReadOnlyAttr = TryResolveType("DotKt.Metadata.KotlinReadOnlyAttribute");
-        _kNsProjAttr = TryResolveType("DotKt.Metadata.DotKtNamespaceProjectionAttribute");
-    }
+    // The embedded `DotKt.Runtime.CompilerServices.*` attribute types — defined into THIS module by EnsureKotlinAttrs
+    // (Emitter.CompilerServices.cs). Always available once defined (no external reference needed to stamp).
+    bool _kAttrsResolved;
+    Type _kFuncAttr, _kFileAttr, _kInlineAttr, _kNullableAttr, _kReadOnlyAttr, _kNsProjAttr;
 
     // [KotlinNullable(mask)] — the Kotlin nullability of the signature (bit 0 = return, bit i+1 = param i).
-    static void ApplyKotlinNullable(MethodBuilder mb, uint mask)
+    void ApplyKotlinNullable(MethodBuilder mb, uint mask)
     {
-        ResolveKotlinAttrs();
-        var ctor = _kNullableAttr?.GetConstructor(new[] { typeof(uint) });
-        if (ctor == null) return;
-        mb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new object[] { mask }));
+        EnsureKotlinAttrs();
+        mb.SetCustomAttribute(new CustomAttributeBuilder(_kNullableAttr.GetConstructor(new[] { typeof(uint) }), new object[] { mask }));
     }
 
     // [KotlinReadOnly] — a public backing field whose Kotlin property isn't publicly settable (restore as `val`).
-    static void ApplyKotlinReadOnly(FieldBuilder fb)
+    void ApplyKotlinReadOnly(FieldBuilder fb)
     {
-        ResolveKotlinAttrs();
-        var ctor = _kReadOnlyAttr?.GetConstructor(Type.EmptyTypes);
-        if (ctor == null) return;
-        fb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new object[0]));
+        EnsureKotlinAttrs();
+        fb.SetCustomAttribute(new CustomAttributeBuilder(_kReadOnlyAttr.GetConstructor(Type.EmptyTypes), new object[0]));
     }
 
     // [KotlinInline(body)] — the inline+lambda fn's BIR body, for cross-module splicing.
-    static void ApplyKotlinInline(MethodBuilder mb, string body)
+    void ApplyKotlinInline(MethodBuilder mb, string body)
     {
-        ResolveKotlinAttrs();
-        var ctor = _kInlineAttr?.GetConstructor(new[] { typeof(string) });
-        if (ctor == null) return;
-        mb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new object[] { body }));
+        EnsureKotlinAttrs();
+        mb.SetCustomAttribute(new CustomAttributeBuilder(_kInlineAttr.GetConstructor(new[] { typeof(string) }), new object[] { body }));
     }
 
     // [KotlinFunction(flags)] — Kotlin modifiers with no .NET analog (infix/operator/suspend), for Kotlin re-consumption.
-    static void ApplyKotlinFunction(MethodBuilder mb, int flags)
+    void ApplyKotlinFunction(MethodBuilder mb, int flags)
     {
-        ResolveKotlinAttrs();
-        if (_kFuncAttr == null || _kFuncFlags == null) return;
-        var ctor = _kFuncAttr.GetConstructor(new[] { _kFuncFlags });
-        if (ctor == null) return;
-        mb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new[] { Enum.ToObject(_kFuncFlags, flags) }));
+        EnsureKotlinAttrs();
+        mb.SetCustomAttribute(new CustomAttributeBuilder(_kFuncAttr.GetConstructor(new[] { typeof(int) }), new object[] { flags }));
     }
 
     // [KotlinFileClass] — marks a `<File>Kt` facade so its statics restore as top-level Kotlin functions.
-    static void ApplyKotlinFileClass(TypeBuilder tb)
+    void ApplyKotlinFileClass(TypeBuilder tb)
     {
-        ResolveKotlinAttrs();
-        var ctor = _kFileAttr?.GetConstructor(Type.EmptyTypes);
-        if (ctor == null) return;
-        tb.SetCustomAttribute(new CustomAttributeBuilder(ctor, new object[0]));
+        EnsureKotlinAttrs();
+        tb.SetCustomAttribute(new CustomAttributeBuilder(_kFileAttr.GetConstructor(Type.EmptyTypes), new object[0]));
     }
 
     CustomAttributeBuilder BuildCab(JsonElement a)
