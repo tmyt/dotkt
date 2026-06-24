@@ -1,4 +1,4 @@
-package clrc
+package kotc
 
 /**
  * S5 bridge between the FIR type-injection frontend extension and the backend codegen.

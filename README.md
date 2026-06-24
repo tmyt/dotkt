@@ -12,14 +12,11 @@ Kotlin via their real .NET types).
 > ships no library of its own. You reference real .NET assemblies and call their types directly
 > from Kotlin. A Kotlin-idiomatic UI DSL would be a separate downstream product.
 
-## Two backends
+## Backend
 
-| Backend | Pipeline | Role |
-|---------|----------|------|
-| **Direct IL** (primary / shipping) | Kotlin IR → `BirEmitter` → `BIR` (JSON) → `tools/ilemit` → CIL | the 1.0 backend; output is [`ilverify`](https://github.com/dotnet/runtime/tree/main/src/coreclr/tools/ILVerify)-clean |
-| C# codegen (dev / oracle) | Kotlin IR → `CSharpCodegen` → C# source → `csc` | differential oracle while IL matures; retired at 1.0 |
-
-A single compiler run emits **both** `Foo.bir.json` (for the IL path) and `Foo.cs` (oracle).
+Direct IL, one path: **Kotlin IR → `BirEmitter` → `BIR` (JSON) → `tools/ilemit` → CIL**. The output is
+[`ilverify`](https://github.com/dotnet/runtime/tree/main/src/coreclr/tools/ILVerify)-clean. (An earlier
+Kotlin-IR→C#-text oracle backend was retired and removed; BIR→ilemit is the sole backend.)
 
 ## What works today
 
@@ -111,15 +108,15 @@ assembly via the chosen backend. See `samples/ktproj/` (C# path), `samples/ktpro
 
 | Path | Role |
 |------|------|
-| `compiler/` | the compiler (Kotlin/JVM) |
-| `compiler/.../clrc/pipeline/ClrCliPipeline.kt` | driver: stock JVM phases + our backend phase |
-| `compiler/.../clrc/backend/ClrBackendPhase.kt` | owns the backend; dumps IR, runs both codegens |
-| `compiler/.../clrc/backend/BirEmitter.kt` | **Kotlin IR → BIR** (the IL path; all lowering lives here) |
-| `compiler/.../clrc/backend/CSharpCodegen.kt` | Kotlin IR → C# (oracle) |
-| `tools/ilemit/` | **BIR (JSON) → CIL** via `System.Reflection.Emit` (`PersistedAssemblyBuilder`) |
-| `tools/facadegen/` | generate `@Clr` Kotlin façades from .NET metadata |
-| `runtime/csharp/` | C# UI runtime shells (Avalonia/WPF) for windowing samples |
-| `samples/` | `il-*` (IL-backend samples), `m-*` (language/interop), `ktproj-*`, `win*` |
+| `kotc/` | the Kotlin→BIR compiler frontend (Kotlin/JVM gradle module; source package `kotc.*`) |
+| `kotc/.../kotc/pipeline/ClrCliPipeline.kt` | driver: stock JVM phases + our backend phase |
+| `kotc/.../kotc/backend/BirEmitter.kt` (+ `BirEmitterExpressions/Statements`, `BirMappings`) | **Kotlin IR → BIR** (all lowering lives here) |
+| `tools/ilemit/` | **BIR (JSON) → CIL** via `System.Reflection.Emit` (split: `Emitter.Expressions/Coroutines/Statements/Metadata`) |
+| `tools/facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) |
+| `tools/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
+| `runtime/DotKt.Runtime/` | .NET runtime helpers + the `[Kotlin*]` round-trip metadata attributes |
+| `packaging/` | NuGet packages: `DotKt.Sdk` (thin), `DotKt.Toolchain` (tools + the build pipeline), `DotKt.Runtime` |
+| `samples/` | `il-*` (IL-backend samples), `m-*` (language/interop), `ktproj-*` (MSBuild) |
 | `scripts/verify-il.sh` | IL differential + `ilverify` gate |
 | `scripts/verify-ktproj.sh` | MSBuild/.ktproj integration (IL backend) |
 | `docs/dotkt-semantics.md` | **how Kotlin maps to the CLR + where DotKt deliberately differs from Kotlin/JVM** |

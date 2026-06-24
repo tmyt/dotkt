@@ -8,7 +8,7 @@
     <KotlinClrRoot Condition="'$(KotlinClrRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</KotlinClrRoot>
 
     <!-- Tool locations: the in-repo source builds (the shared pipeline reads these $(DotKt*) vars). -->
-    <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(KotlinClrRoot)/compiler/build/install/compiler/bin/compiler</DotKtCompiler>
+    <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(KotlinClrRoot)/kotc/build/install/kotc/bin/kotc</DotKtCompiler>
     <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/runtime/kotlin/kotlin-stdlib.jar</DotKtStdlib>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</DotKtFacadeGen>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
@@ -44,7 +44,7 @@
        Each hooks just before the shared-pipeline target that first needs it. -->
   <Target Name="EnsureKotlinClrCompiler" BeforeTargets="DotKtInjectTypes" Condition="!Exists('$(DotKtCompiler)')">
     <Message Importance="high" Text="kotlin/clr: building compiler launcher (first run)..." />
-    <Exec Command="&quot;$(KotlinClrRoot)/gradlew&quot; -q :compiler:installDist" WorkingDirectory="$(KotlinClrRoot)" />
+    <Exec Command="&quot;$(KotlinClrRoot)/gradlew&quot; -q :kotc:installDist" WorkingDirectory="$(KotlinClrRoot)" />
   </Target>
   <Target Name="EnsureFacadeGen" BeforeTargets="DotKtInjectTypes" Condition="!Exists('$(DotKtFacadeGen)')">
     <Message Importance="high" Text="kotlin/clr: building facadegen (first run)..." />

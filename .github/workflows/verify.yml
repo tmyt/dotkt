@@ -40,7 +40,7 @@ jobs:
 
       - name: Build compiler + tools
         run: |
-          ./gradlew --no-daemon :compiler:installDist
+          ./gradlew --no-daemon :kotc:installDist
           dotnet build tools/ilemit   -c Release -o build/ilemit-bin   --nologo
           dotnet build tools/facadegen -c Release -o build/facadegen-bin --nologo
           dotnet build tools/retarget  -c Release -o build/retarget-bin  --nologo

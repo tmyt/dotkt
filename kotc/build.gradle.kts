@@ -21,8 +21,9 @@ kotlin {
 }
 
 application {
-	// CLI entry point of the Kotlin/CLR compiler.
-	mainClass.set("clrc.MainKt")
+	// CLI entry point of the Kotlin/CLR compiler (.kt -> BIR). The launcher binary, the module, and this dir are all
+	// `kotc`; the internal Kotlin package is `kotc.*` too.
+	mainClass.set("kotc.MainKt")
 }
 
 tasks.test {

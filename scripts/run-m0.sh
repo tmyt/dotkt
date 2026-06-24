@@ -10,7 +10,7 @@ STDLIB="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.2.0.jar' | head -1)
 SRC="${1:-$ROOT/samples/m0/M0.kt}"
 
 echo ">> compiling $SRC with kotlin/clr"
-"$ROOT/gradlew" -q --no-daemon :compiler:run \
+"$ROOT/gradlew" -q --no-daemon :kotc:run \
 	--args="$SRC -no-stdlib -classpath $STDLIB -d $OUT" 1>&2
 
 echo ">> running generated C# on dotnet"

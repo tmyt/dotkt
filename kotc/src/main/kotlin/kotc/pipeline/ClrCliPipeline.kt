@@ -1,9 +1,9 @@
 @file:OptIn(org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi::class)
 
-package clrc.pipeline
+package kotc.pipeline
 
-import clrc.backend.ClrBackendPhase
-import clrc.frontend.ClrCompilerPluginRegistrar
+import kotc.backend.ClrBackendPhase
+import kotc.frontend.ClrCompilerPluginRegistrar
 import org.jetbrains.kotlin.backend.common.phaser.then
 import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
 import org.jetbrains.kotlin.cli.pipeline.AbstractCliPipeline

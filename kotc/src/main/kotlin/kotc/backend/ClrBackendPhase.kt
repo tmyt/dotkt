@@ -1,4 +1,4 @@
-package clrc.backend
+package kotc.backend
 
 import org.jetbrains.kotlin.cli.common.ExitCode
 import org.jetbrains.kotlin.cli.pipeline.CheckCompilationErrors

@@ -1,4 +1,4 @@
-package clrc.backend
+package kotc.backend
 
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality

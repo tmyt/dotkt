@@ -12,4 +12,4 @@ plugins {
 
 rootProject.name = "kotlin-net"
 
-include(":compiler")
+include(":kotc")

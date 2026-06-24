@@ -1,4 +1,4 @@
-package clrc.tools
+package kotc.tools
 
 import java.io.File
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
@@ -29,11 +29,11 @@ object ImportScan {
 		val outFile = File(args[outIdx + 1])
 		val sources = args.drop(outIdx + 2).map(::File).filter { it.isFile }
 
-		val disposable = Disposer.newDisposable("clrc-import-scan")
+		val disposable = Disposer.newDisposable("kotc-import-scan")
 		try {
 			val configuration = CompilerConfiguration().apply {
 				put(CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY, MessageCollector.NONE)
-				put(CommonConfigurationKeys.MODULE_NAME, "clrc-import-scan")
+				put(CommonConfigurationKeys.MODULE_NAME, "kotc-import-scan")
 			}
 			val env = KotlinCoreEnvironment.createForProduction(disposable, configuration, EnvironmentConfigFiles.JVM_CONFIG_FILES)
 			val factory = KtPsiFactory(env.project)

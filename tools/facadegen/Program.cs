@@ -29,7 +29,7 @@ static class FacadeGen
                 rest = rest.Skip(2).ToList();
             }
             // C-2: explicit type names, then optionally `--import-list <file>` — the type list produced by the
-            // compiler's `clrc --scan-imports` PSI pass (a real parser, not a regex: handles aliases, `.*`,
+            // compiler's `kotc --scan-imports` PSI pass (a real parser, not a regex: handles aliases, `.*`,
             // multi-line, comments, backtick identifiers — interop feedback item 5). Merge both; EmitMeta warns
             // on any .NET-looking name that resolves to nothing (no silent drop).
             var listAt = rest.IndexOf("--import-list");
@@ -124,7 +124,7 @@ static class FacadeGen
     // Kotlin member names = .NET names verbatim (no per-member mapping needed in the backend).
     // A static .NET class (abstract+sealed, e.g. System.Math) -> Kotlin `object` (static call site);
     // an instance class -> Kotlin `class` with constructors + instance methods.
-    // C-2: read the .NET import list produced by `clrc --scan-imports` (the compiler's PSI-based pre-pass — see
+    // C-2: read the .NET import list produced by `kotc --scan-imports` (the compiler's PSI-based pre-pass — see
     // ImportScan.kt). Each line is a fully-qualified type name, or `Namespace.*` for a wildcard import, expanded
     // here to every public type directly in that namespace across the loaded reference assemblies.
     static IEnumerable<string> ReadImportList(string file)

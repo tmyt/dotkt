@@ -12,8 +12,8 @@ CORO="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-1.8.0.jar
 CP="$STDLIB:$CORO"
 
 # Build the toolchain (compiler launcher + ilemit + facadegen + retarget + runtime) once.
-"$ROOT/gradlew" -q :compiler:installDist >/dev/null 2>&1
-LAUNCHER="$ROOT/compiler/build/install/compiler/bin/compiler"
+"$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
+LAUNCHER="$ROOT/kotc/build/install/kotc/bin/kotc"
 dotnet build "$ROOT/tools/ilemit"        -c Release -o "$ROOT/build/ilemit-bin"     -v q --nologo >/dev/null
 dotnet build "$ROOT/tools/facadegen"     -c Release -o "$ROOT/build/facadegen-bin"  -v q --nologo >/dev/null
 dotnet build "$ROOT/tools/retarget"      -c Release -o "$ROOT/build/retarget-bin"   -v q --nologo >/dev/null

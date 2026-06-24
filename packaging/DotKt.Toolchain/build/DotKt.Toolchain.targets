@@ -6,7 +6,7 @@
   <PropertyGroup>
     <DotKtOut>$(BaseIntermediateOutputPath)dotkt-bir</DotKtOut>
     <DotKtTypeMeta>$(BaseIntermediateOutputPath)dotkt-clrtypes.meta</DotKtTypeMeta>
-    <!-- The .NET import list extracted from the .kt sources by the clrc scan-imports pass (PSI parser, not regex). -->
+    <!-- The .NET import list extracted from the .kt sources by the kotc scan-imports pass (PSI parser, not regex). -->
     <DotKtImportList>$(BaseIntermediateOutputPath)dotkt-clrimports.txt</DotKtImportList>
   </PropertyGroup>
 

@@ -1,4 +1,4 @@
-package clrc.backend
+package kotc.backend
 
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
@@ -3055,7 +3055,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// synthesized accessor. The handler is a lambda -> delegate (the existing closureNew/delegateNew path);
 			// ilemit binds it to the event's own delegate type (not Func/Action). See clrEventAdd in ilemit.
 			val declFq = declClass?.fqNameWhenAvailable?.asString()
-			clrc.ClrEventRegistry.lookup(declFq, name)?.let { (eventName, op) ->
+			kotc.ClrEventRegistry.lookup(declFq, name)?.let { (eventName, op) ->
 				val recvJson = if (isStatic) "null" else expr(recv!!)
 				val handler = expr(regularArgs(call).first())
 				val kind = if (op == "+=") "clrEventAdd" else "clrEventRemove"
@@ -3143,7 +3143,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// An INJECTED top-level EXTENSION property (`val T.p` from a DotKt assembly) -> its get_/set_<name>(__self)
 			// statics on the file class, with the extension receiver passed as `__self`. (body==null = injected stub.)
 			(callee.correspondingPropertySymbol?.owner)?.let { p ->
-				if (declaringClass == null) clrc.ClrTopLevelRegistry.lookupProp(p.fqNameWhenAvailable?.asString())?.let { fileClass ->
+				if (declaringClass == null) kotc.ClrTopLevelRegistry.lookupProp(p.fqNameWhenAvailable?.asString())?.let { fileClass ->
 					val recv = extensionReceiver(call)
 					if (callee === p.setter) {
 						val args = listOfNotNull(recv) + regularArgs(call)
@@ -3496,7 +3496,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// from a same-named local top-level fun. (A suspend top-level fun awaits via the coroutine path, not here.)
 		if (callee.body == null && dispatchReceiver(call) == null) {
 			val extRecv = extensionReceiver(call)
-			clrc.ClrTopLevelRegistry.lookup(callee.fqNameWhenAvailable?.asString())?.let { (fileClass, _) ->
+			kotc.ClrTopLevelRegistry.lookup(callee.fqNameWhenAvailable?.asString())?.let { (fileClass, _) ->
 				// A cross-module `inline fun` taking a lambda (body==null here = injected stub) -> splice its carried
 				// [KotlinInline] body at this call site (the only way a non-local `return` through the lambda works).
 				if (callee.isInline && hasLambdaArg(call) && extRecv == null) return inlineSpliceCall(call, fileClass)
@@ -3591,7 +3591,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if ((a as? IrConstructorCall)?.type?.classFqName?.asString() == "clr.Clr")
 				return (a.arguments.firstOrNull() as? IrConst)?.value as? String
 		}
-		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { clrc.ClrTypeRegistry.dotNetName(it) }
+		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.dotNetName(it) }
 	}
 
 	/** A type's fully-qualified .NET name, for IL reflection-based member resolution. */

@@ -4,11 +4,11 @@
 	org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi::class,
 )
 
-package clrc.frontend
+package kotc.frontend
 
-import clrc.ClrEventRegistry
-import clrc.ClrTopLevelRegistry
-import clrc.ClrTypeRegistry
+import kotc.ClrEventRegistry
+import kotc.ClrTopLevelRegistry
+import kotc.ClrTypeRegistry
 import java.io.File
 import org.jetbrains.kotlin.GeneratedDeclarationKey
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
@@ -848,7 +848,7 @@ class ClrFirExtensionRegistrar : FirExtensionRegistrar() {
 
 /**
  * The compiler-plugin entry the pipeline runs against the frontend's project: it installs the FIR
- * registrar. Wired into [clrc.pipeline.ClrCliPipeline] via `COMPILER_PLUGIN_REGISTRARS`.
+ * registrar. Wired into [kotc.pipeline.ClrCliPipeline] via `COMPILER_PLUGIN_REGISTRARS`.
  */
 class ClrCompilerPluginRegistrar : CompilerPluginRegistrar() {
 	override val supportsK2: Boolean = true

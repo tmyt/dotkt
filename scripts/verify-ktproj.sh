@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fail=0
 
 # Build the compiler launcher once (a plain Java app) so the MSBuild EnsureKotlinClrCompiler bootstrap is a no-op.
-"$ROOT/gradlew" -q :compiler:installDist >/dev/null 2>&1
+"$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 
 # <name> <project> <expected>  — build+run a project on the IL backend and diff stdout.
 kt() {

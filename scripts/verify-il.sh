@@ -9,9 +9,9 @@ CP="$STDLIB:$CORO"
 fail=0
 
 # Build the compiler launcher ONCE (a plain Java app). Per-sample invokes then cost ~2s of JVM startup instead
-# of ~9s for `gradlew --no-daemon :compiler:run` — a ~4x speedup on the dominant compile step.
-"$ROOT/gradlew" -q :compiler:installDist >/dev/null 2>&1
-LAUNCHER="$ROOT/compiler/build/install/compiler/bin/compiler"
+# of ~9s for `gradlew --no-daemon :kotc:run` — a ~4x speedup on the dominant compile step.
+"$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
+LAUNCHER="$ROOT/kotc/build/install/kotc/bin/kotc"
 
 # Run samples concurrently (each compile is an independent ~2s JVM startup). A job pool caps parallelism; results
 # (FAIL markers, runtime-dll paths for the ilverify phase) cross back from the subshells via files.

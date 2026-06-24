@@ -1,4 +1,4 @@
-package clrc.backend
+package kotc.backend
 
 // Kotlin -> .NET name/shape mapping tables used across the BIR emitter (operators, kotlin.math / kotlin.text /
 // collection ops -> their .NET equivalents, primitive/exception type maps). Lifted out of BirEmitter so the

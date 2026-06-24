@@ -1,6 +1,6 @@
-package clrc
+package kotc
 
-import clrc.pipeline.ClrCliPipeline
+import kotc.pipeline.ClrCliPipeline
 import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
 import org.jetbrains.kotlin.cli.common.arguments.parseCommandLineArguments
 import org.jetbrains.kotlin.cli.common.messages.MessageRenderer
@@ -18,7 +18,7 @@ fun main(args: Array<String>) {
 	// imports with the real Kotlin PSI parser (the metadata pre-step facadegen consumes). Reuses this same jar/
 	// launcher so no extra distribution is needed; returns before the normal compile path.
 	if (args.firstOrNull() == "--scan-imports") {
-		clrc.tools.ImportScan.run(args)
+		kotc.tools.ImportScan.run(args)
 		return
 	}
 	val arguments = parseCommandLineArguments<K2JVMCompilerArguments>(args.toList())
@@ -34,7 +34,7 @@ fun main(args: Array<String>) {
 	val perfManager = PerformanceManagerImpl(JvmPlatforms.defaultJvmPlatform, "Kotlin/CLR compiler")
 
 	val exitCode = ClrCliPipeline(perfManager).execute(arguments, Services.EMPTY, collector)
-	System.err.println("clrc finished: $exitCode")
+	System.err.println("kotc finished: $exitCode")
 	// Propagate the compiler's exit code to the process, so a COMPILATION_ERROR (e.g. an unsupported construct
 	// reported with source location) stops the MSBuild/CLI pipeline before ilemit runs on partial output.
 	if (exitCode.code != 0) kotlin.system.exitProcess(exitCode.code)
