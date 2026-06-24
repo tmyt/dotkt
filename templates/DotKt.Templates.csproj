@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <Import Project="$([MSBuild]::GetPathOfFileAbove('DotKt.Versions.props', '$(MSBuildThisFileDirectory)'))" />
+  <Import Project="$(MSBuildThisFileDirectory)../packaging/DotKt.Versions.props" />
   <PropertyGroup>
     <PackageType>Template</PackageType>
     <PackageId>DotKt.Templates</PackageId>
