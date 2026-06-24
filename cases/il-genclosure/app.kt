@@ -5,9 +5,15 @@ fun <T> capVal(x: T) { val run = { println(x) }; run() }
 fun <T> capFn(f: (T) -> Unit, x: T) { val run = { f(x) }; run() }
 fun <T> capList(xs: List<T>) { val run = { for (e in xs) println(e) }; run() }
 fun <T> capRet(x: T): T { val run = { x }; return run() }
+// A LOCAL FUNCTION capturing T is lifted to a generic static method (same root cause as the closure class).
+fun <T> capLocalFn(x: T): T {
+	fun inner(): T { return x }
+	return inner()
+}
 fun main() {
 	capVal(1)
 	capFn({ y -> println("fn:$y") }, 2)
 	capList(listOf(3, 4))
 	println("ret:" + capRet(5))
+	println("lf:" + capLocalFn(6))
 }

@@ -59,6 +59,7 @@ import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
+import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
@@ -146,7 +147,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return if (pkg.isEmpty()) base else "$pkg.$base"
 	}
 	// Local functions: lifted to file-class statics; captured vars become leading params (calls prepend them).
-	internal val localFns = HashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, Pair<String, List<IrValueDeclaration>>>()
+	internal val localFns = HashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, Triple<String, List<IrValueDeclaration>, List<IrTypeParameter>>>()
 
 	// Anonymous objects (`object : I { }`) are lifted to synthetic top-level classes. Their IR name is
 	// "<no name provided>" (not a valid IL identifier), so map the IrClass identity -> its assigned name;
@@ -1983,7 +1984,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Captured vars (incl. the enclosing `this`) become leading params; the call site prepends their values.
 		val captures = capturedVars(fn, includeThis = true)
 		val lname = "__local${scopeCounter++}_${fn.name.asString()}"
-		localFns[fn] = lname to captures
+		// A local fn referencing an enclosing type parameter (in a capture, its own params, or its return) becomes a
+		// GENERIC static method — reified CLR generics, same as a capturing closure class. The call site (callStatic)
+		// passes the enclosing type params as type arguments.
+		val ownRegParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }
+		val freeTps = freeTypeParams(captures.map { it.type } + ownRegParams.map { it.type } + listOf(fn.returnType))
+		localFns[fn] = Triple(lname, captures, freeTps)
 		fun pj(name: String, t: IrType) = """{"name":${str(name)},"type":${str(birType(t))}}"""
 		val capPairs = captures.map { it to captureFieldName(it) }
 		// A captured `<this>` arrives as an `__outer` param; rewrite `this` refs in the body to that local.
@@ -1993,7 +1999,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		capPairs.forEach { (decl, _) -> if (decl.name.asString() == "<this>") captureSubst.remove(decl) }
 		val ret = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
-		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
+		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
 	}
 
 	/** `stackBuffer(n) { buf -> body }` -> a scoped CLR stack allocation: declare a length + a localloc'd pointer,
@@ -2278,6 +2284,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (captured.any { it in mutatedIn(klass) && !isRefCell(it) })
 			return unsupported(klass, "a local class that writes to a captured outer variable",
 				"read-only capture works; pass the value in by constructor, or use a class field")
+		// Capturing an enclosing type parameter isn't supported for a local class yet (it would need a generic lift +
+		// constructed type uses) — a clear error beats invalid IL. A capturing lambda or local fun does support it.
+		if (freeTypeParams(captured.map { it.type }).isNotEmpty())
+			return unsupported(klass, "a local class that captures an enclosing generic type parameter",
+				"move the logic into a (capturing) lambda or a local fun, which do support it")
 		val capPairs = captured.map { it to captureFieldName(it) }
 		capPairs.forEach { (decl, fname) ->
 			captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
@@ -2301,6 +2312,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				if (captured.any { it in mutatedIn(anon) && !isRefCell(it) })
 					return unsupported(block, "an object expression that writes to a captured outer variable",
 						"read-only capture works; to mutate shared state, use a small class with a field instead")
+				// Capturing an ENCLOSING TYPE PARAMETER would require the synthesized object class to be generic over it
+				// (reified CLR generics) AND every use of its (anonymous) type to carry the args — not yet supported, so
+				// fail with a clear error instead of emitting invalid IL. (A capturing lambda or local fn does work.)
+				if (freeTypeParams(captured.map { it.type }).isNotEmpty())
+					return unsupported(block, "an object expression that captures an enclosing generic type parameter",
+						"move the logic into a (capturing) lambda or a local fun, which do support it")
 				val capPairs = captured.map { it to captureFieldName(it) }
 				capPairs.forEach { (decl, fname) ->
 					captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
@@ -2597,9 +2614,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val calleeFq = if (declaringClass == null && pkgFqName != null) "$pkgFqName.$name" else null
 
 		// A call to a lifted local function -> static call with captured values (incl. enclosing `this`) prepended.
-		localFns[callee]?.let { (lname, caps) ->
+		localFns[callee]?.let { (lname, caps, tps) ->
 			val capArgs = caps.map { capValueExpr(it) }
-			return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + filledArgs(call)).joinToString(",")}]}"""
+			// If the lifted method is generic (captured enclosing type params), pass them as type arguments.
+			val typeArgs = if (tps.isEmpty()) "" else ""","typeArgs":[${tps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
+			return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + filledArgs(call)).joinToString(",")}]$typeArgs}"""
 		}
 
 		// Inlining (lambda-param inline funs only; lambda-less inline = JIT's job — see [[clr-not-jvm-discard-jvmisms]]).
