@@ -51,6 +51,13 @@
     <ItemGroup>
       <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
       <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <!-- DotKt.Runtime defines the [Kotlin*] metadata attribute types ilemit stamps so this library round-trips
+           (is consumable AS KOTLIN by another .ktproj): [KotlinFile] on the file facade restores its statics as
+           top-level functions, [KotlinFunction] restores infix/operator/suspend, etc. It's a compile reference but
+           NOT copy-local, so it's absent from @(ReferenceCopyLocalPaths) above; pull it from @(ReferencePath)
+           explicitly. Without it ilemit can't resolve the attribute types and silently skips stamping, so a
+           consumer's `import pkg.topLevelFn` resolves to nothing ("unresolved reference"). -->
+      <_DotKtRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Runtime'" />
     </ItemGroup>
     <Message Importance="high" Text="DotKt: emitting CIL from BIR -> $(TargetName)$(TargetExt)" />
     <!-- <DotKtNamespaceProjection Include="kotlinx.coroutines=DotKt.Coroutines" /> -> [assembly: DotKtNamespaceProjection],

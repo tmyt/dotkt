@@ -36,6 +36,18 @@
     <KotlinCompile Include="**/*.kt" Exclude="$(BaseIntermediateOutputPath)**;$(IntermediateOutputPath)**;bin/**;obj/**" />
   </ItemGroup>
 
+  <!-- DotKt.Runtime carries the runtime helpers AND the [Kotlin*] round-trip metadata attribute types. Reference it so
+       (1) ilemit can stamp [KotlinFile]/[KotlinFunction] (else a library's top-level functions/Kotlin modifiers don't
+       round-trip), (2) the consumer's facadegen can load a referenced round-tripped library (which now depends on it),
+       and (3) it's present at runtime. The shipping SDK gets this via a <PackageReference>; in-repo it's the build/
+       output. Opt out with <KotlinClrRuntimeRef>false</KotlinClrRuntimeRef>. -->
+  <ItemGroup Condition="'$(KotlinClrRuntimeRef)' != 'false' and Exists('$(KotlinClrRoot)/build/dotkt-runtime/DotKt.Runtime.dll')">
+    <Reference Include="DotKt.Runtime">
+      <HintPath>$(KotlinClrRoot)/build/dotkt-runtime/DotKt.Runtime.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
   <!-- Bootstrap: build the kotlin/clr compiler launcher if it isn't there yet. -->
   <Target Name="EnsureKotlinClrCompiler" BeforeTargets="KotlinClrCompile" Condition="!Exists('$(KotlinClrLauncher)')">
     <Message Importance="high" Text="kotlin/clr: building compiler launcher (first run)..." />
@@ -128,6 +140,12 @@
            EMIT time so ilemit can resolve forward-referenced .NET types (e.g. a C# project's `Theme.Palette`).
            The BCL is already loaded in-process; these are the extra implementation assemblies. -->
       <_KotlinIlRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <!-- DotKt.Runtime carries the [Kotlin*] metadata attribute types ilemit stamps for round-trip (consuming this
+           library AS KOTLIN from another .ktproj): [KotlinFile] restores a facade's statics as top-level functions,
+           [KotlinFunction] restores infix/operator/suspend. Without this ref ilemit silently skips stamping and a
+           consumer's `import pkg.topLevelFn` resolves to nothing. -->
+      <_KotlinIlRef Include="$(KotlinClrRoot)/build/dotkt-runtime/DotKt.Runtime.dll"
+                    Condition="Exists('$(KotlinClrRoot)/build/dotkt-runtime/DotKt.Runtime.dll')" />
     </ItemGroup>
     <Message Importance="high" Text="kotlin/clr: emitting CIL directly from BIR -> $(TargetName)$(TargetExt)" />
     <Exec Command="dotnet &quot;$(KotlinClrIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; @(_KotlinIlRef->'--ref &quot;%(FullPath)&quot;', ' ') @(_KotlinBir->'&quot;%(FullPath)&quot;', ' ')" />

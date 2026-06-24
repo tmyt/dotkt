@@ -46,8 +46,16 @@ kt ktproj-bidir "samples/ktproj-bidir/app/app.csproj" \
 kt ktproj-avalonia "samples/ktproj-avalonia/app.ktproj" \
 	"$(printf 'MyApp.Initialize: Kotlin override of Avalonia.Application\nsubclassed Avalonia.Application from Kotlin via PackageReference')"
 
+# KOTLIN -> KOTLIN ProjectReference round-trip: app.ktproj consumes lib.ktproj AS KOTLIN (top-level generic/plain
+# functions + a top-level extension infix + classes). The round-trip path through MSBuild; it regressed because ilemit
+# wasn't passed --ref DotKt.Runtime, so it silently skipped stamping [KotlinFile]/[KotlinFunction] and the consumer's
+# `import mylib.boxed` resolved to nothing.
+kt ktproj-roundtrip "samples/ktproj-roundtrip/app/App.ktproj" \
+	"$(printf '7\n5\nhi\n3\n40')"
+
 # Clean each sample's build output.
 rm -rf "$ROOT"/samples/ktproj/bin "$ROOT"/samples/ktproj/obj \
+       "$ROOT"/samples/ktproj-roundtrip/*/bin "$ROOT"/samples/ktproj-roundtrip/*/obj \
        "$ROOT"/samples/ktproj-inject/bin "$ROOT"/samples/ktproj-inject/obj \
        "$ROOT"/samples/ktproj-extlib/bin "$ROOT"/samples/ktproj-extlib/obj \
        "$ROOT"/samples/ktproj-extlib/extlib/bin "$ROOT"/samples/ktproj-extlib/extlib/obj \
