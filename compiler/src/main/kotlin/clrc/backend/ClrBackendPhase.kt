@@ -16,7 +16,9 @@ class ClrBackendArtifact(override val exitCode: ExitCode) : PipelineArtifactWith
  * The one phase we own. Everything before it (Configuration / Frontend / Fir2Ir) is the stock
  * JVM pipeline, so by the time we get here [input] already holds fully-resolved Kotlin IR.
  *
- * Phase A: just dump the IR so we have a debugging foothold. Lowering + C# codegen come next.
+ * It dumps the resolved IR (a debugging foothold) and walks each file to emit BIR — the portable backend IR
+ * that `tools/ilemit` turns into CIL. (The retired C#-text backend was removed; BIR -> ilemit is the sole
+ * shipping path. See docs/csharp-retirement-design.md.)
  */
 object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArtifact>(
 	name = "ClrBackendPhase",
@@ -30,28 +32,17 @@ object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArti
 
 		File(outputDir, "KIR@Raw.txt").writeText(moduleFragment.dump())
 
-		// E-5: the IL backend (BIR -> ilemit) is the shipping path; C# codegen is demoted to a dev/oracle
-		// opt-in (`KOTLIN_CLR_EMIT_CS=1`). By default we emit ONLY BIR and never run CSharpCodegen, so the
-		// shipping path has no C# dependency and IL-only features can't trip the (frozen) C# backend.
-		// See docs/csharp-retirement-design.md / [[il-primary-backend-pivot]].
-		val emitCs = System.getenv("KOTLIN_CLR_EMIT_CS") == "1"
-		val codegen = if (emitCs) CSharpCodegen() else null
 		val messageCollector = input.configuration.get(
 			org.jetbrains.kotlin.config.CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
 		val bir = BirEmitter(messageCollector)
 		for (irFile in moduleFragment.files) {
 			val baseName = File(irFile.fileEntry.name).name.removeSuffix(".kt")
-			if (codegen != null) {
-				val csharp = codegen.generateFile(irFile)
-				if (csharp.isNotBlank()) File(outputDir, "$baseName.cs").writeText(csharp)
-			}
 			val birJson = bir.emitFile(irFile)
 			if (birJson.isNotBlank()) File(outputDir, "$baseName.bir.json").writeText(birJson)
 		}
 
-		// An unsupported construct was reported (with source location) -> fail the compile here in the shipping IL
-		// path, so the build stops with a clear diagnostic instead of producing BIR that crashes ilemit downstream.
-		// In C#-oracle mode (KOTLIN_CLR_EMIT_CS=1) the C# backend is authoritative, so an IL-only gap doesn't fail it.
-		return ClrBackendArtifact(if (bir.hadError && !emitCs) ExitCode.COMPILATION_ERROR else ExitCode.OK)
+		// An unsupported construct was reported (with source location) -> fail the compile here, so the build stops
+		// with a clear diagnostic instead of producing BIR that crashes ilemit downstream.
+		return ClrBackendArtifact(if (bir.hadError) ExitCode.COMPILATION_ERROR else ExitCode.OK)
 	}
 }

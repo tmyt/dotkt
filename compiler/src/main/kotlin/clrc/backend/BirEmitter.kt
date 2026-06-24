@@ -75,9 +75,8 @@ import java.io.File
 /**
  * D1.1 — Backend IR (BIR) emitter.
  *
- * Serializes the M0 subset of a file to a compact JSON the future `ilemit` tool consumes to emit
- * CIL directly (no C# in between). The IR walk mirrors [CSharpCodegen]; only the rendering target
- * differs (a structured AST as JSON instead of C# text). Stack lowering is deferred to ilemit.
+ * Serializes a file to a compact JSON (BIR) that the `tools/ilemit` tool consumes to emit CIL directly.
+ * This IR walk renders a structured AST as JSON; stack lowering is deferred to ilemit.
  *
  * Scope (M0): top-level functions; const/local/binop/unop/call/concat/ternary; var/set/return/
  * while/if. Classes & interop are later milestones (D1.4+).
@@ -902,10 +901,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// A `suspend fun f(args): T` lowers to a kickoff `Task<T> f(args)` + a struct IAsyncStateMachine (emitted by
 	// ilemit). Here we CPS-linearize the body into a FLAT list of steps so ilemit need not reconstruct control
 	// flow: ordinary statements stay as-is (ilemit redirects references to cpsFields onto state-machine fields),
-	// suspension points become `coSuspend`, and if/while linearize to `coLabel`/`coGoto`/`coCondGoto`. The CPS
-	// logic mirrors the C# D2.1 lowering (CSharpCodegen.emitCps); only the lowered FORM (Task/awaiter vs custom
-	// Continuation runtime) differs. See docs/coroutine-il.md. Ported capability bar = C# manual D2.1: linear /
-	// loop / branch / direct-suspend-call; try-catch-around-await needs exception regions (E-0.5) -> loud error.
+	// suspension points become `coSuspend`, and if/while linearize to `coLabel`/`coGoto`/`coCondGoto`. The lowered
+	// FORM is Task/awaiter-based. See docs/coroutine-il.md. Capability bar: linear / loop / branch /
+	// direct-suspend-call; try-catch-around-await needs exception regions (E-0.5) -> loud error.
 	private var coState = 0
 	private var coLabelN = 0
 	private var coFields: Set<String> = emptySet()

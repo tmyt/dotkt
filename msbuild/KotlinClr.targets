@@ -1,13 +1,13 @@
-<!-- kotlin/clr MSBuild integration: compile .kt -> .cs with our backend, then let the C# toolchain
-     finish the build. Import this from a .ktproj. -->
+<!-- kotlin/clr MSBuild integration: compile .kt -> BIR with our compiler, then ilemit turns the BIR into the
+     final CIL assembly (csc only produces a throwaway placeholder the il-emit overwrites). Import from a .ktproj. -->
 <Project>
 
   <PropertyGroup>
     <KotlinClrRoot Condition="'$(KotlinClrRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</KotlinClrRoot>
     <KotlinClrLauncher Condition="'$(KotlinClrLauncher)' == ''">$(KotlinClrRoot)/compiler/build/install/compiler/bin/compiler</KotlinClrLauncher>
     <KotlinStdlib Condition="'$(KotlinStdlib)' == ''">$(KotlinClrRoot)/runtime/kotlin/kotlin-stdlib.jar</KotlinStdlib>
-    <!-- Generated files live under obj/ (which the .kt glob excludes), not the source tree. -->
-    <KotlinClrOut>$(BaseIntermediateOutputPath)kotlin-cs</KotlinClrOut>
+    <!-- Generated files (BIR) live under obj/ (which the .kt glob excludes), not the source tree. -->
+    <KotlinClrOut>$(BaseIntermediateOutputPath)kotlin-bir</KotlinClrOut>
     <KotlinClrFacadeGen>$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</KotlinClrFacadeGen>
     <KotlinClrFacadeOut>$(BaseIntermediateOutputPath)kotlin-facades</KotlinClrFacadeOut>
     <!-- S5: façade-FREE .NET types listed via <KotlinClrType Include="System.X"/> are injected straight
@@ -15,11 +15,6 @@
     <KotlinClrTypeMeta>$(BaseIntermediateOutputPath)clrtypes.meta</KotlinClrTypeMeta>
     <!-- The .NET import list extracted from the .kt sources by the clrc scan-imports pass (PSI parser, not regex). -->
     <KotlinClrImportList>$(BaseIntermediateOutputPath)clrimports.txt</KotlinClrImportList>
-    <!-- Backend: "il" (default: kt->BIR->ilemit, emit CIL directly — no C#) or "cs" (kt->C#->csc, the
-         retired dev/oracle path). E-5: the shipping default is now IL; C# is opt-in. -->
-    <KotlinClrBackend Condition="'$(KotlinClrBackend)' == ''">il</KotlinClrBackend>
-    <!-- C# emission is opt-in: the compiler emits ONLY BIR unless KOTLIN_CLR_EMIT_CS=1 (set only for the cs backend). -->
-    <KotlinClrEmitCs Condition="'$(KotlinClrBackend)' == 'cs'">1</KotlinClrEmitCs>
     <KotlinClrIlEmit>$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</KotlinClrIlEmit>
     <!-- We generate the C# ourselves; don't let the SDK glob .cs/.kt. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
@@ -89,30 +84,21 @@
     <Exec Command="dotnet &quot;$(KotlinClrFacadeGen)&quot; --meta &quot;$(KotlinClrTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(KotlinClrImportList)&quot;" />
   </Target>
 
-  <!-- Compile all .kt to .cs, then hand the generated C# to CoreCompile. CLR_TYPES_METADATA tells the
-       compiler's FIR injector which façade-free .NET types to synthesize (empty/absent -> none). -->
+  <!-- Compile all .kt to BIR, which ilemit later turns into CIL. CLR_TYPES_METADATA tells the compiler's FIR
+       injector which façade-free .NET types to synthesize (empty/absent -> none). -->
   <Target Name="KotlinClrCompile" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrInjectTypes"
           Inputs="@(KotlinCompile)" Outputs="$(KotlinClrOut)/.stamp">
     <MakeDir Directories="$(KotlinClrOut)" />
-    <Message Importance="high" Text="kotlin/clr: compiling @(KotlinCompile->Count()) .kt file(s) -> C#" />
+    <Message Importance="high" Text="kotlin/clr: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
     <Exec Command="&quot;$(KotlinClrLauncher)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(KotlinStdlib)&quot; -d &quot;$(KotlinClrOut)&quot;"
-          EnvironmentVariables="CLR_TYPES_METADATA=$(KotlinClrTypeMeta);KOTLIN_CLR_EMIT_CS=$(KotlinClrEmitCs)" />
+          EnvironmentVariables="CLR_TYPES_METADATA=$(KotlinClrTypeMeta)" />
     <Touch Files="$(KotlinClrOut)/.stamp" AlwaysCreate="true" />
   </Target>
 
-  <!-- cs backend: add generated C# to the compile set (before CoreCompile). -->
-  <Target Name="KotlinClrCollect" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrCompile"
-          Condition="'$(KotlinClrBackend)' == 'cs'">
-    <ItemGroup>
-      <Compile Include="$(KotlinClrOut)/*.cs" />
-    </ItemGroup>
-  </Target>
-
-  <!-- il backend: give csc a trivial valid assembly to produce; ilemit overwrites it afterwards. The user's
-       StartupObject (e.g. AppKt) names a Kotlin entry that doesn't exist in the placeholder, so point csc at
-       the placeholder's Main for this throwaway compile; ilemit sets the real entry point on the final dll. -->
-  <Target Name="KotlinClrIlPlaceholder" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrCompile"
-          Condition="'$(KotlinClrBackend)' == 'il'">
+  <!-- Give csc a trivial valid assembly to produce; ilemit overwrites it afterwards. The user's StartupObject
+       (e.g. AppKt) names a Kotlin entry that doesn't exist in the placeholder, so point csc at the placeholder's
+       Main for this throwaway compile; ilemit sets the real entry point on the final dll. -->
+  <Target Name="KotlinClrIlPlaceholder" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrCompile">
     <PropertyGroup>
       <StartupObject Condition="'$(StartupObject)' != ''">_IlPlaceholder</StartupObject>
     </PropertyGroup>
@@ -127,13 +113,13 @@
   <!-- il backend: bootstrap ilemit, then overwrite the compiled assembly with one emitted directly
        as CIL from BIR (no C#). Runs after CoreCompile so it replaces csc's (placeholder) output. -->
   <Target Name="EnsureIlEmit" BeforeTargets="KotlinClrIlEmit"
-          Condition="'$(KotlinClrBackend)' == 'il' and !Exists('$(KotlinClrIlEmit)')">
+          Condition="!Exists('$(KotlinClrIlEmit)')">
     <Message Importance="high" Text="kotlin/clr: building ilemit (first run)..." />
     <Exec Command="dotnet build &quot;$(KotlinClrRoot)/tools/ilemit&quot; -c Release -o &quot;$(KotlinClrRoot)/build/ilemit-bin&quot; -v q --nologo" />
   </Target>
 
   <Target Name="KotlinClrIlEmit" AfterTargets="CoreCompile" DependsOnTargets="KotlinClrCompile"
-          Condition="'$(KotlinClrBackend)' == 'il'">
+          >
     <ItemGroup>
       <_KotlinBir Include="$(KotlinClrOut)/*.bir.json" />
       <!-- Non-framework reference dlls (ProjectReference/PackageReference outputs, copy-local) must be loaded at
@@ -163,13 +149,13 @@
   </PropertyGroup>
 
   <Target Name="EnsureRetarget" BeforeTargets="KotlinClrRetarget"
-          Condition="'$(KotlinClrBackend)' == 'il' and '$(KotlinClrRetarget)' == 'true' and !Exists('$(KotlinClrRetargetTool)')">
+          Condition="'$(KotlinClrRetarget)' == 'true' and !Exists('$(KotlinClrRetargetTool)')">
     <Message Importance="high" Text="kotlin/clr: building retarget (first run)..." />
     <Exec Command="dotnet build &quot;$(KotlinClrRoot)/tools/retarget&quot; -c Release -o &quot;$(KotlinClrRoot)/build/retarget-bin&quot; -v q --nologo" />
   </Target>
 
   <Target Name="KotlinClrRetarget" AfterTargets="KotlinClrIlEmit"
-          Condition="'$(KotlinClrBackend)' == 'il' and '$(KotlinClrRetarget)' == 'true'">
+          Condition="'$(KotlinClrRetarget)' == 'true'">
     <Message Importance="high" Text="kotlin/clr: retargeting BCL refs for compile-time &lt;Reference&gt; -> $(TargetName)$(TargetExt)" />
     <Exec Command="dotnet &quot;$(KotlinClrRetargetTool)&quot; &quot;$(IntermediateOutputPath)$(TargetName)$(TargetExt)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot;" />
   </Target>

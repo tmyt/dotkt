@@ -19,3 +19,7 @@ packaging/**/bin/
 build/nuget-feed/
 templates/**/obj/
 templates/**/bin/
+
+# Local dev artifacts (symlinks to NuGet cache; reference IL dumps) — not source
+/dist/
+/refs/
