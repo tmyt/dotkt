@@ -12,10 +12,24 @@ Round-trip interop: a DotKt-compiled assembly can now be consumed **as Kotlin** 
 compile-time `ProjectReference` between C# and Kotlin projects.
 
 ### Added
+- **Reference-type nullability via .NET NRT + platform types.** A reference-type `String?` now rides .NET's own
+  nullable-reference metadata (`[Nullable]`/`[NullableContext]`) instead of a bespoke attribute: ilemit stamps
+  `[NullableContext(1)]` per type and `[Nullable(2)]` on each nullable reference return/parameter, so a **C# consumer
+  also sees** DotKt's `String?` as nullable. facadegen reads NRT uniformly for every assembly, which closes a soundness
+  hole — a reference type from any non-DotKt assembly was previously injected as strictly non-null. A reference type from
+  an assembly built without `<Nullable>enable</Nullable>` (oblivious) now injects as a Kotlin **platform type** `T!`
+  (`ConeFlexibleType(T, T?)`, à la Kotlin/JVM's treatment of un-annotated Java), instead of lying "non-null". The old
+  `[KotlinNullable]` attribute is retired. See `docs/dotkt-semantics.md` §9.
+- **Round-trip metadata attributes are compiler-embedded per assembly.** The `[Kotlin*]` attributes moved to namespace
+  `DotKt.Runtime.CompilerServices` and are now defined as internal types inside each emitted assembly (the csc model for
+  its own `NullableAttribute`/`IsReadOnlyAttribute`) rather than referenced from `DotKt.Runtime`. They are metadata-only,
+  so this makes each assembly self-contained and removes the "ilemit needs `--ref DotKt.Runtime` to stamp" coupling.
+  (`[DotKtNamespaceProjection]` stays a referenced type — it is assembly-level, which PersistedAssemblyBuilder can't
+  embed.) `DotKt.Runtime` now carries only executed code plus that one attribute.
 - **Consume a DotKt assembly AS KOTLIN — Kotlin-modifier round-trip.** Kotlin-language facts with no native .NET
   representation now survive compilation and are restored on a consuming module's FIR, so a `.ktproj` can use
   another DotKt-compiled assembly with idiomatic Kotlin syntax (the basis for shipping compiled kotlinx-* libraries
-  for the CLR). New `DotKt.Metadata` attributes (`[KotlinFunction(Infix|Operator|Suspend)]`, `[KotlinFileClass]`) are
+  for the CLR). Embedded `DotKt.Runtime.CompilerServices` attributes (`[KotlinFunction(Infix|Operator|Suspend)]`, `[KotlinFileClass]`) are
   stamped onto the IL by ilemit, read back by `facadegen --meta`, and restored by the FIR injector:
   - `infix fun` / `operator fun` — restored as `status { isInfix/isOperator }` (call notation + operator resolution).
   - `suspend fun` — emitted as `Task<T>`; restored as `suspend fun(): T` (the Task is unwrapped and re-awaited by the
@@ -52,6 +66,16 @@ compile-time `ProjectReference` between C# and Kotlin projects.
   `<KotlinClrRetarget>false</KotlinClrRetarget>` / `<DotKtRetarget>false</DotKtRetarget>`.
 
 ### Fixed
+- **Cross-file / namespaced interface polymorphism crashed ilemit.** A class in a Kotlin `package` implementing an
+  interface from another file threw `KeyNotFoundException` during the interface-link pass — `FindMethod` was keyed by the
+  TypeBuilder's simple name while `_types` is keyed by the BIR full name. Now keyed consistently.
+- **A generic function applying `(T) -> Unit` to a `List<T>` crashed ilemit.** `for (x in xs) f(x)` inside
+  `fun <T> each(xs: List<T>, f: (T) -> Unit)` threw `NotSupportedException` (TypeBuilder generic instantiation doesn't
+  resolve members) — the `forEach` lowering called `.GetMethod` on `IEnumerable<T>` directly instead of via
+  `TypeBuilder.GetMethod`.
+- **Assigning a Boolean to a .NET `bool?` property failed the frontend.** facadegen mapped a nullable value type
+  `Nullable<X>` to the literal generic `Nullable<X>` (a distinct type) instead of Kotlin's `X?`, so e.g.
+  `checkBox.IsChecked = true` reported an assignment type mismatch. `System.Nullable<X>` now maps to `X?`.
 - **Kotlin → Kotlin `ProjectReference` round-trip — a library's top-level functions vanished.** A `.ktproj` consuming
   another `.ktproj` as Kotlin got `unresolved reference` on the library's top-level functions (`import mylib.boxed`),
   while classes resolved fine. The MSBuild `ilemit` step built its `--ref` list from `@(ReferenceCopyLocalPaths)`, which
