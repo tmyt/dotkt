@@ -977,7 +977,10 @@ static class FacadeGen
         t.IsByRef ? (MetaMode && Supported(t.GetElementType()))
         : !t.IsPointer
         && ((MetaMode && t.IsArray) ? Supported(t.GetElementType())
-            : (!t.IsArray && (t.IsGenericParameter || !t.ContainsGenericParameters)));
+            : (!t.IsArray && (t.IsGenericParameter || !t.ContainsGenericParameters
+                // A constructed generic whose args are themselves supported (`Box<T>` in `fun <T> wrap(): Box<T>`):
+                // it ContainsGenericParameters (the method's T), but each arg resolves, so the `generic:` encoding works.
+                || (MetaMode && t.IsGenericType && t.GetGenericArguments().All(Supported)))));
 
     // Map a .NET type to a Kotlin façade type. Primitives map precisely; generic params map to their
     // name (T); the type itself maps to its façade; everything else degrades to Any?.
@@ -1041,7 +1044,9 @@ static class FacadeGen
     static string CrossType(Type t)
     {
         if (t.IsArray) { var e = Map(t.GetElementType(), t); return e == "Any?" ? "Any?" : "array:" + e; }
-        if (t.IsByRef || t.IsPointer || t.IsGenericParameter || string.IsNullOrEmpty(t.Namespace)) return "Any?";
+        // A root-namespace GENERIC user type (`Box<T>`, t.Namespace empty) is handled by the generic branch below; only
+        // reject an empty namespace for NON-generic types (a global/compiler type with no useful injectable identity).
+        if (t.IsByRef || t.IsPointer || t.IsGenericParameter || (string.IsNullOrEmpty(t.Namespace) && !t.IsGenericType)) return "Any?";
         // (3) A constructed generic (`IList<ResourceDictionary>`) -> `generic:<OpenSimple>:<arg>,<arg>` so the
         // injector resolves it to `IList<ResourceDictionary>` (chained `.Add`/`for-in` work). Requires the open def
         // injectable and every arg resolvable to a simple name/primitive; nested generics/arrays in args (a Map
@@ -1050,7 +1055,9 @@ static class FacadeGen
         {
             var open = t.GetGenericTypeDefinition();
             var openName = SimpleName(open);
-            if (string.IsNullOrEmpty(open.Namespace) || NO_INJECT.Contains(open.FullName ?? "")
+            // A root-namespace open def (`open.Namespace` null) is a legitimately injectable user type (`Box<T>`), not a
+            // global/compiler type — only reject the explicitly non-injectable ones and names that aren't a simple ident.
+            if (NO_INJECT.Contains(open.FullName ?? "")
                 || !openName.All(c => char.IsLetterOrDigit(c) || c == '_')) return "Any?";
             var args = t.GetGenericArguments().Select(a => Map(a, t)).ToList();
             if (args.Any(a => a == "Any?" || a.Contains(':') || a.Contains(','))) return "Any?";

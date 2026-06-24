@@ -3602,7 +3602,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 					if (targs.all { it != null }) {
 						val taJson = targs.joinToString(",") { str(birType(it!!)) }
-						val shapes = regularParams(callee).joinToString(",") { str(clrMethodShape(it.type)) }
+						// `shapes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
+						// fun's `__self` receiver shape is included — else ilemit's by-shape overload pick finds 0 params.
+						val shapeParams = (if (extRecv != null) listOf(callee.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }) else emptyList()) + regularParams(callee)
+						val shapes = shapeParams.joinToString(",") { str(clrMethodShape(it.type)) }
 						return """{"k":"clrGenericStatic","type":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapes":[$shapes],"args":[${a.joinToString(",") { expr(it) }}]}"""
 					}
 				}

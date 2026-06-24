@@ -168,38 +168,69 @@ else
     echo "FAIL  roundtrip-nsproj"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$nsexpected" "$nsactual"; exit 1
 fi
 
-# ----- GENERIC round-trip: a generic user CLASS + non-reified generic TOP-LEVEL functions, consumed as Kotlin -----
-# Guards two coordinated fixes: (1) facadegen emitted a root-namespace generic type's open .NET name as `.Box` (a
-# leading dot — `t.Namespace` is null at the root), unresolvable by the consumer; (2) ilemit named the generic type
-# `Box` without the CLR `1` arity suffix, so a cross-assembly `GetType("Box`1")` missed it (same-assembly use went
-# through the `_types` registry by BIR name, so it never showed). reified generics already worked (a generic method,
-# no carried type) — this covers the non-reified user class + plain generic top-level functions.
+# ----- GENERIC round-trip, COMBINED with every other round-tripping feature, consumed as Kotlin -----
+# Exercises user generics in every POSITION (class type param, member, return, parameter, two type params, generic
+# method on a generic class) AND combined with each restored modifier (operator, infix, extension, extension operator,
+# top-level suspend, nullable, default arg, vararg). Guards the coordinated fixes:
+#   - facadegen: a root-namespace generic open name was `.Box` (leading dot); `Supported`/`CrossType` dropped a generic
+#     user type in a signature (`Box<T>` -> Any?) so the whole function vanished.
+#   - ilemit: a generic type was named `Box` without the CLR `Box`1` arity (cross-assembly `GetType` missed it); a
+#     generic EXTENSION call omitted the `__self` receiver shape; a generic fn with a DEFAULT arg had fewer shapes than
+#     the single .NET method's params (now tolerated + default-filled).
+#   - injector: `coneOf` lost the method type variable inside `generic:Box:T` (resolved `T` -> Any?, so a returned
+#     `Box<T>` became `Box<object>` and crashed at the call site); the generic branch ignored ext receiver / inline /
+#     infix / operator / vararg / default-arg overloads (now one unified path).
+# (reified generics already worked — a generic method with no carried type. Generic-CLASS member `suspend` is a separate
+# pre-existing coroutine×generics limitation that fails the same way WITHOUT round-trip, so it's covered elsewhere.)
 GG="$ROOT/build/roundtrip-generic"; rm -rf "$GG"; mkdir -p "$GG/lib" "$GG/app" "$GG/libbir" "$GG/libil" "$GG/appbir" "$GG/appil"
 cat > "$GG/lib/lib.kt" <<'EOF'
+class Pair2<A, B>(val first: A, val second: B)                       // two type params
 class Box<T>(val value: T) {
     fun get(): T = value
+    operator fun plus(o: Box<T>): Pair2<T, T> = Pair2(value, o.value) // generic + operator
+    infix fun with(o: Box<T>): Pair2<T, T> = Pair2(value, o.value)    // generic + infix
+    fun <R> mapTo(f: (T) -> R): R = f(value)                          // generic METHOD on a generic class
 }
-fun <T> identity(x: T): T = x
-fun <T> firstOf(a: T, b: T): T = a
+class Holder<A, B>(val a: A, val b: B) { val label: String get() = "$a/$b" }  // two type params + custom getter
+fun <T> wrap(x: T): Box<T> = Box(x)                                  // generic top-level, generic RETURN type
+fun <T> unwrap(b: Box<T>): T = b.get()                              // generic top-level, generic PARAM type
+fun <T> Box<T>.twice(): Pair2<T, T> = Pair2(value, value)           // generic EXTENSION on a generic type
+operator fun <T> Box<T>.times(n: Int): Int = n                      // generic extension OPERATOR
+suspend fun <T> echoAsync(x: T): T = x                             // generic + top-level SUSPEND
+fun <T> orDefault(x: T?, label: String = "none"): String =         // generic + NULLABLE + DEFAULT arg
+    if (x == null) label else x.toString()
+fun <T> countAll(vararg xs: T): Int = xs.size                      // generic + VARARG
 EOF
 cat > "$GG/app/app.kt" <<'EOF'
+import kotlinx.coroutines.runBlocking
 fun main() {
-    println(Box<Int>(42).get())   // generic user class, constructed + member call
-    println(identity("hello"))    // non-reified generic top-level fun
-    println(firstOf(1, 2))        // generic top-level fun, inferred type arg
+    val a = Box(3); val b = Box(4)
+    println((a + b).first)                    // 3    generic operator +
+    println((a with b).second)                // 4    generic infix
+    println(Box(5).mapTo { it * 2 })          // 10   generic method on a generic class (+ lambda)
+    println(Box(5).get())                     // 5    generic member
+    println(Holder(1, "z").label)             // 1/z  two type params + custom getter
+    println(wrap(99).get())                   // 99   generic return type
+    println(unwrap(Box(8)))                   // 8    generic param type
+    println(Box(6).twice().first)             // 6    generic extension on a generic type
+    println(Box(6) * 7)                       // 7    generic extension operator
+    println(runBlocking { echoAsync("hi") })  // hi   generic top-level suspend
+    println(orDefault<String>(null))          // none generic + nullable + default omitted
+    println(orDefault("set"))                 // set  default present
+    println(countAll(1, 2, 3, 4))             // 4    generic vararg
 }
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$GG/lib" -no-stdlib -classpath "$CP" -d "$GG/libbir" >/dev/null 2>&1
 dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$GG/libil" KLib --ref "$DOTKT_RT" "$GG/libbir"/*.bir.json >/dev/null 2>&1
 dotnet "$ROOT/build/retarget-bin/retarget.dll" "$GG/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$GG/k.meta" --refs "$REFS$GG/libil/KLib.dll;$DOTKT_RT" Box LibKt >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$GG/k.meta" --refs "$REFS$GG/libil/KLib.dll;$DOTKT_RT" Box Pair2 Holder LibKt >/dev/null 2>&1
 CLR_TYPES_METADATA="$GG/k.meta" "$LAUNCHER" "$GG/app" -no-stdlib -classpath "$CP" -d "$GG/appbir" >/dev/null 2>&1
 dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$GG/appil" KApp --ref "$GG/libil/KLib.dll" --ref "$DOTKT_RT" "$GG/appbir"/*.bir.json >/dev/null 2>&1
 cp "$GG/libil/KLib.dll" "$DOTKT_RT" "$GG/appil/"
-gexpected="$(printf '42\nhello\n1')"
+gexpected="$(printf '3\n4\n10\n5\n1/z\n99\n8\n6\n7\nhi\nnone\nset\n4')"
 gactual="$(dotnet "$GG/appil/KApp.dll" 2>/dev/null)"
 if [[ "$gactual" == "$gexpected" ]]; then
-    echo "PASS  roundtrip-generic (generic user class + non-reified generic top-level functions consumed as Kotlin)"
+    echo "PASS  roundtrip-generic (user generics in every position × operator/infix/extension/suspend/nullable/default/vararg)"
 else
     echo "FAIL  roundtrip-generic"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$gexpected" "$gactual"; exit 1
 fi

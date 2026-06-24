@@ -2212,6 +2212,7 @@ sealed class Emitter
                 var mi = ResolveGenericMethod(type, e.GetProperty("method").GetString(), typeArgs.Length, shapes, typeArgs, instance: false);
                 var ps = mi.GetParameters();
                 for (int i = 0; i < argEls.Count; i++) EmitArg(argEls[i], ps[i].ParameterType);
+                for (int i = argEls.Count; i < ps.Length; i++) EmitDefaultArg(ps[i]);   // fill omitted trailing default/params args
                 _il.Emit(OpCodes.Call, mi);
                 return mi.ReturnType;
             }
@@ -2227,6 +2228,7 @@ sealed class Emitter
                 var ps = mi.GetParameters();
                 EmitExpr(e.GetProperty("recv"));
                 for (int i = 0; i < argEls.Count; i++) EmitArg(argEls[i], ps[i].ParameterType);
+                for (int i = argEls.Count; i < ps.Length; i++) EmitDefaultArg(ps[i]);   // fill omitted trailing default/params args
                 _il.Emit(mi.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, mi);
                 return mi.ReturnType;
             }
@@ -3924,13 +3926,18 @@ sealed class Emitter
     // Resolve a generic static method by name + type-arity + exact parameter shapes, then instantiate it.
     MethodInfo ResolveGenericMethod(Type type, string name, int typeArgCount, string[] shapes, Type[] typeArgs, bool instance = false)
     {
+        // The caller may omit TRAILING default/params args (a generic fn restored @JvmOverloads-style supplies fewer
+        // shapes than the single .NET method has params); accept >= shapes, match shapes over the provided prefix, and
+        // require the extra trailing params to be optional (the emit path fills them via EmitDefaultArg).
         var cands = type.GetMethods(BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static))
             .Where(m => m.Name == name && m.IsGenericMethodDefinition
                      && m.GetGenericArguments().Length == typeArgCount
-                     && m.GetParameters().Length == shapes.Length
-                     && m.GetParameters().Select((p, i) => Shape(p.ParameterType) == shapes[i]).All(x => x))
+                     && m.GetParameters().Length >= shapes.Length
+                     && m.GetParameters().Take(shapes.Length).Select((p, i) => Shape(p.ParameterType) == shapes[i]).All(x => x)
+                     && m.GetParameters().Skip(shapes.Length).All(p => p.HasDefaultValue || p.IsDefined(typeof(ParamArrayAttribute), false)))
             .ToList();
-        return cands.First().MakeGenericMethod(typeArgs);
+        // Prefer an exact-arity match over one that needs default-filling.
+        return (cands.FirstOrDefault(m => m.GetParameters().Length == shapes.Length) ?? cands.First()).MakeGenericMethod(typeArgs);
     }
 
     Type MapType(string t)

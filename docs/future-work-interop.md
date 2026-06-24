@@ -101,9 +101,22 @@ roundtrip-pkg で常設、各実装で verify-il 緑。
 | **nullable** `String?` | BIR の param/return nullable → ilemit `[KotlinNullable(mask)]`（bit0=戻り, biti+1=param i）→ facadegen `?` サフィックス → injector `withNullability`。型レベルで本物（null 非許容 param への null は拒否） |
 | **data class** | 派生で自動成立（プロパティ + componentN operator〔往復済〕 + equals/toString〔.NET ディスパッチ〕）。`data` 修飾子は復元しない（消費側 fir2ir が二重合成して衝突するため・メンバ駆動で十分） |
 
-**残る既知の限界**（往復のブロッカーではない）: デフォルト引数の**名前付き中間省略**（`copy(y=5)` は非定数デフォルト `this.x`
-を要し JVM の `copy$default` 相当が必要）・**ジェネリッククラスの消費側**・**object シングルト**ンは別途。`private`/`internal`
-メンバは非エクスポートで往復対象外。
+**ジェネリクスの往復は全位置・全機能組み合わせで成立**（2026-06-24）: ジェネリッククラス（`Box<T>`、`operator`/`infix`
+メンバ・ジェネリックメソッド `fun <R> mapTo`）、2型パラメータ、戻り/引数位置のジェネリックユーザ型（`fun <T> wrap(x:T):Box<T>`）、
+ジェネリック拡張関数・拡張演算子、ジェネリック top-level `suspend`、nullable/デフォルト引数/vararg との組み合わせ。`verify-roundtrip.sh`
+（roundtrip-generic）で網羅。三層の修正: facadegen（root-namespace 開放名の先頭ドット `.Box`／シグネチャ内ジェネリックユーザ型を
+`Any?` に落としていた）・ilemit（CLR アリティ名 ``Box`1``／ジェネリック拡張の `__self` シェイプ欠落／ジェネリック+デフォルト引数の
+オーバーロード解決）・injector（`coneOf` が `generic:Box:T` 内の型変数を `Any?` に潰す／ジェネリック top-level 経路が
+ext-receiver・inline・infix・operator・vararg・デフォルト引数を無視）。
+
+**残る既知の限界**（往復のブロッカーではない）:
+- デフォルト引数の**名前付き中間省略**（`copy(y=5)` は非定数デフォルト `this.x` を要し JVM の `copy$default` 相当が必要）・**object シングルトン**。
+- **ジェネリッククラスのメンバ `suspend`**（`class Box<T> { suspend fun f(): T }`）— **往復固有ではなく**、単一モジュールでも
+  同じ `BadImageFormatException` で落ちる**既存の coroutine×ジェネリッククラスの穴**（状態機械をジェネリック型のメンバとして emit
+  する経路）。別途要対応。
+- **`kotlin.Pair`/`Triple` をジェネリック型引数で構築**（`Pair<T, T>(a, b)`、T が型パラメータ）— ilemit `ParseOwner` が
+  `kotlin.Pair[gp:T,...]` をユーザ型として探して落ちる（これも単一モジュールで再現する既存バグ）。ユーザ型 `Pair2<A,B>` で代替可。
+- `private`/`internal` メンバは非エクスポートで往復対象外。
 
 **設計メモ**: プロパティ往復は emit 側の .NET プロパティ化（private backing + PropertyDef + accessor）も選択肢だったが、
 ilemit の既存 field-fallback を活かす facadegen 側復元の方が低リスクで全 property サンプル無回帰を達成。`private set` の

@@ -95,14 +95,29 @@ All identified round-trip gaps resolved; guarded by `scripts/verify-roundtrip.sh
 - Named-argument calls also work (ilemit emits parameter names). New metadata attributes: `[KotlinNullable]`, `[KotlinReadOnly]`.
   Remaining known limits (not round-trip blockers): default-arg named middle-omission (`copy(y=5)`, needs `copy$default`),
   object singletons — see docs/future-work-interop.md §5.
-- **Generic round-trip** — a generic user **class** (`class Box<T>`, constructed + member calls) and **non-reified**
-  generic **top-level** functions (`fun <T> identity(x: T): T`) now consume from another `.ktproj` as Kotlin (reified
-  generics already worked — they're a generic method with no carried type). Two coordinated fixes: (1) facadegen built a
-  root-namespace generic type's open .NET name as `.Box` — a leading dot, because `Type.Namespace` is null at the root —
-  which the consumer couldn't resolve; it now omits the dot (`OpenName`). (2) ilemit named the emitted generic type `Box`
-  without the CLR ``Box`1`` arity suffix, so a cross-assembly `GetType("Box`1")` missed it (same-assembly use resolves
-  through the `_types` registry by BIR name, so it never surfaced); the metadata name now carries the arity while the
-  registry key stays the bare name. Guarded by `scripts/verify-roundtrip.sh` (roundtrip-generic).
+- **Generic round-trip** — user generics now consume from another `.ktproj` as Kotlin in **every position** and
+  **combined with every other restored feature**: a generic user **class** (`class Box<T>`, with `operator`/`infix`
+  members and a generic method `fun <R> mapTo(f)`), **two type parameters** (`Holder<A, B>`), generic user types in
+  **return** and **parameter** position (`fun <T> wrap(x: T): Box<T>`, `fun <T> unwrap(b: Box<T>): T`), generic
+  **extension** functions and **extension operators** on a generic type (`fun <T> Box<T>.twice()`), generic **top-level
+  `suspend`** (`echoAsync`), and generics combined with **nullable** / **default-arg** / **vararg**. (Reified generics
+  already worked — a generic method with no carried type.) The coordinated fixes:
+  - **facadegen** — a root-namespace generic type's open .NET name was `.Box` (a leading dot: `Type.Namespace` is null at
+    the root); now `OpenName` omits it. `Supported`/`CrossType` dropped a generic user type appearing in a signature
+    (`Box<T>` → `Any?`), so the whole function silently vanished from the metadata; both now keep it (`generic:Box:T`).
+  - **ilemit** — a generic type was emitted as `Box` without the CLR ``Box`1`` arity suffix, so a cross-assembly
+    `GetType("Box`1")` missed it (same-assembly use resolves through the `_types` registry by BIR name, so it never
+    surfaced); the metadata name now carries the arity, the registry key stays bare. A generic **extension** call omitted
+    the `__self` receiver's shape (so overload resolution saw 0 params); it's now included. A generic fn with a
+    **default arg** supplies fewer shapes than the single .NET method's params — `ResolveGenericMethod` now tolerates the
+    trailing optional params and the emit path default-fills them.
+  - **injector** — `coneOf` lost the method type variable nested inside a `generic:Box:T` argument (resolved `T` → `Any?`
+    with a null owner, so a returned `Box<T>` became `Box<object>` and corrupted the call site); a type-variable resolver
+    is now threaded through every recursion. The generic top-level path also ignored the extension receiver / `inline` /
+    `infix` / `operator` / `vararg` / default-arg overloads — unified into the one path the ordinary case already used.
+  - Guarded by `scripts/verify-roundtrip.sh` (roundtrip-generic). Known limitation (NOT a round-trip regression — it
+    fails the same way in a single module): a `suspend` member of a generic class (`class Box<T> { suspend fun f(): T }`)
+    is a separate pre-existing coroutine×generics gap, tracked in docs/future-work-interop.md.
 - **Namespace projection** (`[assembly: DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]`) — a DotKt library whose
   types live in one .NET namespace (e.g. `DotKt.Coroutines`) can be consumed under a different Kotlin package (e.g.
   `import kotlinx.coroutines.*`). The producer stamps it via `ilemit --ns-projection k=d` (SDK: a `<DotKtNamespaceProjection>`

@@ -453,35 +453,29 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			topLevelByCallable[callableId]?.let { tls ->
 				return tls.flatMap { tl ->
 					val m = tl.fn
-					if (m.typeParams.isEmpty()) {
-						// An extension fun: the first param `__self` is the receiver (rest are value params).
-						val extRecv = if (m.ext && m.params.isNotEmpty()) m.params[0] else null
-						val vps = if (extRecv != null) m.params.drop(1) else m.params
-						// Default args have no .NET analog that fir2ir can lower (a plugin `hasDefaultValue` inserts a STUB
-						// expression that crashes fir2ir). Restore them @JvmOverloads-style: one overload per trailing
-						// contiguous default param omitted; the consumer resolves by arity and ilemit fills the rest from
-						// [DefaultParameterValue]. coneOf strips the `opt:` marker, so each overload's params are required.
-						val trailingOpt = vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
-						((vps.size - trailingOpt)..vps.size).map { arity ->
-							createTopLevelFunction(ClrGeneratedKey, callableId, coneOf(m.returnType, null)) {
-								if (m.suspend) status { isSuspend = true }
-								if (m.inline) status { isInline = true }   // accept non-local return; ilemit splices the carried body
-								if (m.infix || m.operator) status { isInfix = m.infix; isOperator = m.operator }   // top-level extension operators
-								if (extRecv != null) extensionReceiverType(coneOf(extRecv.type, null))
-								for (p in vps.take(arity))
-									if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), coneOf("array:" + p.type.removePrefix("vararg:"), null), isVararg = true)
-									else valueParameter(Name.identifier(p.name), coneOf(p.type, null))
-							}.symbol
-						}
-					} else listOf(
-						// A generic top-level fun (e.g. a `reified` inline restored as a generic method): declare its
-						// type params, then resolve the return/param types against them — mirrors the member-generic path.
+					// An extension fun: the first param `__self` is the receiver (rest are value params).
+					val extRecv = if (m.ext && m.params.isNotEmpty()) m.params[0] else null
+					val vps = if (extRecv != null) m.params.drop(1) else m.params
+					// Default args have no .NET analog that fir2ir can lower (a plugin `hasDefaultValue` inserts a STUB
+					// expression that crashes fir2ir). Restore them @JvmOverloads-style: one overload per trailing
+					// contiguous default param omitted; the consumer resolves by arity and ilemit fills the rest from
+					// [DefaultParameterValue]. coneOfMethod strips the `opt:` marker, so each overload's params are required.
+					val trailingOpt = vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
+					// One path for both ordinary and GENERIC top-level functions: resolve every spec against the fn's own
+					// type params (empty for a non-generic fn -> coneOfMethod falls through to coneOf), so a generic fn
+					// keeps its extension receiver / inline / infix / operator / vararg / default-arg overloads too.
+					((vps.size - trailingOpt)..vps.size).map { arity ->
 						createTopLevelFunction(ClrGeneratedKey, callableId, { tps -> coneOfMethod(m.returnType, null, m.typeParams, tps) }) {
-							if (m.suspend) status { isSuspend = true }
 							for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
-							for (p in m.params) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, null, m.typeParams, tps) })
+							if (m.suspend) status { isSuspend = true }
+							if (m.inline) status { isInline = true }   // accept non-local return; ilemit splices the carried body
+							if (m.infix || m.operator) status { isInfix = m.infix; isOperator = m.operator }   // top-level extension operators
+							if (extRecv != null) extensionReceiverType { tps -> coneOfMethod(extRecv.type, null, m.typeParams, tps) }
+							for (p in vps.take(arity))
+								if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod("array:" + p.type.removePrefix("vararg:"), null, m.typeParams, tps) }, isVararg = true)
+								else valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, null, m.typeParams, tps) })
 						}.symbol
-					)
+					}
 				}
 			}
 			return emptyList()
@@ -646,11 +640,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	/** Like [coneOf], but also resolves a reference to one of the method's own generic parameters (`T`). owner is
 	 *  null for a top-level function (no enclosing class type params). */
 	private fun coneOfMethod(typeName: String, owner: FirClassSymbol<*>?, methodTypeParams: List<String>,
-	                         tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType {
-		val i = methodTypeParams.indexOf(typeName)
-		if (i >= 0 && i < tps.size) return tps[i].symbol.constructType(emptyArray(), false)
-		return coneOf(typeName, owner)
-	}
+	                         tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType =
+		// Resolve the spec through `coneOf`, but with a type-variable resolver so a method type param `T` — even nested
+		// inside a `generic:Box:T` arg — binds to the function's own type parameter (not the owner's, and not Any?).
+		coneOf(typeName, owner) { name ->
+			val i = methodTypeParams.indexOf(name)
+			if (i >= 0 && i < tps.size) tps[i].symbol.constructType(emptyArray(), false) else null
+		}
 
 	/** A Kotlin function type `(P...) -> R` = `kotlin.FunctionN<P..., R>`, for event handler params. */
 	private fun coneFunctionType(params: List<ConeKotlinType>, ret: ConeKotlinType): ConeKotlinType {
@@ -677,42 +673,45 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		session.symbolProvider.getClassLikeSymbolByClassId(spanClassId)?.constructType(arrayOf(arg), false)
 			?: session.builtinTypes.nullableAnyType.coneType
 
-	private fun coneOf(typeName: String, owner: FirClassSymbol<*>?): ConeKotlinType {
+	// `tv` resolves a bare type-variable name (a method/function type parameter) to its cone type; null when the name
+	// isn't one. Threaded through every recursion so a `T` nested in `generic:Box:T`/`array:T`/`func:…` also binds.
+	private fun coneOf(typeName: String, owner: FirClassSymbol<*>?, tv: ((String) -> ConeKotlinType?)? = null): ConeKotlinType {
 		// A trailing `?` -> the Kotlin nullable form `T?` (so a consumer can pass/handle null). Carried by [KotlinNullable].
-		if (typeName.endsWith("?")) return coneOf(typeName.dropLast(1), owner).withNullability(true, session.typeContext)
+		if (typeName.endsWith("?")) return coneOf(typeName.dropLast(1), owner, tv).withNullability(true, session.typeContext)
 		// `opt:T` marks a default-arg param (the optionality is set via hasDefaultValue at the param; the type is T).
-		if (typeName.startsWith("opt:")) return coneOf(typeName.removePrefix("opt:"), owner)
+		if (typeName.startsWith("opt:")) return coneOf(typeName.removePrefix("opt:"), owner, tv)
 		// A .NET out/ref param / ref return (`byref:Int`) -> the intrinsic `ClrRef<Int>`.
-		if (typeName.startsWith("byref:")) return clrRefOf(coneOf(typeName.removePrefix("byref:"), owner))
+		if (typeName.startsWith("byref:")) return clrRefOf(coneOf(typeName.removePrefix("byref:"), owner, tv))
 		// A .NET `Span<T>` param (`span:Int`) -> the intrinsic `Span<Int>` (the real System.Span<Int>).
-		if (typeName.startsWith("span:")) return spanOf(coneOf(typeName.removePrefix("span:"), owner))
+		if (typeName.startsWith("span:")) return spanOf(coneOf(typeName.removePrefix("span:"), owner, tv))
 		// (4) A .NET delegate parameter (`func:<ret>:<arg>,<arg>`) -> a Kotlin function type `(args) -> ret`, so a
 		// lambda binds and overloads disambiguate. The backend builds the real delegate from the call-site param type.
 		if (typeName.startsWith("func:")) {
 			val rest = typeName.removePrefix("func:")
 			val ret = rest.substringBefore(':'); val argStr = rest.substringAfter(':', "")
-			val args = if (argStr.isEmpty()) emptyList() else argStr.split(',').map { coneOf(it, owner) }
-			return coneFunctionType(args, coneOf(ret, owner))
+			val args = if (argStr.isEmpty()) emptyList() else argStr.split(',').map { coneOf(it, owner, tv) }
+			return coneFunctionType(args, coneOf(ret, owner, tv))
 		}
-		// (3) A constructed generic (`generic:IList:ResourceDictionary`) -> the injected open type applied to the
-		// (recursively resolved) args, so `x.MergedDictionaries.Add(..)` / `for (d in coll)` reach real members.
+		// (3) A constructed generic (`generic:IList:ResourceDictionary`, or `generic:Box:T` of a generic fn) -> the
+		// injected open type applied to the (recursively resolved) args, so chained members / type inference work.
 		if (typeName.startsWith("generic:")) {
 			val rest = typeName.removePrefix("generic:")
 			val open = rest.substringBefore(':'); val argStr = rest.substringAfter(':', "")
 			val argNames = if (argStr.isEmpty()) emptyList() else argStr.split(',')
 			val cid = ClrMetadataHolder.classIdFor(open, argNames.size) ?: return session.builtinTypes.nullableAnyType.coneType
 			val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return session.builtinTypes.nullableAnyType.coneType
-			val args = argNames.map { coneOf(it, owner) }
+			val args = argNames.map { coneOf(it, owner, tv) }
 			@Suppress("UNCHECKED_CAST")
 			return sym.constructType(args.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, false)
 		}
-		// A reference to the owner's own generic type parameter (`T` in `Collection<T>.Add(item: T)`).
+		// A bare type-variable name (`T`): a function type parameter (via `tv`) takes priority, then the owner's own.
+		tv?.invoke(typeName)?.let { return it }
 		owner?.typeParameterSymbols?.firstOrNull { it.name.identifier == typeName }
 			?.let { return it.constructType(emptyArray(), false) }
 		val bt = session.builtinTypes
 		// A .NET array param/return (`array:String` -> Kotlin `Array<String>` / primitive `IntArray`).
 		if (typeName.startsWith("array:")) {
-			val elem = coneOf(typeName.removePrefix("array:"), owner)
+			val elem = coneOf(typeName.removePrefix("array:"), owner, tv)
 			val prim = mapOf("Int" to "IntArray", "Long" to "LongArray", "Double" to "DoubleArray", "Float" to "FloatArray",
 				"Short" to "ShortArray", "Byte" to "ByteArray", "Boolean" to "BooleanArray", "Char" to "CharArray")[typeName.removePrefix("array:")]
 			val cid = if (prim != null) ClassId(FqName("kotlin"), Name.identifier(prim))
