@@ -10,5 +10,6 @@
   <files>
     <file src="tools/**" target="tools" />
     <file src="build/DotKt.Toolchain.props" target="build/DotKt.Toolchain.props" />
+    <file src="build/DotKt.Toolchain.targets" target="build/DotKt.Toolchain.targets" />
   </files>
 </package>

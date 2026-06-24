@@ -1,0 +1,81 @@
+<!-- DotKt build pipeline (kt -> BIR -> CIL) — the SINGLE source of truth, shipped WITH the toolchain that it
+     drives. NuGet auto-imports this (build/<PackageId>.targets) for any project referencing DotKt.Toolchain,
+     so the DotKt.Sdk just references the toolchain and the pipeline comes along. The in-repo dev entry
+     (msbuild/KotlinClr.targets) imports it explicitly. Tool paths come from DotKt.Toolchain.props ($(DotKt*)). -->
+<Project>
+  <PropertyGroup>
+    <DotKtOut>$(BaseIntermediateOutputPath)dotkt-bir</DotKtOut>
+    <DotKtTypeMeta>$(BaseIntermediateOutputPath)dotkt-clrtypes.meta</DotKtTypeMeta>
+    <!-- The .NET import list extracted from the .kt sources by the clrc scan-imports pass (PSI parser, not regex). -->
+    <DotKtImportList>$(BaseIntermediateOutputPath)dotkt-clrimports.txt</DotKtImportList>
+  </PropertyGroup>
+
+  <!-- C-2: import-driven, façade-FREE .NET type injection. The .kt sources' imports are extracted with the real
+       Kotlin parser (PSI) and those .NET types injected straight into FIR (no .kt produced). @(ReferencePath)
+       (BCL + PackageReference/Reference) makes any referenced assembly's types injectable. -->
+  <Target Name="DotKtInjectTypes" BeforeTargets="KotlinCompile" DependsOnTargets="ResolveReferences"
+          Condition="'@(KotlinCompile)' != ''">
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(DotKtTypeMeta)'))" />
+    <!-- 1. Extract .NET imports via the compiler's PSI pass (robust where the old regex was not — item 5). -->
+    <Message Importance="high" Text="DotKt: scanning .NET imports from @(KotlinCompile->Count()) .kt file(s) (PSI parser)" />
+    <Exec Command="&quot;$(DotKtCompiler)&quot; --scan-imports --output &quot;$(DotKtImportList)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ')" />
+    <!-- 2. Reflect over the imported (+ explicit <DotKtImport>) types -> FIR-injection metadata. -->
+    <Message Importance="high" Text="DotKt: resolving .NET types (import list + @(DotKtImport))" />
+    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
+  </Target>
+
+  <!-- Compile every .kt to BIR. CLR_TYPES_METADATA tells the FIR injector which façade-free .NET types to synthesize. -->
+  <Target Name="KotlinCompile" BeforeTargets="CoreCompile" DependsOnTargets="DotKtInjectTypes"
+          Inputs="@(KotlinCompile)" Outputs="$(DotKtOut)/.stamp">
+    <MakeDir Directories="$(DotKtOut)" />
+    <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
+    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(DotKtStdlib)&quot; -d &quot;$(DotKtOut)&quot;"
+          EnvironmentVariables="CLR_TYPES_METADATA=$(DotKtTypeMeta)" />
+    <Touch Files="$(DotKtOut)/.stamp" AlwaysCreate="true" />
+  </Target>
+
+  <!-- Give csc a trivial valid assembly to produce; ilemit overwrites it. The user's entry (e.g. AppKt) doesn't
+       exist in the placeholder, so point csc at the placeholder's Main for this throwaway compile. -->
+  <Target Name="DotKtIlPlaceholder" BeforeTargets="CoreCompile" DependsOnTargets="KotlinCompile">
+    <PropertyGroup>
+      <StartupObject Condition="'$(StartupObject)' != '' or '$(OutputType)' == 'Exe'">_DotKtPlaceholder</StartupObject>
+    </PropertyGroup>
+    <MakeDir Directories="$(DotKtOut)" />
+    <WriteLinesToFile File="$(DotKtOut)/_DotKtPlaceholder.cs" Overwrite="true"
+                      Lines="public static class _DotKtPlaceholder { public static void Main(string[] a) { } }" />
+    <ItemGroup>
+      <Compile Include="$(DotKtOut)/_DotKtPlaceholder.cs" />
+    </ItemGroup>
+  </Target>
+
+  <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from BIR. The
+       copy-local references (DotKt.Runtime + the project's package/project references, NOT the BCL, which ilemit
+       resolves by runtime reflection) are preloaded into ilemit as references. -->
+  <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="KotlinCompile">
+    <ItemGroup>
+      <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
+      <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <!-- DotKt.Runtime defines the [Kotlin*] metadata attribute types ilemit stamps so this library round-trips
+           (is consumable AS KOTLIN by another .ktproj): [KotlinFileClass] on the file facade restores its statics as
+           top-level functions, [KotlinFunction] restores infix/operator/suspend, etc. It's a compile reference but
+           NOT copy-local, so it's absent from @(ReferenceCopyLocalPaths) above; pull it from @(ReferencePath)
+           explicitly. Without it ilemit can't resolve the attribute types and silently skips stamping, so a
+           consumer's `import pkg.topLevelFn` resolves to nothing ("unresolved reference"). -->
+      <_DotKtRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Runtime'" />
+    </ItemGroup>
+    <Message Importance="high" Text="DotKt: emitting CIL from BIR -> $(TargetName)$(TargetExt)" />
+    <!-- <DotKtNamespaceProjection Include="kotlinx.coroutines=DotKt.Coroutines" /> -> [assembly: DotKtNamespaceProjection],
+         so a consumer can import this library under its Kotlin package though its types live in a different .NET namespace. -->
+    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; @(_DotKtRef->'--ref &quot;%(FullPath)&quot;', ' ') @(DotKtNamespaceProjection->'--ns-projection &quot;%(Identity)&quot;', ' ') @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
+  </Target>
+
+  <!-- REVERSE interop (R-1): repoint the emitted dll's BCL TypeRefs off the single System.Private.CoreLib onto the
+       real contract assemblies (Object/Task->System.Runtime, List/Dictionary->System.Collections, …) so a C# project
+       can <ProjectReference>/<Reference> it at compile time (otherwise CS0012). Uses the same @(ReferencePath) the
+       forward path resolves from; runtime is unaffected. Opt out with <DotKtRetarget>false</DotKtRetarget>. -->
+  <Target Name="DotKtRetarget" AfterTargets="DotKtIlEmit"
+          Condition="'$(DotKtRetarget)' != 'false'">
+    <Message Importance="high" Text="DotKt: retargeting BCL refs for compile-time &lt;Reference&gt; -> $(TargetName)$(TargetExt)" />
+    <Exec Command="dotnet &quot;$(DotKtRetargetTool)&quot; &quot;$(IntermediateOutputPath)$(TargetName)$(TargetExt)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot;" />
+  </Target>
+</Project>

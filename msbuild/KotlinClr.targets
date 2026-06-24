@@ -1,41 +1,38 @@
-<!-- kotlin/clr MSBuild integration: compile .kt -> BIR with our compiler, then ilemit turns the BIR into the
-     final CIL assembly (csc only produces a throwaway placeholder the il-emit overwrites). Import from a .ktproj. -->
+<!-- In-repo DEV entry for the kt -> BIR -> CIL build. The shipping SDK and this file share ONE pipeline,
+     packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets; this file just (1) points the $(DotKt*) tool vars at the in-repo
+     source builds, (2) bootstraps those tools the first time (the shipping SDK gets them from NuGet instead), and
+     (3) sets the project hygiene the SDK's Sdk.props sets. Sample .ktproj import this via <Import .../KotlinClr.targets>. -->
 <Project>
 
   <PropertyGroup>
     <KotlinClrRoot Condition="'$(KotlinClrRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</KotlinClrRoot>
-    <KotlinClrLauncher Condition="'$(KotlinClrLauncher)' == ''">$(KotlinClrRoot)/compiler/build/install/compiler/bin/compiler</KotlinClrLauncher>
-    <KotlinStdlib Condition="'$(KotlinStdlib)' == ''">$(KotlinClrRoot)/runtime/kotlin/kotlin-stdlib.jar</KotlinStdlib>
-    <!-- Generated files (BIR) live under obj/ (which the .kt glob excludes), not the source tree. -->
-    <KotlinClrOut>$(BaseIntermediateOutputPath)kotlin-bir</KotlinClrOut>
-    <KotlinClrFacadeGen>$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</KotlinClrFacadeGen>
+
+    <!-- Tool locations: the in-repo source builds (the shared pipeline reads these $(DotKt*) vars). -->
+    <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(KotlinClrRoot)/compiler/build/install/compiler/bin/compiler</DotKtCompiler>
+    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/runtime/kotlin/kotlin-stdlib.jar</DotKtStdlib>
+    <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</DotKtFacadeGen>
+    <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
+    <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</DotKtRetargetTool>
     <KotlinClrFacadeOut>$(BaseIntermediateOutputPath)kotlin-facades</KotlinClrFacadeOut>
-    <!-- S5: façade-FREE .NET types listed via <KotlinClrType Include="System.X"/> are injected straight
-         into FIR (no .kt). The metadata file is handed to the compiler via the CLR_TYPES_METADATA env. -->
-    <KotlinClrTypeMeta>$(BaseIntermediateOutputPath)clrtypes.meta</KotlinClrTypeMeta>
-    <!-- The .NET import list extracted from the .kt sources by the clrc scan-imports pass (PSI parser, not regex). -->
-    <KotlinClrImportList>$(BaseIntermediateOutputPath)clrimports.txt</KotlinClrImportList>
-    <KotlinClrIlEmit>$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</KotlinClrIlEmit>
-    <!-- We generate the C# ourselves; don't let the SDK glob .cs/.kt. -->
+
+    <!-- Project hygiene the shipping SDK applies via Sdk.props: we generate the assembly ourselves (kt -> BIR ->
+         CIL), so don't let the .NET SDK glob .cs / infer a language, and don't produce a (placeholder) ref assembly
+         a downstream C# <ProjectReference> would wrongly bind. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
-    <!-- The SDK's reference assembly (obj/ref) is built by csc from our _IlPlaceholder.cs, so it contains the
-         placeholder, NOT the Kotlin types ilemit later writes into the real dll. A downstream C# ProjectReference
-         would bind against that empty ref assembly (CS0246). Disable it so consumers reference the real output. -->
-    <ProduceReferenceAssembly Condition="'$(ProduceReferenceAssembly)' == ''">false</ProduceReferenceAssembly>
-    <!-- A .ktproj has no implicit language; build the generated C# with the C# language targets. -->
     <LanguageTargets Condition="'$(LanguageTargets)' == ''">$(MSBuildToolsPath)/Microsoft.CSharp.targets</LanguageTargets>
+    <ProduceReferenceAssembly Condition="'$(ProduceReferenceAssembly)' == ''">false</ProduceReferenceAssembly>
   </PropertyGroup>
 
-  <!-- By default every .kt under the project is a Kotlin source. -->
+  <!-- Every .kt under the project is a Kotlin source; teach VS's fast up-to-date check that they are build inputs. -->
   <ItemGroup>
     <KotlinCompile Include="**/*.kt" Exclude="$(BaseIntermediateOutputPath)**;$(IntermediateOutputPath)**;bin/**;obj/**" />
+    <UpToDateCheckInput Include="@(KotlinCompile)" />
   </ItemGroup>
 
-  <!-- DotKt.Runtime carries the runtime helpers AND the [Kotlin*] round-trip metadata attribute types. Reference it so
-       (1) ilemit can stamp [KotlinFile]/[KotlinFunction] (else a library's top-level functions/Kotlin modifiers don't
-       round-trip), (2) the consumer's facadegen can load a referenced round-tripped library (which now depends on it),
-       and (3) it's present at runtime. The shipping SDK gets this via a <PackageReference>; in-repo it's the build/
-       output. Opt out with <KotlinClrRuntimeRef>false</KotlinClrRuntimeRef>. -->
+  <!-- DotKt.Runtime carries the runtime helpers AND the [Kotlin*] round-trip metadata attribute types. Referencing
+       it puts it on @(ReferencePath) so the shared pipeline can hand it to ilemit (else top-level functions / Kotlin
+       modifiers don't round-trip), the consumer's facadegen can load a round-tripped library, and it's there at
+       runtime. The shipping SDK gets this via a <PackageReference>. Opt out with <KotlinClrRuntimeRef>false</...>. -->
   <ItemGroup Condition="'$(KotlinClrRuntimeRef)' != 'false' and Exists('$(KotlinClrRoot)/build/dotkt-runtime/DotKt.Runtime.dll')">
     <Reference Include="DotKt.Runtime">
       <HintPath>$(KotlinClrRoot)/build/dotkt-runtime/DotKt.Runtime.dll</HintPath>
@@ -43,121 +40,35 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Bootstrap: build the kotlin/clr compiler launcher if it isn't there yet. -->
-  <Target Name="EnsureKotlinClrCompiler" BeforeTargets="KotlinClrCompile" Condition="!Exists('$(KotlinClrLauncher)')">
+  <!-- Bootstrap: build each tool from source the first time it is missing (the shipping SDK gets them from NuGet).
+       Each hooks just before the shared-pipeline target that first needs it. -->
+  <Target Name="EnsureKotlinClrCompiler" BeforeTargets="DotKtInjectTypes" Condition="!Exists('$(DotKtCompiler)')">
     <Message Importance="high" Text="kotlin/clr: building compiler launcher (first run)..." />
     <Exec Command="&quot;$(KotlinClrRoot)/gradlew&quot; -q :compiler:installDist" WorkingDirectory="$(KotlinClrRoot)" />
   </Target>
-
-  <!-- Auto-generate Kotlin façades for the .NET types listed via <KotlinClrFacade Include="..."/>. -->
-  <Target Name="EnsureFacadeGen" BeforeTargets="KotlinClrFacades"
-          Condition="'@(KotlinClrFacade)' != '' and !Exists('$(KotlinClrFacadeGen)')">
-    <Message Importance="high" Text="kotlin/clr: building façade generator (first run)..." />
+  <Target Name="EnsureFacadeGen" BeforeTargets="DotKtInjectTypes" Condition="!Exists('$(DotKtFacadeGen)')">
+    <Message Importance="high" Text="kotlin/clr: building facadegen (first run)..." />
     <Exec Command="dotnet build &quot;$(KotlinClrRoot)/tools/facadegen&quot; -c Release -o &quot;$(KotlinClrRoot)/build/facadegen-bin&quot; -v q --nologo" />
   </Target>
+  <Target Name="EnsureIlEmit" BeforeTargets="DotKtIlEmit" Condition="!Exists('$(DotKtIlEmit)')">
+    <Message Importance="high" Text="kotlin/clr: building ilemit (first run)..." />
+    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/tools/ilemit&quot; -c Release -o &quot;$(KotlinClrRoot)/build/ilemit-bin&quot; -v q --nologo" />
+  </Target>
+  <Target Name="EnsureRetarget" BeforeTargets="DotKtRetarget" Condition="'$(DotKtRetarget)' != 'false' and !Exists('$(DotKtRetargetTool)')">
+    <Message Importance="high" Text="kotlin/clr: building retarget (first run)..." />
+    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/tools/retarget&quot; -c Release -o &quot;$(KotlinClrRoot)/build/retarget-bin&quot; -v q --nologo" />
+  </Target>
 
-  <Target Name="KotlinClrFacades" BeforeTargets="KotlinClrCompile" Condition="'@(KotlinClrFacade)' != ''">
+  <!-- Auto-generate Kotlin façades for the .NET types listed via <KotlinClrFacade Include="..."/> and feed them to
+       the compile (a dev convenience; the C-2 import scan covers most cases without it). -->
+  <Target Name="KotlinClrFacades" BeforeTargets="DotKtInjectTypes" Condition="'@(KotlinClrFacade)' != ''">
     <MakeDir Directories="$(KotlinClrFacadeOut)" />
     <Message Importance="high" Text="kotlin/clr: generating façades for @(KotlinClrFacade->'%(Identity)', ', ')" />
-    <Exec Command="dotnet &quot;$(KotlinClrFacadeGen)&quot; &quot;$(KotlinClrFacadeOut)&quot; @(KotlinClrFacade->'%(Identity)', ' ')" />
+    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; &quot;$(KotlinClrFacadeOut)&quot; @(KotlinClrFacade->'%(Identity)', ' ')" />
     <ItemGroup>
       <KotlinCompile Include="$(KotlinClrFacadeOut)/clr/*.kt" />
     </ItemGroup>
   </Target>
 
-  <!-- C-2: import-driven façade-FREE injection. The .kt sources are SCANNED for `import System.X` lines and
-       those .NET types are injected straight into FIR (no .kt produced) — so the user just writes the import.
-       Explicit additions go on <DotKtImport> (or legacy <KotlinClrType>); both merge with the scanned set.
-       Runs whenever there are sources. DependsOnTargets=ResolveReferences populates @(ReferencePath) (BCL plus
-       PackageReference/ProjectReference/Reference) so any referenced assembly's types become injectable. -->
-  <Target Name="KotlinClrInjectTypes" BeforeTargets="KotlinClrCompile"
-          DependsOnTargets="ResolveReferences;EnsureKotlinClrCompiler" Condition="'@(KotlinCompile)' != ''">
-    <Exec Condition="!Exists('$(KotlinClrFacadeGen)')"
-          Command="dotnet build &quot;$(KotlinClrRoot)/tools/facadegen&quot; -c Release -o &quot;$(KotlinClrRoot)/build/facadegen-bin&quot; -v q --nologo" />
-    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(KotlinClrTypeMeta)'))" />
-    <!-- 1. Extract the .NET imports with the real Kotlin parser (PSI), not a regex — handles aliases, `.*`,
-            multi-line, comments and backtick identifiers (interop feedback item 5). -->
-    <Message Importance="high" Text="kotlin/clr: scanning .NET imports from @(KotlinCompile->Count()) .kt file(s) (PSI parser)" />
-    <Exec Command="&quot;$(KotlinClrLauncher)&quot; --scan-imports --output &quot;$(KotlinClrImportList)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ')" />
-    <!-- 2. Reflect over the imported (+ explicit <DotKtImport>) types -> FIR-injection metadata. -->
-    <Message Importance="high" Text="kotlin/clr: resolving .NET types (import list + @(DotKtImport))" />
-    <Exec Command="dotnet &quot;$(KotlinClrFacadeGen)&quot; --meta &quot;$(KotlinClrTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(KotlinClrImportList)&quot;" />
-  </Target>
-
-  <!-- Compile all .kt to BIR, which ilemit later turns into CIL. CLR_TYPES_METADATA tells the compiler's FIR
-       injector which façade-free .NET types to synthesize (empty/absent -> none). -->
-  <Target Name="KotlinClrCompile" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrInjectTypes"
-          Inputs="@(KotlinCompile)" Outputs="$(KotlinClrOut)/.stamp">
-    <MakeDir Directories="$(KotlinClrOut)" />
-    <Message Importance="high" Text="kotlin/clr: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
-    <Exec Command="&quot;$(KotlinClrLauncher)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(KotlinStdlib)&quot; -d &quot;$(KotlinClrOut)&quot;"
-          EnvironmentVariables="CLR_TYPES_METADATA=$(KotlinClrTypeMeta)" />
-    <Touch Files="$(KotlinClrOut)/.stamp" AlwaysCreate="true" />
-  </Target>
-
-  <!-- Give csc a trivial valid assembly to produce; ilemit overwrites it afterwards. The user's StartupObject
-       (e.g. AppKt) names a Kotlin entry that doesn't exist in the placeholder, so point csc at the placeholder's
-       Main for this throwaway compile; ilemit sets the real entry point on the final dll. -->
-  <Target Name="KotlinClrIlPlaceholder" BeforeTargets="CoreCompile" DependsOnTargets="KotlinClrCompile">
-    <PropertyGroup>
-      <StartupObject Condition="'$(StartupObject)' != ''">_IlPlaceholder</StartupObject>
-    </PropertyGroup>
-    <MakeDir Directories="$(KotlinClrOut)" />
-    <WriteLinesToFile File="$(KotlinClrOut)/_IlPlaceholder.cs" Overwrite="true"
-                      Lines="public static class _IlPlaceholder { public static void Main(string[] a) { } }" />
-    <ItemGroup>
-      <Compile Include="$(KotlinClrOut)/_IlPlaceholder.cs" />
-    </ItemGroup>
-  </Target>
-
-  <!-- il backend: bootstrap ilemit, then overwrite the compiled assembly with one emitted directly
-       as CIL from BIR (no C#). Runs after CoreCompile so it replaces csc's (placeholder) output. -->
-  <Target Name="EnsureIlEmit" BeforeTargets="KotlinClrIlEmit"
-          Condition="!Exists('$(KotlinClrIlEmit)')">
-    <Message Importance="high" Text="kotlin/clr: building ilemit (first run)..." />
-    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/tools/ilemit&quot; -c Release -o &quot;$(KotlinClrRoot)/build/ilemit-bin&quot; -v q --nologo" />
-  </Target>
-
-  <Target Name="KotlinClrIlEmit" AfterTargets="CoreCompile" DependsOnTargets="KotlinClrCompile"
-          >
-    <ItemGroup>
-      <_KotlinBir Include="$(KotlinClrOut)/*.bir.json" />
-      <!-- Non-framework reference dlls (ProjectReference/PackageReference outputs, copy-local) must be loaded at
-           EMIT time so ilemit can resolve forward-referenced .NET types (e.g. a C# project's `Theme.Palette`).
-           The BCL is already loaded in-process; these are the extra implementation assemblies. -->
-      <_KotlinIlRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
-      <!-- DotKt.Runtime carries the [Kotlin*] metadata attribute types ilemit stamps for round-trip (consuming this
-           library AS KOTLIN from another .ktproj): [KotlinFile] restores a facade's statics as top-level functions,
-           [KotlinFunction] restores infix/operator/suspend. Without this ref ilemit silently skips stamping and a
-           consumer's `import pkg.topLevelFn` resolves to nothing. -->
-      <_KotlinIlRef Include="$(KotlinClrRoot)/build/dotkt-runtime/DotKt.Runtime.dll"
-                    Condition="Exists('$(KotlinClrRoot)/build/dotkt-runtime/DotKt.Runtime.dll')" />
-    </ItemGroup>
-    <Message Importance="high" Text="kotlin/clr: emitting CIL directly from BIR -> $(TargetName)$(TargetExt)" />
-    <Exec Command="dotnet &quot;$(KotlinClrIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; @(_KotlinIlRef->'--ref &quot;%(FullPath)&quot;', ' ') @(_KotlinBir->'&quot;%(FullPath)&quot;', ' ')" />
-  </Target>
-
-  <!-- REVERSE interop (R-1): make the emitted dll consumable from a COMPILE-TIME C# <Reference>/<ProjectReference>.
-       ilemit scopes every BCL TypeRef to the single System.Private.CoreLib (great at runtime, but that assembly
-       is absent from a compiler's reference pack -> CS0012). retarget repoints each ref to its real contract
-       assembly (Object/Task->System.Runtime, List/Dictionary->System.Collections, …) using the SAME @(ReferencePath)
-       the forward path resolves types from. Runtime is unaffected (the host forwards those contracts back to CoreLib).
-       Default ON for the il backend; opt out with <KotlinClrRetarget>false</KotlinClrRetarget>. -->
-  <PropertyGroup>
-    <KotlinClrRetarget Condition="'$(KotlinClrRetarget)' == ''">true</KotlinClrRetarget>
-    <KotlinClrRetargetTool Condition="'$(KotlinClrRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</KotlinClrRetargetTool>
-  </PropertyGroup>
-
-  <Target Name="EnsureRetarget" BeforeTargets="KotlinClrRetarget"
-          Condition="'$(KotlinClrRetarget)' == 'true' and !Exists('$(KotlinClrRetargetTool)')">
-    <Message Importance="high" Text="kotlin/clr: building retarget (first run)..." />
-    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/tools/retarget&quot; -c Release -o &quot;$(KotlinClrRoot)/build/retarget-bin&quot; -v q --nologo" />
-  </Target>
-
-  <Target Name="KotlinClrRetarget" AfterTargets="KotlinClrIlEmit"
-          Condition="'$(KotlinClrRetarget)' == 'true'">
-    <Message Importance="high" Text="kotlin/clr: retargeting BCL refs for compile-time &lt;Reference&gt; -> $(TargetName)$(TargetExt)" />
-    <Exec Command="dotnet &quot;$(KotlinClrRetargetTool)&quot; &quot;$(IntermediateOutputPath)$(TargetName)$(TargetExt)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot;" />
-  </Target>
-
+  <Import Project="$(KotlinClrRoot)/packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets" />
 </Project>
