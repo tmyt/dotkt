@@ -188,7 +188,12 @@ sealed class Emitter
                     // An `abstract`/`sealed`(Kotlin) class -> a CLR abstract class (cannot be instantiated; may hold
                     // abstract members). Kotlin `sealed` is also abstract at the CLR level.
                     if (!isIface && t.TryGetProperty("abstract", out var clsAbs) && clsAbs.GetBoolean()) attrs |= TypeAttributes.Abstract;
-                    var tb = nested ? _types[niEl.GetString()].TB.DefineNestedType(name, attrs) : _mod.DefineType(name, attrs);
+                    // A generic type's CLR metadata name carries its arity (`Box`1`) — Reflection.Emit does NOT append
+                    // it, and a cross-assembly consumer resolves the type by that standard name (`GetType("Box`1")`).
+                    // The `_types` registry key stays the bare BIR name (`Box`), so same-assembly references are intact.
+                    var arity = t.TryGetProperty("typeParams", out var tpArity) ? tpArity.GetArrayLength() : 0;
+                    var metaName = arity > 0 ? name + "`" + arity : name;
+                    var tb = nested ? _types[niEl.GetString()].TB.DefineNestedType(metaName, attrs) : _mod.DefineType(metaName, attrs);
                     // Compiler-generated synthetic types (`<>dotkt_*`: KProperty, Result, KIterator_*, …) get
                     // [CompilerGenerated] (and can't collide with user types — the `<>` prefix isn't source-legal).
                     if (name.StartsWith("<>dotkt_"))

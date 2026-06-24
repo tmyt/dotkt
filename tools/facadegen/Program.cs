@@ -249,7 +249,7 @@ static class FacadeGen
             if (t.IsInterface)
             {
                 var iname = SimpleName(t);
-                var idot = t.IsGenericTypeDefinition ? (t.Namespace + "." + iname) : t.FullName;
+                var idot = t.IsGenericTypeDefinition ? OpenName(t) : t.FullName;
                 var itp = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
                 sb.Append($"interface {iname} {idot}{itp}\n");
                 // Interface->interface supertypes (GENERIC only) so an injected `IList<T>` carries its inherited
@@ -307,7 +307,7 @@ static class FacadeGen
             // A generic type definition (`Collection`1`) -> simple name `Collection`, OPEN .NET name (namespace +
             // simple, no `1` — the backend appends the arity), and the type parameter names as trailing tokens.
             var simpleName = t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name;
-            var dotNet = t.IsGenericTypeDefinition ? (t.Namespace + "." + simpleName) : t.FullName;
+            var dotNet = t.IsGenericTypeDefinition ? OpenName(t) : t.FullName;
             var tparams = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
             // `class <Name> <DotNetName> <open|sealed> [<TypeParam>...]` carries inheritability + generic arity.
             sb.Append(isStatic ? $"object {simpleName} {dotNet}\n"
@@ -599,6 +599,11 @@ static class FacadeGen
 
     static string SimpleName(Type t) => t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name;
 
+    // OPEN .NET name of a generic type definition: namespace + simple name, WITHOUT the `<arity> suffix (the backend
+    // appends it). `t.FullName` carries the arity, so we rebuild it — but for a ROOT-namespace type `t.Namespace` is
+    // null, and `null + "." + "Box"` would yield the broken `.Box` (a leading dot the consumer's ilemit can't resolve).
+    static string OpenName(Type t) => string.IsNullOrEmpty(t.Namespace) ? SimpleName(t) : t.Namespace + "." + SimpleName(t);
+
     // The contiguous run of base classes from t.BaseType upward whose supertype edge IS emitted — members declared
     // there reach `t` through the injected supertype chain, so `t` must NOT re-declare them (fake-override clash).
     // The chain stops at the first ancestor we don't link (Object, a generic base, or a base with no no-arg ctor);
@@ -883,7 +888,7 @@ static class FacadeGen
         sb.Append("package clr\n\n");
         // Generic type definitions (List`1) -> a generic Kotlin façade (`class List<T>`).
         var simpleName = t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name;
-        var clrName = t.IsGenericTypeDefinition ? (t.Namespace + "." + simpleName) : t.FullName;
+        var clrName = t.IsGenericTypeDefinition ? OpenName(t) : t.FullName;
         var typeParams = t.IsGenericTypeDefinition
             ? "<" + string.Join(", ", t.GetGenericArguments().Select(g => g.Name)) + ">"
             : "";

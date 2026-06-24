@@ -94,7 +94,15 @@ All identified round-trip gaps resolved; guarded by `scripts/verify-roundtrip.sh
   (type-level: passing null to a non-null parameter is rejected).
 - Named-argument calls also work (ilemit emits parameter names). New metadata attributes: `[KotlinNullable]`, `[KotlinReadOnly]`.
   Remaining known limits (not round-trip blockers): default-arg named middle-omission (`copy(y=5)`, needs `copy$default`),
-  generic-class consumption, object singletons — see docs/future-work-interop.md §5.
+  object singletons — see docs/future-work-interop.md §5.
+- **Generic round-trip** — a generic user **class** (`class Box<T>`, constructed + member calls) and **non-reified**
+  generic **top-level** functions (`fun <T> identity(x: T): T`) now consume from another `.ktproj` as Kotlin (reified
+  generics already worked — they're a generic method with no carried type). Two coordinated fixes: (1) facadegen built a
+  root-namespace generic type's open .NET name as `.Box` — a leading dot, because `Type.Namespace` is null at the root —
+  which the consumer couldn't resolve; it now omits the dot (`OpenName`). (2) ilemit named the emitted generic type `Box`
+  without the CLR ``Box`1`` arity suffix, so a cross-assembly `GetType("Box`1")` missed it (same-assembly use resolves
+  through the `_types` registry by BIR name, so it never surfaced); the metadata name now carries the arity while the
+  registry key stays the bare name. Guarded by `scripts/verify-roundtrip.sh` (roundtrip-generic).
 - **Namespace projection** (`[assembly: DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]`) — a DotKt library whose
   types live in one .NET namespace (e.g. `DotKt.Coroutines`) can be consumed under a different Kotlin package (e.g.
   `import kotlinx.coroutines.*`). The producer stamps it via `ilemit --ns-projection k=d` (SDK: a `<DotKtNamespaceProjection>`

@@ -167,3 +167,39 @@ if [[ "$nsactual" == "$nsexpected" ]]; then
 else
     echo "FAIL  roundtrip-nsproj"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$nsexpected" "$nsactual"; exit 1
 fi
+
+# ----- GENERIC round-trip: a generic user CLASS + non-reified generic TOP-LEVEL functions, consumed as Kotlin -----
+# Guards two coordinated fixes: (1) facadegen emitted a root-namespace generic type's open .NET name as `.Box` (a
+# leading dot — `t.Namespace` is null at the root), unresolvable by the consumer; (2) ilemit named the generic type
+# `Box` without the CLR `1` arity suffix, so a cross-assembly `GetType("Box`1")` missed it (same-assembly use went
+# through the `_types` registry by BIR name, so it never showed). reified generics already worked (a generic method,
+# no carried type) — this covers the non-reified user class + plain generic top-level functions.
+GG="$ROOT/build/roundtrip-generic"; rm -rf "$GG"; mkdir -p "$GG/lib" "$GG/app" "$GG/libbir" "$GG/libil" "$GG/appbir" "$GG/appil"
+cat > "$GG/lib/lib.kt" <<'EOF'
+class Box<T>(val value: T) {
+    fun get(): T = value
+}
+fun <T> identity(x: T): T = x
+fun <T> firstOf(a: T, b: T): T = a
+EOF
+cat > "$GG/app/app.kt" <<'EOF'
+fun main() {
+    println(Box<Int>(42).get())   // generic user class, constructed + member call
+    println(identity("hello"))    // non-reified generic top-level fun
+    println(firstOf(1, 2))        // generic top-level fun, inferred type arg
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$GG/lib" -no-stdlib -classpath "$CP" -d "$GG/libbir" >/dev/null 2>&1
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$GG/libil" KLib --ref "$DOTKT_RT" "$GG/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$GG/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$GG/k.meta" --refs "$REFS$GG/libil/KLib.dll;$DOTKT_RT" Box LibKt >/dev/null 2>&1
+CLR_TYPES_METADATA="$GG/k.meta" "$LAUNCHER" "$GG/app" -no-stdlib -classpath "$CP" -d "$GG/appbir" >/dev/null 2>&1
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$GG/appil" KApp --ref "$GG/libil/KLib.dll" --ref "$DOTKT_RT" "$GG/appbir"/*.bir.json >/dev/null 2>&1
+cp "$GG/libil/KLib.dll" "$DOTKT_RT" "$GG/appil/"
+gexpected="$(printf '42\nhello\n1')"
+gactual="$(dotnet "$GG/appil/KApp.dll" 2>/dev/null)"
+if [[ "$gactual" == "$gexpected" ]]; then
+    echo "PASS  roundtrip-generic (generic user class + non-reified generic top-level functions consumed as Kotlin)"
+else
+    echo "FAIL  roundtrip-generic"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$gexpected" "$gactual"; exit 1
+fi
