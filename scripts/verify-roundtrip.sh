@@ -13,10 +13,10 @@ CP="$STDLIB:$CORO"
 
 # Build the toolchain (compiler launcher + ilemit + facadegen + retarget + runtime) once.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
-LAUNCHER="$ROOT/kotc/build/install/kotc/bin/kotc"
-dotnet build "$ROOT/ilemit"        -c Release -o "$ROOT/build/ilemit-bin"     -v q --nologo >/dev/null
-dotnet build "$ROOT/facadegen"     -c Release -o "$ROOT/build/facadegen-bin"  -v q --nologo >/dev/null
-dotnet build "$ROOT/retarget"      -c Release -o "$ROOT/build/retarget-bin"   -v q --nologo >/dev/null
+LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
+dotnet build "$ROOT/toolchain/ilemit"        -c Release -o "$ROOT/build/ilemit-bin"     -v q --nologo >/dev/null
+dotnet build "$ROOT/toolchain/facadegen"     -c Release -o "$ROOT/build/facadegen-bin"  -v q --nologo >/dev/null
+dotnet build "$ROOT/toolchain/retarget"      -c Release -o "$ROOT/build/retarget-bin"   -v q --nologo >/dev/null
 dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runtime" -v q --nologo >/dev/null 2>&1
 DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
 REFPACK="$(ls -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/*/ref/net10.0 2>/dev/null | sort -V | tail -1)"

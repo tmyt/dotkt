@@ -7,6 +7,6 @@
     <StartupObject>AppKt</StartupObject>
   </PropertyGroup>
 
-  <Import Project="../../msbuild/KotlinClr.targets" />
+  <Import Project="../../toolchain/KotlinClr.targets" />
 
 </Project>

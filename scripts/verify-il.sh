@@ -11,7 +11,7 @@ fail=0
 # Build the compiler launcher ONCE (a plain Java app). Per-sample invokes then cost ~2s of JVM startup instead
 # of ~9s for `gradlew --no-daemon :kotc:run` — a ~4x speedup on the dominant compile step.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
-LAUNCHER="$ROOT/kotc/build/install/kotc/bin/kotc"
+LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 
 # Run samples concurrently (each compile is an independent ~2s JVM startup). A job pool caps parallelism; results
 # (FAIL markers, runtime-dll paths for the ilverify phase) cross back from the subshells via files.
@@ -19,7 +19,7 @@ JOBS="$(nproc 2>/dev/null || echo 4)"; (( JOBS > 6 )) && JOBS=6
 gate() { while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n 2>/dev/null || true; done; }
 rm -f "$ROOT"/build/fail-* "$ROOT"/build/refdll-* 2>/dev/null || true
 
-dotnet build "$ROOT/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null
+dotnet build "$ROOT/toolchain/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null
 
 # DotKt.Runtime: the runtime assembly for promoted Kotlin lowerings (printf->composite format, AND the
 # kotlin.coroutines core — Continuation/CoroutineContext/Result/Unit/intercepted + sequence/Flow/Channel/select
@@ -29,7 +29,7 @@ dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runt
 DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
 
 # S5 FIR-injection metadata for samples that inherit a real .NET base type (façade-free).
-dotnet build "$ROOT/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo >/dev/null 2>&1
+dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo >/dev/null 2>&1
 EXCMETA="$ROOT/build/exc.meta"
 dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$EXCMETA" System.Exception System.Console >/dev/null 2>&1
 COLLMETA="$ROOT/build/coll.meta"

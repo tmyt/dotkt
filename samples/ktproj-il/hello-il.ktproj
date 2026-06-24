@@ -4,5 +4,5 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
   </PropertyGroup>
-  <Import Project="../../msbuild/KotlinClr.targets" />
+  <Import Project="../../toolchain/KotlinClr.targets" />
 </Project>

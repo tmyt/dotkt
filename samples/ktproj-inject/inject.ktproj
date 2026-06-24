@@ -10,6 +10,6 @@
   <!-- Façade-FREE, import-driven: the .kt sources are scanned for `import System.X` and those types are
        injected straight into the compiler frontend. No <KotlinClrType>, no .kt façade — the import is enough. -->
 
-  <Import Project="../../msbuild/KotlinClr.targets" />
+  <Import Project="../../toolchain/KotlinClr.targets" />
 
 </Project>

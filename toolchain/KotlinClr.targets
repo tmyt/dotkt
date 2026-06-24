@@ -8,8 +8,8 @@
     <KotlinClrRoot Condition="'$(KotlinClrRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</KotlinClrRoot>
 
     <!-- Tool locations: the in-repo source builds (the shared pipeline reads these $(DotKt*) vars). -->
-    <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(KotlinClrRoot)/kotc/build/install/kotc/bin/kotc</DotKtCompiler>
-    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/kotc/vendor/kotlin-stdlib.jar</DotKtStdlib>
+    <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(KotlinClrRoot)/toolchain/kotc/build/install/kotc/bin/kotc</DotKtCompiler>
+    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/toolchain/kotc/vendor/kotlin-stdlib.jar</DotKtStdlib>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</DotKtFacadeGen>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
     <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</DotKtRetargetTool>
@@ -48,15 +48,15 @@
   </Target>
   <Target Name="EnsureFacadeGen" BeforeTargets="DotKtInjectTypes" Condition="!Exists('$(DotKtFacadeGen)')">
     <Message Importance="high" Text="kotlin/clr: building facadegen (first run)..." />
-    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/facadegen&quot; -c Release -o &quot;$(KotlinClrRoot)/build/facadegen-bin&quot; -v q --nologo" />
+    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/facadegen&quot; -c Release -o &quot;$(KotlinClrRoot)/build/facadegen-bin&quot; -v q --nologo" />
   </Target>
   <Target Name="EnsureIlEmit" BeforeTargets="DotKtIlEmit" Condition="!Exists('$(DotKtIlEmit)')">
     <Message Importance="high" Text="kotlin/clr: building ilemit (first run)..." />
-    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/ilemit&quot; -c Release -o &quot;$(KotlinClrRoot)/build/ilemit-bin&quot; -v q --nologo" />
+    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/ilemit&quot; -c Release -o &quot;$(KotlinClrRoot)/build/ilemit-bin&quot; -v q --nologo" />
   </Target>
   <Target Name="EnsureRetarget" BeforeTargets="DotKtRetarget" Condition="'$(DotKtRetarget)' != 'false' and !Exists('$(DotKtRetargetTool)')">
     <Message Importance="high" Text="kotlin/clr: building retarget (first run)..." />
-    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/retarget&quot; -c Release -o &quot;$(KotlinClrRoot)/build/retarget-bin&quot; -v q --nologo" />
+    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/retarget&quot; -c Release -o &quot;$(KotlinClrRoot)/build/retarget-bin&quot; -v q --nologo" />
   </Target>
 
   <!-- Auto-generate Kotlin façades for the .NET types listed via <KotlinClrFacade Include="..."/> and feed them to

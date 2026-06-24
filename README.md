@@ -62,7 +62,7 @@ Prereqs: the repo's Gradle auto-provisions a JDK; you need the **.NET SDK 10**.
 
 ```bash
 # 0. build the BIR→CIL tool once
-dotnet build ilemit -c Release -o build/ilemit-bin
+dotnet build toolchain/ilemit -c Release -o build/ilemit-bin
 
 # 1. Kotlin → BIR (JSON).  One run also writes Foo.cs (the C# oracle) + KIR@Raw.txt (IR dump)
 STDLIB=$(find ~/.gradle/caches -name 'kotlin-stdlib-2.2.0.jar' | head -1)
@@ -108,12 +108,12 @@ assembly via the chosen backend. See `samples/ktproj/` (C# path), `samples/ktpro
 
 | Path | Role |
 |------|------|
-| `kotc/` | the Kotlin→BIR compiler frontend (Kotlin/JVM gradle module; source package `kotc.*`) |
-| `kotc/.../kotc/pipeline/ClrCliPipeline.kt` | driver: stock JVM phases + our backend phase |
-| `kotc/.../kotc/backend/BirEmitter.kt` (+ `BirEmitterExpressions/Statements`, `BirMappings`) | **Kotlin IR → BIR** (all lowering lives here) |
-| `ilemit/` | **BIR (JSON) → CIL** via `System.Reflection.Emit` (split: `Emitter.Expressions/Coroutines/Statements/Metadata`) |
-| `facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) |
-| `retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
+| `toolchain/kotc/` | the Kotlin→BIR compiler frontend (Kotlin/JVM gradle module; source package `kotc.*`) |
+| `toolchain/kotc/.../kotc/pipeline/ClrCliPipeline.kt` | driver: stock JVM phases + our backend phase |
+| `toolchain/kotc/.../kotc/backend/BirEmitter.kt` (+ `BirEmitterExpressions/Statements`, `BirMappings`) | **Kotlin IR → BIR** (all lowering lives here) |
+| `toolchain/ilemit/` | **BIR (JSON) → CIL** via `System.Reflection.Emit` (split: `Emitter.Expressions/Coroutines/Statements/Metadata`) |
+| `toolchain/facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) |
+| `toolchain/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
 | `runtime/DotKt.Runtime/` | .NET runtime helpers + the `[Kotlin*]` round-trip metadata attributes |
 | `packaging/` | NuGet packages: `DotKt.Sdk` (thin), `DotKt.Toolchain` (tools + the build pipeline), `DotKt.Runtime` |
 | `samples/` | `il-*` (IL-backend samples), `m-*` (language/interop), `ktproj-*` (MSBuild) |

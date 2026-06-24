@@ -8,14 +8,14 @@ VER="0.9.3+kotlin-2.2.0"
 
 echo "== build compiler (installDist) + tools + runtime =="
 ( cd "$ROOT" && ./gradlew -q :kotc:installDist )
-dotnet build "$ROOT/ilemit"   -c Release -o "$ROOT/build/ilemit-bin"   -v q --nologo
-dotnet build "$ROOT/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo
-dotnet build "$ROOT/retarget" -c Release -o "$ROOT/build/retarget-bin" -v q --nologo
+dotnet build "$ROOT/toolchain/ilemit"   -c Release -o "$ROOT/build/ilemit-bin"   -v q --nologo
+dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo
+dotnet build "$ROOT/toolchain/retarget" -c Release -o "$ROOT/build/retarget-bin" -v q --nologo
 
 echo "== assemble DotKt.Toolchain/tools =="
 TC="$ROOT/packaging/DotKt.Toolchain/tools"; rm -rf "$TC"; mkdir -p "$TC"
-cp -r "$ROOT/kotc/build/install/kotc" "$TC/kotc"
-cp "$ROOT/kotc/vendor/kotlin-stdlib.jar" "$TC/kotlin-stdlib.jar"
+cp -r "$ROOT/toolchain/kotc/build/install/kotc" "$TC/kotc"
+cp "$ROOT/toolchain/kotc/vendor/kotlin-stdlib.jar" "$TC/kotlin-stdlib.jar"
 cp -r "$ROOT/build/ilemit-bin"   "$TC/ilemit"
 cp -r "$ROOT/build/facadegen-bin" "$TC/facadegen"
 cp -r "$ROOT/build/retarget-bin" "$TC/retarget"

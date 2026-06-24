@@ -1,6 +1,6 @@
 # BIR coverage — どの FIR/IR 構文を backend が lower できるか（チェックリスト）
 
-`kotc/src/main/kotlin/kotc/backend/BirEmitter.kt` が Kotlin IR（Fir2Ir 出力＝FIR を降ろした IR）を BIR(JSON) に
+`toolchain/kotc/src/main/kotlin/kotc/backend/BirEmitter.kt` が Kotlin IR（Fir2Ir 出力＝FIR を降ろした IR）を BIR(JSON) に
 変換する。**フロントエンド（FIR）は本物の `kotlin-compiler-embeddable` なので有効な Kotlin 構文はすべて解決**する。
 ギャップが出るのは backend = BirEmitter 側だけ。
 
@@ -108,5 +108,5 @@ coroutine 内部 (e) 専用パスで処理／定数畳み込み済み のいず�
 | 9 | `BirEmitter:2441` | 非リテラル String.format | B4 |
 | 10 | `BirEmitter:2551` | 未実装 stdlib 関数 | B' |
 
-> 行番号は更新で動く。再取得: `grep -n 'unsupported(' kotc/src/main/kotlin/kotc/backend/BirEmitter.kt`
+> 行番号は更新で動く。再取得: `grep -n 'unsupported(' toolchain/kotc/src/main/kotlin/kotc/backend/BirEmitter.kt`
 > facadegen 側の意図的省略（out/ref=非 surface、façade-.kt 経路のクロス型=Any? 縮退）は B5 と §A 表に記載。

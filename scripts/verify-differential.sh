@@ -20,11 +20,11 @@ CCP="$EMB:$STDLIBJ:$COR:$REFLECT:$SCRIPT:$ANNOT"   # classpath to RUN the kotlin
 
 # E-2: the clr side runs through the SHIPPING IL backend (BIR -> ilemit -> CIL), not C#, so this harness
 # validates the actual shipping path against real Kotlin semantics. Build ilemit once.
-dotnet build "$ROOT/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null 2>&1
+dotnet build "$ROOT/toolchain/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null 2>&1
 
 # Build the compiler launcher once (plain Java app) — per-sample compiles cost ~2s instead of ~9s for gradlew.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
-LAUNCHER="$ROOT/kotc/build/install/kotc/bin/kotc"
+LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 
 # Pure-Kotlin samples only (no @Clr / injected .NET types — those can't run on the JVM).
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 il-seq il-char il-sort il-funref il-getclass il-localdeleg il-langfeat il-mapdes il-ctorref il-collmore il-tryexpr il-localclass il-collops2 il-refcell il-annot il-props il-mixnum il-arrops"

@@ -8,5 +8,5 @@
   <ItemGroup>
     <ProjectReference Include="extlib/extlib.csproj" />
   </ItemGroup>
-  <Import Project="../../msbuild/KotlinClr.targets" />
+  <Import Project="../../toolchain/KotlinClr.targets" />
 </Project>

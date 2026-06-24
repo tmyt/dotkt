@@ -13,3 +13,4 @@ plugins {
 rootProject.name = "kotlin-net"
 
 include(":kotc")
+project(":kotc").projectDir = file("toolchain/kotc")

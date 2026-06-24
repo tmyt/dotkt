@@ -10,7 +10,7 @@
 # IDE
 /.idea/
 *.iml
-/kotc/build
+/toolchain/kotc/build
 
 # DotKt packaging (generated)
 packaging/DotKt.Toolchain/tools/

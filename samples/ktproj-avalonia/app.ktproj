@@ -8,5 +8,5 @@
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.2.3" />
   </ItemGroup>
-  <Import Project="../../msbuild/KotlinClr.targets" />
+  <Import Project="../../toolchain/KotlinClr.targets" />
 </Project>
