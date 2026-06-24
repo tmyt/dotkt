@@ -3,7 +3,7 @@
 > **✅ 完了（2026-06-18）。** C# の3役すべてを置換: (a) 出荷 emit→純 IL（events/generic/coroutines まで gap ゼロ）、(b) オラクル→`verify-differential` が IL 経路を kotlin/jvm と突合（25 MATCH・C# 非依存）、(c) 意味解決→FIR（両経路同一 IR）。MSBuild 既定 `il`・C# は `KOTLIN_CLR_EMIT_CS=1` の opt-in（出荷経路から Kotlin 由来 .cs/csc ゼロ）。3 ハーネス（verify-il / verify-differential / verify-all）緑＋CI 化。
 > **唯一の残**: 5.2 コンパイル時 `<Reference>` retargeting は本トラックのブロッカーではなく（reflection-load 逆interop は動作）、**1.0 出荷タスクへ移管**（`docs/remaining-tasks.md`）。
 
-**目的**: 出荷バックエンドを純 IL（`BirEmitter.kt` → `tools/ilemit`）に一本化し、C# コード生成（`CSharpCodegen.kt` → csc）を出荷経路から外す。本書は「C# を捨てられた」の定義・残タスクの正確な棚卸し・各タスクの設計・着手順を固定する（[[il-primary-backend-pivot]] / [[kotlin-net-1.0-definition]] の E トラック完遂）。
+**目的**: 出荷バックエンドを純 IL（`BirEmitter.kt` → `ilemit`）に一本化し、C# コード生成（`CSharpCodegen.kt` → csc）を出荷経路から外す。本書は「C# を捨てられた」の定義・残タスクの正確な棚卸し・各タスクの設計・着手順を固定する（[[il-primary-backend-pivot]] / [[kotlin-net-1.0-definition]] の E トラック完遂）。
 
 作成 2026-06-18。前提コミット時点で IL バックエンドは 52 サンプル PASS＋ilverify-clean、ユーザ定義 generics・非/ジェネリック .NET 基底継承・generic .NET 型 FIR 注入まで到達済み。
 

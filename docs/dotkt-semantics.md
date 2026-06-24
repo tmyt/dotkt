@@ -122,7 +122,7 @@ which it also emits, so C#/VB/F# consumers get the defaults natively). Consequen
 - A DotKt assembly is a first-class .NET assembly; C# can reflection-load it. For **compile-time** `<Reference>`/
   `<ProjectReference>`, the emitted BCL `TypeRef`s (all scoped to the single `System.Private.CoreLib` that
   Reflection.Emit produces) are repointed to the real contract assemblies (`Object`/`Task`→`System.Runtime`,
-  `List`/`Dictionary`→`System.Collections`, …) by the build-time `tools/retarget` (Mono.Cecil). See memory
+  `List`/`Dictionary`→`System.Collections`, …) by the build-time `retarget` (Mono.Cecil). See memory
   `r1-reverse-projectreference-retargeter`.
 - Forward (`Kotlin → .NET`): `import System.X` / a `<ProjectReference>` to a C# project just works (the import scan
   injects the referenced types into FIR). See `docs/design-kotlin-metadata-attributes.md` and memory

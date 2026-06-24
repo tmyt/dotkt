@@ -14,7 +14,7 @@ Kotlin via their real .NET types).
 
 ## Backend
 
-Direct IL, one path: **Kotlin IR → `BirEmitter` → `BIR` (JSON) → `tools/ilemit` → CIL**. The output is
+Direct IL, one path: **Kotlin IR → `BirEmitter` → `BIR` (JSON) → `ilemit` → CIL**. The output is
 [`ilverify`](https://github.com/dotnet/runtime/tree/main/src/coreclr/tools/ILVerify)-clean. (An earlier
 Kotlin-IR→C#-text oracle backend was retired and removed; BIR→ilemit is the sole backend.)
 
@@ -62,11 +62,11 @@ Prereqs: the repo's Gradle auto-provisions a JDK; you need the **.NET SDK 10**.
 
 ```bash
 # 0. build the BIR→CIL tool once
-dotnet build tools/ilemit -c Release -o build/ilemit-bin
+dotnet build ilemit -c Release -o build/ilemit-bin
 
 # 1. Kotlin → BIR (JSON).  One run also writes Foo.cs (the C# oracle) + KIR@Raw.txt (IR dump)
 STDLIB=$(find ~/.gradle/caches -name 'kotlin-stdlib-2.2.0.jar' | head -1)
-./gradlew :compiler:run --args="$PWD/samples/m0/M0.kt -no-stdlib -classpath $STDLIB -d $PWD/build/out"
+./gradlew :kotc:run --args="$PWD/samples/m0/M0.kt -no-stdlib -classpath $STDLIB -d $PWD/build/out"
 
 # 2. BIR → CIL assembly
 dotnet build/ilemit-bin/ilemit.dll build/out M0Kt build/out/*.bir.json
@@ -111,9 +111,9 @@ assembly via the chosen backend. See `samples/ktproj/` (C# path), `samples/ktpro
 | `kotc/` | the Kotlin→BIR compiler frontend (Kotlin/JVM gradle module; source package `kotc.*`) |
 | `kotc/.../kotc/pipeline/ClrCliPipeline.kt` | driver: stock JVM phases + our backend phase |
 | `kotc/.../kotc/backend/BirEmitter.kt` (+ `BirEmitterExpressions/Statements`, `BirMappings`) | **Kotlin IR → BIR** (all lowering lives here) |
-| `tools/ilemit/` | **BIR (JSON) → CIL** via `System.Reflection.Emit` (split: `Emitter.Expressions/Coroutines/Statements/Metadata`) |
-| `tools/facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) |
-| `tools/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
+| `ilemit/` | **BIR (JSON) → CIL** via `System.Reflection.Emit` (split: `Emitter.Expressions/Coroutines/Statements/Metadata`) |
+| `facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) |
+| `retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
 | `runtime/DotKt.Runtime/` | .NET runtime helpers + the `[Kotlin*]` round-trip metadata attributes |
 | `packaging/` | NuGet packages: `DotKt.Sdk` (thin), `DotKt.Toolchain` (tools + the build pipeline), `DotKt.Runtime` |
 | `samples/` | `il-*` (IL-backend samples), `m-*` (language/interop), `ktproj-*` (MSBuild) |
@@ -126,7 +126,7 @@ assembly via the chosen backend. See `samples/ktproj/` (C# path), `samples/ktpro
 
 The frontend is the **stock JVM pipeline** (Configuration → FIR → Fir2Ir); we own only the final
 backend phase, so resolution against the real `kotlin-stdlib` is correct. Lowering is concentrated
-in `BirEmitter` (Kotlin IR → a compact JSON "BIR"); `tools/ilemit` stays thin and just emits CIL
+in `BirEmitter` (Kotlin IR → a compact JSON "BIR"); `ilemit` stays thin and just emits CIL
 from BIR. Keeping lowering in BIR (rather than emitting IL straight from the structured AST) is what
 makes control flow, generics-shaped overloads, nullable value types, etc. tractable.
 

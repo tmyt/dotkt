@@ -25,7 +25,7 @@
 ## マイルストーン
 
 - **D1.0 — スパイク: 手書き hello.dll（S）✅ 達成.**
-  `tools/ilemit`（`PersistedAssemblyBuilder` + `ManagedPEBuilder`）が IL のみで `hello.dll` + `hello.runtimeconfig.json` を生成、`dotnet hello.dll` が `Hello from IL` を出力。C# ソース/csc を一切経由しないことを実証。CIL 経路の実現可能性を確認。
+  `ilemit`（`PersistedAssemblyBuilder` + `ManagedPEBuilder`）が IL のみで `hello.dll` + `hello.runtimeconfig.json` を生成、`dotnet hello.dll` が `Hello from IL` を出力。C# ソース/csc を一切経由しないことを実証。CIL 経路の実現可能性を確認。
 - **D1.1 — BIR スキーマ v0 + Kotlin 側出力（M）✅ 達成.**
   `BirEmitter.kt` が M0 subset（file→static class, method[name/params/ret], body=構造化 stmt/expr: const/local/bin/un/console/callStatic/concat/cond/var/setLocal/return/while/if）を JSON 化。`ClrBackendPhase` が `*.bir.json` を C# と並行出力。m0 で妥当な JSON（main/sum/fizz, hasMain）を確認。
 - **D1.2 — ilemit M0（L）✅ 達成.**

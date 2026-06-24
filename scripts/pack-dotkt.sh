@@ -8,9 +8,9 @@ VER="0.9.3+kotlin-2.2.0"
 
 echo "== build compiler (installDist) + tools + runtime =="
 ( cd "$ROOT" && ./gradlew -q :kotc:installDist )
-dotnet build "$ROOT/tools/ilemit"   -c Release -o "$ROOT/build/ilemit-bin"   -v q --nologo
-dotnet build "$ROOT/tools/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo
-dotnet build "$ROOT/tools/retarget" -c Release -o "$ROOT/build/retarget-bin" -v q --nologo
+dotnet build "$ROOT/ilemit"   -c Release -o "$ROOT/build/ilemit-bin"   -v q --nologo
+dotnet build "$ROOT/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo
+dotnet build "$ROOT/retarget" -c Release -o "$ROOT/build/retarget-bin" -v q --nologo
 
 echo "== assemble DotKt.Toolchain/tools =="
 TC="$ROOT/packaging/DotKt.Toolchain/tools"; rm -rf "$TC"; mkdir -p "$TC"

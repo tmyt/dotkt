@@ -20,7 +20,7 @@ CCP="$EMB:$STDLIBJ:$COR:$REFLECT:$SCRIPT:$ANNOT"   # classpath to RUN the kotlin
 
 # E-2: the clr side runs through the SHIPPING IL backend (BIR -> ilemit -> CIL), not C#, so this harness
 # validates the actual shipping path against real Kotlin semantics. Build ilemit once.
-dotnet build "$ROOT/tools/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null 2>&1
+dotnet build "$ROOT/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null 2>&1
 
 # Build the compiler launcher once (plain Java app) — per-sample compiles cost ~2s instead of ~9s for gradlew.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1

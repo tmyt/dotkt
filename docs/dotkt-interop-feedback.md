@@ -1,7 +1,7 @@
 # DotKt 言語基盤へのフィードバック — 実 .NET 型 interop の課題
 
 `dotktx.ui.winui`（WinUI を Kotlin で宣言的に駆動するライブラリ）を実装する中で、DotKt の
-**型インジェクタ（`tools/facadegen`）** と **IL バックエンド（`tools/ilemit`）** に、実用上ふさぎたい
+**型インジェクタ（`facadegen`）** と **IL バックエンド（`ilemit`）** に、実用上ふさぎたい
 制約が見つかった。Windows 実機ビルドのエラーと、各ツールのソース解析から、症状・根本原因・最小再現・
 修正方針をまとめる。`file:line` は `kotlin.net` リポジトリの該当箇所。
 
