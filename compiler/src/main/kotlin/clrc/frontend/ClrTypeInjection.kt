@@ -183,7 +183,7 @@ private object ClrMetadataHolder {
 				"fun" -> {
 					val fm = parseFunMods(tok.getOrNull(3))
 					methods.add(ClrMethod(tok[1], tok[2], fm.open, fm.abstract, fm.protected,
-						parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }, fm.infix, fm.operator, fm.suspend))
+						parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }, fm.infix, fm.operator, fm.suspend, fm.inline, fm.ext))
 				}
 				"ctor" -> ctors.add(parseParams(tok.drop(1)))
 				// sfun <Name> <ret> [<param>:<type>]* — a public STATIC method of a normal class (-> companion).
@@ -241,7 +241,7 @@ private object ClrMetadataHolder {
 	}
 	val classIdByName: Map<String, ClassId> by lazy { byClassId.entries.associate { (id, t) -> t.kotlinName to id } }
 	// Generic and non-generic types share a simple name (`IEnumerable<T>` vs `IEnumerable`) — resolve by (name, arity)
-	// so `generic:IEnumerable:Item` picks the generic one and a bare `IEnumerable` picks the non-generic one.
+	// so `generic:IEnumerable[Item]` picks the generic one and a bare `IEnumerable` picks the non-generic one.
 	private val byNameArity: Map<Pair<String, Int>, ClassId> by lazy {
 		byClassId.entries.associate { (id, t) -> (t.kotlinName to t.typeParams.size) to id }
 	}
@@ -325,12 +325,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			for (tp in type.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
 			// Supertypes: a class's base (`Button` -> `Widget`, for assignability + inherited/protected members),
 			// and an interface's GENERIC base interfaces (`IList<T>` -> `ICollection<T>`, so inherited members like
-			// `Add` surface — item 3). A spec is either a simple name or `generic:Open:arg,arg` (args are the owner's
+			// `Add` surface — item 3). A spec is either a simple name or `generic:Open[arg,arg]` (args are the owner's
 			// type params, resolved against `tps` below). Deferred provider form -> lazy cross-generation.
 			for (spec in type.superTypes) {
 				val (openName, arity) = if (spec.startsWith("generic:")) {
 					val rest = spec.removePrefix("generic:")
-					rest.substringBefore(':') to rest.substringAfter(':', "").let { if (it.isEmpty()) 0 else it.split(',').size }
+					val br = rest.indexOf('[')
+					if (br < 0) rest to 0
+					else rest.substring(0, br) to splitTopLevel(rest.substring(br + 1, rest.length - 1)).size
 				} else spec to 0
 				val scid = ClrMetadataHolder.classIdFor(openName, arity) ?: continue
 				superType { tps -> superTypeCone(spec, scid, tps) }
@@ -568,12 +570,17 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		val overloads = type.methods.filter { it.name == callName }
 		// Member name == .NET name verbatim, so the backend emits the call as-is (no per-member map).
 		return overloads.flatMap { m ->
+			// A MEMBER extension function (`class C { fun T.f() }`): the first param is `__self` (the extension receiver,
+			// marked `,ext`), restored as a Kotlin extension receiver; the rest are value params. Composes with
+			// generic / infix / operator / suspend / inline / protected — the full "hellish member" cross-product.
+			val extRecv = if (m.ext && m.params.isNotEmpty()) m.params[0] else null
+			val vps = if (extRecv != null) m.params.drop(1) else m.params
 			if (m.typeParams.isEmpty()) {
 				// Default args: @JvmOverloads-style — one overload per trailing contiguous default param omitted (a plugin
 				// `hasDefaultValue` would insert a fir2ir-crashing STUB). The consumer resolves by arity; ilemit fills the
 				// omitted args from [DefaultParameterValue]. trailingOpt==0 (the common case) => exactly one function.
-				val trailingOpt = m.params.reversed().takeWhile { it.type.startsWith("opt:") }.count()
-				((m.params.size - trailingOpt)..m.params.size).map { arity ->
+				val trailingOpt = vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
+				((vps.size - trailingOpt)..vps.size).map { arity ->
 				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
 					// interface members + .NET abstract => ABSTRACT (must implement); .NET virtual => OPEN (overridable).
 					if (type.isInterface || m.abstract) modality = Modality.ABSTRACT
@@ -581,14 +588,16 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					if (m.protected) visibility = Visibilities.Protected   // overridable protected lifecycle methods (item 2)
 					// DotKt round-trip: Kotlin modifiers with no .NET analog, restored from [KotlinFunction].
 					if (m.infix || m.operator || m.suspend) status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
-					for (p in m.params.take(arity))
+					if (m.inline) status { isInline = true }
+					if (extRecv != null) extensionReceiverType(coneOf(extRecv.type, owner))
+					for (p in vps.take(arity))
 						if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), coneOf("array:" + p.type.removePrefix("vararg:"), owner), isVararg = true)
 						else valueParameter(Name.identifier(p.name), coneOf(p.type, owner))
 				}.symbol
 				}
 			} else listOf(
 				// A generic .NET method (`SizeOf<T>()`, `As<T>(o): T`). Declare its method type parameters, then
-				// resolve the return type and any T-typed value params against THOSE params (via the provider forms,
+				// resolve the return type and any T-typed param/receiver against THOSE params (via the provider forms,
 				// since the type params don't exist until the function is being built). The CLR has reified generics,
 				// so the backend just emits a generic .NET method call (MakeGenericMethod) — see [[clr-not-jvm-discard-jvmisms]].
 				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName,
@@ -596,20 +605,24 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					if (m.abstract) modality = Modality.ABSTRACT
 					else if (m.open && !type.isObject) modality = Modality.OPEN
 					if (m.protected) visibility = Visibilities.Protected
+					if (m.infix || m.operator || m.suspend) status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
+					if (m.inline) status { isInline = true }
 					for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
-					for (p in m.params) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
+					if (extRecv != null) extensionReceiverType { tps -> coneOfMethod(extRecv.type, owner, m.typeParams, tps) }
+					for (p in vps) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
 				}.symbol
 			)
 		}
 	}
 
-	/** Resolve a supertype spec (a simple injected name, or `generic:Open:arg,arg`) to a ConeKotlinType, mapping
+	/** Resolve a supertype spec (a simple injected name, or `generic:Open[arg,arg]`) to a ConeKotlinType, mapping
 	 *  type-argument names to the owner's own type parameters (`tps`, available in the class-builder superType form). */
 	private fun superTypeCone(spec: String, scid: ClassId, tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType {
 		val sym = session.symbolProvider.getClassLikeSymbolByClassId(scid) ?: return session.builtinTypes.anyType.coneType
 		if (!spec.startsWith("generic:")) return sym.constructType(emptyArray(), false)
-		val argStr = spec.removePrefix("generic:").substringAfter(':', "")
-		val args = if (argStr.isEmpty()) emptyList() else argStr.split(',').map { superArgCone(it, tps) }
+		val rest = spec.removePrefix("generic:"); val br = rest.indexOf('[')
+		val argStr = if (br < 0) "" else rest.substring(br + 1, rest.length - 1)
+		val args = if (argStr.isEmpty()) emptyList() else splitTopLevel(argStr).map { superArgCone(it, tps) }
 		@Suppress("UNCHECKED_CAST")
 		return sym.constructType(args.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, false)
 	}
@@ -642,7 +655,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	private fun coneOfMethod(typeName: String, owner: FirClassSymbol<*>?, methodTypeParams: List<String>,
 	                         tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType =
 		// Resolve the spec through `coneOf`, but with a type-variable resolver so a method type param `T` — even nested
-		// inside a `generic:Box:T` arg — binds to the function's own type parameter (not the owner's, and not Any?).
+		// inside a `generic:Box[T]` arg — binds to the function's own type parameter (not the owner's, and not Any?).
 		coneOf(typeName, owner) { name ->
 			val i = methodTypeParams.indexOf(name)
 			if (i >= 0 && i < tps.size) tps[i].symbol.constructType(emptyArray(), false) else null
@@ -673,8 +686,22 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		session.symbolProvider.getClassLikeSymbolByClassId(spanClassId)?.constructType(arrayOf(arg), false)
 			?: session.builtinTypes.nullableAnyType.coneType
 
+	/** Split a metadata type list (`generic:Box[V]` / `func:[ret,a,b]` children) on commas at bracket-depth 0, so a
+	 *  compound child keeps its own `[...]` intact. Mirrors ilemit's SplitTopLevel — the recursive grammar's parser. */
+	private fun splitTopLevel(s: String): List<String> {
+		if (s.isEmpty()) return emptyList()
+		val res = ArrayList<String>(); var depth = 0; var start = 0
+		for (i in s.indices) when (s[i]) {
+			'[' -> depth++
+			']' -> depth--
+			',' -> if (depth == 0) { res.add(s.substring(start, i)); start = i + 1 }
+		}
+		res.add(s.substring(start))
+		return res
+	}
+
 	// `tv` resolves a bare type-variable name (a method/function type parameter) to its cone type; null when the name
-	// isn't one. Threaded through every recursion so a `T` nested in `generic:Box:T`/`array:T`/`func:…` also binds.
+	// isn't one. Threaded through every recursion so a `T` nested in `generic:Box[T]`/`array:T`/`func:…` also binds.
 	private fun coneOf(typeName: String, owner: FirClassSymbol<*>?, tv: ((String) -> ConeKotlinType?)? = null): ConeKotlinType {
 		// A trailing `?` -> the Kotlin nullable form `T?` (so a consumer can pass/handle null). Carried by [KotlinNullable].
 		if (typeName.endsWith("?")) return coneOf(typeName.dropLast(1), owner, tv).withNullability(true, session.typeContext)
@@ -687,17 +714,19 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// (4) A .NET delegate parameter (`func:<ret>:<arg>,<arg>`) -> a Kotlin function type `(args) -> ret`, so a
 		// lambda binds and overloads disambiguate. The backend builds the real delegate from the call-site param type.
 		if (typeName.startsWith("func:")) {
-			val rest = typeName.removePrefix("func:")
-			val ret = rest.substringBefore(':'); val argStr = rest.substringAfter(':', "")
-			val args = if (argStr.isEmpty()) emptyList() else argStr.split(',').map { coneOf(it, owner, tv) }
-			return coneFunctionType(args, coneOf(ret, owner, tv))
+			// `func:[ret,arg,arg]` — bracketed, split at bracket-depth 0 so a compound child (`generic:Box[V]`) nests.
+			val parts = splitTopLevel(typeName.removePrefix("func:").removeSurrounding("[", "]"))
+			val ret = parts.firstOrNull() ?: "Unit"; val args = parts.drop(1)
+			return coneFunctionType(args.map { coneOf(it, owner, tv) }, coneOf(ret, owner, tv))
 		}
-		// (3) A constructed generic (`generic:IList:ResourceDictionary`, or `generic:Box:T` of a generic fn) -> the
+		// (3) A constructed generic (`generic:IList[ResourceDictionary]`, or `generic:Box[T]` of a generic fn) -> the
 		// injected open type applied to the (recursively resolved) args, so chained members / type inference work.
 		if (typeName.startsWith("generic:")) {
 			val rest = typeName.removePrefix("generic:")
-			val open = rest.substringBefore(':'); val argStr = rest.substringAfter(':', "")
-			val argNames = if (argStr.isEmpty()) emptyList() else argStr.split(',')
+			val br = rest.indexOf('[')
+			val open = if (br < 0) rest else rest.substring(0, br)
+			val inner = if (br < 0) "" else rest.substring(br + 1, rest.length - 1)
+			val argNames = if (inner.isEmpty()) emptyList() else splitTopLevel(inner)
 			val cid = ClrMetadataHolder.classIdFor(open, argNames.size) ?: return session.builtinTypes.nullableAnyType.coneType
 			val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return session.builtinTypes.nullableAnyType.coneType
 			val args = argNames.map { coneOf(it, owner, tv) }

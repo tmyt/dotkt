@@ -155,6 +155,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// Captured outer values inside a capturing object literal -> `this.<field>`. Keyed by value-declaration
 	// IDENTITY (not name): the anon's own `<this>` and a captured outer `<this>` share the name "<this>".
 	private val captureSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	// An extension-function `__self` receiver -> the `__self` arg. Keyed by IDENTITY: in a MEMBER extension
+	// (`class C { fun T.f() }`) the extension receiver and the dispatch receiver BOTH have name "<this>", so a
+	// name-keyed map can't tell them apart (it would capture C's `this` too). The dispatch `<this>` then falls
+	// through to `{"k":"this"}` and the extension receiver resolves here.
+	private val selfSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.
 	private val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()
@@ -649,12 +654,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  Used for extension properties (`val T.p`) and computed top-level properties (no backing field). */
 	private fun topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 		val extRecv = acc.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-		if (extRecv != null) valSubst[extRecv.name.asString()] = """{"k":"local","name":"__self"}"""
+		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
 		val savedRefCells = refCellVars
 		refCellVars = refCellVars + computeRefCells(acc)
 		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		refCellVars = savedRefCells
-		if (extRecv != null) valSubst.remove(extRecv.name.asString())
+		if (extRecv != null) selfSubst.remove(extRecv)
 		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
 		val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
 		val name = (if (isGetter) "get_" else "set_") + propName
@@ -664,6 +669,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	private fun accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 		val mname = clrIfaceMemberName(acc) ?: (if (isGetter) "get_" else "set_") + propName
+		// A MEMBER extension property (`class C { val T.p get() }`) has BOTH a dispatch and an extension receiver. Its
+		// read/write lowering (dual-receiver getter call) isn't implemented — report cleanly rather than mis-emit
+		// (a member extension *function* covers the same need). The reported ERROR fails the compile with a location.
+		if (acc.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }) {
+			val node = unsupported(acc, "member extension property `$propName`",
+				"a property with an extension receiver declared inside a class isn't supported yet — use a member extension function")
+			return """{"name":${str(mname)},"static":false,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public","params":[],"ret":${str(if (isGetter) birType(acc.returnType) else "void")},"body":[{"k":"exprStmt","expr":$node}]}"""
+		}
 		val ps = acc.parameters.filter { it.kind == IrParameterKind.Regular }
 			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
@@ -830,13 +843,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// An extension function `fun T.f()` -> static method whose first param `__self` is the receiver;
 		// body references to the receiver resolve to `__self` (via valSubst).
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-		if (extRecv != null) valSubst[extRecv.name.asString()] = """{"k":"local","name":"__self"}"""
+		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
 		// Promote captured-mutated `var`s to ref-cells; accumulate (a nested closure inherits the enclosing set).
 		val savedRefCells = refCellVars
 		refCellVars = refCellVars + computeRefCells(fn)
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		refCellVars = savedRefCells
-		if (extRecv != null) valSubst.remove(extRecv.name.asString())
+		if (extRecv != null) selfSubst.remove(extRecv)
 		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
 		val ps = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters)).joinToString(",")
 		// `override fun toString()/equals()/hashCode()` -> System.Object.ToString/Equals/GetHashCode so that
@@ -1008,9 +1021,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// An extension `suspend fun T.f()` -> a static kickoff whose first param `__self` is the receiver, captured
 		// into the state machine like any other param; receiver references (`<this>`) resolve to `__self`.
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-		if (extRecv != null) valSubst[extRecv.name.asString()] = """{"k":"local","name":"__self"}"""
+		// A MEMBER suspend extension (`class C { suspend fun T.f() }`, non-static) needs the state machine to thread
+		// BOTH receivers AND reach protected members from the SM — not implemented. Reject cleanly (a non-suspend
+		// member extension or a top-level suspend extension both work). Avoids the InvalidProgram/MethodAccess miscompile.
+		if (extRecv != null && !static) {
+			val node = unsupported(fn, "suspend member extension function `${fn.name.asString()}`",
+				"a `suspend` function with an extension receiver declared inside a class isn't supported yet — use a top-level suspend extension or a non-suspend member extension")
+			return """{"name":${str(fn.name.asString())},"static":false,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public","params":[{"name":"__self","type":${str(birType(extRecv.type))}}],"ret":"clr:System.Threading.Tasks.Task","body":[{"k":"exprStmt","expr":$node}]}"""
+		}
+		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
 		val co = emitCoroutineBody(fn)
-		if (extRecv != null) valSubst.remove(extRecv.name.asString())
+		if (extRecv != null) selfSubst.remove(extRecv)
 		val selfJson = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
 		val ps = (listOfNotNull(selfJson) + paramsJsonList(fn.parameters)).joinToString(",")
 		val cps = (listOfNotNull(selfJson) + listOf(co.cpsFields).filter { it.isNotEmpty() }).joinToString(",")
@@ -1584,6 +1605,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// A ref-cell var read `x` -> `x.v` (the heap cell, reached via the capture field inside a closure).
 				isRefCell(owner) -> """{"k":"field","ownerType":${str(refTypeName(owner))},"recv":${refBase(owner)},"name":"v"}"""
 				captureSubst.containsKey(owner) -> captureSubst[owner]!!
+				selfSubst.containsKey(owner) -> selfSubst[owner]!!   // extension `__self` (by identity, before name-based `<this>`)
 				valSubst.containsKey(name) -> valSubst[name]!!
 				name == "<this>" -> """{"k":"this"}"""
 				else -> {
@@ -3183,9 +3205,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 				if (targs.all { it != null }) {
 					val taJson = targs.joinToString(",") { str(birType(it!!)) }
-					val shapes = regularParams(callee).joinToString(",") { str(clrMethodShape(it.type)) }
 					val member = clrName(callee) ?: name
-					val argsJson = regularArgs(call).joinToString(",") { expr(it) }
+					// A generic MEMBER extension (`class C { fun <R> T.f() }`): the `__self` receiver is the .NET method's
+					// first param -> prepend its value + shape so by-shape overload resolution and the call line up.
+					val gExt = if (!isStatic) extensionReceiver(call) else null
+					val shapeParams = (if (gExt != null) listOf(gExt.type) else emptyList()) + regularParams(callee).map { it.type }
+					val shapes = shapeParams.joinToString(",") { str(clrMethodShape(it)) }
+					val argsJson = (listOfNotNull(gExt) + regularArgs(call)).joinToString(",") { expr(it) }
 					return if (isStatic)
 						"""{"k":"clrGenericStatic","type":${str(clrType)},"method":${str(member)},"typeArgs":[$taJson],"shapes":[$shapes],"args":[$argsJson]}"""
 					else
@@ -3218,6 +3244,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
 				val allArgTypes = (listOf(str(netType(extRecv.type))) + regularArgs(call).map { str(netType(it.type)) }).joinToString(",")
 				return """{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]}"""
+			}
+			// A restored MEMBER extension function (`class C { fun T.f() }`): an INSTANCE method on the dispatch receiver
+			// (C) whose first .NET param `__self` is the extension receiver -> dispatch on `recv`, prepend the receiver.
+			if (!isStatic && extRecv != null && recv != null) {
+				val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
+				val allArgTypes = (listOf(str(netType(extRecv.type))) + regularArgs(call).map { str(netType(it.type)) }).joinToString(",")
+				return """{"k":"clrInstance","type":${str(memberType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]}"""
 			}
 			val (cArgs, cArgTypes) = clrCallArgs(call, callee)
 			return if (isStatic)
@@ -3623,10 +3656,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// is typed as the result T and `GetAwaiter` can't be found. See docs §13k.
 		val effRet = if (callee.isSuspend) coTaskType(call.type) else birType(call.type)
 		val recv = dispatchReceiver(call)
-		// User extension function `fun T.f(...)` -> static `f(receiver, args...)` (receiver is the __self param).
+		// An extension function: the receiver is the `__self` first arg. TOP-LEVEL `fun T.f()` -> static `f(self,args)`.
+		// MEMBER `class C { fun T.f() }` has BOTH receivers -> instance method on the enclosing C (dispatch receiver),
+		// with the extension receiver as the first arg (mirrors the JVM `C.f(T $receiver)` shape).
 		val extRecv = extensionReceiver(call)
 		if (extRecv != null) {
 			val all = (listOf(expr(extRecv)) + filledArgs(call)).joinToString(",")
+			if (recv != null) {
+				val ownerStr = ownerSpec(declaringClass, recv.type)
+				val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
+				return """{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$all]}"""
+			}
 			return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]}"""
 		}
 		// Instance method on a user class, or a sibling top-level call.

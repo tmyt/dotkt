@@ -118,6 +118,24 @@ All identified round-trip gaps resolved; guarded by `scripts/verify-roundtrip.sh
   - Guarded by `scripts/verify-roundtrip.sh` (roundtrip-generic). Known limitation (NOT a round-trip regression — it
     fails the same way in a single module): a `suspend` member of a generic class (`class Box<T> { suspend fun f(): T }`)
     is a separate pre-existing coroutine×generics gap, tracked in docs/future-work-interop.md.
+- **Higher-order generics — a generic user type nested in a lambda parameter.** A function-type parameter whose argument
+  or return is a generic user type (`fun <U,V> apply2(f: (Box<U>) -> Box<V>, …)`) now round-trips, in every position
+  (top-level / member / extension / `infix` / `operator` / `inline`). Root cause: the internal metadata **type grammar
+  was flat** (`func:<ret>:<args>` / `generic:<Open>:<args>`, colon/comma-delimited), so a `generic:` couldn't nest
+  inside a `func:` — facadegen deliberately dropped such a lambda to `Any?`, which erased the type variable and made it
+  uninferable at the call site. The grammar is now **recursive (bracketed)**: `generic:Box[V]`, `func:[ret,a,b]` — a
+  compound child keeps its own commas, the injector splits at bracket depth 0, and `(Box<U>)->Box<V>` survives as
+  `func:[generic:Box[V],generic:Box[U]]`. Guarded by `scripts/verify-roundtrip.sh` (roundtrip-generic-hof).
+- **Member-declared extension functions** (`class C { fun T.f() }`) now round-trip — plain, `infix`, `operator`,
+  `inline`+generic-method, and `protected` — consumed as Kotlin via `with(c) { x.f() }`. This also fixes a **pre-existing
+  single-module bug**: a member extension's two implicit receivers (the dispatch `this` and the extension `__self`, both
+  named `<this>` in IR) were name-keyed and got swapped, producing wrong results; they're now substituted by symbol
+  identity, and a member-extension call dispatches on the enclosing instance with the extension receiver prepended.
+  facadegen stamps `,ext`/`,inline` on the member `fun` line; the injector restores the extension receiver on the member
+  path (the `fun`-line parser had also been dropping `,ext`/`,inline`). Guarded by `scripts/verify-roundtrip.sh`
+  (roundtrip-memext). **Rejected with a source-located compile error** (not a miscompile): a member extension *property*
+  (`val T.p` in a class) and a *`suspend`* member extension (needs coroutine-state-machine work) — see
+  docs/future-work-interop.md.
 - **Namespace projection** (`[assembly: DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]`) — a DotKt library whose
   types live in one .NET namespace (e.g. `DotKt.Coroutines`) can be consumed under a different Kotlin package (e.g.
   `import kotlinx.coroutines.*`). The producer stamps it via `ilemit --ns-projection k=d` (SDK: a `<DotKtNamespaceProjection>`

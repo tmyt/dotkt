@@ -109,13 +109,28 @@ roundtrip-pkg で常設、各実装で verify-il 緑。
 オーバーロード解決）・injector（`coneOf` が `generic:Box:T` 内の型変数を `Any?` に潰す／ジェネリック top-level 経路が
 ext-receiver・inline・infix・operator・vararg・デフォルト引数を無視）。
 
-**残る既知の限界**（往復のブロッカーではない）:
-- デフォルト引数の**名前付き中間省略**（`copy(y=5)` は非定数デフォルト `this.x` を要し JVM の `copy$default` 相当が必要）・**object シングルトン**。
-- **ジェネリッククラスのメンバ `suspend`**（`class Box<T> { suspend fun f(): T }`）— **往復固有ではなく**、単一モジュールでも
-  同じ `BadImageFormatException` で落ちる**既存の coroutine×ジェネリッククラスの穴**（状態機械をジェネリック型のメンバとして emit
-  する経路）。別途要対応。
-- **`kotlin.Pair`/`Triple` をジェネリック型引数で構築**（`Pair<T, T>(a, b)`、T が型パラメータ）— ilemit `ParseOwner` が
-  `kotlin.Pair[gp:T,...]` をユーザ型として探して落ちる（これも単一モジュールで再現する既存バグ）。ユーザ型 `Pair2<A,B>` で代替可。
+**高階ジェネリクス（ラムダ引数にネストしたジェネリックユーザ型）の往復は成立**（2026-06-24）: `(Box<U>) -> Box<V>` のような
+関数型パラメータの arg/ret がジェネリックユーザ型でも往復する（top-level/メンバ/拡張/infix/operator/inline）。鍵は**メタ型文法を
+再帰（括弧）化**したこと（`generic:Box[V]`・`func:[ret,a,b]`、injector はブラケット深さ0で分割）。従来は平坦文法（`func:<ret>:<args>`）
+で `func:` 内に `generic:` をネストできず、`Any?` に潰して型変数が推論不能になっていた。`verify-roundtrip.sh`（roundtrip-generic-hof）。
+
+**メンバ拡張関数の往復も成立**（2026-06-24）: `class C { fun T.f() }`（plain/infix/operator/inline+ジェネリックメソッド/protected）を
+`with(c) { x.f() }` で消費できる。**単一モジュールの既存バグも修正**: メンバ拡張の2つの暗黙レシーバ（dispatch `this` と拡張 `__self`、
+IR ではどちらも名前 `<this>`）が名前キーで取り違えられ誤結果になっていた→シンボル同一性で `__self` を置換、呼出は囲みインスタンスに
+dispatch して拡張レシーバを先頭に付与。facadegen がメンバ `fun` 行に `,ext`/`,inline` を付与、injector が復元（`fun` 行パーサが
+`,ext`/`,inline` を落としていたのも修正）。`verify-roundtrip.sh`（roundtrip-memext）。
+
+**残る既知の限界**（往復のブロッカーではない・いずれもソース位置付きクリーンエラー）:
+- **メンバ拡張プロパティ**（`class C { val T.p }`）— 二重レシーバの property read/write lowering が未実装。メンバ拡張**関数**で代替可。
+- **`suspend` メンバ拡張**（`class C { suspend fun T.f() }`）— 状態機械が両レシーバ＋protected メンバ到達を扱えない（await が
+  `with` の inline valueBlock 内だと未 await、protected は SM から `MethodAccessException`）。top-level suspend 拡張 or 非 suspend
+  メンバ拡張で代替可。
+- **コンテキストレシーバ/パラメータ**（`context(B) fun A.f()`）— フロントエンドが実験的機能として拒否（`-Xcontext-parameters` 必須）。
+  「優勝」級の `protected inline suspend fun <reified T> ...context(B)...` はそもそもコンパイルされない。
+- デフォルト引数の**名前付き中間省略**（`copy(y=5)`）・**object シングルトン**。
+- **ジェネリッククラスのメンバ `suspend`**（`class Box<T> { suspend fun f(): T }`）— 単一モジュールでも `BadImageFormatException`
+  で落ちる既存の coroutine×ジェネリッククラスの穴。
+- **`kotlin.Pair`/`Triple` をジェネリック型引数で構築**（`Pair<T, T>(a, b)`）— ilemit `ParseOwner` が落ちる既存バグ。`Pair2<A,B>` で代替可。
 - `private`/`internal` メンバは非エクスポートで往復対象外。
 
 **設計メモ**: プロパティ往復は emit 側の .NET プロパティ化（private backing + PropertyDef + accessor）も選択肢だったが、

@@ -234,3 +234,87 @@ if [[ "$gactual" == "$gexpected" ]]; then
 else
     echo "FAIL  roundtrip-generic"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$gexpected" "$gactual"; exit 1
 fi
+
+# ----- HIGHER-ORDER generics: a function-type parameter whose ARG/RETURN is a generic user type (`(Box<U>)->Box<V>`) -----
+# The metadata type grammar is recursive (bracketed: `func:[generic:Box[V],generic:Box[U]]`), so a generic user type
+# nests inside a lambda parameter — top-level / member / extension / infix / operator / inline all carry it. (Before,
+# the flat `func:<ret>:<args>` grammar couldn't nest `generic:` and dropped the whole lambda to `Any?`, killing inference.)
+HF="$ROOT/build/roundtrip-generic-hof"; rm -rf "$HF"; mkdir -p "$HF/lib" "$HF/app" "$HF/libbir" "$HF/libil" "$HF/appbir" "$HF/appil"
+cat > "$HF/lib/lib.kt" <<'EOF'
+class Box<T>(val value: T) { fun get(): T = value }
+fun <U, V> apply2(f: (Box<U>) -> Box<V>, x: Box<U>): Box<V> = f(x)        // top-level, lambda arg+ret generic user types
+class Wrap<T>(val v: T) { fun <U, V> route(f: (Box<U>) -> Box<V>, x: Box<U>): Box<V> = f(x) }  // member
+fun <U, V> Box<U>.mapBox(f: (Box<U>) -> Box<V>): Box<V> = f(this)         // extension
+infix fun <U, V> Box<U>.pipe(f: (Box<U>) -> Box<V>): Box<V> = f(this)     // infix extension
+operator fun <U, V> Box<U>.times(f: (Box<U>) -> Box<V>): Box<V> = f(this) // operator extension
+inline fun <T, U, V, W> Box<T>.alsoMap(f: (Box<U>) -> Box<V>, w: W): Box<W> = Box(w)  // inline + 4 type params
+EOF
+cat > "$HF/app/app.kt" <<'EOF'
+fun main() {
+    val inc: (Box<Int>) -> Box<String> = { Box(it.get().toString() + "!") }
+    println(apply2(inc, Box(5)).get())                       // 5!
+    println(Wrap("w").route(inc, Box(6)).get())              // 6!
+    println(Box(7).mapBox(inc).get())                        // 7!
+    println((Box(8) pipe inc).get())                         // 8!
+    println((Box(9) * inc).get())                            // 9!
+    println(Box(1).alsoMap<Int, Int, String, Int>(inc, 42).get())  // 42 (inline ext, explicit type args)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$HF/lib" -no-stdlib -classpath "$CP" -d "$HF/libbir" >/dev/null 2>&1
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$HF/libil" KLib --ref "$DOTKT_RT" "$HF/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$HF/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$HF/k.meta" --refs "$REFS$HF/libil/KLib.dll;$DOTKT_RT" Box Wrap LibKt >/dev/null 2>&1
+CLR_TYPES_METADATA="$HF/k.meta" "$LAUNCHER" "$HF/app" -no-stdlib -classpath "$CP" -d "$HF/appbir" >/dev/null 2>&1
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$HF/appil" KApp --ref "$HF/libil/KLib.dll" --ref "$DOTKT_RT" "$HF/appbir"/*.bir.json >/dev/null 2>&1
+cp "$HF/libil/KLib.dll" "$DOTKT_RT" "$HF/appil/"
+hfexpected="$(printf '5!\n6!\n7!\n8!\n9!\n42')"
+hfactual="$(dotnet "$HF/appil/KApp.dll" 2>/dev/null)"
+if [[ "$hfactual" == "$hfexpected" ]]; then
+    echo "PASS  roundtrip-generic-hof (generic user types nested in a lambda parameter: top-level/member/extension/infix/operator/inline)"
+else
+    echo "FAIL  roundtrip-generic-hof"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$hfexpected" "$hfactual"; exit 1
+fi
+
+# ----- MEMBER-declared extension functions: `class C { fun T.f() }` consumed via `with(c) { x.f() }` -----
+# Covers the cross-product: plain / infix / operator / inline+generic-method / protected, on a generic user receiver.
+# Restored via the `,ext` marker (the first param `__self` becomes the extension receiver); the consumer dispatches on
+# the enclosing instance with the extension receiver prepended. (A member extension PROPERTY and a SUSPEND member
+# extension are rejected with a source-located compile error — see docs/future-work-interop.md.)
+ME="$ROOT/build/roundtrip-memext"; rm -rf "$ME"; mkdir -p "$ME/lib" "$ME/app" "$ME/libbir" "$ME/libil" "$ME/appbir" "$ME/appil"
+cat > "$ME/lib/lib.kt" <<'EOF'
+class Box<T>(val value: T) { fun get(): T = value }
+open class Lib(val k: Int) {
+    fun Box<Int>.boost(): Int = get() + k                          // member extension function
+    infix fun Box<Int>.glue(o: Box<Int>): Int = get() + o.get() + k // member extension infix
+    operator fun Box<Int>.times(n: Int): Int = get() * n + k        // member extension operator
+    inline fun <R> Box<Int>.mapped(f: (Int) -> R): R = f(get())     // member extension + inline + generic method + lambda
+    protected fun Box<Int>.sshh(): Int = get() * 100 + k           // protected member extension
+    fun useProt(b: Box<Int>): Int = b.sshh()                       // protected used internally
+}
+EOF
+cat > "$ME/app/app.kt" <<'EOF'
+fun main() {
+    val lib = Lib(10)
+    with(lib) {
+        println(Box(5).boost())            // 15
+        println(Box(2) glue Box(3))        // 15
+        println(Box(4) * 3)                // 22
+        println(Box(7).mapped { it + 1 })  // 8
+    }
+    println(lib.useProt(Box(1)))           // 110
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$ME/lib" -no-stdlib -classpath "$CP" -d "$ME/libbir" >/dev/null 2>&1
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ME/libil" KLib --ref "$DOTKT_RT" "$ME/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$ME/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$ME/k.meta" --refs "$REFS$ME/libil/KLib.dll;$DOTKT_RT" Box Lib >/dev/null 2>&1
+CLR_TYPES_METADATA="$ME/k.meta" "$LAUNCHER" "$ME/app" -no-stdlib -classpath "$CP" -d "$ME/appbir" >/dev/null 2>&1
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ME/appil" KApp --ref "$ME/libil/KLib.dll" --ref "$DOTKT_RT" "$ME/appbir"/*.bir.json >/dev/null 2>&1
+cp "$ME/libil/KLib.dll" "$DOTKT_RT" "$ME/appil/"
+meexpected="$(printf '15\n15\n22\n8\n110')"
+meactual="$(dotnet "$ME/appil/KApp.dll" 2>/dev/null)"
+if [[ "$meactual" == "$meexpected" ]]; then
+    echo "PASS  roundtrip-memext (member extension functions: plain/infix/operator/inline-generic/protected, consumed via with)"
+else
+    echo "FAIL  roundtrip-memext"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$meexpected" "$meactual"; exit 1
+fi

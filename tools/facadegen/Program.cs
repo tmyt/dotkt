@@ -458,7 +458,11 @@ static class FacadeGen
                 var virt = m.IsVirtual && !m.IsFinal;
                 var nmask = KotlinNullMask(m);   // Kotlin nullability ([KotlinNullable]): `?` on return (bit 0) / params (bit i+1)
                 var retTok = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + NullSuffix(nmask, 0);
-                var toks = new List<string> { "fun", m.Name, retTok, FunModifier(Modifier(prot.Value, m.IsAbstract, virt), k) };
+                // A MEMBER extension function (`class C { fun T.f() }`) -> first param `__self`; `,ext` so the injector
+                // restores the extension receiver. `,inline` carries the spliceable body (composes with suspend/generic).
+                var isExt = ps.Length > 0 && ps[0].Name == "__self";
+                var mod = FunModifier(Modifier(prot.Value, m.IsAbstract, virt), k) + (KotlinInlineBody(m) != null ? ",inline" : "") + (isExt ? ",ext" : "");
+                var toks = new List<string> { "fun", m.Name, retTok, mod };
                 toks.AddRange(gp);
                 toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t, nmask)));
                 sb.Append(string.Join(" ", toks) + "\n");
@@ -999,7 +1003,7 @@ static class FacadeGen
         // (4) A .NET delegate type -> a Kotlin function type `func:<ret>:<arg>,<arg>` (meta/injection path only).
         // A lambda then binds to the delegate parameter and overloads disambiguate by arity; the backend builds the
         // SPECIFIC delegate from the parameter type resolved at the call site (so the delegate name isn't needed in
-        // the metadata). Simple signatures only (no generic/array/byref args) — others degrade to Any?.
+        // the metadata). Args/ret may themselves be compound (`generic:Box[V]`) — the bracketed grammar nests them.
         if (MetaMode && IsDelegate(t))
         {
             var inv = t.GetMethod("Invoke");
@@ -1007,8 +1011,10 @@ static class FacadeGen
             {
                 var dret = MapRet(inv.ReturnType, self);
                 var dps = inv.GetParameters().Select(p => Map(p.ParameterType, self)).ToList();
-                if (dret != "Any?" && !dret.Contains(':') && !dret.Contains(',') && dps.All(a => a != "Any?" && !a.Contains(':') && !a.Contains(',')))
-                    return "func:" + dret + ":" + string.Join(",", dps);
+                // `func:[ret,arg,arg]` — bracketed so a compound child (its own `[...]`) keeps its commas; the
+                // injector splits at bracket-depth 0. Only an unresolved child (`Any?`) sinks the whole delegate.
+                if (dret != "Any?" && dps.All(a => a != "Any?"))
+                    return "func:[" + string.Join(",", new[] { dret }.Concat(dps)) + "]";
             }
             return "Any?";
         }
@@ -1047,10 +1053,9 @@ static class FacadeGen
         // A root-namespace GENERIC user type (`Box<T>`, t.Namespace empty) is handled by the generic branch below; only
         // reject an empty namespace for NON-generic types (a global/compiler type with no useful injectable identity).
         if (t.IsByRef || t.IsPointer || t.IsGenericParameter || (string.IsNullOrEmpty(t.Namespace) && !t.IsGenericType)) return "Any?";
-        // (3) A constructed generic (`IList<ResourceDictionary>`) -> `generic:<OpenSimple>:<arg>,<arg>` so the
+        // (3) A constructed generic (`IList<ResourceDictionary>`) -> `generic:<OpenSimple>[<arg>,<arg>]` so the
         // injector resolves it to `IList<ResourceDictionary>` (chained `.Add`/`for-in` work). Requires the open def
-        // injectable and every arg resolvable to a simple name/primitive; nested generics/arrays in args (a Map
-        // result carrying ':' or ',') are deferred -> Any?.
+        // injectable; args may be compound (nested `generic:`/`func:`) — the bracketed grammar nests them recursively.
         if (t.IsGenericType)
         {
             var open = t.GetGenericTypeDefinition();
@@ -1060,8 +1065,10 @@ static class FacadeGen
             if (NO_INJECT.Contains(open.FullName ?? "")
                 || !openName.All(c => char.IsLetterOrDigit(c) || c == '_')) return "Any?";
             var args = t.GetGenericArguments().Select(a => Map(a, t)).ToList();
-            if (args.Any(a => a == "Any?" || a.Contains(':') || a.Contains(','))) return "Any?";
-            return "generic:" + openName + ":" + string.Join(",", args);
+            // `generic:Open[arg,arg]` — bracketed so a compound arg (`generic:Inner[X]`, `func:[...]`) nests; the
+            // injector splits at bracket-depth 0. Only an unresolved arg (`Any?`) sinks the whole type.
+            if (args.Any(a => a == "Any?")) return "Any?";
+            return "generic:" + openName + "[" + string.Join(",", args) + "]";
         }
         // Emit the FULLY-QUALIFIED name so the injector resolves the EXACT type, not whichever same-simple-name type
         // from another namespace won the dedup (e.g. Microsoft.UI.Xaml.LaunchActivatedEventArgs vs the UWP
