@@ -6,7 +6,8 @@ namespace DotKt.Runtime.CompilerServices
     /// </summary>
     /// <remarks>
     /// The other DotKt round-trip metadata attributes ([KotlinFunction]/[KotlinFileClass]/[KotlinInline]/
-    /// [KotlinNullable]/[KotlinReadOnly]) are compiler-EMBEDDED per assembly (like csc's NullableAttribute) — see
+    /// [KotlinReadOnly]) are compiler-EMBEDDED per assembly (like csc's NullableAttribute), and reference-type
+    /// nullability rides .NET's own embedded NRT [Nullable]/[NullableContext] — see
     /// toolchain/ilemit/Emitter.CompilerServices.cs. This one is the exception: it is ASSEMBLY-level, and
     /// PersistedAssemblyBuilder corrupts the image when an assembly-level attribute references a module-internal type,
     /// so it stays a real referenced type here (ilemit resolves it from a --ref'd DotKt.Runtime to stamp).

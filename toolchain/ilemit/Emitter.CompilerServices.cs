@@ -13,12 +13,12 @@ sealed partial class Emitter
 {
     const string CompilerServicesNs = "DotKt.Runtime.CompilerServices.";
 
-    // Define a sealed internal `: Attribute` with a single constructor of the given parameter types, embedded in this
-    // module. Metadata-only: the ctor body just chains to Attribute(); the APPLIED constructor arguments live in the
-    // metadata blob (read back via GetCustomAttributesData().ConstructorArguments), so no fields/properties are needed.
-    Type DefineEmbeddedAttr(string simpleName, params Type[] ctorParams)
+    // Define a sealed internal `: Attribute` (by FULL name) with a single constructor of the given parameter types,
+    // embedded in this module. Metadata-only: the ctor body just chains to Attribute(); the APPLIED constructor
+    // arguments live in the metadata blob (read via GetCustomAttributesData().ConstructorArguments), so no fields needed.
+    Type DefineEmbeddedAttr(string fullName, params Type[] ctorParams)
     {
-        var tb = _mod.DefineType(CompilerServicesNs + simpleName,
+        var tb = _mod.DefineType(fullName,
             TypeAttributes.NotPublic | TypeAttributes.Sealed | TypeAttributes.Class, typeof(Attribute));
         var ctor = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, ctorParams);
         var il = ctor.GetILGenerator();
@@ -31,19 +31,38 @@ sealed partial class Emitter
     }
 
     // Define + cache the embedded attribute types once per emitted module (idempotent). Their ctor signatures match
-    // what Apply*/the assembly stamp pass write, and what facadegen reads (by full name + constructor arg).
+    // what the stamp passes write, and what facadegen reads (by full name + constructor arg).
     void EnsureKotlinAttrs()
     {
         if (_kAttrsResolved) return;
         _kAttrsResolved = true;
-        _kFuncAttr     = DefineEmbeddedAttr("KotlinFunctionAttribute", typeof(int));      // infix/operator/suspend bitmask
-        _kFileAttr     = DefineEmbeddedAttr("KotlinFileClassAttribute");                  // <File>Kt facade marker
-        _kInlineAttr   = DefineEmbeddedAttr("KotlinInlineAttribute", typeof(string));     // carried BIR body
-        _kNullableAttr = DefineEmbeddedAttr("KotlinNullableAttribute", typeof(uint));     // signature nullability mask
-        _kReadOnlyAttr = DefineEmbeddedAttr("KotlinReadOnlyAttribute");                   // public field, `val` property
+        _kFuncAttr     = DefineEmbeddedAttr(CompilerServicesNs + "KotlinFunctionAttribute", typeof(int));   // infix/operator/suspend
+        _kFileAttr     = DefineEmbeddedAttr(CompilerServicesNs + "KotlinFileClassAttribute");               // <File>Kt facade marker
+        _kInlineAttr   = DefineEmbeddedAttr(CompilerServicesNs + "KotlinInlineAttribute", typeof(string));  // carried BIR body
+        _kReadOnlyAttr = DefineEmbeddedAttr(CompilerServicesNs + "KotlinReadOnlyAttribute");                // public field, `val`
+        // Reference-type nullability uses .NET's OWN NRT metadata (not a DotKt attribute), embedded under its standard
+        // System.Runtime.CompilerServices names so a C# consumer recognizes it too — the csc model. [NullableContext(b)]
+        // is the per-type default (we emit 1 = non-null); [Nullable(2)] overrides a specific nullable reference position.
+        _nullableAttr    = DefineEmbeddedAttr("System.Runtime.CompilerServices.NullableAttribute", typeof(byte));
+        _nullableCtxAttr = DefineEmbeddedAttr("System.Runtime.CompilerServices.NullableContextAttribute", typeof(byte));
         // DotKtNamespaceProjection is ASSEMBLY-level; an embedded (module-internal) type in an assembly attribute
         // corrupts the PE under PersistedAssemblyBuilder, so it stays a real referenced type in DotKt.Runtime and is
         // resolved (null if DotKt.Runtime wasn't --ref'd, in which case --ns-projection is a no-op).
         _kNsProjAttr   = TryResolveType("DotKt.Runtime.CompilerServices.DotKtNamespaceProjectionAttribute");
+    }
+
+    // [NullableContext(1)] — the per-type default that ALL reference-type positions in the type are non-null (a nullable
+    // one then carries its own [Nullable(2)] override). Mirrors how csc compresses NRT metadata.
+    void ApplyNullableContext(TypeBuilder tb)
+    {
+        EnsureKotlinAttrs();
+        tb.SetCustomAttribute(new CustomAttributeBuilder(_nullableCtxAttr.GetConstructor(new[] { typeof(byte) }), new object[] { (byte)1 }));
+    }
+
+    // [Nullable(2)] — marks a single reference-type position (a return/parameter) as nullable (`T?`).
+    void ApplyNullable(ParameterBuilder pb)
+    {
+        EnsureKotlinAttrs();
+        pb.SetCustomAttribute(new CustomAttributeBuilder(_nullableAttr.GetConstructor(new[] { typeof(byte) }), new object[] { (byte)2 }));
     }
 }

@@ -883,7 +883,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// (this method def IS the body), so a consuming module can splice it at the call site — the only way a
 		// cross-module non-local `return` through the lambda can work (DotKt inlines at emit, needing the body).
 		val inlineFlag = if (isInlineWithLambda(fn)) ""","inline":true""" else ""
-		// Return nullability (`fun f(): String?`) — the params carry their own `nullable` flag; ilemit folds both into [KotlinNullable].
+		// Return nullability (`fun f(): String?`) — the params carry their own `nullable` flag; ilemit stamps both as .NET NRT ([Nullable]/[NullableContext]).
 		val retNull = if (fn.returnType.isMarkedNullable()) ""","retNullable":true""" else ""
 		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]}"""
 	}

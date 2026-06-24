@@ -766,7 +766,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// `tv` resolves a bare type-variable name (a method/function type parameter) to its cone type; null when the name
 	// isn't one. Threaded through every recursion so a `T` nested in `generic:Box[T]`/`array:T`/`func:…` also binds.
 	private fun coneOf(typeName: String, owner: FirClassSymbol<*>?, tv: ((String) -> ConeKotlinType?)? = null): ConeKotlinType {
-		// A trailing `?` -> the Kotlin nullable form `T?` (so a consumer can pass/handle null). Carried by [KotlinNullable].
+		// A trailing `?` -> the Kotlin nullable form `T?` (so a consumer can pass/handle null). From .NET NRT metadata.
 		if (typeName.endsWith("?")) return coneOf(typeName.dropLast(1), owner, tv).withNullability(true, session.typeContext)
 		// A trailing `!` -> a Kotlin PLATFORM (flexible) type `T!` = (T..T?): the .NET reference type carried NO nullability
 		// metadata (an assembly that never opted into NRT), so we neither force non-null nor nullable — the consumer

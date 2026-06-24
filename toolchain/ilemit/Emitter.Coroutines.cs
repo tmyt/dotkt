@@ -252,9 +252,9 @@ sealed partial class Emitter
     // Emit parameter NAMES into the metadata (DefineParameter is 1-based; 0 = return). ilemit otherwise defines
     // methods by type only, so the names are lost — and facadegen falls back to arg0/arg1, which blocks named-argument
     // calls across an assembly boundary. The names come straight from the BIR params.
-    static void DefineParamNames(MethodBuilder mb, JsonElement m) => DefineParamNames(mb.DefineParameter, m);
-    static void DefineParamNames(ConstructorBuilder cb, JsonElement m) => DefineParamNames(cb.DefineParameter, m);
-    static void DefineParamNames(Func<int, ParameterAttributes, string, ParameterBuilder> defineParam, JsonElement m)
+    void DefineParamNames(MethodBuilder mb, JsonElement m) => DefineParamNames(mb.DefineParameter, m);
+    void DefineParamNames(ConstructorBuilder cb, JsonElement m) => DefineParamNames(cb.DefineParameter, m);
+    void DefineParamNames(Func<int, ParameterAttributes, string, ParameterBuilder> defineParam, JsonElement m)
     {
         if (!m.TryGetProperty("params", out var ps)) return;
         int i = 1;
@@ -263,13 +263,18 @@ sealed partial class Emitter
             var name = (p.TryGetProperty("name", out var nn) ? nn.GetString() : null) ?? "";
             bool vararg = p.TryGetProperty("vararg", out var vv) && vv.GetBoolean();
             bool hasDefault = p.TryGetProperty("default", out var dflt);
-            if (name.Length == 0 && !vararg && !hasDefault) { i++; continue; }
+            // A nullable reference parameter needs a [Nullable(2)] override against the type's non-null default, so the
+            // parameter builder must exist even if it otherwise carries no name/vararg/default. (A value-type `X?` is the
+            // structural Nullable<X> instead; the [Nullable] on it is simply ignored by readers — harmless.)
+            bool nullable = p.TryGetProperty("nullable", out var pn) && pn.GetBoolean();
+            if (name.Length == 0 && !vararg && !hasDefault && !nullable) { i++; continue; }
             // A constant default -> [Optional] + DefaultParameterValue, so a cross-module caller can omit the arg.
             var attrs = hasDefault ? ParameterAttributes.Optional | ParameterAttributes.HasDefault : ParameterAttributes.None;
             var pb = defineParam(i, attrs, name.Length > 0 ? name : null);
             // `vararg xs: T` -> [ParamArray] so the .NET signature is a params array (a C# OR Kotlin consumer can spread).
             if (vararg) pb.SetCustomAttribute(new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
             if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
+            if (nullable) ApplyNullable(pb);
             i++;
         }
     }

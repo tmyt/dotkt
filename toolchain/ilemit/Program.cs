@@ -328,6 +328,10 @@ sealed partial class Emitter
         // synthesized `: System.Attribute` class already exists). Args are compile-time constants.
         foreach (var ti in _types.Values)
         {
+            // [NullableContext(1)] — the per-type NRT default: every reference-type position is non-null unless it
+            // carries its own [Nullable(2)]. So a consuming Kotlin (or C#) module sees DotKt's non-null `String` as
+            // non-null and `String?` as nullable, through .NET's standard nullable-reference metadata.
+            if (ti.TB != null) ApplyNullableContext(ti.TB);
             if (ti.Def.TryGetProperty("attrs", out var tattrs))
                 foreach (var a in tattrs.EnumerateArray()) ti.TB.SetCustomAttribute(BuildCab(a));
             if (ti.Def.TryGetProperty("methods", out var ms))
@@ -359,7 +363,10 @@ sealed partial class Emitter
                     if (kf != 0) ApplyKotlinFunction(mb, kf);
                     // [KotlinInline(body)]: carry this inline+lambda fn's BIR (params + body) so a consumer can splice it.
                     if (inl) ApplyKotlinInline(mb, "{\"params\":" + m.GetProperty("params").GetRawText() + ",\"body\":" + m.GetProperty("body").GetRawText() + "}");
-                    if (nmask != 0) ApplyKotlinNullable(mb, nmask);
+                    // Nullable RETURN -> [Nullable(2)] on the return parameter (position 0; param nullability is stamped
+                    // by DefineParamNames, which owns the parameter builders). The type's [NullableContext(1)] is the
+                    // non-null default, so only the nullable positions need an override.
+                    if ((nmask & 1u) != 0) ApplyNullable(mb.DefineParameter(0, ParameterAttributes.None, null));
                 }
         }
 
