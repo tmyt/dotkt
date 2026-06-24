@@ -2410,15 +2410,41 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  expression. A restored function/ctor carries a real constant default (applyDefaults), so the consumer can omit a
 	 *  default arg ANYWHERE — trailing, named-middle (`f(c=9)`), or reordered — and the value is filled here. */
 	private fun filledArgExprs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
-		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return emptyList()
+		val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
+		val calleeLocals = callee.parameters.map { it.symbol }.toHashSet()
 		val out = ArrayList<IrExpression>()
-		params.forEachIndexed { i, p ->
+		callee.parameters.forEachIndexed { i, p ->
 			if (p.kind != IrParameterKind.Regular) return@forEachIndexed
 			val arg = if (i < call.arguments.size) call.arguments[i] else null
 			if (arg != null) out.add(arg)
-			else (p.defaultValue?.expression)?.let { out.add(it) }
+			else (p.defaultValue?.expression)?.let { def ->
+				// Filling an OMITTED default inlines the callee's default expression at THIS call site — fine for a
+				// constant/global, but a default that reads the callee's OWN parameters/receiver (`b: Int = a * 10`, or a
+				// data class `copy`'s `x = this.x`) must be evaluated in the callee's scope (cf. Kotlin/JVM's `$default`),
+				// which the .NET backend doesn't yet do. Reject only HERE — at the omitting call — not at the declaration:
+				// a data class whose `copy` is never arg-omitted must still compile. Otherwise a dangling `local a`/`this`
+				// reaches ilemit as invalid IL. See docs/future-work-interop.md (non-constant default arguments).
+				if (refsAny(def, calleeLocals)) unsupported(call, "omitting a non-constant default argument",
+					"the default value of parameter '${p.name.asString()}' references other parameters or the receiver, " +
+					"which the .NET backend cannot evaluate at the call site; pass the argument explicitly")
+				out.add(def)
+			}
 		}
 		return out
+	}
+
+	/** True if `expr` reads any of `locals` — detects a default-arg expression that references the callee's own
+	 *  parameters/receiver (e.g. `b = a * 10`, or a data class `copy`'s `this.x`), which can't be inlined at a call site. */
+	private fun refsAny(expr: IrExpression, locals: Set<org.jetbrains.kotlin.ir.symbols.IrValueSymbol>): Boolean {
+		var found = false
+		expr.acceptVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: IrElement) {
+				if (found) return
+				if (element is IrGetValue && element.symbol in locals) { found = true; return }
+				element.acceptChildrenVoid(this)
+			}
+		})
+		return found
 	}
 
 	private fun regularArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
