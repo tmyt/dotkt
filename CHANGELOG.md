@@ -93,8 +93,17 @@ All identified round-trip gaps resolved; guarded by `scripts/verify-roundtrip.sh
 - **Nullable types** — a `[KotlinNullable]` bitmask carries the signature's nullability; the consumer restores `T?`
   (type-level: passing null to a non-null parameter is rejected).
 - Named-argument calls also work (ilemit emits parameter names). New metadata attributes: `[KotlinNullable]`, `[KotlinReadOnly]`.
-  Remaining known limits (not round-trip blockers): default-arg named middle-omission (`copy(y=5)`, needs `copy$default`),
-  object singletons — see docs/future-work-interop.md §5.
+  Remaining known limits (not round-trip blockers): object singletons — see docs/future-work-interop.md §5.
+- **Default arguments — omit ANYWHERE (named-middle, reordered), on functions AND constructors.** Previously a restored
+  default arg was @JvmOverloads-style (one positional overload per *trailing* default omitted), so a **named middle
+  omission** — skip a middle default but provide a later one (`box(1, c = 9)`, `greet("C", punct = "?")`, `Pt(y = 4)`) —
+  matched no overload and failed. The restored param now carries a **real constant default**: facadegen encodes the
+  value in the metadata token (`opt:Int=2`, spaces escaped), and the injector builds a `FirLiteralExpression` and
+  `replaceDefaultValue`s it (fir2ir then inlines the constant for any omitted arg, which `filledArgExprs` fills at the
+  call site). Constructor parameter **names** are now emitted too (`DefineParamNames` for ctors), so named-arg ctor calls
+  work. A .NET BCL method with a non-constant default (an enum/struct, e.g. `NumberStyles = 7`) keeps the @JvmOverloads
+  trailing-overload fallback — the two strategies can't mix on one function (a bare `hasDefaultValue` flag with no literal
+  crashes fir2ir). Guarded by `scripts/verify-roundtrip.sh` (roundtrip-defargs).
 - **Generic round-trip** — user generics now consume from another `.ktproj` as Kotlin in **every position** and
   **combined with every other restored feature**: a generic user **class** (`class Box<T>`, with `operator`/`infix`
   members and a generic method `fun <R> mapTo(f)`), **two type parameters** (`Holder<A, B>`), generic user types in

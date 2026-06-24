@@ -1762,13 +1762,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val netExc = klass?.fqNameWhenAvailable?.asString()?.let { NET_EXCEPTIONS[it] }
 			val mapped = clr ?: netExc
 			if (mapped != null)
-				"""{"k":"clrNew","type":${str(mapped)},"argTypes":[${paramNetTypes(node.symbol.owner)}],"args":[${regularArgs(node).joinToString(",") { expr(it) }}]}"""
+				"""{"k":"clrNew","type":${str(mapped)},"argTypes":[${paramNetTypes(node.symbol.owner)}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
 			else {
 				// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg.
 				val outerArg = if (klass?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
 				// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
 				val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
-				val args = (listOfNotNull(outerArg) + capArgs + regularArgs(node).map { expr(it) }).joinToString(",")
+				val args = (listOfNotNull(outerArg) + capArgs + filledArgExprs(node).map { expr(it) }).joinToString(",")
 				"""{"k":"new","type":${str(klass?.let { ownerSpec(it, node.type) } ?: "object")},"args":[$args]}"""
 			}
 		}
@@ -2403,14 +2403,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birTypeDeleg(it.type))}}""" }
 
 	/** Regular args, filling omitted constant default arguments (IL has no default-parameter mechanism). */
-	private fun filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
+	private fun filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> =
+		filledArgExprs(call).map { expr(it) }
+
+	/** The call's regular args IN ORDER, filling an omitted default-arg param with its callee's default-value
+	 *  expression. A restored function/ctor carries a real constant default (applyDefaults), so the consumer can omit a
+	 *  default arg ANYWHERE — trailing, named-middle (`f(c=9)`), or reordered — and the value is filled here. */
+	private fun filledArgExprs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
 		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return emptyList()
-		val out = ArrayList<String>()
+		val out = ArrayList<IrExpression>()
 		params.forEachIndexed { i, p ->
 			if (p.kind != IrParameterKind.Regular) return@forEachIndexed
 			val arg = if (i < call.arguments.size) call.arguments[i] else null
-			if (arg != null) out.add(expr(arg))
-			else (p.defaultValue?.expression)?.let { out.add(expr(it)) }
+			if (arg != null) out.add(arg)
+			else (p.defaultValue?.expression)?.let { out.add(it) }
 		}
 		return out
 	}
@@ -3720,7 +3726,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// [KotlinInline] body at this call site (the only way a non-local `return` through the lambda works).
 				if (callee.isInline && hasLambdaArg(call) && extRecv == null) return inlineSpliceCall(call, fileClass)
 				// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
-				val a = listOfNotNull(extRecv) + regularArgs(call)
+				val a = listOfNotNull(extRecv) + filledArgExprs(call)   // fill omitted default args (trailing/named-middle/reordered)
 				// A GENERIC top-level fun (e.g. a `reified` inline restored as a generic method) -> a generic static
 				// call carrying the type args, so ilemit MakeGenericMethods it (the reified `typeof(T)`/`is T` body
 				// then sees the concrete type). CLR generics are reified, so no inlining is needed across assemblies.

@@ -884,10 +884,20 @@ static class FacadeGen
         if (p.ParameterType.IsArray && IsParamArray(p))
             return $"{MetaParamName(p, i)}:vararg:{Map(p.ParameterType.GetElementType(), self)}{nul}";
         var t = Map(p.ParameterType, self);
-        // A Kotlin default arg ([Optional]+DefaultParameterValue) -> `opt:<type>` so the injector lets the consumer
-        // omit it (ilemit then fills the .NET default value at the call site).
-        if (HasDefault(p)) t = "opt:" + t;
+        // A Kotlin default arg ([Optional]+DefaultParameterValue) -> `opt:<type>=<constant>` so the injector restores a
+        // REAL default value (the consumer can omit it ANYWHERE, incl. a named middle omission `f(c=9)` — fir2ir inlines
+        // the constant). The value rides the token (spaces escaped) so the meta's space-split is unaffected.
+        if (HasDefault(p)) t = "opt:" + t + "=" + EncodeDefault(p.RawDefaultValue);
         return $"{MetaParamName(p, i)}:{t}{nul}";
+    }
+    // Encode a constant default value for the meta token: `\` -> `\\`, ` ` -> `\s` (so a String default with spaces
+    // stays one whitespace-free token); `null` -> `\0`. bool lowercased to match Kotlin. The injector decodes + builds
+    // a FirLiteralExpression of the param's type.
+    static string EncodeDefault(object v)
+    {
+        if (v == null) return "\\0";   // null marker (a real string is backslash-escaped, so it can never produce `\0`)
+        string s = v is bool b ? (b ? "true" : "false") : v.ToString() ?? "";
+        return s.Replace("\\", "\\\\").Replace(" ", "\\s");
     }
     static bool HasDefault(ParameterInfo p) { try { return p.HasDefaultValue && !p.IsOut; } catch { return false; } }
     static bool IsParamArray(ParameterInfo p)

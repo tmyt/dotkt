@@ -134,7 +134,7 @@ dispatch して拡張レシーバを先頭に付与。facadegen がメンバ `fu
 **残る既知の限界**（往復のブロッカーではない・いずれもソース位置付きクリーンエラー）:
 - **コンテキストレシーバ/パラメータ**（`context(B) fun A.f()`）— フロントエンドが実験的機能として拒否（`-Xcontext-parameters` 必須）。
   「優勝」級の `protected inline suspend fun <reified T> ...context(B)...` はそもそもコンパイルされない。
-- デフォルト引数の**名前付き中間省略**（`copy(y=5)`）・**object シングルトン**。
+- **object シングルトン**（往復消費）。
 - **ジェネリッククラスのメンバ `suspend`**（`class Box<T> { suspend fun f(): T }`）— 単一モジュールでも `BadImageFormatException`
   で落ちる既存の coroutine×ジェネリッククラスの穴。
 - **`kotlin.Pair`/`Triple` をジェネリック型引数で構築**（`Pair<T, T>(a, b)`）— ilemit `ParseOwner` が落ちる既存バグ。`Pair2<A,B>` で代替可。

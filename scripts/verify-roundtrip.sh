@@ -373,3 +373,46 @@ if [[ "$mpactual" == "$mpexpected" ]]; then
 else
     echo "FAIL  roundtrip-memext2"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$mpexpected" "$mpactual"; exit 1
 fi
+
+# ----- DEFAULT ARGUMENTS + NAMED ARGUMENTS: trailing/named-middle/reordered omission, on functions AND constructors -----
+# A restored default arg now carries a REAL constant value (`opt:Type=<const>` in the metadata -> a FirLiteralExpression
+# applied via replaceDefaultValue), so the consumer can omit it ANYWHERE: trailing, NAMED-MIDDLE (`box(1, c=9)` — skip a
+# middle default, provide a later one — which the old @JvmOverloads positional overloads could NOT express), or reordered
+# named. Constructors too (`Pt(y=4)`; ilemit now also emits ctor parameter NAMES). String defaults with spaces survive
+# (escaped in the token). (.NET BCL methods with an enum/struct default fall back to @JvmOverloads trailing overloads.)
+DA="$ROOT/build/roundtrip-defargs"; rm -rf "$DA"; mkdir -p "$DA/lib" "$DA/app" "$DA/libbir" "$DA/libil" "$DA/appbir" "$DA/appil"
+cat > "$DA/lib/lib.kt" <<'EOF'
+fun greet(name: String, greeting: String = "Hi", punct: String = "!"): String = "$greeting, $name$punct"
+fun box(a: Int, b: Int = 2, c: Int = 3): Int = a * 100 + b * 10 + c
+fun flags(on: Boolean = true, label: String = "x y"): String = "$on/$label"
+class Pt(val x: Int = 0, val y: Int = 0) { override fun toString(): String = "($x,$y)" }
+EOF
+cat > "$DA/app/app.kt" <<'EOF'
+fun main() {
+    println(greet("A"))                          // Hi, A!
+    println(greet("B", "Yo"))                     // Yo, B!   trailing omit
+    println(greet("C", punct = "?"))              // Hi, C?   NAMED MIDDLE omission
+    println(greet(greeting = "Hey", name = "E"))  // Hey, E!  reordered named
+    println(box(1))                               // 123
+    println(box(1, c = 9))                        // 129      NAMED MIDDLE omission
+    println(box(a = 5, c = 7))                    // 527      named middle omission
+    println(flags())                              // True/x y string default with a space
+    println(flags(label = "z"))                   // True/z   named middle omission
+    println(Pt(y = 4))                            // (0,4)    ctor named middle omission
+    println(Pt(x = 7))                            // (7,0)    ctor named
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$DA/lib" -no-stdlib -classpath "$CP" -d "$DA/libbir" >/dev/null 2>&1
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$DA/libil" KLib --ref "$DOTKT_RT" "$DA/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$DA/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$DA/k.meta" --refs "$REFS$DA/libil/KLib.dll;$DOTKT_RT" Pt LibKt >/dev/null 2>&1
+CLR_TYPES_METADATA="$DA/k.meta" "$LAUNCHER" "$DA/app" -no-stdlib -classpath "$CP" -d "$DA/appbir" >/dev/null 2>&1
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$DA/appil" KApp --ref "$DA/libil/KLib.dll" --ref "$DOTKT_RT" "$DA/appbir"/*.bir.json >/dev/null 2>&1
+cp "$DA/libil/KLib.dll" "$DOTKT_RT" "$DA/appil/"
+daexpected="$(printf 'Hi, A!\nYo, B!\nHi, C?\nHey, E!\n123\n129\n527\nTrue/x y\nTrue/z\n(0,4)\n(7,0)')"
+daactual="$(dotnet "$DA/appil/KApp.dll" 2>/dev/null)"
+if [[ "$daactual" == "$daexpected" ]]; then
+    echo "PASS  roundtrip-defargs (default args: trailing/named-middle/reordered omission, on functions + constructors)"
+else
+    echo "FAIL  roundtrip-defargs"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$daexpected" "$daactual"; exit 1
+fi

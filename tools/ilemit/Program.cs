@@ -296,7 +296,9 @@ sealed class Emitter
                     foreach (var c in ctors.EnumerateArray())
                     {
                         var ps = c.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
-                        ti.Ctors.Add(ti.TB.DefineConstructor(AccessOf(c), CallingConventions.Standard, ps));
+                        var cb = ti.TB.DefineConstructor(AccessOf(c), CallingConventions.Standard, ps);
+                        DefineParamNames(cb, c);   // ctor param NAMES + [Optional]/DefaultParameterValue (named-arg ctor calls)
+                        ti.Ctors.Add(cb);
                         ti.CtorDefs.Add(c);
                     }
                 if (ti.Ctors.Count > 0) { ti.Ctor = ti.Ctors[0]; ti.CtorDef = ti.CtorDefs[0]; }
@@ -938,7 +940,9 @@ sealed class Emitter
     // Emit parameter NAMES into the metadata (DefineParameter is 1-based; 0 = return). ilemit otherwise defines
     // methods by type only, so the names are lost — and facadegen falls back to arg0/arg1, which blocks named-argument
     // calls across an assembly boundary. The names come straight from the BIR params.
-    static void DefineParamNames(MethodBuilder mb, JsonElement m)
+    static void DefineParamNames(MethodBuilder mb, JsonElement m) => DefineParamNames(mb.DefineParameter, m);
+    static void DefineParamNames(ConstructorBuilder cb, JsonElement m) => DefineParamNames(cb.DefineParameter, m);
+    static void DefineParamNames(Func<int, ParameterAttributes, string, ParameterBuilder> defineParam, JsonElement m)
     {
         if (!m.TryGetProperty("params", out var ps)) return;
         int i = 1;
@@ -950,7 +954,7 @@ sealed class Emitter
             if (name.Length == 0 && !vararg && !hasDefault) { i++; continue; }
             // A constant default -> [Optional] + DefaultParameterValue, so a cross-module caller can omit the arg.
             var attrs = hasDefault ? ParameterAttributes.Optional | ParameterAttributes.HasDefault : ParameterAttributes.None;
-            var pb = mb.DefineParameter(i, attrs, name.Length > 0 ? name : null);
+            var pb = defineParam(i, attrs, name.Length > 0 ? name : null);
             // `vararg xs: T` -> [ParamArray] so the .NET signature is a params array (a C# OR Kotlin consumer can spread).
             if (vararg) pb.SetCustomAttribute(new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
             if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }

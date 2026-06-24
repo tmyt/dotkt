@@ -35,6 +35,10 @@ import org.jetbrains.kotlin.fir.symbols.impl.FirClassSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirConstructorSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirNamedFunctionSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
+import org.jetbrains.kotlin.fir.declarations.FirFunction
+import org.jetbrains.kotlin.fir.expressions.FirExpression
+import org.jetbrains.kotlin.fir.expressions.builder.buildLiteralExpression
+import org.jetbrains.kotlin.types.ConstantValueKind
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.fir.types.constructType
@@ -434,9 +438,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// Only synthesize a `: super()` delegating call when the base actually has a no-arg ctor; a base linked
 			// purely for assignability (e.g. WinUI UIElement, SafeHandle) has none, and the façade ctor is never
 			// lowered (construction is native clrNew) so the missing delegation is harmless.
+			val real = realDefaults(params)   // all-buildable ctor defaults -> real defaults (`Pt(y = 4)` omits x); else required
 			createConstructor(context.owner, ClrGeneratedKey, i == 0, type.baseNoArgCtor) {
-				for (p in params) valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner))
-			}.symbol
+				for (p in params) valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner), hasDefaultValue = real && p.type.startsWith("opt:"))
+			}.also { if (real) applyDefaults(it, params) }.symbol
 		}
 	}
 
@@ -473,14 +478,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					// An extension fun: the first param `__self` is the receiver (rest are value params).
 					val extRecv = if (m.ext && m.params.isNotEmpty()) m.params[0] else null
 					val vps = if (extRecv != null) m.params.drop(1) else m.params
-					// Default args have no .NET analog that fir2ir can lower (a plugin `hasDefaultValue` inserts a STUB
-					// expression that crashes fir2ir). Restore them @JvmOverloads-style: one overload per trailing
-					// contiguous default param omitted; the consumer resolves by arity and ilemit fills the rest from
-					// [DefaultParameterValue]. coneOfMethod strips the `opt:` marker, so each overload's params are required.
-					val trailingOpt = vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
-					// One path for both ordinary and GENERIC top-level functions: resolve every spec against the fn's own
-					// type params (empty for a non-generic fn -> coneOfMethod falls through to coneOf), so a generic fn
-					// keeps its extension receiver / inline / infix / operator / vararg / default-arg overloads too.
+					val real = realDefaults(vps)
+					val trailingOpt = if (real) 0 else vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
 					((vps.size - trailingOpt)..vps.size).map { arity ->
 						createTopLevelFunction(ClrGeneratedKey, callableId, { tps -> coneOfMethod(m.returnType, null, m.typeParams, tps) }) {
 							for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
@@ -490,8 +489,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 							if (extRecv != null) extensionReceiverType { tps -> coneOfMethod(extRecv.type, null, m.typeParams, tps) }
 							for (p in vps.take(arity))
 								if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod("array:" + p.type.removePrefix("vararg:"), null, m.typeParams, tps) }, isVararg = true)
-								else valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, null, m.typeParams, tps) })
-						}.symbol
+								else valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, null, m.typeParams, tps) }, hasDefaultValue = real && p.type.startsWith("opt:"))
+						}.also { if (real) applyDefaults(it, vps) }.symbol
 					}
 				}
 			}
@@ -591,10 +590,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			val extRecv = if (m.ext && m.params.isNotEmpty()) m.params[0] else null
 			val vps = if (extRecv != null) m.params.drop(1) else m.params
 			if (m.typeParams.isEmpty()) {
-				// Default args: @JvmOverloads-style — one overload per trailing contiguous default param omitted (a plugin
-				// `hasDefaultValue` would insert a fir2ir-crashing STUB). The consumer resolves by arity; ilemit fills the
-				// omitted args from [DefaultParameterValue]. trailingOpt==0 (the common case) => exactly one function.
-				val trailingOpt = vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
+				// Default args: ONE function with REAL constant default values (applyDefaults), so the consumer can omit a
+				// default arg ANYWHERE (trailing, named-middle `f(c=9)`, reordered); fir2ir inlines the literal.
+				val real = realDefaults(vps)
+				val trailingOpt = if (real) 0 else vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
 				((vps.size - trailingOpt)..vps.size).map { arity ->
 				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
 					// interface members + .NET abstract => ABSTRACT (must implement); .NET virtual => OPEN (overridable).
@@ -607,8 +606,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					if (extRecv != null) extensionReceiverType(coneOf(extRecv.type, owner))
 					for (p in vps.take(arity))
 						if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), coneOf("array:" + p.type.removePrefix("vararg:"), owner), isVararg = true)
-						else valueParameter(Name.identifier(p.name), coneOf(p.type, owner))
-				}.symbol
+						else valueParameter(Name.identifier(p.name), coneOf(p.type, owner), hasDefaultValue = real && p.type.startsWith("opt:"))
+				}.also { if (real) applyDefaults(it, vps) }.symbol
 				}
 			} else listOf(
 				// A generic .NET method (`SizeOf<T>()`, `As<T>(o): T`). Declare its method type parameters, then
@@ -624,8 +623,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					if (m.inline) status { isInline = true }
 					for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
 					if (extRecv != null) extensionReceiverType { tps -> coneOfMethod(extRecv.type, owner, m.typeParams, tps) }
-					for (p in vps) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
-				}.symbol
+					for (p in vps) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) }, hasDefaultValue = realDefaults(vps) && p.type.startsWith("opt:"))
+				}.also { if (realDefaults(vps)) applyDefaults(it, vps) }.symbol
 			)
 		}
 	}
@@ -715,13 +714,61 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		return res
 	}
 
+	/** Decode a meta-encoded default value (`\\`->`\`, `\s`->space, `\0`->NUL). */
+	private fun decodeDefault(s: String): String {
+		val sb = StringBuilder(); var i = 0
+		while (i < s.length) {
+			if (s[i] == '\\' && i + 1 < s.length) { when (s[i + 1]) { '\\' -> sb.append('\\'); 's' -> sb.append(' '); else -> sb.append(s[i + 1]) }; i += 2 }
+			else { sb.append(s[i]); i++ }
+		}
+		return sb.toString()
+	}
+
+	/** `opt:Int=2` -> a `FirLiteralExpression(2)`, so a restored default arg has a REAL constant value fir2ir can inline
+	 *  at the call site (the consumer may omit it ANYWHERE — trailing, named-middle `f(c=9)`, or reordered). */
+	private fun optDefault(optType: String): FirExpression? {
+		if (!optType.startsWith("opt:")) return null
+		val rest = optType.removePrefix("opt:"); val eq = rest.indexOf('='); if (eq < 0) return null
+		val ty = rest.substring(0, eq); val raw = rest.substring(eq + 1)
+		if (raw == "\\0") return buildLiteralExpression(null, ConstantValueKind.Null, null, setType = true)
+		val v = decodeDefault(raw)
+		val (kind, value) = when (ty) {
+			"Int" -> ConstantValueKind.Int to (v.toIntOrNull() ?: return null)
+			"Long" -> ConstantValueKind.Long to (v.toLongOrNull() ?: return null)
+			"Short" -> ConstantValueKind.Short to (v.toShortOrNull() ?: return null)
+			"Byte" -> ConstantValueKind.Byte to (v.toByteOrNull() ?: return null)
+			"Boolean" -> ConstantValueKind.Boolean to (v == "true")
+			"Double" -> ConstantValueKind.Double to (v.toDoubleOrNull() ?: return null)
+			"Float" -> ConstantValueKind.Float to (v.toFloatOrNull() ?: return null)
+			"Char" -> ConstantValueKind.Char to (v.firstOrNull() ?: return null)
+			"String" -> ConstantValueKind.String to v
+			else -> return null
+		}
+		return buildLiteralExpression(null, kind, value, setType = true)
+	}
+
+	/** Apply restored constant defaults to a generated function/ctor's value parameters (replaces the fir2ir-crashing
+	 *  stub the `hasDefaultValue` flag inserts with a real literal). `params` are the value params in order. */
+	private fun applyDefaults(fn: FirFunction, params: List<ClrParam>) {
+		fn.valueParameters.forEachIndexed { i, vp -> if (i < params.size) optDefault(params[i].type)?.let { vp.replaceDefaultValue(it) } }
+	}
+
+	/** True when EVERY default-arg (`opt:`) param has a buildable constant default — then the function/ctor is restored
+	 *  as ONE function with real defaults (the consumer may omit ANY default arg: trailing/named-middle/reordered).
+	 *  A .NET BCL method with an enum/struct default (`NumberStyles = 7`) isn't buildable -> @JvmOverloads fallback
+	 *  (trailing-omission overloads; ilemit fills the .NET default at the call site). Setting `hasDefaultValue` without a
+	 *  real literal crashes fir2ir, so the two strategies must not mix on one function. */
+	private fun realDefaults(params: List<ClrParam>): Boolean =
+		params.all { !it.type.startsWith("opt:") || optDefault(it.type) != null }
+
 	// `tv` resolves a bare type-variable name (a method/function type parameter) to its cone type; null when the name
 	// isn't one. Threaded through every recursion so a `T` nested in `generic:Box[T]`/`array:T`/`func:…` also binds.
 	private fun coneOf(typeName: String, owner: FirClassSymbol<*>?, tv: ((String) -> ConeKotlinType?)? = null): ConeKotlinType {
 		// A trailing `?` -> the Kotlin nullable form `T?` (so a consumer can pass/handle null). Carried by [KotlinNullable].
 		if (typeName.endsWith("?")) return coneOf(typeName.dropLast(1), owner, tv).withNullability(true, session.typeContext)
-		// `opt:T` marks a default-arg param (the optionality is set via hasDefaultValue at the param; the type is T).
-		if (typeName.startsWith("opt:")) return coneOf(typeName.removePrefix("opt:"), owner, tv)
+		// `opt:T=<const>` marks a default-arg param: the type is T (the `=<const>` default value is applied separately
+		// via applyDefaults -> replaceDefaultValue). Strip both the prefix and the trailing `=<const>`.
+		if (typeName.startsWith("opt:")) return coneOf(typeName.removePrefix("opt:").substringBefore('='), owner, tv)
 		// A .NET out/ref param / ref return (`byref:Int`) -> the intrinsic `ClrRef<Int>`.
 		if (typeName.startsWith("byref:")) return clrRefOf(coneOf(typeName.removePrefix("byref:"), owner, tv))
 		// A .NET `Span<T>` param (`span:Int`) -> the intrinsic `Span<Int>` (the real System.Span<Int>).
