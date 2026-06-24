@@ -66,6 +66,13 @@ compile-time `ProjectReference` between C# and Kotlin projects.
   `<KotlinClrRetarget>false</KotlinClrRetarget>` / `<DotKtRetarget>false</DotKtRetarget>`.
 
 ### Fixed
+- **A closure/local function capturing an enclosing generic type parameter crashed ilemit.** A lambda or local
+  function inside a generic function that captured a value whose type involves the enclosing `T` (a `T` value, a
+  `(T)->Unit`, a `List<T>`) threw `NotSupportedException: unresolved generic type parameter T` — the synthesized closure
+  class / lifted method wasn't generic over `T` (reified CLR generics need it). The closure class is now generic over the
+  captured type parameters and instantiated with the enclosing ones at the capture site; a captured local function is
+  lifted to a generic static method. (An object expression or local *class* that captures an enclosing type parameter is
+  not yet supported and now fails with a clear compile error instead of crashing.)
 - **Cross-file / namespaced interface polymorphism crashed ilemit.** A class in a Kotlin `package` implementing an
   interface from another file threw `KeyNotFoundException` during the interface-link pass — `FindMethod` was keyed by the
   TypeBuilder's simple name while `_types` is keyed by the BIR full name. Now keyed consistently.
