@@ -105,6 +105,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * `detail` is a plain-language explanation of why / what to do — NOT the word "deferred".
 	 */
 	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
+		// Compiling the stdlib ITSELF (DOTKT_STDLIB_COMPILE): don't fail the whole file on one unsupported construct in
+		// one op's body — emit a THROWING stub (a `throw NotSupportedException("[DOTKT-STDLIB] …")`) and warn. The op
+		// is left a compiler lowering (NOT migrated off COLLECTION_OPS), so the stub is never actually called; this lets
+		// the supported ops in the same file compile while the few backend-gap ops (object-expr-captures-T, …) wait.
+		if (System.getenv("DOTKT_STDLIB_COMPILE") != null) {
+			messageCollector?.report(CompilerMessageSeverity.WARNING,
+				"[DOTKT-STDLIB] stubbed (not migrated, keep its lowering): $what — $detail", locationOf(node))
+			return """{"k":"throwExpr","value":{"k":"clrNew","type":"System.NotSupportedException","argTypes":["System.String"],"args":[{"k":"const","type":"string","value":${str("[DOTKT-STDLIB] not lowered: $what")}}]}}"""
+		}
 		hadError = true
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
 			"the .NET backend does not support $what yet: $detail", locationOf(node))
@@ -3702,6 +3711,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		is Boolean -> v.toString()
 		is Char -> str(v.toString())
 		null -> "null"
+		// NaN / ±Infinity are not valid JSON number tokens (`{"value":NaN}` breaks the parser) — emit them as a string
+		// the ilemit const handler decodes to the special double/float (`Double.NaN` etc. appear in stdlib `average()`).
+		is Double -> if (v.isNaN() || v.isInfinite()) str(v.toString()) else v.toString()
+		is Float -> if (v.isNaN() || v.isInfinite()) str(v.toString()) else v.toString()
 		else -> v.toString()
 	}
 

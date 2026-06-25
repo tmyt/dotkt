@@ -1102,8 +1102,9 @@ sealed partial class Emitter
             // fell to default -> Ldnull -> InvalidProgramException when passed to a byte/short parameter.
             case "byte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(sbyte);
             case "short": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(short);
-            case "double": _il.Emit(OpCodes.Ldc_R8, v.GetDouble()); return typeof(double);
-            case "float": _il.Emit(OpCodes.Ldc_R4, v.GetSingle()); return typeof(float);
+            // NaN / ±Infinity are emitted as a JSON STRING (not a number token, which JSON forbids) — parse them back.
+            case "double": _il.Emit(OpCodes.Ldc_R8, v.ValueKind == JsonValueKind.String ? double.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetDouble()); return typeof(double);
+            case "float": _il.Emit(OpCodes.Ldc_R4, v.ValueKind == JsonValueKind.String ? float.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetSingle()); return typeof(float);
             case "bool": _il.Emit(v.GetBoolean() ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); return typeof(bool);
             case "char": _il.Emit(OpCodes.Ldc_I4, (int)v.GetString()[0]); return typeof(char);
             default: _il.Emit(OpCodes.Ldnull); return typeof(object);
