@@ -349,6 +349,26 @@ compilation. When compiling the stdlib ITSELF, these calls must emit a normal st
 the guard. The fix is backend expect→actual resolution (or: don't fire the guard for a callee whose actual is being
 compiled in-module). Plus a few more actuals (`asList`, …). This is the final phase; the frontend is done.
 
+### Backend (ilemit) emission of the real `_Collections.kt` — the final remaining layer
+
+kotc now compiles the real `_Collections.kt` end-to-end (frontend 0 errors → 30 BIR files, kotc finishes OK), thanks to
+two committed toolchain fixes: the `DOTKT_STDLIB_COMPILE` stub-on-unsupported flag (27 backend-gap ops emit a throwing
+`[DOTKT-STDLIB]` stub + stay on their COLLECTION_OPS lowering) and the NaN/±Infinity JSON-string encoding.
+
+ilemit over the BIR still needs the stdlib's **runtime class layer + JVM→CLR type maps**. Per-file emission surfaced:
+- **JVM types** referenced by the bodies need CLR maps: `java.lang.Appendable`/`java.lang.StringBuilder` →
+  `System.Text.StringBuilder`, `kotlin.random.Random` → `System.Random` (used by `shuffle`).
+- **The Abstract* class hierarchy** (`AbstractCollection`/`AbstractList`/`AbstractMutableList`/`ArrayDeque`/…) emits with
+  cross-file refs (resolve only when emitted together) and hits an ilemit "unresolved generic type parameter E/T" in
+  generic CLASS emission (distinct from the method-level GenericMethod fix — class bodies need the same TypeBuilder
+  generic-param registration).
+- These Abstract classes are runtime impls the OPS don't all need; the minimal set is `_Collections` + the platform
+  actuals + the internal-helper FUNCTIONS (`collectionSizeOrDefault` from Iterables.kt, `checkIndexOverflow` from
+  Collections.kt) — but helpers and Abstract classes share files, so a clean split needs care.
+
+This is the final, well-defined layer: a handful of JVM type maps + the generic-class type-param emission fix in ilemit,
+then the ops resolve and `_Collections.kt` emits to `DotKt.Stdlib.dll`. See [[stdlib-platform-actuals-as-bcl-lowering]].
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
