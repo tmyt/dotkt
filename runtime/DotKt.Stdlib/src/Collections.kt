@@ -55,3 +55,45 @@ public fun <T, R> Iterable<T>.fold(initial: R, operation: (acc: R, T) -> R): R {
     for (element in this) accumulator = operation(accumulator, element)
     return accumulator
 }
+
+/** Returns true if the collection has at least one element. */
+public fun <T> Iterable<T>.any(): Boolean {
+    for (element in this) return true
+    return false
+}
+
+/** Returns true if at least one element matches [predicate]. */
+public fun <T> Iterable<T>.any(predicate: (T) -> Boolean): Boolean {
+    for (element in this) if (predicate(element)) return true
+    return false
+}
+
+/** Returns true if the collection has no elements. */
+public fun <T> Iterable<T>.none(): Boolean {
+    for (element in this) return false
+    return true
+}
+
+/** Returns true if no elements match [predicate]. */
+public fun <T> Iterable<T>.none(predicate: (T) -> Boolean): Boolean {
+    for (element in this) if (predicate(element)) return false
+    return true
+}
+
+/** Returns true if all elements match [predicate]. */
+public fun <T> Iterable<T>.all(predicate: (T) -> Boolean): Boolean {
+    for (element in this) if (!predicate(element)) return false
+    return true
+}
+
+/** Returns a new mutable list containing all elements. */
+public fun <T> Iterable<T>.toMutableList(): MutableList<T> {
+    val list = ArrayList<T>()
+    for (element in this) list.add(element)
+    return list
+}
+
+/** Returns a list containing all elements. */
+public fun <T> Iterable<T>.toList(): List<T> {
+    return toMutableList()
+}

@@ -24,11 +24,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   DotKt.Stdlib accepts them all and `for (x in this)` enumerates via `GetEnumerator`/`MoveNext`/`Current`. As a user
   class SUPERTYPE, `Iterable`/`Iterator` stay the synthetic monomorphized interface (implementing `IEnumerable<T>` would
   need a synthesized `GetEnumerator` — the producing-side bridge, separate work), so user iterables are unaffected.
-- **`map` / `filter` migrated off the LINQ lowering onto real Kotlin (any List-backed/Set/Iterable collection).** A
-  `List`/`Collection`/`Set`/`Iterable` receiver routes `map`/`filter` to the real Kotlin body shipped in DotKt.Stdlib
-  (iterate + build an `ArrayList`), matching Kotlin/JVM (verify-differential). `Array`/`Sequence` receivers keep the
-  LINQ lowering (DotKt.Stdlib ships only the `Iterable` overload). The skip is gated on the op being registered from a
-  referenced DotKt.Stdlib, so it composes with the lowering-retirement seam. New verify-il case `mapfilter`.
+- **Collection ops migrated off the LINQ lowering onto real Kotlin.** A `List`/`Collection`/`Set`/`Iterable` receiver
+  routes these ops to the real Kotlin body shipped in DotKt.Stdlib (iterate + build an `ArrayList`), matching Kotlin/JVM
+  (verify-differential): **`map`, `filter`, `forEach`, `count`, `fold`, `any`, `none`, `all`, `toList`, `toMutableList`**
+  (plus the random-access `getOrElse`). `Array`/`Sequence` receivers keep the LINQ lowering (DotKt.Stdlib ships only the
+  `Iterable` overload). The skip is gated on the op being registered from a referenced DotKt.Stdlib, so it composes with
+  the lowering-retirement seam. New verify-il case `mapfilter`.
 - **Mutable collections + the real-stdlib `map`/`filter` shape now compile.** `ArrayList<R>()` (the JVM
   `java.util.ArrayList` typealias) lowers to `new System.Collections.Generic.List<R>()`, and the `MutableList`/
   `MutableCollection` mutation members (`add`/`remove`/`clear`/`removeAt`) bind to the BCL `List<T>` methods — so
