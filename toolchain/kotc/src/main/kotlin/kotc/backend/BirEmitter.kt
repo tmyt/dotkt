@@ -3519,7 +3519,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// fallthrough would emit a callStatic that ilemit can't resolve. Report a clear, source-located compile
 		// error instead. Restricted to no-dispatch-receiver calls so instance methods (`Iterator.next()` etc.,
 		// handled by the callInstance path below) are NOT caught. Handled ops already returned earlier.
-		if (dispatchReceiver(call) == null) callee.fqNameWhenAvailable?.asString()?.let { fqn ->
+		// When compiling the stdlib ITSELF (DOTKT_STDLIB_COMPILE set), a call to a stdlib fn resolves to an `expect`
+		// (body == null) whose `actual` is in THIS module — so it must emit a normal static call to the local actual, not
+		// hit the "unsupported external stdlib fn" guard below (that guard is for USER code calling an absent stdlib fn).
+		val stdlibCompile = System.getenv("DOTKT_STDLIB_COMPILE") != null
+		if (!stdlibCompile) if (dispatchReceiver(call) == null) callee.fqNameWhenAvailable?.asString()?.let { fqn ->
 			// A stdlib fn that is NOT hand-lowered AND NOT provided by a referenced DotKt.Stdlib (the round-trip
 			// registry below) is genuinely unsupported -> a clear compile error. But once a real Kotlin implementation
 			// is compiled into DotKt.Stdlib and injected, `lookup(fqn) != null` and we fall through to the round-trip

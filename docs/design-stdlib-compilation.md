@@ -324,6 +324,31 @@ over the BCL). Once the frontend is at 0, the BACKEND (ilemit) pass over the ful
 phase (every op must lower/route/emit; the inter-op calls + internal helpers surface there). This is a large but
 well-defined layer — the path to full `_Collections.kt` compilation is concrete. See [[stdlib-use-real-generated-source]].
 
+### MILESTONE: the real `_Collections.kt` FRONTEND compiles (BIR emitted)
+
+With the platform-actual layer written (`runtime/stdlib/clr/`), the real generated `_Collections.kt` now compiles all
+the way through the frontend — **30 BIR files emitted, 0 frontend errors**. The full actual set:
+- `kotlin.collections` (PlatformClr.kt, PLATFORM): `listOf(e)`/`setOf(e)`/`mapOf(pair)`, builders ×2 each (with/without
+  capacity), `asArrayList`, `checkIndexOverflow`/`checkCountOverflow`/`mapCapacity`, `reverse`, `collectionToArray`×2/
+  `terminateCollectionToArray`/`arrayOfNulls(ref,size)`/`copyToArrayOfAny`, `toSingletonMap`/`toSingletonMapOrSelf`, and
+  the CollectionsH surface `RandomAccess`/`orEmpty`/`toTypedArray`/`fill`/`sort`/`sortWith`/`shuffle`/`shuffled`/`eachCount`.
+- `kotlin.internal` (SerializationClr.kt, PLATFORM): serialization stubs.
+- `kotlin.sequences` (SequencesClr.kt, PLATFORM): `ConstrainedOnceSequence`.
+- `kotlin.io.Serializable` + `kotlin.text.appendElement` (COMMON shadowing — they're USED by common files, and common
+  can't see platform, so a regular `internal` decl in the common set shadows the jar).
+
+Rule of thumb learned: an `actual` for an `expect` goes in the PLATFORM set; a plain shadowing decl that COMMON code
+calls goes in the COMMON set.
+
+### Remaining: the BACKEND expect/actual call resolution
+
+The 139 remaining errors are ALL the backend guard ("the .NET backend does not support the Kotlin stdlib function X"):
+`_Collections.kt`'s bodies call `reverse`/`sort`/`sortWith`/`asList`/… which resolve to the `expect` (body == null), so
+the guard (BirEmitter ~3522, meant for EXTERNAL unsupported stdlib fns) fires — even though the `actual` is in THIS
+compilation. When compiling the stdlib ITSELF, these calls must emit a normal static call to the local actual, not hit
+the guard. The fix is backend expect→actual resolution (or: don't fire the guard for a callee whose actual is being
+compiled in-module). Plus a few more actuals (`asList`, …). This is the final phase; the frontend is done.
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
