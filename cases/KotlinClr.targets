@@ -13,6 +13,7 @@
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</DotKtFacadeGen>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
     <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</DotKtRetargetTool>
+    <DotKtStdlibAsm Condition="'$(DotKtStdlibAsm)' == ''">$(KotlinClrRoot)/build/dotkt-stdlib/DotKt.Stdlib.dll</DotKtStdlibAsm>
     <KotlinClrFacadeOut>$(BaseIntermediateOutputPath)kotlin-facades</KotlinClrFacadeOut>
 
     <!-- Project hygiene the shipping SDK applies via Sdk.props: we generate the assembly ourselves (kt -> BIR ->
@@ -40,6 +41,15 @@
     </Reference>
   </ItemGroup>
 
+  <!-- DotKt.Stdlib: real-Kotlin stdlib ops migrated off the COLLECTION_OPS lowering (see EnsureDotKtStdlib below).
+       Referencing it puts it on @(ReferencePath) so the facadegen asm-scan injects its ops and ilemit resolves them. -->
+  <ItemGroup Condition="'$(KotlinClrStdlibRef)' != 'false' and Exists('$(DotKtStdlibAsm)')">
+    <Reference Include="DotKt.Stdlib">
+      <HintPath>$(DotKtStdlibAsm)</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
   <!-- Bootstrap: build each tool from source the first time it is missing (the shipping SDK gets them from NuGet).
        Each hooks just before the shared-pipeline target that first needs it. -->
   <Target Name="EnsureKotlinClrCompiler" BeforeTargets="DotKtInjectTypes" Condition="!Exists('$(DotKtCompiler)')">
@@ -57,6 +67,15 @@
   <Target Name="EnsureRetarget" BeforeTargets="DotKtRetarget" Condition="'$(DotKtRetarget)' != 'false' and !Exists('$(DotKtRetargetTool)')">
     <Message Importance="high" Text="kotlin/clr: building retarget (first run)..." />
     <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/retarget&quot; -c Release -o &quot;$(KotlinClrRoot)/build/retarget-bin&quot; -v q --nologo" />
+  </Target>
+  <!-- DotKt.Stdlib: the real-Kotlin stdlib ops migrated off the COLLECTION_OPS lowering. Built from source the first
+       time it is missing, then auto-referenced (the shared pipeline's facadegen asm-scan injects its ops and ilemit
+       resolves them) so a call to a migrated op (getOrElse, ...) routes to the real Kotlin body. Opt out with
+       <KotlinClrStdlibRef>false</...>. The shipping SDK would supply DotKt.Stdlib via a <PackageReference> instead. -->
+  <Target Name="EnsureDotKtStdlib" BeforeTargets="DotKtInjectTypes"
+          Condition="'$(KotlinClrStdlibRef)' != 'false' and !Exists('$(DotKtStdlibAsm)')">
+    <Message Importance="high" Text="kotlin/clr: building DotKt.Stdlib (first run)..." />
+    <Exec Command="bash &quot;$(KotlinClrRoot)/scripts/build-dotkt-stdlib.sh&quot;" WorkingDirectory="$(KotlinClrRoot)" />
   </Target>
 
   <!-- Auto-generate Kotlin façades for the .NET types listed via <KotlinClrFacade Include="..."/> and feed them to

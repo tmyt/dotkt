@@ -27,6 +27,11 @@ kt() {
 kt ktproj "cases/ktproj/hello.ktproj" \
 	"$(printf 'Hello, Visual Studio, from a .ktproj!\nsum 1..5 = 15')"
 
+# A stdlib op MIGRATED off the COLLECTION_OPS lowering (getOrElse): the targets auto-reference DotKt.Stdlib, so the
+# call routes to its real Kotlin body. End-to-end proof that the lowering-retirement pipeline works through MSBuild.
+kt ktproj-stdlib "cases/ktproj-stdlib/app.ktproj" \
+	"$(printf '20\n500')"
+
 # Façade-FREE FIR injection via import scan (the C-2 single path for taking in .NET types).
 kt ktproj-inject "cases/ktproj-inject/inject.ktproj" \
 	"no-facade via import scan; abs(-5)=5"
