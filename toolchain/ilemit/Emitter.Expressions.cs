@@ -716,7 +716,9 @@ sealed partial class Emitter
                 var elem = MapType(e.GetProperty("elem").GetString());
                 var lt = typeof(System.Collections.Generic.List<>).MakeGenericType(elem);
                 EmitExpr(e.GetProperty("list")); EmitExpr(e.GetProperty("index"));
-                _il.Emit(OpCodes.Callvirt, lt.GetMethod("get_Item"));
+                // GenericMethod (not .GetMethod): when `elem` is the enclosing generic FUNCTION's type parameter T,
+                // List<T> is a TypeBuilderInstantiation whose .GetMethod throws — route through TypeBuilder.GetMethod.
+                _il.Emit(OpCodes.Callvirt, GenericMethod(lt, "get_Item"));
                 return elem;
             }
             case "listSet":
@@ -724,7 +726,7 @@ sealed partial class Emitter
                 var elem = MapType(e.GetProperty("elem").GetString());
                 var lt = typeof(System.Collections.Generic.List<>).MakeGenericType(elem);
                 EmitExpr(e.GetProperty("list")); EmitExpr(e.GetProperty("index")); EmitArg(e.GetProperty("value"), elem);
-                _il.Emit(OpCodes.Callvirt, lt.GetMethod("set_Item"));
+                _il.Emit(OpCodes.Callvirt, GenericMethod(lt, "set_Item"));
                 return typeof(void);
             }
             case "mapGet":
@@ -734,7 +736,7 @@ sealed partial class Emitter
                 var dt = typeof(System.Collections.Generic.Dictionary<,>).MakeGenericType(kt, vt);
                 EmitExpr(e.GetProperty("map"));
                 EmitArg(e.GetProperty("key"), kt);
-                _il.Emit(OpCodes.Callvirt, dt.GetMethod("get_Item"));
+                _il.Emit(OpCodes.Callvirt, GenericMethod(dt, "get_Item"));
                 return vt;
             }
             case "mapSet":
@@ -745,7 +747,7 @@ sealed partial class Emitter
                 EmitExpr(e.GetProperty("map"));
                 EmitArg(e.GetProperty("key"), kt);
                 EmitArg(e.GetProperty("value"), vt);
-                _il.Emit(OpCodes.Callvirt, dt.GetMethod("set_Item"));
+                _il.Emit(OpCodes.Callvirt, GenericMethod(dt, "set_Item"));
                 return typeof(void);
             }
             case "mapSize":
@@ -754,7 +756,7 @@ sealed partial class Emitter
                 var vt = MapType(e.GetProperty("valType").GetString());
                 var dt = typeof(System.Collections.Generic.Dictionary<,>).MakeGenericType(kt, vt);
                 EmitExpr(e.GetProperty("map"));
-                _il.Emit(OpCodes.Callvirt, dt.GetMethod("get_Count"));
+                _il.Emit(OpCodes.Callvirt, GenericMethod(dt, "get_Count"));
                 return typeof(int);
             }
             case "setNew":

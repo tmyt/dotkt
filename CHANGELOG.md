@@ -10,6 +10,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `-Xallow-kotlin-package`, `-opt-in=...`, `-Xcontext-parameters`). Needed to compile the Kotlin standard library itself
   (see `docs/design-stdlib-compilation.md`); useful for any advanced compiler option.
 
+### Fixed
+- **Generic collection member access (`List<T>`/`MutableList<T>`/`Map<K,V>` indexers + size) inside a generic function.**
+  `fun <T> List<T>.first(): T = this[0]` and friends now emit: when the element type is the enclosing generic function's
+  own type parameter, `List<T>`/`Dictionary<K,V>` are `TypeBuilderInstantiation`s whose plain reflection `.GetMethod`
+  throws (`TypeBuilder generic instantiation does not support resolving members`). ilemit now routes the `listGet`/
+  `listSet`/`mapGet`/`mapSet`/`mapSize` member lookups through `TypeBuilder.GetMethod` (the existing `GenericMethod`
+  helper). This unblocks compiling real Kotlin stdlib collection extensions to run on the BCL collections DotKt maps
+  `kotlin.collections.*` to — the first step of moving random-access collection ops off the hand-written LINQ lowering
+  onto real Kotlin source (see `docs/design-stdlib-compilation.md`).
+
 ### Changed
 - **`String.format` binds directly to .NET `String.Format` — use .NET composite format strings, not Java printf.**
   `"{0:F2}".format(x)` / `String.format("{0:D5}-{1:x}", a, b)` now lower straight to `System.String.Format` with the
