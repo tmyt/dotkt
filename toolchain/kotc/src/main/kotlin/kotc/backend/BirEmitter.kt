@@ -1855,44 +1855,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	internal fun hasLambdaArg(call: IrCall): Boolean = regularArgs(call).any { it is IrFunctionExpression }
 
-	/**
-	 * Translate a LITERAL printf-style format (`%d`/`%s`/`%.2f`/`%05d`/`%x`/`%%`) to a .NET composite format
-	 * (`{0}`/`{0:F2}`/`{0:D5}`/`{0:x}`). Returns null for an unsupported spec (caller falls back). Kotlin's
-	 * `String.format` is printf (`%`), .NET's `String.Format` is `{0}` — genuinely incompatible, so we rewrite.
-	 */
-	internal fun translatePrintf(fmt: String): String? {
-		val sb = StringBuilder(); var i = 0; var arg = 0
-		while (i < fmt.length) {
-			val c = fmt[i]
-			when {
-				c == '{' -> { sb.append("{{"); i++ }
-				c == '}' -> { sb.append("}}"); i++ }
-				c != '%' -> { sb.append(c); i++ }
-				else -> {
-					i++
-					if (i < fmt.length && fmt[i] == '%') { sb.append('%'); i++; continue }
-					var leftAlign = false; var zeroPad = false
-					while (i < fmt.length && fmt[i] in "-0+ ") { if (fmt[i] == '-') leftAlign = true; if (fmt[i] == '0') zeroPad = true; i++ }
-					val ws = StringBuilder(); while (i < fmt.length && fmt[i].isDigit()) { ws.append(fmt[i]); i++ }
-					val ps = StringBuilder(); if (i < fmt.length && fmt[i] == '.') { i++; while (i < fmt.length && fmt[i].isDigit()) { ps.append(fmt[i]); i++ } }
-					if (i >= fmt.length) return null
-					val conv = fmt[i]; i++
-					val width = ws.toString().toIntOrNull(); val prec = ps.toString().toIntOrNull()
-					val fmtSpec = when (conv) {
-						'd', 'i' -> if (zeroPad && width != null) ":D$width" else ""
-						's', 'c', 'b' -> ""
-						'x' -> ":x"; 'X' -> ":X"
-						'f', 'F' -> ":F${prec ?: 6}"
-						'e' -> ":e${prec ?: 6}"; 'g', 'G' -> ":G"
-						else -> return null
-					}
-					val align = if (width != null && !(conv in "di" && zeroPad)) "," + (if (leftAlign) "-$width" else "$width") else ""
-					sb.append("{").append(arg++).append(align).append(fmtSpec).append("}")
-				}
-			}
-		}
-		return sb.toString()
-	}
 
 	/** Statements of a function/lambda body (block body, or a single-expression `= expr` body). */
 	internal fun bodyStatements(body: org.jetbrains.kotlin.ir.IrElement?): List<org.jetbrains.kotlin.ir.IrStatement> = when (body) {
@@ -3392,10 +3354,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				}
 			}
 			// `"%d %s".format(a, b)` (printf) -> System.String.Format(translated, object[]{a,b}). Only a LITERAL
-			// format with supported specs is translated; otherwise a clean error (printf != .NET composite format).
+			// `.format` binds STRAIGHT to System.String.Format with .NET composite format strings — the user writes
+			// `"{0:F2}".format(x)`, not Java's `"%.2f".format(x)`. DotKt does not reproduce java.util.Formatter (a
+			// JVM-ism — Kotlin/Native and Kotlin/JS don't have String.format either); see [[discard-jvm-isms]]. Both
+			// forms route here: instance `fmt.format(args)` (the receiver IS the format) and companion
+			// `String.format(fmt, args)` (the format is the first arg; the receiver is String.Companion).
 			if (name == "format") {
-				// Two forms: instance `fmt.format(args)` (the receiver IS the format) and companion
-				// `String.format(fmt, args)` (the format is the first arg; the receiver is String.Companion).
 				val extRecv = extensionReceiver(call)
 				val instanceForm = extRecv?.type?.classFqName?.asString() == "kotlin.String"
 				val fmtExpr = if (instanceForm) extRecv else regularArgs(call).getOrNull(0)
@@ -3403,15 +3367,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					val fmtArgs = if (instanceForm) regularArgs(call) else regularArgs(call).drop(1)
 					val elems = (fmtArgs.getOrNull(0) as? IrVararg)?.elements?.filterIsInstance<IrExpression>() ?: fmtArgs
 					val arr = """{"k":"newArray","elem":"object","elems":[${elems.joinToString(",") { expr(it) }}]}"""
-					val net = ((fmtExpr as? IrConst)?.value as? String)?.let { translatePrintf(it) }
-					return if (net != null)
-						// A LITERAL format with supported specs -> translate to a .NET composite at compile time (no
-						// runtime dependency for the common case) and call System.String.Format.
-						"""{"k":"clrStatic","type":"System.String","method":"Format","argTypes":["System.String","array:object"],"ret":"System.String","args":[{"k":"const","type":"string","value":${str(net)}},$arr]}"""
-					else
-						// A non-literal (or untranslatable) format -> defer the printf->composite conversion to runtime.
-						// First promotion to DotKt.Runtime — see [[dotkt-naming-and-runtime-split]].
-						"""{"k":"clrStatic","type":"DotKt.Fmt","method":"format","argTypes":["System.String","array:object"],"ret":"System.String","args":[${expr(fmtExpr)},$arr]}"""
+					return """{"k":"clrStatic","type":"System.String","method":"Format","argTypes":["System.String","array:object"],"ret":"System.String","args":[${expr(fmtExpr)},$arr]}"""
 				}
 			}
 			// Exhaustive-when synthetic else / uninitialized property -> throw (the branch is unreachable).

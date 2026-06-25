@@ -5,6 +5,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+- **`String.format` binds directly to .NET `String.Format` — use .NET composite format strings, not Java printf.**
+  `"{0:F2}".format(x)` / `String.format("{0:D5}-{1:x}", a, b)` now lower straight to `System.String.Format` with the
+  format string passed through verbatim. DotKt no longer reproduces `java.util.Formatter` (the printf→composite
+  translation and the `DotKt.Fmt` runtime helper are removed) — `String.format` is JVM-only in Kotlin (Kotlin/Native and
+  Kotlin/JS don't have it), so binding it to the CLR's own formatter is the natural CLR-native choice and slims the
+  runtime by one type. **Breaking:** a Java printf string like `"%.2f".format(x)` is no longer translated — it is passed
+  to `String.Format`, which treats `%.2f` as literal text. Use `"{0:F2}"`, or string interpolation for the common case.
+
 ## 0.9.3 — 2026-06-24
 
 Round-trip interop: a DotKt-compiled assembly can now be consumed **as Kotlin** by another
