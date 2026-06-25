@@ -2,6 +2,31 @@
 
 Status: **design + spike done; groundwork landed (the `<DotKtKotcOptions>` flag channel).**
 
+## THE CANONICAL ROADMAP (design owner, 2026-06-25) — read this first
+
+The end state: **this becomes a normal Kotlin compiler that happens to ship a CLR version of the stdlib.** The compiler
+does NOT special-case stdlib types/ops. Getting there has a strict order — and the cardinal rule
+([[stdlib-compile-retires-lowerings-never-adds]]): **the fix for "the stdlib won't compile/emit" is ALWAYS on the
+stdlib side, NEVER a new compiler lowering / denylist / ilemit stub** (the whole point of this work is to RETIRE the
+compiler's filter-lowerings, not add more).
+
+1. **Assemble the CLR stub `actual`s, in Kotlin, inside the stdlib.** Every platform `expect` and every JVM/runtime type
+   the common stdlib source references (`Random`, `Grouping`, `StringBuilder`, ranges, the array/collection helpers) gets
+   a Kotlin declaration in the CLR source set (`runtime/stdlib/clr/`) — a stub body (`= TODO()`) is fine at this step.
+   This makes the library syntactically whole so it compiles + emits.
+2. **Fill in the annotations that lower each stub `actual` to its CLR type.** Annotate the stubs (`@Clr("System.Text.StringBuilder")`,
+   …) so the compiler's EXISTING @Clr/injection lowering turns them into the BCL type/call. This is purely stdlib-side
+   work; when it's done **the stdlib actually works end to end** (no TODO throws left on the hot paths).
+3. **Reverse direction — FIR injection read-as.** When a .NET type arrives FROM the CLR and is injected into FIR, read it
+   AS the corresponding Kotlin stdlib type (the `IEnumerable<T>`→`Iterator<T>`/`Iterable` reading already partly done).
+   Now CLR collections flow into Kotlin code as the Kotlin types.
+4. **Result:** the compiler is free to just compile Kotlin against this CLR stdlib — a normal Kotlin compiler with a CLR
+   stdlib. The `COLLECTION_OPS` / type special-cases get retired, not extended.
+
+What I must NOT do (and tried, wrongly — all reverted): a compiler `UNMAPPED_STDLIB_TYPES` denylist, extra
+`isSetType`/`isMapType` entries for `HashSet`/`HashMap`, an ilemit partial-IL stub-on-failure. Those add compiler
+固有実装 — exactly the thing the stdlib is meant to eliminate.
+
 ## Goal
 
 Stop hand-lowering stdlib functions one at a time (the `COLLECTION_OPS` catalog in `BirMappings.kt` — ~50 functions,
