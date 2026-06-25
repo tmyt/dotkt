@@ -274,6 +274,34 @@ Random-access ops (`first`/`last`/`getOrElse`/`get`/`indexOf`/`isEmpty`/`single`
 Iteration ops (`map`/`filter`/`fold`/…) additionally need the `Iterable`→`IEnumerable` reconciliation (today Kotlin
 `Iterable` is the synthetic monomorphized `<>dotkt_KIterable`).
 
+## Compiling the REAL generated `_Collections.kt` — the recipe (2026-06-25)
+
+The user supplied the generated stdlib source under `runtime/stdlib/common/src/generated/` (`_Collections.kt` = 3793
+lines, `_Maps.kt`, `_Sequences.kt`, …). Hand-writing the ops is OUT (guessed signatures are wrong — `reduce` is
+`<S, T : S>`, `count` has a `Collection<T>` overload, …). Compiling the real source needs its dependency closure + the
+right module flags. Established recipe (errors 119 → 15):
+
+1. **Include the internal-helper + internal-annotation source** (not just `_Collections.kt`): `kotlin/internal/*.kt`
+   (gives `@InlineOnly`/`@OnlyInputTypes`/…), all of `kotlin/collections/*.kt` (gives `collectionSizeOrDefault`,
+   `checkIndexOverflow`, `mapCapacity`, `optimizeReadOnlyList`, …), `IndexedValue.kt`, `SlidingWindow.kt`. **Source
+   shadows the JAR** — an `internal` member resolves to the in-module source copy, so cross-module "internal in file"
+   errors clear when the defining file is in the set.
+2. **Mark ALL the included files common** with `-Xcommon-sources=<every file>`. This is the crux: marking only SOME
+   common splits the module and re-breaks internal access (InlineOnly resorts to the JAR); marking EVERYTHING common
+   puts the generated common files AND their internal helpers in one module, so both internal access AND the
+   `@JvmName`/`@JvmMultifileClass` `@OptionalExpectation` annotations resolve. (In upstream the internal helpers are
+   common too.)
+3. **opt-ins:** `-opt-in=kotlin.ExperimentalUnsignedTypes,kotlin.experimental.ExperimentalTypeInference,kotlin.contracts.ExperimentalContracts,kotlin.ExperimentalMultiplatform,kotlin.ExperimentalStdlibApi`
+   plus `-Xallow-kotlin-package`, classpath = the kotlin-stdlib.jar (for the builtins only).
+
+The remaining **15 errors are all JVM-platform-specific** — the CLR platform-actual layer to provide:
+`collectionToArray`/`copyToArrayOfAny`/`arrayOfNulls(reference,size)` (java array helpers → CLR arrays),
+`java.io.Serializable` (drop / empty marker), `toSingletonMap`/`appendElement` (small helpers),
+`ConstrainedOnceSequence` (include `SequencesH.kt`), and `@Volatile` in `AbstractMap.kt` (needs
+`kotlin.concurrent.Volatile` for multiplatform). These are the "細かな Primitive" to bind on CLR. After the frontend
+compiles, the BACKEND (ilemit) pass over the full `_Collections.kt` bodies is the next phase (the ops call one another
++ internal helpers — each must lower/route/emit). See [[stdlib-use-real-generated-source]].
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
