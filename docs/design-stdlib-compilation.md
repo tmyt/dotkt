@@ -149,6 +149,18 @@ Each actual is `@Clr("<BCL type>") actual <class|fun interface> X { @Clr("<BCL m
 stub+rename mechanism. Layout: `runtime/stdlib/clr/<X>.kt` (platform fragment), `src/**` marked common via
 `-Xcommon-sources`, the build standalone (drop the `kotlin-stdlib.jar` crutch once the actuals cover the platform layer).
 
+## Decide before the collections actuals: the iterator protocol
+
+Not every collection type is a clean `@Clr`-to-BCL bind. `expect interface Iterator<out T>` is Kotlin's protocol
+(`next(): T` + `hasNext(): Boolean`), which does NOT match .NET `IEnumerator` (`MoveNext(): bool` + `Current`) — the
+shapes differ, so a name-map isn't enough. **DotKt already represents the Kotlin iterator protocol** via the
+monomorphized synthetic `@KIterator_<elem>` / `@KIterable_<elem>` interfaces (`birType`'s `iteratorElemIface` /
+`iterableElemIface`, and the `for (x in xs)` lowering). So the `Iterator`/`Iterable` actuals should bind to / reuse that
+machinery (a DotKt-side `IKIterator`-style interface), NOT raw `IEnumerable`/`IEnumerator`. Concrete collections
+(`List`→`IReadOnlyList`, `MutableList`→`IList`, `Map`→`IReadOnlyDictionary`) bind more directly (members map by
+`@Clr` name) but must still yield Kotlin iterators. This protocol reconciliation is the first design decision of the
+collections actuals — resolve it before writing them.
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
