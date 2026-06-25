@@ -3483,7 +3483,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// error instead. Restricted to no-dispatch-receiver calls so instance methods (`Iterator.next()` etc.,
 		// handled by the callInstance path below) are NOT caught. Handled ops already returned earlier.
 		if (dispatchReceiver(call) == null) callee.fqNameWhenAvailable?.asString()?.let { fqn ->
-			if (callee.body == null && (fqn.startsWith("kotlin.collections.") || fqn.startsWith("kotlin.sequences.")
+			// A stdlib fn that is NOT hand-lowered AND NOT provided by a referenced DotKt.Stdlib (the round-trip
+			// registry below) is genuinely unsupported -> a clear compile error. But once a real Kotlin implementation
+			// is compiled into DotKt.Stdlib and injected, `lookup(fqn) != null` and we fall through to the round-trip
+			// path, which emits a .NET call to (or inline-splices) that real body. This is the seam that lets us retire
+			// a hand-written `COLLECTION_OPS` lowering one op at a time — drop it from the catalog, ship the op in
+			// DotKt.Stdlib, and the call routes to the real Kotlin source instead.
+			if (callee.body == null && kotc.ClrTopLevelRegistry.lookup(fqn) == null
+					&& (fqn.startsWith("kotlin.collections.") || fqn.startsWith("kotlin.sequences.")
 					|| fqn.startsWith("kotlin.text.") || fqn.startsWith("kotlin.ranges.") || fqn.startsWith("kotlin.comparisons.")))
 				return unsupported(call, "the Kotlin stdlib function `$name`",
 					"it isn't lowered to .NET yet — use a supported equivalent, or wrap the logic by hand")

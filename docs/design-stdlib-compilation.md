@@ -238,6 +238,42 @@ bootstrap, intrinsics — compiler changes are EXPECTED here, not avoided), (3) 
 builtins bootstrap (above) is the gating compiler work for the deepest layer; the self-contained leaf files compile
 today without it.
 
+## Proven: retiring a hand-written collection lowering for real Kotlin (the migration seam)
+
+The end-to-end mechanism for moving a collection op off its `COLLECTION_OPS` LINQ lowering onto real Kotlin source is
+**proven working** (op: `getOrElse`):
+
+1. Compile the real Kotlin op into a DotKt library: `public inline fun <T> List<T>.getOrElse(index, defaultValue) =
+   if (index >= 0 && index <= size - 1) this[index] else defaultValue(index)`. ilemit stamps it with `[KotlinInline]`
+   **carrying the BIR body** (verified — the attribute's ctor arg is the BIR JSON), and facadegen reads it back into the
+   injection metadata as `tlfun getOrElse … inline,ext`.
+2. Drop `getOrElse` from `COLLECTION_OPS` (`BirMappings.kt`).
+3. The backend's "unsupported stdlib function" guard (`BirEmitter.kt`, ~3485) now **defers to the round-trip registry**:
+   if `ClrTopLevelRegistry.lookup(fqn) != null` (the op is provided by a referenced DotKt.Stdlib) it does NOT error, and
+   falls through to the round-trip path (~3494) which emits a `clrGenericStatic` call to (or inline-splices) the real
+   body. **This guard change is the committed enabler** — a safe no-op until a stdlib op is actually injected.
+
+Result (throwaway harness): user `listOf(10,20,30).getOrElse(1){…}` / `getOrElse(5){…}` compiled with `Enumerable`
+(LINQ) count = 0, two `clrGenericStatic` calls into `kotlin.collections.CollKt`, and ran `20` / `500`. The LINQ lowering
+was genuinely replaced by the real Kotlin implementation.
+
+**Why this is `[KotlinInline]`-powered (per the design owner): `[KotlinInline]` injects the body in BIR form, so the
+current compiler splices inline functions originating from a CLR DLL correctly. Removing `COLLECTION_OPS` entries one at
+a time therefore routes each call to the real stdlib source.**
+
+### Remaining productionization (all-or-nothing per op)
+Removing an op from `COLLECTION_OPS` breaks every build that doesn't reference DotKt.Stdlib (the guard fires). So the
+op's migration must land together with:
+- a **tracked first-party `DotKt.Stdlib` library** (like `DotKt.Runtime`) holding the migrated real-Kotlin ops (the
+  untracked vendored `runtime/stdlib/src` is the SOURCE we copy ops from as we migrate),
+- **auto-reference** of `DotKt.Stdlib` from every `.ktproj` (KotlinClr.targets: facadegen meta + ilemit `--ref`) and the
+  verify harnesses, then
+- the `COLLECTION_OPS` removal + a regression case.
+
+Random-access ops (`first`/`last`/`getOrElse`/`get`/`indexOf`/`isEmpty`/`single`/…) are migratable now (no iteration).
+Iteration ops (`map`/`filter`/`fold`/…) additionally need the `Iterable`→`IEnumerable` reconciliation (today Kotlin
+`Iterable` is the synthetic monomorphized `<>dotkt_KIterable`).
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
