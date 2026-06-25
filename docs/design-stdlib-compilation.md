@@ -221,6 +221,23 @@ rest referencing it, so `Enum`/`Int`/… resolve as referenced (not source) buil
 is a substantial, careful addition to the build pipeline — not an end-of-session change — because it must not regress
 the working single-module compile path that every existing `.ktproj` depends on.
 
+## Realized: a first DotKt.Stdlib.dll slice (the growth approach)
+
+A **working `DotKt.Stdlib.dll` is built from real vendored Kotlin stdlib source** by `scripts/build-stdlib.sh` — the
+first step of Path B. It compiles the stdlib files whose dependency closure is entirely builtins + .NET-mappable
+(`kotlin.collections.IndexedValue<T>`, `kotlin.KotlinVersion`, `kotlin.experimental.BitwiseOperations`, the annotation
+classes, …) using the **jar for frontend resolution** (no `-Xbuiltins-from-sources`, sidestepping the multi-layer
+builtins bootstrap), then ilemit emits the assembly. The DLL loads in .NET, carries real `kotlin.*` types, and is
+self-describing (embedded round-trip metadata).
+
+This is deliberately a SLICE. The goal isn't a single-shot full-stdlib compile — it's to **progressively replace the
+compiler's hand-written lowerings (the `COLLECTION_OPS` catalog, the builtin mappings) with the real Kotlin
+implementation, removing each lowering as its source compiles in.** Growing the slice = (1) pull in more stdlib files,
+(2) make them compile by binding the platform layer (the `clr` actuals) and/or adjusting the compiler (the builtins
+bootstrap, intrinsics — compiler changes are EXPECTED here, not avoided), (3) retire the matching hand-lowering. The
+builtins bootstrap (above) is the gating compiler work for the deepest layer; the self-contained leaf files compile
+today without it.
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
