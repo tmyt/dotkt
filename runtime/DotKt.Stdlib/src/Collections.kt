@@ -29,3 +29,29 @@ public fun <T> Iterable<T>.filter(predicate: (T) -> Boolean): List<T> {
     for (item in this) if (predicate(item)) destination.add(item)
     return destination
 }
+
+/** Performs [action] on each element. */
+public fun <T> Iterable<T>.forEach(action: (T) -> Unit) {
+    for (element in this) action(element)
+}
+
+/** Returns the number of elements. */
+public fun <T> Iterable<T>.count(): Int {
+    var count = 0
+    for (element in this) count++
+    return count
+}
+
+/** Returns the number of elements matching [predicate]. */
+public fun <T> Iterable<T>.count(predicate: (T) -> Boolean): Int {
+    var count = 0
+    for (element in this) if (predicate(element)) count++
+    return count
+}
+
+/** Accumulates value starting with [initial] and applying [operation] left to right. */
+public fun <T, R> Iterable<T>.fold(initial: R, operation: (acc: R, T) -> R): R {
+    var accumulator = initial
+    for (element in this) accumulator = operation(accumulator, element)
+    return accumulator
+}

@@ -2229,9 +2229,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"kotlin.Char" -> return "char"
 			"kotlin.Int" -> return "int"
 		}
-		// Kotlin function types ((P..)->R / suspend (P..)->R) -> a CLR Func/Action -> ilemit "func:<argcount>".
-		if (fq != null && (fq.startsWith("kotlin.Function") || fq.startsWith("kotlin.coroutines.SuspendFunction")))
-			return "func:" + ((t as? IrSimpleType)?.arguments?.size ?: 1)
+		// Kotlin function types ((P..)->R / suspend (P..)->R) -> a CLR Func/Action -> ilemit "func:<#generic-args>".
+		// A `(P..)->R` with R != Unit is a `Func<P..,R>` (#args = params+1); with R == Unit it is an `Action<P..>`
+		// (#args = params, NO return slot) — so drop the trailing Unit from the count to match ilemit's Action shape.
+		if (fq != null && (fq.startsWith("kotlin.Function") || fq.startsWith("kotlin.coroutines.SuspendFunction"))) {
+			val targs = (t as? IrSimpleType)?.arguments
+			val n = targs?.size ?: 1
+			val retUnit = (targs?.lastOrNull() as? IrTypeProjection)?.type?.classFqName?.asString() == "kotlin.Unit"
+			return "func:" + (if (retUnit && n > 0) n - 1 else n)
+		}
 		// Kotlin `Iterable<T>` lowers to `IEnumerable<T>`, which ilemit shapes as "ienum" — match it so a migrated
 		// `Iterable<T>.map`/`filter` (whose __self param is IEnumerable<T>) resolves by shape.
 		if (isIterableType(t)) return "ienum"

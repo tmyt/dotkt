@@ -39,6 +39,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   LINQ lowering onto real Kotlin source. New verify-il case `mutcoll`.
 
 ### Fixed
+- **`(P..) -> Unit` lambda shape matches `Action<P..>` for migrated/round-trip generic calls.** `clrMethodShape`
+  counted the trailing `Unit` (`(T)->Unit` → `func:2`), but such a type lowers to `Action<T>` (one generic arg, no
+  return slot) which ilemit shapes `func:1` — the mismatch made the generic-method shape lookup find 0 candidates
+  (`Sequence contains no elements`). Now the trailing `Unit` is dropped from the count. (Surfaced migrating `forEach`.)
 - **Injected stdlib top-level functions no longer re-emitted as broken stubs.** A consuming module's FIR holds the
   plugin-injected stdlib ops (restored from DotKt.Stdlib in the synthetic `__GENERATED DECLARATIONS__` file); the BIR
   emitter was emitting them as local top-level methods with no real body (invalid IL — `ReturnMissing` under ilverify).
