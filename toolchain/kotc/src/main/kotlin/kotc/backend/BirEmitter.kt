@@ -3526,11 +3526,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// path, which emits a .NET call to (or inline-splices) that real body. This is the seam that lets us retire
 			// a hand-written `COLLECTION_OPS` lowering one op at a time — drop it from the catalog, ship the op in
 			// DotKt.Stdlib, and the call routes to the real Kotlin source instead.
-			if (callee.body == null && kotc.ClrTopLevelRegistry.lookup(fqn) == null
+			if (callee.body == null
 					&& (fqn.startsWith("kotlin.collections.") || fqn.startsWith("kotlin.sequences.")
-					|| fqn.startsWith("kotlin.text.") || fqn.startsWith("kotlin.ranges.") || fqn.startsWith("kotlin.comparisons.")))
-				return unsupported(call, "the Kotlin stdlib function `$name`",
-					"it isn't lowered to .NET yet — use a supported equivalent, or wrap the logic by hand")
+					|| fqn.startsWith("kotlin.text.") || fqn.startsWith("kotlin.ranges.") || fqn.startsWith("kotlin.comparisons."))) {
+				// Route to DotKt.Stdlib only when it provides the op AND the extension receiver is a List-backed
+				// collection (List/Set/Collection/Iterable -> IEnumerable<T>, which the migrated `Iterable<T>.op` body
+				// accepts). A range / other non-collection receiver is NOT an IEnumerable here, so emitting the routed
+				// call would crash ilemit — fall to a clean compile error instead (matches the pre-migration behaviour).
+				val er = extensionReceiver(call)
+				val routable = er != null && isCollectionType(er.type) && kotc.ClrTopLevelRegistry.lookup(fqn) != null
+				if (!routable)
+					return unsupported(call, "the Kotlin stdlib function `$name`",
+						"it isn't lowered to .NET yet — use a supported equivalent, or wrap the logic by hand")
+			}
 		}
 		// DotKt round-trip: a call to a top-level function restored from a [KotlinFile] facade in a referenced
 		// assembly -> a .NET static call on that file-facade class. `body == null` distinguishes the injected symbol
