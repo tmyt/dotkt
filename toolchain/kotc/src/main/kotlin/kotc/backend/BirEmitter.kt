@@ -797,9 +797,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// A stdlib interface birType maps to .NET (Continuation, Comparable, Comparator, AutoCloseable, …) ->
 				// its clr:/clrg: spec; the Kotlin iterator/iterable protocol -> a synthetic interface; a user generic
 				// interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
-				val bt = birType(st)
-				if (bt.startsWith("clr:") || bt.startsWith("clrg:")) bt
-				else iteratorElemIface(st) ?: iterableElemIface(st) ?: charSeqIface(st) ?: propIface(st) ?: (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
+				// The Kotlin iterator/iterable protocol -> a synthetic monomorphized interface, checked BEFORE birType:
+				// `Iterable<T>` as a parameter type lowers to IEnumerable<T> (birType), but as a user class SUPERTYPE it
+				// must stay the synthetic KIterable — implementing IEnumerable<T> would demand a synthesized GetEnumerator
+				// (the producing-side bridge, separate work). `for (x in r)` over the synthetic interface still works.
+				val synthIter = iteratorElemIface(st) ?: iterableElemIface(st)
+				if (synthIter != null) synthIter
+				else {
+					val bt = birType(st)
+					if (bt.startsWith("clr:") || bt.startsWith("clrg:")) bt
+					else charSeqIface(st) ?: propIface(st) ?: (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
+				}
 			}
 			.joinToString(",") { str(it) }
 		// Anonymous objects (lifted, tracked in anonNames) are synthetic -> keep public.
@@ -2224,6 +2232,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Kotlin function types ((P..)->R / suspend (P..)->R) -> a CLR Func/Action -> ilemit "func:<argcount>".
 		if (fq != null && (fq.startsWith("kotlin.Function") || fq.startsWith("kotlin.coroutines.SuspendFunction")))
 			return "func:" + ((t as? IrSimpleType)?.arguments?.size ?: 1)
+		// Kotlin `Iterable<T>` lowers to `IEnumerable<T>`, which ilemit shapes as "ienum" — match it so a migrated
+		// `Iterable<T>.map`/`filter` (whose __self param is IEnumerable<T>) resolves by shape.
+		if (isIterableType(t)) return "ienum"
 		// Any other parameterized generic .NET type (Task<T>, Continuation<T>, …) -> "generic" (ilemit's IsGenericType default).
 		if ((t as? IrSimpleType)?.arguments?.isNotEmpty() == true) return "generic"
 		return netType(t).substringAfterLast('.')
@@ -2734,8 +2745,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// Iterable overload, whose receiver lowers to List<T>); Set is also excluded — it lowers to HashSet<T>, not
 			// List<T>, so passing it to the List-receiver body would be a type mismatch (a Set.map migration needs the
 			// Iterable->IEnumerable reconciliation first).
-			val migrated = recv != null && isCollectionType(recv.type) && !isSetType(recv.type)
-				&& kotc.ClrTopLevelRegistry.lookup(calleeFq) != null
+			val migrated = recv != null && isCollectionType(recv.type) && kotc.ClrTopLevelRegistry.lookup(calleeFq) != null
 			if (!migrated && recv != null && (isCollectionType(recv.type) || isSequenceType(recv.type) || isArrayType(recv.type)) && op in COLLECTION_OPS) {
 				val EN = "System.Linq.Enumerable"
 				// A `Sequence<T>` receiver is LAZY: intermediate list-producing ops (map/filter/…) stay deferred
@@ -3711,6 +3721,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun isSetType(t: IrType): Boolean =
 		t.classFqName?.asString() in setOf("kotlin.collections.Set", "kotlin.collections.MutableSet")
 
+	/** Kotlin `Iterable`/`MutableIterable` as a PARAMETER/RECEIVER type -> the BCL `IEnumerable<T>` (the broadest
+	 *  read-only iteration interface — List<T>, HashSet<T>, and any CLR IEnumerable all ARE IEnumerable, so a stdlib
+	 *  `Iterable<T>.map(...)` receiver accepts them all, and `for (x in this)` enumerates via GetEnumerator/MoveNext).
+	 *  As a user class SUPERTYPE it stays the synthetic KIterable (the producing-side bridge is separate). */
+	internal fun isIterableType(t: IrType): Boolean =
+		t.classFqName?.asString() in setOf("kotlin.collections.Iterable", "kotlin.collections.MutableIterable")
+
 	internal fun isMapType(t: IrType): Boolean =
 		t.classFqName?.asString() in setOf("kotlin.collections.Map", "kotlin.collections.MutableMap")
 
@@ -3770,6 +3787,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		nullableElem(t)?.let { return "nullable:$it" }
 		if (isArrayType(t)) return "array:" + arrayElemType(t)
 		// Generic .NET types use a bracket encoding `clrg:Open[arg1,arg2]` so nested generics (List<(A,B)>) parse.
+		if (isIterableType(t)) return "clrg:System.Collections.Generic.IEnumerable[" + collectionElemType(t) + "]"
 		if (isSetType(t)) return "clrg:System.Collections.Generic.HashSet[" + collectionElemType(t) + "]"
 		if (isCollectionType(t)) return "clrg:System.Collections.Generic.List[" + collectionElemType(t) + "]"
 		if (isMapType(t)) { val (k, v) = mapKV(t); return "clrg:System.Collections.Generic.Dictionary[$k,$v]" }

@@ -19,12 +19,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `-Xallow-kotlin-package`, `-opt-in=...`, `-Xcontext-parameters`). Needed to compile the Kotlin standard library itself
   (see `docs/design-stdlib-compilation.md`); useful for any advanced compiler option.
 
-### Added
-- **`map` / `filter` migrated off the LINQ lowering onto real Kotlin (for List-backed collections).** A
-  `List`/`Collection`/`Iterable` receiver routes `map`/`filter` to the real Kotlin body shipped in DotKt.Stdlib (iterate
-  + build an `ArrayList`), matching Kotlin/JVM (verify-differential). `Array`/`Sequence` receivers keep the LINQ
-  lowering (DotKt.Stdlib ships only the `Iterable` overload); `Set` is excluded for now (it lowers to `HashSet`, not
-  `List` — pending the `Iterable`→`IEnumerable` reconciliation). The skip is gated on the op being registered from a
+- **Kotlin `Iterable<T>` (as a parameter/receiver type) lowers to `IEnumerable<T>`.** The broadest read-only iteration
+  interface — `List<T>`, `HashSet<T>`, and any CLR `IEnumerable<T>` all bind, so a real-Kotlin `Iterable<T>.map(...)` in
+  DotKt.Stdlib accepts them all and `for (x in this)` enumerates via `GetEnumerator`/`MoveNext`/`Current`. As a user
+  class SUPERTYPE, `Iterable`/`Iterator` stay the synthetic monomorphized interface (implementing `IEnumerable<T>` would
+  need a synthesized `GetEnumerator` — the producing-side bridge, separate work), so user iterables are unaffected.
+- **`map` / `filter` migrated off the LINQ lowering onto real Kotlin (any List-backed/Set/Iterable collection).** A
+  `List`/`Collection`/`Set`/`Iterable` receiver routes `map`/`filter` to the real Kotlin body shipped in DotKt.Stdlib
+  (iterate + build an `ArrayList`), matching Kotlin/JVM (verify-differential). `Array`/`Sequence` receivers keep the
+  LINQ lowering (DotKt.Stdlib ships only the `Iterable` overload). The skip is gated on the op being registered from a
   referenced DotKt.Stdlib, so it composes with the lowering-retirement seam. New verify-il case `mapfilter`.
 - **Mutable collections + the real-stdlib `map`/`filter` shape now compile.** `ArrayList<R>()` (the JVM
   `java.util.ArrayList` typealias) lowers to `new System.Collections.Generic.List<R>()`, and the `MutableList`/
