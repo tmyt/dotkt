@@ -204,6 +204,16 @@ builtins bootstrap is unavoidable):
 - `-Xbuiltins-from-sources` is a TEST-only flag with exactly these limitations; the production Kotlin stdlib build
   **serializes the builtins** in a separate pre-pass and does not run it over the whole library.
 
+**The diagnostic-suppression route (option 2) is a dead-end — confirmed empirically.** A custom frontend phase
+(`ClrFrontendPhase` wrapping `JvmFrontendPipelinePhase`) that drops the `NO_VALUE_FOR_PARAMETER` diagnostics works at
+the frontend level, but: (a) the pipeline's between-phase error check aborts after the frontend's errors before any
+*inserted* phase runs, so the filter must wrap the frontend itself; (b) the diagnostics live in the collector's
+internal pending/committed maps as immutable lists, so reflective removal is fragile; and crucially (c) **suppressing
+the enum layer just surfaces the NEXT layer** — `expected X has no actual declaration for JVM` (the `multiPlatform=true`
+expect/actual checker now demands actuals for the builtin `expect class Throwable`/`Unit`/…). The bootstrap is
+multi-layer: `-Xbuiltins-from-sources` (a test flag) × `multiPlatform` × the custom backend fundamentally clash, and
+each suppressed layer reveals the next. All such experiments were reverted; the working single-module compiler is intact.
+
 **Decision: the build requires the builtins-serialization bootstrap (option 1), implemented deliberately.** The right
 shape for DotKt is a two-pass build: pass 1 compiles the builtin closure to a `DotKt.Builtins` assembly carrying the
 round-trip metadata (DotKt is self-describing — memory `metadata-attrs-embedded-nrt-nullability`); pass 2 compiles the
