@@ -106,29 +106,23 @@ frontend but NOT emitted (codegen redirects to the real .NET type). **This stub 
 references to it map to `clr:System.X`. So a hand-written `@Clr` stub works today — the injected facadegen types use the
 same path.
 
-The ONE new feature needed is **member-name lowering** (`add` → `Add`): currently a stub's members must use the .NET
-name. So the `clr` actuals look like:
+**Member-name lowering already works — no new attribute is needed.** `@Clr` is already applicable to FUNCTION and
+PROPERTY (`@Target(CLASS, FUNCTION, PROPERTY)`), and the call emitter already uses `clrName(callee) ?: name` /
+`clrName(prop) ?: name` (`BirEmitter.kt:3075/3090/3103`). So `@Clr("Add")` on a member lowers the call to the .NET name.
+**Verified end-to-end**: a hand-written `@Clr("System.Text.StringBuilder") class Buf { @Clr("Append") fun add(s); @Clr("ToString") fun render() }`
+runs (`b.add("hi").add("!"); b.render()` → "hi!"). So the `clr` actuals are written with `@Clr` alone:
 
 ```kotlin
-@Clr("System.Collections.Generic.List`1")          // existing: stub, not emitted, redirected to the BCL type
+@Clr("System.Collections.Generic.List`1")   // class: stub, not emitted, redirected to the BCL type
 actual class ArrayList<T> {
-    @ClrName("Add")   actual fun add(e: T)          // NEW: backend emits clrInstance("Add"), not "add"
-    @ClrName("Count") actual val size: Int
+    @Clr("Add")   actual fun add(e: T)        // member: call lowers to List.Add
+    @Clr("Count") actual val size: Int        // property: lowers to List.Count
 }
 ```
 
-The `@Clr*` family to design (the "various features"): `@Clr` type bind (have), **`@ClrName`** member rename (the
-keystone), property⇔method, `@ClrIndexer` (Kotlin `get`/`set` ↔ .NET indexer), `@ClrStatic`, `@ClrOperator`, `@ClrCtor`.
-This is a GENERAL idiomatic-.NET-binding mechanism; the stdlib is just its first big consumer.
-
-Implementation of `@ClrName` (the minimal first step):
-- Define `clr.ClrName(name: String)` alongside `clr.Clr` (the façade `_Clr.kt` that facadegen generates, + the per-case
-  `facade.kt` pattern).
-- Add `clrMemberName(callee): String` in BirEmitter (mirror `clrName` at `BirEmitter.kt:3582`, reading `clr.ClrName`,
-  default = the Kotlin name).
-- Use it where the .NET member name is currently the Kotlin name — the `clrInstance`/`clrStatic`/`clrPropGet`/
-  `clrPropSet` emit sites (the resolved callee carries the annotation; swap the emit name only, like `@JvmName`).
-- Spike: one `@Clr` + `@ClrName` stub, verify the call lowers to the mapped CLR name and runs.
+Operators already map too (`op_*` handling at the call site). The remaining `@Clr*` ideas (`@ClrIndexer` for Kotlin
+`get`/`set` ↔ .NET indexer, `@ClrCtor` for ctor-signature selection) are refinements to add only where a stdlib member
+needs them — not prerequisites. This is a GENERAL idiomatic-.NET-binding mechanism; the stdlib is its first big consumer.
 
 ## Open questions
 
