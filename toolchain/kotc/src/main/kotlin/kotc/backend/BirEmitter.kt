@@ -3741,6 +3741,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"kotlin.collections.Collection", "kotlin.collections.Iterable",
 			"kotlin.collections.Set", "kotlin.collections.MutableSet",
 			"kotlin.collections.ArrayList", "java.util.ArrayList",
+			"kotlin.collections.MutableCollection",
 		)
 
 	/** A Kotlin `Sequence<T>` -> a LAZY .NET `IEnumerable<T>` (deferred LINQ). Distinct from collections, whose
