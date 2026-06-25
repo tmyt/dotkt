@@ -14,3 +14,18 @@ package kotlin.collections
 /** Returns an element at [index] or the result of [defaultValue] for an out-of-bounds [index]. */
 public fun <T> List<T>.getOrElse(index: Int, defaultValue: (Int) -> T): T =
     if (index >= 0 && index <= size - 1) this[index] else defaultValue(index)
+
+/** Returns a list containing the results of applying [transform] to each element. (Real stdlib body; runs on the BCL
+ *  list — iterate, build an ArrayList. NON-inline so the consumer calls it rather than splicing/re-emitting a stub.) */
+public fun <T, R> Iterable<T>.map(transform: (T) -> R): List<R> {
+    val destination = ArrayList<R>()
+    for (item in this) destination.add(transform(item))
+    return destination
+}
+
+/** Returns a list containing only the elements matching [predicate]. */
+public fun <T> Iterable<T>.filter(predicate: (T) -> Boolean): List<T> {
+    val destination = ArrayList<T>()
+    for (item in this) if (predicate(item)) destination.add(item)
+    return destination
+}

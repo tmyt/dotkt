@@ -2728,7 +2728,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		run {
 			val recv = extensionReceiver(call) ?: dispatchReceiver(call)
 			val op = name
-			if (recv != null && (isCollectionType(recv.type) || isSequenceType(recv.type) || isArrayType(recv.type)) && op in COLLECTION_OPS) {
+			// Skip the LINQ lowering for an op that has been MIGRATED to DotKt.Stdlib (registered in the round-trip
+			// registry) when the receiver is a List-backed collection — fall through to the round-trip path, which routes
+			// the call to the real Kotlin body. Array/Sequence keep the LINQ lowering (DotKt.Stdlib ships only the
+			// Iterable overload, whose receiver lowers to List<T>); Set is also excluded — it lowers to HashSet<T>, not
+			// List<T>, so passing it to the List-receiver body would be a type mismatch (a Set.map migration needs the
+			// Iterable->IEnumerable reconciliation first).
+			val migrated = recv != null && isCollectionType(recv.type) && !isSetType(recv.type)
+				&& kotc.ClrTopLevelRegistry.lookup(calleeFq) != null
+			if (!migrated && recv != null && (isCollectionType(recv.type) || isSequenceType(recv.type) || isArrayType(recv.type)) && op in COLLECTION_OPS) {
 				val EN = "System.Linq.Enumerable"
 				// A `Sequence<T>` receiver is LAZY: intermediate list-producing ops (map/filter/…) stay deferred
 				// (no ToList), matching Kotlin's lazy sequence semantics. The explicit `toList`/`toSet` terminals

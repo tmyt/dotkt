@@ -20,6 +20,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   (see `docs/design-stdlib-compilation.md`); useful for any advanced compiler option.
 
 ### Added
+- **`map` / `filter` migrated off the LINQ lowering onto real Kotlin (for List-backed collections).** A
+  `List`/`Collection`/`Iterable` receiver routes `map`/`filter` to the real Kotlin body shipped in DotKt.Stdlib (iterate
+  + build an `ArrayList`), matching Kotlin/JVM (verify-differential). `Array`/`Sequence` receivers keep the LINQ
+  lowering (DotKt.Stdlib ships only the `Iterable` overload); `Set` is excluded for now (it lowers to `HashSet`, not
+  `List` — pending the `Iterable`→`IEnumerable` reconciliation). The skip is gated on the op being registered from a
+  referenced DotKt.Stdlib, so it composes with the lowering-retirement seam. New verify-il case `mapfilter`.
 - **Mutable collections + the real-stdlib `map`/`filter` shape now compile.** `ArrayList<R>()` (the JVM
   `java.util.ArrayList` typealias) lowers to `new System.Collections.Generic.List<R>()`, and the `MutableList`/
   `MutableCollection` mutation members (`add`/`remove`/`clear`/`removeAt`) bind to the BCL `List<T>` methods — so
