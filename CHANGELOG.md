@@ -19,6 +19,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `-Xallow-kotlin-package`, `-opt-in=...`, `-Xcontext-parameters`). Needed to compile the Kotlin standard library itself
   (see `docs/design-stdlib-compilation.md`); useful for any advanced compiler option.
 
+### Added
+- **Mutable collections + the real-stdlib `map`/`filter` shape now compile.** `ArrayList<R>()` (the JVM
+  `java.util.ArrayList` typealias) lowers to `new System.Collections.Generic.List<R>()`, and the `MutableList`/
+  `MutableCollection` mutation members (`add`/`remove`/`clear`/`removeAt`) bind to the BCL `List<T>` methods — so
+  `mutableListOf(...).add(x)` etc. work (they previously hit an unsupported-owner gap), and a real-Kotlin
+  `Iterable<T>.mapTo(ArrayList()) { … }` iterating + `.add(...)` runs on the BCL list. ilemit's `clrNew` resolves the
+  ctor of a `List<R>` whose `R` is the enclosing generic function's type parameter (a `TypeBuilderInstantiation`) via
+  `TypeBuilder.GetConstructor`. This unblocks migrating the iteration collection ops (`map`/`filter`/`fold`/…) off the
+  LINQ lowering onto real Kotlin source. New verify-il case `mutcoll`.
+
 ### Fixed
 - **Injected stdlib top-level functions no longer re-emitted as broken stubs.** A consuming module's FIR holds the
   plugin-injected stdlib ops (restored from DotKt.Stdlib in the synthetic `__GENERATED DECLARATIONS__` file); the BIR

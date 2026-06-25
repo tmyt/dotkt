@@ -61,6 +61,12 @@ internal val MAP_FACTORIES = setOf(
 	"kotlin.collections.mapOf", "kotlin.collections.mutableMapOf", "kotlin.collections.hashMapOf",
 	"kotlin.collections.emptyMap",
 )
+// MutableList/MutableCollection INSTANCE mutation members (not COLLECTION_OPS extension ops) -> the BCL List<T>
+// method. Kotlin's collections lower to System.Collections.Generic.List<T>, so `list.add(x)` etc. bind to its methods.
+internal val COLLECTION_MEMBER = mapOf(
+	"add" to "Add", "remove" to "Remove", "clear" to "Clear", "removeAt" to "RemoveAt",
+	"contains" to "Contains", "indexOf" to "IndexOf",
+)
 internal val COLLECTION_OPS = setOf(
 	"map", "filter", "take", "drop", "reversed", "distinct", "toList",
 	"count", "any", "none", "all", "first", "last", "contains", "fold", "joinToString", "forEach",

@@ -1346,6 +1346,18 @@ sealed partial class Emitter
         var type = ClrRef(e.GetProperty("type").GetString());
         var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => { try { return ClrRef(a.GetString()); } catch { return (Type)null; } }).ToArray();
         var args = e.GetProperty("args");
+        // `new List<R>()` where R is the enclosing generic FUNCTION's type parameter: List<R> is a
+        // TypeBuilderInstantiation whose .GetConstructor/.GetConstructors throw — resolve the ctor on the open generic
+        // definition (its params are non-generic for the cases we hit: no-arg, capacity), emit the args against those
+        // params, and re-anchor via TypeBuilder.GetConstructor. (Mirrors GenericMethod for member access.)
+        if (IsTbInstantiation(type))
+        {
+            var openCtor = type.GetGenericTypeDefinition().GetConstructor(argTypes.All(t => t != null) ? argTypes : Type.EmptyTypes)
+                ?? throw new NotSupportedException($"no matching ctor on the open def of {type.FullName} with {args.GetArrayLength()} arg(s)");
+            EmitArgs(args, openCtor.GetParameters());
+            _il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(type, openCtor));
+            return type;
+        }
         // Exact match first; else fall back to arity-based selection. The latter matters when a lambda arg's type was
         // erased to `object` by the façade (the param is really a delegate, e.g. `new Thread(ThreadStart)`): the real
         // ctor param type is recovered here so EmitArg can build the specific delegate.

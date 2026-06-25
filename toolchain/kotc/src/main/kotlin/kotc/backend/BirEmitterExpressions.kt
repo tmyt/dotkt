@@ -167,7 +167,11 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		}
 		// Kotlin builtin exceptions (IllegalStateException etc.) -> their .NET counterpart.
 		val netExc = klass?.fqNameWhenAvailable?.asString()?.let { NET_EXCEPTIONS[it] }
-		val mapped = clr ?: netExc
+		// A collection ctor `ArrayList<R>()` / `HashSet<T>()` (kotlin.collections.* = java.util.* typealiases) -> the
+		// BCL collection (`new List<R>()` / `new HashSet<T>()`): birType already maps the type. Lets the real stdlib
+		// `map`/`filter`/`mapTo` (which build an ArrayList) compile straight to the BCL collection DotKt uses.
+		val collNew = if (klass != null && (isCollectionType(node.type) || isSetType(node.type) || isMapType(node.type))) birType(node.type) else null
+		val mapped = clr ?: netExc ?: collNew
 		if (mapped != null)
 			"""{"k":"clrNew","type":${str(mapped)},"argTypes":[${paramNetTypes(node.symbol.owner)}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
 		else {

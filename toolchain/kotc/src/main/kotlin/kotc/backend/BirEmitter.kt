@@ -2997,6 +2997,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"delegateInvoke","funcType":${str(birType(recv.type))},"recv":${expr(recv)},"args":[${a.joinToString(",") { expr(it) }}]}"""
 			}
 		}
+		// MutableList/MutableCollection mutation members (`add`/`remove`/`clear`/`removeAt`) -> the BCL List<T>
+		// instance method. Kotlin collections lower to System.Collections.Generic.List<T>; these are instance calls,
+		// not COLLECTION_OPS extension ops (those already returned above). Lets the real stdlib `map`/`filter`/`mapTo`
+		// — which build an ArrayList via `.add(...)` — run on the BCL list. `contains`/`indexOf` stay COLLECTION_OPS.
+		dispatchReceiver(call)?.let { recv ->
+			if (isCollectionType(recv.type) && !isSetType(recv.type)) COLLECTION_MEMBER[name]?.let { netName ->
+				val a = regularArgs(call)
+				return """{"k":"clrInstance","type":${str(birType(recv.type))},"method":${str(netName)},"argTypes":[${a.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(call.type))},"recv":${expr(recv)},"args":[${a.joinToString(",") { expr(it) }}]}"""
+			}
+		}
 		// Array indexing `a[i]` / `a[i] = v` (the `get`/`set` operators on Array/primitive arrays).
 		if (callee.isOperator && (name == "get" || name == "set")) {
 			val recv = dispatchReceiver(call)
@@ -3673,12 +3683,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return "object"
 	}
 
-	/** Kotlin List/MutableList/Collection/Iterable -> a .NET `List<T>` (works as IEnumerable<T> for LINQ). */
+	/** Kotlin List/MutableList/Collection/Iterable -> a .NET `List<T>` (works as IEnumerable<T> for LINQ). `ArrayList`
+	 *  is `kotlin.collections.ArrayList` = the JVM `java.util.ArrayList` typealias; on CLR it is the same `List<T>`
+	 *  (the concrete mutable list the stdlib builds in `map`/`filter`/`mapTo`). */
 	internal fun isCollectionType(t: IrType): Boolean =
 		t.classFqName?.asString() in setOf(
 			"kotlin.collections.List", "kotlin.collections.MutableList",
 			"kotlin.collections.Collection", "kotlin.collections.Iterable",
 			"kotlin.collections.Set", "kotlin.collections.MutableSet",
+			"kotlin.collections.ArrayList", "java.util.ArrayList",
 		)
 
 	/** A Kotlin `Sequence<T>` -> a LAZY .NET `IEnumerable<T>` (deferred LINQ). Distinct from collections, whose
