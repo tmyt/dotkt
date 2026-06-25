@@ -193,6 +193,24 @@ So completing the build needs one of:
 Beyond the builtin closure, the full stdlib still needs the platform `actual` layer (the ~40 clr actuals) and the
 collections iterator-protocol reconciliation — the build is gated FIRST on the builtins bootstrap above.
 
+**Conclusively, both compile routes hit complementary walls** (so "one module, from source" is mandatory and the
+builtins bootstrap is unavoidable):
+- `-Xbuiltins-from-sources` (standalone): the enum-entry synthesis fails for the source `expect Enum` (10 errors on the
+  builtin closure). Providing a CLR `actual class Enum` does NOT fix it — the synthesis is about source-Enum recognition,
+  not expect/actual.
+- `-classpath kotlin-stdlib.jar` (builtins from the jar, exclude the builtin-declaring source files): 475 "cannot access
+  X: it is internal in file" — the source files reference one another's `internal` members across what the compiler
+  treats as a module boundary against the jar.
+- `-Xbuiltins-from-sources` is a TEST-only flag with exactly these limitations; the production Kotlin stdlib build
+  **serializes the builtins** in a separate pre-pass and does not run it over the whole library.
+
+**Decision: the build requires the builtins-serialization bootstrap (option 1), implemented deliberately.** The right
+shape for DotKt is a two-pass build: pass 1 compiles the builtin closure to a `DotKt.Builtins` assembly carrying the
+round-trip metadata (DotKt is self-describing — memory `metadata-attrs-embedded-nrt-nullability`); pass 2 compiles the
+rest referencing it, so `Enum`/`Int`/… resolve as referenced (not source) builtins and the enum synthesis fires. This
+is a substantial, careful addition to the build pipeline — not an end-of-session change — because it must not regress
+the working single-module compile path that every existing `.ktproj` depends on.
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
