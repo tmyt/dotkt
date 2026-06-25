@@ -124,6 +124,31 @@ Operators already map too (`op_*` handling at the call site). The remaining `@Cl
 `get`/`set` ↔ .NET indexer, `@ClrCtor` for ctor-signature selection) are refinements to add only where a stdlib member
 needs them — not prerequisites. This is a GENERAL idiomatic-.NET-binding mechanism; the stdlib is its first big consumer.
 
+## The `clr` actual worklist (from the vendored src)
+
+The vendored `src` declares **65 `expect`s**. Classified:
+
+- **~25 primitive / builtin** (`Int`/`Long`/…/`Array`/`*Array`/`Comparable`/`CharSequence`/`Any`/`Nothing`/`Unit`/
+  `Number`/`String`) — the compiler already binds these. **Exclude their src files** (ktproj `KotlinCompile` glob); the
+  compiler builtin satisfies references.
+- **~40 library expects = the `clr` actuals to write**, prioritized:
+  1. **Collections (the keystone, ~14)** — `Iterable`/`Iterator`/`Collection`/`List`/`ListIterator`/`Set`/`Map` +
+     the `Mutable*` variants. Bind to BCL: `Iterable→IEnumerable`, `Iterator→IEnumerator`, `List→IReadOnlyList`,
+     `MutableList→IList`, `Set→IReadOnlySet`, `Map→IReadOnlyDictionary`, `MutableMap→IDictionary`, etc. This is the
+     user's original pain (mutable collections, `Map` iteration) and unblocks most of `_Collections.kt`/`_Maps.kt`.
+  2. **Text (~2)** — `Appendable`/`StringBuilder` → `System.Text.StringBuilder` (resolves the `append`/`appendTwoDigits`
+     unresolved refs too).
+  3. **Map onto existing DotKt types** — `AtomicBoolean/Int/Long/Reference` → `DotKtx.Atomicfu.*`; `SafeContinuation` →
+     `DotKt.Coroutines`; `AutoCloseable` → `System.IDisposable`.
+  4. **Defer / stub** — the reflection cluster `KClass`/`KCallable`/`KFunction`/`KProperty*`/`KType` (~11): a separable
+     sub-area, low initial value; minimal stubs or exclude until reflection is needed.
+  5. **Misc, case by case** — `Annotation`, `MonotonicTimeSource`, `PlatformSpecific`, `EnumEntriesSerializationProxy`,
+     `ReadObjectParameterType`, `ValueTimeMarkReading`.
+
+Each actual is `@Clr("<BCL type>") actual <class|fun interface> X { @Clr("<BCL member>") actual ... }` — the verified
+stub+rename mechanism. Layout: `runtime/stdlib/clr/<X>.kt` (platform fragment), `src/**` marked common via
+`-Xcommon-sources`, the build standalone (drop the `kotlin-stdlib.jar` crutch once the actuals cover the platform layer).
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
