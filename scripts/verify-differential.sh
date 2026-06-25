@@ -26,6 +26,18 @@ dotnet build "$ROOT/toolchain/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v 
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 
+# DotKt.Stdlib (real-Kotlin ops migrated off the COLLECTION_OPS lowering): auto-referenced by the CLR side so a
+# migrated op (getOrElse, ...) routes to its real body, exactly as a .ktproj would. The JVM oracle uses the upstream
+# stdlib jar, so this validates that DotKt's real-Kotlin reimplementation matches Kotlin/JVM semantics.
+dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runtime" -v q --nologo >/dev/null 2>&1
+dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo >/dev/null 2>&1
+DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
+bash "$ROOT/scripts/build-dotkt-stdlib.sh" >/dev/null 2>&1
+STDLIB_DLL="$ROOT/build/dotkt-stdlib/DotKt.Stdlib.dll"
+STDLIB_META="$ROOT/build/stdlib.meta"
+_RP="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' | head -1)")"
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$STDLIB_META" --refs "$(ls "$_RP"/*.dll | tr '\n' ';')$STDLIB_DLL;$DOTKT_RT" --scan-asm "$STDLIB_DLL" >/dev/null 2>&1
+
 # Pure-Kotlin samples only (no @Clr / injected .NET types — those can't run on the JVM).
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 il-seq il-char il-sort il-funref il-getclass il-localdeleg il-langfeat il-mapdes il-ctorref il-collmore il-tryexpr il-localclass il-collops2 il-refcell il-annot il-props il-mixnum il-arrops"
 fail=0
@@ -50,8 +62,9 @@ for s in $PURE; do
 	  jvm="$("$JAVA" -cp "$jout:$STDLIBJ" "$mainclass" 2>/dev/null)"
 	  # (b) kotlin/clr via the SHIPPING IL backend: compile to BIR, emit CIL with ilemit, run the dll.
 	  cout="$ROOT/build/diff-clr-$s"; rm -rf "$cout"; mkdir -p "$cout"
-	  "$LAUNCHER" $src -no-stdlib -classpath $STDLIBJ -d $cout >/dev/null 2>&1
-	  dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$cout" "$mainclass" "$cout"/*.bir.json >/dev/null 2>&1
+	  CLR_TYPES_METADATA="$STDLIB_META" "$LAUNCHER" $src -no-stdlib -classpath $STDLIBJ -d $cout >/dev/null 2>&1
+	  dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$cout" "$mainclass" --ref "$DOTKT_RT" --ref "$STDLIB_DLL" "$cout"/*.bir.json >/dev/null 2>&1
+	  cp "$DOTKT_RT" "$STDLIB_DLL" "$cout/"
 	  clr="$(dotnet "$cout/$mainclass.dll" 2>/dev/null)"
 	  if [[ "$(norm <<<"$jvm")" == "$(norm <<<"$clr")" ]]; then echo "MATCH $s"; else
 		echo "DIFF  $s"; echo "--- jvm ---"; echo "$jvm"; echo "--- clr ---"; echo "$clr"; touch "/tmp/diff-fail-$s"; fi

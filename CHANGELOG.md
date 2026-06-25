@@ -6,11 +6,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Added
+- **`DotKt.Stdlib` — a tracked first-party library of real-Kotlin stdlib ops**, compiled by DotKt's own toolchain
+  (`runtime/DotKt.Stdlib/`, built by `scripts/build-dotkt-stdlib.sh`). It holds standard-library operations migrated
+  off the compiler's hand-written `COLLECTION_OPS` LINQ lowerings onto their real Kotlin source. Auto-referenced by the
+  verify harnesses (and intended for every `.ktproj`); a call to a migrated op routes to the real body via the
+  round-trip registry. First migrated op: **`List.getOrElse`** (random-access, runs directly on the BCL `List<T>`).
+  Validated against the Kotlin/JVM oracle (verify-differential) — the real-Kotlin reimplementation matches JVM semantics.
+- **`facadegen --scan-asm <dll>`** — inject ALL `[KotlinFileClass]` facades from a referenced DotKt library wholesale
+  (auto-imported stdlib functions never appear in the `--import-list`), so DotKt.Stdlib's ops are visible to the FIR
+  injector without naming each one.
 - **`<DotKtKotcOptions>` MSBuild property** — pass raw kotc flags through to the compile step (appended verbatim, e.g.
   `-Xallow-kotlin-package`, `-opt-in=...`, `-Xcontext-parameters`). Needed to compile the Kotlin standard library itself
   (see `docs/design-stdlib-compilation.md`); useful for any advanced compiler option.
 
 ### Fixed
+- **Injected stdlib top-level functions no longer re-emitted as broken stubs.** A consuming module's FIR holds the
+  plugin-injected stdlib ops (restored from DotKt.Stdlib in the synthetic `__GENERATED DECLARATIONS__` file); the BIR
+  emitter was emitting them as local top-level methods with no real body (invalid IL — `ReturnMissing` under ilverify).
+  Now filtered to origin `DEFINED` (user code only), mirroring the existing filter for injected top-level properties.
 - **Generic collection member access (`List<T>`/`MutableList<T>`/`Map<K,V>` indexers + size) inside a generic function.**
   `fun <T> List<T>.first(): T = this[0]` and friends now emit: when the element type is the enclosing generic function's
   own type parameter, `List<T>`/`Dictionary<K,V>` are `TypeBuilderInstantiation`s whose plain reflection `.GetMethod`

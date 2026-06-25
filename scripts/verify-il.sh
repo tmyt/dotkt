@@ -39,6 +39,15 @@ dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$OBSCOLLMETA" System.Co
 GMMETA="$ROOT/build/gm.meta"
 dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$GMMETA" System.Runtime.CompilerServices.Unsafe System.Runtime.CompilerServices.RuntimeHelpers System.Collections.ObjectModel.Collection >/dev/null 2>&1
 
+# DotKt.Stdlib: the real-Kotlin stdlib ops migrated off the COLLECTION_OPS lowering (getOrElse, ...). Auto-referenced by
+# every case (its [KotlinFileClass] facades injected via `facadegen --scan-asm`, and ilemit `--ref`), mirroring how a
+# .ktproj gets DotKt.Stdlib. A call to a migrated op routes to the real Kotlin body instead of the retired LINQ lowering.
+bash "$ROOT/scripts/build-dotkt-stdlib.sh" >/dev/null 2>&1
+STDLIB_DLL="$ROOT/build/dotkt-stdlib/DotKt.Stdlib.dll"
+STDLIB_META="$ROOT/build/stdlib.meta"
+_REFPACK="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' | head -1)")"
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$STDLIB_META" --refs "$(ls "$_REFPACK"/*.dll | tr '\n' ';')$STDLIB_DLL;$DOTKT_RT" --scan-asm "$STDLIB_DLL" >/dev/null 2>&1
+
 declare -A REFDLL=()   # sample name -> external runtime dll it references (for ilverify -r)
 
 # Build a sample's <srcDir>/runtime.cs into a referenced .NET assembly (name from <runtimeAsm>); echo its path.
@@ -79,11 +88,15 @@ il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 	{ name="$1"; asm="$2"; src="$3"; expected="$4"; meta="${5:-}"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
+		# Auto-reference DotKt.Stdlib: merge its injection meta with any case-specific meta, and --ref the dll so a
+		# migrated stdlib op (getOrElse, ...) resolves to its real Kotlin body instead of the retired LINQ lowering.
+		usemeta="$STDLIB_META"
+		if [[ -n "$meta" ]]; then usemeta="$ROOT/build/meta-$name"; cat "$STDLIB_META" "$meta" > "$usemeta"; fi
+		if ! CLR_TYPES_METADATA="$usemeta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" "$birdir"/*.bir.json >/dev/null 2>&1; then
+		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" --ref "$STDLIB_DLL" "$birdir"/*.bir.json >/dev/null 2>&1; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		cp "$DOTKT_RT" "$ildir/"
+		cp "$DOTKT_RT" "$STDLIB_DLL" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
 		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
 			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
@@ -322,7 +335,7 @@ if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 		[[ -f "$dll" ]] || continue
 		# A sample that references an external runtime dll needs it on ilverify's resolve path too.
 		refarg=(); [[ -n "${REFDLL[$n]:-}" ]] && refarg=(-r "${REFDLL[$n]}")
-		if dotnet "$ILV" "$dll" -r "$REFDIR/*.dll" -r "$DOTKT_RT" "${refarg[@]}" 2>&1 | grep -qi 'Verified\.'; then echo "VERIFY  $n"; else echo "VERIFY FAIL  $n"; fail=1; fi
+		if dotnet "$ILV" "$dll" -r "$REFDIR/*.dll" -r "$DOTKT_RT" -r "$STDLIB_DLL" "${refarg[@]}" 2>&1 | grep -qi 'Verified\.'; then echo "VERIFY  $n"; else echo "VERIFY FAIL  $n"; fail=1; fi
 	done
 else
 	echo "(ilverify not installed; skipping formal verification — 'dotnet tool install -g dotnet-ilverify')"

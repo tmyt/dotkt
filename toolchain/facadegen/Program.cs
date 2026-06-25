@@ -32,10 +32,19 @@ static class FacadeGen
             // compiler's `kotc --scan-imports` PSI pass (a real parser, not a regex: handles aliases, `.*`,
             // multi-line, comments, backtick identifiers — interop feedback item 5). Merge both; EmitMeta warns
             // on any .NET-looking name that resolves to nothing (no silent drop).
+            // `--scan-asm <dll>`: inject ALL [KotlinFileClass] facades from a referenced DotKt library (DotKt.Stdlib).
+            // Auto-imported stdlib functions (`list.getOrElse(...)`) never appear in the import-list, so the whole
+            // library's top-level functions must be pulled in wholesale for the FIR injector to see them.
+            var scanned = new List<string>();
+            for (var scanAt = rest.IndexOf("--scan-asm"); scanAt >= 0 && scanAt + 1 < rest.Count; scanAt = rest.IndexOf("--scan-asm"))
+            {
+                scanned.AddRange(ScanAsmKotlinTypes(rest[scanAt + 1]));
+                rest.RemoveRange(scanAt, 2);
+            }
             var listAt = rest.IndexOf("--import-list");
             var explicitTypes = listAt < 0 ? rest : rest.Take(listAt).ToList();
             var imported = listAt < 0 || listAt + 1 >= rest.Count ? Enumerable.Empty<string>() : ReadImportList(rest[listAt + 1]);
-            return EmitMeta(args[1], explicitTypes.Concat(imported).Distinct());
+            return EmitMeta(args[1], explicitTypes.Concat(imported).Concat(scanned).Distinct());
         }
         var clrDir = Path.Combine(args[0], "clr");
         Directory.CreateDirectory(clrDir);
@@ -757,6 +766,18 @@ static class FacadeGen
     {
         try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KFileAttr); }
         catch { return false; }
+    }
+
+    // Every [KotlinFileClass] facade type in a referenced DotKt assembly (DotKt.Stdlib) -> its FullName, so EmitMeta
+    // restores its statics as top-level Kotlin functions. Lets a whole compiled stdlib slice be auto-injected.
+    static IEnumerable<string> ScanAsmKotlinTypes(string path)
+    {
+        System.Reflection.Assembly asm;
+        try { asm = Mlc.LoadFromAssemblyPath(Path.GetFullPath(path)); }
+        catch (Exception e) { Console.Error.WriteLine($"--scan-asm: cannot load {path}: {e.Message}"); yield break; }
+        Type[] types; try { types = asm.GetTypes(); } catch { yield break; }
+        foreach (var t in types)
+            if (t.FullName != null && HasKotlinFileClass(t)) yield return t.FullName;
     }
 
     const string KReadOnlyAttr = "DotKt.Runtime.CompilerServices.KotlinReadOnlyAttribute";

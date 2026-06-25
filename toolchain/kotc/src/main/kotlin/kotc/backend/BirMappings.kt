@@ -69,7 +69,7 @@ internal val COLLECTION_OPS = setOf(
 	"asSequence", "toSet", "takeWhile", "dropWhile", "single", "singleOrNull",
 	"sortedDescending", "sortedBy", "sortedByDescending", "mapIndexed", "chunked", "filterNotNull",
 	"mapNotNull", "flatMap", "flatten", "average", "indexOf",
-	"partition", "withIndex", "associate", "scan", "runningFold", "windowed", "getOrElse",
+	"partition", "withIndex", "associate", "scan", "runningFold", "windowed",
 )
 
 // Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.
