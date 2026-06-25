@@ -29,7 +29,9 @@
           Inputs="@(KotlinCompile)" Outputs="$(DotKtOut)/.stamp">
     <MakeDir Directories="$(DotKtOut)" />
     <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
-    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(DotKtStdlib)&quot; -d &quot;$(DotKtOut)&quot;"
+    <!-- $(DotKtKotcOptions): extra raw kotc flags a project may pass through (e.g. compiling the stdlib ITSELF needs
+         -Xallow-kotlin-package -opt-in=... ). Space-separated; appended verbatim to the compile command. -->
+    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(DotKtStdlib)&quot; -d &quot;$(DotKtOut)&quot; $(DotKtKotcOptions)"
           EnvironmentVariables="CLR_TYPES_METADATA=$(DotKtTypeMeta)" />
     <Touch Files="$(DotKtOut)/.stamp" AlwaysCreate="true" />
   </Target>
