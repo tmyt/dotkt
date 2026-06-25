@@ -302,6 +302,28 @@ The remaining **15 errors are all JVM-platform-specific** — the CLR platform-a
 compiles, the BACKEND (ilemit) pass over the full `_Collections.kt` bodies is the next phase (the ops call one another
 + internal helpers — each must lower/route/emit). See [[stdlib-use-real-generated-source]].
 
+### The platform-actual layer (the remaining frontend work)
+
+Past the recipe above, `_Collections.kt` (119 → ~10) needs CLR `actual`s for the multiplatform `expect`s the common
+collection source declares. Found + written so far (`runtime/stdlib/clr/`):
+- factories `listOf(e)`/`setOf(e)`/`mapOf(pair)`, builders `buildList/Map/SetInternal`, `Array.asArrayList`
+- internal helpers `checkIndexOverflow`/`checkCountOverflow`/`mapCapacity`, `MutableList.reverse`
+- array bridges `collectionToArray`(×2)/`terminateCollectionToArray`/`copyToArrayOfAny`/`arrayOfNulls(ref,size)`
+- `kotlin.internal` serialization stubs (`throwReadObjectNotSupported`/`wrapAsDeserializationException`/`ReadObjectParameterType`)
+- `kotlin.io.Serializable` (empty marker — JVM `java.io.Serializable` has no CLR equivalent)
+- `kotlin.sequences.ConstrainedOnceSequence`
+
+KEY structural rule: actuals go in the PLATFORM source set (NOT in `-Xcommon-sources`), matching the package of the
+`expect` exactly (`ConstrainedOnceSequence` → `kotlin.sequences`, the serialization stubs → `kotlin.internal`,
+`Serializable` → `kotlin.io`). Helpers whose `expect` file is NOT pulled in resolve via a plain `internal fun` that
+shadows the JAR.
+
+NOT yet done — **`CollectionsH.kt`'s full platform surface (~25 `expect`s)**: `RandomAccess`, `toTypedArray`, `sort`,
+`sortWith`, `shuffle`/`shuffled`, `fill`, `orEmpty`, `binarySearch`, … Each needs a CLR `actual` (mostly array/list ops
+over the BCL). Once the frontend is at 0, the BACKEND (ilemit) pass over the full `_Collections.kt` bodies is the final
+phase (every op must lower/route/emit; the inter-op calls + internal helpers surface there). This is a large but
+well-defined layer — the path to full `_Collections.kt` compilation is concrete. See [[stdlib-use-real-generated-source]].
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
