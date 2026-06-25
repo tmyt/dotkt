@@ -74,6 +74,62 @@ The residual ~280 (with the jar) / ~1283 (standalone) break down as:
 6. **Enum bootstrap** reconciliation (`name`/`ordinal`).
 7. Retire the `COLLECTION_OPS` hand-catalog as the compiled functions take over (keep a fast-path only where it pays).
 
+## How the compiled stdlib is consumed
+
+`DotKt.Stdlib.dll` (the compiled `src` common + `clr` actuals) is **auto-referenced by every `.ktproj`** via the SDK
+— exactly the role DotKt.Runtime plays today. A user's `listOf(1).map { it*2 }` then emits **calls into
+DotKt.Stdlib's compiled methods** instead of the hand-lowering catalog; the collection TYPES are `@Clr`-bound to BCL
+(below), so values flow as BCL types and the compiled functions operate on them.
+
+Frontend resolution falls out for free: **DotKt.Stdlib is self-describing by construction.** Because it is built with
+DotKt's OWN compiler, the round-trip metadata (`[KotlinFunction]` / `[KotlinFileClass]` / NRT, embedded per assembly —
+memory `metadata-attrs-embedded-nrt-nullability`) is emitted automatically, so kotc resolves `kotlin.*` against
+DotKt.Stdlib via facadegen (the round-trip path, memory `interop-surface-complete`) — **no kotlin-stdlib.jar in the
+consumer**. The model is simply **"forward `kotlin.*` to DotKt.Stdlib"**: the compiler's existing `kotlin.*`
+special-casing flips from "hand-lower to LINQ/intrinsic" to "resolve + call the compiled stdlib method."
+
+The jar survives only as a **bootstrap crutch for compiling the stdlib ITSELF** (and even that goes away once the `clr`
+actuals provide the platform layer, so `src + clr` compiles standalone). Consuming the stdlib never needs it.
+
+Because the stdlib exercises the *entire* language surface (generics, extensions, operators, inline, …), it is the
+ultimate stress test of the round-trip metadata — expect `interop-surface-complete` / `kotlin-modifier-roundtrip` gaps
+to surface here.
+
+**Hybrid:** the hot ops (`map`/`filter` → LINQ) stay hand-lowered as a fast-path (inlined, faster); the long tail comes
+from DotKt.Stdlib. So `COLLECTION_OPS` is demoted to an optimization, not fully retired.
+
+## Binding actuals: the `@Clr*` attribute family (stub types)
+
+The `clr` actuals are **stub types** — ambient/external Kotlin declarations bound to a BCL type, resolved by the
+frontend but NOT emitted (codegen redirects to the real .NET type). **This stub mechanism already exists**: a
+`@Clr("System.X")` source class is filtered out of emission (`BirEmitter.kt`, `clrName(it) == null` guard) and
+references to it map to `clr:System.X`. So a hand-written `@Clr` stub works today — the injected facadegen types use the
+same path.
+
+The ONE new feature needed is **member-name lowering** (`add` → `Add`): currently a stub's members must use the .NET
+name. So the `clr` actuals look like:
+
+```kotlin
+@Clr("System.Collections.Generic.List`1")          // existing: stub, not emitted, redirected to the BCL type
+actual class ArrayList<T> {
+    @ClrName("Add")   actual fun add(e: T)          // NEW: backend emits clrInstance("Add"), not "add"
+    @ClrName("Count") actual val size: Int
+}
+```
+
+The `@Clr*` family to design (the "various features"): `@Clr` type bind (have), **`@ClrName`** member rename (the
+keystone), property⇔method, `@ClrIndexer` (Kotlin `get`/`set` ↔ .NET indexer), `@ClrStatic`, `@ClrOperator`, `@ClrCtor`.
+This is a GENERAL idiomatic-.NET-binding mechanism; the stdlib is just its first big consumer.
+
+Implementation of `@ClrName` (the minimal first step):
+- Define `clr.ClrName(name: String)` alongside `clr.Clr` (the façade `_Clr.kt` that facadegen generates, + the per-case
+  `facade.kt` pattern).
+- Add `clrMemberName(callee): String` in BirEmitter (mirror `clrName` at `BirEmitter.kt:3582`, reading `clr.ClrName`,
+  default = the Kotlin name).
+- Use it where the .NET member name is currently the Kotlin name — the `clrInstance`/`clrStatic`/`clrPropGet`/
+  `clrPropSet` emit sites (the resolved callee carries the annotation; swap the emit name only, like `@JvmName`).
+- Spike: one `@Clr` + `@ClrName` stub, verify the call lowers to the mapped CLR name and runs.
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
