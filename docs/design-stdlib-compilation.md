@@ -161,6 +161,38 @@ machinery (a DotKt-side `IKIterator`-style interface), NOT raw `IEnumerable`/`IE
 `@Clr` name) but must still yield Kotlin iterators. This protocol reconciliation is the first design decision of the
 collections actuals — resolve it before writing them.
 
+## Build attempt — empirical results and the remaining blocker
+
+A focused build attempt established the working configuration and the precise blocker.
+
+**Working flag set** (collapses all config noise to zero): `-no-stdlib -Xallow-kotlin-package
+-opt-in=kotlin.contracts.ExperimentalContracts -opt-in=kotlin.ExperimentalMultiplatform -Xcontext-parameters
+-Xbuiltins-from-sources`. The stdlib must compile **as one module from source** (both the jar-resolution and
+builtins-from-sources routes confirm this): with the jar on the classpath, source files can't access the jar's
+`internal` members ("cannot access X: it is internal in file"); standalone, the builtins must come from source — hence
+`-Xbuiltins-from-sources`, which is the right mode (`Int`/`String`/… then resolve from `Primitives.kt`/`String.kt`).
+
+**Funnel on a 28-file builtin closure** (core types + annotations + experimental, excluding the Kotlin/Native files):
+4002 (version skew) → 1283 (flags) → **10 errors**, all of ONE kind: `no value passed for parameter 'name'/'ordinal'`
+at enum entries (`DeprecationLevel`, `AnnotationTarget`, `AnnotationRetention`, `OptIn.Level`).
+
+**The blocker — the Kotlin builtins bootstrap.** Under `-Xbuiltins-from-sources`, the standard FIR frontend's enum-entry
+→ `Enum(name, ordinal)` super-call synthesis does NOT fire for the SOURCE `expect class Enum` (it special-cases the
+*builtin* Enum), so the entries are flagged as missing `name`/`ordinal`. This is standard Kotlin frontend behavior (kotc
+reuses `JvmFrontendPipelinePhase` verbatim — `ClrCliPipeline` swaps only the backend), not a kotc-specific bug. The real
+Kotlin stdlib build sidesteps it by **serializing the builtins** (`Any`/`Int`/`Enum`/… → `.kotlin_builtins`) in a
+separate pre-pass and compiling the rest against those — it does NOT run `-Xbuiltins-from-sources` over the whole stdlib.
+
+So completing the build needs one of:
+1. **Replicate the builtins-serialization bootstrap** — compile the builtin closure to serialized builtins first, then
+   the rest against them. The proper path; substantial (mirrors the Kotlin build's builtins pipeline).
+2. **A kotc FIR fix** — make the enum-entry synthesis recognize the source `Enum` under `-Xbuiltins-from-sources` (or
+   suppress the spurious diagnostic, since DotKt's backend synthesizes `__name`/`__ordinal` itself from the entry index
+   and never uses the source super-call). A FIR additional-checkers / synthesis extension in `ClrCompilerPluginRegistrar`.
+
+Beyond the builtin closure, the full stdlib still needs the platform `actual` layer (the ~40 clr actuals) and the
+collections iterator-protocol reconciliation — the build is gated FIRST on the builtins bootstrap above.
+
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
