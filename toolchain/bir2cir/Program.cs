@@ -212,7 +212,45 @@ sealed class ReferenceMetadataIndex
     static bool ArityMatches(CallSite site, DotKtMemberMetadata member)
     {
         if (member.Kind == "field") return true;
-        return site.ArgCount < 0 || member.ParameterTypes.Count == site.ArgCount;
+        if (site.ArgCount >= 0 && member.ParameterTypes.Count != site.ArgCount) return false;
+        if (site.ArgTypes.Count == 0 || site.ArgTypes.Any(t => t.Length == 0)) return true;
+        if (member.ParameterTypes.Count != site.ArgTypes.Count) return false;
+
+        for (var i = 0; i < site.ArgTypes.Count; i++)
+            if (!TypeMatches(site.ArgTypes[i], member.ParameterTypes[i]))
+                return false;
+
+        return true;
+    }
+
+    static bool TypeMatches(string siteType, string memberType) =>
+        NormalizeType(siteType) == NormalizeType(memberType);
+
+    static string NormalizeType(string type)
+    {
+        var value = type.Trim();
+        if (value.StartsWith("clr:", StringComparison.Ordinal)) value = value["clr:".Length..];
+        if (value.StartsWith("@", StringComparison.Ordinal)) value = value[1..];
+        if (value.StartsWith("clrg:", StringComparison.Ordinal)) return value;
+        return value switch
+        {
+            "bool" => "System.Boolean",
+            "byte" => "System.Byte",
+            "char" => "System.Char",
+            "double" => "System.Double",
+            "float" => "System.Single",
+            "int" => "System.Int32",
+            "long" => "System.Int64",
+            "object" => "System.Object",
+            "short" => "System.Int16",
+            "string" => "System.String",
+            "ubyte" => "System.Byte",
+            "uint" => "System.UInt32",
+            "ulong" => "System.UInt64",
+            "ushort" => "System.UInt16",
+            "void" => "System.Void",
+            _ => value,
+        };
     }
 
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
@@ -757,7 +795,17 @@ sealed record CallSiteAnalysis(IReadOnlyList<CallSite> Sites)
     }
 }
 
-sealed record CallSite(string Kind, string Path, string Status, string Owner, string Method, string TargetOwner, string TargetName, int ArgCount)
+sealed record CallSite(
+    string Kind,
+    string Path,
+    string Status,
+    string Owner,
+    string Method,
+    string TargetOwner,
+    string TargetName,
+    string Signature,
+    int ArgCount,
+    IReadOnlyList<string> ArgTypes)
 {
     public static CallSite From(string kind, string path, string owner, string method, JsonObject node)
     {
@@ -768,6 +816,8 @@ sealed record CallSite(string Kind, string Path, string Status, string Owner, st
         var targetName = StringProp(node, "method")
             ?? StringProp(node, "name")
             ?? "";
+        var signature = StringProp(node, "sig") ?? "";
+        var argTypes = ArgumentTypes(node, signature);
 
         return new CallSite(
             kind,
@@ -777,7 +827,9 @@ sealed record CallSite(string Kind, string Path, string Status, string Owner, st
             method ?? "",
             targetOwner,
             targetName,
-            node["args"] is JsonArray args ? args.Count : -1);
+            signature,
+            node["args"] is JsonArray args ? args.Count : -1,
+            argTypes);
     }
 
     public JsonObject ToJson() => new()
@@ -789,7 +841,9 @@ sealed record CallSite(string Kind, string Path, string Status, string Owner, st
         ["method"] = Method,
         ["targetOwner"] = TargetOwner,
         ["targetName"] = TargetName,
+        ["signature"] = Signature,
         ["argCount"] = ArgCount,
+        ["argTypes"] = new JsonArray(ArgTypes.Select(t => JsonValue.Create(t)).Cast<JsonNode>().ToArray()),
     };
 
     static string StatusFor(string kind, string targetOwner)
@@ -800,6 +854,29 @@ sealed record CallSite(string Kind, string Path, string Status, string Owner, st
     }
 
     static string StringProp(JsonObject obj, string name) => obj[name]?.GetValue<string>();
+
+    static IReadOnlyList<string> ArgumentTypes(JsonObject node, string signature)
+    {
+        if (!string.IsNullOrWhiteSpace(signature))
+            return signature.Split(',', StringSplitOptions.TrimEntries).ToList();
+
+        if (node["args"] is not JsonArray args) return Array.Empty<string>();
+
+        var inferred = new List<string>();
+        foreach (var arg in args)
+            inferred.Add(InferExpressionType(arg));
+        return inferred;
+    }
+
+    static string InferExpressionType(JsonNode node)
+    {
+        if (node is not JsonObject obj) return "";
+        return StringProp(obj, "type")
+            ?? StringProp(obj, "retType")
+            ?? StringProp(obj, "resultType")
+            ?? StringProp(obj, "ret")
+            ?? "";
+    }
 }
 
 static class NativeAsyncCirDraft

@@ -83,7 +83,7 @@ This is still native-CIR-only and does not rewrite compatibility output. Its pur
 
 `cirDraft.loweredBir` is an intermediate native-only tree used while the real CIR schema is still forming. It clones the original BIR payload and replaces uniquely resolved reference call sites at their JSON paths with draft CLR nodes. Unresolved and ambiguous sites are left in their original BIR form.
 
-Overload resolution is intentionally conservative at this stage. The resolver records call-site argument count and filters referenced constructors/methods by parameter count before declaring a unique match. Exact lowered parameter type matching should be added before this output becomes executable CIR.
+Overload resolution is intentionally conservative at this stage. The resolver records call-site argument count plus BIR `sig` / expression type hints, then filters referenced constructors/methods by parameter count and by exact normalized primitive type matches when all argument types are known. Full lowered generic/member signature matching should be added before this output becomes executable CIR.
 
 ## Call Site Inventory
 
