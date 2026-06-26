@@ -595,7 +595,7 @@ static class NativeCirDraft
         ["asyncFunctions"] = NativeAsyncCirDraft.Create(bir.Root),
         ["resolvedCalls"] = ResolvedCallCirDraft.Create(bir.Calls, refs),
         ["resolvedTypes"] = ResolvedTypeCirDraft.Create(bir.Types, refs),
-        ["loweredBir"] = NativeExpressionCirDraft.Create(bir.Root, bir.Calls, refs),
+        ["loweredBir"] = NativeExpressionCirDraft.Create(bir.Root, bir.Calls, bir.Types, refs),
     };
 }
 
@@ -764,29 +764,41 @@ static class ResolvedTypeCirDraft
 
 static class NativeExpressionCirDraft
 {
-    public static JsonNode Create(JsonNode root, CallSiteAnalysis calls, ReferenceMetadataIndex refs)
+    public static JsonNode Create(JsonNode root, CallSiteAnalysis calls, TypeSiteAnalysis types, ReferenceMetadataIndex refs)
     {
-        var resolved = calls.Sites
+        var resolvedCalls = calls.Sites
             .Where(s => s.Status == "kotlin-symbol")
             .Select(s => new ResolvedSite(s, refs.Resolve(s)))
             .Where(r => r.Candidates.Count == 1)
             .ToDictionary(r => r.Site.Path, r => r, StringComparer.Ordinal);
+        var resolvedTypes = types.Sites
+            .Where(s => s.Status == "kotlin-symbol")
+            .Select(s => new ResolvedTypeSite(s, refs.Resolve(s)))
+            .Where(r => r.Candidates.Count == 1)
+            .ToDictionary(r => r.Site.Path, r => r, StringComparer.Ordinal);
 
-        return LowerNode(root, "$", resolved);
+        return LowerNode(root, "$", resolvedCalls, resolvedTypes);
     }
 
-    static JsonNode LowerNode(JsonNode node, string path, IReadOnlyDictionary<string, ResolvedSite> resolved)
+    static JsonNode LowerNode(
+        JsonNode node,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes)
     {
         if (node is JsonObject obj)
         {
-            if (resolved.TryGetValue(path, out var site))
-                return LowerResolvedExpression(obj, path, site.Site, site.Candidates[0], resolved);
+            if (resolvedCalls.TryGetValue(path, out var site))
+                return LowerResolvedExpression(obj, path, site.Site, site.Candidates[0], resolvedCalls, resolvedTypes);
 
             var copy = new JsonObject();
             foreach (var child in obj)
+            {
+                var childPath = path + "." + EscapePathSegment(child.Key);
                 copy[child.Key] = child.Value == null
                     ? null
-                    : LowerNode(child.Value, path + "." + EscapePathSegment(child.Key), resolved);
+                    : LowerTypeOrNode(child.Value, childPath, resolvedCalls, resolvedTypes);
+            }
             return copy;
         }
 
@@ -794,11 +806,32 @@ static class NativeExpressionCirDraft
         {
             var copy = new JsonArray();
             for (var i = 0; i < arr.Count; i++)
-                copy.Add(arr[i] == null ? null : LowerNode(arr[i], path + "[" + i + "]", resolved));
+            {
+                var itemPath = path + "[" + i + "]";
+                copy.Add(arr[i] == null ? null : LowerTypeOrNode(arr[i], itemPath, resolvedCalls, resolvedTypes));
+            }
             return copy;
         }
 
         return node.DeepClone();
+    }
+
+    static JsonNode LowerTypeOrNode(
+        JsonNode node,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes)
+    {
+        if (resolvedTypes.TryGetValue(path, out var type))
+            return new JsonObject
+            {
+                ["k"] = "clr.typeRef",
+                ["sourcePath"] = type.Site.Path,
+                ["sourceType"] = type.Site.Type,
+                ["typeRef"] = type.Candidates[0].ToTypeRefJson(),
+            };
+
+        return LowerNode(node, path, resolvedCalls, resolvedTypes);
     }
 
     static JsonObject LowerResolvedExpression(
@@ -806,7 +839,8 @@ static class NativeExpressionCirDraft
         string path,
         CallSite site,
         ResolutionCandidate candidate,
-        IReadOnlyDictionary<string, ResolvedSite> resolved)
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes)
     {
         var lowered = new JsonObject
         {
@@ -817,11 +851,11 @@ static class NativeExpressionCirDraft
         };
 
         if (obj["recv"] is JsonNode recv)
-            lowered["recv"] = LowerNode(recv, path + ".recv", resolved);
+            lowered["recv"] = LowerTypeOrNode(recv, path + ".recv", resolvedCalls, resolvedTypes);
         if (obj["args"] is JsonNode args)
-            lowered["args"] = LowerNode(args, path + ".args", resolved);
+            lowered["args"] = LowerTypeOrNode(args, path + ".args", resolvedCalls, resolvedTypes);
         if (obj["value"] is JsonNode value)
-            lowered["value"] = LowerNode(value, path + ".value", resolved);
+            lowered["value"] = LowerTypeOrNode(value, path + ".value", resolvedCalls, resolvedTypes);
 
         if (site.Kind is "callStatic" or "callInstance")
         {
@@ -847,6 +881,7 @@ static class NativeExpressionCirDraft
 }
 
 sealed record ResolvedSite(CallSite Site, IReadOnlyList<ResolutionCandidate> Candidates);
+sealed record ResolvedTypeSite(TypeSite Site, IReadOnlyList<TypeResolutionCandidate> Candidates);
 
 sealed class TypeSiteAnalyzer
 {
