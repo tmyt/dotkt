@@ -37,6 +37,15 @@ The first non-identity pass is `SuspendShapeAnalyzer`. It does not rewrite bodie
 
 This analysis is emitted in `--native-cir` as `analysis.suspendFunctions` and printed as an aggregate in the driver log. It is the insertion point for the future suspend-to-async transform.
 
+`--native-cir` also emits `cirDraft.asyncFunctions`. This is not yet executable CIR, but it maps current coroutine BIR steps into the intended async vocabulary:
+
+- `coSuspend` -> `clr.await`
+- `coSuspendIntrinsic` -> `clr.awaitIntrinsic`
+- `coReturn` -> `return`
+- `var` in coroutine steps -> `clr.asyncLocalInit`
+
+The draft lets the async shape evolve independently from `ilemit`; compatibility mode remains byte-for-byte BIR-compatible.
+
 ## Native CIR Direction
 
 Native CIR should make CLR decisions explicit. The stable shape is still open, but v1 nodes should be named around CLR concepts rather than Kotlin frontend concepts:
@@ -69,7 +78,7 @@ The migration order for suspend is:
 
 1. Detect and index current BIR coroutine shapes (`suspend`, `steps`, `coSuspend`, `coSuspendIntrinsic`, `coReturn`, `cpsFields`).
 2. Emit native CIR analysis alongside the original BIR payload.
-3. Add a native CIR transform for simple linear suspend functions: `steps` -> `clr.asyncFunction` + `clr.await` + `return`.
+3. Emit a native CIR draft for simple linear suspend functions: `steps` -> `clr.asyncFunction` + `clr.await` + `return`.
 4. Extend to branches, loops, and try/finally around await.
 5. Teach `ilemit` to consume native async/state-machine CIR, then remove its Kotlin coroutine discovery.
 

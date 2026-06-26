@@ -196,9 +196,129 @@ static class NativeCirEnvelope
                 .Cast<JsonNode>()
                 .ToArray()),
             ["analysis"] = bir.Suspend.ToJson(),
+            ["cirDraft"] = NativeAsyncCirDraft.Create(bir.Root),
             ["bir"] = bir.Root.DeepClone(),
         };
     }
+}
+
+static class NativeAsyncCirDraft
+{
+    public static JsonObject Create(JsonNode root)
+    {
+        var functions = new JsonArray();
+        CollectFileMethods(root, owner: null, functions);
+        return new JsonObject
+        {
+            ["asyncFunctions"] = functions,
+        };
+    }
+
+    static void CollectFileMethods(JsonNode node, string owner, JsonArray functions)
+    {
+        if (node is not JsonObject obj) return;
+
+        if (obj["methods"] is JsonArray methods)
+            foreach (var method in methods)
+                CollectMethod(method, owner, functions);
+
+        if (obj["types"] is JsonArray types)
+            foreach (var type in types)
+                CollectType(type, functions);
+    }
+
+    static void CollectType(JsonNode type, JsonArray functions)
+    {
+        if (type is not JsonObject obj) return;
+
+        var owner = StringProp(obj, "name");
+        if (obj["methods"] is JsonArray methods)
+            foreach (var method in methods)
+                CollectMethod(method, owner, functions);
+
+        if (obj["types"] is JsonArray nested)
+            foreach (var child in nested)
+                CollectType(child, functions);
+    }
+
+    static void CollectMethod(JsonNode method, string owner, JsonArray functions)
+    {
+        if (method is not JsonObject obj || !BoolProp(obj, "suspend")) return;
+
+        functions.Add(new JsonObject
+        {
+            ["k"] = "clr.asyncFunction",
+            ["owner"] = owner,
+            ["name"] = StringProp(obj, "name") ?? "<anonymous>",
+            ["resultType"] = StringProp(obj, "resultType") ?? StringProp(obj, "ret") ?? "void",
+            ["taskType"] = TaskTypeFor(StringProp(obj, "resultType") ?? StringProp(obj, "ret") ?? "void"),
+            ["params"] = obj["params"]?.DeepClone(),
+            ["locals"] = obj["cpsFields"]?.DeepClone() ?? new JsonArray(),
+            ["body"] = LowerSteps(obj["steps"] as JsonArray),
+        });
+    }
+
+    static JsonArray LowerSteps(JsonArray steps)
+    {
+        var body = new JsonArray();
+        if (steps == null) return body;
+
+        foreach (var step in steps)
+            body.Add(LowerStep(step));
+        return body;
+    }
+
+    static JsonObject LowerStep(JsonNode step)
+    {
+        if (step is not JsonObject obj)
+            return UnknownStep(step);
+
+        return StringProp(obj, "k") switch
+        {
+            "coSuspend" => new JsonObject
+            {
+                ["k"] = "clr.await",
+                ["state"] = obj["state"]?.DeepClone(),
+                ["awaitable"] = obj["awaitable"]?.DeepClone(),
+                ["assignTo"] = obj["assignTo"]?.DeepClone(),
+                ["resultType"] = obj["resultType"]?.DeepClone(),
+            },
+            "coSuspendIntrinsic" => new JsonObject
+            {
+                ["k"] = "clr.awaitIntrinsic",
+                ["state"] = obj["state"]?.DeepClone(),
+                ["pre"] = obj["pre"]?.DeepClone(),
+                ["value"] = obj["value"]?.DeepClone(),
+                ["assignTo"] = obj["assignTo"]?.DeepClone(),
+                ["resultType"] = obj["resultType"]?.DeepClone(),
+            },
+            "coReturn" => new JsonObject
+            {
+                ["k"] = "return",
+                ["value"] = obj["value"]?.DeepClone(),
+            },
+            "var" => new JsonObject
+            {
+                ["k"] = "clr.asyncLocalInit",
+                ["name"] = obj["name"]?.DeepClone(),
+                ["type"] = obj["type"]?.DeepClone(),
+                ["init"] = obj["init"]?.DeepClone(),
+            },
+            _ => UnknownStep(step),
+        };
+    }
+
+    static JsonObject UnknownStep(JsonNode step) => new()
+    {
+        ["k"] = "bir.step",
+        ["node"] = step?.DeepClone(),
+    };
+
+    static string TaskTypeFor(string resultType) =>
+        resultType == "void" ? "System.Threading.Tasks.Task" : $"clrg:System.Threading.Tasks.Task[{resultType}]";
+
+    static string StringProp(JsonObject obj, string name) => obj[name]?.GetValue<string>();
+    static bool BoolProp(JsonObject obj, string name) => obj[name]?.GetValue<bool>() == true;
 }
 
 sealed class SuspendShapeAnalyzer
