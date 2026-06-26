@@ -43,6 +43,16 @@ This analysis is emitted in `--native-cir` as `analysis.suspendFunctions` and pr
 - `coSuspendIntrinsic` -> `clr.awaitIntrinsic`
 - `coReturn` -> `return`
 - `var` in coroutine steps -> `clr.asyncLocalInit`
+- `exprStmt` / `setLocal` -> `clr.exprStmt` / `clr.setLocal`
+- `coLabel` / `coGoto` / `coCondGoto` -> `clr.label` / `clr.goto` / `clr.brfalse`
+- `coTryBegin` / `coCatchBegin` / `coTryEnd` -> `clr.asyncTryBegin` / `clr.asyncCatchBegin` / `clr.asyncTryEnd`
+
+Each draft async function also carries `loweringStatus`:
+
+- `linear`: only local initialization, awaits, and return.
+- `control-flow`: labels or branches are present.
+- `try`: async try/catch/finally markers are present.
+- `unsupported`: a step kind is not yet represented in the draft; `unknownSteps` lists the kinds.
 
 The draft lets the async shape evolve independently from `ilemit`; compatibility mode remains byte-for-byte BIR-compatible.
 
@@ -79,7 +89,7 @@ The migration order for suspend is:
 1. Detect and index current BIR coroutine shapes (`suspend`, `steps`, `coSuspend`, `coSuspendIntrinsic`, `coReturn`, `cpsFields`).
 2. Emit native CIR analysis alongside the original BIR payload.
 3. Emit a native CIR draft for simple linear suspend functions: `steps` -> `clr.asyncFunction` + `clr.await` + `return`.
-4. Extend to branches, loops, and try/finally around await.
+4. Extend to executable branches, loops, and try/finally around await.
 5. Teach `ilemit` to consume native async/state-machine CIR, then remove its Kotlin coroutine discovery.
 
 ## Projection Lookup Rule

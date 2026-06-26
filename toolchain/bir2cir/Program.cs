@@ -244,17 +244,21 @@ static class NativeAsyncCirDraft
     static void CollectMethod(JsonNode method, string owner, JsonArray functions)
     {
         if (method is not JsonObject obj || !BoolProp(obj, "suspend")) return;
+        var steps = obj["steps"] as JsonArray;
+        var shape = AsyncDraftShape.Classify(steps);
 
         functions.Add(new JsonObject
         {
             ["k"] = "clr.asyncFunction",
             ["owner"] = owner,
             ["name"] = StringProp(obj, "name") ?? "<anonymous>",
+            ["loweringStatus"] = shape.Status,
+            ["unknownSteps"] = new JsonArray(shape.UnknownSteps.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
             ["resultType"] = StringProp(obj, "resultType") ?? StringProp(obj, "ret") ?? "void",
             ["taskType"] = TaskTypeFor(StringProp(obj, "resultType") ?? StringProp(obj, "ret") ?? "void"),
             ["params"] = obj["params"]?.DeepClone(),
             ["locals"] = obj["cpsFields"]?.DeepClone() ?? new JsonArray(),
-            ["body"] = LowerSteps(obj["steps"] as JsonArray),
+            ["body"] = LowerSteps(steps),
         });
     }
 
@@ -297,12 +301,57 @@ static class NativeAsyncCirDraft
                 ["k"] = "return",
                 ["value"] = obj["value"]?.DeepClone(),
             },
+            "coLabel" => new JsonObject
+            {
+                ["k"] = "clr.label",
+                ["id"] = obj["id"]?.DeepClone(),
+            },
+            "coGoto" => new JsonObject
+            {
+                ["k"] = "clr.goto",
+                ["target"] = obj["id"]?.DeepClone(),
+            },
+            "coCondGoto" => new JsonObject
+            {
+                ["k"] = "clr.brfalse",
+                ["target"] = obj["id"]?.DeepClone(),
+                ["cond"] = obj["cond"]?.DeepClone(),
+            },
+            "coTryBegin" => new JsonObject
+            {
+                ["k"] = "clr.asyncTryBegin",
+                ["id"] = obj["id"]?.DeepClone(),
+            },
+            "coCatchBegin" => new JsonObject
+            {
+                ["k"] = "clr.asyncCatchBegin",
+                ["id"] = obj["id"]?.DeepClone(),
+                ["excType"] = obj["excType"]?.DeepClone(),
+                ["var"] = obj["var"]?.DeepClone(),
+            },
+            "coTryEnd" => new JsonObject
+            {
+                ["k"] = "clr.asyncTryEnd",
+                ["id"] = obj["id"]?.DeepClone(),
+                ["finally"] = obj["finally"]?.DeepClone(),
+            },
             "var" => new JsonObject
             {
                 ["k"] = "clr.asyncLocalInit",
                 ["name"] = obj["name"]?.DeepClone(),
                 ["type"] = obj["type"]?.DeepClone(),
                 ["init"] = obj["init"]?.DeepClone(),
+            },
+            "exprStmt" => new JsonObject
+            {
+                ["k"] = "clr.exprStmt",
+                ["expr"] = obj["expr"]?.DeepClone(),
+            },
+            "setLocal" => new JsonObject
+            {
+                ["k"] = "clr.setLocal",
+                ["name"] = obj["name"]?.DeepClone(),
+                ["value"] = obj["value"]?.DeepClone(),
             },
             _ => UnknownStep(step),
         };
@@ -319,6 +368,71 @@ static class NativeAsyncCirDraft
 
     static string StringProp(JsonObject obj, string name) => obj[name]?.GetValue<string>();
     static bool BoolProp(JsonObject obj, string name) => obj[name]?.GetValue<bool>() == true;
+}
+
+sealed record AsyncDraftShape(string Status, IReadOnlyList<string> UnknownSteps)
+{
+    static readonly HashSet<string> LinearKinds = new(StringComparer.Ordinal)
+    {
+        "var",
+        "coSuspend",
+        "coSuspendIntrinsic",
+        "coReturn",
+        "exprStmt",
+        "setLocal",
+    };
+
+    static readonly HashSet<string> ControlFlowKinds = new(StringComparer.Ordinal)
+    {
+        "coLabel",
+        "coGoto",
+        "coCondGoto",
+    };
+
+    static readonly HashSet<string> TryKinds = new(StringComparer.Ordinal)
+    {
+        "coTryBegin",
+        "coCatchBegin",
+        "coTryEnd",
+    };
+
+    public static AsyncDraftShape Classify(JsonArray steps)
+    {
+        if (steps == null) return new AsyncDraftShape("linear", Array.Empty<string>());
+
+        var hasControlFlow = false;
+        var hasTry = false;
+        var unknown = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (var step in steps)
+        {
+            if (step is not JsonObject obj)
+            {
+                unknown.Add("<non-object>");
+                continue;
+            }
+
+            var kind = obj["k"]?.GetValue<string>() ?? "<missing>";
+            if (LinearKinds.Contains(kind)) continue;
+            if (ControlFlowKinds.Contains(kind))
+            {
+                hasControlFlow = true;
+                continue;
+            }
+            if (TryKinds.Contains(kind))
+            {
+                hasTry = true;
+                continue;
+            }
+
+            unknown.Add(kind);
+        }
+
+        if (unknown.Count > 0) return new AsyncDraftShape("unsupported", unknown.ToList());
+        if (hasTry) return new AsyncDraftShape("try", Array.Empty<string>());
+        if (hasControlFlow) return new AsyncDraftShape("control-flow", Array.Empty<string>());
+        return new AsyncDraftShape("linear", Array.Empty<string>());
+    }
 }
 
 sealed class SuspendShapeAnalyzer
