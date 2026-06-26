@@ -63,7 +63,8 @@ sealed class Pipeline
                 json,
                 root,
                 SuspendShapeAnalyzer.Analyze(root),
-                CallSiteAnalyzer.Analyze(root)));
+                CallSiteAnalyzer.Analyze(root),
+                TypeSiteAnalyzer.Analyze(root)));
         }
 
         return files;
@@ -149,7 +150,7 @@ enum OutputMode
     NativeCir,
 }
 
-sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend, CallSiteAnalysis Calls);
+sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend, CallSiteAnalysis Calls, TypeSiteAnalysis Types);
 sealed record CirFile(string OutputName, string Json);
 
 sealed class ReferenceMetadataIndex
@@ -196,6 +197,23 @@ sealed class ReferenceMetadataIndex
                     member.IsFileClass,
                     member.ParameterTypes,
                     member.ReturnType));
+            }
+        }
+
+        return matches;
+    }
+
+    public IReadOnlyList<TypeResolutionCandidate> Resolve(TypeSite site)
+    {
+        if (site.Status != "kotlin-symbol") return Array.Empty<TypeResolutionCandidate>();
+
+        var matches = new List<TypeResolutionCandidate>();
+        foreach (var asm in _assemblies)
+        {
+            foreach (var type in asm.DotKt.Types)
+            {
+                if (!OwnerMatches(site.NormalizedType, type.Name)) continue;
+                matches.Add(new TypeResolutionCandidate(asm.Name, type.Name, type.Kind, type.IsFileClass));
             }
         }
 
@@ -293,6 +311,10 @@ sealed class ReferenceMetadataIndex
                 }
 
                 var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
+                metadata.Types.Add(new DotKtTypeMetadata(
+                    type.FullName ?? type.Name,
+                    TypeKind(type),
+                    isFileClass));
 
                 foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                 {
@@ -377,6 +399,14 @@ sealed class ReferenceMetadataIndex
     static string TypeName(Type type) =>
         type.FullName ?? type.Name;
 
+    static string TypeKind(Type type)
+    {
+        if (type.IsInterface) return "interface";
+        if (type.IsEnum) return "enum";
+        if (type.IsValueType) return "struct";
+        return "class";
+    }
+
     static bool OwnerMatches(string requested, string candidate)
     {
         if (requested == candidate) return true;
@@ -407,6 +437,7 @@ sealed class ReferenceDotKtMetadata
 {
     public readonly List<NamespaceProjection> NamespaceProjections = new();
     public readonly List<string> FileClasses = new();
+    public readonly List<DotKtTypeMetadata> Types = new();
     public readonly List<DotKtMemberMetadata> Members = new();
     public readonly List<KotlinFunctionMetadata> Functions = new();
     public readonly List<string> Diagnostics = new();
@@ -415,6 +446,7 @@ sealed class ReferenceDotKtMetadata
     {
         ["namespaceProjections"] = new JsonArray(NamespaceProjections.Select(p => p.ToJson()).Cast<JsonNode>().ToArray()),
         ["fileClasses"] = new JsonArray(FileClasses.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
+        ["types"] = new JsonArray(Types.Select(t => t.ToJson()).Cast<JsonNode>().ToArray()),
         ["members"] = new JsonArray(Members.Select(m => m.ToJson()).Cast<JsonNode>().ToArray()),
         ["functions"] = new JsonArray(Functions.Select(f => f.ToJson()).Cast<JsonNode>().ToArray()),
         ["diagnostics"] = new JsonArray(Diagnostics.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
@@ -441,6 +473,16 @@ sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool 
     };
 }
 
+sealed record DotKtTypeMetadata(string Name, string Kind, bool IsFileClass)
+{
+    public JsonObject ToJson() => new()
+    {
+        ["name"] = Name,
+        ["kind"] = Kind,
+        ["isFileClass"] = IsFileClass,
+    };
+}
+
 sealed record DotKtMemberMetadata(
     string Kind,
     string Owner,
@@ -459,6 +501,26 @@ sealed record DotKtMemberMetadata(
         ["isFileClass"] = IsFileClass,
         ["parameterTypes"] = new JsonArray(ParameterTypes.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
         ["returnType"] = ReturnType,
+    };
+}
+
+sealed record TypeResolutionCandidate(string Assembly, string Name, string Kind, bool IsFileClass)
+{
+    public JsonObject ToJson() => new()
+    {
+        ["assembly"] = Assembly,
+        ["name"] = Name,
+        ["kind"] = Kind,
+        ["isFileClass"] = IsFileClass,
+    };
+
+    public JsonObject ToTypeRefJson() => new()
+    {
+        ["k"] = "clr.typeRef",
+        ["assembly"] = Assembly,
+        ["name"] = Name,
+        ["kind"] = Kind,
+        ["isFileClass"] = IsFileClass,
     };
 }
 
@@ -517,7 +579,9 @@ static class NativeCirEnvelope
                 .ToArray()),
             ["analysis"] = bir.Suspend.ToJson(),
             ["callSites"] = bir.Calls.ToJson(),
+            ["typeSites"] = bir.Types.ToJson(),
             ["resolutionDraft"] = ResolutionDraft.Create(bir.Calls, refs),
+            ["typeResolutionDraft"] = TypeResolutionDraft.Create(bir.Types, refs),
             ["cirDraft"] = NativeCirDraft.Create(bir, refs),
             ["bir"] = bir.Root.DeepClone(),
         };
@@ -530,6 +594,7 @@ static class NativeCirDraft
     {
         ["asyncFunctions"] = NativeAsyncCirDraft.Create(bir.Root),
         ["resolvedCalls"] = ResolvedCallCirDraft.Create(bir.Calls, refs),
+        ["resolvedTypes"] = ResolvedTypeCirDraft.Create(bir.Types, refs),
         ["loweredBir"] = NativeExpressionCirDraft.Create(bir.Root, bir.Calls, refs),
     };
 }
@@ -559,6 +624,35 @@ static class ResolutionDraft
         return new JsonObject
         {
             ["kotlinSymbolSites"] = resolutions,
+        };
+    }
+}
+
+static class TypeResolutionDraft
+{
+    public static JsonObject Create(TypeSiteAnalysis types, ReferenceMetadataIndex refs)
+    {
+        var resolutions = new JsonArray();
+        foreach (var site in types.Sites.Where(s => s.Status == "kotlin-symbol"))
+        {
+            var candidates = refs.Resolve(site);
+            resolutions.Add(new JsonObject
+            {
+                ["site"] = site.ToJson(),
+                ["candidateCount"] = candidates.Count,
+                ["status"] = candidates.Count switch
+                {
+                    0 => "unresolved-in-references",
+                    1 => "resolved-in-reference",
+                    _ => "ambiguous-in-references",
+                },
+                ["candidates"] = new JsonArray(candidates.Select(c => c.ToJson()).Cast<JsonNode>().ToArray()),
+            });
+        }
+
+        return new JsonObject
+        {
+            ["kotlinTypeSites"] = resolutions,
         };
     }
 }
@@ -624,6 +718,47 @@ static class ResolvedCallCirDraft
         if (site.Kind == "new") return "constructor";
         if (candidate.IsStatic || site.Kind is "callStatic" or "staticField") return "static";
         return "instance";
+    }
+}
+
+static class ResolvedTypeCirDraft
+{
+    public static JsonObject Create(TypeSiteAnalysis types, ReferenceMetadataIndex refs)
+    {
+        var lowerable = new JsonArray();
+        var unresolved = 0;
+        var ambiguous = 0;
+
+        foreach (var site in types.Sites.Where(s => s.Status == "kotlin-symbol"))
+        {
+            var candidates = refs.Resolve(site);
+            if (candidates.Count == 1)
+            {
+                lowerable.Add(new JsonObject
+                {
+                    ["k"] = "clr.typeRef",
+                    ["sourcePath"] = site.Path,
+                    ["sourceProperty"] = site.Property,
+                    ["sourceType"] = site.Type,
+                    ["typeRef"] = candidates[0].ToTypeRefJson(),
+                });
+                continue;
+            }
+
+            if (candidates.Count == 0) unresolved++;
+            else ambiguous++;
+        }
+
+        return new JsonObject
+        {
+            ["summary"] = new JsonObject
+            {
+                ["resolved"] = lowerable.Count,
+                ["unresolved"] = unresolved,
+                ["ambiguous"] = ambiguous,
+            },
+            ["types"] = lowerable,
+        };
     }
 }
 
@@ -712,6 +847,140 @@ static class NativeExpressionCirDraft
 }
 
 sealed record ResolvedSite(CallSite Site, IReadOnlyList<ResolutionCandidate> Candidates);
+
+sealed class TypeSiteAnalyzer
+{
+    static readonly HashSet<string> TypeProperties = new(StringComparer.Ordinal)
+    {
+        "type",
+        "ownerType",
+        "ret",
+        "retType",
+        "resultType",
+        "base",
+        "interfaces",
+    };
+
+    static readonly HashSet<string> PrimitiveTypes = new(StringComparer.Ordinal)
+    {
+        "bool",
+        "byte",
+        "char",
+        "double",
+        "float",
+        "int",
+        "long",
+        "object",
+        "short",
+        "string",
+        "ubyte",
+        "uint",
+        "ulong",
+        "ushort",
+        "void",
+    };
+
+    public static TypeSiteAnalysis Analyze(JsonNode root)
+    {
+        var sites = new List<TypeSite>();
+        Collect(root, "$", sites);
+        return new TypeSiteAnalysis(sites);
+    }
+
+    static void Collect(JsonNode node, string path, List<TypeSite> sites)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var child in obj)
+            {
+                if (child.Value == null) continue;
+                var childPath = path + "." + EscapePathSegment(child.Key);
+                if (TypeProperties.Contains(child.Key))
+                    CollectTypeProperty(child.Key, child.Value, childPath, sites);
+                Collect(child.Value, childPath, sites);
+            }
+        }
+        else if (node is JsonArray arr)
+        {
+            for (var i = 0; i < arr.Count; i++)
+                if (arr[i] != null)
+                    Collect(arr[i], path + "[" + i + "]", sites);
+        }
+    }
+
+    static void CollectTypeProperty(string property, JsonNode value, string path, List<TypeSite> sites)
+    {
+        if (value is JsonValue scalar && scalar.TryGetValue<string>(out var type))
+        {
+            AddType(property, path, type, sites);
+        }
+        else if (value is JsonArray arr)
+        {
+            for (var i = 0; i < arr.Count; i++)
+                if (arr[i] is JsonValue item && item.TryGetValue<string>(out var itemType))
+                    AddType(property, path + "[" + i + "]", itemType, sites);
+        }
+    }
+
+    static void AddType(string property, string path, string type, List<TypeSite> sites)
+    {
+        if (string.IsNullOrWhiteSpace(type)) return;
+        sites.Add(new TypeSite(
+            path,
+            property,
+            type,
+            NormalizeTypeName(type),
+            StatusFor(type)));
+    }
+
+    static string StatusFor(string type)
+    {
+        var normalized = NormalizeTypeName(type);
+        if (PrimitiveTypes.Contains(normalized)) return "already-clr";
+        if (normalized.StartsWith("clr:", StringComparison.Ordinal)) return "already-clr";
+        if (normalized.StartsWith("clrg:", StringComparison.Ordinal)) return "already-clr";
+        if (normalized.StartsWith("array:", StringComparison.Ordinal)) return "already-clr";
+        if (normalized.StartsWith("func:", StringComparison.Ordinal)) return "already-clr";
+        if (normalized.StartsWith("gp:", StringComparison.Ordinal)) return "already-clr";
+        return "kotlin-symbol";
+    }
+
+    static string NormalizeTypeName(string type) =>
+        type.Trim().TrimStart('@');
+
+    static string EscapePathSegment(string segment) =>
+        segment.Replace("~", "~0", StringComparison.Ordinal).Replace(".", "~1", StringComparison.Ordinal);
+}
+
+sealed record TypeSiteAnalysis(IReadOnlyList<TypeSite> Sites)
+{
+    public JsonObject ToJson()
+    {
+        var byStatus = Sites
+            .GroupBy(s => s.Status)
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        return new JsonObject
+        {
+            ["total"] = Sites.Count,
+            ["byStatus"] = new JsonObject(byStatus.ToDictionary(kv => kv.Key, kv => (JsonNode)JsonValue.Create(kv.Value))),
+            ["sites"] = new JsonArray(Sites.Select(s => s.ToJson()).Cast<JsonNode>().ToArray()),
+        };
+    }
+}
+
+sealed record TypeSite(string Path, string Property, string Type, string NormalizedType, string Status)
+{
+    public JsonObject ToJson() => new()
+    {
+        ["path"] = Path,
+        ["property"] = Property,
+        ["type"] = Type,
+        ["normalizedType"] = NormalizedType,
+        ["status"] = Status,
+    };
+}
 
 sealed class CallSiteAnalyzer
 {

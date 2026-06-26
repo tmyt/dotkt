@@ -94,6 +94,8 @@ Overload resolution is intentionally conservative at this stage. The resolver re
 
 Each site carries a stable JSON path into the original BIR payload. The path is the rewrite anchor for later native CIR transforms and lets `cirDraft.resolvedCalls` point back to the exact expression that can become a CLR node.
 
+`typeSites` performs the same inventory for BIR type strings such as `type`, `ownerType`, `ret`, `resultType`, `base`, and `interfaces`. `typeResolutionDraft` and `cirDraft.resolvedTypes` resolve only against referenced assembly types and emit draft `clr.typeRef` entries for unique matches.
+
 ## Native CIR Direction
 
 Native CIR should make CLR decisions explicit. The stable shape is still open, but v1 nodes should be named around CLR concepts rather than Kotlin frontend concepts:
