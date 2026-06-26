@@ -5,6 +5,7 @@
     <DotKtToolchainDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../tools/'))</DotKtToolchainDir>
     <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(DotKtToolchainDir)kotc/bin/kotc</DotKtCompiler>
     <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(DotKtToolchainDir)kotlin-stdlib.jar</DotKtStdlib>
+    <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(DotKtToolchainDir)bir2cir/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(DotKtToolchainDir)ilemit/ilemit.dll</DotKtIlEmit>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(DotKtToolchainDir)facadegen/facadegen.dll</DotKtFacadeGen>
     <!-- Repoints the emitted dll's BCL refs off System.Private.CoreLib so a C# project can <ProjectReference> it. -->

@@ -14,9 +14,9 @@ Kotlin via their real .NET types).
 
 ## Backend
 
-Direct IL, one path: **Kotlin IR → `BirEmitter` → `BIR` (JSON) → `ilemit` → CIL**. The output is
+Direct IL, one path: **Kotlin IR → `BirEmitter` → `BIR` (JSON) → `bir2cir` → `CIR` (JSON) → `ilemit` → CIL**. The output is
 [`ilverify`](https://github.com/dotnet/runtime/tree/main/src/coreclr/tools/ILVerify)-clean. (An earlier
-Kotlin-IR→C#-text oracle backend was retired and removed; BIR→ilemit is the sole backend.)
+Kotlin-IR→C#-text oracle backend was retired and removed; BIR→CIR→ilemit is the sole backend.)
 
 ## What works today
 
@@ -61,15 +61,17 @@ Prereqs: the repo's Gradle auto-provisions a JDK; you need the **.NET SDK 10**.
 ### Compile and run one file through the IL backend
 
 ```bash
-# 0. build the BIR→CIL tool once
+# 0. build the BIR→CIR and CIR→CIL tools once
 dotnet build toolchain/ilemit -c Release -o build/ilemit-bin
+dotnet build toolchain/bir2cir -c Release -o build/bir2cir-bin
 
 # 1. Kotlin → BIR (JSON).  One run also writes Foo.cs (the C# oracle) + KIR@Raw.txt (IR dump)
 STDLIB=$(find ~/.gradle/caches -name 'kotlin-stdlib-2.2.0.jar' | head -1)
 ./gradlew :kotc:run --args="$PWD/cases/m0/M0.kt -no-stdlib -classpath $STDLIB -d $PWD/build/out"
 
-# 2. BIR → CIL assembly
-dotnet build/ilemit-bin/ilemit.dll build/out M0Kt build/out/*.bir.json
+# 2. BIR → CIR → CIL assembly
+dotnet build/bir2cir-bin/bir2cir.dll build/cir build/out/*.bir.json
+dotnet build/ilemit-bin/ilemit.dll build/out M0Kt build/cir/*.cir.json
 
 # 3. run it
 dotnet build/out/M0Kt.dll          # -> sum = 5 / zero / n=1 / n=2
@@ -110,8 +112,9 @@ assembly via the chosen backend. See `cases/ktproj/` (C# path), `cases/ktproj-il
 |------|------|
 | `toolchain/kotc/` | the Kotlin→BIR compiler frontend (Kotlin/JVM gradle module; source package `kotc.*`) |
 | `toolchain/kotc/.../kotc/pipeline/ClrCliPipeline.kt` | driver: stock JVM phases + our backend phase |
-| `toolchain/kotc/.../kotc/backend/BirEmitter.kt` (+ `BirEmitterExpressions/Statements`, `BirMappings`) | **Kotlin IR → BIR** (all lowering lives here) |
-| `toolchain/ilemit/` | **BIR (JSON) → CIL** via `System.Reflection.Emit` (split: `Emitter.Expressions/Coroutines/Statements/Metadata`) |
+| `toolchain/kotc/.../kotc/backend/BirEmitter.kt` (+ `BirEmitterExpressions/Statements`, `BirMappings`) | **Kotlin IR → BIR** (currently still hosts legacy lowering being migrated to CIR) |
+| `toolchain/bir2cir/` | **BIR (JSON) → CIR (JSON)** lowering stage; currently compatibility-copy skeleton |
+| `toolchain/ilemit/` | **CIR-compatible JSON → CIL** via `System.Reflection.Emit` (split: `Emitter.Expressions/Coroutines/Statements/Metadata`) |
 | `toolchain/facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) |
 | `toolchain/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
 | `runtime/DotKt.Runtime/` | .NET runtime helpers + the `[Kotlin*]` round-trip metadata attributes |
@@ -120,14 +123,15 @@ assembly via the chosen backend. See `cases/ktproj/` (C# path), `cases/ktproj-il
 | `scripts/verify-il.sh` | IL differential + `ilverify` gate |
 | `scripts/verify-ktproj.sh` | MSBuild/.ktproj integration (IL backend) |
 | `docs/dotkt-semantics.md` | **how Kotlin maps to the CLR + where DotKt deliberately differs from Kotlin/JVM** |
+| `docs/design-fir-bir-cir-il.md` | backend layer contract and CIR migration target |
 | `docs/remaining-tasks.md` | the 1.0 ship checklist |
 
 ## How it works (design)
 
 The frontend is the **stock JVM pipeline** (Configuration → FIR → Fir2Ir); we own only the final
-backend phase, so resolution against the real `kotlin-stdlib` is correct. Lowering is concentrated
-in `BirEmitter` (Kotlin IR → a compact JSON "BIR"); `ilemit` stays thin and just emits CIL
-from BIR. Keeping lowering in BIR (rather than emitting IL straight from the structured AST) is what
+backend phase, so resolution against the real `kotlin-stdlib` is correct. Lowering is being split
+between `BirEmitter` (Kotlin IR → a compact JSON "BIR") and `bir2cir`; `ilemit` emits CIL
+from CIR-compatible JSON. Keeping lowering before IL emission (rather than emitting IL straight from the structured AST) is what
 makes control flow, generics-shaped overloads, nullable value types, etc. tractable.
 
 stdlib is mapped to the BCL at codegen (Kotlin's `inline` stdlib bodies are not present in our IR),

@@ -5,6 +5,7 @@
 <Project>
   <PropertyGroup>
     <DotKtOut>$(BaseIntermediateOutputPath)dotkt-bir</DotKtOut>
+    <DotKtCirOut>$(BaseIntermediateOutputPath)dotkt-cir</DotKtCirOut>
     <DotKtTypeMeta>$(BaseIntermediateOutputPath)dotkt-clrtypes.meta</DotKtTypeMeta>
     <!-- The .NET import list extracted from the .kt sources by the kotc scan-imports pass (PSI parser, not regex). -->
     <DotKtImportList>$(BaseIntermediateOutputPath)dotkt-clrimports.txt</DotKtImportList>
@@ -55,12 +56,24 @@
     </ItemGroup>
   </Target>
 
-  <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from BIR. The
-       copy-local references (DotKt.Runtime + the project's package/project references, NOT the BCL, which ilemit
-       resolves by runtime reflection) are preloaded into ilemit as references. -->
-  <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="KotlinCompile">
+  <Target Name="DotKtBir2Cir" BeforeTargets="DotKtIlEmit" DependsOnTargets="KotlinCompile">
     <ItemGroup>
       <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
+      <_DotKtBir2CirRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <_DotKtBir2CirRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Runtime'" />
+    </ItemGroup>
+    <RemoveDir Directories="$(DotKtCirOut)" />
+    <MakeDir Directories="$(DotKtCirOut)" />
+    <Message Importance="high" Text="DotKt: lowering BIR -> CIR" />
+    <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; &quot;$(DotKtCirOut)&quot; @(_DotKtBir2CirRef->'--ref &quot;%(FullPath)&quot;', ' ') @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
+  </Target>
+
+  <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The
+       copy-local references (DotKt.Runtime + the project's package/project references, NOT the BCL, which ilemit
+       resolves by runtime reflection) are preloaded into ilemit as references. -->
+  <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir">
+    <ItemGroup>
+      <_DotKtCir Include="$(DotKtCirOut)/*.cir.json" />
       <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
       <!-- DotKt.Runtime defines the [Kotlin*] metadata attribute types ilemit stamps so this library round-trips
            (is consumable AS KOTLIN by another .ktproj): [KotlinFileClass] on the file facade restores its statics as
@@ -70,10 +83,10 @@
            consumer's `import pkg.topLevelFn` resolves to nothing ("unresolved reference"). -->
       <_DotKtRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Runtime'" />
     </ItemGroup>
-    <Message Importance="high" Text="DotKt: emitting CIL from BIR -> $(TargetName)$(TargetExt)" />
+    <Message Importance="high" Text="DotKt: emitting CIL from CIR -> $(TargetName)$(TargetExt)" />
     <!-- <DotKtNamespaceProjection Include="kotlinx.coroutines=DotKt.Coroutines" /> -> [assembly: DotKtNamespaceProjection],
          so a consumer can import this library under its Kotlin package though its types live in a different .NET namespace. -->
-    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; @(_DotKtRef->'--ref &quot;%(FullPath)&quot;', ' ') @(DotKtNamespaceProjection->'--ns-projection &quot;%(Identity)&quot;', ' ') @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
+    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; @(_DotKtRef->'--ref &quot;%(FullPath)&quot;', ' ') @(DotKtNamespaceProjection->'--ns-projection &quot;%(Identity)&quot;', ' ') @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
   </Target>
 
   <!-- REVERSE interop (R-1): repoint the emitted dll's BCL TypeRefs off the single System.Private.CoreLib onto the

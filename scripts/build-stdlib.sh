@@ -20,10 +20,13 @@ FILES="$FILES $(find $SRC/annotations -name '*.kt' ! -name 'Native*.kt')"
 FILES="$FILES $(find $SRC/experimental -name '*.kt' ! -name '*ObjC*' ! -name '*Native*')"
 FILES="$FILES $SRC/uuid/ExperimentalUuidApi.kt $SRC/time/ExperimentalTime.kt $SRC/io/encoding/ExperimentalEncodingApi.kt $SRC/contextParameters/ExperimentalContextParameters.kt"
 
-BIR="$ROOT/build/stdlib-bir"; DLL="$ROOT/build/stdlib-dll"; rm -rf "$BIR" "$DLL"; mkdir -p "$BIR" "$DLL"
+BIR="$ROOT/build/stdlib-bir"; CIR="$ROOT/build/stdlib-cir"; DLL="$ROOT/build/stdlib-dll"; rm -rf "$BIR" "$CIR" "$DLL"; mkdir -p "$BIR" "$CIR" "$DLL"
 echo "== kotc: $(echo $FILES | wc -w) stdlib files -> BIR =="
 "$L" $FILES $FLAGS -d "$BIR"
-echo "== ilemit: BIR -> DotKt.Stdlib.dll =="
-dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$DLL" DotKt.Stdlib --ref "$RT" "$BIR"/*.bir.json
+echo "== bir2cir: BIR -> CIR =="
+[ -f "$ROOT/build/bir2cir-bin/bir2cir.dll" ] || dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo >/dev/null
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$CIR" --ref "$RT" "$BIR"/*.bir.json
+echo "== ilemit: CIR -> DotKt.Stdlib.dll =="
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$DLL" DotKt.Stdlib --ref "$RT" "$CIR"/*.cir.json
 echo "== built: $DLL/DotKt.Stdlib.dll =="
 ls -la "$DLL/DotKt.Stdlib.dll"

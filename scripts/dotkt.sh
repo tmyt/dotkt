@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dotkt — compile Kotlin (.kt) to a .NET assembly with the DotKt toolchain (kotc -> BIR -> ilemit -> CIL), from the
+# dotkt — compile Kotlin (.kt) to a .NET assembly with the DotKt toolchain (kotc -> BIR -> CIR -> ilemit -> CIL), from the
 # command line. A thin dev wrapper over the same pipeline the MSBuild targets / verify scripts drive, for quick
 # one-shot builds (handy while iterating on DotKt.Stdlib or trying a snippet).
 #
@@ -22,6 +22,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KOTC="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 ILEMIT="$ROOT/build/ilemit-bin/ilemit.dll"
+BIR2CIR="$ROOT/build/bir2cir-bin/bir2cir.dll"
 FACADEGEN="$ROOT/build/facadegen-bin/facadegen.dll"
 RETARGET="$ROOT/build/retarget-bin/retarget.dll"
 DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
@@ -59,13 +60,14 @@ done
 # --- bootstrap the toolchain if missing --------------------------------------------------------------------------
 [[ -x "$KOTC" ]] || { echo "dotkt: building kotc..." >&2; (cd "$ROOT" && ./gradlew -q :kotc:installDist); }
 [[ -f "$ILEMIT" ]] || { echo "dotkt: building ilemit..." >&2; dotnet build "$ROOT/toolchain/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo; }
+[[ -f "$BIR2CIR" ]] || { echo "dotkt: building bir2cir..." >&2; dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo; }
 [[ -f "$FACADEGEN" ]] || { echo "dotkt: building facadegen..." >&2; dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo; }
 [[ -f "$DOTKT_RT" ]] || { echo "dotkt: building DotKt.Runtime..." >&2; dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runtime" -v q --nologo; }
 if (( use_stdlib )) && [[ ! -f "$DOTKT_STDLIB" ]]; then echo "dotkt: building DotKt.Stdlib..." >&2; bash "$ROOT/scripts/build-dotkt-stdlib.sh" >/dev/null; fi
 if (( do_retarget )) && [[ ! -f "$RETARGET" ]]; then dotnet build "$ROOT/toolchain/retarget" -c Release -o "$ROOT/build/retarget-bin" -v q --nologo; fi
 
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
-bir="$work/bir"; mkdir -p "$bir" "$out_dir"
+bir="$work/bir"; cir="$work/cir"; mkdir -p "$bir" "$cir" "$out_dir"
 cp="$JAR"; [[ -n "$CORO" ]] && cp="$cp:$CORO"
 
 # Reference assemblies (compile-resolution refs for facadegen + ilemit). The runtime ref-pack lets facadegen reflect
@@ -86,14 +88,18 @@ dotnet "$FACADEGEN" --meta "$meta" --refs "$refs_semi" "${scan_asm[@]}" --import
 echo "dotkt: compiling ${#kts[@]} file(s) -> BIR" >&2
 CLR_TYPES_METADATA="$meta" "$KOTC" "${kts[@]}" -no-stdlib -classpath "$cp" -d "$bir"
 
-# 3. ilemit: BIR -> CIL.
-echo "dotkt: emitting $out_name.dll" >&2
-dotnet "$ILEMIT" "$out_dir" "$out_name" "${ilref_args[@]}" "$bir"/*.bir.json
+# 3. bir2cir: BIR -> CIR.
+echo "dotkt: lowering BIR -> CIR" >&2
+dotnet "$BIR2CIR" "$cir" "${ilref_args[@]}" "$bir"/*.bir.json >/dev/null
 
-# 4. optional retarget (for compile-time C# <Reference>).
+# 4. ilemit: CIR -> CIL.
+echo "dotkt: emitting $out_name.dll" >&2
+dotnet "$ILEMIT" "$out_dir" "$out_name" "${ilref_args[@]}" "$cir"/*.cir.json
+
+# 5. optional retarget (for compile-time C# <Reference>).
 (( do_retarget )) && dotnet "$RETARGET" "$out_dir/$out_name.dll" --refs "$refs_semi" >/dev/null
 
-# 5. exe scaffolding: copy copy-local refs + write a runtimeconfig so `dotnet <name>.dll` runs.
+# 6. exe scaffolding: copy copy-local refs + write a runtimeconfig so `dotnet <name>.dll` runs.
 if (( make_exe )); then
 	cp "$DOTKT_RT" "$out_dir/" 2>/dev/null || true
 	(( use_stdlib )) && cp "$DOTKT_STDLIB" "$out_dir/" 2>/dev/null || true

@@ -11,6 +11,7 @@
     <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(KotlinClrRoot)/toolchain/kotc/build/install/kotc/bin/kotc</DotKtCompiler>
     <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/toolchain/kotc/vendor/kotlin-stdlib.jar</DotKtStdlib>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</DotKtFacadeGen>
+    <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(KotlinClrRoot)/build/bir2cir-bin/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
     <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</DotKtRetargetTool>
     <DotKtStdlibAsm Condition="'$(DotKtStdlibAsm)' == ''">$(KotlinClrRoot)/build/dotkt-stdlib/DotKt.Stdlib.dll</DotKtStdlibAsm>
@@ -63,6 +64,10 @@
   <Target Name="EnsureIlEmit" BeforeTargets="DotKtIlEmit" Condition="!Exists('$(DotKtIlEmit)')">
     <Message Importance="high" Text="kotlin/clr: building ilemit (first run)..." />
     <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/ilemit&quot; -c Release -o &quot;$(KotlinClrRoot)/build/ilemit-bin&quot; -v q --nologo" />
+  </Target>
+  <Target Name="EnsureBir2Cir" BeforeTargets="DotKtBir2Cir" Condition="!Exists('$(DotKtBir2Cir)')">
+    <Message Importance="high" Text="kotlin/clr: building bir2cir (first run)..." />
+    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/bir2cir&quot; -c Release -o &quot;$(KotlinClrRoot)/build/bir2cir-bin&quot; -v q --nologo" />
   </Target>
   <Target Name="EnsureRetarget" BeforeTargets="DotKtRetarget" Condition="'$(DotKtRetarget)' != 'false' and !Exists('$(DotKtRetargetTool)')">
     <Message Importance="high" Text="kotlin/clr: building retarget (first run)..." />
