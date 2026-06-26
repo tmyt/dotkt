@@ -166,6 +166,24 @@ sealed class ReferenceMetadataIndex
     public int Count => _assemblies.Count;
     public IReadOnlyList<ReferenceAssembly> Assemblies => _assemblies;
 
+    public IReadOnlyList<ResolutionCandidate> Resolve(CallSite site)
+    {
+        if (site.Status != "kotlin-symbol") return Array.Empty<ResolutionCandidate>();
+
+        var matches = new List<ResolutionCandidate>();
+        foreach (var asm in _assemblies)
+        {
+            foreach (var member in asm.DotKt.Members)
+            {
+                if (site.TargetName != member.Name) continue;
+                if (site.TargetOwner.Length > 0 && !OwnerMatches(site.TargetOwner, member.Owner)) continue;
+                matches.Add(new ResolutionCandidate(asm.Name, member.Owner, member.Name, member.IsStatic, member.IsFileClass));
+            }
+        }
+
+        return matches;
+    }
+
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
     {
         var assemblies = new List<ReferenceAssembly>();
@@ -201,10 +219,21 @@ sealed class ReferenceMetadataIndex
             foreach (var type in SafeTypes(asm, metadata))
             {
                 if (HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr))
+                {
                     metadata.FileClasses.Add(type.FullName ?? type.Name);
+                }
+
+                var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
 
                 foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                 {
+                    if (method.IsPublic)
+                        metadata.Members.Add(new DotKtMemberMetadata(
+                            type.FullName ?? type.Name,
+                            method.Name,
+                            method.IsStatic,
+                            isFileClass));
+
                     var attrs = method.GetCustomAttributesData();
                     var flags = KotlinFunctionFlags(attrs);
                     var hasInline = HasAttribute(attrs, KotlinInlineAttr);
@@ -248,6 +277,20 @@ sealed class ReferenceMetadataIndex
         var value = attr.ConstructorArguments[0].Value;
         return value is int i ? i : 0;
     }
+
+    static bool OwnerMatches(string requested, string candidate)
+    {
+        if (requested == candidate) return true;
+        var bareRequested = StripTypeArgs(requested).TrimStart('@');
+        var bareCandidate = StripTypeArgs(candidate);
+        return bareRequested == bareCandidate || bareCandidate.EndsWith("." + bareRequested, StringComparison.Ordinal);
+    }
+
+    static string StripTypeArgs(string value)
+    {
+        var idx = value.IndexOf('[');
+        return idx >= 0 ? value[..idx] : value;
+    }
 }
 
 sealed record ReferenceAssembly(string Path, string Name, string Version, ReferenceDotKtMetadata DotKt)
@@ -265,6 +308,7 @@ sealed class ReferenceDotKtMetadata
 {
     public readonly List<NamespaceProjection> NamespaceProjections = new();
     public readonly List<string> FileClasses = new();
+    public readonly List<DotKtMemberMetadata> Members = new();
     public readonly List<KotlinFunctionMetadata> Functions = new();
     public readonly List<string> Diagnostics = new();
 
@@ -272,6 +316,7 @@ sealed class ReferenceDotKtMetadata
     {
         ["namespaceProjections"] = new JsonArray(NamespaceProjections.Select(p => p.ToJson()).Cast<JsonNode>().ToArray()),
         ["fileClasses"] = new JsonArray(FileClasses.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
+        ["members"] = new JsonArray(Members.Select(m => m.ToJson()).Cast<JsonNode>().ToArray()),
         ["functions"] = new JsonArray(Functions.Select(f => f.ToJson()).Cast<JsonNode>().ToArray()),
         ["diagnostics"] = new JsonArray(Diagnostics.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
     };
@@ -297,6 +342,29 @@ sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool 
     };
 }
 
+sealed record DotKtMemberMetadata(string Owner, string Name, bool IsStatic, bool IsFileClass)
+{
+    public JsonObject ToJson() => new()
+    {
+        ["owner"] = Owner,
+        ["name"] = Name,
+        ["isStatic"] = IsStatic,
+        ["isFileClass"] = IsFileClass,
+    };
+}
+
+sealed record ResolutionCandidate(string Assembly, string Owner, string Name, bool IsStatic, bool IsFileClass)
+{
+    public JsonObject ToJson() => new()
+    {
+        ["assembly"] = Assembly,
+        ["owner"] = Owner,
+        ["name"] = Name,
+        ["isStatic"] = IsStatic,
+        ["isFileClass"] = IsFileClass,
+    };
+}
+
 static class NativeCirEnvelope
 {
     public static JsonObject Create(BirFile bir, ReferenceMetadataIndex refs)
@@ -312,8 +380,38 @@ static class NativeCirEnvelope
                 .ToArray()),
             ["analysis"] = bir.Suspend.ToJson(),
             ["callSites"] = bir.Calls.ToJson(),
+            ["resolutionDraft"] = ResolutionDraft.Create(bir.Calls, refs),
             ["cirDraft"] = NativeAsyncCirDraft.Create(bir.Root),
             ["bir"] = bir.Root.DeepClone(),
+        };
+    }
+}
+
+static class ResolutionDraft
+{
+    public static JsonObject Create(CallSiteAnalysis calls, ReferenceMetadataIndex refs)
+    {
+        var resolutions = new JsonArray();
+        foreach (var site in calls.Sites.Where(s => s.Status == "kotlin-symbol"))
+        {
+            var candidates = refs.Resolve(site);
+            resolutions.Add(new JsonObject
+            {
+                ["site"] = site.ToJson(),
+                ["candidateCount"] = candidates.Count,
+                ["status"] = candidates.Count switch
+                {
+                    0 => "unresolved-in-references",
+                    1 => "resolved-in-reference",
+                    _ => "ambiguous-in-references",
+                },
+                ["candidates"] = new JsonArray(candidates.Select(c => c.ToJson()).Cast<JsonNode>().ToArray()),
+            });
+        }
+
+        return new JsonObject
+        {
+            ["kotlinSymbolSites"] = resolutions,
         };
     }
 }

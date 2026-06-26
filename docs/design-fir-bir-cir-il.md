@@ -64,11 +64,14 @@ The reference index currently records a small DotKt metadata surface:
 
 - assembly-level `DotKtNamespaceProjectionAttribute`
 - `[KotlinFileClass]` facade types
+- public members on referenced types
 - `[KotlinFunction]` flags
 - whether a method has `[KotlinInline]`
 - diagnostics for references that cannot be fully inspected
 
 This data is emitted in `--native-cir` under `references[].dotkt`. It is not yet used for rewriting, but it is the lookup source for later projection/type/inline lowering.
+
+`resolutionDraft` uses this reference-only index to probe `kotlin-symbol` call sites. It reports `resolved-in-reference`, `ambiguous-in-references`, or `unresolved-in-references`. It intentionally does not consult definitions from the current BIR module.
 
 ## Call Site Inventory
 
