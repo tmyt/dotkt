@@ -564,6 +564,7 @@ static class ResolvedCallCirDraft
         return new JsonObject
         {
             ["k"] = nodeKind,
+            ["sourcePath"] = site.Path,
             ["sourceKind"] = site.Kind,
             ["sourceOwner"] = site.Owner,
             ["sourceMethod"] = site.Method,
@@ -603,11 +604,11 @@ sealed class CallSiteAnalyzer
     public static CallSiteAnalysis Analyze(JsonNode root)
     {
         var sites = new List<CallSite>();
-        Collect(root, owner: null, method: null, sites);
+        Collect(root, owner: null, method: null, path: "$", sites);
         return new CallSiteAnalysis(sites);
     }
 
-    static void Collect(JsonNode node, string owner, string method, List<CallSite> sites)
+    static void Collect(JsonNode node, string owner, string method, string path, List<CallSite> sites)
     {
         if (node is JsonObject obj)
         {
@@ -621,19 +622,25 @@ sealed class CallSiteAnalyzer
 
             var kind = StringProp(obj, "k");
             if (kind != null && InterestingKinds.Contains(kind))
-                sites.Add(CallSite.From(kind, nextOwner, nextMethod, obj));
+                sites.Add(CallSite.From(kind, path, nextOwner, nextMethod, obj));
 
             foreach (var child in obj)
                 if (child.Value != null)
-                    Collect(child.Value, nextOwner, nextMethod, sites);
+                    Collect(child.Value, nextOwner, nextMethod, path + "." + EscapePathSegment(child.Key), sites);
         }
         else if (node is JsonArray arr)
         {
-            foreach (var item in arr)
+            for (var i = 0; i < arr.Count; i++)
+            {
+                var item = arr[i];
                 if (item != null)
-                    Collect(item, owner, method, sites);
+                    Collect(item, owner, method, path + "[" + i + "]", sites);
+            }
         }
     }
+
+    static string EscapePathSegment(string segment) =>
+        segment.Replace("~", "~0", StringComparison.Ordinal).Replace(".", "~1", StringComparison.Ordinal);
 
     static string StringProp(JsonObject obj, string name) => obj[name]?.GetValue<string>();
 }
@@ -656,9 +663,9 @@ sealed record CallSiteAnalysis(IReadOnlyList<CallSite> Sites)
     }
 }
 
-sealed record CallSite(string Kind, string Status, string Owner, string Method, string TargetOwner, string TargetName)
+sealed record CallSite(string Kind, string Path, string Status, string Owner, string Method, string TargetOwner, string TargetName)
 {
-    public static CallSite From(string kind, string owner, string method, JsonObject node)
+    public static CallSite From(string kind, string path, string owner, string method, JsonObject node)
     {
         var targetOwner = StringProp(node, "owner")
             ?? StringProp(node, "ownerType")
@@ -670,6 +677,7 @@ sealed record CallSite(string Kind, string Status, string Owner, string Method, 
 
         return new CallSite(
             kind,
+            path,
             StatusFor(kind, targetOwner),
             owner ?? "",
             method ?? "",
@@ -680,6 +688,7 @@ sealed record CallSite(string Kind, string Status, string Owner, string Method, 
     public JsonObject ToJson() => new()
     {
         ["kind"] = Kind,
+        ["path"] = Path,
         ["status"] = Status,
         ["owner"] = Owner,
         ["method"] = Method,

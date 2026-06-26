@@ -88,7 +88,7 @@ This is still native-CIR-only and does not rewrite compatibility output. Its pur
 - `already-clr`: a physical CLR-ish node already emitted by FIR -> BIR, such as `clrStatic`, `clrNew`, or a `clr:` / `clrg:` owner.
 - `kotlin-symbol`: a Kotlin symbol that still needs BIR -> CIR resolution, such as `callStatic`, `callInstance`, `new`, or `field`.
 
-This inventory is not a resolver yet. It exists so each future lowering move can be measured without changing compatibility output.
+Each site carries a stable JSON path into the original BIR payload. The path is the rewrite anchor for later native CIR transforms and lets `cirDraft.resolvedCalls` point back to the exact expression that can become a CLR node.
 
 ## Native CIR Direction
 
