@@ -64,7 +64,7 @@ The reference index currently records a small DotKt metadata surface:
 
 - assembly-level `DotKtNamespaceProjectionAttribute`
 - `[KotlinFileClass]` facade types
-- public members on referenced types
+- public constructors, fields, and methods on referenced types
 - `[KotlinFunction]` flags
 - whether a method has `[KotlinInline]`
 - diagnostics for references that cannot be fully inspected
@@ -72,6 +72,14 @@ The reference index currently records a small DotKt metadata surface:
 This data is emitted in `--native-cir` under `references[].dotkt`. It is not yet used for rewriting, but it is the lookup source for later projection/type/inline lowering.
 
 `resolutionDraft` uses this reference-only index to probe `kotlin-symbol` call sites. It reports `resolved-in-reference`, `ambiguous-in-references`, or `unresolved-in-references`. It intentionally does not consult definitions from the current BIR module.
+
+`cirDraft.resolvedCalls` is the first lowering-facing view over that data. For uniquely resolved reference symbols it emits draft CLR operations:
+
+- `new` -> `clr.newobj` with `clr.constructorRef`
+- `callStatic` / `callInstance` -> `clr.call` with `clr.methodRef`
+- field reads/writes -> `clr.ldfld` / `clr.ldsfld` / `clr.stfld` with `clr.fieldRef`
+
+This is still native-CIR-only and does not rewrite compatibility output. Its purpose is to make physical member references explicit before `ilemit` learns to consume native CIR.
 
 ## Call Site Inventory
 

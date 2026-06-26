@@ -175,14 +175,38 @@ sealed class ReferenceMetadataIndex
         {
             foreach (var member in asm.DotKt.Members)
             {
-                if (site.TargetName != member.Name) continue;
-                if (site.TargetOwner.Length > 0 && !OwnerMatches(site.TargetOwner, member.Owner)) continue;
-                matches.Add(new ResolutionCandidate(asm.Name, member.Owner, member.Name, member.IsStatic, member.IsFileClass));
+                if (!MemberKindMatches(site.Kind, member.Kind)) continue;
+                if (site.Kind == "new")
+                {
+                    if (!OwnerMatches(site.TargetOwner, member.Owner)) continue;
+                }
+                else
+                {
+                    if (site.TargetName != member.Name) continue;
+                    if (site.TargetOwner.Length > 0 && !OwnerMatches(site.TargetOwner, member.Owner)) continue;
+                }
+
+                matches.Add(new ResolutionCandidate(
+                    member.Kind,
+                    asm.Name,
+                    member.Owner,
+                    member.Name,
+                    member.IsStatic,
+                    member.IsFileClass,
+                    member.ParameterTypes,
+                    member.ReturnType));
             }
         }
 
         return matches;
     }
+
+    static bool MemberKindMatches(string siteKind, string memberKind) => siteKind switch
+    {
+        "new" => memberKind == "constructor",
+        "field" or "staticField" or "setFieldExpr" => memberKind == "field",
+        _ => memberKind == "method",
+    };
 
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
     {
@@ -225,14 +249,41 @@ sealed class ReferenceMetadataIndex
 
                 var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
 
+                foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    metadata.Members.Add(new DotKtMemberMetadata(
+                        "constructor",
+                        type.FullName ?? type.Name,
+                        ".ctor",
+                        false,
+                        isFileClass,
+                        ctor.GetParameters().Select(p => TypeName(p.ParameterType)).ToList(),
+                        type.FullName ?? type.Name));
+                }
+
+                foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    metadata.Members.Add(new DotKtMemberMetadata(
+                        "field",
+                        type.FullName ?? type.Name,
+                        field.Name,
+                        field.IsStatic,
+                        isFileClass,
+                        Array.Empty<string>(),
+                        TypeName(field.FieldType)));
+                }
+
                 foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                 {
                     if (method.IsPublic)
                         metadata.Members.Add(new DotKtMemberMetadata(
+                            "method",
                             type.FullName ?? type.Name,
                             method.Name,
                             method.IsStatic,
-                            isFileClass));
+                            isFileClass,
+                            method.GetParameters().Select(p => TypeName(p.ParameterType)).ToList(),
+                            TypeName(method.ReturnType)));
 
                     var attrs = method.GetCustomAttributesData();
                     var flags = KotlinFunctionFlags(attrs);
@@ -277,6 +328,9 @@ sealed class ReferenceMetadataIndex
         var value = attr.ConstructorArguments[0].Value;
         return value is int i ? i : 0;
     }
+
+    static string TypeName(Type type) =>
+        type.FullName ?? type.Name;
 
     static bool OwnerMatches(string requested, string candidate)
     {
@@ -342,26 +396,64 @@ sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool 
     };
 }
 
-sealed record DotKtMemberMetadata(string Owner, string Name, bool IsStatic, bool IsFileClass)
+sealed record DotKtMemberMetadata(
+    string Kind,
+    string Owner,
+    string Name,
+    bool IsStatic,
+    bool IsFileClass,
+    IReadOnlyList<string> ParameterTypes,
+    string ReturnType)
 {
     public JsonObject ToJson() => new()
     {
+        ["kind"] = Kind,
         ["owner"] = Owner,
         ["name"] = Name,
         ["isStatic"] = IsStatic,
         ["isFileClass"] = IsFileClass,
+        ["parameterTypes"] = new JsonArray(ParameterTypes.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
+        ["returnType"] = ReturnType,
     };
 }
 
-sealed record ResolutionCandidate(string Assembly, string Owner, string Name, bool IsStatic, bool IsFileClass)
+sealed record ResolutionCandidate(
+    string Kind,
+    string Assembly,
+    string Owner,
+    string Name,
+    bool IsStatic,
+    bool IsFileClass,
+    IReadOnlyList<string> ParameterTypes,
+    string ReturnType)
 {
     public JsonObject ToJson() => new()
     {
+        ["kind"] = Kind,
         ["assembly"] = Assembly,
         ["owner"] = Owner,
         ["name"] = Name,
         ["isStatic"] = IsStatic,
         ["isFileClass"] = IsFileClass,
+        ["parameterTypes"] = new JsonArray(ParameterTypes.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
+        ["returnType"] = ReturnType,
+    };
+
+    public JsonObject ToMemberRefJson() => new()
+    {
+        ["k"] = Kind switch
+        {
+            "constructor" => "clr.constructorRef",
+            "field" => "clr.fieldRef",
+            _ => "clr.methodRef",
+        },
+        ["assembly"] = Assembly,
+        ["owner"] = Owner,
+        ["name"] = Name,
+        ["isStatic"] = IsStatic,
+        ["isFileClass"] = IsFileClass,
+        ["parameterTypes"] = new JsonArray(ParameterTypes.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
+        ["returnType"] = ReturnType,
     };
 }
 
@@ -381,10 +473,19 @@ static class NativeCirEnvelope
             ["analysis"] = bir.Suspend.ToJson(),
             ["callSites"] = bir.Calls.ToJson(),
             ["resolutionDraft"] = ResolutionDraft.Create(bir.Calls, refs),
-            ["cirDraft"] = NativeAsyncCirDraft.Create(bir.Root),
+            ["cirDraft"] = NativeCirDraft.Create(bir, refs),
             ["bir"] = bir.Root.DeepClone(),
         };
     }
+}
+
+static class NativeCirDraft
+{
+    public static JsonObject Create(BirFile bir, ReferenceMetadataIndex refs) => new()
+    {
+        ["asyncFunctions"] = NativeAsyncCirDraft.Create(bir.Root),
+        ["resolvedCalls"] = ResolvedCallCirDraft.Create(bir.Calls, refs),
+    };
 }
 
 static class ResolutionDraft
@@ -413,6 +514,69 @@ static class ResolutionDraft
         {
             ["kotlinSymbolSites"] = resolutions,
         };
+    }
+}
+
+static class ResolvedCallCirDraft
+{
+    public static JsonObject Create(CallSiteAnalysis calls, ReferenceMetadataIndex refs)
+    {
+        var lowerable = new JsonArray();
+        var unresolved = 0;
+        var ambiguous = 0;
+
+        foreach (var site in calls.Sites.Where(s => s.Status == "kotlin-symbol"))
+        {
+            var candidates = refs.Resolve(site);
+            if (candidates.Count == 1)
+            {
+                lowerable.Add(CreateResolvedCall(site, candidates[0]));
+                continue;
+            }
+
+            if (candidates.Count == 0) unresolved++;
+            else ambiguous++;
+        }
+
+        return new JsonObject
+        {
+            ["summary"] = new JsonObject
+            {
+                ["resolved"] = lowerable.Count,
+                ["unresolved"] = unresolved,
+                ["ambiguous"] = ambiguous,
+            },
+            ["calls"] = lowerable,
+        };
+    }
+
+    static JsonObject CreateResolvedCall(CallSite site, ResolutionCandidate candidate)
+    {
+        var nodeKind = site.Kind switch
+        {
+            "new" => "clr.newobj",
+            "field" => "clr.ldfld",
+            "staticField" => "clr.ldsfld",
+            "setFieldExpr" => "clr.stfld",
+            _ => "clr.call",
+        };
+
+        return new JsonObject
+        {
+            ["k"] = nodeKind,
+            ["sourceKind"] = site.Kind,
+            ["sourceOwner"] = site.Owner,
+            ["sourceMethod"] = site.Method,
+            ["memberRef"] = candidate.ToMemberRefJson(),
+            ["dispatch"] = DispatchFor(site, candidate),
+        };
+    }
+
+    static string DispatchFor(CallSite site, ResolutionCandidate candidate)
+    {
+        if (site.Kind == "new") return "constructor";
+        if (candidate.IsStatic || site.Kind is "callStatic" or "staticField") return "static";
+        return "instance";
     }
 }
 
@@ -452,7 +616,7 @@ sealed class CallSiteAnalyzer
 
             if (obj["kind"]?.GetValue<string>() is "class" or "interface")
                 nextOwner = StringProp(obj, "name") ?? owner;
-            if (obj["params"] is JsonArray && obj["body"] is JsonArray || obj["steps"] is JsonArray)
+            if ((obj["params"] is JsonArray && obj["body"] is JsonArray) || obj["steps"] is JsonArray)
                 nextMethod = StringProp(obj, "name") ?? method;
 
             var kind = StringProp(obj, "k");
@@ -535,14 +699,11 @@ sealed record CallSite(string Kind, string Status, string Owner, string Method, 
 
 static class NativeAsyncCirDraft
 {
-    public static JsonObject Create(JsonNode root)
+    public static JsonArray Create(JsonNode root)
     {
         var functions = new JsonArray();
         CollectFileMethods(root, owner: null, functions);
-        return new JsonObject
-        {
-            ["asyncFunctions"] = functions,
-        };
+        return functions;
     }
 
     static void CollectFileMethods(JsonNode node, string owner, JsonArray functions)
