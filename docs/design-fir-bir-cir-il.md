@@ -81,6 +81,8 @@ This data is emitted in `--native-cir` under `references[].dotkt`. It is not yet
 
 This is still native-CIR-only and does not rewrite compatibility output. Its purpose is to make physical member references explicit before `ilemit` learns to consume native CIR.
 
+`cirDraft.loweredBir` is an intermediate native-only tree used while the real CIR schema is still forming. It clones the original BIR payload and replaces uniquely resolved reference call sites at their JSON paths with draft CLR nodes. Unresolved and ambiguous sites are left in their original BIR form.
+
 ## Call Site Inventory
 
 `--native-cir` emits `callSites` as an observation aid for the TypeLowering migration. It scans BIR expressions and classifies call/member/type sites as:

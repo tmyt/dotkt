@@ -485,6 +485,7 @@ static class NativeCirDraft
     {
         ["asyncFunctions"] = NativeAsyncCirDraft.Create(bir.Root),
         ["resolvedCalls"] = ResolvedCallCirDraft.Create(bir.Calls, refs),
+        ["loweredBir"] = NativeExpressionCirDraft.Create(bir.Root, bir.Calls, refs),
     };
 }
 
@@ -580,6 +581,92 @@ static class ResolvedCallCirDraft
         return "instance";
     }
 }
+
+static class NativeExpressionCirDraft
+{
+    public static JsonNode Create(JsonNode root, CallSiteAnalysis calls, ReferenceMetadataIndex refs)
+    {
+        var resolved = calls.Sites
+            .Where(s => s.Status == "kotlin-symbol")
+            .Select(s => new ResolvedSite(s, refs.Resolve(s)))
+            .Where(r => r.Candidates.Count == 1)
+            .ToDictionary(r => r.Site.Path, r => r, StringComparer.Ordinal);
+
+        return LowerNode(root, "$", resolved);
+    }
+
+    static JsonNode LowerNode(JsonNode node, string path, IReadOnlyDictionary<string, ResolvedSite> resolved)
+    {
+        if (node is JsonObject obj)
+        {
+            if (resolved.TryGetValue(path, out var site))
+                return LowerResolvedExpression(obj, path, site.Site, site.Candidates[0], resolved);
+
+            var copy = new JsonObject();
+            foreach (var child in obj)
+                copy[child.Key] = child.Value == null
+                    ? null
+                    : LowerNode(child.Value, path + "." + EscapePathSegment(child.Key), resolved);
+            return copy;
+        }
+
+        if (node is JsonArray arr)
+        {
+            var copy = new JsonArray();
+            for (var i = 0; i < arr.Count; i++)
+                copy.Add(arr[i] == null ? null : LowerNode(arr[i], path + "[" + i + "]", resolved));
+            return copy;
+        }
+
+        return node.DeepClone();
+    }
+
+    static JsonObject LowerResolvedExpression(
+        JsonObject obj,
+        string path,
+        CallSite site,
+        ResolutionCandidate candidate,
+        IReadOnlyDictionary<string, ResolvedSite> resolved)
+    {
+        var lowered = new JsonObject
+        {
+            ["k"] = NodeKindFor(site.Kind),
+            ["sourcePath"] = site.Path,
+            ["sourceKind"] = site.Kind,
+            ["memberRef"] = candidate.ToMemberRefJson(),
+        };
+
+        if (obj["recv"] is JsonNode recv)
+            lowered["recv"] = LowerNode(recv, path + ".recv", resolved);
+        if (obj["args"] is JsonNode args)
+            lowered["args"] = LowerNode(args, path + ".args", resolved);
+        if (obj["value"] is JsonNode value)
+            lowered["value"] = LowerNode(value, path + ".value", resolved);
+
+        if (site.Kind is "callStatic" or "callInstance")
+        {
+            lowered["dispatch"] = candidate.IsStatic || site.Kind == "callStatic" ? "static" : "instance";
+            if (obj["virtual"] != null)
+                lowered["virtual"] = obj["virtual"]?.DeepClone();
+        }
+
+        return lowered;
+    }
+
+    static string NodeKindFor(string siteKind) => siteKind switch
+    {
+        "new" => "clr.newobj",
+        "field" => "clr.ldfld",
+        "staticField" => "clr.ldsfld",
+        "setFieldExpr" => "clr.stfld",
+        _ => "clr.call",
+    };
+
+    static string EscapePathSegment(string segment) =>
+        segment.Replace("~", "~0", StringComparison.Ordinal).Replace(".", "~1", StringComparison.Ordinal);
+}
+
+sealed record ResolvedSite(CallSite Site, IReadOnlyList<ResolutionCandidate> Candidates);
 
 sealed class CallSiteAnalyzer
 {
