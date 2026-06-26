@@ -70,6 +70,15 @@ The reference index currently records a small DotKt metadata surface:
 
 This data is emitted in `--native-cir` under `references[].dotkt`. It is not yet used for rewriting, but it is the lookup source for later projection/type/inline lowering.
 
+## Call Site Inventory
+
+`--native-cir` emits `callSites` as an observation aid for the TypeLowering migration. It scans BIR expressions and classifies call/member/type sites as:
+
+- `already-clr`: a physical CLR-ish node already emitted by FIR -> BIR, such as `clrStatic`, `clrNew`, or a `clr:` / `clrg:` owner.
+- `kotlin-symbol`: a Kotlin symbol that still needs BIR -> CIR resolution, such as `callStatic`, `callInstance`, `new`, or `field`.
+
+This inventory is not a resolver yet. It exists so each future lowering move can be measured without changing compatibility output.
+
 ## Native CIR Direction
 
 Native CIR should make CLR decisions explicit. The stable shape is still open, but v1 nodes should be named around CLR concepts rather than Kotlin frontend concepts:

@@ -58,7 +58,12 @@ sealed class Pipeline
             var path = Path.GetFullPath(input);
             var json = File.ReadAllText(path);
             var root = JsonNode.Parse(json) ?? throw new UsageException($"bir2cir: invalid JSON root: {path}");
-            files.Add(new BirFile(path, json, root, SuspendShapeAnalyzer.Analyze(root)));
+            files.Add(new BirFile(
+                path,
+                json,
+                root,
+                SuspendShapeAnalyzer.Analyze(root),
+                CallSiteAnalyzer.Analyze(root)));
         }
 
         return files;
@@ -144,7 +149,7 @@ enum OutputMode
     NativeCir,
 }
 
-sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend);
+sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend, CallSiteAnalysis Calls);
 sealed record CirFile(string OutputName, string Json);
 
 sealed class ReferenceMetadataIndex
@@ -306,10 +311,128 @@ static class NativeCirEnvelope
                 .Cast<JsonNode>()
                 .ToArray()),
             ["analysis"] = bir.Suspend.ToJson(),
+            ["callSites"] = bir.Calls.ToJson(),
             ["cirDraft"] = NativeAsyncCirDraft.Create(bir.Root),
             ["bir"] = bir.Root.DeepClone(),
         };
     }
+}
+
+sealed class CallSiteAnalyzer
+{
+    static readonly HashSet<string> InterestingKinds = new(StringComparer.Ordinal)
+    {
+        "callStatic",
+        "callInstance",
+        "new",
+        "field",
+        "staticField",
+        "setFieldExpr",
+        "clrStatic",
+        "clrGenericStatic",
+        "clrInstance",
+        "clrGenericInstance",
+        "clrNew",
+        "clrPropGet",
+        "clrPropSet",
+        "clrStaticField",
+    };
+
+    public static CallSiteAnalysis Analyze(JsonNode root)
+    {
+        var sites = new List<CallSite>();
+        Collect(root, owner: null, method: null, sites);
+        return new CallSiteAnalysis(sites);
+    }
+
+    static void Collect(JsonNode node, string owner, string method, List<CallSite> sites)
+    {
+        if (node is JsonObject obj)
+        {
+            var nextOwner = owner;
+            var nextMethod = method;
+
+            if (obj["kind"]?.GetValue<string>() is "class" or "interface")
+                nextOwner = StringProp(obj, "name") ?? owner;
+            if (obj["params"] is JsonArray && obj["body"] is JsonArray || obj["steps"] is JsonArray)
+                nextMethod = StringProp(obj, "name") ?? method;
+
+            var kind = StringProp(obj, "k");
+            if (kind != null && InterestingKinds.Contains(kind))
+                sites.Add(CallSite.From(kind, nextOwner, nextMethod, obj));
+
+            foreach (var child in obj)
+                if (child.Value != null)
+                    Collect(child.Value, nextOwner, nextMethod, sites);
+        }
+        else if (node is JsonArray arr)
+        {
+            foreach (var item in arr)
+                if (item != null)
+                    Collect(item, owner, method, sites);
+        }
+    }
+
+    static string StringProp(JsonObject obj, string name) => obj[name]?.GetValue<string>();
+}
+
+sealed record CallSiteAnalysis(IReadOnlyList<CallSite> Sites)
+{
+    public JsonObject ToJson()
+    {
+        var byStatus = Sites
+            .GroupBy(s => s.Status)
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        return new JsonObject
+        {
+            ["total"] = Sites.Count,
+            ["byStatus"] = new JsonObject(byStatus.ToDictionary(kv => kv.Key, kv => (JsonNode)JsonValue.Create(kv.Value))),
+            ["sites"] = new JsonArray(Sites.Select(s => s.ToJson()).Cast<JsonNode>().ToArray()),
+        };
+    }
+}
+
+sealed record CallSite(string Kind, string Status, string Owner, string Method, string TargetOwner, string TargetName)
+{
+    public static CallSite From(string kind, string owner, string method, JsonObject node)
+    {
+        var targetOwner = StringProp(node, "owner")
+            ?? StringProp(node, "ownerType")
+            ?? StringProp(node, "type")
+            ?? "";
+        var targetName = StringProp(node, "method")
+            ?? StringProp(node, "name")
+            ?? "";
+
+        return new CallSite(
+            kind,
+            StatusFor(kind, targetOwner),
+            owner ?? "",
+            method ?? "",
+            targetOwner,
+            targetName);
+    }
+
+    public JsonObject ToJson() => new()
+    {
+        ["kind"] = Kind,
+        ["status"] = Status,
+        ["owner"] = Owner,
+        ["method"] = Method,
+        ["targetOwner"] = TargetOwner,
+        ["targetName"] = TargetName,
+    };
+
+    static string StatusFor(string kind, string targetOwner)
+    {
+        if (kind.StartsWith("clr", StringComparison.Ordinal)) return "already-clr";
+        if (targetOwner.StartsWith("clr:", StringComparison.Ordinal) || targetOwner.StartsWith("clrg:", StringComparison.Ordinal)) return "already-clr";
+        return "kotlin-symbol";
+    }
+
+    static string StringProp(JsonObject obj, string name) => obj[name]?.GetValue<string>();
 }
 
 static class NativeAsyncCirDraft
