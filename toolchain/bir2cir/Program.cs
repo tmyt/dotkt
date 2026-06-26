@@ -149,6 +149,11 @@ sealed record CirFile(string OutputName, string Json);
 
 sealed class ReferenceMetadataIndex
 {
+    const string KotlinFileClassAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
+    const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
+    const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
+    const string DotKtNamespaceProjectionAttr = "DotKt.Runtime.CompilerServices.DotKtNamespaceProjectionAttribute";
+
     readonly List<ReferenceAssembly> _assemblies;
 
     ReferenceMetadataIndex(List<ReferenceAssembly> assemblies) => _assemblies = assemblies;
@@ -168,14 +173,124 @@ sealed class ReferenceMetadataIndex
             assemblies.Add(new ReferenceAssembly(
                 reference,
                 identity.Name ?? Path.GetFileNameWithoutExtension(reference),
-                identity.Version?.ToString() ?? ""));
+                identity.Version?.ToString() ?? "",
+                ReadDotKtMetadata(reference)));
         }
 
         return new ReferenceMetadataIndex(assemblies);
     }
+
+    static ReferenceDotKtMetadata ReadDotKtMetadata(string reference)
+    {
+        var metadata = new ReferenceDotKtMetadata();
+        try
+        {
+            var asm = Assembly.LoadFrom(reference);
+
+            foreach (var attr in asm.GetCustomAttributesData())
+                if (attr.AttributeType.FullName == DotKtNamespaceProjectionAttr && attr.ConstructorArguments.Count == 2)
+                    metadata.NamespaceProjections.Add(new NamespaceProjection(
+                        attr.ConstructorArguments[0].Value?.ToString() ?? "",
+                        attr.ConstructorArguments[1].Value?.ToString() ?? ""));
+
+            foreach (var type in SafeTypes(asm, metadata))
+            {
+                if (HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr))
+                    metadata.FileClasses.Add(type.FullName ?? type.Name);
+
+                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    var attrs = method.GetCustomAttributesData();
+                    var flags = KotlinFunctionFlags(attrs);
+                    var hasInline = HasAttribute(attrs, KotlinInlineAttr);
+                    if (flags != 0 || hasInline)
+                        metadata.Functions.Add(new KotlinFunctionMetadata(
+                            type.FullName ?? type.Name,
+                            method.Name,
+                            flags,
+                            hasInline));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            metadata.Diagnostics.Add($"{Path.GetFileName(reference)}: metadata scan failed: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        return metadata;
+    }
+
+    static IEnumerable<Type> SafeTypes(Assembly asm, ReferenceDotKtMetadata metadata)
+    {
+        try
+        {
+            return asm.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            metadata.Diagnostics.Add($"{asm.GetName().Name}: partial type load: {ex.LoaderExceptions.Length} loader exception(s)");
+            return ex.Types.Where(t => t != null).Cast<Type>();
+        }
+    }
+
+    static bool HasAttribute(IList<CustomAttributeData> attrs, string fullName) =>
+        attrs.Any(a => a.AttributeType.FullName == fullName);
+
+    static int KotlinFunctionFlags(IList<CustomAttributeData> attrs)
+    {
+        var attr = attrs.FirstOrDefault(a => a.AttributeType.FullName == KotlinFunctionAttr);
+        if (attr == null || attr.ConstructorArguments.Count == 0) return 0;
+        var value = attr.ConstructorArguments[0].Value;
+        return value is int i ? i : 0;
+    }
 }
 
-sealed record ReferenceAssembly(string Path, string Name, string Version);
+sealed record ReferenceAssembly(string Path, string Name, string Version, ReferenceDotKtMetadata DotKt)
+{
+    public JsonObject ToJson() => new()
+    {
+        ["path"] = Path,
+        ["name"] = Name,
+        ["version"] = Version,
+        ["dotkt"] = DotKt.ToJson(),
+    };
+}
+
+sealed class ReferenceDotKtMetadata
+{
+    public readonly List<NamespaceProjection> NamespaceProjections = new();
+    public readonly List<string> FileClasses = new();
+    public readonly List<KotlinFunctionMetadata> Functions = new();
+    public readonly List<string> Diagnostics = new();
+
+    public JsonObject ToJson() => new()
+    {
+        ["namespaceProjections"] = new JsonArray(NamespaceProjections.Select(p => p.ToJson()).Cast<JsonNode>().ToArray()),
+        ["fileClasses"] = new JsonArray(FileClasses.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
+        ["functions"] = new JsonArray(Functions.Select(f => f.ToJson()).Cast<JsonNode>().ToArray()),
+        ["diagnostics"] = new JsonArray(Diagnostics.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
+    };
+}
+
+sealed record NamespaceProjection(string KotlinPrefix, string DotNetPrefix)
+{
+    public JsonObject ToJson() => new()
+    {
+        ["kotlinPrefix"] = KotlinPrefix,
+        ["dotNetPrefix"] = DotNetPrefix,
+    };
+}
+
+sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool HasInlineBody)
+{
+    public JsonObject ToJson() => new()
+    {
+        ["owner"] = Owner,
+        ["name"] = Name,
+        ["flags"] = Flags,
+        ["hasInlineBody"] = HasInlineBody,
+    };
+}
 
 static class NativeCirEnvelope
 {
@@ -187,12 +302,7 @@ static class NativeCirEnvelope
             ["mode"] = "native-cir-skeleton",
             ["sourcePath"] = bir.Path,
             ["references"] = new JsonArray(refs.Assemblies
-                .Select(r => new JsonObject
-                {
-                    ["path"] = r.Path,
-                    ["name"] = r.Name,
-                    ["version"] = r.Version,
-                })
+                .Select(r => r.ToJson())
                 .Cast<JsonNode>()
                 .ToArray()),
             ["analysis"] = bir.Suspend.ToJson(),

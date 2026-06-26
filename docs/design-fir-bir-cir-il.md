@@ -56,6 +56,20 @@ Each draft async function also carries `loweringStatus`:
 
 The draft lets the async shape evolve independently from `ilemit`; compatibility mode remains byte-for-byte BIR-compatible.
 
+## Reference Metadata Index
+
+`bir2cir` builds its projection input only from `--ref` assemblies. Current-module BIR attributes are deliberately not read as projection metadata.
+
+The reference index currently records a small DotKt metadata surface:
+
+- assembly-level `DotKtNamespaceProjectionAttribute`
+- `[KotlinFileClass]` facade types
+- `[KotlinFunction]` flags
+- whether a method has `[KotlinInline]`
+- diagnostics for references that cannot be fully inspected
+
+This data is emitted in `--native-cir` under `references[].dotkt`. It is not yet used for rewriting, but it is the lookup source for later projection/type/inline lowering.
+
 ## Native CIR Direction
 
 Native CIR should make CLR decisions explicit. The stable shape is still open, but v1 nodes should be named around CLR concepts rather than Kotlin frontend concepts:
