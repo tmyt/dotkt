@@ -185,6 +185,7 @@ sealed class ReferenceMetadataIndex
                     if (site.TargetName != member.Name) continue;
                     if (site.TargetOwner.Length > 0 && !OwnerMatches(site.TargetOwner, member.Owner)) continue;
                 }
+                if (!ArityMatches(site, member)) continue;
 
                 matches.Add(new ResolutionCandidate(
                     member.Kind,
@@ -207,6 +208,12 @@ sealed class ReferenceMetadataIndex
         "field" or "staticField" or "setFieldExpr" => memberKind == "field",
         _ => memberKind == "method",
     };
+
+    static bool ArityMatches(CallSite site, DotKtMemberMetadata member)
+    {
+        if (member.Kind == "field") return true;
+        return site.ArgCount < 0 || member.ParameterTypes.Count == site.ArgCount;
+    }
 
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
     {
@@ -750,7 +757,7 @@ sealed record CallSiteAnalysis(IReadOnlyList<CallSite> Sites)
     }
 }
 
-sealed record CallSite(string Kind, string Path, string Status, string Owner, string Method, string TargetOwner, string TargetName)
+sealed record CallSite(string Kind, string Path, string Status, string Owner, string Method, string TargetOwner, string TargetName, int ArgCount)
 {
     public static CallSite From(string kind, string path, string owner, string method, JsonObject node)
     {
@@ -769,7 +776,8 @@ sealed record CallSite(string Kind, string Path, string Status, string Owner, st
             owner ?? "",
             method ?? "",
             targetOwner,
-            targetName);
+            targetName,
+            node["args"] is JsonArray args ? args.Count : -1);
     }
 
     public JsonObject ToJson() => new()
@@ -781,6 +789,7 @@ sealed record CallSite(string Kind, string Path, string Status, string Owner, st
         ["method"] = Method,
         ["targetOwner"] = TargetOwner,
         ["targetName"] = TargetName,
+        ["argCount"] = ArgCount,
     };
 
     static string StatusFor(string kind, string targetOwner)
