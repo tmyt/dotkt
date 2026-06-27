@@ -1492,6 +1492,29 @@ static class ExecutableCirDraft
                 lowered = native;
                 return true;
             }
+            case "constrainedCall":
+            {
+                // `a.compareTo(b)` -> constrained. recvType; callvirt IComparable<T>::CompareTo. A fixed BCL
+                // target (no overload/metadata resolution), so it is Basic Lowering. The receiver is taken by
+                // managed pointer in the ilemit consumer (EmitAddr).
+                var native = new JsonObject
+                {
+                    ["k"] = "clr.constrained.compareTo",
+                    ["sourcePath"] = path,
+                    ["sourceKind"] = "constrainedCall",
+                    ["method"] = obj["method"]?.DeepClone(),
+                };
+                if (obj["recvType"] is JsonNode recvType)
+                    native["recvType"] = LowerTypeOrNode(recvType, path + ".recvType", resolvedCalls, resolvedTypes, refs);
+                if (obj["iface"] is JsonNode iface)
+                    native["iface"] = LowerTypeOrNode(iface, path + ".iface", resolvedCalls, resolvedTypes, refs);
+                if (obj["recv"] is JsonNode recv)
+                    native["recv"] = LowerTypeOrNode(recv, path + ".recv", resolvedCalls, resolvedTypes, refs);
+                if (obj["arg"] is JsonNode arg)
+                    native["arg"] = LowerTypeOrNode(arg, path + ".arg", resolvedCalls, resolvedTypes, refs);
+                lowered = native;
+                return true;
+            }
             default:
                 return false;
         }

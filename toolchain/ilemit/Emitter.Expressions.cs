@@ -121,6 +121,7 @@ sealed partial class Emitter
                 return RetOr(e, m == m0 ? rt : mrt);
             }
             case "constrainedCall":
+            case "clr.constrained.compareTo":
             {
                 // `a.compareTo(b)` on a Comparable -> `constrained. recvType; callvirt IComparable<T>::CompareTo`.
                 // The receiver must be a managed pointer; `constrained.` then dispatches for value/ref/generic T.

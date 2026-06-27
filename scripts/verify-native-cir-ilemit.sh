@@ -912,6 +912,59 @@ fi
 
 echo "PASS  native CIR bridge lowers vararg spread-concat"
 
+CONSTRAINEDOPS="$OUT/constrained-ops"
+mkdir -p "$CONSTRAINEDOPS/cir" "$CONSTRAINEDOPS/il"
+cat > "$CONSTRAINEDOPS/ConstrainedOpsApp.bir.json" <<'EOF'
+{
+  "fileClass": "ConstrainedOpsAppKt",
+  "hasMain": true,
+  "fields": [],
+  "methods": [
+    {
+      "name": "main",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [],
+      "ret": "void",
+      "body": [
+        {"k":"var","name":"a","type":"int","init":{"k":"const","type":"int","value":5}},
+        {"k":"var","name":"b","type":"int","init":{"k":"const","type":"int","value":8}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"constrainedCall","recvType":"int","iface":"clrg:System.IComparable[int]","method":"CompareTo","recv":{"k":"local","name":"a"},"arg":{"k":"local","name":"b"}}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"constrainedCall","recvType":"int","iface":"clrg:System.IComparable[int]","method":"CompareTo","recv":{"k":"local","name":"b"},"arg":{"k":"local","name":"a"}}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"constrainedCall","recvType":"int","iface":"clrg:System.IComparable[int]","method":"CompareTo","recv":{"k":"local","name":"a"},"arg":{"k":"local","name":"a"}}]}}
+      ],
+      "attrs": []
+    }
+  ],
+  "types": []
+}
+EOF
+
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$CONSTRAINEDOPS/cir" --native-cir "$CONSTRAINEDOPS/ConstrainedOpsApp.bir.json" >/dev/null
+CONSTRAINEDOPS_CIR="$CONSTRAINEDOPS/cir/ConstrainedOpsApp.cir.json"
+
+for pattern in '"k": "clr.constrained.compareTo"' '"sourceKind": "constrainedCall"'; do
+    if ! rg -q "$pattern" "$CONSTRAINEDOPS_CIR"; then
+        echo "FAIL  constrained-op native CIR missing $pattern" >&2
+        exit 1
+    fi
+done
+
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$CONSTRAINEDOPS/il" ConstrainedOpsNativeApp "$CONSTRAINEDOPS_CIR" >/dev/null
+CONSTRAINEDOPS_RUN_OUT="$(dotnet "$CONSTRAINEDOPS/il/ConstrainedOpsNativeApp.dll")"
+CONSTRAINEDOPS_EXPECTED=$'-1\n1\n0'
+if [[ "$CONSTRAINEDOPS_RUN_OUT" != "$CONSTRAINEDOPS_EXPECTED" ]]; then
+    echo "FAIL  native CIR constrained-op output mismatch" >&2
+    printf 'expected:\n%s\nactual:\n%s\n' "$CONSTRAINEDOPS_EXPECTED" "$CONSTRAINEDOPS_RUN_OUT" >&2
+    exit 1
+fi
+
+echo "PASS  native CIR bridge lowers constrained compareTo"
+
 WRAP="$OUT/wrapper"
 WRAP_OUT="$("$ROOT/scripts/dotkt.sh" --native-cir --no-stdlib --run -d "$WRAP" "$ROOT/cases/m0/M0.kt")"
 WRAP_EXPECTED="$(printf 'emitted M0Kt.dll\ndotkt: built %s/M0Kt.dll\n----\nsum = 5\nzero\nn=1\nn=2' "$WRAP")"
