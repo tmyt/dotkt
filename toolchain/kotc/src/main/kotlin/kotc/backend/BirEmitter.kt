@@ -485,7 +485,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// (stdlib ops restored from a referenced DotKt.Stdlib, in the synthetic `__GENERATED DECLARATIONS__` file);
 		// those are the library's to provide, not ours to re-emit (a re-emitted stub has no real body -> invalid IL).
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
-			.filter { it.origin.toString() == "DEFINED" && !isAwaitIntrinsic(it) && it.name.asString() !in setOf("byref", "stackBuffer") }
+			.filter { it.origin.toString() == "DEFINED" && !isAwaitIntrinsic(it) && clrName(it) == null && it.name.asString() !in setOf("byref", "stackBuffer") }
 			.filterNot { skipStdlibHighArityFunctionType(it) }
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
 		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
@@ -2887,6 +2887,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val isBuiltin = (declaringClass?.fqNameWhenAvailable?.asString() ?: callee.fqNameWhenAvailable?.asString())?.startsWith("kotlin") ?: true
 		val pkgFqName = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
 		val calleeFq = if (declaringClass == null && pkgFqName != null) "$pkgFqName.$name" else null
+		
+		// A top-level fun annotated @Clr("Type.Method") binds to a STATIC .NET method (e.g. println ->
+		// System.Console.WriteLine). A class member's @Clr resolves via its owner type; a top-level fun has no .NET
+		// owner, so split the FQN at its last '.' (namespace/type . method) and emit a direct clrStatic here.
+		if (declaringClass == null && !callee.isInline) clrName(callee)?.let { fqn ->
+			val dot = fqn.lastIndexOf('.')
+			if (dot > 0) {
+				val clrOwner = fqn.substring(0, dot); val clrMethod = fqn.substring(dot + 1)
+				val a = listOfNotNull(extensionReceiver(call)) + filledArgExprs(call)
+				return """{"k":"clrStatic","type":${str(clrOwner)},"method":${str(clrMethod)},"argTypes":[${a.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"args":[${a.joinToString(",") { expr(it) }}]}"""
+			}
+		}
 
 		// A call to a lifted local function -> static call with captured values (incl. enclosing `this`) prepended.
 		localFns[callee]?.let { (lname, caps, tps) ->
