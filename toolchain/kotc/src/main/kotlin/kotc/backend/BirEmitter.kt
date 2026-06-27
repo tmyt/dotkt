@@ -555,7 +555,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
 		// kPropertyDefs/propIfaceDefs, which read flags/maps the producers populate).
 		val synthDelegateTypes = synthDelegateDefs.joinToString(",").let { if (it.isEmpty()) emptyList() else listOf(it) }
-		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
+		// Rule 3: a static helper per @Clr class (which is itself filtered out of emission) holding its bodied non-@Clr
+		// members. Computed before the synth-type collection below so any synth types its bodies register are included.
+		val clrHelperTypes = file.declarations.filterIsInstance<IrClass>().filter { clrName(it) != null }.mapNotNull { clrHelperClassJson(it) }
+		val types = (typeDefs + clrHelperTypes + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
 
@@ -1111,6 +1114,43 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]}"""
 	}
 
+	// ===== Rule 3 (CLR binding): static-helper hoist =====
+	// A non-@Clr member WITH A BODY of a @Clr class has no home — the class becomes a BCL type and is NOT emitted.
+	// So its body is hoisted to a compiler-generated static helper `<>dotkt_ClrH_<Class>`: the dispatch receiver
+	// becomes a leading `__self` param (typed as the @Clr class, i.e. the BCL type; `this` resolves to it via
+	// selfSubst), and call sites invokeStatic it. (@Clr members bind to the BCL directly; abstract members roll up.)
+	internal fun clrHelperName(cls: IrClass): String = "<>dotkt_ClrH_" + typeName(cls).replace(Regex("[^A-Za-z0-9]"), "_")
+	
+	/** The members of a @Clr class that must be hoisted to its static helper (bodied, no own @Clr, not a property
+	 *  accessor, not an inherited fake-override). */
+	internal fun clrHelperMembers(cls: IrClass): List<IrSimpleFunction> =
+		cls.declarations.filterIsInstance<IrSimpleFunction>()
+			.filter { it.body != null && clrName(it) == null && it.correspondingPropertySymbol == null && !it.isFakeOverride }
+	
+	internal fun clrHelperMethod(fn: IrSimpleFunction, cls: IrClass): String {
+		val dispatch = fn.dispatchReceiverParameter
+		if (dispatch != null) selfSubst[dispatch] = """{"k":"local","name":"__self"}"""
+		val savedRefCells = refCellVars
+		refCellVars = refCellVars + computeRefCells(fn)
+		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		refCellVars = savedRefCells
+		if (dispatch != null) selfSubst.remove(dispatch)
+		// `__self` is typed as the dispatch receiver's type (the @Clr class); birType maps it to the BCL type (incl. args).
+		val selfParam = """{"name":"__self","type":${str(birType(dispatch!!.type))}}"""
+		val ps = (listOf(selfParam) + paramsJsonList(fn.parameters)).joinToString(",")
+		// Declare the CLASS type params on the static method too (a generic @Clr class's helper needs them for __self).
+		val tps = typeParamsJson(cls.typeParameters + fn.typeParameters)
+		return """{"name":${str(fn.name.asString())},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public"$tps,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body]}"""
+	}
+	
+	/** The static helper class for a @Clr class's hoisted members, or null if it has none. */
+	internal fun clrHelperClassJson(cls: IrClass): String? {
+		val members = clrHelperMembers(cls)
+		if (members.isEmpty()) return null
+		val methods = members.joinToString(",") { clrHelperMethod(it, cls) }
+		return """{"name":${str(clrHelperName(cls))},"kind":"class","abstract":false,"vis":"public","base":null,"interfaces":[],"fields":[],"ctors":[],"methods":[$methods]}"""
+	}
+	
 	/** `infix`/`operator` flags as BIR JSON fragments (only emitted when set), shared by the regular + suspend paths. */
 	internal fun kotlinModsJson(fn: IrSimpleFunction): String =
 		(if (fn.isInfix) ""","infix":true""" else "") + (if (fn.isOperator) ""","operator":true""" else "")
@@ -3218,6 +3258,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// on the .NET type itself.
 			?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrName(it) }
 		if (clrType != null) {
+			// Rule 3 (CLR binding): a non-@Clr member WITH A BODY of a @Clr class -> its hoisted static helper
+			// (<>dotkt_ClrH_<Class>.m(__self, args)), NOT a BCL member by name. Abstract/@Clr members fall through.
+			if (clrName(callee) == null && callee.body != null && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
+				val hr = dispatchReceiver(call)
+				val hargs = (listOfNotNull(hr?.let { expr(it) }) + filledArgs(call)).joinToString(",")
+				return """{"k":"callStatic","owner":${str(clrHelperName(declaringClass))},"method":${str(name)},"args":[$hargs]}"""
+			}
 			val recv = dispatchReceiver(call)
 			val isStatic = recv == null || recv is IrGetObjectValue
 			// Address the member on the CONSTRUCTED .NET type (`clrg:Collection[int]`) so a member of a generic
