@@ -240,7 +240,7 @@ sealed partial class Emitter
             T($"pass2 parent/iface: {ti.TB?.Name}");
             _curTypeParams = EffectiveTps(ti);
             // Bounds may reference any type (now all defined) and the type's own params (now in _curTypeParams).
-            if (ti.IsGeneric && ti.Def.TryGetProperty("typeParams", out var tps2)) ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface);
+            if (ti.IsGeneric && ti.Def.TryGetProperty("typeParams", out var tps2)) ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface, ti.Def);
             if (ti.BaseName != null)
             {
                 // A `.NET` base (`clr:System.Exception` / `clrg:...[..]`) is resolved by reflection; a Kotlin-user
@@ -868,18 +868,48 @@ sealed partial class Emitter
 
     // Apply generic constraints (`<T : Comparable<T>>` -> `T : IComparable<T>`) to already-defined params. The
     // constraint context map (type or method params) must be current so a `gp:T` inside a bound resolves.
-    void ApplyConstraints(JsonElement tps, Dictionary<string, GenericTypeParameterBuilder> map, bool isInterface)
+    // True if the type string mentions the type param `gp:<pname>` (token-exact, so `gp:E` doesn't match `gp:E2`).
+    static bool MentionsParam(string typeStr, string pname)
+    {
+        if (typeStr == null) return false;
+        var tok = "gp:" + pname; int i = 0;
+        while ((i = typeStr.IndexOf(tok, i, StringComparison.Ordinal)) >= 0)
+        {
+            int end = i + tok.Length;
+            if (end >= typeStr.Length || !(char.IsLetterOrDigit(typeStr[end]) || typeStr[end] == '_')) return true;
+            i = end;
+        }
+        return false;
+    }
+
+    void ApplyConstraints(JsonElement tps, Dictionary<string, GenericTypeParameterBuilder> map, bool isInterface, JsonElement? typeDef = null)
     {
         foreach (var x in tps.EnumerateArray())
         {
             if (x.ValueKind != JsonValueKind.Object) continue;
             var gp = map[x.GetProperty("name").GetString()];
-            // Declaration-site variance is legal in CLR metadata only on interface (and delegate) type params;
-            // on a class it's Kotlin-level only, so we drop it (the runtime assignment isn't variant for classes).
+            // Declaration-site variance is legal CLR metadata only on an interface type param, AND only when the param
+            // is NOT used in a conflicting position: a covariant `out E` may not appear in an `in` (method-argument)
+            // position, a contravariant `in E` not in an `out` (return) position. Kotlin permits the conflict via
+            // @UnsafeVariance (e.g. `Collection<out E>.contains(element: E)`); the CLR has no such escape, so such a
+            // param MUST be emitted invariant or the whole type fails to load. Keep clearly-valid variance, drop the rest.
             if (isInterface && x.TryGetProperty("variance", out var v))
             {
-                var attr = v.GetString() == "out" ? GenericParameterAttributes.Covariant
-                         : v.GetString() == "in" ? GenericParameterAttributes.Contravariant
+                var vs = v.GetString();
+                var pname = x.GetProperty("name").GetString();
+                bool conflict = false;
+                if ((vs == "out" || vs == "in") && typeDef is { } td && td.TryGetProperty("methods", out var ms))
+                    foreach (var m in ms.EnumerateArray())
+                    {
+                        if (vs == "out" && m.TryGetProperty("params", out var ps))
+                            foreach (var p in ps.EnumerateArray())
+                                if (p.TryGetProperty("type", out var pt) && MentionsParam(pt.GetString(), pname)) { conflict = true; break; }
+                        if (vs == "in" && m.TryGetProperty("ret", out var rt) && MentionsParam(rt.GetString(), pname)) conflict = true;
+                        if (conflict) break;
+                    }
+                var attr = conflict ? GenericParameterAttributes.None
+                         : vs == "out" ? GenericParameterAttributes.Covariant
+                         : vs == "in" ? GenericParameterAttributes.Contravariant
                          : GenericParameterAttributes.None;
                 if (attr != GenericParameterAttributes.None) gp.SetGenericParameterAttributes(attr);
             }
