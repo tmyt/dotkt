@@ -700,12 +700,17 @@ sealed partial class Emitter
         if (m.TryGetProperty("suspend", out var su) && su.GetBoolean())
         {
             // DOTKT_STDLIB_COMPILE: a suspend method whose lowered body uses a coroutine feature the backend does not
-            // yet support (the sequence-builder `coYieldAll` machinery is the suspend-ABI's deferred phase) is emitted
-            // as a throwing stub, so the assembly still emits (the "= TODO()" stdlib goal: calling it throws).
-            if (StdlibStub && m.GetRawText().Contains("coYieldAll"))
+            // yet support is emitted as a throwing stub, so the assembly still emits (the "= TODO()" stdlib goal:
+            // calling it throws). TWO cases, both the deferred control-flow-in-coroutine -> CIR refactor:
+            //   * the sequence-builder `coYieldAll` machinery;
+            //   * a STRUCTURED break/continue inside a suspend-containing while loop — kotc keeps control flow FIR-like
+            //     (structured) in BIR and the CFG lowering belongs in CIR, but the coroutine emitter can't resolve a
+            //     structured break/continue against its co-labels yet.
+            if (StdlibStub)
             {
-                EmitThrowStub(mb, "coYieldAll");
-                return;
+                var raw = m.GetRawText();
+                if (raw.Contains("coYieldAll")) { EmitThrowStub(mb, "coYieldAll"); return; }
+                if (raw.Contains("\"break\"") || raw.Contains("\"continue\"")) { EmitThrowStub(mb, "coroutine break/continue"); return; }
             }
             if (m.TryGetProperty("coClass", out var cc) && cc.GetBoolean()) EmitCoroutineClass(ti, mb, m);
             else EmitCoroutine(ti, mb, m);
