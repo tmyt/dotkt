@@ -147,6 +147,201 @@ Existing physical BIR event nodes are normalized as accessor calls:
 - `clrEventAdd` -> native `clr.call` to `add_<event>`.
 - `clrEventRemove` -> native `clr.call` to `remove_<event>`.
 
+### CLR Event Interop
+
+CLR events are a valid compiler-intrinsic surface. They are not ordinary Kotlin properties and should not be modeled as
+stdlib collection-like objects. A CLR event is metadata that names an event plus its add/remove accessor methods and
+handler delegate type. Kotlin needs a source-level endpoint that can participate in `+=` / `-=` resolution, while CIR
+must ultimately call the CLR accessors.
+
+Imported CLR events should be exposed to Kotlin as an event endpoint type, conceptually:
+
+```kotlin
+val Click: CLREvent<(sender: Any?, e: ClickEventArgs) -> Unit>
+```
+
+`CLREvent<T>` is a compiler-provided interop protocol, not a required runtime allocation. Its only source-level
+contract is:
+
+```kotlin
+operator fun CLREvent<T>.plusAssign(handler: T)
+operator fun CLREvent<T>.minusAssign(handler: T)
+```
+
+The frontend may synthesize this endpoint from reflected CLR event metadata, and user source can then write:
+
+```kotlin
+button.Click += { sender, e -> ... }
+button.Click -= savedHandler
+```
+
+The current implementation exposes the same capability through synthesized `add_<Event>` / `remove_<Event>` methods
+and rewrites those calls to `clrEventAdd` / `clrEventRemove`. That is an implementation-compatible v1 surface. The
+preferred public Kotlin surface is the `CLREvent<T>` endpoint with `plusAssign` / `minusAssign`; the add/remove method
+names should remain a lowering detail rather than the ergonomic API.
+
+The lowering rule is explicit and metadata-driven:
+
+```text
+CLR metadata
+  event Click : ClickEventHandler
+  add_Click(ClickEventHandler)
+  remove_Click(ClickEventHandler)
+
+Kotlin surface
+  Click: CLREvent<(sender: Any?, e: ClickEventArgs) -> Unit>
+
+BIR
+  event add/remove operation with receiver, event identity, and handler expression
+
+CIR
+  clr.call add_Click(receiver, handler-as-ClickEventHandler)
+  clr.call remove_Click(receiver, handler-as-ClickEventHandler)
+```
+
+The handler is bound to the event's exact CLR delegate type, not to a generic `Func` / `Action` merely because the
+Kotlin surface uses a function type. A handler literal may be emitted directly as that delegate. A stored function value
+may need a stable wrapper so delegate identity works for `-=`. This is the same delegate-binding rule needed for ordinary
+delegate parameters, but event unsubscribe makes identity observable.
+
+Producing CLR events from Kotlin should be symmetrical. A Kotlin declaration that is explicitly intended to be a CLR
+event should emit real CLR event metadata:
+
+- a delegate-typed backing field or equivalent storage;
+- specialname `add_<Event>` and `remove_<Event>` methods;
+- an event map entry that points to those accessors;
+- Kotlin metadata sufficient for a DotKt consumer to restore the `CLREvent<T>` endpoint.
+
+The source declaration must be treated as an event declaration, not as a Kotlin property that happens to have an event
+type. Kotlin syntax does not have a native `event` member, so KCC can use an annotated compiler-intrinsic declaration
+shape:
+
+```kotlin
+class ViewModel : System.ComponentModel.INotifyPropertyChanged {
+    @ClrEvent
+    public val PropertyChanged: CLREvent<System.ComponentModel.PropertyChangedEventHandler>
+
+    protected fun onPropertyChanged(name: String) {
+        PropertyChanged.raise(this, System.ComponentModel.PropertyChangedEventArgs(name))
+    }
+}
+```
+
+This declaration is visible to the Kotlin frontend as an event endpoint so other code can type-check subscription and
+unsubscription. It must not emit a public CLR property named `PropertyChanged`, and it must not emit a public field named
+`PropertyChanged`. The public CLR surface is only:
+
+```csharp
+public event PropertyChangedEventHandler PropertyChanged;
+```
+
+The backing delegate storage is private and implementation-defined. The add/remove accessors update that storage through
+the normal CLR delegate-combine/delegate-remove pattern, preferably with an atomic compare-exchange loop when thread-safe
+event subscription semantics are required.
+
+Event subscription and event raising must be different capabilities:
+
+- `CLREvent<T>` is the public endpoint. It supports only `plusAssign` and `minusAssign`.
+- `CLREvent<T>` must not expose `raise`, `invoke`, or the backing delegate value.
+- event raising is exposed to Kotlin type checking through a private synthetic callable tied to the declaration site.
+
+This matches CLR rules: external code can subscribe and unsubscribe to a public event, but it cannot read or invoke the
+event's delegate. Even derived classes cannot directly raise a base class event unless the base class exposes a protected
+raiser method. Kotlin should model that by requiring the declaring class to provide an ordinary protected method such as
+`onPropertyChanged` when subclasses need to trigger the event.
+
+The frontend should not accept an unresolved magic name called `raise`. Instead, a `@ClrEvent` declaration synthesizes a
+private FIR-only member extension inside the declaring class:
+
+```kotlin
+private fun CLREvent<System.ComponentModel.PropertyChangedEventHandler>.raise(
+    sender: Any?,
+    e: System.ComponentModel.PropertyChangedEventArgs
+): Unit
+```
+
+This synthetic callable is not emitted as a CLR method. It exists so ordinary Kotlin name lookup, overload resolution,
+visibility, and argument checking can validate the raising operation. Since it is private to the declaring class, outside
+code can still see `PropertyChanged += handler`, but cannot resolve `PropertyChanged.raise(...)`.
+
+The synthetic `raise` callable is only valid when all of these are true:
+
+- the event declaration is in the current declaring type;
+- the caller is inside that declaring type's implementation, not merely an arbitrary consumer of the public endpoint;
+- the argument list matches the event's exact CLR delegate `Invoke` signature.
+
+BIR emission marks calls to that synthetic callable as event-raise operations. Lowering for event raise loads the private
+backing delegate, null-checks it, and invokes the exact event delegate type. It does not call the public add/remove
+accessors and it is not available through reflected or imported `CLREvent<T>` endpoints.
+
+Kotlin interface delegation adds a second valid event implementation shape:
+
+```kotlin
+class ViewModel(
+    private val propertyChanged: PropertyChangedImpl = PropertyChangedImpl()
+) : System.ComponentModel.INotifyPropertyChanged by propertyChanged {
+    var name by ViewModelProperty<String>("")
+}
+```
+
+The outer class still implements `INotifyPropertyChanged`, so its CLR surface must still satisfy the interface event.
+KCC should emit `ViewModel.PropertyChanged` as a real CLR event on `ViewModel`, but its add/remove accessors may forward
+to the delegated implementation:
+
+```text
+ViewModel.add_PropertyChanged(handler)
+  -> this.propertyChanged.add_PropertyChanged(handler)
+
+ViewModel.remove_PropertyChanged(handler)
+  -> this.propertyChanged.remove_PropertyChanged(handler)
+```
+
+In this form, the outer class owns the public interface implementation, while `PropertyChangedImpl` owns the backing
+delegate storage and the event-raise capability. The forwarded event on the outer class must not expose a backing
+delegate or `raise` capability for `ViewModel.PropertyChanged`; it only implements subscription compatibility for CLR and
+Kotlin consumers.
+
+Property delegates that are meant to participate in change notification should communicate with the delegated event
+source through an explicit protocol, not by invoking the public event endpoint. A property delegate such as
+`ViewModelProperty<T>` can use Kotlin's normal delegated-property receiver (`thisRef`) plus a compiler-recognized or
+ordinary interface implemented by `PropertyChangedImpl`:
+
+```kotlin
+interface PropertyChangedSource {
+    fun raisePropertyChanged(sender: Any?, name: String)
+}
+```
+
+The compiler may synthesize a private accessor from `ViewModel` to the interface-delegation field when the delegated
+property lowering needs the event source:
+
+```text
+ViewModel.name.set(value)
+  -> ViewModelProperty.setValue(this, ::name, value, this.propertyChanged)
+  -> propertyChanged.raisePropertyChanged(this, "name")
+```
+
+The exact property-delegate protocol can evolve, but the boundary rule is fixed:
+
+- interface delegation may forward CLR event add/remove from the outer type to the delegate object;
+- event raising remains owned by the object that owns the backing delegate storage;
+- delegated properties must notify through an explicit source/capability, not by calling `CLREvent<T>.raise`;
+- the emitted CLR surface of the outer type remains a normal public event, so C# and reflection see the expected
+  `INotifyPropertyChanged.PropertyChanged` implementation.
+
+If the declaration names an existing CLR delegate type, that delegate type is used. If it starts from a Kotlin function
+type, KCC may synthesize a delegate using the same delegate ABI as function types, including the wide `KFunc` / `KAction`
+path when the handler arity exceeds BCL `Func` / `Action`. The resulting CLR event must still expose a concrete delegate
+type in metadata, because CLR events cannot be typed as a structural Kotlin function.
+
+This intrinsic belongs in the interop/projection part of the pipeline:
+
+- facadegen / FIR injection restore CLR event metadata as an event endpoint;
+- Kotlin frontend resolution turns `+=` / `-=` into the endpoint operations;
+- BIR records event add/remove as a distinct operation or an equivalent compiler-intrinsic call;
+- CLR Projection lowers it to the add/remove accessor call;
+- Ordinary Call Lowering should not infer events from method names alone.
+
 Physical BIR type-operation nodes are normalized without reference metadata. Numeric conversions become `clr.conv`; reference/value casts and type tests become `clr.castclass`, `clr.isinst`, and `clr.isinst.ref`. Nullable-producing value safe casts become `clr.safeCast.value`, which emits the boxed value test plus `Nullable<T>` construction. Value-nullable helpers become `clr.nullable.*` nodes for empty `Nullable<T>`, wrapping, `HasValue`, and `Value`. Type reflection helpers become `clr.typeof` for `T::class` and `clr.getType` for runtime `x::class`. Enum helpers become `clr.enum.*` nodes for literal values, ordinal conversion, values arrays, and parse/valueOf. Object-identity helpers (the `Any` operations `equals` / `hashCode` / `toString` and Kotlin `==`) become `clr.obj.eq` for null-safe equality and `clr.obj.method` for the boxed `System.Object` virtual call; both are Basic Lowering and do not consult reference metadata.
 
 Overload resolution is intentionally conservative at this stage. The resolver records call-site argument count plus BIR `sig` / expression type hints, then filters referenced constructors/methods by parameter count and by exact normalized type matches when all argument types are known. The normalizer understands primitive aliases, `array:`, `func:`, `nullable:`, `byref:`, `gp:`, and constructed `clrg:` encodings. Full lowered generic/member signature matching should be completed before this output becomes executable CIR.

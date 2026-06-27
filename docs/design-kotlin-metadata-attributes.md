@@ -24,6 +24,7 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | Kotlin `val` / non-public setter backed by a public field | public field | no; plain public field looks writable | `[KotlinReadOnly]` |
 | Kotlin package ↔ .NET namespace projection | assembly-level mapping | no | `[DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]` |
 | reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |
+| imported CLR event endpoint (`CLREvent<T>`) | real CLR event metadata + add/remove accessors | yes for the event itself; Kotlin endpoint syntax must be synthesized | plain CLR event metadata, no DotKt attribute by default |
 | `final`/`open`/`abstract` (modality) | non-virtual / virtual / abstract | **yes** — rides .NET virtual-ness | (none) |
 | visibility | public/assembly/family | **yes** | (none) |
 | generics, including `reified` | real CLR generic method `<T>` | **yes** — CLR generics are reified | (none) |
@@ -42,13 +43,17 @@ assembly already references it ([[dotkt-naming-and-runtime-split]]).
   read:   facadegen --meta reads the attributes -> meta tokens
             `fun <name> <ret> final,infix|operator|suspend ...`   (suspend: Task<T> unwrapped to T)
             CLR `op_*` methods map back to Kotlin operator names through the standard operator table
+            CLR events restore as CLREvent<T> endpoints from EventInfo + delegate Invoke
             `file <package> <fileClassFqn>` + `tlfun <name> ...`  (top-level)
             field mutability, namespace projection, inline body availability, and NRT nullability
   inject: ClrTypeInjection parses them and restores the Kotlin modifier on the synthesized FIR:
             members -> status { isInfix/isOperator/isSuspend }
+            events -> CLREvent<T> endpoint with plusAssign/minusAssign compiler-intrinsic operations
             top-level -> getTopLevelCallableIds + generateFunctions(owner==null)
   backend (consumer): a call to a restored top-level fun -> ClrTopLevelRegistry -> a static call on the file class;
-            a restored suspend call's .NET return is Task<T> (coTaskType), awaited by the coroutine machinery.
+            a restored suspend call's .NET return is Task<T> (coTaskType), awaited by the coroutine machinery;
+            a restored event subscription lowers to the event add/remove accessor with the handler bound to the
+            event's exact CLR delegate type.
 ```
 
 ## `inline` / `reified` — deliberately NOT round-tripped (design conclusion)
