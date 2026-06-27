@@ -309,6 +309,16 @@ sealed partial class Emitter
                         ti.Fields[f.GetProperty("name").GetString()] = fb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: false);
+                // Real CLR properties: DefineProperty over the already-declared get_/set_ accessor methods, so a Kotlin
+                // property is seen as a PROPERTY (not a bare field/methods) by C#/F#/reflection. Additive — only fires
+                // when kotc emits the `properties` metadata. See docs/design-clr-property-model.md.
+                if (ti.Def.TryGetProperty("properties", out var props))
+                    foreach (var p in props.EnumerateArray())
+                    {
+                        var pb = ti.TB.DefineProperty(p.GetProperty("name").GetString(), PropertyAttributes.None, MapType(p.GetProperty("type").GetString()), null);
+                        if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(g.GetString(), out var gm)) pb.SetGetMethod(gm);
+                        if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(s.GetString(), out var sm)) pb.SetSetMethod(sm);
+                    }
                 var ctors = ti.Def.GetProperty("ctors");
                 if (!ti.IsInterface)
                     foreach (var c in ctors.EnumerateArray())

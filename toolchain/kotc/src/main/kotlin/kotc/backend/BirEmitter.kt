@@ -956,10 +956,24 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val clrAccessors = klass.declarations.filterIsInstance<IrProperty>()
 			.flatMap { p -> listOfNotNull(clrAccessorMethod(p, p.getter), clrAccessorMethod(p, p.setter)) }
 		// User custom accessors (`get() = …`/`set(v){…}`) -> get_/set_ methods (the access site routes through them).
+		// A property optimizes to a plain field; but one implementing a KOTLIN INTERFACE property must emit a get_/set_
+		// METHOD to bind the interface slot (property-accessor analog of the method-side overridesIface fix; e.g.
+		// ComparableRange.start over ClosedRange.start). See design-clr-property-model.md.
+		fun ovIface(a: IrSimpleFunction) = a.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
+		fun emitsGet(p: IrProperty) = p.getter?.let { hasCustomAccessor(p) || clrIfaceMemberName(it) != null || p.backingField == null || ovIface(it) } ?: false
+		fun emitsSet(p: IrProperty) = p.setter?.let { hasCustomAccessor(p) || clrIfaceMemberName(it) != null || p.backingField == null || ovIface(it) } ?: false
 		val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 			listOfNotNull(
-				p.getter?.takeIf { hasCustomAccessor(p) || clrIfaceMemberName(it) != null || p.backingField == null }?.let { accessorMethod(it, p.name.asString(), true) },
-				p.setter?.takeIf { hasCustomAccessor(p) || clrIfaceMemberName(it) != null || p.backingField == null }?.let { accessorMethod(it, p.name.asString(), false) })
+				p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
+				p.setter?.takeIf { emitsSet(p) }?.let { accessorMethod(it, p.name.asString(), false) })
+		}
+		// Real CLR properties: a `properties` entry per accessor-bearing property -> ilemit DefineProperty's it over
+		// the get_/set_ methods, so a C#/reflection consumer sees a property. (Full "every property -> CLR property +
+		// @ClrField opt-out" is the next phase; field-backed props keep their backing field for now.)
+		val propsList = klass.declarations.filterIsInstance<IrProperty>().filter { emitsGet(it) }.joinToString(",") { p ->
+			val getName = clrIfaceMemberName(p.getter!!) ?: "get_" + p.name.asString()
+			val setName = if (emitsSet(p)) str(clrIfaceMemberName(p.setter!!) ?: "set_" + p.name.asString()) else "null"
+			"""{"name":${str(p.name.asString())},"type":${str(birType(p.getter!!.returnType))},"get":${str(getName)},"set":$setName}"""
 		}
 		val methods = (instMethods + statMethods + companionAccessors + clrAccessors + userAccessors).joinToString(",")
 		// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
@@ -1000,7 +1014,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// top-level type, which forced an assembly-visibility workaround). `inner` additionally captures `__outer`.
 		val nestedIn = emittedNestedParent(klass)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null && !anonNames.containsKey(klass) }
 			?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
-		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn${typeParamsJson(klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"attrs":[${attrsJson(klass.annotations)}]}"""
+		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn${typeParamsJson(klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList],"attrs":[${attrsJson(klass.annotations)}]}"""
 	}
 
 	internal fun ctor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {
