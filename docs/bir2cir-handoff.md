@@ -14,7 +14,7 @@ Recent committed milestones on `main`:
 - `Track BIR paths for resolved CIR calls`: JSON paths on call sites and resolved call draft nodes.
 - `Draft native lowered BIR expressions`: native-only cloned BIR tree with uniquely resolved call sites lowered to draft CLR nodes.
 - `Filter resolved CLR members by arity`: constructor/method candidates filtered by argument count.
-- `Filter resolved CLR members by type hints`: candidates filtered with BIR `sig` and expression type hints where known.
+- `Filter resolved CLR members by type hints`: candidates filtered with BIR `sig` and expression type hints where known. The current type normalizer covers primitive aliases, arrays, delegates, nullable/byref/generic parameters, and constructed `clrg:` types.
 - `Draft reference type resolution in bir2cir`: `typeSites`, `typeResolutionDraft`, and `cirDraft.resolvedTypes`.
 - `Lower resolved type sites in native draft`: resolved BIR type strings are replaced with `clr.typeRef` objects in `cirDraft.loweredBir`.
 
@@ -101,7 +101,7 @@ Do not revert or clean these unless the user explicitly asks.
 ## Suggested Next Steps
 
 1. Decide whether `cirDraft.loweredBir` should keep BIR wrapper structure or become a separate executable CIR schema. Keeping both temporarily is acceptable.
-2. Extend overload resolution for generic owners, generic methods, nullable/reference types, arrays, delegates, and `clrg:` encodings.
+2. Extend overload resolution for generic owners, generic methods, variance/conversion rules, and richer nullable/reference-type semantics.
 3. Teach `ilemit` a native-CIR reader behind an explicit mode. Do not route normal `dotkt` builds to native CIR until compatibility checks exist.
 4. Move one narrow lowering from `kotc`/`ilemit` into `bir2cir`, then verify `--compat-bir` remains unchanged until the consumer can read native CIR.
 

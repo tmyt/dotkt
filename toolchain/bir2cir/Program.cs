@@ -247,9 +247,16 @@ sealed class ReferenceMetadataIndex
     static string NormalizeType(string type)
     {
         var value = type.Trim();
-        if (value.StartsWith("clr:", StringComparison.Ordinal)) value = value["clr:".Length..];
-        if (value.StartsWith("@", StringComparison.Ordinal)) value = value[1..];
-        if (value.StartsWith("clrg:", StringComparison.Ordinal)) return value;
+        if (value.StartsWith("@", StringComparison.Ordinal)) return NormalizeType(value[1..]);
+        if (value.StartsWith("clr:", StringComparison.Ordinal)) return NormalizeType(value["clr:".Length..]);
+        if (value.StartsWith("byref:", StringComparison.Ordinal)) return "byref:" + NormalizeType(value["byref:".Length..]);
+        if (value.StartsWith("array:", StringComparison.Ordinal)) return "array:" + NormalizeType(value["array:".Length..]);
+        if (value.StartsWith("nullable:", StringComparison.Ordinal)) return "nullable:" + NormalizeType(value["nullable:".Length..]);
+        if (value.StartsWith("gp:", StringComparison.Ordinal)) return value;
+        if (value.StartsWith("func:", StringComparison.Ordinal))
+            return NormalizeFuncType(value["func:".Length..]);
+        if (value.StartsWith("clrg:", StringComparison.Ordinal))
+            return NormalizeGenericType(value["clrg:".Length..]);
         return value switch
         {
             "bool" => "System.Boolean",
@@ -267,8 +274,70 @@ sealed class ReferenceMetadataIndex
             "ulong" => "System.UInt64",
             "ushort" => "System.UInt16",
             "void" => "System.Void",
-            _ => value,
+            _ => StripGenericArity(value),
         };
+    }
+
+    static string NormalizeGenericType(string spec)
+    {
+        var br = spec.IndexOf('[');
+        if (br < 0) return "clrg:" + StripGenericArity(spec);
+
+        var open = StripGenericArity(spec[..br]);
+        var inner = spec[(br + 1)..^1];
+        return "clrg:" + open + "[" + string.Join(",", SplitTopLevel(inner).Select(NormalizeType)) + "]";
+    }
+
+    static string NormalizeFuncType(string spec)
+    {
+        var colon = FuncRetEnd(spec);
+        var ret = spec[..colon];
+        var args = colon + 1 < spec.Length ? spec[(colon + 1)..] : "";
+        return "func:" + NormalizeType(ret) + ":" + string.Join(",", SplitTopLevel(args).Select(NormalizeType));
+    }
+
+    static int FuncRetEnd(string value)
+    {
+        var start = PrefixLength(value);
+        var depth = 0;
+        for (var i = start; i < value.Length; i++)
+        {
+            if (value[i] == '[') depth++;
+            else if (value[i] == ']') depth--;
+            else if (value[i] == ':' && depth == 0) return i;
+        }
+
+        return value.Length;
+    }
+
+    static int PrefixLength(string value)
+    {
+        foreach (var prefix in new[] { "clrg:", "clr:", "array:", "nullable:", "func:", "gp:", "byref:" })
+            if (value.StartsWith(prefix, StringComparison.Ordinal))
+                return prefix.Length;
+        return 0;
+    }
+
+    static IReadOnlyList<string> SplitTopLevel(string value)
+    {
+        if (value.Length == 0) return Array.Empty<string>();
+
+        var result = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '[') depth++;
+            else if (value[i] == ']') depth--;
+            else if (value[i] == ',' && depth == 0)
+            {
+                result.Add(value[start..i].Trim());
+                start = i + 1;
+            }
+        }
+
+        result.Add(value[start..].Trim());
+        return result;
     }
 
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
@@ -312,7 +381,7 @@ sealed class ReferenceMetadataIndex
 
                 var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
                 metadata.Types.Add(new DotKtTypeMetadata(
-                    type.FullName ?? type.Name,
+                    TypeName(type),
                     TypeKind(type),
                     isFileClass));
 
@@ -320,19 +389,19 @@ sealed class ReferenceMetadataIndex
                 {
                     metadata.Members.Add(new DotKtMemberMetadata(
                         "constructor",
-                        type.FullName ?? type.Name,
+                        TypeName(type),
                         ".ctor",
                         false,
                         isFileClass,
                         ctor.GetParameters().Select(p => TypeName(p.ParameterType)).ToList(),
-                        type.FullName ?? type.Name));
+                        TypeName(type)));
                 }
 
                 foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                 {
                     metadata.Members.Add(new DotKtMemberMetadata(
                         "field",
-                        type.FullName ?? type.Name,
+                        TypeName(type),
                         field.Name,
                         field.IsStatic,
                         isFileClass,
@@ -345,7 +414,7 @@ sealed class ReferenceMetadataIndex
                     if (method.IsPublic)
                         metadata.Members.Add(new DotKtMemberMetadata(
                             "method",
-                            type.FullName ?? type.Name,
+                            TypeName(type),
                             method.Name,
                             method.IsStatic,
                             isFileClass,
@@ -357,7 +426,7 @@ sealed class ReferenceMetadataIndex
                     var hasInline = HasAttribute(attrs, KotlinInlineAttr);
                     if (flags != 0 || hasInline)
                         metadata.Functions.Add(new KotlinFunctionMetadata(
-                            type.FullName ?? type.Name,
+                            TypeName(type),
                             method.Name,
                             flags,
                             hasInline));
@@ -396,8 +465,51 @@ sealed class ReferenceMetadataIndex
         return value is int i ? i : 0;
     }
 
-    static string TypeName(Type type) =>
-        type.FullName ?? type.Name;
+    static string TypeName(Type type)
+    {
+        if (type.IsByRef)
+            return "byref:" + TypeName(type.GetElementType()!);
+        if (type.IsArray)
+            return "array:" + TypeName(type.GetElementType()!);
+        if (type.IsGenericParameter)
+            return "gp:" + type.Name;
+        if (type.IsConstructedGenericType)
+        {
+            var def = type.GetGenericTypeDefinition();
+            var args = type.GetGenericArguments().Select(TypeName).ToList();
+            if (def == typeof(Nullable<>))
+                return "nullable:" + args[0];
+            if (IsFunc(def))
+                return "func:" + args[^1] + ":" + string.Join(",", args.Take(args.Count - 1));
+            if (IsAction(def))
+                return "func:void:" + string.Join(",", args);
+            return "clrg:" + StripGenericArity(def.FullName ?? def.Name) + "[" + string.Join(",", args) + "]";
+        }
+
+        return PrimitiveBirName(type) ?? StripGenericArity(type.FullName ?? type.Name);
+    }
+
+    static bool IsFunc(Type type) =>
+        type.Namespace == "System" && type.Name.StartsWith("Func`", StringComparison.Ordinal);
+
+    static bool IsAction(Type type) =>
+        type.Namespace == "System" && type.Name.StartsWith("Action`", StringComparison.Ordinal);
+
+    static string PrimitiveBirName(Type type)
+    {
+        if (type == typeof(bool)) return "bool";
+        if (type == typeof(byte)) return "byte";
+        if (type == typeof(char)) return "char";
+        if (type == typeof(double)) return "double";
+        if (type == typeof(float)) return "float";
+        if (type == typeof(int)) return "int";
+        if (type == typeof(long)) return "long";
+        if (type == typeof(object)) return "object";
+        if (type == typeof(short)) return "short";
+        if (type == typeof(string)) return "string";
+        if (type == typeof(void)) return "void";
+        return null;
+    }
 
     static string TypeKind(Type type)
     {
@@ -418,6 +530,12 @@ sealed class ReferenceMetadataIndex
     static string StripTypeArgs(string value)
     {
         var idx = value.IndexOf('[');
+        return StripGenericArity(idx >= 0 ? value[..idx] : value);
+    }
+
+    static string StripGenericArity(string value)
+    {
+        var idx = value.IndexOf('`');
         return idx >= 0 ? value[..idx] : value;
     }
 }
@@ -1162,7 +1280,7 @@ sealed record CallSite(
     static IReadOnlyList<string> ArgumentTypes(JsonObject node, string signature)
     {
         if (!string.IsNullOrWhiteSpace(signature))
-            return signature.Split(',', StringSplitOptions.TrimEntries).ToList();
+            return SplitTopLevel(signature);
 
         if (node["args"] is not JsonArray args) return Array.Empty<string>();
 
@@ -1180,6 +1298,28 @@ sealed record CallSite(
             ?? StringProp(obj, "resultType")
             ?? StringProp(obj, "ret")
             ?? "";
+    }
+
+    static IReadOnlyList<string> SplitTopLevel(string value)
+    {
+        if (value.Length == 0) return Array.Empty<string>();
+
+        var result = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '[') depth++;
+            else if (value[i] == ']') depth--;
+            else if (value[i] == ',' && depth == 0)
+            {
+                result.Add(value[start..i].Trim());
+                start = i + 1;
+            }
+        }
+
+        result.Add(value[start..].Trim());
+        return result;
     }
 }
 

@@ -56,4 +56,69 @@ require '"k": "clr.typeRef"' "lowered type reference"
 require '"sourcePath": "\$\.methods\[0\]\.body\[0\]\.init"' "constructor source path"
 require '"sourcePath": "\$\.methods\[0\]\.body\[1\]\.expr\.args\[0\]"' "method source path"
 
+OV="$OUT/overload"
+mkdir -p "$OV/src" "$OV/native"
+cat > "$OV/src/OverloadRef.csproj" <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+</Project>
+EOF
+cat > "$OV/src/Probe.cs" <<'EOF'
+using System;
+using System.Collections.Generic;
+
+public static class Probe
+{
+    public static string Pick(int[] xs) => "array";
+    public static string Pick(Func<int, string> f) => "func";
+    public static string Pick(List<int> xs) => "list";
+    public static string Pick(string s) => "string";
+}
+EOF
+cat > "$OV/overload.bir.json" <<'EOF'
+{
+  "fileClass": "OverloadKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [
+    {
+      "name": "main",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [],
+      "ret": "void",
+      "body": [
+        {"k":"exprStmt","expr":{"k":"callStatic","owner":"Probe","method":"Pick","sig":"array:int","args":[{"k":"local","name":"xs"}]}},
+        {"k":"exprStmt","expr":{"k":"callStatic","owner":"Probe","method":"Pick","sig":"func:string:int","args":[{"k":"local","name":"f"}]}},
+        {"k":"exprStmt","expr":{"k":"callStatic","owner":"Probe","method":"Pick","sig":"clrg:System.Collections.Generic.List[int]","args":[{"k":"local","name":"list"}]}}
+      ],
+      "attrs": []
+    }
+  ],
+  "types": []
+}
+EOF
+
+dotnet build "$OV/src/OverloadRef.csproj" -v q --nologo >/dev/null
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$OV/native" --native-cir --ref "$OV/src/bin/Debug/net10.0/OverloadRef.dll" "$OV/overload.bir.json" >/dev/null
+OCIR="$OV/native/overload.cir.json"
+
+if [[ "$(rg -c '"status": "resolved-in-reference"' "$OCIR")" != "3" ]]; then
+    echo "FAIL  overload fixture did not resolve exactly three typed overload calls" >&2
+    exit 1
+fi
+
+for encoded in '"array:int"' '"func:string:int"' '"clrg:System.Collections.Generic.List\[int\]"'; do
+    if ! rg -q "$encoded" "$OCIR"; then
+        echo "FAIL  overload fixture missing encoded parameter type $encoded" >&2
+        exit 1
+    fi
+done
+
 echo "PASS  bir2cir native draft and compat identity"
