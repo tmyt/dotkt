@@ -1044,7 +1044,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// An override of a CLASS or ENUM_CLASS member (the latter: a per-entry enum body overriding an abstract enum
 		// member) reuses the base virtual slot. (Interface members bind by name/signature, handled elsewhere.)
 		val isOverride = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS } }
-		val isVirtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT || clrIfaceMemberName(fn) != null
+		// A method that implements/overrides a Kotlin INTERFACE member must be virtual on the CLR to bind the interface
+		// slot — even when it is Kotlin-`final` (final override -> CLR `virtual final` = sealed). Otherwise the type
+		// fails to load with "must be virtual to implement a method on an interface or super type" (e.g. Enum.compareTo,
+		// the primitive Iterator.next).
+		val overridesIface = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
+		val isVirtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT || clrIfaceMemberName(fn) != null || overridesIface
 		// An extension function `fun T.f()` -> static method whose first param `__self` is the receiver;
 		// body references to the receiver resolve to `__self` (via valSubst).
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
