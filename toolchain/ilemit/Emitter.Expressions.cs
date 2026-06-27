@@ -177,9 +177,11 @@ sealed partial class Emitter
                 return typeof(void);
             }
             case "bin": return EmitBin(e);
+            case "clr.bin": return EmitBin(e);
             case "objEq": return EmitObjEq(e);
             case "clr.obj.eq": return EmitObjEq(e);
             case "un": return EmitUn(e);
+            case "clr.un": return EmitUn(e);
             case "conv": return EmitConv(e);
             case "clr.conv": return EmitConv(e);
             case "clr.isinst": return EmitNativeClrIsInst(e, resultIsBool: true);

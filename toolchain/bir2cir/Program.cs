@@ -1147,6 +1147,8 @@ static class ExecutableCirDraft
                 return loweredObjectOp;
             if (TryLowerPhysicalArrayOp(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredArrayOp))
                 return loweredArrayOp;
+            if (TryLowerPhysicalArithOp(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredArithOp))
+                return loweredArithOp;
             if (TryLowerPhysicalEvent(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredEvent))
                 return loweredEvent;
             if (TryLowerPhysicalProperty(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredProperty))
@@ -1372,6 +1374,44 @@ static class ExecutableCirDraft
             native["elem"] = LowerTypeOrNode(elem, path + ".elem", resolvedCalls, resolvedTypes, refs);
         if (obj["elems"] is JsonNode elems)
             native["elems"] = LowerTypeOrNode(elems, path + ".elems", resolvedCalls, resolvedTypes, refs);
+        lowered = native;
+        return true;
+    }
+
+    static bool TryLowerPhysicalArithOp(
+        JsonObject obj,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs,
+        out JsonNode lowered)
+    {
+        lowered = null;
+        var kind = obj["k"]?.GetValue<string>();
+        var nativeKind = kind switch
+        {
+            "bin" => "clr.bin",
+            "un" => "clr.un",
+            _ => null,
+        };
+        if (nativeKind == null) return false;
+
+        // Primitive binary/unary operators. The operand CLR types are inferred from the lowered children at
+        // emit time (mixed-numeric coercion stays in the ilemit consumer), so the node only carries `op` plus
+        // its recursed operand expressions.
+        var native = new JsonObject
+        {
+            ["k"] = nativeKind,
+            ["sourcePath"] = path,
+            ["sourceKind"] = kind,
+            ["op"] = obj["op"]?.DeepClone(),
+        };
+        if (obj["l"] is JsonNode left)
+            native["l"] = LowerTypeOrNode(left, path + ".l", resolvedCalls, resolvedTypes, refs);
+        if (obj["r"] is JsonNode right)
+            native["r"] = LowerTypeOrNode(right, path + ".r", resolvedCalls, resolvedTypes, refs);
+        if (obj["e"] is JsonNode operand)
+            native["e"] = LowerTypeOrNode(operand, path + ".e", resolvedCalls, resolvedTypes, refs);
         lowered = native;
         return true;
     }

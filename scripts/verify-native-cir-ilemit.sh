@@ -648,6 +648,60 @@ fi
 
 echo "PASS  native CIR bridge lowers array construction (incl. object[] boxing)"
 
+ARITHOPS="$OUT/arith-ops"
+mkdir -p "$ARITHOPS/cir" "$ARITHOPS/il"
+cat > "$ARITHOPS/ArithOpsApp.bir.json" <<'EOF'
+{
+  "fileClass": "ArithOpsAppKt",
+  "hasMain": true,
+  "fields": [],
+  "methods": [
+    {
+      "name": "main",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [],
+      "ret": "void",
+      "body": [
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"bin","op":"+","l":{"k":"const","type":"int","value":3},"r":{"k":"const","type":"int","value":4}}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"bin","op":"*","l":{"k":"const","type":"int","value":6},"r":{"k":"const","type":"int","value":7}}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"bin","op":"<","l":{"k":"const","type":"int","value":3},"r":{"k":"const","type":"int","value":4}}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"bin","op":"&","l":{"k":"const","type":"int","value":6},"r":{"k":"const","type":"int","value":3}}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"un","op":"-","e":{"k":"const","type":"int","value":5}}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"un","op":"!","e":{"k":"bin","op":"<","l":{"k":"const","type":"int","value":3},"r":{"k":"const","type":"int","value":4}}}]}}
+      ],
+      "attrs": []
+    }
+  ],
+  "types": []
+}
+EOF
+
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$ARITHOPS/cir" --native-cir "$ARITHOPS/ArithOpsApp.bir.json" >/dev/null
+ARITHOPS_CIR="$ARITHOPS/cir/ArithOpsApp.cir.json"
+
+for pattern in '"k": "clr.bin"' '"k": "clr.un"' '"sourceKind": "bin"' '"sourceKind": "un"'; do
+    if ! rg -q "$pattern" "$ARITHOPS_CIR"; then
+        echo "FAIL  arith-op native CIR missing $pattern" >&2
+        exit 1
+    fi
+done
+
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ARITHOPS/il" ArithOpsNativeApp "$ARITHOPS_CIR" >/dev/null
+ARITHOPS_RUN_OUT="$(dotnet "$ARITHOPS/il/ArithOpsNativeApp.dll")"
+ARITHOPS_EXPECTED=$'7\n42\nTrue\n2\n-5\nFalse'
+if [[ "$ARITHOPS_RUN_OUT" != "$ARITHOPS_EXPECTED" ]]; then
+    echo "FAIL  native CIR arith-op output mismatch" >&2
+    printf 'expected:\n%s\nactual:\n%s\n' "$ARITHOPS_EXPECTED" "$ARITHOPS_RUN_OUT" >&2
+    exit 1
+fi
+
+echo "PASS  native CIR bridge lowers primitive arithmetic/unary operators"
+
 WRAP="$OUT/wrapper"
 WRAP_OUT="$("$ROOT/scripts/dotkt.sh" --native-cir --no-stdlib --run -d "$WRAP" "$ROOT/cases/m0/M0.kt")"
 WRAP_EXPECTED="$(printf 'emitted M0Kt.dll\ndotkt: built %s/M0Kt.dll\n----\nsum = 5\nzero\nn=1\nn=2' "$WRAP")"
