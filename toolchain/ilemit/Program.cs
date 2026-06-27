@@ -94,6 +94,22 @@ sealed partial class Emitter
     // so EmitMethodBody/EmitCtorBody prescans the whole body. id -> IL Label. See docs/design-il-cfg.md.
     Dictionary<int, Label> _cfgLabels;
     Type _methodRetType = typeof(void);
+
+    // The coroutine-ABI types the suspend emitter binds against. These were HARDCODED to the DotKt.Runtime
+    // `DotKt.Coroutines.*` assembly — now ABANDONED: the stdlib IS the runtime and must not depend on it. They name
+    // the canonical kotlin.coroutines.* types the stdlib provides. The suspend->Task bridge helpers (TypedCont/
+    // Builders) and the kotlinx CancellableCont have no kotlin.* home yet — they are placeholders the coroutine
+    // PORT (refactor-stdlib-types-out-of-coroutines) will move into the stdlib and finalize. Centralized so the port
+    // repoints ONE place; suspend emission may break until the bridge is ported (accepted).
+    const string CoContinuation = "kotlin.coroutines.Continuation`1";
+    const string CoContext = "kotlin.coroutines.CoroutineContext";
+    const string CoEmptyContext = "kotlin.coroutines.EmptyCoroutineContext";
+    const string CoIntrinsics = "kotlin.coroutines.intrinsics.IntrinsicsKt";   // holder of COROUTINE_SUSPENDED
+    const string CoTypedCont = "kotlin.coroutines.TypedCont`1";                 // bridge — coroutine port provides
+    const string CoBuilders = "kotlin.coroutines.Builders";                     // bridge — coroutine port provides
+    const string CoCancellableCont = "kotlinx.coroutines.CancellableCont`1";    // dotktx — port provides
+    const string CoSeqStep = "kotlin.sequences.ISeqStep`1";                      // sequence{} bridge — port provides
+    const string CoSeq = "kotlin.sequences.Seq";                                 // sequence{} bridge — port provides
     // The generic context for emitting a type's members = the type's OWN params PLUS every enclosing (`nestedIn`) type's
     // params — a .NET nested type references its outer generic type's parameters by the outer's builder (a Kotlin `inner
     // class IteratorImpl` inside `AbstractList<E>` whose `next(): E` must resolve `gp:E` to AbstractList's `E`).

@@ -316,11 +316,11 @@ sealed partial class Emitter
         bool unitResult = rs == "void";   // a `suspend fun … : Unit` surfaces as a non-generic Task (RootUnit sink)
         var steps = m.GetProperty("steps").EnumerateArray().ToList();
 
-        var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
-        var resObj = ResolveType("DotKt.Result`1").MakeGenericType(typeof(object));
-        var ctxType = ResolveType("DotKt.Coroutines.CoroutineContext");
-        var builders = ResolveType("DotKt.Coroutines.Builders");
-        var fSuspended = ResolveType("DotKt.Coroutines.Intrinsics").GetField("COROUTINE_SUSPENDED");
+        var contObj = ResolveType(CoContinuation).MakeGenericType(typeof(object));
+        var resObj = ResolveType("kotlin.Result`1").MakeGenericType(typeof(object));
+        var ctxType = ResolveType(CoContext);
+        var builders = ResolveType(CoBuilders);
+        var fSuspended = ResolveType(CoIntrinsics).GetField("COROUTINE_SUSPENDED");
         var mResSuccess = resObj.GetMethod("Success");
         var mResFailure = resObj.GetMethod("Failure");
         var mResIsFailure = resObj.GetMethod("get_IsFailure");
@@ -493,7 +493,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldarg, ai++); _il.Emit(OpCodes.Stfld, SmField(smInst, coDefs[pn]));
             }
             var newRoot = unitResult ? builders.GetMethod("NewRootUnit") : builders.GetMethod("NewRoot").MakeGenericMethod(MapType(rs));
-            var emptyCtx = ResolveType("DotKt.Coroutines.EmptyCoroutineContext").GetField("Instance");
+            var emptyCtx = ResolveType(CoEmptyContext).GetField("Instance");
             var locRoot = _il.DeclareLocal(newRoot.ReturnType);
             _il.Emit(OpCodes.Ldsfld, emptyCtx); _il.Emit(OpCodes.Call, newRoot); _il.Emit(OpCodes.Stloc, locRoot);
             _il.Emit(OpCodes.Ldloc, locSm); _il.Emit(OpCodes.Ldloc, locRoot); _il.Emit(OpCodes.Stfld, SmField(smInst, fCompletionD));
@@ -554,7 +554,7 @@ sealed partial class Emitter
     {
         var elem = MapType(e.GetProperty("elem").GetString());
         var steps = e.GetProperty("steps").EnumerateArray().ToList();
-        var iseq = ResolveType("DotKt.Sequences.ISeqStep`1").MakeGenericType(elem);
+        var iseq = ResolveType(CoSeqStep).MakeGenericType(elem);
 
         var sm = _mod.DefineType("<>dotkt_SeqSm" + (_seqCounter++),
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, typeof(object));
@@ -666,7 +666,7 @@ sealed partial class Emitter
 
         // call site: Seq.Of<elem>(new SeqSm())
         _il.Emit(OpCodes.Newobj, ctor);
-        _il.Emit(OpCodes.Call, ResolveType("DotKt.Sequences.Seq").GetMethod("Of").MakeGenericMethod(elem));
+        _il.Emit(OpCodes.Call, ResolveType(CoSeq).GetMethod("Of").MakeGenericMethod(elem));
         return ResolveType("System.Collections.Generic.IEnumerable`1").MakeGenericType(elem);
     }
 
