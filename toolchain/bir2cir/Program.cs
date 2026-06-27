@@ -1145,6 +1145,8 @@ static class ExecutableCirDraft
                 return loweredTypeOp;
             if (TryLowerPhysicalObjectOp(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredObjectOp))
                 return loweredObjectOp;
+            if (TryLowerPhysicalArrayOp(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredArrayOp))
+                return loweredArrayOp;
             if (TryLowerPhysicalEvent(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredEvent))
                 return loweredEvent;
             if (TryLowerPhysicalProperty(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredProperty))
@@ -1326,6 +1328,46 @@ static class ExecutableCirDraft
         if (obj["arg"] is JsonNode methodArg)
             method["arg"] = LowerTypeOrNode(methodArg, path + ".arg", resolvedCalls, resolvedTypes, refs);
         lowered = method;
+        return true;
+    }
+
+    static bool TryLowerPhysicalArrayOp(
+        JsonObject obj,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs,
+        out JsonNode lowered)
+    {
+        lowered = null;
+        var kind = obj["k"]?.GetValue<string>();
+        var nativeKind = kind switch
+        {
+            "arrayGet" => "clr.ldelem",
+            "arraySet" => "clr.stelem",
+            "arrayLen" => "clr.ldlen",
+            _ => null,
+        };
+        if (nativeKind == null) return false;
+
+        // Primitive-array physical ops (ldelem/stelem/ldlen). The element type travels on the node and is
+        // routed through LowerTypeOrNode so reference element types still resolve; the array/index/value
+        // children recurse like any other expression. The value->object boxing concern is newArray-only.
+        var native = new JsonObject
+        {
+            ["k"] = nativeKind,
+            ["sourcePath"] = path,
+            ["sourceKind"] = kind,
+        };
+        if (obj["array"] is JsonNode array)
+            native["array"] = LowerTypeOrNode(array, path + ".array", resolvedCalls, resolvedTypes, refs);
+        if (obj["index"] is JsonNode index)
+            native["index"] = LowerTypeOrNode(index, path + ".index", resolvedCalls, resolvedTypes, refs);
+        if (obj["value"] is JsonNode value)
+            native["value"] = LowerTypeOrNode(value, path + ".value", resolvedCalls, resolvedTypes, refs);
+        if (obj["elem"] is JsonNode elem)
+            native["elem"] = LowerTypeOrNode(elem, path + ".elem", resolvedCalls, resolvedTypes, refs);
+        lowered = native;
         return true;
     }
 

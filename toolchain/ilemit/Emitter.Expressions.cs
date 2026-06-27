@@ -289,17 +289,20 @@ sealed partial class Emitter
                 return elem.MakeArrayType();
             }
             case "arrayGet":
+            case "clr.ldelem":
             {
                 EmitExpr(e.GetProperty("array")); EmitExpr(e.GetProperty("index"));
                 var elem = MapType(e.GetProperty("elem").GetString());
                 _il.Emit(OpCodes.Ldelem, elem); return elem;
             }
             case "arraySet":
+            case "clr.stelem":
             {
                 EmitExpr(e.GetProperty("array")); EmitExpr(e.GetProperty("index")); EmitExpr(e.GetProperty("value"));
                 _il.Emit(OpCodes.Stelem, MapType(e.GetProperty("elem").GetString())); return typeof(void);
             }
             case "arrayLen":
+            case "clr.ldlen":
                 EmitExpr(e.GetProperty("array")); _il.Emit(OpCodes.Ldlen); _il.Emit(OpCodes.Conv_I4); return typeof(int);
             case "forEachInline":
             {

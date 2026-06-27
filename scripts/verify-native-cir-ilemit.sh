@@ -542,6 +542,59 @@ fi
 
 echo "PASS  native CIR bridge lowers physical object operations"
 
+ARRAYOPS="$OUT/array-ops"
+mkdir -p "$ARRAYOPS/cir" "$ARRAYOPS/il"
+cat > "$ARRAYOPS/ArrayOpsApp.bir.json" <<'EOF'
+{
+  "fileClass": "ArrayOpsAppKt",
+  "hasMain": true,
+  "fields": [],
+  "methods": [
+    {
+      "name": "main",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [],
+      "ret": "void",
+      "body": [
+        {"k":"var","name":"xs","type":"array:int","init":{"k":"newArray","elem":"int","elems":[{"k":"const","type":"int","value":10},{"k":"const","type":"int","value":20},{"k":"const","type":"int","value":30}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"arrayLen","array":{"k":"local","name":"xs"}}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"arrayGet","array":{"k":"local","name":"xs"},"index":{"k":"const","type":"int","value":1},"elem":"int"}]}},
+        {"k":"exprStmt","expr":{"k":"arraySet","array":{"k":"local","name":"xs"},"index":{"k":"const","type":"int","value":1},"value":{"k":"const","type":"int","value":99},"elem":"int"}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"arrayGet","array":{"k":"local","name":"xs"},"index":{"k":"const","type":"int","value":1},"elem":"int"}]}}
+      ],
+      "attrs": []
+    }
+  ],
+  "types": []
+}
+EOF
+
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$ARRAYOPS/cir" --native-cir "$ARRAYOPS/ArrayOpsApp.bir.json" >/dev/null
+ARRAYOPS_CIR="$ARRAYOPS/cir/ArrayOpsApp.cir.json"
+
+for pattern in '"k": "clr.ldlen"' '"k": "clr.ldelem"' '"k": "clr.stelem"' '"sourceKind": "arrayGet"' '"sourceKind": "arraySet"' '"sourceKind": "arrayLen"'; do
+    if ! rg -q "$pattern" "$ARRAYOPS_CIR"; then
+        echo "FAIL  array-op native CIR missing $pattern" >&2
+        exit 1
+    fi
+done
+
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ARRAYOPS/il" ArrayOpsNativeApp "$ARRAYOPS_CIR" >/dev/null
+ARRAYOPS_RUN_OUT="$(dotnet "$ARRAYOPS/il/ArrayOpsNativeApp.dll")"
+ARRAYOPS_EXPECTED=$'3\n20\n99'
+if [[ "$ARRAYOPS_RUN_OUT" != "$ARRAYOPS_EXPECTED" ]]; then
+    echo "FAIL  native CIR array-op output mismatch" >&2
+    printf 'expected:\n%s\nactual:\n%s\n' "$ARRAYOPS_EXPECTED" "$ARRAYOPS_RUN_OUT" >&2
+    exit 1
+fi
+
+echo "PASS  native CIR bridge lowers physical primitive-array operations"
+
 WRAP="$OUT/wrapper"
 WRAP_OUT="$("$ROOT/scripts/dotkt.sh" --native-cir --no-stdlib --run -d "$WRAP" "$ROOT/cases/m0/M0.kt")"
 WRAP_EXPECTED="$(printf 'emitted M0Kt.dll\ndotkt: built %s/M0Kt.dll\n----\nsum = 5\nzero\nn=1\nn=2' "$WRAP")"
