@@ -1839,6 +1839,7 @@ sealed partial class Emitter
         // Last resort: a UNIQUELY-named method (covers e.g. a `params`/vararg method called with one array arg whose
         // static argType — `object` — didn't match the `T[]` param, so neither exact nor arity resolution hit).
         if (mi == null) { var named = type.GetMethods(flags).Where(m => m.Name == name).ToList(); if (named.Count == 1) mi = named[0]; }
+        if (mi == null) throw new NotSupportedException($"clrInstance method not resolved: {type}.{name}/{argSpecs.Count}");
         // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
         if (instance) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitArgs(e.GetProperty("args"), mi.GetParameters());

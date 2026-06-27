@@ -3608,7 +3608,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// String ops -> `System.String` instance methods (clrInstance; ilemit resolves overload).
 				STRING_OPS[name]?.let { m ->
 					val recv = extensionReceiver(call) ?: dispatchReceiver(call)
-					if (recv != null) {
+					// `indexOf`'s 3-arg (ignoreCase: Boolean) and stdlib-internal overloads don't match a .NET
+					// String.IndexOf (whose 3rd arg is an int count) — only (value) / (value, startIndex) match.
+					// Don't intrinsify the others; emit the real stdlib indexOf instead of mis-mapping.
+					if (recv != null && !(name == "indexOf" && regularArgs(call).size > 2)) {
 						val args = regularArgs(call)
 						return """{"k":"clrInstance","type":"System.String","method":${str(m)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"recv":${expr(recv)},"args":[${args.joinToString(",") { expr(it) }}]}"""
 					}
