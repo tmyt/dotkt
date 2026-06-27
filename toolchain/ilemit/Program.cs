@@ -1024,7 +1024,11 @@ sealed partial class Emitter
             }
             // A generic method on a CONSTRUCTED-generic TypeBuilder owner (non-self, e.g. `ringBuffer<E>.toArray<T>()`)
             // is a MethodBuilderInstantiation whose MakeGenericMethod is unsupported. Instantiate the OPEN method's
-            // generic params first, then re-anchor onto the constructed owner via TypeBuilder.GetMethod.
+            // generic params. Reflection.Emit has NO API for a generic method on a constructed-generic TypeBuilder
+            // owner (TypeBuilder.GetMethod wants a generic-method-DEFINITION; MethodBuilderInstantiation can't
+            // MakeGenericMethod). The owner here is constructed with enclosing type params (e.g. ringBuffer<E>.toArray
+            // <T>() from inside another generic), which erases to the open owner in IL, so use the OPEN method's
+            // instantiation directly — the same shape the self-instantiation path emits.
             if (m is not MethodBuilder && m.DeclaringType is { IsGenericType: true } dt && !dt.IsGenericTypeDefinition
                 && dt.GetGenericTypeDefinition() is TypeBuilder openTb)
             {
@@ -1040,7 +1044,7 @@ sealed partial class Emitter
                     foreach (var gp in ogps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
                     retType = sub.TryGetValue(openMb.ReturnType, out var or) ? or : m.ReturnType;
                     paramTypes = ps;
-                    return TypeBuilder.GetMethod(dt, openMb.MakeGenericMethod(targs));
+                    return openMb.MakeGenericMethod(targs);
                 }
             }
             retType = sub.TryGetValue(m.ReturnType, out var r) ? r : m.ReturnType;

@@ -1789,6 +1789,26 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return acc.toList()
 	}
 
+	/** Type operands USED in a function body (e.g. `x is R` / `x as R` / `R::class`). A lifted closure must be generic
+	 *  over these too: on the CLR generics are reified, so `is R` works once the lifted method carries `R` — unlike the
+	 *  JVM, which needs `reified`+inlining. freeTypeParams over (params+return+captures) alone misses a body-only `R`. */
+	private fun bodyTypeOperands(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): List<IrType> {
+		val out = ArrayList<IrType>()
+		fn.body?.acceptVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
+				// Don't descend into NESTED lambdas/local funs — they compute their own free type params when lifted.
+				if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
+				when (element) {
+					is IrTypeOperatorCall -> out.add(element.typeOperand)
+					is IrClassReference -> out.add(element.classType)
+					else -> {}
+				}
+				element.acceptChildrenVoid(this)
+			}
+		})
+		return out
+	}
+
 	internal fun lambda(node: IrFunctionExpression): String {
 		val fn = node.function
 		// A `suspend () -> T` lambda is a coroutine; in the CLR ABI it is a `Func<Task<T>>` (coroutine-abi-decision).
@@ -1804,7 +1824,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val captures = capturedVars(fn, includeThis = true)
 		if (captures.isEmpty()) {
 			val lname = "__lambda${lambdaCounter++}"
-			val freeTps = freeTypeParams(fn.parameters.map { it.type } + listOf(fn.returnType))
+			val freeTps = freeTypeParams(fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 			val typeParams = typeParamsJson(freeTps)
 			if (cps) {
 				val co = emitCoroutineBody(fn)
@@ -1842,7 +1862,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
 		// The closure must be GENERIC over any enclosing type parameters it captures (reified CLR generics — a `gp:T`
 		// field is unresolved otherwise). Declare them on the class and pass them as type arguments at `closureNew`.
-		val freeTps = freeTypeParams(capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType))
+		val freeTps = freeTypeParams(capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 		liftedTypes.add("""{"name":${str(cname)},"kind":"class"${typeParamsJson(freeTps)},"base":null,"interfaces":[],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$invoke]}""")
 		// Capture values are evaluated in the enclosing context (the outer `this`, or an outer local).
 		val capExprs = captures.joinToString(",") { capValueExpr(it) }
