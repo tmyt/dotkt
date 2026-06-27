@@ -104,6 +104,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * BIR node. The build fails (hadError), so this placeholder never reaches ilemit. `what` names the construct;
 	 * `detail` is a plain-language explanation of why / what to do — NOT the word "deferred".
 	 */
+	// Compiling the stdlib ITSELF: the kotlin.*->DotKt.Runtime lowerings (Result/Unit/Regex/coroutine ABI) must be OFF
+	// so the stdlib uses its OWN kotlin.* definitions (it IS the runtime) and never references the external DotKt.Runtime.
+	internal val stdlibCompile: Boolean get() = System.getenv("DOTKT_STDLIB_COMPILE") != null
+
 	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
 		// Compiling the stdlib ITSELF (DOTKT_STDLIB_COMPILE): don't fail the whole file on one unsupported construct in
 		// one op's body — emit a THROWING stub (a `throw NotSupportedException("[DOTKT-STDLIB] …")`) and warn. The op
