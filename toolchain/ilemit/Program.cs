@@ -422,7 +422,9 @@ sealed partial class Emitter
             if (inits.Count == 0) continue;
             _il = ti.TB.DefineTypeInitializer().GetILGenerator();
             _args.Clear(); _argTypes.Clear(); _locals.Clear(); _methodRetType = typeof(void);
-            foreach (var f in inits) { EmitExpr(f.GetProperty("init")); _il.Emit(OpCodes.Stsfld, ti.Fields[f.GetProperty("name").GetString()]); }
+            // A field initializer can contain CFG control flow (a `while`/`when` lowered to label/goto), so its labels
+            // must be pre-defined just like a method body — otherwise MarkLabel/Br throws "key not in _cfgLabels".
+            foreach (var f in inits) { PrescanCfgLabels(f.GetProperty("init")); EmitExpr(f.GetProperty("init")); _il.Emit(OpCodes.Stsfld, ti.Fields[f.GetProperty("name").GetString()]); }
             _il.Emit(OpCodes.Ret);
         }
 
@@ -490,7 +492,7 @@ sealed partial class Emitter
                 {
                     var spec = i.GetString();
                     if (spec.StartsWith("clr:") || spec.StartsWith("clrg:")) continue;  // .NET iface — not a user-type dep
-                    if (_types.TryGetValue(ParseOwner(spec).open, out var inf)) Visit(inf);
+                    if (_types.TryGetValue(OwnerOpen(spec), out var inf)) Visit(inf);
                 }
             // A nested type must be CreateType()'d BEFORE its enclosing type (Reflection.Emit bakes children into the
             // parent). `done` already holds `ti` (added at entry), so a child whose base IS `ti` won't recurse forever.
@@ -891,6 +893,10 @@ sealed partial class Emitter
             }
         }
     }
+
+    // The OPEN type name of an owner spec, WITHOUT resolving its generic args. The type-ordering pass runs with no
+    // type-param scope, so a `Foo[gp:E]` base/interface would crash MapType("gp:E"); ordering only needs the open dep.
+    static string OwnerOpen(string spec) { var br = spec.IndexOf('['); return br < 0 ? spec : spec.Substring(0, br); }
 
     (string open, Type constructed) ParseOwner(string spec)
     {
