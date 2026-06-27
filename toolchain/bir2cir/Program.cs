@@ -1149,6 +1149,8 @@ static class ExecutableCirDraft
                 return loweredArrayOp;
             if (TryLowerPhysicalArithOp(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredArithOp))
                 return loweredArithOp;
+            if (TryLowerPhysicalBasicOp(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredBasicOp))
+                return loweredBasicOp;
             if (TryLowerPhysicalEvent(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredEvent))
                 return loweredEvent;
             if (TryLowerPhysicalProperty(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredProperty))
@@ -1414,6 +1416,64 @@ static class ExecutableCirDraft
             native["e"] = LowerTypeOrNode(operand, path + ".e", resolvedCalls, resolvedTypes, refs);
         lowered = native;
         return true;
+    }
+
+    static bool TryLowerPhysicalBasicOp(
+        JsonObject obj,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs,
+        out JsonNode lowered)
+    {
+        lowered = null;
+        var kind = obj["k"]?.GetValue<string>();
+        switch (kind)
+        {
+            case "const":
+                // Literal leaf. `type` is a raw primitive token (int/string/bool/...) that the ilemit
+                // consumer switches on directly, so it is carried verbatim, not normalized to a CLR type site.
+                lowered = new JsonObject
+                {
+                    ["k"] = "clr.const",
+                    ["sourcePath"] = path,
+                    ["sourceKind"] = "const",
+                    ["type"] = obj["type"]?.DeepClone(),
+                    ["value"] = obj["value"]?.DeepClone(),
+                };
+                return true;
+            case "default":
+            {
+                var native = new JsonObject
+                {
+                    ["k"] = "clr.default",
+                    ["sourcePath"] = path,
+                    ["sourceKind"] = "default",
+                };
+                if (obj["type"] is JsonNode type)
+                    native["type"] = LowerTypeOrNode(type, path + ".type", resolvedCalls, resolvedTypes, refs);
+                lowered = native;
+                return true;
+            }
+            case "nullableOf":
+            {
+                // The implicit T -> T? wrap is IL-identical to the already-shipped clr.nullable.wrap node.
+                var native = new JsonObject
+                {
+                    ["k"] = "clr.nullable.wrap",
+                    ["sourcePath"] = path,
+                    ["sourceKind"] = "nullableOf",
+                };
+                if (obj["elem"] is JsonNode elem)
+                    native["elem"] = LowerTypeOrNode(elem, path + ".elem", resolvedCalls, resolvedTypes, refs);
+                if (obj["e"] is JsonNode value)
+                    native["e"] = LowerTypeOrNode(value, path + ".e", resolvedCalls, resolvedTypes, refs);
+                lowered = native;
+                return true;
+            }
+            default:
+                return false;
+        }
     }
 
     static bool TryLowerPhysicalProperty(

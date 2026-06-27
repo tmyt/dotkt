@@ -1487,7 +1487,7 @@ sealed partial class Emitter
     Type EmitNullableCoerced(JsonElement node, Type want)
     {
         bool wantNullable = want != null && want.IsGenericType && want.GetGenericTypeDefinition() == typeof(Nullable<>);
-        if (wantNullable && node.TryGetProperty("k", out var k) && k.GetString() == "const"
+        if (wantNullable && node.TryGetProperty("k", out var k) && k.GetString() is "const" or "clr.const"
             && node.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Null)
         {
             var loc = _il.DeclareLocal(want);

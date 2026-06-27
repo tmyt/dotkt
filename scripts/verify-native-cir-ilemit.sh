@@ -702,6 +702,60 @@ fi
 
 echo "PASS  native CIR bridge lowers primitive arithmetic/unary operators"
 
+BASICOPS="$OUT/basic-ops"
+mkdir -p "$BASICOPS/cir" "$BASICOPS/il"
+cat > "$BASICOPS/BasicOpsApp.bir.json" <<'EOF'
+{
+  "fileClass": "BasicOpsAppKt",
+  "hasMain": true,
+  "fields": [],
+  "methods": [
+    {
+      "name": "main",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [],
+      "ret": "void",
+      "body": [
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"const","type":"int","value":42}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"const","type":"string","value":"hi"}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"default","type":"int"}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"nullableOf","elem":"int","e":{"k":"const","type":"int","value":5}}]}},
+        {"k":"var","name":"m","type":"nullable:int","init":{"k":"cond","type":"nullable:int","cond":{"k":"const","type":"bool","value":false},"then":{"k":"const","type":"int","value":1},"else":{"k":"const","type":"int","value":null}}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"nullableHasValue","elem":"int","e":{"k":"local","name":"m"}}]}}
+      ],
+      "attrs": []
+    }
+  ],
+  "types": []
+}
+EOF
+
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$BASICOPS/cir" --native-cir "$BASICOPS/BasicOpsApp.bir.json" >/dev/null
+BASICOPS_CIR="$BASICOPS/cir/BasicOpsApp.cir.json"
+
+for pattern in '"k": "clr.const"' '"k": "clr.default"' '"sourceKind": "const"' '"sourceKind": "default"' '"sourceKind": "nullableOf"'; do
+    if ! rg -q "$pattern" "$BASICOPS_CIR"; then
+        echo "FAIL  basic-op native CIR missing $pattern" >&2
+        exit 1
+    fi
+done
+
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$BASICOPS/il" BasicOpsNativeApp "$BASICOPS_CIR" >/dev/null
+BASICOPS_RUN_OUT="$(dotnet "$BASICOPS/il/BasicOpsNativeApp.dll")"
+BASICOPS_EXPECTED=$'42\nhi\n0\n5\nFalse'
+if [[ "$BASICOPS_RUN_OUT" != "$BASICOPS_EXPECTED" ]]; then
+    echo "FAIL  native CIR basic-op output mismatch" >&2
+    printf 'expected:\n%s\nactual:\n%s\n' "$BASICOPS_EXPECTED" "$BASICOPS_RUN_OUT" >&2
+    exit 1
+fi
+
+echo "PASS  native CIR bridge lowers const/default/nullableOf (incl. null->Nullable coercion)"
+
 WRAP="$OUT/wrapper"
 WRAP_OUT="$("$ROOT/scripts/dotkt.sh" --native-cir --no-stdlib --run -d "$WRAP" "$ROOT/cases/m0/M0.kt")"
 WRAP_EXPECTED="$(printf 'emitted M0Kt.dll\ndotkt: built %s/M0Kt.dll\n----\nsum = 5\nzero\nn=1\nn=2' "$WRAP")"

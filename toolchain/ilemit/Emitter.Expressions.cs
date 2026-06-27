@@ -15,6 +15,7 @@ sealed partial class Emitter
         switch (e.GetProperty("k").GetString())
         {
             case "const": return EmitConst(e);
+            case "clr.const": return EmitConst(e);
             case "this":
                 if (_coThis != null) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, _coThis); return _coThis.FieldType; }   // instance coroutine: captured receiver
                 _il.Emit(OpCodes.Ldarg_0); return typeof(object);
@@ -261,6 +262,7 @@ sealed partial class Emitter
                 return nt;
             }
             case "default":
+            case "clr.default":
             {
                 // `default(T)` -> the zero value: ldnull for a reference type, else a zero-init local (initobj).
                 var dt = MapType(e.GetProperty("type").GetString());
