@@ -104,6 +104,7 @@ assembly via the chosen backend. See `cases/ktproj/` (C# path), `cases/ktproj-il
 ```bash
 ./scripts/verify-il.sh      # the shipping IL backend over the sample corpus + ilverify
 ./scripts/verify-ktproj.sh  # MSBuild/.ktproj end-to-end (forward + bidirectional ProjectReference)
+./scripts/verify-bir2cir-native.sh  # native-CIR draft + compat identity guard
 ```
 
 ## Layout
@@ -122,6 +123,7 @@ assembly via the chosen backend. See `cases/ktproj/` (C# path), `cases/ktproj-il
 | `cases/` | `il-*` (IL-backend samples), `m-*` (language/interop), `ktproj-*` (MSBuild) |
 | `scripts/verify-il.sh` | IL differential + `ilverify` gate |
 | `scripts/verify-ktproj.sh` | MSBuild/.ktproj integration (IL backend) |
+| `scripts/verify-bir2cir-native.sh` | Native-CIR draft shape + `--compat-bir` identity check |
 | `docs/dotkt-semantics.md` | **how Kotlin maps to the CLR + where DotKt deliberately differs from Kotlin/JVM** |
 | `docs/design-fir-bir-cir-il.md` | backend layer contract and CIR migration target |
 | `docs/remaining-tasks.md` | the 1.0 ship checklist |

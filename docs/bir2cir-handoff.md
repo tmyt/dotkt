@@ -45,6 +45,12 @@ Build `bir2cir`:
 dotnet build toolchain/bir2cir -c Release -o build/bir2cir-bin -v q --nologo
 ```
 
+Run the focused native-CIR guard:
+
+```bash
+scripts/verify-bir2cir-native.sh
+```
+
 Generate native CIR for the interop sample:
 
 ```bash
@@ -94,11 +100,10 @@ Do not revert or clean these unless the user explicitly asks.
 
 ## Suggested Next Steps
 
-1. Add focused tests or golden checks for `bir2cir --native-cir` output. Start with `cases/ktproj-il/obj/dotkt-bir/App.bir.json` because it exercises reference constructors, methods, and type strings.
-2. Decide whether `cirDraft.loweredBir` should keep BIR wrapper structure or become a separate executable CIR schema. Keeping both temporarily is acceptable.
-3. Extend overload resolution for generic owners, generic methods, nullable/reference types, arrays, delegates, and `clrg:` encodings.
-4. Teach `ilemit` a native-CIR reader behind an explicit mode. Do not route normal `dotkt` builds to native CIR until compatibility checks exist.
-5. Move one narrow lowering from `kotc`/`ilemit` into `bir2cir`, then verify `--compat-bir` remains unchanged until the consumer can read native CIR.
+1. Decide whether `cirDraft.loweredBir` should keep BIR wrapper structure or become a separate executable CIR schema. Keeping both temporarily is acceptable.
+2. Extend overload resolution for generic owners, generic methods, nullable/reference types, arrays, delegates, and `clrg:` encodings.
+3. Teach `ilemit` a native-CIR reader behind an explicit mode. Do not route normal `dotkt` builds to native CIR until compatibility checks exist.
+4. Move one narrow lowering from `kotc`/`ilemit` into `bir2cir`, then verify `--compat-bir` remains unchanged until the consumer can read native CIR.
 
 ## Useful Code Pointers
 
