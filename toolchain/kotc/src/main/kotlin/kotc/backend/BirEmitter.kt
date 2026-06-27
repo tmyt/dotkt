@@ -203,7 +203,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// unique. Root-package types are unchanged (fqName has no dot), so existing code is unaffected. birType references
 	// user types through here, so the def name and every reference stay consistent.
 	internal fun typeName(k: IrClass): String =
-		anonNames[k] ?: if (k.isCompanion && k.parent is IrClass) typeName(k.parent as IrClass)
+		// A companion: a PLAIN one flattens to the outer class's name (its members are the outer's statics); a
+		// super-typed one (`companion object X : Base()`) is a lifted singleton `<Outer>.InstanceClass`. This must be a
+		// rule in typeName (not just an anonNames entry) so a CROSS-FILE reference to the companion-as-value resolves to
+		// the same lifted name everywhere, not only in the file that declares it.
+		anonNames[k] ?: if (k.isCompanion && k.parent is IrClass)
+			(if (k.superTypes.any { st -> val sk = st.classifierOrNull?.owner as? IrClass; sk != null && sk.fqNameWhenAvailable?.asString() != "kotlin.Any" })
+				companionObjectTypeName(k) else typeName(k.parent as IrClass))
 		else if (k.parent is IrClass) {
 			val p = k.parent as IrClass
 			val owner = if (p.isCompanion) p.parent as? IrClass else p
@@ -215,6 +221,24 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val p = k.parent as? IrClass ?: return null
 		return if (p.isCompanion) p.parent as? IrClass else p
 	}
+
+	/** A `companion object X : Base()` whose companion has a real supertype (a class base or interface, not just `Any`).
+	 *  Such a companion can't flatten to its (often abstract) parent's statics — its overrides would land on the
+	 *  abstract parent. It is instead emitted as a concrete lifted singleton `<Outer>.InstanceClass` (an object, so it
+	 *  carries its own static `INSTANCE`); the parent keeps none of its members. A plain companion (no supertype) still
+	 *  flattens to the parent's statics. Returns the companion, or null. */
+	internal fun superTypedCompanion(klass: IrClass): IrClass? =
+		klass.declarations.filterIsInstance<IrClass>().firstOrNull { c ->
+			c.isCompanion && c.superTypes.any { st ->
+				val k = st.classifierOrNull?.owner as? IrClass
+				k != null && k.fqNameWhenAvailable?.asString() != "kotlin.Any"
+			}
+		}
+
+	/** The lifted singleton type name for a super-typed companion: `<Outer>.<CompanionName>CompanionObject`
+	 *  (e.g. `kotlin.random.Random.DefaultCompanionObject`). */
+	internal fun companionObjectTypeName(comp: IrClass): String =
+		typeName(comp.parent as IrClass) + "." + comp.name.asString() + "CompanionObject"
 
 	// Synthesized stdlib delegate classes for Delegates.observable/vetoable/notNull (their stdlib bodies are
 	// absent from our IR, so we compiler-generate equivalents, monomorphized by value type, each implementing
@@ -488,6 +512,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
 			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))},"static":true,"init":$init}"""
 		}
+		// Super-typed companions (`companion object X : Base()`) -> lifted concrete singletons `<Outer>.InstanceClass`
+		// (registered in anonNames so typeName resolves them consistently). Must run BEFORE any body emission so a
+		// reference to the companion-as-value resolves to the lifted name everywhere.
+		val superCompanions = (classes + objects + interfaces + enums + annClasses)
+			.flatMap { listOf(it) + nestedClasses(it) + nestedObjects(it) }
+			.mapNotNull { superTypedCompanion(it) }.distinct()
+		superCompanions.forEach { c -> anonNames[c] = companionObjectTypeName(c) }
 		// Emit functions and types first (this lifts lambdas into liftedMethods/liftedTypes), then append them.
 		val fnMethods = functions.map { method(it, static = true) }
 		// A top-level property with NO backing field (an EXTENSION property `val T.p`, or a computed `val p get() = …`)
@@ -513,6 +544,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val nestedIfaces = nestedParents.flatMap { nestedInterfaces(it) }
 		val typeDefs = (basicEnums + nestedBasicEnums).map { enumDef(it) } + (interfaces + nestedIfaces).map { interfaceDef(it) } +
 			classes.map { typeDef(it) } + (objects + nestedObjects).map { typeDef(it, isObject = true) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
+			superCompanions.map { typeDef(it, isObject = true) } +
 			(richEnums + nestedRichEnums).map { richEnumDef(it) } + annClasses.map { annotationDef(it) }
 		val methods = (fnMethods + topPropAccessors + liftedMethods).joinToString(",")
 		// Synthetic types (iterator/Read(Write)Property interfaces, synthesized Delegates.* classes, KProperty)
@@ -859,7 +891,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val baseType = klass.superTypes
 			.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
 		val base = baseType?.classifierOrNull?.owner as? IrClass
-		val companion = klass.declarations.filterIsInstance<IrClass>().firstOrNull { it.isCompanion }
+		// A super-typed companion is emitted as a separate lifted singleton (<Outer>.InstanceClass), NOT flattened into
+		// this (often abstract) parent's statics. Only a plain companion (no supertype) flattens here.
+		val companion = if (superTypedCompanion(klass) != null) null
+			else klass.declarations.filterIsInstance<IrClass>().firstOrNull { it.isCompanion }
 		val instFields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { p ->
 			val bf = p.backingField ?: return@mapNotNull null
 			// Honor the property's visibility on its backing field (A-108): a `private`/`internal`/`protected`
@@ -3205,7 +3240,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 
 		// Companion-object member -> a static member of the enclosing class (precedes user-property field access).
-		(callee.parent as? IrClass)?.takeIf { it.isCompanion }?.let { comp ->
+		// A super-typed companion is a real singleton (<Outer>.InstanceClass) instead: its members are NOT static on the
+		// parent, so fall through to the normal instance-call path (receiver = the companion-as-value -> INSTANCE).
+		(callee.parent as? IrClass)?.takeIf { it.isCompanion && superTypedCompanion(it.parent as IrClass) == null }?.let { comp ->
 			val enclosing = typeName(comp.parent as IrClass)
 			val prop = callee.correspondingPropertySymbol?.owner
 			if (prop != null) return if (callee === prop.setter)
