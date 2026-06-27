@@ -374,8 +374,13 @@ sealed partial class Emitter
         foreach (var ti in _types.Values)
             for (int ci = 0; ci < ti.Ctors.Count; ci++) { T($"pass4 ctor body: {ti.TB?.Name}#{ci}"); EmitCtorBody(ti, ti.Ctors[ci], ti.CtorDefs[ci]); }
         foreach (var ti in _types.Values)
-            if (!ti.IsInterface && !ti.IsEnum)
-                foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) { T($"pass4 method body: {ti.TB?.Name}.{(m.TryGetProperty("name", out var mn) ? mn.GetString() : "?")}"); EmitMethodBody(ti, m); }
+            if (!ti.IsEnum)
+                foreach (var m in ti.Def.GetProperty("methods").EnumerateArray())
+                {
+                    // Interfaces: emit an IL body ONLY for default methods (those that carry one); abstract slots have none.
+                    if (ti.IsInterface && !(m.TryGetProperty("body", out var ib) && ib.ValueKind == JsonValueKind.Array && ib.GetArrayLength() > 0)) continue;
+                    T($"pass4 method body: {ti.TB?.Name}.{(m.TryGetProperty("name", out var mn) ? mn.GetString() : "?")}"); EmitMethodBody(ti, m);
+                }
 
         // User annotations -> .NET custom attributes, applied on the type and its methods (the ctor builder of the
         // synthesized `: System.Attribute` class already exists). Args are compile-time constants.
@@ -530,7 +535,15 @@ sealed partial class Emitter
         var objOverride = m.TryGetProperty("objectOverride", out var oo) && oo.GetBoolean();
         // Overriding a .NET base virtual (e.g. `override val Message`) reuses the base slot, like an object-method.
         var clrOverride = m.TryGetProperty("clrOverride", out var co) ? co.GetString() : null;
-        if (ti.IsInterface) attrs |= MethodAttributes.Virtual | MethodAttributes.Abstract | MethodAttributes.NewSlot;
+        // An interface method with a DEFAULT body -> a CLR default interface method (Virtual|NewSlot, real IL body in
+        // Pass 4); a bare slot (no body) stays Virtual|Abstract|NewSlot. (A Kotlin interface default impl, e.g.
+        // CoroutineContext.plus, must carry its body so non-overriding implementers inherit it instead of failing load.)
+        if (ti.IsInterface)
+        {
+            attrs |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
+            if (!(m.TryGetProperty("body", out var ifb) && ifb.ValueKind == JsonValueKind.Array && ifb.GetArrayLength() > 0))
+                attrs |= MethodAttributes.Abstract;
+        }
         else if (isStatic) attrs |= MethodAttributes.Static;
         // `ToString`/`Equals`/`GetHashCode` and .NET base overrides reuse the base slot (Virtual, no NewSlot).
         else if (objOverride || clrOverride != null) attrs |= MethodAttributes.Virtual | MethodAttributes.HideBySig;

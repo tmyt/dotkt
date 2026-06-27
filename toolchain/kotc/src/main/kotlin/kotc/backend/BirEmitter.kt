@@ -560,12 +560,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	internal fun interfaceDef(iface: IrClass): String {
-		fun ifaceMethod(it: IrSimpleFunction, prop: IrProperty? = it.correspondingPropertySymbol?.owner): String {
-			val name = prop?.let { p -> (if (it == p.getter) "get_" else "set_") + p.name.asString() } ?: it.name.asString()
-			val ret = if (prop != null && it == prop.setter) "void" else birType(it.returnType)
+		fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
+			val name = prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString()
+			val ret = if (prop != null && fn == prop.setter) "void" else birType(fn.returnType)
+			// A Kotlin interface method with a DEFAULT implementation (a body, not abstract) -> carry that body so ilemit
+			// emits a CLR default interface method; an implementer that doesn't override it then INHERITS the default
+			// instead of failing to load ("does not have an implementation", e.g. CoroutineContext.plus, ClosedRange.contains).
+			val hasDefault = fn.body != null && fn.modality != Modality.ABSTRACT
+			val body = if (hasDefault) (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } else ""
 			// A generic interface method (`fun <E> get(...)`, `<R> fold(...)`) must carry its own type params, else
 			// `gp:E`/`gp:R` in its signature is unresolvable at emit (CoroutineContext / ContinuationInterceptor / …).
-			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(it.typeParameters)},"params":[${paramsJson(it.parameters)}],"ret":${str(ret)},"body":[]}"""
+			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 			.filterNot { it.signatureMentionsJava() }
