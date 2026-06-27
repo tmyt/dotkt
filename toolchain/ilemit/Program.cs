@@ -942,7 +942,11 @@ sealed partial class Emitter
     // the static TypeBuilder.GetX helpers, exactly like ResolveField/ResolveMethod do for emitted generics.
     static bool IsTbInstantiation(Type t) =>
         t.IsGenericType && !t.IsGenericTypeDefinition &&
-        t.GetGenericArguments().Any(a => a is TypeBuilder || a is GenericTypeParameterBuilder || (a.IsGenericType && IsTbInstantiation(a)));
+        // The type's own open definition is a TypeBuilder (`Iterator<int>` while Iterator is being emitted), OR one of
+        // its args transitively involves a TypeBuilder. The first clause is what `ContainsTypeBuilder` also needed: a
+        // constructed-generic-of-a-TypeBuilder is itself a TypeBuilderInstantiation but is not `is TypeBuilder`.
+        (t.GetGenericTypeDefinition() is TypeBuilder
+         || t.GetGenericArguments().Any(a => a is TypeBuilder || a is GenericTypeParameterBuilder || (a.IsGenericType && IsTbInstantiation(a))));
 
     static ConstructorInfo GenericCtor(Type constructed, params Type[] argTypes) =>
         IsTbInstantiation(constructed)
@@ -996,6 +1000,27 @@ sealed partial class Emitter
             {
                 int k = 0;
                 foreach (var gp in gps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
+            }
+            // A generic method on a CONSTRUCTED-generic TypeBuilder owner (non-self, e.g. `ringBuffer<E>.toArray<T>()`)
+            // is a MethodBuilderInstantiation whose MakeGenericMethod is unsupported. Instantiate the OPEN method's
+            // generic params first, then re-anchor onto the constructed owner via TypeBuilder.GetMethod.
+            if (m is not MethodBuilder && m.DeclaringType is { IsGenericType: true } dt && !dt.IsGenericTypeDefinition
+                && dt.GetGenericTypeDefinition() is TypeBuilder openTb)
+            {
+                var nm = e.GetProperty("method").GetString();
+                // Detect a generic MethodBuilder via _methodTypeParams (IsGenericMethodDefinition/GetGenericArguments
+                // are unreliable on an un-baked MethodBuilder).
+                var openMb = _types.Values.FirstOrDefault(t => ReferenceEquals(t.TB, openTb))?.Methods.Values
+                    .OfType<MethodBuilder>().FirstOrDefault(b => b.Name == nm
+                        && _methodTypeParams.TryGetValue(b, out var g) && g.Count == targs.Length);
+                if (openMb != null && _methodTypeParams.TryGetValue(openMb, out var ogps))
+                {
+                    int k = 0;
+                    foreach (var gp in ogps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
+                    retType = sub.TryGetValue(openMb.ReturnType, out var or) ? or : m.ReturnType;
+                    paramTypes = ps;
+                    return TypeBuilder.GetMethod(dt, openMb.MakeGenericMethod(targs));
+                }
             }
             retType = sub.TryGetValue(m.ReturnType, out var r) ? r : m.ReturnType;
             paramTypes = ps?.Select(x => sub.TryGetValue(x, out var s) ? s : x).ToArray();
@@ -1073,6 +1098,23 @@ sealed partial class Emitter
         name + "(" + string.Join(",", methodDef.GetProperty("params").EnumerateArray().Select(p => p.GetProperty("type").GetString())) + ")";
     static string SigKey(string name, string sig) => name + "(" + sig + ")";
 
+    // On an exact-sig MISS for a call that targets a GENERIC method: the call carries the INSTANTIATED arg types
+    // (`array:object,object`) while the method is registered under its generic sig (`array:gp:T,gp:T`), so the exact
+    // lookup fails and the name-only fallback returns the wrong (often primitive) overload. Prefer the UNIQUE generic
+    // overload of that name — a non-generic overload would have matched exactly, so on a miss the generic one is the
+    // intended target. Null if there are zero or several generic overloads (keep the existing fallback).
+    MethodBuilder UniqueGenericOverload(TypeInfo ti, string name)
+    {
+        MethodBuilder cand = null;
+        foreach (var kv in ti.MethodsBySig)
+            if (kv.Key.StartsWith(name + "(", StringComparison.Ordinal) && _methodTypeParams.ContainsKey(kv.Value))
+            {
+                if (cand != null) return null;   // ambiguous: more than one generic overload
+                cand = kv.Value;
+            }
+        return cand;
+    }
+
     MethodBuilder FindMethod(string typeName, string name, string sig = null)
     {
         var seenIfaces = new HashSet<string>();
@@ -1086,6 +1128,7 @@ sealed partial class Emitter
                 var (open, _) = ParseOwner(spec);
                 if (!seenIfaces.Add(open) || !_types.TryGetValue(open, out var iti)) continue;
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
+                if (sig != null && UniqueGenericOverload(iti, name) is { } igm) return igm;
                 if (iti.Methods.TryGetValue(name, out var m)) return m;
                 var inherited = FindInInterfaces(iti);
                 if (inherited != null) return inherited;
@@ -1095,6 +1138,7 @@ sealed partial class Emitter
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
+            if (sig != null && UniqueGenericOverload(ti, name) is { } gm) return gm;
             if (ti.Methods.TryGetValue(name, out var m)) return m;
             var im = FindInInterfaces(ti);
             if (im != null) return im;
@@ -1131,6 +1175,10 @@ sealed partial class Emitter
         if (sig != null)
             foreach (var ti in _types.Values)
                 if (ti.IsFileClass && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
+        // exact-sig miss with a generic target -> the unique generic overload (its instantiated call sig won't match).
+        if (sig != null)
+            foreach (var ti in _types.Values)
+                if (ti.IsFileClass && UniqueGenericOverload(ti, name) is { } gm) return gm;
         foreach (var ti in _types.Values)
             if (ti.IsFileClass && ti.Methods.TryGetValue(name, out var mb)) return mb;
         throw new NotSupportedException("static method not found: " + name);
