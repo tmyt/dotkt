@@ -912,10 +912,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val bf = p.backingField ?: return@mapNotNull null
 			// Honor the property's visibility on its backing field (A-108): a `private`/`internal`/`protected`
 			// property gets a non-public field. (Kotlin's own access rules already keep same-class field reads valid.)
-			val v = visOf(p); val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
+			// An accessor-routed property's backing field is PRIVATE — access goes through get_/set_ (CLR property model).
+			// Only @ClrField (future) / const / lateinit / delegated keep the property's own field visibility.
+			val routed = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated
+			val v = if (routed) "private" else visOf(p); val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
 			// A property that isn't publicly SETTABLE (`val`, or `var ... private/protected set`) -> mark the public
 			// backing field read-only so a consuming Kotlin module restores it as `val` (rejecting external writes).
-			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")) ""","readOnly":true""" else ""
+			val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public"))) ""","readOnly":true""" else ""
 			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))}$visJson$ro}"""
 		}
 		// Companion non-const `val`/`var` -> static fields (with initializer run in a static ctor); const is inlined.
