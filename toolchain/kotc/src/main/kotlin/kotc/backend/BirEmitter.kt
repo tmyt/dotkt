@@ -566,6 +566,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 			.filterNot { it.signatureMentionsJava() }
 			.filterNot { skipStdlibHighArityFunctionType(it) }
+			// equals/hashCode/toString are inherited from Any into every Kotlin interface (fake overrides). On the CLR
+			// System.Object already provides Equals/GetHashCode/ToString, so emitting them as interface members creates
+			// abstract slots no implementer fills (the lowercase Kotlin name never binds Object's) -> TypeLoadException.
+			.filterNot { it.name.asString() in setOf("equals", "hashCode", "toString") }
 			.map { ifaceMethod(it) }
 		val propMethods = iface.declarations.filterIsInstance<IrProperty>()
 			.flatMap { p -> listOfNotNull(p.getter?.let { ifaceMethod(it, p) }, p.setter?.let { ifaceMethod(it, p) }) }
