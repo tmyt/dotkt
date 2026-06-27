@@ -331,15 +331,18 @@ sealed partial class Emitter
 
         var sm = _mod.DefineType(ti.TB.Name + "_" + mb.Name + "__sm",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, typeof(object));
-        // Generic suspend fun -> a generic state-machine type mirroring the method's type params (so `gp:T`-typed
-        // cps fields resolve to the SM's own params; the kickoff instantiates sm<methodT>). See docs §13f.
+        // Generic suspend fun/member -> a generic state-machine type mirroring the enclosing type params plus the
+        // method's type params (so `gp:T`-typed cps fields resolve to the SM's own params; the kickoff instantiates
+        // sm<classT, methodT>). See docs §13f.
         var sTps = m.TryGetProperty("typeParams", out var stpC) && stpC.GetArrayLength() > 0 ? (JsonElement?)stpC : null;
         Dictionary<string, GenericTypeParameterBuilder> smMap = null;
         string[] smNames = null;
         GenericTypeParameterBuilder[] smGps = null;
-        if (sTps != null)
+        var classTpNames = ti.IsGeneric ? ti.TypeParams.Keys.ToArray() : Array.Empty<string>();
+        var methodTpNames = sTps != null ? TpNames(sTps.Value) : Array.Empty<string>();
+        smNames = classTpNames.Concat(methodTpNames).ToArray();
+        if (smNames.Length > 0)
         {
-            smNames = TpNames(sTps.Value);
             smGps = sm.DefineGenericParameters(smNames);
             smMap = new Dictionary<string, GenericTypeParameterBuilder>();
             for (int gi = 0; gi < smNames.Length; gi++) smMap[smNames[gi]] = smGps[gi];
@@ -476,7 +479,8 @@ sealed partial class Emitter
         // ResumeWith(success(null)), return root.Task. Runs in the METHOD's generic context (mb's own type params).
         {
             _curTypeParams = ti.TypeParams; _curMethodParams = sTps != null ? _methodTypeParams[mb] : null;
-            Type smInst = smMap == null ? sm : sm.MakeGenericType(smNames.Select(n => (Type)_methodTypeParams[mb][n]).ToArray());
+            Type smInst = smMap == null ? sm : sm.MakeGenericType(smNames.Select(n =>
+                _methodTypeParams.TryGetValue(mb, out var mm) && mm.TryGetValue(n, out var mgp) ? (Type)mgp : ti.TypeParams[n]).ToArray());
             _il = mb.GetILGenerator();
             _args.Clear(); _argTypes.Clear(); _locals.Clear();
             var locSm = _il.DeclareLocal(smInst);

@@ -122,11 +122,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
 	internal val valSubst = HashMap<String, String>()
+	// While splicing an `inline fun` body: its type param name -> the call's substituted type-argument BIR (see birType).
+	internal val typeArgSubst = HashMap<String, String>()
 
 	// Lambda lifting: non-capturing lambdas become named static methods appended to the file class;
 	// capturing lambdas become synthesized closure classes appended to the file's types.
 	internal val liftedMethods = ArrayList<String>()
 	internal val liftedTypes = ArrayList<String>()
+	// Building the stdlib ITSELF: emit kotlin.* REFERENCE types (List/Set/Map/Iterable/Iterator/Map.Entry) as their real
+	// kotlin.* types, NOT lowered to the BCL — the BCL substitution is the consuming APP's emit-time job (driven by the
+	// @Clr metadata). Value-type primitives (Int/Bool/Char/Unit/Nothing/String) stay compiler-intrinsic either way.
 	internal var lambdaCounter = 0
 	internal var closureCounter = 0
 	// CFG block-IR (E-0.5): file-global unique label ids (never reset) so ids never collide across methods/lambdas.
@@ -134,6 +139,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun cfgFresh(): Int = cfgLabelN++
 	// Inlining ([[function-inlining-spike]]): lambda params currently being inlined -> the lambda passed for them.
 	internal val inlineLambdas = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueDeclaration, IrFunctionExpression>()
+	internal data class TypeArgScope(val keys: List<String>, val old: Map<String, String?>, val had: Set<String>)
+	internal val inlineLambdaTypeScopes = java.util.IdentityHashMap<IrFunctionExpression, TypeArgScope>()
 	internal var inlCounter = 0
 	internal var scopeCounter = 0
 	internal var fileClass = ""   // current file's static class name (for top-level property access)
@@ -196,8 +203,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// unique. Root-package types are unchanged (fqName has no dot), so existing code is unaffected. birType references
 	// user types through here, so the def name and every reference stay consistent.
 	internal fun typeName(k: IrClass): String =
-		anonNames[k] ?: if (k.parent is IrClass) k.name.asString()
+		anonNames[k] ?: if (k.isCompanion && k.parent is IrClass) typeName(k.parent as IrClass)
+		else if (k.parent is IrClass) {
+			val p = k.parent as IrClass
+			val owner = if (p.isCompanion) p.parent as? IrClass else p
+			(owner?.let { typeName(it) + "." } ?: "") + k.name.asString()
+		}
 		else (k.fqNameWhenAvailable?.asString() ?: k.name.asString())
+
+	internal fun emittedNestedParent(k: IrClass): IrClass? {
+		val p = k.parent as? IrClass ?: return null
+		return if (p.isCompanion) p.parent as? IrClass else p
+	}
 
 	// Synthesized stdlib delegate classes for Delegates.observable/vetoable/notNull (their stdlib bodies are
 	// absent from our IR, so we compiler-generate equivalents, monomorphized by value type, each implementing
@@ -268,6 +285,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (fq != "kotlin.collections.Iterator" && fq != "kotlin.collections.MutableIterator") return null
 		val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()
 			?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+		// An element that CONTAINS a type param (`gp:E`, or `System.ValueTuple[int,gp:T]` from `IndexedValue<T>`) can't be
+		// a monomorphized synthetic — it would bake the unresolvable `gp:*`. Don't register/emit one; birType maps it to
+		// the CLR-native generic IEnumerator instead (keystone fix for generic `class HashSet<E>` / `withIndex()` etc).
+		if (elem.contains("gp:")) return null
 		return kIteratorName(elem)
 	}
 
@@ -282,6 +303,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (fq != "kotlin.collections.Iterable" && fq != "kotlin.collections.MutableIterable") return null
 		val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()
 			?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+		if (elem.contains("gp:")) return null   // element contains a type param -> CLR-native IEnumerable, no synthetic
 		return kIterableName(elem)
 	}
 
@@ -309,6 +331,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val fq = t.classFqName?.asString() ?: return null
 		if (fq != "kotlin.properties.ReadWriteProperty" && fq != "kotlin.properties.ReadOnlyProperty") return null
 		val v = (t as? IrSimpleType)?.arguments?.getOrNull(1)?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
+		// A value type that CONTAINS a type param can't be a monomorphized synthetic (it would bake an unresolvable
+		// `gp:*`); fall through to the real generic stdlib ReadWriteProperty/ReadOnlyProperty interface instead. (Step
+		// toward retiring the kotlin.* synthetics now that the stdlib defines these interfaces.)
+		if (v.contains("gp:")) return null
 		return propIface0(fq, v)
 	}
 
@@ -432,6 +458,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// those are the library's to provide, not ours to re-emit (a re-emitted stub has no real body -> invalid IL).
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.origin.toString() == "DEFINED" && !isAwaitIntrinsic(it) && it.name.asString() !in setOf("byref", "stackBuffer") }
+			.filterNot { skipStdlibHighArityFunctionType(it) }
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
 		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
 		// `object Foo { ... }` (non-companion) -> a singleton class with a static `INSTANCE` field; `IrGetObjectValue`
@@ -439,10 +466,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// elsewhere; .NET-injected `object`s (Math, …) are static call sites, not user singletons.
 		val objects = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.OBJECT && !it.isCompanion && clrName(it) == null }
 		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && clrName(it) == null }
+		val enums = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ENUM_CLASS }
+		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS && clrName(it) == null }
 		// Only USER properties (origin DEFINED) — a consuming module's FIR also holds plugin-INJECTED top-level props
 		// (restored extension properties from a referenced DotKt assembly); those are the library's, not ours to emit.
 		val topProps = file.declarations.filterIsInstance<IrProperty>().filter { it.origin.toString() == "DEFINED" }
-		if (functions.isEmpty() && classes.isEmpty() && interfaces.isEmpty() && topProps.isEmpty()) return ""
+		if (functions.isEmpty() && classes.isEmpty() && objects.isEmpty() && interfaces.isEmpty() && enums.isEmpty() && annClasses.isEmpty() && topProps.isEmpty()) return ""
 		val className = fileClassName(file)
 		fileClass = className
 		// Entry point: top-level `fun main()` or `fun main(args: Array<String>)`.
@@ -469,19 +498,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				p.getter?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
 				p.setter?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
 		}
-		val enums = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ENUM_CLASS }
 		// Basic enums -> real CLR enums (int-backed, for .NET interop); rich enums -> plain singleton classes.
 		val (richEnums, basicEnums) = enums.partition { isRichEnum(it) }
 		// Nested (non-inner) classes -> flattened to top-level synthetic types (they keep their real name, so
 		// `new Nested(...)` and field ownerTypes resolve). `inner` classes need outer-`this` capture (deferred).
-		val nested = classes.flatMap { nestedClasses(it) }
+		val nestedParents = classes + interfaces + objects + annClasses
+		val nested = nestedParents.flatMap { nestedClasses(it) }
+		val nestedObjects = nestedParents.flatMap { nestedObjects(it) }
+		val nestedEnums = nestedParents.flatMap { nestedEnums(it) }
+		val (nestedRichEnums, nestedBasicEnums) = nestedEnums.partition { isRichEnum(it) }
 		// `inner class`es flatten to top-level types that capture the enclosing instance (`__outer`).
 		val inners = classes.flatMap { innerClasses(it) }
-		// User `annotation class`es -> .NET `: System.Attribute` classes (so reflection / reverse interop sees them).
-		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS && clrName(it) == null }
-		val typeDefs = basicEnums.map { enumDef(it) } + interfaces.map { interfaceDef(it) } +
-			classes.map { typeDef(it) } + objects.map { typeDef(it, isObject = true) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
-			richEnums.map { richEnumDef(it) } + annClasses.map { annotationDef(it) }
+		// Nested interfaces (recursively, inside classes/interfaces/objects) -> real nested types so a `TimeSource.WithComparableMarks` supertype resolves.
+		val nestedIfaces = nestedParents.flatMap { nestedInterfaces(it) }
+		val typeDefs = (basicEnums + nestedBasicEnums).map { enumDef(it) } + (interfaces + nestedIfaces).map { interfaceDef(it) } +
+			classes.map { typeDef(it) } + (objects + nestedObjects).map { typeDef(it, isObject = true) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
+			(richEnums + nestedRichEnums).map { richEnumDef(it) } + annClasses.map { annotationDef(it) }
 		val methods = (fnMethods + topPropAccessors + liftedMethods).joinToString(",")
 		// Synthetic types (iterator/Read(Write)Property interfaces, synthesized Delegates.* classes, KProperty)
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
@@ -492,19 +524,72 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	internal fun interfaceDef(iface: IrClass): String {
-		val methods = iface.declarations.filterIsInstance<IrSimpleFunction>()
-			.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride }
-			.joinToString(",") {
-				"""{"name":${str(it.name.asString())},"static":false,"override":false,"virtual":true,"params":[${paramsJson(it.parameters)}],"ret":${str(birType(it.returnType))},"body":[]}"""
+		fun ifaceMethod(it: IrSimpleFunction, prop: IrProperty? = it.correspondingPropertySymbol?.owner): String {
+			val name = prop?.let { p -> (if (it == p.getter) "get_" else "set_") + p.name.asString() } ?: it.name.asString()
+			val ret = if (prop != null && it == prop.setter) "void" else birType(it.returnType)
+			// A generic interface method (`fun <E> get(...)`, `<R> fold(...)`) must carry its own type params, else
+			// `gp:E`/`gp:R` in its signature is unresolvable at emit (CoroutineContext / ContinuationInterceptor / …).
+			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(it.typeParameters)},"params":[${paramsJson(it.parameters)}],"ret":${str(ret)},"body":[]}"""
+		}
+		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
+			.filterNot { it.signatureMentionsJava() }
+			.filterNot { skipStdlibHighArityFunctionType(it) }
+			.map { ifaceMethod(it) }
+		val propMethods = iface.declarations.filterIsInstance<IrProperty>()
+			.flatMap { p -> listOfNotNull(p.getter?.let { ifaceMethod(it, p) }, p.setter?.let { ifaceMethod(it, p) }) }
+		val methods = (funMethods + propMethods).distinct().joinToString(",")
+		// A nested interface (`TimeSource.WithComparableMarks`) -> a real CLR nested type of its enclosing class/interface.
+		val nestedIn = emittedNestedParent(iface)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null }
+			?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
+		val ifaces = iface.superTypes
+			.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
+			.mapNotNull { st ->
+				val bt = birType(st)
+				if (bt.startsWith("func:")) null
+				else if (bt.startsWith("clr:") || bt.startsWith("clrg:")) bt
+				else (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
 			}
-		return """{"name":${str(typeName(iface))},"kind":"interface"${typeParamsJson(iface.typeParameters)},"base":null,"fields":[],"ctors":[],"methods":[$methods]}"""
+			.joinToString(",") { str(it) }
+		return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods]}"""
+	}
+
+	internal fun IrSimpleFunction.signatureMentionsJava(): Boolean =
+		typeMentionsJava(returnType) || parameters.any { it.kind == IrParameterKind.Regular && typeMentionsJava(it.type) }
+
+	internal fun typeMentionsJava(t: IrType): Boolean {
+		val fq = t.classFqName?.asString()
+		if (fq != null && fq.startsWith("java.")) return true
+		return (t as? IrSimpleType)?.arguments.orEmpty().any { (it as? IrTypeProjection)?.type?.let(::typeMentionsJava) == true }
+	}
+
+	internal fun skipStdlibHighArityFunctionType(fn: IrSimpleFunction): Boolean {
+		if (System.getenv("DOTKT_STDLIB_COMPILE") == null) return false
+		val arity = highArityFunctionParameterCount(fn.returnType)
+			?: fn.parameters.firstNotNullOfOrNull { highArityFunctionParameterCount(it.type) }
+			?: return false
+		messageCollector?.report(CompilerMessageSeverity.WARNING,
+			"[DOTKT-STDLIB] skipped ${fn.name.asString()}: function type with $arity parameters exceeds System.Func/Action's 16-parameter limit", locationOf(fn))
+		return true
+	}
+
+	internal fun highArityFunctionParameterCount(t: IrType): Int? {
+		val fqn = t.classFqName?.asString()
+		val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
+		if (fqn != null && (fqn.startsWith("kotlin.Function") || fqn.startsWith("kotlin.reflect.KFunction") ||
+				fqn.startsWith("kotlin.coroutines.SuspendFunction")) && args.size > 1) {
+			val parameterCount = args.size - 1
+			if (parameterCount > 16) return parameterCount
+		}
+		return args.firstNotNullOfOrNull { highArityFunctionParameterCount(it) }
 	}
 
 	/** A Kotlin `enum class` -> a real .NET enum (ilemit DefineEnum + literals). */
 	internal fun enumDef(e: IrClass): String {
 		val entries = e.declarations.filterIsInstance<IrEnumEntry>()
 			.mapIndexed { i, ent -> """{"name":${str(ent.name.asString())},"ordinal":$i}""" }
-		return """{"name":${str(typeName(e))},"kind":"enum","entries":[${entries.joinToString(",")}]}"""
+		val nestedIn = emittedNestedParent(e)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null }
+			?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
+		return """{"name":${str(typeName(e))},"kind":"enum"$nestedIn,"entries":[${entries.joinToString(",")}]}"""
 	}
 
 	/** A "rich" enum has ctor params, user instance methods, or per-entry bodies -> can't be a CLR enum. */
@@ -542,6 +627,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val hasPerEntry = entries.any { it.correspondingClass != null }
 		val absMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.correspondingPropertySymbol == null && it.body == null && it.modality == Modality.ABSTRACT }
+			.filterNot { skipStdlibHighArityFunctionType(it) }
 		val baseAbstract = hasPerEntry || absMethods.isNotEmpty()
 		// base ctor must be callable from the entry subclasses -> protected (was private for the flat form).
 		val ctor = """{"params":[$ctorParams],"baseArgs":null,"thisArgs":null,"vis":${str(if (hasPerEntry) "protected" else "private")},"body":[$ctorBody]}"""
@@ -569,6 +655,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// methods: concrete user methods + abstract member decls + ToString + values() + valueOf().
 		val userMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.origin.toString() == "DEFINED" && it.correspondingPropertySymbol == null && it.body != null }
+			.filterNot { skipStdlibHighArityFunctionType(it) }
 			.map { method(it, static = false) } +
 			absMethods.map { m -> """{"name":${str(m.name.asString())},"static":false,"override":false,"virtual":true,"abstract":true,"vis":"public","params":[${paramsJsonList(m.parameters).joinToString(",")}],"ret":${str(birType(m.returnType))},"body":[]}""" }
 		val sf = { e: IrEnumEntry -> """{"k":"staticField","ownerType":${str(name)},"name":${str(e.name.asString())}}""" }
@@ -600,6 +687,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun enumEntrySubclass(subName: String, baseName: String, cc: IrClass, userArgs: List<String>): String {
 		val overrides = cc.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.body != null && it.correspondingPropertySymbol == null }
+			.filterNot { skipStdlibHighArityFunctionType(it) }
 			.joinToString(",") { method(it, static = false) }
 		val baseArgs = (listOf("""{"k":"local","name":"__name"}""", """{"k":"local","name":"__ordinal"}""") + userArgs).joinToString(",")
 		val subCtor = """{"params":[{"name":"__name","type":"string"},{"name":"__ordinal","type":"int"}],"baseArgs":[$baseArgs],"thisArgs":null,"vis":"public","body":[]}"""
@@ -610,8 +698,44 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun nestedClasses(c: IrClass): List<IrClass> {
 		val out = ArrayList<IrClass>()
 		c.declarations.filterIsInstance<IrClass>()
-			.filter { it.kind == ClassKind.CLASS && !it.isCompanion && !it.isInner && clrName(it) == null && it.name.asString() != "<no name provided>" }
-			.forEach { out.add(it); out.addAll(nestedClasses(it)) }
+			.filter { !it.isCompanion && clrName(it) == null && it.name.asString() != "<no name provided>" }
+			.forEach {
+				if (it.kind == ClassKind.CLASS && !it.isInner) out.add(it)
+				out.addAll(nestedClasses(it))
+			}
+		c.declarations.filterIsInstance<IrClass>().filter { it.isCompanion }.forEach { out.addAll(nestedClasses(it)) }
+		return out
+	}
+
+	/** Nested singleton objects inside a class/object/interface (`TimeSource.Monotonic`). */
+	internal fun nestedObjects(c: IrClass): List<IrClass> {
+		val out = ArrayList<IrClass>()
+		c.declarations.filterIsInstance<IrClass>()
+			.filter { !it.isCompanion && clrName(it) == null && it.name.asString() != "<no name provided>" }
+			.forEach {
+				if (it.kind == ClassKind.OBJECT) out.add(it)
+				out.addAll(nestedObjects(it))
+			}
+		c.declarations.filterIsInstance<IrClass>().filter { it.isCompanion }.forEach { out.addAll(nestedObjects(it)) }
+		return out
+	}
+
+	/** Nested enum classes inside a class/object/interface (`Base64.PaddingOption`). */
+	internal fun nestedEnums(c: IrClass): List<IrClass> {
+		val out = ArrayList<IrClass>()
+		c.declarations.filterIsInstance<IrClass>()
+			.filter { clrName(it) == null && it.name.asString() != "<no name provided>" }
+			.forEach { if (it.kind == ClassKind.ENUM_CLASS) out.add(it); out.addAll(nestedEnums(it)) }
+		return out
+	}
+
+	/** Nested interfaces (recursively) inside a class OR interface (`TimeSource.WithComparableMarks`); emitted as real
+	 *  nested types so a supertype reference to the bare name resolves. */
+	internal fun nestedInterfaces(c: IrClass): List<IrClass> {
+		val out = ArrayList<IrClass>()
+		c.declarations.filterIsInstance<IrClass>()
+			.filter { clrName(it) == null && it.name.asString() != "<no name provided>" }
+			.forEach { if (it.kind == ClassKind.INTERFACE) out.add(it); out.addAll(nestedInterfaces(it)) }
 		return out
 	}
 
@@ -640,9 +764,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun hasCustomAccessor(prop: IrProperty): Boolean = isCustomAccessor(prop.getter) || isCustomAccessor(prop.setter)
 
 	/** Emit a custom property accessor as a `get_<prop>`/`set_<prop>` method (the `field` identifier -> the backing field). */
-	/** If `fn` overrides a member of a .NET-mapped Kotlin interface (kotlin.coroutines.Continuation), the .NET
-	 *  member name to emit (Kotlin camelCase -> .NET PascalCase), so a user `class C : Continuation<T>` binds to the
-	 *  real interface slots. Returns null for ordinary members. */
 	/** True if [t]'s class transitively extends kotlin.Throwable / a .NET-mapped exception (so `.message`/`.cause` on
 	 *  a user exception subclass route to System.Exception.Message/.InnerException). */
 	internal fun isThrowableType(t: IrType?): Boolean {
@@ -664,14 +785,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val ifaceFq = (owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
 			val mn = owner.name.asString()
 			when (ifaceFq) {
-				"kotlin.coroutines.Continuation" -> when {
-					mn == "resumeWith" -> "ResumeWith"
-					owner.correspondingPropertySymbol?.owner?.name?.asString() == "context" -> "get_Context"
-					else -> null
-				}
-				// Stdlib interfaces mapped to .NET (see birType): the override must carry the .NET member name.
-				"kotlin.Comparable" -> if (mn == "compareTo") "CompareTo" else null
-				"kotlin.Comparator", "java.util.Comparator" -> if (mn == "compare") "Compare" else null
+				// Comparable/Comparator are emitted by stdlib itself; keep their Kotlin ABI names.
 				"kotlin.AutoCloseable", "java.lang.AutoCloseable", "java.io.Closeable", "kotlin.io.Closeable" -> if (mn == "close") "Dispose" else null
 				// CharSequence -> synthetic <>dotkt_CharSequence: the `length` property getter must be emitted (the
 				// override has a non-empty overriddenSymbols so isCustomAccessor is false). get/subSequence keep names.
@@ -694,7 +808,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
 		val name = (if (isGetter) "get_" else "set_") + propName
 		val ret = if (isGetter) birType(acc.returnType) else "void"
-		return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public","params":[$ps],"ret":${str(ret)},"body":[$body]}"""
+		return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public"${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)},"body":[$body]}"""
 	}
 
 	internal fun accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
@@ -711,9 +825,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (extRecv != null) selfSubst.remove(extRecv)
 		val ret = if (isGetter) birType(acc.returnType) else "void"
 		val clrIface = clrIfaceMemberName(acc) != null
-		val virtual = clrIface || acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT
+		val virtual = clrIface || acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty()
 		val vis = if (clrIface) "public" else visOf(acc)
-		return """{"name":${str(mname)},"static":false,"override":$clrIface,"virtual":$virtual,"abstract":false,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]}"""
+		val isAbstract = acc.modality == Modality.ABSTRACT && acc.body == null
+		return """{"name":${str(mname)},"static":false,"override":$clrIface,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]}"""
 	}
 
 	/** A user `annotation class Ann(val v: Int, …)` -> a `class Ann : System.Attribute` (ctor params -> public fields). */
@@ -775,21 +890,30 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// Include `abstract fun`s (body == null): they emit as CLR abstract methods so subclass overrides bind
 			// and a base-typed call (`shape.area()`) resolves to the slot.
 			.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && (it.body != null || it.modality == Modality.ABSTRACT) }
+			.filterNot { skipStdlibHighArityFunctionType(it) }
 			.map { method(it, static = false) }
 		// Companion methods -> static methods of the enclosing class.
 		val statMethods = companion?.declarations?.filterIsInstance<IrSimpleFunction>()
 			?.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && it.body != null }
+			?.filterNot { skipStdlibHighArityFunctionType(it) }
 			?.map { method(it, static = true) }.orEmpty()
+		val companionAccessors = companion?.declarations?.filterIsInstance<IrProperty>()
+			?.filter { it.backingField == null }
+			?.flatMap { p ->
+				listOfNotNull(
+					p.getter?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
+					p.setter?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
+			}.orEmpty()
 		// Property accessors that override a .NET base virtual property -> emitted as get_/set_ override methods.
 		val clrAccessors = klass.declarations.filterIsInstance<IrProperty>()
 			.flatMap { p -> listOfNotNull(clrAccessorMethod(p, p.getter), clrAccessorMethod(p, p.setter)) }
 		// User custom accessors (`get() = …`/`set(v){…}`) -> get_/set_ methods (the access site routes through them).
 		val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 			listOfNotNull(
-				p.getter?.takeIf { isCustomAccessor(it) || clrIfaceMemberName(it) != null }?.let { accessorMethod(it, p.name.asString(), true) },
-				p.setter?.takeIf { isCustomAccessor(it) || clrIfaceMemberName(it) != null }?.let { accessorMethod(it, p.name.asString(), false) })
+				p.getter?.takeIf { hasCustomAccessor(p) || clrIfaceMemberName(it) != null || p.backingField == null }?.let { accessorMethod(it, p.name.asString(), true) },
+				p.setter?.takeIf { hasCustomAccessor(p) || clrIfaceMemberName(it) != null || p.backingField == null }?.let { accessorMethod(it, p.name.asString(), false) })
 		}
-		val methods = (instMethods + statMethods + clrAccessors + userAccessors).joinToString(",")
+		val methods = (instMethods + statMethods + companionAccessors + clrAccessors + userAccessors).joinToString(",")
 		// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
 		// type spec (via birType) that ilemit resolves by reflection; a Kotlin-user base stays a bare type name.
 		val baseJson = base?.let {
@@ -814,7 +938,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				if (synthIter != null) synthIter
 				else {
 					val bt = birType(st)
-					if (bt.startsWith("clr:") || bt.startsWith("clrg:")) bt
+					if (bt.startsWith("func:")) null
+					else if (bt.startsWith("clr:") || bt.startsWith("clrg:")) bt
 					else charSeqIface(st) ?: propIface(st) ?: (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
 				}
 			}
@@ -825,7 +950,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A `nested`/`inner` class is emitted as a true CLR nested type of its enclosing user class (`Outer+Inner`),
 		// so it retains Kotlin's access to the enclosing class's private members (instead of flattening to a separate
 		// top-level type, which forced an assembly-visibility workaround). `inner` additionally captures `__outer`.
-		val nestedIn = (klass.parent as? IrClass)?.takeIf { it.kind == ClassKind.CLASS && clrName(it) == null && !anonNames.containsKey(klass) }
+		val nestedIn = emittedNestedParent(klass)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null && !anonNames.containsKey(klass) }
 			?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
 		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn${typeParamsJson(klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"attrs":[${attrsJson(klass.annotations)}]}"""
 	}
@@ -1407,6 +1532,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun paramsJson(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): String =
 		paramsJsonList(params).joinToString(",")
 
+	internal fun isValueParameter(p: IrValueParameter): Boolean =
+		p.kind == IrParameterKind.Regular || p.kind == IrParameterKind.Context
+
 	/**
 	 * A property accessor that OVERRIDES a .NET base virtual property (e.g. `override val Message` over
 	 * `System.Exception.Message`) -> a `get_<Name>`/`set_<Name>` method that reuses the base virtual slot
@@ -1431,7 +1559,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	internal fun paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): List<String> =
-		params.filter { it.kind == IrParameterKind.Regular }
+		params.filter { isValueParameter(it) }
 			.map {
 				// `vararg xs: T` -> mark the param so ilemit stamps [ParamArray] (native .NET varargs; a cross-module
 				// consumer can then call `f(1, 2, 3)`). A nullable type rides a `nullable` flag (ref types are nullable
@@ -1512,18 +1640,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `for (x in array)` -> an indexed loop (avoids the kotlin iterator types).
 		if (source != null && isArrayType(source.type))
 			return """{"k":"forArray","label":$lbl,"var":${str(loopVar.name.asString())},"elem":${str(arrayElemType(source.type))},"array":${expr(source)},"body":[$body]}"""
-		// `for (x in collection)` -> an IEnumerator loop (reuses forEachInline; binds x to Current).
-		if (source != null && isCollectionType(source.type))
-			return """{"k":"forEachInline","label":$lbl,"elem":${str(collectionElemType(source.type))},"src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
-		// `for ((k,v) in map)` -> enumerate the Dictionary (yields KeyValuePair<K,V>); the loop var is the entry
-		// (`<destruct>`), and the body's `component1()`/`component2()` map to .Key/.Value.
-		if (source != null && isMapType(source.type)) {
-			val (kt, vt) = mapKV(source.type)
-			return """{"k":"forEachInline","label":$lbl,"elem":"clrg:System.Collections.Generic.KeyValuePair[$kt,$vt]","src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
-		}
-		// `for (x in dotNetEnumerable)` -> enumerate any .NET IEnumerable<T> (@Clr/injected type) via GetEnumerator
-		// (forEachInline). The façade's `operator iterator()` only satisfies the frontend; we bypass it. Element
-		// type = the source's first type arg (e.g. Collection<Int> -> Int), else the loop var's type.
+		// A `for` over a kotlin.* collection is NOT intercepted: FIR already desugared it to the iterator protocol
+		// (`it = coll.iterator(); while (it.hasNext()) { x = it.next(); … }`). Returning null here lets that block emit
+		// as ordinary kotlin.* calls — no BCL IEnumerator lowering. Only CLR-native shapes (array/range) + injected .NET
+		// enumerables stay special-cased.
+		// `for (x in dotNetEnumerable)` -> enumerate any .NET IEnumerable<T> (@Clr type) via GetEnumerator
+		// (forEachInline). This runs only after the frontend has resolved an iterator operation from source/stdlib
+		// declarations; the FIR injector no longer synthesizes Kotlin's iterator protocol for .NET types.
+		// Element type = the source's first type arg (e.g. Collection<Int> -> Int), else the loop var's type.
 		if (source != null && (source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null) {
 			val elem = (source.type as? IrSimpleType)?.arguments?.firstOrNull()
 				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
@@ -1645,14 +1769,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val captures = capturedVars(fn, includeThis = true)
 		if (captures.isEmpty()) {
 			val lname = "__lambda${lambdaCounter++}"
+			val freeTps = freeTypeParams(fn.parameters.map { it.type } + listOf(fn.returnType))
+			val typeParams = typeParamsJson(freeTps)
 			if (cps) {
 				val co = emitCoroutineBody(fn)
-				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"suspend":true,"resultType":${str(co.resultType)},"cpsFields":[${co.cpsFields}],"params":[${lambdaParamsJson(fn.parameters)}],"steps":[${co.steps}]}""")
+				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false$typeParams,"suspend":true,"resultType":${str(co.resultType)},"cpsFields":[${co.cpsFields}],"params":[${lambdaParamsJson(fn.parameters)}],"steps":[${co.steps}]}""")
 			} else {
 				val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
+				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
 			}
-			return """{"k":"delegateNew","method":${str(lname)},"funcType":${str(ftype)}}"""
+			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
+			return """{"k":"delegateNew","method":${str(lname)},"funcType":${str(ftype)}$typeArgs}"""
 		}
 		// Capturing: build a closure class. Captures rewrite to `this.<field>` (by symbol identity, so the
 		// enclosing `this` — captured when the lambda reads a member — maps to a `__outer` field, not the
@@ -1706,8 +1833,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 				val retT = birType(ctor.returnType)
 				val newE = """{"k":"new","type":${str(ownerSpec(klass, ctor.returnType))},"args":[$argsJson]}"""
-				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
-				return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${ps.joinToString(",") { birTypeDeleg(it.type) }}"}"""
+				val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
+				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
+				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
+				return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${ps.joinToString(",") { birTypeDeleg(it.type) }}"$typeArgs}"""
 			}
 			// `::NetType` — a lifted factory `__ctorref(args) = new NetType(args)` (clrNew), bound as a delegate.
 			if (klass != null) {
@@ -1717,8 +1846,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 				val retT = birType(ctor.returnType)
 				val newE = """{"k":"clrNew","type":${str(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { str(netType(it.type)) }}],"args":[$argsJson]}"""
-				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
-				return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${ps.joinToString(",") { birTypeDeleg(it.type) }}"}"""
+				val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
+				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
+				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
+				return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${ps.joinToString(",") { birTypeDeleg(it.type) }}"$typeArgs}"""
 			}
 			return unsupported(node, "this constructor reference", "the constructor's class could not be resolved")
 		}
@@ -1751,8 +1882,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val retVoid = fn.returnType.isUnit()
 			val retT = if (retVoid) "void" else birType(fn.returnType)
 			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
-			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
-			return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${(listOf(selfT) + ps.map { birTypeDeleg(it.type) }).joinToString(",")}"}"""
+			val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + ps.map { it.type } + listOf(fn.returnType))
+			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
+			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
+			return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${(listOf(selfT) + ps.map { birTypeDeleg(it.type) }).joinToString(",")}"$typeArgs}"""
 		}
 		// A .NET method reference. Bound `obj::m` -> a delegate over the .NET instance method (ldftn). Unbound
 		// `NetType::m` -> a lifted static `__mref(self, args) = self.m(args)` via clrInstance.
@@ -1774,8 +1907,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val retT = if (retVoid) "void" else birType(fn.returnType)
 				val callE = """{"k":"clrInstance","type":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${str(netType(fn.returnType))},"recv":{"k":"local","name":"__self"},"args":[$argsJson]}"""
 				val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
-				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
-				return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${(listOf(selfT) + regs.map { birTypeDeleg(it.type) }).joinToString(",")}"}"""
+				val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
+				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
+				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
+				return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${(listOf(selfT) + regs.map { birTypeDeleg(it.type) }).joinToString(",")}"$typeArgs}"""
 			}
 		}
 		return unsupported(node, "a method reference to a .NET method (`::${fn.name}`)",
@@ -1873,7 +2008,34 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"delegateNew","method":${str(lname)},"funcType":${str("func:$retType:$paramType")}}"""
 	}
 
-	internal fun hasLambdaArg(call: IrCall): Boolean = regularArgs(call).any { it is IrFunctionExpression }
+	internal fun hasLambdaArg(call: IrCall): Boolean = regularArgs(call).any {
+		it is IrFunctionExpression || ((it as? IrGetValue)?.symbol?.owner?.let { owner -> inlineLambdas.containsKey(owner) } == true)
+	}
+
+	internal fun nestedCapturesValue(node: IrElement?, decl: IrValueDeclaration): Boolean {
+		var found = false
+		node?.acceptChildrenVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: IrElement) {
+				if (found) return
+				when (element) {
+					is IrFunctionExpression -> {
+						if (decl in capturedVars(element.function, includeThis = true)) {
+							found = true
+							return
+						}
+					}
+					is IrClass -> {
+						if (decl in capturedVarsForObject(element)) {
+							found = true
+							return
+						}
+					}
+				}
+				element.acceptChildrenVoid(this)
+			}
+		})
+		return found
+	}
 
 
 	/** Statements of a function/lambda body (block body, or a single-expression `= expr` body). */
@@ -1893,26 +2055,115 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 */
 	internal fun inlineCall(call: IrCall): String {
 		val callee = call.symbol.owner
-		val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
+		val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+		val params = regularParams(callee)
+		val extArg = extensionReceiver(call)
 		val args = regularArgs(call)
 		val pre = ArrayList<String>()
 		val boundVals = ArrayList<String>(); val boundLams = ArrayList<org.jetbrains.kotlin.ir.declarations.IrValueDeclaration>()
+		val oldVals = HashMap<String, String>()
+		val hadOldVals = HashSet<String>()
+		var boundExt = false
+		fun bindVal(name: String, ref: String) {
+			if (!boundVals.contains(name)) {
+				if (valSubst.containsKey(name)) {
+					hadOldVals.add(name)
+					oldVals[name] = valSubst[name]!!
+				}
+				boundVals.add(name)
+			}
+			valSubst[name] = ref
+		}
+		// Substitute the callee's type params with the call's type args FIRST — before binding params — so both a bound
+		// param's temp type (`birType(p.type)`) AND the spliced body resolve `gp:T` to the inferred type (a `*` star
+		// projection with no concrete arg -> `object`/Any?). E.g. `with(e){…}`'s receiver temp gets `@Entry`, not `gp:T`.
+		val tps = callee.typeParameters
+		val subKeys = ArrayList<String>()
+		val calleeTypeArgs = HashMap<String, String>()
+		val oldTypeArgs = HashMap<String, String?>()
+		val hadOldTypeArg = HashSet<String>()
+		for (i in tps.indices) {
+			val nm = tps[i].name.asString()
+			if (typeArgSubst.containsKey(nm)) {
+				hadOldTypeArg.add(nm)
+				oldTypeArgs[nm] = typeArgSubst[nm]
+			}
+			val ta = call.typeArguments.getOrNull(i)
+			val bt = ta?.let { birType(it) }
+			val subst = if (bt == null || bt == "gp:$nm") "object" else bt   // unresolved/self star -> object
+			calleeTypeArgs[nm] = subst
+			typeArgSubst[nm] = subst
+			subKeys.add(nm)
+		}
+		fun restoreCalleeTypeArgs() {
+			for (nm in subKeys) typeArgSubst[nm] = calleeTypeArgs[nm]!!
+		}
+		fun <T> withCallerTypeArgs(block: () -> T): T {
+			for (nm in subKeys) {
+				if (hadOldTypeArg.contains(nm)) typeArgSubst[nm] = oldTypeArgs[nm]!!
+				else typeArgSubst.remove(nm)
+			}
+			return try { block() } finally { restoreCalleeTypeArgs() }
+		}
+		val callerTypeScope = TypeArgScope(subKeys.toList(), HashMap(oldTypeArgs), HashSet(hadOldTypeArg))
+		if (extParam != null && extArg != null) {
+			val tmp = "__inl${inlCounter++}"
+			pre.add("""{"k":"var","name":${str(tmp)},"type":${str(birType(extParam.type))},"init":${withCallerTypeArgs { expr(extArg) }}}""")
+			val ref = """{"k":"local","name":${str(tmp)}}"""
+			selfSubst[extParam] = ref
+			if (extParam.name.asString() != "<this>") {
+				bindVal(extParam.name.asString(), ref)
+			}
+			boundExt = true
+		}
 		for ((p, arg) in params.zip(args)) {
 			// A `crossinline`/`noinline` lambda is NOT spliced: crossinline guarantees no non-local return (the only
 			// reason to splice — see [[clr-not-jvm-discard-jvmisms]]) and noinline forbids inlining outright, and both
 			// may be invoked from a nested lambda/object. Bind them to a real delegate local (the `else` path): the
 			// arg emits as a closure, `block()` falls through to the delegate-invoke path, and a nested lambda/object
 			// captures the local via the normal closure machinery.
-			if (arg is IrFunctionExpression && !p.isCrossinline && !p.isNoinline) { inlineLambdas[p] = arg; boundLams.add(p) }
+			val inlineLambdaArg = when (arg) {
+				is IrFunctionExpression -> arg
+				is IrGetValue -> inlineLambdas[arg.symbol.owner]
+				else -> null
+			}
+			if (inlineLambdaArg != null && !p.isCrossinline && !p.isNoinline && !nestedCapturesValue(callee.body, p)) {
+				inlineLambdas[p] = inlineLambdaArg
+				inlineLambdaTypeScopes[inlineLambdaArg] = callerTypeScope
+				boundLams.add(p)
+			}
 			else {
 				val tmp = "__inl${inlCounter++}"
-				pre.add("""{"k":"var","name":${str(tmp)},"type":${str(birType(p.type))},"init":${expr(arg)}}""")
-				valSubst[p.name.asString()] = """{"k":"local","name":${str(tmp)}}"""; boundVals.add(p.name.asString())
+				pre.add("""{"k":"var","name":${str(tmp)},"type":${str(birType(p.type))},"init":${withCallerTypeArgs { expr(inlineLambdaArg ?: arg) }}}""")
+				bindVal(p.name.asString(), """{"k":"local","name":${str(tmp)}}""")
 			}
 		}
 		val result = spliceBody(bodyStatements(callee.body), callee.returnType.isUnit(), pre)
-		boundVals.forEach { valSubst.remove(it) }; boundLams.forEach { inlineLambdas.remove(it) }
+		boundVals.forEach { name -> if (hadOldVals.contains(name)) valSubst[name] = oldVals[name]!! else valSubst.remove(name) }
+		boundLams.forEach { inlineLambdas.remove(it)?.let { lam -> inlineLambdaTypeScopes.remove(lam) } }
+		subKeys.forEach { nm -> if (hadOldTypeArg.contains(nm)) typeArgSubst[nm] = oldTypeArgs[nm]!! else typeArgSubst.remove(nm) }
+		if (boundExt) selfSubst.remove(extParam)
 		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
+	}
+
+	internal fun <T> withTypeArgScope(scope: TypeArgScope?, block: () -> T): T {
+		if (scope == null) return block()
+		val saved = HashMap<String, String?>()
+		val hadSaved = HashSet<String>()
+		for (nm in scope.keys) {
+			if (typeArgSubst.containsKey(nm)) {
+				hadSaved.add(nm)
+				saved[nm] = typeArgSubst[nm]
+			}
+			if (scope.had.contains(nm)) typeArgSubst[nm] = scope.old[nm]!!
+			else typeArgSubst.remove(nm)
+		}
+		return try { block() } finally {
+			for (nm in scope.keys) {
+				if (hadSaved.contains(nm)) typeArgSubst[nm] = saved[nm]!!
+				else typeArgSubst.remove(nm)
+			}
+		}
 	}
 
 	/** CROSS-MODULE inline splice: a call to an injected `inline fun` (its body lives in [KotlinInline] on the
@@ -1937,16 +2188,31 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** Splice an invoked inlined lambda `f(args)`: bind its params to the invoke args, then splice its body. */
 	internal fun spliceLambdaCall(lambda: IrFunctionExpression, call: IrCall): String {
 		val fn = lambda.function
+		val extParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 		val params = fn.parameters.filter { it.kind == IrParameterKind.Regular }
 		val args = regularArgs(call)
-		val pre = ArrayList<String>(); val bound = ArrayList<String>()
-		for ((p, arg) in params.zip(args)) {
+		val extArg = if (extParam != null) extensionReceiver(call) ?: args.firstOrNull() else null
+		val regArgs = if (extParam != null && extArg != null && extensionReceiver(call) == null && args.firstOrNull() === extArg) args.drop(1) else args
+		val pre = ArrayList<String>(); val bound = ArrayList<String>(); var boundExt = false
+		if (extParam != null && extArg != null) {
+			val tmp = "__lam${inlCounter++}"
+			pre.add("""{"k":"var","name":${str(tmp)},"type":${str(birType(extParam.type))},"init":${expr(extArg)}}""")
+			val ref = """{"k":"local","name":${str(tmp)}}"""
+			selfSubst[extParam] = ref
+			valSubst[extParam.name.asString()] = ref
+			bound.add(extParam.name.asString())
+			boundExt = true
+		}
+		for ((p, arg) in params.zip(regArgs)) {
 			val tmp = "__lam${inlCounter++}"
 			pre.add("""{"k":"var","name":${str(tmp)},"type":${str(birType(p.type))},"init":${expr(arg)}}""")
 			valSubst[p.name.asString()] = """{"k":"local","name":${str(tmp)}}"""; bound.add(p.name.asString())
 		}
-		val result = spliceBody(bodyStatements(fn.body), fn.returnType.isUnit() || call.type.isUnit(), pre)
+		val result = withTypeArgScope(inlineLambdaTypeScopes[lambda]) {
+			spliceBody(bodyStatements(fn.body), fn.returnType.isUnit() || call.type.isUnit(), pre)
+		}
 		bound.forEach { valSubst.remove(it) }
+		if (boundExt) selfSubst.remove(extParam)
 		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
 	}
 
@@ -1974,12 +2240,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		localFns[fn] = Triple(lname, captures, freeTps)
 		fun pj(name: String, t: IrType) = """{"name":${str(name)},"type":${str(birType(t))}}"""
 		val capPairs = captures.map { it to captureFieldName(it) }
-		// A captured `<this>` arrives as an `__outer` param; rewrite `this` refs in the body to that local.
-		capPairs.forEach { (decl, fname) -> if (decl.name.asString() == "<this>") captureSubst[decl] = """{"k":"local","name":${str(fname)}}""" }
+		// Captures arrive as leading params; rewrite body refs to those params. This must cover not only `<this>` but
+		// also receiver-like captured params such as `$this$buildString`, otherwise an active inline substitution can
+		// leak a caller-local (`__lam<N>`) into the lifted method body.
+		capPairs.forEach { (decl, fname) -> captureSubst[decl] = """{"k":"local","name":${str(fname)}}""" }
 		val capParams = capPairs.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val ownParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { pj(it.name.asString(), it.type) }
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-		capPairs.forEach { (decl, _) -> if (decl.name.asString() == "<this>") captureSubst.remove(decl) }
+		capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
 		val ret = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
 		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
 	}
@@ -2209,7 +2477,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun regularArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<IrExpression> {
 		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: emptyList()
 		return call.arguments.mapIndexedNotNull { i, a ->
-			if (a != null && i < params.size && params[i].kind == IrParameterKind.Regular) a else null
+			if (a != null && i < params.size && isValueParameter(params[i])) a else null
 		}
 	}
 
@@ -2221,7 +2489,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** The callee's ordinary (non-receiver) value parameters, in order. */
 	internal fun regularParams(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): List<IrValueParameter> =
-		callee.parameters.filter { it.kind == IrParameterKind.Regular }
+		callee.parameters.filter { isValueParameter(it) }
 
 	/**
 	 * A parameter-shape token matching ilemit's `Shape(Type)` — used to pick the exact generic-method overload
@@ -2247,9 +2515,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val retUnit = (targs?.lastOrNull() as? IrTypeProjection)?.type?.classFqName?.asString() == "kotlin.Unit"
 			return "func:" + (if (retUnit && n > 0) n - 1 else n)
 		}
-		// Kotlin `Iterable<T>` lowers to `IEnumerable<T>`, which ilemit shapes as "ienum" — match it so a migrated
-		// `Iterable<T>.map`/`filter` (whose __self param is IEnumerable<T>) resolves by shape.
-		if (isIterableType(t)) return "ienum"
 		// Any other parameterized generic .NET type (Task<T>, Continuation<T>, …) -> "generic" (ilemit's IsGenericType default).
 		if ((t as? IrSimpleType)?.arguments?.isNotEmpty() == true) return "generic"
 		return netType(t).substringAfterLast('.')
@@ -2412,22 +2677,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"clrInstance","type":${str(clrType)},"method":${str(m)},"argTypes":[$argTs],"ret":${str(netType(call.type))},"recv":${expr(recv)},"args":[$argsJson]}"""
 	}
 
-	/** A `DotKt.Coroutines.Continuations.{Resume,ResumeWithException}<T>(cont, arg)` call (the resume API). Uses the
-	 *  generic-static path (MakeGenericMethod over T) matched by param shapes: Continuation<T>="generic", value=T="gp",
-	 *  Exception="Exception". */
-	internal fun resumeHelper(method: String, contT: String, recvJson: String, argJson: String, argShape: String): String =
-		"""{"k":"clrGenericStatic","type":"DotKt.Coroutines.Continuations","method":${str(method)},"typeArgs":[${str(contT)}],"shapes":["generic",${str(argShape)}],"args":[$recvJson,$argJson]}"""
-
 	internal fun call(call: IrCall): String {
 		val callee = call.symbol.owner
 		val calleeFqEarly = callee.fqNameWhenAvailable?.asString()
-		// `kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED` (a top-level val getter) -> the runtime sentinel.
-		if (callee.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED")
-			return """{"k":"coSuspendedSentinel"}"""
-		// `kotlin.coroutines.coroutineContext` (the suspend top-level property) -> the current coroutine's context =
-		// the state machine's own Context (the SM IS a Continuation<object>). Forces the Continuation-class form. T3.
-		if (callee.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.coroutineContext")
-			return """{"k":"coContext"}"""
 		// kotlin.text.MatchResult.value -> System.Text.RegularExpressions.Match.Value (find(s)?.value). Handled early
 		// because it's a property getter (the generic property->field path would otherwise emit a bare-name field).
 		if (callee.correspondingPropertySymbol?.owner?.name?.asString() == "value" &&
@@ -2442,32 +2694,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
 			}
 		}
-		// CoroutineContext algebra: the Kotlin members map to the .NET CoroutineContext methods (PascalCase). `plus`/
-		// `minusKey` are non-generic; `fold<R>`/`get<E>` are generic instance calls. T3(b).
-		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.plus") {
-			val recv = dispatchReceiver(call)!!
-			return """{"k":"clrInstance","type":"DotKt.Coroutines.CoroutineContext","method":"Plus","argTypes":["clr:DotKt.Coroutines.CoroutineContext"],"ret":"clr:DotKt.Coroutines.CoroutineContext","recv":${expr(recv)},"args":[${expr(regularArgs(call).first())}]}"""
-		}
-		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.minusKey") {
-			val recv = dispatchReceiver(call)!!
-			return """{"k":"clrInstance","type":"DotKt.Coroutines.CoroutineContext","method":"MinusKey","argTypes":["clr:DotKt.Coroutines.IKey"],"ret":"clr:DotKt.Coroutines.CoroutineContext","recv":${expr(recv)},"args":[${expr(regularArgs(call).first())}]}"""
-		}
-		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.fold") {
-			val recv = dispatchReceiver(call)!!; val args = regularArgs(call)
-			return """{"k":"clrGenericInstance","type":"DotKt.Coroutines.CoroutineContext","method":"Fold","typeArgs":[${str(birType(call.type))}],"shapes":["gp","func:3"],"recv":${expr(recv)},"args":[${expr(args[0])},${expr(args[1])}]}"""
-		}
-		// `cont.intercepted()` -> Interceptors.Intercepted<T>(cont): apply the context's ContinuationInterceptor. T3(c).
-		if (calleeFqEarly == "kotlin.coroutines.intrinsics.intercepted") {
-			val recv = extensionReceiver(call)!!
-			val t = ((recv.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
-			return """{"k":"clrGenericStatic","type":"DotKt.Coroutines.Interceptors","method":"Intercepted","typeArgs":[${str(t)}],"shapes":["generic"],"args":[${expr(recv)}]}"""
-		}
-		// `ctx.get(key)` / `ctx[key]` -> Get<E>(Key<E>): E. E is the element type (the call's type argument).
-		if (calleeFqEarly == "kotlin.coroutines.CoroutineContext.get") {
-			val recv = dispatchReceiver(call)!!
-			val e = call.typeArguments.firstOrNull()?.let { birType(it) } ?: "object"
-			return """{"k":"clrGenericInstance","type":"DotKt.Coroutines.CoroutineContext","method":"Get","typeArgs":[${str(e)}],"shapes":["generic"],"recv":${expr(recv)},"args":[${expr(regularArgs(call).first())}]}"""
-		}
 		// `Result.success(v)` / `Result.failure(e)` as a VALUE -> DotKt.Result.Success/Failure (so a Result
 		// can be constructed and forwarded anywhere, e.g. into a user `Continuation.resumeWith`). T4 / docs §13n.
 		if (calleeFqEarly == "kotlin.Result.Companion.success" || calleeFqEarly == "kotlin.Result.Companion.failure") {
@@ -2477,44 +2703,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				"""{"k":"clrStatic","type":${str(spec)},"method":"Success","argTypes":[${str(t)}],"ret":${str(spec)},"args":[${expr(regularArgs(call).first())}]}"""
 			else
 				"""{"k":"clrStatic","type":${str(spec)},"method":"Failure","argTypes":["clr:System.Exception"],"ret":${str(spec)},"args":[${expr(regularArgs(call).first())}]}"""
-		}
-		// kotlin.coroutines.Continuation.resumeWith(Result.success(v) / Result.failure(e)) -> the resume helpers
-		// (the common pattern; a non-literal Result forwarded to resumeWith is not yet supported — loud error).
-		if (calleeFqEarly == "kotlin.coroutines.Continuation.resumeWith") {
-			val recv = dispatchReceiver(call)!!
-			val contT = ((recv.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
-			val arg = regularArgs(call).first()
-			val af = (arg as? IrCall)?.symbol?.owner?.fqNameWhenAvailable?.asString()
-			if (af == "kotlin.Result.Companion.success")
-				return resumeHelper("Resume", contT, expr(recv), expr(regularArgs(arg).first()), "gp")
-			if (af == "kotlin.Result.Companion.failure")
-				return resumeHelper("ResumeWithException", contT, expr(recv), expr(regularArgs(arg).first()), "Exception")
-			return unsupported(call, "resumeWith with a non-literal Result", "use resume(v) / resumeWithException(e), or resumeWith(Result.success(v))")
-		}
-		// kotlin.coroutines.{resume,resumeWithException}(value/e) on a Continuation<T> -> the runtime resume helpers
-		// (they wrap a kotlin.Result, kept off the emitted surface).
-		if (calleeFqEarly == "kotlin.coroutines.resume" || calleeFqEarly == "kotlin.coroutines.resumeWithException") {
-			val recv = extensionReceiver(call) ?: dispatchReceiver(call)!!
-			val contT = ((recv.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
-			val resume = calleeFqEarly == "kotlin.coroutines.resume"
-			return resumeHelper(if (resume) "Resume" else "ResumeWithException", contT, expr(recv), expr(regularArgs(call).first()), if (resume) "gp" else "Exception")
-		}
-		// `(suspend ()->T).startCoroutine(completion)` / `(suspend R.()->T).startCoroutine(receiver, completion)`
-		// -> drive the block's kickoff Task into the supplied Continuation (T1). The block is the extension receiver
-		// (a suspend lambda -> Func<…,Task<T>>); the completion's Continuation<T> gives T.
-		if (calleeFqEarly == "kotlin.coroutines.startCoroutine") {
-			val block = extensionReceiver(call)!!
-			val regs = regularArgs(call)
-			val completion = regs.last()
-			// T from the startCoroutine<T> instantiation (the completion ARG's declared type may be a concrete
-			// Continuation<T> implementor, not Continuation<T> itself, so its type args aren't T).
-			val t = call.typeArguments.lastOrNull()?.let { birType(it) } ?: "object"
-			return if (regs.size == 1)
-				"""{"k":"clrGenericStatic","type":"DotKt.Coroutines.Builders","method":"StartCoroutine","typeArgs":[${str(t)}],"shapes":["func:1","generic"],"args":[${expr(block)},${expr(completion)}]}"""
-			else {
-				val r = birType(regs.first().type)
-				"""{"k":"clrGenericStatic","type":"DotKt.Coroutines.Builders","method":"StartCoroutineR","typeArgs":[${str(r)},${str(t)}],"shapes":["func:2","gp","generic"],"args":[${expr(block)},${expr(regs.first())},${expr(completion)}]}"""
-			}
 		}
 		atomicfuCall(call)?.let { return it }
 		// `kotlin.sequences.sequence { yield(…) }` -> a lazy IEnumerable<T> backed by a yield state machine that
@@ -2641,6 +2829,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"k":"clrNew","type":${str("clrg:System.Lazy[$elem]")},"argTypes":[${str("func:$elem:")}],"args":[$init]}"""
 		}
 
+		if (name == "compareTo") {
+			val recv = dispatchReceiver(call)
+			val arg = regularArgs(call).firstOrNull()
+			val ec = recv?.type?.classifierOrNull?.owner as? IrClass
+			if (recv != null && arg != null && ec?.kind == ClassKind.ENUM_CLASS) {
+				fun ord(e: IrExpression): String = if (isRichEnum(ec))
+					"""{"k":"field","ownerType":${str(typeName(ec))},"recv":${expr(e)},"name":"__ordinal"}"""
+				else """{"k":"enumOrdinal","e":${expr(e)}}"""
+				return """{"k":"bin","op":"-","l":${ord(recv)},"r":${ord(arg)}}"""
+			}
+		}
+
 		// `a.compareTo(b)` (the desugaring of `<`/`>`/`<=`/`>=` on a Comparable, incl. a bounded generic param
 		// `<T : Comparable<T>>`) -> a `constrained.` callvirt to `System.IComparable<T>::CompareTo`. The
 		// `constrained.` prefix dispatches uniformly whether the receiver is a value type, a reference type, or
@@ -2748,196 +2948,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val entries = pairs.joinToString(",") { p -> """{"key":${expr(extensionReceiver(p)!!)},"val":${expr(regularArgs(p).first())}}""" }
 			return """{"k":"mapNew","keyType":${str(kt)},"valType":${str(vt)},"entries":[$entries]}"""
 		}
-		// Collection ops -> LINQ generic statics (lambdas already lift to delegates). List-producing ops
-		// materialize via ToList (Kotlin returns List, not a lazy sequence). Catches both extension ops
-		// (map/filter, extension receiver) and member ops (contains, dispatch receiver).
-		run {
-			val recv = extensionReceiver(call) ?: dispatchReceiver(call)
-			val op = name
-			// Skip the LINQ lowering for an op that has been MIGRATED to DotKt.Stdlib (registered in the round-trip
-			// registry) when the receiver is a List-backed collection — fall through to the round-trip path, which routes
-			// the call to the real Kotlin body. Array/Sequence keep the LINQ lowering (DotKt.Stdlib ships only the
-			// Iterable overload, whose receiver lowers to List<T>); Set is also excluded — it lowers to HashSet<T>, not
-			// List<T>, so passing it to the List-receiver body would be a type mismatch (a Set.map migration needs the
-			// Iterable->IEnumerable reconciliation first).
-			val migrated = recv != null && isCollectionType(recv.type) && kotc.ClrTopLevelRegistry.lookup(calleeFq) != null
-			if (!migrated && recv != null && (isCollectionType(recv.type) || isSequenceType(recv.type) || isArrayType(recv.type)) && op in COLLECTION_OPS) {
-				val EN = "System.Linq.Enumerable"
-				// A `Sequence<T>` receiver is LAZY: intermediate list-producing ops (map/filter/…) stay deferred
-				// (no ToList), matching Kotlin's lazy sequence semantics. The explicit `toList`/`toSet` terminals
-				// still materialize. (LINQ is already deferred, so this is exactly Kotlin's Sequence behaviour.)
-				val lazySeq = isSequenceType(recv.type)
-				// Element/result types come from FIR's resolved type arguments (map<T,R>/filter<T>/…);
-				// member ops (contains) aren't generic, so fall back to the receiver's element type.
-				val targs = call.typeArguments.mapNotNull { it?.let(::birType) }
-				val t = targs.getOrNull(0) ?: (if (isArrayType(recv.type)) arrayElemType(recv.type) else collectionElemType(recv.type))
-				val src = expr(recv)
-				val a0 = regularArgs(call).getOrNull(0)
-				fun arg() = expr(a0!!)
-				// Shapes: ienum=IEnumerable<T> source, func:2=Func<T,_> predicate/selector, gp=generic param value, int.
-				val EI = listOf("ienum")                       // (src)
-				val EF = listOf("ienum", "func:2")             // (src, predicate/selector)
-				// Intermediate list-producing ops: materialize for eager collections, stay deferred for sequences.
-				fun toList(inner: String, e: String) = if (lazySeq) inner else clrGen(EN, "ToList", listOf(e), EI, listOf(inner))
-				fun any() = if (a0 != null) clrGen(EN, "Any", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "Any", listOf(t), EI, listOf(src))
-				return when (op) {
-					"map" -> { val tr = targs.getOrNull(1) ?: lambdaRet(a0); toList(clrGen(EN, "Select", listOf(t, tr), EF, listOf(src, arg())), tr) }
-					// `mapIndexed { i, v -> … }` -> Range(0,MAX).Zip(src, Func<int,T,R>): Zip's (first,second) =
-					// (index,value) matches Kotlin's order, so no param-swap is needed (lambda lifts as-is).
-					"mapIndexed" -> {
-						val tr = lambdaRet(a0)
-						val range = """{"k":"clrStatic","type":"System.Linq.Enumerable","method":"Range","argTypes":["System.Int32","System.Int32"],"ret":"clrg:System.Collections.Generic.IEnumerable[int]","args":[{"k":"const","type":"int","value":0},{"k":"const","type":"int","value":2147483647}]}"""
-						toList(clrGen(EN, "Zip", listOf("int", t, tr), listOf("ienum", "ienum", "func:3"), listOf(range, src, arg())), tr)
-					}
-					"filter" -> toList(clrGen(EN, "Where", listOf(t), EF, listOf(src, arg())), t)
-					// `mapNotNull { … }` -> Select(sel) then drop nulls. Value-type R? unwraps Nullable<R>.
-					"mapNotNull" -> {
-						val tr = lambdaRet(a0)                                  // R? (the selector's return)
-						val mapped = clrGen(EN, "Select", listOf(t, tr), EF, listOf(src, arg()))
-						if (tr.startsWith("nullable:")) {
-							val inner = tr.removePrefix("nullable:")
-							val hasVal = synthLambda(tr, "bool") { x -> """{"k":"clrPropGet","type":${str(tr)},"name":"HasValue","retType":"bool","static":false,"recv":$x}""" }
-							val getVal = synthLambda(tr, inner) { x -> """{"k":"clrPropGet","type":${str(tr)},"name":"Value","retType":${str(inner)},"static":false,"recv":$x}""" }
-							toList(clrGen(EN, "Select", listOf(tr, inner), EF, listOf(clrGen(EN, "Where", listOf(tr), EF, listOf(mapped, hasVal)), getVal)), inner)
-						} else {
-							val pred = synthLambda(tr, "bool") { x -> """{"k":"un","op":"!","e":{"k":"objEq","l":$x,"r":{"k":"const","type":"void","value":null}}}""" }
-							toList(clrGen(EN, "Where", listOf(tr), EF, listOf(mapped, pred)), tr)
-						}
-					}
-					// `flatMap { … }` -> SelectMany(Select(sel), identity). The user selector returns a List<R> (exact
-					// Select), then a synthetic identity (List<R> -> IEnumerable<R>) flattens — keeps delegate types exact.
-					"flatMap" -> {
-						val r = collectionElemType(call.type)
-						val listR = lambdaRet(a0)
-						val mapped = clrGen(EN, "Select", listOf(t, listR), EF, listOf(src, arg()))
-						val identity = synthLambda(listR, "clrg:System.Collections.Generic.IEnumerable[$r]") { x -> x }
-						toList(clrGen(EN, "SelectMany", listOf(listR, r), listOf("ienum", "func:2"), listOf(mapped, identity)), r)
-					}
-					// `flatten()` -> SelectMany(identity) (the outer element IS an IEnumerable of the inner).
-					"flatten" -> {
-						val r = collectionElemType(call.type)
-						val listR = collectionElemType(recv.type)
-						val identity = synthLambda(listR, "clrg:System.Collections.Generic.IEnumerable[$r]") { x -> x }
-						toList(clrGen(EN, "SelectMany", listOf(listR, r), listOf("ienum", "func:2"), listOf(src, identity)), r)
-					}
-					"take" -> toList(clrGen(EN, "Take", listOf(t), listOf("ienum", "int"), listOf(src, arg())), t)
-					"drop" -> toList(clrGen(EN, "Skip", listOf(t), listOf("ienum", "int"), listOf(src, arg())), t)
-					"takeWhile" -> toList(clrGen(EN, "TakeWhile", listOf(t), EF, listOf(src, arg())), t)
-					"dropWhile" -> toList(clrGen(EN, "SkipWhile", listOf(t), EF, listOf(src, arg())), t)
-					"single" -> if (a0 != null) clrGen(EN, "Single", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "Single", listOf(t), EI, listOf(src))
-					"singleOrNull" -> if (a0 != null) clrGen(EN, "SingleOrDefault", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "SingleOrDefault", listOf(t), EI, listOf(src))
-					"reversed" -> toList(clrGen(EN, "Reverse", listOf(t), EI, listOf(src)), t)
-					"distinct" -> toList(clrGen(EN, "Distinct", listOf(t), EI, listOf(src)), t)
-					// `chunked(n)` -> Chunk(src,n).Select(c => c.ToList()) : IEnumerable<List<T>> (Kotlin List<List<T>>).
-					"chunked" -> {
-						val listT = "clrg:System.Collections.Generic.List[$t]"
-						val chunk = clrGen(EN, "Chunk", listOf(t), listOf("ienum", "int"), listOf(src, arg()))
-						val sel = synthLambda("array:$t", listT) { x -> clrGen(EN, "ToList", listOf(t), listOf("ienum"), listOf(x)) }
-						toList(clrGen(EN, "Select", listOf("array:$t", listT), listOf("ienum", "func:2"), listOf(chunk, sel)), listT)
-					}
-					// `filterNotNull()`. The receiver element is `T?`; the result is `T`. Value-type `T?` (Nullable<T>) ->
-					// Where(x => x.HasValue).Select(x => x.Value); reference `T?` -> Where(x => x != null).
-					"filterNotNull" -> {
-						val srcElem = collectionElemType(recv.type)   // "nullable:int" (value) or e.g. "string" (ref)
-						if (srcElem.startsWith("nullable:")) {
-							val inner = srcElem.removePrefix("nullable:")
-							val hasVal = synthLambda(srcElem, "bool") { x -> """{"k":"clrPropGet","type":${str(srcElem)},"name":"HasValue","retType":"bool","static":false,"recv":$x}""" }
-							val getVal = synthLambda(srcElem, inner) { x -> """{"k":"clrPropGet","type":${str(srcElem)},"name":"Value","retType":${str(inner)},"static":false,"recv":$x}""" }
-							val filtered = clrGen(EN, "Where", listOf(srcElem), EF, listOf(src, hasVal))
-							toList(clrGen(EN, "Select", listOf(srcElem, inner), EF, listOf(filtered, getVal)), inner)
-						} else {
-							val pred = synthLambda(srcElem, "bool") { x -> """{"k":"un","op":"!","e":{"k":"objEq","l":$x,"r":{"k":"const","type":"void","value":null}}}""" }
-							toList(clrGen(EN, "Where", listOf(srcElem), EF, listOf(src, pred)), srcElem)
-						}
-					}
-					"toList" -> clrGen(EN, "ToList", listOf(t), EI, listOf(src))
-					"toSet" -> clrGen(EN, "ToHashSet", listOf(t), EI, listOf(src))
-					// `asSequence()` -> the receiver AS an IEnumerable (LINQ is already lazy); ops on the result
-					// route here too (isSequenceType) and stay deferred until a terminal materializes.
-					"asSequence" -> src
-					"count" -> if (a0 != null) clrGen(EN, "Count", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "Count", listOf(t), EI, listOf(src))
-					"any" -> any()
-					"none" -> """{"k":"un","op":"!","e":${any()}}"""
-					"all" -> clrGen(EN, "All", listOf(t), EF, listOf(src, arg()))
-					"first" -> if (a0 != null) clrGen(EN, "First", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "First", listOf(t), EI, listOf(src))
-					"last" -> if (a0 != null) clrGen(EN, "Last", listOf(t), EF, listOf(src, arg())) else clrGen(EN, "Last", listOf(t), EI, listOf(src))
-					// `firstOrNull`/`lastOrNull`: for a REFERENCE element, FirstOrDefault is correct (null for empty). For a
-					// VALUE element, FirstOrDefault returns 0 for empty (conflating with the first element), so emit
-					// `seq.Any() ? Nullable(seq.First()) : null` (the source is bound once to avoid double-enumeration).
-					"firstOrNull", "lastOrNull" -> {
-						val dm = if (op == "firstOrNull") "FirstOrDefault" else "LastOrDefault"
-						val fm = if (op == "firstOrNull") "First" else "Last"
-						val velem = nullableElem(call.type)
-						if (velem == null) (if (a0 != null) clrGen(EN, dm, listOf(t), EF, listOf(src, arg())) else clrGen(EN, dm, listOf(t), EI, listOf(src)))
-						else {
-							val tmp = "__on${scopeCounter++}"; val tl = """{"k":"local","name":${str(tmp)}}"""
-							val anyE = if (a0 != null) clrGen(EN, "Any", listOf(t), EF, listOf(tl, arg())) else clrGen(EN, "Any", listOf(t), EI, listOf(tl))
-							val firstE = if (a0 != null) clrGen(EN, fm, listOf(t), EF, listOf(tl, arg())) else clrGen(EN, fm, listOf(t), EI, listOf(tl))
-							"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(tmp)},"type":${str(birType(recv.type))},"init":$src}],"result":{"k":"cond","cond":$anyE,"then":{"k":"nullableWrap","elem":${str(velem)},"e":$firstE},"else":{"k":"nullableNull","elem":${str(velem)}}}}"""
-						}
-					}
-					"contains" -> clrGen(EN, "Contains", listOf(t), listOf("ienum", "gp"), listOf(src, arg()))
-					"isEmpty" -> """{"k":"un","op":"!","e":${clrGen(EN, "Any", listOf(t), EI, listOf(src))}}"""
-					"isNotEmpty" -> clrGen(EN, "Any", listOf(t), EI, listOf(src))
-					"sum" -> """{"k":"linqSum","elem":${str(t)},"src":$src}"""
-					"sumOf" -> """{"k":"linqSumOf","elem":${str(t)},"selRet":${str(lambdaRet(a0))},"src":$src,"sel":${arg()}}"""
-					"sorted" -> toList(clrGen(EN, "Order", listOf(t), EI, listOf(src)), t)
-					"sortedDescending" -> toList(clrGen(EN, "OrderDescending", listOf(t), EI, listOf(src)), t)
-					"sortedBy" -> toList(clrGen(EN, "OrderBy", listOf(t, lambdaRet(a0)), EF, listOf(src, arg())), t)
-					"sortedByDescending" -> toList(clrGen(EN, "OrderByDescending", listOf(t, lambdaRet(a0)), EF, listOf(src, arg())), t)
-					"maxOrNull" -> clrGen(EN, "Max", listOf(t), EI, listOf(src))
-					"minOrNull" -> clrGen(EN, "Min", listOf(t), EI, listOf(src))
-					"maxByOrNull" -> clrGen(EN, "MaxBy", listOf(t, lambdaRet(a0)), EF, listOf(src, arg()))
-					"minByOrNull" -> clrGen(EN, "MinBy", listOf(t, lambdaRet(a0)), EF, listOf(src, arg()))
-					// associateWith{v}->Dictionary<E,V>; associateBy{k}->Dictionary<K,E>; groupBy{k}->Dictionary<K,List<E>>.
-					"associateWith" -> """{"k":"associateWith","keyType":${str(t)},"valType":${str(lambdaRet(a0))},"src":$src,"sel":${arg()}}"""
-					"associateBy" -> """{"k":"associateBy","keyType":${str(lambdaRet(a0))},"valType":${str(t)},"src":$src,"sel":${arg()}}"""
-					"groupBy" -> """{"k":"groupBy","keyType":${str(lambdaRet(a0))},"elemType":${str(t)},"src":$src,"sel":${arg()}}"""
-					// zip(other) -> ToList(Zip<TF,TS>(a, b)) : List<(TF,TS)> (Kotlin Pair -> ValueTuple).
-					"zip" -> {
-						val other = regularArgs(call)[0]; val ot = collectionElemType(other.type)
-						toList(clrGen(EN, "Zip", listOf(t, ot), listOf("ienum", "ienum"), listOf(src, expr(other))), "clrg:System.ValueTuple[$t,$ot]")
-					}
-					"reduce" -> clrGen(EN, "Aggregate", listOf(t), listOf("ienum", "func:3"), listOf(src, arg()))
-					// partition { pred } -> a (matched, unmatched) Pair of Lists (ValueTuple<List<T>,List<T>>).
-					"partition" -> """{"k":"linqPartition","elem":${str(t)},"src":$src,"pred":${arg()}}"""
-					// withIndex() -> List<IndexedValue> as ValueTuple<int,T> (so `for ((i,v) in …)` destructures).
-					"withIndex" -> """{"k":"linqWithIndex","elem":${str(t)},"src":$src}"""
-					// associate { it to (k,v) } -> Dictionary<K,V> from a selector returning a Pair (ValueTuple<K,V>).
-					"associate" -> { val (kt, vt) = mapKV(call.type); """{"k":"linqAssociate","elem":${str(t)},"keyType":${str(kt)},"valType":${str(vt)},"src":$src,"sel":${arg()}}""" }
-					// scan/runningFold(init){acc,e -> } -> List<acc> = [init, op(init,e0), op(prev,e1), …].
-					"scan", "runningFold" -> {
-						val accT = collectionElemType(call.type)
-						"""{"k":"linqScan","elem":${str(t)},"accType":${str(accT)},"init":${expr(regularArgs(call)[0])},"src":$src,"op":${expr(regularArgs(call)[1])}}"""
-					}
-					// windowed(size) -> List<List<T>> sliding windows (step 1, no partial windows = Kotlin default).
-					"windowed" -> """{"k":"linqWindowed","elem":${str(t)},"size":${expr(regularArgs(call)[0])},"src":$src}"""
-					// getOrElse(index){ default(index) } -> in-bounds ? src[index] : default(index).
-					"getOrElse" -> """{"k":"linqGetOrElse","elem":${str(t)},"index":${expr(regularArgs(call)[0])},"src":$src,"default":${expr(regularArgs(call)[1])}}"""
-					// average -> Enumerable.Average (a per-numeric-type overload, not generic; always returns Double).
-					"average" -> """{"k":"clrStatic","type":"System.Linq.Enumerable","method":"Average","argTypes":["clrg:System.Collections.Generic.IEnumerable[$t]"],"ret":"double","args":[$src]}"""
-					// indexOf(e) -> List<T>.IndexOf (an instance method; LINQ has no IndexOf).
-					"indexOf" -> """{"k":"clrInstance","type":${str(birType(recv.type))},"method":"IndexOf","argTypes":[${str(t)}],"ret":"System.Int32","recv":$src,"args":[${arg()}]}"""
-					// forEach { it -> body } -> inline body into an enumerator loop (no closure; body uses enclosing locals).
-					"forEach" -> {
-						val lam = a0 as? IrFunctionExpression
-						if (lam != null) inlineForEach(t, recv, lam) else src
-					}
-					// fold(seed){acc,x->…} -> Enumerable.Aggregate<TSource,TAcc>(src, seed, Func<TAcc,TSource,TAcc>).
-					"fold" -> {
-						val seed = regularArgs(call)[0]; val lam = regularArgs(call)[1]
-						val r = targs.getOrNull(1) ?: birType(seed.type)
-						clrGen(EN, "Aggregate", listOf(t, r), listOf("ienum", "gp", "func:3"), listOf(src, expr(seed), expr(lam)))
-					}
-					// joinToString(sep?) -> String.Join<T>(string sep, IEnumerable<T> src) (default separator ", ").
-					"joinToString" -> {
-						val sep = regularArgs(call).getOrNull(0)?.let { expr(it) } ?: """{"k":"const","type":"string","value":", "}"""
-						clrGen("System.String", "Join", listOf(t), listOf("string", "ienum"), listOf(sep, src))
-					}
-					else -> src
-				}
-			}
-		}
 
 		// Array factory `intArrayOf(...)`/`arrayOf(...)` -> a `newArray` (vararg elements).
 		if (declaringClass == null && name in ARRAY_FACTORY_NAMES &&
@@ -2951,6 +2961,30 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		// `e!!` (not-null assertion) -> the value itself (the use site throws on null anyway).
 		if (name == "CHECK_NOT_NULL") return expr(call.arguments.filterNotNull().first())
+
+		// Primitive range operators are declared as Kotlin builtins, but CLR primitives have no instance methods.
+		// Materialize the stdlib range classes directly for value-position ranges; structured for-loops are handled
+		// in birForLoop.
+		if (name == "rangeTo" || name == "rangeUntil") {
+			val cls = declaringClass?.fqNameWhenAvailable?.asString()
+			val recv = dispatchReceiver(call)
+			val end = regularArgs(call).firstOrNull()
+			if (recv != null && end != null) {
+				val rangeType = when (cls) {
+					"kotlin.Byte", "kotlin.Short", "kotlin.Int" -> "kotlin.ranges.IntRange"
+					"kotlin.Long" -> "kotlin.ranges.LongRange"
+					"kotlin.Char" -> "kotlin.ranges.CharRange"
+					else -> null
+				}
+				if (rangeType != null) {
+					val endExpr = if (name == "rangeUntil") {
+						val one = if (cls == "kotlin.Long") """{"k":"const","type":"long","value":1}""" else """{"k":"const","type":"int","value":1}"""
+						"""{"k":"bin","op":"-","l":${expr(end)},"r":$one}"""
+					} else expr(end)
+					return """{"k":"new","type":${str(rangeType)},"args":[${expr(recv)},$endExpr]}"""
+				}
+			}
+		}
 
 		// `x in a..b` (range membership) -> `(x >= a && x <op> b)` via a short-circuit cond.
 		if (name == "contains") {
@@ -2997,16 +3031,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
-		// `a to b` -> a ValueTuple. `pair.componentN()` (destructuring) -> the ItemN field.
+		// `a to b` -> the stdlib Pair class. Pair/Triple/IndexedValue are emitted by stdlib itself, so don't
+		// lower their ABI to CLR ValueTuple here.
 		if (calleeFq == "kotlin.to") {
 			val a = extensionReceiver(call); val b = regularArgs(call).getOrNull(0)
 			if (a != null && b != null)
-				return """{"k":"tupleNew","elems":[${str(birType(a.type))},${str(birType(b.type))}],"args":[${expr(a)},${expr(b)}]}"""
+				return """{"k":"new","type":"kotlin.Pair[${birType(a.type)},${birType(b.type)}]","args":[${expr(a)},${expr(b)}]}"""
 		}
 		if (declaringClass?.fqNameWhenAvailable?.asString() in setOf("kotlin.Pair", "kotlin.Triple", "kotlin.collections.IndexedValue")
 			&& name.startsWith("component") && name.drop("component".length).all { it.isDigit() }) {
 			dispatchReceiver(call)?.let { r ->
-				return """{"k":"tupleItem","tupleType":${str(birType(r.type))},"index":${name.removePrefix("component")},"recv":${expr(r)}}"""
+				val field = when (declaringClass?.fqNameWhenAvailable?.asString() to name) {
+					"kotlin.Pair" to "component1", "kotlin.Triple" to "component1", "kotlin.collections.IndexedValue" to "component1" -> if (declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.collections.IndexedValue") "index" else "first"
+					"kotlin.Pair" to "component2", "kotlin.Triple" to "component2", "kotlin.collections.IndexedValue" to "component2" -> if (declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.collections.IndexedValue") "value" else "second"
+					"kotlin.Triple" to "component3" -> "third"
+					else -> null
+				}
+				if (field != null) return """{"k":"field","ownerType":${str(birType(r.type).removePrefix("@"))},"recv":${expr(r)},"name":${str(field)}}"""
 			}
 		}
 		// `entry.component1()/.component2()` on a Map.Entry (the `for ((k,v) in map)` desugaring; an EXTENSION
@@ -3034,12 +3075,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// instance method. Kotlin collections lower to System.Collections.Generic.List<T>; these are instance calls,
 		// not COLLECTION_OPS extension ops (those already returned above). Lets the real stdlib `map`/`filter`/`mapTo`
 		// — which build an ArrayList via `.add(...)` — run on the BCL list. `contains`/`indexOf` stay COLLECTION_OPS.
-		dispatchReceiver(call)?.let { recv ->
-			if (isCollectionType(recv.type) && !isSetType(recv.type)) COLLECTION_MEMBER[name]?.let { netName ->
-				val a = regularArgs(call)
-				return """{"k":"clrInstance","type":${str(birType(recv.type))},"method":${str(netName)},"argTypes":[${a.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(call.type))},"recv":${expr(recv)},"args":[${a.joinToString(",") { expr(it) }}]}"""
-			}
-		}
 		// Array indexing `a[i]` / `a[i] = v` (the `get`/`set` operators on Array/primitive arrays).
 		if (callee.isOperator && (name == "get" || name == "set")) {
 			val recv = dispatchReceiver(call)
@@ -3051,18 +3086,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// String indexing `s[i]` -> System.String.get_Chars(i) (char).
 			if (recv != null && name == "get" && recv.type.classFqName?.asString() == "kotlin.String")
 				return """{"k":"clrInstance","type":"System.String","method":"get_Chars","argTypes":["System.Int32"],"ret":"System.Char","recv":${expr(recv)},"args":[${expr(regularArgs(call)[0])}]}"""
-			// List indexing `list[i]` / `list[i] = v` -> List get_Item / set_Item.
-			if (recv != null && isCollectionType(recv.type) && !isSetType(recv.type)) {
-				val elemT = collectionElemType(recv.type); val a = regularArgs(call)
-				return if (name == "get") """{"k":"listGet","elem":${str(elemT)},"list":${expr(recv)},"index":${expr(a[0])}}"""
-				else """{"k":"listSet","elem":${str(elemT)},"list":${expr(recv)},"index":${expr(a[0])},"value":${expr(a[1])}}"""
-			}
-			// Map indexing `m[k]` / `m[k] = v` -> Dictionary get_Item / set_Item.
-			if (recv != null && isMapType(recv.type)) {
-				val (kt, vt) = mapKV(recv.type); val a = regularArgs(call)
-				return if (name == "get") """{"k":"mapGet","keyType":${str(kt)},"valType":${str(vt)},"map":${expr(recv)},"key":${expr(a[0])}}"""
-				else """{"k":"mapSet","keyType":${str(kt)},"valType":${str(vt)},"map":${expr(recv)},"key":${expr(a[0])},"value":${expr(a[1])}}"""
-			}
+			// kotlin.* List/Map indexing `list[i]`/`m[k]` is NOT intercepted: in FIR it's already an operator call to
+			// `get`/`set` — fall through to the ordinary call path so it emits as a real kotlin.* `get`/`set` call.
 			// Injected .NET indexer `c[i]` / `c[i] = v` -> get_Item / set_Item on the constructed .NET type. The
 			// receiver's type carries the element type arg (`Collection<Int>`), so the constructed `clrg:...[int]`
 			// resolves the substituted accessor.
@@ -3184,7 +3209,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val enclosing = typeName(comp.parent as IrClass)
 			val prop = callee.correspondingPropertySymbol?.owner
 			if (prop != null) return if (callee === prop.setter)
-				"""{"k":"staticFieldSet","ownerType":${str(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+				if (prop.backingField == null)
+					"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("set_" + prop.name.asString())},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
+				else
+					"""{"k":"staticFieldSet","ownerType":${str(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+			else if (prop.backingField == null)
+				"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("get_" + prop.name.asString())},"args":[]${retHint(false, call.type)}}"""
 			else """{"k":"staticField","ownerType":${str(enclosing)},"name":${str(prop.name.asString())}}"""
 			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)}${overloadSigField(callee)},"args":[${filledArgs(call).joinToString(",")}]}"""
 		}
@@ -3206,9 +3236,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// class. Use the property's own file, NOT the file currently being emitted — else a cross-file reference
 		// looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
-			if (declaringClass == null) { val owner = fileClassOf(p); return if (callee === p.setter)
-				"""{"k":"staticFieldSet","ownerType":${str(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
-			else """{"k":"staticField","ownerType":${str(owner)},"name":${str(p.name.asString())}}""" }
+			if (declaringClass == null) {
+				val owner = fileClassOf(p)
+				if (p.backingField == null) {
+					val ext = extensionReceiver(call)
+					return if (callee === p.setter) {
+						val args = listOfNotNull(ext) + regularArgs(call)
+						"""{"k":"callStatic","owner":${str(owner)},"method":${str("set_" + p.name.asString())},"args":[${args.joinToString(",") { expr(it) }}]}"""
+					} else {
+						"""{"k":"callStatic","owner":${str(owner)},"method":${str("get_" + p.name.asString())},"args":[${ext?.let { expr(it) } ?: ""}]${retHint(false, call.type)}}"""
+					}
+				}
+				return if (callee === p.setter)
+					"""{"k":"staticFieldSet","ownerType":${str(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+				else """{"k":"staticField","ownerType":${str(owner)},"name":${str(p.name.asString())}}"""
+			}
 		}
 
 		// `s.length` on a String -> System.String.Length (CLR property).
@@ -3216,20 +3258,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (p.name.asString() == "length" && dispatchReceiver(call)?.type?.classFqName?.asString() == "kotlin.String")
 				return """{"k":"clrPropGet","type":"System.String","name":"Length","retType":"System.Int32","static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
 		}
-		// Pair/Triple `.first`/`.second`/`.third` -> ValueTuple ItemN field.
+		// Pair/Triple `.first`/`.second`/`.third` -> stdlib class fields.
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
 			val pfq = (callee.parent as? IrClass)?.fqNameWhenAvailable?.asString()
 			if (pfq == "kotlin.Pair" || pfq == "kotlin.Triple") {
-				val idx = when (p.name.asString()) { "first" -> 1; "second" -> 2; "third" -> 3; else -> 0 }
-				if (idx > 0) dispatchReceiver(call)?.let { r ->
-					return """{"k":"tupleItem","tupleType":${str(birType(r.type))},"index":$idx,"recv":${expr(r)}}"""
+				val field = p.name.asString().takeIf { it in setOf("first", "second", "third") }
+				if (field != null) dispatchReceiver(call)?.let { r ->
+					return """{"k":"field","ownerType":${str(birType(r.type).removePrefix("@"))},"recv":${expr(r)},"name":${str(field)}}"""
 				}
 			}
-			// `IndexedValue.index`/`.value` -> Item1/Item2 of the ValueTuple<int,T>.
+			// `IndexedValue.index`/`.value` -> stdlib class fields.
 			if (pfq == "kotlin.collections.IndexedValue") {
-				val idx = when (p.name.asString()) { "index" -> 1; "value" -> 2; else -> 0 }
-				if (idx > 0) dispatchReceiver(call)?.let { r ->
-					return """{"k":"tupleItem","tupleType":${str(birType(r.type))},"index":$idx,"recv":${expr(r)}}"""
+				val field = p.name.asString().takeIf { it in setOf("index", "value") }
+				if (field != null) dispatchReceiver(call)?.let { r ->
+					return """{"k":"field","ownerType":${str(birType(r.type).removePrefix("@"))},"recv":${expr(r)},"name":${str(field)}}"""
 				}
 			}
 		}
@@ -3249,8 +3291,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (isArrayType(r.type)) return """{"k":"arrayLen","array":${expr(r)}}"""
 			// `Color.entries.size`: entries -> a Color[] (enumValues), so .size is the array length.
 			if (r.type.classFqName?.asString() == "kotlin.enums.EnumEntries") return """{"k":"arrayLen","array":${expr(r)}}"""
-			if (isCollectionType(r.type)) return clrGen("System.Linq.Enumerable", "Count", listOf(collectionElemType(r.type)), listOf("ienum"), listOf(expr(r)))
-			if (isMapType(r.type)) { val (kt, vt) = mapKV(r.type); return """{"k":"mapSize","keyType":${str(kt)},"valType":${str(vt)},"map":${expr(r)}}""" }
+			// kotlin.* collection/map `.size` is NOT intercepted: it's a real `size` property — fall through to the
+			// ordinary property read so it emits as a kotlin.* `get_size` call.
 		}
 		// `kProperty.name` -> the compiler-generated KProperty.get_name().
 		if (property?.name?.asString() == "name" &&
@@ -3270,14 +3312,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val elem = birType(callee.returnType)
 				return """{"k":"clrPropGet","type":${str("clrg:System.Lazy[$elem]")},"name":"Value","retType":${str(elem)},"static":false,"recv":$delegate}"""
 			}
-			// `val x by map` / `var x by mutableMap` -> `map["x"]` (read, cast to the property type) / `map["x"] = v`.
-			if (bf != null && isMapType(bf.type) && delegate != null) {
-				val (kt, vt) = mapKV(bf.type)
-				val key = """{"k":"const","type":"string","value":${str(property.name.asString())}}"""
-				return if (callee === property.setter)
-					"""{"k":"mapSet","keyType":${str(kt)},"valType":${str(vt)},"map":$delegate,"key":$key,"value":${expr(regularArgs(call).first())}}"""
-				else """{"k":"cast","type":${str(birType(callee.returnType))},"e":{"k":"mapGet","keyType":${str(kt)},"valType":${str(vt)},"map":$delegate,"key":$key}}"""
-			}
+			// `val x by map` is NOT intercepted: FIR routes it through the stdlib `Map.getValue`/`setValue` operator —
+			// fall through to the getValue/setValue delegate routing so it emits as real kotlin.* calls.
 			// Route getValue/setValue to the delegate object. The dispatch type is either the concrete user
 			// delegate class (duck-typed or implementing Read(Write)Property) or — when the field is typed as
 			// the Read(Write)Property interface (e.g. Delegates.observable) — the synthetic interface.
@@ -3309,7 +3345,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A property with a custom accessor — OR one overriding a .NET/synthetic-mapped iface property (e.g.
 			// CharSequence.length -> get_length) — routes through the get_/set_ method, not the backing field.
 			val ifaceAcc = clrIfaceMemberName(callee)
-			if (hasCustomAccessor(property) || ifaceAcc != null) {
+			if (hasCustomAccessor(property) || ifaceAcc != null || property.backingField == null) {
 				val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
 				// A MEMBER extension property (`class C { val T.p get() }`): dispatch on the enclosing C, but its `get_p`/
 				// `set_p` method takes the extension receiver as a leading `__self` arg -> prepend it.
@@ -3427,6 +3463,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":"void","value":null},"else":${throwExpr(newExc("System.ArgumentException", "\"Failed requirement\""))}}"""
 			if (calleeFq == "kotlin.check")
 				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":"void","value":null},"else":${throwExpr(newExc("System.InvalidOperationException", "\"Check failed\""))}}"""
+			if (name == "ieee754equals" && regularArgs(call).size == 2) {
+				val a = regularArgs(call)
+				return """{"k":"bin","op":"==","l":${expr(a[0])},"r":${expr(a[1])}}"""
+			}
 			// requireNotNull(x)/checkNotNull(x) -> evaluate once; throw if null, else the (non-null) value.
 			if (calleeFq == "kotlin.requireNotNull" || calleeFq == "kotlin.checkNotNull") {
 				val arg = regularArgs(call).first()
@@ -3443,6 +3483,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			// coerceAtMost/atLeast/In -> System.Math.Min/Max/Clamp (receiver is the first arg).
 			if (calleeFq == "kotlin.ranges.coerceAtMost" || calleeFq == "kotlin.ranges.coerceAtLeast" || calleeFq == "kotlin.ranges.coerceIn") {
+				if (calleeFq == "kotlin.ranges.coerceIn" && regularArgs(call).size == 1) {
+					val recv = extensionReceiver(call)!!
+					val range = regularArgs(call).first()
+					val rfq = range.type.classFqName?.asString()
+					if (rfq != null && rfq.endsWith("Range")) {
+						val tmp = "__rng${scopeCounter++}"
+						val rangeType = birType(range.type)
+						val owner = rangeType.removePrefix("@").substringBefore("[")
+						val loc = """{"k":"local","name":${str(tmp)}}"""
+						val first = """{"k":"field","ownerType":${str(owner)},"recv":$loc,"name":"first"}"""
+						val last = """{"k":"field","ownerType":${str(owner)},"recv":$loc,"name":"last"}"""
+						return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tmp)},"type":${str(rangeType)},"init":${expr(range)}}],"result":{"k":"clrStatic","type":"System.Math","method":"Clamp","argTypes":[${str(netType(recv.type))},${str(netType(recv.type))},${str(netType(recv.type))}],"ret":${str(netType(callee.returnType))},"args":[${expr(recv)},$first,$last]}}"""
+					}
+				}
 				val m = when (calleeFq) { "kotlin.ranges.coerceAtMost" -> "Min"; "kotlin.ranges.coerceAtLeast" -> "Max"; else -> "Clamp" }
 				val all = listOf(extensionReceiver(call)!!) + regularArgs(call)
 				return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${all.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"args":[${all.joinToString(",") { expr(it) }}]}"""
@@ -3524,35 +3578,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
-		// An unhandled Kotlin-stdlib FREE/EXTENSION function (e.g. `partition`, `windowed`) reaching the generic
-		// fallthrough would emit a callStatic that ilemit can't resolve. Report a clear, source-located compile
-		// error instead. Restricted to no-dispatch-receiver calls so instance methods (`Iterator.next()` etc.,
-		// handled by the callInstance path below) are NOT caught. Handled ops already returned earlier.
-		// When compiling the stdlib ITSELF (DOTKT_STDLIB_COMPILE set), a call to a stdlib fn resolves to an `expect`
-		// (body == null) whose `actual` is in THIS module — so it must emit a normal static call to the local actual, not
-		// hit the "unsupported external stdlib fn" guard below (that guard is for USER code calling an absent stdlib fn).
-		val stdlibCompile = System.getenv("DOTKT_STDLIB_COMPILE") != null
-		if (!stdlibCompile) if (dispatchReceiver(call) == null) callee.fqNameWhenAvailable?.asString()?.let { fqn ->
-			// A stdlib fn that is NOT hand-lowered AND NOT provided by a referenced DotKt.Stdlib (the round-trip
-			// registry below) is genuinely unsupported -> a clear compile error. But once a real Kotlin implementation
-			// is compiled into DotKt.Stdlib and injected, `lookup(fqn) != null` and we fall through to the round-trip
-			// path, which emits a .NET call to (or inline-splices) that real body. This is the seam that lets us retire
-			// a hand-written `COLLECTION_OPS` lowering one op at a time — drop it from the catalog, ship the op in
-			// DotKt.Stdlib, and the call routes to the real Kotlin source instead.
-			if (callee.body == null
-					&& (fqn.startsWith("kotlin.collections.") || fqn.startsWith("kotlin.sequences.")
-					|| fqn.startsWith("kotlin.text.") || fqn.startsWith("kotlin.ranges.") || fqn.startsWith("kotlin.comparisons."))) {
-				// Route to DotKt.Stdlib only when it provides the op AND the extension receiver is a List-backed
-				// collection (List/Set/Collection/Iterable -> IEnumerable<T>, which the migrated `Iterable<T>.op` body
-				// accepts). A range / other non-collection receiver is NOT an IEnumerable here, so emitting the routed
-				// call would crash ilemit — fall to a clean compile error instead (matches the pre-migration behaviour).
-				val er = extensionReceiver(call)
-				val routable = er != null && isCollectionType(er.type) && kotc.ClrTopLevelRegistry.lookup(fqn) != null
-				if (!routable)
-					return unsupported(call, "the Kotlin stdlib function `$name`",
-						"it isn't lowered to .NET yet — use a supported equivalent, or wrap the logic by hand")
-			}
-		}
+		// (The old "unsupported external stdlib fn" guard — a COLLECTION_OPS-era seam that errored unless the receiver
+		// was a List-backed collection — is gone: with pure kotlin.* the stdlib provides every fn, so calls route via
+		// the round-trip path below or emit as ordinary kotlin.* calls.)
 		// DotKt round-trip: a call to a top-level function restored from a [KotlinFile] facade in a referenced
 		// assembly -> a .NET static call on that file-facade class. `body == null` distinguishes the injected symbol
 		// from a same-named local top-level fun. (A suspend top-level fun awaits via the coroutine path, not here.)
@@ -3672,12 +3700,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.Char" -> "System.Char"
 		"kotlin.String" -> "System.String"
 		"kotlin.Unit" -> "System.Void"
-		"kotlin.coroutines.Continuation" -> "clrg:DotKt.Coroutines.Continuation[${firstArgNet(t)}]"
 		"kotlinx.coroutines.CancellableContinuation" -> "clrg:DotKtx.Coroutines.CancellableCont[${firstArgNet(t)}]"
 		"kotlin.Result" -> "clrg:DotKt.Result[${firstArgNet(t)}]"
-		"kotlin.coroutines.CoroutineContext", "kotlin.coroutines.EmptyCoroutineContext" -> "clr:DotKt.Coroutines.CoroutineContext"
-		"kotlin.coroutines.CoroutineContext.Element" -> "clr:DotKt.Coroutines.Element"
-		"kotlin.coroutines.CoroutineContext.Key" -> "clrg:DotKt.Coroutines.Key[${firstArgNet(t)}]"
 		"kotlin.sequences.Sequence" -> "clrg:System.Collections.Generic.IEnumerable[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlinx.atomicfu.AtomicInt" -> "DotKtx.Atomicfu.AtomicInt"
 		"kotlinx.atomicfu.AtomicLong" -> "DotKtx.Atomicfu.AtomicLong"
@@ -3732,37 +3756,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return "object"
 	}
 
-	/** Kotlin List/MutableList/Collection/Iterable -> a .NET `List<T>` (works as IEnumerable<T> for LINQ). `ArrayList`
-	 *  is `kotlin.collections.ArrayList` = the JVM `java.util.ArrayList` typealias; on CLR it is the same `List<T>`
-	 *  (the concrete mutable list the stdlib builds in `map`/`filter`/`mapTo`). */
-	internal fun isCollectionType(t: IrType): Boolean =
-		t.classFqName?.asString() in setOf(
-			"kotlin.collections.List", "kotlin.collections.MutableList",
-			"kotlin.collections.Collection", "kotlin.collections.Iterable",
-			"kotlin.collections.Set", "kotlin.collections.MutableSet",
-			"kotlin.collections.ArrayList", "java.util.ArrayList",
-			"kotlin.collections.MutableCollection",
-		)
-
-	/** A Kotlin `Sequence<T>` -> a LAZY .NET `IEnumerable<T>` (deferred LINQ). Distinct from collections, whose
-	 *  intermediate ops materialize via ToList (Kotlin lists are eager); sequence ops stay deferred. */
-	internal fun isSequenceType(t: IrType): Boolean =
-		t.classFqName?.asString() == "kotlin.sequences.Sequence"
-
-	/** A Kotlin Set type -> .NET HashSet<T>; List-family -> List<T>. */
-	internal fun isSetType(t: IrType): Boolean =
-		t.classFqName?.asString() in setOf("kotlin.collections.Set", "kotlin.collections.MutableSet")
-
-	/** Kotlin `Iterable`/`MutableIterable` as a PARAMETER/RECEIVER type -> the BCL `IEnumerable<T>` (the broadest
-	 *  read-only iteration interface — List<T>, HashSet<T>, and any CLR IEnumerable all ARE IEnumerable, so a stdlib
-	 *  `Iterable<T>.map(...)` receiver accepts them all, and `for (x in this)` enumerates via GetEnumerator/MoveNext).
-	 *  As a user class SUPERTYPE it stays the synthetic KIterable (the producing-side bridge is separate). */
-	internal fun isIterableType(t: IrType): Boolean =
-		t.classFqName?.asString() in setOf("kotlin.collections.Iterable", "kotlin.collections.MutableIterable")
-
-	internal fun isMapType(t: IrType): Boolean =
-		t.classFqName?.asString() in setOf("kotlin.collections.Map", "kotlin.collections.MutableMap")
-
 	/** (keyType, valType) BIR types of a Map<K,V>. */
 	internal fun mapKV(t: IrType): Pair<String, String> {
 		val a = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
@@ -3807,7 +3800,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A type parameter `T` is a real generic parameter -> `gp:<name>` (resolved in IL context). On the CLR,
 		// generics are reified, so even `reified T` rides on this (no inlining) — see [[clr-not-jvm-discard-jvmisms]].
 		(t.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.let { tp ->
-			return "gp:" + tp.owner.name.asString()
+			// While splicing an `inline fun`'s body, its OWN type params are substituted with the call's type arguments
+			// (the splice site has no such param in scope) — e.g. `all<T>` spliced into `containsAll` resolves `T` to the
+			// inferred element type. A `*` star projection lands here as the param itself -> render `object` (Any?).
+			val nm = tp.owner.name.asString()
+			typeArgSubst[nm]?.let { return it }
+			return "gp:" + nm
 		}
 		// The intrinsic `ClrRef<T>` -> `byref:T` (a managed reference; a ref-cell delegate local is a `ref T` local).
 		if (t.classFqName?.asString() == "ClrRef")
@@ -3818,43 +3816,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Nullable value type `Int?` -> System.Nullable<int> (reference nullables stay as the ref type).
 		nullableElem(t)?.let { return "nullable:$it" }
 		if (isArrayType(t)) return "array:" + arrayElemType(t)
-		// Generic .NET types use a bracket encoding `clrg:Open[arg1,arg2]` so nested generics (List<(A,B)>) parse.
-		if (isIterableType(t)) return "clrg:System.Collections.Generic.IEnumerable[" + collectionElemType(t) + "]"
-		if (isSetType(t)) return "clrg:System.Collections.Generic.HashSet[" + collectionElemType(t) + "]"
-		if (isCollectionType(t)) return "clrg:System.Collections.Generic.List[" + collectionElemType(t) + "]"
-		if (isMapType(t)) { val (k, v) = mapKV(t); return "clrg:System.Collections.Generic.Dictionary[$k,$v]" }
-		// `Map.Entry<K,V>` (the element of `for ((k,v) in map)`) -> a .NET `KeyValuePair<K,V>`.
-		if (t.classFqName?.asString() in setOf("kotlin.collections.Map.Entry", "kotlin.collections.MutableMap.MutableEntry")) {
-			val (k, v) = mapKV(t); return "clrg:System.Collections.Generic.KeyValuePair[$k,$v]"
-		}
-		// Pair<A,B>/Triple<A,B,C> -> System.ValueTuple<...>.
 		val fqp = t.classFqName?.asString()
-		if (fqp == "kotlin.Pair" || fqp == "kotlin.Triple") {
-			val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
-			return "clrg:System.ValueTuple[" + args.joinToString(",") + "]"
-		}
-		// `IndexedValue<T>` (the element of `for ((i,v) in xs.withIndex())`) -> ValueTuple<int,T>; .index/.value
-		// and component1/2 map to Item1/Item2.
-		if (fqp == "kotlin.collections.IndexedValue") {
-			val a = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
-			return "clrg:System.ValueTuple[int,${a.getOrNull(0) ?: "object"}]"
-		}
-		// kotlin.Comparable<T> -> System.IComparable<T> (bound for `<T : Comparable<T>>`, and `a.compareTo(b)`).
-		if (fqp == "kotlin.Comparable") {
-			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			return "clrg:System.IComparable[$arg]"
-		}
 		// kotlin.text.Regex -> System.Text.RegularExpressions.Regex.
 		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
 		if (fqp == "kotlin.text.MatchResult") return "clr:System.Text.RegularExpressions.Match"
 		// Kotlin/Java throwables -> their .NET counterpart (the common base; `.message` -> .Message). Covers a custom
 		// exception base (`class E : Exception(msg)`) as well as a `Throwable`-typed value.
 		if (fqp != null) NET_EXCEPTIONS[fqp]?.let { return "clr:$it" }
-		// kotlin.Comparator<T> -> System.Collections.Generic.IComparer<T>; AutoCloseable/Closeable -> IDisposable.
-		if (fqp == "kotlin.Comparator" || fqp == "java.util.Comparator") {
-			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			return "clrg:System.Collections.Generic.IComparer[$arg]"
-		}
 		if (fqp == "kotlin.AutoCloseable" || fqp == "java.lang.AutoCloseable" || fqp == "java.io.Closeable" || fqp == "kotlin.io.Closeable")
 			return "clr:System.IDisposable"
 		// kotlin.CharSequence -> a synthetic interface (no faithful .NET equivalent). See charSeqIface.
@@ -3870,19 +3838,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return "func:$retEnc:${ps.joinToString(",") { birTypeDeleg(it) }}"
 			}
 		}
-		// kotlin.sequences.Sequence<T> -> a lazy .NET IEnumerable<T> (sequence{} builds one; ops map to LINQ).
-		if (fqp == "kotlin.sequences.Sequence") {
-			val arg = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			return "clrg:System.Collections.Generic.IEnumerable[$arg]"
-		}
-		// kotlin.coroutines.Continuation<T> -> the shared DotKt.Coroutines.Continuation<T> (Path B; cross-assembly
-		// identity so a user assembly and dotktx.coroutines share one Continuation). See docs §13b.
-		if (fqp == "kotlin.coroutines.Continuation") return "clrg:DotKt.Coroutines.Continuation[${firstArgBir(t)}]"
 		if (fqp == "kotlinx.coroutines.CancellableContinuation") return "clrg:DotKtx.Coroutines.CancellableCont[${firstArgBir(t)}]"
-		if (fqp == "kotlin.coroutines.CoroutineContext" || fqp == "kotlin.coroutines.EmptyCoroutineContext")
-			return "clr:DotKt.Coroutines.CoroutineContext"
-		if (fqp == "kotlin.coroutines.CoroutineContext.Element") return "clr:DotKt.Coroutines.Element"
-		if (fqp == "kotlin.coroutines.CoroutineContext.Key") return "clrg:DotKt.Coroutines.Key[${firstArgBir(t)}]"
 		// kotlinx.atomicfu atomics -> the DotKt.Coroutines Interlocked/Volatile wrappers (Phase 3 / §13a res. 5).
 		if (fqp == "kotlinx.atomicfu.AtomicInt") return "clr:DotKtx.Atomicfu.AtomicInt"
 		if (fqp == "kotlinx.atomicfu.AtomicLong") return "clr:DotKtx.Atomicfu.AtomicLong"
@@ -3935,10 +3891,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"kotlin.UByte" -> return "ubyte"
 			"kotlin.UShort" -> return "ushort"
 		}
-		// The Kotlin iterator/iterable protocol types -> a monomorphized synthetic interface (`@KIterator_<elem>` /
-		// `@KIterable_<elem>`).
-		iteratorElemIface(t)?.let { return "@$it" }
-		iterableElemIface(t)?.let { return "@$it" }
+		// A (Mutable)Iterator<E>/Iterable<E> whose ELEMENT is a type parameter (gp:E) can't be a monomorphized synthetic:
+		// the synthetic interface `<>dotkt_KIterator_gp_E` would bake `gp:E` into a NON-generic type, so `next(): gp:E` has
+		// no `E` to resolve at emit (the keystone bug blocking a generic `class HashSet<E>`'s `iterator(): MutableIterator<E>`
+		// and `AbstractCollection<E>`). Map straight to the CLR-native generic IEnumerator<E>/IEnumerable<E> instead — which
+		// is the right target anyway (roadmap step 3, the IEnumerable<->Iterator read-as). Concrete elements keep the
+		// monomorphized synthetic below (the IL-can't-define-a-generic-interface workaround for user iterator classes).
 		val klass = t.classifierOrNull?.owner as? IrClass
 		// A @Clr / FIR-injected .NET type ("clr:System.Text.StringBuilder"); a constructed generic .NET type
 		// (`Collection<Int>`) carries its concrete args as `clrg:<openName>[int]`.
@@ -3964,7 +3922,29 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return "object"
 	}
 
-	internal fun str(s: String): String =
-		"\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\t", "\\t") + "\""
+	internal fun str(s: String): String {
+		val escaped = buildString(s.length + 2) {
+			for (ch in s) {
+				when (ch) {
+					'\\' -> append("\\\\")
+					'"' -> append("\\\"")
+					'\n' -> append("\\n")
+					'\r' -> append("\\r")
+					'\t' -> append("\\t")
+					'\b' -> append("\\b")
+					'\u000C' -> append("\\f")
+					else -> {
+						if (ch.code < 0x20) {
+							append("\\u")
+							append(ch.code.toString(16).padStart(4, '0'))
+						} else {
+							append(ch)
+						}
+					}
+				}
+			}
+		}
+		return "\"$escaped\""
+	}
 
 }

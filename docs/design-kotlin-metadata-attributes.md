@@ -12,14 +12,18 @@ consuming them as Kotlin (see [[dotkt-compile-kotlin-libraries]]).
 
 ## What needs an attribute (and what doesn't)
 
-Only modifiers .NET metadata **can't already express**:
+Only Kotlin facts that plain .NET metadata cannot express or cannot express with Kotlin semantics:
 
 | Kotlin construct | .NET emission | Recoverable from plain metadata? | Carrier |
 |---|---|---|---|
 | `infix fun` | ordinary method | no (pure call-syntax modifier) | `[KotlinFunction(Infix)]` |
-| `operator fun` | ordinary method | no (convention-name resolution) | `[KotlinFunction(Operator)]` |
+| `operator fun` | CLR `op_*` when the operator has a CLR ABI equivalent; otherwise ordinary method | no for ordinary methods; CLR `op_*` names are recoverable but still need Kotlin operator status for Kotlin re-consumption | `[KotlinFunction(Operator)]` |
 | `suspend fun` | `Task<T>`-returning method | no (the Task ABI hides the suspend-ness) | `[KotlinFunction(Suspend)]` |
 | top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFileClass]` on the file class |
+| inline function body needed for cross-module lambda/non-local-return splicing | ordinary method | no | `[KotlinInline(body)]` |
+| Kotlin `val` / non-public setter backed by a public field | public field | no; plain public field looks writable | `[KotlinReadOnly]` |
+| Kotlin package ↔ .NET namespace projection | assembly-level mapping | no | `[DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]` |
+| reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |
 | `final`/`open`/`abstract` (modality) | non-virtual / virtual / abstract | **yes** — rides .NET virtual-ness | (none) |
 | visibility | public/assembly/family | **yes** | (none) |
 | generics, including `reified` | real CLR generic method `<T>` | **yes** — CLR generics are reified | (none) |
@@ -30,12 +34,16 @@ assembly already references it ([[dotkt-naming-and-runtime-split]]).
 ## Pipeline (mirror of the forward `--refs` injection)
 
 ```
-  emit:   BirEmitter records infix/operator/suspend + the file class
-            -> ilemit stamps [KotlinFunction(flags)] / [KotlinFileClass]   (skipped if DotKt.Runtime absent)
+  emit:   BirEmitter records infix/operator/suspend, inline bodies, read-only fields, file classes, namespace projections,
+          and reference nullability
+            -> ilemit stamps [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinInline(body)] /
+               [KotlinReadOnly] / [DotKtNamespaceProjection] / .NET NRT [Nullable*]
   retarget: dotkt-retarget repoints BCL refs (also needed so facadegen can MLC-load the dll)
   read:   facadegen --meta reads the attributes -> meta tokens
             `fun <name> <ret> final,infix|operator|suspend ...`   (suspend: Task<T> unwrapped to T)
+            CLR `op_*` methods map back to Kotlin operator names through the standard operator table
             `file <package> <fileClassFqn>` + `tlfun <name> ...`  (top-level)
+            field mutability, namespace projection, inline body availability, and NRT nullability
   inject: ClrTypeInjection parses them and restores the Kotlin modifier on the synthesized FIR:
             members -> status { isInfix/isOperator/isSuspend }
             top-level -> getTopLevelCallableIds + generateFunctions(owner==null)

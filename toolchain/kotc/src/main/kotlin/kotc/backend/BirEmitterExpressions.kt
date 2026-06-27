@@ -108,17 +108,16 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		val parent = entry.parent as? IrClass
 		// Rich enum -> the static singleton field; basic enum -> ordinal const typed as the CLR enum.
 		if (parent != null && isRichEnum(parent))
-			"""{"k":"staticField","ownerType":${str(parent.name.asString())},"name":${str(entry.name.asString())}}"""
+			"""{"k":"staticField","ownerType":${str(typeName(parent))},"name":${str(entry.name.asString())}}"""
 		else {
 			val ord = parent?.declarations?.filterIsInstance<IrEnumEntry>()?.indexOf(entry) ?: 0
-			"""{"k":"enumValue","type":${str("@" + parent?.name?.asString())},"ordinal":$ord}"""
+			"""{"k":"enumValue","type":${str("@" + parent?.let { typeName(it) })},"ordinal":$ord}"""
 		}
 	}
 	// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (.NET-injected objects
 	// like Math are static call sites handled at the call site; only user singletons reach here as a value.)
 	is IrGetObjectValue ->
 		when (node.symbol.owner.fqNameWhenAvailable?.asString()) {
-			"kotlin.coroutines.EmptyCoroutineContext" -> """{"k":"clrStaticField","type":"DotKt.Coroutines.EmptyCoroutineContext","name":"Instance"}"""
 			// The `Unit` object as a VALUE (e.g. `Result.success(Unit)`) -> the DotKt.Unit singleton.
 			"kotlin.Unit" -> """{"k":"clrStaticField","type":"DotKt.Unit","name":"Instance"}"""
 			else -> """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
@@ -170,8 +169,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// A collection ctor `ArrayList<R>()` / `HashSet<T>()` (kotlin.collections.* = java.util.* typealiases) -> the
 		// BCL collection (`new List<R>()` / `new HashSet<T>()`): birType already maps the type. Lets the real stdlib
 		// `map`/`filter`/`mapTo` (which build an ArrayList) compile straight to the BCL collection DotKt uses.
-		val collNew = if (klass != null && (isCollectionType(node.type) || isSetType(node.type) || isMapType(node.type))) birType(node.type) else null
-		val mapped = clr ?: netExc ?: collNew
+		val mapped = clr ?: netExc
 		if (mapped != null)
 			"""{"k":"clrNew","type":${str(mapped)},"argTypes":[${paramNetTypes(node.symbol.owner)}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
 		else {

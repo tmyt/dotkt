@@ -77,6 +77,12 @@ dotnet build/ilemit-bin/ilemit.dll build/out M0Kt build/cir/*.cir.json
 dotnet build/out/M0Kt.dll          # -> sum = 5 / zero / n=1 / n=2
 ```
 
+For the experimental native-CIR envelope path, use the dev wrapper:
+
+```bash
+./scripts/dotkt.sh --native-cir --no-stdlib --run cases/m0/M0.kt
+```
+
 ### Build a project with MSBuild / `.ktproj`
 
 A Kotlin.NET project builds with plain `dotnet build` / `dotnet run` (and thus in Visual Studio):
@@ -105,6 +111,8 @@ assembly via the chosen backend. See `cases/ktproj/` (C# path), `cases/ktproj-il
 ./scripts/verify-il.sh      # the shipping IL backend over the sample corpus + ilverify
 ./scripts/verify-ktproj.sh  # MSBuild/.ktproj end-to-end (forward + bidirectional ProjectReference)
 ./scripts/verify-bir2cir-native.sh  # native-CIR draft + compat identity guard
+./scripts/verify-native-cir-ilemit.sh  # native-CIR envelope consumed by ilemit
+./scripts/verify-ilemit-wide-delegates.sh  # synthetic delegates beyond System.Func/Action arity
 ```
 
 ## Layout
@@ -114,7 +122,7 @@ assembly via the chosen backend. See `cases/ktproj/` (C# path), `cases/ktproj-il
 | `toolchain/kotc/` | the Kotlin→BIR compiler frontend (Kotlin/JVM gradle module; source package `kotc.*`) |
 | `toolchain/kotc/.../kotc/pipeline/ClrCliPipeline.kt` | driver: stock JVM phases + our backend phase |
 | `toolchain/kotc/.../kotc/backend/BirEmitter.kt` (+ `BirEmitterExpressions/Statements`, `BirMappings`) | **Kotlin IR → BIR** (currently still hosts legacy lowering being migrated to CIR) |
-| `toolchain/bir2cir/` | **BIR (JSON) → CIR (JSON)** lowering stage; currently compatibility-copy skeleton |
+| `toolchain/bir2cir/` | **BIR (JSON) → CIR (JSON)** lowering stage; compat mode plus native-CIR draft/ilemit bridge |
 | `toolchain/ilemit/` | **CIR-compatible JSON → CIL** via `System.Reflection.Emit` (split: `Emitter.Expressions/Coroutines/Statements/Metadata`) |
 | `toolchain/facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) |
 | `toolchain/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
@@ -124,6 +132,9 @@ assembly via the chosen backend. See `cases/ktproj/` (C# path), `cases/ktproj-il
 | `scripts/verify-il.sh` | IL differential + `ilverify` gate |
 | `scripts/verify-ktproj.sh` | MSBuild/.ktproj integration (IL backend) |
 | `scripts/verify-bir2cir-native.sh` | Native-CIR draft shape + `--compat-bir` identity check |
+| `scripts/verify-native-cir-ilemit.sh` | Native-CIR envelope consumed directly by `ilemit` through `cirDraft.executableCir` |
+| `scripts/verify-ilemit-wide-delegates.sh` | Wide Kotlin function types using synthetic KFunc/KAction delegates |
+| `scripts/dotkt.sh --native-cir` | Developer-only native-CIR pipeline switch; normal builds still default to compat mode |
 | `docs/dotkt-semantics.md` | **how Kotlin maps to the CLR + where DotKt deliberately differs from Kotlin/JVM** |
 | `docs/design-fir-bir-cir-il.md` | backend layer contract and CIR migration target |
 | `docs/remaining-tasks.md` | the 1.0 ship checklist |

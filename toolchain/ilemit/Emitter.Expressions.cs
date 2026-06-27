@@ -178,8 +178,24 @@ sealed partial class Emitter
             }
             case "bin": return EmitBin(e);
             case "objEq": return EmitObjEq(e);
+            case "clr.obj.eq": return EmitObjEq(e);
             case "un": return EmitUn(e);
             case "conv": return EmitConv(e);
+            case "clr.conv": return EmitConv(e);
+            case "clr.isinst": return EmitNativeClrIsInst(e, resultIsBool: true);
+            case "clr.castclass": return EmitNativeClrCastClass(e);
+            case "clr.isinst.ref": return EmitNativeClrIsInst(e, resultIsBool: false);
+            case "clr.safeCast.value": return EmitNativeClrSafeCastValue(e);
+            case "clr.nullable.null": return EmitNativeClrNullableNull(e);
+            case "clr.nullable.wrap": return EmitNativeClrNullableWrap(e);
+            case "clr.nullable.hasValue": return EmitNativeClrNullableHasValue(e);
+            case "clr.nullable.value": return EmitNativeClrNullableValue(e);
+            case "clr.typeof": return EmitNativeClrTypeOf(e);
+            case "clr.getType": return EmitNativeClrGetType(e);
+            case "clr.enum.value": return EmitNativeClrEnumValue(e);
+            case "clr.enum.ordinal": return EmitNativeClrEnumOrdinal(e);
+            case "clr.enum.values": return EmitNativeClrEnumValues(e);
+            case "clr.enum.parse": return EmitNativeClrEnumParse(e);
             case "valueBlock":
             {
                 // Inlined scope function: run the spliced statements, then yield the result expression.
@@ -333,20 +349,11 @@ sealed partial class Emitter
             }
             case "classRef":
             {
-                // `T::class` -> a System.Type token (ldtoken + GetTypeFromHandle).
-                var t = MapType(e.GetProperty("type").GetString());
-                _il.Emit(OpCodes.Ldtoken, t);
-                _il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
-                return typeof(Type);
+                return EmitNativeClrTypeOf(e);
             }
             case "getType":
             {
-                // `x::class` -> x.GetType() (a runtime System.Type). Box a value-type receiver first (GetType is
-                // declared on object); a generic-param value also needs boxing to call the object method.
-                var gt = EmitExpr(e.GetProperty("e"));
-                if (gt != null && (gt.IsValueType || gt.IsGenericParameter)) _il.Emit(OpCodes.Box, gt);
-                _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("GetType"));
-                return typeof(Type);
+                return EmitNativeClrGetType(e);
             }
             case "isinstRef":
             {
@@ -360,71 +367,23 @@ sealed partial class Emitter
             }
             case "safeCastValue":
             {
-                // `x as? T` for value T -> `T?`: isinst boxed-T, then unbox+wrap, else empty Nullable<T>.
-                var elem = MapType(e.GetProperty("elem").GetString());
-                var nt = typeof(Nullable<>).MakeGenericType(elem);
-                var res = _il.DeclareLocal(nt);
-                var has = _il.DefineLabel(); var done = _il.DefineLabel();
-                EmitExpr(e.GetProperty("e"));
-                _il.Emit(OpCodes.Isinst, elem);
-                _il.Emit(OpCodes.Dup);
-                _il.Emit(OpCodes.Brtrue, has);
-                _il.Emit(OpCodes.Pop);
-                _il.Emit(OpCodes.Ldloca, res);
-                _il.Emit(OpCodes.Initobj, nt);
-                _il.Emit(OpCodes.Ldloc, res);
-                _il.Emit(OpCodes.Br, done);
-                _il.MarkLabel(has);
-                _il.Emit(OpCodes.Unbox_Any, elem);
-                _il.Emit(OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
-                _il.MarkLabel(done);
-                return nt;
+                return EmitNativeClrSafeCastValue(e);
             }
             case "nullableNull":
             {
-                // `null` typed as Int? -> a Nullable<T> with HasValue=false. NOT ldnull: a value type
-                // has no null reference. `initobj` zero-inits the local (HasValue defaults to false).
-                var elem = MapType(e.GetProperty("elem").GetString());
-                var nt = typeof(Nullable<>).MakeGenericType(elem);
-                var loc = _il.DeclareLocal(nt);
-                _il.Emit(OpCodes.Ldloca, loc);
-                _il.Emit(OpCodes.Initobj, nt);
-                _il.Emit(OpCodes.Ldloc, loc);
-                return nt;
+                return EmitNativeClrNullableNull(e);
             }
             case "nullableWrap":
             {
-                // A present value -> `new Nullable<T>(v)` (the implicit T -> T? conversion).
-                var elem = MapType(e.GetProperty("elem").GetString());
-                var nt = typeof(Nullable<>).MakeGenericType(elem);
-                EmitExpr(e.GetProperty("e"));
-                _il.Emit(OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
-                return nt;
+                return EmitNativeClrNullableWrap(e);
             }
             case "nullableHasValue":
             {
-                // `x != null` for a value-nullable -> x.HasValue. The getter takes a `this` *address*,
-                // so spill to a local and `ldloca`; never `callvirt` (Nullable<T> is a sealed value type).
-                var elem = MapType(e.GetProperty("elem").GetString());
-                var nt = typeof(Nullable<>).MakeGenericType(elem);
-                EmitExpr(e.GetProperty("e"));
-                var loc = _il.DeclareLocal(nt);
-                _il.Emit(OpCodes.Stloc, loc);
-                _il.Emit(OpCodes.Ldloca, loc);
-                _il.Emit(OpCodes.Call, nt.GetProperty("HasValue").GetGetMethod());
-                return typeof(bool);
+                return EmitNativeClrNullableHasValue(e);
             }
             case "nullableValue":
             {
-                // `x!!` / the present-branch of `?:` -> x.Value (address-based call, like HasValue).
-                var elem = MapType(e.GetProperty("elem").GetString());
-                var nt = typeof(Nullable<>).MakeGenericType(elem);
-                EmitExpr(e.GetProperty("e"));
-                var loc = _il.DeclareLocal(nt);
-                _il.Emit(OpCodes.Stloc, loc);
-                _il.Emit(OpCodes.Ldloca, loc);
-                _il.Emit(OpCodes.Call, nt.GetProperty("Value").GetGetMethod());
-                return elem;
+                return EmitNativeClrNullableValue(e);
             }
             case "repeatInline":
             {
@@ -445,50 +404,20 @@ sealed partial class Emitter
             }
             case "enumValue":
             {
-                // An enum entry -> its ordinal constant, typed as the enum (box later yields the name).
-                _il.Emit(OpCodes.Ldc_I4, e.GetProperty("ordinal").GetInt32());
-                return MapType(e.GetProperty("type").GetString());
+                return EmitNativeClrEnumValue(e);
             }
             case "enumOrdinal":
-                EmitExpr(e.GetProperty("e")); _il.Emit(OpCodes.Conv_I4); return typeof(int);
+                return EmitNativeClrEnumOrdinal(e);
             case "enumValues":
             {
-                // `Color.values()`/`entries` -> Enum.GetValues(typeof(Color)) cast to Color[] (TypeBuilder-safe).
-                var et = MapType(e.GetProperty("type").GetString());
-                _il.Emit(OpCodes.Ldtoken, et);
-                _il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
-                _il.Emit(OpCodes.Call, typeof(Enum).GetMethod("GetValues", new[] { typeof(Type) }));
-                _il.Emit(OpCodes.Castclass, et.MakeArrayType());
-                return et.MakeArrayType();
+                return EmitNativeClrEnumValues(e);
             }
             case "enumParse":
             {
-                // `Color.valueOf(s)` -> (Color)Enum.Parse(typeof(Color), s).
-                var et = MapType(e.GetProperty("type").GetString());
-                _il.Emit(OpCodes.Ldtoken, et);
-                _il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
-                EmitExpr(e.GetProperty("arg"));
-                _il.Emit(OpCodes.Call, typeof(Enum).GetMethod("Parse", new[] { typeof(Type), typeof(string) }));
-                _il.Emit(OpCodes.Unbox_Any, et);
-                return et;
+                return EmitNativeClrEnumParse(e);
             }
-            case "objMethod":
-            {
-                // Kotlin Any-method on a builtin receiver -> System.Object virtual (box value types first).
-                var rt = EmitExpr(e.GetProperty("recv"));
-                if (NeedsBoxToRef(rt)) _il.Emit(OpCodes.Box, rt);
-                switch (e.GetProperty("method").GetString())
-                {
-                    case "GetHashCode": _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("GetHashCode")); return typeof(int);
-                    case "ToString": _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("ToString")); return typeof(string);
-                    case "Equals":
-                        var at = EmitExpr(e.GetProperty("arg"));
-                        if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);
-                        _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("Equals", new[] { typeof(object) }));
-                        return typeof(bool);
-                }
-                return typeof(object);
-            }
+            case "objMethod": return EmitObjMethod(e);
+            case "clr.obj.method": return EmitObjMethod(e);
             case "strRepeat":
             {
                 // `s.repeat(n)` -> string.Concat(Enumerable.Repeat(s, n)).
@@ -938,6 +867,12 @@ sealed partial class Emitter
             case "clrInstance": return EmitClrCall(e, instance: true);
             case "clrPropGet": return EmitClrPropGet(e);
             case "clrPropSet": return EmitClrPropSet(e);
+            case "clr.newobj": return EmitNativeClrNewObj(e);
+            case "clr.call": return EmitNativeClrCall(e);
+            case "clr.ldfld": return EmitNativeClrFieldGet(e, isStatic: false);
+            case "clr.ldsfld": return EmitNativeClrFieldGet(e, isStatic: true);
+            case "clr.stfld": return EmitNativeClrFieldSet(e, isStatic: false);
+            case "clr.stsfld": return EmitNativeClrFieldSet(e, isStatic: true);
             case "clrEventAdd": return EmitClrEvent(e, add: true);
             case "clrEventRemove": return EmitClrEvent(e, add: false);
             case "byrefOf":

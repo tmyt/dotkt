@@ -17,6 +17,7 @@ Recent committed milestones on `main`:
 - `Filter resolved CLR members by type hints`: candidates filtered with BIR `sig` and expression type hints where known. The current type normalizer covers primitive aliases, arrays, delegates, nullable/byref/generic parameters, and constructed `clrg:` types.
 - `Draft reference type resolution in bir2cir`: `typeSites`, `typeResolutionDraft`, and `cirDraft.resolvedTypes`.
 - `Lower resolved type sites in native draft`: resolved BIR type strings are replaced with `clr.typeRef` objects in `cirDraft.loweredBir`.
+- `Executable native CIR`: `cirDraft.executableCir` rewrites uniquely resolved reference constructors/methods/fields to native `clr.newobj`/`clr.call`/`clr.ldfld`/`clr.stfld` nodes with `memberRef` metadata, and `ilemit` emits those nodes directly. Generic method `typeArgs` are preserved on `clr.call` and emitted via `MakeGenericMethod`; constructed generic owners are preserved as node `ownerType`; physical `clrPropGet`/`clrPropSet` and `clrEventAdd`/`clrEventRemove` nodes are lowered to native calls/field ops when reference metadata is available. Physical type/nullable/reflection/enum operations are now lowered to `clr.conv`, `clr.isinst`, `clr.castclass`, `clr.isinst.ref`, `clr.safeCast.value`, `clr.nullable.*`, `clr.typeof`, `clr.getType`, and `clr.enum.*`. Object-identity helpers (`objEq` / `objMethod`) are lowered to `clr.obj.eq` / `clr.obj.method`.
 
 Important invariant: `--compat-bir` must remain byte-for-byte BIR-compatible because `ilemit` still consumes that mode.
 
@@ -34,8 +35,10 @@ For `--native-cir`, the envelope currently contains:
 - `cirDraft.resolvedCalls`: unique call/member resolutions as `clr.call`, `clr.newobj`, `clr.ldfld`, `clr.ldsfld`, or `clr.stfld`.
 - `cirDraft.resolvedTypes`: unique type resolutions as `clr.typeRef`.
 - `cirDraft.loweredBir`: cloned BIR payload with uniquely resolved call/type sites replaced by draft CLR nodes.
+- `cirDraft.executableCir`: executable native-CIR payload with BIR wrapper shape and native CLR expression nodes carrying `memberRef`.
+- `cirDraft.ilemitCompatBir`: legacy transition fallback with BIR wrapper shape and old `ilemit` `clr*` nodes.
 
-The native draft is not executable CIR yet. It exists to make the next `ilemit` reader work mechanical and measurable.
+The native draft is not the final executable CIR schema yet, but the envelope is now executable for the covered reference constructor/method/field/property/event/type-operation subset because `ilemit` reads `cirDraft.executableCir`.
 
 ## Reproduction Commands
 
@@ -74,6 +77,31 @@ scripts/dotkt.sh --no-stdlib --run -d /tmp/dotkt-bir2cir-check cases/m0/M0.kt
 dotnet build cases/ktproj-il/hello-il.ktproj -v minimal --nologo
 ```
 
+Check wide Kotlin function delegates in `ilemit`:
+
+```bash
+scripts/verify-ilemit-wide-delegates.sh
+```
+
+Check the native-CIR envelope can be consumed by `ilemit`:
+
+```bash
+scripts/verify-native-cir-ilemit.sh
+```
+
+Smoke-test the developer native-CIR pipeline switch:
+
+```bash
+scripts/dotkt.sh --native-cir --no-stdlib --run -d /tmp/dotkt-native-cir-handoff cases/m0/M0.kt
+```
+
+`ilemit` maps ordinary `func:` types to `System.Func` / `System.Action` while they fit. Wider function types synthesize public module-local delegates under `DotKt.Runtime.CompilerServices`:
+
+- ``KFunc`N`` for non-`Unit` returns, with the last type parameter as `TResult`.
+- ``KAction`N`` for `Unit` returns.
+
+They are stamped `[CompilerGenerated]` plus DotKt metadata and are read back by `facadegen` / `bir2cir` as ordinary `func:` types.
+
 The current stdlib emit still stops in `ilemit` at:
 
 ```text
@@ -100,10 +128,10 @@ Do not revert or clean these unless the user explicitly asks.
 
 ## Suggested Next Steps
 
-1. Decide whether `cirDraft.loweredBir` should keep BIR wrapper structure or become a separate executable CIR schema. Keeping both temporarily is acceptable.
+1. Expand `cirDraft.executableCir` beyond reference ctor/method/field/generic-method/generic-owner/property/event/type/nullable/reflection/enum/object-identity-operation sites: collection helpers, inline lowering, and eventually suspend lowering. (Object-identity helpers `objEq`/`objMethod` -> `clr.obj.eq`/`clr.obj.method` are done; `verify-native-cir-ilemit.sh` covers them.)
 2. Extend overload resolution for generic owners, generic methods, variance/conversion rules, and richer nullable/reference-type semantics.
-3. Teach `ilemit` a native-CIR reader behind an explicit mode. Do not route normal `dotkt` builds to native CIR until compatibility checks exist.
-4. Move one narrow lowering from `kotc`/`ilemit` into `bir2cir`, then verify `--compat-bir` remains unchanged until the consumer can read native CIR.
+3. Keep normal `dotkt` builds on `--compat-bir` until enough lowerings have moved and the native-CIR bridge has broader coverage. The dev wrapper has an explicit `--native-cir` switch for smoke-testing the envelope path.
+4. Move one narrow lowering from `kotc`/`ilemit` into `bir2cir`, then verify `--compat-bir` remains unchanged and `scripts/verify-native-cir-ilemit.sh` still runs.
 
 ## Useful Code Pointers
 
@@ -112,4 +140,6 @@ Do not revert or clean these unless the user explicitly asks.
 - `CallSiteAnalyzer` and `TypeSiteAnalyzer`: inventories BIR sites and assigns JSON paths.
 - `ResolvedCallCirDraft` and `ResolvedTypeCirDraft`: native draft summaries.
 - `NativeExpressionCirDraft`: clones BIR and rewrites uniquely resolved sites into draft CLR nodes.
+- `ExecutableCirDraft`: executable transition bridge from resolved reference symbols to native CIR `clr.*` nodes.
+- `IlemitCompatCirDraft`: legacy fallback bridge from resolved reference symbols to existing `ilemit` `clr*` nodes.
 - `docs/design-fir-bir-cir-il.md`: higher-level architecture and invariants.

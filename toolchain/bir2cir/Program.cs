@@ -220,10 +220,89 @@ sealed class ReferenceMetadataIndex
         return matches;
     }
 
+    public IReadOnlyList<ResolutionCandidate> ResolveClrProperty(string owner, string name, bool setter, bool isStatic)
+    {
+        var matches = new List<ResolutionCandidate>();
+        var accessorName = (setter ? "set_" : "get_") + name;
+        foreach (var asm in _assemblies)
+        {
+            foreach (var member in asm.DotKt.Members)
+            {
+                if (!OwnerMatches(owner, member.Owner)) continue;
+                if (member.IsStatic != isStatic) continue;
+                if (member.Kind == "method" &&
+                    member.Name == accessorName &&
+                    member.ParameterTypes.Count == (setter ? 1 : 0))
+                {
+                    matches.Add(new ResolutionCandidate(
+                        member.Kind,
+                        asm.Name,
+                        member.Owner,
+                        member.Name,
+                        member.IsStatic,
+                        member.IsFileClass,
+                        member.ParameterTypes,
+                        member.ReturnType));
+                }
+            }
+        }
+        if (matches.Count > 0) return matches;
+
+        foreach (var asm in _assemblies)
+        {
+            foreach (var member in asm.DotKt.Members)
+            {
+                if (member.Kind != "field") continue;
+                if (!OwnerMatches(owner, member.Owner)) continue;
+                if (member.IsStatic != isStatic) continue;
+                if (member.Name != name) continue;
+                matches.Add(new ResolutionCandidate(
+                    member.Kind,
+                    asm.Name,
+                    member.Owner,
+                    member.Name,
+                    member.IsStatic,
+                    member.IsFileClass,
+                    member.ParameterTypes,
+                    member.ReturnType));
+            }
+        }
+
+        return matches;
+    }
+
+    public IReadOnlyList<ResolutionCandidate> ResolveClrEvent(string owner, string name, bool add, bool isStatic)
+    {
+        var accessorName = (add ? "add_" : "remove_") + name;
+        var matches = new List<ResolutionCandidate>();
+        foreach (var asm in _assemblies)
+        {
+            foreach (var member in asm.DotKt.Members)
+            {
+                if (member.Kind != "method") continue;
+                if (!OwnerMatches(owner, member.Owner)) continue;
+                if (member.IsStatic != isStatic) continue;
+                if (member.Name != accessorName) continue;
+                if (member.ParameterTypes.Count != 1) continue;
+                matches.Add(new ResolutionCandidate(
+                    member.Kind,
+                    asm.Name,
+                    member.Owner,
+                    member.Name,
+                    member.IsStatic,
+                    member.IsFileClass,
+                    member.ParameterTypes,
+                    member.ReturnType));
+            }
+        }
+
+        return matches;
+    }
+
     static bool MemberKindMatches(string siteKind, string memberKind) => siteKind switch
     {
         "new" => memberKind == "constructor",
-        "field" or "staticField" or "setFieldExpr" => memberKind == "field",
+        "field" or "staticField" or "setFieldExpr" or "staticFieldSet" => memberKind == "field",
         _ => memberKind == "method",
     };
 
@@ -241,8 +320,13 @@ sealed class ReferenceMetadataIndex
         return true;
     }
 
-    static bool TypeMatches(string siteType, string memberType) =>
-        NormalizeType(siteType) == NormalizeType(memberType);
+    static bool TypeMatches(string siteType, string memberType)
+    {
+        var normalizedMember = NormalizeType(memberType);
+        if (normalizedMember.StartsWith("gp:", StringComparison.Ordinal))
+            return true;
+        return NormalizeType(siteType) == normalizedMember;
+    }
 
     static string NormalizeType(string type)
     {
@@ -473,6 +557,8 @@ sealed class ReferenceMetadataIndex
             return "array:" + TypeName(type.GetElementType()!);
         if (type.IsGenericParameter)
             return "gp:" + type.Name;
+        if (IsDelegate(type))
+            return DelegateTypeName(type);
         if (type.IsConstructedGenericType)
         {
             var def = type.GetGenericTypeDefinition();
@@ -494,6 +580,21 @@ sealed class ReferenceMetadataIndex
 
     static bool IsAction(Type type) =>
         type.Namespace == "System" && type.Name.StartsWith("Action`", StringComparison.Ordinal);
+
+    static bool IsDelegate(Type type)
+    {
+        for (var cur = type; cur != null; cur = cur.BaseType)
+            if (cur.FullName == "System.MulticastDelegate")
+                return true;
+        return false;
+    }
+
+    static string DelegateTypeName(Type type)
+    {
+        var invoke = type.GetMethod("Invoke");
+        if (invoke == null) return PrimitiveBirName(type) ?? StripGenericArity(type.FullName ?? type.Name);
+        return "func:" + TypeName(invoke.ReturnType) + ":" + string.Join(",", invoke.GetParameters().Select(p => TypeName(p.ParameterType)));
+    }
 
     static string PrimitiveBirName(Type type)
     {
@@ -529,6 +630,9 @@ sealed class ReferenceMetadataIndex
 
     static string StripTypeArgs(string value)
     {
+        foreach (var prefix in new[] { "clrg:", "clr:" })
+            if (value.StartsWith(prefix, StringComparison.Ordinal))
+                value = value[prefix.Length..];
         var idx = value.IndexOf('[');
         return StripGenericArity(idx >= 0 ? value[..idx] : value);
     }
@@ -714,6 +818,8 @@ static class NativeCirDraft
         ["resolvedCalls"] = ResolvedCallCirDraft.Create(bir.Calls, refs),
         ["resolvedTypes"] = ResolvedTypeCirDraft.Create(bir.Types, refs),
         ["loweredBir"] = NativeExpressionCirDraft.Create(bir.Root, bir.Calls, bir.Types, refs),
+        ["executableCir"] = ExecutableCirDraft.Create(bir.Root, bir.Calls, bir.Types, refs),
+        ["ilemitCompatBir"] = IlemitCompatCirDraft.Create(bir.Root, bir.Calls, bir.Types, refs),
     };
 }
 
@@ -816,6 +922,7 @@ static class ResolvedCallCirDraft
             "field" => "clr.ldfld",
             "staticField" => "clr.ldsfld",
             "setFieldExpr" => "clr.stfld",
+            "staticFieldSet" => "clr.stsfld",
             _ => "clr.call",
         };
 
@@ -834,7 +941,7 @@ static class ResolvedCallCirDraft
     static string DispatchFor(CallSite site, ResolutionCandidate candidate)
     {
         if (site.Kind == "new") return "constructor";
-        if (candidate.IsStatic || site.Kind is "callStatic" or "staticField") return "static";
+        if (candidate.IsStatic || site.Kind is "callStatic" or "staticField" or "staticFieldSet") return "static";
         return "instance";
     }
 }
@@ -991,6 +1098,7 @@ static class NativeExpressionCirDraft
         "field" => "clr.ldfld",
         "staticField" => "clr.ldsfld",
         "setFieldExpr" => "clr.stfld",
+        "staticFieldSet" => "clr.stsfld",
         _ => "clr.call",
     };
 
@@ -1000,6 +1108,497 @@ static class NativeExpressionCirDraft
 
 sealed record ResolvedSite(CallSite Site, IReadOnlyList<ResolutionCandidate> Candidates);
 sealed record ResolvedTypeSite(TypeSite Site, IReadOnlyList<TypeResolutionCandidate> Candidates);
+
+static class ExecutableCirDraft
+{
+    public static JsonNode Create(JsonNode root, CallSiteAnalysis calls, TypeSiteAnalysis types, ReferenceMetadataIndex refs)
+    {
+        var resolvedCalls = calls.Sites
+            .Where(s => s.Status == "kotlin-symbol")
+            .Select(s => new ResolvedSite(s, refs.Resolve(s)))
+            .Where(r => r.Candidates.Count == 1 && IsSupported(r.Site.Kind))
+            .ToDictionary(r => r.Site.Path, r => r, StringComparer.Ordinal);
+        var resolvedTypes = types.Sites
+            .Where(s => s.Status == "kotlin-symbol")
+            .Select(s => new ResolvedTypeSite(s, refs.Resolve(s)))
+            .Where(r => r.Candidates.Count == 1)
+            .ToDictionary(r => r.Site.Path, r => r, StringComparer.Ordinal);
+
+        return LowerNode(root, "$", resolvedCalls, resolvedTypes, refs);
+    }
+
+    static bool IsSupported(string kind) =>
+        kind is "new" or "callStatic" or "callInstance" or "field" or "staticField" or "setFieldExpr" or "staticFieldSet";
+
+    static JsonNode LowerNode(
+        JsonNode node,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs)
+    {
+        if (node is JsonObject obj)
+        {
+            if (resolvedCalls.TryGetValue(path, out var site))
+                return LowerResolvedExpression(obj, path, site.Site, site.Candidates[0], resolvedCalls, resolvedTypes, refs);
+            if (TryLowerPhysicalTypeOp(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredTypeOp))
+                return loweredTypeOp;
+            if (TryLowerPhysicalObjectOp(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredObjectOp))
+                return loweredObjectOp;
+            if (TryLowerPhysicalEvent(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredEvent))
+                return loweredEvent;
+            if (TryLowerPhysicalProperty(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredProperty))
+                return loweredProperty;
+
+            var copy = new JsonObject();
+            foreach (var child in obj)
+            {
+                var childPath = path + "." + EscapePathSegment(child.Key);
+                copy[child.Key] = child.Value == null
+                    ? null
+                    : LowerTypeOrNode(child.Value, childPath, resolvedCalls, resolvedTypes, refs);
+            }
+            return copy;
+        }
+
+        if (node is JsonArray arr)
+        {
+            var copy = new JsonArray();
+            for (var i = 0; i < arr.Count; i++)
+            {
+                var itemPath = path + "[" + i + "]";
+                copy.Add(arr[i] == null ? null : LowerTypeOrNode(arr[i], itemPath, resolvedCalls, resolvedTypes, refs));
+            }
+            return copy;
+        }
+
+        return node.DeepClone();
+    }
+
+    static JsonNode LowerTypeOrNode(
+        JsonNode node,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs)
+    {
+        if (resolvedTypes.TryGetValue(path, out var type))
+            return JsonValue.Create(ClrTypeName(type.Candidates[0].Name));
+
+        return LowerNode(node, path, resolvedCalls, resolvedTypes, refs);
+    }
+
+    static JsonObject LowerResolvedExpression(
+        JsonObject obj,
+        string path,
+        CallSite site,
+        ResolutionCandidate candidate,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs)
+    {
+        var lowered = new JsonObject
+        {
+            ["k"] = NativeKind(site.Kind),
+            ["sourcePath"] = site.Path,
+            ["sourceKind"] = site.Kind,
+            ["ownerType"] = NativeOwnerType(site.TargetOwner, candidate.Owner),
+            ["memberRef"] = candidate.ToMemberRefJson(),
+        };
+
+        if (site.Kind == "new")
+        {
+            lowered["args"] = obj["args"] == null ? new JsonArray() : LowerTypeOrNode(obj["args"]!, path + ".args", resolvedCalls, resolvedTypes, refs);
+            return lowered;
+        }
+
+        if (site.Kind is "callStatic" or "callInstance")
+        {
+            lowered["dispatch"] = candidate.IsStatic || site.Kind == "callStatic" ? "static" : "instance";
+            lowered["args"] = obj["args"] == null ? new JsonArray() : LowerTypeOrNode(obj["args"]!, path + ".args", resolvedCalls, resolvedTypes, refs);
+            if (obj["typeArgs"] is JsonNode typeArgs)
+                lowered["typeArgs"] = LowerTypeOrNode(typeArgs, path + ".typeArgs", resolvedCalls, resolvedTypes, refs);
+            if (site.Kind == "callInstance" && obj["recv"] is JsonNode callRecv)
+                lowered["recv"] = LowerTypeOrNode(callRecv, path + ".recv", resolvedCalls, resolvedTypes, refs);
+            if (obj["virtual"] != null)
+                lowered["virtual"] = obj["virtual"]?.DeepClone();
+            return lowered;
+        }
+
+        if (site.Kind is "field" or "setFieldExpr" && obj["recv"] is JsonNode fieldRecv)
+            lowered["recv"] = LowerTypeOrNode(fieldRecv, path + ".recv", resolvedCalls, resolvedTypes, refs);
+        if (site.Kind is "setFieldExpr" or "staticFieldSet")
+            lowered["value"] = obj["value"] == null ? null : LowerTypeOrNode(obj["value"]!, path + ".value", resolvedCalls, resolvedTypes, refs);
+
+        return lowered;
+    }
+
+    static bool TryLowerPhysicalTypeOp(
+        JsonObject obj,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs,
+        out JsonNode lowered)
+    {
+        lowered = null;
+        var kind = obj["k"]?.GetValue<string>();
+        var nativeKind = kind switch
+        {
+            "conv" => "clr.conv",
+            "isinst" => "clr.isinst",
+            "cast" => "clr.castclass",
+            "isinstRef" => "clr.isinst.ref",
+            "safeCastValue" => "clr.safeCast.value",
+            "nullableNull" => "clr.nullable.null",
+            "nullableWrap" => "clr.nullable.wrap",
+            "nullableHasValue" => "clr.nullable.hasValue",
+            "nullableValue" => "clr.nullable.value",
+            "classRef" => "clr.typeof",
+            "getType" => "clr.getType",
+            "enumValue" => "clr.enum.value",
+            "enumOrdinal" => "clr.enum.ordinal",
+            "enumValues" => "clr.enum.values",
+            "enumParse" => "clr.enum.parse",
+            _ => null,
+        };
+        if (nativeKind == null) return false;
+
+        var native = new JsonObject
+        {
+            ["k"] = nativeKind,
+            ["sourcePath"] = path,
+            ["sourceKind"] = kind,
+        };
+        if (obj["e"] is JsonNode value)
+            native["e"] = LowerTypeOrNode(value, path + ".e", resolvedCalls, resolvedTypes, refs);
+        if (obj["to"] is JsonNode to)
+            native["to"] = LowerTypeOrNode(to, path + ".to", resolvedCalls, resolvedTypes, refs);
+        if (obj["type"] is JsonNode type)
+            native["type"] = LowerTypeOrNode(type, path + ".type", resolvedCalls, resolvedTypes, refs);
+        if (obj["elem"] is JsonNode elem)
+            native["elem"] = LowerTypeOrNode(elem, path + ".elem", resolvedCalls, resolvedTypes, refs);
+        if (obj["ordinal"] is JsonNode ordinal)
+            native["ordinal"] = ordinal.DeepClone();
+        if (obj["arg"] is JsonNode arg)
+            native["arg"] = LowerTypeOrNode(arg, path + ".arg", resolvedCalls, resolvedTypes, refs);
+        lowered = native;
+        return true;
+    }
+
+    static bool TryLowerPhysicalObjectOp(
+        JsonObject obj,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs,
+        out JsonNode lowered)
+    {
+        lowered = null;
+        var kind = obj["k"]?.GetValue<string>();
+        if (kind is not ("objEq" or "objMethod")) return false;
+
+        if (kind == "objEq")
+        {
+            var eq = new JsonObject
+            {
+                ["k"] = "clr.obj.eq",
+                ["sourcePath"] = path,
+                ["sourceKind"] = kind,
+            };
+            if (obj["l"] is JsonNode left)
+                eq["l"] = LowerTypeOrNode(left, path + ".l", resolvedCalls, resolvedTypes, refs);
+            if (obj["r"] is JsonNode right)
+                eq["r"] = LowerTypeOrNode(right, path + ".r", resolvedCalls, resolvedTypes, refs);
+            lowered = eq;
+            return true;
+        }
+
+        var method = new JsonObject
+        {
+            ["k"] = "clr.obj.method",
+            ["sourcePath"] = path,
+            ["sourceKind"] = kind,
+            ["method"] = obj["method"]?.DeepClone(),
+        };
+        if (obj["recv"] is JsonNode recv)
+            method["recv"] = LowerTypeOrNode(recv, path + ".recv", resolvedCalls, resolvedTypes, refs);
+        if (obj["arg"] is JsonNode methodArg)
+            method["arg"] = LowerTypeOrNode(methodArg, path + ".arg", resolvedCalls, resolvedTypes, refs);
+        lowered = method;
+        return true;
+    }
+
+    static bool TryLowerPhysicalProperty(
+        JsonObject obj,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs,
+        out JsonNode lowered)
+    {
+        lowered = null;
+        var kind = obj["k"]?.GetValue<string>();
+        if (kind is not ("clrPropGet" or "clrPropSet")) return false;
+        var owner = obj["type"]?.GetValue<string>() ?? "";
+        var name = obj["name"]?.GetValue<string>() ?? "";
+        var isStatic = obj["static"]?.GetValue<bool>() ?? false;
+        var setter = kind == "clrPropSet";
+        var candidates = refs.ResolveClrProperty(owner, name, setter, isStatic);
+        if (candidates.Count != 1) return false;
+
+        var candidate = candidates[0];
+        if (candidate.Kind == "field")
+        {
+            var field = new JsonObject
+            {
+                ["k"] = setter
+                    ? (isStatic ? "clr.stsfld" : "clr.stfld")
+                    : (isStatic ? "clr.ldsfld" : "clr.ldfld"),
+                ["sourcePath"] = path,
+                ["sourceKind"] = kind,
+                ["ownerType"] = NativeOwnerType(owner, candidate.Owner),
+                ["memberRef"] = candidate.ToMemberRefJson(),
+            };
+            if (!isStatic && obj["recv"] is JsonNode recv)
+                field["recv"] = LowerTypeOrNode(recv, path + ".recv", resolvedCalls, resolvedTypes, refs);
+            if (setter && obj["value"] is JsonNode value)
+                field["value"] = LowerTypeOrNode(value, path + ".value", resolvedCalls, resolvedTypes, refs);
+            lowered = field;
+            return true;
+        }
+
+        var call = new JsonObject
+        {
+            ["k"] = "clr.call",
+            ["sourcePath"] = path,
+            ["sourceKind"] = kind,
+            ["ownerType"] = NativeOwnerType(owner, candidate.Owner),
+            ["memberRef"] = candidate.ToMemberRefJson(),
+            ["dispatch"] = isStatic ? "static" : "instance",
+            ["args"] = setter && obj["value"] is JsonNode valueArg
+                ? new JsonArray(LowerTypeOrNode(valueArg, path + ".value", resolvedCalls, resolvedTypes, refs))
+                : new JsonArray(),
+        };
+        if (!isStatic && obj["recv"] is JsonNode callRecv)
+            call["recv"] = LowerTypeOrNode(callRecv, path + ".recv", resolvedCalls, resolvedTypes, refs);
+        lowered = call;
+        return true;
+    }
+
+    static bool TryLowerPhysicalEvent(
+        JsonObject obj,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs,
+        out JsonNode lowered)
+    {
+        lowered = null;
+        var kind = obj["k"]?.GetValue<string>();
+        if (kind is not ("clrEventAdd" or "clrEventRemove")) return false;
+        var owner = obj["type"]?.GetValue<string>() ?? "";
+        var name = obj["event"]?.GetValue<string>() ?? "";
+        var isStatic = obj["static"]?.GetValue<bool>() ?? false;
+        var add = kind == "clrEventAdd";
+        var candidates = refs.ResolveClrEvent(owner, name, add, isStatic);
+        if (candidates.Count != 1) return false;
+
+        var candidate = candidates[0];
+        var call = new JsonObject
+        {
+            ["k"] = "clr.call",
+            ["sourcePath"] = path,
+            ["sourceKind"] = kind,
+            ["ownerType"] = NativeOwnerType(owner, candidate.Owner),
+            ["memberRef"] = candidate.ToMemberRefJson(),
+            ["dispatch"] = isStatic ? "static" : "instance",
+            ["args"] = obj["handler"] is JsonNode handler
+                ? new JsonArray(LowerTypeOrNode(handler, path + ".handler", resolvedCalls, resolvedTypes, refs))
+                : new JsonArray(),
+        };
+        if (!isStatic && obj["recv"] is JsonNode recv)
+            call["recv"] = LowerTypeOrNode(recv, path + ".recv", resolvedCalls, resolvedTypes, refs);
+        lowered = call;
+        return true;
+    }
+
+    static string NativeKind(string siteKind) => siteKind switch
+    {
+        "new" => "clr.newobj",
+        "field" => "clr.ldfld",
+        "staticField" => "clr.ldsfld",
+        "setFieldExpr" => "clr.stfld",
+        "staticFieldSet" => "clr.stsfld",
+        _ => "clr.call",
+    };
+
+    static string ClrTypeName(string name) =>
+        name.StartsWith("clr:", StringComparison.Ordinal) || name.StartsWith("clrg:", StringComparison.Ordinal)
+            ? name
+            : "clr:" + name;
+
+    static string NativeOwnerType(string requested, string candidate)
+    {
+        if (requested.StartsWith("clr:", StringComparison.Ordinal) || requested.StartsWith("clrg:", StringComparison.Ordinal))
+            return requested;
+        if (requested.Contains('[', StringComparison.Ordinal))
+            return "clrg:" + requested;
+        return ClrTypeName(candidate);
+    }
+
+    static string EscapePathSegment(string segment) =>
+        segment.Replace("~", "~0", StringComparison.Ordinal).Replace(".", "~1", StringComparison.Ordinal);
+}
+
+static class IlemitCompatCirDraft
+{
+    public static JsonNode Create(JsonNode root, CallSiteAnalysis calls, TypeSiteAnalysis types, ReferenceMetadataIndex refs)
+    {
+        var resolvedCalls = calls.Sites
+            .Where(s => s.Status == "kotlin-symbol")
+            .Select(s => new ResolvedSite(s, refs.Resolve(s)))
+            .Where(r => r.Candidates.Count == 1 && IsSupported(r.Site.Kind))
+            .ToDictionary(r => r.Site.Path, r => r, StringComparer.Ordinal);
+        var resolvedTypes = types.Sites
+            .Where(s => s.Status == "kotlin-symbol")
+            .Select(s => new ResolvedTypeSite(s, refs.Resolve(s)))
+            .Where(r => r.Candidates.Count == 1)
+            .ToDictionary(r => r.Site.Path, r => r, StringComparer.Ordinal);
+
+        return LowerNode(root, "$", resolvedCalls, resolvedTypes);
+    }
+
+    static bool IsSupported(string kind) =>
+        kind is "new" or "callStatic" or "callInstance" or "field" or "staticField" or "setFieldExpr" or "staticFieldSet";
+
+    static JsonNode LowerNode(
+        JsonNode node,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes)
+    {
+        if (node is JsonObject obj)
+        {
+            if (resolvedCalls.TryGetValue(path, out var site))
+                return LowerResolvedExpression(obj, path, site.Site, site.Candidates[0], resolvedCalls, resolvedTypes);
+
+            var copy = new JsonObject();
+            foreach (var child in obj)
+            {
+                var childPath = path + "." + EscapePathSegment(child.Key);
+                copy[child.Key] = child.Value == null
+                    ? null
+                    : LowerTypeOrNode(child.Value, childPath, resolvedCalls, resolvedTypes);
+            }
+            return copy;
+        }
+
+        if (node is JsonArray arr)
+        {
+            var copy = new JsonArray();
+            for (var i = 0; i < arr.Count; i++)
+            {
+                var itemPath = path + "[" + i + "]";
+                copy.Add(arr[i] == null ? null : LowerTypeOrNode(arr[i], itemPath, resolvedCalls, resolvedTypes));
+            }
+            return copy;
+        }
+
+        return node.DeepClone();
+    }
+
+    static JsonNode LowerTypeOrNode(
+        JsonNode node,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes)
+    {
+        if (resolvedTypes.TryGetValue(path, out var type))
+            return JsonValue.Create(ClrTypeName(type.Candidates[0].Name));
+
+        return LowerNode(node, path, resolvedCalls, resolvedTypes);
+    }
+
+    static JsonObject LowerResolvedExpression(
+        JsonObject obj,
+        string path,
+        CallSite site,
+        ResolutionCandidate candidate,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes)
+    {
+        if (site.Kind == "new")
+        {
+            return new JsonObject
+            {
+                ["k"] = "clrNew",
+                ["type"] = ClrTypeName(candidate.Owner),
+                ["argTypes"] = TypeArray(candidate.ParameterTypes),
+                ["args"] = obj["args"] == null ? new JsonArray() : LowerTypeOrNode(obj["args"]!, path + ".args", resolvedCalls, resolvedTypes),
+            };
+        }
+
+        if (site.Kind is "field" or "staticField")
+        {
+            var loweredField = new JsonObject
+            {
+                ["k"] = "clrPropGet",
+                ["type"] = ClrTypeName(candidate.Owner),
+                ["name"] = candidate.Name,
+                ["static"] = site.Kind == "staticField" || candidate.IsStatic,
+            };
+            if (site.Kind == "field" && obj["recv"] is JsonNode fieldRecv)
+                loweredField["recv"] = LowerTypeOrNode(fieldRecv, path + ".recv", resolvedCalls, resolvedTypes);
+            return loweredField;
+        }
+
+        if (site.Kind is "setFieldExpr" or "staticFieldSet")
+        {
+            var loweredSet = new JsonObject
+            {
+                ["k"] = "clrPropSet",
+                ["type"] = ClrTypeName(candidate.Owner),
+                ["name"] = candidate.Name,
+                ["static"] = site.Kind == "staticFieldSet" || candidate.IsStatic,
+                ["value"] = obj["value"] == null ? null : LowerTypeOrNode(obj["value"]!, path + ".value", resolvedCalls, resolvedTypes),
+            };
+            if (site.Kind == "setFieldExpr" && obj["recv"] is JsonNode setRecv)
+                loweredSet["recv"] = LowerTypeOrNode(setRecv, path + ".recv", resolvedCalls, resolvedTypes);
+            return loweredSet;
+        }
+
+        var lowered = new JsonObject
+        {
+            ["k"] = site.Kind == "callStatic" ? "clrStatic" : "clrInstance",
+            ["type"] = ClrTypeName(candidate.Owner),
+            ["method"] = candidate.Name,
+            ["argTypes"] = TypeArray(candidate.ParameterTypes),
+            ["ret"] = candidate.ReturnType,
+            ["args"] = obj["args"] == null ? new JsonArray() : LowerTypeOrNode(obj["args"]!, path + ".args", resolvedCalls, resolvedTypes),
+        };
+
+        if (obj["typeArgs"] is JsonNode typeArgs)
+            lowered["typeArgs"] = LowerTypeOrNode(typeArgs, path + ".typeArgs", resolvedCalls, resolvedTypes);
+        if (site.Kind == "callInstance" && obj["recv"] is JsonNode recv)
+            lowered["recv"] = LowerTypeOrNode(recv, path + ".recv", resolvedCalls, resolvedTypes);
+        if (obj["virtual"] != null)
+            lowered["virtual"] = obj["virtual"]?.DeepClone();
+
+        return lowered;
+    }
+
+    static JsonArray TypeArray(IReadOnlyList<string> values) =>
+        new(values.Select(v => (JsonNode)JsonValue.Create(v)).ToArray());
+
+    static string ClrTypeName(string name) =>
+        name.StartsWith("clr:", StringComparison.Ordinal) || name.StartsWith("clrg:", StringComparison.Ordinal)
+            ? name
+            : "clr:" + name;
+
+    static string EscapePathSegment(string segment) =>
+        segment.Replace("~", "~0", StringComparison.Ordinal).Replace(".", "~1", StringComparison.Ordinal);
+}
 
 sealed class TypeSiteAnalyzer
 {
@@ -1145,6 +1744,7 @@ sealed class CallSiteAnalyzer
         "field",
         "staticField",
         "setFieldExpr",
+        "staticFieldSet",
         "clrStatic",
         "clrGenericStatic",
         "clrInstance",
@@ -1271,7 +1871,6 @@ sealed record CallSite(
     static string StatusFor(string kind, string targetOwner)
     {
         if (kind.StartsWith("clr", StringComparison.Ordinal)) return "already-clr";
-        if (targetOwner.StartsWith("clr:", StringComparison.Ordinal) || targetOwner.StartsWith("clrg:", StringComparison.Ordinal)) return "already-clr";
         return "kotlin-symbol";
     }
 

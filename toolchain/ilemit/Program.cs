@@ -32,9 +32,29 @@ static class IlEmit
             else if (rest[i] == "--ns-projection" && i + 1 < rest.Count) { var kv = rest[++i].Split('=', 2); if (kv.Length == 2) nsProj.Add((kv[0], kv[1])); }
             else bir.Add(rest[i]);
         }
-        var files = bir.Select(p => JsonDocument.Parse(File.ReadAllText(p))).ToList();
+        var files = bir.Select(LoadInputDocument).ToList();
         new Emitter(outDir, asmName, nsProj).EmitAssembly(files.Select(d => d.RootElement).ToList());
         return 0;
+    }
+
+    static JsonDocument LoadInputDocument(string path)
+    {
+        var json = File.ReadAllText(path);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("cirVersion", out _))
+            return JsonDocument.Parse(json);
+
+        if (root.TryGetProperty("cirDraft", out var draft) &&
+            draft.TryGetProperty("executableCir", out var executable))
+            return JsonDocument.Parse(executable.GetRawText());
+
+        if (root.TryGetProperty("cirDraft", out draft) &&
+            draft.TryGetProperty("ilemitCompatBir", out var compat))
+            return JsonDocument.Parse(compat.GetRawText());
+
+        throw new InvalidOperationException(
+            $"ilemit: native CIR input '{path}' does not contain cirDraft.executableCir");
     }
 }
 
@@ -44,6 +64,9 @@ sealed partial class Emitter
     readonly string _outDir;
     readonly string _asmName;
     readonly Dictionary<string, TypeInfo> _types = new();
+    readonly Dictionary<string, TypeBuilder> _syntheticDelegates = new();
+    readonly Dictionary<TypeBuilder, ConstructorBuilder> _syntheticDelegateCtors = new();
+    readonly Dictionary<TypeBuilder, MethodBuilder> _syntheticDelegateInvokes = new();
     ModuleBuilder _mod;
 
     // Crash localizer: Reflection.Emit can hard-CRASH the process (access violation, 0xC0000005) — uncatchable — on a
@@ -71,6 +94,21 @@ sealed partial class Emitter
     // so EmitMethodBody/EmitCtorBody prescans the whole body. id -> IL Label. See docs/design-il-cfg.md.
     Dictionary<int, Label> _cfgLabels;
     Type _methodRetType = typeof(void);
+    // The generic context for emitting a type's members = the type's OWN params PLUS every enclosing (`nestedIn`) type's
+    // params — a .NET nested type references its outer generic type's parameters by the outer's builder (a Kotlin `inner
+    // class IteratorImpl` inside `AbstractList<E>` whose `next(): E` must resolve `gp:E` to AbstractList's `E`).
+    Dictionary<string, GenericTypeParameterBuilder> EffectiveTps(TypeInfo ti)
+    {
+        var chain = new List<TypeInfo>();
+        for (var cur = ti; cur != null;
+             cur = (cur.Def.TryGetProperty("nestedIn", out var ni) && _types.TryGetValue(ni.GetString(), out var p)) ? p : null)
+            chain.Add(cur);
+        if (chain.Count == 1) return ti.TypeParams;   // not nested -> the common case, no merge
+        var merged = new Dictionary<string, GenericTypeParameterBuilder>();
+        chain.Reverse();   // outermost first; an inner param of the same name shadows
+        foreach (var c in chain) foreach (var kv in c.TypeParams) merged[kv.Key] = kv.Value;
+        return merged;
+    }
     // Generic context for resolving `gp:T` type references: method params shadow the enclosing type's.
     Dictionary<string, GenericTypeParameterBuilder> _curTypeParams;
     Dictionary<string, GenericTypeParameterBuilder> _curMethodParams;
@@ -163,7 +201,8 @@ sealed partial class Emitter
                     // it, and a cross-assembly consumer resolves the type by that standard name (`GetType("Box`1")`).
                     // The `_types` registry key stays the bare BIR name (`Box`), so same-assembly references are intact.
                     var arity = t.TryGetProperty("typeParams", out var tpArity) ? tpArity.GetArrayLength() : 0;
-                    var metaName = arity > 0 ? name + "`" + arity : name;
+                    var simpleName = nested && name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
+                    var metaName = arity > 0 ? simpleName + "`" + arity : simpleName;
                     var tb = nested ? _types[niEl.GetString()].TB.DefineNestedType(metaName, attrs) : _mod.DefineType(metaName, attrs);
                     // Compiler-generated synthetic types (`<>dotkt_*`: KProperty, Result, KIterator_*, …) get
                     // [CompilerGenerated] (and can't collide with user types — the `<>` prefix isn't source-legal).
@@ -199,7 +238,7 @@ sealed partial class Emitter
         foreach (var ti in _types.Values)
         {
             T($"pass2 parent/iface: {ti.TB?.Name}");
-            _curTypeParams = ti.TypeParams;
+            _curTypeParams = EffectiveTps(ti);
             // Bounds may reference any type (now all defined) and the type's own params (now in _curTypeParams).
             if (ti.IsGeneric && ti.Def.TryGetProperty("typeParams", out var tps2)) ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface);
             if (ti.BaseName != null)
@@ -228,7 +267,7 @@ sealed partial class Emitter
         {
             if (ti.IsEnum) continue;   // enums are fully defined (literals) in pass 1
             T($"pass3 signatures: {ti.TB?.Name}");
-            _curTypeParams = ti.TypeParams;   // so `gp:T` in field/ctor/method signatures resolves
+            _curTypeParams = EffectiveTps(ti);   // so `gp:T` in field/ctor/method signatures resolves
             if (ti.IsFileClass)
             {
                 // Top-level `val`/`var` -> static fields of the file class.
@@ -282,6 +321,8 @@ sealed partial class Emitter
         // coincides with the key for a non-generic root-package type — so namespaced/generic types broke with KeyNotFound).
         foreach (var (typeKey, ti) in _types)
             if (!ti.IsFileClass && !ti.IsInterface && ti.Def.TryGetProperty("interfaces", out var ifs))
+            {
+                _curTypeParams = EffectiveTps(ti);
                 foreach (var i in ifs.EnumerateArray())
                 {
                     var spec = i.GetString();
@@ -300,22 +341,25 @@ sealed partial class Emitter
                             var openDef = itype.GetGenericTypeDefinition();
                             foreach (var im in openDef.GetMethods())
                                 if (have.Contains(im.Name))
-                                    ti.TB.DefineMethodOverride(FindMethod(typeKey, im.Name), TypeBuilder.GetMethod(itype, im));
+                                    ti.TB.DefineMethodOverride(ti.Methods[im.Name], TypeBuilder.GetMethod(itype, im));
                         }
                         else
                             foreach (var im in itype.GetMethods())
                                 if (have.Contains(im.Name))
-                                    ti.TB.DefineMethodOverride(FindMethod(typeKey, im.Name), im);
+                                    ti.TB.DefineMethodOverride(ti.Methods[im.Name], im);
                         continue;
                     }
                     var (open, constructed) = ParseOwner(spec);
                     var iface = _types[open];
                     foreach (var im in iface.Methods)
                     {
+                        if (!ti.Methods.TryGetValue(im.Key, out var bodyMethod)) continue;
                         var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, im.Value) : (MethodInfo)im.Value;
-                        ti.TB.DefineMethodOverride(FindMethod(typeKey, im.Key), ifaceMethod);
+                        ti.TB.DefineMethodOverride(bodyMethod, ifaceMethod);
                     }
                 }
+            }
+        _curTypeParams = null;
 
         // Pass 4: emit all bodies (every ctor/method signature already exists).
         foreach (var ti in _types.Values)
@@ -398,6 +442,9 @@ sealed partial class Emitter
 
         // Pass 6: bake types (base before derived). Enums were already baked up front.
         foreach (var ti in Ordered()) { if (!ti.IsEnum) { T($"pass6 createType: {ti.TB?.Name}"); ti.TB.CreateType(); } }
+        foreach (var tb in _syntheticDelegates.Values)
+            if (!tb.IsCreated())
+                tb.CreateType();
         // Safety net: any user type Ordered() somehow missed (so Save won't throw "not supported before the type is
         // created"). Repeat until stable, since creating one may be a prerequisite for another.
         for (bool again = true; again;)
@@ -582,7 +629,7 @@ sealed partial class Emitter
     void EmitCtorBody(TypeInfo ti, ConstructorBuilder cb, JsonElement c)
     {
         _methodRetType = typeof(void);
-        _curTypeParams = ti.TypeParams; _curMethodParams = null;
+        _curTypeParams = EffectiveTps(ti); _curMethodParams = null;
         BeginMethod(cb.GetILGenerator(), c, isStatic: false);
         PrescanCfgLabels(c.GetProperty("body"));
 
@@ -648,7 +695,7 @@ sealed partial class Emitter
         // `text(()->String)` bug).
         var mb = ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var bm) ? bm : ti.Methods[mname];
         _methodRetType = mb.ReturnType;
-        _curTypeParams = ti.TypeParams;
+        _curTypeParams = EffectiveTps(ti);
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
         if (m.TryGetProperty("suspend", out var su) && su.GetBoolean())
         {
@@ -957,9 +1004,13 @@ sealed partial class Emitter
     // param arg (e.g. IComparable<!!0>), its own GetMethod throws on the persisted builder -> use the static helper.
     MethodInfo InterfaceMethodOn(Type iface, string name)
     {
-        if (iface.IsGenericType && iface.GetGenericArguments().Any(a => a.IsGenericParameter || a is TypeBuilder))
+        if (iface.IsGenericType && (IsTbInstantiation(iface) || iface.GetGenericArguments().Any(a => a.IsGenericParameter || a is TypeBuilder)))
             return TypeBuilder.GetMethod(iface, iface.GetGenericTypeDefinition().GetMethod(name));
-        return iface.GetMethod(name);
+        try { return iface.GetMethod(name); }
+        catch (NotSupportedException) when (iface.IsGenericType)
+        {
+            return TypeBuilder.GetMethod(iface, iface.GetGenericTypeDefinition().GetMethod(name));
+        }
     }
 
     // Load a managed pointer (&) to an addressable lvalue (for `constrained.` / struct-member calls). Falls back
@@ -1006,10 +1057,29 @@ sealed partial class Emitter
 
     MethodBuilder FindMethod(string typeName, string name, string sig = null)
     {
+        var seenIfaces = new HashSet<string>();
+        MethodBuilder FindInInterfaces(TypeInfo ti)
+        {
+            if (ti == null || !ti.Def.TryGetProperty("interfaces", out var ifs)) return null;
+            foreach (var i in ifs.EnumerateArray())
+            {
+                var spec = i.GetString();
+                if (spec.StartsWith("clr:") || spec.StartsWith("clrg:")) continue;
+                var (open, _) = ParseOwner(spec);
+                if (!seenIfaces.Add(open) || !_types.TryGetValue(open, out var iti)) continue;
+                if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
+                if (iti.Methods.TryGetValue(name, out var m)) return m;
+                var inherited = FindInInterfaces(iti);
+                if (inherited != null) return inherited;
+            }
+            return null;
+        }
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
             if (ti.Methods.TryGetValue(name, out var m)) return m;
+            var im = FindInInterfaces(ti);
+            if (im != null) return im;
         }
         throw new NotSupportedException($"method {typeName}.{name} not found");
     }
@@ -1060,18 +1130,27 @@ sealed partial class Emitter
         if (t.IsGenericType) foreach (var a in t.GetGenericArguments()) if (ContainsTypeBuilder(a)) return true;
         return false;
     }
+    static bool IsTypeBuilderBackedGeneric(Type t) =>
+        t.IsGenericType && t.GetGenericTypeDefinition() is TypeBuilder;
+
     ConstructorInfo DelegateCtor(Type ft)
     {
         var sig = new[] { typeof(object), typeof(IntPtr) };
-        return (ft.IsGenericType && ContainsTypeBuilder(ft))
+        if (ft.IsGenericType && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateCtors.TryGetValue(dtb, out var dctor))
+            return TypeBuilder.GetConstructor(ft, dctor);
+        return (ft.IsGenericType && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
             ? TypeBuilder.GetConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
             : ft.GetConstructor(sig);
     }
     // The delegate's `Invoke` method, bridged via TypeBuilder.GetMethod for a TypeBuilder-involving instantiation.
     MethodInfo InvokeOf(Type ft)
-        => (ft.IsGenericType && ContainsTypeBuilder(ft))
+    {
+        if (ft.IsGenericType && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateInvokes.TryGetValue(dtb, out var invoke))
+            return TypeBuilder.GetMethod(ft, invoke);
+        return (ft.IsGenericType && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
             ? TypeBuilder.GetMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"))
             : ft.GetMethod("Invoke");
+    }
     // The RETURN .NET type from a `func:<ret>:<args>` string — carried by the BIR, so we never reflect the
     // ReturnType of a TypeBuilder-baked Invoke (which is unreliable on an un-baked generic instantiation).
     Type FuncRetType(string t)
@@ -1229,6 +1308,144 @@ sealed partial class Emitter
         }
     }
 
+    Type EmitNativeClrIsInst(JsonElement e, bool resultIsBool)
+    {
+        EmitExpr(e.GetProperty("e"));
+        var t = NativeType(e.GetProperty("type").GetString());
+        _il.Emit(OpCodes.Isinst, t);
+        if (!resultIsBool) return typeof(object);
+        _il.Emit(OpCodes.Ldnull);
+        _il.Emit(OpCodes.Cgt_Un);
+        return typeof(bool);
+    }
+
+    Type EmitNativeClrCastClass(JsonElement e)
+    {
+        EmitExpr(e.GetProperty("e"));
+        var t = NativeType(e.GetProperty("type").GetString());
+        _il.Emit(t.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, t);
+        return t;
+    }
+
+    Type EmitNativeClrSafeCastValue(JsonElement e)
+    {
+        // `x as? T` for value T -> `T?`: isinst boxed-T, then unbox+wrap, else empty Nullable<T>.
+        var elem = NativeType(e.GetProperty("elem").GetString());
+        var nt = typeof(Nullable<>).MakeGenericType(elem);
+        var res = _il.DeclareLocal(nt);
+        var has = _il.DefineLabel();
+        var done = _il.DefineLabel();
+        EmitExpr(e.GetProperty("e"));
+        _il.Emit(OpCodes.Isinst, elem);
+        _il.Emit(OpCodes.Dup);
+        _il.Emit(OpCodes.Brtrue, has);
+        _il.Emit(OpCodes.Pop);
+        _il.Emit(OpCodes.Ldloca, res);
+        _il.Emit(OpCodes.Initobj, nt);
+        _il.Emit(OpCodes.Ldloc, res);
+        _il.Emit(OpCodes.Br, done);
+        _il.MarkLabel(has);
+        _il.Emit(OpCodes.Unbox_Any, elem);
+        _il.Emit(OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
+        _il.MarkLabel(done);
+        return nt;
+    }
+
+    Type EmitNativeClrNullableNull(JsonElement e)
+    {
+        // `null` typed as Int? -> a Nullable<T> with HasValue=false. NOT ldnull: a value type has no null reference.
+        var elem = NativeType(e.GetProperty("elem").GetString());
+        var nt = typeof(Nullable<>).MakeGenericType(elem);
+        var loc = _il.DeclareLocal(nt);
+        _il.Emit(OpCodes.Ldloca, loc);
+        _il.Emit(OpCodes.Initobj, nt);
+        _il.Emit(OpCodes.Ldloc, loc);
+        return nt;
+    }
+
+    Type EmitNativeClrNullableWrap(JsonElement e)
+    {
+        var elem = NativeType(e.GetProperty("elem").GetString());
+        var nt = typeof(Nullable<>).MakeGenericType(elem);
+        EmitExpr(e.GetProperty("e"));
+        _il.Emit(OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
+        return nt;
+    }
+
+    Type EmitNativeClrNullableHasValue(JsonElement e)
+    {
+        var elem = NativeType(e.GetProperty("elem").GetString());
+        var nt = typeof(Nullable<>).MakeGenericType(elem);
+        EmitExpr(e.GetProperty("e"));
+        var loc = _il.DeclareLocal(nt);
+        _il.Emit(OpCodes.Stloc, loc);
+        _il.Emit(OpCodes.Ldloca, loc);
+        _il.Emit(OpCodes.Call, nt.GetProperty("HasValue").GetGetMethod());
+        return typeof(bool);
+    }
+
+    Type EmitNativeClrNullableValue(JsonElement e)
+    {
+        var elem = NativeType(e.GetProperty("elem").GetString());
+        var nt = typeof(Nullable<>).MakeGenericType(elem);
+        EmitExpr(e.GetProperty("e"));
+        var loc = _il.DeclareLocal(nt);
+        _il.Emit(OpCodes.Stloc, loc);
+        _il.Emit(OpCodes.Ldloca, loc);
+        _il.Emit(OpCodes.Call, nt.GetProperty("Value").GetGetMethod());
+        return elem;
+    }
+
+    Type EmitNativeClrTypeOf(JsonElement e)
+    {
+        var t = NativeType(e.GetProperty("type").GetString());
+        _il.Emit(OpCodes.Ldtoken, t);
+        _il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
+        return typeof(Type);
+    }
+
+    Type EmitNativeClrGetType(JsonElement e)
+    {
+        var got = EmitExpr(e.GetProperty("e"));
+        if (got != null && NeedsBoxToRef(got)) _il.Emit(OpCodes.Box, got);
+        _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("GetType"));
+        return typeof(Type);
+    }
+
+    Type EmitNativeClrEnumValue(JsonElement e)
+    {
+        _il.Emit(OpCodes.Ldc_I4, e.GetProperty("ordinal").GetInt32());
+        return NativeType(e.GetProperty("type").GetString());
+    }
+
+    Type EmitNativeClrEnumOrdinal(JsonElement e)
+    {
+        EmitExpr(e.GetProperty("e"));
+        _il.Emit(OpCodes.Conv_I4);
+        return typeof(int);
+    }
+
+    Type EmitNativeClrEnumValues(JsonElement e)
+    {
+        var et = NativeType(e.GetProperty("type").GetString());
+        _il.Emit(OpCodes.Ldtoken, et);
+        _il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
+        _il.Emit(OpCodes.Call, typeof(Enum).GetMethod("GetValues", new[] { typeof(Type) }));
+        _il.Emit(OpCodes.Castclass, et.MakeArrayType());
+        return et.MakeArrayType();
+    }
+
+    Type EmitNativeClrEnumParse(JsonElement e)
+    {
+        var et = NativeType(e.GetProperty("type").GetString());
+        _il.Emit(OpCodes.Ldtoken, et);
+        _il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
+        EmitExpr(e.GetProperty("arg"));
+        _il.Emit(OpCodes.Call, typeof(Enum).GetMethod("Parse", new[] { typeof(Type), typeof(string) }));
+        _il.Emit(OpCodes.Unbox_Any, et);
+        return et;
+    }
+
     // Array literal (`intArrayOf(...)` / `arrayOf(...)`) -> newarr + per-element stelem.
     Type EmitNewArray(JsonElement e)
     {
@@ -1301,6 +1518,24 @@ sealed partial class Emitter
     // Kotlin structural `==`: `if (a == null) b == null else a.Equals((object)b)`.
     // Value types are boxed first — boxing a Nullable<T> with HasValue=false yields a real null ref,
     // so the same null-safe shape works for `Int?` as for reference types.
+    Type EmitObjMethod(JsonElement e)
+    {
+        // Kotlin Any-method on a builtin receiver -> System.Object virtual (box value types first).
+        var rt = EmitExpr(e.GetProperty("recv"));
+        if (NeedsBoxToRef(rt)) _il.Emit(OpCodes.Box, rt);
+        switch (e.GetProperty("method").GetString())
+        {
+            case "GetHashCode": _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("GetHashCode")); return typeof(int);
+            case "ToString": _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("ToString")); return typeof(string);
+            case "Equals":
+                var at = EmitExpr(e.GetProperty("arg"));
+                if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);
+                _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("Equals", new[] { typeof(object) }));
+                return typeof(bool);
+        }
+        return typeof(object);
+    }
+
     Type EmitObjEq(JsonElement e)
     {
         var nonNull = _il.DefineLabel();
@@ -1364,6 +1599,19 @@ sealed partial class Emitter
         // ctor param type is recovered here so EmitArg can build the specific delegate.
         var ci = (argTypes.All(t => t != null) ? type.GetConstructor(argTypes) : null) ?? PickClrCtor(type, args);
         if (ci == null) throw new NotSupportedException($"no matching constructor for {type.FullName} with {args.GetArrayLength()} arg(s)");
+        EmitArgs(args, ci.GetParameters());
+        _il.Emit(OpCodes.Newobj, ci);
+        return type;
+    }
+
+    Type EmitNativeClrNewObj(JsonElement e)
+    {
+        var member = e.GetProperty("memberRef");
+        var type = ClrRef(NativeOwnerSpec(e, member));
+        var argTypes = NativeParameterTypes(member);
+        var args = e.GetProperty("args");
+        var ci = (argTypes.All(t => t != null) ? type.GetConstructor(argTypes) : null) ?? PickClrCtor(type, args);
+        if (ci == null) throw new NotSupportedException($"native CIR: no matching constructor for {type.FullName} with {args.GetArrayLength()} arg(s)");
         EmitArgs(args, ci.GetParameters());
         _il.Emit(OpCodes.Newobj, ci);
         return type;
@@ -1513,6 +1761,181 @@ sealed partial class Emitter
         }
         return mi.ReturnType;
     }
+
+    Type EmitNativeClrCall(JsonElement e)
+    {
+        var member = e.GetProperty("memberRef");
+        var type = ClrRef(NativeOwnerSpec(e, member));
+        var name = member.GetProperty("name").GetString();
+        var dispatch = e.TryGetProperty("dispatch", out var disp) && disp.ValueKind == JsonValueKind.String
+            ? disp.GetString()
+            : (member.TryGetProperty("isStatic", out var st) && st.GetBoolean() ? "static" : "instance");
+        var instance = dispatch == "instance";
+        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
+        var argTypes = NativeParameterTypes(member);
+        var methodTypeArgs = e.TryGetProperty("typeArgs", out var ta) && ta.ValueKind == JsonValueKind.Array
+            ? ta.EnumerateArray().Select(a => NativeType(a.GetString())).ToArray()
+            : Array.Empty<Type>();
+        MethodInfo mi = null;
+        try
+        {
+            if (methodTypeArgs.Length > 0)
+            {
+                mi = ResolveNativeGenericMethod(type, name, flags, argTypes, methodTypeArgs);
+            }
+            else if (argTypes.All(x => x != null))
+            {
+                mi = type.GetMethod(name, flags, null, argTypes, null);
+            }
+            mi ??= type.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argTypes.Length && !m.IsGenericMethodDefinition);
+        }
+        catch (NotSupportedException) { }
+        if (mi == null)
+        {
+            var named = type.GetMethods(flags).Where(m => m.Name == name).ToList();
+            if (named.Count == 1) mi = named[0];
+        }
+        if (mi == null)
+            throw new NotSupportedException($"native CIR: method {type.FullName}.{name}/{argTypes.Length} not found");
+
+        if (instance)
+        {
+            if (type.IsValueType) EmitAddr(e.GetProperty("recv"));
+            else EmitExpr(e.GetProperty("recv"));
+        }
+        EmitArgs(e.GetProperty("args"), mi.GetParameters());
+        _il.Emit(instance && mi.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, mi);
+        if (mi.ReturnType.IsByRef)
+        {
+            var elem = mi.ReturnType.GetElementType();
+            _il.Emit(OpCodes.Ldobj, elem);
+            return elem;
+        }
+        return mi.ReturnType;
+    }
+
+    MethodInfo ResolveNativeGenericMethod(Type type, string name, BindingFlags flags, Type[] argTypes, Type[] methodTypeArgs)
+    {
+        var candidates = type.GetMethods(flags)
+            .Where(m => m.Name == name &&
+                        m.IsGenericMethodDefinition &&
+                        m.GetGenericArguments().Length == methodTypeArgs.Length &&
+                        m.GetParameters().Length == argTypes.Length)
+            .ToList();
+        if (candidates.Count == 0) return null;
+
+        foreach (var candidate in candidates)
+        {
+            var ps = candidate.GetParameters();
+            var ok = true;
+            for (var i = 0; i < ps.Length; i++)
+            {
+                if (argTypes[i] == null) continue;
+                var expected = SubstituteMethodGenericParameter(ps[i].ParameterType, methodTypeArgs);
+                if (expected != argTypes[i])
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) return candidate.MakeGenericMethod(methodTypeArgs);
+        }
+
+        return candidates.Count == 1 ? candidates[0].MakeGenericMethod(methodTypeArgs) : null;
+    }
+
+    static Type SubstituteMethodGenericParameter(Type type, Type[] methodTypeArgs)
+    {
+        if (type.IsGenericParameter && type.DeclaringMethod != null)
+            return methodTypeArgs[type.GenericParameterPosition];
+        if (type.IsByRef)
+            return SubstituteMethodGenericParameter(type.GetElementType(), methodTypeArgs).MakeByRefType();
+        if (type.IsArray)
+            return SubstituteMethodGenericParameter(type.GetElementType(), methodTypeArgs).MakeArrayType();
+        if (type.IsGenericType && !type.IsGenericTypeDefinition)
+        {
+            var args = type.GetGenericArguments().Select(a => SubstituteMethodGenericParameter(a, methodTypeArgs)).ToArray();
+            return type.GetGenericTypeDefinition().MakeGenericType(args);
+        }
+        return type;
+    }
+
+    Type EmitNativeClrFieldGet(JsonElement e, bool isStatic)
+    {
+        var member = e.GetProperty("memberRef");
+        var type = ClrRef(NativeOwnerSpec(e, member));
+        var name = member.GetProperty("name").GetString();
+        var flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
+        var fld = type.GetField(name, flags)
+            ?? throw new NotSupportedException($"native CIR: field {type.FullName}.{name} not found");
+        if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), fld.FieldType);
+        if (!isStatic && !fld.IsStatic)
+        {
+            if (type.IsValueType) EmitAddr(e.GetProperty("recv"));
+            else EmitExpr(e.GetProperty("recv"));
+        }
+        _il.Emit(fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
+        return fld.FieldType;
+    }
+
+    Type EmitNativeClrFieldSet(JsonElement e, bool isStatic)
+    {
+        var member = e.GetProperty("memberRef");
+        var type = ClrRef(NativeOwnerSpec(e, member));
+        var name = member.GetProperty("name").GetString();
+        var flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
+        var fld = type.GetField(name, flags)
+            ?? throw new NotSupportedException($"native CIR: field {type.FullName}.{name} not found");
+        if (!isStatic && !fld.IsStatic)
+        {
+            if (type.IsValueType) EmitAddr(e.GetProperty("recv"));
+            else EmitExpr(e.GetProperty("recv"));
+        }
+        EmitNullableCoerced(e.GetProperty("value"), fld.FieldType);
+        _il.Emit(fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
+        return typeof(void);
+    }
+
+    Type[] NativeParameterTypes(JsonElement member) =>
+        member.GetProperty("parameterTypes").EnumerateArray()
+            .Select(t => TryResolveNativeType(t.GetString()))
+            .ToArray();
+
+    Type TryResolveNativeType(string spec)
+    {
+        try { return NativeType(spec); }
+        catch { return null; }
+    }
+
+    Type NativeType(string spec)
+    {
+        if (spec == null) return typeof(object);
+        if (spec.StartsWith("clr:", StringComparison.Ordinal) ||
+            spec.StartsWith("clrg:", StringComparison.Ordinal) ||
+            spec.StartsWith("array:", StringComparison.Ordinal) ||
+            spec.StartsWith("func:", StringComparison.Ordinal) ||
+            spec.StartsWith("nullable:", StringComparison.Ordinal) ||
+            spec.StartsWith("byref:", StringComparison.Ordinal) ||
+            spec.StartsWith("gp:", StringComparison.Ordinal) ||
+            spec.StartsWith("@", StringComparison.Ordinal))
+            return MapType(spec);
+        return spec switch
+        {
+            "void" or "int" or "long" or "double" or "float" or "bool" or "char" or "string" or
+            "uint" or "ulong" or "ubyte" or "ushort" or "short" or "byte" or "object" => MapType(spec),
+            _ => ClrRef(ClrOwnerSpec(spec)),
+        };
+    }
+
+    static string ClrOwnerSpec(string owner) =>
+        owner.StartsWith("clr:", StringComparison.Ordinal) || owner.StartsWith("clrg:", StringComparison.Ordinal)
+            ? owner
+            : "clr:" + owner;
+
+    static string NativeOwnerSpec(JsonElement node, JsonElement member) =>
+        node.TryGetProperty("ownerType", out var ownerType) && ownerType.ValueKind == JsonValueKind.String
+            ? ownerType.GetString()
+            : ClrOwnerSpec(member.GetProperty("owner").GetString());
 
     // ClrRef (generic-aware type resolution) that returns null instead of throwing.
     Type TryResolveClr(string spec) { try { return ClrRef(spec); } catch { return null; } }
@@ -1769,12 +2192,62 @@ sealed partial class Emitter
         // taken as the separator. Find the first ':' at bracket-depth 0 AFTER any leading type prefix.
         var colon = FuncRetEnd(rest);
         var ret = rest.Substring(0, colon);
-        var args = rest.Substring(colon + 1).Split(',', StringSplitOptions.RemoveEmptyEntries).Select(MapType).ToArray();
+        var argsPart = rest.Substring(colon + 1);
+        var args = SplitTopLevel(argsPart).Select(MapType).ToArray();
         if (ret == "void")
             return args.Length == 0 ? typeof(Action)
-                : Type.GetType("System.Action`" + args.Length).MakeGenericType(args);
+                : args.Length <= 16
+                    ? ResolveType("System.Action`" + args.Length).MakeGenericType(args)
+                    : SyntheticActionType(args);
         var all = args.Append(MapType(ret)).ToArray();
-        return Type.GetType("System.Func`" + all.Length).MakeGenericType(all);
+        return args.Length <= 16
+            ? ResolveType("System.Func`" + all.Length).MakeGenericType(all)
+            : SyntheticFuncType(args, MapType(ret));
+    }
+
+    Type SyntheticFuncType(Type[] args, Type ret) =>
+        SyntheticDelegateType("KFunc", args.Append(ret).ToArray(), returnsValue: true).MakeGenericType(args.Append(ret).ToArray());
+
+    Type SyntheticActionType(Type[] args) =>
+        SyntheticDelegateType("KAction", args, returnsValue: false).MakeGenericType(args);
+
+    TypeBuilder SyntheticDelegateType(string baseName, Type[] genericArgs, bool returnsValue)
+    {
+        var arity = genericArgs.Length;
+        var metadataName = CompilerServicesNs + baseName + "`" + arity;
+        if (_syntheticDelegates.TryGetValue(metadataName, out var cached))
+            return cached;
+
+        var tb = _mod.DefineType(metadataName,
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class,
+            typeof(MulticastDelegate));
+        tb.SetCustomAttribute(new CustomAttributeBuilder(
+            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+        tb.SetCustomAttribute(new CustomAttributeBuilder(
+            _kFuncAttr.GetConstructor(new[] { typeof(int) }), new object[] { 0 }));
+
+        var names = Enumerable.Range(1, arity).Select(i => i == arity && returnsValue ? "TResult" : "T" + i).ToArray();
+        var gps = tb.DefineGenericParameters(names);
+        var invokeParams = returnsValue ? gps.Take(arity - 1).Cast<Type>().ToArray() : gps.Cast<Type>().ToArray();
+        var invokeRet = returnsValue ? (Type)gps[^1] : typeof(void);
+
+        var ctor = tb.DefineConstructor(
+            MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.RTSpecialName | MethodAttributes.SpecialName,
+            CallingConventions.Standard,
+            new[] { typeof(object), typeof(IntPtr) });
+        ctor.SetImplementationFlags(MethodImplAttributes.Runtime | MethodImplAttributes.Managed);
+
+        var invoke = tb.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual,
+            invokeRet,
+            invokeParams);
+        invoke.SetImplementationFlags(MethodImplAttributes.Runtime | MethodImplAttributes.Managed);
+
+        _syntheticDelegates[metadataName] = tb;
+        _syntheticDelegateCtors[tb] = ctor;
+        _syntheticDelegateInvokes[tb] = invoke;
+        return tb;
     }
 
     // Index of the ':' separating RET from ARGS in a `func:` body. Skips a leading type prefix (clrg:/clr:/...)
@@ -1804,12 +2277,16 @@ sealed partial class Emitter
         (s.StartsWith("func:") || s.StartsWith("clr:") || s.StartsWith("array:") || s.StartsWith("nullable:") || s.StartsWith("@")) ? MapType(s) :
         ResolveType(s);
 
+    // A generic TYPE ARGUMENT of `System.Void` is illegal in .NET; Kotlin `Unit`/`Nothing` map to `void` for a return
+    // position but as a type arg (`Continuation<Unit>`, `Map<K, Unit>`, …) they must be a real type -> `object`.
+    Type MapArg(string t) { var r = MapType(t); return r == typeof(void) ? typeof(object) : r; }
+
     Type GenericType(string spec)
     {
         var br = spec.IndexOf('[');
         var open = spec.Substring(0, br);
         var inner = spec.Substring(br + 1, spec.Length - br - 2);
-        var args = SplitTopLevel(inner).Select(MapType).ToArray();
+        var args = SplitTopLevel(inner).Select(MapArg).ToArray();
         return ResolveType(open + "`" + args.Length).MakeGenericType(args);
     }
 
@@ -1887,7 +2364,7 @@ sealed partial class Emitter
             var br = spec.IndexOf('[');
             if (br < 0) return _types[spec].AsType;
             var open = spec.Substring(0, br);
-            var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapType).ToArray();
+            var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapArg).ToArray();
             return _types[open].AsType.MakeGenericType(args);
         }
         return t switch

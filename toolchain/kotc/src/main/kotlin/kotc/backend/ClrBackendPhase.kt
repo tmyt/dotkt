@@ -35,8 +35,14 @@ object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArti
 		val messageCollector = input.configuration.get(
 			org.jetbrains.kotlin.config.CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
 		val bir = BirEmitter(messageCollector)
+		// The BIR file name is derived from the source file's BASENAME — but the stdlib has several same-named files in
+		// different dirs (3x Collections.kt: src/kotlin, src/kotlin/collections, clr/builtins). Disambiguate with a
+		// per-basename counter so they don't OVERWRITE each other (clr/builtins/Collections.kt's interface defs were lost).
+		val usedNames = HashMap<String, Int>()
 		for (irFile in moduleFragment.files) {
-			val baseName = File(irFile.fileEntry.name).name.removeSuffix(".kt")
+			var baseName = File(irFile.fileEntry.name).name.removeSuffix(".kt")
+			val seen = usedNames.merge(baseName, 1) { a, b -> a + b }!!
+			if (seen > 1) baseName = "${baseName}__$seen"
 			val birJson = bir.emitFile(irFile)
 			if (birJson.isNotBlank()) File(outputDir, "$baseName.bir.json").writeText(birJson)
 		}

@@ -418,15 +418,6 @@ static class FacadeGen
                         && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));
                 if (ix != null)
                     sb.Append($"index {Map(ix.GetIndexParameters()[0].ParameterType, t)} {Map(ix.PropertyType, t)} {(ix.CanWrite ? "rw" : "ro")}\n");
-                // IEnumerable<T> -> a FRONTEND-ONLY `operator fun iterator(): Iterator<T>` so `for (x in it)` resolves
-                // unambiguously (otherwise the stdlib extension iterator()s clash). The backend ignores it and
-                // enumerates via GetEnumerator/MoveNext/Current (forEachInline).
-                Type ienum = null;
-                try { ienum = t.GetInterfaces().FirstOrDefault(i => i.IsGenericType
-                    && i.GetGenericTypeDefinition().FullName == "System.Collections.Generic.IEnumerable`1"
-                    && Supported(i.GetGenericArguments()[0])); } catch { }
-                if (ienum != null)
-                    sb.Append($"iterator {Map(ienum.GetGenericArguments()[0], t)}\n");
                 // Public STATIC members of a NORMAL class (it also has instance members) -> companion-object members,
                 // so `App.Start(cb)` / `App.Current` resolve. `sfun`/`sprop` lines; the injector puts them on a
                 // synthesized companion and the backend emits .NET static calls. (Feedback: WinUI Application.Start.)

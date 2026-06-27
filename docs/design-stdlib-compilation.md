@@ -23,9 +23,28 @@ compiler's filter-lowerings, not add more).
 4. **Result:** the compiler is free to just compile Kotlin against this CLR stdlib — a normal Kotlin compiler with a CLR
    stdlib. The `COLLECTION_OPS` / type special-cases get retired, not extended.
 
-What I must NOT do (and tried, wrongly — all reverted): a compiler `UNMAPPED_STDLIB_TYPES` denylist, extra
-`isSetType`/`isMapType` entries for `HashSet`/`HashMap`, an ilemit partial-IL stub-on-failure. Those add compiler
-固有実装 — exactly the thing the stdlib is meant to eliminate.
+What I must NOT do (and tried, wrongly — all reverted): a compiler `UNMAPPED_STDLIB_TYPES` denylist, a stdlib-op skip,
+an ilemit partial-IL stub-on-failure. Those add compiler 固有実装 for the STDLIB's own behaviour types/ops — exactly the
+thing the stdlib is meant to eliminate.
+
+### The layers (where each kind of mapping legitimately lives)
+
+The design owner (2026-06-25) drew the line: "最終的に一部の java.* package みたいなやつはコンパイラ側で固定の lowering を
+持たないといけない気がするけど、それは stdlib とはまた違うレイヤーの話".
+
+- **Stdlib layer (Kotlin, in `runtime/stdlib/clr/`):** the `kotlin.*` expect classes get a CLR `actual` — and the
+  idiomatic form is exactly JVM's: an **`actual typealias`** to the underlying platform type, e.g.
+  `actual typealias HashSet<E> = java.util.HashSet<E>` (mirrors `TypeAliasesJVM.kt`). `kotlin.*` behaviour types with no
+  platform analogue (`Grouping`) are just their real common source, emitted.
+- **Compiler `java.*` layer (legitimate, FIXED, separate from the stdlib):** a small fixed set of `java.*` → BCL
+  lowerings — `java.util.HashSet`/`LinkedHashSet` → `System.Collections.Generic.HashSet`, `java.util.HashMap`/… →
+  `Dictionary`, `java.lang.StringBuilder` → `System.Text.StringBuilder`, etc. These are NOT the stdlib's job (the stdlib
+  typealiases its `kotlin.*` names *to* these `java.*` names; the compiler then lowers the `java.*` names to the BCL).
+  This is the SAME role as the existing foundational `kotlin.collections.List/Set/Map → BCL` mapping — a fixed interop
+  layer, not a per-op 固有実装 that grows. So `isSetType += java.util.HashSet` is correct *as a java.\* lowering*; a
+  denylist or a `kotlin.collections.HashSet` special-case is not.
+- **@Clr / FIR-injection layer:** @Clr-annotated declarations + the reverse read-as (CLR `IEnumerable<T>` injected →
+  `Iterator`/`Iterable`), so .NET types flow in as the Kotlin stdlib types.
 
 ## Goal
 
