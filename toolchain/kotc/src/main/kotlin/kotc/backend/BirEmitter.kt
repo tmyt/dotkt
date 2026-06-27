@@ -3524,7 +3524,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					val recv = extensionReceiver(call)!!
 					val range = regularArgs(call).first()
 					val rfq = range.type.classFqName?.asString()
-					if (rfq != null && rfq.endsWith("Range")) {
+					// ONLY the progression ranges (IntRange/LongRange/CharRange/U*) have `first`/`last` backing fields.
+					// A ClosedFloatingPointRange/ClosedRange has `start`/`endInclusive` (interface properties), so DON'T
+					// intrinsify those — fall through to the ordinary call so the real stdlib coerceIn(range) runs.
+					if (rfq in setOf("kotlin.ranges.IntRange", "kotlin.ranges.LongRange", "kotlin.ranges.CharRange",
+							"kotlin.ranges.UIntRange", "kotlin.ranges.ULongRange")) {
 						val tmp = "__rng${scopeCounter++}"
 						val rangeType = birType(range.type)
 						val owner = rangeType.removePrefix("@").substringBefore("[")
@@ -3533,10 +3537,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						val last = """{"k":"field","ownerType":${str(owner)},"recv":$loc,"name":"last"}"""
 						return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tmp)},"type":${str(rangeType)},"init":${expr(range)}}],"result":{"k":"clrStatic","type":"System.Math","method":"Clamp","argTypes":[${str(netType(recv.type))},${str(netType(recv.type))},${str(netType(recv.type))}],"ret":${str(netType(callee.returnType))},"args":[${expr(recv)},$first,$last]}}"""
 					}
+					// non-progression range (ClosedFloatingPointRange/ClosedRange): not an intrinsic, emit the real call.
+				} else {
+					// value form: coerceAtMost(v) / coerceAtLeast(v) / coerceIn(min, max) -> Math.Min/Max/Clamp.
+					val m = when (calleeFq) { "kotlin.ranges.coerceAtMost" -> "Min"; "kotlin.ranges.coerceAtLeast" -> "Max"; else -> "Clamp" }
+					val all = listOf(extensionReceiver(call)!!) + regularArgs(call)
+					return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${all.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"args":[${all.joinToString(",") { expr(it) }}]}"""
 				}
-				val m = when (calleeFq) { "kotlin.ranges.coerceAtMost" -> "Min"; "kotlin.ranges.coerceAtLeast" -> "Max"; else -> "Clamp" }
-				val all = listOf(extensionReceiver(call)!!) + regularArgs(call)
-				return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${all.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"args":[${all.joinToString(",") { expr(it) }}]}"""
 			}
 			// repeat(n) { i -> body } -> an inline counter loop (no closure; body uses enclosing locals).
 			if (calleeFq == "kotlin.repeat") {
