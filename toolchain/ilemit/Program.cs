@@ -22,18 +22,14 @@ static class IlEmit
         // `--ref <dll>`: preload an external .NET assembly (e.g. a coroutine runtime, a framework like Avalonia)
         // so its types resolve at emit time; the runtime dll must sit beside the emitted assembly to run.
         var bir = new List<string>();
-        var nsProj = new List<(string, string)>();
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
             if (rest[i] == "--ref" && i + 1 < rest.Count) { var rp = Path.GetFullPath(rest[++i]); Emitter.T($"ref: {rp}"); try { Assembly.LoadFrom(rp); } catch { } }
-            // `--ns-projection <kotlinPrefix>=<dotNetPrefix>`: stamp [assembly: DotKtNamespaceProjection] so a consumer
-            // can import this library under <kotlinPrefix> though its types live in the .NET <dotNetPrefix> namespace.
-            else if (rest[i] == "--ns-projection" && i + 1 < rest.Count) { var kv = rest[++i].Split('=', 2); if (kv.Length == 2) nsProj.Add((kv[0], kv[1])); }
             else bir.Add(rest[i]);
         }
         var files = bir.Select(LoadInputDocument).ToList();
-        new Emitter(outDir, asmName, nsProj).EmitAssembly(files.Select(d => d.RootElement).ToList());
+        new Emitter(outDir, asmName).EmitAssembly(files.Select(d => d.RootElement).ToList());
         return 0;
     }
 
@@ -142,8 +138,7 @@ sealed partial class Emitter
     int _coTryDepth;
     Label _coExit;
 
-    readonly List<(string kotlin, string dotNet)> _nsProj;
-    public Emitter(string outDir, string asmName, List<(string, string)> nsProj = null) { _outDir = outDir; _asmName = asmName; _nsProj = nsProj ?? new(); }
+    public Emitter(string outDir, string asmName) { _outDir = outDir; _asmName = asmName; }
 
     public void EmitAssembly(List<JsonElement> files)
     {
@@ -158,9 +153,7 @@ sealed partial class Emitter
         var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName), typeof(object).Assembly);
         _mod = ab.DefineDynamicModule(_asmName);
         // Embed the DotKt.Runtime.CompilerServices.* metadata attribute types into this module up front (so they exist
-        // before any type/member that stamps one). No --ref DotKt.Runtime needed to resolve them. The assembly-level
-        // [DotKtNamespaceProjection] is applied LATE (just before Save) — applying an assembly attribute whose type is a
-        // module-internal embedded type before the module's other types exist corrupts the image.
+        // before any type/member that stamps one). No --ref DotKt.Runtime needed to resolve them.
         EnsureKotlinAttrs();
 
         // Pass 1: DefineType for every file-static-class and every user class.
@@ -474,15 +467,6 @@ sealed partial class Emitter
                     T($"pass6 createType (leftover): {ti.TB.Name}");
                     ti.TB.CreateType(); again = true;
                 }
-        }
-
-        // [assembly: DotKtNamespaceProjection(kotlin, dotNet)] for each --ns-projection — so a consumer can import this
-        // library's types under a Kotlin package different from their .NET namespace (e.g. kotlinx.coroutines). Applied
-        // here (after all module types are created) because the attribute type is a module-internal embedded type.
-        foreach (var (kotlin, dotNet) in _nsProj)
-        {
-            var nsCtor = _kNsProjAttr?.GetConstructor(new[] { typeof(string), typeof(string) });
-            if (nsCtor != null) ab.SetCustomAttribute(new CustomAttributeBuilder(nsCtor, new object[] { kotlin, dotNet }));
         }
 
         T("save: writing PE");

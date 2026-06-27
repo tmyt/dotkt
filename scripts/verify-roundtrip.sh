@@ -139,34 +139,6 @@ else
     echo "FAIL  roundtrip-pkg"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$pkgexpected" "$pkgactual"; exit 1
 fi
 
-# ----- NAMESPACE PROJECTION: a library in .NET namespace `dotktx.foo` is consumed via idiomatic `import kotlinx.foo.*` -----
-# `[assembly: DotKtNamespaceProjection("kotlinx.foo","dotktx.foo")]` (stamped by `ilemit --ns-projection`) declares the map;
-# the consumer's facadegen resolves the import through it and the injector exposes the types under the Kotlin package.
-N="$ROOT/build/roundtrip-nsproj"; rm -rf "$N"; mkdir -p "$N/lib" "$N/app" "$N/libbir" "$N/libil" "$N/appbir" "$N/appil"
-cat > "$N/lib/lib.kt" <<'EOF'
-package dotktx.foo
-class Greeter(val name: String) { fun greet(): String = "Hello, " + name }
-fun hello(): String = "hi from foo"
-EOF
-cat > "$N/app/app.kt" <<'EOF'
-import kotlinx.foo.*
-fun main() { println(Greeter("Bob").greet()); println(hello()) }
-EOF
-CLR_TYPES_METADATA="" "$LAUNCHER" "$N/lib" -no-stdlib -classpath "$CP" -d "$N/libbir" >/dev/null 2>&1
-dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$N/libil" FooLib --ref "$DOTKT_RT" --ns-projection kotlinx.foo=dotktx.foo "$N/libbir"/*.bir.json >/dev/null 2>&1
-dotnet "$ROOT/build/retarget-bin/retarget.dll" "$N/libil/FooLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
-"$LAUNCHER" --scan-imports --output "$N/imports.txt" "$N/app"/*.kt >/dev/null 2>&1
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$N/meta" --refs "$REFS$N/libil/FooLib.dll;$DOTKT_RT" --import-list "$N/imports.txt" >/dev/null 2>&1
-CLR_TYPES_METADATA="$N/meta" "$LAUNCHER" "$N/app" -no-stdlib -classpath "$CP" -d "$N/appbir" >/dev/null 2>&1
-dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$N/appil" FooApp --ref "$N/libil/FooLib.dll" --ref "$DOTKT_RT" "$N/appbir"/*.bir.json >/dev/null 2>&1
-cp "$N/libil/FooLib.dll" "$DOTKT_RT" "$N/appil/"
-nsexpected="$(printf 'Hello, Bob\nhi from foo')"
-nsactual="$(dotnet "$N/appil/FooApp.dll" 2>/dev/null)"
-if [[ "$nsactual" == "$nsexpected" ]]; then
-    echo "PASS  roundtrip-nsproj (DotKtNamespaceProjection: import kotlinx.foo.* resolves a library living in .NET namespace dotktx.foo)"
-else
-    echo "FAIL  roundtrip-nsproj"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$nsexpected" "$nsactual"; exit 1
-fi
 
 # ----- GENERIC round-trip, COMBINED with every other round-tripping feature, consumed as Kotlin -----
 # Exercises user generics in every POSITION (class type param, member, return, parameter, two type params, generic

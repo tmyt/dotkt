@@ -91,8 +91,7 @@ When another `.ktproj` consumes a DotKt assembly, the Kotlin facts with **no nat
 by `DotKt.Runtime.CompilerServices` attributes and restored on the consumer's FIR; the rest round-trips through plain
 .NET metadata. Those attributes are **compiler-EMBEDDED** into each emitted assembly (internal types, like csc's own
 `NullableAttribute`/`IsReadOnlyAttribute`) — they are metadata-only, never executed, so they don't live in a referenced
-runtime. The sole exception is `[DotKtNamespaceProjection]` (assembly-level), which stays a real type in `DotKt.Runtime`
-because PersistedAssemblyBuilder corrupts the image when an assembly attribute references a module-internal type.
+runtime.
 
 | Kotlin construct | carrier |
 |---|---|

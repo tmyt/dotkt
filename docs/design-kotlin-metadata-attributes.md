@@ -22,7 +22,6 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFileClass]` on the file class |
 | inline function body needed for cross-module lambda/non-local-return splicing | ordinary method | no | `[KotlinInline(body)]` |
 | Kotlin `val` / non-public setter backed by a public field | public field | no; plain public field looks writable | `[KotlinReadOnly]` |
-| Kotlin package ↔ .NET namespace projection | assembly-level mapping | no | `[DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]` |
 | reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |
 | imported CLR event endpoint (`CLREvent<T>`) | real CLR event metadata + add/remove accessors | yes for the event itself; Kotlin endpoint syntax must be synthesized | plain CLR event metadata, no DotKt attribute by default |
 | `final`/`open`/`abstract` (modality) | non-virtual / virtual / abstract | **yes** — rides .NET virtual-ness | (none) |
@@ -35,17 +34,17 @@ assembly already references it ([[dotkt-naming-and-runtime-split]]).
 ## Pipeline (mirror of the forward `--refs` injection)
 
 ```
-  emit:   BirEmitter records infix/operator/suspend, inline bodies, read-only fields, file classes, namespace projections,
+  emit:   BirEmitter records infix/operator/suspend, inline bodies, read-only fields, file classes,
           and reference nullability
             -> ilemit stamps [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinInline(body)] /
-               [KotlinReadOnly] / [DotKtNamespaceProjection] / .NET NRT [Nullable*]
+               [KotlinReadOnly] / .NET NRT [Nullable*]
   retarget: dotkt-retarget repoints BCL refs (also needed so facadegen can MLC-load the dll)
   read:   facadegen --meta reads the attributes -> meta tokens
             `fun <name> <ret> final,infix|operator|suspend ...`   (suspend: Task<T> unwrapped to T)
             CLR `op_*` methods map back to Kotlin operator names through the standard operator table
             CLR events restore as CLREvent<T> endpoints from EventInfo + delegate Invoke
             `file <package> <fileClassFqn>` + `tlfun <name> ...`  (top-level)
-            field mutability, namespace projection, inline body availability, and NRT nullability
+            field mutability, inline body availability, and NRT nullability
   inject: ClrTypeInjection parses them and restores the Kotlin modifier on the synthesized FIR:
             members -> status { isInfix/isOperator/isSuspend }
             events -> CLREvent<T> endpoint with plusAssign/minusAssign compiler-intrinsic operations

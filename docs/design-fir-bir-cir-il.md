@@ -96,7 +96,6 @@ This means primitive/string basics are not "implicit `@Clr` lookup" exceptions. 
 
 The reference index currently records a small DotKt metadata surface:
 
-- assembly-level `DotKtNamespaceProjectionAttribute`
 - `[KotlinFileClass]` facade types
 - public constructors, fields, and methods on referenced types
 - `[KotlinFunction]` flags
@@ -346,6 +345,72 @@ Physical BIR type-operation nodes are normalized without reference metadata. Num
 
 Overload resolution is intentionally conservative at this stage. The resolver records call-site argument count plus BIR `sig` / expression type hints, then filters referenced constructors/methods by parameter count and by exact normalized type matches when all argument types are known. The normalizer understands primitive aliases, `array:`, `func:`, `nullable:`, `byref:`, `gp:`, and constructed `clrg:` encodings. Full lowered generic/member signature matching should be completed before this output becomes executable CIR.
 
+## Companion Object ABI
+
+Kotlin companion objects have two different CLR shapes depending on whether the companion object itself must exist as a
+runtime value.
+
+Most companions are only static-member namespaces:
+
+```kotlin
+class Box {
+    companion object {
+        fun parse(s: String): Box = ...
+        val empty: Box = ...
+    }
+}
+```
+
+These should be flattened to static members on the parent CLR type:
+
+```text
+Box.parse(string)
+Box.empty
+```
+
+This shape is important for interop and for referenced-assembly consumption because `facadegen` / FIR injection cannot
+reliably reconstruct full Kotlin companion-object semantics from CLR metadata. Consumers should not need a real
+`Box.Companion` declaration merely to call static companion members.
+
+However, a companion object with a meaningful supertype is not just a static namespace. It is a singleton value:
+
+```kotlin
+abstract class Random {
+    companion object Default : Random()
+}
+```
+
+Kotlin source uses that singleton as a value:
+
+```kotlin
+random(Random)
+```
+
+For this case, flattening all companion semantics into parent static methods is insufficient. KCC should emit a concrete
+singleton field or property on the parent CLR type whose type is the companion's effective value type, normally the first
+non-`Any` class supertype or the emitted companion class when necessary:
+
+```text
+Random.Default : Random
+```
+
+The exact CLR member name may be `Default` for a named companion or a compiler-chosen stable name for an unnamed
+companion, but it must not be modeled as `Random.INSTANCE`. `INSTANCE` belongs to a real `object Foo` singleton type;
+`Random` is the parent class, not the companion object type.
+
+The lowering rule is:
+
+- companion with no meaningful supertype: flatten members to parent static fields/methods/properties;
+- companion with a meaningful supertype or otherwise used as a value: emit a parent static singleton field/property for
+  the companion value;
+- accesses to companion members may still be flattened to parent static members where that preserves semantics;
+- `IrGetObjectValue` for a companion must load the companion singleton field/property, not `<parent>.INSTANCE`.
+
+Referenced DotKt assemblies should expose enough metadata for consumers to restore this surface without reconstructing a
+full companion declaration. For static-member companions, `facadegen` can report ordinary static members on the parent
+type. For value companions, it must also report the parent static singleton member so BIR -> CIR can lower object-value
+uses such as `Random` to the correct CLR field/property.
+
 ## Function Delegate ABI
 
 Kotlin function types are represented in BIR and CIR with the structural encoding:
@@ -387,7 +452,6 @@ The implemented roundtrip carriers are:
 - `[KotlinFileClass]`: marks a file facade so static methods restore as top-level Kotlin functions.
 - `[KotlinInline(body)]`: carries BIR for inline-with-lambda functions that must be spliced across module boundaries.
 - `[KotlinReadOnly]`: marks a public backing field whose Kotlin property should restore as `val`.
-- `[DotKtNamespaceProjection(kotlinPrefix, dotNetPrefix)]`: assembly-level namespace/package projection.
 - `.NET` nullable-reference metadata, `[Nullable]` / `[NullableContext]`: carries reference-type nullability for both Kotlin and C# consumers.
 
 `[KotlinFunction(flags)]` currently carries:

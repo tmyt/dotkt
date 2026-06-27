@@ -158,7 +158,6 @@ sealed class ReferenceMetadataIndex
     const string KotlinFileClassAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
-    const string DotKtNamespaceProjectionAttr = "DotKt.Runtime.CompilerServices.DotKtNamespaceProjectionAttribute";
 
     readonly List<ReferenceAssembly> _assemblies;
 
@@ -450,12 +449,6 @@ sealed class ReferenceMetadataIndex
         {
             var asm = Assembly.LoadFrom(reference);
 
-            foreach (var attr in asm.GetCustomAttributesData())
-                if (attr.AttributeType.FullName == DotKtNamespaceProjectionAttr && attr.ConstructorArguments.Count == 2)
-                    metadata.NamespaceProjections.Add(new NamespaceProjection(
-                        attr.ConstructorArguments[0].Value?.ToString() ?? "",
-                        attr.ConstructorArguments[1].Value?.ToString() ?? ""));
-
             foreach (var type in SafeTypes(asm, metadata))
             {
                 if (HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr))
@@ -657,7 +650,6 @@ sealed record ReferenceAssembly(string Path, string Name, string Version, Refere
 
 sealed class ReferenceDotKtMetadata
 {
-    public readonly List<NamespaceProjection> NamespaceProjections = new();
     public readonly List<string> FileClasses = new();
     public readonly List<DotKtTypeMetadata> Types = new();
     public readonly List<DotKtMemberMetadata> Members = new();
@@ -666,21 +658,11 @@ sealed class ReferenceDotKtMetadata
 
     public JsonObject ToJson() => new()
     {
-        ["namespaceProjections"] = new JsonArray(NamespaceProjections.Select(p => p.ToJson()).Cast<JsonNode>().ToArray()),
         ["fileClasses"] = new JsonArray(FileClasses.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
         ["types"] = new JsonArray(Types.Select(t => t.ToJson()).Cast<JsonNode>().ToArray()),
         ["members"] = new JsonArray(Members.Select(m => m.ToJson()).Cast<JsonNode>().ToArray()),
         ["functions"] = new JsonArray(Functions.Select(f => f.ToJson()).Cast<JsonNode>().ToArray()),
         ["diagnostics"] = new JsonArray(Diagnostics.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
-    };
-}
-
-sealed record NamespaceProjection(string KotlinPrefix, string DotNetPrefix)
-{
-    public JsonObject ToJson() => new()
-    {
-        ["kotlinPrefix"] = KotlinPrefix,
-        ["dotNetPrefix"] = DotNetPrefix,
     };
 }
 

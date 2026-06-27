@@ -84,9 +84,7 @@
       <_DotKtRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Runtime'" />
     </ItemGroup>
     <Message Importance="high" Text="DotKt: emitting CIL from CIR -> $(TargetName)$(TargetExt)" />
-    <!-- <DotKtNamespaceProjection Include="kotlinx.coroutines=DotKt.Coroutines" /> -> [assembly: DotKtNamespaceProjection],
-         so a consumer can import this library under its Kotlin package though its types live in a different .NET namespace. -->
-    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; @(_DotKtRef->'--ref &quot;%(FullPath)&quot;', ' ') @(DotKtNamespaceProjection->'--ns-projection &quot;%(Identity)&quot;', ' ') @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
+    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; @(_DotKtRef->'--ref &quot;%(FullPath)&quot;', ' ') @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
   </Target>
 
   <!-- REVERSE interop (R-1): repoint the emitted dll's BCL TypeRefs off the single System.Private.CoreLib onto the

@@ -5,6 +5,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Removed
+- **Namespace projection** (`[DotKtNamespaceProjection]` / `ilemit --ns-projection` / the `nsproj` meta line). The
+  assembly-level Kotlin-package ↔ .NET-namespace remap (e.g. consuming a `DotKt.Coroutines` library as
+  `import kotlinx.coroutines.*`) had no real use — a DotKt assembly's types are seen 1:1 at their actual .NET
+  namespace as the Kotlin package, and a library that wants a `kotlinx.*` package simply declares `package kotlinx.*`.
+  Removed across kotc/ilemit/bir2cir/facadegen, the `DotKtNamespaceProjectionAttribute` runtime type, the MSBuild
+  `<DotKtNamespaceProjection>` item, and the `roundtrip-nsproj` test.
+
 ### Added
 - **`DotKt.Stdlib` — a tracked first-party library of real-Kotlin stdlib ops**, compiled by DotKt's own toolchain
   (`runtime/DotKt.Stdlib/`, built by `scripts/build-dotkt-stdlib.sh`). It holds standard-library operations migrated

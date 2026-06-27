@@ -45,10 +45,6 @@ sealed partial class Emitter
         // is the per-type default (we emit 1 = non-null); [Nullable(2)] overrides a specific nullable reference position.
         _nullableAttr    = DefineEmbeddedAttr("System.Runtime.CompilerServices.NullableAttribute", typeof(byte));
         _nullableCtxAttr = DefineEmbeddedAttr("System.Runtime.CompilerServices.NullableContextAttribute", typeof(byte));
-        // DotKtNamespaceProjection is ASSEMBLY-level; an embedded (module-internal) type in an assembly attribute
-        // corrupts the PE under PersistedAssemblyBuilder, so it stays a real referenced type in DotKt.Runtime and is
-        // resolved (null if DotKt.Runtime wasn't --ref'd, in which case --ns-projection is a no-op).
-        _kNsProjAttr   = TryResolveType("DotKt.Runtime.CompilerServices.DotKtNamespaceProjectionAttribute");
     }
 
     // [NullableContext(1)] — the per-type default that ALL reference-type positions in the type are non-null (a nullable

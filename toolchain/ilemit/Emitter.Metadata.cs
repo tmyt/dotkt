@@ -12,7 +12,7 @@ sealed partial class Emitter
     // The embedded `DotKt.Runtime.CompilerServices.*` attribute types — defined into THIS module by EnsureKotlinAttrs
     // (Emitter.CompilerServices.cs). Always available once defined (no external reference needed to stamp).
     bool _kAttrsResolved;
-    Type _kFuncAttr, _kFileAttr, _kInlineAttr, _kReadOnlyAttr, _kNsProjAttr, _nullableAttr, _nullableCtxAttr;
+    Type _kFuncAttr, _kFileAttr, _kInlineAttr, _kReadOnlyAttr, _nullableAttr, _nullableCtxAttr;
 
     // [KotlinReadOnly] — a public backing field whose Kotlin property isn't publicly settable (restore as `val`).
     void ApplyKotlinReadOnly(FieldBuilder fb)
