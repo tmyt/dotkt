@@ -25,6 +25,7 @@ sealed partial class Emitter
             case "coSelfCont":   // the coroutine's own continuation (the SM), as a typed Continuation<T>: new TypedCont<T>(this)
                 {
                     var tk = MapType(e.GetProperty("resultType").GetString());
+                    if (tk == typeof(void)) tk = typeof(object);   // Unit-returning suspend -> Continuation<object>
                     var typed = ResolveType("DotKt.Coroutines.TypedCont`1").MakeGenericType(tk);
                     var contObj = ResolveType("DotKt.Coroutines.Continuation`1").MakeGenericType(typeof(object));
                     _il.Emit(OpCodes.Ldarg_0);   // the SM (Continuation<object>)

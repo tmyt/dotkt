@@ -699,6 +699,14 @@ sealed partial class Emitter
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
         if (m.TryGetProperty("suspend", out var su) && su.GetBoolean())
         {
+            // DOTKT_STDLIB_COMPILE: a suspend method whose lowered body uses a coroutine feature the backend does not
+            // yet support (the sequence-builder `coYieldAll` machinery is the suspend-ABI's deferred phase) is emitted
+            // as a throwing stub, so the assembly still emits (the "= TODO()" stdlib goal: calling it throws).
+            if (StdlibStub && m.GetRawText().Contains("coYieldAll"))
+            {
+                EmitThrowStub(mb, "coYieldAll");
+                return;
+            }
             if (m.TryGetProperty("coClass", out var cc) && cc.GetBoolean()) EmitCoroutineClass(ti, mb, m);
             else EmitCoroutine(ti, mb, m);
             return;
@@ -986,6 +994,19 @@ sealed partial class Emitter
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
     // `retType`/`paramTypes` give the SUBSTITUTED (concrete) signature, since the instantiation's own reflection
     // still reports `!!0` (and throws pre-bake) — needed so value args to `object`/concrete params get boxed.
+    // Set by build-clr-stdlib.sh: while compiling the pure-kotlin stdlib, methods the backend can't yet emit are
+    // stubbed (throw) instead of aborting the whole assembly — the "= TODO()" stdlib still emits and loads.
+    static readonly bool StdlibStub = Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") == "1";
+
+    // Emit a body that just throws — stubs a method the backend can't yet emit during the stdlib build.
+    void EmitThrowStub(MethodBuilder mb, string feature)
+    {
+        var il = mb.GetILGenerator();
+        il.Emit(OpCodes.Ldstr, "DOTKT-STDLIB stub: " + feature + " not yet supported by the .NET backend");
+        il.Emit(OpCodes.Newobj, typeof(NotSupportedException).GetConstructor(new[] { typeof(string) }));
+        il.Emit(OpCodes.Throw);
+    }
+
     MethodInfo ApplyTypeArgs(MethodInfo m, JsonElement e, out Type retType, out Type[] paramTypes)
     {
         var ps = _mparams.TryGetValue(m, out var p) ? p : null;
