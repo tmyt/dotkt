@@ -859,6 +859,59 @@ fi
 
 echo "PASS  native CIR bridge lowers scoped stack allocation (localloc)"
 
+SPREADOPS="$OUT/spread-ops"
+mkdir -p "$SPREADOPS/cir" "$SPREADOPS/il"
+cat > "$SPREADOPS/SpreadOpsApp.bir.json" <<'EOF'
+{
+  "fileClass": "SpreadOpsAppKt",
+  "hasMain": true,
+  "fields": [],
+  "methods": [
+    {
+      "name": "main",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [],
+      "ret": "void",
+      "body": [
+        {"k":"var","name":"a","type":"array:int","init":{"k":"newArray","elem":"int","elems":[{"k":"const","type":"int","value":7},{"k":"const","type":"int","value":8}]}},
+        {"k":"var","name":"arr","type":"array:int","init":{"k":"spreadConcat","elem":"int","parts":[{"e":{"k":"const","type":"int","value":1},"spread":false},{"e":{"k":"local","name":"a"},"spread":true},{"e":{"k":"const","type":"int","value":2},"spread":false}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"arrayLen","array":{"k":"local","name":"arr"}}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"arrayGet","array":{"k":"local","name":"arr"},"index":{"k":"const","type":"int","value":1},"elem":"int"}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"arrayGet","array":{"k":"local","name":"arr"},"index":{"k":"const","type":"int","value":3},"elem":"int"}]}}
+      ],
+      "attrs": []
+    }
+  ],
+  "types": []
+}
+EOF
+
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$SPREADOPS/cir" --native-cir "$SPREADOPS/SpreadOpsApp.bir.json" >/dev/null
+SPREADOPS_CIR="$SPREADOPS/cir/SpreadOpsApp.cir.json"
+
+for pattern in '"k": "clr.array.spread"' '"sourceKind": "spreadConcat"'; do
+    if ! rg -q "$pattern" "$SPREADOPS_CIR"; then
+        echo "FAIL  spread-op native CIR missing $pattern" >&2
+        exit 1
+    fi
+done
+
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$SPREADOPS/il" SpreadOpsNativeApp "$SPREADOPS_CIR" >/dev/null
+SPREADOPS_RUN_OUT="$(dotnet "$SPREADOPS/il/SpreadOpsNativeApp.dll")"
+SPREADOPS_EXPECTED=$'4\n7\n2'
+if [[ "$SPREADOPS_RUN_OUT" != "$SPREADOPS_EXPECTED" ]]; then
+    echo "FAIL  native CIR spread-op output mismatch" >&2
+    printf 'expected:\n%s\nactual:\n%s\n' "$SPREADOPS_EXPECTED" "$SPREADOPS_RUN_OUT" >&2
+    exit 1
+fi
+
+echo "PASS  native CIR bridge lowers vararg spread-concat"
+
 WRAP="$OUT/wrapper"
 WRAP_OUT="$("$ROOT/scripts/dotkt.sh" --native-cir --no-stdlib --run -d "$WRAP" "$ROOT/cases/m0/M0.kt")"
 WRAP_EXPECTED="$(printf 'emitted M0Kt.dll\ndotkt: built %s/M0Kt.dll\n----\nsum = 5\nzero\nn=1\nn=2' "$WRAP")"

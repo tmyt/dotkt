@@ -273,6 +273,7 @@ sealed partial class Emitter
                 return dt;
             }
             case "spreadConcat":
+            case "clr.array.spread":
             {
                 // `f(1, *a, 2)` -> new List<elem>(); Add(literal) / AddRange(spread); ToArray().
                 var elem = MapType(e.GetProperty("elem").GetString());

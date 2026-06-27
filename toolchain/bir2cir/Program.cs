@@ -1353,6 +1353,7 @@ static class ExecutableCirDraft
             "arraySet" => "clr.stelem",
             "arrayLen" => "clr.ldlen",
             "newArray" => "clr.newarr",
+            "spreadConcat" => "clr.array.spread",
             _ => null,
         };
         if (nativeKind == null) return false;
@@ -1378,6 +1379,9 @@ static class ExecutableCirDraft
             native["elem"] = LowerTypeOrNode(elem, path + ".elem", resolvedCalls, resolvedTypes, refs);
         if (obj["elems"] is JsonNode elems)
             native["elems"] = LowerTypeOrNode(elems, path + ".elems", resolvedCalls, resolvedTypes, refs);
+        // spreadConcat carries `parts` (each {e, spread}); recursion lowers each part's `e` and keeps `spread`.
+        if (obj["parts"] is JsonNode parts)
+            native["parts"] = LowerTypeOrNode(parts, path + ".parts", resolvedCalls, resolvedTypes, refs);
         lowered = native;
         return true;
     }
