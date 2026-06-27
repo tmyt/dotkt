@@ -128,10 +128,12 @@ Do not revert or clean these unless the user explicitly asks.
 
 ## Suggested Next Steps
 
-1. Expand `cirDraft.executableCir` beyond reference ctor/method/field/generic-method/generic-owner/property/event/type/nullable/reflection/enum/object-identity-operation sites: collection helpers, inline lowering, and eventually suspend lowering. (Object-identity helpers `objEq`/`objMethod` -> `clr.obj.eq`/`clr.obj.method` are done; `verify-native-cir-ilemit.sh` covers them.)
-2. Extend overload resolution for generic owners, generic methods, variance/conversion rules, and richer nullable/reference-type semantics.
-3. Keep normal `dotkt` builds on `--compat-bir` until enough lowerings have moved and the native-CIR bridge has broader coverage. The dev wrapper has an explicit `--native-cir` switch for smoke-testing the envelope path.
-4. Move one narrow lowering from `kotc`/`ilemit` into `bir2cir`, then verify `--compat-bir` remains unchanged and `scripts/verify-native-cir-ilemit.sh` still runs.
+The full remaining-work map is in **[bir2cir-migration-inventory.md](bir2cir-migration-inventory.md)**: all 102 BIR node kinds classified, with only ~34 being genuine near-term `bir2cir` `clr.*` targets (26 BasicLowering + 8 ClrProjection); the rest retire to stdlib (25), are control-flow pass-through (21), or belong to the deferred suspend (17) / inline (3) phases. The plan there is breaking-changes-aware ([[break-for-elegance]]): nothing has shipped, so the `--compat-bir` byte-for-byte invariant is being abandoned.
+
+1. **Milestone 0 — flip up front.** Make `--native-cir` the default and **delete `--compat-bir`**, gated only on `scripts/verify-native-cir-ilemit.sh` staying green (native-cir already passes unmigrated nodes through identically, so the flip is low-risk and unblocks deleting each legacy intrinsic as its wave lands).
+2. **Wave 1 (next increment):** self-contained physical primitives via the proven `TryLowerPhysical*` loop — start with `primitive-arrays` (`arrayLen`/`arrayGet`/`arraySet` -> `clr.ldlen`/`clr.ldelem`/`clr.stelem`, then `newArray` -> `clr.newarr`), then `bin`/`un`/`const`/`default`/`nullableOf`/`concat`/`stack*`. One `TryLowerPhysical*` + fixture + commit per kind; delete the legacy ilemit case as it lands.
+3. **Waves 3-6 are gated on shared infrastructure** (see inventory): a per-method scope/type environment (`this`/`local`), a same-module member resolver (`setField`/`lateinit`/byref family), then the reference-metadata overload resolver (physical `clr*` calls), and finally delegate/closure construction.
+4. **Parallel non-wave workstreams:** retire the 25 stdlib intrinsics out of the compiler (several ilemit cases are already dead code — delete, don't migrate), and the deferred suspend/inline phases.
 
 ## Useful Code Pointers
 
