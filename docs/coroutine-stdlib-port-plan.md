@@ -87,7 +87,7 @@ CoSeq          = "kotlin.sequences.Seq"                  (PORT — sequence buil
 - **G5 — `kotlinx.coroutines.CancellableCont`.** Out of scope: it is kotlinx, not kotlin stdlib. The stdlib build never
   reaches it. Leave the seam const as a placeholder; provide it later in `dotktx.coroutines` ([[dotktx-coroutines-path-b]]).
 - **G6 — Kotlin↔BCL Task binding.** The Task sink (`Root<T>` wrapping `TaskCompletionSource<T>`, `AwaitOnto` using
-  `GetAwaiter().OnCompleted`) is the only part needing real BCL interop. Port it as `@Clr`/`@ClrAsm`-bound Kotlin (the
+  `GetAwaiter().OnCompleted`) is the only part needing real BCL interop. Port it as `@Clr`-bound Kotlin (the
   `stackalloc`/`Span` and event-interop precedents show BCL binding from Kotlin works). This is the main implementation
   risk — generics + `TaskCompletionSource` + the `OnCompleted` callback closure.
 
