@@ -2933,10 +2933,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// owner, so split the FQN at its last '.' (namespace/type . method) and emit a direct clrStatic here.
 		if (declaringClass == null && !callee.isInline) clrName(callee)?.let { fqn ->
 			val dot = fqn.lastIndexOf('.')
+			val extRecv = extensionReceiver(call)
 			if (dot > 0) {
 				val clrOwner = fqn.substring(0, dot); val clrMethod = fqn.substring(dot + 1)
-				val a = listOfNotNull(extensionReceiver(call)) + filledArgExprs(call)
+				val a = listOfNotNull(extRecv) + filledArgExprs(call)
 				return """{"k":"clrStatic","type":${str(clrOwner)},"method":${str(clrMethod)},"argTypes":[${a.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"args":[${a.joinToString(",") { expr(it) }}]}"""
+			} else if (extRecv != null) {
+				// @Clr("Method") (no '.') on an extension fun `fun T.f()` -> an INSTANCE call on the extension receiver
+				// (e.g. `fun String.uppercase()` @Clr("ToUpper") -> `s.ToUpper()`). The BCL owner = the receiver's type.
+				val a = filledArgExprs(call)
+				return """{"k":"clrInstance","type":${str(netType(extRecv.type))},"method":${str(fqn)},"argTypes":[${a.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"recv":${expr(extRecv)},"args":[${a.joinToString(",") { expr(it) }}]}"""
 			}
 		}
 
