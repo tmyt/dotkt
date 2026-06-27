@@ -1151,6 +1151,8 @@ static class ExecutableCirDraft
                 return loweredArithOp;
             if (TryLowerPhysicalBasicOp(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredBasicOp))
                 return loweredBasicOp;
+            if (TryLowerPhysicalStackOp(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredStackOp))
+                return loweredStackOp;
             if (TryLowerPhysicalEvent(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredEvent))
                 return loweredEvent;
             if (TryLowerPhysicalProperty(obj, path, resolvedCalls, resolvedTypes, refs, out var loweredProperty))
@@ -1489,6 +1491,42 @@ static class ExecutableCirDraft
             default:
                 return false;
         }
+    }
+
+    static bool TryLowerPhysicalStackOp(
+        JsonObject obj,
+        string path,
+        IReadOnlyDictionary<string, ResolvedSite> resolvedCalls,
+        IReadOnlyDictionary<string, ResolvedTypeSite> resolvedTypes,
+        ReferenceMetadataIndex refs,
+        out JsonNode lowered)
+    {
+        lowered = null;
+        var kind = obj["k"]?.GetValue<string>();
+        var nativeKind = kind switch
+        {
+            "stackAlloc" => "clr.stackalloc",
+            "stackGet" => "clr.stack.get",
+            "stackSet" => "clr.stack.set",
+            _ => null,
+        };
+        if (nativeKind == null) return false;
+
+        // Scoped stack allocation (localloc) + bounds-checked get/set. Intentionally unverifiable IL, but the
+        // CIR shape is ordinary: recurse the count/ptr/index/len/value children and carry elem as a type.
+        var native = new JsonObject
+        {
+            ["k"] = nativeKind,
+            ["sourcePath"] = path,
+            ["sourceKind"] = kind,
+        };
+        foreach (var field in new[] { "count", "ptr", "index", "len", "value" })
+            if (obj[field] is JsonNode child)
+                native[field] = LowerTypeOrNode(child, path + "." + field, resolvedCalls, resolvedTypes, refs);
+        if (obj["elem"] is JsonNode elem)
+            native["elem"] = LowerTypeOrNode(elem, path + ".elem", resolvedCalls, resolvedTypes, refs);
+        lowered = native;
+        return true;
     }
 
     static bool TryLowerPhysicalProperty(

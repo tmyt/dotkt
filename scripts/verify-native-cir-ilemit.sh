@@ -805,6 +805,60 @@ fi
 
 echo "PASS  native CIR bridge lowers string concatenation"
 
+STACKOPS="$OUT/stack-ops"
+mkdir -p "$STACKOPS/cir" "$STACKOPS/il"
+cat > "$STACKOPS/StackOpsApp.bir.json" <<'EOF'
+{
+  "fileClass": "StackOpsAppKt",
+  "hasMain": true,
+  "fields": [],
+  "methods": [
+    {
+      "name": "main",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [],
+      "ret": "void",
+      "body": [
+        {"k":"var","name":"ptr","type":"stackptr","init":{"k":"stackAlloc","count":{"k":"const","type":"int","value":3},"elem":"int"}},
+        {"k":"exprStmt","expr":{"k":"stackSet","ptr":{"k":"local","name":"ptr"},"len":{"k":"const","type":"int","value":3},"index":{"k":"const","type":"int","value":0},"elem":"int","value":{"k":"const","type":"int","value":11}}},
+        {"k":"exprStmt","expr":{"k":"stackSet","ptr":{"k":"local","name":"ptr"},"len":{"k":"const","type":"int","value":3},"index":{"k":"const","type":"int","value":1},"elem":"int","value":{"k":"const","type":"int","value":22}}},
+        {"k":"exprStmt","expr":{"k":"stackSet","ptr":{"k":"local","name":"ptr"},"len":{"k":"const","type":"int","value":3},"index":{"k":"const","type":"int","value":2},"elem":"int","value":{"k":"const","type":"int","value":33}}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"stackGet","ptr":{"k":"local","name":"ptr"},"len":{"k":"const","type":"int","value":3},"index":{"k":"const","type":"int","value":0},"elem":"int"}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"stackGet","ptr":{"k":"local","name":"ptr"},"len":{"k":"const","type":"int","value":3},"index":{"k":"const","type":"int","value":2},"elem":"int"}]}}
+      ],
+      "attrs": []
+    }
+  ],
+  "types": []
+}
+EOF
+
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$STACKOPS/cir" --native-cir "$STACKOPS/StackOpsApp.bir.json" >/dev/null
+STACKOPS_CIR="$STACKOPS/cir/StackOpsApp.cir.json"
+
+for pattern in '"k": "clr.stackalloc"' '"k": "clr.stack.get"' '"k": "clr.stack.set"' '"sourceKind": "stackAlloc"' '"sourceKind": "stackGet"' '"sourceKind": "stackSet"'; do
+    if ! rg -q "$pattern" "$STACKOPS_CIR"; then
+        echo "FAIL  stack-op native CIR missing $pattern" >&2
+        exit 1
+    fi
+done
+
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$STACKOPS/il" StackOpsNativeApp "$STACKOPS_CIR" >/dev/null
+STACKOPS_RUN_OUT="$(dotnet "$STACKOPS/il/StackOpsNativeApp.dll")"
+STACKOPS_EXPECTED=$'11\n33'
+if [[ "$STACKOPS_RUN_OUT" != "$STACKOPS_EXPECTED" ]]; then
+    echo "FAIL  native CIR stack-op output mismatch" >&2
+    printf 'expected:\n%s\nactual:\n%s\n' "$STACKOPS_EXPECTED" "$STACKOPS_RUN_OUT" >&2
+    exit 1
+fi
+
+echo "PASS  native CIR bridge lowers scoped stack allocation (localloc)"
+
 WRAP="$OUT/wrapper"
 WRAP_OUT="$("$ROOT/scripts/dotkt.sh" --native-cir --no-stdlib --run -d "$WRAP" "$ROOT/cases/m0/M0.kt")"
 WRAP_EXPECTED="$(printf 'emitted M0Kt.dll\ndotkt: built %s/M0Kt.dll\n----\nsum = 5\nzero\nn=1\nn=2' "$WRAP")"

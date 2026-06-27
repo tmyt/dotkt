@@ -896,6 +896,7 @@ sealed partial class Emitter
                 return null;
             }
             case "stackAlloc":
+            case "clr.stackalloc":
             {
                 // `localloc` a zero-initialized stack buffer of `count * sizeof(elem)` bytes, leaving its pointer.
                 // (Unverifiable, like C#'s own stackalloc.)
@@ -911,6 +912,7 @@ sealed partial class Emitter
                 return typeof(byte).MakePointerType();
             }
             case "stackGet":
+            case "clr.stack.get":
             {
                 EmitStackBounds(e);
                 var elem = MapType(e.GetProperty("elem").GetString());
@@ -919,6 +921,7 @@ sealed partial class Emitter
                 return elem;
             }
             case "stackSet":
+            case "clr.stack.set":
             {
                 EmitStackBounds(e);
                 var elem = MapType(e.GetProperty("elem").GetString());
