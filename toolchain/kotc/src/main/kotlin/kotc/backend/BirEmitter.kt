@@ -960,8 +960,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// METHOD to bind the interface slot (property-accessor analog of the method-side overridesIface fix; e.g.
 		// ComparableRange.start over ClosedRange.start). See design-clr-property-model.md.
 		fun ovIface(a: IrSimpleFunction) = a.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
-		fun emitsGet(p: IrProperty) = p.getter?.let { hasCustomAccessor(p) || clrIfaceMemberName(it) != null || p.backingField == null || ovIface(it) } ?: false
-		fun emitsSet(p: IrProperty) = p.setter?.let { hasCustomAccessor(p) || clrIfaceMemberName(it) != null || p.backingField == null || ovIface(it) } ?: false
+		fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated
+		fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !p.isDelegated
 		val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 			listOfNotNull(
 				p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
@@ -3434,7 +3434,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A property with a custom accessor — OR one overriding a .NET/synthetic-mapped iface property (e.g.
 			// CharSequence.length -> get_length) — routes through the get_/set_ method, not the backing field.
 			val ifaceAcc = clrIfaceMemberName(callee)
-			if (hasCustomAccessor(property) || ifaceAcc != null || property.backingField == null) {
+			if (!property.isLateinit) {   // every property routes through its get_/set_ accessor (CLR property model)
 				val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
 				// A MEMBER extension property (`class C { val T.p get() }`): dispatch on the enclosing C, but its `get_p`/
 				// `set_p` method takes the extension receiver as a leading `__self` arg -> prepend it.
