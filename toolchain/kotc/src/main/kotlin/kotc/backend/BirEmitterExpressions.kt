@@ -118,8 +118,10 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	// like Math are static call sites handled at the call site; only user singletons reach here as a value.)
 	is IrGetObjectValue ->
 		when (node.symbol.owner.fqNameWhenAvailable?.asString()) {
-			// The `Unit` object as a VALUE (e.g. `Result.success(Unit)`) -> the DotKt.Unit singleton.
-			"kotlin.Unit" -> """{"k":"clrStaticField","type":"DotKt.Unit","name":"Instance"}"""
+			// The `Unit` object as a VALUE (e.g. `Result.success(Unit)`) -> the DotKt.Unit singleton; under
+			// stdlib-compile the stdlib's OWN kotlin.Unit object (its INSTANCE) is used (no DotKt.Runtime).
+			"kotlin.Unit" -> if (!stdlibCompile) """{"k":"clrStaticField","type":"DotKt.Unit","name":"Instance"}"""
+				else """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
 			else -> """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
 		}
 	is IrBlock -> blockExpr(node)
@@ -138,7 +140,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		if (isThrowableProp) {
 			val (prop, rt) = if (fldName == "message") "Message" to "System.String" else "InnerException" to "System.Exception"
 			"""{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
-		} else if (ownerFq == "kotlin.Result" || recvFq == "kotlin.Result") {
+		} else if (!stdlibCompile && (ownerFq == "kotlin.Result" || recvFq == "kotlin.Result")) {
 			// kotlin.Result is an inline value class -> isSuccess/isFailure/value/failure arrive as IrGetField.
 			// Map onto the shared DotKt.Result<T> struct properties (see T4 / docs §13n).
 			val spec = node.receiver?.type?.let { birType(it) } ?: "clrg:DotKt.Result[object]"
