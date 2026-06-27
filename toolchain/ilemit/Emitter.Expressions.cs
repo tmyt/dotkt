@@ -933,6 +933,7 @@ sealed partial class Emitter
                 return typeof(void);
             }
             case "stackAsSpan":
+            case "clr.stack.asSpan":
             {
                 // `new System.Span<T>(void* ptr, int length)` over the stack buffer -> a real Span for .NET APIs.
                 var elem = MapType(e.GetProperty("elem").GetString());

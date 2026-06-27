@@ -965,6 +965,80 @@ fi
 
 echo "PASS  native CIR bridge lowers constrained compareTo"
 
+STACKSPAN="$OUT/stack-span"
+mkdir -p "$STACKSPAN/src" "$STACKSPAN/cir" "$STACKSPAN/il"
+cat > "$STACKSPAN/src/SpanRef.csproj" <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+</Project>
+EOF
+cat > "$STACKSPAN/src/SpanProbe.cs" <<'EOF'
+public static class SpanProbe
+{
+    public static int Sum(System.Span<int> s)
+    {
+        int t = 0;
+        for (int i = 0; i < s.Length; i++) t += s[i];
+        return t;
+    }
+}
+EOF
+cat > "$STACKSPAN/StackSpanApp.bir.json" <<'EOF'
+{
+  "fileClass": "StackSpanAppKt",
+  "hasMain": true,
+  "fields": [],
+  "methods": [
+    {
+      "name": "main",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [],
+      "ret": "void",
+      "body": [
+        {"k":"var","name":"ptr","type":"stackptr","init":{"k":"stackAlloc","count":{"k":"const","type":"int","value":3},"elem":"int"}},
+        {"k":"exprStmt","expr":{"k":"stackSet","ptr":{"k":"local","name":"ptr"},"len":{"k":"const","type":"int","value":3},"index":{"k":"const","type":"int","value":0},"elem":"int","value":{"k":"const","type":"int","value":10}}},
+        {"k":"exprStmt","expr":{"k":"stackSet","ptr":{"k":"local","name":"ptr"},"len":{"k":"const","type":"int","value":3},"index":{"k":"const","type":"int","value":1},"elem":"int","value":{"k":"const","type":"int","value":20}}},
+        {"k":"exprStmt","expr":{"k":"stackSet","ptr":{"k":"local","name":"ptr"},"len":{"k":"const","type":"int","value":3},"index":{"k":"const","type":"int","value":2},"elem":"int","value":{"k":"const","type":"int","value":30}}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"callStatic","owner":"SpanProbe","method":"Sum","args":[{"k":"stackAsSpan","elem":"int","ptr":{"k":"local","name":"ptr"},"len":{"k":"const","type":"int","value":3}}]}]}}
+      ],
+      "attrs": []
+    }
+  ],
+  "types": []
+}
+EOF
+
+dotnet build "$STACKSPAN/src/SpanRef.csproj" -v q --nologo >/dev/null
+SPAN_REF="$STACKSPAN/src/bin/Debug/net10.0/SpanRef.dll"
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$STACKSPAN/cir" --native-cir --ref "$SPAN_REF" "$STACKSPAN/StackSpanApp.bir.json" >/dev/null
+STACKSPAN_CIR="$STACKSPAN/cir/StackSpanApp.cir.json"
+
+for pattern in '"k": "clr.stack.asSpan"' '"sourceKind": "stackAsSpan"' '"k": "clr.call"'; do
+    if ! rg -q "$pattern" "$STACKSPAN_CIR"; then
+        echo "FAIL  stack-span native CIR missing $pattern" >&2
+        exit 1
+    fi
+done
+
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$STACKSPAN/il" StackSpanNativeApp --ref "$SPAN_REF" "$STACKSPAN_CIR" >/dev/null
+cp "$SPAN_REF" "$STACKSPAN/il/SpanRef.dll"
+STACKSPAN_RUN_OUT="$(dotnet "$STACKSPAN/il/StackSpanNativeApp.dll")"
+STACKSPAN_EXPECTED='60'
+if [[ "$STACKSPAN_RUN_OUT" != "$STACKSPAN_EXPECTED" ]]; then
+    echo "FAIL  native CIR stack-span output mismatch" >&2
+    printf 'expected:\n%s\nactual:\n%s\n' "$STACKSPAN_EXPECTED" "$STACKSPAN_RUN_OUT" >&2
+    exit 1
+fi
+
+echo "PASS  native CIR bridge lowers stack asSpan into a .NET Span API"
+
 WRAP="$OUT/wrapper"
 WRAP_OUT="$("$ROOT/scripts/dotkt.sh" --native-cir --no-stdlib --run -d "$WRAP" "$ROOT/cases/m0/M0.kt")"
 WRAP_EXPECTED="$(printf 'emitted M0Kt.dll\ndotkt: built %s/M0Kt.dll\n----\nsum = 5\nzero\nn=1\nn=2' "$WRAP")"

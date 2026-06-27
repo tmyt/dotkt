@@ -1535,6 +1535,7 @@ static class ExecutableCirDraft
             "stackAlloc" => "clr.stackalloc",
             "stackGet" => "clr.stack.get",
             "stackSet" => "clr.stack.set",
+            "stackAsSpan" => "clr.stack.asSpan",
             _ => null,
         };
         if (nativeKind == null) return false;
