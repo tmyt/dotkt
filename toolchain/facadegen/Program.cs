@@ -199,11 +199,18 @@ static class FacadeGen
         {
             var t = queue.Dequeue();
             if (!done.Add(t.FullName!)) continue;
-            EmitOneType(t, sb);
+            // Scan one type (emit + closure traversal) under a guard: a single malformed/unreflectable type — e.g. a
+            // stdlib member whose signature references a type the MetadataLoadContext can't resolve — is SKIPPED with a
+            // warning rather than aborting the whole façade scan. Emit into a local buffer committed only on success.
+            try
+            {
+                var one = new StringBuilder(); EmitOneType(t, one); sb.Append(one);
+                foreach (var r in ReferencedTypes(t))
+                    foreach (var u in Unwrap(r))
+                        if (ShouldInject(u)) Enqueue(u);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"warning: skipped type {t.FullName}: {ex.GetType().Name}: {ex.Message}"); }
             if (done.Count >= CAP) { Console.Error.WriteLine($"warning: injection closure hit cap {CAP}; truncating reachable set"); break; }
-            foreach (var r in ReferencedTypes(t))
-                foreach (var u in Unwrap(r))
-                    if (ShouldInject(u)) Enqueue(u);
         }
         Console.WriteLine($"closure: {seeds} seed(s) -> {done.Count} injected type(s)");
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
