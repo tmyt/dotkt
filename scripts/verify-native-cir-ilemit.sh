@@ -756,6 +756,55 @@ fi
 
 echo "PASS  native CIR bridge lowers const/default/nullableOf (incl. null->Nullable coercion)"
 
+CONCATOPS="$OUT/concat-ops"
+mkdir -p "$CONCATOPS/cir" "$CONCATOPS/il"
+cat > "$CONCATOPS/ConcatOpsApp.bir.json" <<'EOF'
+{
+  "fileClass": "ConcatOpsAppKt",
+  "hasMain": true,
+  "fields": [],
+  "methods": [
+    {
+      "name": "main",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [],
+      "ret": "void",
+      "body": [
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"concat","parts":[{"k":"const","type":"string","value":"x="},{"k":"const","type":"int","value":7},{"k":"const","type":"string","value":", ok="},{"k":"const","type":"bool","value":true}]}]}}
+      ],
+      "attrs": []
+    }
+  ],
+  "types": []
+}
+EOF
+
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$CONCATOPS/cir" --native-cir "$CONCATOPS/ConcatOpsApp.bir.json" >/dev/null
+CONCATOPS_CIR="$CONCATOPS/cir/ConcatOpsApp.cir.json"
+
+for pattern in '"k": "clr.str.concat"' '"sourceKind": "concat"'; do
+    if ! rg -q "$pattern" "$CONCATOPS_CIR"; then
+        echo "FAIL  concat-op native CIR missing $pattern" >&2
+        exit 1
+    fi
+done
+
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$CONCATOPS/il" ConcatOpsNativeApp "$CONCATOPS_CIR" >/dev/null
+CONCATOPS_RUN_OUT="$(dotnet "$CONCATOPS/il/ConcatOpsNativeApp.dll")"
+CONCATOPS_EXPECTED='x=7, ok=True'
+if [[ "$CONCATOPS_RUN_OUT" != "$CONCATOPS_EXPECTED" ]]; then
+    echo "FAIL  native CIR concat-op output mismatch" >&2
+    printf 'expected:\n%s\nactual:\n%s\n' "$CONCATOPS_EXPECTED" "$CONCATOPS_RUN_OUT" >&2
+    exit 1
+fi
+
+echo "PASS  native CIR bridge lowers string concatenation"
+
 WRAP="$OUT/wrapper"
 WRAP_OUT="$("$ROOT/scripts/dotkt.sh" --native-cir --no-stdlib --run -d "$WRAP" "$ROOT/cases/m0/M0.kt")"
 WRAP_EXPECTED="$(printf 'emitted M0Kt.dll\ndotkt: built %s/M0Kt.dll\n----\nsum = 5\nzero\nn=1\nn=2' "$WRAP")"

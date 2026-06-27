@@ -869,6 +869,7 @@ sealed partial class Emitter
                 return ft;
             }
             case "concat": return EmitConcat(e);
+            case "clr.str.concat": return EmitConcat(e);
             case "cond": return EmitCond(e);
             case "clrNew": return EmitClrNew(e);
             case "clrStatic": return EmitClrCall(e, instance: false);

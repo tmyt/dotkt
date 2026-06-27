@@ -1471,6 +1471,21 @@ static class ExecutableCirDraft
                 lowered = native;
                 return true;
             }
+            case "concat":
+            {
+                // String interpolation/concat: object[] of the parts -> String.Concat. The value->object
+                // boxing of each part stays in the ilemit consumer, so the node only carries `parts`.
+                var native = new JsonObject
+                {
+                    ["k"] = "clr.str.concat",
+                    ["sourcePath"] = path,
+                    ["sourceKind"] = "concat",
+                };
+                if (obj["parts"] is JsonNode parts)
+                    native["parts"] = LowerTypeOrNode(parts, path + ".parts", resolvedCalls, resolvedTypes, refs);
+                lowered = native;
+                return true;
+            }
             default:
                 return false;
         }
