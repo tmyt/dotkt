@@ -1,0 +1,652 @@
+# CLR collection binding — the iterator bridge (design)
+
+Status: **design (Codex-assisted, 2026-06-28)**. The HARD fork of the @Clr stdlib binding ([[clr-binding-actuals]]):
+the collection hierarchy, where Kotlin `Iterator.hasNext()/next()` ≠ BCL `IEnumerator.MoveNext()/Current`.
+
+## Decision summary
+
+Bind the collection **interfaces** to their BCL surface, but bridge the iterator semantic mismatch with compiler
+lowerings + Kotlin-level adapters (NO hand-written CIL — @ClrAsm is gone). Key rule: **do NOT bind Kotlin
+`Iterator<T>` to CLR `IEnumerator<T>` directly**; bind `Iterable<T>`→`IEnumerable<T>` and bridge at the two protocol
+boundaries.
+
+Type map:
+| Kotlin | BCL |
+|---|---|
+| `Iterable<out T>` | `IEnumerable<T>` |
+| `Collection<out T>` | `IReadOnlyCollection<T>` (size→Count) |
+| `List<out T>` | `IReadOnlyList<T>` (get→get_Item) |
+| `MutableCollection<T>` | `ICollection<T>` |
+| `MutableList<T>` | `IList<T>` |
+| `Set<out T>` | `IReadOnlySet<T>` |
+| `MutableSet<T>` | `ISet<T>` |
+| `Map<out K,out V>` | `IReadOnlyDictionary<K,V>` |
+| `MutableMap<K,V>` | `IDictionary<K,V>` |
+| `listOf/mutableListOf/arrayListOf` | `System.Collections.Generic.List<T>` (returned as the read-only/mutable iface) |
+
+Three mechanisms: (1) CLR-bound type identity (@Clr), (2) **for-loop lowering** to GetEnumerator/MoveNext/Current when
+the iterated type is BCL-bound IEnumerable, (3) **semantic adapters**: explicit `iterator()` → `KotlinIteratorOver
+Enumerator<T>`; a Kotlin `Iterable` implementor gets a generated `GetEnumerator` via `EnumeratorOverKotlinIterator<T>`.
+
+---
+
+## Full Codex consultation (verbatim)
+
+Yes: make the bridge a compiler feature, not a library trick. Treat Kotlin collection interfaces annotated with `@Clr` as having **CLR surface identity**, but preserve Kotlin semantics through targeted lowerings and generated adapters.
+
+**Opinionated Design**
+
+1. **For-Loops**
+
+Lower `for (x in xs)` directly to the BCL foreach pattern when the iterated type is CLR-bound to `IEnumerable<T>` or compatible:
+
+```kotlin
+for (x in xs) body
+```
+
+becomes approximately:
+
+```cil
+var e = xs.GetEnumerator()
+try {
+    while (e.MoveNext()) {
+        var x = e.Current
+        body
+    }
+}
+finally {
+    (e as IDisposable)?.Dispose()
+}
+```
+
+This is clean and desirable.
+
+Do not lower BCL-bound `Iterable<T>` loops through Kotlin `Iterator<T>`. That would allocate an adapter and obscure the native CLR shape.
+
+Compiler rule:
+
+```text
+if expression type is @Clr-bound Iterable<T> / IEnumerable<T>:
+    emit GetEnumerator / MoveNext / Current
+else:
+    emit Kotlin iterator / hasNext / next protocol
+```
+
+You may also support pattern-based enumeration later, but first bind to known BCL collection interfaces.
+
+2. **Explicit Kotlin Iterator Use**
+
+For explicit calls:
+
+```kotlin
+val it = xs.iterator()
+it.hasNext()
+it.next()
+```
+
+you need a real Kotlin `Iterator<T>` view.
+
+Provide this in the Kotlin stdlib as normal Kotlin code:
+
+```kotlin
+package kotlin.collections
+
+internal class KotlinIteratorOverEnumerator<T>(
+    private val e: System.Collections.Generic.IEnumerator<T>
+) : Iterator<T> {
+    private var state: Int = 0
+    // 0 = unknown, 1 = has current buffered, 2 = done
+
+    override fun hasNext(): Boolean {
+        if (state == 1) return true
+        if (state == 2) return false
+
+        return if (e.MoveNext()) {
+            state = 1
+            true
+        } else {
+            state = 2
+            false
+        }
+    }
+
+    override fun next(): T {
+        if (!hasNext()) throw NoSuchElementException()
+        state = 0
+        return e.Current
+    }
+}
+```
+
+Then define the Kotlin-level adapter:
+
+```kotlin
+@PublishedApi
+internal fun <T> iteratorOverEnumerable(
+    self: System.Collections.Generic.IEnumerable<T>
+): Iterator<T> =
+    KotlinIteratorOverEnumerator(self.GetEnumerator())
+```
+
+For `Iterable<T>.iterator()` on the CLR-bound stdlib declaration, do **not** bind it directly to `GetEnumerator`, because the return type and semantics differ.
+
+Instead:
+
+```kotlin
+@Clr("System.Collections.Generic.IEnumerable`1")
+interface Iterable<out T> {
+    fun iterator(): Iterator<T> =
+        iteratorOverEnumerable(this)
+}
+```
+
+Backend behavior:
+
+```text
+Iterable<T>.iterator() has a Kotlin body
+=> hoist to static helper
+=> call helper with receiver as __self
+```
+
+That matches your existing model perfectly.
+
+Important: `hasNext()` must buffer by calling `MoveNext()` at most once per element. `next()` must consume the buffered state and return `Current`.
+
+Also implement disposal if useful:
+
+```kotlin
+if (!hasNext()) {
+    (e as? System.IDisposable)?.Dispose()
+}
+```
+
+But be careful: Kotlin `Iterator` has no close/dispose protocol, so disposal is best-effort only. Compiler-lowered `for` should always dispose.
+
+3. **Kotlin Classes Implementing Iterable / Iterator**
+
+Separate two cases.
+
+**A Kotlin class implements `Iterable<T>`**
+
+Example:
+
+```kotlin
+class MyRange : Iterable<Int> {
+    override fun iterator(): Iterator<Int> = ...
+}
+```
+
+Because `kotlin.collections.Iterable<T>` is CLR-bound to `IEnumerable<T>`, the emitted class must implement:
+
+```csharp
+System.Collections.Generic.IEnumerable<T>
+System.Collections.IEnumerable
+```
+
+Generate methods:
+
+```kotlin
+public fun GetEnumerator(): System.Collections.Generic.IEnumerator<T> =
+    EnumeratorOverKotlinIterator(this.iterator())
+
+public fun System.Collections.IEnumerable.GetEnumerator(): System.Collections.IEnumerator =
+    this.GetEnumerator()
+```
+
+Adapter:
+
+```kotlin
+internal class EnumeratorOverKotlinIterator<T>(
+    private val it: Iterator<T>
+) : System.Collections.Generic.IEnumerator<T> {
+    private var currentValue: T = defaultValue()
+
+    override fun MoveNext(): Boolean {
+        if (!it.hasNext()) return false
+        currentValue = it.next()
+        return true
+    }
+
+    override val Current: T
+        get() = currentValue
+
+    override fun Reset() {
+        throw System.NotSupportedException()
+    }
+
+    override fun Dispose() {}
+}
+```
+
+For non-nullable/value types, `defaultValue()` needs backend support or a generated backing field initialized to CLR default.
+
+**A Kotlin class implements `Iterator<T>`**
+
+Do **not** make every Kotlin `Iterator<T>` directly implement `IEnumerator<T>` unless `Iterator` itself is CLR-bound to `IEnumerator<T>`, which I would avoid.
+
+Reason: the semantics are not isomorphic. Kotlin `Iterator.next()` advances; CLR `IEnumerator.Current` does not. Binding `Iterator` directly to `IEnumerator` will make normal calls ambiguous and bug-prone.
+
+Instead:
+
+```text
+Kotlin Iterator<T> remains a Kotlin interface.
+Iterable<T> is CLR-bound to IEnumerable<T>.
+The compiler generates IEnumerator adapters where CLR requires them.
+```
+
+If a Kotlin type explicitly needs to be passed as `IEnumerator<T>`, require/generated adapter:
+
+```kotlin
+asClrEnumerator(kotlinIterator)
+```
+
+or compiler-inserted conversion only at known CLR interop boundaries.
+
+4. **Concrete Collection Factories**
+
+Yes: return real BCL collections.
+
+Use:
+
+```text
+listOf<T>()              -> System.Array.Empty<T>() or cached empty IReadOnlyList<T>
+listOf<T>(one)           -> small immutable list if you have one, otherwise List<T>
+listOf<T>(vararg items)  -> System.Collections.Generic.List<T>
+mutableListOf<T>()       -> System.Collections.Generic.List<T>
+arrayListOf<T>()         -> System.Collections.Generic.List<T>
+setOf<T>()               -> HashSet<T> or read-only wrapper, depending on immutability policy
+mutableSetOf<T>()        -> HashSet<T>
+mapOf<K,V>()             -> Dictionary<K,V> or read-only wrapper
+mutableMapOf<K,V>()      -> Dictionary<K,V>
+```
+
+But be precise about Kotlin read-only vs immutable:
+
+```text
+Kotlin List<T> is read-only view, not necessarily immutable.
+```
+
+So this is acceptable:
+
+```kotlin
+fun <T> listOf(vararg xs: T): List<T>
+```
+
+emits a `System.Collections.Generic.List<T>` instance returned as `IReadOnlyList<T>`.
+
+Recommended bindings:
+
+```text
+Iterable<out T>      -> IEnumerable<T>
+Collection<out T>    -> IReadOnlyCollection<T>
+List<out T>          -> IReadOnlyList<T>
+MutableIterable<T>   -> IEnumerable<T> plus Kotlin mutation members where needed
+MutableCollection<T> -> ICollection<T>
+MutableList<T>       -> IList<T>
+Set<out T>           -> IReadOnlySet<T> if targeting modern .NET, otherwise IReadOnlyCollection<T>
+MutableSet<T>        -> ISet<T>
+Map<out K, out V>    -> IReadOnlyDictionary<K,V>
+MutableMap<K,V>      -> IDictionary<K,V>
+```
+
+For `List.get(index)` bind to:
+
+```text
+IReadOnlyList<T>.get_Item(int)
+```
+
+For `size` bind to:
+
+```text
+IReadOnlyCollection<T>.Count
+```
+
+For `MutableList.add`, `removeAt`, `set`, bind to `IList<T>` members.
+
+Variance:
+
+```text
+Kotlin List<out E>        -> IReadOnlyList<E>
+Kotlin Collection<out E>  -> IReadOnlyCollection<E>
+Kotlin Iterable<out E>    -> IEnumerable<E>
+```
+
+This matches CLR covariance because these BCL interfaces are covariant in `out T`.
+
+For mutable collections:
+
+```text
+MutableList<E> -> IList<E>
+MutableCollection<E> -> ICollection<E>
+MutableSet<E> -> ISet<E>
+```
+
+These must be invariant. Do not try to preserve Kotlin-style variance on mutable BCL interfaces.
+
+**Backend Rules To Implement**
+
+Use three distinct mechanisms:
+
+```text
+1. CLR-bound type identity
+   kotlin.collections.Iterable<T> is emitted/referenced as IEnumerable<T>.
+
+2. Special for-loop lowering
+   BCL-bound Iterable<T> uses GetEnumerator / MoveNext / Current directly.
+
+3. Semantic adapters
+   Explicit iterator() calls use KotlinIteratorOverEnumerator<T>.
+   Kotlin Iterable implementors get generated GetEnumerator methods using EnumeratorOverKotlinIterator<T>.
+```
+
+The key rule is: **do not bind Kotlin `Iterator<T>` to CLR `IEnumerator<T>` directly**. Bind `Iterable<T>` to `IEnumerable<T>`, then bridge the iterator semantic mismatch at the two protocol boundaries.
+6,166
+Yes: make the bridge a compiler feature, not a library trick. Treat Kotlin collection interfaces annotated with `@Clr` as having **CLR surface identity**, but preserve Kotlin semantics through targeted lowerings and generated adapters.
+Yes: make the bridge a compiler feature, not a library trick. Treat Kotlin collection interfaces annotated with `@Clr` as having **CLR surface identity**, but preserve Kotlin semantics through targeted lowerings and generated adapters.
+
+**Opinionated Design**
+
+1. **For-Loops**
+
+Lower `for (x in xs)` directly to the BCL foreach pattern when the iterated type is CLR-bound to `IEnumerable<T>` or compatible:
+
+```kotlin
+for (x in xs) body
+```
+
+becomes approximately:
+
+```cil
+var e = xs.GetEnumerator()
+try {
+    while (e.MoveNext()) {
+        var x = e.Current
+        body
+    }
+}
+finally {
+    (e as IDisposable)?.Dispose()
+}
+```
+
+This is clean and desirable.
+
+Do not lower BCL-bound `Iterable<T>` loops through Kotlin `Iterator<T>`. That would allocate an adapter and obscure the native CLR shape.
+
+Compiler rule:
+
+```text
+if expression type is @Clr-bound Iterable<T> / IEnumerable<T>:
+    emit GetEnumerator / MoveNext / Current
+else:
+    emit Kotlin iterator / hasNext / next protocol
+```
+
+You may also support pattern-based enumeration later, but first bind to known BCL collection interfaces.
+
+2. **Explicit Kotlin Iterator Use**
+
+For explicit calls:
+
+```kotlin
+val it = xs.iterator()
+it.hasNext()
+it.next()
+```
+
+you need a real Kotlin `Iterator<T>` view.
+
+Provide this in the Kotlin stdlib as normal Kotlin code:
+
+```kotlin
+package kotlin.collections
+
+internal class KotlinIteratorOverEnumerator<T>(
+    private val e: System.Collections.Generic.IEnumerator<T>
+) : Iterator<T> {
+    private var state: Int = 0
+    // 0 = unknown, 1 = has current buffered, 2 = done
+
+    override fun hasNext(): Boolean {
+        if (state == 1) return true
+        if (state == 2) return false
+
+        return if (e.MoveNext()) {
+            state = 1
+            true
+        } else {
+            state = 2
+            false
+        }
+    }
+
+    override fun next(): T {
+        if (!hasNext()) throw NoSuchElementException()
+        state = 0
+        return e.Current
+    }
+}
+```
+
+Then define the Kotlin-level adapter:
+
+```kotlin
+@PublishedApi
+internal fun <T> iteratorOverEnumerable(
+    self: System.Collections.Generic.IEnumerable<T>
+): Iterator<T> =
+    KotlinIteratorOverEnumerator(self.GetEnumerator())
+```
+
+For `Iterable<T>.iterator()` on the CLR-bound stdlib declaration, do **not** bind it directly to `GetEnumerator`, because the return type and semantics differ.
+
+Instead:
+
+```kotlin
+@Clr("System.Collections.Generic.IEnumerable`1")
+interface Iterable<out T> {
+    fun iterator(): Iterator<T> =
+        iteratorOverEnumerable(this)
+}
+```
+
+Backend behavior:
+
+```text
+Iterable<T>.iterator() has a Kotlin body
+=> hoist to static helper
+=> call helper with receiver as __self
+```
+
+That matches your existing model perfectly.
+
+Important: `hasNext()` must buffer by calling `MoveNext()` at most once per element. `next()` must consume the buffered state and return `Current`.
+
+Also implement disposal if useful:
+
+```kotlin
+if (!hasNext()) {
+    (e as? System.IDisposable)?.Dispose()
+}
+```
+
+But be careful: Kotlin `Iterator` has no close/dispose protocol, so disposal is best-effort only. Compiler-lowered `for` should always dispose.
+
+3. **Kotlin Classes Implementing Iterable / Iterator**
+
+Separate two cases.
+
+**A Kotlin class implements `Iterable<T>`**
+
+Example:
+
+```kotlin
+class MyRange : Iterable<Int> {
+    override fun iterator(): Iterator<Int> = ...
+}
+```
+
+Because `kotlin.collections.Iterable<T>` is CLR-bound to `IEnumerable<T>`, the emitted class must implement:
+
+```csharp
+System.Collections.Generic.IEnumerable<T>
+System.Collections.IEnumerable
+```
+
+Generate methods:
+
+```kotlin
+public fun GetEnumerator(): System.Collections.Generic.IEnumerator<T> =
+    EnumeratorOverKotlinIterator(this.iterator())
+
+public fun System.Collections.IEnumerable.GetEnumerator(): System.Collections.IEnumerator =
+    this.GetEnumerator()
+```
+
+Adapter:
+
+```kotlin
+internal class EnumeratorOverKotlinIterator<T>(
+    private val it: Iterator<T>
+) : System.Collections.Generic.IEnumerator<T> {
+    private var currentValue: T = defaultValue()
+
+    override fun MoveNext(): Boolean {
+        if (!it.hasNext()) return false
+        currentValue = it.next()
+        return true
+    }
+
+    override val Current: T
+        get() = currentValue
+
+    override fun Reset() {
+        throw System.NotSupportedException()
+    }
+
+    override fun Dispose() {}
+}
+```
+
+For non-nullable/value types, `defaultValue()` needs backend support or a generated backing field initialized to CLR default.
+
+**A Kotlin class implements `Iterator<T>`**
+
+Do **not** make every Kotlin `Iterator<T>` directly implement `IEnumerator<T>` unless `Iterator` itself is CLR-bound to `IEnumerator<T>`, which I would avoid.
+
+Reason: the semantics are not isomorphic. Kotlin `Iterator.next()` advances; CLR `IEnumerator.Current` does not. Binding `Iterator` directly to `IEnumerator` will make normal calls ambiguous and bug-prone.
+
+Instead:
+
+```text
+Kotlin Iterator<T> remains a Kotlin interface.
+Iterable<T> is CLR-bound to IEnumerable<T>.
+The compiler generates IEnumerator adapters where CLR requires them.
+```
+
+If a Kotlin type explicitly needs to be passed as `IEnumerator<T>`, require/generated adapter:
+
+```kotlin
+asClrEnumerator(kotlinIterator)
+```
+
+or compiler-inserted conversion only at known CLR interop boundaries.
+
+4. **Concrete Collection Factories**
+
+Yes: return real BCL collections.
+
+Use:
+
+```text
+listOf<T>()              -> System.Array.Empty<T>() or cached empty IReadOnlyList<T>
+listOf<T>(one)           -> small immutable list if you have one, otherwise List<T>
+listOf<T>(vararg items)  -> System.Collections.Generic.List<T>
+mutableListOf<T>()       -> System.Collections.Generic.List<T>
+arrayListOf<T>()         -> System.Collections.Generic.List<T>
+setOf<T>()               -> HashSet<T> or read-only wrapper, depending on immutability policy
+mutableSetOf<T>()        -> HashSet<T>
+mapOf<K,V>()             -> Dictionary<K,V> or read-only wrapper
+mutableMapOf<K,V>()      -> Dictionary<K,V>
+```
+
+But be precise about Kotlin read-only vs immutable:
+
+```text
+Kotlin List<T> is read-only view, not necessarily immutable.
+```
+
+So this is acceptable:
+
+```kotlin
+fun <T> listOf(vararg xs: T): List<T>
+```
+
+emits a `System.Collections.Generic.List<T>` instance returned as `IReadOnlyList<T>`.
+
+Recommended bindings:
+
+```text
+Iterable<out T>      -> IEnumerable<T>
+Collection<out T>    -> IReadOnlyCollection<T>
+List<out T>          -> IReadOnlyList<T>
+MutableIterable<T>   -> IEnumerable<T> plus Kotlin mutation members where needed
+MutableCollection<T> -> ICollection<T>
+MutableList<T>       -> IList<T>
+Set<out T>           -> IReadOnlySet<T> if targeting modern .NET, otherwise IReadOnlyCollection<T>
+MutableSet<T>        -> ISet<T>
+Map<out K, out V>    -> IReadOnlyDictionary<K,V>
+MutableMap<K,V>      -> IDictionary<K,V>
+```
+
+For `List.get(index)` bind to:
+
+```text
+IReadOnlyList<T>.get_Item(int)
+```
+
+For `size` bind to:
+
+```text
+IReadOnlyCollection<T>.Count
+```
+
+For `MutableList.add`, `removeAt`, `set`, bind to `IList<T>` members.
+
+Variance:
+
+```text
+Kotlin List<out E>        -> IReadOnlyList<E>
+Kotlin Collection<out E>  -> IReadOnlyCollection<E>
+Kotlin Iterable<out E>    -> IEnumerable<E>
+```
+
+This matches CLR covariance because these BCL interfaces are covariant in `out T`.
+
+For mutable collections:
+
+```text
+MutableList<E> -> IList<E>
+MutableCollection<E> -> ICollection<E>
+MutableSet<E> -> ISet<E>
+```
+
+These must be invariant. Do not try to preserve Kotlin-style variance on mutable BCL interfaces.
+
+**Backend Rules To Implement**
+
+Use three distinct mechanisms:
+
+```text
+1. CLR-bound type identity
+   kotlin.collections.Iterable<T> is emitted/referenced as IEnumerable<T>.
+
+2. Special for-loop lowering
+   BCL-bound Iterable<T> uses GetEnumerator / MoveNext / Current directly.
+
+3. Semantic adapters
+   Explicit iterator() calls use KotlinIteratorOverEnumerator<T>.
+   Kotlin Iterable implementors get generated GetEnumerator methods using EnumeratorOverKotlinIterator<T>.
+```
+
+The key rule is: **do not bind Kotlin `Iterator<T>` to CLR `IEnumerator<T>` directly**. Bind `Iterable<T>` to `IEnumerable<T>`, then bridge the iterator semantic mismatch at the two protocol boundaries.
