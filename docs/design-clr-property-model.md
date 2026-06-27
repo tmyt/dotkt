@@ -1,19 +1,27 @@
 # CLR property model — emit every Kotlin property as a CLR property
 
-Status: **design locked** (design owner, 2026-06-28). Implementation pending (broad-impact; phase it).
+Status: **design locked** (design owner, 2026-06-28). **Phases 1–5 implemented & verified** (2026-06-28).
 
 ## Decision
 
 1. **Every Kotlin property is emitted as a REAL CLR property** — `PropertyBuilder` (`DefineProperty` +
-   `SetGetMethod`/`SetSetMethod`) over `T get_p()` / `void set_p(T)` accessors, with a **private backing field**. So a
-   Kotlin `val`/`var` is seen as a *property* by C#/F#/reflection — the interop-correct shape. (Today it's a plain public
-   field — a deviation; see [dotkt-semantics.md](dotkt-semantics.md).)
+   `SetGetMethod`/`SetSetMethod`) over `T get_p()` / `void set_p(T)` accessors, with an **`internal`
+   (assembly-visible) backing field**. So a Kotlin `val`/`var` is seen as a *property* by a cross-assembly C#/F#/
+   reflection consumer (the backing field is invisible across the assembly boundary) — the interop-correct shape.
+   (Pre-model behavior: a plain public field — a deviation; see [dotkt-semantics.md](dotkt-semantics.md).)
+   NOTE on visibility: the field is `internal`, NOT strictly `private`. `private` would be invisible to cross-assembly
+   consumers too, but ECMA-335 scopes `private` to the *declaring type* — so a `byref(otherObj.prop)` from another
+   in-module type (Decision 3) could not `ldflda` it. `internal` (`FieldAttributes.Assembly`) is the minimal visibility
+   satisfying BOTH goals: invisible across the assembly boundary (interop), reachable across types in-module (byref).
 2. **Emitting a property as a plain FIELD is OPT-IN via `@ClrField`.** `@ClrField val p` -> a public CLR field `p`, no
-   accessors/property (the current default behavior, now opt-in). For perf-critical / layout-sensitive interop.
-3. **A `byref` (ref/out interop — `__clrref` / `__clrout`, [[interop-surface-complete]]) to a property WITHIN the current
-   source set lowers to IL-level BACKING-FIELD access** (`ldflda <backing>`), since the backing field is reachable
-   in-module. A byref to a *cross-assembly* property is NOT supported (the backing field is private; an accessor returns
-   a value you cannot take the address of) — diagnose it.
+   accessors/property (the pre-model default, now opt-in). For perf-critical / layout-sensitive interop. The annotation
+   is `clr.ClrField` (facadegen-generated, joining `clr.Clr`); kotc recognizes it by short name so any `ClrField`
+   annotation works.
+3. **A `byref(obj.prop)` (the unified ref/out interop intrinsic — `__clrref`/`__clrout` were merged into one `byref`,
+   [[interop-surface-complete]]) of a property WITHIN the current source set lowers to IL-level BACKING-FIELD access**
+   (`ldflda <internal backing>`), reachable in-module. A byref to a *cross-assembly* property is NOT supported (the
+   backing field is `internal`, invisible across the boundary; an accessor returns a value you cannot take the address
+   of). `byref` of a `@ClrField` property addresses its plain public field directly.
 
 ## Current state (what must change)
 
@@ -47,10 +55,22 @@ For `class C { val p: T ; var q: U }` (no `@ClrField`):
 3. **Access-site routing (the broad, risky step).** A property read/write -> accessor call (`clrPropGet`/`clrPropSet`)
    instead of `{"k":"field"}`. Touches every property access in every program — run m0 / verify-native-cir-ilemit /
    verify-roundtrip / verify-il. (Within the owner, a self read MAY stay backing-field for perf — optional.)
-4. **`@ClrField` annotation.** New `kotlin`-package annotation (or `@Clr`-family). When present, property emits as the
-   plain field (phase-0 behavior). Round-trips via metadata so a consumer also sees a field.
-5. **byref lowering.** `__clrref`/`__clrout` of an own-source-set property -> `ldflda <backing>` (the BIR already has a
-   byref family; point it at the backing field for in-module properties). Diagnose cross-assembly byref-of-property.
+4. **`@ClrField` annotation.** ✅ DONE — `clr.ClrField` (facadegen `clr/_Clr.kt`, `@Clr`-family). `isClrField(p)` (short
+   name) excludes the property from accessor/property emission (`emitsGet`/`emitsSet`) AND from the access-site routing,
+   and keeps the backing field at the property's own (public) visibility — i.e. the pre-model plain-field shape.
+5. **byref lowering.** ✅ DONE — `byrefBackingField(inner)` recognizes a `byref(...)` whose target is an own-source-set
+   property read and emits its backing-`{"k":"field"}` node, so ilemit `EmitAddr` `ldflda`s the `internal` backing field
+   (`Program.cs` EmitAddr `case "field"`). Falls back to `expr(inner)` (and thus the copy-to-temp path) for a
+   non-property / .NET / computed / delegated / lateinit target; a `@ClrField` target naturally routes to its plain field.
+
+## Implemented & verified (2026-06-28)
+
+- ilemit `PropertyBuilder` (`DefineProperty` + `SetGetMethod`/`SetSetMethod`); kotc emits a `properties` list + routes
+  every non-`@ClrField`/const/lateinit/delegated property through `get_`/`set_`, backing field `internal`.
+- Verified: `il-outref` (behavioral — `byref(a.quo)` writes through the internal backing field; ref-swap between a
+  property-backed field and a `@ClrField` field); a `MetadataLoadContext` reflection probe over the emitted `Acc`
+  (structural — `quo` = CLR property + `internal` field, `raw`(`@ClrField`) = public field, no property);
+  `verify-native-cir-ilemit`, `verify-roundtrip` (roundtrip-pkg properties), `m0`.
 
 ## Risks
 

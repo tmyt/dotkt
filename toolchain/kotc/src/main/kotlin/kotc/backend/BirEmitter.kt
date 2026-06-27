@@ -807,6 +807,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun isCustomAccessor(acc: IrSimpleFunction?): Boolean =
 		acc != null && acc.origin.toString() == "DEFINED" && acc.body != null && acc.overriddenSymbols.isEmpty()
 	internal fun hasCustomAccessor(prop: IrProperty): Boolean = isCustomAccessor(prop.getter) || isCustomAccessor(prop.setter)
+	
+	/** `@ClrField` opt-out: emit this property as a plain (public) CLR FIELD, no accessor/property. Detected by short
+	 *  name so the facadegen-generated `clr.ClrField` — or any user-declared `ClrField` — annotation triggers it. */
+	internal fun isClrField(p: IrProperty): Boolean =
+		p.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrField" }
 
 	/** Emit a custom property accessor as a `get_<prop>`/`set_<prop>` method (the `field` identifier -> the backing field). */
 	/** True if [t]'s class transitively extends kotlin.Throwable / a .NET-mapped exception (so `.message`/`.cause` on
@@ -912,10 +917,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val bf = p.backingField ?: return@mapNotNull null
 			// Honor the property's visibility on its backing field (A-108): a `private`/`internal`/`protected`
 			// property gets a non-public field. (Kotlin's own access rules already keep same-class field reads valid.)
-			// An accessor-routed property's backing field is PRIVATE — access goes through get_/set_ (CLR property model).
-			// Only @ClrField (future) / const / lateinit / delegated keep the property's own field visibility.
-			val routed = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated
-			val v = if (routed) "private" else visOf(p); val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
+			// An accessor-routed property's backing field is INTERNAL (assembly-visible): access goes through get_/set_
+			// (CLR property model), yet it stays reachable IN-MODULE so a `byref(obj.prop)` can ldflda it (Phase 5) while a
+			// cross-assembly consumer sees only the property. Only @ClrField / const / lateinit / delegated keep a plain field.
+			val routed = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
+			val v = if (routed) "internal" else visOf(p); val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
 			// A property that isn't publicly SETTABLE (`val`, or `var ... private/protected set`) -> mark the public
 			// backing field read-only so a consuming Kotlin module restores it as `val` (rejecting external writes).
 			val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public"))) ""","readOnly":true""" else ""
@@ -963,8 +969,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// METHOD to bind the interface slot (property-accessor analog of the method-side overridesIface fix; e.g.
 		// ComparableRange.start over ClosedRange.start). See design-clr-property-model.md.
 		fun ovIface(a: IrSimpleFunction) = a.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
-		fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated
-		fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !p.isDelegated
+		fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
+		fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
 		val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 			listOfNotNull(
 				p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
@@ -3437,7 +3443,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A property with a custom accessor — OR one overriding a .NET/synthetic-mapped iface property (e.g.
 			// CharSequence.length -> get_length) — routes through the get_/set_ method, not the backing field.
 			val ifaceAcc = clrIfaceMemberName(callee)
-			if (!property.isLateinit) {   // every property routes through its get_/set_ accessor (CLR property model)
+			if (!property.isLateinit && !isClrField(property)) {   // route through get_/set_ accessor (CLR property model); @ClrField reads/writes the plain field
 				val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
 				// A MEMBER extension property (`class C { val T.p get() }`): dispatch on the enclosing C, but its `get_p`/
 				// `set_p` method takes the extension receiver as a leading `__self` arg -> prepend it.
@@ -3821,6 +3827,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** The `byref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. */
 	internal fun byrefMarker(a: IrExpression): IrExpression? =
 		if (a is IrCall && a.symbol.owner.name.asString() == "byref") regularArgs(a).firstOrNull() else null
+	
+	/** A `byref(...)` target that is an own-source-set property read -> its BACKING-FIELD node, so ilemit takes the
+	 *  field address (`ldflda <backing>`) instead of addressing an accessor's return value (Phase 5). The field is
+	 *  INTERNAL, hence reachable across types in-module. Null for a non-property, a .NET/injected property, or a
+	 *  computed/delegated/lateinit/@ClrField property (no plain in-module backing field to address). */
+	internal fun byrefBackingField(inner: IrExpression): String? {
+		val call = inner as? IrCall ?: return null
+		val callee = call.symbol.owner
+		val prop = callee.correspondingPropertySymbol?.owner ?: return null
+		if (callee !== prop.getter) return null
+		val cls = callee.parent as? IrClass ?: return null
+		if (clrName(cls) != null) return null
+		if (prop.backingField == null || prop.isDelegated || prop.isLateinit || isClrField(prop)) return null
+		val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
+		val owner = str(ownerSpec(cls, dispatchReceiver(call)?.type))
+		return """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(prop.name.asString())}}"""
+	}
 
 	/** (argsJson, argTypesJson) for an injected .NET call. A `ClrRef<T>` param already maps to `byref:T` via netType
 	 *  (so the out/ref overload resolves + optional params still default-fill); a `byref(x)` arg unwraps to its lvalue
@@ -3828,7 +3851,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
 		val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
 		val tj = params.map { str(netType(it.type)) }
-		val aj = regularArgs(call).map { val inner = byrefMarker(it); if (inner != null) expr(inner) else expr(it) }
+		val aj = regularArgs(call).map { val inner = byrefMarker(it); if (inner != null) (byrefBackingField(inner) ?: expr(inner)) else expr(it) }
 		return aj.joinToString(",") to tj.joinToString(",")
 	}
 

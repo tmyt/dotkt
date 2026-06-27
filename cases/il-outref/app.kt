@@ -4,6 +4,17 @@
 // (a `ref T` local, getValue/setValue inline to ldobj/stobj) so writes flow back into the .NET storage. (#52)
 import P.Calc
 
+// CLR property model — Phase 5: `byref(obj.prop)` of an own-source-set property addresses its INTERNAL backing
+// field (ldflda), so a .NET out/ref param writes back THROUGH the property. `@ClrField` opts a property out to a
+// plain public field; byref of it addresses that field. Both are exercised below. (`ClrField` is recognized by
+// short name — the real one is the facadegen-generated `clr.ClrField`; declared here so the sample is standalone.)
+annotation class ClrField
+
+class Acc {
+    var quo: Int = -1           // default -> CLR property (private-to-consumers, internal backing field; byref-able in-module)
+    @ClrField var raw: Int = 7  // opt-in plain public CLR field
+}
+
 fun main() {
     val c = Calc()
     var q = -1
@@ -24,4 +35,10 @@ fun main() {
     println(slot)                                // 20
     slot = 99                                    // write through the ref
     println(c.Slot(0) + c.Slot(1))               // 10 + 99 = 109
+
+    val a = Acc()
+    c.TryDivide(20, 4, byref(a.quo))             // out -> writes a.quo=5 via ldflda of its backing field
+    println(a.quo)                               // 5
+    c.Swap(byref(a.quo), byref(a.raw))           // ref-swap a property-backed field with a @ClrField field
+    println("${a.quo} ${a.raw}")                 // 7 5
 }

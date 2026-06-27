@@ -51,7 +51,11 @@ static class FacadeGen
         File.WriteAllText(Path.Combine(clrDir, "_Clr.kt"),
             "package clr\n\n" +
             "@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)\n" +
-            "annotation class Clr(val name: String)\n");
+            "annotation class Clr(val name: String)\n\n" +
+            // @ClrField opts a property OUT of the CLR-property model: emit it as a plain (public) CLR field, no
+            // accessor/property. For perf-/layout-sensitive interop. Default (unmarked) is a real CLR property.
+            "@Target(AnnotationTarget.PROPERTY)\n" +
+            "annotation class ClrField\n");
 
         foreach (var typeName in args.Skip(1))
         {
