@@ -701,23 +701,19 @@ sealed partial class Emitter
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
         if (m.TryGetProperty("suspend", out var su) && su.GetBoolean())
         {
-            // DOTKT_STDLIB_COMPILE: a suspend method whose lowered body uses a coroutine feature the backend does not
-            // yet support is emitted as a throwing stub, so the assembly still emits (the "= TODO()" stdlib goal:
-            // calling it throws). TWO cases, both the deferred control-flow-in-coroutine -> CIR refactor:
-            //   * the sequence-builder `coYieldAll` machinery;
-            //   * a STRUCTURED break/continue inside a suspend-containing while loop — kotc keeps control flow FIR-like
-            //     (structured) in BIR and the CFG lowering belongs in CIR, but the coroutine emitter can't resolve a
-            //     structured break/continue against its co-labels yet.
-            if (StdlibStub)
-            {
-                var raw = m.GetRawText();
-                if (raw.Contains("coYieldAll")) { EmitThrowStub(mb, "coYieldAll"); return; }
-                if (raw.Contains("\"break\"") || raw.Contains("\"continue\"")) { EmitThrowStub(mb, "coroutine break/continue"); return; }
-            }
+            // DOTKT_STDLIB_COMPILE: the CLR coroutine BRIDGE (TypedCont / Builders / COROUTINE_SUSPENDED, etc.) is not
+            // yet ported into the stdlib — the port is planned (docs/coroutine-stdlib-port-plan.md) but PENDING. So a
+            // suspend fun is emitted as a throwing-stub IL: it depends only on the stdlib and throws when called. This
+            // keeps the stdlib assembly emitting so the (non-coroutine) load problems can be worked on. Replace with the
+            // real state machine at port time (the seam is the `Co*` consts + EmitCoroutine).
+            if (StdlibStub) { EmitThrowStub(mb, "suspend (coroutine port pending)"); return; }
             if (m.TryGetProperty("coClass", out var cc) && cc.GetBoolean()) EmitCoroutineClass(ti, mb, m);
             else EmitCoroutine(ti, mb, m);
             return;
         }
+        // A non-suspend method that builds a `sequence { }` (`sequenceNew` -> the restricted-suspension SM binding
+        // Seq/ISeqStep, also part of the pending coroutine port) -> the same throwing stub under stdlib-compile.
+        if (StdlibStub && m.GetRawText().Contains("sequenceNew")) { EmitThrowStub(mb, "sequence builder (coroutine port pending)"); return; }
         BeginMethod(mb.GetILGenerator(), m, isStatic: mb.IsStatic);
         PrescanCfgLabels(m.GetProperty("body"));
         foreach (var s in m.GetProperty("body").EnumerateArray()) EmitStmt(s);

@@ -3489,7 +3489,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (name == "toRegex") extensionReceiver(call)?.let { p ->
 				return """{"k":"clrNew","type":${str(RX)},"argTypes":["System.String"],"args":[${expr(p)}]}"""
 			}
-			if ((name == "containsMatchIn" || name == "replace" || name == "matches" || name == "find") &&
+			if (!stdlibCompile && (name == "containsMatchIn" || name == "replace" || name == "matches" || name == "find") &&
 				dispatchReceiver(call)?.type?.classFqName?.asString() == "kotlin.text.Regex") {
 				val r = dispatchReceiver(call)!!; val a = regularArgs(call)
 				return when (name) {
