@@ -2,6 +2,8 @@
 
 This is the target split for the Kotlin/CLR backend.
 
+For resume-oriented operational notes, see [bir2cir-handoff.md](bir2cir-handoff.md).
+
 ## Layer Contract
 
 - **FIR -> BIR** preserves Kotlin semantic structure and metadata. It should not decide CLR projection, inline bodies, suspend state machines, or physical CLR member references.
