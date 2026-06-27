@@ -595,6 +595,59 @@ fi
 
 echo "PASS  native CIR bridge lowers physical primitive-array operations"
 
+NEWARRAY="$OUT/newarray"
+mkdir -p "$NEWARRAY/cir" "$NEWARRAY/il"
+cat > "$NEWARRAY/NewArrayApp.bir.json" <<'EOF'
+{
+  "fileClass": "NewArrayAppKt",
+  "hasMain": true,
+  "fields": [],
+  "methods": [
+    {
+      "name": "main",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "objectOverride": false,
+      "vis": "public",
+      "params": [],
+      "ret": "void",
+      "body": [
+        {"k":"var","name":"os","type":"array:object","init":{"k":"newArray","elem":"object","elems":[{"k":"const","type":"int","value":7},{"k":"const","type":"string","value":"x"}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"arrayGet","array":{"k":"local","name":"os"},"index":{"k":"const","type":"int","value":0},"elem":"object"}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"arrayGet","array":{"k":"local","name":"os"},"index":{"k":"const","type":"int","value":1},"elem":"object"}]}},
+        {"k":"var","name":"ns","type":"array:int","init":{"k":"newArray","elem":"int","elems":[{"k":"const","type":"int","value":5},{"k":"const","type":"int","value":6}]}},
+        {"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"arrayLen","array":{"k":"local","name":"ns"}}]}}
+      ],
+      "attrs": []
+    }
+  ],
+  "types": []
+}
+EOF
+
+dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$NEWARRAY/cir" --native-cir "$NEWARRAY/NewArrayApp.bir.json" >/dev/null
+NEWARRAY_CIR="$NEWARRAY/cir/NewArrayApp.cir.json"
+
+for pattern in '"k": "clr.newarr"' '"sourceKind": "newArray"'; do
+    if ! rg -q "$pattern" "$NEWARRAY_CIR"; then
+        echo "FAIL  newArray native CIR missing $pattern" >&2
+        exit 1
+    fi
+done
+
+dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$NEWARRAY/il" NewArrayNativeApp "$NEWARRAY_CIR" >/dev/null
+NEWARRAY_RUN_OUT="$(dotnet "$NEWARRAY/il/NewArrayNativeApp.dll")"
+NEWARRAY_EXPECTED=$'7\nx\n2'
+if [[ "$NEWARRAY_RUN_OUT" != "$NEWARRAY_EXPECTED" ]]; then
+    echo "FAIL  native CIR newArray output mismatch" >&2
+    printf 'expected:\n%s\nactual:\n%s\n' "$NEWARRAY_EXPECTED" "$NEWARRAY_RUN_OUT" >&2
+    exit 1
+fi
+
+echo "PASS  native CIR bridge lowers array construction (incl. object[] boxing)"
+
 WRAP="$OUT/wrapper"
 WRAP_OUT="$("$ROOT/scripts/dotkt.sh" --native-cir --no-stdlib --run -d "$WRAP" "$ROOT/cases/m0/M0.kt")"
 WRAP_EXPECTED="$(printf 'emitted M0Kt.dll\ndotkt: built %s/M0Kt.dll\n----\nsum = 5\nzero\nn=1\nn=2' "$WRAP")"

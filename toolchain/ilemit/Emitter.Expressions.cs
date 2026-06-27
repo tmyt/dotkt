@@ -248,6 +248,7 @@ sealed partial class Emitter
                 return mi.ReturnType;
             }
             case "newArray": return EmitNewArray(e);
+            case "clr.newarr": return EmitNewArray(e);
             case "nullableOf":
             {
                 // value `v` -> `new Nullable<elem>(v)` (the implicit T -> T? wrap).

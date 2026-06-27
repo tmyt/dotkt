@@ -1346,13 +1346,16 @@ static class ExecutableCirDraft
             "arrayGet" => "clr.ldelem",
             "arraySet" => "clr.stelem",
             "arrayLen" => "clr.ldlen",
+            "newArray" => "clr.newarr",
             _ => null,
         };
         if (nativeKind == null) return false;
 
-        // Primitive-array physical ops (ldelem/stelem/ldlen). The element type travels on the node and is
-        // routed through LowerTypeOrNode so reference element types still resolve; the array/index/value
-        // children recurse like any other expression. The value->object boxing concern is newArray-only.
+        // Primitive-array physical ops (ldelem/stelem/ldlen) and array construction (newarr). The element
+        // type travels on the node and is routed through LowerTypeOrNode so reference element types still
+        // resolve; the array/index/value/elems children recurse like any other expression. newArray's
+        // value->object boxing (NeedsBoxToRef for object[] packs) stays in the ilemit consumer, so the
+        // clr.newarr node remains a pure (elem, elems) construction.
         var native = new JsonObject
         {
             ["k"] = nativeKind,
@@ -1367,6 +1370,8 @@ static class ExecutableCirDraft
             native["value"] = LowerTypeOrNode(value, path + ".value", resolvedCalls, resolvedTypes, refs);
         if (obj["elem"] is JsonNode elem)
             native["elem"] = LowerTypeOrNode(elem, path + ".elem", resolvedCalls, resolvedTypes, refs);
+        if (obj["elems"] is JsonNode elems)
+            native["elems"] = LowerTypeOrNode(elems, path + ".elems", resolvedCalls, resolvedTypes, refs);
         lowered = native;
         return true;
     }
