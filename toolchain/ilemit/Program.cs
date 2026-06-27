@@ -914,8 +914,26 @@ sealed partial class Emitter
         var (open, constructed) = ParseOwner(spec);
         var mb = FindMethod(open, name, sig);
         if (constructed == null) { retType = mb.ReturnType; return mb; }
+        // The owner constructed with its OWN class type parameters (`RingBuffer<T>` referenced from inside
+        // RingBuffer<T>) is the self instantiation — identical to the open type in IL. Use the open MethodBuilder: a
+        // TypeBuilder.GetMethod instantiation is a MethodBuilderInstantiation that cannot be MakeGenericMethod'd, so a
+        // generic-method call on such an owner (`this.toArray<object>()`) would otherwise throw.
+        if (IsSelfInstantiation(constructed)) { retType = mb.ReturnType; return mb; }
         retType = Subst(mb.ReturnType, constructed.GetGenericArguments());
         return TypeBuilder.GetMethod(constructed, mb);
+    }
+
+    // True when `constructed` is a generic type instantiated with exactly its own open definition's type parameters
+    // (in order) — i.e. `C<T0,T1,…>` referenced from within C, which is the same as the open type in emitted IL.
+    static bool IsSelfInstantiation(Type constructed)
+    {
+        if (!constructed.IsGenericType || constructed.IsGenericTypeDefinition) return false;
+        if (constructed.GetGenericTypeDefinition() is not TypeBuilder def) return false;
+        var args = constructed.GetGenericArguments();
+        var pars = def.GetGenericArguments();
+        if (args.Length != pars.Length) return false;
+        for (int i = 0; i < args.Length; i++) if (!ReferenceEquals(args[i], pars[i])) return false;
+        return true;
     }
 
     // A BCL constructed generic (List<T>, HashSet<T>, Dictionary<K,V>) whose type argument is an EMITTED type
@@ -1127,7 +1145,14 @@ sealed partial class Emitter
     {
         if (t is TypeBuilder || t is GenericTypeParameterBuilder) return true;
         if (t.HasElementType) return ContainsTypeBuilder(t.GetElementType());
-        if (t.IsGenericType) foreach (var a in t.GetGenericArguments()) if (ContainsTypeBuilder(a)) return true;
+        if (t.IsGenericType)
+        {
+            // A CONSTRUCTED generic whose open definition is a TypeBuilder (e.g. `Iterator<int>` while Iterator is being
+            // emitted) is a TypeBuilderInstantiation: resolving its members needs TypeBuilder.GetX, yet it is not itself
+            // `is TypeBuilder`. Detect it via its definition (catches e.g. `Func<Iterator<int>>` through recursion).
+            if (t.GetGenericTypeDefinition() is TypeBuilder) return true;
+            foreach (var a in t.GetGenericArguments()) if (ContainsTypeBuilder(a)) return true;
+        }
         return false;
     }
     static bool IsTypeBuilderBackedGeneric(Type t) =>
