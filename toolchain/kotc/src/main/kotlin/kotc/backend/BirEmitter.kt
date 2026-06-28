@@ -2792,6 +2792,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * canonical token; everything else is the .NET simple name (`Object`, `Int64`, ...).
 	 */
 	/** A parameter shape matching ilemit's `Shape()` (for resolving a generic .NET overload by name+arity+shapes). */
+	// Receiver discriminator matching ClrTypeInjection's (simple type name; kotlin.Array -> "array"). The registry keys
+	// a top-level fun's file class by this, so reversed/toList on Iterable resolves to _CollectionsKt (not _UArraysKt).
+	private fun discrimOfType(t: IrType): String? {
+		val fq = t.classFqName?.asString() ?: return null
+		return if (fq == "kotlin.Array") "array" else fq.substringAfterLast(".")
+	}
+
 	internal fun clrMethodShape(t: IrType): String {
 		if (t.classifierOrNull is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) return "gp"   // bare type param
 		if (isArrayType(t)) return "array"
@@ -3984,7 +3991,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// from a same-named local top-level fun. (A suspend top-level fun awaits via the coroutine path, not here.)
 		if (callee.body == null && dispatchReceiver(call) == null) {
 			val extRecv = extensionReceiver(call)
-			kotc.ClrTopLevelRegistry.lookup(callee.fqNameWhenAvailable?.asString())?.let { (fileClass, _) ->
+			// Discriminate by the callee's DECLARED extension-receiver type (Iterable<T>), NOT the call expression's type
+			// (List<Int>) -- the registry keys on the declared receiver (the meta __self).
+			val recvDisc = (callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver })?.type?.let { discrimOfType(it) }
+			kotc.ClrTopLevelRegistry.lookup(callee.fqNameWhenAvailable?.asString(), recvDisc)?.let { (fileClass, _) ->
 				// A cross-module `inline fun` taking a lambda (body==null here = injected stub) -> splice its carried
 				// [KotlinInline] body at this call site (the only way a non-local `return` through the lambda works).
 				if (callee.isInline && hasLambdaArg(call)) return inlineSpliceCall(call, fileClass)

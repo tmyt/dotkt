@@ -212,7 +212,13 @@ private object ClrMetadataHolder {
 		// Record each restored top-level function so the backend emits its call as a .NET static on the file class.
 		for (tl in topLevel) {
 			val fqn = if (tl.pkg.isRoot) tl.fn.name else "${tl.pkg.asString()}.${tl.fn.name}"
-			ClrTopLevelRegistry.register(fqn, tl.fileClassDotNet, tl.fn.suspend)
+			// Receiver discriminator (simple type name; arrays -> "array") so the backend picks the file class whose
+			// extension receiver matches the call's receiver (reversed lives in _CollectionsKt/_ArraysKt/_StringsKt...).
+			val recvDisc = if (tl.fn.ext && tl.fn.params.isNotEmpty()) {
+				val s = tl.fn.params[0].type.removePrefix("generic:")
+				if (s.startsWith("array:") || s.startsWith("vararg:")) "array" else s.substringBefore("[").substringAfterLast(".")
+			} else null
+			ClrTopLevelRegistry.register(fqn, tl.fileClassDotNet, recvDisc, tl.fn.suspend)
 		}
 		// Record each restored top-level extension property so the backend emits its get_/set_ as a .NET static call.
 		for (tp in topLevelProps) {

@@ -35,16 +35,22 @@ object ClrTypeRegistry {
  * The backend consults this in `call()` (and the suspend path) and emits `LibKt.greet(...)`.
  */
 object ClrTopLevelRegistry {
-	// key = the restored top-level function's FQN ("greet" in root, or "com.foo.greet")  ->  (.NET file class, suspend?)
-	private val funs = HashMap<String, Pair<String, Boolean>>()
+	// key = the restored top-level fun's FQN ("greet", "kotlin.collections.reversed")  ->  a LIST of (.NET file class,
+	// receiver discriminator, suspend?). A name like reversed/toList lives in MANY file classes (_CollectionsKt/_ArraysKt/
+	// _UArraysKt/_StringsKt) -> disambiguate the file class by the call's RECEIVER type (else the last-registered overload
+	// wins and ilemit's ResolveGenericMethod gets 0 candidates).
+	private val funs = HashMap<String, MutableList<Triple<String, String?, Boolean>>>()
 	// key = a restored top-level EXTENSION property's FQN  ->  .NET file class (its get_/set_<name> static accessors).
 	private val props = HashMap<String, String>()
 
-	fun register(fqn: String, fileClassDotNet: String, suspend: Boolean) { funs[fqn] = fileClassDotNet to suspend }
+	fun register(fqn: String, fileClassDotNet: String, recvDisc: String?, suspend: Boolean) { funs.getOrPut(fqn) { ArrayList() }.add(Triple(fileClassDotNet, recvDisc, suspend)) }
 	fun registerProp(fqn: String, fileClassDotNet: String) { props[fqn] = fileClassDotNet }
 
-	/** (.NET file class, isSuspend) for an injected top-level function FQN, or null if not one. */
-	fun lookup(fqn: String?): Pair<String, Boolean>? = fqn?.let { funs[it] }
+	/** (.NET file class, isSuspend) for an injected top-level fun FQN matching the receiver discriminator, or null. */
+	fun lookup(fqn: String?, recvDisc: String? = null): Pair<String, Boolean>? = fqn?.let { funs[it] }?.let { list ->
+		val e = list.firstOrNull { it.second == recvDisc } ?: list.firstOrNull { it.second == null } ?: list.first()
+		e.first to e.third
+	}
 	/** .NET file class for an injected top-level extension-property FQN (accessors are get_/set_<name>), or null. */
 	fun lookupProp(fqn: String?): String? = fqn?.let { props[it] }
 }
