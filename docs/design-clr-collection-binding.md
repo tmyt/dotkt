@@ -694,3 +694,25 @@ for-loop needs Iterable+List+listOf together):
 - `listOf`/`mutableListOf`/`emptyList` factories → create an @Clr List.
 Each rule-3-hoisted member needs a REAL Kotlin body (the current stubs are `TODO()`, which would throw). Iterate with
 `scripts/run-clr-sample.sh` once enough of the chain is in to make `for (x in listOf(1,2,3))` resolvable.
+
+## WIRING BLOCKER found (2026-06-28): expect/actual forces `iterator()` abstract
+
+Attempting the real-stdlib wiring (Iterable/Collection/List @Clr + `iterator()` default bridge + `Array.asList()` =
+`this as List`) hit a hard expect/actual constraint:
+- The common `expect interface Iterable { operator fun iterator() }` declares `iterator()` **abstract**. Giving the CLR
+  `actual` a DEFAULT BODY (the rule-3 bridge) fails: *"modality is different — expect abstract, actual open."*
+- Removing members the expect declares (the `iterator()`/`size`/etc. overrides on Collection/List) fails:
+  *"some expected members have no actual ones."* So the actual must keep every member, all abstract.
+
+=> The rule-3-hoist-of-`iterator()`-default-body approach (which worked in scratchpad with NON-expect interfaces) does
+NOT apply to the real stdlib collection interfaces. The bridge must instead be a **compiler lowering**: when `recv.iterator()`
+is called and `recv`'s static type is a BCL-bound (`@Clr`) `kotlin.collections.Iterable` subtype, kotc emits a call to the
+stdlib bridge `iteratorOverEnumerable(recv)` (a generic top-level fun in ClrIteratorBridge.kt) instead of routing to a
+non-existent BCL `iterator` member. (`for` desugars to `iterator()`/hasNext/next in FIR, and hasNext/next then run on the
+adapter — a real Kotlin Iterator — so only `iterator()` needs interception.)
+
+OPEN DESIGN POINT: this is a compiler-knows-a-stdlib-function coupling (like the existing array-iteration / .size
+intrinsics). Either accept it as a foundational intrinsic (resolve the bridge fun's file class by name), or find a
+cleaner registration. The @Clr annotations on the interfaces themselves (NOT the default body / member removal) are
+believed compatible with expect/actual — to be confirmed — so the type identity (Iterable=IEnumerable, size=Count,
+get=get_Item) can land independently of the iterator() lowering.
