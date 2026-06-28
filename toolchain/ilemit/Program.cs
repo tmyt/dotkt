@@ -2129,9 +2129,22 @@ sealed partial class Emitter
             var named = all.Where(m => m.Name == name).ToList();
             if (named.Count == 1) mi = reanchor ? TypeBuilder.GetMethod(type, named[0]) : named[0];
         }
+        // `Array<T>.Clone()` (@Clr("Clone")): a generic array receiver erases to `object`, whose Clone is protected, so
+        // resolution fails — but the runtime value is always a System.Array. Resolve Array.Clone and (below) cast the
+        // receiver to System.Array before the callvirt. Returns object; the stdlib `as Array<T>` re-types it.
+        bool arrayCloneFallback = false;
+        if (mi == null && name == "Clone" && argSpecs.Count == 0)
+        {
+            mi = typeof(System.Array).GetMethod("Clone", BindingFlags.Public | BindingFlags.Instance);
+            arrayCloneFallback = mi != null;
+        }
         if (mi == null) throw new NotSupportedException($"clrInstance method not resolved: {type}.{name}/{argSpecs.Count}");
         // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
-        if (instance) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
+        if (instance)
+        {
+            if (type.IsValueType) EmitAddr(e.GetProperty("recv"));
+            else { EmitExpr(e.GetProperty("recv")); if (arrayCloneFallback && !typeof(System.Array).IsAssignableFrom(type)) _il.Emit(OpCodes.Castclass, typeof(System.Array)); }
+        }
         EmitArgs(e.GetProperty("args"), mi.GetParameters());
         _il.Emit(instance && mi.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, mi);
         // A `ref T`-returning method used as a value -> dereference the managed pointer (value copy). The live-ref
