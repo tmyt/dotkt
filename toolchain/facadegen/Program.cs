@@ -905,6 +905,11 @@ static class FacadeGen
             // a local callStatic -> "static method not found"). @Clr / concretely-typed tlfuns (uppercase->String) kept.
             var isExt = ps.Length > 0 && ps[0].Name == "__self";
             if (!isExt && System.Text.RegularExpressions.Regex.IsMatch(ret, @"^generic:(List|MutableList|Set|MutableSet|Map|MutableMap|Collection|MutableCollection|Iterable|MutableIterable|Pair|Triple|HashMap|LinkedHashMap|HashSet|LinkedHashSet|ArrayList|Sequence)\[")) continue;
+            // An EXTENSION whose RECEIVER maps to Any? (an unresolvable type, e.g. CharSequence) is a CATCH-ALL: it
+            // matches every receiver and mis-wins overload resolution against the specific Iterable<T> overload (so
+            // `list.count{}`/`.filter{}` resolve to the _StringsKt Any? overload, not _CollectionsKt). Skip it; the jar
+            // provides the CharSequence form and the specific Iterable/Array overloads handle the real receivers.
+            if (isExt && ParamTok(ps[0], 0, t).EndsWith(":Any?")) continue;
             var mod = FunModifier("final", k) + (KotlinInlineBody(m) != null ? ",inline" : "") + (isExt ? ",ext" : "");
             var toks = new List<string> { "tlfun", m.Name, ret, mod };
             toks.AddRange(gp);
