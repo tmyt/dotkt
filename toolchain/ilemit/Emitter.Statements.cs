@@ -239,9 +239,10 @@ sealed partial class Emitter
             }
             case "forRange":
             {
-                // for (i in <IntRange/IntProgression value>): evaluate the range once, then counter-loop i over
-                // get_first..get_last step get_step (resolved on the emitted IntProgression). Avoids the iterator
-                // protocol + its covariant-return iterator. Emitted only in the stdlib build (IntProgression is in _types).
+                // for (i in <IntRange/IntProgression value>): counter-loop i over get_first..get_last step get_step.
+                // TODO(per user 2026-06-28): the range-accessor knowledge below ideally belongs to the CIR-lowering layer
+                // (BirEmitter) so this Emitter stays Kotlin-agnostic; blocked on resolving a synthetic property-getter
+                // call through the callInstance path. Gated to the stdlib build (IntProgression is in _types).
                 var rngT = EmitExpr(s.GetProperty("range"));
                 var rngLocal = _il.DeclareLocal(rngT); _il.Emit(OpCodes.Stloc, rngLocal);
                 if (!_types.TryGetValue("kotlin.ranges.IntProgression", out var prog))

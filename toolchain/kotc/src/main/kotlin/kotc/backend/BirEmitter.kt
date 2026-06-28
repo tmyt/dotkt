@@ -1830,6 +1830,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// first/last/step. The custom pipeline runs no ForLoopsLowering, so without this it falls to the iterator
 		// protocol, which hits the covariant-return `IntProgression.iterator():IntIterator`. Gated to the stdlib build
 		// (where IntProgression is emitted, so ilemit can resolve get_first/last/step); user apps keep the iterator path.
+		// TODO(refactor, per user 2026-06-28): move the range-access knowledge fully to this CIR layer — emit first/last/
+		// step as ordinary call nodes so ilemit stays Kotlin-agnostic. Blocked: a synthetic callInstance to the property
+		// getter `get_first` doesn't resolve through ilemit's callInstance path (KeyNotFound). For now ilemit reads the
+		// IntProgression accessors directly (user: "当面これでよい"). See [[clr-stdlib-ref-runtime-split]].
 		if (stdlibCompile && source != null && source.type.classFqName?.asString() in INT_PROGRESSION_FQ)
 			return """{"k":"forRange","label":$lbl,"var":${str(loopVar.name.asString())},"elem":"int","range":${expr(source)},"body":[$body]}"""
 		val range = source as? IrCall ?: return null
