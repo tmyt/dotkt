@@ -3890,10 +3890,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			// `kotlin.math.*` -> `System.Math.*` lowered to a `clrStatic` (ilemit resolves the overload by argTypes).
 			if (fq == "kotlin.math") MATH_FUNCS[name]?.let { m ->
-				// An EXTENSION math fun (Double.pow(x), Double.withSign(s)) carries the receiver as `this` -> it must lead the
-				// static args: Pow(this, x), not Pow(x). Non-extension funs (sqrt(x), max(a,b)) have a null receiver -> unchanged.
-				val args = listOfNotNull(extensionReceiver(call)) + regularArgs(call)
-				return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"args":[${args.joinToString(",") { expr(it) }}]}"""
+				// An EXTENSION math fun (Double.pow(x)) carries the receiver as `this` -> it leads the static args: Pow(this, x).
+				// Value args then coerce to the receiver's numeric type so `2.0.pow(3)` (Int exponent) emits Pow(2.0,(double)3),
+				// not the ill-typed Pow(2.0, 3[int]). Non-extension funs (sqrt(x), max(a,b)) have a null receiver -> unchanged.
+				val extRecv = extensionReceiver(call)
+				val recvBir = extRecv?.let { birType(it.type) }?.takeIf { it == "double" || it == "float" }
+				val parts = (listOfNotNull(extRecv) + regularArgs(call)).mapIndexed { i, a ->
+					if (i > 0 && recvBir != null && birType(a.type) != recvBir)
+						(if (recvBir == "double") "System.Double" else "System.Single") to """{"k":"conv","to":${str(recvBir)},"e":${expr(a)}}"""
+					else netType(a.type) to expr(a)
+				}
+				return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${parts.joinToString(",") { str(it.first) }}],"ret":${str(netType(callee.returnType))},"args":[${parts.joinToString(",") { it.second }}]}"""
 			}
 			if (fq == "kotlin.text") {
 				// `s.repeat(n)` -> Concat(Repeat(s,n)); `s.reversed()` -> new string(Reverse(s).ToArray()).
