@@ -4287,9 +4287,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// Carry concrete args ("@Box[int]"); a type-parameter arg rides on its `gp:T` form (resolvable in the
 				// enclosing generic context) rather than collapsing to the open type — so `State<T>` as a generic
 				// factory's return type stays constructed and the emitted IL is verifiable (item 13).
-				val args = (t as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }
-				if (!args.isNullOrEmpty())
-					return "@" + typeName(klass) + "[" + args.joinToString(",") { birType(it) } + "]"
+				val sargs = (t as? IrSimpleType)?.arguments
+				if (!sargs.isNullOrEmpty())
+					// A STAR projection (`Comparable<*>`) has no IrTypeProjection.type -> emit `object`. (Dropping it would
+					// leave a RAW generic `@kotlin.Comparable` with NO type arg, which is malformed metadata -> the loader's
+					// "incorrect format"; e.g. compareBy/compareValuesBy/minusKey take `(T)->Comparable<*>` selectors.)
+					return "@" + typeName(klass) + "[" + sargs.joinToString(",") { (it as? IrTypeProjection)?.type?.let(::birType) ?: "object" } + "]"
 			}
 			return "@" + typeName(klass)
 		}
