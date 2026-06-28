@@ -3902,6 +3902,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if ((a as? IrConstructorCall)?.type?.classFqName?.asString() == "clr.Clr")
 				return (a.arguments.firstOrNull() as? IrConst)?.value as? String
 		}
+		// ref/runtime split (app-emit MEMBER substitution): an injected property bound to a BCL member (size -> Count).
+		// Walk the fake-override chain so an inherited `List.size` finds `Collection.size`'s registered binding.
+		(decl as? IrProperty)?.let { prop ->
+			fun lookup(p: IrProperty): String? {
+				p.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.memberClrName(it) }?.let { return it }
+				for (ov in p.overriddenSymbols) lookup(ov.owner)?.let { return it }
+				return null
+			}
+			lookup(prop)?.let { return it }
+		}
 		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.dotNetName(it) }
 	}
 

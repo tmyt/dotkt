@@ -71,7 +71,7 @@ private class ClrMethod(val name: String, val returnType: String, val open: Bool
 // A restored top-level Kotlin function: its package, the .NET file-facade class to call, and the function itself.
 private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
 private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: String, val mutable: Boolean, val receiver: String)
-private class ClrProperty(val name: String, val type: String, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean)
+private class ClrProperty(val name: String, val type: String, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean, val clrName: String? = null)
 // A MEMBER extension property (`class C { val T.p }`): restored as a member property of C with an extension receiver.
 private class ClrMemberExtProp(val name: String, val type: String, val mutable: Boolean, val receiver: String, val protected: Boolean)
 private class ClrEvent(val name: String, val handlerReturn: String, val handlerParams: List<ClrParam>)
@@ -95,6 +95,7 @@ private class ClrType(
 	val staticMethods: List<ClrMethod>,// public static methods of a NORMAL class -> companion-object members (App.Start)
 	val staticProps: List<ClrProperty>,// public static props/fields of a NORMAL class -> companion-object members
 	val memberExtProps: List<ClrMemberExtProp> = emptyList(),  // `class C { val T.p }` member extension properties
+	val clrBinding: String? = null,    // ref/runtime split: the BCL type this Kotlin type binds to (`List` -> IReadOnlyList)
 )
 private class ClrModule(val types: List<ClrType>, val topLevel: List<ClrTopLevel> = emptyList(), val topLevelProps: List<ClrTopLevelProp> = emptyList())
 
@@ -121,6 +122,7 @@ private object ClrMetadataHolder {
 		if (!file.isFile) return null
 		val types = ArrayList<ClrType>()
 		var name = ""; var dotNet = ""; var isObject = false; var isInterface = false; var isOpen = false; var isAnnotation = false
+		var clrBind: String? = null   // ref/runtime split: BCL binding from `token[2] = KotlinFqn=BclName`
 		var tparams = emptyList<String>(); var supers = emptyList<String>()
 		val methods = ArrayList<ClrMethod>(); val ctors = ArrayList<List<ClrParam>>()
 		val props = ArrayList<ClrProperty>(); val events = ArrayList<ClrEvent>()
@@ -129,7 +131,7 @@ private object ClrMetadataHolder {
 		val staticMethods = ArrayList<ClrMethod>(); val staticProps = ArrayList<ClrProperty>()
 		val memberExtProps = ArrayList<ClrMemberExtProp>()
 		val topLevel = ArrayList<ClrTopLevel>(); val topLevelProps = ArrayList<ClrTopLevelProp>(); var filePkg: FqName? = null; var fileClass = ""   // current [KotlinFile] section
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(memberExtProps))) }
+		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(memberExtProps), clrBind)); clrBind = null }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
 			if (line.isEmpty()) continue
@@ -138,7 +140,10 @@ private object ClrMetadataHolder {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
 					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null
-					name = tok[1]; dotNet = tok[2]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"; isAnnotation = false
+					// ref/runtime split: `token[2] = KotlinFqn=BclName` -> LEFT = Kotlin identity (drives namespace/ClassId),
+					// RIGHT (if any) = the BCL binding for clrName. Most injected types have no `=`.
+					val dn = tok[2]; val eq = dn.indexOf('='); dotNet = if (eq >= 0) dn.substring(0, eq) else dn; clrBind = if (eq >= 0) dn.substring(eq + 1) else null
+					name = tok[1]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"; isAnnotation = false
 					isOpen = !isObject && !isInterface && tok.getOrNull(3) == "open"
 					// `class <Name> <DotNet> <open|sealed> [<TP>...]` (TPs at 4, after the modality token) vs
 					// `interface <Name> <DotNet> [<TP>...]` (TPs at 3, no modality token). `object` has none.
@@ -188,7 +193,8 @@ private object ClrMetadataHolder {
 				// prop <Name> <type> <ro|rw> <prot-?open|final|abstract>
 				"prop" -> {
 					val mod = tok.getOrNull(4) ?: "final"; val prot = mod.startsWith("prot-"); val bare = mod.removePrefix("prot-")
-					props.add(ClrProperty(tok[1], tok[2], tok.getOrNull(3) == "rw", bare == "open", bare == "abstract", prot))
+					val pclr = tok.firstOrNull { it.startsWith("clr:") }?.removePrefix("clr:")   // ref/runtime split: size -> Count
+					props.add(ClrProperty(tok[1], tok[2], tok.getOrNull(3) == "rw", bare == "open", bare == "abstract", prot, pclr))
 				}
 				// memextprop <Name> <type> <ro|rw> <receiverType> <prot-?final> — a member extension property `val T.p`
 				"memextprop" -> memberExtProps.add(ClrMemberExtProp(tok[1], tok[2], tok.getOrNull(3) == "rw", tok[4], (tok.getOrNull(5) ?: "final").startsWith("prot-")))
@@ -215,7 +221,10 @@ private object ClrMetadataHolder {
 			// resolves the .NET type for `import System.Text.StringBuilder`. Namespace-less types fall back to bare name.
 			val ns = namespaceOf(t.dotNetName)   // the .NET namespace IS the Kotlin package
 			val fqn = if (ns.isNotEmpty()) "$ns.${t.kotlinName}" else t.kotlinName
-			ClrTypeRegistry.register(fqn, t.dotNetName)
+			// ref/runtime split: register the BCL BINDING (clrBinding) if present, else the type's own .NET name.
+			ClrTypeRegistry.register(fqn, t.clrBinding ?: t.dotNetName)
+			// per-member BCL name (size -> Count): key = the member's Kotlin fqn so clrName(prop) can resolve it.
+			for (p in t.properties) p.clrName?.let { ClrTypeRegistry.registerMember("$fqn.${p.name}", it) }
 			for (e in t.events) {
 				ClrEventRegistry.register(fqn, "add_${e.name}", e.name, "+=")
 				ClrEventRegistry.register(fqn, "remove_${e.name}", e.name, "-=")

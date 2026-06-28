@@ -247,9 +247,12 @@ static class FacadeGen
             if (t.IsInterface)
             {
                 var iname = SimpleName(t);
-                // app-emit substitution (kotc-level): a @Clr-bound stdlib interface -> its BCL target as the dotNet name,
-                // so the app's clrName binds `kotlin.collections.List -> System.Collections.Generic.IReadOnlyList`.
-                var idot = ClrAttrName(t) ?? (t.IsGenericTypeDefinition ? OpenName(t) : t.FullName);
+                // app-emit substitution (kotc-level): a @Clr-bound stdlib interface keeps its KOTLIN identity (drives the
+                // injection's namespace/ClassId) and carries the BCL binding via `=`: token[2] = `kotlin.collections.List=
+                // System.Collections.Generic.IReadOnlyList`. The injection splits it -> app's clrName binds List->IReadOnlyList.
+                var ikt = t.IsGenericTypeDefinition ? OpenName(t) : t.FullName;
+                var iclr = ClrAttrName(t);
+                var idot = iclr != null ? ikt + "=" + iclr : ikt;
                 var itp = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
                 sb.Append($"interface {iname} {idot}{itp}\n");
                 // Interface->interface supertypes (GENERIC only) so an injected `IList<T>` carries its inherited
