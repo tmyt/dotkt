@@ -350,9 +350,16 @@ sealed partial class Emitter
             if (!ti.IsFileClass && !ti.IsInterface && ti.Def.TryGetProperty("interfaces", out var ifs))
             {
                 _curTypeParams = EffectiveTps(ti);
-                foreach (var i in ifs.EnumerateArray())
+                // Worklist over the class's interfaces INCLUDING transitively-inherited ones (a Kotlin interface method
+                // can be inherited through a chain, e.g. MonotonicTimeSource : WithComparableMarks : TimeSource — the
+                // covariant markNow over TimeSource.markNow must be bridged too, or the slot stays unimplemented).
+                var ifWork = new Queue<string>();
+                var ifSeen = new HashSet<string>();
+                foreach (var i in ifs.EnumerateArray()) ifWork.Enqueue(i.GetString());
+                while (ifWork.Count > 0)
                 {
-                    var spec = i.GetString();
+                    var spec = ifWork.Dequeue();
+                    if (!ifSeen.Add(spec)) continue;
                     // C3b transitive reverse bridge: a Kotlin collection interface (Set/MutableSet/... — extends Iterable
                     // but isn't itself @Clr) still makes the class IEnumerable<E> via its @Clr Collection supertype.
                     TryGenerateEnumeratorForKotlinIface(ti, spec);
@@ -382,7 +389,12 @@ sealed partial class Emitter
                         continue;
                     }
                     var (open, constructed) = ParseOwner(spec);
-                    var iface = _types[open];
+                    if (!_types.TryGetValue(open, out var iface)) continue;
+                    // Transitively process this interface's base interfaces too, substituting the type args through the
+                    // chain (e.g. WithComparableMarks : TimeSource, or List[object] : Collection[object]).
+                    var ifSubstForBases = BuildTypeArgSubst(spec, iface);
+                    if (iface.Def.ValueKind == JsonValueKind.Object && iface.Def.TryGetProperty("interfaces", out var baseIfs))
+                        foreach (var bi in baseIfs.EnumerateArray()) ifWork.Enqueue(SubstSig(bi.GetString(), ifSubstForBases));
                     // ti.Methods is name-keyed, so OVERLOADED body methods collide and DefineMethodOverride would bind the
                     // wrong one (e.g. a value class's compareTo(UByte/UShort/UInt/ULong) all map to ti.Methods["compareTo"]
                     // = the last = ULong, wired to Comparable<UInt32>.compareTo -> TypeLoad "do not match"). Resolve the
