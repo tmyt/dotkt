@@ -383,9 +383,15 @@ sealed partial class Emitter
                     }
                     var (open, constructed) = ParseOwner(spec);
                     var iface = _types[open];
+                    // ti.Methods is name-keyed, so OVERLOADED body methods collide and DefineMethodOverride would bind the
+                    // wrong one (e.g. a value class's compareTo(UByte/UShort/UInt/ULong) all map to ti.Methods["compareTo"]
+                    // = the last = ULong, wired to Comparable<UInt32>.compareTo -> TypeLoad "do not match"). Resolve the
+                    // overload by the interface method's TYPE-ARG-SUBSTITUTED signature via MethodsBySig.
+                    var ifSubst = BuildTypeArgSubst(spec, iface);
                     foreach (var im in iface.Methods)
                     {
-                        if (!ti.Methods.TryGetValue(im.Key, out var bodyMethod)) continue;
+                        var bodyMethod = ResolveOverload(ti, iface, im.Key, ifSubst) ?? (ti.Methods.TryGetValue(im.Key, out var bm) ? bm : null);
+                        if (bodyMethod == null) continue;
                         var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, im.Value) : (MethodInfo)im.Value;
                         ti.TB.DefineMethodOverride(bodyMethod, ifaceMethod);
                     }
@@ -962,6 +968,42 @@ sealed partial class Emitter
     // The OPEN type name of an owner spec, WITHOUT resolving its generic args. The type-ordering pass runs with no
     // type-param scope, so a `Foo[gp:E]` base/interface would crash MapType("gp:E"); ordering only needs the open dep.
     static string OwnerOpen(string spec) { var br = spec.IndexOf('['); return br < 0 ? spec : spec.Substring(0, br); }
+
+    // {gp:T -> uint, ...} mapping the open interface's type params to a constructed spec's BIR type args
+    // (`kotlin.Comparable[uint]` + typeParams ['T'] -> {gp:T: uint}), for resolving overloaded overrides by signature.
+    Dictionary<string, string> BuildTypeArgSubst(string spec, TypeInfo iface)
+    {
+        var subst = new Dictionary<string, string>();
+        var br = spec.IndexOf('[');
+        if (br < 0 || iface.Def.ValueKind != JsonValueKind.Object || !iface.Def.TryGetProperty("typeParams", out var tps)) return subst;
+        var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).ToList();
+        int k = 0;
+        foreach (var tp in tps.EnumerateArray())
+        {
+            var nm = tp.ValueKind == JsonValueKind.String ? tp.GetString() : (tp.TryGetProperty("name", out var n) ? n.GetString() : null);
+            if (nm != null && k < args.Count) subst["gp:" + nm] = args[k].Trim();
+            k++;
+        }
+        return subst;
+    }
+
+    // The body method whose TYPE-ARG-SUBSTITUTED signature matches the interface method `name` (handles overloaded names
+    // like compareTo). Null if no exact match -> caller falls back to the name-keyed ti.Methods[name].
+    MethodBuilder ResolveOverload(TypeInfo ti, TypeInfo iface, string name, Dictionary<string, string> subst)
+    {
+        if (iface.Def.ValueKind != JsonValueKind.Object || !iface.Def.TryGetProperty("methods", out var ms)) return null;
+        foreach (var m in ms.EnumerateArray())
+        {
+            if (!m.TryGetProperty("name", out var mn) || mn.GetString() != name) continue;
+            var sig = string.Join(",", m.GetProperty("params").EnumerateArray().Select(p =>
+            {
+                var t = p.GetProperty("type").GetString();
+                return subst.TryGetValue(t, out var s) ? s : t;
+            }));
+            if (ti.MethodsBySig.TryGetValue(name + "(" + sig + ")", out var mb)) return mb;
+        }
+        return null;
+    }
 
     (string open, Type constructed) ParseOwner(string spec)
     {
