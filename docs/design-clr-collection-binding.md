@@ -716,3 +716,24 @@ intrinsics). Either accept it as a foundational intrinsic (resolve the bridge fu
 cleaner registration. The @Clr annotations on the interfaces themselves (NOT the default body / member removal) are
 believed compatible with expect/actual — to be confirmed — so the type identity (Iterable=IEnumerable, size=Count,
 get=get_Item) can land independently of the iterator() lowering.
+
+## C3 (the reverse direction) is FORCED, not deferrable (2026-06-28)
+
+The "concrete classes are @Clr->BCL, so no Kotlin implementors of @Clr collection interfaces" idea is INCOMPLETE: the
+stdlib has concrete Kotlin classes implementing the collection interfaces that are NOT BCL collections and can't be
+@Clr-bound — the **unsigned arrays** (`UByteArray`/`UIntArray`/... : `Collection<UByte>`), `EmptyList`, ranges, etc.
+So @Clr-binding Collection/List immediately aborts ilemit on THOSE classes' `clrOverride` against the generic @Clr base.
+
+=> A Kotlin class IMPLEMENTING a @Clr collection interface (C3 / the reverse direction) IS required for the bootstrap.
+It has two parts:
+- **C3a (member naming):** an override of a @Clr interface member must emit with the BCL name — `size` -> `get_Count`,
+  `get` -> `get_Item`, `contains` -> `Contains`. (kotc: a method/accessor overriding a @Clr-annotated interface member
+  inherits that member's @Clr name; ilemit clrOverride must resolve the CONSTRUCTED generic base, not the bare name.)
+- **C3b (GetEnumerator):** the class's Kotlin `iterator()` must ALSO be exposed as a BCL `GetEnumerator(): IEnumerator<T>`
+  — a generated method wrapping the Kotlin iterator in an `EnumeratorOverKotlinIterator<T>` adapter (the mirror of
+  KotlinIteratorOverEnumerator). This is the genuinely large piece.
+
+STATUS: the FORWARD mechanism is fully validated (bridge, @Clr type+member binding, abstract-leave-abstract, iterator()
+compiler lowering — committed, inert until the interfaces are @Clr-bound). C3 (reverse) is the forced, large remaining
+core, blocked behind it. Order: C3a (member naming + clrOverride generic-base) -> C3b (generated GetEnumerator) -> then
+land the interface/concrete @Clr + asList + factories -> `for (x in listOf(1,2,3))`.

@@ -2946,6 +2946,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
+		// `recv.iterator()` on a CLR-bound (@Clr) kotlin.collections.Iterable -> the stdlib enumerator bridge
+		// `iteratorOverEnumerable(recv)`. A BCL IEnumerable has GetEnumerator (a struct for List<T>), NOT a Kotlin
+		// `iterator()`; the bridge wraps GetEnumerator in a Kotlin Iterator adapter (hasNext/next over MoveNext/Current).
+		// `for` desugars to iterator()/hasNext()/next() in FIR — only iterator() needs interception; hasNext/next then run
+		// on the returned adapter. expect/actual forces iterator() abstract, so it can't carry a default body (rule 3).
+		if (name == "iterator" && callee.correspondingPropertySymbol == null &&
+			callee.parameters.none { it.kind == IrParameterKind.Regular } &&
+			declaringClass != null && clrName(declaringClass) != null &&
+			declaringClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin.collections") == true) {
+			dispatchReceiver(call)?.let { recv ->
+				val elem = (recv.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+				return """{"k":"callStatic","owner":"kotlin.collections.ClrIteratorBridgeKt","method":"iteratorOverEnumerable","args":[${expr(recv)}],"typeArgs":[${str(elem)}]}"""
+			}
+		}
+
 		// A call to a lifted local function -> static call with captured values (incl. enclosing `this`) prepended.
 		localFns[callee]?.let { (lname, caps, tps) ->
 			val capArgs = caps.map { capValueExpr(it) }
