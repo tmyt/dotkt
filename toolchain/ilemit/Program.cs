@@ -2178,7 +2178,22 @@ sealed partial class Emitter
         {
             // Not a .NET property. A DotKt custom-accessor property is a plain `get_<name>` METHOD (no PropertyDef) ->
             // call it. (A backing-field property is a public FIELD -> field access below.)
-            var gm = type.GetMethod("get_" + propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            MethodInfo gm;
+            try
+            {
+                gm = type.GetMethod("get_" + propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            }
+            catch (NotSupportedException)
+            {
+                // A constructed generic over a TypeBuilder (TypeBuilderInstantiation) can't resolve members directly:
+                // resolve the getter on the open generic def, then re-anchor it to the constructed type via GetMethod.
+                gm = null;
+                if (type.IsConstructedGenericType)
+                {
+                    var openGm = type.GetGenericTypeDefinition().GetMethod("get_" + propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                    if (openGm != null) gm = TypeBuilder.GetMethod(type, openGm);
+                }
+            }
             if (gm != null)
             {
                 if (!isStatic && !gm.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
@@ -2187,8 +2202,23 @@ sealed partial class Emitter
             }
             // A .NET FIELD surfaced as a Kotlin property (facadegen records static/const fields, public instance fields,
             // and Kotlin backing-field properties). Emit a field access instead of a getter call.
-            var fld = type.GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
-                ?? throw new InvalidOperationException($"ilemit: no readable property OR field '{propName}' on .NET type '{type}' (spec '{typeName}'). Available properties: [{PropList(type)}]");
+            FieldInfo fld;
+            try
+            {
+                fld = type.GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance);
+            }
+            catch (NotSupportedException)
+            {
+                // Backing field of a constructed generic over a TypeBuilder: resolve on the open def + re-anchor.
+                fld = null;
+                if (type.IsConstructedGenericType)
+                {
+                    var openFld = type.GetGenericTypeDefinition().GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance);
+                    if (openFld != null) fld = TypeBuilder.GetField(type, openFld);
+                }
+            }
+            if (fld == null)
+                throw new InvalidOperationException($"ilemit: no readable property OR field '{propName}' on .NET type '{type}' (spec '{typeName}'). Available properties: [{PropList(type)}]");
             // A `const` (literal) field has no storage — `ldsfld` is invalid (and a memberref to it fails). Inline its
             // value, exactly as C# does. Covers .NET consts surfaced by facadegen as `sprop` (e.g. WinRT constants).
             if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), fld.FieldType);

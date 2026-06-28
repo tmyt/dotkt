@@ -2986,6 +2986,31 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"callStatic","owner":"kotlin.collections.ClrIteratorBridgeKt","method":"iteratorOverEnumerable","args":[${expr(recv)}],"typeArgs":[${str(elem)}]}"""
 			}
 		}
+		// Non-BCL Collection/List members -> runtime default helpers (same bridge pattern as iterator()): the substituted
+		// BCL IReadOnly* types lack isEmpty/contains/containsAll/indexOf/lastIndexOf. Helper takes (recv, args...).
+		val collDefault = when (name) {
+			"isEmpty" -> "clrCollIsEmpty"; "contains" -> "clrCollContains"; "containsAll" -> "clrCollContainsAll"
+			"indexOf" -> "clrListIndexOf"; "lastIndexOf" -> "clrListLastIndexOf"; else -> null
+		}
+		if (collDefault != null && callee.correspondingPropertySymbol == null &&
+			declaringClass != null && clrName(declaringClass) != null &&
+			declaringClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin.collections") == true) {
+			dispatchReceiver(call)?.let { recv ->
+				val elem = (recv.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+				val cargs = (listOf(expr(recv)) + regularArgs(call).map { expr(it) }).joinToString(",")
+				return """{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"$collDefault","args":[$cargs],"typeArgs":[${str(elem)}]}"""
+			}
+		}
+		// listIterator() / listIterator(index) -> the ClrListIterator adapter; default index 0 for the no-arg overload.
+		if (name == "listIterator" && callee.correspondingPropertySymbol == null &&
+			declaringClass != null && clrName(declaringClass) != null &&
+			declaringClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin.collections") == true) {
+			dispatchReceiver(call)?.let { recv ->
+				val elem = (recv.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+				val idxArg = regularArgs(call).firstOrNull()?.let { expr(it) } ?: """{"k":"const","type":"int","value":0}"""
+				return """{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrListListIterator","args":[${expr(recv)},$idxArg],"typeArgs":[${str(elem)}]}"""
+			}
+		}
 
 		// A call to a lifted local function -> static call with captured values (incl. enclosing `this`) prepended.
 		localFns[callee]?.let { (lname, caps, tps) ->
@@ -3902,23 +3927,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// metadata attribute (attrsJson) and the BCL substitution is deferred to app-emit. So the ref assembly is PURE
 		// Kotlin shapes (no C3, no clrg: BCL refs). docs/design-clr-stdlib-ref-runtime-split.md.
 		if (stdlibCompile && !stdlibSubstitute) return null   // ref build = gated; runtime (substitute) build = @Clr binds
-		for (a in decl.annotations) {
-			if ((a as? IrConstructorCall)?.type?.classFqName?.asString() == "clr.Clr")
-				return (a.arguments.firstOrNull() as? IrConst)?.value as? String
+		// @Clr binding source: the annotation on the decl (or, for a member, on any decl up its fake-override chain —
+		// `List.size` overrides `Collection.size`@Clr("Count")), else the registry the injection populated (app flow).
+		fun annClr(d: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
+			for (a in d.annotations) if ((a as? IrConstructorCall)?.type?.classFqName?.asString() == "clr.Clr") return (a.arguments.firstOrNull() as? IrConst)?.value as? String
+			return null
 		}
-		// ref/runtime split (app-emit MEMBER substitution): an injected property bound to a BCL member (size -> Count).
-		// Walk the fake-override chain so an inherited `List.size` finds `Collection.size`'s registered binding.
+		annClr(decl)?.let { return it }
 		(decl as? IrProperty)?.let { prop ->
 			fun lookup(p: IrProperty): String? {
+				annClr(p)?.let { return it }
 				p.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.memberClrName(it) }?.let { return it }
 				for (ov in p.overriddenSymbols) lookup(ov.owner)?.let { return it }
 				return null
 			}
 			lookup(prop)?.let { return it }
 		}
-		// ...and a method bound to a BCL member (get -> get_Item, contains -> Contains); same fake-override walk.
 		(decl as? IrSimpleFunction)?.takeIf { it.correspondingPropertySymbol == null }?.let { fn ->
 			fun lookupFn(m: IrSimpleFunction): String? {
+				annClr(m)?.let { return it }
 				m.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.memberClrName(it) }?.let { return it }
 				for (ov in m.overriddenSymbols) lookupFn(ov.owner)?.let { return it }
 				return null
