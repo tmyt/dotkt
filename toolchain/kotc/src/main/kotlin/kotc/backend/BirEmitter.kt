@@ -3888,7 +3888,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlinx.atomicfu.AtomicBoolean" -> "DotKtx.Atomicfu.AtomicBoolean"
 		"kotlinx.atomicfu.AtomicRef" -> "clrg:DotKtx.Atomicfu.AtomicRef[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		else -> NET_EXCEPTIONS[fq]
-			?: (t.classifierOrNull?.owner as? IrClass)?.let { clrName(it) }
+			?: (t.classifierOrNull?.owner as? IrClass)?.let { cls -> clrName(cls)?.let { netName ->
+				// A generic @Clr type needs its `clrg:Name[args]` form (resolvable via ClrRef/GenericType) — the bare
+				// `netName` would be the OPEN generic def, unresolvable. Fill a raw/star reference with `object`.
+				val a = (t as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::netType) }
+				when {
+					!a.isNullOrEmpty() -> "clrg:$netName[${a.joinToString(",")}]"
+					cls.typeParameters.isNotEmpty() -> "clrg:$netName[${cls.typeParameters.joinToString(",") { "object" }}]"
+					else -> netName
+				}
+			} }
 			?: "System.Object"
 	}
 
@@ -4097,9 +4106,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val klass = t.classifierOrNull?.owner as? IrClass
 		// A @Clr / FIR-injected .NET type ("clr:System.Text.StringBuilder"); a constructed generic .NET type
 		// (`Collection<Int>`) carries its concrete args as `clrg:<openName>[int]`.
+		val clrTypeParams = klass?.typeParameters
 		klass?.let { clrName(it) }?.let { netName ->
 			val args = (t as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
-			return if (args.isNullOrEmpty()) "clr:$netName" else "clrg:$netName[${args.joinToString(",")}]"
+			return when {
+				!args.isNullOrEmpty() -> "clrg:$netName[${args.joinToString(",")}]"
+				// A GENERIC @Clr type referenced raw / star-projected (no args) still needs its `\`N` arity — emit `clrg:`
+				// filled with `object` per type param; a bare `clr:Name` would be the OPEN generic def, unresolvable in ilemit.
+				!clrTypeParams.isNullOrEmpty() -> "clrg:$netName[${clrTypeParams.joinToString(",") { "object" }}]"
+				else -> "clr:$netName"
+			}
 		}
 		// Enums -> the real .NET enum type reference (package-qualified, like other user types).
 		if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return "@" + typeName(klass)
