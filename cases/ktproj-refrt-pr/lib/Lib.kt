@@ -1,8 +1,3 @@
 package mylib
 fun greeting(name: String): String = "Hello, " + name.uppercase() + "!"
-fun squares(n: Int): List<Int> {
-    val r = ArrayList<Int>()
-    var i = 1
-    while (i <= n) { r.add(i * i); i++ }
-    return r
-}
+fun sumTo(n: Int): Int { var s = 0; for (i in 1..n) s += i; return s }
