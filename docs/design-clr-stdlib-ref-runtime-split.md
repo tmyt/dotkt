@@ -128,3 +128,24 @@ ilemit loads the referenced `stdlib.ref.dll` (MetadataLoadContext), builds a sub
 variance rides the BCL target (`List<out E>`->covariant `IReadOnlyList`, `MutableList`->invariant `IList`) — it's the
 target interface's own variance, so nothing special. Watch the bypass paths: base/interface lists, generic args, attribute
 args, and by-shape method-overload matching all must route through the same chokepoint.
+
+## Step 2 fork (2026-06-28): WHERE the substitution lives — kotc vs ilemit
+
+Step 1 done (ref assembly carries `[Clr]` on types + members, verified). For step 2, two places to apply substitution:
+
+- **(A) kotc-level (RECOMMENDED):** when an APP references stdlib.ref.dll, restore the `[clr.Clr]` attribute as an @Clr
+  annotation (or populate ClrTypeRegistry) on the injected/restored stdlib types+members, so the app's EXISTING clrName
+  mechanism binds `List -> IReadOnlyList`, `size -> Count` at the app's BIR/CIR. Then the app's CIR is ALREADY substituted
+  (clrg:IReadOnlyList) and ilemit needs NO new substitution logic (it already emits clrg:, hardened this session). The
+  runtime stdlib build gets it for free (it also references the ref assembly). UNIFIES app+runtime via the existing @Clr
+  path. COST: facadegen `--scan-asm` must emit the `[clr.Clr]` info into the injection meta + the FIR injection must restore
+  it (type-level via ClrTypeRegistry.dotNetName fallback in clrName; member-level needs @Clr-on-member restoration). The app
+  is NOT stdlib-compile, so clrName is NOT gated -> it binds.
+- **(B) ilemit-level:** ilemit reads `[Clr]` from the loaded ref assembly at emit and substitutes in ResolveType (types) +
+  member resolution. Touches only ilemit, but must cover every emission path (base/iface lists, generic args, member
+  calls, by-shape matching) — more edge cases, and leaves the app's CIR referencing kotlin.* (substituted late).
+
+Recommendation: **(A)** — substitution at the frontend/backend boundary keeps ilemit dumb, reuses the proven @Clr
+mechanism, and unifies the app + runtime builds. Confirmed: facadegen meta for `List` currently has NO @Clr (pure Kotlin
+shape only) — so (A)'s work is "facadegen emits @Clr from [clr.Clr] + injection restores it". (Codex cross-check of the
+substitution chokepoint pending.)
