@@ -2086,7 +2086,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (clrOwner != null && !hasExt) {
 			val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }
 			val argTypes = regs.joinToString(",") { str(netType(it.type)) }
-			val member = clrName(fn) ?: fn.name.asString()
+			val member = clrName(fn) ?: objectMethodName(fn) ?: fn.name.asString()
 			val virtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT
 			if (boundRecv != null)
 				return """{"k":"boundClrDelegateNew","clrType":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${str(funcTypeOf(fn))}}"""
@@ -3420,7 +3420,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 				if (targs.all { it != null }) {
 					val taJson = targs.joinToString(",") { str(birType(it!!)) }
-					val member = clrName(callee) ?: name
+					val member = clrName(callee) ?: objectMethodName(callee) ?: name
 					// A generic MEMBER extension (`class C { fun <R> T.f() }`): the `__self` receiver is the .NET method's
 					// first param -> prepend its value + shape so by-shape overload resolution and the call line up.
 					val gExt = if (!isStatic) extensionReceiver(call) else null
@@ -3448,7 +3448,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					"""{"k":"clrPropSet","type":${str(memberType)},"name":${str(pn)},"static":$isStatic,"recv":$recvJson,"value":${expr(regularArgs(call).first())}}"""
 				else """{"k":"clrPropGet","type":${str(memberType)},"name":${str(pn)},"retType":${str(netType(callee.returnType))},"static":$isStatic,"recv":$recvJson}"""
 			}
-			val member = clrName(callee) ?: name
+			val member = clrName(callee) ?: objectMethodName(callee) ?: name
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
 			// A restored `suspend` member's .NET method returns Task<T> (awaited via the coroutine machinery), not T.
 			val ret = str(if (callee.isSuspend) coTaskType(call.type) else netType(callee.returnType))
