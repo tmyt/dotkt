@@ -2,7 +2,9 @@
 # Build the REAL pure-Kotlin Kotlin/CLR standard library: compile the multiplatform common source
 # (runtime/stdlib/common/src + runtime/stdlib/src + runtime/stdlib/unsigned/src)
 # against the CLR platform `actual`s (runtime/stdlib/clr), emit BIR,
-# then ilemit -> DotKt.Stdlib.dll. Phase 1 of docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP" (stubs =TODO()).
+# then ilemit -> DotKt.Private.Stdlib.dll. This is the REFERENCE assembly (compile-time only, keeps @Clr metadata, never
+# loaded at runtime — fully substituted away at app-emit); the shipping RUNTIME assembly is DotKt.Stdlib.dll
+# (build-clr-stdlib-runtime.sh). The 'Private' name marks it as an internal reference face, not an external artifact.
 #
 #   scripts/build-clr-stdlib.sh [--emit]   # --emit also runs ilemit; default = frontend+BIR only (faster triage)
 set -uo pipefail
@@ -40,18 +42,18 @@ if (( do_emit )) && [[ "$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)" -gt 0 ]]; t
   echo "== bir2cir -> CIR =="
   DOTKT_STDLIB_COMPILE=1 dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$CIR" "$BIR"/*.bir.json 2>"$OUT/bir2cir.err"
   echo "CIR files: $(ls "$CIR"/*.cir.json 2>/dev/null | wc -l)"
-  echo "== ilemit(CIR compat) -> DotKt.Stdlib.dll =="
-  DOTKT_STDLIB_COMPILE=1 dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$DLL" DotKt.Stdlib "$CIR"/*.cir.json 2>"$OUT/ilemit.err" | tail -2
+  echo "== ilemit(CIR compat) -> DotKt.Private.Stdlib.dll =="
+  DOTKT_STDLIB_COMPILE=1 dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$DLL" DotKt.Private.Stdlib "$CIR"/*.cir.json 2>"$OUT/ilemit.err" | tail -2
   grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3
   # Retarget: the emitted dll references the IMPLEMENTATION core (System.Private.CoreLib); repoint those refs at the
   # REFERENCE assemblies (+ self) so a downstream MetadataLoadContext reader — facadegen --scan-asm, ilverify — can
   # resolve its types. The pure-kotlin stdlib stays SELF-CONTAINED (no DotKt.Runtime ref), so retarget against the BCL
   # reference pack only. (Mirrors the legacy build-dotkt-stdlib.sh retarget step.)
-  if [[ -f "$DLL/DotKt.Stdlib.dll" ]]; then
+  if [[ -f "$DLL/DotKt.Private.Stdlib.dll" ]]; then
     [[ -f "$ROOT/build/retarget-bin/retarget.dll" ]] || dotnet build "$ROOT/toolchain/retarget" -c Release -o "$ROOT/build/retarget-bin" -v q --nologo >/dev/null
     REFPACK="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' | head -1)")"
     echo "== retarget: repoint CoreLib refs (so facadegen/ilverify can read it back) =="
-    dotnet "$ROOT/build/retarget-bin/retarget.dll" "$DLL/DotKt.Stdlib.dll" --refs "$(ls "$REFPACK"/*.dll | tr '\n' ';')" 2>&1 | tail -1
+    dotnet "$ROOT/build/retarget-bin/retarget.dll" "$DLL/DotKt.Private.Stdlib.dll" --refs "$(ls "$REFPACK"/*.dll | tr '\n' ';')" 2>&1 | tail -1
   fi
-  ls -la "$DLL"/DotKt.Stdlib.dll 2>/dev/null && echo "*** DotKt.Stdlib.dll emitted ***"
+  ls -la "$DLL"/DotKt.Private.Stdlib.dll 2>/dev/null && echo "*** DotKt.Private.Stdlib.dll emitted ***"
 fi

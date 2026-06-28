@@ -1175,7 +1175,11 @@ sealed partial class Emitter
             catch (ArgumentException) { return mb; }
         }
         retType = Subst(mb.ReturnType, constructed.GetGenericArguments());
-        return TypeBuilder.GetMethod(constructed, mb);
+        // An INHERITED method on a NON-self constructed generic (mb declared on a base/interface, not on `constructed`'s
+        // own generic def — e.g. AbstractMutableCollection<E> calling the inherited iterator()) throws the same
+        // "method must be declared on the generic type definition" as the self case -> fall back to the open MethodBuilder.
+        try { return TypeBuilder.GetMethod(constructed, mb); }
+        catch (ArgumentException) { return mb; }
     }
 
     // True when `constructed` is a generic type instantiated with exactly its own open definition's type parameters

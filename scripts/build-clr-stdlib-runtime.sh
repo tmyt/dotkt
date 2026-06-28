@@ -3,7 +3,8 @@
 # SUBSTITUTE mode (DOTKT_STDLIB_SUBSTITUTE=1): clrName is ACTIVE, so the @Clr annotations in the sources bind
 # List->IReadOnlyList, size->Count, get->get_Item etc. The @Clr-bound TYPES then resolve to the BCL and are NOT emitted
 # (no clash with the ref's pure-Kotlin shapes); the stdlib FUNCTIONS (listOf/map/filter/asList) are emitted with
-# substituted signatures. ref + runtime share the assembly name (DotKt.Stdlib) -> compile-against-ref / run-against-runtime.
+# substituted signatures. The REFERENCE assembly is DotKt.Private.Stdlib.dll (build-clr-stdlib.sh, compile-time only,
+# @Clr metadata, fully substituted away at app-emit); THIS build emits the shipping RUNTIME assembly DotKt.Stdlib.dll.
 # docs/design-clr-stdlib-ref-runtime-split.md "Runtime-build architecture".
 #
 #   scripts/build-clr-stdlib-runtime.sh [--emit]
