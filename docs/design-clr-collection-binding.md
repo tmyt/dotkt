@@ -650,3 +650,47 @@ Use three distinct mechanisms:
 ```
 
 The key rule is: **do not bind Kotlin `Iterator<T>` to CLR `IEnumerator<T>` directly**. Bind `Iterable<T>` to `IEnumerable<T>`, then bridge the iterator semantic mismatch at the two protocol boundaries.
+
+---
+
+## VALIDATED reference pattern (2026-06-28) — the full for-loop bridge WORKS
+
+Proven end-to-end in scratchpad (`for (x in @ClrList) -> 1/2/3`). The mechanism, confirmed:
+
+```kotlin
+@Clr("System.Collections.Generic.IEnumerator")
+internal interface ClrEnumerator<out T> { fun MoveNext(): Boolean; @Clr("get_Current") fun current(): T }
+@Clr("System.Collections.Generic.IEnumerable")
+internal interface ClrEnumerable<out T> { fun GetEnumerator(): ClrEnumerator<T> }   // INTERFACE GetEnumerator -> IEnumerator<T> (not the List<T>.Enumerator struct)
+
+internal class KotlinIteratorOverEnumerator<out T>(private val e: ClrEnumerator<T>) : Iterator<T> { ... MoveNext/Current -> hasNext/next, buffer one ... }
+internal fun <T> iteratorOverEnumerable(self: ClrEnumerable<T>): Iterator<T> = KotlinIteratorOverEnumerator(self.GetEnumerator())
+
+@Clr("System.Collections.Generic.IEnumerable")
+interface Iterable<out T> {
+    operator fun iterator(): Iterator<T> = iteratorOverEnumerable(this as ClrEnumerable<T>)   // default body -> RULE 3 hoist; cast Iterable(=IEnumerable) -> ClrEnumerable(=IEnumerable) is identity at runtime
+}
+```
+
+Key facts that made it work:
+1. **No special for-loop lowering.** `for (x in xs)` desugars to `xs.iterator()`/hasNext/next in FIR; `Iterable.iterator()`
+   has a Kotlin default body, so **rule 3 hoists it to a static helper** automatically.
+2. **`this as ClrEnumerable<T>`** bridges the Kotlin-type gap (Iterable and ClrEnumerable are distinct Kotlin types, same
+   BCL IEnumerable) — an identity cast at runtime. Avoids adding GetEnumerator to Iterable (which would break USER Iterable
+   implementors — the reverse direction, EnumeratorOverKotlinIterator, still TODO).
+3. Required an ilemit fix (committed): generic self-calls now reference the self-instantiation, not the open type def
+   (the adapter is a generic class calling its own methods).
+4. The adapter MUST be `out T` (covariant) to satisfy `Iterable<out T>.iterator(): Iterator<out T>`.
+
+## Remaining wiring (the large, coupled follow-up)
+The mechanism is proven; wiring the real hierarchy is mechanical-but-large and CANNOT be tested incrementally (one
+for-loop needs Iterable+List+listOf together):
+- `Iterable`→IEnumerable (iterator() bridge above), `Collection`→IReadOnlyCollection (size→@Clr get_Count; isEmpty/
+  contains/containsAll have NO 1:1 BCL member → bodied actuals, rule-3-hoisted, implemented via Count/enumeration),
+  `List`→IReadOnlyList (get→@Clr get_Item; indexOf/lastIndexOf/subList/listIterator → bodied actuals), `MutableCollection`
+  →ICollection, `MutableList`→IList.
+- `ArrayList`→@Clr `System.Collections.Generic.List` (Add/etc.); it must IMPLEMENT every abstract member of MutableList
+  (@Clr each 1:1 one with a TODO body, leave the rest bodied for rule 3).
+- `listOf`/`mutableListOf`/`emptyList` factories → create an @Clr List.
+Each rule-3-hoisted member needs a REAL Kotlin body (the current stubs are `TODO()`, which would throw). Iterate with
+`scripts/run-clr-sample.sh` once enough of the chain is in to make `for (x in listOf(1,2,3))` resolvable.
