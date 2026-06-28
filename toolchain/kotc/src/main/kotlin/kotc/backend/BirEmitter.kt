@@ -111,6 +111,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// size->Count etc. are applied (the @Clr-bound TYPES then bind to the BCL and aren't emitted, so no clash). Still uses
 	// the stdlib-compile flags (-Xstdlib-compilation, package kotlin, per-file resilience). docs/design-clr-stdlib-ref-runtime-split.md.
 	internal val stdlibSubstitute: Boolean get() = System.getenv("DOTKT_STDLIB_SUBSTITUTE") != null
+	// ORTHOGONAL to substitution: strip the roundtrip metadata ([Kotlin*]/[KotlinInline]/NRT). ONLY the stdlib RUNTIME
+	// sets this — it's CLR-executed, never re-read as Kotlin. A USER LIBRARY is also substituted but KEEPS its attributes
+	// (it may be consumed AS KOTLIN by another module, needing [KotlinInline] etc.), so it must NOT set this flag.
+	internal val stripMetadata: Boolean get() = System.getenv("DOTKT_STRIP_METADATA") != null
 
 	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
 		// Compiling the stdlib ITSELF (DOTKT_STDLIB_COMPILE): don't fail the whole file on one unsupported construct in
@@ -923,9 +927,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  annotation uses its synthesized `: System.Attribute` type (#46); an imported .NET attribute uses its real type
 	 *  via a `clr:` marker so ilemit binds the existing .NET constructor (#54). Kotlin built-in annotations are dropped. */
 	internal fun attrsJson(anns: List<IrConstructorCall>): String {
-		// RUNTIME (substitute) build: emit NO roundtrip metadata ([Kotlin*]/[Clr]) — the runtime assembly is consumed by
-		// the CLR directly, not re-read AS KOTLIN, so the binding/modifier attributes are dead weight. (Per design + user.)
-		if (stdlibSubstitute) return ""
+		// Strip roundtrip metadata ([Kotlin*]/[Clr]) — ONLY when DOTKT_STRIP_METADATA (the stdlib runtime). NOT tied to
+		// substitution: a user library is substituted but KEEPS its attributes (round-trip consumable). (Per user.)
+		if (stripMetadata) return ""
 		return anns.mapNotNull { ann ->
 			val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
 			if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null

@@ -59,6 +59,10 @@ sealed partial class Emitter
 {
     readonly string _outDir;
     readonly string _asmName;
+    // Strip ALL roundtrip metadata ([Kotlin*]/[KotlinInline]/NRT + the attr class defs) — the [KotlinInline] BIR payloads
+    // are ~73.8% of the size. ORTHOGONAL to substitution (DOTKT_STDLIB_SUBSTITUTE): ONLY the stdlib RUNTIME sets this;
+    // a USER LIBRARY is substituted but KEEPS its attributes (round-trip consumable AS KOTLIN). (Per user.)
+    readonly bool _stripMetadata = Environment.GetEnvironmentVariable("DOTKT_STRIP_METADATA") != null;
     readonly Dictionary<string, TypeInfo> _types = new();
     readonly Dictionary<string, TypeBuilder> _syntheticDelegates = new();
     readonly Dictionary<TypeBuilder, ConstructorBuilder> _syntheticDelegateCtors = new();
@@ -153,8 +157,9 @@ sealed partial class Emitter
         var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName), typeof(object).Assembly);
         _mod = ab.DefineDynamicModule(_asmName);
         // Embed the DotKt.Runtime.CompilerServices.* metadata attribute types into this module up front (so they exist
-        // before any type/member that stamps one). No --ref DotKt.Runtime needed to resolve them.
-        EnsureKotlinAttrs();
+        // before any type/member that stamps one). No --ref DotKt.Runtime needed to resolve them. Skipped in the runtime
+        // (substitute) build — no [Kotlin*] is stamped there, so the attr CLASS defs would just be dead weight.
+        if (!_stripMetadata) EnsureKotlinAttrs();
 
         // Pass 1: DefineType for every file-static-class and every user class.
         foreach (var file in files)
@@ -401,6 +406,7 @@ sealed partial class Emitter
         // synthesized `: System.Attribute` class already exists). Args are compile-time constants.
         foreach (var ti in _types.Values)
         {
+            if (_stripMetadata) continue;   // runtime build: strip ALL roundtrip metadata (NRT, [Kotlin*], [KotlinInline])
             // [NullableContext(1)] — the per-type NRT default: every reference-type position is non-null unless it
             // carries its own [Nullable(2)]. So a consuming Kotlin (or C#) module sees DotKt's non-null `String` as
             // non-null and `String?` as nullable, through .NET's standard nullable-reference metadata.
