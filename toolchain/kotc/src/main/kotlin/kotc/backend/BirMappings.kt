@@ -85,6 +85,14 @@ internal val ARRAY_CLASS_ELEM = mapOf(
 	"kotlin.CharArray" to "char", "kotlin.DoubleArray" to "double", "kotlin.FloatArray" to "float", "kotlin.BooleanArray" to "bool",
 )
 
+// java.util.SequencedCollection (JDK21) leaks its members onto kotlin.collections.List/MutableList when the frontend
+// reads the JVM builtins. On the CLR these are pure JVM-isms (IReadOnlyList/IList have no getFirst/addFirst/…), so an
+// ABSTRACT injected interface slot has no implementer -> "method does not have an implementation". Drop them (discard
+// the JVM-ism); a concrete type's REAL addFirst/removeFirst (with a body, e.g. ArrayDeque) is emitted independently.
+// `reversed` is included: the SequencedCollection member leaks as ABSTRACT; the real `kotlin.collections.reversed`
+// EXTENSION (a top-level function with a body) handles `list.reversed()` calls, so dropping the member slot is safe.
+internal val SEQUENCED_COLLECTION_LEAK = setOf("getFirst", "getLast", "addFirst", "addLast", "removeFirst", "removeLast", "reversed")
+
 // Int-range/-progression types whose for-loop can be counter-lowered (over get_first/get_last/get_step) when the source
 // is a range VALUE (e.g. `for (i in indices)`), avoiding the iterator protocol + its covariant-return iterator.
 internal val INT_PROGRESSION_FQ = setOf("kotlin.ranges.IntRange", "kotlin.ranges.IntProgression")

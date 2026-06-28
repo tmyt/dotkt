@@ -605,6 +605,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// System.Object already provides Equals/GetHashCode/ToString, so emitting them as interface members creates
 			// abstract slots no implementer fills (the lowercase Kotlin name never binds Object's) -> TypeLoadException.
 			.filterNot { it.name.asString() in setOf("equals", "hashCode", "toString") }
+			// Drop the java.util.SequencedCollection JVM-ism leaked (as ABSTRACT) onto List/MutableList — no CLR contract
+			// member, no implementer -> "does not have an implementation" (a concrete type's real one is emitted separately).
+			.filterNot { stdlibCompile && it.name.asString() in SEQUENCED_COLLECTION_LEAK && it.body == null }
 			// A FAKE-OVERRIDE of a DEFAULT interface method (a DIM body lives in a supertype, e.g. Map.getOrDefault) must
 			// NOT be re-emitted as an abstract slot here — that shadows the inherited DIM, so concrete implementers
 			// (EmptyMap/MapWithDefaultImpl) "do not have an implementation". Abstract fake-overrides (no body anywhere, the
