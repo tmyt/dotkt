@@ -388,13 +388,27 @@ sealed partial class Emitter
                     // = the last = ULong, wired to Comparable<UInt32>.compareTo -> TypeLoad "do not match"). Resolve the
                     // overload by the interface method's TYPE-ARG-SUBSTITUTED signature via MethodsBySig.
                     var ifSubst = BuildTypeArgSubst(spec, iface);
-                    foreach (var im in iface.Methods)
-                    {
-                        var bodyMethod = ResolveOverload(ti, iface, im.Key, ifSubst) ?? (ti.Methods.TryGetValue(im.Key, out var bm) ? bm : null);
-                        if (bodyMethod == null) continue;
-                        var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, im.Value) : (MethodInfo)im.Value;
-                        ti.TB.DefineMethodOverride(bodyMethod, ifaceMethod);
-                    }
+                    // Iterate the interface's method DEFS (not the name-keyed iface.Methods) so OVERLOADED interface
+                    // methods (e.g. MutableMap.remove(K):V vs the JVM remove(K,V):Boolean) each resolve to their own
+                    // builder by signature, and to the matching body overload by TYPE-ARG-SUBSTITUTED signature. A miss
+                    // when the name is AMBIGUOUS (multiple body overloads) is skipped — wiring the wrong one is the bug.
+                    if (iface.Def.ValueKind == JsonValueKind.Object && iface.Def.TryGetProperty("methods", out var ifMs))
+                        foreach (var imDef in ifMs.EnumerateArray())
+                        {
+                            if (!imDef.TryGetProperty("name", out var imn) || !imDef.TryGetProperty("params", out _)) continue;
+                            var imName = imn.GetString();
+                            var ifaceBuilder = iface.MethodsBySig.TryGetValue(SigKey(imName, imDef), out var ib) ? ib
+                                             : (iface.Methods.TryGetValue(imName, out var ib2) ? ib2 : null);
+                            if (ifaceBuilder == null) continue;
+                            var subSig = imName + "(" + string.Join(",", imDef.GetProperty("params").EnumerateArray()
+                                .Select(p => { var t = p.GetProperty("type").GetString(); return ifSubst.TryGetValue(t, out var s) ? s : t; })) + ")";
+                            // Only wire an EXACT signature match. A miss means the class doesn't override this exact
+                            // overload (e.g. it lacks the JVM remove(K,V):Boolean default) -> SKIP rather than mis-wire a
+                            // different overload; for a Kotlin interface the same-name+sig method resolves implicitly anyway.
+                            if (!ti.MethodsBySig.TryGetValue(subSig, out var bodyMethod)) continue;
+                            var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
+                            ti.TB.DefineMethodOverride(bodyMethod, ifaceMethod);
+                        }
                 }
             }
         _curTypeParams = null;
