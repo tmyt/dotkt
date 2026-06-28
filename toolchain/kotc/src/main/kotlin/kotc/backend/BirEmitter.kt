@@ -3997,7 +3997,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			kotc.ClrTopLevelRegistry.lookup(callee.fqNameWhenAvailable?.asString(), recvDisc)?.let { (fileClass, _) ->
 				// A cross-module `inline fun` taking a lambda (body==null here = injected stub) -> splice its carried
 				// [KotlinInline] body at this call site (the only way a non-local `return` through the lambda works).
-				if (callee.isInline && hasLambdaArg(call)) return inlineSpliceCall(call, fileClass)
+				// Splice ONLY a non-extension inline-with-lambda (the receiver-less scope/util fns); an EXTENSION inline
+				// op (count/filter/let/also) instead CALLs its now-correctly-routed rt method (the ref splice body uses the
+				// Kotlin iterator protocol -> unresolved under substitution, but the rt body iterates via the fixed
+				// forEachInline). Non-local returns through an ext-inline lambda were already call-only pre-session.
+				if (callee.isInline && hasLambdaArg(call) && extRecv == null) return inlineSpliceCall(call, fileClass)
 				// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
 				val a = listOfNotNull(extRecv) + filledArgExprs(call)   // fill omitted default args (trailing/named-middle/reordered)
 				// A GENERIC top-level fun (e.g. a `reified` inline restored as a generic method) -> a generic static
