@@ -24,7 +24,9 @@
          DotKt.Stdlib (the real-Kotlin stdlib ops) is injected WHOLESALE via an asm-scan: its auto-imported ops
          (list.getOrElse(...)) never appear in the import-list, so every [KotlinFileClass] facade it ships is pulled in. -->
     <ItemGroup>
-      <_DotKtStdlibRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Stdlib'" />
+      <_DotKtStdlibRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Stdlib' and '$(KotlinClrRefRt)' != 'true'" />
+      <!-- ref/rt mode: scan the @Clr-metadata stdlib.ref (DotKt.Private.Stdlib), NOT the metadata-stripped rt. -->
+      <_DotKtStdlibRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Private.Stdlib' and '$(KotlinClrRefRt)' == 'true'" />
     </ItemGroup>
     <Message Importance="high" Text="DotKt: resolving .NET types (import list + @(DotKtImport))" />
     <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(_DotKtStdlibRef->'--scan-asm &quot;%(FullPath)&quot;', ' ') @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />

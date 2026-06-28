@@ -14,7 +14,11 @@
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(KotlinClrRoot)/build/bir2cir-bin/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
     <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</DotKtRetargetTool>
+    <!-- ref/rt mode (KotlinClrRefRt=true): RUNTIME references the full substitute stdlib.rt; the @Clr-metadata stdlib.ref
+         is scanned (added as a non-copy Reference below). Default = the migrated compat DotKt.Stdlib. -->
+    <DotKtStdlibAsm Condition="'$(DotKtStdlibAsm)' == '' and '$(KotlinClrRefRt)' == 'true'">$(KotlinClrRoot)/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll</DotKtStdlibAsm>
     <DotKtStdlibAsm Condition="'$(DotKtStdlibAsm)' == ''">$(KotlinClrRoot)/build/dotkt-stdlib/DotKt.Stdlib.dll</DotKtStdlibAsm>
+    <DotKtRefAsm Condition="'$(DotKtRefAsm)' == ''">$(KotlinClrRoot)/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll</DotKtRefAsm>
     <KotlinClrFacadeOut>$(BaseIntermediateOutputPath)kotlin-facades</KotlinClrFacadeOut>
 
     <!-- Project hygiene the shipping SDK applies via Sdk.props: we generate the assembly ourselves (kt -> BIR ->
@@ -48,6 +52,16 @@
     <Reference Include="DotKt.Stdlib">
       <HintPath>$(DotKtStdlibAsm)</HintPath>
       <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- ref/rt mode: also reference the @Clr-metadata stdlib.ref (DotKt.Private.Stdlib) so the facadegen asm-scan reads
+       its @Clr bindings; NOT copy-local (compile-time only; the rt above is the runtime). The shared pipeline scans
+       DotKt.Private.Stdlib (DotKt.Toolchain.targets) and the compile runs in substitute mode (DOTKT_STDLIB_SUBSTITUTE). -->
+  <ItemGroup Condition="'$(KotlinClrRefRt)' == 'true' and Exists('$(DotKtRefAsm)')">
+    <Reference Include="DotKt.Private.Stdlib">
+      <HintPath>$(DotKtRefAsm)</HintPath>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
 
