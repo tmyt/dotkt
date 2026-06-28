@@ -4187,7 +4187,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 		when (t.classFqName?.asString()) {
-			"kotlin.Unit", "kotlin.Nothing" -> return "void"
+			"kotlin.Unit" -> return "void"
+			// kotlin.Nothing (bottom type) erases to `object` — a Nothing-returning fn never returns (its body throws), and
+			// as a TYPE-ARG (EmptyList : List<Nothing>) it must be a real type: IReadOnlyList<object>, not <void> (invalid).
+			"kotlin.Nothing" -> return "object"
 			"kotlin.Any" -> return "object"
 			"kotlin.Int" -> return "int"
 			"kotlin.Long" -> return "long"
