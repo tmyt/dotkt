@@ -1655,7 +1655,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// interfaces, where the CLR allows variance; on classes it's Kotlin-level only — dropped).
 			val variance = when (tp.variance) {
 				org.jetbrains.kotlin.types.Variance.OUT_VARIANCE -> "out"
-				org.jetbrains.kotlin.types.Variance.IN_VARIANCE -> "in"
+				// `in` (contravariant) is dropped in the runtime build: the CLR's variance-validity check is stricter than
+				// Kotlin's (e.g. Continuation<in T>.resumeWith(Result<out T>) — T appears covariantly in an input position,
+				// which the CLR rejects). Runtime types don't need declaration-site variance (a compile-time concern).
+				org.jetbrains.kotlin.types.Variance.IN_VARIANCE -> if (stdlibSubstitute) null else "in"
 				else -> null
 			}
 			if (bounds.isEmpty() && variance == null) str(tp.name.asString())
