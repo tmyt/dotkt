@@ -235,3 +235,33 @@ Next concrete step: a runtime-build script that compiles the stdlib FUNCTION fil
 mode, producing the same-named runtime assembly; set the CLR actuals' bodies (asList = `this as List<T>`, etc.); strip
 [Clr]/[Kotlin*] metadata. Bounded C3b only bites for genuinely-Kotlin CONCRETE collection classes (UByteArray/EmptyList/
 ranges) if they're in the compiled set — keep them in the ref/handle separately.
+
+## Reverse GetEnumerator bridge (C3b) — DESIGN LOCKED (2026-06-28, Codex-reviewed)
+
+A concrete Kotlin collection class implementing the @Clr-bound `List`/`Collection`/`Iterable` (now CLR IReadOnly*/
+IEnumerable) must provide `IEnumerator<T> GetEnumerator()`, but only has a Kotlin `iterator(): Iterator<T>`. The bridge:
+
+- **(A) Adapter in IL, not Kotlin (A2).** Generate `EnumeratorOverKotlinIterator<T>` directly in the ilemit backend:
+  fields = the Kotlin Iterator + a cached current; `MoveNext()` = `if hasNext() { cur = next(); true } else false`;
+  generic `T get_Current()`; EXPLICIT `System.Collections.IEnumerator.get_Current()` returning `(object)cur`; `Reset()`
+  throws NotSupportedException; `Dispose()` no-op. Rationale (Codex): the two `Current` slots are genuinely distinct
+  interface slots; Kotlin can't express explicit interface impl; a GENERAL "auto-emit the non-generic Current bridge"
+  feature (A1) has too-broad semantic surface (boxing/nullability/value types/overrides/diagnostics) — only build it later
+  if many interop scenarios need it. So a small backend-generated helper type is lowest-risk.
+- **Generate `GetEnumerator()` on each qualifying class**: `IEnumerator<T> GetEnumerator() => new
+  EnumeratorOverKotlinIterator<T>(this.iterator())` + the non-generic `IEnumerable.GetEnumerator()` returning the same.
+  Emit at the class that INTRODUCES the @Clr-Iterable impl (avoid hierarchy duplicates).
+- **(B) Break the iterator<->GetEnumerator cycle via an EXPLICIT IR call-kind, not a clrName(declaringClass) heuristic**
+  (Codex's biggest risk). The generated GetEnumerator's `this.iterator()` must be a KotlinMemberCall (real method), never
+  the forward-bridge lowering (which calls GetEnumerator -> infinite recursion). Mark calls ClrInterfaceBridgeCall vs
+  KotlinMemberCall in BIR/CIR. Regression tests: concrete override, inherited concrete impl, abstract base, fake override,
+  value-type element enumerators.
+- **(C) Minimize the surface**: @Clr-bind concrete classes WITH BCL equivalents (ArrayList->System.Collections.Generic.
+  List, HashMap->Dictionary, HashSet->HashSet) so they ARE the BCL type (no bridge); ABSTRACT bases (AbstractList/
+  AbstractCollection) stay Kotlin with un-bindable interface members left ABSTRACT (an abstract class need not fully
+  satisfy the interface); generate the reverse bridge ONLY for irreducibly-Kotlin concretes (EmptyList, ranges,
+  UByteArray-like, sublist views). CAVEAT (Codex): treat ArrayList->System.List as targeted member mappings + tests, NOT
+  "the APIs are identical" (Kotlin `add` returns Boolean vs List.Add void; nullability; mutation-during-iteration).
+
+Implementation order: the reverse bridge (A)+(B) is the highest-leverage (unblocks ALL Kotlin collection classes at once);
+(C) is a follow-up optimization. Then subList (returns such a List), metadata-strip, same-name assembly swap.
