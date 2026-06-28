@@ -4168,8 +4168,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// kotlin.Result<T> -> the shared DotKt.Result<T> struct (one type, cross-assembly identity, so it
 		// serves both runCatching AND the Continuation.resumeWith parameter). See docs §13n.
 		if (!stdlibCompile && fqp == "kotlin.Result") return "clrg:DotKt.Result[${firstArgBir(t)}]"
-		// `by lazy` delegate: kotlin.Lazy<T> -> System.Lazy<T>.
-		if (fqp == "kotlin.Lazy") {
+		// `by lazy` delegate: kotlin.Lazy<T> -> System.Lazy<T>. NOT in the runtime (substitute) build: kotlin.Lazy is an
+		// INTERFACE with Kotlin implementors (UnsafeLazyImpl/...) — a Kotlin class can't implement System.Lazy (a CLASS).
+		if (fqp == "kotlin.Lazy" && !stdlibSubstitute) {
 			val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
 			return "clrg:System.Lazy[$elem]"
 		}
