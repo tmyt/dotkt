@@ -1708,6 +1708,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// implement kotlin.Comparable, so ClosedRange<Int> would violate the constraint at load; the body's compareTo
 			// already emits a `constrained. System.IComparable<T>::CompareTo` (which primitives satisfy). Runtime constraints
 			// are not enforced anyway (the app type-checked against the ref). Other bounds (clr/clrg) are kept.
+			// (A `C : MutableCollection<T>` bound on filterTo/mapTo/toCollection is NOT simply droppable -- the body still
+			// references MutableCollection in a `constrained.` call -> TypeLoad. It needs MutableCollection->ICollection
+			// SUBSTITUTION in both the bound and the body, i.e. the rt-build collection-reference substitution. TODO.)
 			val bounds = tp.superTypes.filter { it.classFqName?.asString() != "kotlin.Any" && !(stdlibSubstitute && it.classFqName?.asString() == "kotlin.Comparable") }.map { birType(it) }
 			// Declaration-site variance `out`/`in` -> CLR covariant/contravariant (ilemit applies it only on
 			// interfaces, where the CLR allows variance; on classes it's Kotlin-level only — dropped).
