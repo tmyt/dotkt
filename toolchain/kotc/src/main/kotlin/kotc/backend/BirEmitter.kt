@@ -2629,6 +2629,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun birTypeDeleg(t: IrType): String {
 		val fq = t.classFqName?.asString()
 		if (fq != null && (fq.startsWith("kotlin.reflect.KProperty") || fq.startsWith("kotlin.reflect.KMutableProperty"))) return "object"
+		// birTypeDeleg is used in PARAMETER positions (lambda/func-type params, delegate args); a Unit PARAM must be the
+		// real Unit VALUE type, not `void` (a void parameter is invalid metadata -> "incorrect format"). E.g. the func
+		// type for `(Unit, Element) -> Unit` becomes `func:void:@kotlin.Unit,@Element`. The RETURN context special-cases
+		// Unit->void before ever calling this, so this only affects params.
+		if (t.isUnit()) return if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit"
 		return birType(t)
 	}
 
