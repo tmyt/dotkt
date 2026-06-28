@@ -2636,7 +2636,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  extension receiver first (so a receiver lambda's `$this$build` is bound), then regular params. */
 	internal fun lambdaParamsJson(params: List<IrValueParameter>): String =
 		(params.filter { it.kind == IrParameterKind.ExtensionReceiver } + params.filter { it.kind == IrParameterKind.Regular })
-			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birTypeDeleg(it.type))}}""" }
+			// A `Unit`-typed PARAMETER (e.g. `fold(Unit) { _, e -> }` -> the closure's invoke(Unit, Element)) must be the
+			// real Unit VALUE type, not `void` — a `void` parameter is invalid metadata ("The signature is incorrect").
+			// Only a RETURN Unit erases to void. Mirrors firstArgBir's type-arg handling.
+			.joinToString(",") { p ->
+				val ty = if (p.type.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit") else birTypeDeleg(p.type)
+				"""{"name":${str(p.name.asString())},"type":${str(ty)}}"""
+			}
 
 	/** Regular args, filling omitted constant default arguments (IL has no default-parameter mechanism). */
 	internal fun filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> =
