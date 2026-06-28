@@ -835,15 +835,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// iface member AND a direct call on an iface-typed value (e.g. `cs.length` where cs: CharSequence).
 	internal fun clrIfaceMemberName(fn: IrSimpleFunction): String? =
 		(sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).firstNotNullOfOrNull { owner ->
-			val ifaceFq = (owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
-			val mn = owner.name.asString()
-			when (ifaceFq) {
-				// Comparable/Comparator are emitted by stdlib itself; keep their Kotlin ABI names.
-				"kotlin.AutoCloseable", "java.lang.AutoCloseable", "java.io.Closeable", "kotlin.io.Closeable" -> if (mn == "close") "Dispose" else null
-				// CharSequence -> synthetic <>dotkt_CharSequence: the `length` property getter must be emitted (the
-				// override has a non-empty overriddenSymbols so isCustomAccessor is false). get/subSequence keep names.
-				"kotlin.CharSequence" -> if (owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
-				else -> null
+			// A @Clr-annotated interface member -> its BCL name (C3a of the collection binding): a METHOD = its @Clr name
+			// (contains -> Contains); a PROPERTY accessor = get_/set_ + the property's @Clr name (Collection.size
+			// @Clr("Count") -> get_Count). So a Kotlin class implementing a @Clr interface binds its members to the BCL slots.
+			val ovProp = owner.correspondingPropertySymbol?.owner
+			val clrM = if (ovProp != null) clrName(ovProp)?.let { (if (owner === ovProp.getter) "get_" else "set_") + it } else clrName(owner)
+			clrM ?: run {
+				val ifaceFq = (owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
+				val mn = owner.name.asString()
+				when (ifaceFq) {
+					// Comparable/Comparator are emitted by stdlib itself; keep their Kotlin ABI names.
+					"kotlin.AutoCloseable", "java.lang.AutoCloseable", "java.io.Closeable", "kotlin.io.Closeable" -> if (mn == "close") "Dispose" else null
+					// CharSequence -> synthetic <>dotkt_CharSequence: the `length` property getter must be emitted (the
+					// override has a non-empty overriddenSymbols so isCustomAccessor is false). get/subSequence keep names.
+					"kotlin.CharSequence" -> if (owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
+					else -> null
+				}
 			}
 		}
 
@@ -1661,9 +1668,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		acc ?: return null
 		if (acc.body == null) return null
 		// The accessor overrides a member whose (real) declaring type is a .NET type.
-		val clrOwner = acc.overriddenSymbols.asSequence()
-			.map { it.owner }.map { (if (it.isFakeOverride) it.resolveFakeOverride() else it)?.parent as? IrClass }
-			.mapNotNull { it?.let(::clrName) }.firstOrNull() ?: return null
+		// Only a .NET base CLASS virtual property uses clrOverride. A @Clr INTERFACE property (Collection.size) goes via
+		// userAccessors + clrIfaceMemberName (-> get_Count), binding the interface slot rather than a generic clrOverride.
+		val clrOwnerClass = acc.overriddenSymbols.asSequence()
+			.map { it.owner }.mapNotNull { (if (it.isFakeOverride) it.resolveFakeOverride() else it)?.parent as? IrClass }
+			.firstOrNull { clrName(it) != null } ?: return null
+		if (clrOwnerClass.kind == ClassKind.INTERFACE) return null
+		val clrOwner = clrName(clrOwnerClass)!!
 		val isGetter = acc == prop.getter
 		val netName = clrName(prop) ?: prop.name.asString()
 		val emitName = (if (isGetter) "get_" else "set_") + netName

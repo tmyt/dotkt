@@ -355,17 +355,16 @@ sealed partial class Emitter
                         // type) is a TypeBuilderInstantiation whose .GetMethods() throws. Enumerate the OPEN
                         // definition's methods and re-anchor each to the instantiation via TypeBuilder.GetMethod
                         // (same pattern as the self-ref base-ctor below).
-                        if (itype.IsGenericType && itype.GetGenericArguments().Any(a => a is TypeBuilder || a.IsGenericParameter))
-                        {
-                            var openDef = itype.GetGenericTypeDefinition();
-                            foreach (var im in openDef.GetMethods())
-                                if (have.Contains(im.Name))
-                                    ti.TB.DefineMethodOverride(ti.Methods[im.Name], TypeBuilder.GetMethod(itype, im));
-                        }
-                        else
-                            foreach (var im in itype.GetMethods())
-                                if (have.Contains(im.Name))
-                                    ti.TB.DefineMethodOverride(ti.Methods[im.Name], im);
+                        // A constructed generic interface whose OPEN def is a TypeBuilder (a self-ref `V : IComparable<V>`,
+                        // OR a generic STDLIB interface instantiated even with a concrete arg) is a TypeBuilderInstantiation
+                        // whose .GetMethods() throws. Try GetMethods; on failure, enumerate the OPEN definition's methods
+                        // and re-anchor each to the instantiation via TypeBuilder.GetMethod.
+                        MethodInfo[] ifaceMs; bool reanchor;
+                        try { ifaceMs = itype.GetMethods(); reanchor = false; }
+                        catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
+                        foreach (var im in ifaceMs)
+                            if (have.Contains(im.Name))
+                                ti.TB.DefineMethodOverride(ti.Methods[im.Name], reanchor ? TypeBuilder.GetMethod(itype, im) : im);
                         continue;
                     }
                     var (open, constructed) = ParseOwner(spec);
@@ -1903,7 +1902,15 @@ sealed partial class Emitter
         }
         // Last resort: a UNIQUELY-named method (covers e.g. a `params`/vararg method called with one array arg whose
         // static argType — `object` — didn't match the `T[]` param, so neither exact nor arity resolution hit).
-        if (mi == null) { var named = type.GetMethods(flags).Where(m => m.Name == name).ToList(); if (named.Count == 1) mi = named[0]; }
+        if (mi == null)
+        {
+            // A generic TypeBuilder instantiation throws on GetMethods — enumerate the open def + re-anchor via GetMethod.
+            MethodInfo[] all; bool reanchor = false;
+            try { all = type.GetMethods(flags); }
+            catch (NotSupportedException) { all = type.GetGenericTypeDefinition().GetMethods(flags); reanchor = true; }
+            var named = all.Where(m => m.Name == name).ToList();
+            if (named.Count == 1) mi = reanchor ? TypeBuilder.GetMethod(type, named[0]) : named[0];
+        }
         if (mi == null) throw new NotSupportedException($"clrInstance method not resolved: {type}.{name}/{argSpecs.Count}");
         // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
         if (instance) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
