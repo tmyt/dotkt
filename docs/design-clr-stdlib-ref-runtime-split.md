@@ -92,3 +92,39 @@ metadata-only it's a trivial pure-Kotlin build. The pivot dissolves the cascade,
    Method). Drive the primitive maps (kotlin.Char->System.Char) from [Clr] too (retire the hardcoded maps — the goal of
    [[four-layer-purpose-retire-intrinsics]]).
 3. **Runtime build:** the stdlib funcs/adapters compiled WITH substitution + metadata stripped.
+
+## Design resolutions (design owner reasoning, Codex cross-check pending)
+
+### The unification: ref-mode vs substitute-mode — ONE substitution, two emit modes
+There aren't really "two builds with different rules" — there's ONE substitution mechanism and a flag:
+- **ref mode** (`DOTKT_STDLIB_COMPILE`, substitute OFF): @Clr -> `[Clr]` attr, pure Kotlin shapes. Produces `stdlib.ref.dll`.
+- **substitute mode** (default — used for BOTH apps AND the runtime stdlib build): compile against `stdlib.ref.dll`, then
+  at emit READ its `[Clr]` attrs and substitute `kotlin.* -> BCL`. Produces app IL / `stdlib.dll`.
+So the runtime stdlib build = "substitute mode applied to the stdlib source". Apps and the runtime stdlib are emitted by
+the exact same machinery; only the stdlib's REFERENCE build is special (it's the one that emits the metadata everyone
+else consumes).
+
+### Q3/Q4 — ref vs runtime signature divergence is FINE (no binary compat needed)
+The app is FULLY substituted: every `kotlin.*` type/member/call in the app IL becomes BCL or a runtime-stdlib BCL-signature
+member. `stdlib.ref.dll` is NEVER loaded at runtime. ref and runtime share the assembly NAME (`DotKt.Stdlib`) so a call
+to `DotKt.Stdlib.CollectionsKt.map` resolves to the runtime dll, but they need NOT be binary-compatible — the app references
+the SUBSTITUTED (BCL) signature, and the runtime dll (same substitution applied) provides exactly that signature. The
+substitution is the single source of truth, applied consistently to the app AND the runtime build, so signatures match by
+construction. ref.dll = compile-time type-shape + metadata provider ONLY.
+
+### Q5 — the runtime build needs BOUNDED C3 (not the open cascade)
+In substitute mode, the genuinely-Kotlin concrete classes with NO BCL equivalent (UByteArray:Collection, EmptyList, the
+ranges) become `: IReadOnlyCollection` etc., so they must satisfy the BCL interface. Substitution handles the NAMING
+(size->get_Count via the member [Clr]) but NOT the iterator SEMANTIC bridge — so each such class still needs a generated
+`GetEnumerator(): IEnumerator<T>` wrapping its Kotlin `iterator()` in an `EnumeratorOverKotlinIterator<T>` adapter (C3b).
+This set is BOUNDED (a handful of classes) — tractable per-class — vs the single-assembly approach where C3 hit EVERY
+type. C3a (member naming) is already done. So the residual hard piece (C3b GetEnumerator generation) shrinks to a small,
+well-scoped generator.
+
+### Q1/Q2 — the substitution chokepoint
+ilemit loads the referenced `stdlib.ref.dll` (MetadataLoadContext), builds a substitution table from the `[Clr]` attrs
+(type FQN -> BCL spec; member -> BCL member name), and applies it at the type/member resolution chokepoint (`MapType`/
+`ResolveType`/`ResolveMethod`). Generic substitution composes structurally (`List<Int>`->`IReadOnlyList<int>`, nested OK);
+variance rides the BCL target (`List<out E>`->covariant `IReadOnlyList`, `MutableList`->invariant `IList`) — it's the
+target interface's own variance, so nothing special. Watch the bypass paths: base/interface lists, generic args, attribute
+args, and by-shape method-overload matching all must route through the same chokepoint.
