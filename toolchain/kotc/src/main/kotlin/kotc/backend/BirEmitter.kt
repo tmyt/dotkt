@@ -2070,7 +2070,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 				val retVoid = fn.returnType.isUnit()
 				val retT = if (retVoid) "void" else birType(fn.returnType)
-				val callE = """{"k":"clrInstance","type":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${str(netType(fn.returnType))},"recv":{"k":"local","name":"__self"},"args":[$argsJson]}"""
+				// A lifted `Iterable::iterator` (e.g. `Sequence { this.iterator() }`) reaches here, NOT the call-site
+				// iterator() lowering — route it to the enumerator bridge too, else `__self.iterator()` calls a
+				// non-existent `iterator()` on the substituted BCL IEnumerable.
+				val callE = if (member == "iterator" && ownerClass?.fqNameWhenAvailable?.asString()?.startsWith("kotlin.collections") == true) {
+					val elem = (fn.parameters[dispatchIdx].type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+					"""{"k":"callStatic","owner":"kotlin.collections.ClrIteratorBridgeKt","method":"iteratorOverEnumerable","args":[{"k":"local","name":"__self"}],"typeArgs":[${str(elem)}]}"""
+				} else """{"k":"clrInstance","type":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${str(netType(fn.returnType))},"recv":{"k":"local","name":"__self"},"args":[$argsJson]}"""
 				val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 				val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
 				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
@@ -2993,7 +2999,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// BCL IReadOnly* types lack isEmpty/contains/containsAll/indexOf/lastIndexOf. Helper takes (recv, args...).
 		val collDefault = when (name) {
 			"isEmpty" -> "clrCollIsEmpty"; "contains" -> "clrCollContains"; "containsAll" -> "clrCollContainsAll"
-			"indexOf" -> "clrListIndexOf"; "lastIndexOf" -> "clrListLastIndexOf"; else -> null
+			"indexOf" -> "clrListIndexOf"; "lastIndexOf" -> "clrListLastIndexOf"; "subList" -> "clrListSubList"; else -> null
 		}
 		if (collDefault != null && callee.correspondingPropertySymbol == null &&
 			declaringClass != null && clrName(declaringClass) != null &&

@@ -338,6 +338,9 @@ sealed partial class Emitter
         // Iterate with the registry KEY (the BIR/full name, e.g. `p.Impl` for a packaged type, `Box` for a generic):
         // FindMethod looks the type up in `_types` by that key, NOT by `ti.TB.Name` (the *simple* name, which only
         // coincides with the key for a non-generic root-package type — so namespaced/generic types broke with KeyNotFound).
+        // C3b reverse bridge: now that the Kotlin Iterator interface's hasNext/next exist, emit the IEnumerator adapter
+        // (once) so qualifying classes' generated GetEnumerator can reference it. Emitter.ReverseBridge.cs.
+        EmitEnumeratorAdapter();
         foreach (var (typeKey, ti) in _types)
             if (!ti.IsFileClass && !ti.IsInterface && ti.Def.TryGetProperty("interfaces", out var ifs))
             {
@@ -350,6 +353,9 @@ sealed partial class Emitter
                     if (spec.StartsWith("clr:") || spec.StartsWith("clrg:"))
                     {
                         var itype = MapType(spec);
+                        // C3b reverse bridge: if this is a @Clr collection interface (IEnumerable<E>-derived) and the
+                        // class has only a Kotlin iterator(), synthesize GetEnumerator (handles the two overloads itself).
+                        GenerateGetEnumeratorIfNeeded(ti, itype);
                         var have = ti.Methods.Keys.ToHashSet();
                         // A SELF-REFERENTIAL constructed generic interface (e.g. `V : IComparable<V>`, V the emitted
                         // type) is a TypeBuilderInstantiation whose .GetMethods() throws. Enumerate the OPEN
@@ -363,7 +369,7 @@ sealed partial class Emitter
                         try { ifaceMs = itype.GetMethods(); reanchor = false; }
                         catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
                         foreach (var im in ifaceMs)
-                            if (have.Contains(im.Name))
+                            if (im.Name != "GetEnumerator" && have.Contains(im.Name))   // GetEnumerator: handled by the reverse bridge above
                                 ti.TB.DefineMethodOverride(ti.Methods[im.Name], reanchor ? TypeBuilder.GetMethod(itype, im) : im);
                         continue;
                     }
@@ -467,6 +473,8 @@ sealed partial class Emitter
 
         // Pass 6: bake types (base before derived). Enums were already baked up front.
         foreach (var ti in Ordered()) { if (!ti.IsEnum) { T($"pass6 createType: {ti.TB?.Name}"); ti.TB.CreateType(); } }
+        // The reverse-bridge adapter references the (now-baked) Kotlin Iterator type, so bake it after the user types.
+        if (_enumAdapterTB != null && !_enumAdapterTB.IsCreated()) _enumAdapterTB.CreateType();
         foreach (var tb in _syntheticDelegates.Values)
             if (!tb.IsCreated())
                 tb.CreateType();
