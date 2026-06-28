@@ -67,7 +67,7 @@ private class ClrParam(val name: String, val type: String)
 // [KotlinFunction] (carried in the `fun`/`tlfun` modifier token as comma-suffixes). For a `suspend` fun the
 // returnType is already the unwrapped result T (facadegen unwrapped the emitted Task<T>).
 private class ClrMethod(val name: String, val returnType: String, val open: Boolean, val abstract: Boolean, val protected: Boolean, val params: List<ClrParam>, val typeParams: List<String> = emptyList(),
-	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false)
+	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false, val clrName: String? = null)
 // A restored top-level Kotlin function: its package, the .NET file-facade class to call, and the function itself.
 private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
 private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: String, val mutable: Boolean, val receiver: String)
@@ -182,8 +182,11 @@ private object ClrMetadataHolder {
 				// single token (so it never looks like a type param); bare trailing tokens (no `:`) are type params.
 				"fun" -> {
 					val fm = parseFunMods(tok.getOrNull(3))
+					val rest = tok.drop(4)   // ref/runtime split: pull the `clr:Name` member-binding token out before param/typeparam parsing
+					val mclr = rest.firstOrNull { it.startsWith("clr:") }?.removePrefix("clr:")
+					val body = rest.filterNot { it.startsWith("clr:") }
 					methods.add(ClrMethod(tok[1], tok[2], fm.open, fm.abstract, fm.protected,
-						parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }, fm.infix, fm.operator, fm.suspend, fm.inline, fm.ext))
+						parseParams(body), body.filterNot { it.contains(':') }, fm.infix, fm.operator, fm.suspend, fm.inline, fm.ext, mclr))
 				}
 				"ctor" -> ctors.add(parseParams(tok.drop(1)))
 				// sfun <Name> <ret> [<param>:<type>]* — a public STATIC method of a normal class (-> companion).
@@ -225,6 +228,7 @@ private object ClrMetadataHolder {
 			ClrTypeRegistry.register(fqn, t.clrBinding ?: t.dotNetName)
 			// per-member BCL name (size -> Count): key = the member's Kotlin fqn so clrName(prop) can resolve it.
 			for (p in t.properties) p.clrName?.let { ClrTypeRegistry.registerMember("$fqn.${p.name}", it) }
+			for (m in t.methods) m.clrName?.let { ClrTypeRegistry.registerMember("$fqn.${m.name}", it) }
 			for (e in t.events) {
 				ClrEventRegistry.register(fqn, "add_${e.name}", e.name, "+=")
 				ClrEventRegistry.register(fqn, "remove_${e.name}", e.name, "-=")
@@ -241,7 +245,10 @@ private object ClrMetadataHolder {
 	// Kotlin package); nested "+" and generic arity are already stripped in the metadata.
 	fun namespaceOf(dotNet: String): String = dotNet.substringBefore('+').substringBeforeLast('.', "")
 	val byClassId: Map<ClassId, ClrType> by lazy {
-		module?.types?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
+		// ref/runtime split: a @Clr stdlib type (clrBinding != null, e.g. List/Collection) is a builtin the jar/
+		// frontend already provides. Only its BCL binding is registered (above) for the backend's clrName; do NOT
+		// re-create it as a FIR type here, or it shadows the jar's builtin and loses operator/infix modifiers.
+		module?.types?.filter { it.clrBinding == null }?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
 	}
 	val classIdByName: Map<String, ClassId> by lazy { byClassId.entries.associate { (id, t) -> t.kotlinName to id } }
 	// Generic and non-generic types share a simple name (`IEnumerable<T>` vs `IEnumerable`) — resolve by (name, arity)

@@ -278,6 +278,8 @@ static class FacadeGen
                     if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
                     if (!iseen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
                     var toks = new List<string> { "fun", m.Name, MapRet(m.ReturnType, t), "abstract" };
+                    var mclr = ClrAttrName(m);   // ref/runtime split: member substitution for a method (get -> get_Item)
+                    if (mclr != null) toks.Add("clr:" + mclr);
                     toks.AddRange(gp);
                     toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t)));
                     sb.Append(string.Join(" ", toks) + "\n");

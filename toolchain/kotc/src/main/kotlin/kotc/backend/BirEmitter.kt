@@ -3912,6 +3912,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			lookup(prop)?.let { return it }
 		}
+		// ...and a method bound to a BCL member (get -> get_Item, contains -> Contains); same fake-override walk.
+		(decl as? IrSimpleFunction)?.takeIf { it.correspondingPropertySymbol == null }?.let { fn ->
+			fun lookupFn(m: IrSimpleFunction): String? {
+				m.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.memberClrName(it) }?.let { return it }
+				for (ov in m.overriddenSymbols) lookupFn(ov.owner)?.let { return it }
+				return null
+			}
+			lookupFn(fn)?.let { return it }
+		}
 		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.dotNetName(it) }
 	}
 
