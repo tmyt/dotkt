@@ -568,7 +568,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	internal fun interfaceDef(iface: IrClass): String {
 		fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
-			val name = prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString()
+			// C3b reverse direction: a Kotlin interface extending a @Clr interface (Set : Collection->IReadOnlyCollection)
+			// must emit its overriding members with the BCL slot names (size getter -> get_Count) so implementers satisfy
+			// the BCL interface. clrIfaceMemberName is null in the ref build (pure Kotlin: get_size) and binds in substitute.
+			val name = clrIfaceMemberName(fn) ?: (prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString())
 			val ret = if (prop != null && fn == prop.setter) "void" else birType(fn.returnType)
 			// A Kotlin interface method with a DEFAULT implementation (a body, not abstract) -> carry that body so ilemit
 			// emits a CLR default interface method; an implementer that doesn't override it then INHERITS the default
