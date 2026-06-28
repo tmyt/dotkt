@@ -1881,7 +1881,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// (forEachInline). This runs only after the frontend has resolved an iterator operation from source/stdlib
 		// declarations; the FIR injector no longer synthesizes Kotlin's iterator protocol for .NET types.
 		// Element type = the source's first type arg (e.g. Collection<Int> -> Int), else the loop var's type.
-		if (source != null && (source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null) {
+		if (source != null && source.type.classFqName?.asString() != "kotlin.ranges.IntRange" && source.type.classFqName?.asString() !in INT_PROGRESSION_FQ && (source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null) {
 			val elem = (source.type as? IrSimpleType)?.arguments?.firstOrNull()
 				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
 			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
@@ -1896,6 +1896,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// IntProgression accessors directly (user: "当面これでよい"). See [[clr-stdlib-ref-runtime-split]].
 		if (stdlibCompile && source != null && source.type.classFqName?.asString() in INT_PROGRESSION_FQ)
 			return """{"k":"forRange","label":$lbl,"var":${str(loopVar.name.asString())},"elem":"int","range":${expr(source)},"body":[$body]}"""
+		// `for (i in 1..5)` constant-folds to a `new IntRange(first,last)` (a CONSTRUCTOR, not a rangeTo call) -> emit a
+		// plain counter loop straight from its args, so NO IntRange object reaches ilemit (it stays Kotlin-agnostic; this
+		// is the user-app form of the §1897 forRange, without the IntProgression accessors). Inclusive -> cmp "<=", step 1.
+		(source as? IrConstructorCall)?.takeIf { it.type.classFqName?.asString() == "kotlin.ranges.IntRange" }?.let { ctor ->
+			val cargs = ctor.arguments.filterNotNull()
+			if (cargs.size == 2)
+				return """{"k":"for","label":$lbl,"var":${str(loopVar.name.asString())},"from":${expr(cargs[0])},"to":${expr(cargs[1])},"cmp":"<=","step":1,"body":[$body]}"""
+		}
 		val range = source as? IrCall ?: return null
 		val ops = range.arguments.filterNotNull()
 		if (ops.size != 2) return null
