@@ -78,6 +78,13 @@ internal val COLLECTION_OPS = setOf(
 	"partition", "withIndex", "associate", "scan", "runningFold", "windowed",
 )
 
+// Primitive array class -> its BCL element type, for lowering the sized constructor `IntArray(size){init}` to a real
+// `new int[size]` + fill loop (a `kotlin.IntArray` object would otherwise be constructed — the wrong representation).
+internal val ARRAY_CLASS_ELEM = mapOf(
+	"kotlin.IntArray" to "int", "kotlin.LongArray" to "long", "kotlin.ShortArray" to "short", "kotlin.ByteArray" to "byte",
+	"kotlin.CharArray" to "char", "kotlin.DoubleArray" to "double", "kotlin.FloatArray" to "float", "kotlin.BooleanArray" to "bool",
+)
+
 // Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.
 internal val NUMBER_CONV = mapOf(
 	"toInt" to "int", "toLong" to "long", "toDouble" to "double", "toFloat" to "float",

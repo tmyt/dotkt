@@ -254,6 +254,39 @@ sealed partial class Emitter
             }
             case "newArray": return EmitNewArray(e);
             case "clr.newarr": return EmitNewArray(e);
+            case "newArraySized":
+            {
+                // `IntArray(size)` (no init) -> a zero-filled BCL array (newarr zero-initializes).
+                var elem = MapType(e.GetProperty("elem").GetString());
+                EmitExpr(e.GetProperty("size")); _il.Emit(OpCodes.Newarr, elem); return elem.MakeArrayType();
+            }
+            case "newArrayInit":
+            {
+                // `IntArray(size) { init }` -> `new elem[size]` + a fill loop `for i in 0..size-1: arr[i] = init(i)`.
+                // The init is a Func<int,elem> delegate; box/unbox per its actual signature (primitive vs boxed lambda).
+                var elem = MapType(e.GetProperty("elem").GetString());
+                EmitExpr(e.GetProperty("size")); var size = _il.DeclareLocal(typeof(int)); _il.Emit(OpCodes.Stloc, size);
+                var fnType = EmitExpr(e.GetProperty("init")); var fn = _il.DeclareLocal(fnType); _il.Emit(OpCodes.Stloc, fn);
+                var invoke = fnType.GetMethod("Invoke");
+                var pType = invoke.GetParameters()[0].ParameterType;
+                var rType = invoke.ReturnType;
+                _il.Emit(OpCodes.Ldloc, size); _il.Emit(OpCodes.Newarr, elem);
+                var arr = _il.DeclareLocal(elem.MakeArrayType()); _il.Emit(OpCodes.Stloc, arr);
+                var i = _il.DeclareLocal(typeof(int)); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Stloc, i);
+                var top = _il.DefineLabel(); var done = _il.DefineLabel();
+                _il.MarkLabel(top);
+                _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldloc, size); _il.Emit(OpCodes.Bge, done);
+                _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, i);                       // arr, i (for stelem)
+                _il.Emit(OpCodes.Ldloc, fn); _il.Emit(OpCodes.Ldloc, i);                         // fn, i
+                if (!pType.IsValueType) _il.Emit(OpCodes.Box, typeof(int));
+                _il.Emit(OpCodes.Callvirt, invoke);                                              // init(i)
+                if (rType != elem) { if (elem.IsValueType) _il.Emit(OpCodes.Unbox_Any, elem); else _il.Emit(OpCodes.Castclass, elem); }
+                _il.Emit(OpCodes.Stelem, elem);                                                  // arr[i] = init(i)
+                _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, i);
+                _il.Emit(OpCodes.Br, top);
+                _il.MarkLabel(done);
+                _il.Emit(OpCodes.Ldloc, arr); return arr.LocalType;
+            }
             case "nullableOf":
             {
                 // value `v` -> `new Nullable<elem>(v)` (the implicit T -> T? wrap).

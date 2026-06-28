@@ -161,6 +161,14 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	}
 	is IrConstructorCall -> {
 		val klass = node.symbol.owner.parent as? IrClass
+		// `IntArray(size){init}` / `IntArray(size)` -> a real BCL array (newarr + fill loop), NOT a kotlin.IntArray object.
+		val arrElem = ARRAY_CLASS_ELEM[klass?.fqNameWhenAvailable?.asString()]
+		val arrArgs = if (arrElem != null) filledArgExprs(node) else emptyList()
+		if (arrElem != null && arrArgs.size == 2)
+			"""{"k":"newArrayInit","elem":${str(arrElem)},"size":${expr(arrArgs[0])},"init":${expr(arrArgs[1])}}"""
+		else if (arrElem != null && arrArgs.size == 1)
+			"""{"k":"newArraySized","elem":${str(arrElem)},"size":${expr(arrArgs[0])}}"""
+		else {
 		// A generic .NET type (`Collection<Int>()`) -> a constructed `clrg:` spec; non-generic stays plain.
 		val clr = klass?.let { clrName(it) }?.let { net ->
 			val args = (node.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
@@ -181,6 +189,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
 			val args = (listOfNotNull(outerArg) + capArgs + filledArgExprs(node).map { expr(it) }).joinToString(",")
 			"""{"k":"new","type":${str(klass?.let { ownerSpec(it, node.type) } ?: "object")},"args":[$args]}"""
+		}
 		}
 	}
 	is IrStringConcatenation -> """{"k":"concat","parts":[${node.arguments.joinToString(",") { expr(it) }}]}"""
