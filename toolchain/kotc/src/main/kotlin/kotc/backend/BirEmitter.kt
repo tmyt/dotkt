@@ -3268,8 +3268,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// (<>dotkt_ClrH_<Class>.m(__self, args)), NOT a BCL member by name. Abstract/@Clr members fall through.
 			if (clrName(callee) == null && callee.body != null && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
 				val hr = dispatchReceiver(call)
+				// The helper static method declares the CLASS type params THEN the method's own (clrHelperMethod). A
+				// generic @Clr class (e.g. List<E>) needs them bound at the call: class args come from the receiver's
+				// type (List<Int> -> E=Int), method args from the call. Emit typeArgs so ilemit MakeGenericMethods it.
+				val classTAs = (hr?.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }.orEmpty()
+				val methodTAs = callee.typeParameters.indices.mapNotNull { call.typeArguments.getOrNull(it) }
+				val allTAs = classTAs + methodTAs
+				val taJson = if (allTAs.isEmpty()) "" else ""","typeArgs":[${allTAs.joinToString(",") { str(birType(it)) }}]"""
 				val hargs = (listOfNotNull(hr?.let { expr(it) }) + filledArgs(call)).joinToString(",")
-				return """{"k":"callStatic","owner":${str(clrHelperName(declaringClass))},"method":${str(name)},"args":[$hargs]}"""
+				return """{"k":"callStatic","owner":${str(clrHelperName(declaringClass))},"method":${str(name)},"args":[$hargs]$taJson}"""
 			}
 			val recv = dispatchReceiver(call)
 			val isStatic = recv == null || recv is IrGetObjectValue
