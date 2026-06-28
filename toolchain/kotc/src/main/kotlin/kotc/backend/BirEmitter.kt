@@ -1037,7 +1037,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// `Iterable<T>` as a parameter type lowers to IEnumerable<T> (birType), but as a user class SUPERTYPE it
 				// must stay the synthetic KIterable — implementing IEnumerable<T> would demand a synthesized GetEnumerator
 				// (the producing-side bridge, separate work). `for (x in r)` over the synthetic interface still works.
-				val synthIter = iteratorElemIface(st) ?: iterableElemIface(st)
+				// In the RUNTIME (substitute) build the synthetic monomorphized KIterable/KIterator are obsolete: the
+				// reverse bridge synthesizes GetEnumerator, so an Iterable supertype can be the real @Clr IEnumerable<E>
+				// (birType -> clrg:), and an Iterator supertype the real generic kotlin.collections.Iterator<E> (which the
+				// adapter wraps). Using the real interfaces keeps the producing + consuming sides type-compatible.
+				val synthIter = if (stdlibSubstitute) null else (iteratorElemIface(st) ?: iterableElemIface(st))
 				if (synthIter != null) synthIter
 				else {
 					val bt = birType(st)
