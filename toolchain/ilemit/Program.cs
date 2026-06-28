@@ -983,10 +983,16 @@ sealed partial class Emitter
         var mb = FindMethod(open, name, sig);
         if (constructed == null) { retType = mb.ReturnType; return mb; }
         // The owner constructed with its OWN class type parameters (`RingBuffer<T>` referenced from inside
-        // RingBuffer<T>) is the self instantiation — identical to the open type in IL. Use the open MethodBuilder: a
-        // TypeBuilder.GetMethod instantiation is a MethodBuilderInstantiation that cannot be MakeGenericMethod'd, so a
-        // generic-method call on such an owner (`this.toArray<object>()`) would otherwise throw.
-        if (IsSelfInstantiation(constructed)) { retType = mb.ReturnType; return mb; }
+        // RingBuffer<T>) is the self instantiation. A call must reference the method on that self-instantiation
+        // (`C<!0>::m`), NOT the open type def (`C`1::m`) — the open form is "not fully instantiated" at runtime (any
+        // self method-call `this.b()` inside a generic class). EXCEPTION: a generic-METHOD self-call must keep the open
+        // MethodBuilder, because TypeBuilder.GetMethod yields a MethodBuilderInstantiation that can't be
+        // MakeGenericMethod'd (`this.toArray<object>()`); ApplyTypeArgs instantiates the open mb instead.
+        if (IsSelfInstantiation(constructed))
+        {
+            retType = mb.ReturnType;
+            return mb.IsGenericMethodDefinition ? mb : TypeBuilder.GetMethod(constructed, mb);
+        }
         retType = Subst(mb.ReturnType, constructed.GetGenericArguments());
         return TypeBuilder.GetMethod(constructed, mb);
     }
