@@ -265,3 +265,14 @@ IEnumerable) must provide `IEnumerator<T> GetEnumerator()`, but only has a Kotli
 
 Implementation order: the reverse bridge (A)+(B) is the highest-leverage (unblocks ALL Kotlin collection classes at once);
 (C) is a follow-up optimization. Then subList (returns such a List), metadata-strip, same-name assembly swap.
+
+## User-library reverse-substitution: decision (A) breadcrumb — DEFERRED (2026-06-28)
+
+A USER LIBRARY (built by KCC with substitution + KEEP attrs) has `IReadOnlyList<int>` in its IL signatures. At the ABI/call
+level this is SMOOTH (List ≡ IReadOnlyList, identity-preserving — a consumer's List<Int> matches). BUT for an importer to
+see the idiomatic `kotlin.collections.List`, the reverse substitution IReadOnlyList->List is AMBIGUOUS: the IL can't tell a
+substituted `List<Int>` from an explicit `IReadOnlyList<int>` interop usage. DECISION (user): **(A) breadcrumb** — record
+the original Kotlin type at each substituted position in the kept [Kotlin*] metadata, so import can restore List precisely.
+**DEFERRED** (not blocking the stdlib runtime; the stdlib uses a ref/runtime split, not reverse-import). To do later: extend
+the per-member metadata with the pre-substitution type at collection/@Clr positions; the import path (facadegen --scan-asm /
+the round-trip injector) reads it to reverse-map. Until then, an imported user lib shows IReadOnlyList (functional, non-idiomatic).
