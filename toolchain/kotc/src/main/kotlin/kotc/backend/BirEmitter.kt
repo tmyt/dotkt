@@ -107,6 +107,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// Compiling the stdlib ITSELF: the kotlin.*->DotKt.Runtime lowerings (Result/Unit/Regex/coroutine ABI) must be OFF
 	// so the stdlib uses its OWN kotlin.* definitions (it IS the runtime) and never references the external DotKt.Runtime.
 	internal val stdlibCompile: Boolean get() = System.getenv("DOTKT_STDLIB_COMPILE") != null
+	// RUNTIME-assembly build ("substitute mode"): the stdlib FUNCTIONS compiled with @Clr ACTIVE so List->IReadOnlyList,
+	// size->Count etc. are applied (the @Clr-bound TYPES then bind to the BCL and aren't emitted, so no clash). Still uses
+	// the stdlib-compile flags (-Xstdlib-compilation, package kotlin, per-file resilience). docs/design-clr-stdlib-ref-runtime-split.md.
+	internal val stdlibSubstitute: Boolean get() = System.getenv("DOTKT_STDLIB_SUBSTITUTE") != null
 
 	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
 		// Compiling the stdlib ITSELF (DOTKT_STDLIB_COMPILE): don't fail the whole file on one unsupported construct in
@@ -3897,7 +3901,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// REFERENCE-assembly build (the stdlib under DOTKT_STDLIB_COMPILE): @Clr does NOT bind — it is emitted as a [Clr]
 		// metadata attribute (attrsJson) and the BCL substitution is deferred to app-emit. So the ref assembly is PURE
 		// Kotlin shapes (no C3, no clrg: BCL refs). docs/design-clr-stdlib-ref-runtime-split.md.
-		if (stdlibCompile) return null
+		if (stdlibCompile && !stdlibSubstitute) return null   // ref build = gated; runtime (substitute) build = @Clr binds
 		for (a in decl.annotations) {
 			if ((a as? IrConstructorCall)?.type?.classFqName?.asString() == "clr.Clr")
 				return (a.arguments.firstOrNull() as? IrConst)?.value as? String
