@@ -907,6 +907,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// CharSequence -> synthetic <>dotkt_CharSequence: the `length` property getter must be emitted (the
 					// override has a non-empty overriddenSymbols so isCustomAccessor is false). get/subSequence keep names.
 					"kotlin.CharSequence" -> if (owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
+					"kotlin.collections.List", "kotlin.collections.MutableList", "kotlin.collections.Collection",
+					"kotlin.collections.MutableCollection", "kotlin.collections.Set", "kotlin.collections.MutableSet",
+					"kotlin.collections.Map", "kotlin.collections.MutableMap" -> if (stdlibCompile || !stdlibSubstitute) null else when {
+						owner.correspondingPropertySymbol?.owner?.name?.asString() == "size" -> "get_Count"
+						mn == "get" -> "get_Item"
+						mn == "set" -> "set_Item"
+						mn == "iterator" -> "GetEnumerator"
+						mn == "add" -> "Add"
+						mn == "remove" -> "Remove"
+						mn == "contains" -> "Contains"
+						mn == "containsKey" -> "ContainsKey"
+						mn == "clear" -> "Clear"
+						else -> null
+					}
 					else -> null
 				}
 			}
@@ -4032,6 +4046,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * backend, like the C# backend, must consult the registry so injected types resolve as real .NET types
 	 * (otherwise they leak in as user classes and their members mis-route as fields). See [[s5-fir-injection-seam]].
 	 */
+	/** APP-side collection mapping (app compiled with DOTKT_STDLIB_SUBSTITUTE, !stdlibCompile): the app's List/Map
+	 *  come from the JVM jar and lack the IReadOnly* supertype the stdlib build declares -> map them DIRECTLY to
+	 *  the BCL interfaces. Drives routing (clrName!=null -> clrInstance) + birType (clrg:). rt build excluded. */
+	private fun appColl(fqn: String): String? = if (stdlibCompile || !stdlibSubstitute) null else when (fqn) {
+		"kotlin.collections.List" -> "System.Collections.Generic.IReadOnlyList"
+		"kotlin.collections.MutableList" -> "System.Collections.Generic.IList"
+		"kotlin.collections.Collection", "kotlin.collections.Set" -> "System.Collections.Generic.IReadOnlyCollection"
+		"kotlin.collections.MutableCollection", "kotlin.collections.MutableSet" -> "System.Collections.Generic.ICollection"
+		"kotlin.collections.Map" -> "System.Collections.Generic.IReadOnlyDictionary"
+		"kotlin.collections.MutableMap" -> "System.Collections.Generic.IDictionary"
+		"kotlin.collections.Iterable", "kotlin.collections.MutableIterable" -> "System.Collections.Generic.IEnumerable"
+		else -> null
+	}
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
 		// REFERENCE-assembly build (the stdlib under DOTKT_STDLIB_COMPILE): @Clr does NOT bind — it is emitted as a [Clr]
 		// metadata attribute (attrsJson) and the BCL substitution is deferred to app-emit. So the ref assembly is PURE
@@ -4052,6 +4079,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return null
 			}
 			lookup(prop)?.let { return it }
+			if (!stdlibCompile && stdlibSubstitute && (sequenceOf(prop) + prop.overriddenSymbols.asSequence().map { it.owner }).any { (it.parent as? IrClass)?.fqNameWhenAvailable?.asString() in setOf("kotlin.collections.List","kotlin.collections.MutableList","kotlin.collections.Collection","kotlin.collections.MutableCollection","kotlin.collections.Set","kotlin.collections.MutableSet","kotlin.collections.Map","kotlin.collections.MutableMap","kotlin.collections.Iterable") }) when (prop.name.asString()) {
+				"size" -> return "Count"; "keys" -> return "Keys"; "values" -> return "Values"; "entries" -> return "Entries"
+			}
 		}
 		(decl as? IrSimpleFunction)?.takeIf { it.correspondingPropertySymbol == null }?.let { fn ->
 			fun lookupFn(m: IrSimpleFunction): String? {
@@ -4061,8 +4091,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return null
 			}
 			lookupFn(fn)?.let { return it }
+			if (!stdlibCompile && stdlibSubstitute && (sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).any { (it.parent as? IrClass)?.fqNameWhenAvailable?.asString() in setOf("kotlin.collections.List","kotlin.collections.MutableList","kotlin.collections.Collection","kotlin.collections.MutableCollection","kotlin.collections.Set","kotlin.collections.MutableSet","kotlin.collections.Map","kotlin.collections.MutableMap","kotlin.collections.Iterable") }) when (fn.name.asString()) {
+				"get" -> return "get_Item"; "set" -> return "set_Item"; "iterator" -> return "GetEnumerator"; "add" -> return "Add"
+				"remove" -> return "Remove"; "contains" -> return "Contains"; "containsKey" -> return "ContainsKey"; "clear" -> return "Clear"
+			}
 		}
-		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.dotNetName(it) }
+		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { appColl(it) ?: kotc.ClrTypeRegistry.dotNetName(it) }
 	}
 
 	/** A type's fully-qualified .NET name, for IL reflection-based member resolution. */
