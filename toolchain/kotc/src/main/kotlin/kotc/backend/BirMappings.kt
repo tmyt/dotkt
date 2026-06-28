@@ -18,6 +18,10 @@ internal val MATH_FUNCS = mapOf(
 	"abs" to "Abs", "max" to "Max", "min" to "Min", "sqrt" to "Sqrt", "pow" to "Pow",
 	"round" to "Round", "floor" to "Floor", "ceil" to "Ceiling", "exp" to "Exp",
 	"ln" to "Log", "log10" to "Log10", "sin" to "Sin", "cos" to "Cos", "tan" to "Tan",
+	"asin" to "Asin", "acos" to "Acos", "atan" to "Atan", "atan2" to "Atan2",
+	"sinh" to "Sinh", "cosh" to "Cosh", "tanh" to "Tanh",
+	"asinh" to "Asinh", "acosh" to "Acosh", "atanh" to "Atanh",
+	"log" to "Log", "log2" to "Log2", "truncate" to "Truncate", "cbrt" to "Cbrt", "withSign" to "CopySign",
 )
 
 // kotlin.text String ops -> .NET System.String instance methods.
