@@ -276,3 +276,14 @@ the original Kotlin type at each substituted position in the kept [Kotlin*] meta
 **DEFERRED** (not blocking the stdlib runtime; the stdlib uses a ref/runtime split, not reverse-import). To do later: extend
 the per-member metadata with the pre-substitution type at collection/@Clr positions; the import path (facadegen --scan-asm /
 the round-trip injector) reads it to reverse-map. Until then, an imported user lib shows IReadOnlyList (functional, non-idiomatic).
+
+## Primitive conversion lowering: hardcoded NUMBER_CONV -> metadata-driven (refinement, DEFERRED 2026-06-28)
+
+`x.toDouble()`/`toInt()`/... on a numeric primitive lower to a CIL `conv` (BirEmitter ~L3683, driven by the hardcoded
+`NUMBER_CONV = mapOf("toDouble" to "double", ...)` + `NUMERIC_FQ` in BirMappings.kt). User: hardcoding is a residual
+intrinsic; ideally drive it from stdlib metadata. CLEAN DESIGN (deferred): the conversion TARGET is already the method's
+RETURN TYPE (`Int.toDouble(): Double`), so a marker annotation on the stdlib conversion methods (e.g. `@clr.ClrConv`, or
+reuse `@IntrinsicConstEvaluation`) + `conv to birType(callee.returnType)` removes BOTH NUMBER_CONV's hardcoded targets AND
+the name set — same "stdlib declares, compiler reads" philosophy as @Clr. NOT urgent: a cast is a CIL `conv` instruction
+with no method to bind to (can't be @Clr proper), so a small fixed intrinsic is acceptable; the win is removing the
+hardcoded target map. Cost = annotating ~49 conversion methods (7 conversions × 7 numeric primitives).
