@@ -4057,6 +4057,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.collections.Map" -> "System.Collections.Generic.IReadOnlyDictionary"
 		"kotlin.collections.MutableMap" -> "System.Collections.Generic.IDictionary"
 		"kotlin.collections.Iterable", "kotlin.collections.MutableIterable" -> "System.Collections.Generic.IEnumerable"
+		"java.util.ArrayList" -> "System.Collections.Generic.List"
+		"java.util.HashMap", "java.util.LinkedHashMap", "java.util.TreeMap" -> "System.Collections.Generic.Dictionary"
+		"java.util.HashSet", "java.util.LinkedHashSet", "java.util.TreeSet" -> "System.Collections.Generic.HashSet"
+		"java.util.List" -> "System.Collections.Generic.IList"
+		"java.util.Map" -> "System.Collections.Generic.IDictionary"
+		"java.util.Set", "java.util.Collection" -> "System.Collections.Generic.ICollection"
 		else -> null
 	}
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
