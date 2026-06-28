@@ -166,9 +166,13 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// (`Array<Any?>` -> object[]), so a concrete E works (a bare type-param E rides its `gp:E` form). Without this it
 		// fell through to a bogus `new kotlin.Array(...)` (wrong-sized array).
 		val arrElem = ARRAY_CLASS_ELEM[klass?.fqNameWhenAvailable?.asString()]
-			?: if (klass?.fqNameWhenAvailable?.asString() == "kotlin.Array")
-				((((node.type as? IrSimpleType)?.arguments?.firstOrNull()) as? IrTypeProjection)?.type?.let { birType(it) } ?: "object")
-			   else null
+			?: if (klass?.fqNameWhenAvailable?.asString() == "kotlin.Array") {
+				val elemType = (((node.type as? IrSimpleType)?.arguments?.firstOrNull()) as? IrTypeProjection)?.type
+				// Only a CONCRETE element type routes to a real BCL newarr (`Array<Any?>` -> object[]). A bare TYPE-PARAM
+				// element (`Array<T>`) needs reified allocation; routing it here would newarr a `gp:T` AND make its init
+				// `Func<int,T>` a TypeBuilderInstantiation (ilemit GetMethod("Invoke") fails) -> leave it to the fall-through.
+				if (elemType != null && elemType.classifierOrNull !is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) birType(elemType) else null
+			} else null
 		val arrArgs = if (arrElem != null) filledArgExprs(node) else emptyList()
 		if (arrElem != null && arrArgs.size == 2)
 			"""{"k":"newArrayInit","elem":${str(arrElem)},"size":${expr(arrArgs[0])},"init":${expr(arrArgs[1])}}"""
