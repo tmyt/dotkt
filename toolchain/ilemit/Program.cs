@@ -1763,7 +1763,12 @@ sealed partial class Emitter
         // params, and re-anchor via TypeBuilder.GetConstructor. (Mirrors GenericMethod for member access.)
         if (IsTbInstantiation(type))
         {
-            var openCtor = type.GetGenericTypeDefinition().GetConstructor(argTypes.All(t => t != null) ? argTypes : Type.EmptyTypes)
+            var openDef = type.GetGenericTypeDefinition();
+            var openCtor = (argTypes.All(t => t != null) ? openDef.GetConstructor(argTypes) : null)
+                // ABI substitution (@Clr concrete collections, ArrayList->System.List): a Kotlin arg type doesn't EXACTLY
+                // match the BCL ctor param (Collection->IReadOnlyCollection vs the List(IEnumerable<T>) ctor). Fall back to
+                // arity + structural assignability (IReadOnlyCollection IS IEnumerable).
+                ?? PickOpenCtor(openDef, argTypes, args.GetArrayLength())
                 ?? throw new NotSupportedException($"no matching ctor on the open def of {type.FullName} with {args.GetArrayLength()} arg(s)");
             EmitArgs(args, openCtor.GetParameters());
             _il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(type, openCtor));
@@ -1790,6 +1795,37 @@ sealed partial class Emitter
         EmitArgs(args, ci.GetParameters());
         _il.Emit(OpCodes.Newobj, ci);
         return type;
+    }
+
+    // Pick a ctor on an open generic def by arity + STRUCTURAL assignability (a Kotlin arg whose @Clr type derives from
+    // the BCL ctor's param generic def, e.g. IReadOnlyCollection<T> for a List(IEnumerable<T>) ctor). For the @Clr
+    // concrete-collection bindings where the Kotlin and BCL signatures aren't identical (Codex's ABI caveat).
+    ConstructorInfo PickOpenCtor(Type openDef, Type[] argTypes, int n)
+    {
+        var cands = openDef.GetConstructors().Where(c => c.GetParameters().Length == n).ToList();
+        if (cands.Count <= 1) return cands.FirstOrDefault();
+        foreach (var c in cands)
+        {
+            var ps = c.GetParameters();
+            if (Enumerable.Range(0, n).All(i => ParamAccepts(ps[i].ParameterType, argTypes[i]))) return c;
+        }
+        return cands.FirstOrDefault();
+    }
+
+    // Whether a ctor/method param of (possibly open-generic) type `param` accepts an arg of type `arg`: exact assignable,
+    // same generic def, or `arg`'s generic def derives from `param`'s generic def (IReadOnlyCollection<> : IEnumerable<>).
+    static bool ParamAccepts(Type param, Type arg)
+    {
+        if (arg == null) return true;                 // unknown arg type -> don't reject
+        try { if (param.IsAssignableFrom(arg)) return true; } catch { }
+        if (param.IsGenericType && arg.IsGenericType)
+        {
+            var pdef = param.GetGenericTypeDefinition();
+            var adef = arg.GetGenericTypeDefinition();
+            if (adef == pdef) return true;
+            try { if (adef.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == pdef)) return true; } catch { }
+        }
+        return false;
     }
 
     /** Pick a ctor by arity when exact type match fails; among equal-arity ctors prefer the one whose delegate-typed
