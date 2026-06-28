@@ -3890,7 +3890,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			// `kotlin.math.*` -> `System.Math.*` lowered to a `clrStatic` (ilemit resolves the overload by argTypes).
 			if (fq == "kotlin.math") MATH_FUNCS[name]?.let { m ->
-				val args = regularArgs(call)
+				// An EXTENSION math fun (Double.pow(x), Double.withSign(s)) carries the receiver as `this` -> it must lead the
+				// static args: Pow(this, x), not Pow(x). Non-extension funs (sqrt(x), max(a,b)) have a null receiver -> unchanged.
+				val args = listOfNotNull(extensionReceiver(call)) + regularArgs(call)
 				return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"args":[${args.joinToString(",") { expr(it) }}]}"""
 			}
 			if (fq == "kotlin.text") {
