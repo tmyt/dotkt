@@ -212,3 +212,26 @@ substitution all correct. native-cir 18 PASS, roundtrip PASS.
 
 Remaining: bind more Collection members (only size/get today; isEmpty/contains/indexOf aren't on IReadOnlyList<T> -> Kotlin
 impls needed); the runtime stdlib build; bounded C3b (GetEnumerator for UByteArray/EmptyList/ranges); primitive [Clr] maps.
+
+## Runtime-build architecture (2026-06-28, clarified by the listOf-essence proof)
+
+PROVEN: a Kotlin function that CREATES a List works end-to-end in the app-flow. `fun <T> listOfMini(vararg elements: T):
+List<T> = elements as List<T>` (the @Suppress'd cast — at the CLR a `T[]` IS `IReadOnlyList<T>`) compiled app-against-ref
+-> return type `IReadOnlyList<T>`, body a cast -> a C# consumer `listOfMini<int>(7,8,9)` -> Count=3, [0]=7, [2]=9. This is
+exactly the real stdlib's `listOf(vararg) = elements.asList()` where the CLR `Array<T>.asList() = this as List<T>`.
+
+KEY INSIGHT — the RUNTIME stdlib is built in APP-FLOW mode, NOT stdlibCompile mode:
+- stdlibCompile (clrName gated) produces the REF (pure Kotlin shapes + [Clr] metadata).
+- The RUNTIME is SUBSTITUTED code, so it compiles like an APP: clrName ACTIVE + CLR_TYPES_METADATA=ref.meta + jar. Its
+  `List` substitutes to `IReadOnlyList`, exactly as a consuming app's does.
+- CATCH: the stdlib's TYPE DECLARATIONS (the `List` interface itself) can NOT be compiled in app-flow — byClassId filters
+  kotlin.* out of injection (the jar owns them), so a source re-defining `kotlin.collections.List` would clash. Therefore
+  the runtime build compiles ONLY the FUNCTION files (listOf/map/filter/asList...), referencing the ref's types. The type
+  decls live only in the ref.
+- ref and runtime share an ASSEMBLY NAME (e.g. DotKt.Stdlib) -> the app compiles against the ref's List signatures and
+  RUNS against the runtime's IReadOnlyList impls (List ≡ IReadOnlyList post-substitution). Classic .NET ref/impl swap.
+
+Next concrete step: a runtime-build script that compiles the stdlib FUNCTION files (not the type-decl files) in app-flow
+mode, producing the same-named runtime assembly; set the CLR actuals' bodies (asList = `this as List<T>`, etc.); strip
+[Clr]/[Kotlin*] metadata. Bounded C3b only bites for genuinely-Kotlin CONCRETE collection classes (UByteArray/EmptyList/
+ranges) if they're in the compiled set — keep them in the ref/handle separately.
