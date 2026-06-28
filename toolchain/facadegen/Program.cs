@@ -219,6 +219,15 @@ static class FacadeGen
     }
 
     // Emit one type's FIR-injection metadata (enum/interface/annotation/object/class + members).
+    // The @Clr("BclName") binding on a ref-assembly type/member, emitted there as a [clr.Clr] custom attribute. When
+    // present, the injection registers the Kotlin type's dotNet name AS THE BCL TARGET, so the app's clrName binds it
+    // (kotlin.collections.List -> System.Collections.Generic.IReadOnlyList). docs/design-clr-stdlib-ref-runtime-split.md.
+    static string ClrAttrName(MemberInfo m)
+    {
+        var a = m.GetCustomAttributesData().FirstOrDefault(x => x.AttributeType.Name == "Clr" && x.ConstructorArguments.Count == 1);
+        return a?.ConstructorArguments[0].Value as string;
+    }
+
     static void EmitOneType(Type t, StringBuilder sb)
     {
             // A Kotlin file-facade ([KotlinFileClass]) -> its statics become TOP-LEVEL Kotlin functions, not a class.
@@ -238,7 +247,9 @@ static class FacadeGen
             if (t.IsInterface)
             {
                 var iname = SimpleName(t);
-                var idot = t.IsGenericTypeDefinition ? OpenName(t) : t.FullName;
+                // app-emit substitution (kotc-level): a @Clr-bound stdlib interface -> its BCL target as the dotNet name,
+                // so the app's clrName binds `kotlin.collections.List -> System.Collections.Generic.IReadOnlyList`.
+                var idot = ClrAttrName(t) ?? (t.IsGenericTypeDefinition ? OpenName(t) : t.FullName);
                 var itp = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
                 sb.Append($"interface {iname} {idot}{itp}\n");
                 // Interface->interface supertypes (GENERIC only) so an injected `IList<T>` carries its inherited
