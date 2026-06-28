@@ -1642,7 +1642,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun typeParamsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String {
 		if (tps.isEmpty()) return ""
 		val entries = tps.joinToString(",") { tp ->
-			val bounds = tp.superTypes.filter { it.classFqName?.asString() != "kotlin.Any" }.map { birType(it) }
+			// In the runtime (substitute) build drop a `kotlin.Comparable` upper bound: a BCL primitive (Int32) doesn't
+			// implement kotlin.Comparable, so ClosedRange<Int> would violate the constraint at load; the body's compareTo
+			// already emits a `constrained. System.IComparable<T>::CompareTo` (which primitives satisfy). Runtime constraints
+			// are not enforced anyway (the app type-checked against the ref). Other bounds (clr/clrg) are kept.
+			val bounds = tp.superTypes.filter { it.classFqName?.asString() != "kotlin.Any" && !(stdlibSubstitute && it.classFqName?.asString() == "kotlin.Comparable") }.map { birType(it) }
 			// Declaration-site variance `out`/`in` -> CLR covariant/contravariant (ilemit applies it only on
 			// interfaces, where the CLR allows variance; on classes it's Kotlin-level only — dropped).
 			val variance = when (tp.variance) {
