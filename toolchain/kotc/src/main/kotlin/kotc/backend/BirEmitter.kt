@@ -4080,6 +4080,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"java.util.List" -> "System.Collections.Generic.IList"
 		"java.util.Map" -> "System.Collections.Generic.IDictionary"
 		"java.util.Set", "java.util.Collection" -> "System.Collections.Generic.ICollection"
+		// The JVM kotlin-stdlib.jar aliases `kotlin.text.StringBuilder = java.lang.StringBuilder`; a ref/rt app gets that
+		// JVM concrete -> map it to the BCL builder (its members map below, mirroring the collection model).
+		"java.lang.StringBuilder", "java.lang.AbstractStringBuilder" -> "System.Text.StringBuilder"
 		else -> null
 	}
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
@@ -4117,6 +4120,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (!stdlibCompile && stdlibSubstitute && (sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).any { (it.parent as? IrClass)?.fqNameWhenAvailable?.asString() in setOf("kotlin.collections.List","kotlin.collections.MutableList","kotlin.collections.Collection","kotlin.collections.MutableCollection","kotlin.collections.Set","kotlin.collections.MutableSet","kotlin.collections.Map","kotlin.collections.MutableMap","kotlin.collections.Iterable") }) when (fn.name.asString()) {
 				"get" -> return "get_Item"; "set" -> return "set_Item"; "iterator" -> return "GetEnumerator"; "add" -> return "Add"
 				"remove" -> return "Remove"; "contains" -> return "Contains"; "containsKey" -> return "ContainsKey"; "clear" -> return "Clear"
+			}
+			// java.lang.StringBuilder (the JVM alias of kotlin.text.StringBuilder) -> System.Text.StringBuilder members.
+			if (!stdlibCompile && stdlibSubstitute && (sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).any { (it.parent as? IrClass)?.fqNameWhenAvailable?.asString() in setOf("java.lang.StringBuilder", "java.lang.AbstractStringBuilder", "kotlin.text.StringBuilder") }) when (fn.name.asString()) {
+				"append" -> return "Append"; "insert" -> return "Insert"; "toString" -> return "ToString"; "get" -> return "get_Chars"; "clear" -> return "Clear"
 			}
 		}
 		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { appColl(it) ?: kotc.ClrTypeRegistry.dotNetName(it) }
