@@ -353,6 +353,9 @@ sealed partial class Emitter
                 foreach (var i in ifs.EnumerateArray())
                 {
                     var spec = i.GetString();
+                    // C3b transitive reverse bridge: a Kotlin collection interface (Set/MutableSet/... — extends Iterable
+                    // but isn't itself @Clr) still makes the class IEnumerable<E> via its @Clr Collection supertype.
+                    TryGenerateEnumeratorForKotlinIface(ti, spec);
                     // A .NET-mapped interface (DotKt.Coroutines.Continuation<int>): bind each interface method to the
                     // class method of the same .NET name via reflection (the class emits PascalCase names already).
                     if (spec.StartsWith("clr:") || spec.StartsWith("clrg:"))
