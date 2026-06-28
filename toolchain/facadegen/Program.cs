@@ -224,7 +224,7 @@ static class FacadeGen
     // (kotlin.collections.List -> System.Collections.Generic.IReadOnlyList). docs/design-clr-stdlib-ref-runtime-split.md.
     static string ClrAttrName(MemberInfo m)
     {
-        var a = m.GetCustomAttributesData().FirstOrDefault(x => x.AttributeType.Name == "Clr" && x.ConstructorArguments.Count == 1);
+        var a = m.GetCustomAttributesData().FirstOrDefault(x => (x.AttributeType.Name == "ClrIntrinsic" || x.AttributeType.Name == "Clr") && x.ConstructorArguments.Count == 1);
         return a?.ConstructorArguments[0].Value as string;
     }
 
