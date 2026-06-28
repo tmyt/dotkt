@@ -149,3 +149,27 @@ Recommendation: **(A)** — substitution at the frontend/backend boundary keeps 
 mechanism, and unifies the app + runtime builds. Confirmed: facadegen meta for `List` currently has NO @Clr (pure Kotlin
 shape only) — so (A)'s work is "facadegen emits @Clr from [clr.Clr] + injection restores it". (Codex cross-check of the
 substitution chokepoint pending.)
+
+## Step 2B (member substitution) — sub-parts identified (2026-06-28)
+
+Step 2A (TYPE substitution) works: facadegen emits the BCL name as the injected dotNet token, the injection registers it
+in ClrTypeRegistry, clrName binds `List -> IReadOnlyList`. Member substitution (`size -> Count`, `get -> get_Item`) is the
+next slice and has more plumbing:
+- The ref-assembly List's `size` (a property under the CLR property model) is reflected by facadegen as `fun get_size`
+  (a method), not restored as `prop size`. So the app referencing it sees `get_size`, not a `size` property. Two issues:
+  (a) facadegen should RESTORE the property (so the app uses `list.size`), and (b) carry the member's [clr.Clr("Count")].
+- The injection (ClrTypeInjection) has no PER-MEMBER clr-name today (only the type-level ClrTypeRegistry). So a member
+  registry (member fqn -> BCL name) OR attaching an @Clr annotation to the synthesized FIR member is needed, so
+  clrName(member) returns the BCL name (get_Count / get_Item) at the app's call sites.
+- Then the existing call-resolution (`clrName(callee) ?: name`, the @Clr member path) emits the BCL member call.
+
+So 2B = facadegen (emit member [clr.Clr] + restore properties) + injection (per-member clr name) + (reuse) clrName. The
+TYPE path is done; the MEMBER path is the same idea one level down. After 2B: the end-to-end app-against-ref test, then
+the runtime build + bounded C3b.
+
+### Current overall state (this session)
+DONE+committed: design (architecture, Q1-Q5, fork A), step 1 (ref [Clr] metadata, verified), step 2A (type substitution,
+verified at meta level). Plus reusable: @Clr mechanism (class/member/rollup/top-level/extension), iterator bridge +
+iterator() lowering, C3a (clrIfaceMemberName @Clr), and ilemit robustness (generic self-calls, TypeBuilderInstantiation,
+clrg: arity). The pivot is on a clear, validated track with no remaining UNKNOWN difficulty — the rest is the same
+substitution pattern extended to members + the app/runtime build wiring.
