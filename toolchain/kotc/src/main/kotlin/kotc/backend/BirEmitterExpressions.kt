@@ -162,7 +162,13 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrConstructorCall -> {
 		val klass = node.symbol.owner.parent as? IrClass
 		// `IntArray(size){init}` / `IntArray(size)` -> a real BCL array (newarr + fill loop), NOT a kotlin.IntArray object.
+		// The GENERIC object array `Array<E>(size){init}` is the same intrinsic: the element is the CLR type of E
+		// (`Array<Any?>` -> object[]), so a concrete E works (a bare type-param E rides its `gp:E` form). Without this it
+		// fell through to a bogus `new kotlin.Array(...)` (wrong-sized array).
 		val arrElem = ARRAY_CLASS_ELEM[klass?.fqNameWhenAvailable?.asString()]
+			?: if (klass?.fqNameWhenAvailable?.asString() == "kotlin.Array")
+				((((node.type as? IrSimpleType)?.arguments?.firstOrNull()) as? IrTypeProjection)?.type?.let { birType(it) } ?: "object")
+			   else null
 		val arrArgs = if (arrElem != null) filledArgExprs(node) else emptyList()
 		if (arrElem != null && arrArgs.size == 2)
 			"""{"k":"newArrayInit","elem":${str(arrElem)},"size":${expr(arrArgs[0])},"init":${expr(arrArgs[1])}}"""
