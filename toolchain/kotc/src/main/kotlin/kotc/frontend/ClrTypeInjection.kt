@@ -248,7 +248,9 @@ private object ClrMetadataHolder {
 		// ref/runtime split: a @Clr stdlib type (clrBinding != null, e.g. List/Collection) is a builtin the jar/
 		// frontend already provides. Only its BCL binding is registered (above) for the backend's clrName; do NOT
 		// re-create it as a FIR type here, or it shadows the jar's builtin and loses operator/infix modifiers.
-		module?.types?.filter { it.clrBinding == null }?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
+		// Broader: NO `kotlin.*` type is injected — the jar/frontend owns ALL Kotlin shapes (Iterator/Iterable/...);
+		// ref.meta is consulted ONLY for the @Clr bindings (registered above). The injection creates System.* types only.
+		module?.types?.filter { it.clrBinding == null && !it.dotNetName.startsWith("kotlin.") }?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
 	}
 	val classIdByName: Map<String, ClassId> by lazy { byClassId.entries.associate { (id, t) -> t.kotlinName to id } }
 	// Generic and non-generic types share a simple name (`IEnumerable<T>` vs `IEnumerable`) — resolve by (name, arity)
