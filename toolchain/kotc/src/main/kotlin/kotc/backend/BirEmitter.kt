@@ -1881,7 +1881,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// (forEachInline). This runs only after the frontend has resolved an iterator operation from source/stdlib
 		// declarations; the FIR injector no longer synthesizes Kotlin's iterator protocol for .NET types.
 		// Element type = the source's first type arg (e.g. Collection<Int> -> Int), else the loop var's type.
-		if (source != null && source.type.classFqName?.asString() != "kotlin.ranges.IntRange" && source.type.classFqName?.asString() !in INT_PROGRESSION_FQ && (source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null) {
+		if (source != null && source.type.classFqName?.asString() != "kotlin.ranges.IntRange" && source.type.classFqName?.asString() !in INT_PROGRESSION_FQ && ((source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null || isSubstIterable(source.type))) {
 			val elem = (source.type as? IrSimpleType)?.arguments?.firstOrNull()
 				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
 			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
@@ -4073,6 +4073,26 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** APP-side collection mapping (app compiled with DOTKT_STDLIB_SUBSTITUTE, !stdlibCompile): the app's List/Map
 	 *  come from the JVM jar and lack the IReadOnly* supertype the stdlib build declares -> map them DIRECTLY to
 	 *  the BCL interfaces. Drives routing (clrName!=null -> clrInstance) + birType (clrg:). rt build excluded. */
+	// In the SUBSTITUTE STDLIB BUILD (rt: stdlibCompile && stdlibSubstitute), appColl/clrName stay off (the rt substitutes
+	// collections via the IReadOnly* supertype, not the app-side map), so a `for (e in coll)` falls to the Kotlin iterator
+	// protocol (coll.iterator()/Iterator.hasNext) -> EntryPointNotFound when an app calls the rt op. Detect a kotlin.collections
+	// iterable here so the for-loop emits forEachInline instead: ilemit's GetEnumerator resolves through the IEnumerable the
+	// IReadOnly* supertype carries. rt-build-only (app/ref unaffected).
+	private fun isSubstIterable(t: org.jetbrains.kotlin.ir.types.IrType): Boolean {
+		if (!(stdlibCompile && stdlibSubstitute)) return false
+		val collFqs = setOf("kotlin.collections.Iterable", "kotlin.collections.MutableIterable", "kotlin.collections.Collection",
+			"kotlin.collections.MutableCollection", "kotlin.collections.List", "kotlin.collections.MutableList",
+			"kotlin.collections.Set", "kotlin.collections.MutableSet")
+		val seen = HashSet<String>()
+		fun walk(c: IrClass): Boolean {
+			val fq = c.fqNameWhenAvailable?.asString() ?: return false
+			if (!seen.add(fq)) return false
+			if (fq in collFqs) return true
+			return c.superTypes.any { st -> (st.classifierOrNull?.owner as? IrClass)?.let(::walk) == true }
+		}
+		return (t.classifierOrNull?.owner as? IrClass)?.let(::walk) ?: false
+	}
+
 	private fun appColl(fqn: String): String? = if (stdlibCompile || !stdlibSubstitute) null else when (fqn) {
 		"kotlin.collections.List" -> "System.Collections.Generic.IReadOnlyList"
 		"kotlin.collections.MutableList" -> "System.Collections.Generic.IList"
