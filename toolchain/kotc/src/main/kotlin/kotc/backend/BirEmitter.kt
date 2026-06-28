@@ -922,8 +922,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. A Kotlin-authored
 	 *  annotation uses its synthesized `: System.Attribute` type (#46); an imported .NET attribute uses its real type
 	 *  via a `clr:` marker so ilemit binds the existing .NET constructor (#54). Kotlin built-in annotations are dropped. */
-	internal fun attrsJson(anns: List<IrConstructorCall>): String =
-		anns.mapNotNull { ann ->
+	internal fun attrsJson(anns: List<IrConstructorCall>): String {
+		// RUNTIME (substitute) build: emit NO roundtrip metadata ([Kotlin*]/[Clr]) — the runtime assembly is consumed by
+		// the CLR directly, not re-read AS KOTLIN, so the binding/modifier attributes are dead weight. (Per design + user.)
+		if (stdlibSubstitute) return ""
+		return anns.mapNotNull { ann ->
 			val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
 			if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
 			val clr = clrName(ac)
@@ -932,6 +935,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val args = regularArgs(ann)
 			"""{"attr":${str(attrType)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
 		}.joinToString(",")
+	}
 
 	internal fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false): String {
 		val baseType = klass.superTypes
