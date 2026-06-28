@@ -4294,10 +4294,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// factory's return type stays constructed and the emitted IL is verifiable (item 13).
 				val sargs = (t as? IrSimpleType)?.arguments
 				if (!sargs.isNullOrEmpty())
-					// A STAR projection (`Comparable<*>`) has no IrTypeProjection.type -> emit `object`. (Dropping it would
-					// leave a RAW generic `@kotlin.Comparable` with NO type arg, which is malformed metadata -> the loader's
-					// "incorrect format"; e.g. compareBy/compareValuesBy/minusKey take `(T)->Comparable<*>` selectors.)
-					return "@" + typeName(klass) + "[" + sargs.joinToString(",") { (it as? IrTypeProjection)?.type?.let(::birType) ?: "object" } + "]"
+					return "@" + typeName(klass) + "[" + sargs.joinToString(",") { a ->
+						val at = (a as? IrTypeProjection)?.type
+						when {
+							// A STAR projection (`Comparable<*>`) -> `object`; dropping it leaves a RAW generic (no type arg),
+							// malformed metadata ("incorrect format"); e.g. compareBy/minusKey `(T)->Comparable<*>` selectors.
+							at == null -> "object"
+							// A `Unit` TYPE-ARG can't be `void` (a generic arg of System.Void is invalid -> "incorrect format",
+							// validated only when the instantiation resolves in the full type-load batch, e.g. Continuation<Unit>).
+							at.isUnit() -> if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit"
+							else -> birType(at)
+						}
+					} + "]"
 			}
 			return "@" + typeName(klass)
 		}
