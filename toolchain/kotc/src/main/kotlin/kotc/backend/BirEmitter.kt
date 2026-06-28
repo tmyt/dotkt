@@ -475,6 +475,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun scopeSuspendCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? =
 		scopeCall(e)?.takeIf { (_, recv, lambda) -> lambda.function.body?.let { containsSuspend(it) } == true || containsSuspend(recv) }
 
+	private val SUBSTITUTED_VALUE_CLASSES = setOf("kotlin.Int","kotlin.Long","kotlin.Byte","kotlin.Short","kotlin.Float","kotlin.Double","kotlin.Char","kotlin.Boolean")
+	// A primitive value class substitutes to a BCL value type (kotlin.Int -> System.Int32) at every use; its Kotlin
+	// declaration is a degenerate empty class (no field, intrinsic members) -> do NOT emit it in the runtime (per user).
+	internal fun substitutedAway(k: IrClass): Boolean = clrName(k) != null || (stdlibSubstitute && k.fqNameWhenAvailable?.asString() in SUBSTITUTED_VALUE_CLASSES)
 	fun emitFile(file: IrFile): String {
 		fileEntry = file.fileEntry
 		// Per-FILE lifted state. One BirEmitter instance processes every file in turn, so these MUST be reset here —
@@ -496,14 +500,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			.filter { it.origin.toString() == "DEFINED" && !isAwaitIntrinsic(it) && clrName(it) == null && it.name.asString() !in setOf("byref", "stackBuffer") }
 			.filterNot { skipStdlibHighArityFunctionType(it) }
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
-		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && clrName(it) == null && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
+		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && !substitutedAway(it) && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
 		// `object Foo { ... }` (non-companion) -> a singleton class with a static `INSTANCE` field; `IrGetObjectValue`
 		// loads it. The shared-state-via-`object` case (feedback item 10). Companion/anonymous objects are handled
 		// elsewhere; .NET-injected `object`s (Math, …) are static call sites, not user singletons.
-		val objects = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.OBJECT && !it.isCompanion && clrName(it) == null }
-		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && clrName(it) == null }
+		val objects = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.OBJECT && !it.isCompanion && !substitutedAway(it) }
+		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && !substitutedAway(it) }
 		val enums = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ENUM_CLASS }
-		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS && clrName(it) == null }
+		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS && !substitutedAway(it) }
 		// Only USER properties (origin DEFINED) — a consuming module's FIR also holds plugin-INJECTED top-level props
 		// (restored extension properties from a referenced DotKt assembly); those are the library's, not ours to emit.
 		val topProps = file.declarations.filterIsInstance<IrProperty>().filter { it.origin.toString() == "DEFINED" }
@@ -3084,6 +3088,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else """{"k":"enumOrdinal","e":${expr(e)}}"""
 				return """{"k":"bin","op":"-","l":${ord(recv)},"r":${ord(arg)}}"""
 			}
+			// PRIMITIVE compareTo: the boxed kotlin.<Prim> is NOT emitted in the runtime (substituted to the BCL value
+			// type), so route to System.<Prim>.CompareTo (IComparable<T>) instead of a member call on the omitted class.
+			val rfq = recv?.type?.classFqName?.asString()
+			val bcl = mapOf("kotlin.Int" to "System.Int32","kotlin.Long" to "System.Int64","kotlin.Byte" to "System.SByte","kotlin.Short" to "System.Int16","kotlin.Float" to "System.Single","kotlin.Double" to "System.Double","kotlin.Char" to "System.Char","kotlin.Boolean" to "System.Boolean")[rfq]
+			if (recv != null && arg != null && bcl != null)
+				return """{"k":"clrInstance","type":${str(bcl)},"method":"CompareTo","argTypes":[${str(bcl)}],"ret":"System.Int32","recv":${expr(recv)},"args":[${expr(arg)}]}"""
 		}
 
 		// `a.compareTo(b)` (the desugaring of `<`/`>`/`<=`/`>=` on a Comparable, incl. a bounded generic param
