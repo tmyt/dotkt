@@ -1737,7 +1737,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A type-parameter argument is emitted via its `gp:T` form (resolvable by ilemit in the enclosing generic
 		// method/class context) — NOT dropped to the raw open type, which would make `new State<T>(i)` inside a
 		// generic factory `fun <T> state(i:T): State<T>` emit a `newobj` on the open generic (invalid IL; item 13).
-		val all = enclArgs + (args?.map { birType(it) } ?: emptyList())
+		// A `Unit` TYPE-ARG can't be `void` (a generic arg of System.Void is invalid) — e.g. a `Continuation<Unit>`
+		// SUPERTYPE must be `Continuation[@kotlin.Unit]` to match `resumeWith(Result<Unit>)`, not `Continuation[void]`.
+		val all = enclArgs + (args?.map { if (it.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit") else birType(it) } ?: emptyList())
 		if (all.isEmpty()) return name
 		return "$name[${all.joinToString(",")}]"
 	}
