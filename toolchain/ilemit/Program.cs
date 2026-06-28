@@ -260,9 +260,23 @@ sealed partial class Emitter
                 // A `.NET` base (`clr:System.Exception` / `clrg:...[..]`) is resolved by reflection; a Kotlin-user
                 // base is another TypeBuilder in `_types`.
                 if (ti.BaseName.StartsWith("clr:") || ti.BaseName.StartsWith("clrg:")) ti.TB.SetParent(ti.ClrBase = MapType(ti.BaseName));
-                // A constructed user base (`...IteratorImpl[gp:E]` — an inner class extending another inner class) must be
-                // INSTANTIATED, not set to the open TB; ParseOwner yields the closed type (like the interface path below).
-                else { var (bopen, bconstructed) = ParseOwner(ti.BaseName); ti.TB.SetParent(bconstructed ?? (Type)_types[bopen].TB); }
+                else
+                {
+                    // A constructed user base (`...IteratorImpl[gp:E]` — an inner extending an inner) is INSTANTIATED via
+                    // ParseOwner. A user base emitted OPEN (`AbstractCollection` for `AbstractList<E> : AbstractCollection
+                    // <E>`) must NOT stay an un-instantiated open generic ("could not load" at type-load) — instantiate it
+                    // with this type's leading generic params POSITIONALLY (the BIR keeps the open name so FindMethod still
+                    // walks the base chain by bare name for inherited members like AbstractIterator.setNext).
+                    var (bopen, bconstructed) = ParseOwner(ti.BaseName);
+                    if (bconstructed != null) { ti.TB.SetParent(bconstructed); }
+                    else
+                    {
+                        var baseTb = _types[bopen].TB;
+                        var bArity = baseTb.IsGenericTypeDefinition ? baseTb.GetGenericArguments().Length : 0;
+                        var myArgs = ti.TB.IsGenericTypeDefinition ? ti.TB.GetGenericArguments() : Type.EmptyTypes;
+                        ti.TB.SetParent(bArity > 0 && myArgs.Length >= bArity ? baseTb.MakeGenericType(myArgs.Take(bArity).ToArray()) : (Type)baseTb);
+                    }
+                }
             }
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
                 foreach (var i in ifs.EnumerateArray())

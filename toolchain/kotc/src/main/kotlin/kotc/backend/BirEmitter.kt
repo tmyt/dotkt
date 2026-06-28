@@ -225,7 +225,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		else if (k.parent is IrClass) {
 			val p = k.parent as IrClass
 			val owner = if (p.isCompanion) p.parent as? IrClass else p
-			(owner?.let { typeName(it) + "." } ?: "") + k.name.asString()
+			// A type nested in a GENERIC enclosing flattens to a top-level type (PersistedAssemblyBuilder NREs on nested
+			// generics — see the nestedIn suppression). Joining with `.` would put it in a namespace equal to the
+			// enclosing type's name (`kotlin.collections.AbstractList` type AND namespace) -> the loader can't resolve the
+			// base. Join with `$` (valid in a type name, NOT a namespace separator) to avoid the type/namespace collision.
+			val sep = if (owner != null && owner.typeParameters.isNotEmpty()) "$" else "."
+			(owner?.let { typeName(it) + sep } ?: "") + k.name.asString()
 		}
 		else (k.fqNameWhenAvailable?.asString() ?: k.name.asString())
 
@@ -1058,7 +1063,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (clrName(it) != null || bt.startsWith("clr:") || bt.startsWith("clrg:")) str(bt)
 			else {
 				// An inner-class base (ListIteratorImpl : IteratorImpl) must carry the enclosing args so the nested generic
-				// base is INSTANTIATED (IteratorImpl[gp:E]); a non-inner base stays the open name (handled positionally).
+				// base is INSTANTIATED (IteratorImpl[gp:E]); a non-inner generic base stays the OPEN name — ilemit walks the
+				// base chain by bare name (FindMethod for inherited members like AbstractIterator.setNext) and instantiates
+				// the open generic base with this type's params positionally at SetParent.
 				val enclArgs = innerEnclosingTypeParams(it).map { tp -> "gp:" + tp.name.asString() }
 				str(if (enclArgs.isNotEmpty()) "${typeName(it)}[${enclArgs.joinToString(",")}]" else typeName(it))
 			}
@@ -1095,7 +1102,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A `nested`/`inner` class is emitted as a true CLR nested type of its enclosing user class (`Outer+Inner`),
 		// so it retains Kotlin's access to the enclosing class's private members (instead of flattening to a separate
 		// top-level type, which forced an assembly-visibility workaround). `inner` additionally captures `__outer`.
-		val nestedIn = emittedNestedParent(klass)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null && !anonNames.containsKey(klass) }
+		// EXCEPTION: a type nested in a GENERIC enclosing flattens to top-level — PersistedAssemblyBuilder NREs when a
+		// nested type lives inside a generic enclosing TypeBuilder, and the nested type's signatures reference the
+		// enclosing params via the enclosing builder. Inner classes already re-declare those params (innerEnclosing-
+		// TypeParams), so flattening loses nothing; the type keeps its dotted name so references still resolve.
+		val nestedIn = emittedNestedParent(klass)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null && !anonNames.containsKey(klass) && it.typeParameters.isEmpty() }
 			?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
 		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn${typeParamsJson(innerEnclosingTypeParams(klass) + klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList],"attrs":[${attrsJson(klass.annotations)}]}"""
 	}
