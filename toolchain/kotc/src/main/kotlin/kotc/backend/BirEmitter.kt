@@ -600,6 +600,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// System.Object already provides Equals/GetHashCode/ToString, so emitting them as interface members creates
 			// abstract slots no implementer fills (the lowercase Kotlin name never binds Object's) -> TypeLoadException.
 			.filterNot { it.name.asString() in setOf("equals", "hashCode", "toString") }
+			// A FAKE-OVERRIDE of a DEFAULT interface method (a DIM body lives in a supertype, e.g. Map.getOrDefault) must
+			// NOT be re-emitted as an abstract slot here — that shadows the inherited DIM, so concrete implementers
+			// (EmptyMap/MapWithDefaultImpl) "do not have an implementation". Abstract fake-overrides (no body anywhere, the
+			// C3a size/get case) are KEPT (resolveFakeOverride has no body), so the BCL member binding still emits.
+			.filterNot { it.isFakeOverride && it.resolveFakeOverride()?.body != null }
 			.map { ifaceMethod(it) }
 		val propMethods = iface.declarations.filterIsInstance<IrProperty>()
 			.flatMap { p -> listOfNotNull(p.getter?.let { ifaceMethod(it, p) }, p.setter?.let { ifaceMethod(it, p) }) }
