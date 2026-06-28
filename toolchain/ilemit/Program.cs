@@ -260,7 +260,9 @@ sealed partial class Emitter
                 // A `.NET` base (`clr:System.Exception` / `clrg:...[..]`) is resolved by reflection; a Kotlin-user
                 // base is another TypeBuilder in `_types`.
                 if (ti.BaseName.StartsWith("clr:") || ti.BaseName.StartsWith("clrg:")) ti.TB.SetParent(ti.ClrBase = MapType(ti.BaseName));
-                else ti.TB.SetParent(_types[ti.BaseName].TB);
+                // A constructed user base (`...IteratorImpl[gp:E]` — an inner class extending another inner class) must be
+                // INSTANTIATED, not set to the open TB; ParseOwner yields the closed type (like the interface path below).
+                else { var (bopen, bconstructed) = ParseOwner(ti.BaseName); ti.TB.SetParent(bconstructed ?? (Type)_types[bopen].TB); }
             }
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
                 foreach (var i in ifs.EnumerateArray())

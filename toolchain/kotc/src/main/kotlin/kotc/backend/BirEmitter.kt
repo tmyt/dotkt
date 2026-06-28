@@ -828,6 +828,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** Emit a flattened `inner class`: it captures the enclosing instance as a leading `__outer` ctor param/field. */
+	/**
+	 * The type parameters an `inner class` inherits from its enclosing class(es). A Kotlin `inner class` (e.g.
+	 * `AbstractList<E>.IteratorImpl : Iterator<E>`) references the enclosing `E` but declares no own param. Reflection.Emit
+	 * does NOT auto-inherit an enclosing type's generic params into a nested type, so emitting `IteratorImpl` with arity 0
+	 * while its signatures reference the enclosing `E` (encoded as `VAR 0`) produces malformed metadata ("incorrect format",
+	 * only caught at full-type-load batch validation). The Kotlin->CLR lowering is to RE-DECLARE the enclosing params on the
+	 * inner class (own generic context) and reference it WITH those args — `IteratorImpl[gp:E]` — at every use site (the
+	 * enclosing params are in scope wherever an inner class is referenced, since it captures the enclosing instance). This is
+	 * a relationship-layer lowering (eventual home: bir2cir native-cir); it lives here while the substitute build runs
+	 * bir2cir in compat-passthrough, alongside the other lowerings (Unit->void, star-projection->object).
+	 */
+	internal fun innerEnclosingTypeParams(klass: IrClass): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
+		if (!klass.isInner) return emptyList()
+		val result = mutableListOf<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
+		var p = klass.parent as? IrClass
+		while (p != null) { result.addAll(0, p.typeParameters); p = if (p.isInner) p.parent as? IrClass else null }
+		return result
+	}
+
 	internal fun innerClassDef(inner: IrClass): String {
 		val outerThis = (inner.parent as? IrClass)?.thisReceiver
 			?: return typeDef(inner)   // not actually inner-of-class; emit plainly
@@ -1036,7 +1055,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val bt = birType(baseType!!)
 			// A .NET base: an @Clr-injected type, or a Kotlin stdlib type birType maps to .NET (`Exception` -> clr:
 			// System.Exception, etc.). Otherwise a Kotlin-user base stays a bare type name.
-			if (clrName(it) != null || bt.startsWith("clr:") || bt.startsWith("clrg:")) str(bt) else str(typeName(it))
+			if (clrName(it) != null || bt.startsWith("clr:") || bt.startsWith("clrg:")) str(bt)
+			else {
+				// An inner-class base (ListIteratorImpl : IteratorImpl) must carry the enclosing args so the nested generic
+				// base is INSTANTIATED (IteratorImpl[gp:E]); a non-inner base stays the open name (handled positionally).
+				val enclArgs = innerEnclosingTypeParams(it).map { tp -> "gp:" + tp.name.asString() }
+				str(if (enclArgs.isNotEmpty()) "${typeName(it)}[${enclArgs.joinToString(",")}]" else typeName(it))
+			}
 		} ?: "null"
 		// Stdlib interface supertypes (Iterator, Read(Write)Property) -> their monomorphized synthetic interfaces;
 		// a user generic interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
@@ -1072,7 +1097,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// top-level type, which forced an assembly-visibility workaround). `inner` additionally captures `__outer`.
 		val nestedIn = emittedNestedParent(klass)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null && !anonNames.containsKey(klass) }
 			?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
-		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn${typeParamsJson(klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList],"attrs":[${attrsJson(klass.annotations)}]}"""
+		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn${typeParamsJson(innerEnclosingTypeParams(klass) + klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList],"attrs":[${attrsJson(klass.annotations)}]}"""
 	}
 
 	internal fun ctor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {
@@ -1689,13 +1714,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// CharSequence (declaring class of a call on a CharSequence-typed value) -> the synthetic interface name.
 		if (klass.fqNameWhenAvailable?.asString() == "kotlin.CharSequence") { usesCharSeq = true; return "<>dotkt_CharSequence" }
 		val name = typeName(klass)
-		if (klass.typeParameters.isEmpty()) return name
+		// An `inner class` re-declares its enclosing type params; construct it WITH them as `gp:E` (in scope at the
+		// construction site, which is inside the enclosing instance). See innerEnclosingTypeParams.
+		val enclArgs = innerEnclosingTypeParams(klass).map { "gp:" + it.name.asString() }
+		if (klass.typeParameters.isEmpty())
+			return if (enclArgs.isNotEmpty()) "$name[${enclArgs.joinToString(",")}]" else name
 		val args = (recvType as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }
 		// A type-parameter argument is emitted via its `gp:T` form (resolvable by ilemit in the enclosing generic
 		// method/class context) — NOT dropped to the raw open type, which would make `new State<T>(i)` inside a
 		// generic factory `fun <T> state(i:T): State<T>` emit a `newobj` on the open generic (invalid IL; item 13).
-		if (args.isNullOrEmpty()) return name
-		return "$name[${args.joinToString(",") { birType(it) }}]"
+		val all = enclArgs + (args?.map { birType(it) } ?: emptyList())
+		if (all.isEmpty()) return name
+		return "$name[${all.joinToString(",")}]"
 	}
 
 	internal fun paramsJson(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): String =
@@ -4288,13 +4318,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A user-declared class/interface becomes a reference to that BIR type ("@Name"); a constructed user
 		// generic carries concrete args ("@Box[int]"). Anon objects resolve through `typeName`.
 		if (klass != null && (klass.kind == ClassKind.CLASS || klass.kind == ClassKind.INTERFACE)) {
+			// An `inner class` re-declares its enclosing class(es)' type params; reference it WITH those args as `gp:E`
+			// (in scope wherever an inner class is used — it captures the enclosing instance). See innerEnclosingTypeParams.
+			val enclArgs = innerEnclosingTypeParams(klass).map { "gp:" + it.name.asString() }
 			if (klass.typeParameters.isNotEmpty()) {
 				// Carry concrete args ("@Box[int]"); a type-parameter arg rides on its `gp:T` form (resolvable in the
 				// enclosing generic context) rather than collapsing to the open type — so `State<T>` as a generic
 				// factory's return type stays constructed and the emitted IL is verifiable (item 13).
 				val sargs = (t as? IrSimpleType)?.arguments
-				if (!sargs.isNullOrEmpty())
-					return "@" + typeName(klass) + "[" + sargs.joinToString(",") { a ->
+				if (!sargs.isNullOrEmpty()) {
+					val ownArgs = sargs.map { a ->
 						val at = (a as? IrTypeProjection)?.type
 						when {
 							// A STAR projection (`Comparable<*>`) -> `object`; dropping it leaves a RAW generic (no type arg),
@@ -4305,8 +4338,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 							at.isUnit() -> if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit"
 							else -> birType(at)
 						}
-					} + "]"
+					}
+					return "@" + typeName(klass) + "[" + (enclArgs + ownArgs).joinToString(",") + "]"
+				}
 			}
+			if (enclArgs.isNotEmpty()) return "@" + typeName(klass) + "[" + enclArgs.joinToString(",") + "]"
 			return "@" + typeName(klass)
 		}
 		return "object"
