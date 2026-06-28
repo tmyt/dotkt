@@ -991,7 +991,11 @@ sealed partial class Emitter
         if (IsSelfInstantiation(constructed))
         {
             retType = mb.ReturnType;
-            return mb.IsGenericMethodDefinition ? mb : TypeBuilder.GetMethod(constructed, mb);
+            if (mb.IsGenericMethodDefinition) return mb;
+            // TypeBuilder.GetMethod requires `mb` declared on `constructed`'s OWN generic def. An INHERITED self-call
+            // (mb on a base) throws — fall back to the open MethodBuilder there (the pre-existing behavior).
+            try { return TypeBuilder.GetMethod(constructed, mb); }
+            catch (ArgumentException) { return mb; }
         }
         retType = Subst(mb.ReturnType, constructed.GetGenericArguments());
         return TypeBuilder.GetMethod(constructed, mb);
