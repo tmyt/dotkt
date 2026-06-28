@@ -893,6 +893,11 @@ static class FacadeGen
             // the body itself stays in the assembly's [KotlinInline] and is read by the consumer's ilemit at splice time.
             // An extension fun's receiver is emitted as the first param `__self` (DotKt convention) -> mark `,ext` so the
             // injector restores it as an extension receiver (composes with operator -> top-level extension operators).
+            // ref/rt app-frontend de-duplication: skip a tlfun whose return is an UNRESOLVABLE kotlin generic
+            // (List/Set/Map/Pair/... -> would inject as Any?, colliding with the JVM kotlin-stdlib.jar which already
+            // provides these functions). The jar's version + the app-side collection mapping (birType/clrName appColl)
+            // handle them. @Clr / concretely-typed tlfuns (uppercase -> String) are kept.
+            if (System.Text.RegularExpressions.Regex.IsMatch(ret, @"^generic:(List|MutableList|Set|MutableSet|Map|MutableMap|Collection|MutableCollection|Iterable|MutableIterable|Pair|Triple|HashMap|LinkedHashMap|HashSet|LinkedHashSet|ArrayList|Sequence)\[")) continue;
             var isExt = ps.Length > 0 && ps[0].Name == "__self";
             var mod = FunModifier("final", k) + (KotlinInlineBody(m) != null ? ",inline" : "") + (isExt ? ",ext" : "");
             var toks = new List<string> { "tlfun", m.Name, ret, mod };
