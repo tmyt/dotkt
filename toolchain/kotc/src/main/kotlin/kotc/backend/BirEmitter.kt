@@ -2810,6 +2810,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val retUnit = (targs?.lastOrNull() as? IrTypeProjection)?.type?.classFqName?.asString() == "kotlin.Unit"
 			return "func:" + (if (retUnit && n > 0) n - 1 else n)
 		}
+		// kotlin.collections.Iterable substitutes to System.Collections.Generic.IEnumerable, whose ilemit Shape is the
+		// special "ienum" (not the generic default) -> so a generic stdlib op's Iterable<T> receiver matches the rt's
+		// IEnumerable<T> param in ResolveGenericMethod (else 0 candidates -> "Sequence contains no elements" at emit).
+		if (stdlibSubstitute && (fq == "kotlin.collections.Iterable" || fq == "kotlin.collections.MutableIterable")) return "ienum"
 		// Any other parameterized generic .NET type (Task<T>, Continuation<T>, …) -> "generic" (ilemit's IsGenericType default).
 		if ((t as? IrSimpleType)?.arguments?.isNotEmpty() == true) return "generic"
 		return netType(t).substringAfterLast('.')
