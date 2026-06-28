@@ -259,9 +259,13 @@ static class FacadeGen
                 var isup = InterfaceSuperTypes(t);
                 if (isup.Count > 0) sb.Append("super " + string.Join(" ", isup) + "\n");
                 var iseen = new HashSet<string>();
+                var iprops = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (m.IsSpecialName) continue;
+                    // A property accessor (get_size/set_size) that isn't flagged SpecialName (a DotKt PropertyBuilder
+                    // accessor) -> skip; the `prop` line below covers it (else the meta has both `fun get_size` + `prop size`).
+                    if (iprops.Any(p => p.GetMethod == m || p.SetMethod == m)) continue;
                     // A GENERIC interface method (`U Convert<U>(object)`) is emitted with its own method type-parameter
                     // tokens, same as the class path: the frontend declares the type params and resolves the
                     // return/params against them, and fir2ir fake-overrides it onto an implementing class.

@@ -589,6 +589,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val propMethods = iface.declarations.filterIsInstance<IrProperty>()
 			.flatMap { p -> listOfNotNull(p.getter?.let { ifaceMethod(it, p) }, p.setter?.let { ifaceMethod(it, p) }) }
 		val methods = (funMethods + propMethods).distinct().joinToString(",")
+		// 2B layer 1: a Kotlin interface property -> a REAL CLR property (PropertyBuilder over its get_/set_ interface
+		// methods), so a consumer (facadegen restoring the ref assembly) sees `size` as a PROPERTY, not a bare get_size
+		// method. The accessor methods are already emitted (propMethods) named get_<n>/set_<n>; wire the property over them.
+		val ifaceProps = iface.declarations.filterIsInstance<IrProperty>().filter { it.getter != null }.joinToString(",") { p ->
+			val n = p.name.asString()
+			val setName = if (p.setter != null) str("set_$n") else "null"
+			"""{"name":${str(n)},"type":${str(birType(p.getter!!.returnType))},"get":${str("get_$n")},"set":$setName}"""
+		}
 		// A nested interface (`TimeSource.WithComparableMarks`) -> a real CLR nested type of its enclosing class/interface.
 		val nestedIn = emittedNestedParent(iface)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null }
 			?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
@@ -601,7 +609,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
 			}
 			.joinToString(",") { str(it) }
-		return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods],"attrs":[${attrsJson(iface.annotations)}]}"""
+		return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods],"properties":[$ifaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
 	}
 
 	internal fun IrSimpleFunction.signatureMentionsJava(): Boolean =
