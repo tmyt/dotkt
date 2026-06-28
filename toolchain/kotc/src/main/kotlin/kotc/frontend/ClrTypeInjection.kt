@@ -296,14 +296,17 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		((module?.topLevel ?: emptyList()).map { it.pkg } + (module?.topLevelProps ?: emptyList()).map { it.pkg }).toSet()
 	private val classIdByName: Map<String, ClassId> = ClrMetadataHolder.classIdByName
 
-	// `byref(x)`: a root-package intrinsic marking a call arg as a .NET out/ref parameter. It returns `ClrRef<T>`
-	// (the surfaced type of any .NET byref param), so the signature is self-documenting. The backend reads the
-	// marker and passes the lvalue's address; `netType(ClrRef<T>)` is `byref:T`.
+	// `byref(x)`: an intrinsic marking a call arg as a .NET out/ref parameter. It returns `ClrRef<T>` (the surfaced type
+	// of any .NET byref param), so the signature is self-documenting. The backend reads the marker and passes the
+	// lvalue's address; `netType(ClrRef<T>)` is `byref:T`. byref/ClrRef live in the `kotlin.clr` namespace (the CLR-
+	// intrinsic home, alongside @kotlin.clr.ClrIntrinsic) so they're IMPORTABLE from a named package — unlike a root-
+	// package symbol, which Kotlin cannot import into a named package (that blocked the packaged stdlib from using them).
 	private val byrefName = "byref"
+	private val clrPkg = FqName("kotlin.clr")
 	// `ClrRef<T>`: an intrinsic generic type for a managed reference (T&). It is the surfaced type of a .NET out/ref
 	// parameter and of a ref-returning method; it is `by`-delegatable (getValue/setValue) so a ref return reads as
 	// `var x by m()`. The argument path erases it (the byref(x) marker emits the lvalue's address).
-	private val clrRefClassId = ClassId(FqName.ROOT, Name.identifier("ClrRef"))
+	private val clrRefClassId = ClassId(clrPkg, Name.identifier("ClrRef"))
 	// `stackBuffer(n) { buf -> … }` + `StackBuffer<T>`: a scoped stack allocation (CLR `localloc`). The block is
 	// splice-inlined so the buffer lives in the caller's frame; `StackBuffer<T>` (size/get/set/asSpan) is erased.
 	private val stackBufferName = "stackBuffer"
@@ -315,11 +318,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	private val clrActive = module != null
 
 	override fun hasPackage(packageFqName: FqName): Boolean =
-		clrActive && (packageFqName in packages || packageFqName in topLevelPackages || packageFqName.isRoot)
+		clrActive && (packageFqName in packages || packageFqName in topLevelPackages || packageFqName.isRoot || packageFqName == clrPkg)
 
 	override fun getTopLevelCallableIds(): Set<CallableId> =
 		if (!clrActive) emptySet()
-		else hashSetOf(CallableId(FqName.ROOT, Name.identifier(byrefName)), CallableId(FqName.ROOT, Name.identifier(stackBufferName))) + topLevelByCallable.keys + topLevelPropByCallable.keys
+		else hashSetOf(CallableId(clrPkg, Name.identifier(byrefName)), CallableId(FqName.ROOT, Name.identifier(stackBufferName))) + topLevelByCallable.keys + topLevelPropByCallable.keys
 
 	override fun getTopLevelClassIds(): Set<ClassId> =
 		if (!clrActive) byClassId.keys else byClassId.keys + clrRefClassId + stackBufferClassId + spanClassId

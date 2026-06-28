@@ -3,6 +3,7 @@
 // A ref-returning method received plainly is a value copy; received via `var x by byref(m())` it is a LIVE ref
 // (a `ref T` local, getValue/setValue inline to ldobj/stobj) so writes flow back into the .NET storage. (#52)
 import P.Calc
+import kotlin.clr.byref   // byref/ClrRef now live in the importable `kotlin.clr` namespace (was the root package)
 
 // CLR property model — Phase 5: `byref(obj.prop)` of an own-source-set property addresses its INTERNAL backing
 // field (ldflda), so a .NET out/ref param writes back THROUGH the property. `@ClrField` opts a property out to a

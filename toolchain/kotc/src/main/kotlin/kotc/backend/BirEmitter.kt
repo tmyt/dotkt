@@ -4067,8 +4067,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** A type's fully-qualified .NET name, for IL reflection-based member resolution. */
 	internal fun netType(t: IrType): String = when (val fq = t.classFqName?.asString()) {
-		// The intrinsic `ClrRef<T>` is a managed reference -> `byref:<T>` (selects the out/ref overload in ilemit).
-		"ClrRef" -> "byref:" + ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) }.orEmpty()
+		// The intrinsic `kotlin.clr.ClrRef<T>` is a managed reference -> `byref:<T>` (selects the out/ref overload in ilemit).
+		"kotlin.clr.ClrRef" -> "byref:" + ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) }.orEmpty()
 		// The intrinsic `Span<T>` -> the real `System.Span<T>`.
 		"Span" -> "clrg:System.Span[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
 		"kotlin.Int" -> "System.Int32"
@@ -4221,8 +4221,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			typeArgSubst[nm]?.let { return it }
 			return "gp:" + nm
 		}
-		// The intrinsic `ClrRef<T>` -> `byref:T` (a managed reference; a ref-cell delegate local is a `ref T` local).
-		if (t.classFqName?.asString() == "ClrRef")
+		// The intrinsic `kotlin.clr.ClrRef<T>` -> `byref:T` (a managed reference; a ref-cell delegate local is a `ref T` local).
+		if (t.classFqName?.asString() == "kotlin.clr.ClrRef")
 			return "byref:" + ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) }.orEmpty()
 		// The intrinsic `Span<T>` -> the real `System.Span<T>`.
 		if (t.classFqName?.asString() == "Span")
