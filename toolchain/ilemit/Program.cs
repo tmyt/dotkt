@@ -85,6 +85,7 @@ sealed partial class Emitter
     readonly Dictionary<string, JsonElement> _inlineSubst = new();
     readonly Dictionary<string, (string lamParam, JsonElement body)> _inlineLambdas = new();
     readonly List<JsonDocument> _inlineDocs = new();   // keep parsed [KotlinInline] bodies alive
+    readonly Stack<LocalBuilder> _inlineThis = new();   // bound `this` (extension receiver) for the current inline splice
     readonly Dictionary<MethodInfo, Type[]> _mparams = new();   // declared param types per method (for call-site boxing)
     // active try blocks: a `return` inside stores to the result local and leaves to the end label.
     readonly Stack<(LocalBuilder result, Label end)> _tryStack = new();
@@ -1346,6 +1347,7 @@ sealed partial class Emitter
                 break;
             }
             case "this":
+                if (_inlineThis.Count > 0) { _il.Emit(OpCodes.Ldloc, _inlineThis.Peek()); return; }   // spliced extension receiver
                 if (_coThis != null) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, _coThis); }   // instance coroutine: captured receiver
                 else _il.Emit(OpCodes.Ldarg_0);
                 return;
@@ -2066,7 +2068,21 @@ sealed partial class Emitter
     {
         var typeName = e.GetProperty("type").GetString();
         var method = e.GetProperty("method").GetString();
-        var mi = ResolveType(typeName).GetMethod(method)
+        // Disambiguate overloads (forEach/count for Iterable/Array/CharSequence...) by param count + generic arity, since
+        // GetMethod(name) throws AmbiguousMatch. Older nodes without pc/ga fall back to the by-name lookup.
+        MethodInfo mi;
+        if (e.TryGetProperty("pc", out var pcEl))
+        {
+            int pc = pcEl.GetInt32(), ga = e.GetProperty("ga").GetInt32();
+            // Search ALL referenced assemblies: the runtime stdlib is metadata-stripped (no [KotlinInline]); the inline
+            // body lives in the @Clr-metadata REF assembly (DotKt.Private.Stdlib). ResolveType returns just the first.
+            mi = AppDomain.CurrentDomain.GetAssemblies().Select(a => { try { return a.GetType(typeName); } catch { return null; } })
+                     .Where(t => t != null).SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                     .FirstOrDefault(m => m.Name == method && m.GetParameters().Length == pc && m.GetGenericArguments().Length == ga
+                          && m.GetCustomAttributesData().Any(c => c.AttributeType.FullName == "DotKt.Runtime.CompilerServices.KotlinInlineAttribute"))
+                 ?? throw new NotSupportedException($"inline splice: {typeName}.{method} (pc={pc} ga={ga}) with [KotlinInline] not found");
+        }
+        else mi = ResolveType(typeName).GetMethod(method)
                  ?? throw new NotSupportedException($"inline splice: method {typeName}.{method} not found");
         var cad = mi.GetCustomAttributesData().FirstOrDefault(c => c.AttributeType.FullName == "DotKt.Runtime.CompilerServices.KotlinInlineAttribute")
                   ?? throw new NotSupportedException($"inline splice: [KotlinInline] body missing on {typeName}.{method}");
@@ -2079,7 +2095,18 @@ sealed partial class Emitter
             if (b.TryGetProperty("lambdaParam", out var lp)) { _inlineLambdas[pn] = (lp.GetString(), b.GetProperty("lambdaBody")); addedLams.Add(pn); }
             else { _inlineSubst[pn] = b.GetProperty("value"); addedVals.Add(pn); }
         }
+        // An EXTENSION inline fun's body references the receiver via `this`; evaluate the bound receiver ONCE into a
+        // local and push it so a `this` node in the spliced body loads it (instead of the enclosing method's arg0).
+        LocalBuilder thisLoc = null;
+        if (e.TryGetProperty("thisValue", out var tv))
+        {
+            var tt = EmitExpr(tv);
+            thisLoc = _il.DeclareLocal(tt);
+            _il.Emit(OpCodes.Stloc, thisLoc);
+            _inlineThis.Push(thisLoc);
+        }
         EmitSplicedStmts(doc.RootElement.GetProperty("body"));
+        if (thisLoc != null) _inlineThis.Pop();
         foreach (var s in addedVals) _inlineSubst.Remove(s);
         foreach (var s in addedLams) _inlineLambdas.Remove(s);
         return typeof(void);

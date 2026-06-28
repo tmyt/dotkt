@@ -2459,7 +2459,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				"""{"name":${str(p.name.asString())},"lambdaParam":${str(lamParam)},"lambdaBody":[$body]}"""
 			} else """{"name":${str(p.name.asString())},"value":${arg?.let { expr(it) } ?: "null"}}"""
 		}.joinToString(",")
-		return """{"k":"inlineSplice","type":${str(fileClass)},"method":${str(callee.name.asString())},"bindings":[$bindings]}"""
+		// An EXTENSION inline fun's body references the receiver via `this`; carry it so EmitInlineSplice can substitute it
+		// (the body's `this` -> this bound value). Non-extension splices omit it (unchanged).
+		val thisJson = extensionReceiver(call)?.let { ""","thisValue":${expr(it)}""" } ?: ""
+		// Disambiguate the file-facade overload (forEach/count/... exist for Iterable/Array/CharSequence): the .NET method's
+		// param count = regular params + the receiver-as-__self, and its generic arity = the fn's type params.
+		val pc = params.size + (if (extensionReceiver(call) != null) 1 else 0)
+		val ga = callee.typeParameters.size
+		return """{"k":"inlineSplice","type":${str(fileClass)},"method":${str(callee.name.asString())},"pc":$pc,"ga":$ga,"bindings":[$bindings]$thisJson}"""
 	}
 
 	/** Splice an invoked inlined lambda `f(args)`: bind its params to the invoke args, then splice its body. */
@@ -3976,7 +3983,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			kotc.ClrTopLevelRegistry.lookup(callee.fqNameWhenAvailable?.asString())?.let { (fileClass, _) ->
 				// A cross-module `inline fun` taking a lambda (body==null here = injected stub) -> splice its carried
 				// [KotlinInline] body at this call site (the only way a non-local `return` through the lambda works).
-				if (callee.isInline && hasLambdaArg(call) && extRecv == null) return inlineSpliceCall(call, fileClass)
+				if (callee.isInline && hasLambdaArg(call)) return inlineSpliceCall(call, fileClass)
 				// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
 				val a = listOfNotNull(extRecv) + filledArgExprs(call)   // fill omitted default args (trailing/named-middle/reordered)
 				// A GENERIC top-level fun (e.g. a `reified` inline restored as a generic method) -> a generic static
