@@ -407,7 +407,19 @@ sealed partial class Emitter
                             // different overload; for a Kotlin interface the same-name+sig method resolves implicitly anyway.
                             if (!ti.MethodsBySig.TryGetValue(subSig, out var bodyMethod)) continue;
                             var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
-                            ti.TB.DefineMethodOverride(bodyMethod, ifaceMethod);
+                            // Covariant return: a NARROWED override return type (markNow():ValueTimeMark over the iface's
+                            // :ComparableTimeMark) makes a direct MethodImpl fail the CLR's exact-return rule. Emit a bridge
+                            // with the iface's (base) return type that calls the narrow body method and upcasts; put the
+                            // MethodImpl on the bridge. The iface ret/params come from imDef (BIR) via MapType — no need to
+                            // reflect the TypeBuilderInstantiation.
+                            Type ifaceRet = null;
+                            try { if (imDef.TryGetProperty("ret", out var rt)) ifaceRet = MapType(SubstSig(rt.GetString(), ifSubst)); } catch { }
+                            // Bridge only on a genuine type NARROWING (different type name) — not two reference-different
+                            // instantiations of the SAME generic (Iterator<Object> vs Iterator<Object>), which match fine.
+                            if (ifaceRet != null && bodyMethod.ReturnType.Name != ifaceRet.Name && !bodyMethod.ReturnType.IsValueType && !ifaceRet.IsValueType)
+                                EmitCovariantBridge(ti, imName, imDef, ifSubst, bodyMethod, ifaceMethod, ifaceRet);
+                            else
+                                ti.TB.DefineMethodOverride(bodyMethod, ifaceMethod);
                         }
                 }
             }
@@ -982,6 +994,34 @@ sealed partial class Emitter
     // The OPEN type name of an owner spec, WITHOUT resolving its generic args. The type-ordering pass runs with no
     // type-param scope, so a `Foo[gp:E]` base/interface would crash MapType("gp:E"); ordering only needs the open dep.
     static string OwnerOpen(string spec) { var br = spec.IndexOf('['); return br < 0 ? spec : spec.Substring(0, br); }
+
+    int _covarBridge = 0;
+
+    // Substitute the interface's type params into a BIR type string ({gp:T -> uint}); simple token replace (type-param
+    // names are short, e.g. T/K/V/E), enough for `gp:T` and `X[gp:T]` forms.
+    static string SubstSig(string sig, Dictionary<string, string> subst)
+    {
+        foreach (var kv in subst) sig = sig.Replace(kv.Key, kv.Value);
+        return sig;
+    }
+
+    // Emit a covariant-return bridge: a private explicit-interface-impl method with the iface's (base) return type +
+    // params, calling the narrow body method on `this` and returning it (a ref upcast); the MethodImpl goes on the bridge.
+    void EmitCovariantBridge(TypeInfo ti, string name, JsonElement imDef, Dictionary<string, string> subst, MethodBuilder body, MethodInfo ifaceMethod, Type ifaceRet)
+    {
+        var paramTypes = imDef.GetProperty("params").EnumerateArray()
+            .Select(p => MapType(SubstSig(p.GetProperty("type").GetString(), subst))).ToArray();
+        var bridge = ti.TB.DefineMethod("<>dotkt_covar$" + name + "$" + (_covarBridge++),
+            MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
+            ifaceRet, paramTypes);
+        var il = bridge.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
+        var bodyCall = ti.IsGeneric ? TypeBuilder.GetMethod(ti.TB.MakeGenericType(ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
+        il.Emit(OpCodes.Callvirt, bodyCall);
+        il.Emit(OpCodes.Ret);   // the narrow return value upcasts to ifaceRet (reference types)
+        ti.TB.DefineMethodOverride(bridge, ifaceMethod);
+    }
 
     // {gp:T -> uint, ...} mapping the open interface's type params to a constructed spec's BIR type args
     // (`kotlin.Comparable[uint]` + typeParams ['T'] -> {gp:T: uint}), for resolving overloaded overrides by signature.
