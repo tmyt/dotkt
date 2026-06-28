@@ -4130,6 +4130,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** A Kotlin `Any`-override -> its System.Object method name (`toString`->`ToString`…), else null. */
 	internal fun objectMethodName(fn: IrSimpleFunction): String? {
+		// Only a REAL instance-member override maps to the System.Object name. A top-level / EXTENSION function named
+		// `hashCode`/`toString` (e.g. `Any?.hashCode()`, `Any?.toString()`) is NOT an Object override — renaming it to
+		// GetHashCode/ToString makes a STATIC method on the file class collide with the inherited Object.<Name> slot
+		// (TypeLoad "do not match", e.g. HashCodeKt/LibraryKt). Require a dispatch receiver + no extension receiver.
+		val hasDispatch = fn.parameters.any { it.kind == IrParameterKind.DispatchReceiver }
+		val hasExt = fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }
+		if (!hasDispatch || hasExt) return null
 		val reg = fn.parameters.count { it.kind == IrParameterKind.Regular }
 		return when (fn.name.asString()) {
 			"toString" -> if (reg == 0) "ToString" else null
