@@ -173,3 +173,23 @@ verified at meta level). Plus reusable: @Clr mechanism (class/member/rollup/top-
 iterator() lowering, C3a (clrIfaceMemberName @Clr), and ilemit robustness (generic self-calls, TypeBuilderInstantiation,
 clrg: arity). The pivot is on a clear, validated track with no remaining UNKNOWN difficulty — the rest is the same
 substitution pattern extended to members + the app/runtime build wiring.
+
+## CORRECTION (2026-06-28): 2A conflated Kotlin identity with BCL binding
+
+While wiring 2B, found that 2A (emit the BCL name AS the injected dotNet token) is WRONG: the FIR injection computes the
+Kotlin PACKAGE from `namespaceOf(dotNetName)` (ClrTypeInjection L216/L235), so emitting `System.Collections.Generic.
+IReadOnlyList` as the token moves the type to package `System.Collections.Generic` — the app's `List` (which resolves to
+`kotlin.collections.List`) then never binds to it. The Kotlin IDENTITY (`kotlin.collections.List`, for the namespace/
+ClassId) and the BCL BINDING (`IReadOnlyList`, for clrName) must be SEPARATE.
+
+**Corrected mechanism — `=` encoding in token[2]:** facadegen emits `interface List kotlin.collections.List=System.
+Collections.Generic.IReadOnlyList E` (KotlinFqn=BclName). The injection splits tok[2] on `=`: the LEFT drives namespace/
+ClassId (Kotlin identity preserved), the RIGHT is registered in ClrTypeRegistry as the binding (clrName -> IReadOnlyList).
+Members use a distinct trailing `clr:Count` token on the `prop`/`fun` line -> ClrTypeRegistry.memberNames (added) keyed by
+the member's Kotlin fqn; clrName(IrProperty) looks it up (resolving fake-overrides). Then the existing clrName-driven
+emission produces clrg:IReadOnlyList + get_Count, ilemit unchanged.
+
+DONE so far: ClrTypeRegistry.memberNames + memberClrName (added); facadegen emits `clr:Count` on the interface prop line.
+TODO: revert 2A's idot=ClrAttrName -> the `=` encoding; injection split + member-token parse + clrName member lookup; then
+test the ACTUAL app-against-ref flow (the meta-string check in 2A did NOT exercise resolution — that's how the namespace
+bug slipped). NO unknown difficulty, just the coordinated edits + a real end-to-end test.

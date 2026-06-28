@@ -12,11 +12,20 @@ package kotc
  */
 object ClrTypeRegistry {
 	private val typeNames = HashMap<String, String>()
+	// Per-MEMBER BCL name (ref/runtime split, app-emit member substitution): key = the member's Kotlin fqn
+	// (`kotlin.collections.Collection.size`) -> its BCL member name (`Count`). Populated from the `[clr.Clr]` carried in
+	// the injection meta when an app references the ref stdlib; the backend's clrName consults it for an injected member.
+	private val memberNames = HashMap<String, String>()
 
 	fun register(kotlinFqn: String, dotNetName: String) { typeNames[kotlinFqn] = dotNetName }
 
 	/** The .NET type name for a synthesized Kotlin class FQN, or null if not injected. */
 	fun dotNetName(kotlinFqn: String): String? = typeNames[kotlinFqn]
+
+	fun registerMember(memberFqn: String, bclName: String) { memberNames[memberFqn] = bclName }
+
+	/** The BCL member name for an injected Kotlin member FQN (e.g. `...Collection.size` -> `Count`), or null. */
+	fun memberClrName(memberFqn: String): String? = memberNames[memberFqn]
 }
 
 /**
