@@ -85,6 +85,10 @@ internal val ARRAY_CLASS_ELEM = mapOf(
 	"kotlin.CharArray" to "char", "kotlin.DoubleArray" to "double", "kotlin.FloatArray" to "float", "kotlin.BooleanArray" to "bool",
 )
 
+// Int-range/-progression types whose for-loop can be counter-lowered (over get_first/get_last/get_step) when the source
+// is a range VALUE (e.g. `for (i in indices)`), avoiding the iterator protocol + its covariant-return iterator.
+internal val INT_PROGRESSION_FQ = setOf("kotlin.ranges.IntRange", "kotlin.ranges.IntProgression")
+
 // Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.
 internal val NUMBER_CONV = mapOf(
 	"toInt" to "int", "toLong" to "long", "toDouble" to "double", "toFloat" to "float",

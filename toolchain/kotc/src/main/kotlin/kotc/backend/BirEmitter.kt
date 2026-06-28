@@ -1826,6 +1826,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
 			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
 		}
+		// `for (i in <Int range VALUE>)` (e.g. `indices`, a range variable) -> a counter loop over the range's
+		// first/last/step. The custom pipeline runs no ForLoopsLowering, so without this it falls to the iterator
+		// protocol, which hits the covariant-return `IntProgression.iterator():IntIterator`. Gated to the stdlib build
+		// (where IntProgression is emitted, so ilemit can resolve get_first/last/step); user apps keep the iterator path.
+		if (stdlibCompile && source != null && source.type.classFqName?.asString() in INT_PROGRESSION_FQ)
+			return """{"k":"forRange","label":$lbl,"var":${str(loopVar.name.asString())},"elem":"int","range":${expr(source)},"body":[$body]}"""
 		val range = source as? IrCall ?: return null
 		val ops = range.arguments.filterNotNull()
 		if (ops.size != 2) return null

@@ -237,6 +237,38 @@ sealed partial class Emitter
                 _loops.RemoveAt(_loops.Count - 1);
                 break;
             }
+            case "forRange":
+            {
+                // for (i in <IntRange/IntProgression value>): evaluate the range once, then counter-loop i over
+                // get_first..get_last step get_step (resolved on the emitted IntProgression). Avoids the iterator
+                // protocol + its covariant-return iterator. Emitted only in the stdlib build (IntProgression is in _types).
+                var rngT = EmitExpr(s.GetProperty("range"));
+                var rngLocal = _il.DeclareLocal(rngT); _il.Emit(OpCodes.Stloc, rngLocal);
+                if (!_types.TryGetValue("kotlin.ranges.IntProgression", out var prog))
+                    throw new NotSupportedException("forRange: kotlin.ranges.IntProgression not emitted in this assembly");
+                var i = _il.DeclareLocal(typeof(int)); _locals[s.GetProperty("var").GetString()] = i;
+                var last = _il.DeclareLocal(typeof(int)); var step = _il.DeclareLocal(typeof(int));
+                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods["get_first"]); _il.Emit(OpCodes.Stloc, i);
+                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods["get_last"]); _il.Emit(OpCodes.Stloc, last);
+                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods["get_step"]); _il.Emit(OpCodes.Stloc, step);
+                var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
+                var neg = _il.DefineLabel(); var bodyL = _il.DefineLabel();
+                _loops.Add((LoopLabel(s), cont, end));
+                _il.MarkLabel(start);
+                // exit test: step >= 0 ? (i > last) : (i < last)
+                _il.Emit(OpCodes.Ldloc, step); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Blt, neg);
+                _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldloc, last); _il.Emit(OpCodes.Bgt, end); _il.Emit(OpCodes.Br, bodyL);
+                _il.MarkLabel(neg);
+                _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldloc, last); _il.Emit(OpCodes.Blt, end);
+                _il.MarkLabel(bodyL);
+                foreach (var b in s.GetProperty("body").EnumerateArray()) EmitStmt(b);
+                _il.MarkLabel(cont);
+                _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldloc, step); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, i);
+                _il.Emit(OpCodes.Br, start);
+                _il.MarkLabel(end);
+                _loops.RemoveAt(_loops.Count - 1);
+                break;
+            }
             case "block":
                 foreach (var b in s.GetProperty("body").EnumerateArray()) EmitStmt(b);
                 break;
