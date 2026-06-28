@@ -741,17 +741,21 @@ static class FacadeGen
     // The KotlinFunctionFlags carried by a method's [KotlinFunction] (Infix=1, Operator=2, Suspend=4), or 0/none.
     static (bool infix, bool op, bool suspend) KotlinFun(MethodInfo m)
     {
+        bool infix = false, op = false, suspend = false;
         try
         {
             foreach (var cad in m.GetCustomAttributesData())
                 if (cad.AttributeType.FullName == KFuncAttr && cad.ConstructorArguments.Count == 1)
                 {
                     var f = Convert.ToInt32(cad.ConstructorArguments[0].Value);
-                    return ((f & 1) != 0, (f & 2) != 0, (f & 4) != 0);
+                    infix = (f & 1) != 0; op = (f & 2) != 0; suspend = (f & 4) != 0;
                 }
         }
         catch { /* DotKt.Runtime not in the resolver set -> no Kotlin modifiers to restore */ }
-        return (false, false, false);
+        // compareTo is ALWAYS an operator (Comparable.compareTo); some metadata carries it as infix-only, which makes a
+        // consumer's `a > b` (-> a.compareTo(b)) fail with "operator modifier required". Force it for the known name.
+        if (m.Name == "compareTo") op = true;
+        return (infix, op, suspend);
     }
 
     static bool HasKotlinFileClass(Type t)
