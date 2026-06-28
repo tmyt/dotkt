@@ -417,7 +417,16 @@ sealed partial class Emitter
                             // Only wire an EXACT signature match. A miss means the class doesn't override this exact
                             // overload (e.g. it lacks the JVM remove(K,V):Boolean default) -> SKIP rather than mis-wire a
                             // different overload; for a Kotlin interface the same-name+sig method resolves implicitly anyway.
-                            if (!ti.MethodsBySig.TryGetValue(subSig, out var bodyMethod)) continue;
+                            if (!ti.MethodsBySig.TryGetValue(subSig, out var bodyMethod))
+                            {
+                                // ...unless a DIRECT base interface provides this method as a DEFAULT (e.g. ValueTimeMark :
+                                // ComparableTimeMark, which has compareTo(ComparableTimeMark) as a DIM): the CLR does NOT
+                                // treat an interface DIM as implicitly implementing the base interface method (Comparable.
+                                // compareTo), so the class slot stays unimplemented. Emit a class-level forwarding bridge
+                                // that calls the inherited DIM and put the MethodImpl on it.
+                                if (!ti.IsInterface) TryEmitDimForwardBridge(ti, imDef, ifSubst, subSig, constructed, ifaceBuilder);
+                                continue;
+                            }
                             var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
                             // Covariant return: a NARROWED override return type (markNow():ValueTimeMark over the iface's
                             // :ComparableTimeMark) makes a direct MethodImpl fail the CLR's exact-return rule. Emit a bridge
@@ -1033,6 +1042,34 @@ sealed partial class Emitter
         il.Emit(OpCodes.Callvirt, bodyCall);
         il.Emit(OpCodes.Ret);   // the narrow return value upcasts to ifaceRet (reference types)
         ti.TB.DefineMethodOverride(bridge, ifaceMethod);
+    }
+
+    // A class implements an interface method (Comparable.compareTo) for which it has no own body, but a DIRECT base
+    // interface provides it as a DEFAULT method (ComparableTimeMark.compareTo DIM). The CLR doesn't treat the DIM as
+    // implicitly implementing the base interface method, so emit a class-level forwarding bridge that calls the inherited
+    // DIM (callvirt the base-interface method on `this`) and put the MethodImpl for the interface method on the bridge.
+    void TryEmitDimForwardBridge(TypeInfo ti, JsonElement imDef, Dictionary<string, string> ifSubst, string subSig, Type constructed, MethodBuilder ifaceBuilder)
+    {
+        if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var dirIfs)) return;
+        foreach (var di in dirIfs.EnumerateArray())
+        {
+            var (dopen, _) = ParseOwner(di.GetString());
+            if (!_types.TryGetValue(dopen, out var diTi) || !diTi.MethodsBySig.TryGetValue(subSig, out var dim)) continue;
+            if (dim.Attributes.HasFlag(MethodAttributes.Abstract)) continue;   // need an actual DEFAULT (bodied) method
+            Type ifaceRet; try { ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstSig(rt.GetString(), ifSubst)) : typeof(void); } catch { return; }
+            Type[] paramTypes; try { paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstSig(p.GetProperty("type").GetString(), ifSubst))).ToArray(); } catch { return; }
+            var bridge = ti.TB.DefineMethod("<>dotkt_dimfwd$" + (_covarBridge++),
+                MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
+                ifaceRet, paramTypes);
+            var il = bridge.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
+            il.Emit(OpCodes.Callvirt, dim);   // dispatches to the DIM inherited by `this`
+            il.Emit(OpCodes.Ret);
+            var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
+            ti.TB.DefineMethodOverride(bridge, ifaceMethod);
+            return;
+        }
     }
 
     // {gp:T -> uint, ...} mapping the open interface's type params to a constructed spec's BIR type args
