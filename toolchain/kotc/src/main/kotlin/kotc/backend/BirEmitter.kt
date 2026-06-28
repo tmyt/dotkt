@@ -573,7 +573,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val body = if (hasDefault) (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } else ""
 			// A generic interface method (`fun <E> get(...)`, `<R> fold(...)`) must carry its own type params, else
 			// `gp:E`/`gp:R` in its signature is unresolvable at emit (CoroutineContext / ContinuationInterceptor / …).
-			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}"""
+			// `attrs`: ride the @Clr/[Kotlin*] metadata so the ref assembly carries the BCL binding hint (for app-emit
+			// substitution). For a PROPERTY accessor the @Clr is on the property (size @Clr("Count")), so read from there.
+			val memberAttrs = attrsJson((prop ?: fn).annotations)
+			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body],"attrs":[$memberAttrs]}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 			.filterNot { it.signatureMentionsJava() }
@@ -598,7 +601,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
 			}
 			.joinToString(",") { str(it) }
-		return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods]}"""
+		return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods],"attrs":[${attrsJson(iface.annotations)}]}"""
 	}
 
 	internal fun IrSimpleFunction.signatureMentionsJava(): Boolean =
@@ -3883,6 +3886,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * (otherwise they leak in as user classes and their members mis-route as fields). See [[s5-fir-injection-seam]].
 	 */
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
+		// REFERENCE-assembly build (the stdlib under DOTKT_STDLIB_COMPILE): @Clr does NOT bind — it is emitted as a [Clr]
+		// metadata attribute (attrsJson) and the BCL substitution is deferred to app-emit. So the ref assembly is PURE
+		// Kotlin shapes (no C3, no clrg: BCL refs). docs/design-clr-stdlib-ref-runtime-split.md.
+		if (stdlibCompile) return null
 		for (a in decl.annotations) {
 			if ((a as? IrConstructorCall)?.type?.classFqName?.asString() == "clr.Clr")
 				return (a.arguments.firstOrNull() as? IrConst)?.value as? String
