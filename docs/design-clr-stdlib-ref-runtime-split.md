@@ -193,3 +193,22 @@ DONE so far: ClrTypeRegistry.memberNames + memberClrName (added); facadegen emit
 TODO: revert 2A's idot=ClrAttrName -> the `=` encoding; injection split + member-token parse + clrName member lookup; then
 test the ACTUAL app-against-ref flow (the meta-string check in 2A did NOT exercise resolution — that's how the namespace
 bug slipped). NO unknown difficulty, just the coordinated edits + a real end-to-end test.
+
+## ★ SUBSTITUTION PROVEN END-TO-END (2026-06-28) ★
+
+The `=`-encoding correction works. Implemented + verified with a C# consumer:
+- facadegen: `token[2] = KotlinFqn=BclName` for a @Clr type; `clr:Count`/`clr:get_Item` token on prop/fun lines.
+- injection: split tok[2] on `=` (LEFT=Kotlin identity for namespace/ClassId, RIGHT=BCL binding -> ClrTypeRegistry); the
+  prop/fun `clr:` token -> per-member binding (ClrTypeRegistry.memberNames, key=member fqn). A @Clr type (clrBinding!=null)
+  is FILTERED OUT of byClassId — NOT re-created as a FIR type (the jar provides the builtin shape incl. operator/infix;
+  only the binding is registered). This fixed `xs[0]` failing with "operator modifier required".
+- BirEmitter.clrName: looks up an IrProperty / non-accessor IrSimpleFunction in the member registry, walking
+  fake-overrides (inherited `List.size` -> `Collection.size`'s binding).
+
+Test: `fun listSize(xs:List<Int>)=xs.size`, `firstElem=xs[0]`, `secondElem=xs.get(1)` compiled
+`kotc <app> -no-stdlib -classpath <kotlin-stdlib.jar>` + `CLR_TYPES_METADATA=ref.meta` (clrName ACTIVE) -> bir2cir ->
+ilemit -> retarget -> a C# consumer passes `int[]{10,20,30}` -> **size=3 first=10 second=20**. Type + property + method
+substitution all correct. native-cir 18 PASS, roundtrip PASS.
+
+Remaining: bind more Collection members (only size/get today; isEmpty/contains/indexOf aren't on IReadOnlyList<T> -> Kotlin
+impls needed); the runtime stdlib build; bounded C3b (GetEnumerator for UByteArray/EmptyList/ranges); primitive [Clr] maps.
