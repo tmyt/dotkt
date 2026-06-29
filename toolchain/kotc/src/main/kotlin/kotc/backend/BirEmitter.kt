@@ -170,7 +170,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// The `<File>Kt` facade class name, qualified with the file's package as the .NET namespace (so top-level
 	// declarations live in the package's namespace, and two same-named files in different packages don't collide).
 	internal fun fileClassName(f: IrFile): String {
-		val base = File(f.fileEntry.name).name.removeSuffix(".kt").replaceFirstChar { it.uppercaseChar() } + "Kt"
+		var stem = File(f.fileEntry.name).name.removeSuffix(".kt")
+		// Platform-actual files are named `<Common>Clr.kt` (e.g. _ComparisonsClr.kt); their `actual`s belong to the SAME
+		// file class as the common expect (_ComparisonsKt) -- JVM merges expect/actual into one class. Strip the `Clr`
+		// suffix so the actual lands in the common's class (ilemit then MERGES the two same-file-class inputs). Without
+		// this, `actual inline fun maxOf(Int,Int)` lands in _ComparisonsClrKt while the call targets _ComparisonsKt.
+		if (stem.endsWith("Clr")) stem = stem.dropLast(3)
+		val base = stem.replaceFirstChar { it.uppercaseChar() } + "Kt"
 		val pkg = f.packageFqName.asString()
 		return if (pkg.isEmpty()) base else "$pkg.$base"
 	}

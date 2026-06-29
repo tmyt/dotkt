@@ -29,8 +29,46 @@ static class IlEmit
             else bir.Add(rest[i]);
         }
         var files = bir.Select(LoadInputDocument).ToList();
-        new Emitter(outDir, asmName).EmitAssembly(files.Select(d => d.RootElement).ToList());
+        new Emitter(outDir, asmName).EmitAssembly(MergeByFileClass(files));
         return 0;
+    }
+
+    // Multiple CIR files can target the SAME file class — a Kotlin multiplatform `expect`/`actual` split (the common
+    // `_Comparisons.kt` and the platform `_ComparisonsClr.kt` both compile to `kotlin.comparisons._ComparisonsKt`).
+    // Emitting them as separate files made the 2nd `DefineType` collide, silently dropping one file's methods (the
+    // platform's inline primitive overloads `maxOf(int,int)` etc.). Merge same-file-class inputs into ONE so every
+    // overload lands in the single emitted type. (Inline funcs are normal callable methods on CLR; metadata is stripped.)
+    static readonly List<JsonDocument> _mergedDocs = new();
+    static List<JsonElement> MergeByFileClass(List<JsonDocument> docs)
+    {
+        var byFc = new Dictionary<string, System.Text.Json.Nodes.JsonObject>();
+        var order = new List<string>();
+        foreach (var d in docs)
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(d.RootElement.GetRawText()).AsObject();
+            var fc = node["fileClass"]?.GetValue<string>() ?? "";
+            if (fc.Length > 0 && byFc.TryGetValue(fc, out var acc))
+            {
+                foreach (var key in new[] { "methods", "fields", "types" })
+                    if (node[key] is System.Text.Json.Nodes.JsonArray src && src.Count > 0)
+                    {
+                        if (acc[key] is System.Text.Json.Nodes.JsonArray dst)
+                            foreach (var it in src.ToList()) dst.Add(it.DeepClone());
+                        else acc[key] = src.DeepClone();
+                    }
+                if (node["hasMain"]?.GetValue<bool>() == true) acc["hasMain"] = true;
+            }
+            else { byFc[fc] = node; order.Add(fc); }
+        }
+        _mergedDocs.Clear();
+        var result = new List<JsonElement>();
+        foreach (var fc in order)
+        {
+            var doc = JsonDocument.Parse(byFc[fc].ToJsonString());
+            _mergedDocs.Add(doc);
+            result.Add(doc.RootElement);
+        }
+        return result;
     }
 
     static JsonDocument LoadInputDocument(string path)
