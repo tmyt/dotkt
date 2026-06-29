@@ -1898,7 +1898,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// getter `get_first` doesn't resolve through ilemit's callInstance path (KeyNotFound). For now ilemit reads the
 		// IntProgression accessors directly (user: "当面これでよい"). See [[clr-stdlib-ref-runtime-split]].
 		if (stdlibCompile && source != null && source.type.classFqName?.asString() in INT_PROGRESSION_FQ)
-			return """{"k":"forRange","label":$lbl,"var":${str(loopVar.name.asString())},"elem":"int","range":${expr(source)},"body":[$body]}"""
+			// Carry the range-accessor owner + getter names in the NODE so ilemit's forRange stays Kotlin-agnostic (it
+			// resolves `_types[accessOwner].Methods[firstM]` generically, with no hardcoded kotlin.ranges knowledge). The
+			// Kotlin-specific facts live here in the CIR-lowering layer (the frontend may know Kotlin; the IL backend not).
+			return """{"k":"forRange","label":$lbl,"var":${str(loopVar.name.asString())},"elem":"int","range":${expr(source)},"accessOwner":"kotlin.ranges.IntProgression","firstM":"get_first","lastM":"get_last","stepM":"get_step","body":[$body]}"""
 		// `for (i in 1..5)` constant-folds to a `new IntRange(first,last)` (a CONSTRUCTOR, not a rangeTo call) -> emit a
 		// plain counter loop straight from its args, so NO IntRange object reaches ilemit (it stays Kotlin-agnostic; this
 		// is the user-app form of the §1897 forRange, without the IntProgression accessors). Inclusive -> cmp "<=", step 1.

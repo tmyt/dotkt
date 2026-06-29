@@ -239,19 +239,19 @@ sealed partial class Emitter
             }
             case "forRange":
             {
-                // for (i in <IntRange/IntProgression value>): counter-loop i over get_first..get_last step get_step.
-                // TODO(per user 2026-06-28): the range-accessor knowledge below ideally belongs to the CIR-lowering layer
-                // (BirEmitter) so this Emitter stays Kotlin-agnostic; blocked on resolving a synthetic property-getter
-                // call through the callInstance path. Gated to the stdlib build (IntProgression is in _types).
+                // for (i in <range value>): counter-loop i over <first>..<last> step <step>. The range type + getter
+                // names come from the NODE (accessOwner/firstM/lastM/stepM), so this Emitter holds NO hardcoded
+                // kotlin.ranges knowledge -- it resolves the accessors generically on whatever type the CIR layer names.
                 var rngT = EmitExpr(s.GetProperty("range"));
                 var rngLocal = _il.DeclareLocal(rngT); _il.Emit(OpCodes.Stloc, rngLocal);
-                if (!_types.TryGetValue("kotlin.ranges.IntProgression", out var prog))
-                    throw new NotSupportedException("forRange: kotlin.ranges.IntProgression not emitted in this assembly");
+                var accessOwner = s.GetProperty("accessOwner").GetString();
+                if (!_types.TryGetValue(accessOwner, out var prog))
+                    throw new NotSupportedException($"forRange: {accessOwner} not emitted in this assembly");
                 var i = _il.DeclareLocal(typeof(int)); _locals[s.GetProperty("var").GetString()] = i;
                 var last = _il.DeclareLocal(typeof(int)); var step = _il.DeclareLocal(typeof(int));
-                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods["get_first"]); _il.Emit(OpCodes.Stloc, i);
-                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods["get_last"]); _il.Emit(OpCodes.Stloc, last);
-                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods["get_step"]); _il.Emit(OpCodes.Stloc, step);
+                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods[s.GetProperty("firstM").GetString()]); _il.Emit(OpCodes.Stloc, i);
+                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods[s.GetProperty("lastM").GetString()]); _il.Emit(OpCodes.Stloc, last);
+                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods[s.GetProperty("stepM").GetString()]); _il.Emit(OpCodes.Stloc, step);
                 var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
                 var neg = _il.DefineLabel(); var bodyL = _il.DefineLabel();
                 _loops.Add((LoopLabel(s), cont, end));
