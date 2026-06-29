@@ -347,7 +347,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, fn); _il.Emit(OpCodes.Ldloc, i);                         // fn, i
                 if (!pType.IsValueType) _il.Emit(OpCodes.Box, typeof(int));
                 _il.Emit(OpCodes.Callvirt, invoke);                                              // init(i)
-                if (rType != elem) { if (elem.IsValueType) _il.Emit(OpCodes.Unbox_Any, elem); else _il.Emit(OpCodes.Castclass, elem); }
+                if (rType != elem) { if (elem.IsValueType || elem.IsGenericParameter) _il.Emit(OpCodes.Unbox_Any, elem); else _il.Emit(OpCodes.Castclass, elem); }
                 _il.Emit(OpCodes.Stelem, elem);                                                  // arr[i] = init(i)
                 _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, i);
                 _il.Emit(OpCodes.Br, top);
@@ -472,10 +472,13 @@ sealed partial class Emitter
             }
             case "cast":
             {
-                // `x as T` / smart-cast downcast -> castclass (reference) or unbox.any (value type).
+                // `x as T` / smart-cast downcast. A generic type parameter (`!!T`) is NOT IsValueType at emit time, but
+                // `castclass` is INVALID for a VALUE-type instantiation (the JIT rejects `castclass int` ->
+                // InvalidProgram). `unbox.any` is the universal cast: unbox for value types, castclass for reference
+                // types, and resolves a generic param correctly at JIT -- exactly what C# emits for `(T)objExpr`.
                 EmitExpr(e.GetProperty("e"));
                 var t = MapType(e.GetProperty("type").GetString());
-                _il.Emit(t.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, t);
+                _il.Emit(t.IsValueType || t.IsGenericParameter ? OpCodes.Unbox_Any : OpCodes.Castclass, t);
                 return t;
             }
             case "classRef":

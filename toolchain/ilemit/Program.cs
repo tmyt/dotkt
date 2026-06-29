@@ -1679,7 +1679,7 @@ sealed partial class Emitter
     {
         EmitExpr(e.GetProperty("e"));
         var t = NativeType(e.GetProperty("type").GetString());
-        _il.Emit(t.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, t);
+        _il.Emit(t.IsValueType || t.IsGenericParameter ? OpCodes.Unbox_Any : OpCodes.Castclass, t);   // castclass is invalid for value-type/generic-param instantiations
         return t;
     }
 
