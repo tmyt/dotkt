@@ -3325,6 +3325,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"k":"mapNew","keyType":${str(kt)},"valType":${str(vt)},"entries":[$entries]}"""
 		}
 
+		// `arrayOfNulls<T>(size)` -> a sized `new T[size]` (the reified builtin's actual is a TODO stub; lower it here
+		// like IntArray(size)). Used by toTypedArray/collectionToArray etc. -- elem = the type arg (object/gp:T/clrg:...).
+		if (declaringClass == null && name == "arrayOfNulls" &&
+			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString() == "kotlin") {
+			val elemT = call.typeArguments.getOrNull(0)?.let { birType(it) } ?: "object"
+			return """{"k":"newArraySized","elem":${str(elemT)},"size":${expr(regularArgs(call).first())}}"""
+		}
 		// Array factory `intArrayOf(...)`/`arrayOf(...)` -> a `newArray` (vararg elements).
 		if (declaringClass == null && name in ARRAY_FACTORY_NAMES &&
 			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString() == "kotlin") {
