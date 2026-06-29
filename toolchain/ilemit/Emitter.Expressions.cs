@@ -410,13 +410,25 @@ sealed partial class Emitter
                 // Inlining (not a delegate) lets the body read/write enclosing locals without closure Ref cells.
                 var elem = MapType(e.GetProperty("elem").GetString());
                 var ienumT = typeof(System.Collections.Generic.IEnumerable<>).MakeGenericType(elem);
-                var ienumrT = typeof(System.Collections.Generic.IEnumerator<>).MakeGenericType(elem);
+                // When `elem` is a TYPE PARAMETER (method/class), IEnumerable<!!T>/IEnumerator<!!T> are TypeBuilder
+                // instantiations of a BCL generic; TypeBuilder.GetMethod re-anchoring them yields a BROKEN metadata
+                // token (runtime EntryPointNotFound) in a non-inline method. Fall back to the NON-GENERIC IEnumerable/
+                // IEnumerator (no <!!T> -> no bad token) + Unbox_Any the object Current to elem. Concrete elem types
+                // keep the typed enumerator (faster, no box).
+                bool viaNonGeneric = IsTbInstantiation(ienumT);
                 EmitExpr(e.GetProperty("src"));
-                // GenericMethod (not .GetMethod): when `elem` is the enclosing generic FUNCTION's type parameter T,
-                // IEnumerable<T>/IEnumerator<T> are TypeBuilderInstantiations whose .GetMethod throws — route those
-                // through TypeBuilder.GetMethod. (Concrete elem types resolve normally.)
-                _il.Emit(OpCodes.Callvirt, GenericMethod(ienumT, "GetEnumerator"));
-                var en = _il.DeclareLocal(ienumrT); _il.Emit(OpCodes.Stloc, en);
+                Type enT;
+                if (viaNonGeneric)
+                {
+                    _il.Emit(OpCodes.Callvirt, typeof(System.Collections.IEnumerable).GetMethod("GetEnumerator"));
+                    enT = typeof(System.Collections.IEnumerator);
+                }
+                else
+                {
+                    _il.Emit(OpCodes.Callvirt, GenericMethod(ienumT, "GetEnumerator"));
+                    enT = typeof(System.Collections.Generic.IEnumerator<>).MakeGenericType(elem);
+                }
+                var en = _il.DeclareLocal(enT); _il.Emit(OpCodes.Stloc, en);
                 var lv = _il.DeclareLocal(elem); _locals[e.GetProperty("var").GetString()] = lv;
                 var start = _il.DefineLabel(); var end = _il.DefineLabel();
                 _loops.Add((LoopLabel(e), start, end));
@@ -425,7 +437,15 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Callvirt, typeof(System.Collections.IEnumerator).GetMethod("MoveNext"));
                 _il.Emit(OpCodes.Brfalse, end);
                 _il.Emit(OpCodes.Ldloc, en);
-                _il.Emit(OpCodes.Callvirt, GenericMethod(ienumrT, "get_Current"));
+                if (viaNonGeneric)
+                {
+                    _il.Emit(OpCodes.Callvirt, typeof(System.Collections.IEnumerator).GetMethod("get_Current"));
+                    _il.Emit(OpCodes.Unbox_Any, elem);
+                }
+                else
+                {
+                    _il.Emit(OpCodes.Callvirt, GenericMethod(enT, "get_Current"));
+                }
                 _il.Emit(OpCodes.Stloc, lv);
                 foreach (var b in e.GetProperty("body").EnumerateArray()) EmitStmt(b);
                 _il.Emit(OpCodes.Br, start);
