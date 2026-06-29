@@ -17,7 +17,7 @@ package kotlin.collections
  *
  * @sample samples.collections.Collections.Sorting.sortMutableList
  */
-public actual fun <T : Comparable<T>> MutableList<T>.sort(): Unit { TODO("clr binding should be implemented") }
+public actual fun <T : Comparable<T>> MutableList<T>.sort(): Unit = sortWith(Comparator { a, b -> a.compareTo(b) })
 
 /**
  * Sorts elements in the list in-place according to the order specified with [comparator].
@@ -26,7 +26,39 @@ public actual fun <T : Comparable<T>> MutableList<T>.sort(): Unit { TODO("clr bi
  *
  * @sample samples.collections.Collections.Sorting.sortMutableListWith
  */
-public actual fun <T> MutableList<T>.sortWith(comparator: Comparator<in T>): Unit { TODO("clr binding should be implemented") }
+public actual fun <T> MutableList<T>.sortWith(comparator: Comparator<in T>): Unit {
+    // STABLE O(n log n) bottom-up merge sort. Copy out to an Any?[] aux (`Array<Any?>(n){null}` -> object[]; cast
+    // per-element for compare), sort, write back via set. kotlin.Comparator is a plain fun interface (a SAM
+    // `Comparator { a, b -> ... }` lowers to a synthetic impl, not a Func delegate). Value-type instantiations work via
+    // the ilemit `castclass`->`unbox.any` fix + the get_Item(ret=gp:T)/arraySet(box) value<->collection boundary fixes.
+    // (The earlier "IComparer alias / PersistedAssemblyBuilder limitation" was a misdiagnosis -- it was 3 small mistypings.)
+    val n = this.size
+    if (n < 2) return
+    val a = Array<Any?>(n) { null }
+    for (i in 0 until n) a[i] = this.get(i)
+    val tmp = Array<Any?>(n) { null }
+    var width = 1
+    while (width < n) {
+        var lo = 0
+        while (lo < n) {
+            val mid = if (lo + width < n) lo + width else n
+            val hi = if (lo + 2 * width < n) lo + 2 * width else n
+            var l = lo; var r = mid; var k = lo
+            while (l < mid && r < hi) {
+                if (comparator.compare(a[l] as T, a[r] as T) <= 0) { tmp[k] = a[l]; l = l + 1 }
+                else { tmp[k] = a[r]; r = r + 1 }
+                k = k + 1
+            }
+            while (l < mid) { tmp[k] = a[l]; l = l + 1; k = k + 1 }
+            while (r < hi) { tmp[k] = a[r]; r = r + 1; k = k + 1 }
+            var j = lo
+            while (j < hi) { a[j] = tmp[j]; j = j + 1 }
+            lo = lo + 2 * width
+        }
+        width = width * 2
+    }
+    for (i in 0 until n) this.set(i, a[i] as T)
+}
 
 /**
  * Fills the list with the provided [value].
