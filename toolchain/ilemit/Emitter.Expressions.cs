@@ -406,8 +406,14 @@ sealed partial class Emitter
             case "arraySet":
             case "clr.stelem":
             {
-                EmitExpr(e.GetProperty("array")); EmitExpr(e.GetProperty("index")); EmitExpr(e.GetProperty("value"));
-                _il.Emit(OpCodes.Stelem, MapType(e.GetProperty("elem").GetString())); return typeof(void);
+                EmitExpr(e.GetProperty("array")); EmitExpr(e.GetProperty("index"));
+                var svt = EmitExpr(e.GetProperty("value"));
+                var selem = MapType(e.GetProperty("elem").GetString());
+                // Storing a value-type/generic-param value into a REFERENCE-element array (`Array<Any?>[i] = aT`) needs a
+                // box -- `stelem object` with an unboxed value on the stack is invalid (garbage/NullRef). The matching
+                // read side is `a[i] as T` -> unbox.any. (Reference values and value-element arrays need no box.)
+                if (!selem.IsValueType && svt != null && NeedsBoxToRef(svt)) _il.Emit(OpCodes.Box, svt);
+                _il.Emit(OpCodes.Stelem, selem); return typeof(void);
             }
             case "arrayLen":
             case "clr.ldlen":
