@@ -2746,7 +2746,7 @@ sealed partial class Emitter
     Type ClrRef(string s) =>
         s.StartsWith("byref:") ? ClrRef(s.Substring(6)).MakeByRefType() :   // `out`/`ref` param type (T&)
         s.StartsWith("clrg:") ? GenericType(s.Substring(5)) :
-        (s.StartsWith("func:") || s.StartsWith("clr:") || s.StartsWith("array:") || s.StartsWith("nullable:") || s.StartsWith("@")) ? MapType(s) :
+        (s.StartsWith("func:") || s.StartsWith("clr:") || s.StartsWith("array:") || s.StartsWith("nullable:") || s.StartsWith("gp:") || s.StartsWith("@")) ? MapType(s) :
         ResolveType(s);
 
     // A generic TYPE ARGUMENT of `System.Void` is illegal in .NET; Kotlin `Unit`/`Nothing` map to `void` for a return

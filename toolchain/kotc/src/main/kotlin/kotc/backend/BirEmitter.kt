@@ -3535,8 +3535,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val ixOwner = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
 			if (recv != null && ixOwner != null && clrName(ixOwner) != null) {
 				val mt = birType(recv.type); val a = regularArgs(call)
+				// get_Item returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T), not netType's
+				// erased `object`: ilemit then hands back gp:T (matching the stack), so the value<->collection boundary
+				// box/unbox is correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
+				val retH = if (call.type.classifierOrNull?.owner is org.jetbrains.kotlin.ir.declarations.IrTypeParameter) birType(call.type) else netType(call.type)
 				return if (name == "get")
-					"""{"k":"clrInstance","type":${str(mt)},"method":"get_Item","argTypes":[${str(netType(a[0].type))}],"ret":${str(netType(call.type))},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
+					"""{"k":"clrInstance","type":${str(mt)},"method":"get_Item","argTypes":[${str(netType(a[0].type))}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
 				else
 					"""{"k":"clrInstance","type":${str(mt)},"method":"set_Item","argTypes":[${str(netType(a[0].type))},${str(netType(a[1].type))}],"ret":"System.Void","recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
 			}
