@@ -183,13 +183,21 @@ sealed partial class Emitter
             case "constrainedCall":
             case "clr.constrained.compareTo":
             {
-                // `a.compareTo(b)` on a Comparable -> `constrained. recvType; callvirt IComparable<T>::CompareTo`.
+                // `a.compareTo(b)` on a Comparable -> `constrained. recvType; callvirt IComparable::CompareTo`.
                 // The receiver must be a managed pointer; `constrained.` then dispatches for value/ref/generic T.
                 var recvType = MapType(e.GetProperty("recvType").GetString());
                 var iface = MapType(e.GetProperty("iface").GetString());
-                var mi = InterfaceMethodOn(iface, e.GetProperty("method").GetString());
+                // IComparable`1<T> instantiated over a BUILDER type param (e.g. a SAM-shim's class type param): re-anchoring
+                // CompareTo via TypeBuilder.GetMethod yields a metadata token the JIT REJECTS for a value-type instantiation
+                // (InvalidProgramException) -- the same family as the generic-enumerator fallback. Use the NON-generic
+                // System.IComparable.CompareTo(object) + box the arg; `constrained.` still dispatches to T's own impl
+                // (value types implement both IComparable and IComparable<T>). Reference-type args worked before because
+                // they are already object-compatible; only value-type instantiations hit the bad token.
+                bool brokenGeneric = iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IComparable<>) && IsTbInstantiation(iface);
+                var mi = brokenGeneric ? typeof(IComparable).GetMethod("CompareTo")! : InterfaceMethodOn(iface, e.GetProperty("method").GetString());
                 EmitAddr(e.GetProperty("recv"));
                 EmitExpr(e.GetProperty("arg"));
+                if (brokenGeneric) _il.Emit(OpCodes.Box, recvType);   // arg (type T) -> object for CompareTo(object)
                 _il.Emit(OpCodes.Constrained, recvType);
                 _il.Emit(OpCodes.Callvirt, mi);
                 return mi.ReturnType;
