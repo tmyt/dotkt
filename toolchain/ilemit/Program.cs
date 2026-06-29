@@ -2131,7 +2131,14 @@ sealed partial class Emitter
         try
         {
             if (resolved.All(x => x != null))
-                mi = type.GetMethod(name, flags, null, resolved, null);
+                try { mi = type.GetMethod(name, flags, null, resolved, null); }
+                // Overloads that collapse to the SAME CLR signature (e.g. IntArray.sum & Array<out Int>.sum -> sum(int[])
+                // under the primitive/boxed dual-representation) make GetMethod ambiguous -> pick the EXACT-param match
+                // (also prefers the concrete overload over a generic `T[]` one, which doesn't param-equal `int[]`).
+                catch (AmbiguousMatchException) {
+                    mi = type.GetMethods(flags).FirstOrDefault(m => m.Name == name
+                        && m.GetParameters().Select(p => p.ParameterType).SequenceEqual(resolved));
+                }
             // Fall back to name + arity — e.g. a generic-parameter arg type (`Add(T)` on `Collection<int>`) that
             // doesn't name a plain .NET type; on the constructed type GetMethods returns the substituted overload.
             mi ??= type.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);

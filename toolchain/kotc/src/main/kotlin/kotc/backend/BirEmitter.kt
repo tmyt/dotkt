@@ -4277,6 +4277,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.Float" -> "System.Single"
 		"kotlin.Boolean" -> "System.Boolean"
 		"kotlin.Char" -> "System.Char"
+		// Primitive arrays are real BCL arrays (int[]/double[]/…). Without these they fall through to `System.Object`,
+		// so a clrStatic arg-type erases the receiver -> ilemit resolves the WRONG `sum`/`max`/… overload (silent wrong
+		// answer, e.g. `intArrayOf(3,1,2).sum()` -> 3). `array:<elem>` resolves via ClrRef -> elem[].
+		"kotlin.IntArray" -> "array:System.Int32"
+		"kotlin.LongArray" -> "array:System.Int64"
+		"kotlin.ShortArray" -> "array:System.Int16"
+		"kotlin.ByteArray" -> "array:System.SByte"
+		"kotlin.DoubleArray" -> "array:System.Double"
+		"kotlin.FloatArray" -> "array:System.Single"
+		"kotlin.BooleanArray" -> "array:System.Boolean"
+		"kotlin.CharArray" -> "array:System.Char"
 		"kotlin.String" -> "System.String"
 		"kotlin.Unit" -> "System.Void"
 		"kotlinx.coroutines.CancellableContinuation" -> "clrg:DotKtx.Coroutines.CancellableCont[${firstArgNet(t)}]"
