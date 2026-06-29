@@ -1436,7 +1436,7 @@ sealed partial class Emitter
         return cand;
     }
 
-    MethodBuilder FindMethod(string typeName, string name, string sig = null)
+    MethodInfo FindMethod(string typeName, string name, string sig = null)
     {
         var seenIfaces = new HashSet<string>();
         MethodBuilder FindInInterfaces(TypeInfo ti)
@@ -1455,6 +1455,17 @@ sealed partial class Emitter
                 if (inherited != null) return inherited;
             }
             return null;
+        }
+        // A type NOT in this assembly's `_types` is EXTERNAL — an rt-internal helper (`ClrCollectionDefaultsKt`,
+        // referenced from an APP that links the rt via --ref). Resolve it by reflection on the loaded assembly instead
+        // of indexing `_types` (which would KeyNotFound). (indexOf/listIterator/etc. lower to such helper callStatics.)
+        if (!_types.ContainsKey(typeName))
+        {
+            var ext = TryResolveType(typeName);
+            if (ext == null) return null;
+            var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+            try { return ext.GetMethod(name, bf); }
+            catch (AmbiguousMatchException) { return ext.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); }
         }
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
         {

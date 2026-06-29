@@ -153,8 +153,17 @@ sealed partial class Emitter
             case "new":
             {
                 var (open, constructed) = ParseOwner(e.GetProperty("type").GetString());
-                var ti = _types[open];
                 var nargs = e.GetProperty("args");
+                if (!_types.TryGetValue(open, out var ti))
+                {
+                    // External type (e.g. `new kotlin.ranges.IntRange(1,3)` from an APP linking the rt where IntRange
+                    // lives): resolve the ctor via reflection on the loaded assembly instead of indexing `_types`.
+                    var ext = constructed ?? ResolveType(open);
+                    var ctorE = ext.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == nargs.GetArrayLength());
+                    foreach (var a in nargs.EnumerateArray()) EmitExpr(a);
+                    _il.Emit(OpCodes.Newobj, ctorE);
+                    return ext;
+                }
                 var ctor = SelectCtor(ti, nargs.GetArrayLength());
                 foreach (var a in nargs.EnumerateArray()) EmitExpr(a);
                 // Constructed user generic `Box<int>` -> resolve the ctor onto the instantiation (static helper).
