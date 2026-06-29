@@ -3885,7 +3885,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
 			if (fq == "kotlin.io" && (name == "println" || name == "print")) {
 				val m = if (name == "println") "WriteLine" else "Write"
-				return """{"k":"console","method":${str(m)},"args":[${operands.joinToString(",") { expr(it) }}]}"""
+				// A collection operand prints Kotlin-style `[a, b]`, not .NET's type-name ToString -> route via clrCollToString.
+				val argJson = operands.joinToString(",") { op ->
+					val rfq = op.type.classFqName?.asString()
+					if (rfq != null && rfq.startsWith("kotlin.collections.") && (rfq.contains("List") || rfq.contains("Set") || rfq.endsWith("Collection"))) {
+						val elem = (op.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+						"""{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollToString","args":[${expr(op)}],"typeArgs":[${str(elem)}]}"""
+					} else expr(op)
+				}
+				return """{"k":"console","method":${str(m)},"args":[$argJson]}"""
 			}
 			// `readLine()` -> Console.ReadLine() (returns String?; null at EOF, like Kotlin).
 			if (fq == "kotlin.io" && name == "readLine")
