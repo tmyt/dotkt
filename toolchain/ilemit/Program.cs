@@ -2759,7 +2759,11 @@ sealed partial class Emitter
         var open = spec.Substring(0, br);
         var inner = spec.Substring(br + 1, spec.Length - br - 2);
         var args = SplitTopLevel(inner).Select(MapArg).ToArray();
-        return ResolveType(open + "`" + args.Length).MakeGenericType(args);
+        // A Kotlin generic type @ClrIntrinsic-aliased to a NON-generic BCL type (e.g. Comparator<T> ->
+        // System.Collections.IComparer) still carries the Kotlin type args in the spec, but the BCL target has no `N
+        // arity. If `open`N` doesn't exist, fall back to the non-generic type (drop the args).
+        var openGen = TryResolveType(open + "`" + args.Length);
+        return openGen != null ? openGen.MakeGenericType(args) : ResolveType(open);
     }
 
     static List<string> SplitTopLevel(string s)

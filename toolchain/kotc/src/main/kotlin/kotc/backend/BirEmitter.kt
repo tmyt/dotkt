@@ -1184,14 +1184,24 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// body references to the receiver resolve to `__self` (via valSubst).
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
+		// An override of a fun-interface SAM whose interface is @ClrIntrinsic-aliased to a NON-generic BCL interface
+		// (e.g. NaturalOrderComparator : Comparator, aliased to System.Collections.IComparer): the override must be erased
+		// to `object` params (matching IComparer.Compare(object,object)) and cast each back to its declared type, else the
+		// class fails to load ("does not implement Compare(object,object)"). Same bridge the SAM-shim applies.
+		val erasesSam = fn.overriddenSymbols.any { s -> (s.owner.parent as? IrClass)?.let { ic ->
+			ic.isFun && ic.annotations.any { a -> (a as? IrConstructorCall)?.type?.classFqName?.asString() in setOf("kotlin.clr.ClrIntrinsic", "clr.Clr") } } == true }
+		val erasedParams = if (erasesSam) fn.parameters.filter { it.kind == IrParameterKind.Regular } else emptyList()
+		erasedParams.forEachIndexed { i, p -> captureSubst[p] = """{"k":"cast","type":${str(birType(p.type))},"e":{"k":"local","name":"__sam$i"}}""" }
 		// Promote captured-mutated `var`s to ref-cells; accumulate (a nested closure inherits the enclosing set).
 		val savedRefCells = refCellVars
 		refCellVars = refCellVars + computeRefCells(fn)
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		refCellVars = savedRefCells
+		erasedParams.forEach { captureSubst.remove(it) }
 		if (extRecv != null) selfSubst.remove(extRecv)
 		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
-		val ps = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters)).joinToString(",")
+		val ps = if (erasesSam) (listOfNotNull(selfParam) + erasedParams.mapIndexed { i, _ -> """{"name":"__sam$i","type":"object"}""" }).joinToString(",")
+			else (listOfNotNull(selfParam) + paramsJsonList(fn.parameters)).joinToString(",")
 		// `override fun toString()/equals()/hashCode()` -> System.Object.ToString/Equals/GetHashCode so that
 		// CLR virtual dispatch (Console.WriteLine, structural `==`) finds the override.
 		val objName = objectMethodName(fn)
@@ -2111,14 +2121,28 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val captures = capturedVars(fn, includeThis = true)
 		val cname = "<>dotkt_${synthScope}_Sam${closureCounter++}"
 		val capPairs = captures.map { it to captureFieldName(it) }
-		val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
-		capPairs.forEach { (decl, fname) -> captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}""" }
+		// A fun interface aliased to a NON-generic BCL interface (Comparator -> @ClrIntrinsic("System.Collections.IComparer"))
+		// erases its SAM method to `object` params, so there is no generic interface-method ref (which PersistedAssemblyBuilder
+		// mis-encodes for value-type type-parameter instantiations -> InvalidProgram). The shim casts each object arg back to
+		// the lambda's declared param type (the bridge) via captureSubst, so the body still sees typed values.
+		val aliasTarget = ifaceClass.annotations.firstNotNullOfOrNull {
+			val a = it as? IrConstructorCall
+			if (a != null && a.type?.classFqName?.asString() in setOf("kotlin.clr.ClrIntrinsic", "clr.Clr")) (a.arguments.firstOrNull() as? IrConst)?.value as? String else null
+		}
+		val savedSubst = java.util.IdentityHashMap<IrValueDeclaration, String?>()
+		capPairs.forEach { (decl, fname) -> savedSubst[decl] = captureSubst[decl]; captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}""" }
+		val samParams = if (aliasTarget != null) fn.parameters.mapIndexed { i, p ->
+			val pn = "__sam$i"
+			savedSubst[p] = captureSubst[p]
+			captureSubst[p] = """{"k":"cast","type":${str(birType(p.type))},"e":{"k":"local","name":${str(pn)}}}"""
+			"""{"name":${str(pn)},"type":"object"}"""
+		}.joinToString(",") else lambdaParamsJson(fn.parameters)
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-		val samMethod = """{"name":${str(samName)},"static":false,"override":true,"virtual":true,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}"""
-		capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
+		val samMethod = """{"name":${str(samName)},"static":false,"override":true,"virtual":true,"params":[$samParams],"ret":${str(ret)},"body":[$body]}"""
+		savedSubst.forEach { (decl, prev) -> if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 		val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
-		val ifaceSpec = ownerSpec(ifaceClass, funIface) ?: birType(funIface)
+		val ifaceSpec = if (aliasTarget != null) "clr:$aliasTarget" else (ownerSpec(ifaceClass, funIface) ?: birType(funIface))   // clr: = non-generic BCL interface (IComparer)
 		val freeTps = freeTypeParams(listOf(funIface) + capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 		liftedTypes.add("""{"name":${str(cname)},"kind":"class"${typeParamsJson(freeTps)},"base":null,"interfaces":[${str(ifaceSpec)}],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$samMethod]}""")
 		val capExprs = captures.joinToString(",") { capValueExpr(it) }
