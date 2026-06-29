@@ -906,8 +906,14 @@ sealed partial class Emitter
                 // Non-capturing lambda: bind the lifted static method into a Func/Action delegate.
                 var ft = MapType(e.GetProperty("funcType").GetString());
                 var mb = FindStatic(e.GetProperty("method").GetString());
+                // A GENERIC lifted lambda (e.g. the comparator inside a generic `sort<T>`) MUST be instantiated with its
+                // typeArgs before Ldftn -- loading the open generic-method-DEFINITION's ftn throws "the method itself or
+                // the containing type is not fully instantiated" at runtime.
+                MethodInfo target = (e.TryGetProperty("typeArgs", out var dta) && dta.GetArrayLength() > 0 && mb.IsGenericMethodDefinition)
+                    ? mb.MakeGenericMethod(dta.EnumerateArray().Select(x => MapType(x.GetString())).ToArray())
+                    : mb;
                 _il.Emit(OpCodes.Ldnull);
-                _il.Emit(OpCodes.Ldftn, mb);
+                _il.Emit(OpCodes.Ldftn, target);
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
                 return ft;
             }
