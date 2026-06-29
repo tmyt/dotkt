@@ -5,17 +5,21 @@
 
 package kotlin.io
 
+import clr.Clr
+
+// @Clr-bound to the BCL console (System.Console.Write/WriteLine). NOT inline: a BCL call replaces the body, and the
+// BCL internals are native — there is nothing to inline. The TODO body never runs (the @Clr call-site routing wins).
 /** Prints the given [message] to the standard output stream. */
-@kotlin.internal.InlineOnly
-public actual inline fun print(message: Any?) { TODO("clr binding should be implemented") }
+@Clr("System.Console.Write")
+public actual fun print(message: Any?) { TODO("@Clr System.Console.Write") }
 
 /** Prints the given [message] and the line separator to the standard output stream. */
-@kotlin.internal.InlineOnly
-public actual inline fun println(message: Any?) { TODO("clr binding should be implemented") }
+@Clr("System.Console.WriteLine")
+public actual fun println(message: Any?) { TODO("@Clr System.Console.WriteLine") }
 
 /** Prints the line separator to the standard output stream. */
-@kotlin.internal.InlineOnly
-public actual inline fun println() { TODO("clr binding should be implemented") }
+@Clr("System.Console.WriteLine")
+public actual fun println() { TODO("@Clr System.Console.WriteLine") }
 
 /**
  * Reads a line of input from the standard input stream and returns it,

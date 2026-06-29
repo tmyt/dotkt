@@ -45,23 +45,52 @@ public actual fun <T> Iterable<T>.shuffled(): List<T> = TODO("clr binding should
 
 @Suppress("DEPRECATION_ERROR")
 @kotlin.internal.InlineOnly
-internal actual inline fun collectionToArray(collection: Collection<*>): Array<Any?> = TODO("clr binding should be implemented")
+internal actual inline fun collectionToArray(collection: Collection<*>): Array<Any?> {
+    val result = arrayOfNulls<Any?>(collection.size)
+    var index = 0
+    for (element in collection) {
+        result[index++] = element
+    }
+    return result
+}
 
 @kotlin.internal.InlineOnly
 @Suppress("UNCHECKED_CAST", "DEPRECATION_ERROR")
 internal actual inline fun <T> collectionToArray(collection: Collection<*>, array: Array<T>): Array<T> = TODO("clr binding should be implemented")
 
-internal actual fun <T> terminateCollectionToArray(collectionSize: Int, array: Array<T>): Array<T> = TODO("clr binding should be implemented")
+internal actual fun <T> terminateCollectionToArray(collectionSize: Int, array: Array<T>): Array<T> {
+    if (collectionSize < array.size) {
+        @Suppress("UNCHECKED_CAST")
+        (array as Array<T?>)[collectionSize] = null
+    }
+    return array
+}
 
 // copies typed varargs array to array of objects
-internal actual fun <T> Array<out T>.copyToArrayOfAny(isVarargs: Boolean): Array<out Any?> = TODO("clr binding should be implemented")
+internal actual fun <T> Array<out T>.copyToArrayOfAny(isVarargs: Boolean): Array<out Any?> {
+    val result = arrayOfNulls<Any?>(this.size)
+    for (index in this.indices) {
+        result[index] = this[index]
+    }
+    return result
+}
 
 @PublishedApi
 @SinceKotlin("1.3")
 @InlineOnly
-internal actual inline fun checkIndexOverflow(index: Int): Int = TODO("clr binding should be implemented")
+internal actual inline fun checkIndexOverflow(index: Int): Int {
+    if (index < 0) {
+        throwIndexOverflow()
+    }
+    return index
+}
 
 @PublishedApi
 @SinceKotlin("1.3")
 @InlineOnly
-internal actual inline fun checkCountOverflow(count: Int): Int = TODO("clr binding should be implemented")
+internal actual inline fun checkCountOverflow(count: Int): Int {
+    if (count < 0) {
+        throwCountOverflow()
+    }
+    return count
+}

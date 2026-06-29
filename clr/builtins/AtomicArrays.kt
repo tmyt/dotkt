@@ -13,79 +13,130 @@
     "MUST_BE_INITIALIZED_OR_BE_ABSTRACT",
 )
 
-// Step-1 CLR stub mirroring the JVM `actual` declarations.
-// Bodies are TODO pending the @Clr/BCL binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
+// CLR atomic arrays. Mirrors the scalar atomics (builtins/Atomics.kt): the genuinely-atomic element ops
+// (exchangeAt/compareAndSetAt/compareAndExchangeAt/fetchAndAddAt/addAndFetchAt) are made atomic with a per-instance
+// monitor (System.Threading.Monitor.Enter/Exit, reused from Atomics.kt since both live in this package). Correct
+// (mutual exclusion), though not lock-free; each critical section does only a backing-array read/compare/assign,
+// which never throws, so a plain enter/exit (no try/finally) is safe. loadAt/storeAt take the lock too for
+// consistency (a single aligned element access would be fine without it).
 
 package kotlin.concurrent.atomics
 
 @SinceKotlin("2.1")
 @ExperimentalAtomicApi
 public actual class AtomicIntArray {
-    public actual constructor(size: Int)
+    private val array: IntArray
+    private val lock: Any = Any()
 
-    public actual constructor(array: IntArray)
+    public actual constructor(size: Int) { array = IntArray(size) }
 
-    public actual val size: Int get() = TODO("clr binding should be implemented")
+    public actual constructor(array: IntArray) { this.array = array }
 
-    public actual fun loadAt(index: Int): Int = TODO("clr binding should be implemented")
+    public actual val size: Int get() = array.size
 
-    public actual fun storeAt(index: Int, newValue: Int) { TODO("clr binding should be implemented") }
+    public actual fun loadAt(index: Int): Int {
+        monitorEnter(lock); val r = array[index]; monitorExit(lock); return r
+    }
 
-    public actual fun exchangeAt(index: Int, newValue: Int): Int = TODO("clr binding should be implemented")
+    public actual fun storeAt(index: Int, newValue: Int) {
+        monitorEnter(lock); array[index] = newValue; monitorExit(lock)
+    }
 
-    public actual fun compareAndSetAt(index: Int, expectedValue: Int, newValue: Int): Boolean = TODO("clr binding should be implemented")
+    public actual fun exchangeAt(index: Int, newValue: Int): Int {
+        monitorEnter(lock); val old = array[index]; array[index] = newValue; monitorExit(lock); return old
+    }
 
-    public actual fun compareAndExchangeAt(index: Int, expectedValue: Int, newValue: Int): Int = TODO("clr binding should be implemented")
+    public actual fun compareAndSetAt(index: Int, expectedValue: Int, newValue: Int): Boolean {
+        monitorEnter(lock); val ok = array[index] == expectedValue; if (ok) array[index] = newValue; monitorExit(lock); return ok
+    }
 
-    public actual fun fetchAndAddAt(index: Int, delta: Int): Int = TODO("clr binding should be implemented")
+    public actual fun compareAndExchangeAt(index: Int, expectedValue: Int, newValue: Int): Int {
+        monitorEnter(lock); val old = array[index]; if (old == expectedValue) array[index] = newValue; monitorExit(lock); return old
+    }
 
-    public actual fun addAndFetchAt(index: Int, delta: Int): Int = TODO("clr binding should be implemented")
+    public actual fun fetchAndAddAt(index: Int, delta: Int): Int {
+        monitorEnter(lock); val old = array[index]; array[index] = old + delta; monitorExit(lock); return old
+    }
 
-    public actual override fun toString(): String = TODO("clr binding should be implemented")
+    public actual fun addAndFetchAt(index: Int, delta: Int): Int {
+        monitorEnter(lock); val nv = array[index] + delta; array[index] = nv; monitorExit(lock); return nv
+    }
+
+    public actual override fun toString(): String = array.contentToString()
 }
 
 @SinceKotlin("2.1")
 @ExperimentalAtomicApi
 public actual class AtomicLongArray {
-    public actual constructor(size: Int)
+    private val array: LongArray
+    private val lock: Any = Any()
 
-    public actual constructor(array: LongArray)
+    public actual constructor(size: Int) { array = LongArray(size) }
 
-    public actual val size: Int get() = TODO("clr binding should be implemented")
+    public actual constructor(array: LongArray) { this.array = array }
 
-    public actual fun loadAt(index: Int): Long = TODO("clr binding should be implemented")
+    public actual val size: Int get() = array.size
 
-    public actual fun storeAt(index: Int, newValue: Long) { TODO("clr binding should be implemented") }
+    public actual fun loadAt(index: Int): Long {
+        monitorEnter(lock); val r = array[index]; monitorExit(lock); return r
+    }
 
-    public actual fun exchangeAt(index: Int, newValue: Long): Long = TODO("clr binding should be implemented")
+    public actual fun storeAt(index: Int, newValue: Long) {
+        monitorEnter(lock); array[index] = newValue; monitorExit(lock)
+    }
 
-    public actual fun compareAndSetAt(index: Int, expectedValue: Long, newValue: Long): Boolean = TODO("clr binding should be implemented")
+    public actual fun exchangeAt(index: Int, newValue: Long): Long {
+        monitorEnter(lock); val old = array[index]; array[index] = newValue; monitorExit(lock); return old
+    }
 
-    public actual fun compareAndExchangeAt(index: Int, expectedValue: Long, newValue: Long): Long = TODO("clr binding should be implemented")
+    public actual fun compareAndSetAt(index: Int, expectedValue: Long, newValue: Long): Boolean {
+        monitorEnter(lock); val ok = array[index] == expectedValue; if (ok) array[index] = newValue; monitorExit(lock); return ok
+    }
 
-    public actual fun fetchAndAddAt(index: Int, delta: Long): Long = TODO("clr binding should be implemented")
+    public actual fun compareAndExchangeAt(index: Int, expectedValue: Long, newValue: Long): Long {
+        monitorEnter(lock); val old = array[index]; if (old == expectedValue) array[index] = newValue; monitorExit(lock); return old
+    }
 
-    public actual fun addAndFetchAt(index: Int, delta: Long): Long = TODO("clr binding should be implemented")
+    public actual fun fetchAndAddAt(index: Int, delta: Long): Long {
+        monitorEnter(lock); val old = array[index]; array[index] = old + delta; monitorExit(lock); return old
+    }
 
-    public actual override fun toString(): String = TODO("clr binding should be implemented")
+    public actual fun addAndFetchAt(index: Int, delta: Long): Long {
+        monitorEnter(lock); val nv = array[index] + delta; array[index] = nv; monitorExit(lock); return nv
+    }
+
+    public actual override fun toString(): String = array.contentToString()
 }
 
 @SinceKotlin("2.1")
 @ExperimentalAtomicApi
 public actual class AtomicArray<T> {
-    public actual constructor (array: Array<T>)
+    private val array: Array<T>
+    private val lock: Any = Any()
 
-    public actual val size: Int get() = TODO("clr binding should be implemented")
+    public actual constructor (array: Array<T>) { this.array = array }
 
-    public actual fun loadAt(index: Int): T = TODO("clr binding should be implemented")
+    public actual val size: Int get() = array.size
 
-    public actual fun storeAt(index: Int, newValue: T) { TODO("clr binding should be implemented") }
+    public actual fun loadAt(index: Int): T {
+        monitorEnter(lock); val r = array[index]; monitorExit(lock); return r
+    }
 
-    public actual fun exchangeAt(index: Int, newValue: T): T = TODO("clr binding should be implemented")
+    public actual fun storeAt(index: Int, newValue: T) {
+        monitorEnter(lock); array[index] = newValue; monitorExit(lock)
+    }
 
-    public actual fun compareAndSetAt(index: Int, expectedValue: T, newValue: T): Boolean = TODO("clr binding should be implemented")
+    public actual fun exchangeAt(index: Int, newValue: T): T {
+        monitorEnter(lock); val old = array[index]; array[index] = newValue; monitorExit(lock); return old
+    }
 
-    public actual fun compareAndExchangeAt(index: Int, expectedValue: T, newValue: T): T = TODO("clr binding should be implemented")
+    public actual fun compareAndSetAt(index: Int, expectedValue: T, newValue: T): Boolean {
+        monitorEnter(lock); val ok = array[index] === expectedValue; if (ok) array[index] = newValue; monitorExit(lock); return ok
+    }
 
-    public actual override fun toString(): String = TODO("clr binding should be implemented")
+    public actual fun compareAndExchangeAt(index: Int, expectedValue: T, newValue: T): T {
+        monitorEnter(lock); val old = array[index]; if (old === expectedValue) array[index] = newValue; monitorExit(lock); return old
+    }
+
+    public actual override fun toString(): String = array.contentToString()
 }

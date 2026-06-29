@@ -18,7 +18,7 @@ package kotlin.collections
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
-public actual inline fun UIntArray.elementAt(index: Int): UInt = TODO("clr binding should be implemented")
+public actual inline fun UIntArray.elementAt(index: Int): UInt = this[index]
 
 /**
  * Returns an element at the given [index] or throws an [IndexOutOfBoundsException] if the [index] is out of bounds of this array.
@@ -28,7 +28,7 @@ public actual inline fun UIntArray.elementAt(index: Int): UInt = TODO("clr bindi
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
-public actual inline fun ULongArray.elementAt(index: Int): ULong = TODO("clr binding should be implemented")
+public actual inline fun ULongArray.elementAt(index: Int): ULong = this[index]
 
 /**
  * Returns an element at the given [index] or throws an [IndexOutOfBoundsException] if the [index] is out of bounds of this array.
@@ -38,7 +38,7 @@ public actual inline fun ULongArray.elementAt(index: Int): ULong = TODO("clr bin
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
-public actual inline fun UByteArray.elementAt(index: Int): UByte = TODO("clr binding should be implemented")
+public actual inline fun UByteArray.elementAt(index: Int): UByte = this[index]
 
 /**
  * Returns an element at the given [index] or throws an [IndexOutOfBoundsException] if the [index] is out of bounds of this array.
@@ -48,7 +48,7 @@ public actual inline fun UByteArray.elementAt(index: Int): UByte = TODO("clr bin
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
-public actual inline fun UShortArray.elementAt(index: Int): UShort = TODO("clr binding should be implemented")
+public actual inline fun UShortArray.elementAt(index: Int): UShort = this[index]
 
 /**
  * Returns a [List] that wraps the original array.

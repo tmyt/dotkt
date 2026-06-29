@@ -16,64 +16,65 @@ public actual val Char.category: CharCategory
 @kotlin.internal.InlineOnly
 public actual inline fun Char.isDefined(): Boolean = TODO("clr binding should be implemented")
 
-@kotlin.internal.InlineOnly
-public actual inline fun Char.isLetter(): Boolean = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.IsLetter")
+public actual fun Char.isLetter(): Boolean = TODO("clr binding should be implemented")
 
-@kotlin.internal.InlineOnly
-public actual inline fun Char.isLetterOrDigit(): Boolean = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.IsLetterOrDigit")
+public actual fun Char.isLetterOrDigit(): Boolean = TODO("clr binding should be implemented")
 
-@kotlin.internal.InlineOnly
-public actual inline fun Char.isDigit(): Boolean = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.IsDigit")
+public actual fun Char.isDigit(): Boolean = TODO("clr binding should be implemented")
 
-@kotlin.internal.InlineOnly
-public actual inline fun Char.isISOControl(): Boolean = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.IsControl")
+public actual fun Char.isISOControl(): Boolean = TODO("clr binding should be implemented")
 
+@kotlin.clr.ClrIntrinsic("System.Char.IsWhiteSpace")
 public actual fun Char.isWhitespace(): Boolean = TODO("clr binding should be implemented")
 
-@kotlin.internal.InlineOnly
-public actual inline fun Char.isUpperCase(): Boolean = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.IsUpper")
+public actual fun Char.isUpperCase(): Boolean = TODO("clr binding should be implemented")
 
-@kotlin.internal.InlineOnly
-public actual inline fun Char.isLowerCase(): Boolean = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.IsLower")
+public actual fun Char.isLowerCase(): Boolean = TODO("clr binding should be implemented")
 
 @Deprecated("Use uppercaseChar() instead.", ReplaceWith("uppercaseChar()"))
 @DeprecatedSinceKotlin(warningSince = "1.5", errorSince = "2.1")
-@kotlin.internal.InlineOnly
-public actual inline fun Char.toUpperCase(): Char = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.ToUpperInvariant")
+public actual fun Char.toUpperCase(): Char = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.5")
-@kotlin.internal.InlineOnly
-public actual inline fun Char.uppercaseChar(): Char = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.ToUpperInvariant")
+public actual fun Char.uppercaseChar(): Char = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.5")
-@kotlin.internal.InlineOnly
-public actual inline fun Char.uppercase(): String = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.ToUpperInvariant")
+public actual fun Char.uppercase(): String = TODO("clr binding should be implemented")
 
 @Deprecated("Use lowercaseChar() instead.", ReplaceWith("lowercaseChar()"))
 @DeprecatedSinceKotlin(warningSince = "1.5", errorSince = "2.1")
-@kotlin.internal.InlineOnly
-public actual inline fun Char.toLowerCase(): Char = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.ToLowerInvariant")
+public actual fun Char.toLowerCase(): Char = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.5")
-@kotlin.internal.InlineOnly
-public actual inline fun Char.lowercaseChar(): Char = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.ToLowerInvariant")
+public actual fun Char.lowercaseChar(): Char = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.5")
-@kotlin.internal.InlineOnly
-public actual inline fun Char.lowercase(): String = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.ToLowerInvariant")
+public actual fun Char.lowercase(): String = TODO("clr binding should be implemented")
 
 @kotlin.internal.InlineOnly
 public actual inline fun Char.isTitleCase(): Boolean = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.5")
-@kotlin.internal.InlineOnly
-public actual inline fun Char.titlecaseChar(): Char = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.ToUpperInvariant")
+public actual fun Char.titlecaseChar(): Char = TODO("clr binding should be implemented")
 
-@kotlin.internal.InlineOnly
-public actual inline fun Char.isHighSurrogate(): Boolean = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.IsHighSurrogate")
+public actual fun Char.isHighSurrogate(): Boolean = TODO("clr binding should be implemented")
 
-@kotlin.internal.InlineOnly
-public actual inline fun Char.isLowSurrogate(): Boolean = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Char.IsLowSurrogate")
+public actual fun Char.isLowSurrogate(): Boolean = TODO("clr binding should be implemented")
 
 internal actual fun digitOf(char: Char, radix: Int): Int = TODO("clr binding should be implemented")
 

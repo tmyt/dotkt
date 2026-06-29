@@ -24,12 +24,66 @@ public actual abstract class AbstractMutableCollection<E> protected actual const
     actual abstract override fun iterator(): MutableIterator<E>
     actual abstract override fun add(element: E): Boolean
 
-    actual override fun isEmpty(): Boolean = TODO("clr binding should be implemented")
-    actual override fun contains(element: E): Boolean = TODO("clr binding should be implemented")
-    actual override fun containsAll(elements: Collection<E>): Boolean = TODO("clr binding should be implemented")
-    actual override fun addAll(elements: Collection<E>): Boolean = TODO("clr binding should be implemented")
-    actual override fun remove(element: E): Boolean = TODO("clr binding should be implemented")
-    actual override fun removeAll(elements: Collection<E>): Boolean = TODO("clr binding should be implemented")
-    actual override fun retainAll(elements: Collection<E>): Boolean = TODO("clr binding should be implemented")
-    actual override fun clear(): Unit = TODO("clr binding should be implemented")
+    actual override fun isEmpty(): Boolean = size == 0
+
+    actual override fun contains(element: E): Boolean {
+        val iterator = iterator()
+        while (iterator.hasNext()) {
+            if (iterator.next() == element) return true
+        }
+        return false
+    }
+
+    actual override fun containsAll(elements: Collection<E>): Boolean = elements.all { contains(it) }
+
+    actual override fun addAll(elements: Collection<E>): Boolean {
+        var modified = false
+        for (element in elements) {
+            if (add(element)) modified = true
+        }
+        return modified
+    }
+
+    actual override fun remove(element: E): Boolean {
+        val iterator = iterator()
+        while (iterator.hasNext()) {
+            if (iterator.next() == element) {
+                iterator.remove()
+                return true
+            }
+        }
+        return false
+    }
+
+    actual override fun removeAll(elements: Collection<E>): Boolean {
+        var modified = false
+        val iterator = iterator()
+        while (iterator.hasNext()) {
+            if (iterator.next() in elements) {
+                iterator.remove()
+                modified = true
+            }
+        }
+        return modified
+    }
+
+    actual override fun retainAll(elements: Collection<E>): Boolean {
+        var modified = false
+        val iterator = iterator()
+        while (iterator.hasNext()) {
+            if (iterator.next() !in elements) {
+                iterator.remove()
+                modified = true
+            }
+        }
+        return modified
+    }
+
+    actual override fun clear(): Unit {
+        val iterator = iterator()
+        while (iterator.hasNext()) {
+            iterator.next()
+            iterator.remove()
+        }
+    }
 }

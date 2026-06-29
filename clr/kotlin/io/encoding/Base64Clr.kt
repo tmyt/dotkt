@@ -5,15 +5,21 @@
 
 package kotlin.io.encoding
 
+// CLR has no scheme-aware Base64 in the BCL (System.Convert always uses the basic
+// RFC 4648 alphabet with mandatory padding and cannot honor a Base64 instance's
+// UrlSafe/Mime/padding configuration), so these platform hooks delegate to the
+// shared, scheme-aware `*Impl` members on the Base64 receiver. This mirrors the
+// JVM slow path and the JS/Native actuals.
+
 @SinceKotlin("1.8")
 @kotlin.internal.InlineOnly
 internal actual inline fun Base64.platformCharsToBytes(source: CharSequence, startIndex: Int, endIndex: Int): ByteArray =
-    TODO("clr binding should be implemented")
+    charsToBytesImpl(source, startIndex, endIndex)
 
 @SinceKotlin("1.8")
 @kotlin.internal.InlineOnly
 internal actual inline fun Base64.platformEncodeToString(source: ByteArray, startIndex: Int, endIndex: Int): String =
-    TODO("clr binding should be implemented")
+    bytesToStringImpl(encodeToByteArrayImpl(source, startIndex, endIndex))
 
 @SinceKotlin("1.8")
 @kotlin.internal.InlineOnly
@@ -23,7 +29,7 @@ internal actual inline fun Base64.platformEncodeIntoByteArray(
     destinationOffset: Int,
     startIndex: Int,
     endIndex: Int
-): Int = TODO("clr binding should be implemented")
+): Int = encodeIntoByteArrayImpl(source, destination, destinationOffset, startIndex, endIndex)
 
 @SinceKotlin("1.8")
 @kotlin.internal.InlineOnly
@@ -31,4 +37,4 @@ internal actual inline fun Base64.platformEncodeToByteArray(
     source: ByteArray,
     startIndex: Int,
     endIndex: Int
-): ByteArray = TODO("clr binding should be implemented")
+): ByteArray = encodeToByteArrayImpl(source, startIndex, endIndex)

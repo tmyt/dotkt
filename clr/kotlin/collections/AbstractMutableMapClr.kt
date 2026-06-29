@@ -20,24 +20,103 @@ package kotlin.collections
  */
 @SinceKotlin("1.1")
 public actual abstract class AbstractMutableMap<K, V> protected actual constructor() : MutableMap<K, V> {
+
+    private fun implFindEntry(key: K): MutableMap.MutableEntry<K, V>? = entries.firstOrNull { it.key == key }
+
+    private var _keys: MutableSet<K>? = null
     actual override val keys: MutableSet<K>
-        get() = TODO("clr binding should be implemented")
+        get() {
+            if (_keys == null) {
+                _keys = object : AbstractMutableSet<K>() {
+                    override fun add(element: K): Boolean = throw UnsupportedOperationException("Add is not supported on keys")
+
+                    override fun clear() {
+                        this@AbstractMutableMap.clear()
+                    }
+
+                    override operator fun contains(element: K): Boolean = containsKey(element)
+
+                    override operator fun iterator(): MutableIterator<K> {
+                        val entryIterator = entries.iterator()
+                        return object : MutableIterator<K> {
+                            override fun hasNext(): Boolean = entryIterator.hasNext()
+                            override fun next(): K = entryIterator.next().key
+                            override fun remove() = entryIterator.remove()
+                        }
+                    }
+
+                    override fun remove(element: K): Boolean {
+                        if (containsKey(element)) {
+                            this@AbstractMutableMap.remove(element)
+                            return true
+                        }
+                        return false
+                    }
+
+                    override val size: Int get() = this@AbstractMutableMap.size
+                }
+            }
+            return _keys!!
+        }
+
     actual override val size: Int
-        get() = TODO("clr binding should be implemented")
+        get() = entries.size
+
+    private var _values: MutableCollection<V>? = null
     actual override val values: MutableCollection<V>
-        get() = TODO("clr binding should be implemented")
+        get() {
+            if (_values == null) {
+                _values = object : AbstractMutableCollection<V>() {
+                    override fun add(element: V): Boolean = throw UnsupportedOperationException("Add is not supported on values")
+
+                    override fun clear() {
+                        this@AbstractMutableMap.clear()
+                    }
+
+                    override operator fun contains(element: V): Boolean = containsValue(element)
+
+                    override operator fun iterator(): MutableIterator<V> {
+                        val entryIterator = entries.iterator()
+                        return object : MutableIterator<V> {
+                            override fun hasNext(): Boolean = entryIterator.hasNext()
+                            override fun next(): V = entryIterator.next().value
+                            override fun remove() = entryIterator.remove()
+                        }
+                    }
+
+                    override val size: Int get() = this@AbstractMutableMap.size
+                }
+            }
+            return _values!!
+        }
 
     actual override fun clear(): Unit {
-        TODO("clr binding should be implemented")
+        entries.clear()
     }
-    actual override fun containsKey(key: K): Boolean = TODO("clr binding should be implemented")
-    actual override fun containsValue(value: V): Boolean = TODO("clr binding should be implemented")
-    actual override fun get(key: K): V? = TODO("clr binding should be implemented")
-    actual override fun isEmpty(): Boolean = TODO("clr binding should be implemented")
+
+    actual override fun containsKey(key: K): Boolean = implFindEntry(key) != null
+    actual override fun containsValue(value: V): Boolean = entries.any { it.value == value }
+    actual override fun get(key: K): V? = implFindEntry(key)?.value
+    actual override fun isEmpty(): Boolean = size == 0
+
     actual override fun putAll(from: Map<out K, V>): Unit {
-        TODO("clr binding should be implemented")
+        for ((key, value) in from) {
+            put(key, value)
+        }
     }
-    actual override fun remove(key: K): V? = TODO("clr binding should be implemented")
+
+    actual override fun remove(key: K): V? {
+        val iterator = entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (key == entry.key) {
+                val value = entry.value
+                iterator.remove()
+                return value
+            }
+        }
+        return null
+    }
 
     /**
      * Associates the specified [value] with the specified [key] in the map.

@@ -13,4 +13,15 @@ package kotlin.collections
 /**
  * Reverses elements in the list in-place.
  */
-public actual fun <T> MutableList<T>.reverse(): Unit { TODO("clr binding should be implemented") }
+public actual fun <T> MutableList<T>.reverse(): Unit {
+    // In-place O(n) two-pointer swap via the bound get_Item/set_Item/Count (no JVM Collections.reverse intrinsic).
+    var i = 0
+    var j = this.size - 1
+    while (i < j) {
+        val t = this.get(i)
+        this.set(i, this.get(j))
+        this.set(j, t)
+        i = i + 1
+        j = j - 1
+    }
+}

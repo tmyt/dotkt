@@ -11,21 +11,26 @@ internal actual fun secureRandomUuid(): Uuid = TODO("clr binding should be imple
 @ExperimentalUuidApi
 internal actual fun serializedUuid(uuid: Uuid): Any = TODO("clr binding should be implemented")
 
+// The byte<->Long packing and hex parsing are pure, big-endian, platform-agnostic
+// algorithms shared in common as `*CommonImpl`. We delegate to them (as the JVM
+// actual does). Note: we intentionally do NOT route through System.Guid, whose
+// byte order for the first three fields differs from Kotlin's Uuid layout.
+
 @ExperimentalUuidApi
-internal actual fun ByteArray.getLongAt(index: Int): Long = TODO("clr binding should be implemented")
+internal actual fun ByteArray.getLongAt(index: Int): Long = getLongAtCommonImpl(index)
 
 @ExperimentalUuidApi
 internal actual fun Long.formatBytesInto(dst: ByteArray, dstOffset: Int, startIndex: Int, endIndex: Int): Unit =
-    TODO("clr binding should be implemented")
+    formatBytesIntoCommonImpl(dst, dstOffset, startIndex, endIndex)
 
 @ExperimentalUuidApi
 internal actual fun ByteArray.setLongAt(index: Int, value: Long): Unit =
-    TODO("clr binding should be implemented")
+    setLongAtCommonImpl(index, value)
 
 @ExperimentalUuidApi
 internal actual fun uuidParseHexDash(hexDashString: String): Uuid =
-    TODO("clr binding should be implemented")
+    uuidParseHexDashCommonImpl(hexDashString)
 
 @ExperimentalUuidApi
 internal actual fun uuidParseHex(hexString: String): Uuid =
-    TODO("clr binding should be implemented")
+    uuidParseHexCommonImpl(hexString)

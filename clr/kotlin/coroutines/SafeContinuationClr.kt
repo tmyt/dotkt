@@ -4,21 +4,54 @@
 
 package kotlin.coroutines
 
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import kotlin.coroutines.intrinsics.CoroutineSingletons.RESUMED
+import kotlin.coroutines.intrinsics.CoroutineSingletons.UNDECIDED
+
+// Mirrors the JVM SafeContinuation state machine. The CLR coroutine ABI is
+// Task-based and a continuation is resumed exactly once, so the JVM-only
+// AtomicReferenceFieldUpdater lock-free loop is replaced with plain field
+// reads/writes. CoroutineStackFrame is JVM-only and intentionally not implemented.
 @PublishedApi
 @SinceKotlin("1.3")
 internal actual class SafeContinuation<in T>
 internal actual constructor(
-    delegate: Continuation<T>,
+    private val delegate: Continuation<T>,
     initialResult: Any?
 ) : Continuation<T> {
     @PublishedApi
-    internal actual constructor(delegate: Continuation<T>) : this(delegate, null)
+    internal actual constructor(delegate: Continuation<T>) : this(delegate, UNDECIDED)
+
+    private var result: Any? = initialResult
 
     public actual override val context: CoroutineContext
-        get() = TODO("clr binding should be implemented")
+        get() = delegate.context
 
-    public actual override fun resumeWith(result: Result<T>) { TODO("clr binding should be implemented") }
+    public actual override fun resumeWith(result: Result<T>) {
+        val cur = this.result
+        when {
+            cur === UNDECIDED -> {
+                this.result = result.value
+            }
+            cur === COROUTINE_SUSPENDED -> {
+                this.result = RESUMED
+                delegate.resumeWith(result)
+            }
+            else -> throw IllegalStateException("Already resumed")
+        }
+    }
 
     @PublishedApi
-    internal actual fun getOrThrow(): Any? = TODO("clr binding should be implemented")
+    internal actual fun getOrThrow(): Any? {
+        if (result === UNDECIDED) {
+            result = COROUTINE_SUSPENDED
+            return COROUTINE_SUSPENDED
+        }
+        val current = result
+        return when {
+            current === RESUMED -> COROUTINE_SUSPENDED // already resumed delegate, indicate suspension upstream
+            current is Result.Failure -> throw current.exception
+            else -> current // either COROUTINE_SUSPENDED or the resumed data
+        }
+    }
 }

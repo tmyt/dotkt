@@ -5,8 +5,9 @@
 
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 
-// Step-1 CLR stub mirroring the JVM `actual` declarations.
-// Bodies are `TODO` pending the `@Clr`/BCL binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
+// CLR `actual` declarations for kotlin.comparisons.
+// maxOf/minOf are inline (matching the expect) with Kotlin bodies; @Clr cannot bind inline functions.
+// Generic, three-argument and vararg overloads carry real Kotlin bodies.
 
 package kotlin.comparisons
 
@@ -16,35 +17,31 @@ package kotlin.comparisons
  * If values are equal, returns the first one.
  */
 @SinceKotlin("1.1")
-public actual fun <T : Comparable<T>> maxOf(a: T, b: T): T = TODO("clr binding should be implemented")
+public actual inline fun <T : Comparable<T>> maxOf(a: T, b: T): T = if (a >= b) a else b
 
 /**
  * Returns the greater of two values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Byte, b: Byte): Byte = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Byte, b: Byte): Byte = if (a >= b) a else b
 
 /**
  * Returns the greater of two values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Short, b: Short): Short = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Short, b: Short): Short = if (a >= b) a else b
 
 /**
  * Returns the greater of two values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Int, b: Int): Int = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Int, b: Int): Int = if (a >= b) a else b
 
 /**
  * Returns the greater of two values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Long, b: Long): Long = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Long, b: Long): Long = if (a >= b) a else b
 
 /**
  * Returns the greater of two values.
@@ -52,8 +49,7 @@ public actual inline fun maxOf(a: Long, b: Long): Long = TODO("clr binding shoul
  * If either value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Float, b: Float): Float = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Float, b: Float): Float = if (a >= b) a else b
 
 /**
  * Returns the greater of two values.
@@ -61,8 +57,7 @@ public actual inline fun maxOf(a: Float, b: Float): Float = TODO("clr binding sh
  * If either value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Double, b: Double): Double = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Double, b: Double): Double = if (a >= b) a else b
 
 /**
  * Returns the greater of three values.
@@ -70,35 +65,31 @@ public actual inline fun maxOf(a: Double, b: Double): Double = TODO("clr binding
  * If there are multiple equal maximal values, returns the first of them.
  */
 @SinceKotlin("1.1")
-public actual fun <T : Comparable<T>> maxOf(a: T, b: T, c: T): T = TODO("clr binding should be implemented")
+public actual inline fun <T : Comparable<T>> maxOf(a: T, b: T, c: T): T = maxOf(a, maxOf(b, c))
 
 /**
  * Returns the greater of three values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Byte, b: Byte, c: Byte): Byte = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Byte, b: Byte, c: Byte): Byte = maxOf(a, maxOf(b, c))
 
 /**
  * Returns the greater of three values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Short, b: Short, c: Short): Short = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Short, b: Short, c: Short): Short = maxOf(a, maxOf(b, c))
 
 /**
  * Returns the greater of three values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Int, b: Int, c: Int): Int = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Int, b: Int, c: Int): Int = maxOf(a, maxOf(b, c))
 
 /**
  * Returns the greater of three values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Long, b: Long, c: Long): Long = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Long, b: Long, c: Long): Long = maxOf(a, maxOf(b, c))
 
 /**
  * Returns the greater of three values.
@@ -106,8 +97,7 @@ public actual inline fun maxOf(a: Long, b: Long, c: Long): Long = TODO("clr bind
  * If any value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Float, b: Float, c: Float): Float = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Float, b: Float, c: Float): Float = maxOf(a, maxOf(b, c))
 
 /**
  * Returns the greater of three values.
@@ -115,8 +105,7 @@ public actual inline fun maxOf(a: Float, b: Float, c: Float): Float = TODO("clr 
  * If any value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun maxOf(a: Double, b: Double, c: Double): Double = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Double, b: Double, c: Double): Double = maxOf(a, maxOf(b, c))
 
 /**
  * Returns the greater of the given values.
@@ -124,31 +113,51 @@ public actual inline fun maxOf(a: Double, b: Double, c: Double): Double = TODO("
  * If there are multiple equal maximal values, returns the first of them.
  */
 @SinceKotlin("1.4")
-public actual fun <T : Comparable<T>> maxOf(a: T, vararg other: T): T = TODO("clr binding should be implemented")
+public actual inline fun <T : Comparable<T>> maxOf(a: T, vararg other: T): T {
+    var max = a
+    for (e in other) if (max < e) max = e
+    return max
+}
 
 /**
  * Returns the greater of the given values.
  */
 @SinceKotlin("1.4")
-public actual fun maxOf(a: Byte, vararg other: Byte): Byte = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Byte, vararg other: Byte): Byte {
+    var max = a
+    for (e in other) max = maxOf(max, e)
+    return max
+}
 
 /**
  * Returns the greater of the given values.
  */
 @SinceKotlin("1.4")
-public actual fun maxOf(a: Short, vararg other: Short): Short = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Short, vararg other: Short): Short {
+    var max = a
+    for (e in other) max = maxOf(max, e)
+    return max
+}
 
 /**
  * Returns the greater of the given values.
  */
 @SinceKotlin("1.4")
-public actual fun maxOf(a: Int, vararg other: Int): Int = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Int, vararg other: Int): Int {
+    var max = a
+    for (e in other) max = maxOf(max, e)
+    return max
+}
 
 /**
  * Returns the greater of the given values.
  */
 @SinceKotlin("1.4")
-public actual fun maxOf(a: Long, vararg other: Long): Long = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Long, vararg other: Long): Long {
+    var max = a
+    for (e in other) max = maxOf(max, e)
+    return max
+}
 
 /**
  * Returns the greater of the given values.
@@ -156,7 +165,11 @@ public actual fun maxOf(a: Long, vararg other: Long): Long = TODO("clr binding s
  * If any value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.4")
-public actual fun maxOf(a: Float, vararg other: Float): Float = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Float, vararg other: Float): Float {
+    var max = a
+    for (e in other) max = maxOf(max, e)
+    return max
+}
 
 /**
  * Returns the greater of the given values.
@@ -164,7 +177,11 @@ public actual fun maxOf(a: Float, vararg other: Float): Float = TODO("clr bindin
  * If any value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.4")
-public actual fun maxOf(a: Double, vararg other: Double): Double = TODO("clr binding should be implemented")
+public actual inline fun maxOf(a: Double, vararg other: Double): Double {
+    var max = a
+    for (e in other) max = maxOf(max, e)
+    return max
+}
 
 /**
  * Returns the smaller of two values.
@@ -172,35 +189,31 @@ public actual fun maxOf(a: Double, vararg other: Double): Double = TODO("clr bin
  * If values are equal, returns the first one.
  */
 @SinceKotlin("1.1")
-public actual fun <T : Comparable<T>> minOf(a: T, b: T): T = TODO("clr binding should be implemented")
+public actual inline fun <T : Comparable<T>> minOf(a: T, b: T): T = if (a <= b) a else b
 
 /**
  * Returns the smaller of two values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Byte, b: Byte): Byte = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Byte, b: Byte): Byte = if (a <= b) a else b
 
 /**
  * Returns the smaller of two values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Short, b: Short): Short = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Short, b: Short): Short = if (a <= b) a else b
 
 /**
  * Returns the smaller of two values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Int, b: Int): Int = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Int, b: Int): Int = if (a <= b) a else b
 
 /**
  * Returns the smaller of two values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Long, b: Long): Long = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Long, b: Long): Long = if (a <= b) a else b
 
 /**
  * Returns the smaller of two values.
@@ -208,8 +221,7 @@ public actual inline fun minOf(a: Long, b: Long): Long = TODO("clr binding shoul
  * If either value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Float, b: Float): Float = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Float, b: Float): Float = if (a <= b) a else b
 
 /**
  * Returns the smaller of two values.
@@ -217,8 +229,7 @@ public actual inline fun minOf(a: Float, b: Float): Float = TODO("clr binding sh
  * If either value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Double, b: Double): Double = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Double, b: Double): Double = if (a <= b) a else b
 
 /**
  * Returns the smaller of three values.
@@ -226,35 +237,31 @@ public actual inline fun minOf(a: Double, b: Double): Double = TODO("clr binding
  * If there are multiple equal minimal values, returns the first of them.
  */
 @SinceKotlin("1.1")
-public actual fun <T : Comparable<T>> minOf(a: T, b: T, c: T): T = TODO("clr binding should be implemented")
+public actual inline fun <T : Comparable<T>> minOf(a: T, b: T, c: T): T = minOf(a, minOf(b, c))
 
 /**
  * Returns the smaller of three values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Byte, b: Byte, c: Byte): Byte = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Byte, b: Byte, c: Byte): Byte = minOf(a, minOf(b, c))
 
 /**
  * Returns the smaller of three values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Short, b: Short, c: Short): Short = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Short, b: Short, c: Short): Short = minOf(a, minOf(b, c))
 
 /**
  * Returns the smaller of three values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Int, b: Int, c: Int): Int = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Int, b: Int, c: Int): Int = minOf(a, minOf(b, c))
 
 /**
  * Returns the smaller of three values.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Long, b: Long, c: Long): Long = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Long, b: Long, c: Long): Long = minOf(a, minOf(b, c))
 
 /**
  * Returns the smaller of three values.
@@ -262,8 +269,7 @@ public actual inline fun minOf(a: Long, b: Long, c: Long): Long = TODO("clr bind
  * If any value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Float, b: Float, c: Float): Float = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Float, b: Float, c: Float): Float = minOf(a, minOf(b, c))
 
 /**
  * Returns the smaller of three values.
@@ -271,8 +277,7 @@ public actual inline fun minOf(a: Float, b: Float, c: Float): Float = TODO("clr 
  * If any value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.1")
-@kotlin.internal.InlineOnly
-public actual inline fun minOf(a: Double, b: Double, c: Double): Double = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Double, b: Double, c: Double): Double = minOf(a, minOf(b, c))
 
 /**
  * Returns the smaller of the given values.
@@ -280,31 +285,51 @@ public actual inline fun minOf(a: Double, b: Double, c: Double): Double = TODO("
  * If there are multiple equal minimal values, returns the first of them.
  */
 @SinceKotlin("1.4")
-public actual fun <T : Comparable<T>> minOf(a: T, vararg other: T): T = TODO("clr binding should be implemented")
+public actual inline fun <T : Comparable<T>> minOf(a: T, vararg other: T): T {
+    var min = a
+    for (e in other) if (min > e) min = e
+    return min
+}
 
 /**
  * Returns the smaller of the given values.
  */
 @SinceKotlin("1.4")
-public actual fun minOf(a: Byte, vararg other: Byte): Byte = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Byte, vararg other: Byte): Byte {
+    var min = a
+    for (e in other) min = minOf(min, e)
+    return min
+}
 
 /**
  * Returns the smaller of the given values.
  */
 @SinceKotlin("1.4")
-public actual fun minOf(a: Short, vararg other: Short): Short = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Short, vararg other: Short): Short {
+    var min = a
+    for (e in other) min = minOf(min, e)
+    return min
+}
 
 /**
  * Returns the smaller of the given values.
  */
 @SinceKotlin("1.4")
-public actual fun minOf(a: Int, vararg other: Int): Int = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Int, vararg other: Int): Int {
+    var min = a
+    for (e in other) min = minOf(min, e)
+    return min
+}
 
 /**
  * Returns the smaller of the given values.
  */
 @SinceKotlin("1.4")
-public actual fun minOf(a: Long, vararg other: Long): Long = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Long, vararg other: Long): Long {
+    var min = a
+    for (e in other) min = minOf(min, e)
+    return min
+}
 
 /**
  * Returns the smaller of the given values.
@@ -312,7 +337,11 @@ public actual fun minOf(a: Long, vararg other: Long): Long = TODO("clr binding s
  * If any value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.4")
-public actual fun minOf(a: Float, vararg other: Float): Float = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Float, vararg other: Float): Float {
+    var min = a
+    for (e in other) min = minOf(min, e)
+    return min
+}
 
 /**
  * Returns the smaller of the given values.
@@ -320,4 +349,8 @@ public actual fun minOf(a: Float, vararg other: Float): Float = TODO("clr bindin
  * If any value is `NaN`, returns `NaN`.
  */
 @SinceKotlin("1.4")
-public actual fun minOf(a: Double, vararg other: Double): Double = TODO("clr binding should be implemented")
+public actual inline fun minOf(a: Double, vararg other: Double): Double {
+    var min = a
+    for (e in other) min = minOf(min, e)
+    return min
+}

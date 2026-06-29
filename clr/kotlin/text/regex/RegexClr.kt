@@ -56,6 +56,7 @@ public actual data class MatchGroup(public actual val value: String, public val 
  * Provides functions to match strings in text with a pattern, replace the found occurrences and split text around matches.
  */
 @Suppress("NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS") // Counterpart for @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
+@kotlin.clr.ClrIntrinsic("System.Text.RegularExpressions.Regex")
 public actual class Regex {
 
     /** Creates a regular expression from the specified [pattern] string and the default options.  */
@@ -68,6 +69,7 @@ public actual class Regex {
     public actual constructor(pattern: String, options: Set<RegexOption>)
 
     /** The pattern string of this regular expression. */
+    @kotlin.clr.ClrIntrinsic("Pattern")
     public actual val pattern: String
         get() = TODO("clr binding should be implemented")
 
@@ -76,9 +78,11 @@ public actual class Regex {
         get() = TODO("clr binding should be implemented")
 
     /** Indicates whether the regular expression matches the entire [input]. */
+    @kotlin.clr.ClrIntrinsic("IsMatch")
     public actual infix fun matches(input: CharSequence): Boolean = TODO("clr binding should be implemented")
 
     /** Indicates whether the regular expression can find at least one match in the specified [input]. */
+    @kotlin.clr.ClrIntrinsic("IsMatch")
     public actual fun containsMatchIn(input: CharSequence): Boolean = TODO("clr binding should be implemented")
 
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
@@ -97,6 +101,7 @@ public actual class Regex {
     @WasExperimental(ExperimentalStdlibApi::class)
     public actual fun matchesAt(input: CharSequence, index: Int): Boolean = TODO("clr binding should be implemented")
 
+    @kotlin.clr.ClrIntrinsic("Replace")
     public actual fun replace(input: CharSequence, replacement: String): String = TODO("clr binding should be implemented")
 
     public actual fun replace(input: CharSequence, transform: (MatchResult) -> CharSequence): String { TODO("clr binding should be implemented") }
@@ -110,6 +115,7 @@ public actual class Regex {
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
     public actual fun splitToSequence(input: CharSequence, limit: Int = 0): Sequence<String> { TODO("clr binding should be implemented") }
 
+    @kotlin.clr.ClrIntrinsic("ToString")
     public override fun toString(): String = TODO("clr binding should be implemented")
 
     public actual companion object {
@@ -123,6 +129,7 @@ public actual class Regex {
          * Returns a regular expression pattern string that matches the specified [literal] string literally.
          * No characters of that string will have special meaning when searching for an occurrence of the regular expression.
          */
+        @kotlin.clr.ClrIntrinsic("Escape")
         public actual fun escape(literal: String): String = TODO("clr binding should be implemented")
 
         /**
