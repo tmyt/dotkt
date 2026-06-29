@@ -216,6 +216,10 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			if (velem != null) """{"k":"safeCastValue","elem":${str(velem)},"e":${expr(node.argument)}}"""
 			else """{"k":"isinstRef","type":${str(birType(node.typeOperand))},"e":${expr(node.argument)}}"""
 		}
+		// A fun-interface SAM conversion (`Comparator { a, b -> … }`) -> a synthetic class implementing the interface
+		// (the SAM method = the lambda body), NOT a Func delegate -- a delegate has no `compare` so a call site that
+		// uses the value by interface (`comparator.compare(...)`) throws EntryPointNotFound. See samConversion.
+		IrTypeOperator.SAM_CONVERSION -> samConversion(node)
 		// Coercions to Unit / not-null pass the value through.
 		else -> expr(node.argument)
 	}

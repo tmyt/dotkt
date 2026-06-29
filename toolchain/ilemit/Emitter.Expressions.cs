@@ -989,6 +989,23 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
                 return ft;
             }
+            case "samNew":
+            {
+                // SAM conversion `Comparator { … }` -> `new <Sam>(captures)` -- a synthetic class IMPLEMENTING the fun
+                // interface (no delegate). The instance IS the interface value (implicit upcast at the use site).
+                var ct = _types[e.GetProperty("samType").GetString()];
+                ConstructorInfo ctor = ct.Ctor;
+                Type result = ct.TB;
+                if (e.TryGetProperty("typeArgs", out var staProp) && staProp.GetArrayLength() > 0)
+                {
+                    var typeArgs = staProp.EnumerateArray().Select(a => MapType(a.GetString())).ToArray();
+                    result = ct.TB.MakeGenericType(typeArgs);
+                    ctor = TypeBuilder.GetConstructor(result, ct.Ctor);
+                }
+                foreach (var c in e.GetProperty("captures").EnumerateArray()) EmitExpr(c);
+                _il.Emit(OpCodes.Newobj, ctor);
+                return result;
+            }
             case "concat": return EmitConcat(e);
             case "clr.str.concat": return EmitConcat(e);
             case "cond": return EmitCond(e);

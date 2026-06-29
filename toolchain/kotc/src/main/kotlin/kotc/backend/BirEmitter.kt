@@ -2093,6 +2093,40 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/**
+	 * SAM conversion `Comparator { a, b -> … }` -> a synthetic class that IMPLEMENTS the fun interface (the SAM method =
+	 * the lambda body) and is instantiated via `samNew`. Unlike a function-type lambda (which lowers to a Func delegate),
+	 * a fun-interface value is used by INTERFACE (`comparator.compare(...)`), so a delegate has no matching method
+	 * (EntryPointNotFound). This mirrors the closure-class build but implements the iface + names the method after the SAM
+	 * + override:true, and returns the instance itself (not a delegate). Reuses the working object:Comparator emission.
+	 */
+	internal fun samConversion(node: IrTypeOperatorCall): String {
+		val funIface = node.typeOperand
+		val ifaceClass = funIface.classifierOrNull?.owner as? IrClass ?: return expr(node.argument)
+		val lamExpr = node.argument as? IrFunctionExpression ?: return expr(node.argument)   // fun-ref / existing impl -> fall back
+		val fn = lamExpr.function
+		val sam = ifaceClass.declarations.filterIsInstance<IrSimpleFunction>()
+			.singleOrNull { it.modality == org.jetbrains.kotlin.descriptors.Modality.ABSTRACT } ?: return expr(node.argument)
+		val samName = clrIfaceMemberName(sam) ?: sam.name.asString()
+		val ret = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		val captures = capturedVars(fn, includeThis = true)
+		val cname = "<>dotkt_${synthScope}_Sam${closureCounter++}"
+		val capPairs = captures.map { it to captureFieldName(it) }
+		val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
+		capPairs.forEach { (decl, fname) -> captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}""" }
+		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		val samMethod = """{"name":${str(samName)},"static":false,"override":true,"virtual":true,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}"""
+		capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
+		val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
+		val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
+		val ifaceSpec = ownerSpec(ifaceClass, funIface) ?: birType(funIface)
+		val freeTps = freeTypeParams(listOf(funIface) + capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
+		liftedTypes.add("""{"name":${str(cname)},"kind":"class"${typeParamsJson(freeTps)},"base":null,"interfaces":[${str(ifaceSpec)}],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$samMethod]}""")
+		val capExprs = captures.joinToString(",") { capValueExpr(it) }
+		val tArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
+		return """{"k":"samNew","samType":${str(cname)},"captures":[$capExprs]$tArgs}"""
+	}
+
+	/**
 	 * A callable reference `::foo` -> a delegate bound to the referenced function. v1 scope: a top-level/static
 	 * function reference (no receiver, no bound args) reuses the lambda `delegateNew` path — top-level funs are
 	 * emitted as static file-class methods, so `FindStatic(name)` resolves the `ldftn` target. Bound-instance
