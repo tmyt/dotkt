@@ -4153,6 +4153,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		else -> null
 	}
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
+		// The JVM kotlin-stdlib aliases `Comparator = java.util.Comparator`; an app compiled against that jar sees the
+		// java.util name. Treat it as OUR rt `kotlin.Comparator` (a real CLR interface in the rt), so birType, the
+		// member-call dispatch (-> clrInstance), and the supertype all resolve it via the .NET-type (clrg:) path from the
+		// loaded --ref rt -- NOT the _types app-table (which only holds app-emitted types -> KeyNotFound).
+		if ((decl as? IrClass)?.fqNameWhenAvailable?.asString() == "java.util.Comparator") return "kotlin.Comparator"
 		// REFERENCE-assembly build (the stdlib under DOTKT_STDLIB_COMPILE): @Clr does NOT bind — it is emitted as a [Clr]
 		// metadata attribute (attrsJson) and the BCL substitution is deferred to app-emit. So the ref assembly is PURE
 		// Kotlin shapes (no C3, no clrg: BCL refs). docs/design-clr-stdlib-ref-runtime-split.md.
@@ -4365,6 +4370,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// kotlin.text.Regex -> System.Text.RegularExpressions.Regex.
 		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
 		if (fqp == "kotlin.text.MatchResult") return "clr:System.Text.RegularExpressions.Match"
+		// The JVM kotlin-stdlib.jar aliases `kotlin.Comparator = java.util.Comparator`, so app code compiled against that
+		// jar leaks the java.util name. Collapse it to OUR kotlin.Comparator, which in a ref/rt app is a REFERENCED rt
+		// type (loaded via --ref), NOT app-emitted -- so it must be the `clrg:` ref form (ilemit resolves clrg: from the
+		// loaded assemblies; the bare/@ form goes to _types and KeyNotFounds). This reroutes supertype, value-type, and
+		// member-call (c.compare -> clrInstance) through ilemit's .NET-type path.
+		if (fqp == "java.util.Comparator") {
+			val arg = ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
+			return "clrg:kotlin.Comparator[$arg]"
+		}
 		// Kotlin/Java throwables -> their .NET counterpart (the common base; `.message` -> .Message). Covers a custom
 		// exception base (`class E : Exception(msg)`) as well as a `Throwable`-typed value.
 		if (fqp != null) NET_EXCEPTIONS[fqp]?.let { return "clr:$it" }
