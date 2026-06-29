@@ -3512,7 +3512,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val memberType = when {
 				isStatic || recv == null -> clrType
 				recvClass != null && clrName(recvClass) != null -> birType(recv.type)
-				else -> recvClass?.superTypes?.firstOrNull { it.classifierOrNull?.owner == declClass }?.let { birType(it) } ?: clrType
+				// A type-PARAM receiver (`destination: C` where `C : MutableCollection<T>`, e.g. filterTo's body) has no
+				// recvClass -> use the type param's @Clr-bound BOUND with its args (clrg:ICollection[T]), not the raw
+				// clrName (System.Collections.Generic.ICollection without `1 -> ResolveType fails).
+				else -> (recvClass?.superTypes ?: (recv?.type?.classifierOrNull?.owner as? org.jetbrains.kotlin.ir.declarations.IrTypeParameter)?.superTypes)
+					?.firstOrNull { it.classifierOrNull?.owner == declClass }?.let { birType(it) } ?: clrType
 			}
 			// I4: an injected `add_<E>`/`remove_<E>` call is a .NET event subscription -> `recv.<E> += handler`.
 			// The real .NET declaring type owns the event; the FIR injector recorded (eventName, op) for the
@@ -4063,7 +4067,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A call to an override of a .NET-mapped interface member (e.g. a user Continuation's resumeWith) uses
 			// the .NET member name (ResumeWith), matching what the class emitted.
 			val mname = clrIfaceMemberName(callee) ?: objectMethodName(callee) ?: name
-			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]}"""
+			// Carry the return type so ilemit can fall back to dynamic dispatch if static resolution fails AND the owner
+			// implements a BCL clrg: interface (a substituted Kotlin collection whose member -- get_Item, iterator, addAll
+			// -- lives on the BCL interface FindMethod skips). ilemit gates on the owner-interface so non-collection misses
+			// still throw. See ilemit EmitDynamicCall.
+			val dynRet = ""","dynRet":${str(birType(call.type))}"""
+			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]}"""
 		} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]}"""
 	}
 

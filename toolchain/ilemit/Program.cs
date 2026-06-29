@@ -2170,6 +2170,9 @@ sealed partial class Emitter
             mi = typeof(System.Array).GetMethod("Clone", BindingFlags.Public | BindingFlags.Instance);
             arrayCloneFallback = mi != null;
         }
+        // An unbound Kotlin member that became a clrInstance because its receiver type is @Clr-substituted (e.g.
+        // MutableCollection.removeAll/addAll on ICollection -- no BCL equivalent by that name) -> dynamic dispatch.
+        if (mi == null && instance && e.TryGetProperty("recv", out _)) return EmitDynamicCall(e);
         if (mi == null) throw new NotSupportedException($"clrInstance method not resolved: {type}.{name}/{argSpecs.Count}");
         // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
         if (instance)

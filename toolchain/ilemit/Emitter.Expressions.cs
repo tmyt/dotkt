@@ -14,6 +14,17 @@ sealed partial class Emitter
     // helper assembly). Resolves the bound member at RUNTIME, so ilemit needs NO static resolution -- this sidesteps the
     // BCL-`clrg:`-interface skip in FindMethod (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) and
     // the IReadOnlyList/IList dual get_Item. Slower (reflection + boxing) but correct; used only where static fails.
+    // True if the emitted type implements a BCL `clr:`/`clrg:` interface -- i.e. a substituted Kotlin collection whose
+    // Kotlin members (get_Item/iterator/addAll) may live on the BCL interface that static FindMethod skips. Gates the
+    // dynamic-dispatch fallback to these, so a genuine missing-method on a non-collection type still throws.
+    bool OwnerHasClrInterface(string ownerType)
+    {
+        var (open, _) = ParseOwner(ownerType);
+        if (!_types.TryGetValue(open, out var ti) || ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var ifs)) return false;
+        foreach (var i in ifs.EnumerateArray()) { var s = i.GetString(); if (s != null && (s.StartsWith("clr:") || s.StartsWith("clrg:"))) return true; }
+        return false;
+    }
+
     Type EmitDynamicCall(JsonElement e)
     {
         var name = e.GetProperty("method").GetString();
@@ -41,10 +52,11 @@ sealed partial class Emitter
         }
         _il.Emit(OpCodes.Callvirt, typeof(MethodInfo).GetMethod("Invoke", new[] { typeof(object), typeof(object[]) }));
         // result: pop a dropped (void/Unit) return, else unbox/cast to the CIR-declared dynRet
-        var retSpec = e.TryGetProperty("dynRet", out var rr) && rr.ValueKind == JsonValueKind.String ? rr.GetString() : "void";
-        if (retSpec is "void" or "unit" or "kotlin.Unit") { _il.Emit(OpCodes.Pop); return typeof(void); }
+        var retSpec = e.TryGetProperty("dynRet", out var rr) && rr.ValueKind == JsonValueKind.String ? rr.GetString()
+                    : e.TryGetProperty("ret", out var rr2) && rr2.ValueKind == JsonValueKind.String ? rr2.GetString() : "void";
+        if (retSpec is "void" or "unit" or "kotlin.Unit" or "System.Void") { _il.Emit(OpCodes.Pop); return typeof(void); }
         var retT = MapType(retSpec);
-        _il.Emit(retT.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, retT);
+        _il.Emit(OpCodes.Unbox_Any, retT);   // universal: unbox a value type, cast a ref type, resolve a generic param
         return retT;
     }
 
@@ -156,7 +168,12 @@ sealed partial class Emitter
                 if (e.TryGetProperty("dyn", out var dynF) && dynF.ValueKind == JsonValueKind.True)
                     return EmitDynamicCall(e);
                 var cisig = e.TryGetProperty("sig", out var ciEl) && ciEl.ValueKind == JsonValueKind.String ? ciEl.GetString() : null;
-                var m0 = ResolveMethod(e.GetProperty("ownerType").GetString(), e.GetProperty("method").GetString(), out var rt, cisig);
+                MethodInfo m0 = null; Type rt = null;
+                // A @Clr-bound member whose STATIC resolution fails -- it lives on a BCL clrg: interface that FindMethod
+                // skips (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) -- falls back to dynamic
+                // dispatch. Gated to nodes carrying "dynRet" (the @Clr member calls), so a genuine miss elsewhere throws.
+                try { m0 = ResolveMethod(e.GetProperty("ownerType").GetString(), e.GetProperty("method").GetString(), out rt, cisig); }
+                catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _) && OwnerHasClrInterface(e.GetProperty("ownerType").GetString())) { return EmitDynamicCall(e); }
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
                 EmitExpr(e.GetProperty("recv"));
                 if (m == m0) EmitCallArgs(e.GetProperty("args"), m); else EmitArgsTyped(e.GetProperty("args"), mps);
