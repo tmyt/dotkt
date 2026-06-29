@@ -14,7 +14,9 @@ package kotlin
  * Returns a string representation of the object. Can be called with a null receiver, in which case
  * it returns the string "null".
  */
-public actual fun Any?.toString(): String = TODO("clr binding should be implemented")
+// Null-receiver -> "null"; otherwise the MEMBER toString() (member beats this extension, so no recursion). On CLR the
+// member is System.Object.ToString().
+public actual fun Any?.toString(): String = this?.toString() ?: "null"
 
 /**
  * Concatenates this string with the string representation of the given [other] object. If either the receiver
