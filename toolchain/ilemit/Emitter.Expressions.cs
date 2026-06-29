@@ -10,6 +10,44 @@ using System.Text.Json;
 sealed partial class Emitter
 {
     // ---- expressions: push one value, return its CLR type ----
+    // @ClrIntrinsicAsDynamic dispatch: `recv.GetType().GetMethod(name).Invoke(recv, [args...])`, emitted inline (no
+    // helper assembly). Resolves the bound member at RUNTIME, so ilemit needs NO static resolution -- this sidesteps the
+    // BCL-`clrg:`-interface skip in FindMethod (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) and
+    // the IReadOnlyList/IList dual get_Item. Slower (reflection + boxing) but correct; used only where static fails.
+    Type EmitDynamicCall(JsonElement e)
+    {
+        var name = e.GetProperty("method").GetString();
+        var args = e.GetProperty("args").EnumerateArray().ToArray();
+        var recvT = EmitExpr(e.GetProperty("recv"));
+        if (recvT.IsValueType) _il.Emit(OpCodes.Box, recvT);
+        var recvLocal = _il.DeclareLocal(typeof(object));
+        _il.Emit(OpCodes.Stloc, recvLocal);
+        // mi = recv.GetType().GetMethod(name)   (this for Invoke)
+        _il.Emit(OpCodes.Ldloc, recvLocal);
+        _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("GetType"));
+        _il.Emit(OpCodes.Ldstr, name);
+        _il.Emit(OpCodes.Callvirt, typeof(Type).GetMethod("GetMethod", new[] { typeof(string) }));
+        // Invoke(target=recv, object[] args)
+        _il.Emit(OpCodes.Ldloc, recvLocal);
+        _il.Emit(OpCodes.Ldc_I4, args.Length);
+        _il.Emit(OpCodes.Newarr, typeof(object));
+        for (int i = 0; i < args.Length; i++)
+        {
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Ldc_I4, i);
+            var at = EmitExpr(args[i]);
+            if (at.IsValueType) _il.Emit(OpCodes.Box, at);
+            _il.Emit(OpCodes.Stelem_Ref);
+        }
+        _il.Emit(OpCodes.Callvirt, typeof(MethodInfo).GetMethod("Invoke", new[] { typeof(object), typeof(object[]) }));
+        // result: pop a dropped (void/Unit) return, else unbox/cast to the CIR-declared dynRet
+        var retSpec = e.TryGetProperty("dynRet", out var rr) && rr.ValueKind == JsonValueKind.String ? rr.GetString() : "void";
+        if (retSpec is "void" or "unit" or "kotlin.Unit") { _il.Emit(OpCodes.Pop); return typeof(void); }
+        var retT = MapType(retSpec);
+        _il.Emit(retT.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, retT);
+        return retT;
+    }
+
     Type EmitExpr(JsonElement e)
     {
         switch (e.GetProperty("k").GetString())
@@ -113,6 +151,10 @@ sealed partial class Emitter
             }
             case "callInstance":
             {
+                // @ClrIntrinsicAsDynamic member: dispatch by RUNTIME reflection (recv.GetType().GetMethod(name).Invoke),
+                // sidestepping static resolution that cascades (a member on a BCL `clrg:` interface FindMethod skips).
+                if (e.TryGetProperty("dyn", out var dynF) && dynF.ValueKind == JsonValueKind.True)
+                    return EmitDynamicCall(e);
                 var cisig = e.TryGetProperty("sig", out var ciEl) && ciEl.ValueKind == JsonValueKind.String ? ciEl.GetString() : null;
                 var m0 = ResolveMethod(e.GetProperty("ownerType").GetString(), e.GetProperty("method").GetString(), out var rt, cisig);
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);

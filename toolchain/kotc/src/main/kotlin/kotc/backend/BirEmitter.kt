@@ -4144,7 +4144,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// @Clr binding source: the annotation on the decl (or, for a member, on any decl up its fake-override chain —
 		// `List.size` overrides `Collection.size`@Clr("Count")), else the registry the injection populated (app flow).
 		fun annClr(d: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
-			for (a in d.annotations) { val fq = (a as? IrConstructorCall)?.type?.classFqName?.asString(); if (fq == "kotlin.clr.ClrIntrinsic" || fq == "clr.Clr") return (a.arguments.firstOrNull() as? IrConst)?.value as? String }
+			for (a in d.annotations) { val fq = (a as? IrConstructorCall)?.type?.classFqName?.asString(); if (fq == "kotlin.clr.ClrIntrinsic" || fq == "clr.Clr" || fq == "kotlin.clr.ClrIntrinsicAsDynamic") return (a.arguments.firstOrNull() as? IrConst)?.value as? String }
 			return null
 		}
 		annClr(decl)?.let { return it }
