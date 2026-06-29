@@ -454,7 +454,9 @@ sealed partial class Emitter
                             try { if (imDef.TryGetProperty("ret", out var rt)) ifaceRet = MapType(SubstSig(rt.GetString(), ifSubst)); } catch { }
                             // Bridge only on a genuine type NARROWING (different type name) — not two reference-different
                             // instantiations of the SAME generic (Iterator<Object> vs Iterator<Object>), which match fine.
-                            if (ifaceRet != null && bodyMethod.ReturnType.Name != ifaceRet.Name && !bodyMethod.ReturnType.IsValueType && !ifaceRet.IsValueType)
+                            if (ifaceRet != null && bodyMethod.ReturnType != ifaceRet &&
+                                ((bodyMethod.ReturnType.Name != ifaceRet.Name && !bodyMethod.ReturnType.IsValueType && !ifaceRet.IsValueType)   // covariant reference narrowing
+                                 || (ifaceRet == typeof(void) && bodyMethod.ReturnType != typeof(void))))   // a BCL slot that DROPS the Kotlin return (MutableCollection.add():Boolean -> ICollection.Add():void, set/removeAt:E -> void)
                                 EmitCovariantBridge(ti, imName, imDef, ifSubst, bodyMethod, ifaceMethod, ifaceRet);
                             else
                                 ti.TB.DefineMethodOverride(bodyMethod, ifaceMethod);
@@ -1057,7 +1059,10 @@ sealed partial class Emitter
         for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
         var bodyCall = ti.IsGeneric ? TypeBuilder.GetMethod(ti.TB.MakeGenericType(ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
         il.Emit(OpCodes.Callvirt, bodyCall);
-        il.Emit(OpCodes.Ret);   // the narrow return value upcasts to ifaceRet (reference types)
+        // ifaceRet==void but the body returns a value (add():Boolean -> ICollection.Add():void): the BCL slot drops the
+        // Kotlin return -> pop it so the void bridge leaves an empty stack. Else the (reference) narrow return upcasts.
+        if (ifaceRet == typeof(void) && body.ReturnType != typeof(void)) il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ret);
         ti.TB.DefineMethodOverride(bridge, ifaceMethod);
     }
 
