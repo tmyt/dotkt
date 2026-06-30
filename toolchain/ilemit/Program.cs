@@ -1465,12 +1465,17 @@ sealed partial class Emitter
         // of indexing `_types` (which would KeyNotFound). (indexOf/listIterator/etc. lower to such helper callStatics.)
         if (!_types.ContainsKey(typeName))
         {
-            var ext = TryResolveType(typeName);
+            // The owner is not emitted in THIS assembly -> a referenced .NET type. Resolve it with the prefix-aware
+            // resolver (`ClrRef` strips `clr:`/`clrg:`/etc.; a bare FQN falls to reflection), then look the member up
+            // including the reflected base-class + interface chain.
+            Type ext = null;
+            try { ext = ClrRef(typeName); } catch (NotSupportedException) { }
             if (ext == null) return null;
-            var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
-            try { return ext.GetMethod(name, bf); }
-            catch (AmbiguousMatchException) { return ext.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); }
+            return FindReflectedMethod(ext, name);
         }
+        // Walk this type's own members, then its EMITTED base/interface chain. If the base is NOT emitted here (an
+        // external .NET base, e.g. an emitted class extending a BCL type), fall through to a reflected lookup on the
+        // resolved base type so inherited .NET members are still found.
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
@@ -1478,8 +1483,36 @@ sealed partial class Emitter
             if (ti.Methods.TryGetValue(name, out var m)) return m;
             var im = FindInInterfaces(ti);
             if (im != null) return im;
+            // Base is an EXTERNAL (non-emitted) type -> inherited member must come from reflection on it. `ti.ClrBase`
+            // is set when the base parsed to a `clr:`/`clrg:` type; otherwise resolve the base name on demand.
+            if (ti.BaseName != null && !_types.ContainsKey(ti.BaseName))
+            {
+                Type extBase = ti.ClrBase;
+                if (extBase == null) { try { extBase = ClrRef(ti.BaseName); } catch (NotSupportedException) { } }
+                if (extBase != null) { var rm = FindReflectedMethod(extBase, name); if (rm != null) return rm; }
+            }
         }
         throw new NotSupportedException($"method {typeName}.{name} not found");
+    }
+
+    // Resolve a method by name on an already-RESOLVED (referenced .NET / baked) type, walking the standard CLR member
+    // lookup: the type's own members + its base CLASS chain (reflection's `GetMethod` already includes inherited base
+    // members for a class), and — because `GetMethod` on an INTERFACE type does NOT surface base-interface members —
+    // the transitively-inherited interface chain too. Pure CLR resolution; no Kotlin/BCL name mapping. Null if absent.
+    static MethodInfo FindReflectedMethod(Type t, string name)
+    {
+        var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+        try { var m = t.GetMethod(name, bf); if (m != null) return m; }
+        catch (AmbiguousMatchException) { var m = t.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); if (m != null) return m; }
+        // Interface members are inherited but `GetMethod`/`GetMethods` on an interface only reports the interface's own
+        // slots — search the (flattened) base interfaces. (`GetInterfaces` returns the full transitive set.)
+        if (t.IsInterface)
+            foreach (var bi in t.GetInterfaces())
+            {
+                try { var m = bi.GetMethod(name, bf); if (m != null) return m; }
+                catch (AmbiguousMatchException) { var m = bi.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); if (m != null) return m; }
+            }
+        return null;
     }
 
 
