@@ -17,7 +17,10 @@ fail=0
 kt() {
 	local name="$1" proj="$2" expected="$3"
 	local actual
-	actual="$(dotnet run --project "$ROOT/$proj" -v q --nologo 2>/dev/null | grep -vE 'kotlin/clr:|duplicate source root')"
+	# `|| true`: a sample that fails to build/run (non-zero `dotnet run`, surfaced via pipefail) must be reported as
+	# its own FAIL line and NOT abort the whole gate under `set -e` — otherwise one broken sample masks every sample
+	# after it (the gate is meant to run ALL samples and summarize at the end).
+	actual="$(dotnet run --project "$ROOT/$proj" -v q --nologo 2>/dev/null | grep -vE 'kotlin/clr:|duplicate source root' || true)"
 	if [[ "$actual" == "$expected" ]]; then echo "PASS  $name"; else
 		echo "FAIL  $name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; fail=1
 	fi
@@ -60,9 +63,17 @@ kt ktproj-avalonia "cases/ktproj-avalonia/app.ktproj" \
 kt ktproj-roundtrip "cases/ktproj-roundtrip/app/App.ktproj" \
 	"$(printf '7\n5\nhi\n3\n40')"
 
+# APP + LIB via <ProjectReference>: App.ktproj (Exe) references Shapes.ktproj (Library), which DotKt emits as a real
+# .NET assembly (Shapes.dll) the app consumes WITHOUT recompiling the lib's sources. Exercises a richer library API
+# than ktproj-roundtrip — a class with a computed property + member fn, a data-class toString, an enum constant, a
+# top-level fn, and a top-level extension fn — all re-imported AS KOTLIN from the referenced dll's round-trip metadata.
+kt ktproj-applib "cases/ktproj-applib/app/App.ktproj" \
+	"$(printf 'Rectangle 3x4 area=12\n48\nPoint(x=-2, y=5)\n7\nBLUE')"
+
 # Clean each sample's build output.
 rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-roundtrip/*/bin "$ROOT"/cases/ktproj-roundtrip/*/obj \
+       "$ROOT"/cases/ktproj-applib/*/bin "$ROOT"/cases/ktproj-applib/*/obj \
        "$ROOT"/cases/ktproj-inject/bin "$ROOT"/cases/ktproj-inject/obj \
        "$ROOT"/cases/ktproj-extlib/bin "$ROOT"/cases/ktproj-extlib/obj \
        "$ROOT"/cases/ktproj-extlib/extlib/bin "$ROOT"/cases/ktproj-extlib/extlib/obj \
