@@ -1741,6 +1741,10 @@ static class BirTypeLowering
             var copy = new JsonObject();
             foreach (var kv in obj)
             {
+                // STEP-1 clrName migration: kotc emits a pure-Kotlin `overrides` marker (the override closure) so a
+                // future bir2cir decl-rename pass can derive BCL slot names from the ref.dll @ClrIntrinsic. It is
+                // bir2cir-internal metadata — strip it here so it never reaches the CIR/ilemit (keeps emit byte-identical).
+                if (kv.Key == "overrides") continue;
                 if (kv.Value == null) { copy[kv.Key] = null; continue; }
                 if (kv.Key == "attrs")
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, force: true);   // attribute application -> blob metadata
