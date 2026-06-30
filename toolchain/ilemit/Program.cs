@@ -2038,7 +2038,12 @@ sealed partial class Emitter
         if (IsTbInstantiation(type))
         {
             var openDef = type.GetGenericTypeDefinition();
-            var openCtor = (argTypes.All(t => t != null) ? openDef.GetConstructor(argTypes) : null)
+            // GetConstructor(argTypes) throws ArgumentException when argTypes contains a TypeBuilder (a generic collection
+            // constructed with an EMITTED element type, e.g. `new HashSet<EmittedType>()`) -> null it and fall through to
+            // PickOpenCtor (the exact mirror of the EmitClrCall ArgumentException catch).
+            ConstructorInfo directCtor = null;
+            if (argTypes.All(t => t != null)) try { directCtor = openDef.GetConstructor(argTypes); } catch (ArgumentException) { }
+            var openCtor = directCtor
                 // ABI substitution (@Clr concrete collections, ArrayList->System.List): a Kotlin arg type doesn't EXACTLY
                 // match the BCL ctor param (Collection->IReadOnlyCollection vs the List(IEnumerable<T>) ctor). Fall back to
                 // arity + structural assignability (IReadOnlyCollection IS IEnumerable).
