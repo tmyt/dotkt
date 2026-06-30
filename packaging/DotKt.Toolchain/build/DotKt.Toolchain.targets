@@ -20,16 +20,13 @@
     <!-- 1. Extract .NET imports via the compiler's PSI pass (robust where the old regex was not — item 5). -->
     <Message Importance="high" Text="DotKt: scanning .NET imports from @(KotlinCompile->Count()) .kt file(s) (PSI parser)" />
     <Exec Command="&quot;$(DotKtCompiler)&quot; --scan-imports --output &quot;$(DotKtImportList)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ')" />
-    <!-- 2. Reflect over the imported (+ explicit <DotKtImport>) types -> FIR-injection metadata. A referenced
-         DotKt.Stdlib (the real-Kotlin stdlib ops) is injected WHOLESALE via an asm-scan: its auto-imported ops
-         (list.getOrElse(...)) never appear in the import-list, so every [KotlinFileClass] facade it ships is pulled in. -->
-    <ItemGroup>
-      <_DotKtStdlibRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Stdlib' and '$(KotlinClrRefRt)' != 'true'" />
-      <!-- ref/rt mode: scan the @Clr-metadata stdlib.ref (DotKt.Private.Stdlib), NOT the metadata-stripped rt. -->
-      <_DotKtStdlibRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Private.Stdlib' and '$(KotlinClrRefRt)' == 'true'" />
-    </ItemGroup>
+    <!-- 2. Reflect over the imported (+ explicit <DotKtImport>) types -> FIR-injection metadata for the .NET space ONLY.
+         The stdlib (kotlin.*) is deliberately NOT scanned here: kotc resolves it from the JAR (-classpath), which
+         carries the full Kotlin semantics — Companion objects (the stdlib is implemented premised on them), inline,
+         operator, infix — that facadegen cannot fully restore. Feeding stdlib.dll to facadegen produced degraded and
+         DUPLICATE kotlin.* symbols (e.g. a non-reified arrayOf colliding with the jar's reified one -> ambiguity). -->
     <Message Importance="high" Text="DotKt: resolving .NET types (import list + @(DotKtImport))" />
-    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(_DotKtStdlibRef->'--scan-asm &quot;%(FullPath)&quot;', ' ') @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
+    <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
   </Target>
 
   <!-- Compile every .kt to BIR. CLR_TYPES_METADATA tells the FIR injector which façade-free .NET types to synthesize. -->

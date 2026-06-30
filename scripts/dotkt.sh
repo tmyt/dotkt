@@ -80,11 +80,13 @@ refs_semi="$(ls "$refpack"/*.dll 2>/dev/null | tr '\n' ';')$DOTKT_RT"
 (( use_stdlib )) && { ilref_args+=(--ref "$DOTKT_STDLIB"); refs_semi="$refs_semi;$DOTKT_STDLIB"; }
 for r in "${extra_refs[@]}"; do ilref_args+=(--ref "$r"); refs_semi="$refs_semi;$r"; done
 
-# 1. .NET type injection: scan the sources' imports (PSI) + pull in DotKt.Stdlib's facades wholesale.
+# 1. .NET type injection: scan the sources' .NET imports (PSI) -> facadegen generates ONLY .NET-space facades.
+#    kotlin.* (the WHOLE stdlib) is supplied to kotc via the JAR (-classpath), which carries full Kotlin semantics
+#    (inline/reified/operator/...). facadegen must NEVER inject kotlin.* -- it cannot restore those semantics, and a
+#    facadegen-produced kotlin.* symbol collides with the jar's (e.g. non-reified vs reified arrayOf -> ambiguity).
 meta="$work/clrtypes.meta"; implist="$work/imports.txt"
 "$KOTC" --scan-imports --output "$implist" "${kts[@]}" >/dev/null 2>&1 || true
-scan_asm=(); (( use_stdlib )) && scan_asm=(--scan-asm "$DOTKT_STDLIB")
-dotnet "$FACADEGEN" --meta "$meta" --refs "$refs_semi" "${scan_asm[@]}" --import-list "$implist" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN" --meta "$meta" --refs "$refs_semi" --import-list "$implist" >/dev/null 2>&1 || true
 
 # 2. kotc: .kt -> BIR.
 echo "dotkt: compiling ${#kts[@]} file(s) -> BIR" >&2
