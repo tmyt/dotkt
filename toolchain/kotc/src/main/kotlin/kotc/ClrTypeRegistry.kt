@@ -43,8 +43,16 @@ object ClrTopLevelRegistry {
 	// key = a restored top-level EXTENSION property's FQN  ->  .NET file class (its get_/set_<name> static accessors).
 	private val props = HashMap<String, String>()
 
-	fun register(fqn: String, fileClassDotNet: String, recvDisc: String?, suspend: Boolean) { funs.getOrPut(fqn) { ArrayList() }.add(Triple(fileClassDotNet, recvDisc, suspend)) }
-	fun registerProp(fqn: String, fileClassDotNet: String) { props[fqn] = fileClassDotNet }
+	fun register(fqn: String, fileClassDotNet: String, recvDisc: String?, suspend: Boolean) { funs.getOrPut(fqn) { ArrayList() }.add(Triple(stripClrFileClass(fileClassDotNet), recvDisc, suspend)) }
+	fun registerProp(fqn: String, fileClassDotNet: String) { props[fqn] = stripClrFileClass(fileClassDotNet) }
+	// Platform-actual files `<Common>Clr.kt` emit their actuals into the COMMON file class `<Common>Kt` -- ilemit/the rt
+	// strip the `Clr` suffix (BirEmitter.fileClassName). The registry's fileClass comes from the K2 frontend jar, which
+	// does NOT strip, so a non-inline top-level call would reference `<Common>ClrKt` -- never emitted by the rt, giving
+	// `cannot resolve .NET type ...ClrKt`. Strip here to match the rt. Mirrors fileClassName's `stem.endsWith("Clr")`.
+	private fun stripClrFileClass(fc: String): String {
+		val dot = fc.lastIndexOf('.'); val simple = if (dot >= 0) fc.substring(dot + 1) else fc
+		return if (simple.endsWith("ClrKt")) (if (dot >= 0) fc.substring(0, dot + 1) else "") + simple.removeSuffix("ClrKt") + "Kt" else fc
+	}
 
 	/** (.NET file class, isSuspend) for an injected top-level fun FQN matching the receiver discriminator, or null. */
 	fun lookup(fqn: String?, recvDisc: String? = null): Pair<String, Boolean>? = fqn?.let { funs[it] }?.let { list ->

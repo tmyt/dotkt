@@ -990,7 +990,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
 			if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
 			val clr = clrName(ac)
-			if (clr == null && ac.fqNameWhenAvailable?.asString()?.startsWith("kotlin.") == true) return@mapNotNull null
+			// Keep @ClrIntrinsic/@ClrIntrinsicAsDynamic even though they're `kotlin.*` with no clrName: they are the
+			// BINDING metadata and MUST round-trip as a real [ClrIntrinsic] attribute (facadegen reads it back to emit
+			// `clr:` on the file-class statics / members). Without this they were filtered, the ref dll never carried
+			// them, and only stale ref.auto.meta + the frontend jar's IR kept things limping.
+			val fq0 = ac.fqNameWhenAvailable?.asString()
+			if (clr == null && fq0?.startsWith("kotlin.") == true && fq0 != "kotlin.clr.ClrIntrinsic" && fq0 != "kotlin.clr.ClrIntrinsicAsDynamic") return@mapNotNull null
 			val attrType = if (clr != null) "clr:$clr" else typeName(ac)
 			val args = regularArgs(ann)
 			"""{"attr":${str(attrType)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
@@ -3171,7 +3176,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A top-level fun annotated @Clr("Type.Method") binds to a STATIC .NET method (e.g. println ->
 		// System.Console.WriteLine). A class member's @Clr resolves via its owner type; a top-level fun has no .NET
 		// owner, so split the FQN at its last '.' (namespace/type . method) and emit a direct clrStatic here.
-		if (declaringClass == null && !callee.isInline) clrName(callee)?.let { fqn ->
+		// No `!isInline` gate: an inline top-level fun WITH @ClrIntrinsic (e.g. `@InlineOnly operator fun
+		// StringBuilder.set` -> set_Chars) must bind to its BCL member, not be left to the registry (which would emit a
+		// non-existent `<File>Kt.set` static). The `clrName(callee)?.let` below already restricts this to @ClrIntrinsic
+		// funs, so plain inline funs (clrName == null) are unaffected and still inline normally.
+		if (declaringClass == null) clrName(callee)?.let { fqn ->
 			val dot = fqn.lastIndexOf('.')
 			val extRecv = extensionReceiver(call)
 			if (dot > 0) {
@@ -3546,9 +3555,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// box/unbox is correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
 				val retH = if (call.type.classifierOrNull?.owner is org.jetbrains.kotlin.ir.declarations.IrTypeParameter) birType(call.type) else netType(call.type)
 				return if (name == "get")
-					"""{"k":"clrInstance","type":${str(mt)},"method":"get_Item","argTypes":[${str(netType(a[0].type))}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
+					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrName(callee) ?: "get_Item")},"argTypes":[${str(netType(a[0].type))}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
 				else
-					"""{"k":"clrInstance","type":${str(mt)},"method":"set_Item","argTypes":[${str(netType(a[0].type))},${str(netType(a[1].type))}],"ret":"System.Void","recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
+					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrName(callee) ?: "set_Item")},"argTypes":[${str(netType(a[0].type))},${str(netType(a[1].type))}],"ret":"System.Void","recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
 			}
 		}
 
@@ -3563,7 +3572,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (clrType != null) {
 			// Rule 3 (CLR binding): a non-@Clr member WITH A BODY of a @Clr class -> its hoisted static helper
 			// (<>dotkt_ClrH_<Class>.m(__self, args)), NOT a BCL member by name. Abstract/@Clr members fall through.
-			if (clrName(callee) == null && callee.body != null && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
+			// Non-abstract (concrete) rather than `body != null`: a CROSS-MODULE callee deserialized from the frontend
+			// jar carries NO body (bodies live in the .class, not metadata), so `body != null` would wrongly skip the
+			// hoist and emit a non-existent BCL member (e.g. StringBuilder.reverse). Modality survives deserialization.
+			if (clrName(callee) == null && callee.modality != Modality.ABSTRACT && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
 				val hr = dispatchReceiver(call)
 				// The helper static method declares the CLASS type params THEN the method's own (clrHelperMethod). A
 				// generic @Clr class (e.g. List<E>) needs them bound at the call: class args come from the receiver's
@@ -4042,7 +4054,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// `indexOf`'s 3-arg (ignoreCase: Boolean) and stdlib-internal overloads don't match a .NET
 					// String.IndexOf (whose 3rd arg is an int count) — only (value) / (value, startIndex) match.
 					// Don't intrinsify the others; emit the real stdlib indexOf instead of mis-mapping.
-					if (recv != null && !(name == "indexOf" && regularArgs(call).size > 2)) {
+					// Guard: STRING_OPS are `System.String` instance methods, but `uppercase`/`lowercase` also name
+					// `Char.uppercase()/lowercase()` (which return a multi-char String, NOT ToUpper on the char). A char
+					// receiver here would emit `String.ToUpper(recv=char)` -> char-as-String-recv -> NullRef. Only lower
+					// for a String receiver; a Char receiver falls through to its real stdlib body.
+					if (recv != null && netType(recv.type) != "System.Char" && !(name == "indexOf" && regularArgs(call).size > 2)) {
 						val args = regularArgs(call)
 						return """{"k":"clrInstance","type":"System.String","method":${str(m)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"recv":${expr(recv)},"args":[${args.joinToString(",") { expr(it) }}]}"""
 					}
