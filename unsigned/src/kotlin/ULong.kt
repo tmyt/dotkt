@@ -13,6 +13,10 @@ import kotlin.jvm.*
 
 @SinceKotlin("1.5")
 @JvmInline
+// kotlin.ULong *is* System.UInt64 (unsigned 64-bit): substituted away (NOT emitted), same as the signed primitives.
+// Without it the value class was emitted with unbound `toString(): String`/auto `equals(Any?)` clashing with
+// System.Object/ValueType -> type-load failure. (Div/rem still need the ilemit Div_Un fix; compiler-layer, not stdlib.)
+@kotlin.clr.ClrTypeAlias("System.UInt64")
 public value class ULong @kotlin.internal.IntrinsicConstEvaluation @PublishedApi internal constructor(@PublishedApi internal val data: Long) : Comparable<ULong> {
 
     public companion object {

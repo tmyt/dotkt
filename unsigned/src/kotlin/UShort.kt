@@ -13,6 +13,9 @@ import kotlin.jvm.*
 
 @SinceKotlin("1.5")
 @JvmInline
+// kotlin.UShort *is* System.UInt16 (unsigned 16-bit): substituted away (NOT emitted), same as the signed primitives.
+// Fixes the unbound-member type-load clash with System.Object/ValueType.
+@kotlin.clr.ClrTypeAlias("System.UInt16")
 public value class UShort @kotlin.internal.IntrinsicConstEvaluation @PublishedApi internal constructor(@PublishedApi internal val data: Short) : Comparable<UShort> {
 
     public companion object {

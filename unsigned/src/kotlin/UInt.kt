@@ -13,6 +13,10 @@ import kotlin.jvm.*
 
 @SinceKotlin("1.5")
 @JvmInline
+// kotlin.UInt *is* System.UInt32 (unsigned 32-bit): substituted away (NOT emitted), same as the signed primitives. Without
+// it the value class was emitted with unbound `toString(): String`/auto `equals(Any?)` clashing with System.Object/ValueType
+// -> type-load failure. (Div/rem still need the ilemit Div_Un fix; that is compiler-layer, not stdlib.)
+@kotlin.clr.ClrTypeAlias("System.UInt32")
 public value class UInt @kotlin.internal.IntrinsicConstEvaluation @PublishedApi internal constructor(@PublishedApi internal val data: Int) : Comparable<UInt> {
 
     public companion object {

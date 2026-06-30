@@ -13,6 +13,9 @@ import kotlin.jvm.*
 
 @SinceKotlin("1.5")
 @JvmInline
+// kotlin.UByte *is* System.Byte (.NET's Byte is the UNSIGNED 8-bit type; signed is SByte): substituted away (NOT emitted),
+// same as the signed primitives. Fixes the unbound-member type-load clash with System.Object/ValueType.
+@kotlin.clr.ClrTypeAlias("System.Byte")
 public value class UByte @kotlin.internal.IntrinsicConstEvaluation @PublishedApi internal constructor(@PublishedApi internal val data: Byte) : Comparable<UByte> {
 
     public companion object {
