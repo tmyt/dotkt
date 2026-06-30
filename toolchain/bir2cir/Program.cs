@@ -82,7 +82,12 @@ sealed class Pipeline
             // type in the ref.dll (@ClrTypeAlias, or the legacy class-level @ClrIntrinsic) is rewritten to a plain BCL
             // call/new. This is the bir2cir home of what kotc's clrName() member routing used to do — sourced from the
             // ref.dll's @ClrIntrinsic labels, NOT from kotc. Runs BEFORE type lowering so it sees the kotlin.* owners.
-            var substituted = _options.RefBuild ? bir.Root : MemberCallSubstitution.Apply(bir.Root, refs);
+            // ALIAS-ONLY-FILE rule-3 hoist: kotc emits an alias-only file's @ClrTypeAlias class as a PLAIN BIR type
+            // (it no longer synthesizes the <>dotkt_ClrH_* helper for those — see BirEmitter's alias-only branch).
+            // Turn that plain type into the static helper + drop it, BEFORE call substitution so the (already-BCL)
+            // member bodies and the rule-3 call routing both see a consistent helper. No-op for the reference build.
+            var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs);
+            var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
@@ -2314,6 +2319,136 @@ static class RefBodySquash
             },
         },
     };
+}
+
+// ALIAS-ONLY-FILE RULE-3 HOIST. kotc no longer synthesizes the `<>dotkt_ClrH_<owner>` helper for an "alias-only" file
+// (its sole content is a @ClrTypeAlias class whose concrete intrinsic-less members carry real bodies — kotlin.String's
+// subSequence, plus kotlin.Boolean/kotlin.Char operator stubs). kotc instead emits the alias class as a PLAIN BIR type;
+// this pass reads the ref.dll @ClrTypeAlias index, hoists those rule-3 members into the static helper (the dispatch
+// `this` becomes a leading `__self` param), and DROPS the original alias type def — it must NEVER reach ilemit as a
+// real CLR type (its equals(Any?)/toString()/length members would clash with System.String/System.Object). The rule-3
+// CALL routing in MemberCallSubstitution already targets `<>dotkt_ClrH_<owner>.<member>(recv, ..)` by name, so emitting
+// the helper here closes the loop. The MIXED-file alias helpers (StringBuilder/UInt/collections/Regex) are still
+// kotc-synthesized; relocating them here is the migration follow-up. Runs only in substitute/app builds (never ref).
+static class AliasHelperHoist
+{
+    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs)
+    {
+        if (root is not JsonObject obj || obj["types"] is not JsonArray types) return root;
+        var rebuilt = new JsonArray();
+        var changed = false;
+        foreach (var t in types)
+        {
+            if (t is JsonObject td && IsAliasTypeDef(td, refs, out var fqn))
+            {
+                changed = true;                                  // alias type def -> dropped (and possibly hoisted)
+                var helper = BuildHelper(td, fqn, refs);
+                if (helper != null) rebuilt.Add(helper);         // null = no rule-3 members (e.g. kotlin.Any) -> just dropped
+            }
+            else rebuilt.Add(t?.DeepClone());
+        }
+        if (!changed) return root;
+        var outObj = new JsonObject();
+        foreach (var kv in obj) outObj[kv.Key] = kv.Key == "types" ? rebuilt : kv.Value?.DeepClone();
+        return outObj;
+    }
+
+    // A top-level type def whose FQN is a @ClrTypeAlias owner in the ref.dll (the same index the type-token lowering and
+    // member-call substitution use). Only such a def is dropped/hoisted, so a non-alias plain type can never be lost.
+    static bool IsAliasTypeDef(JsonObject td, ReferenceMetadataIndex refs, out string fqn)
+    {
+        fqn = null;
+        if ((td["name"] as JsonValue)?.GetValue<string>() is not string name) return false;
+        var bare = ReferenceMetadataIndex.BareOwnerFqn(name);
+        if (!refs.Aliases.ContainsKey(bare)) return false;
+        fqn = bare;
+        return true;
+    }
+
+    static JsonObject BuildHelper(JsonObject td, string fqn, ReferenceMetadataIndex refs)
+    {
+        var classTps = td["typeParams"] as JsonArray;
+        var aliasToken = (td["name"] as JsonValue)!.GetValue<string>();   // kotlin FQN; lowered to its BCL form downstream
+        var methods = new JsonArray();
+        foreach (var m in td["methods"] as JsonArray ?? new JsonArray())
+        {
+            if (m is not JsonObject mo) continue;
+            if ((mo["name"] as JsonValue)?.GetValue<string>() is not string mn) continue;
+            if (mn.StartsWith("get_", StringComparison.Ordinal) || mn.StartsWith("set_", StringComparison.Ordinal)) continue;
+            if ((mo["static"] as JsonValue)?.GetValue<bool>() == true) continue;   // a top-level/companion static, not a member
+            if (mo["body"] is not JsonArray) continue;                              // abstract / no body
+            if (!refs.IsRule3Member(fqn, mn)) continue;   // ref.dll: concrete + intrinsic-less (matches the rule-3 call routing)
+            methods.Add(HoistMethod(mo, aliasToken, classTps));
+        }
+        if (methods.Count == 0) return null;
+        return new JsonObject
+        {
+            ["name"] = ReferenceMetadataIndex.HelperTypeName(fqn),
+            ["kind"] = "class",
+            ["abstract"] = false,
+            ["vis"] = "public",
+            ["base"] = null,
+            ["interfaces"] = new JsonArray(),
+            ["fields"] = new JsonArray(),
+            ["ctors"] = new JsonArray(),
+            ["methods"] = methods,
+        };
+    }
+
+    // An instance member -> a static helper method: prepend a `__self` param typed as the alias owner, rewrite the
+    // dispatch `this` to that `__self`, and declare the class type params ahead of the method's own (a generic alias's
+    // helper needs them for `__self`). Mirrors kotc's clrHelperMethod shape so ilemit sees an identical helper.
+    static JsonObject HoistMethod(JsonObject m, string aliasToken, JsonArray classTps)
+    {
+        var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = aliasToken } };
+        foreach (var p in m["params"] as JsonArray ?? new JsonArray()) ps.Add(p?.DeepClone());
+        var outM = new JsonObject
+        {
+            ["name"] = (m["name"] as JsonValue)!.DeepClone(),
+            ["static"] = true,
+            ["override"] = false,
+            ["virtual"] = false,
+            ["abstract"] = false,
+            ["objectOverride"] = false,
+            ["vis"] = "public",
+        };
+        var tps = MergeTypeParams(classTps, m["typeParams"] as JsonArray);
+        if (tps != null) outM["typeParams"] = tps;
+        outM["params"] = ps;
+        outM["ret"] = m["ret"]?.DeepClone();
+        outM["body"] = RewriteThis(m["body"]);
+        return outM;
+    }
+
+    static JsonArray MergeTypeParams(JsonArray a, JsonArray b)
+    {
+        if ((a == null || a.Count == 0) && (b == null || b.Count == 0)) return null;
+        var r = new JsonArray();
+        if (a != null) foreach (var x in a) r.Add(x?.DeepClone());
+        if (b != null) foreach (var x in b) r.Add(x?.DeepClone());
+        return r;
+    }
+
+    // Rewrite every dispatch-receiver node {"k":"this"} to the hoisted static's leading `__self` local. kotc lifts all
+    // lambdas/local funs to separate methods, so within a single member body every {"k":"this"} is THIS receiver.
+    static JsonNode RewriteThis(JsonNode n)
+    {
+        if (n is JsonObject o)
+        {
+            if ((o["k"] as JsonValue)?.GetValue<string>() == "this")
+                return new JsonObject { ["k"] = "local", ["name"] = "__self" };
+            var c = new JsonObject();
+            foreach (var kv in o) c[kv.Key] = kv.Value == null ? null : RewriteThis(kv.Value);
+            return c;
+        }
+        if (n is JsonArray a)
+        {
+            var c = new JsonArray();
+            foreach (var i in a) c.Add(i == null ? null : RewriteThis(i));
+            return c;
+        }
+        return n?.DeepClone();
+    }
 }
 
 static class JsonOptions

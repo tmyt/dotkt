@@ -527,7 +527,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Only USER properties (origin DEFINED) — a consuming module's FIR also holds plugin-INJECTED top-level props
 		// (restored extension properties from a referenced DotKt assembly); those are the library's, not ours to emit.
 		val topProps = file.declarations.filterIsInstance<IrProperty>().filter { it.origin.toString() == "DEFINED" }
-		if (functions.isEmpty() && classes.isEmpty() && objects.isEmpty() && interfaces.isEmpty() && enums.isEmpty() && annClasses.isEmpty() && topProps.isEmpty()) return ""
+		if (functions.isEmpty() && classes.isEmpty() && objects.isEmpty() && interfaces.isEmpty() && enums.isEmpty() && annClasses.isEmpty() && topProps.isEmpty()) {
+			// BOUNDED rule-3-hoist MIGRATION (kotc -> bir2cir): an "alias-only" file — its sole content is a CLR-bound
+			// (@ClrTypeAlias) class whose concrete intrinsic-less members carry real bodies — used to be DROPPED right
+			// here, BEFORE the line-593 helper hoist could run. That silently lost the <>dotkt_ClrH_* helpers for
+			// kotlin.String (subSequence — the rt-build blocker), kotlin.Boolean and kotlin.Char (the latter two are
+			// dead throwing stubs). Rather than synthesize the helper in kotc (a CLR-layer concern that reads the CLR
+			// annotations), emit these alias classes as PLAIN BIR types: bir2cir reads the ref.dll @ClrTypeAlias index,
+			// hoists their rule-3 members into <>dotkt_ClrH_<owner>, and drops the original type (AliasHelperHoist).
+			// Follow-up: move the remaining MIXED-file alias helpers (StringBuilder/UInt/collections/Regex, still
+			// produced by the line-593 path below) off kotc the same way, then delete kotc's helper synthesis entirely.
+			val aliasHoistClasses = file.declarations.filterIsInstance<IrClass>()
+				.filter { it.kind == ClassKind.CLASS && substitutedAway(it) && clrHelperMembers(it).isNotEmpty() }
+			if (aliasHoistClasses.isEmpty()) return ""
+			fileClass = fileClassName(file)
+			val plainTypes = aliasHoistClasses.map { typeDef(it) }   // may lift lambdas -> include lifted below
+			val typesJson = (plainTypes + liftedTypes).joinToString(",")
+			val methodsJson = liftedMethods.joinToString(",")
+			return """{"fileClass":${str(fileClass)},"hasMain":false,"fields":[],"methods":[$methodsJson],"types":[$typesJson]}"""
+		}
 		val className = fileClassName(file)
 		fileClass = className
 		// Entry point: top-level `fun main()` or `fun main(args: Array<String>)`.
