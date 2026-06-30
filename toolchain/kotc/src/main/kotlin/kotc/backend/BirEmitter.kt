@@ -613,7 +613,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `attrs`: ride the @Clr/[Kotlin*] metadata so the ref assembly carries the BCL binding hint (for app-emit
 			// substitution). For a PROPERTY accessor the binding is on the property (size @ClrIntrinsic("Count")), so read from there.
 			val memberAttrs = attrsJson((prop ?: fn).annotations)
-			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body],"attrs":[$memberAttrs]}"""
+			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 			.filterNot { it.signatureMentionsJava() }
@@ -943,6 +943,28 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
+	/** STEP-1 (kotc->bir2cir clrName migration) — a PURE-KOTLIN override marker for an emitted member: the transitive
+	 *  closure of interface/base members it overrides, each as {owner FQN, Kotlin member name, kind, arity}. NO CLR
+	 *  knowledge (no @ClrIntrinsic read, no BCL name). bir2cir (Step 2) consumes this + the ref.dll @ClrIntrinsic to
+	 *  derive the BCL slot name (the job [clrIfaceMemberName]'s `annClr` does today). Behavior-neutral: bir2cir strips
+	 *  the `overrides` key, so it never reaches ilemit (Step 1 keeps CIR byte-identical). `member` is the property name
+	 *  for an accessor (kind getter/setter) so bir2cir can resolve `get_`/`set_` + the property's @ClrIntrinsic. */
+	internal fun overridesJson(fn: IrSimpleFunction): String {
+		val ordered = LinkedHashSet<IrSimpleFunction>()
+		fun walk(f: IrSimpleFunction) { for (ov in f.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walk(o) } }
+		walk(fn)
+		if (ordered.isEmpty()) return ""
+		val items = ordered.mapNotNull { m ->
+			val owner = (m.parent as? IrClass)?.fqNameWhenAvailable?.asString() ?: return@mapNotNull null
+			val prop = m.correspondingPropertySymbol?.owner
+			val memberName = prop?.name?.asString() ?: m.name.asString()
+			val kind = if (prop != null) (if (m === prop.getter) "getter" else "setter") else "method"
+			val arity = m.parameters.count { it.kind == IrParameterKind.Regular }
+			"""{"owner":${str(owner)},"member":${str(memberName)},"kind":${str(kind)},"arity":$arity}"""
+		}
+		return if (items.isEmpty()) "" else ""","overrides":[${items.joinToString(",")}]"""
+	}
+
 	/** A TOP-LEVEL property's accessor as a STATIC `get_<name>`/`set_<name>` method (extension receiver -> `__self`).
 	 *  Used for extension properties (`val T.p`) and computed top-level properties (no backing field). */
 	internal fun topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
@@ -977,7 +999,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val virtual = clrIface || acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty()
 		val vis = if (clrIface) "public" else visOf(acc)
 		val isAbstract = acc.modality == Modality.ABSTRACT && acc.body == null
-		return """{"name":${str(mname)},"static":false,"override":$clrIface,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]}"""
+		return """{"name":${str(mname)},"static":false,"override":$clrIface,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]${overridesJson(acc)}}"""
 	}
 
 	/** A user `annotation class Ann(val v: Int, …)` -> a `class Ann : System.Attribute` (ctor params -> public fields). */
@@ -1244,7 +1266,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val inlineFlag = if (isInlineWithLambda(fn)) ""","inline":true""" else ""
 		// Return nullability (`fun f(): String?`) — the params carry their own `nullable` flag; ilemit stamps both as .NET NRT ([Nullable]/[NullableContext]).
 		val retNull = if (fn.returnType.isMarkedNullable()) ""","retNullable":true""" else ""
-		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]}"""
+		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}}"""
 	}
 
 	// ===== Rule 3 (CLR binding): static-helper hoist — SYNTHESIS + type-strip live in bir2cir =====

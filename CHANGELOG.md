@@ -6,6 +6,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Changed
+- **kotc→bir2cir `clrName` migration, Step 1 (NEUTRAL groundwork): pure-Kotlin override markers.** Toward "kotc reads
+  NEITHER `@ClrIntrinsic` NOR `@ClrTypeAlias`", kotc now emits an `overrides:[{owner,member,kind,arity}]` marker on each
+  instance method / interface method / property accessor — the transitive closure of the interface/base members it
+  overrides, in **pure Kotlin terms** (FQN + Kotlin member name + getter/setter/method + arity; NO `@ClrIntrinsic` read,
+  NO BCL name). bir2cir **strips** the marker in `BirTypeLowering` so it never reaches the CIR/ilemit. **Behavior-neutral
+  and verified CIR byte-identical** (rt stdlib: 0 differing/new/removed files vs the prior build; 95 BIR files carry the
+  marker, 0 leak to CIR). The marker is the handshake a future Step 2 consumes — bir2cir resolves the BCL slot name from
+  the ref.dll `@ClrIntrinsic` (`TryMemberIntrinsic`) instead of kotc's `clrName`/`annClr`: validated that e.g.
+  `AbstractCollection.get_Count` ← `Collection.size`(getter) → ref.dll `@ClrIntrinsic("Count")`, and `String.get_Length`
+  ← `CharSequence.length`(getter) → `@ClrIntrinsic("Length")` reproduce exactly. **Remaining** (Step 2/3, deferred — a
+  large coordinated change proven not single-pass-safe by a 72-file/ilemit-crash probe): a bir2cir declaration-rename
+  pass (markers + ref.dll) + the `@ClrIntrinsic`-bound-member DROP (member-strip, the `clrName(it)==null` emission
+  filters) + the fun-interface SAM rewrite (Comparator→IComparer), then switch kotc decl-name sites to plain names and
+  remove `annClr`. Also pending markers on the `properties` get/set entries + SAM methods + `clrAccessorMethod`.
 - **`@ClrTypeAlias` type-STRIP moved kotc → bir2cir (layer-purity).** kotc no longer reads `@ClrTypeAlias` to strip a
   CLR-bound type from emission: `substitutedAway` / `hasClrTypeAlias` / `hasHoistableBody` and the `aliasPlainTypes` +
   "alias-only file" branches are **deleted**. kotc now emits EVERY type as ordinary Kotlin (a primitive `kotlin.Int`,
