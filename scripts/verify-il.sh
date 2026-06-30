@@ -3,15 +3,23 @@
 set -euo pipefail
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-STDLIB="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.2.0.jar' | head -1)"
+# The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-clr-stdlib-frontend.sh) on
+# -classpath, REPLACING the JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). This preserves full Kotlin
+# semantics and is the BINDING invariant: kotlin.* comes from the JAR, never from facadegen --scan-asm. kotlinx.coroutines
+# stays a separate jar (the 3 cases that use kotlinx.* — kcancel/cobuild/expect). Built below once the launcher exists.
+FE_JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
 CORO="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-1.8.0.jar' | head -1)"
-CP="$STDLIB:$CORO"
+CP="$FE_JAR:$CORO"
 fail=0
 
 # Build the compiler launcher ONCE (a plain Java app). Per-sample invokes then cost ~2s of JVM startup instead
 # of ~9s for `gradlew --no-daemon :kotc:run` — a ~4x speedup on the dominant compile step.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
+
+# Frontend stdlib jar (kotc's -classpath input): build it once if missing (it consumes the kotc lib jars produced by
+# installDist above), else reuse. This is what supplies kotlin.* to the frontend — not facadegen.
+[[ -f "$FE_JAR" ]] || bash "$ROOT/scripts/build-clr-stdlib-frontend.sh" >/dev/null 2>&1
 
 # Run samples concurrently (each compile is an independent ~2s JVM startup). A job pool caps parallelism; results
 # (FAIL markers, runtime-dll paths for the ilverify phase) cross back from the subshells via files.
@@ -39,14 +47,18 @@ dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$OBSCOLLMETA" System.Co
 GMMETA="$ROOT/build/gm.meta"
 dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$GMMETA" System.Runtime.CompilerServices.Unsafe System.Runtime.CompilerServices.RuntimeHelpers System.Collections.ObjectModel.Collection >/dev/null 2>&1
 
-# DotKt.Stdlib: the real-Kotlin stdlib ops migrated off the COLLECTION_OPS lowering (getOrElse, ...). Auto-referenced by
-# every case (its [KotlinFileClass] facades injected via `facadegen --scan-asm`, and ilemit `--ref`), mirroring how a
-# .ktproj gets DotKt.Stdlib. A call to a migrated op routes to the real Kotlin body instead of the retired LINQ lowering.
-bash "$ROOT/scripts/build-dotkt-stdlib.sh" >/dev/null 2>&1
-STDLIB_DLL="$ROOT/build/dotkt-stdlib/DotKt.Stdlib.dll"
-STDLIB_META="$ROOT/build/stdlib.meta"
-_REFPACK="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' | head -1)")"
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$STDLIB_META" --refs "$(ls "$_REFPACK"/*.dll | tr '\n' ';')$STDLIB_DLL;$DOTKT_RT" --scan-asm "$STDLIB_DLL" >/dev/null 2>&1
+# CLR stdlib (the NEW canonical build under runtime/stdlib/, not the STALE runtime/DotKt.Stdlib/src):
+#   - RUNTIME assembly DotKt.Stdlib.dll (scripts/build-clr-stdlib-runtime.sh) — `--ref`'d into every emitted case so a
+#     stdlib op resolves to its real Kotlin body, and copied next to each output for the run phase.
+#   - REFERENCE assembly DotKt.Private.Stdlib.dll (scripts/build-clr-stdlib.sh) — the @Clr-metadata face (bir2cir input).
+# The stdlib's kotlin.* is supplied to kotc via the FRONTEND JAR on -classpath (above), NOT via `facadegen --scan-asm`
+# (that is a banned layer violation — facadegen cannot restore the Companion-object semantics the stdlib is premised on,
+# and a reconstructed kotlin.* symbol collides with the jar's). facadegen is used ONLY for per-case .NET imports below.
+# Build if missing, reuse if present.
+STDLIB_DLL="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
+STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
+[[ -f "$STDLIB_REF_DLL" ]] || bash "$ROOT/scripts/build-clr-stdlib.sh" --emit >/dev/null 2>&1
+[[ -f "$STDLIB_DLL" ]]     || bash "$ROOT/scripts/build-clr-stdlib-runtime.sh" --emit >/dev/null 2>&1
 
 declare -A REFDLL=()   # sample name -> external runtime dll it references (for ilverify -r)
 
@@ -88,10 +100,10 @@ il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 	{ name="$1"; asm="$2"; src="$3"; expected="$4"; meta="${5:-}"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-		# Auto-reference DotKt.Stdlib: merge its injection meta with any case-specific meta, and --ref the dll so a
-		# migrated stdlib op (getOrElse, ...) resolves to its real Kotlin body instead of the retired LINQ lowering.
-		usemeta="$STDLIB_META"
-		if [[ -n "$meta" ]]; then usemeta="$ROOT/build/meta-$name"; cat "$STDLIB_META" "$meta" > "$usemeta"; fi
+		# The case's .NET-space facade metadata (EXCMETA/COLLMETA/... — System.* injection) ONLY, if any. The stdlib
+		# (kotlin.*) is supplied to kotc by the frontend JAR on -classpath, NOT facadegen. --ref the runtime
+		# DotKt.Stdlib.dll so a stdlib op (getOrElse, ...) resolves to its real Kotlin body instead of a retired lowering.
+		usemeta="${meta:-}"
 		if ! CLR_TYPES_METADATA="$usemeta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
 		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" --ref "$STDLIB_DLL" "$birdir"/*.bir.json >/dev/null 2>&1; then
