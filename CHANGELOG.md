@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+- **Rule-3 static-helper SYNTHESIS moved kotc → bir2cir (layer-purity, MIXED-file hoist).** kotc no longer synthesizes
+  the `<>dotkt_ClrH_<owner>` helper for a CLR-bound (`@ClrTypeAlias`) class: `clrHelperClassJson`/`clrHelperMethod`/
+  `clrHelperMembers` (which read `@ClrIntrinsic`) are **deleted**. kotc now emits EVERY bound alias class with hoistable
+  bodies as a PLAIN BIR type — the alias-only files (String/Char/Boolean) AND the previously kotc-synthesized MIXED
+  files (StringBuilder/collections/Regex/unsigned) alike — gated by the pure-Kotlin `hasHoistableBody` (no annotation
+  read); bir2cir's existing `AliasHelperHoist` (the single home of rule-3 synthesis) hoists their members and drops the
+  type. bir2cir gained two fixes for the now-bir2cir-owned MIXED set: (a) a GENERIC alias owner types `__self` as the
+  constructed `kotlin.collections.ArrayList[gp:E]` (lowers to `clrg:…List[gp:E]`, was a non-generic `clr:…List` that
+  ilemit could not resolve); (b) an `@JvmInline` value-class alias (UInt/UByte/…) does NOT hoist its `Equals`/
+  `GetHashCode`/`ToString` overrides (they read the erased `.data` field → an unresolvable `<self>.data` on the `ubyte`
+  shorthand; they defer to the BCL primitive instead). The emitted rt-stdlib helper set is byte-identical to before (14
+  `<>dotkt_ClrH_*`), with kotc now producing zero of them. Remaining for the "kotc reads NEITHER annotation" goal: the
+  `substitutedAway` strip-routing (still reads `@ClrTypeAlias`/`@ClrIntrinsic`) and the `clrName`/`netType` member-call +
+  type maps.
+
 ### Fixed
 - **App-consume of the rt stdlib: `for (x in list)` now iterates a referenced collection.** kotc desugars the loop to
   a `<iterator>` var initialized by the rt bridge `ClrIteratorBridgeKt.iteratorOverEnumerable` (which returns the real

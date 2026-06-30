@@ -528,17 +528,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// (restored extension properties from a referenced DotKt assembly); those are the library's, not ours to emit.
 		val topProps = file.declarations.filterIsInstance<IrProperty>().filter { it.origin.toString() == "DEFINED" }
 		if (functions.isEmpty() && classes.isEmpty() && objects.isEmpty() && interfaces.isEmpty() && enums.isEmpty() && annClasses.isEmpty() && topProps.isEmpty()) {
-			// BOUNDED rule-3-hoist MIGRATION (kotc -> bir2cir): an "alias-only" file — its sole content is a CLR-bound
-			// (@ClrTypeAlias) class whose concrete intrinsic-less members carry real bodies — used to be DROPPED right
-			// here, BEFORE the line-593 helper hoist could run. That silently lost the <>dotkt_ClrH_* helpers for
-			// kotlin.String (subSequence — the rt-build blocker), kotlin.Boolean and kotlin.Char (the latter two are
-			// dead throwing stubs). Rather than synthesize the helper in kotc (a CLR-layer concern that reads the CLR
-			// annotations), emit these alias classes as PLAIN BIR types: bir2cir reads the ref.dll @ClrTypeAlias index,
-			// hoists their rule-3 members into <>dotkt_ClrH_<owner>, and drops the original type (AliasHelperHoist).
-			// Follow-up: move the remaining MIXED-file alias helpers (StringBuilder/UInt/collections/Regex, still
-			// produced by the line-593 path below) off kotc the same way, then delete kotc's helper synthesis entirely.
+			// rule-3-hoist MIGRATION (kotc -> bir2cir, COMPLETE for hoisting): an "alias-only" file — its sole content is
+			// a CLR-bound (@ClrTypeAlias) class whose concrete intrinsic-less members carry real bodies — used to be
+			// DROPPED right here. kotc instead emits these alias classes as PLAIN BIR types: bir2cir reads the ref.dll
+			// @ClrTypeAlias index, hoists their rule-3 members into <>dotkt_ClrH_<owner>, and drops the original type
+			// (AliasHelperHoist). The MIXED-file alias classes (StringBuilder/UInt/collections/Regex) now go through the
+			// SAME plain-emit path (the normal-branch `aliasPlainTypes` below) — kotc's helper SYNTHESIS is deleted.
+			// hasHoistableBody (>=1 bodied member, pure-Kotlin — no @ClrIntrinsic read) gates plain re-emission, so a
+			// body-less primitive alias stays stripped (bir2cir lowers its type token directly).
 			val aliasHoistClasses = file.declarations.filterIsInstance<IrClass>()
-				.filter { it.kind == ClassKind.CLASS && substitutedAway(it) && clrHelperMembers(it).isNotEmpty() }
+				.filter { it.kind == ClassKind.CLASS && substitutedAway(it) && hasHoistableBody(it) }
 			if (aliasHoistClasses.isEmpty()) return ""
 			fileClass = fileClassName(file)
 			val plainTypes = aliasHoistClasses.map { typeDef(it) }   // may lift lambdas -> include lifted below
@@ -601,15 +600,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
 		// kPropertyDefs/propIfaceDefs, which read flags/maps the producers populate).
 		val synthDelegateTypes = synthDelegateDefs.joinToString(",").let { if (it.isEmpty()) emptyList() else listOf(it) }
-		// Rule 3: a static helper per CLR-bound class (which is itself filtered out of emission via substitutedAway)
-		// holding its bodied non-@Clr members. Gate on substitutedAway — the SAME predicate that drops the class type
-		// above (519-526) — so the helper emits for BOTH @ClrIntrinsic (clrName != null) AND @ClrTypeAlias (rt build)
-		// owners. The role-split moved class-level @ClrIntrinsic -> @ClrTypeAlias for collections/unsigned/StringBuilder/
-		// Regex/String, making clrName null for them; gating on clrName here dropped their helpers while 39 CIR files
-		// still call them (callStatic owners) -> rt build ArgumentNullException. Computed before the synth-type
-		// collection below so any synth types its bodies register are included.
-		val clrHelperTypes = file.declarations.filterIsInstance<IrClass>().filter { substitutedAway(it) }.mapNotNull { clrHelperClassJson(it) }
-		val types = (typeDefs + clrHelperTypes + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
+		// Rule-3 static-helper hoist (MIGRATED to bir2cir): a CLR-bound (@ClrTypeAlias) class whose concrete
+		// intrinsic-less members carry real bodies (StringBuilder/collections/Regex/unsigned — the MIXED files — plus
+		// the alias-only String/Char/Boolean) is emitted here as a PLAIN BIR type. kotc no longer SYNTHESIZES the
+		// <>dotkt_ClrH_<owner> helper (clrHelperClassJson is deleted): bir2cir's AliasHelperHoist reads the ref.dll
+		// @ClrTypeAlias index, hoists those rule-3 members into the helper, and DROPS this alias type before ilemit.
+		// kotc's job is reduced to "emit the bound type as ordinary Kotlin"; the Kotlin<->CLR drop+hoist is bir2cir's.
+		// Gate: substitutedAway (a bound type, excluded from `classes` above) AND hasHoistableBody (>=1 bodied member —
+		// so a body-less PRIMITIVE alias like kotlin.Int is NOT re-emitted: it stays stripped and bir2cir lowers its
+		// type token directly). Restricted to CLASS — an @ClrTypeAlias interface (Comparable) is abstract, no helper.
+		// Computed after `methods` (like the old clrHelperTypes) so the ordering of any body-registered synth types is
+		// unchanged.
+		val aliasPlainTypes = file.declarations.filterIsInstance<IrClass>()
+			.filter { it.kind == ClassKind.CLASS && substitutedAway(it) && hasHoistableBody(it) }.map { typeDef(it) }
+		val types = (typeDefs + aliasPlainTypes + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
 
@@ -1264,43 +1268,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]}"""
 	}
 
-	// ===== Rule 3 (CLR binding): static-helper hoist =====
-	// A non-@Clr member WITH A BODY of a @Clr class has no home — the class becomes a BCL type and is NOT emitted.
-	// So its body is hoisted to a compiler-generated static helper `<>dotkt_ClrH_<Class>`: the dispatch receiver
-	// becomes a leading `__self` param (typed as the @Clr class, i.e. the BCL type; `this` resolves to it via
-	// selfSubst), and call sites invokeStatic it. (@Clr members bind to the BCL directly; abstract members roll up.)
+	// ===== Rule 3 (CLR binding): static-helper hoist — SYNTHESIS lives in bir2cir =====
+	// A concrete intrinsic-less member WITH A BODY of a CLR-bound (@ClrTypeAlias) class has no home — the class becomes
+	// a BCL type and is NOT emitted as itself. Its body is hoisted to a static helper `<>dotkt_ClrH_<Class>` (dispatch
+	// receiver -> a leading `__self` param). kotc no longer SYNTHESIZES that helper (clrHelperMembers/clrHelperMethod/
+	// clrHelperClassJson are deleted — they read @ClrIntrinsic, a CLR concern): kotc emits the alias class as a PLAIN
+	// BIR type and bir2cir's AliasHelperHoist (ref.dll-driven) hoists the rule-3 members + drops the type. kotc only
+	// decides "does this bound type carry hoistable bodies, so re-emit it plain rather than fully strip it" via the
+	// pure-Kotlin [hasHoistableBody] (no annotation read).
 	internal fun clrHelperName(cls: IrClass): String = "<>dotkt_ClrH_" + typeName(cls).replace(Regex("[^A-Za-z0-9]"), "_")
-	
-	/** The members of a @Clr class that must be hoisted to its static helper (bodied, no own @Clr, not a property
-	 *  accessor, not an inherited fake-override). */
-	internal fun clrHelperMembers(cls: IrClass): List<IrSimpleFunction> =
+
+	/** Whether a CLR-bound class has at least one bodied, non-property, non-fake-override member — i.e. a member bir2cir
+	 *  could hoist into the `<>dotkt_ClrH_<Class>` helper. PURE KOTLIN: reads only body/property/fake-override, never an
+	 *  @Clr annotation. Over-inclusive vs the actual rule-3 set (it also counts @ClrIntrinsic stub bodies), which is
+	 *  harmless: bir2cir's IsRule3Member re-filters and simply DROPS an intrinsic-only alias type with no real hoist. A
+	 *  body-less primitive alias (kotlin.Int — abstract operators) returns false, so it stays stripped. */
+	internal fun hasHoistableBody(cls: IrClass): Boolean =
 		cls.declarations.filterIsInstance<IrSimpleFunction>()
-			.filter { it.body != null && clrName(it) == null && it.correspondingPropertySymbol == null && !it.isFakeOverride }
-	
-	internal fun clrHelperMethod(fn: IrSimpleFunction, cls: IrClass): String {
-		val dispatch = fn.dispatchReceiverParameter
-		if (dispatch != null) selfSubst[dispatch] = """{"k":"local","name":"__self"}"""
-		val savedRefCells = refCellVars
-		refCellVars = refCellVars + computeRefCells(fn)
-		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-		refCellVars = savedRefCells
-		if (dispatch != null) selfSubst.remove(dispatch)
-		// `__self` is typed as the dispatch receiver's type (the @Clr class); birType maps it to the BCL type (incl. args).
-		val selfParam = """{"name":"__self","type":${str(birType(dispatch!!.type))}}"""
-		val ps = (listOf(selfParam) + paramsJsonList(fn.parameters)).joinToString(",")
-		// Declare the CLASS type params on the static method too (a generic @Clr class's helper needs them for __self).
-		val tps = typeParamsJson(cls.typeParameters + fn.typeParameters)
-		return """{"name":${str(fn.name.asString())},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public"$tps,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body]}"""
-	}
-	
-	/** The static helper class for a @Clr class's hoisted members, or null if it has none. */
-	internal fun clrHelperClassJson(cls: IrClass): String? {
-		val members = clrHelperMembers(cls)
-		if (members.isEmpty()) return null
-		val methods = members.joinToString(",") { clrHelperMethod(it, cls) }
-		return """{"name":${str(clrHelperName(cls))},"kind":"class","abstract":false,"vis":"public","base":null,"interfaces":[],"fields":[],"ctors":[],"methods":[$methods]}"""
-	}
-	
+			.any { it.body != null && it.correspondingPropertySymbol == null && !it.isFakeOverride }
+
 	/** `infix`/`operator` flags as BIR JSON fragments (only emitted when set), shared by the regular + suspend paths. */
 	internal fun kotlinModsJson(fn: IrSimpleFunction): String =
 		(if (fn.isInfix) ""","infix":true""" else "") + (if (fn.isOperator) ""","operator":true""" else "")
@@ -3604,9 +3590,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// hoist and emit a non-existent BCL member (e.g. StringBuilder.reverse). Modality survives deserialization.
 			if (clrInteropName(callee) == null && callee.modality != Modality.ABSTRACT && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
 				val hr = dispatchReceiver(call)
-				// The helper static method declares the CLASS type params THEN the method's own (clrHelperMethod). A
-				// generic @Clr class (e.g. List<E>) needs them bound at the call: class args come from the receiver's
-				// type (List<Int> -> E=Int), method args from the call. Emit typeArgs so ilemit MakeGenericMethods it.
+				// The helper static method declares the CLASS type params THEN the method's own (bir2cir's HoistMethod /
+				// MergeTypeParams). A generic @Clr class (e.g. List<E>) needs them bound at the call: class args come from
+				// the receiver's type (List<Int> -> E=Int), method args from the call. Emit typeArgs so ilemit MakeGenericMethods it.
 				val classTAs = (hr?.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }.orEmpty()
 				val methodTAs = callee.typeParameters.indices.mapNotNull { call.typeArguments.getOrNull(it) }
 				val allTAs = classTAs + methodTAs
