@@ -986,7 +986,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. A Kotlin-authored
 	 *  annotation uses its synthesized `: System.Attribute` type (#46); an imported .NET attribute uses its real type
-	 *  via a `clr:` marker so ilemit binds the existing .NET constructor (#54). Kotlin built-in annotations are dropped. */
+	 *  via a `clr:` marker so ilemit binds the existing .NET constructor (#54).
+	 *
+	 *  kotc does NOT filter/select annotations: from kotc's view an annotation is just METADATA, so EVERY annotation is
+	 *  passed through to the BIR verbatim (incl. @ClrTypeAlias, @ClrIntrinsic, and every other `kotlin.*` annotation).
+	 *  The ref.dll consumer (bir2cir) is the CLR layer that decides what to do with each attribute. (The old keep-list —
+	 *  drop `kotlin.*` except @ClrIntrinsic/@ClrIntrinsicAsDynamic — was a kotc-side SELECT and is removed: a
+	 *  metadata-selection policy must NOT live in kotc.) If emitting some Kotlin-internal annotation type breaks
+	 *  downstream (its `: System.Attribute` type or an arg type being unresolvable at ilemit), that is a bir2cir/ilemit
+	 *  concern, NOT a reason to re-introduce a kotc filter. */
 	internal fun attrsJson(anns: List<IrConstructorCall>): String {
 		// Strip roundtrip metadata ([Kotlin*]/[Clr]) — ONLY when DOTKT_STRIP_METADATA (the stdlib runtime). NOT tied to
 		// substitution: a user library is substituted but KEEPS its attributes (round-trip consumable). (Per user.)
@@ -995,12 +1003,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
 			if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
 			val clr = clrName(ac)
-			// Keep @ClrIntrinsic/@ClrIntrinsicAsDynamic even though they're `kotlin.*` with no clrName: they are the
-			// BINDING metadata and MUST round-trip as a real [ClrIntrinsic] attribute (facadegen reads it back to emit
-			// `clr:` on the file-class statics / members). Without this they were filtered, the ref dll never carried
-			// them, and only stale ref.auto.meta + the frontend jar's IR kept things limping.
-			val fq0 = ac.fqNameWhenAvailable?.asString()
-			if (clr == null && fq0?.startsWith("kotlin.") == true && fq0 != "kotlin.clr.ClrIntrinsic" && fq0 != "kotlin.clr.ClrIntrinsicAsDynamic") return@mapNotNull null
 			val attrType = if (clr != null) "clr:$clr" else typeName(ac)
 			val args = regularArgs(ann)
 			"""{"attr":${str(attrType)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
@@ -3180,27 +3182,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val pkgFqName = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
 		val calleeFq = if (declaringClass == null && pkgFqName != null) "$pkgFqName.$name" else null
 		
-		// A top-level fun annotated @Clr("Type.Method") binds to a STATIC .NET method (e.g. println ->
-		// System.Console.WriteLine). A class member's @Clr resolves via its owner type; a top-level fun has no .NET
-		// owner, so split the FQN at its last '.' (namespace/type . method) and emit a direct clrStatic here.
-		// No `!isInline` gate: an inline top-level fun WITH @ClrIntrinsic (e.g. `@InlineOnly operator fun
-		// StringBuilder.set` -> set_Chars) must bind to its BCL member, not be left to the registry (which would emit a
-		// non-existent `<File>Kt.set` static). The `clrName(callee)?.let` below already restricts this to @ClrIntrinsic
-		// funs, so plain inline funs (clrName == null) are unaffected and still inline normally.
-		if (declaringClass == null) clrName(callee)?.let { fqn ->
-			val dot = fqn.lastIndexOf('.')
-			val extRecv = extensionReceiver(call)
-			if (dot > 0) {
-				val clrOwner = fqn.substring(0, dot); val clrMethod = fqn.substring(dot + 1)
-				val a = listOfNotNull(extRecv) + filledArgExprs(call)
-				return """{"k":"clrStatic","type":${str(clrOwner)},"method":${str(clrMethod)},"argTypes":[${a.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"args":[${a.joinToString(",") { expr(it) }}]}"""
-			} else if (extRecv != null) {
-				// @Clr("Method") (no '.') on an extension fun `fun T.f()` -> an INSTANCE call on the extension receiver
-				// (e.g. `fun String.uppercase()` @Clr("ToUpper") -> `s.ToUpper()`). The BCL owner = the receiver's type.
-				val a = filledArgExprs(call)
-				return """{"k":"clrInstance","type":${str(netType(extRecv.type))},"method":${str(fqn)},"argTypes":[${a.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"recv":${expr(extRecv)},"args":[${a.joinToString(",") { expr(it) }}]}"""
-			}
-		}
+		// (REMOVED) A top-level fun annotated @ClrIntrinsic used to bind here to a STATIC/INSTANCE .NET call by splitting
+		// its FQN — that is an @ClrIntrinsic-driven member-call SUBSTITUTION, which now belongs to bir2cir (sourced from
+		// the ref.dll), NOT kotc. kotc emits the PLAIN Kotlin top-level call (the clrStatic file-class path below for
+		// injected .NET top-level funs is registry-driven and stays). See [clrInteropName] / CLAUDE.md "kotc reads
+		// NEITHER @ClrIntrinsic NOR @ClrTypeAlias".
 
 		// `recv.iterator()` on a CLR-bound (@Clr) kotlin.collections.Iterable -> the stdlib enumerator bridge
 		// `iteratorOverEnumerable(recv)`. A BCL IEnumerable has GetEnumerator (a struct for List<T>), NOT a Kotlin
@@ -3555,34 +3541,37 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// receiver's type carries the element type arg (`Collection<Int>`), so the constructed `clrg:...[int]`
 			// resolves the substituted accessor.
 			val ixOwner = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
-			if (recv != null && ixOwner != null && clrName(ixOwner) != null) {
+			if (recv != null && ixOwner != null && clrInteropName(ixOwner) != null) {
 				val mt = birType(recv.type); val a = regularArgs(call)
 				// get_Item returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T), not netType's
 				// erased `object`: ilemit then hands back gp:T (matching the stack), so the value<->collection boundary
 				// box/unbox is correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
 				val retH = if (call.type.classifierOrNull?.owner is org.jetbrains.kotlin.ir.declarations.IrTypeParameter) birType(call.type) else netType(call.type)
 				return if (name == "get")
-					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrName(callee) ?: "get_Item")},"argTypes":[${str(netType(a[0].type))}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
+					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrInteropName(callee) ?: "get_Item")},"argTypes":[${str(netType(a[0].type))}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
 				else
-					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrName(callee) ?: "set_Item")},"argTypes":[${str(netType(a[0].type))},${str(netType(a[1].type))}],"ret":"System.Void","recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
+					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrInteropName(callee) ?: "set_Item")},"argTypes":[${str(netType(a[0].type))},${str(netType(a[1].type))}],"ret":"System.Void","recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
 			}
 		}
 
 		// BCL interop: a call whose declaring class is a .NET type (`@Clr` or injected) resolves to a real .NET
 		// member. An INHERITED .NET member (e.g. `appError.Message`) is a fake-override whose `parent` is the
 		// Kotlin subclass, so resolve through the fake override to find the real .NET declaring type.
-		val clrType = declaringClass?.let { clrName(it) }
-			?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrName(it) }
+		// clrInteropName (NOT clrName): a `kotlin.*` stdlib owner carrying @ClrIntrinsic resolves to null here, so its
+		// member call FALLS THROUGH to the plain Kotlin member-call path below (bir2cir substitutes it from the ref.dll).
+		// Only a genuine .NET interop owner (facadegen-injected via ClrTypeRegistry / appColl) keeps a non-null clrType.
+		val clrType = declaringClass?.let { clrInteropName(it) }
+			?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrInteropName(it) }
 			// A synthesized companion of an injected .NET type holds its STATIC members (`App.Start`) -> a static call
 			// on the .NET type itself.
-			?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrName(it) }
+			?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrInteropName(it) }
 		if (clrType != null) {
 			// Rule 3 (CLR binding): a non-@Clr member WITH A BODY of a @Clr class -> its hoisted static helper
 			// (<>dotkt_ClrH_<Class>.m(__self, args)), NOT a BCL member by name. Abstract/@Clr members fall through.
 			// Non-abstract (concrete) rather than `body != null`: a CROSS-MODULE callee deserialized from the frontend
 			// jar carries NO body (bodies live in the .class, not metadata), so `body != null` would wrongly skip the
 			// hoist and emit a non-existent BCL member (e.g. StringBuilder.reverse). Modality survives deserialization.
-			if (clrName(callee) == null && callee.modality != Modality.ABSTRACT && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
+			if (clrInteropName(callee) == null && callee.modality != Modality.ABSTRACT && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
 				val hr = dispatchReceiver(call)
 				// The helper static method declares the CLASS type params THEN the method's own (clrHelperMethod). A
 				// generic @Clr class (e.g. List<E>) needs them bound at the call: class args come from the receiver's
@@ -3605,7 +3594,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val declClass = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
 			val memberType = when {
 				isStatic || recv == null -> clrType
-				recvClass != null && clrName(recvClass) != null -> birType(recv.type)
+				recvClass != null && clrInteropName(recvClass) != null -> birType(recv.type)
 				// A type-PARAM receiver (`destination: C` where `C : MutableCollection<T>`, e.g. filterTo's body) has no
 				// recvClass -> use the type param's @Clr-bound BOUND with its args (clrg:ICollection[T]), not the raw
 				// clrName (System.Collections.Generic.ICollection without `1 -> ResolveType fails).
@@ -3631,7 +3620,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 				if (targs.all { it != null }) {
 					val taJson = targs.joinToString(",") { str(birType(it!!)) }
-					val member = clrName(callee) ?: objectMethodName(callee) ?: name
+					val member = clrInteropName(callee) ?: objectMethodName(callee) ?: name
 					// A generic MEMBER extension (`class C { fun <R> T.f() }`): the `__self` receiver is the .NET method's
 					// first param -> prepend its value + shape so by-shape overload resolution and the call line up.
 					val gExt = if (!isStatic) extensionReceiver(call) else null
@@ -3646,7 +3635,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			val prop = callee.correspondingPropertySymbol?.owner
 			if (prop != null) {
-				val pn = clrName(prop) ?: prop.name.asString()
+				val pn = clrInteropName(prop) ?: prop.name.asString()
 				val recvJson = if (isStatic) "null" else expr(recv!!)
 				// A restored MEMBER extension property (`class C { val T.p }`): no .NET property exists — it's a
 				// `get_p(__self)`/`set_p(__self, v)` method on the dispatch type, the extension receiver as `__self`.
@@ -3659,7 +3648,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					"""{"k":"clrPropSet","type":${str(memberType)},"name":${str(pn)},"static":$isStatic,"recv":$recvJson,"value":${expr(regularArgs(call).first())}}"""
 				else """{"k":"clrPropGet","type":${str(memberType)},"name":${str(pn)},"retType":${str(netType(callee.returnType))},"static":$isStatic,"recv":$recvJson}"""
 			}
-			val member = clrName(callee) ?: objectMethodName(callee) ?: name
+			val member = clrInteropName(callee) ?: objectMethodName(callee) ?: name
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
 			// A restored `suspend` member's .NET method returns Task<T> (awaited via the coroutine machinery), not T.
 			val ret = str(if (callee.isSuspend) coTaskType(call.type) else netType(callee.returnType))
@@ -4259,7 +4248,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"java.lang.StringBuilder", "java.lang.AbstractStringBuilder" -> "System.Text.StringBuilder"
 		else -> null
 	}
-	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
+	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = true)
+
+	/** Member-CALL routing must NOT substitute from the stdlib's own `@ClrIntrinsic`/`clr.Clr` annotation: that
+	 *  substitution (a `kotlin.*` member call -> a BCL member) is bir2cir's job, sourced from the ref.dll. kotc emits a
+	 *  PLAIN Kotlin member call. So the call-routing sites read [clrInteropName], which resolves ONLY the genuine .NET
+	 *  interop sources (the facadegen-injected [ClrTypeRegistry], `appColl`, the `java.util.*` aliases, the hardcoded
+	 *  collection/StringBuilder member maps) and DELIBERATELY ignores the `@ClrIntrinsic` annotation. Note the two
+	 *  sources are mutually exclusive per build: the stdlib build (`CLR_TYPES_METADATA=""`) has an EMPTY registry +
+	 *  `appColl`/collection-maps gated off (`!stdlibCompile`), so its only clrName source IS the annotation -> dropping
+	 *  it leaves a plain call for bir2cir; an app build resolves the stdlib from the jar, which drops `@ClrIntrinsic`, so
+	 *  the annotation source is already absent -> [clrInteropName] == [clrName] there. Type encoding ([netType]) and the
+	 *  type-strip ([substitutedAway]) intentionally keep `useAnnotation=true` — those are separate concerns. */
+	internal fun clrInteropName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = false)
+
+	private fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer, useAnnotation: Boolean): String? {
 		// The JVM kotlin-stdlib aliases `Comparator = java.util.Comparator`; an app compiled against that jar sees the
 		// java.util name. Treat it as OUR rt `kotlin.Comparator` (a real CLR interface in the rt), so birType, the
 		// member-call dispatch (-> clrInstance), and the supertype all resolve it via the .NET-type (clrg:) path from the
@@ -4271,7 +4274,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (stdlibCompile && !stdlibSubstitute) return null   // ref build = gated; runtime (substitute) build = @Clr binds
 		// @Clr binding source: the annotation on the decl (or, for a member, on any decl up its fake-override chain —
 		// `List.size` overrides `Collection.size`@Clr("Count")), else the registry the injection populated (app flow).
+		// [useAnnotation]=false skips the annotation source entirely (member-CALL routing — see [clrInteropName]).
 		fun annClr(d: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
+			if (!useAnnotation) return null
 			for (a in d.annotations) { val fq = (a as? IrConstructorCall)?.type?.classFqName?.asString(); if (fq == "kotlin.clr.ClrIntrinsic" || fq == "clr.Clr" || fq == "kotlin.clr.ClrIntrinsicAsDynamic") return (a.arguments.firstOrNull() as? IrConst)?.value as? String }
 			return null
 		}
