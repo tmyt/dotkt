@@ -486,10 +486,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun scopeSuspendCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? =
 		scopeCall(e)?.takeIf { (_, recv, lambda) -> lambda.function.body?.let { containsSuspend(it) } == true || containsSuspend(recv) }
 
-	private val SUBSTITUTED_VALUE_CLASSES = setOf("kotlin.Int","kotlin.Long","kotlin.Byte","kotlin.Short","kotlin.Float","kotlin.Double","kotlin.Char","kotlin.Boolean")
 	// A primitive value class substitutes to a BCL value type (kotlin.Int -> System.Int32) at every use; its Kotlin
-	// declaration is a degenerate empty class (no field, intrinsic members) -> do NOT emit it in the runtime (per user).
-	internal fun substitutedAway(k: IrClass): Boolean = clrName(k) != null || (stdlibSubstitute && k.fqNameWhenAvailable?.asString() in SUBSTITUTED_VALUE_CLASSES)
+	// declaration is a degenerate empty class (no field, intrinsic members) -> do NOT emit it in the runtime. Driven by
+	// @kotlin.clr.ClrTypeAlias on the primitive (NOT a hard-coded compiler list, per user 2026-06-30: separate the
+	// @ClrIntrinsic/@ClrTypeAlias roles). The @ClrTypeAlias read is kept LOCAL here — it must NOT leak into clrName (the
+	// member call-substitute reader), else a primitive's clrName flips null->"System.Int32" and its member calls resolve
+	// to non-existent System.Int32 methods (ilemit ApplyTypeArgs null-method crash). Gated on stdlibSubstitute so the
+	// reference assembly keeps the primitive + its @ClrTypeAlias attribute; the runtime/app substitute it away.
+	private fun hasClrTypeAlias(k: IrClass): Boolean = k.annotations.any { (it as? IrConstructorCall)?.type?.classFqName?.asString() == "kotlin.clr.ClrTypeAlias" }
+	internal fun substitutedAway(k: IrClass): Boolean = clrName(k) != null || (stdlibSubstitute && hasClrTypeAlias(k))
 	fun emitFile(file: IrFile): String {
 		fileEntry = file.fileEntry
 		// Per-FILE lifted state. One BirEmitter instance processes every file in turn, so these MUST be reset here —
