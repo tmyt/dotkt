@@ -185,14 +185,13 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val args = (node.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
 			if (args.isNullOrEmpty()) net else "clrg:$net[${args.joinToString(",")}]"
 		}
-		// Kotlin builtin exceptions (IllegalStateException etc.) -> their .NET counterpart.
-		val netExc = klass?.fqNameWhenAvailable?.asString()?.let { NET_EXCEPTIONS[it] }
 		// A collection ctor `ArrayList<R>()` / `HashSet<T>()` (kotlin.collections.* = java.util.* typealiases) -> the
 		// BCL collection (`new List<R>()` / `new HashSet<T>()`): birType already maps the type. Lets the real stdlib
 		// `map`/`filter`/`mapTo` (which build an ArrayList) compile straight to the BCL collection DotKt uses.
-		val mapped = clr ?: netExc
-		if (mapped != null)
-			"""{"k":"clrNew","type":${str(mapped)},"argTypes":[${paramNetTypes(node.symbol.owner)}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
+		// A builtin-exception ctor (`throw IllegalStateException(msg)`) is NOT mapped here: it emits a plain `new
+		// @kotlin.IllegalStateException` and bir2cir rewrites it to `clrNew System.X` off the stdlib's @ClrTypeAlias.
+		if (clr != null)
+			"""{"k":"clrNew","type":${str(clr)},"argTypes":[${paramNetTypes(node.symbol.owner)}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
 		else {
 			// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg.
 			val outerArg = if (klass?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
