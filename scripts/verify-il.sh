@@ -37,7 +37,11 @@ dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -
 il_emit() { # <name> <ildir> <asm> <birdir> [extra ilemit args...]
 	local name="$1" ildir="$2" asm="$3" birdir="$4"; shift 4
 	local cirdir="$ROOT/build/cir-$name"; rm -rf "$cirdir"; mkdir -p "$cirdir"
-	dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$cirdir" "$birdir"/*.bir.json >/dev/null 2>&1 || return 1
+	# bir2cir reads the REFERENCE stdlib for the @ClrTypeAlias/@ClrIntrinsic labels: app-build collection/StringBuilder/
+	# Regex type tokens (kotlin.collections.List -> System...IReadOnlyList) and member calls lower from it. (kotc no
+	# longer substitutes them — appColl is gated off outside the rt build; bir2cir is the single substitution home.)
+	local refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
+	dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$cirdir" "${refarg[@]}" "$birdir"/*.bir.json >/dev/null 2>&1 || return 1
 	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" "$@" "$cirdir"/*.cir.json >/dev/null 2>&1
 }
 

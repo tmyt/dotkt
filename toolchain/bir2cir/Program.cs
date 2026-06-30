@@ -84,8 +84,10 @@ sealed class Pipeline
             // ref.dll's @ClrIntrinsic labels, NOT from kotc. Runs BEFORE type lowering so it sees the kotlin.* owners.
             var substituted = _options.RefBuild ? bir.Root : MemberCallSubstitution.Apply(bir.Root, refs);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
-            // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track.
-            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild);
+            // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
+            // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
+            // hardcoded primitives) wherever it appears as a type token.
+            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases);
             // REFERENCE build only: squash every declaration body to `throw NotImplementedException()` so the ref
             // assembly is metadata-only. Keeps ALL metadata (signatures/types/supertypes/generics/attrs) intact —
             // only the body STATEMENTS change. This is what makes it safe for a bare-value kotlin.* primitive kept
@@ -173,6 +175,7 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "<>dotkt_ClrH_*"
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
 
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
     // kotlin.* -> CLR type map already hardcoded in this file). Listed here so member-call / construction
@@ -199,11 +202,17 @@ sealed class ReferenceMetadataIndex
                     _membersByOwner[m.Owner] = list = new List<MemberBinding>();
                 list.Add(m);
             }
+            foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
         }
     }
 
     public int Count => _assemblies.Count;
     public IReadOnlyList<ReferenceAssembly> Assemblies => _assemblies;
+
+    // The ref.dll @ClrTypeAlias index (Kotlin FQN -> BCL), the SINGLE source of truth shared by both the member-call
+    // substitution (owner identity) and the TYPE-TOKEN lowering (supertypes/interfaces/type-args/fields). Keyed on the
+    // stripped FQN (no generic-arity backtick), matching a BIR type token's bare owner.
+    public IReadOnlyDictionary<string, string> Aliases => _ownerAlias;
 
     // ---- Call-substitution lookups (consumed by MemberCallSubstitution) ----
 
@@ -239,6 +248,11 @@ sealed class ReferenceMetadataIndex
         intrinsic = (cands.FirstOrDefault(m => m.ParamCount == argCount) ?? cands[0]).Intrinsic;
         return true;
     }
+
+    // A top-level fun (file-class static, called as `callStatic owner=null`) bound by @ClrIntrinsic to a
+    // fully-qualified BCL static (e.g. clrTimestamp -> "System.Diagnostics.Stopwatch.GetTimestamp").
+    public bool TryTopLevelIntrinsic(string funName, out string fqStatic) =>
+        _topLevelIntrinsics.TryGetValue(funName, out fqStatic);
 
     // A rule-3 hoist candidate: owner.member exists, is concrete (non-abstract) and carries NO @ClrIntrinsic, so its
     // real Kotlin body was hoisted by kotc to the static helper `<>dotkt_ClrH_<owner>`.
@@ -657,15 +671,22 @@ sealed class ReferenceMetadataIndex
                     var classAlias = ClrAliasOf(type.GetCustomAttributesData());
                     if (classAlias != null) metadata.Aliases[ownerFqn] = classAlias;
                     if (ownerFqn.StartsWith("<>dotkt_ClrH_", StringComparison.Ordinal)) metadata.HelperTypes.Add(ownerFqn);
+                    var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
 
                     foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                    {
+                        var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         metadata.MemberBindings.Add(new MemberBinding(
                             ownerFqn,
                             method.Name,
                             method.GetParameters().Length,
-                            ClrIntrinsicOf(method.GetCustomAttributesData()),
+                            intrinsic,
                             method.IsAbstract,
                             method.IsStatic));
+                        // A top-level fun (file-class static) with @ClrIntrinsic naming a fully-qualified BCL static.
+                        if (isFileClass && method.IsStatic && intrinsic != null && intrinsic.Contains('.'))
+                            metadata.TopLevelIntrinsics.TryAdd(method.Name, intrinsic);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -864,6 +885,9 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
     public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "<>dotkt_ClrH_*" rule-3 helpers
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
+    // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
+    // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.
+    public readonly Dictionary<string, string> TopLevelIntrinsics = new(StringComparer.Ordinal);
 
     public JsonObject ToJson() => new()
     {
@@ -1542,7 +1566,19 @@ static class BirTypeLowering
 
     static readonly string[] ModifierPrefixes = { "byref:", "array:", "nullable:" };
 
-    public static JsonNode Lower(JsonNode root, bool refBuild) => LowerNode(root, refBuild, force: false);
+    // The ref.dll @ClrTypeAlias index (Kotlin FQN -> BCL), set per top-level Lower() call. Consulted for ANY CLR-bound
+    // type token beyond the hardcoded foundational primitives (collections -> System...IReadOnlyCollection, StringBuilder,
+    // Regex, ...). Single-threaded per bir2cir run, so a static binding is sufficient. The foundational primitives stay
+    // shadowed by KotlinToClr (checked first), keeping their CLR shorthand ("int"/"string"/"object").
+    static IReadOnlyDictionary<string, string> _aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    static string AliasBcl(string fqn) => _aliases.TryGetValue(fqn, out var bcl) ? bcl : null;
+
+    public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null)
+    {
+        _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        return LowerNode(root, refBuild, force: false);
+    }
 
     // `force` == "this subtree carries attribute-blob metadata": lower with the FULL map, ignoring refBuild. It is
     // set when entering an attribute-class declaration (base : System.Attribute) or an `attrs` application array,
@@ -1661,6 +1697,15 @@ static class BirTypeLowering
             var head = t[..br];
             var inner = t[(br + 1)..^1];
             var args = string.Join(",", SplitTopLevel(inner).Select(a => LowerTypeString(a, refBuild, force)));
+            // A @ClrTypeAlias GENERIC type used as a type constructor (supertype/interface/type-arg/field), e.g.
+            // kotlin.collections.Collection[E] -> clrg:System.Collections.Generic.IReadOnlyCollection[E]. kotc may carry
+            // an `@` (this-assembly-emitted) marker even on a substituted type (a CLR-resolution marker that belongs
+            // below kotc) — strip it for the alias lookup and DROP it when the type is BCL-aliased; a non-alias `@`
+            // head is a genuine emitted type and keeps its `@`. ilemit builds the generic by arg count. The foundational
+            // primitives never appear as a generic head, so KotlinToClr need not gate here.
+            var bareHead = head.StartsWith("@", StringComparison.Ordinal) ? head[1..] : head;
+            if (!head.StartsWith("clr", StringComparison.Ordinal) && AliasBcl(bareHead) is string genericBcl)
+                return "clrg:" + genericBcl + "[" + args + "]";
             return head + "[" + args + "]";
         }
 
@@ -1686,10 +1731,17 @@ static class BirTypeLowering
         // (any bracket args were recursed above) — keep verbatim. A bare kotlin.* foundational leaf (numeric/bool/
         // char + String/Any + the unsigned set) lowers via the active map; all other leaves (CLR shorthand, the
         // position-dependent kotlin.Unit value, user/stdlib FQNs like kotlin.collections.List) pass through.
-        if (t.StartsWith("@", StringComparison.Ordinal)) return t;
         if (t.StartsWith("clrg:", StringComparison.Ordinal)) return t;
+        // An `@`-decorated PRIMITIVE is the dual-representation type-arg form (Comparable<@kotlin.Int>) and MUST stay
+        // verbatim — never lowered to the bare CLR primitive. A bare primitive lowers to its CLR shorthand.
+        var decorated = t.StartsWith("@", StringComparison.Ordinal);
+        var bare = decorated ? t[1..] : t;
         var map = force ? KotlinAllToClr : KotlinToClr;
-        return map.TryGetValue(t, out var clr) ? clr : t;
+        if (map.TryGetValue(bare, out var clr)) return decorated ? t : clr;
+        // A non-primitive @ClrTypeAlias type used bare (a non-generic BCL: StringBuilder/Regex/Match/IComparable/
+        // TextWriter/...) -> clr:<bcl>. Applies whether or not it carried the `@` marker (BCL-aliased -> drop `@`).
+        if (AliasBcl(bare) is string bcl) return "clr:" + bcl;
+        return t;
     }
 
     // First top-level ':' after the leading type prefix; bracket depth aware. Mirrors the matcher's FuncRetEnd.
@@ -1808,7 +1860,18 @@ static class MemberCallSubstitution
     static JsonNode TransformCall(JsonObject node, ReferenceMetadataIndex refs, bool instance)
     {
         var ownerToken = (node[instance ? "ownerType" : "owner"] as JsonValue)?.GetValue<string>();
-        if (string.IsNullOrEmpty(ownerToken)) return null;
+        if (string.IsNullOrEmpty(ownerToken))
+        {
+            // Top-level fun call (`callStatic owner=null`): a @ClrIntrinsic top-level fun -> a fully-qualified BCL
+            // static. Split the intrinsic at the last '.' into owner type + method (mirrors kotc's old declaringClass
+            // == null path, BirEmitter.kt:3190, but sourced from the ref.dll). Instance calls always carry an owner.
+            var fn = (node["method"] as JsonValue)?.GetValue<string>();
+            if (instance || string.IsNullOrEmpty(fn) || !refs.TryTopLevelIntrinsic(fn, out var fq)) return null;
+            var dot = fq.LastIndexOf('.');
+            if (dot <= 0) return null;
+            var args0 = node["args"] as JsonArray ?? new JsonArray();
+            return ClrCallNode(node, fq[..dot], fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false);
+        }
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var _)) return null;
 
         var member = (node["method"] as JsonValue)?.GetValue<string>();
