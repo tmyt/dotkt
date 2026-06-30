@@ -1471,7 +1471,11 @@ sealed partial class Emitter
             Type ext = null;
             try { ext = ClrRef(typeName); } catch (NotSupportedException) { }
             if (ext == null) return null;
-            return FindReflectedMethod(ext, name);
+            // The call's parameter count (from `sig`) disambiguates a referenced file-class's overloads (e.g.
+            // _CollectionsKt.first(List<T>) vs first(Iterable<T>, predicate)) — GetMethod(name) throws Ambiguous and
+            // an arbitrary pick emits a stack-mismatched call (InvalidProgramException at run).
+            var extArgc = sig == null ? -1 : (sig.Length == 0 ? 0 : SplitTopLevel(sig).Count);
+            return FindReflectedMethod(ext, name, extArgc);
         }
         // Walk this type's own members, then its EMITTED base/interface chain. If the base is NOT emitted here (an
         // external .NET base, e.g. an emitted class extending a BCL type), fall through to a reflected lookup on the
@@ -1499,9 +1503,15 @@ sealed partial class Emitter
     // lookup: the type's own members + its base CLASS chain (reflection's `GetMethod` already includes inherited base
     // members for a class), and — because `GetMethod` on an INTERFACE type does NOT surface base-interface members —
     // the transitively-inherited interface chain too. Pure CLR resolution; no Kotlin/BCL name mapping. Null if absent.
-    static MethodInfo FindReflectedMethod(Type t, string name)
+    static MethodInfo FindReflectedMethod(Type t, string name, int argCount = -1)
     {
         var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+        // Arity-disambiguated lookup FIRST when the caller knows the parameter count: a referenced file-class can carry
+        // overloads of the same name (e.g. _CollectionsKt.first(List<T>) vs first(Iterable<T>, predicate)); the
+        // unconstrained GetMethod(name) below throws Ambiguous and an arbitrary pick mis-counts the stack.
+        MethodInfo ByArity(Type ty) =>
+            argCount < 0 ? null : ty.GetMethods(bf).FirstOrDefault(mm => mm.Name == name && mm.GetParameters().Length == argCount);
+        if (ByArity(t) is { } am) return am;
         try { var m = t.GetMethod(name, bf); if (m != null) return m; }
         catch (AmbiguousMatchException) { var m = t.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); if (m != null) return m; }
         // Interface members are inherited but `GetMethod`/`GetMethods` on an interface only reports the interface's own
@@ -1509,6 +1519,7 @@ sealed partial class Emitter
         if (t.IsInterface)
             foreach (var bi in t.GetInterfaces())
             {
+                if (ByArity(bi) is { } bam) return bam;
                 try { var m = bi.GetMethod(name, bf); if (m != null) return m; }
                 catch (AmbiguousMatchException) { var m = bi.GetMethods(bf).FirstOrDefault(mm => mm.Name == name); if (m != null) return m; }
             }

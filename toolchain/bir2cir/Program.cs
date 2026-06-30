@@ -74,6 +74,20 @@ sealed class Pipeline
 
     List<CirFile> TransformFiles(IReadOnlyList<BirFile> birFiles, ReferenceMetadataIndex refs)
     {
+        // The top-level funs DEFINED in this compilation (every file-class's own static methods, across all input
+        // files). A `callStatic owner=null` to one of these must stay owner-less (ilemit's FindStatic finds the
+        // sibling); only a name absent here is eligible for referenced-stdlib file-class attribution (Gap B).
+        var localTopLevelFns = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var b in birFiles)
+            if (b.Root is JsonObject ro && ro["methods"] is JsonArray ms)
+                foreach (var m in ms)
+                    if (m is JsonObject mo && (mo["name"] as JsonValue)?.GetValue<string>() is string mn)
+                        localTopLevelFns.Add(mn);
+        // Attribute referenced top-level stdlib funs to their file-class owner only in an APP build: the stdlib self-
+        // build (DOTKT_STDLIB_COMPILE set) defines them locally, so owner=null is correct there. The reference build
+        // never runs MemberCallSubstitution at all (see the RefBuild gate below).
+        var attributeTopLevelOwner = Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") == null;
+
         var files = new List<CirFile>();
         foreach (var bir in birFiles)
         {
@@ -87,7 +101,7 @@ sealed class Pipeline
             // Turn that plain type into the static helper + drop it, BEFORE call substitution so the (already-BCL)
             // member bodies and the rule-3 call routing both see a consistent helper. No-op for the reference build.
             var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs);
-            var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs);
+            var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
@@ -185,6 +199,7 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
     readonly Dictionary<string, string> _extMemberIntrinsics = new(StringComparer.Ordinal); // "name|recvKey" -> bare member
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
+    readonly Dictionary<string, List<(string Owner, string RecvKey)>> _topLevelStatics = new(StringComparer.Ordinal); // non-intrinsic top-level fun name -> [(file-class, recvKey)]
 
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
     // kotlin.* -> CLR type map already hardcoded in this file). Listed here so member-call / construction
@@ -215,6 +230,12 @@ sealed class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ExtMemberIntrinsics) _extMemberIntrinsics.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.InlineBacking) _inlineBacking.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.TopLevelStatics)
+            {
+                if (!_topLevelStatics.TryGetValue(kv.Key, out var lst))
+                    _topLevelStatics[kv.Key] = lst = new List<(string, string)>();
+                lst.AddRange(kv.Value);
+            }
         }
     }
 
@@ -267,6 +288,20 @@ sealed class ReferenceMetadataIndex
     // fully-qualified BCL static (e.g. clrTimestamp -> "System.Diagnostics.Stopwatch.GetTimestamp").
     public bool TryTopLevelIntrinsic(string funName, out string fqStatic) =>
         _topLevelIntrinsics.TryGetValue(funName, out fqStatic);
+
+    // A NON-intrinsic top-level fun (real Kotlin body) resolved to the file-class it lives in, so an APP's
+    // `callStatic owner=null` gets an explicit owner ilemit reflects against the referenced runtime stdlib. When the
+    // name is defined in multiple file-classes (getOrElse in CollectionsKt/ArraysKt/MapsKt/...), the call's receiver
+    // type (recvKey = its first sig param's bare owner) disambiguates. A single candidate needs no receiver match.
+    public bool TryResolveTopLevelStatic(string funName, string recvKey, out string owner)
+    {
+        owner = null;
+        if (!_topLevelStatics.TryGetValue(funName, out var cands) || cands.Count == 0) return false;
+        if (cands.Count == 1) { owner = cands[0].Owner; return true; }
+        foreach (var c in cands)
+            if (c.RecvKey == recvKey) { owner = c.Owner; return true; }
+        return false;
+    }
 
     // A bare-@ClrIntrinsic extension fun resolved by name + the receiver-type key (the call's first-arg type), so
     // `set` on a MutableMap receiver -> set_Item, not StringBuilder's set_Chars.
@@ -737,6 +772,17 @@ sealed class ReferenceMetadataIndex
                             else if (ps.Length >= 1)
                                 metadata.ExtMemberIntrinsics.TryAdd(method.Name + "|" + RecvKey(ps[0].ParameterType), intrinsic);
                         }
+                        // A NON-intrinsic top-level fun (a real Kotlin body in a file-class) -> index it by name so an APP
+                        // build can attribute a referenced `callStatic owner=null` to this file-class (disambiguated by the
+                        // first-param receiver type when overloaded across file-classes). The stdlib self-build never reads it.
+                        if (isFileClass && method.IsStatic && intrinsic == null)
+                        {
+                            var ps = method.GetParameters();
+                            var rk = ps.Length >= 1 ? RecvKey(ps[0].ParameterType) : "";
+                            if (!metadata.TopLevelStatics.TryGetValue(method.Name, out var lst))
+                                metadata.TopLevelStatics[method.Name] = lst = new List<(string, string)>();
+                            lst.Add((ownerFqn, rk));
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -968,6 +1014,12 @@ sealed class ReferenceDotKtMetadata
     // The class is ERASED to its primitive CLR form, so `get_data()` is the inline unbox: it collapses to the receiver
     // value conv'd to the field's declared type (a `conv`, never a `ldfld data` — the erased primitive has no field).
     public readonly Dictionary<string, (string Getter, string Conv)> InlineBacking = new(StringComparer.Ordinal);
+    // NON-intrinsic top-level funs (real Kotlin bodies in a [KotlinFileClass]) -> their (file-class owner FQN, first-
+    // param recvKey). Keyed by fun name. Lets an APP build resolve a referenced `callStatic owner=null` to the file-
+    // class it actually lives in (getOrElse -> kotlin.collections._CollectionsKt), disambiguated by the call's receiver
+    // type when the name is defined across multiple file-classes (CollectionsKt vs ArraysKt vs MapsKt). NOT consulted in
+    // a stdlib self-build (the fun is local there; owner=null + FindStatic finds the sibling).
+    public readonly Dictionary<string, List<(string Owner, string RecvKey)>> TopLevelStatics = new(StringComparer.Ordinal);
 
     public JsonObject ToJson() => new()
     {
@@ -1887,7 +1939,21 @@ static class BirTypeLowering
 // kotlin.* vocabulary and are lowered by the subsequent BirTypeLowering pass (those keys are in its TypeKeys).
 static class MemberCallSubstitution
 {
-    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs) => Rewrite(root, refs);
+    // Top-level fun names DEFINED in the current compilation (this assembly's file-class statics). A `callStatic
+    // owner=null` to one of these stays owner-less (ilemit's FindStatic finds the local sibling) — only a name NOT
+    // defined here is a candidate for referenced-stdlib owner attribution. Single-threaded per run, so static is fine.
+    static IReadOnlySet<string> _localTopLevelFns = new HashSet<string>(StringComparer.Ordinal);
+    // Whether to attribute referenced top-level stdlib funs to their file-class owner (APP build only; OFF for the
+    // stdlib self-build, where every such fun is local — see DOTKT_STDLIB_COMPILE gate at the call site in the Driver).
+    static bool _attributeTopLevelOwner;
+
+    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
+        IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner)
+    {
+        _localTopLevelFns = localTopLevelFns;
+        _attributeTopLevelOwner = attributeTopLevelOwner;
+        return Rewrite(root, refs);
+    }
 
     static JsonNode Rewrite(JsonNode node, ReferenceMetadataIndex refs)
     {
@@ -1975,6 +2041,20 @@ static class MemberCallSubstitution
             var sigParts0 = SplitSig(node);
             if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, RecvKeyOf(sigParts0[0]), out var extMember))
                 return TopLevelExtensionInstance(node, refs, extMember, args0, sigParts0);
+            // A NON-intrinsic referenced top-level stdlib fun (getOrElse/first/...): kotc emits owner=null (it cannot
+            // know the file-class — that is CLR/ref knowledge). In an APP build, attribute it to the file-class the
+            // ref.dll says it lives in, so ilemit's owner-present FindMethod reflects it against the runtime stdlib —
+            // exactly how the iterator bridge `callStatic kotlin.collections.ClrIteratorBridgeKt.*` already resolves.
+            // Skipped when the fun is locally defined (the sibling wins) or in the stdlib self-build (flag off).
+            if (_attributeTopLevelOwner && !_localTopLevelFns.Contains(fn))
+            {
+                var recvKey = sigParts0.Count >= 1 ? RecvKeyOf(sigParts0[0]) : "";
+                if (refs.TryResolveTopLevelStatic(fn, recvKey, out var fileClassOwner))
+                {
+                    node["owner"] = fileClassOwner;
+                    return node;
+                }
+            }
             return null;
         }
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
