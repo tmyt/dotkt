@@ -1846,11 +1846,20 @@ static class MemberCallSubstitution
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
         if (kind is "struct" or "enum") return null;
 
+        // A GENERIC @ClrTypeAlias owner (`new HashSet<E>()` -> token `kotlin.collections.HashSet[gp:E]`) must carry
+        // its element args so ilemit reconstructs the instantiation: emit clrg:<bcl>[<args>] (the SAME generic-alias
+        // form BirTypeLowering produces for type positions). The args stay in the source vocabulary — the subsequent
+        // type-lowering pass lowers them (the clrNew `type` is a TypeKey). A non-generic owner stays a bare BCL type.
+        var typeTok = bcl;
+        var br = ownerToken.IndexOf('[');
+        if (br >= 0 && ownerToken.EndsWith("]", StringComparison.Ordinal))
+            typeTok = "clrg:" + bcl + "[" + ownerToken[(br + 1)..^1] + "]";
+
         var args = node["args"] as JsonArray ?? new JsonArray();
         return new JsonObject
         {
             ["k"] = "clrNew",
-            ["type"] = bcl,
+            ["type"] = typeTok,
             ["argTypes"] = InferArgTypes(node, args),
             ["args"] = args.DeepClone(),
         };
@@ -1890,8 +1899,21 @@ static class MemberCallSubstitution
         if (refs.IsRule3Member(ownerFqn, member))
             return Rule3HelperCall(node, refs, ownerFqn, member, args, instance);
 
+        // Rule 4 (universal object/comparable members): kotc renames Kotlin's compareTo/equals/hashCode/toString to the
+        // BCL interface/object member names (CompareTo/Equals/GetHashCode/ToString) at the CALL site, so the ref.dll's
+        // own member (kept as `compareTo` etc.) doesn't match by that name. These exist on EVERY BCL type the alias
+        // targets (a value primitive like System.UInt32, or a reference type) -> route to a direct clrInstance/clrStatic
+        // on the BCL type. Without this, the owner lowers to a bare shorthand (`uint`) that ilemit cannot resolve.
+        if (BclUniversalMembers.Contains(member))
+            return ClrCallNode(node, bcl, member, member, args, instance);
+
         return null;
     }
+
+    static readonly HashSet<string> BclUniversalMembers = new(StringComparer.Ordinal)
+    {
+        "CompareTo", "Equals", "GetHashCode", "ToString",
+    };
 
     // A clrInstance / clrStatic node. For a property accessor call (`get_X`/`set_X` whose intrinsic is the bare
     // property name) emit clrPropGet/clrPropSet per the property-name convention; otherwise a plain method call.
