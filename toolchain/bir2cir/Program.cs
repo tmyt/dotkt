@@ -1880,7 +1880,7 @@ static class MemberCallSubstitution
             var args0 = node["args"] as JsonArray ?? new JsonArray();
             return ClrCallNode(node, fq[..dot], fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false);
         }
-        if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var _)) return null;
+        if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
 
         var member = (node["method"] as JsonValue)?.GetValue<string>();
         if (string.IsNullOrEmpty(member)) return null;
@@ -1891,12 +1891,14 @@ static class MemberCallSubstitution
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
             return ClrCallNode(node, bcl, intrinsic, member, args, instance);
 
-        // Rule 3: a concrete member of a CLR-bound class with NO @ClrIntrinsic carries a real Kotlin body, which kotc
+        // Rule 3: a concrete member of a CLR-bound CLASS with NO @ClrIntrinsic carries a real Kotlin body, which kotc
         // hoists to the static helper `<>dotkt_ClrH_<owner>` (driven by the SAME class binding that brought us here).
         // `IsRule3Member` (ref.dll: the member is concrete + intrinsic-less) is the signal kotc hoisted it; the helper
-        // is emitted into the same runtime assembly. (A ref.dll helper-presence check is uselessly always-false: the
-        // ref assembly is metadata-only and emits no helper bodies — see kotc's clrHelperClassJson gate.)
-        if (refs.IsRule3Member(ownerFqn, member))
+        // is emitted into the same runtime assembly. NEVER for an INTERFACE owner: an @ClrTypeAlias interface's members
+        // are abstract in source (kotc emits NO helper for it — confirmed: every emitted <>dotkt_ClrH_* is a class), so
+        // its abstract collection members (isEmpty/contains/iterator/...) need kotc's ClrCollectionDefaults routing, not
+        // a non-existent helper. (The ref.dll mis-reports these as non-abstract, so IsRule3Member alone false-positives.)
+        if (kind != "interface" && refs.IsRule3Member(ownerFqn, member))
             return Rule3HelperCall(node, refs, ownerFqn, member, args, instance);
 
         // Rule 4 (universal object/comparable members): kotc renames Kotlin's compareTo/equals/hashCode/toString to the
