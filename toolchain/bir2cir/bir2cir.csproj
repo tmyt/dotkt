@@ -6,4 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>bir2cir</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Read the metadata-only reference stdlib (throw-stub bodies, kotlin.* signatures) WITHOUT a runtime load:
+         Assembly.LoadFrom chokes (TypeLoadException) on it; MetadataLoadContext reads its metadata cleanly. -->
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" />
+  </ItemGroup>
 </Project>

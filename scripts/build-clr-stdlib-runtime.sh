@@ -33,7 +33,11 @@ if (( do_emit )) && [[ "$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)" -gt 0 ]]; t
   [[ -f "$ROOT/build/bir2cir-bin/bir2cir.dll" ]] || dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo >/dev/null
   [[ -f "$ROOT/build/ilemit-bin/ilemit.dll" ]] || dotnet build "$ROOT/toolchain/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null
   echo "== bir2cir (substitute) -> CIR =="
-  DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITUTE=1 DOTKT_STRIP_METADATA=1 dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$CIR" "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" | tail -1
+  # bir2cir reads the REFERENCE assembly (DotKt.Private.Stdlib.dll) to source the @ClrTypeAlias/@ClrIntrinsic
+  # call-substitution labels (member calls on CLR-bound owners -> plain BCL calls). Must exist (build ref first).
+  REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
+  REF_ARG=(); [[ -f "$REF_DLL" ]] && REF_ARG=(--ref "$REF_DLL")
+  DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITUTE=1 DOTKT_STRIP_METADATA=1 dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$CIR" "${REF_ARG[@]}" "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" | tail -1
   echo "== ilemit (substitute) -> DotKt.Stdlib.dll =="
   DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITUTE=1 DOTKT_STRIP_METADATA=1 dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$DLL" DotKt.Stdlib "$CIR"/*.cir.json 2>"$OUT/ilemit.err" | tail -2
   grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|error|unresolved|no matching|not found|cannot' | head -3

@@ -4,6 +4,7 @@
 // vocabulary in the BIR into the CLR-codegen vocabulary ilemit consumes, emitting a BIR-SHAPED CIR (same node
 // shape; only type strings change). There is no verbatim-copy / envelope alternative — that dual track is retired.
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -77,9 +78,14 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
-            // The single, sole transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary,
-            // emitting a BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track.
-            var lowered = BirTypeLowering.Lower(bir.Root, _options.RefBuild);
+            // CALL substitution (substitute/app builds only): a member call / construction whose OWNER is a CLR-bound
+            // type in the ref.dll (@ClrTypeAlias, or the legacy class-level @ClrIntrinsic) is rewritten to a plain BCL
+            // call/new. This is the bir2cir home of what kotc's clrName() member routing used to do — sourced from the
+            // ref.dll's @ClrIntrinsic labels, NOT from kotc. Runs BEFORE type lowering so it sees the kotlin.* owners.
+            var substituted = _options.RefBuild ? bir.Root : MemberCallSubstitution.Apply(bir.Root, refs);
+            // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
+            // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track.
+            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild);
             // REFERENCE build only: squash every declaration body to `throw NotImplementedException()` so the ref
             // assembly is metadata-only. Keeps ALL metadata (signatures/types/supertypes/generics/attrs) intact —
             // only the body STATEMENTS change. This is what makes it safe for a bare-value kotlin.* primitive kept
@@ -162,10 +168,86 @@ sealed class ReferenceMetadataIndex
 
     readonly List<ReferenceAssembly> _assemblies;
 
-    ReferenceMetadataIndex(List<ReferenceAssembly> assemblies) => _assemblies = assemblies;
+    // Aggregate CALL-SUBSTITUTION index across all reference assemblies.
+    readonly Dictionary<string, string> _ownerAlias = new(StringComparer.Ordinal);   // Kotlin FQN -> BCL alias
+    readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
+    readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "<>dotkt_ClrH_*"
+    readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
+
+    // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
+    // kotlin.* -> CLR type map already hardcoded in this file). Listed here so member-call / construction
+    // substitution works even before kotc preserves the class @ClrTypeAlias attribute on the ref.dll. Only the
+    // reference primitives (Any/String) — value primitives keep their identity and are handled by type lowering.
+    static readonly IReadOnlyDictionary<string, string> FoundationalRefAliases = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["kotlin.Any"] = "System.Object",
+        ["kotlin.String"] = "System.String",
+        ["kotlin.Nothing"] = "System.Object",
+    };
+
+    ReferenceMetadataIndex(List<ReferenceAssembly> assemblies)
+    {
+        _assemblies = assemblies;
+        foreach (var asm in assemblies)
+        {
+            foreach (var kv in asm.DotKt.Aliases) _ownerAlias[kv.Key] = kv.Value;
+            foreach (var kv in asm.DotKt.TypeKinds) _ownerKind[kv.Key] = kv.Value;
+            foreach (var h in asm.DotKt.HelperTypes) _helperTypes.Add(h);
+            foreach (var m in asm.DotKt.MemberBindings)
+            {
+                if (!_membersByOwner.TryGetValue(m.Owner, out var list))
+                    _membersByOwner[m.Owner] = list = new List<MemberBinding>();
+                list.Add(m);
+            }
+        }
+    }
 
     public int Count => _assemblies.Count;
     public IReadOnlyList<ReferenceAssembly> Assemblies => _assemblies;
+
+    // ---- Call-substitution lookups (consumed by MemberCallSubstitution) ----
+
+    // A BIR owner token ("@kotlin.text.StringBuilder", "kotlin.collections.ArrayList[gp:E]", "clr:System.X") ->
+    // its bare Kotlin FQN ("kotlin.text.StringBuilder"). Strips decoration, the clr:/clrg: marker, and type args.
+    public static string BareOwnerFqn(string token)
+    {
+        var t = token.Trim().TrimStart('@');
+        foreach (var p in new[] { "clrg:", "clr:" })
+            if (t.StartsWith(p, StringComparison.Ordinal)) t = t[p.Length..];
+        var br = t.IndexOf('[');
+        if (br >= 0) t = t[..br];
+        return StripGenericArity(t);
+    }
+
+    // Resolve a member-call/construction OWNER to its BCL type. True for a @ClrTypeAlias / class-@ClrIntrinsic owner
+    // (or a foundational reference primitive). `kind` is the ref.dll type kind (class/struct/interface/enum).
+    public bool TryResolveClrOwner(string ownerToken, out string bcl, out string kind)
+    {
+        var fqn = BareOwnerFqn(ownerToken);
+        if (FoundationalRefAliases.TryGetValue(fqn, out bcl)) { kind = "class"; return true; }
+        if (_ownerAlias.TryGetValue(fqn, out bcl)) { kind = _ownerKind.GetValueOrDefault(fqn, "class"); return true; }
+        bcl = null; kind = null; return false;
+    }
+
+    // The @ClrIntrinsic BCL member name for owner.member (overload-disambiguated by arg count when possible).
+    public bool TryMemberIntrinsic(string ownerFqn, string memberName, int argCount, out string intrinsic)
+    {
+        intrinsic = null;
+        if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return false;
+        var cands = list.Where(m => m.Name == memberName && m.Intrinsic != null).ToList();
+        if (cands.Count == 0) return false;
+        intrinsic = (cands.FirstOrDefault(m => m.ParamCount == argCount) ?? cands[0]).Intrinsic;
+        return true;
+    }
+
+    // A rule-3 hoist candidate: owner.member exists, is concrete (non-abstract) and carries NO @ClrIntrinsic, so its
+    // real Kotlin body was hoisted by kotc to the static helper `<>dotkt_ClrH_<owner>`.
+    public bool IsRule3Member(string ownerFqn, string memberName) =>
+        _membersByOwner.TryGetValue(ownerFqn, out var list) &&
+        list.Any(m => m.Name == memberName && m.Intrinsic == null && !m.IsAbstract);
+
+    public static string HelperTypeName(string ownerFqn) =>
+        "<>dotkt_ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
 
     public IReadOnlyList<ResolutionCandidate> Resolve(CallSite site)
     {
@@ -536,7 +618,65 @@ sealed class ReferenceMetadataIndex
             metadata.Diagnostics.Add($"{Path.GetFileName(reference)}: metadata scan failed: {ex.GetType().Name}: {ex.Message}");
         }
 
+        // CALL-SUBSTITUTION index. Read via MetadataLoadContext (a metadata-only reflection read) — the runtime
+        // Assembly.LoadFrom above throws TypeLoadException on the metadata-only ref stdlib (throw-stub bodies +
+        // kotlin.* signatures) and aborts early, so the @ClrTypeAlias/@ClrIntrinsic labels never load through it.
+        ScanSubstitutionMetadata(reference, metadata);
+
         return metadata;
+    }
+
+    // Populate the substitution index (Aliases / TypeKinds / HelperTypes / MemberBindings) from the ref.dll using a
+    // MetadataLoadContext so the metadata-only assembly reads cleanly. Per-type try/catch: one malformed type is
+    // skipped, never aborting the whole scan (the failure mode that left Assembly.LoadFrom's index empty).
+    static void ScanSubstitutionMetadata(string reference, ReferenceDotKtMetadata metadata)
+    {
+        try
+        {
+            var full = Path.GetFullPath(reference);
+            var paths = new List<string>(Directory.GetFiles(RuntimeEnvironment.GetRuntimeDirectory(), "*.dll"));
+            var dir = Path.GetDirectoryName(full);
+            if (dir != null) paths.AddRange(Directory.GetFiles(dir, "*.dll"));
+            paths.Add(full);
+            using var mlc = new MetadataLoadContext(new PathAssemblyResolver(paths.Distinct(StringComparer.Ordinal)));
+            var asm = mlc.LoadFromAssemblyPath(full);
+
+            Type[] types;
+            try { types = asm.GetTypes(); }
+            catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).Cast<Type>().ToArray(); }
+
+            foreach (var type in types)
+            {
+                try
+                {
+                    // Index by the REAL Kotlin FQN (kotc emits "kotlin.String" etc. as the type name) so a BIR
+                    // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the renamed type
+                    // identity binding) or the legacy class-level @ClrIntrinsic/clr.Clr.
+                    var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
+                    metadata.TypeKinds[ownerFqn] = TypeKind(type);
+                    var classAlias = ClrAliasOf(type.GetCustomAttributesData());
+                    if (classAlias != null) metadata.Aliases[ownerFqn] = classAlias;
+                    if (ownerFqn.StartsWith("<>dotkt_ClrH_", StringComparison.Ordinal)) metadata.HelperTypes.Add(ownerFqn);
+
+                    foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                        metadata.MemberBindings.Add(new MemberBinding(
+                            ownerFqn,
+                            method.Name,
+                            method.GetParameters().Length,
+                            ClrIntrinsicOf(method.GetCustomAttributesData()),
+                            method.IsAbstract,
+                            method.IsStatic));
+                }
+                catch (Exception ex)
+                {
+                    metadata.Diagnostics.Add($"subst scan skip {type?.FullName}: {ex.GetType().Name}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            metadata.Diagnostics.Add($"{Path.GetFileName(reference)}: subst scan failed: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     static IEnumerable<Type> SafeTypes(Assembly asm, ReferenceDotKtMetadata metadata)
@@ -554,6 +694,23 @@ sealed class ReferenceMetadataIndex
 
     static bool HasAttribute(IList<CustomAttributeData> attrs, string fullName) =>
         attrs.Any(a => a.AttributeType.FullName == fullName);
+
+    // The class-level CLR binding: @ClrTypeAlias (the renamed type-identity binding) is preferred; the legacy
+    // class-level @ClrIntrinsic / clr.Clr are accepted for the not-yet-renamed bound classes (StringBuilder/Regex/
+    // collections). Returns the single ctor-arg (the .NET FQN), or null if the class is not CLR-bound.
+    static string ClrAliasOf(IList<CustomAttributeData> attrs)
+    {
+        var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrTypeAlias" or "kotlin.clr.ClrIntrinsic" or "clr.Clr");
+        return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
+    }
+
+    // The member-level CLR binding: @ClrIntrinsic("Name") (or AsDynamic / legacy clr.Clr). Returns the BCL member
+    // name (the call is rewritten to owner.Name), or null when the member carries no intrinsic (a rule-3 candidate).
+    static string ClrIntrinsicOf(IList<CustomAttributeData> attrs)
+    {
+        var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrIntrinsic" or "kotlin.clr.ClrIntrinsicAsDynamic" or "clr.Clr");
+        return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
+    }
 
     static int KotlinFunctionFlags(IList<CustomAttributeData> attrs)
     {
@@ -700,6 +857,14 @@ sealed class ReferenceDotKtMetadata
     public readonly List<KotlinFunctionMetadata> Functions = new();
     public readonly List<string> Diagnostics = new();
 
+    // CALL-SUBSTITUTION metadata (sourced from the ref.dll, consumed by MemberCallSubstitution; NOT serialized).
+    // ownerFqn (the Kotlin FQN, e.g. "kotlin.String") -> the BCL alias it binds to ("System.String"), from a
+    // class-level @ClrTypeAlias (the type-identity binding) or the legacy class-level @ClrIntrinsic/clr.Clr.
+    public readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
+    public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "<>dotkt_ClrH_*" rule-3 helpers
+    public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
+
     public JsonObject ToJson() => new()
     {
         ["fileClasses"] = new JsonArray(FileClasses.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
@@ -709,6 +874,10 @@ sealed class ReferenceDotKtMetadata
         ["diagnostics"] = new JsonArray(Diagnostics.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
     };
 }
+
+// A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the
+// @ClrIntrinsic BCL name or null (null + !IsAbstract = a rule-3 hoist candidate).
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic);
 
 sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool HasInlineBody)
 {
@@ -1563,6 +1732,209 @@ static class BirTypeLowering
             }
         }
 
+        result.Add(value[start..].Trim());
+        return result;
+    }
+}
+
+// CALL SUBSTITUTION. The bir2cir home of what kotc's clrName() member routing used to do: a member call /
+// construction whose OWNER is a CLR-bound type in the ref.dll is rewritten to a plain BCL call/new that ilemit
+// resolves against the runtime BCL. Sourced ENTIRELY from the ref.dll's @ClrTypeAlias (owner identity) and
+// @ClrIntrinsic (member name) labels — ilemit receives only `System.X.Member`, never a kotlin.* label.
+//
+// Three rewrites (mirrors docs/clr-stdlib-intrinsic-audit.md's three binding rules):
+//   1. construction `new T(..)` on a CLR-bound REFERENCE owner T -> `clrNew System.X(..)`.
+//   2. member `r.m(..)` / `T.m(..)` where m carries @ClrIntrinsic("Name") -> `clrInstance`/`clrStatic` System.X.Name.
+//   3. member m with NO @ClrIntrinsic but concrete (a real Kotlin body kotc hoisted to `<>dotkt_ClrH_<T>`) ->
+//      a static call to that helper, with the receiver threaded as the helper's first arg. Gated on the helper
+//      actually being present in the ref.dll (it is for @Clr-bound classes; for @ClrTypeAlias classes once kotc
+//      keys helper emission on @ClrTypeAlias) so we never emit a call to a non-existent helper.
+//
+// Runs ONLY in the substitute/app build (never the pure-Kotlin reference build) and BEFORE type lowering, so it
+// sees the kotlin.* owners. The emitted clr* nodes carry already-BCL `type` tokens; their argTypes/ret stay in the
+// kotlin.* vocabulary and are lowered by the subsequent BirTypeLowering pass (those keys are in its TypeKeys).
+static class MemberCallSubstitution
+{
+    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs) => Rewrite(root, refs);
+
+    static JsonNode Rewrite(JsonNode node, ReferenceMetadataIndex refs)
+    {
+        if (node is JsonObject obj)
+        {
+            var copy = new JsonObject();
+            foreach (var kv in obj)
+                copy[kv.Key] = kv.Value == null ? null : Rewrite(kv.Value, refs);   // children first (bottom-up)
+            return Transform(copy, refs);
+        }
+        if (node is JsonArray arr)
+        {
+            var copy = new JsonArray();
+            foreach (var item in arr) copy.Add(item == null ? null : Rewrite(item, refs));
+            return copy;
+        }
+        return node.DeepClone();
+    }
+
+    static JsonNode Transform(JsonObject node, ReferenceMetadataIndex refs)
+    {
+        return (node["k"] as JsonValue)?.GetValue<string>() switch
+        {
+            "new" => TransformNew(node, refs) ?? node,
+            "callInstance" => TransformCall(node, refs, instance: true) ?? node,
+            "callStatic" => TransformCall(node, refs, instance: false) ?? node,
+            _ => node,
+        };
+    }
+
+    // `new T(..)` on a CLR-bound REFERENCE owner -> clrNew. A value-type (struct) owner is left untouched: a value
+    // primitive keeps its identity (the inline-value-class / unsigned representation is a primitive concern handled
+    // by type lowering + kotc, not a member-call substitution).
+    static JsonNode TransformNew(JsonObject node, ReferenceMetadataIndex refs)
+    {
+        if (node["type"] is not JsonValue tv || !tv.TryGetValue<string>(out var ownerToken)) return null;
+        if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
+        if (kind is "struct" or "enum") return null;
+
+        var args = node["args"] as JsonArray ?? new JsonArray();
+        return new JsonObject
+        {
+            ["k"] = "clrNew",
+            ["type"] = bcl,
+            ["argTypes"] = InferArgTypes(node, args),
+            ["args"] = args.DeepClone(),
+        };
+    }
+
+    static JsonNode TransformCall(JsonObject node, ReferenceMetadataIndex refs, bool instance)
+    {
+        var ownerToken = (node[instance ? "ownerType" : "owner"] as JsonValue)?.GetValue<string>();
+        if (string.IsNullOrEmpty(ownerToken)) return null;
+        if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var _)) return null;
+
+        var member = (node["method"] as JsonValue)?.GetValue<string>();
+        if (string.IsNullOrEmpty(member)) return null;
+        var ownerFqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
+        var args = node["args"] as JsonArray ?? new JsonArray();
+
+        // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
+        if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
+            return ClrCallNode(node, bcl, intrinsic, member, args, instance);
+
+        // Rule 3: a concrete member of a CLR-bound class with NO @ClrIntrinsic carries a real Kotlin body, which kotc
+        // hoists to the static helper `<>dotkt_ClrH_<owner>` (driven by the SAME class binding that brought us here).
+        // `IsRule3Member` (ref.dll: the member is concrete + intrinsic-less) is the signal kotc hoisted it; the helper
+        // is emitted into the same runtime assembly. (A ref.dll helper-presence check is uselessly always-false: the
+        // ref assembly is metadata-only and emits no helper bodies — see kotc's clrHelperClassJson gate.)
+        if (refs.IsRule3Member(ownerFqn, member))
+            return Rule3HelperCall(node, refs, ownerFqn, member, args, instance);
+
+        return null;
+    }
+
+    // A clrInstance / clrStatic node. For a property accessor call (`get_X`/`set_X` whose intrinsic is the bare
+    // property name) emit clrPropGet/clrPropSet per the property-name convention; otherwise a plain method call.
+    static JsonNode ClrCallNode(JsonObject node, string bcl, string intrinsic, string member, JsonArray args, bool instance)
+    {
+        var argTypes = InferArgTypes(node, args);
+        var ret = RetToken(node);
+
+        var isGet = member.StartsWith("get_", StringComparison.Ordinal) && args.Count == 0;
+        var isSet = member.StartsWith("set_", StringComparison.Ordinal) && args.Count == 1;
+        if (instance && (isGet || isSet))
+        {
+            var prop = intrinsic.StartsWith("get_", StringComparison.Ordinal) || intrinsic.StartsWith("set_", StringComparison.Ordinal)
+                ? intrinsic[4..] : intrinsic;
+            var pg = new JsonObject
+            {
+                ["k"] = isGet ? "clrPropGet" : "clrPropSet",
+                ["type"] = bcl,
+                ["name"] = prop,
+                ["static"] = false,
+                ["recv"] = node["recv"]?.DeepClone(),
+            };
+            if (isGet && ret != null) pg["retType"] = ret;
+            if (isSet) pg["value"] = args[0].DeepClone();
+            return pg;
+        }
+
+        var call = new JsonObject
+        {
+            ["k"] = instance ? "clrInstance" : "clrStatic",
+            ["type"] = bcl,
+            ["method"] = intrinsic,
+            ["argTypes"] = argTypes,
+        };
+        if (ret != null) call["ret"] = ret;
+        if (instance) call["recv"] = node["recv"]?.DeepClone();
+        call["args"] = args.DeepClone();
+        return call;
+    }
+
+    // Rule-3: route to `<>dotkt_ClrH_<owner>.<member>(recv?, args..)`. The receiver is threaded as the helper's
+    // first argument (the hoisted static's `__self`); type args are carried through when present.
+    static JsonNode Rule3HelperCall(JsonObject node, ReferenceMetadataIndex refs, string ownerFqn, string member, JsonArray args, bool instance)
+    {
+        var hargs = new JsonArray();
+        if (instance && node["recv"] != null) hargs.Add(node["recv"].DeepClone());
+        foreach (var a in args) hargs.Add(a?.DeepClone());
+
+        var call = new JsonObject
+        {
+            ["k"] = "callStatic",
+            ["owner"] = ReferenceMetadataIndex.HelperTypeName(ownerFqn),
+            ["method"] = member,
+            ["args"] = hargs,
+        };
+        if (node["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
+        return call;
+    }
+
+    // The call's parameter types, used as the clr* argTypes overload key. Prefer kotc's `sig` (a comma-joined
+    // param-type list); else infer each arg's own type token; else empty. Left in the kotlin.* vocabulary —
+    // BirTypeLowering lowers `argTypes` afterwards.
+    static JsonArray InferArgTypes(JsonObject node, JsonArray args)
+    {
+        var sig = (node["sig"] as JsonValue)?.GetValue<string>();
+        var result = new JsonArray();
+        if (!string.IsNullOrWhiteSpace(sig))
+        {
+            foreach (var p in SplitTopLevel(sig)) result.Add(p);
+            if (result.Count == args.Count) return result;
+            result = new JsonArray();
+        }
+        foreach (var a in args) result.Add(InferExpressionType(a));
+        return result;
+    }
+
+    static string RetToken(JsonObject node)
+    {
+        foreach (var key in new[] { "dynRet", "retType", "ret" })
+            if (node[key] is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s))
+                return s;
+        return null;
+    }
+
+    static string InferExpressionType(JsonNode node)
+    {
+        if (node is not JsonObject obj) return "object";
+        foreach (var key in new[] { "type", "retType", "resultType", "ret", "dynRet" })
+            if (obj[key] is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s))
+                return s;
+        return "object";
+    }
+
+    static IReadOnlyList<string> SplitTopLevel(string value)
+    {
+        if (value.Length == 0) return Array.Empty<string>();
+        var result = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '[') depth++;
+            else if (value[i] == ']') depth--;
+            else if (value[i] == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
+        }
         result.Add(value[start..].Trim());
         return result;
     }
