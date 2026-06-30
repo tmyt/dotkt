@@ -174,6 +174,14 @@ static class FacadeGen
             // class that holds it (EmitOneType then emits `file`/`tlfun`). `import geom.*` already yields the facade
             // type directly via TypesInNamespace, so this only covers the single-function form.
             if (seed == null) seed = ResolveTopLevelFacade(dn);
+            // A MEMBER import (`import Probe.Ext.tripled` — a member of an object/static class, e.g. a C#-origin
+            // extension fun) doesn't resolve to a type; inject its CONTAINING type (the prefix) so the member comes into
+            // scope. Walk successive prefixes (handles a member of a nested type) and stop at the first that resolves.
+            for (var prefix = dn; seed == null && prefix.Contains('.'); )
+            {
+                prefix = prefix.Substring(0, prefix.LastIndexOf('.'));
+                seed = Resolve(prefix) ?? Resolve(prefix + "`1") ?? Resolve(prefix + "`2") ?? Resolve(prefix + "`3");
+            }
             if (seed == null) { Console.Error.WriteLine($"warning: .NET import resolved to no type (injected nothing): {typeName}"); continue; }
             seeds++; Enqueue(seed);
         }
@@ -208,6 +216,35 @@ static class FacadeGen
     {
         var a = m.GetCustomAttributesData().FirstOrDefault(x => (x.AttributeType.Name == "ClrIntrinsic" || x.AttributeType.Name == "ClrTypeAlias") && x.ConstructorArguments.Count == 1);
         return a?.ConstructorArguments[0].Value as string;
+    }
+
+    // A GENUINE .NET interop type: a real BCL/3rd-party type (not a `kotlin.*` stdlib shape, not a @Clr-bound stdlib
+    // type). Its injected members are REAL BCL members addressed BY NAME, so each is emitted with an identity
+    // `clr:<.NETName>` binding — the consumer's `clrInteropName` then resolves it as a DIRECT BCL member and the backend
+    // routes the call straight to that BCL member. WITHOUT the binding, the backend's rule-3 (a non-@Clr concrete member
+    // of a CLR-bound class) wrongly hoists the call to a non-existent `<>dotkt_ClrH_<Type>` static helper (the helper is
+    // only emitted for @Clr STDLIB classes with real Kotlin bodies; a facadegen-injected member has no body). A
+    // `kotlin.*`/@Clr type is EXCLUDED: those carry their substitution via @ClrIntrinsic (mclr) and their bodied members
+    // are legitimate rule-3 hoist candidates — stamping identity bindings on them would suppress that hoist.
+    static bool GenuineNet(Type t) =>
+        ClrAttrName(t) == null && !((t.FullName ?? t.Namespace ?? "").StartsWith("kotlin.")) && (t.Namespace ?? "") != "kotlin";
+
+    // .NET operator method (`op_Addition`, `op_UnaryNegation`, …) -> the Kotlin `operator fun` name. Binary ops take the
+    // LEFT operand as the receiver (drop param[0]); unary ops take the sole operand as the receiver (no value params).
+    static readonly Dictionary<string, string> OPERATOR_NAMES = new()
+    {
+        ["op_Addition"] = "plus", ["op_Subtraction"] = "minus", ["op_Multiply"] = "times", ["op_Division"] = "div",
+        ["op_Modulus"] = "rem", ["op_UnaryNegation"] = "unaryMinus", ["op_UnaryPlus"] = "unaryPlus",
+        ["op_Increment"] = "inc", ["op_Decrement"] = "dec",
+    };
+    static readonly HashSet<string> UNARY_OPERATORS = new() { "unaryMinus", "unaryPlus", "inc", "dec" };
+
+    // A C#-origin extension method (`static T M(this X self, …)`) carries [ExtensionAttribute]. Recognize it so the
+    // first param is restored as a Kotlin extension receiver (`,ext`), exactly like a DotKt-origin `__self` extension.
+    static bool IsExtensionMethod(MethodInfo m)
+    {
+        try { return m.GetCustomAttributesData().Any(c => c.AttributeType.FullName == "System.Runtime.CompilerServices.ExtensionAttribute"); }
+        catch { return false; }
     }
 
     static void EmitOneType(Type t, StringBuilder sb)
@@ -457,14 +494,35 @@ static class FacadeGen
                 var virt = m.IsVirtual && !m.IsFinal;
                 var retTok = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + RetSuffix(m);
                 // A MEMBER extension function (`class C { fun T.f() }`) -> first param `__self`; `,ext` so the injector
-                // restores the extension receiver. `,inline` carries the spliceable body (composes with suspend/generic).
-                var isExt = ps.Length > 0 && ps[0].Name == "__self";
+                // restores the extension receiver. A C#-origin `[Extension]` static method is ALSO an extension (its first
+                // param — any name — is the receiver). `,inline` carries the spliceable body (composes with suspend/generic).
+                var isExt = ps.Length > 0 && (ps[0].Name == "__self" || IsExtensionMethod(m));
                 var mod = FunModifier(Modifier(prot.Value, m.IsAbstract, virt), k) + (KotlinInlineBody(m) != null ? ",inline" : "") + (isExt ? ",ext" : "");
                 var toks = new List<string> { "fun", m.Name, retTok, mod };
+                if (GenuineNet(t)) toks.Add("clr:" + m.Name);   // identity BCL-member binding (see GenuineNet) -> direct .NET call
                 toks.AddRange(gp);
                 toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t)));
                 sb.Append(string.Join(" ", toks) + "\n");
             }
+            // .NET OPERATORS (`op_Addition`/`op_UnaryNegation`/…) are STATIC methods (IsSpecialName, so skipped above).
+            // Surface them as Kotlin `operator fun`s on a genuine .NET value/ref type: the LEFT operand is the receiver,
+            // so a binary op drops param[0] (kept as the receiver) and a unary op has no value params. Each carries
+            // `clr:op_*` so the consumer's backend re-prepends the receiver and emits the static `op_*` call
+            // (BirEmitter `member.startsWith("op_")`). Only when param[0] IS the declaring type (a member operator on `t`).
+            if (!isStatic && GenuineNet(t))
+                foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                {
+                    if (!m.IsSpecialName || !OPERATOR_NAMES.TryGetValue(m.Name, out var kop)) continue;
+                    var unary = UNARY_OPERATORS.Contains(kop);
+                    var ps = m.GetParameters();
+                    if (ps.Length != (unary ? 1 : 2) || ps[0].ParameterType.FullName != t.FullName) continue;
+                    if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
+                    var vps = unary ? Array.Empty<ParameterInfo>() : ps.Skip(1).ToArray();
+                    if (!seen.Add("op:" + kop + "(" + Sig(vps, t) + ")")) continue;
+                    var toks = new List<string> { "fun", kop, MapRet(m.ReturnType, t), "final,operator", "clr:" + m.Name };
+                    toks.AddRange(vps.Select((p, i) => ParamTok(p, i, t)));
+                    sb.Append(string.Join(" ", toks) + "\n");
+                }
             // (explicit impl) Emit concrete stubs for in-scope members of the generic interfaces this class implements
             // but doesn't expose PUBLICLY (e.g. `List<T>.IsReadOnly`, an explicit `ICollection<T>` impl). `c : I` in
             // .NET guarantees `c` implements every member of `I`, so we can always stub the non-public ones — that
