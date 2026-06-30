@@ -486,15 +486,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun scopeSuspendCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? =
 		scopeCall(e)?.takeIf { (_, recv, lambda) -> lambda.function.body?.let { containsSuspend(it) } == true || containsSuspend(recv) }
 
-	// A primitive value class substitutes to a BCL value type (kotlin.Int -> System.Int32) at every use; its Kotlin
-	// declaration is a degenerate empty class (no field, intrinsic members) -> do NOT emit it in the runtime. Driven by
-	// @kotlin.clr.ClrTypeAlias on the primitive (NOT a hard-coded compiler list, per user 2026-06-30: separate the
-	// @ClrIntrinsic/@ClrTypeAlias roles). The @ClrTypeAlias read is kept LOCAL here — it must NOT leak into clrName (the
-	// member call-substitute reader), else a primitive's clrName flips null->"System.Int32" and its member calls resolve
-	// to non-existent System.Int32 methods (ilemit ApplyTypeArgs null-method crash). Gated on stdlibSubstitute so the
-	// reference assembly keeps the primitive + its @ClrTypeAlias attribute; the runtime/app substitute it away.
-	private fun hasClrTypeAlias(k: IrClass): Boolean = k.annotations.any { (it as? IrConstructorCall)?.type?.classFqName?.asString() == "kotlin.clr.ClrTypeAlias" }
-	internal fun substitutedAway(k: IrClass): Boolean = clrName(k) != null || (stdlibSubstitute && hasClrTypeAlias(k))
+	// CLR-bound (@ClrTypeAlias) TYPE-STRIP — MOVED to bir2cir (kotc reads NEITHER @ClrTypeAlias NOR @ClrIntrinsic).
+	// A @ClrTypeAlias class/interface/primitive (kotlin.Int, kotlin.collections.List, kotlin.text.StringBuilder, …) is
+	// substituted to a BCL type at every use and must NOT be emitted as a real CLR type in the rt/app build. kotc no
+	// longer reads the annotation to strip it: it emits EVERY type as ordinary Kotlin, and bir2cir's AliasHelperHoist
+	// (driven by the ref.dll @ClrTypeAlias index) DROPS the alias type def (hoisting a class's rule-3 members into the
+	// <>dotkt_ClrH_* helper; an interface/object alias is dropped with no helper). The drop is a no-op in the REFERENCE
+	// build (AliasHelperHoist is skipped there), so the ref assembly keeps the pure-Kotlin @ClrTypeAlias shapes verbatim.
 	fun emitFile(file: IrFile): String {
 		fileEntry = file.fileEntry
 		// Per-FILE lifted state. One BirEmitter instance processes every file in turn, so these MUST be reset here —
@@ -516,35 +514,26 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			.filter { it.origin.toString() == "DEFINED" && !isAwaitIntrinsic(it) && clrName(it) == null && it.name.asString() !in setOf("byref", "stackBuffer") }
 			.filterNot { skipStdlibHighArityFunctionType(it) }
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
-		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && !substitutedAway(it) && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
+		// @ClrTypeAlias classes (collections/StringBuilder/unsigned/primitives/String/…) are emitted here as ORDINARY
+		// types; bir2cir's AliasHelperHoist drops them (and hoists a class's rule-3 members). kotc no longer strips them.
+		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
 		// `object Foo { ... }` (non-companion) -> a singleton class with a static `INSTANCE` field; `IrGetObjectValue`
 		// loads it. The shared-state-via-`object` case (feedback item 10). Companion/anonymous objects are handled
 		// elsewhere; .NET-injected `object`s (Math, …) are static call sites, not user singletons.
-		val objects = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.OBJECT && !it.isCompanion && !substitutedAway(it) }
-		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && !substitutedAway(it) }
+		val objects = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.OBJECT && !it.isCompanion }
+		// @ClrTypeAlias interfaces (Comparable/Iterable/Collection/List/…) are emitted as ordinary interfaces; bir2cir
+		// drops them (no helper for a non-class kind). At use-sites BirTypeLowering substitutes them to the BCL interface.
+		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE }
 		val enums = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ENUM_CLASS }
-		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS && !substitutedAway(it) }
+		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS }
 		// Only USER properties (origin DEFINED) — a consuming module's FIR also holds plugin-INJECTED top-level props
 		// (restored extension properties from a referenced DotKt assembly); those are the library's, not ours to emit.
 		val topProps = file.declarations.filterIsInstance<IrProperty>().filter { it.origin.toString() == "DEFINED" }
-		if (functions.isEmpty() && classes.isEmpty() && objects.isEmpty() && interfaces.isEmpty() && enums.isEmpty() && annClasses.isEmpty() && topProps.isEmpty()) {
-			// rule-3-hoist MIGRATION (kotc -> bir2cir, COMPLETE for hoisting): an "alias-only" file — its sole content is
-			// a CLR-bound (@ClrTypeAlias) class whose concrete intrinsic-less members carry real bodies — used to be
-			// DROPPED right here. kotc instead emits these alias classes as PLAIN BIR types: bir2cir reads the ref.dll
-			// @ClrTypeAlias index, hoists their rule-3 members into <>dotkt_ClrH_<owner>, and drops the original type
-			// (AliasHelperHoist). The MIXED-file alias classes (StringBuilder/UInt/collections/Regex) now go through the
-			// SAME plain-emit path (the normal-branch `aliasPlainTypes` below) — kotc's helper SYNTHESIS is deleted.
-			// hasHoistableBody (>=1 bodied member, pure-Kotlin — no @ClrIntrinsic read) gates plain re-emission, so a
-			// body-less primitive alias stays stripped (bir2cir lowers its type token directly).
-			val aliasHoistClasses = file.declarations.filterIsInstance<IrClass>()
-				.filter { it.kind == ClassKind.CLASS && substitutedAway(it) && hasHoistableBody(it) }
-			if (aliasHoistClasses.isEmpty()) return ""
-			fileClass = fileClassName(file)
-			val plainTypes = aliasHoistClasses.map { typeDef(it) }   // may lift lambdas -> include lifted below
-			val typesJson = (plainTypes + liftedTypes).joinToString(",")
-			val methodsJson = liftedMethods.joinToString(",")
-			return """{"fileClass":${str(fileClass)},"hasMain":false,"fields":[],"methods":[$methodsJson],"types":[$typesJson]}"""
-		}
+		// A genuinely empty file emits nothing. (An "alias-only" file — e.g. String.kt / Primitives.kt / Comparable.kt —
+		// is NO LONGER empty: its @ClrTypeAlias type now flows through `classes`/`interfaces` above and is emitted as an
+		// ordinary type below, then dropped/hoisted by bir2cir's AliasHelperHoist. No special branch is needed.)
+		if (functions.isEmpty() && classes.isEmpty() && objects.isEmpty() && interfaces.isEmpty() && enums.isEmpty() && annClasses.isEmpty() && topProps.isEmpty())
+			return ""
 		val className = fileClassName(file)
 		fileClass = className
 		// Entry point: top-level `fun main()` or `fun main(args: Array<String>)`.
@@ -600,20 +589,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
 		// kPropertyDefs/propIfaceDefs, which read flags/maps the producers populate).
 		val synthDelegateTypes = synthDelegateDefs.joinToString(",").let { if (it.isEmpty()) emptyList() else listOf(it) }
-		// Rule-3 static-helper hoist (MIGRATED to bir2cir): a CLR-bound (@ClrTypeAlias) class whose concrete
-		// intrinsic-less members carry real bodies (StringBuilder/collections/Regex/unsigned — the MIXED files — plus
-		// the alias-only String/Char/Boolean) is emitted here as a PLAIN BIR type. kotc no longer SYNTHESIZES the
-		// <>dotkt_ClrH_<owner> helper (clrHelperClassJson is deleted): bir2cir's AliasHelperHoist reads the ref.dll
-		// @ClrTypeAlias index, hoists those rule-3 members into the helper, and DROPS this alias type before ilemit.
-		// kotc's job is reduced to "emit the bound type as ordinary Kotlin"; the Kotlin<->CLR drop+hoist is bir2cir's.
-		// Gate: substitutedAway (a bound type, excluded from `classes` above) AND hasHoistableBody (>=1 bodied member —
-		// so a body-less PRIMITIVE alias like kotlin.Int is NOT re-emitted: it stays stripped and bir2cir lowers its
-		// type token directly). Restricted to CLASS — an @ClrTypeAlias interface (Comparable) is abstract, no helper.
-		// Computed after `methods` (like the old clrHelperTypes) so the ordering of any body-registered synth types is
-		// unchanged.
-		val aliasPlainTypes = file.declarations.filterIsInstance<IrClass>()
-			.filter { it.kind == ClassKind.CLASS && substitutedAway(it) && hasHoistableBody(it) }.map { typeDef(it) }
-		val types = (typeDefs + aliasPlainTypes + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
+		// The CLR-bound (@ClrTypeAlias) classes are already in `typeDefs` (they flow through `classes` like any other
+		// type — kotc no longer strips them). bir2cir's AliasHelperHoist drops each alias type def and, for a class,
+		// hoists its rule-3 members into the <>dotkt_ClrH_<owner> static helper. kotc synthesizes NO helper itself.
+		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
 
@@ -1268,24 +1247,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]}"""
 	}
 
-	// ===== Rule 3 (CLR binding): static-helper hoist — SYNTHESIS lives in bir2cir =====
+	// ===== Rule 3 (CLR binding): static-helper hoist — SYNTHESIS + type-strip live in bir2cir =====
 	// A concrete intrinsic-less member WITH A BODY of a CLR-bound (@ClrTypeAlias) class has no home — the class becomes
 	// a BCL type and is NOT emitted as itself. Its body is hoisted to a static helper `<>dotkt_ClrH_<Class>` (dispatch
-	// receiver -> a leading `__self` param). kotc no longer SYNTHESIZES that helper (clrHelperMembers/clrHelperMethod/
-	// clrHelperClassJson are deleted — they read @ClrIntrinsic, a CLR concern): kotc emits the alias class as a PLAIN
-	// BIR type and bir2cir's AliasHelperHoist (ref.dll-driven) hoists the rule-3 members + drops the type. kotc only
-	// decides "does this bound type carry hoistable bodies, so re-emit it plain rather than fully strip it" via the
-	// pure-Kotlin [hasHoistableBody] (no annotation read).
+	// receiver -> a leading `__self` param). kotc no longer reads any @Clr annotation here: it emits the alias type as
+	// ordinary Kotlin, and bir2cir's AliasHelperHoist (ref.dll-driven) hoists the rule-3 members + drops the type.
+	// `clrHelperName` is retained only for the facadegen .NET-interop rule-3 CALL routing below (an injected .NET owner).
 	internal fun clrHelperName(cls: IrClass): String = "<>dotkt_ClrH_" + typeName(cls).replace(Regex("[^A-Za-z0-9]"), "_")
-
-	/** Whether a CLR-bound class has at least one bodied, non-property, non-fake-override member — i.e. a member bir2cir
-	 *  could hoist into the `<>dotkt_ClrH_<Class>` helper. PURE KOTLIN: reads only body/property/fake-override, never an
-	 *  @Clr annotation. Over-inclusive vs the actual rule-3 set (it also counts @ClrIntrinsic stub bodies), which is
-	 *  harmless: bir2cir's IsRule3Member re-filters and simply DROPS an intrinsic-only alias type with no real hoist. A
-	 *  body-less primitive alias (kotlin.Int — abstract operators) returns false, so it stays stripped. */
-	internal fun hasHoistableBody(cls: IrClass): Boolean =
-		cls.declarations.filterIsInstance<IrSimpleFunction>()
-			.any { it.body != null && it.correspondingPropertySymbol == null && !it.isFakeOverride }
 
 	/** `infix`/`operator` flags as BIR JSON fragments (only emitted when set), shared by the regular + suspend paths. */
 	internal fun kotlinModsJson(fn: IrSimpleFunction): String =
@@ -4266,8 +4234,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  sources are mutually exclusive per build: the stdlib build (`CLR_TYPES_METADATA=""`) has an EMPTY registry +
 	 *  `appColl`/collection-maps gated off (`!stdlibCompile`), so its only clrName source IS the annotation -> dropping
 	 *  it leaves a plain call for bir2cir; an app build resolves the stdlib from the jar, which drops `@ClrIntrinsic`, so
-	 *  the annotation source is already absent -> [clrInteropName] == [clrName] there. Type encoding ([netType]) and the
-	 *  type-strip ([substitutedAway]) intentionally keep `useAnnotation=true` — those are separate concerns. */
+	 *  the annotation source is already absent -> [clrInteropName] == [clrName] there. Type encoding ([netType]) still
+	 *  keeps `useAnnotation=true` — a separate concern. (The @ClrTypeAlias type-strip is gone: bir2cir drops alias types.) */
 	internal fun clrInteropName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = false)
 
 	private fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer, useAnnotation: Boolean): String? {

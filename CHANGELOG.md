@@ -6,6 +6,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Changed
+- **`@ClrTypeAlias` type-STRIP moved kotc → bir2cir (layer-purity).** kotc no longer reads `@ClrTypeAlias` to strip a
+  CLR-bound type from emission: `substitutedAway` / `hasClrTypeAlias` / `hasHoistableBody` and the `aliasPlainTypes` +
+  "alias-only file" branches are **deleted**. kotc now emits EVERY type as ordinary Kotlin (a primitive `kotlin.Int`,
+  the `kotlin.collections.List` interface, `kotlin.text.StringBuilder`, …); bir2cir's `AliasHelperHoist` DROPS each
+  alias type def — hoisting a class's rule-3 members into the `<>dotkt_ClrH_*` helper, and dropping an interface/object
+  alias with NO helper (a new `kind == "class"` guard, so a ref.dll default-interface-method can't false-positive into a
+  bogus interface helper). The rt-stdlib emit is unchanged in IL (still 14 helpers; the only CIR deltas are internal
+  label-id renumbering from the new type-emission order, a now-defined `<>dotkt_CharSequence` that `kotlin.String`'s
+  helper already referenced, and the removal of 4 pointless **empty** file-classes — Primitives/Comparable/Any/MathH —
+  which bir2cir now skips when an alias-only file lowers to nothing). The reference build is untouched (the strip was
+  always a no-op there: `clrName` is null in the ref, so the old `substitutedAway` never fired). Drives kotc toward
+  "reads NEITHER `@ClrIntrinsic` NOR `@ClrTypeAlias`": the `@ClrTypeAlias` read is now gone except the fun-interface-SAM
+  alias lookup; what remains is the `clrName`/`netType` member-call + type maps.
 - **Rule-3 static-helper SYNTHESIS moved kotc → bir2cir (layer-purity, MIXED-file hoist).** kotc no longer synthesizes
   the `<>dotkt_ClrH_<owner>` helper for a CLR-bound (`@ClrTypeAlias`) class: `clrHelperClassJson`/`clrHelperMethod`/
   `clrHelperMembers` (which read `@ClrIntrinsic`) are **deleted**. kotc now emits EVERY bound alias class with hoistable
