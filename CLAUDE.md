@@ -37,6 +37,14 @@
     **never** in kotc/`BirEmitter` — `compiler-layer-responsibilities` decides it. So "wire it into
     BirEmitter or move it to bir2cir?" is not a real fork: it's bir2cir.
 - This project is **unpublished**: prefer the cleanest design over backward compatibility. Break freely.
+- **NO compat shims. NO dual-track. Delete the legacy path in the SAME change (2026-06-30, binding, user-directed).**
+  Maintaining two systems behind a `compat` flag — e.g. `--compat-bir` kept alongside `--native-cir` — is **the
+  root cause** of the blurred layer boundaries: as long as the old path survives, CLR knowledge keeps lingering in
+  kotc/ilemit instead of being forced into bir2cir. So, from this moment: **never keep old code behind a
+  `compat`/legacy flag or a "both paths" switch.** When a layer is being moved to the 4-layer architecture
+  (facadegen / kotc / bir2cir / ilemit), **delete the legacy code as part of that change** — do not preserve it "just
+  in case". `--native-cir` (the clean 4-layer) is the ONLY path; `--compat-bir` is to be **removed**, not defaulted-
+  away. Always choose a clean rebuild over an incremental compat shim, even when the rebuild is larger.
 - You may use **Codex** to discuss design.
 
 # Build & test (do NOT guess commands)
