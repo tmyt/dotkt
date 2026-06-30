@@ -5,7 +5,30 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+- **App-consume of the rt stdlib: referenced top-level stdlib funs now resolve.** A top-level stdlib function called
+  from an app (`xs.getOrElse(i){…}`, `xs.first()`, …) is emitted by kotc as `callStatic owner=null`; ilemit's
+  `FindStatic` only searches THIS assembly's file-classes, so it threw `static method not found`. bir2cir now reads
+  the ref.dll for non-intrinsic file-class statics and, in an **app** build (`DOTKT_STDLIB_COMPILE` unset),
+  attributes such an owner-less call to the file-class it actually lives in (`kotlin.collections._CollectionsKt`),
+  disambiguated by the call's receiver type when overloaded across file-classes (CollectionsKt vs ArraysKt vs MapsKt).
+  ilemit's owner-present `FindMethod` then resolves it by reflection against the runtime stdlib (the same path the
+  iterator bridge already uses). Gated off for the stdlib self-build (the fun is local there) and when the name is
+  locally defined; the rt/ref stdlib CIR is byte-identical after the change. New sample `cases/ktproj-coll` builds and
+  runs a practical collections app (List local + `first`/`getOrElse`/`contains`/`indexOf`/`count`/`isEmpty`/`take`) via
+  MSBuild `dotnet build`/`dotnet run`; wired into `verify-ktproj.sh`.
+- **ilemit picks the arity-matching overload of a referenced file-class static.** The reflected-method lookup used an
+  unconstrained `GetMethod(name)` that threw `AmbiguousMatchException` and fell back to an arbitrary pick, emitting a
+  stack-mismatched call (`InvalidProgramException` at run) for e.g. `_CollectionsKt.first(List<T>)` vs
+  `first(Iterable<T>, predicate)`. It now prefers the overload whose parameter count matches the call's `sig`.
+
 ### Changed
+- **verify-il routes the migrated `m2`/`mi1`/`c1net` samples through the facadegen import path.** `m2`/`mi1` consume
+  BCL types via `import System.X` (System.Math, StringBuilder) but ran under a bare `il_check` that injects nothing —
+  moved to a new `il_check_imports` (scan-imports + facadegen `--meta`, no `runtime.cs`). `c1net` consumes its own
+  `runtime.cs` types via `import Probe.X` — moved off `il_check_ref` (no import scan, the dead `@Clr`-facade path) onto
+  `il_check_inject` (build runtime + scan imports + `--ref`). `il_check_ref` stays for the coroutine samples that ship
+  a `runtime.cs` but import nothing.
 - **bir2cir is now the single-path owner of Kotlin→CLR type substitution.** The `CompatBir` verbatim-copy mode and
   the `--compat-bir`/`--native-cir` output-selection flags are gone — there is one path: a real type-lowering pass
   rewrites the Kotlin type vocabulary in the BIR into the CLR-codegen vocabulary ilemit consumes, emitting a

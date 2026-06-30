@@ -24,6 +24,21 @@
 8. **Round-trip comprehensive review** — audit for any Kotlin semantics the Roundtrip attributes CANNOT restore
    (find the gaps, not just the known ones).
 9. **MSBuild practical cases** — implement a variety of practical sample cases and confirm they build AND run via MSBuild.
+   *(in progress)* DONE: the app-consume gap for a **List local + referenced top-level stdlib funs** — bir2cir attributes
+   a `callStatic owner=null` to its rt-dll file-class owner (Gap B), ilemit picks the arity-matching overload;
+   `cases/ktproj-coll` builds+runs (`first`/`getOrElse`/`contains`/`indexOf`/`count`/`isEmpty`/`take`). REMAINING app-consume gaps:
+   - **Gap A — `for (x in list)`** (the dual-representation Iterator): kotc types the desugared `<iterator>` var
+     `@kotlin.collections.Iterator[..]` (KeyNotFound in ilemit `_types`) and routes `hasNext`/`next` to a synthetic
+     `<>dotkt_KIterator_*` interface, while the rt dll has the real generic `kotlin.collections.Iterator<E>`. Fix layer =
+     **bir2cir** (Codex-confirmed): in an app build rewrite the var-type token + the synthetic call-owner to
+     `clrg:kotlin.collections.Iterator[E]`, gated so the stdlib self-build (where Iterator is locally emitted) is untouched.
+   - **Collection-BUILDING ops (`map`/`filter`/`sorted`/`reversed`)** now reach the stdlib body (Gap B routed them) but
+     crash *inside* it: `mapTo`/`filterTo` do `ICollection<T>.Add` on the result `ArrayList`, which throws
+     `EntryPointNotFoundException` — the rt stdlib's **mutable-collection (ArrayList) actuals** are not bound. Layer =
+     **stdlib** (the mutable-collection platform actuals), not the compiler.
+   - **Element-type-overloaded statics (`sum`)**: arity alone can't disambiguate `sum(Iterable<Int>)` vs `sum(Iterable<Double>)`
+     (both 1 param) — needs element-type matching in ilemit's reflected lookup or a bir2cir owner+overload pick. `last`/`lastIndex`
+     remain blocked by the known generic-ext-property-getter-typeargs bug.
 
 ## Cross-cutting categories (not in the linear sequence)
 
