@@ -4,7 +4,9 @@
   <PropertyGroup>
     <DotKtToolchainDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../tools/'))</DotKtToolchainDir>
     <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(DotKtToolchainDir)kotc/bin/kotc</DotKtCompiler>
-    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(DotKtToolchainDir)kotlin-stdlib.jar</DotKtStdlib>
+    <!-- kotc -classpath: the CLR FRONTEND stdlib jar (built FROM our CLR stdlib sources), REPLACING the JVM
+         kotlin-stdlib.jar whose java.util.* typealiases leaked into the frontend. kotlin.* resolves from THIS jar. -->
+    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(DotKtToolchainDir)kotlin-stdlib-clr-frontend.jar</DotKtStdlib>
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(DotKtToolchainDir)bir2cir/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(DotKtToolchainDir)ilemit/ilemit.dll</DotKtIlEmit>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(DotKtToolchainDir)facadegen/facadegen.dll</DotKtFacadeGen>
