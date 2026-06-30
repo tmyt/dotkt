@@ -126,6 +126,22 @@ The CLR-specific lowering still living in `BirEmitter` is **legacy being migrate
 when you touch it, move it toward the boundary above, don't entrench it. (MEMORY
 `compiler-layer-responsibilities`; plan in `docs/bir2cir-migration-inventory.md`.)
 
+> ### BIR type tokens are pure Kotlin FQN identities — kotc emits NO CLR-resolution marker (2026-06-30, user-confirmed)
+> The BIR's `@Name` (this-assembly-emitted → ilemit `_types`), `clr:Name` (a referenced .NET type),
+> `clrg:Name[args]` (a referenced .NET *generic* type), and the primitive **shorthand** (`int`/`long`/
+> `bool`/`char`/`void`/`object`/`string`/…) prefixes ALL encode a **CLR-resolution decision** — *where*
+> a type lives (local vs referenced) and *what kind* it is (primitive / generic / value). That is CLR
+> knowledge, so it must NOT be produced by kotc. **kotc emits ONLY the type's FQN identity** — `kotlin.Int`,
+> `kotlin.collections.List`, `System.Exception` — and nothing else. **bir2cir / ilemit DERIVE the
+> resolution** from that FQN: substitute a stdlib type to its CLR form (gated — see below), resolve a
+> referenced .NET type, select the primitive IL opcode, construct the generic, look up an in-assembly
+> emitted type. The whole `@`/`clr:`/`clrg:`/shorthand vocabulary lives **below** the kotc boundary.
+> **Primitive substitution is mode-gated and owned by bir2cir:** in the **reference** build
+> (`DOTKT_STDLIB_COMPILE=1`, no `SUBSTITUTE`) a primitive STAYS `kotlin.Int` (the ref is pure-Kotlin
+> metadata; its method bodies are all squashed to `throw NotImplementedException`, so a bare-value
+> `kotlin.Int` never reaches arithmetic/box IL); in **every other** build (rt, app — anything non-ref)
+> `kotlin.Int` lowers to the CLR primitive. This is the in-flight `--native-cir`/CompatBir-deletion work.
+
 # The cardinal rule: do NOT special-case the compiler
 
 There is now a real CLR stdlib (`runtime/stdlib/`). The whole point of compiling it is to **retire**
