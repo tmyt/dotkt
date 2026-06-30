@@ -14,6 +14,7 @@ package kotlin
  * Represents a 8-bit signed integer.
  * On the JVM, non-nullable values of this type are represented as values of the primitive type `byte`.
  */
+@kotlin.clr.ClrTypeAlias("System.SByte")
 public actual class Byte private constructor() : Number(), Comparable<Byte> {
     public actual companion object {
         /**
@@ -384,6 +385,7 @@ public actual class Byte private constructor() : Number(), Comparable<Byte> {
  * Represents a 16-bit signed integer.
  * On the JVM, non-nullable values of this type are represented as values of the primitive type `short`.
  */
+@kotlin.clr.ClrTypeAlias("System.Int16")
 public actual class Short private constructor() : Number(), Comparable<Short> {
     public actual companion object {
         /**
@@ -752,6 +754,7 @@ public actual class Short private constructor() : Number(), Comparable<Short> {
  * Represents a 32-bit signed integer.
  * On the JVM, non-nullable values of this type are represented as values of the primitive type `int`.
  */
+@kotlin.clr.ClrTypeAlias("System.Int32")
 public actual class Int private constructor() : Number(), Comparable<Int> {
     public actual companion object {
         /**
@@ -1166,6 +1169,7 @@ public actual class Int private constructor() : Number(), Comparable<Int> {
  * Represents a 64-bit signed integer.
  * On the JVM, non-nullable values of this type are represented as values of the primitive type `long`.
  */
+@kotlin.clr.ClrTypeAlias("System.Int64")
 public actual class Long private constructor() : Number(), Comparable<Long> {
     public actual companion object {
         /**
@@ -1583,6 +1587,7 @@ public actual class Long private constructor() : Number(), Comparable<Long> {
  * Represents a single-precision 32-bit IEEE 754 floating point number.
  * On the JVM, non-nullable values of this type are represented as values of the primitive type `float`.
  */
+@kotlin.clr.ClrTypeAlias("System.Single")
 public actual class Float private constructor() : Number(), Comparable<Float> {
     public actual companion object {
         /**
@@ -1916,6 +1921,7 @@ public actual class Float private constructor() : Number(), Comparable<Float> {
  * Represents a double-precision 64-bit IEEE 754 floating point number.
  * On the JVM, non-nullable values of this type are represented as values of the primitive type `double`.
  */
+@kotlin.clr.ClrTypeAlias("System.Double")
 public actual class Double private constructor() : Number(), Comparable<Double> {
     public actual companion object {
         /**

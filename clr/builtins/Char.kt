@@ -13,6 +13,7 @@ package kotlin
 /**
  * Represents a 16-bit Unicode character.
  */
+@kotlin.clr.ClrTypeAlias("System.Char")
 public actual class Char private constructor() : Comparable<Char> {
     /**
      * Compares this value with the specified value for order.

@@ -13,6 +13,7 @@ package kotlin
 /**
  * Represents a value which is either `true` or `false`.
  */
+@kotlin.clr.ClrTypeAlias("System.Boolean")
 public actual class Boolean private constructor() : Comparable<Boolean> {
     @SinceKotlin("1.3")
     public actual companion object {}
