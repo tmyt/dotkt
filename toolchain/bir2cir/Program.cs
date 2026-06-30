@@ -173,6 +173,7 @@ sealed class ReferenceMetadataIndex
     // Aggregate CALL-SUBSTITUTION index across all reference assemblies.
     readonly Dictionary<string, string> _ownerAlias = new(StringComparer.Ordinal);   // Kotlin FQN -> BCL alias
     readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
+    readonly Dictionary<string, int> _ownerArity = new(StringComparer.Ordinal);      // Kotlin FQN -> generic arity
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "<>dotkt_ClrH_*"
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
@@ -195,6 +196,7 @@ sealed class ReferenceMetadataIndex
         {
             foreach (var kv in asm.DotKt.Aliases) _ownerAlias[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeKinds) _ownerKind[kv.Key] = kv.Value;
+            foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var h in asm.DotKt.HelperTypes) _helperTypes.Add(h);
             foreach (var m in asm.DotKt.MemberBindings)
             {
@@ -237,6 +239,8 @@ sealed class ReferenceMetadataIndex
         if (_ownerAlias.TryGetValue(fqn, out bcl)) { kind = _ownerKind.GetValueOrDefault(fqn, "class"); return true; }
         bcl = null; kind = null; return false;
     }
+
+    public int OwnerArity(string ownerFqn) => _ownerArity.GetValueOrDefault(ownerFqn, 0);
 
     // The @ClrIntrinsic BCL member name for owner.member (overload-disambiguated by arg count when possible).
     public bool TryMemberIntrinsic(string ownerFqn, string memberName, int argCount, out string intrinsic)
@@ -668,6 +672,7 @@ sealed class ReferenceMetadataIndex
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
                     metadata.TypeKinds[ownerFqn] = TypeKind(type);
+                    if (type.IsGenericType) metadata.TypeArity[ownerFqn] = type.GetGenericArguments().Length;
                     var classAlias = ClrAliasOf(type.GetCustomAttributesData());
                     if (classAlias != null) metadata.Aliases[ownerFqn] = classAlias;
                     if (ownerFqn.StartsWith("<>dotkt_ClrH_", StringComparison.Ordinal)) metadata.HelperTypes.Add(ownerFqn);
@@ -882,6 +887,7 @@ sealed class ReferenceDotKtMetadata
     // class-level @ClrTypeAlias (the type-identity binding) or, for a not-yet-renamed bound class, a class-level @ClrIntrinsic.
     public readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
+    public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "<>dotkt_ClrH_*" rule-3 helpers
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
@@ -1886,10 +1892,22 @@ static class MemberCallSubstitution
         if (string.IsNullOrEmpty(member)) return null;
         var ownerFqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
         var args = node["args"] as JsonArray ?? new JsonArray();
+        // The CLR owner TYPE the call addresses: a GENERIC alias keeps its element args (clrg:<bcl>[<args>]) so ilemit
+        // constructs the instantiation (a member on IReadOnlyList<int>); a non-generic alias is the bare BCL type. When
+        // the token is a RAW generic (no args, e.g. `kotlin.collections.Collection` with the element erased), default
+        // the args to `object` per the ref.dll arity so the generic BCL interface still resolves.
+        var obr = ownerToken.IndexOf('[');
+        string clrOwner;
+        if (obr >= 0 && ownerToken.EndsWith("]", StringComparison.Ordinal))
+            clrOwner = "clrg:" + bcl + "[" + ownerToken[(obr + 1)..^1] + "]";
+        else if (refs.OwnerArity(ownerFqn) is var ar && ar > 0)
+            clrOwner = "clrg:" + bcl + "[" + string.Join(",", Enumerable.Repeat("object", ar)) + "]";
+        else
+            clrOwner = bcl;
 
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
-            return ClrCallNode(node, bcl, intrinsic, member, args, instance);
+            return ClrCallNode(node, clrOwner, intrinsic, member, args, instance);
 
         // Rule 3: a concrete member of a CLR-bound CLASS with NO @ClrIntrinsic carries a real Kotlin body, which kotc
         // hoists to the static helper `<>dotkt_ClrH_<owner>` (driven by the SAME class binding that brought us here).
@@ -1901,21 +1919,79 @@ static class MemberCallSubstitution
         if (kind != "interface" && refs.IsRule3Member(ownerFqn, member))
             return Rule3HelperCall(node, refs, ownerFqn, member, args, instance);
 
-        // Rule 4 (universal object/comparable members): kotc renames Kotlin's compareTo/equals/hashCode/toString to the
-        // BCL interface/object member names (CompareTo/Equals/GetHashCode/ToString) at the CALL site, so the ref.dll's
-        // own member (kept as `compareTo` etc.) doesn't match by that name. These exist on EVERY BCL type the alias
-        // targets (a value primitive like System.UInt32, or a reference type) -> route to a direct clrInstance/clrStatic
-        // on the BCL type. Without this, the owner lowers to a bare shorthand (`uint`) that ilemit cannot resolve.
-        if (BclUniversalMembers.Contains(member))
-            return ClrCallNode(node, bcl, member, member, args, instance);
+        // Rule 5 (collection-interface defaults): the substituted BCL IReadOnly*/I* interfaces lack isEmpty/contains/
+        // containsAll/indexOf/lastIndexOf/subList/listIterator/iterator, so an @ClrTypeAlias collection-interface call
+        // routes to the rt's ClrCollectionDefaults / ClrIteratorBridge helpers — the SAME targets kotc's collDefault
+        // path uses (its `clrName(declaringClass) != null` gate is now null for the @ClrTypeAlias collection interfaces,
+        // so it no longer fires; this is the bir2cir home of that Kotlin<->CLR relation). The element type is the
+        // owner token's first type arg; the helper is generic over it.
+        if (instance && kind == "interface" && ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal))
+        {
+            var elem = OwnerElemArg(ownerToken);
+            if (member == "iterator" && args.Count == 0)
+                return CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable", elem, args);
+            if (member == "listIterator")
+            {
+                var idx = args.Count >= 1 ? args : new JsonArray { new JsonObject { ["k"] = "const", ["type"] = "int", ["value"] = 0 } };
+                return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrListListIterator", elem, idx);
+            }
+            if (CollectionDefaults.TryGetValue(member, out var helperMethod))
+                return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", helperMethod, elem, args);
+        }
+
+        // Rule 4 (already-BCL member name): kotc emits the BCL member NAME for a member it knows is CLR-bound — both the
+        // universal object/comparable renames (compareTo/equals/hashCode/toString -> CompareTo/Equals/GetHashCode/
+        // ToString) and the collection accessors/methods (get_Item/get_Count/Add/set_Item/RemoveAt/Insert/Remove/Clear/
+        // GetEnumerator/...). The ref.dll member is kept under its Kotlin name (`get`/`compareTo`), so rules 2/3 miss by
+        // name; but the emitted name is already the BCL member, which exists on the alias's BCL type. A BCL name is
+        // PascalCase or a get_/set_ accessor (Kotlin members are lowercase camelCase) -> route to clrInstance/clrPropGet
+        // on the BCL type. This also rescues the call from the bare-shorthand / clrg: owner that plain callInstance
+        // resolution (ilemit ParseOwner) cannot handle. A lowercase-camelCase name reaching here is genuinely unmapped.
+        if (member.Length > 0 && (char.IsUpper(member[0]) ||
+            member.StartsWith("get_", StringComparison.Ordinal) || member.StartsWith("set_", StringComparison.Ordinal)))
+            return ClrCallNode(node, clrOwner, member, member, args, instance);
 
         return null;
     }
 
-    static readonly HashSet<string> BclUniversalMembers = new(StringComparer.Ordinal)
+    // Kotlin collection-interface member -> the rt ClrCollectionDefaults static (recv-first, generic over elem).
+    // iterator() and listIterator() are handled separately (different owner / default index).
+    static readonly Dictionary<string, string> CollectionDefaults = new(StringComparer.Ordinal)
     {
-        "CompareTo", "Equals", "GetHashCode", "ToString",
+        ["isEmpty"] = "clrCollIsEmpty",
+        ["contains"] = "clrCollContains",
+        ["containsAll"] = "clrCollContainsAll",
+        ["indexOf"] = "clrListIndexOf",
+        ["lastIndexOf"] = "clrListLastIndexOf",
+        ["subList"] = "clrListSubList",
     };
+
+    // A `callStatic <helperOwner>.<helperMethod>(recv, args...)` typed over the collection's element. Mirrors kotc's
+    // collDefault emission shape (owner=ClrCollectionDefaultsKt / ClrIteratorBridgeKt, recv prepended, typeArgs=[elem]).
+    static JsonNode CollDefaultCall(JsonObject node, string helperOwner, string helperMethod, string elem, JsonArray args)
+    {
+        var hargs = new JsonArray();
+        if (node["recv"] != null) hargs.Add(node["recv"].DeepClone());
+        foreach (var a in args) hargs.Add(a?.DeepClone());
+        return new JsonObject
+        {
+            ["k"] = "callStatic",
+            ["owner"] = helperOwner,
+            ["method"] = helperMethod,
+            ["args"] = hargs,
+            ["typeArgs"] = new JsonArray { elem },
+        };
+    }
+
+    // The first top-level type argument of an owner token (`kotlin.collections.List[gp:E]` -> `gp:E`); `object` if none.
+    static string OwnerElemArg(string ownerToken)
+    {
+        var br = ownerToken.IndexOf('[');
+        if (br < 0 || !ownerToken.EndsWith("]", StringComparison.Ordinal)) return "object";
+        var inner = ownerToken[(br + 1)..^1];
+        var parts = SplitTopLevel(inner);
+        return parts.Count > 0 && parts[0].Length > 0 ? parts[0] : "object";
+    }
 
     // A clrInstance / clrStatic node. For a property accessor call (`get_X`/`set_X` whose intrinsic is the bare
     // property name) emit clrPropGet/clrPropSet per the property-name convention; otherwise a plain method call.
