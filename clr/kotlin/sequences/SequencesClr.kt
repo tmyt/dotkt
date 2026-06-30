@@ -10,6 +10,13 @@
 
 package kotlin.sequences
 
+// Copied from the JS/Native actual: a plain nullable field consumed once (no AtomicReference).
 internal actual class ConstrainedOnceSequence<T> actual constructor(sequence: Sequence<T>) : Sequence<T> {
-    actual override fun iterator(): Iterator<T> = TODO("clr binding should be implemented")
+    private var sequenceRef: Sequence<T>? = sequence
+
+    actual override fun iterator(): Iterator<T> {
+        val sequence = sequenceRef ?: throw IllegalStateException("This sequence can be consumed only once.")
+        sequenceRef = null
+        return sequence.iterator()
+    }
 }

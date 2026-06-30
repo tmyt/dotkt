@@ -11,32 +11,32 @@ import kotlin.internal.InlineOnly
 @InlineOnly
 public actual inline fun <T> (suspend () -> T).startCoroutineUninterceptedOrReturn(
     completion: Continuation<T>
-): Any? = TODO("clr binding should be implemented")
+): Any? = TODO("clr binding should be implemented") // TODO(clr): coroutine kickoff bridge (see audit investigation)
 
 @SinceKotlin("1.3")
 @InlineOnly
 public actual inline fun <R, T> (suspend R.() -> T).startCoroutineUninterceptedOrReturn(
     receiver: R,
     completion: Continuation<T>
-): Any? = TODO("clr binding should be implemented")
+): Any? = TODO("clr binding should be implemented") // TODO(clr): coroutine kickoff bridge (see audit investigation)
 
 @InlineOnly
 internal actual inline fun <R, P, T> (suspend R.(P) -> T).startCoroutineUninterceptedOrReturn(
     receiver: R,
     param: P,
     completion: Continuation<T>
-): Any? = TODO("clr binding should be implemented")
+): Any? = TODO("clr binding should be implemented") // TODO(clr): coroutine kickoff bridge (see audit investigation)
 
 @SinceKotlin("1.3")
 public actual fun <T> (suspend () -> T).createCoroutineUnintercepted(
     completion: Continuation<T>
-): Continuation<Unit> = TODO("clr binding should be implemented")
+): Continuation<Unit> = TODO("clr binding should be implemented") // TODO(clr): coroutine kickoff bridge (see audit investigation)
 
 @SinceKotlin("1.3")
 public actual fun <R, T> (suspend R.() -> T).createCoroutineUnintercepted(
     receiver: R,
     completion: Continuation<T>
-): Continuation<Unit> = TODO("clr binding should be implemented")
+): Continuation<Unit> = TODO("clr binding should be implemented") // TODO(clr): coroutine kickoff bridge (see audit investigation)
 
 @SinceKotlin("1.3")
 public actual fun <T> Continuation<T>.intercepted(): Continuation<T> = TODO("clr binding should be implemented")

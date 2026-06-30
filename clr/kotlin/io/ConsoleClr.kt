@@ -5,21 +5,20 @@
 
 package kotlin.io
 
-import clr.Clr
-
-// @Clr-bound to the BCL console (System.Console.Write/WriteLine). NOT inline: a BCL call replaces the body, and the
-// BCL internals are native — there is nothing to inline. The TODO body never runs (the @Clr call-site routing wins).
+// @ClrIntrinsic-bound to the BCL console (System.Console.Write/WriteLine). NOT inline: a BCL call replaces the body, and
+// the BCL internals are native — there is nothing to inline. The TODO body never runs (the call-site substitution wins).
+// Overloads match: print(Any?)->Write(Object), println(Any?)->WriteLine(Object), println()->WriteLine().
 /** Prints the given [message] to the standard output stream. */
-@Clr("System.Console.Write")
-public actual fun print(message: Any?) { TODO("@Clr System.Console.Write") }
+@kotlin.clr.ClrIntrinsic("System.Console.Write")
+public actual fun print(message: Any?) { TODO("@ClrIntrinsic System.Console.Write") }
 
 /** Prints the given [message] and the line separator to the standard output stream. */
-@Clr("System.Console.WriteLine")
-public actual fun println(message: Any?) { TODO("@Clr System.Console.WriteLine") }
+@kotlin.clr.ClrIntrinsic("System.Console.WriteLine")
+public actual fun println(message: Any?) { TODO("@ClrIntrinsic System.Console.WriteLine") }
 
 /** Prints the line separator to the standard output stream. */
-@Clr("System.Console.WriteLine")
-public actual fun println() { TODO("@Clr System.Console.WriteLine") }
+@kotlin.clr.ClrIntrinsic("System.Console.WriteLine")
+public actual fun println() { TODO("@ClrIntrinsic System.Console.WriteLine") }
 
 /**
  * Reads a line of input from the standard input stream and returns it,
@@ -30,7 +29,7 @@ public actual fun println() { TODO("@Clr System.Console.WriteLine") }
  * The input is decoded using the system default Charset. A [CharacterCodingException] is thrown if input is malformed.
  */
 @SinceKotlin("1.6")
-public actual fun readln(): String = TODO("clr binding should be implemented")
+public actual fun readln(): String = readlnOrNull() ?: throw ReadAfterEOFException("EOF has already been reached")
 
 /**
  * Reads a line of input from the standard input stream and returns it,
@@ -40,5 +39,7 @@ public actual fun readln(): String = TODO("clr binding should be implemented")
  *
  * The input is decoded using the system default Charset. A [CharacterCodingException] is thrown if input is malformed.
  */
+// @ClrIntrinsic-bound: System.Console.ReadLine returns the next line, or null at end-of-stream (matches readlnOrNull's contract).
 @SinceKotlin("1.6")
-public actual fun readlnOrNull(): String? = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Console.ReadLine")
+public actual fun readlnOrNull(): String? = TODO("@ClrIntrinsic System.Console.ReadLine")

@@ -5,4 +5,4 @@
 package kotlin.reflect
 
 internal actual inline val KClass<*>.qualifiedOrSimpleName: String?
-    get() = TODO("clr binding should be implemented")
+    get() = qualifiedName

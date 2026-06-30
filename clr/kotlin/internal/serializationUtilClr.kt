@@ -7,9 +7,10 @@ package kotlin.internal
 
 @InlineOnly
 internal actual inline fun throwReadObjectNotSupported(): Nothing =
-    TODO("clr binding should be implemented")
+    throw UnsupportedOperationException("Deserialization is not supported")
 
+// No Java-style serialization on the CLR: nothing to wrap, just run the action.
 @InlineOnly
-internal actual inline fun wrapAsDeserializationException(action: () -> Unit) { TODO("clr binding should be implemented") }
+internal actual inline fun wrapAsDeserializationException(action: () -> Unit) { action() }
 
 internal actual class ReadObjectParameterType

@@ -30,7 +30,11 @@ public actual constructor(size: Int) {
 
     public actual val size: Int get() = TODO("clr binding should be implemented")
 
-    public actual operator fun iterator(): ByteIterator = TODO("clr binding should be implemented")
+    public actual operator fun iterator(): ByteIterator = object : ByteIterator() {
+        private var index: Int = 0
+        override fun hasNext(): Boolean = index < this@ByteArray.size
+        override fun nextByte(): Byte = this@ByteArray[index++]
+    }
 }
 
 public actual class CharArray
@@ -44,7 +48,11 @@ public actual constructor(size: Int) {
 
     public actual val size: Int get() = TODO("clr binding should be implemented")
 
-    public actual operator fun iterator(): CharIterator = TODO("clr binding should be implemented")
+    public actual operator fun iterator(): CharIterator = object : CharIterator() {
+        private var index: Int = 0
+        override fun hasNext(): Boolean = index < this@CharArray.size
+        override fun nextChar(): Char = this@CharArray[index++]
+    }
 }
 
 public actual class ShortArray
@@ -58,7 +66,11 @@ public actual constructor(size: Int) {
 
     public actual val size: Int get() = TODO("clr binding should be implemented")
 
-    public actual operator fun iterator(): ShortIterator = TODO("clr binding should be implemented")
+    public actual operator fun iterator(): ShortIterator = object : ShortIterator() {
+        private var index: Int = 0
+        override fun hasNext(): Boolean = index < this@ShortArray.size
+        override fun nextShort(): Short = this@ShortArray[index++]
+    }
 }
 
 public actual class IntArray
@@ -72,7 +84,11 @@ public actual constructor(size: Int) {
 
     public actual val size: Int get() = TODO("clr binding should be implemented")
 
-    public actual operator fun iterator(): IntIterator = TODO("clr binding should be implemented")
+    public actual operator fun iterator(): IntIterator = object : IntIterator() {
+        private var index: Int = 0
+        override fun hasNext(): Boolean = index < this@IntArray.size
+        override fun nextInt(): Int = this@IntArray[index++]
+    }
 }
 
 public actual class LongArray
@@ -86,7 +102,11 @@ public actual constructor(size: Int) {
 
     public actual val size: Int get() = TODO("clr binding should be implemented")
 
-    public actual operator fun iterator(): LongIterator = TODO("clr binding should be implemented")
+    public actual operator fun iterator(): LongIterator = object : LongIterator() {
+        private var index: Int = 0
+        override fun hasNext(): Boolean = index < this@LongArray.size
+        override fun nextLong(): Long = this@LongArray[index++]
+    }
 }
 
 public actual class FloatArray
@@ -100,7 +120,11 @@ public actual constructor(size: Int) {
 
     public actual val size: Int get() = TODO("clr binding should be implemented")
 
-    public actual operator fun iterator(): FloatIterator = TODO("clr binding should be implemented")
+    public actual operator fun iterator(): FloatIterator = object : FloatIterator() {
+        private var index: Int = 0
+        override fun hasNext(): Boolean = index < this@FloatArray.size
+        override fun nextFloat(): Float = this@FloatArray[index++]
+    }
 }
 
 public actual class DoubleArray
@@ -114,7 +138,11 @@ public actual constructor(size: Int) {
 
     public actual val size: Int get() = TODO("clr binding should be implemented")
 
-    public actual operator fun iterator(): DoubleIterator = TODO("clr binding should be implemented")
+    public actual operator fun iterator(): DoubleIterator = object : DoubleIterator() {
+        private var index: Int = 0
+        override fun hasNext(): Boolean = index < this@DoubleArray.size
+        override fun nextDouble(): Double = this@DoubleArray[index++]
+    }
 }
 
 public actual class BooleanArray
@@ -128,5 +156,9 @@ public actual constructor(size: Int) {
 
     public actual val size: Int get() = TODO("clr binding should be implemented")
 
-    public actual operator fun iterator(): BooleanIterator = TODO("clr binding should be implemented")
+    public actual operator fun iterator(): BooleanIterator = object : BooleanIterator() {
+        private var index: Int = 0
+        override fun hasNext(): Boolean = index < this@BooleanArray.size
+        override fun nextBoolean(): Boolean = this@BooleanArray[index++]
+    }
 }

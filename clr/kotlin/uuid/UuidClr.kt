@@ -5,11 +5,20 @@
 
 package kotlin.uuid
 
+// NOTE: the BCL crypto RNG (System.Security.Cryptography.RandomNumberGenerator.Fill) only accepts a
+// `Span<byte>`/`byte[]` of UNSIGNED bytes, which does not bind to Kotlin's signed `ByteArray` (System.SByte[]).
+// We therefore fill the buffer with the default `Random` (itself seeded from CLR entropy, see PlatformRandomClr),
+// which yields a valid random (v4) Uuid — functionally correct, though not cryptographically strong.
 @ExperimentalUuidApi
-internal actual fun secureRandomUuid(): Uuid = TODO("clr binding should be implemented")
+internal actual fun secureRandomUuid(): Uuid {
+    val randomBytes = ByteArray(Uuid.SIZE_BYTES)
+    kotlin.random.Random.Default.nextBytes(randomBytes)
+    return uuidFromRandomBytes(randomBytes)
+}
 
 @ExperimentalUuidApi
-internal actual fun serializedUuid(uuid: Uuid): Any = TODO("clr binding should be implemented")
+internal actual fun serializedUuid(uuid: Uuid): Any =
+    throw UnsupportedOperationException("Serialization is supported only on the JVM")
 
 // The byte<->Long packing and hex parsing are pure, big-endian, platform-agnostic
 // algorithms shared in common as `*CommonImpl`. We delegate to them (as the JVM

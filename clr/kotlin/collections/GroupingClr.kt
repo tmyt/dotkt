@@ -18,4 +18,13 @@ package kotlin.collections
  * @sample samples.collections.Grouping.groupingByEachCount
  */
 @SinceKotlin("1.1")
-public actual fun <T, K> Grouping<T, K>.eachCount(): Map<K, Int> = TODO("clr binding should be implemented")
+public actual fun <T, K> Grouping<T, K>.eachCount(): Map<K, Int> {
+    val result = LinkedHashMap<K, Int>()
+    val iterator = this.sourceIterator()
+    while (iterator.hasNext()) {
+        val key = keyOf(iterator.next())
+        val count = result.get(key)
+        result.put(key, if (count == null) 1 else count + 1)
+    }
+    return result
+}

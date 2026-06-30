@@ -39,7 +39,7 @@ public actual abstract class Number {
      */
     @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead.\nIf you override toChar() function in your Number inheritor, it's recommended to gradually deprecate the overriding function and then remove it.\nSee https://youtrack.jetbrains.com/issue/KT-46465 for details about the migration", ReplaceWith("this.toInt().toChar()"))
     @DeprecatedSinceKotlin(warningSince = "1.9", errorSince = "2.3")
-    public actual open fun toChar(): Char { TODO("clr binding should be implemented") }
+    public actual open fun toChar(): Char = toInt().toChar()
 
     /**
      * Returns the value of this number as a [Short], which may involve rounding or truncation.

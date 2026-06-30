@@ -16,4 +16,4 @@ package kotlin.text
  * @sample samples.collections.Collections.Elements.elementAt
  */
 @kotlin.internal.InlineOnly
-public actual inline fun CharSequence.elementAt(index: Int): Char = TODO("clr binding should be implemented")
+public actual inline fun CharSequence.elementAt(index: Int): Char = get(index)

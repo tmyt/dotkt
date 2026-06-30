@@ -8,5 +8,6 @@ package kotlin
 /**
  * Returns an empty array of the specified type [T].
  */
+// reified T -> arrayOfNulls<T>(0) lowers to a generic `newarr !T` (verified frontend-accepted in reified context).
 public actual inline fun <reified T> emptyArray(): Array<T> =
-    TODO("clr binding should be implemented")
+    arrayOfNulls<T>(0) as Array<T>

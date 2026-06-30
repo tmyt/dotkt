@@ -18,5 +18,12 @@ package kotlin.text
  * @throws UnsupportedOperationException if this match group collection doesn't support getting match groups by name,
  * for example, when it's not supported by the current platform.
  */
+// Delegates to the by-name member operator of a [MatchNamedGroupCollection] (the CLR adapter ClrMatchGroupCollection,
+// which reaches the wrapped System...GroupCollection's by-name `this[name]` indexer).
 @SinceKotlin("1.2")
-public actual operator fun MatchGroupCollection.get(name: String): MatchGroup? = TODO("clr binding should be implemented")
+public actual operator fun MatchGroupCollection.get(name: String): MatchGroup? {
+    val namedGroups = this as? MatchNamedGroupCollection
+        ?: throw UnsupportedOperationException("Retrieving groups by name is not supported on this platform.")
+
+    return namedGroups[name]
+}

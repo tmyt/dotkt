@@ -13,10 +13,33 @@ public actual interface AutoCloseable {
 @SinceKotlin("2.0")
 @kotlin.internal.InlineOnly
 public actual inline fun AutoCloseable(crossinline closeAction: () -> Unit): AutoCloseable =
-    TODO("clr binding should be implemented")
+    object : AutoCloseable {
+        override fun close() { closeAction() }
+    }
 
 @SinceKotlin("1.2")
 @kotlin.internal.InlineOnly
 public actual inline fun <T : AutoCloseable?, R> T.use(block: (T) -> R): R {
-    TODO("clr binding should be implemented")
+    var exception: Throwable? = null
+    try {
+        return block(this)
+    } catch (e: Throwable) {
+        exception = e
+        throw e
+    } finally {
+        this.closeFinally(exception)
+    }
+}
+
+@SinceKotlin("1.2")
+@PublishedApi
+internal fun AutoCloseable?.closeFinally(cause: Throwable?): Unit = when {
+    this == null -> {}
+    cause == null -> close()
+    else ->
+        try {
+            close()
+        } catch (closeException: Throwable) {
+            cause.addSuppressed(closeException)
+        }
 }

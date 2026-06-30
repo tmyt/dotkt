@@ -12,4 +12,4 @@ package kotlin
  */
 @SinceKotlin("1.5")
 @kotlin.internal.InlineOnly
-public actual inline fun Char(code: UShort): Char = TODO("clr binding should be implemented")
+public actual inline fun Char(code: UShort): Char = code.toInt().toChar()

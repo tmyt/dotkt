@@ -7,9 +7,14 @@ package kotlin.random
 
 import kotlin.internal.InlineOnly
 
+// CLR entropy seed: a high-resolution, ever-advancing monotonic counter (System.Diagnostics.Stopwatch.GetTimestamp).
+// Distinct calls observe distinct timestamps, so each default Random instance is seeded differently.
+@kotlin.clr.ClrIntrinsic("System.Diagnostics.Stopwatch.GetTimestamp")
+internal fun clrEntropyTimestamp(): Long = TODO("clr binding should be implemented")
+
 @InlineOnly
 internal actual inline fun defaultPlatformRandom(): Random =
-    TODO("clr binding should be implemented")
+    Random(clrEntropyTimestamp())
 
 internal actual fun doubleFromParts(hi26: Int, low27: Int): Double =
-    TODO("clr binding should be implemented")
+    (hi26.toLong().shl(27) + low27) / (1L shl 53).toDouble()

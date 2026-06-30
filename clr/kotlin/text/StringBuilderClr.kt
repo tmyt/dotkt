@@ -27,10 +27,23 @@ public actual class StringBuilder : Appendable, CharSequence {
     actual override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = nativeSubstring(startIndex, endIndex - startIndex)
     @kotlin.clr.ClrIntrinsic("Append")
     actual override fun append(value: Char): StringBuilder = TODO("clr binding should be implemented")
-    actual override fun append(value: CharSequence?): StringBuilder = TODO("clr binding should be implemented")
-    actual override fun append(value: CharSequence?, startIndex: Int, endIndex: Int): StringBuilder = TODO("clr binding should be implemented")
+    actual override fun append(value: CharSequence?): StringBuilder = append((value ?: "null").toString())
+    actual override fun append(value: CharSequence?, startIndex: Int, endIndex: Int): StringBuilder =
+        append((value ?: "null").subSequence(startIndex, endIndex).toString())
 
-    public actual fun reverse(): StringBuilder = TODO("clr binding should be implemented")
+    public actual fun reverse(): StringBuilder {
+        // Simple index swap; unlike Kotlin/JVM's reverse() this does not preserve surrogate-pair ordering.
+        var i = 0
+        var j = length - 1
+        while (i < j) {
+            val tmp = this[i]
+            this[i] = this[j]
+            this[j] = tmp
+            i++
+            j--
+        }
+        return this
+    }
     @kotlin.clr.ClrIntrinsic("Append")
     public actual fun append(value: Any?): StringBuilder = TODO("clr binding should be implemented")
 
@@ -73,16 +86,16 @@ public actual class StringBuilder : Appendable, CharSequence {
     }
 
     @SinceKotlin("1.4")
-    public actual fun indexOf(string: String): Int = TODO("clr binding should be implemented")
+    public actual fun indexOf(string: String): Int = toString().indexOf(string)
 
     @SinceKotlin("1.4")
-    public actual fun indexOf(string: String, startIndex: Int): Int = TODO("clr binding should be implemented")
+    public actual fun indexOf(string: String, startIndex: Int): Int = toString().indexOf(string, startIndex)
 
     @SinceKotlin("1.4")
-    public actual fun lastIndexOf(string: String): Int = TODO("clr binding should be implemented")
+    public actual fun lastIndexOf(string: String): Int = toString().lastIndexOf(string)
 
     @SinceKotlin("1.4")
-    public actual fun lastIndexOf(string: String, startIndex: Int): Int = TODO("clr binding should be implemented")
+    public actual fun lastIndexOf(string: String, startIndex: Int): Int = toString().lastIndexOf(string, startIndex)
 
     @SinceKotlin("1.4")
     @kotlin.clr.ClrIntrinsic("Insert")
@@ -112,8 +125,11 @@ public actual class StringBuilder : Appendable, CharSequence {
     @kotlin.clr.ClrIntrinsic("Insert")
     public actual fun insert(index: Int, value: CharArray): StringBuilder = TODO("clr binding should be implemented")
 
+    // No 1:1 BCL overload (.NET StringBuilder has no Insert(int, CharSequence)); insert the string form,
+    // mirroring append(CharSequence?) above. Delegates to the @ClrIntrinsic Insert(int, String?) overload.
     @SinceKotlin("1.4")
-    public actual fun insert(index: Int, value: CharSequence?): StringBuilder = TODO("clr binding should be implemented")
+    public actual fun insert(index: Int, value: CharSequence?): StringBuilder =
+        insert(index, (value ?: "null").toString())
 
     @SinceKotlin("1.4")
     @kotlin.clr.ClrIntrinsic("Insert")
@@ -140,9 +156,13 @@ public actual class StringBuilder : Appendable, CharSequence {
     @kotlin.clr.ClrIntrinsic("ToString")
     private fun nativeSubstring(startIndex: Int, length: Int): String = TODO("@Clr System.Text.StringBuilder.ToString(int,int)")
 
+    // Setter of .NET StringBuilder.Capacity; used to shrink the backing buffer to the current length.
+    @kotlin.clr.ClrIntrinsic("set_Capacity")
+    private fun nativeSetCapacity(value: Int): Unit = TODO("@Clr System.Text.StringBuilder.set_Capacity(int)")
+
     @SinceKotlin("1.4")
     public actual fun trimToSize(): Unit {
-        TODO("clr binding should be implemented")
+        nativeSetCapacity(length)
     }
 }
 
@@ -176,7 +196,8 @@ public actual operator fun StringBuilder.set(index: Int, value: Char): Unit = TO
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.setRange(startIndex: Int, endIndex: Int, value: String): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.setRange(startIndex: Int, endIndex: Int, value: String): StringBuilder =
+    this.deleteRange(startIndex, endIndex).insert(startIndex, value)
 
 // Thin wrapper: Kotlin deleteAt removes a single index and deleteRange takes an exclusive
 // end index, while .NET StringBuilder.Remove(startIndex, length) takes a length. Adapt by subtracting.
@@ -189,47 +210,74 @@ public actual fun StringBuilder.deleteAt(index: Int): StringBuilder = nativeRemo
 @SinceKotlin("1.4")
 public actual fun StringBuilder.deleteRange(startIndex: Int, endIndex: Int): StringBuilder = nativeRemove(startIndex, endIndex - startIndex)
 
+// Thin wrapper: Kotlin toCharArray(startIndex, endIndex) has an exclusive end index, while
+// .NET StringBuilder.CopyTo(sourceIndex, destination, destinationIndex, count) takes a count. Adapt by subtracting.
+// @PublishedApi (not private) so the public inline `toCharArray` may reference it across module boundaries.
+@PublishedApi
+@kotlin.clr.ClrIntrinsic("CopyTo")
+internal fun StringBuilder.nativeCopyTo(sourceIndex: Int, destination: CharArray, destinationIndex: Int, count: Int): Unit =
+    TODO("@Clr System.Text.StringBuilder.CopyTo(int,char[],int,int)")
+
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
 @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-public actual inline fun StringBuilder.toCharArray(destination: CharArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = this.length): Unit = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.toCharArray(destination: CharArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = this.length): Unit =
+    nativeCopyTo(startIndex, destination, destinationOffset, endIndex - startIndex)
+
+// Thin wrapper: Kotlin appendRange takes an exclusive end index, while
+// .NET StringBuilder.Append(value, startIndex, charCount) takes a count. Adapt by subtracting.
+@PublishedApi
+@kotlin.clr.ClrIntrinsic("Append")
+internal fun StringBuilder.nativeAppendRange(value: CharArray, startIndex: Int, charCount: Int): StringBuilder =
+    TODO("@Clr System.Text.StringBuilder.Append(char[],int,int)")
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.appendRange(value: CharArray, startIndex: Int, endIndex: Int): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.appendRange(value: CharArray, startIndex: Int, endIndex: Int): StringBuilder =
+    nativeAppendRange(value, startIndex, endIndex - startIndex)
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.appendRange(value: CharSequence, startIndex: Int, endIndex: Int): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.appendRange(value: CharSequence, startIndex: Int, endIndex: Int): StringBuilder =
+    append(value.subSequence(startIndex, endIndex).toString())
+
+// Thin wrapper: Kotlin insertRange takes an exclusive end index, while
+// .NET StringBuilder.Insert(index, value, startIndex, charCount) takes a count. Adapt by subtracting.
+@PublishedApi
+@kotlin.clr.ClrIntrinsic("Insert")
+internal fun StringBuilder.nativeInsertRange(index: Int, value: CharArray, startIndex: Int, charCount: Int): StringBuilder =
+    TODO("@Clr System.Text.StringBuilder.Insert(int,char[],int,int)")
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.insertRange(index: Int, value: CharArray, startIndex: Int, endIndex: Int): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.insertRange(index: Int, value: CharArray, startIndex: Int, endIndex: Int): StringBuilder =
+    nativeInsertRange(index, value, startIndex, endIndex - startIndex)
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.insertRange(index: Int, value: CharSequence, startIndex: Int, endIndex: Int): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.insertRange(index: Int, value: CharSequence, startIndex: Int, endIndex: Int): StringBuilder =
+    insert(index, value.subSequence(startIndex, endIndex).toString())
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.appendLine(value: Int): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.appendLine(value: Int): StringBuilder = append(value).appendLine()
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.appendLine(value: Short): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.appendLine(value: Short): StringBuilder = append(value).appendLine()
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.appendLine(value: Byte): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.appendLine(value: Byte): StringBuilder = append(value).appendLine()
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.appendLine(value: Long): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.appendLine(value: Long): StringBuilder = append(value).appendLine()
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.appendLine(value: Float): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.appendLine(value: Float): StringBuilder = append(value).appendLine()
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun StringBuilder.appendLine(value: Double): StringBuilder = TODO("clr binding should be implemented")
+public actual inline fun StringBuilder.appendLine(value: Double): StringBuilder = append(value).appendLine()

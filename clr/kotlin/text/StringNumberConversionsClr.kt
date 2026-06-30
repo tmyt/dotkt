@@ -90,7 +90,7 @@ public actual fun Long.toString(radix: Int): String {
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun String?.toBoolean(): Boolean = TODO("clr binding should be implemented")
+public actual inline fun String?.toBoolean(): Boolean = this != null && this.equals("true", ignoreCase = true)
 
 @kotlin.clr.ClrIntrinsic("System.SByte.Parse")
 public actual fun String.toByte(): Byte = TODO("clr binding should be implemented")

@@ -55,25 +55,25 @@ public actual inline fun UShortArray.elementAt(index: Int): UShort = this[index]
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public actual fun UIntArray.asList(): List<UInt> = TODO("clr binding should be implemented")
+public actual fun UIntArray.asList(): List<UInt> { val r = ArrayList<UInt>(); for (i in 0 until this.size) r.add(this[i]); return r }
 
 /**
  * Returns a [List] that wraps the original array.
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public actual fun ULongArray.asList(): List<ULong> = TODO("clr binding should be implemented")
+public actual fun ULongArray.asList(): List<ULong> { val r = ArrayList<ULong>(); for (i in 0 until this.size) r.add(this[i]); return r }
 
 /**
  * Returns a [List] that wraps the original array.
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public actual fun UByteArray.asList(): List<UByte> = TODO("clr binding should be implemented")
+public actual fun UByteArray.asList(): List<UByte> { val r = ArrayList<UByte>(); for (i in 0 until this.size) r.add(this[i]); return r }
 
 /**
  * Returns a [List] that wraps the original array.
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public actual fun UShortArray.asList(): List<UShort> = TODO("clr binding should be implemented")
+public actual fun UShortArray.asList(): List<UShort> { val r = ArrayList<UShort>(); for (i in 0 until this.size) r.add(this[i]); return r }

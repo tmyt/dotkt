@@ -9,5 +9,5 @@ package kotlin
  * The type with only one value: the `Unit` object. This type corresponds to the `void` type in Java.
  */
 public actual object Unit {
-    override fun toString(): String = TODO("clr binding should be implemented")
+    override fun toString(): String = "kotlin.Unit"
 }

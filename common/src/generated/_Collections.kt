@@ -1036,11 +1036,10 @@ public fun <T : Comparable<T>> MutableList<T>.sortDescending(): Unit {
  * The sort is _stable_. It means that equal elements preserve their order relative to each other after sorting.
  */
 public fun <T : Comparable<T>> Iterable<T>.sorted(): List<T> {
-    if (this is Collection) {
-        if (size <= 1) return this.toList()
-        @Suppress("UNCHECKED_CAST")
-        return (toTypedArray<Comparable<T>>() as Array<T>).apply { sort() }.asList()
-    }
+    // CLR adaptation: the JVM Collection fast-path `(toTypedArray<Comparable<T>>() as Array<T>)` relies on array
+    // ERASURE (Comparable[] == T[]); on CLR's reified arrays IComparable<Int>[] != Int[] -> InvalidCast. Always use
+    // toMutableList().sort() (the original non-Collection branch) -- the stable O(n log n) merge sort, correct for all
+    // element types and value/reference alike.
     return toMutableList().apply { sort() }
 }
 

@@ -49,5 +49,9 @@ public actual class Array<T> {
     public actual val size: Int get() = TODO("clr binding should be implemented")
 
     /** Creates an [Iterator] for iterating over the elements of the array. */
-    public actual operator fun iterator(): Iterator<T> = TODO("clr binding should be implemented")
+    public actual operator fun iterator(): Iterator<T> = object : Iterator<T> {
+        private var index: Int = 0
+        override fun hasNext(): Boolean = index < this@Array.size
+        override fun next(): T = this@Array[index++]
+    }
 }

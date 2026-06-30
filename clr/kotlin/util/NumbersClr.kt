@@ -23,25 +23,29 @@ public actual fun Double.isFinite(): Boolean = TODO("clr binding should be imple
 public actual fun Float.isFinite(): Boolean = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-@kotlin.clr.ClrIntrinsic("System.BitConverter.DoubleToInt64Bits")
-public actual fun Double.toBits(): Long = TODO("clr binding should be implemented")
+public actual fun Double.toBits(): Long = if (this.isNaN()) 0x7ff8000000000000L else this.toRawBits()
 
 @SinceKotlin("1.2")
 @kotlin.clr.ClrIntrinsic("System.BitConverter.DoubleToInt64Bits")
 public actual fun Double.toRawBits(): Long = TODO("clr binding should be implemented")
 
+// TODO(clr): companion receiver prepend, needs compiler fix
+// The @ClrIntrinsic clrName('.') split prepends the companion receiver, emitting a 2-arg
+// Int64BitsToDouble(companion, bits) call. The static bind cannot be fixed stdlib-side; keep TODO.
 @SinceKotlin("1.2")
 @kotlin.clr.ClrIntrinsic("System.BitConverter.Int64BitsToDouble")
 public actual fun Double.Companion.fromBits(bits: Long): Double = TODO("clr binding should be implemented")
 
 @SinceKotlin("1.2")
-@kotlin.clr.ClrIntrinsic("System.BitConverter.SingleToInt32Bits")
-public actual fun Float.toBits(): Int = TODO("clr binding should be implemented")
+public actual fun Float.toBits(): Int = if (this.isNaN()) 0x7fc00000 else this.toRawBits()
 
 @SinceKotlin("1.2")
 @kotlin.clr.ClrIntrinsic("System.BitConverter.SingleToInt32Bits")
 public actual fun Float.toRawBits(): Int = TODO("clr binding should be implemented")
 
+// TODO(clr): companion receiver prepend, needs compiler fix
+// The @ClrIntrinsic clrName('.') split prepends the companion receiver, emitting a 2-arg
+// Int32BitsToSingle(companion, bits) call. The static bind cannot be fixed stdlib-side; keep TODO.
 @SinceKotlin("1.2")
 @kotlin.clr.ClrIntrinsic("System.BitConverter.Int32BitsToSingle")
 public actual fun Float.Companion.fromBits(bits: Int): Float = TODO("clr binding should be implemented")
@@ -60,11 +64,12 @@ public actual fun Int.countTrailingZeroBits(): Int = TODO("clr binding should be
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun Int.takeHighestOneBit(): Int = TODO("clr binding should be implemented")
+public actual inline fun Int.takeHighestOneBit(): Int =
+    if (this == 0) 0 else 1 shl (31 - this.countLeadingZeroBits())
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun Int.takeLowestOneBit(): Int = TODO("clr binding should be implemented")
+public actual inline fun Int.takeLowestOneBit(): Int = this and -this
 
 @SinceKotlin("1.6")
 @kotlin.clr.ClrIntrinsic("System.Numerics.BitOperations.RotateLeft")
@@ -88,11 +93,12 @@ public actual fun Long.countTrailingZeroBits(): Int = TODO("clr binding should b
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun Long.takeHighestOneBit(): Long = TODO("clr binding should be implemented")
+public actual inline fun Long.takeHighestOneBit(): Long =
+    if (this == 0L) 0L else 1L shl (63 - this.countLeadingZeroBits())
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
-public actual inline fun Long.takeLowestOneBit(): Long = TODO("clr binding should be implemented")
+public actual inline fun Long.takeLowestOneBit(): Long = this and -this
 
 @SinceKotlin("1.6")
 @kotlin.clr.ClrIntrinsic("System.Numerics.BitOperations.RotateLeft")

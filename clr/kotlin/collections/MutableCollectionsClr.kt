@@ -67,11 +67,21 @@ public actual fun <T> MutableList<T>.sortWith(comparator: Comparator<in T>): Uni
  */
 @kotlin.internal.InlineOnly
 @SinceKotlin("1.2")
-public actual inline fun <T> MutableList<T>.fill(value: T) { TODO("clr binding should be implemented") }
+public actual inline fun <T> MutableList<T>.fill(value: T) {
+    for (index in 0 until size) this[index] = value
+}
 
 /**
  * Randomly shuffles elements in this mutable list.
  */
 @kotlin.internal.InlineOnly
 @SinceKotlin("1.2")
-public actual inline fun <T> MutableList<T>.shuffle() { TODO("clr binding should be implemented") }
+public actual inline fun <T> MutableList<T>.shuffle() {
+    // Fisher-Yates over size/get/set using the default platform Random.
+    for (i in size - 1 downTo 1) {
+        val j = kotlin.random.Random.Default.nextInt(i + 1)
+        val tmp = this[i]
+        this[i] = this[j]
+        this[j] = tmp
+    }
+}

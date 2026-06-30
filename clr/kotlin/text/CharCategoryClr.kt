@@ -164,5 +164,6 @@ public actual enum class CharCategory(public val value: Int, public actual val c
     /**
      * Returns `true` if [char] character belongs to this category.
      */
-    public actual operator fun contains(char: Char): Boolean = TODO("clr binding should be implemented")
+    // `char in category` membership: the char belongs to this category iff its Unicode category equals this one.
+    public actual operator fun contains(char: Char): Boolean = char.category == this
 }
