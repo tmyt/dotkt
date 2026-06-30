@@ -2232,6 +2232,10 @@ sealed partial class Emitter
                     mi = type.GetMethods(flags).FirstOrDefault(m => m.Name == name
                         && m.GetParameters().Select(p => p.ParameterType).SequenceEqual(resolved));
                 }
+                // A TypeBuilder in `resolved` (a generic collection of an emitted element type, e.g.
+                // ICollection<EmittedType>.Add(EmittedType)) makes GetMethod throw ArgumentException ("Type must be a
+                // type provided by the runtime"). Null it out so the name+arity fallback re-anchors on the constructed type.
+                catch (ArgumentException) { mi = null; }
             // Fall back to name + arity — e.g. a generic-parameter arg type (`Add(T)` on `Collection<int>`) that
             // doesn't name a plain .NET type; on the constructed type GetMethods returns the substituted overload.
             mi ??= type.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);
