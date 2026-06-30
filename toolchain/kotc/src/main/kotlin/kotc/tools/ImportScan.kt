@@ -45,7 +45,7 @@ object ImportScan {
 					// Skip stdlib/Java/own-runtime imports — only .NET (and projected) types are injectable. NOTE: `kotlin.`
 					// (stdlib) is skipped but `kotlinx.` is NOT — kotlinx-* are external libraries (compiled for the CLR
 					// and consumable via a namespace projection), so they must reach facadegen to resolve.
-					if (fqName == "kotlin" || fqName.startsWith("kotlin.") || fqName.startsWith("java.") || fqName.startsWith("javax.") || fqName.startsWith("clr.")) continue
+					if (fqName == "kotlin" || fqName.startsWith("kotlin.") || fqName.startsWith("java.") || fqName.startsWith("javax.")) continue
 					imports.add(if (directive.isAllUnder) "$fqName.*" else fqName)
 				}
 			}

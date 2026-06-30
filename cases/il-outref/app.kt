@@ -8,7 +8,7 @@ import kotlin.clr.byref   // byref/ClrRef now live in the importable `kotlin.clr
 // CLR property model — Phase 5: `byref(obj.prop)` of an own-source-set property addresses its INTERNAL backing
 // field (ldflda), so a .NET out/ref param writes back THROUGH the property. `@ClrField` opts a property out to a
 // plain public field; byref of it addresses that field. Both are exercised below. (`ClrField` is recognized by
-// short name — the real one is the facadegen-generated `clr.ClrField`; declared here so the sample is standalone.)
+// short name, so declaring it here keeps the sample standalone.)
 annotation class ClrField
 
 class Acc {

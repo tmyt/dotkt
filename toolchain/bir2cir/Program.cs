@@ -664,8 +664,8 @@ sealed class ReferenceMetadataIndex
                 try
                 {
                     // Index by the REAL Kotlin FQN (kotc emits "kotlin.String" etc. as the type name) so a BIR
-                    // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the renamed type
-                    // identity binding) or the legacy class-level @ClrIntrinsic/clr.Clr.
+                    // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the type-identity
+                    // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
                     metadata.TypeKinds[ownerFqn] = TypeKind(type);
                     var classAlias = ClrAliasOf(type.GetCustomAttributesData());
@@ -716,20 +716,19 @@ sealed class ReferenceMetadataIndex
     static bool HasAttribute(IList<CustomAttributeData> attrs, string fullName) =>
         attrs.Any(a => a.AttributeType.FullName == fullName);
 
-    // The class-level CLR binding: @ClrTypeAlias (the renamed type-identity binding) is preferred; the legacy
-    // class-level @ClrIntrinsic / clr.Clr are accepted for the not-yet-renamed bound classes (StringBuilder/Regex/
-    // collections). Returns the single ctor-arg (the .NET FQN), or null if the class is not CLR-bound.
+    // The class-level CLR binding: @ClrTypeAlias (the type-identity binding); a class-level @ClrIntrinsic is also
+    // accepted for any not-yet-renamed bound class. Returns the single ctor-arg (the .NET FQN), or null if not CLR-bound.
     static string ClrAliasOf(IList<CustomAttributeData> attrs)
     {
-        var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrTypeAlias" or "kotlin.clr.ClrIntrinsic" or "clr.Clr");
+        var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrTypeAlias" or "kotlin.clr.ClrIntrinsic");
         return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
     }
 
-    // The member-level CLR binding: @ClrIntrinsic("Name") (or AsDynamic / legacy clr.Clr). Returns the BCL member
-    // name (the call is rewritten to owner.Name), or null when the member carries no intrinsic (a rule-3 candidate).
+    // The member-level CLR binding: @ClrIntrinsic("Name") (or AsDynamic). Returns the BCL member name (the call is
+    // rewritten to owner.Name), or null when the member carries no intrinsic (a rule-3 candidate).
     static string ClrIntrinsicOf(IList<CustomAttributeData> attrs)
     {
-        var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrIntrinsic" or "kotlin.clr.ClrIntrinsicAsDynamic" or "clr.Clr");
+        var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrIntrinsic" or "kotlin.clr.ClrIntrinsicAsDynamic");
         return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
     }
 
@@ -880,7 +879,7 @@ sealed class ReferenceDotKtMetadata
 
     // CALL-SUBSTITUTION metadata (sourced from the ref.dll, consumed by MemberCallSubstitution; NOT serialized).
     // ownerFqn (the Kotlin FQN, e.g. "kotlin.String") -> the BCL alias it binds to ("System.String"), from a
-    // class-level @ClrTypeAlias (the type-identity binding) or the legacy class-level @ClrIntrinsic/clr.Clr.
+    // class-level @ClrTypeAlias (the type-identity binding) or, for a not-yet-renamed bound class, a class-level @ClrIntrinsic.
     public readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
     public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "<>dotkt_ClrH_*" rule-3 helpers

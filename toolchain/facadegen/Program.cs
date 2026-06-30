@@ -1,9 +1,8 @@
-// facadegen — reads .NET type metadata via reflection and emits @Clr-annotated Kotlin façades,
-// so a kotlin/clr program can call those .NET types with no hand-written façade.
+// facadegen — reads .NET type metadata via reflection and emits FIR-injection metadata, so a kotlin/clr program can
+// call those .NET types FAÇADE-FREE (`import System.X` resolves directly; the compiler's FIR injector consumes the
+// metadata). The legacy mode that wrote hand-written `package clr` Kotlin façade files is GONE.
 //
-//   facadegen <outDir> <Type.Full.Name> [<Type.Full.Name> ...]
-//
-// Emits <outDir>/clr/_Clr.kt (the annotation) and one <outDir>/clr/<Name>.kt per type.
+//   facadegen --meta <outFile> [--refs a.dll;b.dll;...] <Type.Full.Name>... [--import-list <file>] [--scan-asm <dll>]
 using System.Reflection;
 using System.Text;
 
@@ -13,7 +12,7 @@ static class FacadeGen
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("usage: facadegen <outDir> <TypeFullName>...  |  facadegen --meta <outFile> <TypeFullName>...");
+            Console.Error.WriteLine("usage: facadegen --meta <outFile> [--refs a.dll;...] <TypeFullName>... [--import-list <file>] [--scan-asm <dll>]");
             return 1;
         }
         // S5 generalization: emit a compact metadata file consumed by the compiler's FIR injector,
@@ -46,27 +45,10 @@ static class FacadeGen
             var imported = listAt < 0 || listAt + 1 >= rest.Count ? Enumerable.Empty<string>() : ReadImportList(rest[listAt + 1]);
             return EmitMeta(args[1], explicitTypes.Concat(imported).Concat(scanned).Distinct());
         }
-        var clrDir = Path.Combine(args[0], "clr");
-        Directory.CreateDirectory(clrDir);
-        File.WriteAllText(Path.Combine(clrDir, "_Clr.kt"),
-            "package clr\n\n" +
-            "@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)\n" +
-            "annotation class Clr(val name: String)\n\n" +
-            // @ClrField opts a property OUT of the CLR-property model: emit it as a plain (public) CLR field, no
-            // accessor/property. For perf-/layout-sensitive interop. Default (unmarked) is a real CLR property.
-            "@Target(AnnotationTarget.PROPERTY)\n" +
-            "annotation class ClrField\n");
-
-        foreach (var typeName in args.Skip(1))
-        {
-            // Resolve directly, or as a generic type definition (List -> List`1, Dictionary -> `2).
-            var t = Resolve(typeName) ?? Resolve(typeName + "`1") ?? Resolve(typeName + "`2");
-            if (t == null) { Console.Error.WriteLine($"type not found: {typeName}"); continue; }
-            var fileName = (t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name) + ".kt";
-            File.WriteAllText(Path.Combine(clrDir, fileName), GenerateType(t));
-            Console.WriteLine($"generated clr/{fileName}  <-  {t.FullName ?? t.Name}");
-        }
-        return 0;
+        // The legacy facade-FILE emission (a `package clr` Kotlin file per type, with a binding annotation) is GONE:
+        // .NET interop is façade-free via `--meta` (the FIR injector consumes the metadata directly). There is no other mode.
+        Console.Error.WriteLine("facadegen: only `--meta` mode is supported (façade-free .NET injection); see usage above.");
+        return 1;
     }
 
     static readonly string[] PROBE_ASSEMBLIES =
@@ -219,12 +201,12 @@ static class FacadeGen
     }
 
     // Emit one type's FIR-injection metadata (enum/interface/annotation/object/class + members).
-    // The @Clr("BclName") binding on a ref-assembly type/member, emitted there as a [clr.Clr] custom attribute. When
-    // present, the injection registers the Kotlin type's dotNet name AS THE BCL TARGET, so the app's clrName binds it
+    // A `[ClrIntrinsic]`/`[ClrTypeAlias]` binding on a ref-assembly type/member (when facadegen reflects a DotKt
+    // library) registers the Kotlin type's dotNet name AS THE BCL TARGET, so the app binds it
     // (kotlin.collections.List -> System.Collections.Generic.IReadOnlyList). docs/design-clr-stdlib-ref-runtime-split.md.
     static string ClrAttrName(MemberInfo m)
     {
-        var a = m.GetCustomAttributesData().FirstOrDefault(x => (x.AttributeType.Name == "ClrIntrinsic" || x.AttributeType.Name == "Clr") && x.ConstructorArguments.Count == 1);
+        var a = m.GetCustomAttributesData().FirstOrDefault(x => (x.AttributeType.Name == "ClrIntrinsic" || x.AttributeType.Name == "ClrTypeAlias") && x.ConstructorArguments.Count == 1);
         return a?.ConstructorArguments[0].Value as string;
     }
 
@@ -967,88 +949,6 @@ static class FacadeGen
     {
         var n = p.Name;
         return (string.IsNullOrEmpty(n) || !IsIdent(n)) ? "arg" + i : n;
-    }
-
-    static string GenerateType(Type t)
-    {
-        var sb = new StringBuilder();
-        sb.Append("package clr\n\n");
-        // Generic type definitions (List`1) -> a generic Kotlin façade (`class List<T>`).
-        var simpleName = t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name;
-        var clrName = t.IsGenericTypeDefinition ? OpenName(t) : t.FullName;
-        var typeParams = t.IsGenericTypeDefinition
-            ? "<" + string.Join(", ", t.GetGenericArguments().Select(g => g.Name)) + ">"
-            : "";
-        sb.Append($"@Clr(\"{clrName}\")\n");
-        sb.Append($"class {simpleName}{typeParams} {{\n");
-        var seen = new HashSet<string>();
-
-        // Indexer (this[i]) -> Kotlin operator get/set.
-        var indexer = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .FirstOrDefault(p => p.GetIndexParameters().Length == 1 && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));
-        if (indexer != null)
-        {
-            var it = Map(indexer.GetIndexParameters()[0].ParameterType, t);
-            var vt = Map(indexer.PropertyType, t);
-            sb.Append($"\toperator fun get(index: {it}): {vt} = TODO()\n");
-            if (indexer.CanWrite) sb.Append($"\toperator fun set(index: {it}, value: {vt}): Unit = TODO()\n");
-        }
-
-        foreach (var c in t.GetConstructors(BindingFlags.Public | BindingFlags.Instance))
-        {
-            var ps = c.GetParameters();
-            if (!ps.All(p => Supported(p.ParameterType))) continue;
-            if (!seen.Add("ctor(" + Sig(ps, t) + ")")) continue;
-            sb.Append($"\tconstructor({KParams(ps, t)})\n");
-        }
-
-        foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-        {
-            if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType)) continue;
-            var nm = Decap(p.Name);
-            if (!seen.Add("prop:" + nm)) continue;
-            var kt = Map(p.PropertyType, t);
-            if (p.CanWrite)
-                sb.Append($"\t@Clr(\"{p.Name}\") var {nm}: {kt} get() = TODO(); set(value) {{}}\n");
-            else
-                sb.Append($"\t@Clr(\"{p.Name}\") val {nm}: {kt} get() = TODO()\n");
-        }
-
-        foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-        {
-            if (m.IsSpecialName || m.IsGenericMethod) continue;
-            // Skip Object identity members that would clash with Kotlin's Any (keep ToString).
-            if (OBJECT_MEMBERS.Contains(m.Name)) continue;
-            if (m.DeclaringType?.FullName == "System.Object" && m.Name != "ToString") continue;
-            var ps = m.GetParameters();
-            if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
-            var nm = Decap(m.Name);
-            if (!seen.Add(nm + "(" + Sig(ps, t) + ")")) continue;
-            if (m.Name == "ToString" && ps.Length == 0)
-                sb.Append("\t@Clr(\"ToString\") override fun toString(): String = TODO()\n");
-            else
-                sb.Append($"\t@Clr(\"{m.Name}\") fun {nm}({KParams(ps, t)}): {Map(m.ReturnType, t)} = TODO()\n");
-        }
-
-        var statics = t.GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Where(m => !m.IsSpecialName && !m.IsGenericMethod).ToList();
-        if (statics.Count > 0)
-        {
-            sb.Append($"\n\t@Clr(\"{t.FullName}\")\n\tcompanion object {{\n");
-            var seenS = new HashSet<string>();
-            foreach (var m in statics)
-            {
-                var ps = m.GetParameters();
-                if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
-                var nm = Decap(m.Name);
-                if (!seenS.Add(nm + "(" + Sig(ps, t) + ")")) continue;
-                sb.Append($"\t\t@Clr(\"{m.Name}\") fun {nm}({KParams(ps, t)}): {Map(m.ReturnType, t)} = TODO()\n");
-            }
-            sb.Append("\t}\n");
-        }
-
-        sb.Append("}\n");
-        return sb.ToString();
     }
 
     // A bare generic parameter (T) is fine as a Kotlin type parameter; constructed generics

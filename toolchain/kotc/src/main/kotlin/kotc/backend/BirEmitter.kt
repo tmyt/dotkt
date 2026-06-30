@@ -605,7 +605,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A generic interface method (`fun <E> get(...)`, `<R> fold(...)`) must carry its own type params, else
 			// `gp:E`/`gp:R` in its signature is unresolvable at emit (CoroutineContext / ContinuationInterceptor / …).
 			// `attrs`: ride the @Clr/[Kotlin*] metadata so the ref assembly carries the BCL binding hint (for app-emit
-			// substitution). For a PROPERTY accessor the @Clr is on the property (size @Clr("Count")), so read from there.
+			// substitution). For a PROPERTY accessor the binding is on the property (size @ClrIntrinsic("Count")), so read from there.
 			val memberAttrs = attrsJson((prop ?: fn).annotations)
 			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body],"attrs":[$memberAttrs]}"""
 		}
@@ -881,7 +881,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun hasCustomAccessor(prop: IrProperty): Boolean = isCustomAccessor(prop.getter) || isCustomAccessor(prop.setter)
 	
 	/** `@ClrField` opt-out: emit this property as a plain (public) CLR FIELD, no accessor/property. Detected by short
-	 *  name so the facadegen-generated `clr.ClrField` — or any user-declared `ClrField` — annotation triggers it. */
+	 *  name so any user-declared `ClrField` annotation triggers it. */
 	internal fun isClrField(p: IrProperty): Boolean =
 		p.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrField" }
 
@@ -906,7 +906,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		(sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).firstNotNullOfOrNull { owner ->
 			// A @Clr-annotated interface member -> its BCL name (C3a of the collection binding): a METHOD = its @Clr name
 			// (contains -> Contains); a PROPERTY accessor = get_/set_ + the property's @Clr name (Collection.size
-			// @Clr("Count") -> get_Count). So a Kotlin class implementing a @Clr interface binds its members to the BCL slots.
+			// @ClrIntrinsic("Count") -> get_Count). So a Kotlin class implementing a CLR-bound interface binds its members to the BCL slots.
 			val ovProp = owner.correspondingPropertySymbol?.owner
 			val clrM = if (ovProp != null) clrName(ovProp)?.let { (if (owner === ovProp.getter) "get_" else "set_") + it } else clrName(owner)
 			clrM ?: run {
@@ -1207,7 +1207,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// to `object` params (matching IComparer.Compare(object,object)) and cast each back to its declared type, else the
 		// class fails to load ("does not implement Compare(object,object)"). Same bridge the SAM-shim applies.
 		val erasesSam = fn.overriddenSymbols.any { s -> (s.owner.parent as? IrClass)?.let { ic ->
-			ic.isFun && ic.annotations.any { a -> (a as? IrConstructorCall)?.type?.classFqName?.asString() in setOf("kotlin.clr.ClrIntrinsic", "clr.Clr") } } == true }
+			ic.isFun && ic.annotations.any { a -> (a as? IrConstructorCall)?.type?.classFqName?.asString() in setOf("kotlin.clr.ClrIntrinsic", "kotlin.clr.ClrTypeAlias") } } == true }
 		val erasedParams = if (erasesSam) fn.parameters.filter { it.kind == IrParameterKind.Regular } else emptyList()
 		erasedParams.forEachIndexed { i, p -> captureSubst[p] = """{"k":"cast","type":${str(birType(p.type))},"e":{"k":"local","name":"__sam$i"}}""" }
 		// Promote captured-mutated `var`s to ref-cells; accumulate (a nested closure inherits the enclosing set).
@@ -2139,13 +2139,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val captures = capturedVars(fn, includeThis = true)
 		val cname = "<>dotkt_${synthScope}_Sam${closureCounter++}"
 		val capPairs = captures.map { it to captureFieldName(it) }
-		// A fun interface aliased to a NON-generic BCL interface (Comparator -> @ClrIntrinsic("System.Collections.IComparer"))
+		// A fun interface aliased to a NON-generic BCL interface (Comparator -> @ClrTypeAlias("System.Collections.IComparer"))
 		// erases its SAM method to `object` params, so there is no generic interface-method ref (which PersistedAssemblyBuilder
 		// mis-encodes for value-type type-parameter instantiations -> InvalidProgram). The shim casts each object arg back to
 		// the lambda's declared param type (the bridge) via captureSubst, so the body still sees typed values.
 		val aliasTarget = ifaceClass.annotations.firstNotNullOfOrNull {
 			val a = it as? IrConstructorCall
-			if (a != null && a.type?.classFqName?.asString() in setOf("kotlin.clr.ClrIntrinsic", "clr.Clr")) (a.arguments.firstOrNull() as? IrConst)?.value as? String else null
+			if (a != null && a.type?.classFqName?.asString() in setOf("kotlin.clr.ClrIntrinsic", "kotlin.clr.ClrTypeAlias")) (a.arguments.firstOrNull() as? IrConst)?.value as? String else null
 		}
 		val savedSubst = java.util.IdentityHashMap<IrValueDeclaration, String?>()
 		capPairs.forEach { (decl, fname) -> savedSubst[decl] = captureSubst[decl]; captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}""" }
@@ -4201,7 +4201,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/**
-	 * The .NET name for a type/member: from a `@Clr("...")` annotation, or — for an S5 FIR-injected .NET type
+	 * The .NET name for a type/member: from a `@ClrIntrinsic("...")` annotation, or — for an S5 FIR-injected .NET type
 	 * (synthesized into FIR without annotations) — from the [ClrTypeRegistry] the frontend populated. The IL
 	 * backend, like the C# backend, must consult the registry so injected types resolve as real .NET types
 	 * (otherwise they leak in as user classes and their members mis-route as fields). See [[s5-fir-injection-seam]].
@@ -4250,7 +4250,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = true)
 
-	/** Member-CALL routing must NOT substitute from the stdlib's own `@ClrIntrinsic`/`clr.Clr` annotation: that
+	/** Member-CALL routing must NOT substitute from the stdlib's own `@ClrIntrinsic` annotation: that
 	 *  substitution (a `kotlin.*` member call -> a BCL member) is bir2cir's job, sourced from the ref.dll. kotc emits a
 	 *  PLAIN Kotlin member call. So the call-routing sites read [clrInteropName], which resolves ONLY the genuine .NET
 	 *  interop sources (the facadegen-injected [ClrTypeRegistry], `appColl`, the `java.util.*` aliases, the hardcoded
@@ -4273,11 +4273,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Kotlin shapes (no C3, no clrg: BCL refs). docs/design-clr-stdlib-ref-runtime-split.md.
 		if (stdlibCompile && !stdlibSubstitute) return null   // ref build = gated; runtime (substitute) build = @Clr binds
 		// @Clr binding source: the annotation on the decl (or, for a member, on any decl up its fake-override chain —
-		// `List.size` overrides `Collection.size`@Clr("Count")), else the registry the injection populated (app flow).
+		// `List.size` overrides `Collection.size`@ClrIntrinsic("Count")), else the registry the injection populated (app flow).
 		// [useAnnotation]=false skips the annotation source entirely (member-CALL routing — see [clrInteropName]).
 		fun annClr(d: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
 			if (!useAnnotation) return null
-			for (a in d.annotations) { val fq = (a as? IrConstructorCall)?.type?.classFqName?.asString(); if (fq == "kotlin.clr.ClrIntrinsic" || fq == "clr.Clr" || fq == "kotlin.clr.ClrIntrinsicAsDynamic") return (a.arguments.firstOrNull() as? IrConst)?.value as? String }
+			for (a in d.annotations) { val fq = (a as? IrConstructorCall)?.type?.classFqName?.asString(); if (fq == "kotlin.clr.ClrIntrinsic" || fq == "kotlin.clr.ClrIntrinsicAsDynamic") return (a.arguments.firstOrNull() as? IrConst)?.value as? String }
 			return null
 		}
 		annClr(decl)?.let { return it }

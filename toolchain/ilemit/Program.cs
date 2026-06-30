@@ -2228,7 +2228,7 @@ sealed partial class Emitter
             var named = all.Where(m => m.Name == name).ToList();
             if (named.Count == 1) mi = reanchor ? TypeBuilder.GetMethod(type, named[0]) : named[0];
         }
-        // `Array<T>.Clone()` (@Clr("Clone")): a generic array receiver erases to `object`, whose Clone is protected, so
+        // `Array<T>.Clone()` (@ClrIntrinsic("Clone")): a generic array receiver erases to `object`, whose Clone is protected, so
         // resolution fails — but the runtime value is always a System.Array. Resolve Array.Clone and (below) cast the
         // receiver to System.Array before the callvirt. Returns object; the stdlib `as Array<T>` re-types it.
         bool arrayCloneFallback = false;

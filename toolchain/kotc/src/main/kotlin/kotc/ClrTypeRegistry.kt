@@ -5,16 +5,15 @@ package kotc
  *
  * The frontend extension synthesizes .NET types into FIR *without* annotations (synthesizing FIR
  * annotations that survive Fir2Ir is the brittle part). Instead it records `Kotlin FQN -> .NET type`
- * here, and the backend's `clrName` consults this map as a fallback after `@Clr`. Net effect: a
- * synthesized `clrgen.Math` maps to `System.Math` exactly as a hand-written `@Clr("System.Math")`
- * would — but with no façade `.kt` file. Single JVM process, so a static registry is the simplest
- * correct channel between the two compiler phases.
+ * here, and the backend's `clrName` consults this map. Net effect: a synthesized `clrgen.Math` maps
+ * to `System.Math` (façade-free, no hand-written `.kt` file). Single JVM process, so a static registry
+ * is the simplest correct channel between the two compiler phases.
  */
 object ClrTypeRegistry {
 	private val typeNames = HashMap<String, String>()
 	// Per-MEMBER BCL name (ref/runtime split, app-emit member substitution): key = the member's Kotlin fqn
-	// (`kotlin.collections.Collection.size`) -> its BCL member name (`Count`). Populated from the `[clr.Clr]` carried in
-	// the injection meta when an app references the ref stdlib; the backend's clrName consults it for an injected member.
+	// (`kotlin.collections.Collection.size`) -> its BCL member name (`Count`). Populated from the binding attribute carried
+	// in the injection meta when an app references the ref stdlib; the backend's clrName consults it for an injected member.
 	private val memberNames = HashMap<String, String>()
 
 	fun register(kotlinFqn: String, dotNetName: String) { typeNames[kotlinFqn] = dotNetName }
