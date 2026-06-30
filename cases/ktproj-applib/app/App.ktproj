@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A Kotlin APP that references the Kotlin LIBRARY through <ProjectReference>. `dotnet build`/`dotnet run`
+       build Shapes.ktproj first; its emitted Shapes.dll lands on the app's @(ReferencePath), where the app's
+       kotc import-scan + facadegen (meta mode, reading the lib's [Kotlin*] attributes) inject the lib's types
+       into FIR, and bir2cir/ilemit resolve the calls against that referenced dll. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <StartupObject>AppKt</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../lib/Shapes.ktproj" />
+  </ItemGroup>
+
+  <Import Project="../../KotlinClr.targets" />
+
+</Project>
