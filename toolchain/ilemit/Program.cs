@@ -2250,6 +2250,7 @@ sealed partial class Emitter
         // reflection — re-anchor the open definition's method onto the constructed type via TypeBuilder.GetMethod.
         if (mi == null && type.IsGenericType && !type.IsGenericTypeDefinition)
         {
+            try {
             var open = type.GetGenericTypeDefinition();
             var typeArgs = type.GetGenericArguments();
             var om = open.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);
@@ -2258,17 +2259,25 @@ sealed partial class Emitter
             // doesn't include base-interface methods, so walk the (transitively-flattened) base interfaces, find the
             // declaring one, construct it with this type's args (shared type parameters) and re-anchor. See item 3.
             else mi = ResolveInheritedIfaceMethod(open, typeArgs, name, argSpecs.Count, flags);
+            }
+            catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException) { mi = null; }
         }
         // Last resort: a UNIQUELY-named method (covers e.g. a `params`/vararg method called with one array arg whose
         // static argType — `object` — didn't match the `T[]` param, so neither exact nor arity resolution hit).
         if (mi == null)
         {
             // A generic TypeBuilder instantiation throws on GetMethods — enumerate the open def + re-anchor via GetMethod.
-            MethodInfo[] all; bool reanchor = false;
-            try { all = type.GetMethods(flags); }
-            catch (NotSupportedException) { all = type.GetGenericTypeDefinition().GetMethods(flags); reanchor = true; }
-            var named = all.Where(m => m.Name == name).ToList();
-            if (named.Count == 1) mi = reanchor ? TypeBuilder.GetMethod(type, named[0]) : named[0];
+            // Every reflection step here can throw on a TypeBuilderInstantiation (GetMethods/GetGenericTypeDefinition ->
+            // NotSupportedException "Derived classes must provide an implementation"); any such failure must leave mi == null
+            // so we fall through to dynamic dispatch (below) rather than aborting the emit.
+            try {
+                MethodInfo[] all; bool reanchor = false;
+                try { all = type.GetMethods(flags); }
+                catch (NotSupportedException) { all = type.GetGenericTypeDefinition().GetMethods(flags); reanchor = true; }
+                var named = all.Where(m => m.Name == name).ToList();
+                if (named.Count == 1) mi = reanchor ? TypeBuilder.GetMethod(type, named[0]) : named[0];
+            }
+            catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException) { mi = null; }
         }
         // `Array<T>.Clone()` (@ClrIntrinsic("Clone")): a generic array receiver erases to `object`, whose Clone is protected, so
         // resolution fails — but the runtime value is always a System.Array. Resolve Array.Clone and (below) cast the
