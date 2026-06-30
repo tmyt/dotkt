@@ -127,6 +127,15 @@ The CLR-specific lowering still living in `BirEmitter` is **legacy being migrate
 when you touch it, move it toward the boundary above, don't entrench it. (MEMORY
 `compiler-layer-responsibilities`; plan in `docs/bir2cir-migration-inventory.md`.)
 
+> ### kotc reads NEITHER `@ClrIntrinsic` NOR `@ClrTypeAlias` — the substitution is bir2cir's (2026-06-30, user, foundational)
+> `BirEmitter.clrName()` (it reads `@ClrIntrinsic` to do member call-substitution) is **legacy that must be
+> REMOVED**: kotc must not read either CLR-binding annotation. It emits pure Kotlin — a plain `kotlin.String.length`
+> member call, the bare `kotlin.String` owner — and nothing more. **bir2cir reads the ref.dll** and treats a class
+> carrying `@ClrTypeAlias` as a **CLR-bound owner**, and its members carrying `@ClrIntrinsic` (and rule-3 bodies) as the
+> substitution targets — rewriting `kotlin.String.length` → `System.String.get_Length`, etc. **This bir2cir
+> reference-metadata substitution is the CORE of the 4-layer migration and is MANDATORY — not a follow-up.** (A
+> stdlib member binding does nothing until bir2cir consumes it from the ref.dll.)
+
 > ### BIR type tokens are pure Kotlin FQN identities — kotc emits NO CLR-resolution marker (2026-06-30, user-confirmed)
 > The BIR's `@Name` (this-assembly-emitted → ilemit `_types`), `clr:Name` (a referenced .NET type),
 > `clrg:Name[args]` (a referenced .NET *generic* type), and the primitive **shorthand** (`int`/`long`/
