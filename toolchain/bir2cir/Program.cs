@@ -178,6 +178,7 @@ sealed class ReferenceMetadataIndex
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "<>dotkt_ClrH_*"
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
+    readonly Dictionary<string, string> _extMemberIntrinsics = new(StringComparer.Ordinal); // "name|recvKey" -> bare member
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
 
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
@@ -207,6 +208,7 @@ sealed class ReferenceMetadataIndex
                 list.Add(m);
             }
             foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.ExtMemberIntrinsics) _extMemberIntrinsics.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.InlineBacking) _inlineBacking.TryAdd(kv.Key, kv.Value);
         }
     }
@@ -260,6 +262,11 @@ sealed class ReferenceMetadataIndex
     // fully-qualified BCL static (e.g. clrTimestamp -> "System.Diagnostics.Stopwatch.GetTimestamp").
     public bool TryTopLevelIntrinsic(string funName, out string fqStatic) =>
         _topLevelIntrinsics.TryGetValue(funName, out fqStatic);
+
+    // A bare-@ClrIntrinsic extension fun resolved by name + the receiver-type key (the call's first-arg type), so
+    // `set` on a MutableMap receiver -> set_Item, not StringBuilder's set_Chars.
+    public bool TryExtMemberIntrinsic(string funName, string recvKey, out string member) =>
+        _extMemberIntrinsics.TryGetValue(funName + "|" + recvKey, out member);
 
     // An @JvmInline value class's backing-field getter call (`x.get_data()`): the inline UNBOX. Returns the CLR conv
     // token for the field's declared type so the call collapses to `conv(recv)` (the erased primitive IS the value).
@@ -708,9 +715,20 @@ sealed class ReferenceMetadataIndex
                             intrinsic,
                             method.IsAbstract,
                             method.IsStatic));
-                        // A top-level fun (file-class static) with @ClrIntrinsic naming a fully-qualified BCL static.
-                        if (isFileClass && method.IsStatic && intrinsic != null && intrinsic.Contains('.'))
-                            metadata.TopLevelIntrinsics.TryAdd(method.Name, intrinsic);
+                        // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
+                        //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.
+                        //   bare "Name"      -> a member on an EXTENSION receiver (`Array<T>.nativeClone()` ->
+                        //                       @ClrIntrinsic("Clone")). Keyed by NAME|recvKey (the first param's type),
+                        //                       because the name alone collides across receivers (MutableMap.set->set_Item
+                        //                       vs StringBuilder.set->set_Chars). recvKey of the call site is its first arg.
+                        if (isFileClass && method.IsStatic && intrinsic != null)
+                        {
+                            var ps = method.GetParameters();
+                            if (intrinsic.Contains('.'))
+                                metadata.TopLevelIntrinsics.TryAdd(method.Name, intrinsic);
+                            else if (ps.Length >= 1)
+                                metadata.ExtMemberIntrinsics.TryAdd(method.Name + "|" + RecvKey(ps[0].ParameterType), intrinsic);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -755,6 +773,17 @@ sealed class ReferenceMetadataIndex
     {
         var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrIntrinsic" or "kotlin.clr.ClrIntrinsicAsDynamic");
         return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
+    }
+
+    // A receiver-type key for an extension fun's first param, matched against a call's first-arg type. Arrays collapse
+    // to "[]", generic params to "gp", a generic type to its open def's stripped FQN.
+    static string RecvKey(Type t)
+    {
+        if (t.IsByRef && t.GetElementType() is Type e) t = e;
+        if (t.IsArray) return "[]";
+        if (t.IsGenericParameter) return "gp";
+        var def = t.IsGenericType ? t.GetGenericTypeDefinition() : t;
+        return StripGenericArity(def.FullName ?? def.Name);
     }
 
     // An @JvmInline backing-field's CLR `conv` target — the ilemit conv opcode token for the field's primitive type
@@ -924,6 +953,9 @@ sealed class ReferenceDotKtMetadata
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.
     public readonly Dictionary<string, string> TopLevelIntrinsics = new(StringComparer.Ordinal);
+    // Bare-@ClrIntrinsic extension fun, keyed "funName|recvKey" (recvKey = the receiver/first-param type) -> the BCL
+    // member name. Receiver-keyed because the bare name collides across receivers (set->set_Item vs set->set_Chars).
+    public readonly Dictionary<string, string> ExtMemberIntrinsics = new(StringComparer.Ordinal);
     // @JvmInline value-class owner FQN -> (its single backing-field getter "get_data", the field's CLR conv token).
     // The class is ERASED to its primitive CLR form, so `get_data()` is the inline unbox: it collapses to the receiver
     // value conv'd to the field's declared type (a `conv`, never a `ldfld data` — the erased primitive has no field).
@@ -1911,15 +1943,21 @@ static class MemberCallSubstitution
         var ownerToken = (node[instance ? "ownerType" : "owner"] as JsonValue)?.GetValue<string>();
         if (string.IsNullOrEmpty(ownerToken))
         {
-            // Top-level fun call (`callStatic owner=null`): a @ClrIntrinsic top-level fun -> a fully-qualified BCL
-            // static. Split the intrinsic at the last '.' into owner type + method (mirrors kotc's old declaringClass
-            // == null path, BirEmitter.kt:3190, but sourced from the ref.dll). Instance calls always carry an owner.
+            // Top-level fun call (`callStatic owner=null`) bound by @ClrIntrinsic. Two shapes (sourced from the ref.dll):
+            //   FQ "System.X.Y"  -> a fully-qualified BCL static: split at the last '.' -> clrStatic System.X.Y(args).
+            //   bare "Name"      -> an EXTENSION receiver's instance method (`Array<T>.nativeClone()`@ClrIntrinsic("Clone")
+            //                       -> recv.Clone()): clrInstance on the first arg (the extension receiver). The first
+            //                       sig type is the receiver type; the rest are the method args.
             var fn = (node["method"] as JsonValue)?.GetValue<string>();
-            if (instance || string.IsNullOrEmpty(fn) || !refs.TryTopLevelIntrinsic(fn, out var fq)) return null;
-            var dot = fq.LastIndexOf('.');
-            if (dot <= 0) return null;
+            if (instance || string.IsNullOrEmpty(fn)) return null;
             var args0 = node["args"] as JsonArray ?? new JsonArray();
-            return ClrCallNode(node, fq[..dot], fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false);
+            if (refs.TryTopLevelIntrinsic(fn, out var fq) && fq.LastIndexOf('.') is var dot && dot > 0)
+                return ClrCallNode(node, fq[..dot], fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false);
+            // bare-intrinsic extension: resolve by name + the first-arg's receiver key (disambiguates `set`).
+            var sigParts0 = SplitSig(node);
+            if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, RecvKeyOf(sigParts0[0]), out var extMember))
+                return TopLevelExtensionInstance(node, extMember, args0, sigParts0);
+            return null;
         }
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
 
@@ -2035,6 +2073,46 @@ static class MemberCallSubstitution
         var inner = ownerToken[(br + 1)..^1];
         var parts = SplitTopLevel(inner);
         return parts.Count > 0 && parts[0].Length > 0 ? parts[0] : "object";
+    }
+
+    // A bare-@ClrIntrinsic top-level EXTENSION fun: `fn(recv, rest...)` -> `recv.<intrinsic>(rest...)`. The extension
+    // receiver is the first arg; the first `sig` type is its (CLR) type, the rest are the method's arg types. ilemit
+    // resolves the BCL member on that receiver type (incl. its array-Clone / dynamic-dispatch fallbacks).
+    static List<string> SplitSig(JsonObject node)
+    {
+        var sig = (node["sig"] as JsonValue)?.GetValue<string>();
+        return string.IsNullOrWhiteSpace(sig) ? new List<string>() : SplitTopLevel(sig).ToList();
+    }
+
+    // The receiver-type key of a call's first-arg type (mirrors ReferenceMetadataIndex.RecvKey on the ref.dll side).
+    static string RecvKeyOf(string sig0)
+    {
+        if (sig0.StartsWith("array:", StringComparison.Ordinal)) return "[]";
+        if (sig0.StartsWith("gp:", StringComparison.Ordinal)) return "gp";
+        return ReferenceMetadataIndex.BareOwnerFqn(sig0);
+    }
+
+    static JsonNode TopLevelExtensionInstance(JsonObject node, string intrinsic, JsonArray args, List<string> sigParts)
+    {
+        if (args.Count == 0) return null;   // no receiver -> not an extension shape; leave for FindStatic to report
+        var recvType = sigParts.Count > 0 ? sigParts[0] : InferExpressionType(args[0]);
+
+        var argTypes = new JsonArray();
+        for (var i = 1; i < sigParts.Count; i++) argTypes.Add(sigParts[i]);
+        var rest = new JsonArray();
+        for (var i = 1; i < args.Count; i++) rest.Add(args[i]?.DeepClone());
+
+        var call = new JsonObject
+        {
+            ["k"] = "clrInstance",
+            ["type"] = recvType,
+            ["method"] = intrinsic,
+            ["argTypes"] = argTypes,
+            ["recv"] = args[0].DeepClone(),
+            ["args"] = rest,
+        };
+        if (RetToken(node) is string ret) call["ret"] = ret;
+        return call;
     }
 
     // A clrInstance / clrStatic node. For a property accessor call (`get_X`/`set_X` whose intrinsic is the bare
