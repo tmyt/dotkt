@@ -320,16 +320,6 @@ sealed class ReferenceMetadataIndex
         return intrinsic != null;
     }
 
-    // By-NAME @ClrIntrinsic lookup for a PROPERTY accessor's declaration rename (size getter/setter -> get_/set_Count):
-    // a property has ONE @ClrIntrinsic regardless of accessor arity (the getter is arity 0, the setter arity 1, both ->
-    // the property's "Count"), so arity does not disambiguate here. (The property binding is indexed by the property name.)
-    public bool TryMemberIntrinsicByName(string ownerFqn, string memberName, out string intrinsic)
-    {
-        intrinsic = _membersByOwner.TryGetValue(ownerFqn, out var list)
-            ? list.FirstOrDefault(m => m.Name == memberName && m.Intrinsic != null)?.Intrinsic
-            : null;
-        return intrinsic != null;
-    }
 
     // A top-level fun (file-class static, called as `callStatic owner=null`) bound by @ClrIntrinsic to a
     // fully-qualified BCL static (e.g. clrTimestamp -> "System.Diagnostics.Stopwatch.GetTimestamp").
@@ -830,17 +820,6 @@ sealed class ReferenceMetadataIndex
                                 metadata.TopLevelStatics[method.Name] = lst = new List<(string, string)>();
                             lst.Add((ownerFqn, rk));
                         }
-                    }
-                    // A PROPERTY's @ClrIntrinsic (`Collection.size @ClrIntrinsic("Count")`, `CharSequence.length ->
-                    // "Length"`) lives on the property, NOT on its accessor methods, so GetMethods() above misses it.
-                    // Index it by the Kotlin property name (size/length) so the declaration-rename pass can resolve a
-                    // getter/setter override to `get_Count`/`set_Count`. Only intrinsic-bearing properties are added (a
-                    // null-intrinsic entry would perturb IsRule3Member's "concrete + intrinsic-less" rule-3 detection).
-                    foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                    {
-                        var pIntr = ClrIntrinsicOf(prop.GetCustomAttributesData());
-                        if (pIntr == null) continue;
-                        metadata.MemberBindings.Add(new MemberBinding(ownerFqn, prop.Name, 0, pIntr, prop.GetMethod?.IsAbstract ?? false, false));
                     }
                 }
                 catch (Exception ex)
@@ -2574,12 +2553,12 @@ static class DeclarationRename
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
             var arity = (oo["arity"] as JsonValue)?.GetValue<int>() ?? 0;
-            // A method matches its overload by EXACT arity; a property accessor matches the property's single intrinsic
-            // by name (the getter/setter prefix is applied below).
-            var found = kind is "getter" or "setter"
-                ? refs.TryMemberIntrinsicByName(owner, member, out var intr)
-                : refs.TryMemberIntrinsicExact(owner, member, arity, out intr);
-            if (!found) continue;
+            // The @ClrIntrinsic lives on the EMITTED member as the ref.dll exposes it: for a property it is on the
+            // get_<name>/set_<name> ACCESSOR METHOD (not the property), and its value is the BCL PROPERTY name ("Count"),
+            // so the slot is get_/set_ + that. A plain method's intrinsic is the BCL method name verbatim. EXACT arity
+            // overload-matching (getter=arity 0, setter=arity 1) so `add(element)`->Add never grabs `add(i,e)`->Insert.
+            var lookupName = kind switch { "getter" => "get_" + member, "setter" => "set_" + member, _ => member };
+            if (!refs.TryMemberIntrinsicExact(owner, lookupName, arity, out var intr)) continue;
             return kind switch { "getter" => "get_" + intr, "setter" => "set_" + intr, _ => intr };
         }
         return null;
