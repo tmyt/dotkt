@@ -308,13 +308,16 @@ sealed partial class Emitter
                     // walks the base chain by bare name for inherited members like AbstractIterator.setNext).
                     var (bopen, bconstructed) = ParseOwner(ti.BaseName);
                     if (bconstructed != null) { ti.TB.SetParent(bconstructed); }
-                    else
+                    else if (_types.TryGetValue(bopen, out var baseTi))
                     {
-                        var baseTb = _types[bopen].TB;
+                        var baseTb = baseTi.TB;
                         var bArity = baseTb.IsGenericTypeDefinition ? baseTb.GetGenericArguments().Length : 0;
                         var myArgs = ti.TB.IsGenericTypeDefinition ? ti.TB.GetGenericArguments() : Type.EmptyTypes;
                         ti.TB.SetParent(bArity > 0 && myArgs.Length >= bArity ? baseTb.MakeGenericType(myArgs.Take(bArity).ToArray()) : (Type)baseTb);
                     }
+                    // A bare external .NET base (kotc's pure-FQN output for a non-`clr:`-marked .NET supertype): not in
+                    // `_types`, so resolve it by reflection over referenced assemblies.
+                    else ti.TB.SetParent(ResolveType(bopen));
                 }
             }
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
@@ -322,10 +325,11 @@ sealed partial class Emitter
                 {
                     var spec = i.GetString();
                     // A .NET-mapped interface (`clr:`/`clrg:...[..]`, e.g. DotKt.Coroutines.Continuation<int>) is
-                    // resolved by reflection; a Kotlin-user interface `Container[int]` comes from _types.
-                    Type itype = (spec.StartsWith("clr:") || spec.StartsWith("clrg:"))
-                        ? MapType(spec)
-                        : ParseOwner(spec) is var (open, constructed) ? (constructed ?? (Type)_types[open].TB) : null;
+                    // resolved by reflection; a Kotlin-user interface `Container[int]` comes from _types; a bare external
+                    // .NET interface FQN (pure-FQN, not `_types`) falls back to reflection.
+                    Type itype;
+                    if (spec.StartsWith("clr:") || spec.StartsWith("clrg:")) itype = MapType(spec);
+                    else { var (open, constructed) = ParseOwner(spec); itype = constructed ?? (_types.TryGetValue(open, out var oti) ? (Type)oti.TB : ResolveType(open)); }
                     ti.TB.AddInterfaceImplementation(itype);
                 }
         }
@@ -2914,9 +2918,28 @@ sealed partial class Emitter
             "uint" => typeof(uint), "ulong" => typeof(ulong), "ubyte" => typeof(byte), "ushort" => typeof(ushort),
             // Kotlin Byte is SIGNED (sbyte, -128..127); UByte is the unsigned `byte`.
             "short" => typeof(short), "byte" => typeof(sbyte),
-            // A bare .NET FQN (e.g. a hardcoded `System.Exception` catch type) -> resolve by reflection; otherwise object.
-            _ => (t != null && t.Contains('.')) ? ResolveType(t) : typeof(object),
+            // A bare FQN identity (kotc's pure-FQN output — NO `@`/`clr:` marker): ilemit DERIVES where the type lives.
+            // An in-assembly emitted type (`_types`, incl. the constructed `Name[args]` form) wins FIRST, else a
+            // referenced .NET type by reflection (`System.X`), else fall back to object (the pre-existing default for an
+            // erased/unknown non-dotted token). This is the ilemit half of "kotc emits pure FQNs; ilemit derives
+            // resolution" — so a plain `kotlin.Int`/`Foo`/`kotlin.Any` reference resolves to its emitted TypeBuilder.
+            _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('.')) ? ResolveType(t) : typeof(object)),
         };
+    }
+
+    // Resolve a bare type spec (no `@`/`clr:`/shorthand prefix) against THIS assembly's emitted types (`_types`).
+    // Handles the plain `Name` and the constructed-generic `Name[arg,...]` forms (the `_types` key is the open name
+    // WITHOUT arity, so the `[...]` suffix is stripped to look it up). Returns null when the name is not emitted here
+    // (the caller then falls back to reflection over referenced assemblies).
+    Type TryMapEmittedType(string spec)
+    {
+        if (spec == null) return null;
+        var br = spec.IndexOf('[');
+        if (br < 0) return _types.TryGetValue(spec, out var ti) ? ti.AsType : null;
+        var open = spec.Substring(0, br);
+        if (!_types.TryGetValue(open, out var oti)) return null;
+        var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapArg).ToArray();
+        return oti.AsType.MakeGenericType(args);
     }
 
     void Save(PersistedAssemblyBuilder ab, MethodBuilder entry)
