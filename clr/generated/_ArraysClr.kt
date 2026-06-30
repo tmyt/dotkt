@@ -521,7 +521,7 @@ public actual fun CharArray.copyInto(destination: CharArray, destinationOffset: 
 }
 
 // copyOf(): System.Array.Clone() returns a shallow copy whose runtime element type matches the receiver (no reified T
-// allocation needed). The @Clr("Clone") receiver erases to object; ilemit resolves Array.Clone + casts the receiver.
+// allocation needed). The @ClrIntrinsic("Clone") receiver erases to object; ilemit resolves Array.Clone + casts the receiver.
 @kotlin.clr.ClrIntrinsic("Clone")
 private fun <T> Array<T>.nativeClone(): Any = TODO("clr binding should be implemented")
 

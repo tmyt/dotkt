@@ -8,18 +8,16 @@
 
 package kotlin.collections
 
-import clr.Clr
-
-/** The BCL `IEnumerator<T>` surface, for the adapter below. (@Clr -> not emitted; resolves to the real BCL type.) */
-@Clr("System.Collections.Generic.IEnumerator")
+/** The BCL `IEnumerator<T>` surface, for the adapter below. (@ClrTypeAlias -> not emitted; resolves to the real BCL type.) */
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IEnumerator")
 internal interface ClrEnumerator<out T> {
     fun MoveNext(): Boolean
-    @Clr("get_Current") fun current(): T
+    @kotlin.clr.ClrIntrinsic("get_Current") fun current(): T
 }
 
 /** The BCL `IEnumerable<T>` surface — its `GetEnumerator()` returns the INTERFACE `IEnumerator<T>` (a `List<T>` value's
  *  own `GetEnumerator` returns the struct `List<T>.Enumerator` instead, so always go through this interface). */
-@Clr("System.Collections.Generic.IEnumerable")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IEnumerable")
 internal interface ClrEnumerable<out T> {
     fun GetEnumerator(): ClrEnumerator<T>
 }

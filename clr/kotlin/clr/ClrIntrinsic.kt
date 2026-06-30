@@ -1,4 +1,4 @@
-// The @ClrIntrinsic binding annotation (the kotlin.clr-namespaced successor to the legacy `clr.Clr`): a MEMBER
+// The @ClrIntrinsic binding annotation (the kotlin.clr-namespaced replacement for the now-removed legacy root-package binding): a MEMBER
 // (function / property) of a CLR-bound class binds to the named .NET member. CLASS-level type aliasing is now
 // @ClrTypeAlias's role — @ClrIntrinsic NO LONGER targets CLASS (the @Target below enforces the role split, so
 // @ClrIntrinsic on a class is a compile error). bir2cir reads it from the REFERENCE assembly (NOT kotc) and
@@ -6,7 +6,6 @@
 //  - on a MEMBER -> binds to the named .NET member (e.g. @ClrIntrinsic("Length") on a member of a
 //    @ClrTypeAlias("System.String") class -> System.String.get_Length); an unannotated member rolls up to its own name.
 //  - on a TOP-LEVEL fun -> a STATIC .NET method, splitting "Namespace.Type.Method" at the last '.'.
-//  (Legacy `clr.Clr` is still recognized.)
 package kotlin.clr
 
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
