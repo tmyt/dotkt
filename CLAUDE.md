@@ -12,7 +12,8 @@
 # Ground Rules
 
 - **Think in English; write the final report to the user in Japanese.** Internal reasoning, code,
-  comments, identifiers, and commit messages stay in English; only the user-facing answer (the final
+  comments, identifiers, commit messages, **and subagent (Agent tool) prompts** stay in English —
+  they are instructions to agents, not the user-facing report; only the user-facing answer (the final
   report) is Japanese.
 - **The answer is usually already written down — this repo over-documents.** Before changing
   anything non-trivial, use the **Task → doc map** below and read the matching doc. Do not
