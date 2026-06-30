@@ -1,7 +1,8 @@
 // bir2cir — lower Backend IR (BIR) JSON into CLR IR (CIR) JSON.
 //
-// The default output is BIR-compatible CIR so existing ilemit-based pipelines keep
-// working while lowering responsibilities move into this stage.
+// bir2cir owns the Kotlin -> CLR type substitution. Its SINGLE, sole transform rewrites the Kotlin type
+// vocabulary in the BIR into the CLR-codegen vocabulary ilemit consumes, emitting a BIR-SHAPED CIR (same node
+// shape; only type strings change). There is no verbatim-copy / envelope alternative — that dual track is retired.
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -19,7 +20,7 @@ static class Bir2Cir
         catch (UsageException ex)
         {
             Console.Error.WriteLine(ex.Message);
-            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compat-bir|--native-cir] [--ref <dll>]... <file.bir.json>...");
+            Console.Error.WriteLine("usage: bir2cir <out-dir> [--ref <dll>]... <file.bir.json>...");
             return 1;
         }
         catch (Exception ex)
@@ -47,7 +48,7 @@ sealed class Pipeline
 
         var suspend = SuspendShapeAnalysis.Combine(birFiles.Select(f => f.Suspend));
         Console.Error.WriteLine(
-            $"bir2cir: lowered {birFiles.Count} BIR file(s) -> {_options.OutDir} ({refs.Count} ref(s), mode: {_options.ModeName}, suspend: {suspend.FunctionCount} fn/{suspend.AwaitCount} await)");
+            $"bir2cir: lowered {birFiles.Count} BIR file(s) -> {_options.OutDir} ({refs.Count} ref(s), build: {(_options.RefBuild ? "reference" : "substitute/app")}, suspend: {suspend.FunctionCount} fn/{suspend.AwaitCount} await)");
     }
 
     static List<BirFile> LoadBirFiles(IReadOnlyList<string> inputs)
@@ -76,10 +77,10 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
-            var json = _options.Mode == OutputMode.CompatBir
-                ? bir.Json
-                : NativeCirEnvelope.Create(bir, refs).ToJsonString(JsonOptions.Indented);
-            files.Add(new CirFile(outputName, json));
+            // The single, sole transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary,
+            // emitting a BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track.
+            var lowered = BirTypeLowering.Lower(bir.Root, _options.RefBuild);
+            files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
         }
 
         return files;
@@ -102,9 +103,15 @@ sealed class Pipeline
     }
 }
 
-sealed record DriverOptions(string OutDir, OutputMode Mode, IReadOnlyList<string> References, IReadOnlyList<string> Inputs)
+sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IReadOnlyList<string> Inputs)
 {
-    public string ModeName => Mode == OutputMode.CompatBir ? "compat-bir" : "native-cir";
+    // The lowering mode is a property of the BUILD, not a CLI flag. The pure-Kotlin REFERENCE stdlib surface
+    // (DOTKT_STDLIB_COMPILE set AND DOTKT_STDLIB_SUBSTITUTE unset) keeps kotlin.* type tokens verbatim; EVERY
+    // other invocation — the runtime stdlib build and all app builds — lowers kotlin.* to the CLR vocabulary.
+    // The build scripts export these env vars. There is no --compat-bir/--native-cir output selection any more.
+    public bool RefBuild =>
+        Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") != null &&
+        Environment.GetEnvironmentVariable("DOTKT_STDLIB_SUBSTITUTE") == null;
 
     public static DriverOptions Parse(string[] args)
     {
@@ -114,7 +121,6 @@ sealed record DriverOptions(string OutDir, OutputMode Mode, IReadOnlyList<string
         var outDir = args[0];
         var refs = new List<string>();
         var inputs = new List<string>();
-        var mode = OutputMode.CompatBir;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -125,13 +131,9 @@ sealed record DriverOptions(string OutDir, OutputMode Mode, IReadOnlyList<string
                     break;
                 case "--ref":
                     throw new UsageException("bir2cir: --ref requires a DLL path");
-                case "--compat-bir":
-                    mode = OutputMode.CompatBir;
-                    break;
-                case "--native-cir":
-                    mode = OutputMode.NativeCir;
-                    break;
                 default:
+                    if (args[i].StartsWith("--", StringComparison.Ordinal))
+                        throw new UsageException($"bir2cir: unknown option '{args[i]}'");
                     inputs.Add(args[i]);
                     break;
             }
@@ -140,14 +142,8 @@ sealed record DriverOptions(string OutDir, OutputMode Mode, IReadOnlyList<string
         if (inputs.Count == 0)
             throw new UsageException("bir2cir: no BIR input files");
 
-        return new DriverOptions(outDir, mode, refs, inputs);
+        return new DriverOptions(outDir, refs, inputs);
     }
-}
-
-enum OutputMode
-{
-    CompatBir,
-    NativeCir,
 }
 
 sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend, CallSiteAnalysis Calls, TypeSiteAnalysis Types);
@@ -342,6 +338,7 @@ sealed class ReferenceMetadataIndex
             return NormalizeGenericType(value["clrg:".Length..]);
         return value switch
         {
+            // CLR-codegen shorthand (bir2cir's OUTPUT vocabulary, also what kotc still emits today). KEEP these.
             "bool" => "System.Boolean",
             "byte" => "System.Byte",
             "char" => "System.Char",
@@ -357,6 +354,25 @@ sealed class ReferenceMetadataIndex
             "ulong" => "System.UInt64",
             "ushort" => "System.UInt16",
             "void" => "System.Void",
+            // The pure-Kotlin INPUT vocabulary (the symbols kotc emits once switched, and the FullName of the
+            // emitted reference primitive classes — "kotlin.Int" etc.). Converge onto the same BCL token so
+            // TypeMatches sees ONE vocabulary regardless of whether a site speaks shorthand or kotlin.*.
+            "kotlin.Boolean" => "System.Boolean",
+            "kotlin.Byte" => "System.Byte",
+            "kotlin.Char" => "System.Char",
+            "kotlin.Double" => "System.Double",
+            "kotlin.Float" => "System.Single",
+            "kotlin.Int" => "System.Int32",
+            "kotlin.Long" => "System.Int64",
+            "kotlin.Any" => "System.Object",
+            "kotlin.Nothing" => "System.Object",
+            "kotlin.Short" => "System.Int16",
+            "kotlin.String" => "System.String",
+            "kotlin.UByte" => "System.Byte",
+            "kotlin.UInt" => "System.UInt32",
+            "kotlin.ULong" => "System.UInt64",
+            "kotlin.UShort" => "System.UInt16",
+            "kotlin.Unit" => "System.Void",
             _ => StripGenericArity(value),
         };
     }
@@ -602,8 +618,31 @@ sealed class ReferenceMetadataIndex
         if (type == typeof(short)) return "short";
         if (type == typeof(string)) return "string";
         if (type == typeof(void)) return "void";
-        return null;
+        // The REFERENCE stdlib emits the pure-Kotlin primitives as real types whose FullName is literally
+        // "kotlin.Int" / "kotlin.String" / ... When such a ref dll is read back, converge those onto the SAME
+        // CLR-shorthand token as their BCL twin so a member signature speaks one vocabulary for TypeMatches.
+        return PrimitiveBirNameByFullName(type.FullName);
     }
+
+    static string PrimitiveBirNameByFullName(string fullName) => fullName switch
+    {
+        "kotlin.Boolean" => "bool",
+        "kotlin.Byte" => "byte",
+        "kotlin.Char" => "char",
+        "kotlin.Double" => "double",
+        "kotlin.Float" => "float",
+        "kotlin.Int" => "int",
+        "kotlin.Long" => "long",
+        "kotlin.Any" => "object",
+        "kotlin.Short" => "short",
+        "kotlin.String" => "string",
+        "kotlin.UByte" => "ubyte",
+        "kotlin.UInt" => "uint",
+        "kotlin.ULong" => "ulong",
+        "kotlin.UShort" => "ushort",
+        "kotlin.Unit" => "void",
+        _ => null,
+    };
 
     static string TypeKind(Type type)
     {
@@ -1812,7 +1851,10 @@ static class IlemitCompatCirDraft
 
 sealed class TypeSiteAnalyzer
 {
-    static readonly HashSet<string> TypeProperties = new(StringComparer.Ordinal)
+    // The type-bearing JSON keys whose string (or string[]) values carry a type token. SHARED with
+    // BirTypeLowering, which rewrites exactly these. `type` also covers nested params[].type / fields[].type;
+    // `interfaces` and `argTypes` are string arrays.
+    internal static readonly HashSet<string> TypeProperties = new(StringComparer.Ordinal)
     {
         "type",
         "ownerType",
@@ -1821,10 +1863,12 @@ sealed class TypeSiteAnalyzer
         "resultType",
         "base",
         "interfaces",
+        "argTypes",
     };
 
     static readonly HashSet<string> PrimitiveTypes = new(StringComparer.Ordinal)
     {
+        // CLR-codegen shorthand (bir2cir's output vocabulary).
         "bool",
         "byte",
         "char",
@@ -1840,6 +1884,24 @@ sealed class TypeSiteAnalyzer
         "ulong",
         "ushort",
         "void",
+        // The pure-Kotlin input vocabulary — a bare kotlin.* primitive is a recognised primitive (bir2cir lowers
+        // it directly), not an unresolved kotlin-symbol that needs a reference lookup.
+        "kotlin.Boolean",
+        "kotlin.Byte",
+        "kotlin.Char",
+        "kotlin.Double",
+        "kotlin.Float",
+        "kotlin.Int",
+        "kotlin.Long",
+        "kotlin.Any",
+        "kotlin.Nothing",
+        "kotlin.Short",
+        "kotlin.String",
+        "kotlin.UByte",
+        "kotlin.UInt",
+        "kotlin.ULong",
+        "kotlin.UShort",
+        "kotlin.Unit",
     };
 
     public static TypeSiteAnalysis Analyze(JsonNode root)
@@ -2469,6 +2531,203 @@ sealed record SuspendFunctionShape(
         ["returns"] = Returns,
         ["cpsFields"] = CpsFields,
     };
+}
+
+// bir2cir's single, sole transform. Rewrites the Kotlin type vocabulary in a BIR-shaped JSON tree into the
+// CLR-codegen vocabulary ilemit consumes, producing a BIR-SHAPED CIR (same node shape; only type strings change).
+//
+// Mode gate (a property of the build, exported as env by the build scripts):
+//   refBuild = DOTKT_STDLIB_COMPILE set AND DOTKT_STDLIB_SUBSTITUTE unset  -> the pure-Kotlin REFERENCE surface.
+// In the REFERENCE build a kotlin.* token is kept VERBATIM (pure-Kotlin metadata; the bare FQN "kotlin.Int"
+// stays "kotlin.Int"); the rewrite is a pure passthrough. In EVERY other build (the runtime stdlib, and all app
+// builds) a bare kotlin.* primitive lowers to its CLR token (kotlin.Int -> int, kotlin.String -> string, ...).
+//
+// kotc still emits the CLR shorthand (int/string/...) directly today, so those tokens are ALREADY-LOWERED and
+// pass through untouched in BOTH modes; the kotlin.* -> CLR rewrite only fires once kotc is switched to emit
+// kotlin.* symbols. Against current kotc output this pass is a near-no-op (the reference build is byte-faithful;
+// the substitute build only rewrites the handful of bare kotlin.* tokens kotc already emits).
+static class BirTypeLowering
+{
+    // The bare kotlin.* value tokens and their CLR-codegen lowering. Only consulted in the non-reference
+    // (substitute/app) build; the reference build keeps every kotlin.* token verbatim.
+    //
+    // SCOPE — these are the primitives kotc currently emits as the CLR shorthand at EVERY position (value AND
+    // call-owner), so once kotc switches to emitting the kotlin.* symbol, lowering it back to the shorthand
+    // reproduces exactly today's wiring — ilemit already resolves it. They have ZERO occurrences in the current
+    // BIR's type positions, so this map is a true no-op against today's output (it activates only after the kotc
+    // switch).
+    //
+    // DEFERRED — kotlin.String / kotlin.Any / kotlin.Unit and the unsigned set (kotlin.UInt/ULong/UByte/UShort)
+    // are NOT here yet. kotc already emits them as BARE kotlin.* references to the stdlib's own emitted
+    // value-classes in call-OWNER positions (`ownerType:"kotlin.UInt"`), and ilemit resolves them in THAT form,
+    // not as a CLR primitive. Lowering them now makes ilemit fail to resolve the owner ("cannot resolve .NET
+    // type ..."). Activating them needs the matching ilemit-resolver adjustment (resolve the lowered owner /
+    // resolve a bare emitted kotlin.* type) — an ilemit-layer change tracked separately; adding them here before
+    // that lands would regress the runtime-stdlib build.
+    static readonly IReadOnlyDictionary<string, string> KotlinToClr = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["kotlin.Int"] = "int",
+        ["kotlin.Long"] = "long",
+        ["kotlin.Short"] = "short",
+        ["kotlin.Byte"] = "byte",
+        ["kotlin.Double"] = "double",
+        ["kotlin.Float"] = "float",
+        ["kotlin.Boolean"] = "bool",
+        ["kotlin.Char"] = "char",
+        ["kotlin.Nothing"] = "object",
+    };
+
+    static readonly string[] ModifierPrefixes = { "byref:", "array:", "nullable:" };
+
+    public static JsonNode Lower(JsonNode root, bool refBuild) => LowerNode(root, refBuild);
+
+    static JsonNode LowerNode(JsonNode node, bool refBuild)
+    {
+        if (node is JsonObject obj)
+        {
+            var copy = new JsonObject();
+            foreach (var kv in obj)
+            {
+                if (kv.Value == null) { copy[kv.Key] = null; continue; }
+                copy[kv.Key] = TypeSiteAnalyzer.TypeProperties.Contains(kv.Key)
+                    ? LowerTypeValued(kv.Value, refBuild)
+                    : LowerNode(kv.Value, refBuild);
+            }
+            return copy;
+        }
+
+        if (node is JsonArray arr)
+        {
+            var copy = new JsonArray();
+            foreach (var item in arr)
+                copy.Add(item == null ? null : LowerNode(item, refBuild));
+            return copy;
+        }
+
+        return node.DeepClone();
+    }
+
+    // A type-bearing key's value: a scalar type string, an array of type strings (interfaces/argTypes), or — for
+    // a few node shapes — a nested object under a `type` key, which is recursed structurally.
+    static JsonNode LowerTypeValued(JsonNode val, bool refBuild)
+    {
+        if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
+            return JsonValue.Create(LowerTypeString(s, refBuild));
+
+        if (val is JsonArray arr)
+        {
+            var copy = new JsonArray();
+            foreach (var item in arr)
+            {
+                if (item is JsonValue iv && iv.TryGetValue<string>(out var its))
+                    copy.Add(JsonValue.Create(LowerTypeString(its, refBuild)));
+                else
+                    copy.Add(item == null ? null : LowerNode(item, refBuild));
+            }
+            return copy;
+        }
+
+        return LowerNode(val, refBuild);
+    }
+
+    // Recurse the BIR type grammar, rewriting only bare kotlin.* primitive tokens. Every other shape
+    // (gp:, clr:, clrg:[...], @Name[...], func:ret:args, array:/byref:/nullable: modifiers, the CLR shorthand,
+    // and user/stdlib FQNs like kotlin.collections.List) is structurally preserved; nested type arguments are
+    // recursed so a kotlin.* primitive inside a generic lowers too.
+    public static string LowerTypeString(string raw, bool refBuild)
+    {
+        // The reference build keeps kotlin.* verbatim — and there is nothing else to rewrite — so it is a pure
+        // passthrough. A token with no "kotlin." substring can never contain a mappable primitive, so skip it.
+        if (refBuild || !raw.Contains("kotlin.", StringComparison.Ordinal)) return raw;
+
+        var t = raw.Trim();
+        if (t.Length == 0) return raw;
+
+        foreach (var p in ModifierPrefixes)
+            if (t.StartsWith(p, StringComparison.Ordinal))
+                return p + LowerTypeString(t[p.Length..], refBuild);
+
+        if (t.StartsWith("gp:", StringComparison.Ordinal)) return t;
+        if (t.StartsWith("clr:", StringComparison.Ordinal)) return t;
+        if (t.StartsWith("func:", StringComparison.Ordinal)) return LowerFuncString(t, refBuild);
+
+        var br = t.IndexOf('[');
+        if (br >= 0 && t.EndsWith("]", StringComparison.Ordinal))
+        {
+            var head = t[..br];
+            var inner = t[(br + 1)..^1];
+            var args = string.Join(",", SplitTopLevel(inner).Select(a => LowerTypeString(a, refBuild)));
+            return head + "[" + args + "]";
+        }
+
+        return LowerLeaf(t);
+    }
+
+    static string LowerFuncString(string t, bool refBuild)
+    {
+        // func:<ret>:<arg,arg,...>  — the ret/args separator is the first top-level ':' AFTER the ret's own
+        // leading type prefix (so a ret like clrg:Foo[int] is not split on its clrg: colon).
+        var body = t["func:".Length..];
+        var sep = FuncRetEnd(body);
+        var ret = sep >= body.Length ? body : body[..sep];
+        var args = sep >= body.Length ? "" : body[(sep + 1)..];
+        var loweredArgs = string.Join(",", SplitTopLevel(args).Select(a => LowerTypeString(a, refBuild)));
+        return "func:" + LowerTypeString(ret, refBuild) + ":" + loweredArgs;
+    }
+
+    static string LowerLeaf(string t)
+    {
+        // @-decorated and clrg: references are emitted/CLR type references whose head is never a bare primitive
+        // (any bracket args were recursed above) — keep verbatim. A bare kotlin.* primitive leaf lowers; all
+        // other leaves (CLR shorthand, user/stdlib FQNs) pass through.
+        if (t.StartsWith("@", StringComparison.Ordinal)) return t;
+        if (t.StartsWith("clrg:", StringComparison.Ordinal)) return t;
+        return KotlinToClr.TryGetValue(t, out var clr) ? clr : t;
+    }
+
+    // First top-level ':' after the leading type prefix; bracket depth aware. Mirrors the matcher's FuncRetEnd.
+    static int FuncRetEnd(string value)
+    {
+        var start = PrefixLength(value);
+        var depth = 0;
+        for (var i = start; i < value.Length; i++)
+        {
+            if (value[i] == '[') depth++;
+            else if (value[i] == ']') depth--;
+            else if (value[i] == ':' && depth == 0) return i;
+        }
+        return value.Length;
+    }
+
+    static int PrefixLength(string value)
+    {
+        foreach (var prefix in new[] { "clrg:", "clr:", "array:", "nullable:", "func:", "gp:", "byref:" })
+            if (value.StartsWith(prefix, StringComparison.Ordinal))
+                return prefix.Length;
+        return 0;
+    }
+
+    static IReadOnlyList<string> SplitTopLevel(string value)
+    {
+        if (value.Length == 0) return Array.Empty<string>();
+
+        var result = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '[') depth++;
+            else if (value[i] == ']') depth--;
+            else if (value[i] == ',' && depth == 0)
+            {
+                result.Add(value[start..i].Trim());
+                start = i + 1;
+            }
+        }
+
+        result.Add(value[start..].Trim());
+        return result;
+    }
 }
 
 static class JsonOptions
