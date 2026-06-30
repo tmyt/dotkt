@@ -50,9 +50,13 @@
   (`clrHelperClassJson`/`clrHelperMethod`/`clrHelperMembers` DELETED); (2) the `@ClrTypeAlias` type-STRIP is fully
   bir2cir's (`substitutedAway`/`hasClrTypeAlias`/`hasHoistableBody`/`aliasPlainTypes`/alias-only-branch DELETED — kotc
   emits ALL types as ordinary Kotlin; bir2cir `AliasHelperHoist` drops every alias type def, helper only for `kind ==
-  class`). **Remaining for "reads NEITHER":** the `clrName` (`@ClrIntrinsic`) member-call name resolver + the
-  fun-interface-SAM alias lookup, and the `netType` `kotlin.*→System.*` type map (move to bir2cir; `birType` already
-  emits bare FQNs — netType is the legacy twin still emitting `System.Int32`/`System.Object`) (#5)
+  class`). (3) `clrName` migration UNDERWAY: Step 1 = kotc emits pure-Kotlin `overrides` markers; Step 2a = bir2cir
+  `DeclarationRename` (markers + ref.dll `@ClrIntrinsic`, exact-arity) + property-scan reproduce the decl slot-names
+  (`get_Count`/`ResumeWith`) IDEMPOTENTLY (byte-identical, annClr still active). **Remaining Step 2b/3** (the `annClr`
+  removal — not single-pass-safe): `fn`-self in the marker + `properties:[{get,set}]` rename + `@ClrIntrinsic`-bound
+  member-strip + fun-interface-SAM rewrite, then kotc plain-naming + delete `annClr`. Then the `netType`
+  `kotlin.*→System.*` type map (move to bir2cir; `birType` already emits bare FQNs — netType is the legacy twin still
+  emitting `System.Int32`/`System.Object`) (#5)
 - `stackBuffer`/`Span` `FqName.ROOT` → `kotlin.clr.*` (§6)
 - **static-helper (rule-3) performance review** — audit the stdlib pieces implemented as static helpers for perf
   problems; reimplement them a better way where found. *(added 2026-07-01)*

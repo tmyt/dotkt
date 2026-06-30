@@ -6,6 +6,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Changed
+- **kotc→bir2cir `clrName` migration, Step 2a (IDEMPOTENT declaration-rename, byte-identical): bir2cir now owns the BCL
+  slot-name derivation.** Two bir2cir additions consume the Step-1 `overrides` markers to reproduce what kotc's
+  `clrName`/`annClr` does for declaration naming: (1) `ScanSubstitutionMetadata` now also reads `GetProperties()`, so a
+  property's `@ClrIntrinsic` (`Collection.size`→`"Count"`, `CharSequence.length`→`"Length"`) — which lives on the
+  property, invisible to the `GetMethods()` scan — enters `MemberBindings`; (2) a new `DeclarationRename` pass (gated to
+  NON-ref builds, runs before the marker is stripped) renames an emitted method/accessor to its BCL slot from the FIRST
+  overridden member carrying an `@ClrIntrinsic` in the ref.dll (a `size` getter override → `get_Count`, `resumeWith` →
+  `ResumeWith`). Method overloads match by EXACT arity (a new `TryMemberIntrinsicExact` — so `add(element)`→`Add` does
+  NOT fall through to `add(index,element)`→`Insert`); property accessors match by name (`TryMemberIntrinsicByName`).
+  With `annClr` STILL running in kotc the pass is **idempotent** → verified **rt CIR byte-identical** (0 diff) and ref
+  💮 (`kotlin.Int : Comparable<kotlin.Int>`) intact. This moves the slot-name LOGIC to bir2cir without yet removing the
+  kotc annotation read. **Remaining for Step 3** (the actual `annClr` removal, deferred — proven not single-pass-safe):
+  add `fn`-self to the marker (a method with its OWN `@ClrIntrinsic`; harmless/idempotent today, a byte-identity
+  prerequisite once annClr is gone), rename the `properties:[{get,set}]` entries, the `@ClrIntrinsic`-bound member-strip,
+  the fun-interface SAM rewrite, then switch kotc's decl-name sites to plain Kotlin names and delete `annClr`.
 - **kotc→bir2cir `clrName` migration, Step 1 (NEUTRAL groundwork): pure-Kotlin override markers.** Toward "kotc reads
   NEITHER `@ClrIntrinsic` NOR `@ClrTypeAlias`", kotc now emits an `overrides:[{owner,member,kind,arity}]` marker on each
   instance method / interface method / property accessor — the transitive closure of the interface/base members it

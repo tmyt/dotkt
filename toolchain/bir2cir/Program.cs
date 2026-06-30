@@ -107,6 +107,13 @@ sealed class Pipeline
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
             if (attributeTopLevelOwner) IteratorConsumerNormalization.Apply(substituted);
+            // DECLARATION-NAME rename (clrName migration, Step 2a): an emitted member that overrides a CLR-bound
+            // interface member carrying @ClrIntrinsic gets the BCL slot name (a `size` getter override -> get_Count,
+            // `resumeWith` -> ResumeWith) — the job kotc's clrName/annClr does today. Derived from the Step-1 `overrides`
+            // marker (the pure-Kotlin override closure) + the ref.dll @ClrIntrinsic bindings. While annClr STILL runs in
+            // kotc this is IDEMPOTENT (it reproduces the name annClr already set) -> CIR byte-identical. Never in ref
+            // (there annClr is null and members keep their plain Kotlin names — renaming would corrupt the ref shapes).
+            if (!_options.RefBuild) DeclarationRename.Apply(substituted, refs);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
@@ -300,6 +307,28 @@ sealed class ReferenceMetadataIndex
         if (cands.Count == 0) return false;
         intrinsic = (cands.FirstOrDefault(m => m.ParamCount == argCount) ?? cands[0]).Intrinsic;
         return true;
+    }
+
+    // STRICT overload-exact @ClrIntrinsic lookup for the DECLARATION rename: the marker's arity is precise (Kotlin
+    // override resolution), so `add(element)` (arity 1, ->Add) must NOT fall through to `add(index,element)` (arity 2,
+    // ->Insert). Unlike TryMemberIntrinsic there is no `?? cands[0]` arity fallback — no exact-arity match = no rename.
+    public bool TryMemberIntrinsicExact(string ownerFqn, string memberName, int argCount, out string intrinsic)
+    {
+        intrinsic = _membersByOwner.TryGetValue(ownerFqn, out var list)
+            ? list.FirstOrDefault(m => m.Name == memberName && m.Intrinsic != null && m.ParamCount == argCount)?.Intrinsic
+            : null;
+        return intrinsic != null;
+    }
+
+    // By-NAME @ClrIntrinsic lookup for a PROPERTY accessor's declaration rename (size getter/setter -> get_/set_Count):
+    // a property has ONE @ClrIntrinsic regardless of accessor arity (the getter is arity 0, the setter arity 1, both ->
+    // the property's "Count"), so arity does not disambiguate here. (The property binding is indexed by the property name.)
+    public bool TryMemberIntrinsicByName(string ownerFqn, string memberName, out string intrinsic)
+    {
+        intrinsic = _membersByOwner.TryGetValue(ownerFqn, out var list)
+            ? list.FirstOrDefault(m => m.Name == memberName && m.Intrinsic != null)?.Intrinsic
+            : null;
+        return intrinsic != null;
     }
 
     // A top-level fun (file-class static, called as `callStatic owner=null`) bound by @ClrIntrinsic to a
@@ -801,6 +830,17 @@ sealed class ReferenceMetadataIndex
                                 metadata.TopLevelStatics[method.Name] = lst = new List<(string, string)>();
                             lst.Add((ownerFqn, rk));
                         }
+                    }
+                    // A PROPERTY's @ClrIntrinsic (`Collection.size @ClrIntrinsic("Count")`, `CharSequence.length ->
+                    // "Length"`) lives on the property, NOT on its accessor methods, so GetMethods() above misses it.
+                    // Index it by the Kotlin property name (size/length) so the declaration-rename pass can resolve a
+                    // getter/setter override to `get_Count`/`set_Count`. Only intrinsic-bearing properties are added (a
+                    // null-intrinsic entry would perturb IsRule3Member's "concrete + intrinsic-less" rule-3 detection).
+                    foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                    {
+                        var pIntr = ClrIntrinsicOf(prop.GetCustomAttributesData());
+                        if (pIntr == null) continue;
+                        metadata.MemberBindings.Add(new MemberBinding(ownerFqn, prop.Name, 0, pIntr, prop.GetMethod?.IsAbstract ?? false, false));
                     }
                 }
                 catch (Exception ex)
@@ -2499,6 +2539,51 @@ static class RefBodySquash
             },
         },
     };
+}
+
+// DECLARATION-NAME RENAME (clrName migration, Step 2a). kotc tags each emitted method/accessor with a pure-Kotlin
+// `overrides` marker (the transitive override closure, in Kotlin terms). This pass derives the BCL slot name from the
+// ref.dll @ClrIntrinsic on the FIRST overridden member that carries one (a `size` getter override of
+// Collection.size@ClrIntrinsic("Count") -> get_Count; resumeWith -> ResumeWith) — replacing what kotc's clrName/annClr
+// resolves today. While annClr still runs in kotc the rename is IDEMPOTENT (it reproduces the existing name), so the
+// emit stays byte-identical; once annClr is removed (Step 3) this becomes the sole source of the slot name. Mutates the
+// method nodes in place; the `overrides` marker is stripped later by BirTypeLowering. (Object-method names like ToString
+// and the hardcoded close->Dispose map are NOT @ClrIntrinsic, so TryMemberIntrinsic returns false and the kotc-supplied
+// name is left untouched — those stay kotc's concern, a separate netType-layer cleanup.)
+static class DeclarationRename
+{
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    {
+        if (root is not JsonObject obj || obj["types"] is not JsonArray types) return;
+        foreach (var t in types)
+            if (t is JsonObject td && td["methods"] is JsonArray methods)
+                foreach (var m in methods)
+                    if (m is JsonObject mo && mo["overrides"] is JsonArray ovs && ResolveSlot(ovs, refs) is string slot)
+                        mo["name"] = slot;
+    }
+
+    // The first override entry whose (owner, Kotlin member name, arity) carries an @ClrIntrinsic in the ref.dll, mapped
+    // to its CLR slot: a getter/setter -> get_/set_ + the intrinsic; a method -> the intrinsic verbatim. null = no
+    // CLR-bound member in the closure (leave the kotc name).
+    static string ResolveSlot(JsonArray ovs, ReferenceMetadataIndex refs)
+    {
+        foreach (var o in ovs)
+        {
+            if (o is not JsonObject oo) continue;
+            if ((oo["owner"] as JsonValue)?.GetValue<string>() is not string owner) continue;
+            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
+            var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
+            var arity = (oo["arity"] as JsonValue)?.GetValue<int>() ?? 0;
+            // A method matches its overload by EXACT arity; a property accessor matches the property's single intrinsic
+            // by name (the getter/setter prefix is applied below).
+            var found = kind is "getter" or "setter"
+                ? refs.TryMemberIntrinsicByName(owner, member, out var intr)
+                : refs.TryMemberIntrinsicExact(owner, member, arity, out intr);
+            if (!found) continue;
+            return kind switch { "getter" => "get_" + intr, "setter" => "set_" + intr, _ => intr };
+        }
+        return null;
+    }
 }
 
 // RULE-3 HOIST (ALL CLR-bound alias classes). kotc no longer synthesizes the `<>dotkt_ClrH_<owner>` helper for ANY
