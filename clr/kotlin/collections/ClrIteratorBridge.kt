@@ -10,7 +10,7 @@ package kotlin.collections
 
 /** The BCL `IEnumerator<T>` surface, for the adapter below. (@ClrTypeAlias -> not emitted; resolves to the real BCL type.) */
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IEnumerator")
-internal interface ClrEnumerator<out T> {
+public interface ClrEnumerator<out T> {
     fun MoveNext(): Boolean
     @kotlin.clr.ClrIntrinsic("get_Current") fun current(): T
 }
@@ -18,7 +18,7 @@ internal interface ClrEnumerator<out T> {
 /** The BCL `IEnumerable<T>` surface — its `GetEnumerator()` returns the INTERFACE `IEnumerator<T>` (a `List<T>` value's
  *  own `GetEnumerator` returns the struct `List<T>.Enumerator` instead, so always go through this interface). */
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IEnumerable")
-internal interface ClrEnumerable<out T> {
+public interface ClrEnumerable<out T> {
     fun GetEnumerator(): ClrEnumerator<T>
 }
 
@@ -40,5 +40,5 @@ internal class KotlinIteratorOverEnumerator<out T>(private val e: ClrEnumerator<
 
 /** Wrap a BCL enumerable as a Kotlin `Iterator<T>`. `Iterable<T>.iterator()` (CLR-bound to IEnumerable) delegates here;
  *  because the default body is Kotlin, rule 3 hoists it to a static helper automatically. */
-internal fun <T> iteratorOverEnumerable(self: ClrEnumerable<T>): Iterator<T> =
+public fun <T> iteratorOverEnumerable(self: ClrEnumerable<T>): Iterator<T> =
     KotlinIteratorOverEnumerator(self.GetEnumerator())
