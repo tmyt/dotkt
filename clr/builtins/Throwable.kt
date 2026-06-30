@@ -16,6 +16,7 @@ package kotlin
  * @param message the detail message string.
  * @param cause the cause of this throwable.
  */
+@kotlin.clr.ClrTypeAlias("System.Exception")
 public actual open class Throwable actual constructor(public open actual val message: String?, public open actual val cause: Throwable?) {
     public actual constructor(message: String?) : this(message, null)
 
@@ -24,6 +25,7 @@ public actual open class Throwable actual constructor(public open actual val mes
     public actual constructor() : this(null, null)
 }
 
+@kotlin.clr.ClrTypeAlias("System.Exception")
 public actual open class Error : Throwable {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
@@ -31,6 +33,7 @@ public actual open class Error : Throwable {
     public actual constructor(cause: Throwable?) : super(cause)
 }
 
+@kotlin.clr.ClrTypeAlias("System.Exception")
 public actual open class Exception : Throwable {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
@@ -38,6 +41,7 @@ public actual open class Exception : Throwable {
     public actual constructor(cause: Throwable?) : super(cause)
 }
 
+@kotlin.clr.ClrTypeAlias("System.Exception")
 public actual open class RuntimeException : Exception {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
@@ -45,6 +49,7 @@ public actual open class RuntimeException : Exception {
     public actual constructor(cause: Throwable?) : super(cause)
 }
 
+@kotlin.clr.ClrTypeAlias("System.ArgumentException")
 public actual open class IllegalArgumentException : RuntimeException {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
@@ -52,6 +57,7 @@ public actual open class IllegalArgumentException : RuntimeException {
     public actual constructor(cause: Throwable?) : super(cause)
 }
 
+@kotlin.clr.ClrTypeAlias("System.InvalidOperationException")
 public actual open class IllegalStateException : RuntimeException {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
@@ -59,6 +65,7 @@ public actual open class IllegalStateException : RuntimeException {
     public actual constructor(cause: Throwable?) : super(cause)
 }
 
+@kotlin.clr.ClrTypeAlias("System.IndexOutOfRangeException")
 public actual open class IndexOutOfBoundsException : RuntimeException {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
@@ -71,6 +78,7 @@ public actual open class ConcurrentModificationException : RuntimeException {
     public actual constructor(cause: Throwable?) : super(cause)
 }
 
+@kotlin.clr.ClrTypeAlias("System.NotSupportedException")
 public actual open class UnsupportedOperationException : RuntimeException {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
@@ -83,6 +91,7 @@ public actual open class NumberFormatException : IllegalArgumentException {
     public actual constructor(message: String?) : super(message)
 }
 
+@kotlin.clr.ClrTypeAlias("System.NullReferenceException")
 public actual open class NullPointerException : RuntimeException {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
@@ -101,12 +110,14 @@ public actual open class AssertionError : Error {
     public actual constructor(message: String?, cause: Throwable?) : super(message, cause)
 }
 
+@kotlin.clr.ClrTypeAlias("System.InvalidOperationException")
 public actual open class NoSuchElementException : RuntimeException {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
 }
 
 @SinceKotlin("1.3")
+@kotlin.clr.ClrTypeAlias("System.ArithmeticException")
 public actual open class ArithmeticException : RuntimeException {
     public actual constructor() : super()
     public actual constructor(message: String?) : super(message)
