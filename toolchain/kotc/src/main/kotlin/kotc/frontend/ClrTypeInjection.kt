@@ -323,15 +323,20 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// The intrinsics are CLR-context features -> available whenever .NET interop is active (metadata loaded).
 	private val clrActive = module != null
 
+	// `byref`/`ClrRef` are PURE compiler intrinsics (no .NET metadata needed) -> the `kotlin.clr` package is ALWAYS
+	// claimed so the packaged stdlib — built with CLR_TYPES_METADATA="" (module==null -> clrActive==false) — can
+	// `import kotlin.clr.byref` / `ClrRef` to pass a field BY REFERENCE to a BCL `ref`/`out` method (the atomics'
+	// Interlocked, int.TryParse, Math.DivRem). The metadata-backed packages (System.*, the round-trip facades) and the
+	// metadata-context intrinsics (stackBuffer/Span) stay clrActive-gated.
 	override fun hasPackage(packageFqName: FqName): Boolean =
-		clrActive && (packageFqName in packages || packageFqName in topLevelPackages || packageFqName.isRoot || packageFqName == clrPkg)
+		packageFqName == clrPkg || (clrActive && (packageFqName in packages || packageFqName in topLevelPackages || packageFqName.isRoot))
 
 	override fun getTopLevelCallableIds(): Set<CallableId> =
-		if (!clrActive) emptySet()
+		if (!clrActive) hashSetOf(CallableId(clrPkg, Name.identifier(byrefName)))
 		else hashSetOf(CallableId(clrPkg, Name.identifier(byrefName)), CallableId(FqName.ROOT, Name.identifier(stackBufferName))) + topLevelByCallable.keys + topLevelPropByCallable.keys
 
 	override fun getTopLevelClassIds(): Set<ClassId> =
-		if (!clrActive) byClassId.keys else byClassId.keys + clrRefClassId + stackBufferClassId + spanClassId
+		if (!clrActive) hashSetOf(clrRefClassId) else byClassId.keys + clrRefClassId + stackBufferClassId + spanClassId
 
 	override fun generateTopLevelClassLikeDeclaration(classId: ClassId): FirClassLikeSymbol<*>? {
 		// The intrinsic `ClrRef<T>` carries getValue/setValue (so a ref return is `by`-delegatable).

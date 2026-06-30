@@ -2835,8 +2835,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 
 	/** Regular args, filling omitted constant default arguments (IL has no default-parameter mechanism). */
-	internal fun filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> =
-		filledArgExprs(call).map { expr(it) }
+	internal fun filledArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
+		// Pair each filled arg with its callee Regular parameter (same iteration order as filledArgExprs) so a `byref(x)`
+		// arg bound to a `ClrRef<T>` param is lowered to an addressable lvalue (argExpr) for the plain-call path.
+		val regs = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)
+			?.parameters?.filter { it.kind == IrParameterKind.Regular } ?: emptyList()
+		return filledArgExprs(call).mapIndexed { i, arg -> argExpr(arg, regs.getOrNull(i)) }
+	}
 
 	/** The call's regular args IN ORDER, filling an omitted default-arg param with its callee's default-value
 	 *  expression. A restored function/ctor carries a real constant default (applyDefaults), so the consumer can omit a
@@ -4381,9 +4386,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		callee.parameters.filter { it.kind == IrParameterKind.Regular }
 			.joinToString(",") { str(netType(it.type)) }
 
-	/** The `byref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. */
+	/** The `byref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. Matched by FULL name
+	 *  (`kotlin.clr.byref`) so a user function happening to be named `byref` is not mistaken for the intrinsic. */
 	internal fun byrefMarker(a: IrExpression): IrExpression? =
-		if (a is IrCall && a.symbol.owner.name.asString() == "byref") regularArgs(a).firstOrNull() else null
+		if (a is IrCall && a.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.clr.byref") regularArgs(a).firstOrNull() else null
+
+	/** Emit one regular call argument, unwrapping a `byref(x)` marker to its ADDRESSABLE lvalue (a property's backing
+	 *  FIELD node, else the lvalue itself) WHEN the matching callee parameter is a `ClrRef<T>` (`byref:`). A plain Kotlin
+	 *  call to such a byref-param method — the stdlib's @ClrIntrinsic Interlocked/TryParse/DivRem helpers, emitted as
+	 *  plain calls in the ref build and substituted to BCL `ref`/`out` calls by bir2cir in the rt build — thus passes the
+	 *  address; ilemit's EmitArg(want.IsByRef) does the `ldflda`/`ldloca`. A non-byref parameter is unaffected (so this
+	 *  is inert for every existing call), and a `ClrRef<T>` value used outside a byref arg slot still flows normally. */
+	internal fun argExpr(arg: IrExpression, param: IrValueParameter?): String {
+		if (param != null && birType(param.type).startsWith("byref:")) byrefMarker(arg)?.let { inner ->
+			return byrefBackingField(inner) ?: expr(inner)
+		}
+		return expr(arg)
+	}
 	
 	/** A `byref(...)` target that is an own-source-set property read -> its BACKING-FIELD node, so ilemit takes the
 	 *  field address (`ldflda <backing>`) instead of addressing an accessor's return value (Phase 5). The field is
