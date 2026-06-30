@@ -1373,6 +1373,16 @@ static class BirTypeLowering
         "ownerType", "owner", "recvType", "accessOwner",
     };
 
+    // Method-RETURN keys. A `kotlin.Unit` RETURN is the Kotlin "no value" convention -> CLR `void` (a Unit-returning
+    // fun is a void method; the entry point `fun main(): Unit` MUST be void or the CLR rejects the program). This is
+    // the standard Unit-return lowering, NOT a value representation: a BARE top-level kotlin.Unit at a return key
+    // becomes void, while a kotlin.Unit VALUE (a field, a generic arg like Sequence<Unit>, a receiver) keeps the
+    // emitted Unit type (you cannot have a `void` field). So it is gated to the bare scalar at these keys only.
+    static readonly HashSet<string> ReturnKeys = new(StringComparer.Ordinal)
+    {
+        "ret", "retType", "dynRet", "selRet", "returnType", "resultType",
+    };
+
     static readonly string[] ModifierPrefixes = { "byref:", "array:", "nullable:" };
 
     public static JsonNode Lower(JsonNode root, bool refBuild) => LowerNode(root, refBuild, force: false);
@@ -1393,6 +1403,9 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, force: true);   // attribute application -> blob metadata
                 else if (kv.Key == "sig")
                     copy[kv.Key] = LowerSigValue(kv.Value, refBuild, here, lowerRef: true);   // sig = param types (values)
+                else if ((here || !refBuild) && ReturnKeys.Contains(kv.Key)
+                         && kv.Value is JsonValue rv && rv.TryGetValue<string>(out var rs) && rs == "kotlin.Unit")
+                    copy[kv.Key] = JsonValue.Create("void");   // Unit-returning fun -> void (bare top-level only)
                 else if (TypeKeys.Contains(kv.Key))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, lowerRef: !OwnerKeys.Contains(kv.Key));
                 else
