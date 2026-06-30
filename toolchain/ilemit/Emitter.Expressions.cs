@@ -343,9 +343,14 @@ sealed partial class Emitter
                 var elem = MapType(e.GetProperty("elem").GetString());
                 EmitExpr(e.GetProperty("size")); var size = _il.DeclareLocal(typeof(int)); _il.Emit(OpCodes.Stloc, size);
                 var fnType = EmitExpr(e.GetProperty("init")); var fn = _il.DeclareLocal(fnType); _il.Emit(OpCodes.Stloc, fn);
-                var invoke = fnType.GetMethod("Invoke");
-                var pType = invoke.GetParameters()[0].ParameterType;
-                var rType = invoke.ReturnType;
+                // `Func<int,elem>` over an EMITTED elem (kotlin.Any / kotlin.UInt / a user class) is a TypeBuilder
+                // instantiation whose .GetMethod / .GetParameters / .ReturnType all throw -- resolve Invoke via
+                // InvokeOf, and read the param/return shapes off the delegate's type ARGS (GetGenericArguments is
+                // safe on an instantiation; reflecting the Invoke signature is not).
+                var invoke = InvokeOf(fnType);
+                var ga = fnType.IsGenericType ? fnType.GetGenericArguments() : null;
+                var pType = ga != null ? ga[0] : invoke.GetParameters()[0].ParameterType;
+                var rType = ga != null ? ga[^1] : invoke.ReturnType;
                 _il.Emit(OpCodes.Ldloc, size); _il.Emit(OpCodes.Newarr, elem);
                 var arr = _il.DeclareLocal(elem.MakeArrayType()); _il.Emit(OpCodes.Stloc, arr);
                 var i = _il.DeclareLocal(typeof(int)); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Stloc, i);
@@ -617,8 +622,8 @@ sealed partial class Emitter
                 EmitForEachOf(e.GetProperty("src"), elemT, x =>
                 {
                     _il.Emit(OpCodes.Ldloc, d);
-                    if (byKey) { _il.Emit(OpCodes.Ldloc, sel); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, selFn.GetMethod("Invoke")); _il.Emit(OpCodes.Ldloc, x); }
-                    else { _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Ldloc, sel); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, selFn.GetMethod("Invoke")); }
+                    if (byKey) { _il.Emit(OpCodes.Ldloc, sel); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, InvokeOf(selFn)); _il.Emit(OpCodes.Ldloc, x); }
+                    else { _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Ldloc, sel); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, InvokeOf(selFn)); }
                     _il.Emit(OpCodes.Callvirt, dt.GetMethod("set_Item"));
                 });
                 _il.Emit(OpCodes.Ldloc, d);
@@ -637,7 +642,7 @@ sealed partial class Emitter
                 var k = _il.DeclareLocal(kt);
                 EmitForEachOf(e.GetProperty("src"), elemT, x =>
                 {
-                    _il.Emit(OpCodes.Ldloc, sel); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, selFn.GetMethod("Invoke")); _il.Emit(OpCodes.Stloc, k);
+                    _il.Emit(OpCodes.Ldloc, sel); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, InvokeOf(selFn)); _il.Emit(OpCodes.Stloc, k);
                     var have = _il.DefineLabel();
                     _il.Emit(OpCodes.Ldloc, d); _il.Emit(OpCodes.Ldloc, k); _il.Emit(OpCodes.Callvirt, dt.GetMethod("ContainsKey")); _il.Emit(OpCodes.Brtrue, have);
                     _il.Emit(OpCodes.Ldloc, d); _il.Emit(OpCodes.Ldloc, k); _il.Emit(OpCodes.Newobj, listT.GetConstructor(Type.EmptyTypes)); _il.Emit(OpCodes.Callvirt, dt.GetMethod("set_Item"));
@@ -660,7 +665,7 @@ sealed partial class Emitter
                 EmitForEachOf(e.GetProperty("src"), elemT, x =>
                 {
                     var elseL = _il.DefineLabel(); var end = _il.DefineLabel();
-                    _il.Emit(OpCodes.Ldloc, p); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, predFn.GetMethod("Invoke"));
+                    _il.Emit(OpCodes.Ldloc, p); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, InvokeOf(predFn));
                     _il.Emit(OpCodes.Brfalse, elseL);
                     _il.Emit(OpCodes.Ldloc, m); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, add); _il.Emit(OpCodes.Br, end);
                     _il.MarkLabel(elseL); _il.Emit(OpCodes.Ldloc, u); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, add);
@@ -702,7 +707,7 @@ sealed partial class Emitter
                 var pair = _il.DeclareLocal(pairT);
                 EmitForEachOf(e.GetProperty("src"), elemT, x =>
                 {
-                    _il.Emit(OpCodes.Ldloc, f); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, selFn.GetMethod("Invoke")); _il.Emit(OpCodes.Stloc, pair);
+                    _il.Emit(OpCodes.Ldloc, f); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, InvokeOf(selFn)); _il.Emit(OpCodes.Stloc, pair);
                     _il.Emit(OpCodes.Ldloc, d);
                     _il.Emit(OpCodes.Ldloca, pair); _il.Emit(OpCodes.Ldfld, pairT.GetField("Item1"));
                     _il.Emit(OpCodes.Ldloca, pair); _il.Emit(OpCodes.Ldfld, pairT.GetField("Item2"));
@@ -724,7 +729,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, l); _il.Emit(OpCodes.Ldloc, acc); _il.Emit(OpCodes.Callvirt, add);
                 EmitForEachOf(e.GetProperty("src"), elemT, x =>
                 {
-                    _il.Emit(OpCodes.Ldloc, f); _il.Emit(OpCodes.Ldloc, acc); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, opFn.GetMethod("Invoke")); _il.Emit(OpCodes.Stloc, acc);
+                    _il.Emit(OpCodes.Ldloc, f); _il.Emit(OpCodes.Ldloc, acc); _il.Emit(OpCodes.Ldloc, x); _il.Emit(OpCodes.Callvirt, InvokeOf(opFn)); _il.Emit(OpCodes.Stloc, acc);
                     _il.Emit(OpCodes.Ldloc, l); _il.Emit(OpCodes.Ldloc, acc); _il.Emit(OpCodes.Callvirt, add);
                 });
                 _il.Emit(OpCodes.Ldloc, l); return listT;
@@ -768,7 +773,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Blt, elseL);
                 _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Callvirt, listT.GetMethod("get_Count")); _il.Emit(OpCodes.Bge, elseL);
                 _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Callvirt, listT.GetMethod("get_Item")); _il.Emit(OpCodes.Br, end);
-                _il.MarkLabel(elseL); _il.Emit(OpCodes.Ldloc, df); _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Callvirt, defFn.GetMethod("Invoke"));
+                _il.MarkLabel(elseL); _il.Emit(OpCodes.Ldloc, df); _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Callvirt, InvokeOf(defFn));
                 _il.MarkLabel(end);
                 return elemT;
             }
