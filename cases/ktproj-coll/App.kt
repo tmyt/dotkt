@@ -17,7 +17,12 @@ fun main() {
     println(nums.isEmpty())             // False
     println(nums.take(2).size)          // 2
 
+    var total = 0                       // for-loop over the List (the iterator protocol resolves to the real
+    for (n in nums) total += n          // referenced kotlin.collections.Iterator<Int>, via the rt bridge)
+    println(total)                      // 150
+
     val words = listOf("apple", "pear", "fig")
     println(words.first().uppercase())  // APPLE
     println(words[1])                   // pear
+    for (w in words) println(w.length)  // 5 / 4 / 3
 }

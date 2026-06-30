@@ -102,6 +102,10 @@ sealed class Pipeline
             // member bodies and the rule-3 call routing both see a consistent helper. No-op for the reference build.
             var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
+            // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
+            // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
+            // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
+            if (attributeTopLevelOwner) IteratorConsumerNormalization.Apply(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
@@ -1937,6 +1941,71 @@ static class BirTypeLowering
 // Runs ONLY in the substitute/app build (never the pure-Kotlin reference build) and BEFORE type lowering, so it
 // sees the kotlin.* owners. The emitted clr* nodes carry already-BCL `type` tokens; their argTypes/ret stay in the
 // kotlin.* vocabulary and are lowered by the subsequent BirTypeLowering pass (those keys are in its TypeKeys).
+// GAP A — the for-loop iterator protocol over a referenced (rt-dll) collection. kotc desugars `for (x in xs)` to a
+// `<iterator>` var initialized by the stdlib bridge `kotlin.collections.ClrIteratorBridgeKt.iteratorOverEnumerable`
+// (which RETURNS the real generic `kotlin.collections.Iterator<E>`), then routes hasNext/next to a synthetic
+// monomorphized `<>dotkt_KIterator_<elem>` interface kotc emits into the app — a legacy "IL can't define a generic
+// interface" workaround, now false since the rt dll defines `Iterator`1`. In an APP build that synthetic owner (and
+// the `@kotlin.collections.Iterator` var type) KeyNotFounds in ilemit's `_types` (they're referenced, not emitted).
+// Re-point BOTH at the real referenced generic `clrg:kotlin.collections.Iterator[E]` so ilemit resolves hasNext/next
+// by reflection against the runtime stdlib — symmetric to how the List local already lowers to IReadOnlyList. The
+// element type comes from the bridge call's typeArgs (still in the source vocabulary; the later type-lowering pass
+// lowers the inner). Scoped per method (the `<iterator>` name is per-loop synthetic); the stdlib self-build is gated
+// OFF at the call site (it emits Iterator itself). The now-unreferenced synthetic interface emits as harmless dead
+// metadata. Producer-side (`class C : Iterator<T>`) is a separate, deeper gap and is intentionally not touched here.
+static class IteratorConsumerNormalization
+{
+    const string Bridge = "kotlin.collections.ClrIteratorBridgeKt";
+    const string SynthPrefix = "<>dotkt_KIterator_";
+
+    public static void Apply(JsonNode root) => Process(root, new Dictionary<string, string>(StringComparer.Ordinal));
+
+    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+
+    // A SINGLE document-order walk: a `var <name>` initialized by the bridge records name->elem (and retypes the var)
+    // BEFORE its for-loop body is reached, so a hasNext/next on that local is rewritten with the elem current at that
+    // point. This is order-sensitive on purpose: sibling/nested for-loops reuse the synthetic `<iterator>` name with
+    // DIFFERENT element types, and each loop's body sits AFTER its own var-decl and BEFORE the next one — so the
+    // forward walk always rewrites a call with its own loop's element (a two-pass collect-then-rewrite conflated them).
+    static void Process(JsonNode node, Dictionary<string, string> map)
+    {
+        if (node is JsonObject obj)
+        {
+            var k = Str(obj["k"]);
+            if (k == "var" && Str(obj["name"]) is string vn && obj["init"] is JsonObject init &&
+                Str(init["k"]) == "callStatic" && Str(init["owner"]) == Bridge &&
+                Str(init["method"]) == "iteratorOverEnumerable" &&
+                init["typeArgs"] is JsonArray ta && ta.Count == 1 && Str(ta[0]) is string elem)
+            {
+                map[vn] = elem;
+                obj["type"] = "clrg:kotlin.collections.Iterator[" + elem + "]";
+            }
+            // A hasNext/next `callInstance` whose synthetic owner addresses one of those iterator locals -> a
+            // `clrInstance` on the real referenced generic interface. callInstance routes through ResolveMethod/
+            // ParseOwner (an EMITTED-type `_types` lookup that KeyNotFounds on a clrg: owner); the CLR-bound member path
+            // is `clrInstance` (EmitClrCall), exactly how the substituted IReadOnlyList's get_Item/get_Count resolve.
+            // next() returns the element, hasNext() returns Boolean; argTypes are empty. `type`/`ret` stay in the source
+            // vocabulary — the later type-lowering pass lowers them.
+            else if (k == "callInstance" && Str(obj["ownerType"]) is string owner &&
+                owner.StartsWith(SynthPrefix, StringComparison.Ordinal) && obj["recv"] is JsonObject recv &&
+                Str(recv["k"]) == "local" && Str(recv["name"]) is string rn && map.TryGetValue(rn, out var e))
+            {
+                var method = Str(obj["method"]);
+                obj["k"] = "clrInstance";
+                obj.Remove("ownerType");
+                obj.Remove("virtual");
+                obj["type"] = "clrg:kotlin.collections.Iterator[" + e + "]";
+                obj["method"] = method;
+                obj["argTypes"] = new JsonArray();
+                obj["ret"] = method == "next" ? e : "kotlin.Boolean";
+            }
+            foreach (var kv in obj) if (kv.Value != null) Process(kv.Value, map);
+        }
+        else if (node is JsonArray arr)
+            foreach (var it in arr) if (it != null) Process(it, map);
+    }
+}
+
 static class MemberCallSubstitution
 {
     // Top-level fun names DEFINED in the current compilation (this assembly's file-class statics). A `callStatic
