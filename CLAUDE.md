@@ -47,7 +47,10 @@
   in case". The clean 4-layer is the ONLY path; the `--compat-bir`/`--native-cir` output-selection flags (and the
   CompatBir verbatim-copy mode / the native-CIR envelope) were **removed** (2026-06-30), leaving a single unflagged
   bir2cir type-lowering path. Always choose a clean rebuild over an incremental compat shim, even when the rebuild is larger.
-- You may use **Codex** to discuss design.
+- **Prefer dedicated subagents for tasks, and actively use Codex.** Delegate substantive work to dedicated
+  (specialized) subagents rather than doing it inline — the coordinator orchestrates and integrates. Use **Codex**
+  (`codex exec -s read-only "<question in English>"`) for design and investigation, and **instruct every subagent to
+  USE Codex** (not merely note it's "available") — both the coordinator and subagents should consult it. (User-directed.)
 
 # Build & test (do NOT guess commands)
 
