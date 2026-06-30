@@ -18,25 +18,29 @@ SCRIPT="$(find "$HOME/.gradle/caches" -name 'kotlin-script-runtime-2.2.0.jar' | 
 ANNOT="$(find "$HOME/.gradle/caches" -path '*org.jetbrains/annotations*' -name 'annotations-*.jar' | head -1)"
 CCP="$EMB:$STDLIBJ:$COR:$REFLECT:$SCRIPT:$ANNOT"   # classpath to RUN the kotlin/jvm compiler
 
-# E-2: the clr side runs through the SHIPPING IL backend (BIR -> ilemit -> CIL), not C#, so this harness
-# validates the actual shipping path against real Kotlin semantics. Build ilemit once.
-dotnet build "$ROOT/toolchain/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null 2>&1
+# E-2: the clr side runs through the SHIPPING IL backend (kotc -> bir2cir -> ilemit -> CIL), not C#, so this harness
+# validates the actual shipping path against real Kotlin semantics. Build ilemit + bir2cir once.
+dotnet build "$ROOT/toolchain/ilemit"  -c Release -o "$ROOT/build/ilemit-bin"  -v q --nologo >/dev/null 2>&1
+dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo >/dev/null 2>&1
 
 # Build the compiler launcher once (plain Java app) — per-sample compiles cost ~2s instead of ~9s for gradlew.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 
-# DotKt.Stdlib (real-Kotlin ops migrated off the COLLECTION_OPS lowering): auto-referenced by the CLR side so a
-# migrated op (getOrElse, ...) routes to its real body, exactly as a .ktproj would. The JVM oracle uses the upstream
-# stdlib jar, so this validates that DotKt's real-Kotlin reimplementation matches Kotlin/JVM semantics.
+# The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-clr-stdlib-frontend.sh) on the clr
+# side's -classpath, REPLACING the JVM kotlin-stdlib.jar (the JVM oracle below keeps the JVM jar — it IS the oracle).
+# bir2cir then reads the REFERENCE assembly (DotKt.Private.Stdlib.dll) for the @Clr labels, and ilemit references the
+# RUNTIME assembly (DotKt.Stdlib.dll) so a stdlib op resolves to its real Kotlin body — exactly the canonical ref/rt
+# stdlib that dotkt.sh / verify-il use (NOT the stale build-dotkt-stdlib.sh). The banned facadegen --scan-asm of the
+# stdlib is GONE: kotlin.* comes from the jar, never a facadegen reconstruction.
 dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runtime" -v q --nologo >/dev/null 2>&1
-dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo >/dev/null 2>&1
 DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
-bash "$ROOT/scripts/build-dotkt-stdlib.sh" >/dev/null 2>&1
-STDLIB_DLL="$ROOT/build/dotkt-stdlib/DotKt.Stdlib.dll"
-STDLIB_META="$ROOT/build/stdlib.meta"
-_RP="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' | head -1)")"
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$STDLIB_META" --refs "$(ls "$_RP"/*.dll | tr '\n' ';')$STDLIB_DLL;$DOTKT_RT" --scan-asm "$STDLIB_DLL" >/dev/null 2>&1
+FE_JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
+STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
+STDLIB_DLL="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
+[[ -f "$FE_JAR" ]]         || bash "$ROOT/scripts/build-clr-stdlib-frontend.sh" >/dev/null 2>&1
+[[ -f "$STDLIB_REF_DLL" ]] || bash "$ROOT/scripts/build-clr-stdlib.sh" --emit >/dev/null 2>&1
+[[ -f "$STDLIB_DLL" ]]     || bash "$ROOT/scripts/build-clr-stdlib-runtime.sh" --emit >/dev/null 2>&1
 
 # Pure-Kotlin samples only (no @Clr / injected .NET types — those can't run on the JVM).
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 il-seq il-char il-sort il-funref il-getclass il-localdeleg il-langfeat il-mapdes il-ctorref il-collmore il-tryexpr il-localclass il-collops2 il-refcell il-annot il-props il-mixnum il-arrops"
@@ -60,10 +64,13 @@ for s in $PURE; do
 	  jout="/tmp/diff-jvm-$s"; rm -rf "$jout"; mkdir -p "$jout"
 	  "$JAVA" -cp "$CCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler "$src"/*.kt -no-stdlib -classpath "$STDLIBJ" -d "$jout" >/dev/null 2>&1
 	  jvm="$("$JAVA" -cp "$jout:$STDLIBJ" "$mainclass" 2>/dev/null)"
-	  # (b) kotlin/clr via the SHIPPING IL backend: compile to BIR, emit CIL with ilemit, run the dll.
+	  # (b) kotlin/clr via the SHIPPING IL backend: kotc (frontend jar) -> BIR -> bir2cir -> CIR -> ilemit -> dll, run.
 	  cout="$ROOT/build/diff-clr-$s"; rm -rf "$cout"; mkdir -p "$cout"
-	  CLR_TYPES_METADATA="$STDLIB_META" "$LAUNCHER" $src -no-stdlib -classpath $STDLIBJ -d $cout >/dev/null 2>&1
-	  dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$cout" "$mainclass" --ref "$DOTKT_RT" --ref "$STDLIB_DLL" "$cout"/*.bir.json >/dev/null 2>&1
+	  ccir="$ROOT/build/diff-cir-$s"; rm -rf "$ccir"; mkdir -p "$ccir"
+	  "$LAUNCHER" $src -no-stdlib -classpath "$FE_JAR" -d $cout >/dev/null 2>&1
+	  refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
+	  dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$ccir" "${refarg[@]}" "$cout"/*.bir.json >/dev/null 2>&1
+	  dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$cout" "$mainclass" --ref "$DOTKT_RT" --ref "$STDLIB_DLL" "$ccir"/*.cir.json >/dev/null 2>&1
 	  cp "$DOTKT_RT" "$STDLIB_DLL" "$cout/"
 	  clr="$(dotnet "$cout/$mainclass.dll" 2>/dev/null)"
 	  if [[ "$(norm <<<"$jvm")" == "$(norm <<<"$clr")" ]]; then echo "MATCH $s"; else

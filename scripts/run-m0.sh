@@ -6,12 +6,16 @@ export DOTNET_NOLOGO=1
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build/clr-out"
-STDLIB="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.2.0.jar' | head -1)"
+# kotc resolves the stdlib (kotlin.*) from the CLR FRONTEND JAR (scripts/build-clr-stdlib-frontend.sh), NOT the JVM
+# kotlin-stdlib.jar (which leaked java.util.* typealiases). Build it once if missing (needs the kotc lib jars).
+FE_JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
+"$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
+[[ -f "$FE_JAR" ]] || bash "$ROOT/scripts/build-clr-stdlib-frontend.sh" >/dev/null 2>&1
 SRC="${1:-$ROOT/cases/m0/M0.kt}"
 
 echo ">> compiling $SRC with kotlin/clr"
 "$ROOT/gradlew" -q --no-daemon :kotc:run \
-	--args="$SRC -no-stdlib -classpath $STDLIB -d $OUT" 1>&2
+	--args="$SRC -no-stdlib -classpath $FE_JAR -d $OUT" 1>&2
 
 echo ">> running generated C# on dotnet"
 ACTUAL="$(dotnet run --project "$ROOT/cases/m0/runner.csproj" -v q --nologo 2>/dev/null)"

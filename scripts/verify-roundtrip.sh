@@ -7,13 +7,18 @@
 set -euo pipefail
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-STDLIB="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.2.0.jar' | head -1)"
+# kotc resolves the stdlib (kotlin.*) from the CLR FRONTEND JAR (scripts/build-clr-stdlib-frontend.sh), REPLACING the
+# JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). kotlinx.coroutines stays a separate jar (the consumer
+# awaits suspend funs via runBlocking). The frontend jar is built below once the launcher (its lib jars) exists.
+FE_JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
 CORO="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-1.8.0.jar' | head -1)"
-CP="$STDLIB:$CORO"
+CP="$FE_JAR:$CORO"
 
 # Build the toolchain (compiler launcher + ilemit + facadegen + retarget + runtime) once.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
+# Frontend stdlib jar (kotc's -classpath input): build once if missing (consumes the kotc lib jars from installDist).
+[[ -f "$FE_JAR" ]] || bash "$ROOT/scripts/build-clr-stdlib-frontend.sh" >/dev/null 2>&1
 dotnet build "$ROOT/toolchain/ilemit"        -c Release -o "$ROOT/build/ilemit-bin"     -v q --nologo >/dev/null
 dotnet build "$ROOT/toolchain/facadegen"     -c Release -o "$ROOT/build/facadegen-bin"  -v q --nologo >/dev/null
 dotnet build "$ROOT/toolchain/retarget"      -c Release -o "$ROOT/build/retarget-bin"   -v q --nologo >/dev/null
