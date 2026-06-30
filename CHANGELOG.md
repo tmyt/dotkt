@@ -6,6 +6,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Fixed
+- **App-consume of the rt stdlib: `for (x in list)` now iterates a referenced collection.** kotc desugars the loop to
+  a `<iterator>` var initialized by the rt bridge `ClrIteratorBridgeKt.iteratorOverEnumerable` (which returns the real
+  generic `kotlin.collections.Iterator<E>`) and routes `hasNext`/`next` to a synthetic monomorphized
+  `<>dotkt_KIterator_*` interface — a legacy "IL can't define a generic interface" workaround that KeyNotFounds in an
+  app build (the synthetic + the `@kotlin.collections.Iterator` var type are referenced, not emitted). A new bir2cir
+  pass (`IteratorConsumerNormalization`, app build only) retypes the var to `clrg:kotlin.collections.Iterator[E]` and
+  converts the synthetic `hasNext`/`next` `callInstance` to a `clrInstance` on the real referenced interface (the
+  `EmitClrCall` path the substituted IReadOnlyList already uses), in a single document-order walk so sibling/nested
+  for-loops reusing the `<iterator>` name bind to their own element type. The rt stdlib bridge
+  `iteratorOverEnumerable` (+ its two `@ClrTypeAlias` interface types) was made `public` (was `internal` →
+  `MethodAccessException` from an app).
 - **App-consume of the rt stdlib: referenced top-level stdlib funs now resolve.** A top-level stdlib function called
   from an app (`xs.getOrElse(i){…}`, `xs.first()`, …) is emitted by kotc as `callStatic owner=null`; ilemit's
   `FindStatic` only searches THIS assembly's file-classes, so it threw `static method not found`. bir2cir now reads
