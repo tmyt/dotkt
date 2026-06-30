@@ -56,7 +56,7 @@ public actual data class MatchGroup(public actual val value: String, public val 
  * Provides functions to match strings in text with a pattern, replace the found occurrences and split text around matches.
  */
 @Suppress("NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS") // Counterpart for @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
-@kotlin.clr.ClrIntrinsic("System.Text.RegularExpressions.Regex")
+@kotlin.clr.ClrTypeAlias("System.Text.RegularExpressions.Regex")
 public actual class Regex {
 
     /** Creates a regular expression from the specified [pattern] string and the default options.  */
@@ -233,7 +233,7 @@ public actual class Regex {
 // adapter classes (which ARE emitted as real Kotlin classes).
 
 /** Binds System.Text.RegularExpressions.Capture/Group members used by a captured group. */
-@kotlin.clr.ClrIntrinsic("System.Text.RegularExpressions.Group")
+@kotlin.clr.ClrTypeAlias("System.Text.RegularExpressions.Group")
 internal class ClrGroup {
     @kotlin.clr.ClrIntrinsic("Success")
     val success: Boolean get() = TODO("clr binding should be implemented")
@@ -246,7 +246,7 @@ internal class ClrGroup {
 }
 
 /** Binds System.Text.RegularExpressions.GroupCollection (Count + the by-index and by-name `this[..]` indexers). */
-@kotlin.clr.ClrIntrinsic("System.Text.RegularExpressions.GroupCollection")
+@kotlin.clr.ClrTypeAlias("System.Text.RegularExpressions.GroupCollection")
 internal class ClrGroupCollection {
     @kotlin.clr.ClrIntrinsic("Count")
     val count: Int get() = TODO("clr binding should be implemented")
@@ -257,7 +257,7 @@ internal class ClrGroupCollection {
 }
 
 /** Binds System.Text.RegularExpressions.Match (inherits Value/Index/Length/Success; adds Groups + NextMatch). */
-@kotlin.clr.ClrIntrinsic("System.Text.RegularExpressions.Match")
+@kotlin.clr.ClrTypeAlias("System.Text.RegularExpressions.Match")
 internal class ClrMatch {
     @kotlin.clr.ClrIntrinsic("Success")
     val success: Boolean get() = TODO("clr binding should be implemented")

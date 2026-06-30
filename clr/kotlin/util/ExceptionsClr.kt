@@ -14,7 +14,7 @@ package kotlin
 // --- @Clr BCL primitives ----------------------------------------------------------------------
 // The standard error stream is System.Console.Error (a static TextWriter property getter).
 
-@kotlin.clr.ClrIntrinsic("System.IO.TextWriter")
+@kotlin.clr.ClrTypeAlias("System.IO.TextWriter")
 private class ClrTextWriter {
     @kotlin.clr.ClrIntrinsic("WriteLine")
     fun writeLine(value: String?): Unit = TODO("clr binding should be implemented")

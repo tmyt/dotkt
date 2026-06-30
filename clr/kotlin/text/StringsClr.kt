@@ -164,7 +164,7 @@ public actual fun String.toCharArray(startIndex: Int = 0, endIndex: Int = this.l
 // UTF-8 transcoding via a constructed `System.Text.UTF8Encoding` instance (the proven Regex/StringBuilder
 // @ClrIntrinsic-class pattern). The class is `internal` (NOT private) so its constructor substitution is valid.
 // Note: `throwOnInvalidSequence` is approximated — the default UTF8Encoding uses replacement, not throwing.
-@kotlin.clr.ClrIntrinsic("System.Text.UTF8Encoding")
+@kotlin.clr.ClrTypeAlias("System.Text.UTF8Encoding")
 internal class DotktUtf8 {
     constructor()
 

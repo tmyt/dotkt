@@ -10,17 +10,17 @@
 
 package kotlin.collections
 
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.IEnumerable")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IEnumerable")
 public actual interface Iterable<out T> {
     public actual operator fun iterator(): Iterator<T>
 }
 
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.IEnumerable")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IEnumerable")
 public actual interface MutableIterable<out T> : Iterable<T> {
     actual override fun iterator(): MutableIterator<T>
 }
 
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.IReadOnlyCollection")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IReadOnlyCollection")
 public actual interface Collection<out E> : Iterable<E> {
     @kotlin.clr.ClrIntrinsic("Count") public actual val size: Int
     public actual fun isEmpty(): Boolean
@@ -29,7 +29,7 @@ public actual interface Collection<out E> : Iterable<E> {
     public actual fun containsAll(elements: Collection<@UnsafeVariance E>): Boolean
 }
 
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.ICollection")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.ICollection")
 public actual interface MutableCollection<E> : Collection<E>, MutableIterable<E> {
     actual override fun iterator(): MutableIterator<E>
     @kotlin.clr.ClrIntrinsic("Add") public actual fun add(element: E): Boolean
@@ -40,7 +40,7 @@ public actual interface MutableCollection<E> : Collection<E>, MutableIterable<E>
     @kotlin.clr.ClrIntrinsic("Clear") public actual fun clear(): Unit
 }
 
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.IReadOnlyList")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IReadOnlyList")
 public actual interface List<out E> : Collection<E> {
     actual override val size: Int
     actual override fun isEmpty(): Boolean
@@ -55,7 +55,7 @@ public actual interface List<out E> : Collection<E> {
     public actual fun subList(fromIndex: Int, toIndex: Int): List<E>
 }
 
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.IList")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IList")
 public actual interface MutableList<E> : List<E>, MutableCollection<E> {
     actual override fun add(element: E): Boolean
     actual override fun remove(element: E): Boolean
@@ -81,7 +81,7 @@ public actual interface Set<out E> : Collection<E> {
     actual override fun containsAll(elements: Collection<@UnsafeVariance E>): Boolean
 }
 
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.ICollection")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.ICollection")
 public actual interface MutableSet<E> : Set<E>, MutableCollection<E> {
     actual override fun iterator(): MutableIterator<E>
     actual override fun add(element: E): Boolean

@@ -17,7 +17,7 @@ internal actual typealias ValueTimeMarkReading = Long
 // (sidestepping the platform-dependent Stopwatch.Frequency, which is a static FIELD and therefore
 // not bindable through the @Clr static-method mechanism).
 
-@kotlin.clr.ClrIntrinsic("System.TimeSpan")
+@kotlin.clr.ClrTypeAlias("System.TimeSpan")
 private class ClrTimeSpan {
     @kotlin.clr.ClrIntrinsic("get_Ticks")
     fun ticks(): Long = TODO("clr binding should be implemented")

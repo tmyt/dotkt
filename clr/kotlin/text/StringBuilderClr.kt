@@ -10,7 +10,7 @@
 
 package kotlin.text
 
-@kotlin.clr.ClrIntrinsic("System.Text.StringBuilder")
+@kotlin.clr.ClrTypeAlias("System.Text.StringBuilder")
 public actual class StringBuilder : Appendable, CharSequence {
     public actual constructor()
     public actual constructor(capacity: Int)

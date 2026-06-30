@@ -17,7 +17,7 @@ package kotlin
 // (System.Int32) implements IComparable<int> but NOT kotlin.Comparable, so `sorted`'s `toTypedArray<Comparable<T>>`
 // type-arg must resolve to IComparable<T> for the element cast to succeed. compareTo -> IComparable.CompareTo (consistent
 // with the bound-drop + the constrained-call compareTo lowering, which already use System.IComparable).
-@kotlin.clr.ClrIntrinsic("System.IComparable")
+@kotlin.clr.ClrTypeAlias("System.IComparable")
 public actual interface Comparable<in T> {
     /**
      * Compares this object with the specified object for order. Returns zero if this object is equal

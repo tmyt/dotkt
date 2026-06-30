@@ -21,7 +21,7 @@ public actual interface RandomAccess
 
 
 @SinceKotlin("1.1")
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.List")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.List")
 public actual class ArrayList<E> : MutableList<E>, RandomAccess {
     public actual constructor()
     public actual constructor(initialCapacity: Int)
@@ -180,7 +180,7 @@ private class ArrayListSubList<E>(
 
 
 @SinceKotlin("1.1")
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.Dictionary")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.Dictionary")
 public actual class HashMap<K, V> : MutableMap<K, V> {
     public actual constructor()
     public actual constructor(initialCapacity: Int)
@@ -237,7 +237,7 @@ public actual class HashMap<K, V> : MutableMap<K, V> {
 
 
 @SinceKotlin("1.1")
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.Dictionary")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.Dictionary")
 public actual class LinkedHashMap<K, V> : MutableMap<K, V> {
     public actual constructor()
     public actual constructor(initialCapacity: Int)
@@ -383,7 +383,7 @@ private fun <K, V> clrMapEntriesView(
 
 
 @SinceKotlin("1.1")
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.HashSet")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.HashSet")
 public actual class HashSet<E> : MutableSet<E> {
     public actual constructor()
     public actual constructor(initialCapacity: Int)
@@ -456,7 +456,7 @@ public actual class HashSet<E> : MutableSet<E> {
 
 
 @SinceKotlin("1.1")
-@kotlin.clr.ClrIntrinsic("System.Collections.Generic.HashSet")
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.HashSet")
 public actual class LinkedHashSet<E> : MutableSet<E> {
     public actual constructor()
     public actual constructor(initialCapacity: Int)

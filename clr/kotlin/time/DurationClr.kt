@@ -12,7 +12,7 @@ internal actual val durationAssertionsEnabled: Boolean get() = true
 // Fixed-point formatting with a '.' decimal separator: System.Double.ToString("F<decimals>",
 // CultureInfo.InvariantCulture). The "F" standard format already rounds to `decimals` places.
 
-@kotlin.clr.ClrIntrinsic("System.Globalization.CultureInfo")
+@kotlin.clr.ClrTypeAlias("System.Globalization.CultureInfo")
 private class ClrCultureInfo
 
 @kotlin.clr.ClrIntrinsic("System.Globalization.CultureInfo.get_InvariantCulture")

@@ -9,7 +9,7 @@ package kotlin.time
 // Wall-clock "now" comes from System.DateTimeOffset.UtcNow (a static property getter returning the
 // DateTimeOffset struct), then ToUnixTimeMilliseconds() on that value.
 
-@kotlin.clr.ClrIntrinsic("System.DateTimeOffset")
+@kotlin.clr.ClrTypeAlias("System.DateTimeOffset")
 private class ClrDateTimeOffset {
     @kotlin.clr.ClrIntrinsic("ToUnixTimeMilliseconds")
     fun toUnixTimeMilliseconds(): Long = TODO("clr binding should be implemented")
