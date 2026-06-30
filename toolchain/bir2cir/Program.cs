@@ -167,6 +167,7 @@ sealed class ReferenceMetadataIndex
     const string KotlinFileClassAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
+    const string JvmInlineAttr = "kotlin.jvm.JvmInline";
 
     readonly List<ReferenceAssembly> _assemblies;
 
@@ -177,6 +178,7 @@ sealed class ReferenceMetadataIndex
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "<>dotkt_ClrH_*"
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
+    readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
 
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
     // kotlin.* -> CLR type map already hardcoded in this file). Listed here so member-call / construction
@@ -205,6 +207,7 @@ sealed class ReferenceMetadataIndex
                 list.Add(m);
             }
             foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.InlineBacking) _inlineBacking.TryAdd(kv.Key, kv.Value);
         }
     }
 
@@ -257,6 +260,14 @@ sealed class ReferenceMetadataIndex
     // fully-qualified BCL static (e.g. clrTimestamp -> "System.Diagnostics.Stopwatch.GetTimestamp").
     public bool TryTopLevelIntrinsic(string funName, out string fqStatic) =>
         _topLevelIntrinsics.TryGetValue(funName, out fqStatic);
+
+    // An @JvmInline value class's backing-field getter call (`x.get_data()`): the inline UNBOX. Returns the CLR conv
+    // token for the field's declared type so the call collapses to `conv(recv)` (the erased primitive IS the value).
+    public bool TryInlineFieldGetter(string ownerFqn, string member, out string conv)
+    {
+        conv = null;
+        return _inlineBacking.TryGetValue(ownerFqn, out var info) && member == info.Getter && (conv = info.Conv) != null;
+    }
 
     // A rule-3 hoist candidate: owner.member exists, is concrete (non-abstract) and carries NO @ClrIntrinsic, so its
     // real Kotlin body was hoisted by kotc to the static helper `<>dotkt_ClrH_<owner>`.
@@ -678,6 +689,15 @@ sealed class ReferenceMetadataIndex
                     if (ownerFqn.StartsWith("<>dotkt_ClrH_", StringComparison.Ordinal)) metadata.HelperTypes.Add(ownerFqn);
                     var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
 
+                    // @JvmInline value class: its single instance backing field IS the erased value. Record the field
+                    // getter + the field's CLR conv token so a `get_<field>()` call collapses to `conv(<recv>)`.
+                    if (HasAttribute(type.GetCustomAttributesData(), JvmInlineAttr))
+                    {
+                        var backing = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly).FirstOrDefault();
+                        if (backing != null && InlineFieldConv(backing.FieldType) is string conv)
+                            metadata.InlineBacking[ownerFqn] = ("get_" + backing.Name, conv);
+                    }
+
                     foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                     {
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
@@ -736,6 +756,17 @@ sealed class ReferenceMetadataIndex
         var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrIntrinsic" or "kotlin.clr.ClrIntrinsicAsDynamic");
         return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
     }
+
+    // An @JvmInline backing-field's CLR `conv` target — the ilemit conv opcode token for the field's primitive type
+    // (kotlin.Int -> "int", kotlin.Byte -> "byte"=sbyte, ...). Null if the field is not a primitive ilemit conv'able.
+    static string InlineFieldConv(Type fieldType) => fieldType.FullName switch
+    {
+        "kotlin.Int" => "int", "kotlin.Long" => "long", "kotlin.Short" => "short", "kotlin.Byte" => "byte",
+        "kotlin.Char" => "char", "kotlin.Double" => "double", "kotlin.Float" => "float",
+        "System.Int32" => "int", "System.Int64" => "long", "System.Int16" => "short", "System.SByte" => "byte",
+        "System.Char" => "char", "System.Double" => "double", "System.Single" => "float",
+        _ => null,
+    };
 
     static int KotlinFunctionFlags(IList<CustomAttributeData> attrs)
     {
@@ -893,6 +924,10 @@ sealed class ReferenceDotKtMetadata
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.
     public readonly Dictionary<string, string> TopLevelIntrinsics = new(StringComparer.Ordinal);
+    // @JvmInline value-class owner FQN -> (its single backing-field getter "get_data", the field's CLR conv token).
+    // The class is ERASED to its primitive CLR form, so `get_data()` is the inline unbox: it collapses to the receiver
+    // value conv'd to the field's declared type (a `conv`, never a `ldfld data` — the erased primitive has no field).
+    public readonly Dictionary<string, (string Getter, string Conv)> InlineBacking = new(StringComparer.Ordinal);
 
     public JsonObject ToJson() => new()
     {
@@ -1892,6 +1927,15 @@ static class MemberCallSubstitution
         if (string.IsNullOrEmpty(member)) return null;
         var ownerFqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
         var args = node["args"] as JsonArray ?? new JsonArray();
+
+        // Rule 0 (inline-class ERASURE / unbox): the backing-field getter of an @JvmInline value class erased to its
+        // primitive CLR form (`uint.get_data()`) is the unbox — the receiver value IS the field. Collapse it to a
+        // `conv` of the receiver to the field's declared type (never a `ldfld data` — System.UInt32 has no `data`). This
+        // is the GENERAL inline-erasure rule, not a UInt.toInt special-case; it fixes both the inlined `x.data` and the
+        // rule-3 helper body's `self.data`, after which all the unsigned conversions fold to a plain cast.
+        if (instance && refs.TryInlineFieldGetter(ownerFqn, member, out var inlineConv))
+            return new JsonObject { ["k"] = "conv", ["to"] = inlineConv, ["e"] = node["recv"]?.DeepClone() };
+
         // The CLR owner TYPE the call addresses: a GENERIC alias keeps its element args (clrg:<bcl>[<args>]) so ilemit
         // constructs the instantiation (a member on IReadOnlyList<int>); a non-generic alias is the bare BCL type. When
         // the token is a RAW generic (no args, e.g. `kotlin.collections.Collection` with the element erased), default
