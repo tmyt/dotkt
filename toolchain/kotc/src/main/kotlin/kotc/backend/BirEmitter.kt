@@ -583,9 +583,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// are registered lazily while emitting bodies above -> append last (order matters: producers before
 		// kPropertyDefs/propIfaceDefs, which read flags/maps the producers populate).
 		val synthDelegateTypes = synthDelegateDefs.joinToString(",").let { if (it.isEmpty()) emptyList() else listOf(it) }
-		// Rule 3: a static helper per @Clr class (which is itself filtered out of emission) holding its bodied non-@Clr
-		// members. Computed before the synth-type collection below so any synth types its bodies register are included.
-		val clrHelperTypes = file.declarations.filterIsInstance<IrClass>().filter { clrName(it) != null }.mapNotNull { clrHelperClassJson(it) }
+		// Rule 3: a static helper per CLR-bound class (which is itself filtered out of emission via substitutedAway)
+		// holding its bodied non-@Clr members. Gate on substitutedAway — the SAME predicate that drops the class type
+		// above (519-526) — so the helper emits for BOTH @ClrIntrinsic (clrName != null) AND @ClrTypeAlias (rt build)
+		// owners. The role-split moved class-level @ClrIntrinsic -> @ClrTypeAlias for collections/unsigned/StringBuilder/
+		// Regex/String, making clrName null for them; gating on clrName here dropped their helpers while 39 CIR files
+		// still call them (callStatic owners) -> rt build ArgumentNullException. Computed before the synth-type
+		// collection below so any synth types its bodies register are included.
+		val clrHelperTypes = file.declarations.filterIsInstance<IrClass>().filter { substitutedAway(it) }.mapNotNull { clrHelperClassJson(it) }
 		val types = (typeDefs + clrHelperTypes + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
@@ -914,7 +919,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val mn = owner.name.asString()
 				when (ifaceFq) {
 					// Comparable/Comparator are emitted by stdlib itself; keep their Kotlin ABI names.
-					"kotlin.AutoCloseable", "java.lang.AutoCloseable", "java.io.Closeable", "kotlin.io.Closeable" -> if (mn == "close") "Dispose" else null
+					"kotlin.AutoCloseable", "kotlin.io.Closeable" -> if (mn == "close") "Dispose" else null
 					// CharSequence -> synthetic <>dotkt_CharSequence: the `length` property getter must be emitted (the
 					// override has a non-empty overriddenSymbols so isCustomAccessor is false). get/subSequence keep names.
 					"kotlin.CharSequence" -> if (owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
@@ -4237,15 +4242,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.collections.Map" -> "System.Collections.Generic.IReadOnlyDictionary"
 		"kotlin.collections.MutableMap" -> "System.Collections.Generic.IDictionary"
 		"kotlin.collections.Iterable", "kotlin.collections.MutableIterable" -> "System.Collections.Generic.IEnumerable"
-		"java.util.ArrayList" -> "System.Collections.Generic.List"
-		"java.util.HashMap", "java.util.LinkedHashMap", "java.util.TreeMap" -> "System.Collections.Generic.Dictionary"
-		"java.util.HashSet", "java.util.LinkedHashSet", "java.util.TreeSet" -> "System.Collections.Generic.HashSet"
-		"java.util.List" -> "System.Collections.Generic.IList"
-		"java.util.Map" -> "System.Collections.Generic.IDictionary"
-		"java.util.Set", "java.util.Collection" -> "System.Collections.Generic.ICollection"
-		// The JVM kotlin-stdlib.jar aliases `kotlin.text.StringBuilder = java.lang.StringBuilder`; a ref/rt app gets that
-		// JVM concrete -> map it to the BCL builder (its members map below, mirroring the collection model).
-		"java.lang.StringBuilder", "java.lang.AbstractStringBuilder" -> "System.Text.StringBuilder"
 		else -> null
 	}
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = true)
@@ -4505,7 +4501,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Kotlin/Java throwables -> their .NET counterpart (the common base; `.message` -> .Message). Covers a custom
 		// exception base (`class E : Exception(msg)`) as well as a `Throwable`-typed value.
 		if (fqp != null) NET_EXCEPTIONS[fqp]?.let { return "clr:$it" }
-		if (fqp == "kotlin.AutoCloseable" || fqp == "java.lang.AutoCloseable" || fqp == "java.io.Closeable" || fqp == "kotlin.io.Closeable")
+		if (fqp == "kotlin.AutoCloseable" || fqp == "kotlin.io.Closeable")
 			return "clr:System.IDisposable"
 		// kotlin.CharSequence -> a synthetic interface (no faithful .NET equivalent). See charSeqIface.
 		charSeqIface(t)?.let { return "@$it" }
