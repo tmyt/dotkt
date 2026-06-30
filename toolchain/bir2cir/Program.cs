@@ -1271,32 +1271,26 @@ sealed record SuspendFunctionShape(
 //
 // Mode gate (a property of the build, exported as env by the build scripts):
 //   refBuild = DOTKT_STDLIB_COMPILE set AND DOTKT_STDLIB_SUBSTITUTE unset  -> the pure-Kotlin REFERENCE surface.
-// In the REFERENCE build a kotlin.* token is kept VERBATIM (pure-Kotlin metadata; the bare FQN "kotlin.Int"
-// stays "kotlin.Int"); the rewrite is a pure passthrough. In EVERY other build (the runtime stdlib, and all app
-// builds) a bare kotlin.* primitive lowers to its CLR token (kotlin.Int -> int, kotlin.String -> string, ...).
+// In the REFERENCE build a kotlin.* primitive token is kept VERBATIM (pure-Kotlin metadata; the bare FQN
+// "kotlin.Int" stays "kotlin.Int"); the rewrite is a pure passthrough. In EVERY other build (the runtime stdlib,
+// and all app builds) a bare kotlin.* primitive lowers to its CLR token (kotlin.Int -> int, ...).
 //
-// kotc still emits the CLR shorthand (int/string/...) directly today, so those tokens are ALREADY-LOWERED and
-// pass through untouched in BOTH modes; the kotlin.* -> CLR rewrite only fires once kotc is switched to emit
-// kotlin.* symbols. Against current kotc output this pass is a near-no-op (the reference build is byte-faithful;
-// the substitute build only rewrites the handful of bare kotlin.* tokens kotc already emits).
+// COMPREHENSIVE WALK — kotc emits a bare `kotlin.*` FQN for every source-type primitive at EVERY position:
+// signatures, expression/statement type tokens (call owners, conv targets, generic constraints, array elem
+// types, lambda/func types, ...). So the lowering recurses the WHOLE node tree and rewrites every type-bearing
+// string (see TypeKeys + the `sig` comma-list + the `attrs`/attribute-class force path), not just the signature
+// keys — a primitive left un-lowered in an expression position reaches ilemit as `kotlin.Byte` and fails to
+// resolve ("cannot resolve .NET type kotlin.Byte").
 static class BirTypeLowering
 {
-    // The bare kotlin.* value tokens and their CLR-codegen lowering. Only consulted in the non-reference
-    // (substitute/app) build; the reference build keeps every kotlin.* token verbatim.
+    // The bare kotlin.* PRIMITIVE tokens and their CLR-codegen lowering. Consulted only in the non-reference
+    // (substitute/app) build; the reference build keeps every kotlin.* primitive verbatim.
     //
-    // SCOPE — these are the primitives kotc currently emits as the CLR shorthand at EVERY position (value AND
-    // call-owner), so once kotc switches to emitting the kotlin.* symbol, lowering it back to the shorthand
-    // reproduces exactly today's wiring — ilemit already resolves it. They have ZERO occurrences in the current
-    // BIR's type positions, so this map is a true no-op against today's output (it activates only after the kotc
-    // switch).
-    //
-    // DEFERRED — kotlin.String / kotlin.Any / kotlin.Unit and the unsigned set (kotlin.UInt/ULong/UByte/UShort)
-    // are NOT here yet. kotc already emits them as BARE kotlin.* references to the stdlib's own emitted
-    // value-classes in call-OWNER positions (`ownerType:"kotlin.UInt"`), and ilemit resolves them in THAT form,
-    // not as a CLR primitive. Lowering them now makes ilemit fail to resolve the owner ("cannot resolve .NET
-    // type ..."). Activating them needs the matching ilemit-resolver adjustment (resolve the lowered owner /
-    // resolve a bare emitted kotlin.* type) — an ilemit-layer change tracked separately; adding them here before
-    // that lands would regress the runtime-stdlib build.
+    // DEFERRED from the general map — kotlin.String / kotlin.Any / kotlin.Unit and the unsigned set
+    // (kotlin.UInt/ULong/UByte/UShort) are NOT here. In the substitute build kotc has already substituted those
+    // @Clr-bound types to System.* at the source level; in the reference build they stay as the stdlib's own
+    // emitted value-classes and ilemit resolves them as bare emitted types. They DO appear in KotlinAllToClr,
+    // used only on the attribute-metadata force path (a CLR attribute blob needs a concrete System.* type).
     static readonly IReadOnlyDictionary<string, string> KotlinToClr = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["kotlin.Int"] = "int",
@@ -1310,21 +1304,73 @@ static class BirTypeLowering
         ["kotlin.Nothing"] = "object",
     };
 
+    // The FULL kotlin.* -> CLR map, used UNCONDITIONALLY (both modes) on the attribute-metadata force path. A
+    // custom-attribute's constructor-argument / field / property types are encoded into the assembly's attribute
+    // blob, which the CLR custom-attribute encoder accepts ONLY for concrete System.* types — never the emitted
+    // pure-Kotlin class. So even in the reference build (where every other kotlin.* primitive is kept verbatim)
+    // an attribute-carried type must lower to its real CLR token, including String/Any/Unit and the unsigned set.
+    static readonly IReadOnlyDictionary<string, string> KotlinAllToClr = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["kotlin.Int"] = "int",
+        ["kotlin.Long"] = "long",
+        ["kotlin.Short"] = "short",
+        ["kotlin.Byte"] = "byte",
+        ["kotlin.Double"] = "double",
+        ["kotlin.Float"] = "float",
+        ["kotlin.Boolean"] = "bool",
+        ["kotlin.Char"] = "char",
+        ["kotlin.Nothing"] = "object",
+        ["kotlin.String"] = "string",
+        ["kotlin.Any"] = "object",
+        ["kotlin.Unit"] = "void",
+        ["kotlin.UInt"] = "uint",
+        ["kotlin.ULong"] = "ulong",
+        ["kotlin.UByte"] = "ubyte",
+        ["kotlin.UShort"] = "ushort",
+    };
+
+    // Every JSON key whose string (or string[]) value is a TYPE reference, across signatures, expressions and
+    // statements. SHARED-IN-SPIRIT with TypeSiteAnalyzer.TypeProperties but a strict superset: the analyzer only
+    // ever needed the signature keys, whereas lowering must catch a primitive WHEREVER it sits. Identity/data keys
+    // that may carry a kotlin.*-looking string but are NOT types (name/value/var/method/id/kind/...) are
+    // deliberately excluded — lowering them would corrupt a declaration name or a string literal. `sig` (a
+    // comma-joined type list) and `attrs` (attribute applications) get their own handling below.
+    static readonly HashSet<string> TypeKeys = new(StringComparer.Ordinal)
+    {
+        // signature positions (the original TypeProperties set)
+        "type", "ownerType", "ret", "retType", "resultType", "base", "interfaces", "argTypes",
+        // expression / statement type positions
+        "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
+        "keyType", "valType", "iterType", "accessOwner", "elem", "to", "owner",
+        "samType", "closureType",
+        // additional type-reference keys ilemit reads (absent in today's BIR but lowered for robustness)
+        "elemType", "accType", "clrType", "tupleType", "selRet", "parameterTypes", "returnType",
+    };
+
     static readonly string[] ModifierPrefixes = { "byref:", "array:", "nullable:" };
 
-    public static JsonNode Lower(JsonNode root, bool refBuild) => LowerNode(root, refBuild);
+    public static JsonNode Lower(JsonNode root, bool refBuild) => LowerNode(root, refBuild, force: false);
 
-    static JsonNode LowerNode(JsonNode node, bool refBuild)
+    // `force` == "this subtree carries attribute-blob metadata": lower with the FULL map, ignoring refBuild. It is
+    // set when entering an attribute-class declaration (base : System.Attribute) or an `attrs` application array,
+    // and propagates to the whole subtree.
+    static JsonNode LowerNode(JsonNode node, bool refBuild, bool force)
     {
         if (node is JsonObject obj)
         {
+            var here = force || IsAttributeClass(obj);
             var copy = new JsonObject();
             foreach (var kv in obj)
             {
                 if (kv.Value == null) { copy[kv.Key] = null; continue; }
-                copy[kv.Key] = TypeSiteAnalyzer.TypeProperties.Contains(kv.Key)
-                    ? LowerTypeValued(kv.Value, refBuild)
-                    : LowerNode(kv.Value, refBuild);
+                if (kv.Key == "attrs")
+                    copy[kv.Key] = LowerNode(kv.Value, refBuild, force: true);   // attribute application -> blob metadata
+                else if (kv.Key == "sig")
+                    copy[kv.Key] = LowerSigValue(kv.Value, refBuild, here);
+                else if (TypeKeys.Contains(kv.Key))
+                    copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here);
+                else
+                    copy[kv.Key] = LowerNode(kv.Value, refBuild, here);
             }
             return copy;
         }
@@ -1333,19 +1379,36 @@ static class BirTypeLowering
         {
             var copy = new JsonArray();
             foreach (var item in arr)
-                copy.Add(item == null ? null : LowerNode(item, refBuild));
+                copy.Add(item == null ? null : LowerNode(item, refBuild, force));
             return copy;
         }
 
         return node.DeepClone();
     }
 
-    // A type-bearing key's value: a scalar type string, an array of type strings (interfaces/argTypes), or — for
-    // a few node shapes — a nested object under a `type` key, which is recursed structurally.
-    static JsonNode LowerTypeValued(JsonNode val, bool refBuild)
+    // A type declaration is an attribute class iff it extends System.Attribute (kotc lowers every Kotlin
+    // `annotation class` to `: System.Attribute`). Its ctor params / fields / property accessors must carry
+    // concrete CLR types so the attribute is emittable — hence the force path.
+    static bool IsAttributeClass(JsonObject obj) =>
+        obj["base"] is JsonValue b && b.TryGetValue<string>(out var s) && s != null &&
+        s.EndsWith("System.Attribute", StringComparison.Ordinal);
+
+    // A `sig` value is a top-level comma-joined list of parameter type tokens (the overload key ilemit matches by
+    // STRING EQUALITY against a method def's lowered `params[].type`). Lower each element so the call-side sig and
+    // the def-side params stay in the SAME vocabulary, else overload resolution misses.
+    static JsonNode LowerSigValue(JsonNode val, bool refBuild, bool force)
     {
         if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
-            return JsonValue.Create(LowerTypeString(s, refBuild));
+            return JsonValue.Create(string.Join(",", SplitTopLevel(s).Select(p => LowerTypeString(p, refBuild, force))));
+        return LowerNode(val, refBuild, force);
+    }
+
+    // A type-bearing key's value: a scalar type string, an array of type strings (interfaces/argTypes/constraints/
+    // typeArgs), or — for a few node shapes — a nested object, which is recursed structurally.
+    static JsonNode LowerTypeValued(JsonNode val, bool refBuild, bool force)
+    {
+        if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
+            return JsonValue.Create(LowerTypeString(s, refBuild, force));
 
         if (val is JsonArray arr)
         {
@@ -1353,50 +1416,50 @@ static class BirTypeLowering
             foreach (var item in arr)
             {
                 if (item is JsonValue iv && iv.TryGetValue<string>(out var its))
-                    copy.Add(JsonValue.Create(LowerTypeString(its, refBuild)));
+                    copy.Add(JsonValue.Create(LowerTypeString(its, refBuild, force)));
                 else
-                    copy.Add(item == null ? null : LowerNode(item, refBuild));
+                    copy.Add(item == null ? null : LowerNode(item, refBuild, force));
             }
             return copy;
         }
 
-        return LowerNode(val, refBuild);
+        return LowerNode(val, refBuild, force);
     }
 
-    // Recurse the BIR type grammar, rewriting only bare kotlin.* primitive tokens. Every other shape
+    // Recurse the BIR type grammar, rewriting only bare kotlin.* tokens in the active map. Every other shape
     // (gp:, clr:, clrg:[...], @Name[...], func:ret:args, array:/byref:/nullable: modifiers, the CLR shorthand,
     // and user/stdlib FQNs like kotlin.collections.List) is structurally preserved; nested type arguments are
     // recursed so a kotlin.* primitive inside a generic lowers too.
-    public static string LowerTypeString(string raw, bool refBuild)
+    public static string LowerTypeString(string raw, bool refBuild, bool force = false)
     {
-        // The reference build keeps kotlin.* verbatim — and there is nothing else to rewrite — so it is a pure
-        // passthrough. A token with no "kotlin." substring can never contain a mappable primitive, so skip it.
-        if (refBuild || !raw.Contains("kotlin.", StringComparison.Ordinal)) return raw;
+        // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers
+        // unconditionally. A token with no "kotlin." substring can never contain a mappable token, so skip it.
+        if ((!force && refBuild) || !raw.Contains("kotlin.", StringComparison.Ordinal)) return raw;
 
         var t = raw.Trim();
         if (t.Length == 0) return raw;
 
         foreach (var p in ModifierPrefixes)
             if (t.StartsWith(p, StringComparison.Ordinal))
-                return p + LowerTypeString(t[p.Length..], refBuild);
+                return p + LowerTypeString(t[p.Length..], refBuild, force);
 
         if (t.StartsWith("gp:", StringComparison.Ordinal)) return t;
         if (t.StartsWith("clr:", StringComparison.Ordinal)) return t;
-        if (t.StartsWith("func:", StringComparison.Ordinal)) return LowerFuncString(t, refBuild);
+        if (t.StartsWith("func:", StringComparison.Ordinal)) return LowerFuncString(t, refBuild, force);
 
         var br = t.IndexOf('[');
         if (br >= 0 && t.EndsWith("]", StringComparison.Ordinal))
         {
             var head = t[..br];
             var inner = t[(br + 1)..^1];
-            var args = string.Join(",", SplitTopLevel(inner).Select(a => LowerTypeString(a, refBuild)));
+            var args = string.Join(",", SplitTopLevel(inner).Select(a => LowerTypeString(a, refBuild, force)));
             return head + "[" + args + "]";
         }
 
-        return LowerLeaf(t);
+        return LowerLeaf(t, force);
     }
 
-    static string LowerFuncString(string t, bool refBuild)
+    static string LowerFuncString(string t, bool refBuild, bool force)
     {
         // func:<ret>:<arg,arg,...>  — the ret/args separator is the first top-level ':' AFTER the ret's own
         // leading type prefix (so a ret like clrg:Foo[int] is not split on its clrg: colon).
@@ -1404,18 +1467,19 @@ static class BirTypeLowering
         var sep = FuncRetEnd(body);
         var ret = sep >= body.Length ? body : body[..sep];
         var args = sep >= body.Length ? "" : body[(sep + 1)..];
-        var loweredArgs = string.Join(",", SplitTopLevel(args).Select(a => LowerTypeString(a, refBuild)));
-        return "func:" + LowerTypeString(ret, refBuild) + ":" + loweredArgs;
+        var loweredArgs = string.Join(",", SplitTopLevel(args).Select(a => LowerTypeString(a, refBuild, force)));
+        return "func:" + LowerTypeString(ret, refBuild, force) + ":" + loweredArgs;
     }
 
-    static string LowerLeaf(string t)
+    static string LowerLeaf(string t, bool force)
     {
         // @-decorated and clrg: references are emitted/CLR type references whose head is never a bare primitive
-        // (any bracket args were recursed above) — keep verbatim. A bare kotlin.* primitive leaf lowers; all
-        // other leaves (CLR shorthand, user/stdlib FQNs) pass through.
+        // (any bracket args were recursed above) — keep verbatim. A bare kotlin.* leaf lowers via the active map;
+        // all other leaves (CLR shorthand, user/stdlib FQNs) pass through.
         if (t.StartsWith("@", StringComparison.Ordinal)) return t;
         if (t.StartsWith("clrg:", StringComparison.Ordinal)) return t;
-        return KotlinToClr.TryGetValue(t, out var clr) ? clr : t;
+        var map = force ? KotlinAllToClr : KotlinToClr;
+        return map.TryGetValue(t, out var clr) ? clr : t;
     }
 
     // First top-level ':' after the leading type prefix; bracket depth aware. Mirrors the matcher's FuncRetEnd.
