@@ -117,10 +117,23 @@ sealed class Pipeline
             // only the body STATEMENTS change. This is what makes it safe for a bare-value kotlin.* primitive kept
             // verbatim in the ref to appear in a signature without any real body ever emitting arithmetic/box/conv IL.
             if (_options.RefBuild) RefBodySquash.Squash(lowered);
+            // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
+            // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
+            // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.
+            if (!_options.RefBuild && IsEmptyCir(lowered)) continue;
             files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
         }
 
         return files;
+    }
+
+    // A lowered CIR root that carries no types, no methods and no fields contributes nothing — its file-class would be
+    // an empty static type. True once AliasHelperHoist has dropped a file whose sole content was @ClrTypeAlias types.
+    static bool IsEmptyCir(JsonNode root)
+    {
+        if (root is not JsonObject o) return false;
+        static bool Empty(JsonNode? n) => n is not JsonArray a || a.Count == 0;
+        return Empty(o["types"]) && Empty(o["methods"]) && Empty(o["fields"]);
     }
 
     void WriteCirFiles(IReadOnlyList<CirFile> files)
@@ -2530,6 +2543,12 @@ static class AliasHelperHoist
 
     static JsonObject BuildHelper(JsonObject td, string fqn, ReferenceMetadataIndex refs)
     {
+        // ONLY a CLASS alias gets a rule-3 helper. kotc now emits @ClrTypeAlias INTERFACES (Comparable/Iterable/
+        // Collection/List/…) too (it no longer strips them); those are dropped here with NO helper — an interface's
+        // members are abstract in source, and a ref.dll default-interface-method would otherwise false-positive as a
+        // rule-3 member and produce a bogus interface "helper". A non-class kind => return null => the alias is just
+        // dropped (its use-site references are lowered to the BCL type by BirTypeLowering).
+        if ((td["kind"] as JsonValue)?.GetValue<string>() != "class") return null;
         var classTps = td["typeParams"] as JsonArray;
         var aliasToken = (td["name"] as JsonValue)!.GetValue<string>();   // kotlin FQN; lowered to its BCL form downstream
         // An @JvmInline value-class alias (UInt/UByte/ULong/UShort -> System.UInt32/Byte/...) erases to its backing

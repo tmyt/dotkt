@@ -46,11 +46,13 @@
 - `@InlineOnly` drops `@ClrIntrinsic` cross-module (direct `s[i]=c`)
 
 ### B. Layer-purity follow-ups + performance
-- kotc "reads NEITHER annotation" final form — rule-3 helper-EMISSION is now fully bir2cir's (kotc's
-  `clrHelperClassJson`/`clrHelperMethod`/`clrHelperMembers` DELETED; kotc emits bound alias classes as plain BIR types
-  gated by pure-Kotlin `hasHoistableBody`; bir2cir `AliasHelperHoist` hoists all 14 helpers). **Remaining:** the
-  `substitutedAway` type-STRIP still reads `@ClrTypeAlias`/`@ClrIntrinsic` (kept for primitive strip + plain-emit
-  routing), and the broader `clrName`/`netType` member-call + `kotlin.*→System.*` type maps (#5)
+- kotc "reads NEITHER annotation" final form — DONE so far: (1) rule-3 helper-EMISSION is fully bir2cir's
+  (`clrHelperClassJson`/`clrHelperMethod`/`clrHelperMembers` DELETED); (2) the `@ClrTypeAlias` type-STRIP is fully
+  bir2cir's (`substitutedAway`/`hasClrTypeAlias`/`hasHoistableBody`/`aliasPlainTypes`/alias-only-branch DELETED — kotc
+  emits ALL types as ordinary Kotlin; bir2cir `AliasHelperHoist` drops every alias type def, helper only for `kind ==
+  class`). **Remaining for "reads NEITHER":** the `clrName` (`@ClrIntrinsic`) member-call name resolver + the
+  fun-interface-SAM alias lookup, and the `netType` `kotlin.*→System.*` type map (move to bir2cir; `birType` already
+  emits bare FQNs — netType is the legacy twin still emitting `System.Int32`/`System.Object`) (#5)
 - `stackBuffer`/`Span` `FqName.ROOT` → `kotlin.clr.*` (§6)
 - **static-helper (rule-3) performance review** — audit the stdlib pieces implemented as static helpers for perf
   problems; reimplement them a better way where found. *(added 2026-07-01)*
