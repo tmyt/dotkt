@@ -281,6 +281,9 @@ sealed class ReferenceMetadataIndex
         return _inlineBacking.TryGetValue(ownerFqn, out var info) && member == info.Getter && (conv = info.Conv) != null;
     }
 
+    // Whether the owner is an @JvmInline value class erased to a primitive CLR form (so `new T(arg)` is the inline BOX).
+    public bool IsInlineValueClass(string ownerFqn) => _inlineBacking.ContainsKey(ownerFqn);
+
     // A rule-3 hoist candidate: owner.member exists, is concrete (non-abstract) and carries NO @ClrIntrinsic, so its
     // real Kotlin body was hoisted by kotc to the static helper `<>dotkt_ClrH_<owner>`.
     public bool IsRule3Member(string ownerFqn, string memberName) =>
@@ -1922,6 +1925,16 @@ static class MemberCallSubstitution
     {
         if (node["type"] is not JsonValue tv || !tv.TryGetValue<string>(out var ownerToken)) return null;
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
+
+        // Inline-class CONSTRUCTION erasure (the BOX, mirror of the `.data` unbox collapse): an @JvmInline value class
+        // erases to its single backing field's primitive CLR form, so `new UByte(arg)` IS `arg` (no System.Byte(byte)
+        // ctor exists). Collapse to the lone arg UNCHANGED — never a conv: the int32 stack bits are already the value,
+        // and a signed conv (Conv_I1) would sign-extend and corrupt an unsigned high bit (UByte 200 -> -56). Width is
+        // truncated/masked at the byte-typed store/use sites. (Codex-confirmed: identity, not conv.)
+        if (refs.IsInlineValueClass(ReferenceMetadataIndex.BareOwnerFqn(ownerToken)) &&
+            node["args"] is JsonArray ctorArgs && ctorArgs.Count == 1)
+            return ctorArgs[0].DeepClone();
+
         if (kind is "struct" or "enum") return null;
 
         // A GENERIC @ClrTypeAlias owner (`new HashSet<E>()` -> token `kotlin.collections.HashSet[gp:E]`) must carry
