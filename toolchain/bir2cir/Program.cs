@@ -96,10 +96,11 @@ sealed class Pipeline
             // type in the ref.dll (@ClrTypeAlias, or the legacy class-level @ClrIntrinsic) is rewritten to a plain BCL
             // call/new. This is the bir2cir home of what kotc's clrName() member routing used to do — sourced from the
             // ref.dll's @ClrIntrinsic labels, NOT from kotc. Runs BEFORE type lowering so it sees the kotlin.* owners.
-            // ALIAS-ONLY-FILE rule-3 hoist: kotc emits an alias-only file's @ClrTypeAlias class as a PLAIN BIR type
-            // (it no longer synthesizes the <>dotkt_ClrH_* helper for those — see BirEmitter's alias-only branch).
-            // Turn that plain type into the static helper + drop it, BEFORE call substitution so the (already-BCL)
-            // member bodies and the rule-3 call routing both see a consistent helper. No-op for the reference build.
+            // RULE-3 HOIST (all CLR-bound alias classes): kotc emits EVERY @ClrTypeAlias class with hoistable bodies as a
+            // PLAIN BIR type — alias-only files (String/Char/Boolean) AND the MIXED files (StringBuilder/collections/
+            // Regex/unsigned) alike — and synthesizes NO <>dotkt_ClrH_* helper itself. This pass reads the ref.dll
+            // @ClrTypeAlias index, turns each such plain type into the static helper + drops it, BEFORE call substitution
+            // so the (already-BCL) member bodies and the rule-3 call routing both see a consistent helper. No-op for ref.
             var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
@@ -2483,15 +2484,15 @@ static class RefBodySquash
     };
 }
 
-// ALIAS-ONLY-FILE RULE-3 HOIST. kotc no longer synthesizes the `<>dotkt_ClrH_<owner>` helper for an "alias-only" file
-// (its sole content is a @ClrTypeAlias class whose concrete intrinsic-less members carry real bodies — kotlin.String's
-// subSequence, plus kotlin.Boolean/kotlin.Char operator stubs). kotc instead emits the alias class as a PLAIN BIR type;
-// this pass reads the ref.dll @ClrTypeAlias index, hoists those rule-3 members into the static helper (the dispatch
-// `this` becomes a leading `__self` param), and DROPS the original alias type def — it must NEVER reach ilemit as a
-// real CLR type (its equals(Any?)/toString()/length members would clash with System.String/System.Object). The rule-3
-// CALL routing in MemberCallSubstitution already targets `<>dotkt_ClrH_<owner>.<member>(recv, ..)` by name, so emitting
-// the helper here closes the loop. The MIXED-file alias helpers (StringBuilder/UInt/collections/Regex) are still
-// kotc-synthesized; relocating them here is the migration follow-up. Runs only in substitute/app builds (never ref).
+// RULE-3 HOIST (ALL CLR-bound alias classes). kotc no longer synthesizes the `<>dotkt_ClrH_<owner>` helper for ANY
+// @ClrTypeAlias class whose concrete intrinsic-less members carry real bodies — the alias-only files (kotlin.String's
+// subSequence, plus kotlin.Boolean/kotlin.Char operator stubs) AND the MIXED files (StringBuilder/UInt/collections/
+// Regex). kotc emits each such alias class as a PLAIN BIR type; this pass reads the ref.dll @ClrTypeAlias index, hoists
+// those rule-3 members into the static helper (the dispatch `this` becomes a leading `__self` param), and DROPS the
+// original alias type def — it must NEVER reach ilemit as a real CLR type (its equals(Any?)/toString()/length members
+// would clash with System.String/System.Object). The rule-3 CALL routing in MemberCallSubstitution already targets
+// `<>dotkt_ClrH_<owner>.<member>(recv, ..)` by name, so emitting the helper here closes the loop. This is the SOLE home
+// of rule-3 helper synthesis (kotc's clrHelperClassJson is deleted). Runs only in substitute/app builds (never ref).
 static class AliasHelperHoist
 {
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs)
@@ -2531,6 +2532,13 @@ static class AliasHelperHoist
     {
         var classTps = td["typeParams"] as JsonArray;
         var aliasToken = (td["name"] as JsonValue)!.GetValue<string>();   // kotlin FQN; lowered to its BCL form downstream
+        // An @JvmInline value-class alias (UInt/UByte/ULong/UShort -> System.UInt32/Byte/...) erases to its backing
+        // primitive; its Object-method overrides (Equals/GetHashCode/ToString) operate on the boxed Kotlin value and
+        // read the now-erased `.data` field, so hoisting them produces a `<self>.data` access on the value-type
+        // shorthand (`ubyte`) that ilemit cannot resolve. They must NOT be hoisted — a call `u.toString()` defers to
+        // the BCL primitive's ToString via member-call substitution. (A non-value alias like Boolean DOES hoist its
+        // Equals/GetHashCode/ToString — those carry real Kotlin bodies and no erased field.)
+        var isInlineValue = refs.IsInlineValueClass(fqn);
         var methods = new JsonArray();
         foreach (var m in td["methods"] as JsonArray ?? new JsonArray())
         {
@@ -2539,6 +2547,7 @@ static class AliasHelperHoist
             if (mn.StartsWith("get_", StringComparison.Ordinal) || mn.StartsWith("set_", StringComparison.Ordinal)) continue;
             if ((mo["static"] as JsonValue)?.GetValue<bool>() == true) continue;   // a top-level/companion static, not a member
             if (mo["body"] is not JsonArray) continue;                              // abstract / no body
+            if (isInlineValue && (mo["objectOverride"] as JsonValue)?.GetValue<bool>() == true) continue;  // see note above
             if (!refs.IsRule3Member(fqn, mn)) continue;   // ref.dll: concrete + intrinsic-less (matches the rule-3 call routing)
             methods.Add(HoistMethod(mo, aliasToken, classTps));
         }
@@ -2562,7 +2571,15 @@ static class AliasHelperHoist
     // helper needs them for `__self`). Mirrors kotc's clrHelperMethod shape so ilemit sees an identical helper.
     static JsonObject HoistMethod(JsonObject m, string aliasToken, JsonArray classTps)
     {
-        var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = aliasToken } };
+        // A GENERIC alias owner (ArrayList<E>, HashMap<K,V>) must type `__self` as the CONSTRUCTED generic
+        // `kotlin.collections.ArrayList[gp:E]` — BirTypeLowering then lowers it to `clrg:System...List[gp:E]` (with
+        // arity). A bare `kotlin.collections.ArrayList` token would lower to a non-generic `clr:System...List` that
+        // ilemit cannot resolve. The class type params (bare-string entries like "E") become the `gp:` args; they are
+        // declared on the method via MergeTypeParams below, so `gp:E` is in scope. (Mirrors kotc's old birType(__self).)
+        var selfType = aliasToken;
+        if (classTps is { Count: > 0 })
+            selfType = aliasToken + "[" + string.Join(",", classTps.Select(tp => "gp:" + (tp as JsonValue)?.GetValue<string>())) + "]";
+        var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = selfType } };
         foreach (var p in m["params"] as JsonArray ?? new JsonArray()) ps.Add(p?.DeepClone());
         var outM = new JsonObject
         {
