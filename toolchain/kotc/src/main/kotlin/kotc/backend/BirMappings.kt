@@ -121,18 +121,22 @@ internal val VALUE_PRIM_BIR = mapOf(
 	"kotlin.Double" to "double", "kotlin.Float" to "float", "kotlin.Boolean" to "bool", "kotlin.Char" to "char",
 )
 
+// kotlin.* throwables -> their .NET counterpart. The frontend jar resolves these as our real `kotlin.*` exception
+// classes (NOT java.* typealiases), so only the kotlin.* keys are live; the former java.lang.*/java.util.* keys were
+// dead once no consumer fed kotc the JVM kotlin-stdlib.jar. `kotlin.ArithmeticException` maps to System.ArithmeticException
+// so `catch (ArithmeticException)` catches the BCL System.DivideByZeroException that integer `a/0` throws.
 internal val NET_EXCEPTIONS = mapOf(
-	"java.lang.Throwable" to "System.Exception", "kotlin.Throwable" to "System.Exception",
-	"java.lang.Exception" to "System.Exception", "kotlin.Exception" to "System.Exception",
-	"java.lang.RuntimeException" to "System.Exception", "kotlin.RuntimeException" to "System.Exception",
-	"java.lang.Error" to "System.Exception", "kotlin.Error" to "System.Exception",
-	"java.lang.ArithmeticException" to "System.ArithmeticException",
-	"java.lang.IllegalArgumentException" to "System.ArgumentException", "kotlin.IllegalArgumentException" to "System.ArgumentException",
-	"java.lang.IllegalStateException" to "System.InvalidOperationException", "kotlin.IllegalStateException" to "System.InvalidOperationException",
-	"java.lang.IndexOutOfBoundsException" to "System.IndexOutOfRangeException", "kotlin.IndexOutOfBoundsException" to "System.IndexOutOfRangeException",
-	"java.lang.NullPointerException" to "System.NullReferenceException", "kotlin.NullPointerException" to "System.NullReferenceException",
-	"java.lang.UnsupportedOperationException" to "System.NotSupportedException", "kotlin.UnsupportedOperationException" to "System.NotSupportedException",
-	"java.util.NoSuchElementException" to "System.InvalidOperationException", "kotlin.NoSuchElementException" to "System.InvalidOperationException",
+	"kotlin.Throwable" to "System.Exception",
+	"kotlin.Exception" to "System.Exception",
+	"kotlin.RuntimeException" to "System.Exception",
+	"kotlin.Error" to "System.Exception",
+	"kotlin.ArithmeticException" to "System.ArithmeticException",
+	"kotlin.IllegalArgumentException" to "System.ArgumentException",
+	"kotlin.IllegalStateException" to "System.InvalidOperationException",
+	"kotlin.IndexOutOfBoundsException" to "System.IndexOutOfRangeException",
+	"kotlin.NullPointerException" to "System.NullReferenceException",
+	"kotlin.UnsupportedOperationException" to "System.NotSupportedException",
+	"kotlin.NoSuchElementException" to "System.InvalidOperationException",
 )
 internal val ATOMICFU_TYPES = setOf(
 	"kotlinx.atomicfu.AtomicInt", "kotlinx.atomicfu.AtomicLong",
