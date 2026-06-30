@@ -28,6 +28,18 @@ gate() { while (( $(jobs -rp | wc -l) >= JOBS )); do wait -n 2>/dev/null || true
 rm -f "$ROOT"/build/fail-* "$ROOT"/build/refdll-* 2>/dev/null || true
 
 dotnet build "$ROOT/toolchain/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null
+# bir2cir: the canonical kotc -> bir2cir -> ilemit pipeline. kotc emits bare kotlin.* FQNs for source-type
+# primitives at EVERY position; bir2cir lowers them to the CLR-codegen vocabulary ilemit consumes. App builds run
+# in substitute/app mode (no DOTKT_STDLIB_COMPILE), so kotlin.* primitives lower (kotlin.Int -> int, ...). Feeding
+# BIR straight to ilemit (the old compat path) would leave those tokens un-lowered -> "cannot resolve kotlin.Int".
+dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo >/dev/null
+# Lower a sample's BIR -> CIR (bir2cir), then emit IL (ilemit). A bir2cir failure folds into the ilemit-error bucket.
+il_emit() { # <name> <ildir> <asm> <birdir> [extra ilemit args...]
+	local name="$1" ildir="$2" asm="$3" birdir="$4"; shift 4
+	local cirdir="$ROOT/build/cir-$name"; rm -rf "$cirdir"; mkdir -p "$cirdir"
+	dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$cirdir" "$birdir"/*.bir.json >/dev/null 2>&1 || return 1
+	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" "$@" "$cirdir"/*.cir.json >/dev/null 2>&1
+}
 
 # DotKt.Runtime: the runtime assembly for promoted Kotlin lowerings (printf->composite format, AND the
 # kotlin.coroutines core — Continuation/CoroutineContext/Result/Unit/intercepted + sequence/Flow/Channel/select
@@ -86,7 +98,7 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" --ref "$refdll" "$birdir"/*.bir.json >/dev/null 2>&1; then
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT" --ref "$refdll"; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
 		cp "$refdll" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
@@ -106,7 +118,7 @@ il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 		usemeta="${meta:-}"
 		if ! CLR_TYPES_METADATA="$usemeta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" --ref "$STDLIB_DLL" "$birdir"/*.bir.json >/dev/null 2>&1; then
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT" --ref "$STDLIB_DLL"; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
 		cp "$DOTKT_RT" "$STDLIB_DLL" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
@@ -124,7 +136,7 @@ il_check_mpp() { # <name> <asm> <srcDir> <commonFile> <expected>
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! "$LAUNCHER" "$src"/*.kt -Xcommon-sources="$src/$common" -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" "$birdir"/*.bir.json >/dev/null 2>&1; then
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT"; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
 		cp "$DOTKT_RT" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
@@ -241,7 +253,7 @@ il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" --ref "$refdll" "$birdir"/*.bir.json >/dev/null 2>&1; then
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT" --ref "$refdll"; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
 		cp "$refdll" "$ildir/"; cp "$DOTKT_RT" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
@@ -318,7 +330,7 @@ il_revinterop() {
 	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 	"$LAUNCHER" $src/lib.kt -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1 \
 		|| { echo "FAIL  il:$name (compile error)"; fail=1; return; }
-	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" --ref "$DOTKT_RT" "$birdir"/*.bir.json >/dev/null
+	il_emit revinterop "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT"
 	cp "$src/Program.cs" "$ildir/Program.cs"
 	cat > "$ildir/consumer.csproj" <<EOF
 <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework>
