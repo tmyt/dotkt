@@ -26,8 +26,15 @@ BIR2CIR="$ROOT/build/bir2cir-bin/bir2cir.dll"
 FACADEGEN="$ROOT/build/facadegen-bin/facadegen.dll"
 RETARGET="$ROOT/build/retarget-bin/retarget.dll"
 DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
-DOTKT_STDLIB="$ROOT/build/dotkt-stdlib/DotKt.Stdlib.dll"
-JAR="$ROOT/toolchain/kotc/vendor/kotlin-stdlib.jar"
+# CLR stdlib (the canonical build under runtime/stdlib/, mirrored from scripts/verify-il.sh): the REFERENCE assembly
+# (@Clr metadata) feeds bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution; the RUNTIME assembly carries the real
+# Kotlin bodies and is ilemit's --ref (and copy-local for the run phase).
+STDLIB_REF="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
+STDLIB_RT="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
+# kotc -classpath: the CLR FRONTEND jar built FROM our CLR stdlib sources, REPLACING the JVM kotlin-stdlib.jar whose
+# java.util.* typealiases leaked into the frontend (e.g. kotlin.Comparator = java.util.Comparator). kotlin.* resolves
+# from THIS jar (full Kotlin semantics), never from facadegen --scan-asm. This is the binding verify-il invariant.
+JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
 CORO="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-*.jar' 2>/dev/null | head -1)"
 
 # --- args ---------------------------------------------------------------------------------------------------------
@@ -63,20 +70,29 @@ done
 [[ -f "$BIR2CIR" ]] || { echo "dotkt: building bir2cir..." >&2; dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo; }
 [[ -f "$FACADEGEN" ]] || { echo "dotkt: building facadegen..." >&2; dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo; }
 [[ -f "$DOTKT_RT" ]] || { echo "dotkt: building DotKt.Runtime..." >&2; dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runtime" -v q --nologo; }
-if (( use_stdlib )) && [[ ! -f "$DOTKT_STDLIB" ]]; then echo "dotkt: building DotKt.Stdlib..." >&2; bash "$ROOT/scripts/build-dotkt-stdlib.sh" >/dev/null; fi
+# The CLR frontend stdlib jar (kotc -classpath): build once if missing — exactly as verify-il bootstraps it.
+[[ -f "$JAR" ]] || { echo "dotkt: building CLR frontend stdlib jar..." >&2; bash "$ROOT/scripts/build-clr-stdlib-frontend.sh" >/dev/null; }
+# The CLR stdlib ref/rt assemblies are the canonical CACHED builds (scripts/build-clr-stdlib{,-runtime}.sh --emit). Do
+# NOT auto-rebuild them here: the runtime emit is the slow, blocker-prone path; a cached green pair is what we want.
+if (( use_stdlib )); then
+	[[ -f "$STDLIB_REF" ]] || { echo "dotkt: missing $STDLIB_REF — build it with: scripts/build-clr-stdlib.sh --emit (or pass --no-stdlib)" >&2; exit 1; }
+	[[ -f "$STDLIB_RT" ]]  || { echo "dotkt: missing $STDLIB_RT — build it with: scripts/build-clr-stdlib-runtime.sh --emit (or pass --no-stdlib)" >&2; exit 1; }
+fi
 if (( do_retarget )) && [[ ! -f "$RETARGET" ]]; then dotnet build "$ROOT/toolchain/retarget" -c Release -o "$ROOT/build/retarget-bin" -v q --nologo; fi
 
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 bir="$work/bir"; cir="$work/cir"; mkdir -p "$bir" "$cir" "$out_dir"
 cp="$JAR"; [[ -n "$CORO" ]] && cp="$cp:$CORO"
 
-# Reference assemblies (compile-resolution refs for facadegen + ilemit). The runtime ref-pack lets facadegen reflect
-# BCL types; DotKt.Runtime carries the [Kotlin*] attributes; DotKt.Stdlib carries the migrated real-Kotlin ops.
+# Reference assemblies. Mirroring verify-il, the two backend stages take DIFFERENT stdlib refs: bir2cir reads the
+# @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets DotKt.Runtime (the
+# [Kotlin*] attribute types + runtime helpers) plus the RUNTIME stdlib (the real Kotlin bodies). ilemit resolves the
+# BCL itself by runtime reflection, so the ref-pack is only for facadegen's .NET-type resolution (and retarget).
 refpack="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' 2>/dev/null | head -1)")"
-declare -a ilref_args=(--ref "$DOTKT_RT")
+declare -a bir2cir_refs=() ilemit_refs=(--ref "$DOTKT_RT")
 refs_semi="$(ls "$refpack"/*.dll 2>/dev/null | tr '\n' ';')$DOTKT_RT"
-(( use_stdlib )) && { ilref_args+=(--ref "$DOTKT_STDLIB"); refs_semi="$refs_semi;$DOTKT_STDLIB"; }
-for r in "${extra_refs[@]}"; do ilref_args+=(--ref "$r"); refs_semi="$refs_semi;$r"; done
+(( use_stdlib )) && { bir2cir_refs+=(--ref "$STDLIB_REF"); ilemit_refs+=(--ref "$STDLIB_RT"); refs_semi="$refs_semi;$STDLIB_RT"; }
+for r in "${extra_refs[@]}"; do bir2cir_refs+=(--ref "$r"); ilemit_refs+=(--ref "$r"); refs_semi="$refs_semi;$r"; done
 
 # 1. .NET type injection: scan the sources' .NET imports (PSI) -> facadegen generates ONLY .NET-space facades.
 #    kotlin.* (the WHOLE stdlib) is supplied to kotc via the JAR (-classpath), which carries full Kotlin semantics
@@ -90,13 +106,14 @@ dotnet "$FACADEGEN" --meta "$meta" --refs "$refs_semi" --import-list "$implist" 
 echo "dotkt: compiling ${#kts[@]} file(s) -> BIR" >&2
 CLR_TYPES_METADATA="$meta" "$KOTC" "${kts[@]}" -no-stdlib -classpath "$cp" -d "$bir"
 
-# 3. bir2cir: BIR -> CIR (the single type-lowering path; mode is env-gated, not a flag).
+# 3. bir2cir: BIR -> CIR (the single type-lowering path; mode is env-gated, not a flag). Reads the @Clr-metadata
+#    REFERENCE stdlib for the @ClrTypeAlias/@ClrIntrinsic substitution.
 echo "dotkt: lowering BIR -> CIR" >&2
-dotnet "$BIR2CIR" "$cir" "${ilref_args[@]}" "$bir"/*.bir.json >/dev/null
+dotnet "$BIR2CIR" "$cir" "${bir2cir_refs[@]}" "$bir"/*.bir.json >/dev/null
 
-# 4. ilemit: CIR -> CIL.
+# 4. ilemit: CIR -> CIL. Gets DotKt.Runtime + the RUNTIME stdlib (real Kotlin bodies).
 echo "dotkt: emitting $out_name.dll" >&2
-dotnet "$ILEMIT" "$out_dir" "$out_name" "${ilref_args[@]}" "$cir"/*.cir.json
+dotnet "$ILEMIT" "$out_dir" "$out_name" "${ilemit_refs[@]}" "$cir"/*.cir.json
 
 # 5. optional retarget (for compile-time C# <Reference>).
 (( do_retarget )) && dotnet "$RETARGET" "$out_dir/$out_name.dll" --refs "$refs_semi" >/dev/null
@@ -104,7 +121,7 @@ dotnet "$ILEMIT" "$out_dir" "$out_name" "${ilref_args[@]}" "$cir"/*.cir.json
 # 6. exe scaffolding: copy copy-local refs + write a runtimeconfig so `dotnet <name>.dll` runs.
 if (( make_exe )); then
 	cp "$DOTKT_RT" "$out_dir/" 2>/dev/null || true
-	(( use_stdlib )) && cp "$DOTKT_STDLIB" "$out_dir/" 2>/dev/null || true
+	(( use_stdlib )) && cp "$STDLIB_RT" "$out_dir/" 2>/dev/null || true
 	for r in "${extra_refs[@]}"; do cp "$r" "$out_dir/" 2>/dev/null || true; done
 	cat > "$out_dir/$out_name.runtimeconfig.json" <<JSON
 {"runtimeOptions":{"tfm":"net10.0","framework":{"name":"Microsoft.NETCore.App","version":"10.0.0"}}}
