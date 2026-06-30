@@ -155,6 +155,70 @@ Reading the other direction, consuming **any** .NET assembly:
 enforces neither — exactly how Kotlin/JVM treats un-annotated Java. This avoids the unsound alternative of forcing a
 possibly-null .NET value into a Kotlin non-null type.
 
+## 10. Round-trip fidelity audit — what re-consuming a DotKt assembly as Kotlin LOSES
+
+§6 lists what survives the round-trip (Kotlin → DotKt `.dll` → re-consumed as Kotlin: `facadegen` reflects the dll and
+reads the `[Kotlin*]`/NRT attributes, the FIR injector rebuilds the declarations). **This section is the inverse: the
+Kotlin surface that the round-trip does NOT fully restore.** It is an *audit* (prioritized-task #8) — the gaps are
+documented here, not yet fixed. Findings are grounded in `toolchain/facadegen/Program.cs` (the reconstructor),
+`toolchain/ilemit/Emitter.Metadata.cs` + `Emitter.CompilerServices.cs` (the attribute stampers), and
+`toolchain/kotc/.../BirEmitter.kt` (the emitter), and were cross-checked with Codex against the CLR-metadata surface.
+
+Three buckets — **Restored** (faithful), **Partial** (degraded), **Lost** (no carrier).
+
+### 10.1 Restored (faithful) — see §6
+
+`infix`/`operator`/`suspend`, top-level functions, cross-module `inline` non-local-return, `val`-vs-`var`,
+reference-type nullability, parameter names (named-arg calls), constant default args, `vararg`, extension receivers,
+reified generics, and `final`/`open`/`abstract` + `public`/`protected` visibility. **Data-class generated members
+also round-trip**: `componentN()` carries `operator` (via `[KotlinFunction(Operator)]`, set from `fn.isOperator` in
+`BirEmitter.kt`), so destructuring works cross-module, and `copy`/`equals`/`hashCode`/`toString` are real callable
+methods.
+
+### 10.2 Partially restored (in metadata, but degraded on reconstruction)
+
+| Kotlin construct | What survives | What degrades / is lost |
+|---|---|---|
+| **Generic constraints / bounds** (`<T : Comparable<T>>`, `where`) | — | **HIGHEST-IMPACT, FIXABLE.** `ilemit` *does* write the CLR constraint (`ApplyConstraints` → `SetBaseTypeConstraint`/interface constraints, `Program.cs`), but `facadegen` emits only the bare type-param **name** (`g.Name`) and never reads `GetGenericParameterConstraints()`. So a consumer sees an **unconstrained `T`** even though the bound is in the assembly. No new attribute needed — fixable purely in the reconstructor. |
+| **Declaration-site variance** (`class Box<out T>`, `interface Cmp<in T>`) | — | `ilemit` writes CLR variance on **interface** params (`GenericParameterAttributes.Covariant/Contravariant`, dropping CLR-illegal/conflicting ones); `facadegen` never reads it back → restored **invariant**. Class-type-param variance has no CLR form at all. **Use-site** variance / **star projection** `Foo<*>`: no analog, lost. |
+| **`enum class`** | entry values | A *basic* enum → a real CLR `enum` → `facadegen` restores it as an **`object` of `val`s**; a *rich* enum (ctor args / methods / per-entry bodies, `isRichEnum`) → a singleton-field **class** → restored as a plain **`class`**. Either way it is **not** a Kotlin `enum class`: exhaustive `when`, `.entries`/`values()`/`valueOf`, `.ordinal`/`.name` identity degrade. |
+| **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried (consumer sees an ordinary class); a `copy(...)` with **non-constant/self-referential defaults** (`x = this.x`) fails the call-site default rule (§7). |
+| **Annotations** | RUNTIME/BINARY-retained with CLR-legal args; `KClass`→`System.Type` | `ilemit` **skips** annotations whose ctor-arg shape the CLR encoder rejects (`BuildCab`/`TryCab` → diagnostic, e.g. a generic-instantiation parameter). **SOURCE**-retention annotations are gone. **Use-site targets** (`@get:`/`@field:`/`@param:`) are only as faithful as which CLR target they landed on — the Kotlin intent is ambiguous. Repeatable-annotation semantics differ. |
+| **Default arguments** | constants (§7) | non-constant defaults (reference callee params/receiver) are rejected at the omitting call, not restored. |
+| **`internal` visibility** | hidden cross-assembly (correct for module≈assembly) | `kotc` lowers `internal`→ CLR `assembly`; `facadegen.Vis` skips assembly-visible members, so they don't inject — aligned with Kotlin's module boundary, but the **`internal` modifier is not itself restorable**, there is **no friend-module / `InternalsVisibleTo`** wiring, and no JVM-style name mangling. |
+
+### 10.3 Lost (no carrier — not reconstructable from the current metadata)
+
+| Kotlin construct | Closest .NET shape | What is lost |
+|---|---|---|
+| **`object` singleton** | class + static `INSTANCE` field | Restored as a plain **`class`**; the Kotlin singleton access `MyObject.member` does **not** round-trip (a consumer would need `.INSTANCE`/`.Companion`). |
+| **Companion implicit access** | synthesized companion (`sfun`/`sprop`) | `Class.member` must be written `Class.Companion.member` (MEMORY `injected-static-members-need-companion`). |
+| **`fun interface` (SAM)** | a plain interface | `kotc` does SAM-conversion in-module (`SAM_CONVERSION`/`samConversion`), but no `fun interface` marker is emitted and `facadegen` restores a **plain interface** → a consumer **cannot pass a lambda** (no SAM conversion) for a DotKt `fun interface`. |
+| **`sealed` class/interface** | abstract class / interface | The closed sub-hierarchy is not carried; CLR `sealed` means *final*, a different concept → no exhaustive-`when` guarantee cross-module. |
+| **`value`/inline class** (`@JvmInline`) | the erased underlying type | The wrapper identity is erased (the inline-class `.data` collapse) — a consumer sees the underlying type, not the value class. |
+| **`typealias`** | the expanded type | The alias name is not visible cross-module (it is expanded at use). |
+| **Contracts** (`@ExperimentalContracts`) | — | `callsInPlace`/returns-implies smart-cast facts are gone → consumer loses the smart-casts. |
+| **`Nothing`** (bottom type) | `void` / a throwing method | The bottom-type semantics (unreachable, `List<Nothing>` covariance) have no CLR analog. |
+| **Function types with receiver** (`A.() -> B`) and **suspend function types** | a delegate / `Func<>` | The receiver-vs-argument distinction and the suspend-function-type identity degrade to an ordinary delegate. |
+| **`lateinit`** | a non-null `var` field | The definite-init contract / `isInitialized` is lost (restored as a plain non-null `var`). |
+| **`inner` class** | a nested type | The `inner` modifier (implicit outer `this` capture) is not marked vs. a plain nested class. |
+| **`const val`, `tailrec`, `crossinline`/`noinline`, property delegation `by`** | literal field / plain method / accessors | Compile-time-only facts: the value/behavior survives but the modifier/relationship is not a restorable declaration fact. (Mostly harmless — these don't change the callable API surface.) |
+
+### 10.4 Highest-impact gaps (for a follow-up fix pass)
+
+1. **Generic constraints + interface variance dropped by `facadegen`** — the metadata already carries them; this is a
+   reconstructor-only fix (read `GetGenericParameterConstraints()` / `GenericParameterAttributes`), no new attribute.
+   Affects every generic library API (`<T : Comparable<T>>`, `Comparator<in T>`, …).
+2. **`object` singleton / companion implicit access** — pervasive in real Kotlin libraries; the ergonomic
+   `Type.member` call site does not round-trip.
+3. **`fun interface` SAM** — a DotKt callback interface can't take a lambda from a consuming module.
+4. **`enum class`** restored as `object`/`class` — no exhaustive `when`, no `.entries`.
+5. **`sealed` hierarchies** — no exhaustive `when` cross-module.
+6. **Non-constant default args / `data class copy` self-defaults** — rejected at the call (§7).
+
+Each of 1–6 needs either a new `[Kotlin*]` carrier attribute (`object`/`enum`/`sealed`/`fun interface`/`data`/`value`
+markers) **or**, for #1, just a richer `facadegen` read of metadata that is already present. None are fixed yet.
+
 ---
 
 ## Quick "this surprised me" index
@@ -167,3 +231,4 @@ possibly-null .NET value into a Kotlin non-null type.
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`. §4.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
 - A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
+- Re-consuming a DotKt `.dll` as Kotlin drops generic **bounds/variance** (in the metadata, but `facadegen` doesn't read them back), and restores `object`/`enum class`/`sealed`/`fun interface`/`data` only as plain classes. §10.
