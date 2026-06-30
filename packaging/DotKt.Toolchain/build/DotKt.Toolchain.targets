@@ -59,7 +59,11 @@
     <ItemGroup>
       <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
       <_DotKtBir2CirRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
-      <_DotKtBir2CirRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Runtime'" />
+      <!-- DotKt.Runtime (the [Kotlin*]/runtime attribute types) and the @Clr-metadata REFERENCE stdlib
+           (DotKt.Private.Stdlib) are compile-only references (NOT copy-local), so they're absent from
+           @(ReferenceCopyLocalPaths) above; pull them from @(ReferencePath). bir2cir reads DotKt.Private.Stdlib's
+           @ClrTypeAlias/@ClrIntrinsic labels to lower kotlin.* — the same ref scripts/verify-il.sh hands it. -->
+      <_DotKtBir2CirRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Runtime' or '%(FileName)' == 'DotKt.Private.Stdlib'" />
     </ItemGroup>
     <RemoveDir Directories="$(DotKtCirOut)" />
     <MakeDir Directories="$(DotKtCirOut)" />

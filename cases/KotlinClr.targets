@@ -9,15 +9,19 @@
 
     <!-- Tool locations: the in-repo source builds (the shared pipeline reads these $(DotKt*) vars). -->
     <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(KotlinClrRoot)/toolchain/kotc/build/install/kotc/bin/kotc</DotKtCompiler>
-    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/toolchain/kotc/vendor/kotlin-stdlib.jar</DotKtStdlib>
+    <!-- kotc -classpath: the CLR FRONTEND jar built FROM our CLR stdlib sources (scripts/build-clr-stdlib-frontend.sh),
+         REPLACING the JVM kotlin-stdlib.jar whose java.util.* typealiases leaked into the frontend. kotlin.* resolves
+         from THIS jar (full Kotlin semantics), never from facadegen. Same input scripts/verify-il.sh + dotkt.sh use. -->
+    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar</DotKtStdlib>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</DotKtFacadeGen>
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(KotlinClrRoot)/build/bir2cir-bin/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
     <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</DotKtRetargetTool>
-    <!-- ref/rt mode (KotlinClrRefRt=true): RUNTIME references the full substitute stdlib.rt; the @Clr-metadata stdlib.ref
-         is scanned (added as a non-copy Reference below). Default = the migrated compat DotKt.Stdlib. -->
-    <DotKtStdlibAsm Condition="'$(DotKtStdlibAsm)' == '' and '$(KotlinClrRefRt)' == 'true'">$(KotlinClrRoot)/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll</DotKtStdlibAsm>
-    <DotKtStdlibAsm Condition="'$(DotKtStdlibAsm)' == ''">$(KotlinClrRoot)/build/dotkt-stdlib/DotKt.Stdlib.dll</DotKtStdlibAsm>
+    <!-- The CLR stdlib (canonical build under runtime/stdlib/, mirrors scripts/verify-il.sh + dotkt.sh): the RUNTIME
+         assembly (real Kotlin bodies) is copy-local and ilemit's runtime ref; the @Clr-metadata REFERENCE assembly
+         feeds bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution (added as a non-copy Reference below, handed to
+         bir2cir by the shared DotKtBir2Cir target). The OLD build/dotkt-stdlib (build-dotkt-stdlib.sh) is retired. -->
+    <DotKtStdlibAsm Condition="'$(DotKtStdlibAsm)' == ''">$(KotlinClrRoot)/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll</DotKtStdlibAsm>
     <DotKtRefAsm Condition="'$(DotKtRefAsm)' == ''">$(KotlinClrRoot)/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll</DotKtRefAsm>
     <KotlinClrFacadeOut>$(BaseIntermediateOutputPath)kotlin-facades</KotlinClrFacadeOut>
 
@@ -55,10 +59,10 @@
     </Reference>
   </ItemGroup>
 
-  <!-- ref/rt mode: also reference the @Clr-metadata stdlib.ref (DotKt.Private.Stdlib) so the facadegen asm-scan reads
-       its @Clr bindings; NOT copy-local (compile-time only; the rt above is the runtime). The shared pipeline scans
-       DotKt.Private.Stdlib (DotKt.Toolchain.targets) and the compile runs in substitute mode (DOTKT_STDLIB_SUBSTITUTE). -->
-  <ItemGroup Condition="'$(KotlinClrRefRt)' == 'true' and Exists('$(DotKtRefAsm)')">
+  <!-- The @Clr-metadata REFERENCE stdlib (DotKt.Private.Stdlib): bir2cir reads its @ClrTypeAlias/@ClrIntrinsic labels
+       to lower kotlin.* tokens + member calls. NOT copy-local (compile-time only; DotKt.Stdlib above is the runtime).
+       The shared DotKtBir2Cir target picks it up from @(ReferencePath) by file name and hands it to bir2cir. -->
+  <ItemGroup Condition="'$(KotlinClrStdlibRef)' != 'false' and Exists('$(DotKtRefAsm)')">
     <Reference Include="DotKt.Private.Stdlib">
       <HintPath>$(DotKtRefAsm)</HintPath>
       <Private>false</Private>
@@ -87,14 +91,22 @@
     <Message Importance="high" Text="kotlin/clr: building retarget (first run)..." />
     <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/retarget&quot; -c Release -o &quot;$(KotlinClrRoot)/build/retarget-bin&quot; -v q --nologo" />
   </Target>
-  <!-- DotKt.Stdlib: the real-Kotlin stdlib ops migrated off the COLLECTION_OPS lowering. Built from source the first
-       time it is missing, then auto-referenced (the shared pipeline's facadegen asm-scan injects its ops and ilemit
-       resolves them) so a call to a migrated op (getOrElse, ...) routes to the real Kotlin body. Opt out with
-       <KotlinClrStdlibRef>false</...>. The shipping SDK would supply DotKt.Stdlib via a <PackageReference> instead. -->
+  <!-- The CLR frontend stdlib jar (kotc -classpath): build once from our CLR stdlib sources if missing. This is the
+       input that replaces the JVM kotlin-stdlib.jar; the shipping SDK ships it inside DotKt.Toolchain. -->
+  <Target Name="EnsureKotlinClrFrontendJar" BeforeTargets="DotKtInjectTypes"
+          Condition="!Exists('$(DotKtStdlib)') and Exists('$(KotlinClrRoot)/scripts/build-clr-stdlib-frontend.sh')">
+    <Message Importance="high" Text="kotlin/clr: building CLR frontend stdlib jar (first run)..." />
+    <Exec Command="bash &quot;$(KotlinClrRoot)/scripts/build-clr-stdlib-frontend.sh&quot;" WorkingDirectory="$(KotlinClrRoot)" />
+  </Target>
+
+  <!-- The CLR stdlib ref/rt assemblies are the canonical CACHED builds (scripts/build-clr-stdlib{,-runtime}.sh in emit
+       mode): the runtime carries the real Kotlin bodies, the reference carries the @Clr metadata. Do NOT auto-rebuild
+       them here (the runtime emit is the slow, blocker-prone path; the OLD build-dotkt-stdlib.sh bootstrap that rm'd
+       and rebuilt the cache is RETIRED); fail clearly if the cached pair is missing. The shipping SDK would supply the
+       runtime stdlib via a PackageReference instead. Opt out of referencing it with KotlinClrStdlibRef=false. -->
   <Target Name="EnsureDotKtStdlib" BeforeTargets="DotKtInjectTypes"
           Condition="'$(KotlinClrStdlibRef)' != 'false' and !Exists('$(DotKtStdlibAsm)')">
-    <Message Importance="high" Text="kotlin/clr: building DotKt.Stdlib (first run)..." />
-    <Exec Command="bash &quot;$(KotlinClrRoot)/scripts/build-dotkt-stdlib.sh&quot;" WorkingDirectory="$(KotlinClrRoot)" />
+    <Error Text="kotlin/clr: missing $(DotKtStdlibAsm). Build the CLR stdlib once with: scripts/build-clr-stdlib.sh --emit &amp;&amp; scripts/build-clr-stdlib-runtime.sh --emit (or set &lt;KotlinClrStdlibRef&gt;false&lt;/KotlinClrStdlibRef&gt; to skip it)." />
   </Target>
 
   <!-- Auto-generate Kotlin façades for the .NET types listed via <KotlinClrFacade Include="..."/> and feed them to
