@@ -43,8 +43,9 @@
   kotc/ilemit instead of being forced into bir2cir. So, from this moment: **never keep old code behind a
   `compat`/legacy flag or a "both paths" switch.** When a layer is being moved to the 4-layer architecture
   (facadegen / kotc / bir2cir / ilemit), **delete the legacy code as part of that change** — do not preserve it "just
-  in case". `--native-cir` (the clean 4-layer) is the ONLY path; `--compat-bir` is to be **removed**, not defaulted-
-  away. Always choose a clean rebuild over an incremental compat shim, even when the rebuild is larger.
+  in case". The clean 4-layer is the ONLY path; the `--compat-bir`/`--native-cir` output-selection flags (and the
+  CompatBir verbatim-copy mode / the native-CIR envelope) were **removed** (2026-06-30), leaving a single unflagged
+  bir2cir type-lowering path. Always choose a clean rebuild over an incremental compat shim, even when the rebuild is larger.
 - You may use **Codex** to discuss design.
 
 # Build & test (do NOT guess commands)
@@ -56,12 +57,11 @@ The build is a multi-stage native pipeline, not a single `gradle build`. Use the
 | **Run the IL test gate** (compile → IL → run → assert → `ilverify`) | `./scripts/verify-il.sh` |
 | MSBuild / `.ktproj` end-to-end | `./scripts/verify-ktproj.sh` |
 | Kotlin↔CLR round-trip (consume a DotKt dll as Kotlin) | `./scripts/verify-roundtrip.sh` |
-| native-CIR drafts | `verify-bir2cir-native.sh`, `verify-native-cir-ilemit.sh` |
 | **One-shot: compile + run a single `.kt`** | `./scripts/dotkt.sh --run path/to/Foo.kt` |
 
 `verify-il.sh` is the **canonical gate** — a change is not "done" until it stays green (35 samples,
 all run-correct *and* `ilverify`-clean). `dotkt.sh` is the fast dev wrapper over the same pipeline
-(`-h` for options: `--exe`, `--no-stdlib`, `--native-cir`, `--retarget`, `--ref <dll>`).
+(`-h` for options: `--exe`, `--no-stdlib`, `--retarget`, `--ref <dll>`).
 
 **Building the CLR stdlib** — the real pure-Kotlin stdlib under `runtime/stdlib/`. **These THREE
 scripts are the current, canonical build** (other stdlib scripts are STALE — see the warning):
@@ -138,9 +138,14 @@ when you touch it, move it toward the boundary above, don't entrench it. (MEMORY
 > emitted type. The whole `@`/`clr:`/`clrg:`/shorthand vocabulary lives **below** the kotc boundary.
 > **Primitive substitution is mode-gated and owned by bir2cir:** in the **reference** build
 > (`DOTKT_STDLIB_COMPILE=1`, no `SUBSTITUTE`) a primitive STAYS `kotlin.Int` (the ref is pure-Kotlin
-> metadata; its method bodies are all squashed to `throw NotImplementedException`, so a bare-value
+> metadata; its method bodies are meant to be squashed to `throw NotImplementedException`, so a bare-value
 > `kotlin.Int` never reaches arithmetic/box IL); in **every other** build (rt, app — anything non-ref)
-> `kotlin.Int` lowers to the CLR primitive. This is the in-flight `--native-cir`/CompatBir-deletion work.
+> `kotlin.Int` lowers to the CLR primitive. The CompatBir/`--native-cir` dual-track is **removed** (2026-06-30):
+> bir2cir owns this on a single path, env-gated by `refBuild`. Two coupled pieces still **pend the kotc switch**
+> (kotc currently emits the CLR shorthand, so the pass is a verified no-op today): (a) kotc emitting `kotlin.*`
+> symbols, and (b) the ref-build **body-squash** (NOT yet implemented — only `kotlin.TODO()` throws today), which
+> the bare-value `kotlin.Int`-in-ref design depends on. Until both land, bir2cir's active lowering is scoped to the
+> signed/bool/char primitives (a no-op against current output).
 
 # The cardinal rule: do NOT special-case the compiler
 

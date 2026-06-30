@@ -185,10 +185,4 @@ if ! rg -q 'tlfun accept Int final cb:func:\[Int,Int,Int,Int,Int,Int,Int,Int,Int
     exit 1
 fi
 
-dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$OUT/native" --native-cir --ref "$OUT/il/Wide.dll" "$OUT/bir/Wide.bir.json" >/dev/null
-if ! rg -q '"parameterTypes"' "$OUT/native/Wide.cir.json" || ! rg -q '"func:int:int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int"' "$OUT/native/Wide.cir.json"; then
-    echo "FAIL  bir2cir did not index KFunc\`18 as func:..." >&2
-    exit 1
-fi
-
 echo "PASS  ilemit wide synthetic delegates"

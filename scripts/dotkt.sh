@@ -12,7 +12,6 @@
 #   --run           build, then run it              (implies --exe)
 #   --ref <dll>     add a compile/emit reference    (repeatable; e.g. a NuGet/BCL dll or another DotKt assembly)
 #   --no-stdlib     do NOT reference DotKt.Stdlib   (the migrated real-Kotlin collection ops)
-#   --native-cir    use the experimental native-CIR envelope between bir2cir and ilemit
 #   --retarget      repoint BCL refs off System.Private.CoreLib (so a C# project can <Reference> the output)
 #   -h | --help     this help
 #
@@ -32,7 +31,7 @@ JAR="$ROOT/toolchain/kotc/vendor/kotlin-stdlib.jar"
 CORO="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-*.jar' 2>/dev/null | head -1)"
 
 # --- args ---------------------------------------------------------------------------------------------------------
-out_name=""; out_dir="$PWD/dotkt-out"; make_exe=0; do_run=0; use_stdlib=1; native_cir=0; do_retarget=0
+out_name=""; out_dir="$PWD/dotkt-out"; make_exe=0; do_run=0; use_stdlib=1; do_retarget=0
 declare -a srcs=() extra_refs=()
 while (( $# )); do
 	case "$1" in
@@ -42,7 +41,6 @@ while (( $# )); do
 		--run) do_run=1; make_exe=1; shift ;;
 		--ref) extra_refs+=("$2"); shift 2 ;;
 		--no-stdlib) use_stdlib=0; shift ;;
-		--native-cir) native_cir=1; shift ;;
 		--retarget) do_retarget=1; shift ;;
 		-h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 		-*) echo "dotkt: unknown option '$1'" >&2; exit 2 ;;
@@ -92,11 +90,9 @@ dotnet "$FACADEGEN" --meta "$meta" --refs "$refs_semi" --import-list "$implist" 
 echo "dotkt: compiling ${#kts[@]} file(s) -> BIR" >&2
 CLR_TYPES_METADATA="$meta" "$KOTC" "${kts[@]}" -no-stdlib -classpath "$cp" -d "$bir"
 
-# 3. bir2cir: BIR -> CIR.
+# 3. bir2cir: BIR -> CIR (the single type-lowering path; mode is env-gated, not a flag).
 echo "dotkt: lowering BIR -> CIR" >&2
-bir2cir_mode=()
-(( native_cir )) && bir2cir_mode=(--native-cir)
-dotnet "$BIR2CIR" "$cir" "${bir2cir_mode[@]}" "${ilref_args[@]}" "$bir"/*.bir.json >/dev/null
+dotnet "$BIR2CIR" "$cir" "${ilref_args[@]}" "$bir"/*.bir.json >/dev/null
 
 # 4. ilemit: CIR -> CIL.
 echo "dotkt: emitting $out_name.dll" >&2

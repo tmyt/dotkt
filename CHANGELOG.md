@@ -5,6 +5,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+- **bir2cir is now the single-path owner of Kotlin→CLR type substitution.** The `CompatBir` verbatim-copy mode and
+  the `--compat-bir`/`--native-cir` output-selection flags are gone — there is one path: a real type-lowering pass
+  rewrites the Kotlin type vocabulary in the BIR into the CLR-codegen vocabulary ilemit consumes, emitting a
+  BIR-shaped CIR (same node shape; only type strings change, so ilemit needs no shape change). The lowering is
+  build-gated by env (not a flag): the pure-Kotlin **reference** stdlib surface (`DOTKT_STDLIB_COMPILE` set,
+  `DOTKT_STDLIB_SUBSTITUTE` unset) keeps `kotlin.*` tokens verbatim; **every other** build (the runtime stdlib and
+  all app builds) lowers a bare `kotlin.*` primitive to its CLR token (`kotlin.Int` → `int`, …). kotc still emits the
+  CLR shorthand today, so the rewrite is a verified no-op against current output (it activates once kotc is switched
+  to emit `kotlin.*` symbols). `scripts/dotkt.sh` drops its `--native-cir` flag accordingly.
+
 ### Removed
 - **Namespace projection** (`[DotKtNamespaceProjection]` / `ilemit --ns-projection` / the `nsproj` meta line). The
   assembly-level Kotlin-package ↔ .NET-namespace remap (e.g. consuming a `DotKt.Coroutines` library as
