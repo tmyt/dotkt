@@ -102,18 +102,20 @@ sealed class Pipeline
             // @ClrTypeAlias index, turns each such plain type into the static helper + drops it, BEFORE call substitution
             // so the (already-BCL) member bodies and the rule-3 call routing both see a consistent helper. No-op for ref.
             var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs);
+            // DECLARATION + CALL-NAME rename (clrName migration): a member declaration that overrides a CLR-bound
+            // interface member carrying @ClrIntrinsic gets the BCL slot name (a `size` getter override -> get_Count,
+            // `resumeWith` -> ResumeWith), AND the corresponding implementor-side call (`AbstractList.get_size` ->
+            // `get_Count`) — the job kotc's clrName/annClr does today. Derived from the `overrides` marker (the pure-Kotlin
+            // override closure) + the ref.dll @ClrIntrinsic bindings. Runs BEFORE MemberCallSubstitution so a now-get_Count
+            // call on a CLR-bound owner still falls through to clrPropGet. While annClr STILL runs in kotc this is
+            // IDEMPOTENT (reproduces the name annClr already set) -> CIR byte-identical. Never in ref (there annClr is null
+            // and members keep their plain Kotlin names — renaming would corrupt the pure-Kotlin ref shapes).
+            if (!_options.RefBuild) DeclarationRename.Apply(hoisted, refs);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
             if (attributeTopLevelOwner) IteratorConsumerNormalization.Apply(substituted);
-            // DECLARATION-NAME rename (clrName migration, Step 2a): an emitted member that overrides a CLR-bound
-            // interface member carrying @ClrIntrinsic gets the BCL slot name (a `size` getter override -> get_Count,
-            // `resumeWith` -> ResumeWith) — the job kotc's clrName/annClr does today. Derived from the Step-1 `overrides`
-            // marker (the pure-Kotlin override closure) + the ref.dll @ClrIntrinsic bindings. While annClr STILL runs in
-            // kotc this is IDEMPOTENT (it reproduces the name annClr already set) -> CIR byte-identical. Never in ref
-            // (there annClr is null and members keep their plain Kotlin names — renaming would corrupt the ref shapes).
-            if (!_options.RefBuild) DeclarationRename.Apply(substituted, refs);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
@@ -2531,14 +2533,25 @@ static class RefBodySquash
 // name is left untouched — those stay kotc's concern, a separate netType-layer cleanup.)
 static class DeclarationRename
 {
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    // Recursively rename to the BCL slot every node carrying an `overrides` marker: a method/accessor DECLARATION (its
+    // `name`) and a CALL node (`callInstance`'s `method`) alike, so the implementor-side call `AbstractList.get_size`
+    // tracks the renamed declaration `get_Count`. Runs BEFORE MemberCallSubstitution so a now-`get_Count` call on a
+    // CLR-bound owner still falls through to clrPropGet. Idempotent while annClr is active (reproduces the kotc name).
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Walk(root, refs);
+
+    static void Walk(JsonNode node, ReferenceMetadataIndex refs)
     {
-        if (root is not JsonObject obj || obj["types"] is not JsonArray types) return;
-        foreach (var t in types)
-            if (t is JsonObject td && td["methods"] is JsonArray methods)
-                foreach (var m in methods)
-                    if (m is JsonObject mo && mo["overrides"] is JsonArray ovs && ResolveSlot(ovs, refs) is string slot)
-                        mo["name"] = slot;
+        if (node is JsonObject obj)
+        {
+            if (obj["overrides"] is JsonArray ovs && ResolveSlot(ovs, refs) is string slot)
+            {
+                if ((obj["k"] as JsonValue)?.GetValue<string>() == "callInstance") obj["method"] = slot;
+                else if (obj.ContainsKey("name")) obj["name"] = slot;
+            }
+            foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, refs);
+        }
+        else if (node is JsonArray arr)
+            foreach (var it in arr) if (it != null) Walk(it, refs);
     }
 
     // The first override entry whose (owner, Kotlin member name, arity) carries an @ClrIntrinsic in the ref.dll, mapped

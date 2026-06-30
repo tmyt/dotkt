@@ -6,6 +6,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Changed
+- **kotc→bir2cir `clrName` migration, Step 3 part 1: CALL-SITE slot rename.** kotc now emits the same pure-Kotlin
+  `overrides` marker on the `callInstance` nodes whose member name `clrIfaceMemberName` resolves via `@ClrIntrinsic`
+  (the property-accessor and method-call paths), and bir2cir's `DeclarationRename` is now a recursive walk that renames
+  a CALL's `method` (not just a declaration's `name`) from that marker + the ref.dll — so an implementor-side call
+  `AbstractList.get_size` tracks its renamed declaration `get_Count`. The pass moved to run BEFORE
+  `MemberCallSubstitution` (so a now-`get_Count` call on a CLR-bound owner still lowers to `clrPropGet`). Verified rt CIR
+  byte-identical with annClr active (idempotent); an annClr-off probe confirms it FIRES — the call side now compensates
+  (probe diff 71→46 files, the `AbstractList.get_size not found` failure gone). **Remaining for annClr removal**: the
+  `@ClrIntrinsic`-bodyless member-strip (bir2cir, the member mirror of the @ClrTypeAlias type-strip), the
+  `properties:[{get,set}]` entry rename, the fun-interface SAM rewrite — then kotc plain-naming + delete `annClr`.
 - **kotc→bir2cir `clrName` migration, Step 2a FIX: the declaration-rename was inert; now functional.** Step 2a's
   `DeclarationRename` (552261e) was a verified no-op — it looked the property `@ClrIntrinsic` up by the property NAME
   (`size`), but in the ref.dll that attribute lives on the ACCESSOR METHOD (`get_size@ClrIntrinsic("Count")`, the
