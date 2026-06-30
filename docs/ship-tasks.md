@@ -14,7 +14,12 @@
 | **bir2cir** | **stdlib.ref.dll**（= DotKt.Private.Stdlib.dll、全 attribute 保持） | BIR → CIR。inline lowering / **type substitute** / suspend lowering。**@ClrIntrinsic はここで「何に substitute するか」のラベルとして消費し、CIR には出力しない**（plain な BCL 呼び出しを emit）。 |
 | **ilemit** | **stdlib.rt.dll**（= DotKt.Stdlib.dll、実装） | CIR → IL。**Kotlin を知らない**。 |
 
-> 重要な不変条件: **@ClrIntrinsic は ref.dll が出所**で、**bir2cir が消費**する。jar（artifact A）は inline/expect-actual で @ClrIntrinsic を落とすので出所にできない。ilemit に @ClrIntrinsic（や intrinsic ラベル）を渡すのは**明確な誤り**。
+> 重要な不変条件①: **@ClrIntrinsic は ref.dll が出所**で、**bir2cir が消費**する。jar（artifact A）は inline/expect-actual で @ClrIntrinsic を落とすので出所にできない。ilemit に @ClrIntrinsic（や intrinsic ラベル）を渡すのは**明確な誤り**。
+>
+> 重要な不変条件②: **`kotlin.*`（stdlib 全体）は jar から供給する。facadegen 経由で注入しては絶対にならない。** kotc は stdlib 空間を frontend **jar**（`-classpath`）から解決し、jar は Companion object を含む Kotlin 意味論を完全に保持する。facadegen は **.NET 空間専用**（`System.*` + 参照 .NET アセンブリ。System.* に限らない）。
+> - 理由: facadegen は inline/operator/infix を Roundtrip Attribute で復元できるが、**Companion object の暗黙呼び出し（`Type.method`、method が Companion 上）を完全復元できない**（`Type.Companion.method` が要る）。stdlib は Companion object 前提で実装されているため、facadegen 製の `kotlin.*` シンボルは意味論が劣化し、かつ jar のものと**二重化して衝突**する（本セッション実例: facadegen の非reified `arrayOf` が jar の reified `arrayOf` と衝突 → `overload resolution ambiguity`）。
+> - 直し方: 「アプリビルドで stdlib シンボルが無い/曖昧」の修正は**常に jar**。facadegen 側に `kotlin.*` ガードを足すのは**対症療法で筋が悪い** — 根本は **stdlib.dll を facadegen に `--scan-asm` で渡していること自体**。
+> - 状態: 本番経路 `packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets` + `scripts/dotkt.sh` から除去済（commit `522bdc8`）。**`scripts/verify-il.sh` / `scripts/verify-differential.sh` は未対応**（同じ `--scan-asm "$STDLIB_DLL"` の除去が要る）。`[[stdlib-jar-only-not-facadegen]]`
 
 ---
 
