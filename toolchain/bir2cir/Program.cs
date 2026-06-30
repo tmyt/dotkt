@@ -1283,14 +1283,18 @@ sealed record SuspendFunctionShape(
 // resolve ("cannot resolve .NET type kotlin.Byte").
 static class BirTypeLowering
 {
-    // The bare kotlin.* PRIMITIVE tokens and their CLR-codegen lowering. Consulted only in the non-reference
-    // (substitute/app) build; the reference build keeps every kotlin.* primitive verbatim.
+    // The bare kotlin.* tokens and their CLR-codegen lowering. Consulted only in the non-reference
+    // (substitute/app) build; the reference build keeps every kotlin.* token verbatim.
     //
-    // DEFERRED from the general map — kotlin.String / kotlin.Any / kotlin.Unit and the unsigned set
-    // (kotlin.UInt/ULong/UByte/UShort) are NOT here. In the substitute build kotc has already substituted those
-    // @Clr-bound types to System.* at the source level; in the reference build they stay as the stdlib's own
-    // emitted value-classes and ilemit resolves them as bare emitted types. They DO appear in KotlinAllToClr,
-    // used only on the attribute-metadata force path (a CLR attribute blob needs a concrete System.* type).
+    // kotc emits ONLY the type's FQN identity (kotlin.String / kotlin.Any / kotlin.UInt / ...), never a CLR
+    // resolution marker — so EVERY @Clr-bound foundational type lowers HERE, uniformly, exactly like the signed/
+    // bool/char primitives: kotlin.String -> string, kotlin.Any -> object, and the unsigned set (note
+    // kotlin.UByte is an UNSIGNED byte = System.Byte, token "ubyte", NOT the signed "byte"). The whole set is
+    // mode-gated by refBuild (LowerTypeString below): the reference surface keeps kotlin.* verbatim, every other
+    // build lowers. kotlin.Unit is the ONE token NOT here: it is position-dependent (return -> void via the
+    // ReturnKeys path; a Unit VALUE keeps the emitted Unit type — you cannot have a `void` field), handled
+    // separately. KotlinAllToClr (the attribute-blob force map) additionally carries kotlin.Unit -> void and is
+    // applied UNCONDITIONALLY because an attribute blob needs a concrete System.* type even in the ref build.
     static readonly IReadOnlyDictionary<string, string> KotlinToClr = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["kotlin.Int"] = "int",
@@ -1302,6 +1306,12 @@ static class BirTypeLowering
         ["kotlin.Boolean"] = "bool",
         ["kotlin.Char"] = "char",
         ["kotlin.Nothing"] = "object",
+        ["kotlin.String"] = "string",
+        ["kotlin.Any"] = "object",
+        ["kotlin.UInt"] = "uint",
+        ["kotlin.ULong"] = "ulong",
+        ["kotlin.UByte"] = "ubyte",
+        ["kotlin.UShort"] = "ushort",
     };
 
     // The FULL kotlin.* -> CLR map, used UNCONDITIONALLY (both modes) on the attribute-metadata force path. A
@@ -1454,10 +1464,11 @@ static class BirTypeLowering
         return LowerNode(val, refBuild, force);
     }
 
-    // Recurse the BIR type grammar, rewriting only bare kotlin.* numeric tokens in the active map. Every other shape
-    // (gp:, clr:, clrg:[...], @Name[...], func:ret:args, array:/byref:/nullable: modifiers, the CLR shorthand,
-    // and user/stdlib FQNs like kotlin.collections.List / the emitted kotlin.String/Any/Unit/UInt value-classes) is
-    // structurally preserved; nested type arguments are recursed so a kotlin.* numeric inside a generic lowers too.
+    // Recurse the BIR type grammar, rewriting bare kotlin.* foundational tokens (numeric/bool/char + String/Any +
+    // the unsigned set) in the active map. Every other shape (gp:, clr:, clrg:[...], @Name[...], func:ret:args,
+    // array:/byref:/nullable: modifiers, the CLR shorthand, the position-dependent kotlin.Unit value, and user/
+    // stdlib FQNs like kotlin.collections.List) is structurally preserved; nested type arguments are recursed so a
+    // bare kotlin.* foundational token inside a generic lowers too.
     public static string LowerTypeString(string raw, bool refBuild, bool force = false)
     {
         // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers
@@ -1503,9 +1514,9 @@ static class BirTypeLowering
     static string LowerLeaf(string t, bool force)
     {
         // @-decorated and clrg: references are emitted/CLR type references whose head is never a bare primitive
-        // (any bracket args were recursed above) — keep verbatim. A bare kotlin.* numeric leaf lowers via the active
-        // map; all other leaves (CLR shorthand, the emitted kotlin.String/Any/Unit/unsigned value-classes, user/
-        // stdlib FQNs) pass through so they resolve exactly as before this change.
+        // (any bracket args were recursed above) — keep verbatim. A bare kotlin.* foundational leaf (numeric/bool/
+        // char + String/Any + the unsigned set) lowers via the active map; all other leaves (CLR shorthand, the
+        // position-dependent kotlin.Unit value, user/stdlib FQNs like kotlin.collections.List) pass through.
         if (t.StartsWith("@", StringComparison.Ordinal)) return t;
         if (t.StartsWith("clrg:", StringComparison.Ordinal)) return t;
         var map = force ? KotlinAllToClr : KotlinToClr;
