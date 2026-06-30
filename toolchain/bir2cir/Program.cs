@@ -1347,37 +1347,15 @@ static class BirTypeLowering
         "elemType", "accType", "clrType", "tupleType", "selRet", "parameterTypes", "returnType",
     };
 
-    // The kotlin.* VALUE-CLASS types whose representation IS a concrete BCL type: kotlin.String == System.String,
-    // kotlin.Any == System.Object. Unlike the 9 primitives, kotc still emits them as bare kotlin.* references to the
-    // stdlib's own emitted classes (which carry Kotlin-only members — CharSequence.subSequence, String.plus — that
-    // do NOT exist on the BCL type). So they get a SPLIT representation in the non-reference build:
-    //   - VALUE positions (ret / params / fields / type args / ...) lower to the BCL FQN, so a member that OVERRIDES
-    //     System.Object (ToString : System.String, Equals(System.Object)) / implements IComparable<System.String> has
-    //     a signature the CLR accepts -- otherwise the emitted class fails to load ("Signature of the body and
-    //     declaration in a method implementation do not match").
-    //   - OWNER positions (ownerType / recvType / ...) keep kotlin.* so a Kotlin-only member still resolves on the
-    //     emitted class (FindMethod would not find subSequence/plus on System.String).
-    // The FQN form (not the `string`/`object` shorthand) is used so a kept-kotlin.* owner that DID lower a nested
-    // type arg, and any value site, resolves through ilemit's reflection (ResolveType) as well as MapType.
-    static readonly IReadOnlyDictionary<string, string> KotlinRefToClr = new Dictionary<string, string>(StringComparer.Ordinal)
-    {
-        ["kotlin.String"] = "System.String",
-        ["kotlin.Any"] = "System.Object",
-    };
-
-    // The OWNER/receiver type-reference keys: the type here is the method-call/field owner (or constrained-call
-    // receiver), which must keep its emitted-class identity (KotlinRefToClr is NOT applied at the top leaf). Nested
-    // type args inside a generic owner are still value positions and DO lower (the recursion re-enables it).
-    static readonly HashSet<string> OwnerKeys = new(StringComparer.Ordinal)
-    {
-        "ownerType", "owner", "recvType", "accessOwner",
-    };
-
-    // Method-RETURN keys. A `kotlin.Unit` RETURN is the Kotlin "no value" convention -> CLR `void` (a Unit-returning
-    // fun is a void method; the entry point `fun main(): Unit` MUST be void or the CLR rejects the program). This is
-    // the standard Unit-return lowering, NOT a value representation: a BARE top-level kotlin.Unit at a return key
-    // becomes void, while a kotlin.Unit VALUE (a field, a generic arg like Sequence<Unit>, a receiver) keeps the
-    // emitted Unit type (you cannot have a `void` field). So it is gated to the bare scalar at these keys only.
+    // The RETURN-slot keys. kotlin.Unit is the ONE position-dependent token: kotc's birType change made it emit
+    // bare "kotlin.Unit" everywhere (it was "void" in a return slot before). A Unit RETURN is the Kotlin "no value"
+    // convention -> CLR `void` (a Unit-returning fun is a void method; the entry point `fun main(): Unit` MUST be
+    // void or the CLR rejects the program). This is UNIFORM across ref AND substitute/app — a Unit-returning method
+    // is void in both, matching the prior behaviour — so it is NOT mode-gated. A kotlin.Unit VALUE (a field, a
+    // generic arg like Sequence<Unit>, a receiver) keeps the emitted Unit type (you cannot have a `void` field), and
+    // an already-decorated `@kotlin.Unit` type-arg passes through unchanged. (Mirrors kotc birTypeDeleg's
+    // "kotlin.Unit -> void in return, @kotlin.Unit in type-arg" split.) The numeric primitives are NOT
+    // position-dependent — they lower uniformly everywhere via KotlinToClr.
     static readonly HashSet<string> ReturnKeys = new(StringComparer.Ordinal)
     {
         "ret", "retType", "dynRet", "selRet", "returnType", "resultType",
@@ -1402,12 +1380,11 @@ static class BirTypeLowering
                 if (kv.Key == "attrs")
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, force: true);   // attribute application -> blob metadata
                 else if (kv.Key == "sig")
-                    copy[kv.Key] = LowerSigValue(kv.Value, refBuild, here, lowerRef: true);   // sig = param types (values)
-                else if ((here || !refBuild) && ReturnKeys.Contains(kv.Key)
-                         && kv.Value is JsonValue rv && rv.TryGetValue<string>(out var rs) && rs == "kotlin.Unit")
-                    copy[kv.Key] = JsonValue.Create("void");   // Unit-returning fun -> void (bare top-level only)
+                    copy[kv.Key] = LowerSigValue(kv.Value, refBuild, here);   // sig = param types
+                else if (ReturnKeys.Contains(kv.Key))
+                    copy[kv.Key] = LowerReturnValued(kv.Value, refBuild, here);   // Unit-in-return -> void (uniform)
                 else if (TypeKeys.Contains(kv.Key))
-                    copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, lowerRef: !OwnerKeys.Contains(kv.Key));
+                    copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here);
                 else
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, here);
             }
@@ -1435,20 +1412,31 @@ static class BirTypeLowering
     // A `sig` value is a top-level comma-joined list of parameter type tokens (the overload key ilemit matches by
     // STRING EQUALITY against a method def's lowered `params[].type`). Lower each element so the call-side sig and
     // the def-side params stay in the SAME vocabulary, else overload resolution misses.
-    static JsonNode LowerSigValue(JsonNode val, bool refBuild, bool force, bool lowerRef)
+    static JsonNode LowerSigValue(JsonNode val, bool refBuild, bool force)
     {
         if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
-            return JsonValue.Create(string.Join(",", SplitTopLevel(s).Select(p => LowerTypeString(p, refBuild, force, lowerRef))));
+            return JsonValue.Create(string.Join(",", SplitTopLevel(s).Select(p => LowerTypeString(p, refBuild, force))));
         return LowerNode(val, refBuild, force);
     }
 
-    // A type-bearing key's value: a scalar type string, an array of type strings (interfaces/argTypes/constraints/
-    // typeArgs), or — for a few node shapes — a nested object, which is recursed structurally. `lowerRef` = whether
-    // the KotlinRefToClr (String/Any -> BCL) map applies at the TOP leaf; false at owner/receiver keys.
-    static JsonNode LowerTypeValued(JsonNode val, bool refBuild, bool force, bool lowerRef)
+    // A return-slot value: a bare top-level `kotlin.Unit` -> `void` (UNIFORM, both modes); otherwise the normal type
+    // lowering (so a return like clrg:List[kotlin.Int] still lowers its inner Int).
+    static JsonNode LowerReturnValued(JsonNode val, bool refBuild, bool force)
     {
         if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
-            return JsonValue.Create(LowerTypeString(s, refBuild, force, lowerRef));
+            return JsonValue.Create(LowerReturnSlot(s, refBuild, force));
+        return LowerTypeValued(val, refBuild, force);
+    }
+
+    static string LowerReturnSlot(string s, bool refBuild, bool force) =>
+        s == "kotlin.Unit" ? "void" : LowerTypeString(s, refBuild, force);
+
+    // A type-bearing key's value: a scalar type string, an array of type strings (interfaces/argTypes/constraints/
+    // typeArgs), or — for a few node shapes — a nested object, which is recursed structurally.
+    static JsonNode LowerTypeValued(JsonNode val, bool refBuild, bool force)
+    {
+        if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
+            return JsonValue.Create(LowerTypeString(s, refBuild, force));
 
         if (val is JsonArray arr)
         {
@@ -1456,7 +1444,7 @@ static class BirTypeLowering
             foreach (var item in arr)
             {
                 if (item is JsonValue iv && iv.TryGetValue<string>(out var its))
-                    copy.Add(JsonValue.Create(LowerTypeString(its, refBuild, force, lowerRef)));
+                    copy.Add(JsonValue.Create(LowerTypeString(its, refBuild, force)));
                 else
                     copy.Add(item == null ? null : LowerNode(item, refBuild, force));
             }
@@ -1466,11 +1454,11 @@ static class BirTypeLowering
         return LowerNode(val, refBuild, force);
     }
 
-    // Recurse the BIR type grammar, rewriting only bare kotlin.* tokens in the active map. Every other shape
+    // Recurse the BIR type grammar, rewriting only bare kotlin.* numeric tokens in the active map. Every other shape
     // (gp:, clr:, clrg:[...], @Name[...], func:ret:args, array:/byref:/nullable: modifiers, the CLR shorthand,
-    // and user/stdlib FQNs like kotlin.collections.List) is structurally preserved; nested type arguments are
-    // recursed so a kotlin.* primitive inside a generic lowers too.
-    public static string LowerTypeString(string raw, bool refBuild, bool force = false, bool lowerRef = true)
+    // and user/stdlib FQNs like kotlin.collections.List / the emitted kotlin.String/Any/Unit/UInt value-classes) is
+    // structurally preserved; nested type arguments are recursed so a kotlin.* numeric inside a generic lowers too.
+    public static string LowerTypeString(string raw, bool refBuild, bool force = false)
     {
         // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers
         // unconditionally. A token with no "kotlin." substring can never contain a mappable token, so skip it.
@@ -1481,7 +1469,7 @@ static class BirTypeLowering
 
         foreach (var p in ModifierPrefixes)
             if (t.StartsWith(p, StringComparison.Ordinal))
-                return p + LowerTypeString(t[p.Length..], refBuild, force, lowerRef);
+                return p + LowerTypeString(t[p.Length..], refBuild, force);
 
         if (t.StartsWith("gp:", StringComparison.Ordinal)) return t;
         if (t.StartsWith("clr:", StringComparison.Ordinal)) return t;
@@ -1490,42 +1478,38 @@ static class BirTypeLowering
         var br = t.IndexOf('[');
         if (br >= 0 && t.EndsWith("]", StringComparison.Ordinal))
         {
-            // Nested type ARGS are value positions (re-enable the ref map even under an owner-key head).
             var head = t[..br];
             var inner = t[(br + 1)..^1];
-            var args = string.Join(",", SplitTopLevel(inner).Select(a => LowerTypeString(a, refBuild, force, lowerRef: true)));
+            var args = string.Join(",", SplitTopLevel(inner).Select(a => LowerTypeString(a, refBuild, force)));
             return head + "[" + args + "]";
         }
 
-        return LowerLeaf(t, force, lowerRef);
+        return LowerLeaf(t, force);
     }
 
     static string LowerFuncString(string t, bool refBuild, bool force)
     {
         // func:<ret>:<arg,arg,...>  — the ret/args separator is the first top-level ':' AFTER the ret's own
-        // leading type prefix (so a ret like clrg:Foo[int] is not split on its clrg: colon).
+        // leading type prefix (so a ret like clrg:Foo[int] is not split on its clrg: colon). The func RETURN is a
+        // return slot -> a Unit ret lowers to void (Action vs Func); args are value positions.
         var body = t["func:".Length..];
         var sep = FuncRetEnd(body);
         var ret = sep >= body.Length ? body : body[..sep];
         var args = sep >= body.Length ? "" : body[(sep + 1)..];
-        // func: ret/args are value positions (a delegate's signature), so the ref map applies to them.
-        var loweredArgs = string.Join(",", SplitTopLevel(args).Select(a => LowerTypeString(a, refBuild, force, lowerRef: true)));
-        return "func:" + LowerTypeString(ret, refBuild, force, lowerRef: true) + ":" + loweredArgs;
+        var loweredArgs = string.Join(",", SplitTopLevel(args).Select(a => LowerTypeString(a, refBuild, force)));
+        return "func:" + LowerReturnSlot(ret, refBuild, force) + ":" + loweredArgs;
     }
 
-    static string LowerLeaf(string t, bool force, bool lowerRef)
+    static string LowerLeaf(string t, bool force)
     {
         // @-decorated and clrg: references are emitted/CLR type references whose head is never a bare primitive
-        // (any bracket args were recursed above) — keep verbatim. A bare kotlin.* leaf lowers via the active map;
-        // all other leaves (CLR shorthand, user/stdlib FQNs) pass through.
+        // (any bracket args were recursed above) — keep verbatim. A bare kotlin.* numeric leaf lowers via the active
+        // map; all other leaves (CLR shorthand, the emitted kotlin.String/Any/Unit/unsigned value-classes, user/
+        // stdlib FQNs) pass through so they resolve exactly as before this change.
         if (t.StartsWith("@", StringComparison.Ordinal)) return t;
         if (t.StartsWith("clrg:", StringComparison.Ordinal)) return t;
-        if (force) return KotlinAllToClr.TryGetValue(t, out var all) ? all : t;
-        // The 9 primitives lower at EVERY position (they never appear as an owner). String/Any lower only at
-        // VALUE positions (lowerRef) -- an owner/receiver keeps the emitted-class identity for member resolution.
-        if (KotlinToClr.TryGetValue(t, out var prim)) return prim;
-        if (lowerRef && KotlinRefToClr.TryGetValue(t, out var rf)) return rf;
-        return t;
+        var map = force ? KotlinAllToClr : KotlinToClr;
+        return map.TryGetValue(t, out var clr) ? clr : t;
     }
 
     // First top-level ':' after the leading type prefix; bracket depth aware. Mirrors the matcher's FuncRetEnd.
