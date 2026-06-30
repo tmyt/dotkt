@@ -2332,7 +2332,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val itParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
 		itParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(uname)}}""" }
 		val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
-		val unit = retType == "void"
+		// kotc now emits the Kotlin FQN for source types, so a Unit-returning block's type is "kotlin.Unit"
+		// (bir2cir lowers it to void). Accept the residual "void" shorthand too (synthetic/already-lowered rets).
+		val unit = retType == "void" || retType == "kotlin.Unit"
 		val tryBody = ArrayList<String>()
 		stmts.dropLast(1).forEach { tryBody.add(stmt(it)) }
 		when (val last = stmts.lastOrNull()) {
@@ -3110,7 +3112,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val args = regularArgs(call)
 			val elem = call.typeArguments.firstOrNull()?.let { birType(it) } ?: "object"
 			// Value-type T -> the GenerateVal variant (next is Func<T, Nullable<T>>); reference T -> GenerateRef.
-			val isVal = elem in setOf("int", "long", "short", "byte", "bool", "char", "double", "float")
+			val isVal = elem in setOf("kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte", "kotlin.Boolean", "kotlin.Char", "kotlin.Double", "kotlin.Float")
 			return if (args.size == 2) {
 				val method = if (isVal) "GenerateVal" else "GenerateRef"
 				val seedShape = if (isVal) "generic" else "gp"   // value seed is Nullable<T> (generic), ref seed is bare T
@@ -3326,7 +3328,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (!stdlibCompile && (calleeFq == "kotlin.runCatching" || name == "runCatching") && call.type.classFqName?.asString() == "kotlin.Result") {
 			(regularArgs(call).getOrNull(0) as? IrFunctionExpression)?.let { lam ->
 				var elem = (call.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-				if (elem == "void") elem = "object"
+				if (elem == "void" || elem == "kotlin.Unit") elem = "object"
 				val spec = "clrg:DotKt.Result[$elem]"
 				val rcVar = "__rc${scopeCounter++}"
 				val rcLoc = """{"k":"local","name":${str(rcVar)}}"""
@@ -3885,7 +3887,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// cast it to the other operand's type so the numeric/compare op sees the right value, not the box.
 				fun operand(o: IrExpression, other: IrExpression): String {
 					val ot = birType(o.type); val tt = birType(other.type)
-					return if (ot == "object" && tt != "object") """{"k":"cast","type":${str(tt)},"e":${expr(o)}}""" else expr(o)
+					// A boxed Any operand renders as the Any token ("object" fallback, or "kotlin.Any" for an explicit Any/Nothing
+					// source type) — cast it to the other (concrete) operand's type so the op sees the value, not the box.
+					val anyTok = ot == "object" || ot == "kotlin.Any"
+					val otherConcrete = tt != "object" && tt != "kotlin.Any"
+					return if (anyTok && otherConcrete) """{"k":"cast","type":${str(tt)},"e":${expr(o)}}""" else expr(o)
 				}
 				return """{"k":"bin","op":${str(op)},"l":${operand(operands[0], operands[1])},"r":${operand(operands[1], operands[0])}}"""
 			} }
@@ -4022,10 +4028,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// Value args then coerce to the receiver's numeric type so `2.0.pow(3)` (Int exponent) emits Pow(2.0,(double)3),
 				// not the ill-typed Pow(2.0, 3[int]). Non-extension funs (sqrt(x), max(a,b)) have a null receiver -> unchanged.
 				val extRecv = extensionReceiver(call)
-				val recvBir = extRecv?.let { birType(it.type) }?.takeIf { it == "double" || it == "float" }
+				// The receiver type is now its Kotlin FQN (kotc emits source types as FQN). The predicate compares FQN to
+				// FQN; the conv target stays the CLR shorthand ("double"/"float") like every other conv site (a CLR-internal
+				// token bir2cir passes through), so the emitted IL conv is unchanged.
+				val recvBir = extRecv?.let { birType(it.type) }?.takeIf { it == "kotlin.Double" || it == "kotlin.Float" }
+				val convTo = if (recvBir == "kotlin.Double") "double" else "float"
 				val parts = (listOfNotNull(extRecv) + regularArgs(call)).mapIndexed { i, a ->
 					if (i > 0 && recvBir != null && birType(a.type) != recvBir)
-						(if (recvBir == "double") "System.Double" else "System.Single") to """{"k":"conv","to":${str(recvBir)},"e":${expr(a)}}"""
+						(if (recvBir == "kotlin.Double") "System.Double" else "System.Single") to """{"k":"conv","to":${str(convTo)},"e":${expr(a)}}"""
 					else netType(a.type) to expr(a)
 				}
 				return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${parts.joinToString(",") { str(it.first) }}],"ret":${str(netType(callee.returnType))},"args":[${parts.joinToString(",") { it.second }}]}"""
@@ -4540,27 +4550,30 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return "func:$ret:${tys.dropLast(1).joinToString(",") { birType(it) }}"
 			}
 		}
+		// kotc emits the Kotlin FQN as-is for a SOURCE TYPE — it knows nothing about the CLR. bir2cir lowers these
+		// (kotlin.Int -> System.Int32, kotlin.Unit -> System.Void, …) to the CLR vocabulary. Do NOT re-introduce the
+		// `int`/`void` shorthand or a `System.Int32` here: that is a CLR concern and belongs to bir2cir, not kotc.
 		when (t.classFqName?.asString()) {
-			"kotlin.Unit" -> return "void"
-			// kotlin.Nothing (bottom type) erases to `object` — a Nothing-returning fn never returns (its body throws), and
-			// as a TYPE-ARG (EmptyList : List<Nothing>) it must be a real type: IReadOnlyList<object>, not <void> (invalid).
-			"kotlin.Nothing" -> return "object"
-			"kotlin.Any" -> return "object"
-			"kotlin.Int" -> return "int"
-			"kotlin.Long" -> return "long"
-			"kotlin.Short" -> return "short"
-			"kotlin.Byte" -> return "byte"
-			"kotlin.Double" -> return "double"
-			"kotlin.Float" -> return "float"
-			"kotlin.Boolean" -> return "bool"
-			"kotlin.Char" -> return "char"
-			"kotlin.String" -> return "string"
-			// Unsigned types (Kotlin inline classes) -> the native CLR unsigned primitives. The frontend already
-			// lowers unsigned arithmetic to plain ops and stores the bit-pattern in the const value.
-			"kotlin.UInt" -> return "uint"
-			"kotlin.ULong" -> return "ulong"
-			"kotlin.UByte" -> return "ubyte"
-			"kotlin.UShort" -> return "ushort"
+			"kotlin.Unit" -> return "kotlin.Unit"
+			// kotlin.Nothing (bottom type) stays the Kotlin FQN — kotc knows nothing about how it lowers. bir2cir
+			// decides the CLR target (Nothing-as-type-arg must become a real type; a Nothing return never returns).
+			"kotlin.Nothing" -> return "kotlin.Nothing"
+			"kotlin.Any" -> return "kotlin.Any"
+			"kotlin.Int" -> return "kotlin.Int"
+			"kotlin.Long" -> return "kotlin.Long"
+			"kotlin.Short" -> return "kotlin.Short"
+			"kotlin.Byte" -> return "kotlin.Byte"
+			"kotlin.Double" -> return "kotlin.Double"
+			"kotlin.Float" -> return "kotlin.Float"
+			"kotlin.Boolean" -> return "kotlin.Boolean"
+			"kotlin.Char" -> return "kotlin.Char"
+			"kotlin.String" -> return "kotlin.String"
+			// Unsigned types (Kotlin inline classes) stay the Kotlin FQN; bir2cir lowers them to the native CLR
+			// unsigned primitives. The frontend already lowers unsigned arithmetic to plain ops (bit-pattern const).
+			"kotlin.UInt" -> return "kotlin.UInt"
+			"kotlin.ULong" -> return "kotlin.ULong"
+			"kotlin.UByte" -> return "kotlin.UByte"
+			"kotlin.UShort" -> return "kotlin.UShort"
 		}
 		// A (Mutable)Iterator<E>/Iterable<E> whose ELEMENT is a type parameter (gp:E) can't be a monomorphized synthetic:
 		// the synthetic interface `<>dotkt_KIterator_gp_E` would bake `gp:E` into a NON-generic type, so `next(): gp:E` has

@@ -98,7 +98,8 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				// declared type, so emit a cast (ilemit unboxes Any->Int / castclass for refs). Without it the
 				// value keeps its boxed/declared form and ops like `>` compare the wrong thing.
 				val ut = birType(node.type); val dt = birType(owner.type)
-				if (ut != dt && dt == "object") """{"k":"cast","type":${str(ut)},"e":{"k":"local","name":${str(name)}}}"""
+				// The declared type is the boxed Any token ("object" fallback, or "kotlin.Any" for an Any/Nothing source type).
+				if (ut != dt && (dt == "object" || dt == "kotlin.Any")) """{"k":"cast","type":${str(ut)},"e":{"k":"local","name":${str(name)}}}"""
 				else """{"k":"local","name":${str(name)}}"""
 			}
 		}
