@@ -70,6 +70,14 @@ kt ktproj-roundtrip "cases/ktproj-roundtrip/app/App.ktproj" \
 kt ktproj-applib "cases/ktproj-applib/app/App.ktproj" \
 	"$(printf 'Rectangle 3x4 area=12\n48\nPoint(x=-2, y=5)\n7\nBLUE')"
 
+# PRACTICAL COLLECTIONS app consuming the real CLR stdlib (DotKt.Stdlib.dll): a List held as an app local (resolves as
+# the referenced IReadOnlyList), member access (size/indexing), TOP-LEVEL stdlib funs (first/getOrElse/contains/indexOf/
+# count/isEmpty/take) which kotc emits as `callStatic owner=null` and bir2cir attributes to their file-class owner
+# (kotlin.collections._CollectionsKt), AND `for (x in list)` (the iterator protocol re-pointed at the real referenced
+# kotlin.collections.Iterator<E> via the rt bridge). The whole app-consume gap, end-to-end through MSBuild.
+kt ktproj-coll "cases/ktproj-coll/app.ktproj" \
+	"$(printf '5\n30\n10\n20\n-1\nTrue\n3\n5\nFalse\n2\n150\nAPPLE\npear\n5\n4\n3')"
+
 # Clean each sample's build output.
 rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-roundtrip/*/bin "$ROOT"/cases/ktproj-roundtrip/*/obj \
@@ -78,6 +86,7 @@ rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
        "$ROOT"/cases/ktproj-extlib/bin "$ROOT"/cases/ktproj-extlib/obj \
        "$ROOT"/cases/ktproj-extlib/extlib/bin "$ROOT"/cases/ktproj-extlib/extlib/obj \
        "$ROOT"/cases/ktproj-bidir/*/bin "$ROOT"/cases/ktproj-bidir/*/obj \
+       "$ROOT"/cases/ktproj-coll/bin "$ROOT"/cases/ktproj-coll/obj \
        "$ROOT"/cases/ktproj-avalonia/bin "$ROOT"/cases/ktproj-avalonia/obj
 
 echo "------------------------------------"

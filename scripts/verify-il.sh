@@ -131,6 +131,31 @@ il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 	} &
 }
 
+# Façade-free .NET interop via the import scan ALONE (no sample runtime.cs): scan the .kt imports, facadegen the
+# referenced .NET types into metadata, compile with it, ilemit against the runtime + stdlib. This is the C-2 single
+# path for a sample that consumes BCL types through `import System.X` (System.Math, System.Text.StringBuilder) and
+# needs no custom runtime assembly — the same path scripts/dotkt.sh and the .ktproj targets use. (il_check_inject is
+# the variant for a sample that ALSO ships its own runtime.cs; il_check is for a sample with no .NET imports at all.)
+il_check_imports() { # <name> <asm> <srcDir> <expected>
+	gate
+	{ name="$1"; asm="$2"; src="$3"; expected="$4"
+		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
+		RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
+		implist="$ROOT/build/$name.imports"
+		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1
+		dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';')" --import-list "$implist" >/dev/null 2>&1
+		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
+		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
+			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT" --ref "$STDLIB_DLL"; then
+			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
+		cp "$DOTKT_RT" "$STDLIB_DLL" "$ildir/"
+		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
+		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
+			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
+	} &
+}
+
 # Multiplatform check: expect/actual compiled as common + platform fragments in one invocation (-Xcommon-sources),
 # plus kotlinx.atomicfu mapped to the DotKt.Coroutines wrappers. <commonGlob> = the common source file(s).
 il_check_mpp() { # <name> <asm> <srcDir> <commonFile> <expected>
@@ -161,8 +186,10 @@ il_check xfaceimpl XFace "$ROOT/cases/il-xfaceimpl" "1"   # cross-file + namespa
 il_check genhof XHof "$ROOT/cases/il-genhof/app.kt" "$(printf '1\n2\n3')"   # generic fn: (T)->Unit over List<T> (TypeBuilderInstantiation.GetMethod regression)
 il_check genclosure GenClo "$ROOT/cases/il-genclosure/app.kt" "$(printf '1\nfn:2\n3\n4\nret:5\nlf:6')"   # closure in a generic fn capturing T-typed values (generic closure class regression)
 il_check enum  Enum  "$ROOT/cases/il-enum"   "$(printf 'red\ngreen\nblue')"
-il_check m2    M2    "$ROOT/cases/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"
-il_check mi1   MI1   "$ROOT/cases/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
+# m2 / mi1 consume BCL types via `import System.X` (System.Math, System.Text.StringBuilder) -> the facadegen import
+# scan (il_check_imports), NOT a bare il_check (which injects nothing, so the import would not resolve). No runtime.cs.
+il_check_imports m2  M2    "$ROOT/cases/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"
+il_check_imports mi1 MI1   "$ROOT/cases/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
 il_check for   ForT  "$ROOT/cases/il-for"     "$(printf 'sum 1..5 = 15\ncountdown 5 = 54321')"
 il_check exc   Exc   "$ROOT/cases/il-exc"     "$(printf 'safeDiv(10,2) = 5\nsafeDiv(1,0) = -1')"
 il_check ops   Ops   "$ROOT/cases/il-ops"     "$(printf '3\n2\n7\n3\n16\n15\n-1\n3\n5')"
@@ -291,7 +318,9 @@ il_check_ref kunit KUnit "$ROOT/cases/il-kunit" "42" KfcU
 il_check_ref kstruct KStruct "$ROOT/cases/il-kstruct" "$(printf '30\n42')" KfcS
 il_check_ref coro Coro "$ROOT/cases/il-coro" "$(printf 'tryOk = 11\ntryCatch = -99\ntryFallthrough = 8\nloopCond = 3\ncondBranch = 6\nspillSum = 30\nspillNested = 17\nspillArg = 16\nchain = 30\nfetchDouble(7) = 14\nuseChain = 35\nsumLoop(4) = 6\nbranch(true) = 15\nbranch(false) = 10')" Kfc
 il_check_ref colam Colam "$ROOT/cases/il-colam" "$(printf '30\n6\n105\n18')" KfcLam
-il_check_ref c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
+# c1net consumes types from its OWN runtime.cs (Probe assembly) via `import Probe.X` -> il_check_inject (build the
+# runtime, scan the imports through facadegen, --ref it). il_check_ref (no import scan) was the dead @Clr-facade path.
+il_check_inject c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
 il_check_inject firgap FirGap "$ROOT/cases/il-firgap" "$(printf '42\n60\n3\n20')" P
 il_check_inject inherit Inherit "$ROOT/cases/il-inherit" "$(printf 'run:derived\nshow:button\nbutton')" PInh
 il_check_inject geninj GenInj "$ROOT/cases/il-geninj" "$(printf '2\na')" PGI
