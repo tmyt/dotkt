@@ -6,6 +6,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Changed
+- **kotc→bir2cir `clrName` migration, Step 2a FIX: the declaration-rename was inert; now functional.** Step 2a's
+  `DeclarationRename` (552261e) was a verified no-op — it looked the property `@ClrIntrinsic` up by the property NAME
+  (`size`), but in the ref.dll that attribute lives on the ACCESSOR METHOD (`get_size@ClrIntrinsic("Count")`, the
+  intrinsic value being the BCL property name), so `ResolveSlot` always returned null and kotc's annClr name was simply
+  kept (still byte-identical, but the rename did nothing). Fixed `ResolveSlot` to look up the accessor method
+  (`get_`/`set_`+name) by exact arity and prefix the result; removed the dead `GetProperties()` scan + unused
+  `TryMemberIntrinsicByName`. Verified: rt CIR still byte-identical with annClr active (idempotent), and an annClr-off
+  probe now correctly renames `AbstractCollection.get_size`→`get_Count`. This makes the Step-3 prerequisite real (the
+  rename actually compensates when annClr is removed).
 - **kotc→bir2cir `clrName` migration, Step 2a (IDEMPOTENT declaration-rename, byte-identical): bir2cir now owns the BCL
   slot-name derivation.** Two bir2cir additions consume the Step-1 `overrides` markers to reproduce what kotc's
   `clrName`/`annClr` does for declaration naming: (1) `ScanSubstitutionMetadata` now also reads `GetProperties()`, so a
