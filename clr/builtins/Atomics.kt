@@ -21,6 +21,27 @@
 
 package kotlin.concurrent.atomics
 
+import kotlin.clr.ClrRef
+import kotlin.clr.byref
+
+// Interlocked byref helpers: each takes its first argument BY REFERENCE (`ClrRef<T>` -> `T&`), so the atomics can pass
+// the address of their backing field (`byref(v)` -> ldflda) to the BCL `ref`-parameter overloads — a genuine lock-free
+// implementation (unlike the Monitor-lock fallback kept for AtomicBoolean/AtomicReference, which have no Interlocked
+// overload). bir2cir reads these @ClrIntrinsic labels from the ref.dll and substitutes the call to the BCL static; the
+// `ClrRef<T>` param carries the byref-ness into the resolved overload + the `ldflda` address-load.
+@kotlin.clr.ClrIntrinsic("System.Threading.Interlocked.Exchange")
+internal fun interlockedExchangeInt(location: ClrRef<Int>, value: Int): Int = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Threading.Interlocked.CompareExchange")
+internal fun interlockedCompareExchangeInt(location: ClrRef<Int>, value: Int, comparand: Int): Int = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Threading.Interlocked.Add")
+internal fun interlockedAddInt(location: ClrRef<Int>, value: Int): Int = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Threading.Interlocked.Exchange")
+internal fun interlockedExchangeLong(location: ClrRef<Long>, value: Long): Long = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Threading.Interlocked.CompareExchange")
+internal fun interlockedCompareExchangeLong(location: ClrRef<Long>, value: Long, comparand: Long): Long = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Threading.Interlocked.Add")
+internal fun interlockedAddLong(location: ClrRef<Long>, value: Long): Long = TODO("clr binding should be implemented")
+
 @kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Enter")
 internal fun monitorEnter(lock: Any): Unit = TODO("clr binding should be implemented")
 @kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Exit")
@@ -30,31 +51,24 @@ internal fun monitorExit(lock: Any): Unit = TODO("clr binding should be implemen
 @ExperimentalAtomicApi
 public actual class AtomicInt actual constructor(value: Int) {
     private var v: Int = value
-    private val lock: Any = Any()
 
     public actual fun load(): Int = v
 
     public actual fun store(newValue: Int) { v = newValue }
 
-    public actual fun exchange(newValue: Int): Int {
-        monitorEnter(lock); val old = v; v = newValue; monitorExit(lock); return old
-    }
+    // Lock-free: `byref(v)` passes a managed pointer to the backing field to Interlocked's `ref` parameter.
+    public actual fun exchange(newValue: Int): Int = interlockedExchangeInt(byref(v), newValue)
 
-    public actual fun compareAndSet(expectedValue: Int, newValue: Int): Boolean {
-        monitorEnter(lock); val ok = v == expectedValue; if (ok) v = newValue; monitorExit(lock); return ok
-    }
+    public actual fun compareAndSet(expectedValue: Int, newValue: Int): Boolean =
+        interlockedCompareExchangeInt(byref(v), newValue, expectedValue) == expectedValue
 
-    public actual fun compareAndExchange(expectedValue: Int, newValue: Int): Int {
-        monitorEnter(lock); val old = v; if (old == expectedValue) v = newValue; monitorExit(lock); return old
-    }
+    public actual fun compareAndExchange(expectedValue: Int, newValue: Int): Int =
+        interlockedCompareExchangeInt(byref(v), newValue, expectedValue)
 
-    public actual fun fetchAndAdd(delta: Int): Int {
-        monitorEnter(lock); val old = v; v = old + delta; monitorExit(lock); return old
-    }
+    // Interlocked.Add returns the NEW value; fetchAndAdd wants the OLD (subtract back the delta).
+    public actual fun fetchAndAdd(delta: Int): Int = interlockedAddInt(byref(v), delta) - delta
 
-    public actual fun addAndFetch(delta: Int): Int {
-        monitorEnter(lock); val nv = v + delta; v = nv; monitorExit(lock); return nv
-    }
+    public actual fun addAndFetch(delta: Int): Int = interlockedAddInt(byref(v), delta)
 
     public actual override fun toString(): String = v.toString()
 }
@@ -63,31 +77,22 @@ public actual class AtomicInt actual constructor(value: Int) {
 @ExperimentalAtomicApi
 public actual class AtomicLong actual constructor(value: Long) {
     private var v: Long = value
-    private val lock: Any = Any()
 
     public actual fun load(): Long = v
 
     public actual fun store(newValue: Long) { v = newValue }
 
-    public actual fun exchange(newValue: Long): Long {
-        monitorEnter(lock); val old = v; v = newValue; monitorExit(lock); return old
-    }
+    public actual fun exchange(newValue: Long): Long = interlockedExchangeLong(byref(v), newValue)
 
-    public actual fun compareAndSet(expectedValue: Long, newValue: Long): Boolean {
-        monitorEnter(lock); val ok = v == expectedValue; if (ok) v = newValue; monitorExit(lock); return ok
-    }
+    public actual fun compareAndSet(expectedValue: Long, newValue: Long): Boolean =
+        interlockedCompareExchangeLong(byref(v), newValue, expectedValue) == expectedValue
 
-    public actual fun compareAndExchange(expectedValue: Long, newValue: Long): Long {
-        monitorEnter(lock); val old = v; if (old == expectedValue) v = newValue; monitorExit(lock); return old
-    }
+    public actual fun compareAndExchange(expectedValue: Long, newValue: Long): Long =
+        interlockedCompareExchangeLong(byref(v), newValue, expectedValue)
 
-    public actual fun fetchAndAdd(delta: Long): Long {
-        monitorEnter(lock); val old = v; v = old + delta; monitorExit(lock); return old
-    }
+    public actual fun fetchAndAdd(delta: Long): Long = interlockedAddLong(byref(v), delta) - delta
 
-    public actual fun addAndFetch(delta: Long): Long {
-        monitorEnter(lock); val nv = v + delta; v = nv; monitorExit(lock); return nv
-    }
+    public actual fun addAndFetch(delta: Long): Long = interlockedAddLong(byref(v), delta)
 
     public actual override fun toString(): String = v.toString()
 }
