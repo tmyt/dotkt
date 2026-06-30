@@ -1,12 +1,15 @@
-// The @ClrIntrinsic binding annotation (the kotlin.clr-namespaced successor to the legacy `clr.Clr`), available to the
-// stdlib's CLR actuals so they can bind to BCL types/members. kotc recognizes it by the FQN `kotlin.clr.ClrIntrinsic`
-// (and, for backward compatibility, still the legacy `clr.Clr`):
-//  - on a CLASS  -> the declaration resolves to the named .NET type (e.g. @ClrIntrinsic("System.Text.StringBuilder")).
-//  - on a MEMBER -> the member binds to the named .NET member; an unannotated member rolls up to its own name.
-//  - on a TOP-LEVEL fun -> binds to a STATIC .NET method, splitting "Namespace.Type.Method" at the last '.'.
+// The @ClrIntrinsic binding annotation (the kotlin.clr-namespaced successor to the legacy `clr.Clr`): a MEMBER
+// (function / property) of a CLR-bound class binds to the named .NET member. CLASS-level type aliasing is now
+// @ClrTypeAlias's role — @ClrIntrinsic NO LONGER targets CLASS (the @Target below enforces the role split, so
+// @ClrIntrinsic on a class is a compile error). bir2cir reads it from the REFERENCE assembly (NOT kotc) and
+// substitutes the member call:
+//  - on a MEMBER -> binds to the named .NET member (e.g. @ClrIntrinsic("Length") on a member of a
+//    @ClrTypeAlias("System.String") class -> System.String.get_Length); an unannotated member rolls up to its own name.
+//  - on a TOP-LEVEL fun -> a STATIC .NET method, splitting "Namespace.Type.Method" at the last '.'.
+//  (Legacy `clr.Clr` is still recognized.)
 package kotlin.clr
 
-@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 public annotation class ClrIntrinsic(val name: String)
 
 // Like @ClrIntrinsic on a MEMBER, but the member binds to the named .NET member DYNAMICALLY: a CALL to it is emitted as
