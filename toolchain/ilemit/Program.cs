@@ -1659,13 +1659,20 @@ sealed partial class Emitter
                 lt = common;
             }
         }
+        // Unsigned operands (Kotlin UInt/ULong -> .NET uint/ulong) need the UNSIGNED CIL ops for division and
+        // remainder (a direct `bin` on the raw unsigned operand). Reads the CIR operand type only -- no Kotlin
+        // knowledge. Without this, `a / b` on UInt >= 2^31 is silently wrong (signed Div on the bit pattern).
+        // NOTE: ordered compares are NOT here -- Kotlin lowers `a > b` on UInt to `a.compareTo(b) > 0`, where
+        // compareTo does the UNSIGNED compare and the outer `> 0` is a plain signed int compare. (`byte`/`ushort`
+        // arithmetic promotes to UInt, so only uint/ulong reach a direct unsigned div here.)
+        bool isUns = lt == typeof(uint) || lt == typeof(ulong);
         switch (op)
         {
             case "+": _il.Emit(OpCodes.Add); return lt;
             case "-": _il.Emit(OpCodes.Sub); return lt;
             case "*": _il.Emit(OpCodes.Mul); return lt;
-            case "/": _il.Emit(OpCodes.Div); return lt;
-            case "%": _il.Emit(OpCodes.Rem); return lt;
+            case "/": _il.Emit(isUns ? OpCodes.Div_Un : OpCodes.Div); return lt;
+            case "%": _il.Emit(isUns ? OpCodes.Rem_Un : OpCodes.Rem); return lt;
             case "&": _il.Emit(OpCodes.And); return lt;
             case "|": _il.Emit(OpCodes.Or); return lt;
             case "^": _il.Emit(OpCodes.Xor); return lt;
