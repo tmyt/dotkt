@@ -121,23 +121,10 @@ internal val VALUE_PRIM_BIR = mapOf(
 	"kotlin.Double" to "double", "kotlin.Float" to "float", "kotlin.Boolean" to "bool", "kotlin.Char" to "char",
 )
 
-// kotlin.* throwables -> their .NET counterpart. The frontend jar resolves these as our real `kotlin.*` exception
-// classes (NOT java.* typealiases), so only the kotlin.* keys are live; the former java.lang.*/java.util.* keys were
-// dead once no consumer fed kotc the JVM kotlin-stdlib.jar. `kotlin.ArithmeticException` maps to System.ArithmeticException
-// so `catch (ArithmeticException)` catches the BCL System.DivideByZeroException that integer `a/0` throws.
-internal val NET_EXCEPTIONS = mapOf(
-	"kotlin.Throwable" to "System.Exception",
-	"kotlin.Exception" to "System.Exception",
-	"kotlin.RuntimeException" to "System.Exception",
-	"kotlin.Error" to "System.Exception",
-	"kotlin.ArithmeticException" to "System.ArithmeticException",
-	"kotlin.IllegalArgumentException" to "System.ArgumentException",
-	"kotlin.IllegalStateException" to "System.InvalidOperationException",
-	"kotlin.IndexOutOfBoundsException" to "System.IndexOutOfRangeException",
-	"kotlin.NullPointerException" to "System.NullReferenceException",
-	"kotlin.UnsupportedOperationException" to "System.NotSupportedException",
-	"kotlin.NoSuchElementException" to "System.InvalidOperationException",
-)
+// The kotlin.* -> System.* exception map was RETIRED: it was CLR knowledge living in kotc (a layer violation). The
+// stdlib's exception classes now carry `@kotlin.clr.ClrTypeAlias("System.X")`, and bir2cir reads that off the ref.dll
+// to lower throw/catch/supertype/construction (the same @ClrTypeAlias path that lowers the collections). kotc emits
+// the bare `kotlin.*Exception` FQN and nothing more. See MEMORY `exception-map-to-clrtypealias`.
 internal val ATOMICFU_TYPES = setOf(
 	"kotlinx.atomicfu.AtomicInt", "kotlinx.atomicfu.AtomicLong",
 	"kotlinx.atomicfu.AtomicBoolean", "kotlinx.atomicfu.AtomicRef",

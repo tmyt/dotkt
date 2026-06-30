@@ -909,15 +909,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		p.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrField" }
 
 	/** Emit a custom property accessor as a `get_<prop>`/`set_<prop>` method (the `field` identifier -> the backing field). */
-	/** True if [t]'s class transitively extends kotlin.Throwable / a .NET-mapped exception (so `.message`/`.cause` on
-	 *  a user exception subclass route to System.Exception.Message/.InnerException). */
+	/** True if [t]'s class transitively extends kotlin.Throwable (so `.message`/`.cause` on a user exception subclass
+	 *  route to System.Exception.Message/.InnerException). Every stdlib exception (Exception/RuntimeException/… and the
+	 *  IllegalArgument/Arithmetic/… set) extends kotlin.Throwable, so the single root check covers them via the walk. */
 	internal fun isThrowableType(t: IrType?): Boolean {
 		val start = t?.classifierOrNull?.owner as? IrClass ?: return false
 		val seen = HashSet<IrClass>()
 		fun walk(c: IrClass): Boolean {
 			if (!seen.add(c)) return false
-			val fq = c.fqNameWhenAvailable?.asString()
-			if (fq == "kotlin.Throwable" || (fq != null && NET_EXCEPTIONS.containsKey(fq))) return true
+			if (c.fqNameWhenAvailable?.asString() == "kotlin.Throwable") return true
 			return c.superTypes.any { (it.classifierOrNull?.owner as? IrClass)?.let(::walk) == true }
 		}
 		return walk(start)
@@ -1993,7 +1993,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val tryBody = bodyStmtsAssign(node.tryResult, tv)
 		val catches = node.catches.joinToString(",") { c ->
 			val p = c.catchParameter
-			"""{"excType":${str(netType(p.type))},"var":${str(p.name.asString())},"body":[${bodyStmtsAssign(c.result, tv)}]}"""
+			// birType (matching tryStmt) so the catch type stays the Kotlin FQN that bir2cir lowers via @ClrTypeAlias —
+			// a USER exception class catches as its own `@AppErr`, a stdlib one as its BCL alias. netType would degrade a
+			// user class to System.Object (unverifiable catch) and no longer maps exceptions since NET_EXCEPTIONS retired.
+			"""{"excType":${str(birType(p.type))},"var":${str(p.name.asString())},"body":[${bodyStmtsAssign(c.result, tv)}]}"""
 		}
 		val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
 		val tryS = """{"k":"try","type":"void","body":[$tryBody],"catches":[$catches]$finally}"""
@@ -4361,8 +4364,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlinx.atomicfu.AtomicLong" -> "DotKtx.Atomicfu.AtomicLong"
 		"kotlinx.atomicfu.AtomicBoolean" -> "DotKtx.Atomicfu.AtomicBoolean"
 		"kotlinx.atomicfu.AtomicRef" -> "clrg:DotKtx.Atomicfu.AtomicRef[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
-		else -> NET_EXCEPTIONS[fq]
-			?: (t.classifierOrNull?.owner as? IrClass)?.let { cls -> clrName(cls)?.let { netName ->
+		else -> (t.classifierOrNull?.owner as? IrClass)?.let { cls -> clrName(cls)?.let { netName ->
 				// A generic @Clr type needs its `clrg:Name[args]` form (resolvable via ClrRef/GenericType) — the bare
 				// `netName` would be the OPEN generic def, unresolvable. Fill a raw/star reference with `object`.
 				val a = (t as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::netType) }
@@ -4516,9 +4518,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val arg = ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
 			return "clrg:kotlin.Comparator[$arg]"
 		}
-		// Kotlin/Java throwables -> their .NET counterpart (the common base; `.message` -> .Message). Covers a custom
-		// exception base (`class E : Exception(msg)`) as well as a `Throwable`-typed value.
-		if (fqp != null) NET_EXCEPTIONS[fqp]?.let { return "clr:$it" }
+		// Kotlin throwables stay their bare `kotlin.*` FQN here (emitted as `@kotlin.IllegalArgumentException`, etc. via
+		// the user-class fall-through below); bir2cir lowers them to the BCL base off the stdlib's @ClrTypeAlias on each
+		// exception class (the retired NET_EXCEPTIONS map's job, now metadata-driven). A custom `class E : Exception(msg)`
+		// supertype rides the same path, and `.message`->.Message routing is gated by isThrowableType, not this map.
 		if (fqp == "kotlin.AutoCloseable" || fqp == "kotlin.io.Closeable")
 			return "clr:System.IDisposable"
 		// kotlin.CharSequence -> a synthetic interface (no faithful .NET equivalent). See charSeqIface.
