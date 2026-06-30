@@ -21,15 +21,16 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | `suspend fun` | `Task<T>`-returning method | no (the Task ABI hides the suspend-ness) | `[KotlinFunction(Suspend)]` |
 | top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFileClass]` on the file class |
 | inline function body needed for cross-module lambda/non-local-return splicing | ordinary method | no | `[KotlinInline(body)]` |
-| Kotlin `val` / non-public setter backed by a public field | public field | no; plain public field looks writable | `[KotlinReadOnly]` |
+| Kotlin `val` backed by a **`@ClrField` public field** | public field | no; a plain public field looks writable | `[KotlinReadOnly]` — survives **only** for the `@ClrField` plain-field case; a normal `val` is now a get-only CLR property, recoverable from plain metadata (see [design-clr-property-model.md](design-clr-property-model.md)) |
 | reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |
 | imported CLR event endpoint (`CLREvent<T>`) | real CLR event metadata + add/remove accessors | yes for the event itself; Kotlin endpoint syntax must be synthesized | plain CLR event metadata, no DotKt attribute by default |
 | `final`/`open`/`abstract` (modality) | non-virtual / virtual / abstract | **yes** — rides .NET virtual-ness | (none) |
 | visibility | public/assembly/family | **yes** | (none) |
 | generics, including `reified` | real CLR generic method `<T>` | **yes** — CLR generics are reified | (none) |
 
-The attributes live in **`DotKt.Runtime`** (`DotKt.Metadata` namespace) for cross-assembly identity — every DotKt
-assembly already references it ([[dotkt-naming-and-runtime-split]]).
+The attributes are **compiler-EMBEDDED per-assembly** as internal `DotKt.Runtime.CompilerServices.*` types (like csc's
+own `NullableAttribute`/`IsReadOnlyAttribute`) — there is **no referenced `DotKt.Runtime` DLL** (that runtime is being
+eliminated, in-flight). They are metadata-only, never executed ([[dotkt-naming-and-runtime-split]]).
 
 ## Pipeline (mirror of the forward `--refs` injection)
 
@@ -79,23 +80,26 @@ cross-assembly inline matrix is:
 
 **The last row is now IMPLEMENTED** (2026-06-24) — cross-module inline with a lambda + non-local `return` works.
 
-**Where inlining happens.** DotKt does NOT run the standard JVM IR `FunctionInlining` lowering — its pipeline is
-`…Fir2Ir then ClrBackendPhase` (no JVM lowerings). **Inlining happens at EMIT time in BirEmitter**
+**Where inlining happens.** DotKt does NOT run the standard JVM IR `FunctionInlining` lowering — its pipeline is the
+four layers `facadegen` / `kotc` / `bir2cir` / `ilemit` (`native-cir` is the target; the frontend is
+`…Fir2Ir then ClrBackendPhase`, no JVM lowerings). **Inlining (the `[KotlinInline]` splice) is a `bir2cir` (BIR→CIR)
+responsibility — currently still partly in `BirEmitter`, being migrated**
 (`call()` → `if (callee.isInline && callee.body != null && hasLambdaArg(call)) inlineCall(call)`, which `spliceBody`s
 the callee's IR body at the call site; lambda-less inline funs are left as ordinary calls for the JIT, and `inline`/
-`reified` are pure decoration unless a lambda LITERAL is passed). Because inlining is emit-time over (near-)BIR, the
+`reified` are pure decoration unless a lambda LITERAL is passed). Because inlining is over (near-)BIR, the
 cross-module fix is **lighter than JVM's `@Metadata`** (no frontend IR deserializer):
 
 1. **emit** — `ilemit` stamps an inline+lambda fn with `[KotlinInline(birJson)]` carrying its own `{params, body}` BIR.
 2. **read** — `facadegen` flags the restored fn `,inline` in the meta; the body STAYS in the assembly (read at splice time).
 3. **inject** — `ClrTypeInjection` marks the fn `status { isInline = true }`, so the consumer's frontend ACCEPTS a
    non-local `return` through the lambda (a body-less stub here, so BirEmitter's `callee.body == null`).
-4. **splice** — the consumer's BirEmitter emits an `inlineSplice` node (the call's value/lambda bindings); the
-   consumer's `ilemit` (which `--ref`s the library) reads `[KotlinInline].Body`, parses it, and emits the callee body
-   HERE with substitution: a callee param `local` → its bound value; a `delegateInvoke` of a lambda param → the
-   caller's lambda body (binding its param). A `return` in that spliced lambda body emits a `ret` from the caller →
-   non-local return works. CFG labels are re-`DefineLabel`d per splice (the BIR ids are baked, so re-emitting a body
-   would otherwise redefine a Label).
+4. **splice** — the consumer's `bir2cir` emits an `inlineSplice` node (the call's value/lambda bindings), reads
+   `[KotlinInline].Body` from the `--ref`'d library, parses it, and splices the callee body HERE with substitution: a
+   callee param `local` → its bound value; a `delegateInvoke` of a lambda param → the caller's lambda body (binding its
+   param). A `return` in that spliced lambda body emits a `ret` from the caller → non-local return works. CFG labels are
+   re-`DefineLabel`d per splice (the BIR ids are baked, so re-emitting a body would otherwise redefine a Label). (This
+   splice currently still runs across `BirEmitter`/`ilemit` and is being migrated into `bir2cir`; `ilemit` is meant to
+   be Kotlin-free.)
 
 Scope: lambda-taking inline funcs only (the only ones whose body must travel; lambda-less degrade to plain/generic
 methods). Not yet handled: a callee body with its OWN locals (name scoping), and value-returning lambda params with

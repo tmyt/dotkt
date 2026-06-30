@@ -1,5 +1,9 @@
 # Kotlin `suspend` ⇔ CLR の ABI 契約（coroutine 完全実装の前提）
 
+> **状態 (2026-06-30 見直し)**: §1（`suspend ⇔ Task<T>` 不変契約）と §4（意味論対応表）は今も生きた契約。§2/§6 の C# 実装記述は HISTORICAL。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+>
+> 補足: 実装は**戦略 B（CLR-native `IAsyncStateMachine`）が唯一**で確定済み（[coroutine-il.md](coroutine-il.md)）。§2 の「戦略 A = C# `async Task<T>` 写像（現状）」と §6 の D2.0/D2.1（`runtime/csharp/KfcCoroutines`・`@Sm`・`CSharpCodegen.kt`）は**廃止済みの経路**で、当時の記録として残す。`@ClrAwait` は現行 `kotlin.clr.ClrIntrinsic`。
+
 完全な coroutine ランタイムを実装する**前に**、「CLR から見た `suspend fun` の見え方」を**実装戦略から独立した不変契約**として固定する。これにより内部実装（後述 A/B）を入れ替えても、C#/F# 等の消費側コードは変わらない。
 
 ## 1. 不変契約（CLR から見た `suspend fun`）
@@ -17,7 +21,11 @@
 
 > 要点: **「Continuation を隠して `Task<T>` として見せ、内部で結線する」**。この契約は実装戦略 A/B のどちらでも同一。
 
-## 2. 実装戦略 A（async 写像）— 現状
+## 2. 実装戦略 A（async 写像）— HISTORICAL（廃止）
+
+> **HISTORICAL**: この節が「現状」と呼ぶ C# `async Task<T>` 写像（戦略 A）は採用されず廃止済み。現行の実装は
+> 戦略 B（CLR-native `IAsyncStateMachine`、[coroutine-il.md](coroutine-il.md)）。以下は当時の経路の記録。ABI（§1）は
+> 戦略を入れ替えても不変。
 
 `suspend` を C# `async Task<T>` に写像。C# コンパイラが state machine を生成する。
 
@@ -64,7 +72,12 @@ Kotlin の suspend lowering を再利用して state machine を IR で入手し
 
 > まとめ: **「Continuation を隠して `Task<T>` として見せ、TCS で結線する」** が答え。現状（A）は Kotlin→CLR の ABI をすでに満たしており、B 移行時もこの契約を破らない。
 
-## 6. 戦略B 実装状況と手順
+## 6. 戦略B 実装状況と手順 — HISTORICAL（C# 経路の記録）
+
+> **HISTORICAL**: 下記 D2.0/D2.1 は **C# バックエンド経路**での戦略 B 検証記録で、いずれも**廃止済み**:
+> `runtime/csharp/KfcCoroutines/Coroutines.cs`・`@Sm` オプトイン・`CSharpCodegen.kt` の `emitCps`/`emitWhenCps`/`emitWhileCps`
+> はすべて削除済み。現行の戦略 B は IL バックエンド（`ilemit`）の CLR-native `IAsyncStateMachine` として全面実装済み
+> （AS-BUILT は [design-coroutines-clr.md](design-coroutines-clr.md) §§13a–§14a）。以下は当時の到達点の記録。
 
 ### D2.0 — CLR Continuation ランタイム（✅ 構築・**end-to-end 実動作検証済**）
 `runtime/csharp/KfcCoroutines/Coroutines.cs`: `KResult<T>`, `IContinuation<T>`, `CoroutineContext`, `Intrinsics.CoroutineSuspended`, **`CoroutineBuilders.Future`（Continuation⇄`TaskCompletionSource` ブリッジ：正常→SetResult / 例外→SetException / OperationCanceled→SetCanceled）**, `RunBlocking`。依存なし。

@@ -1,8 +1,14 @@
 # Future work — interop / consuming DotKt-built assemblies from Kotlin
 
-後々やりたいことのメモ（2026-06-23 起票）。まだ未着手。優先度・設計は未確定。
+後々やりたいことのメモ（2026-06-23 起票）。
 
-## 1. ktproj の `ProjectReference`
+> **状態 (2026-06-30 見直し)**: #1（ProjectReference）/ #2（DotKt 製アセンブリを Kotlin として消費）/ #5（往復抜け漏れ）は **DONE で着地済み**、#3（名前空間射影）は削除済み、**#4（推移的/オンデマンド型注入）のみが本当に未着手の future item**。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+>
+> 着地の要点: infix/operator/suspend/top-level/inline（non-local return 含む）は **アセンブリ埋め込みの DotKt メタ属性**（`DotKt.Runtime.CompilerServices.*` 配下の `[Kotlin*]` 型）で復元（メモリ `embedded-metadata-attrs-embedded-nrt-nullability`、`kotlin-modifier-roundtrip`）。reverse の ProjectReference は Cecil ベースの retarget ツールで実現（サンプル `ktproj-bidir`、メモリ `r1-reverse-projectreference-retargeter`）。`scripts/verify-roundtrip.sh` 常設。
+
+## 1. ktproj の `ProjectReference` — ✅ DONE
+
+> **DONE**: `.ktproj` からの `<ProjectReference>`（`.csproj` / 別 `.ktproj`）が着地。reverse 方向（C#→Kotlin の compile-time 参照）は Cecil ベースの retarget ツール（CoreLib→contract 参照の付け替え + 3 つの MSBuild 修正）で実現、サンプル `ktproj-bidir`。メモリ `r1-reverse-projectreference-retargeter` / `r1-compiletime-reference-blocker`。以下は起票当時の課題メモ。
 
 `.ktproj` から別プロジェクト（`.csproj` / 別の `.ktproj`）を `<ProjectReference>` で参照できるようにする。
 現状は `<PackageReference>` / `<Reference>`（= 解決済みアセンブリ）経由の .NET 型注入は通る（`@(ReferencePath)`
@@ -12,7 +18,10 @@
   `ResolveProjectReferences` 連携）。
 - 別 `.ktproj` を参照する場合は「DotKt でビルドしたアセンブリを Kotlin 側から再 Emit/消費する」(#2) と直結。
 
-## 2. DotKt でビルドしたアセンブリを Kotlin 側で正しく消費（再 Emit）する仕組み
+## 2. DotKt でビルドしたアセンブリを Kotlin 側で正しく消費（再 Emit）する仕組み — ✅ DONE
+
+> **DONE**: top-level / suspend / inline（non-local return 含む）/ infix / operator の Kotlin 性質はすべてクロスモジュールで復元される（`reified` は落とす）。`scripts/verify-roundtrip.sh`・`docs/design-kotlin-metadata-attributes.md`、メモリ `kotlin-modifier-roundtrip`。
+> 起票時に「（名前は仮）」とした属性名は**確定スキームに置き換わった**: 仮称 `[DotKtSuspendable]`/`[DotKtTopLevel]`/`[DotKtInline]` ではなく、**アセンブリ単位で埋め込まれる `DotKt.Runtime.CompilerServices.*` 配下の `[Kotlin*]` 型**で運ぶ（メモリ `embedded-metadata-attrs-embedded-nrt-nullability`）。以下は起票当時の構想メモ。
 
 DotKt が出した dll を、別の Kotlin コンパイルから `import` して使うとき、.NET の素朴な型/メンバ射影では
 **Kotlin 固有の構造が落ちる**。次を復元できるようにする:
@@ -26,18 +35,19 @@ DotKt が出した dll を、別の Kotlin コンパイルから `import` して
 ### 方針: メタ情報を .NET 属性でフラグして相互運用
 
 .NET の素のシグネチャだけでは上記の Kotlin 性質が判別できないので、**DotKt が emit する時に属性で印を付け、
-消費する時に読む**。属性の例（名前は仮）:
+消費する時に読む**。**確定スキーム**（起票時の仮称 `[DotKt*]` は採用されず、アセンブリ埋め込みの
+`DotKt.Runtime.CompilerServices.*` 配下 `[Kotlin*]` 型に置換）:
 
-- `[DotKtSuspendable]` … この static メソッドは元 `suspend fun`（`Task<T>` 戻りを suspend として再射影）
-- top level function / inline / infix なども同様に属性でフラグ:
-  - `[DotKtTopLevel]`（`XxxKt` の static を Kotlin トップレベル関数として見せる）
-  - `[DotKtInline]`（+ 必要なら本体やインライン種別。`reified` は別途）
+- 元 `suspend fun`（`Task<T>` 戻りを suspend として再射影）を `[Kotlin*]` 属性でフラグ
+- top level function / inline / infix なども同様に `[Kotlin*]` 属性でフラグ:
+  - top-level（`XxxKt` の static を Kotlin トップレベル関数として見せる）
+  - inline（+ 必要なら本体やインライン種別。`reified` は別途。cross-module non-local return は `[KotlinInline]` の BIR スプライスで実現）
     - ⚠️ **そもそも `inline` をアセンブリ境界に切り出す意味があるか自体が別問題**。実インライン展開には
       呼び出し側に**本体（IR）が必要**で、属性フラグだけでは展開できない（JVM の kotlinx は `@Metadata` に
       本体を持つ）。選択肢: (a) 本体を何らかの形で同梱して跨ぎインラインする（重い）／(b) 跨ぎでは普通の
       呼び出しに格下げ（`inline` の non-local return・`reified` 等が絡むと不可な場合あり）。属性は「意図の
       記録」に留まる可能性が高い。要設計。
-  - `[DotKtInfix]` / `[DotKtOperator(...)]`
+  - infix / operator も同様に `[Kotlin*]` 属性
 - 消費側コンパイル（FIR 注入）で、これらの属性を見て元の Kotlin 宣言形へ復元する。
 
 > 既存の forward 方向（`@Clr*` で .NET → Kotlin）と対になる reverse 方向のメタ。
@@ -64,7 +74,9 @@ DotKt アセンブリの型は実 .NET 名前空間 = Kotlin パッケージと�
 
 現状の運用は「触る型は明示 import」。優先度は中（WinUI のような型リッチな相互運用で効く）。
 
-## 5. ラウンドトリップ抜け漏れ一覧（検証済み 2026-06-24）
+## 5. ラウンドトリップ抜け漏れ一覧（検証済み 2026-06-24）— ✅ DONE（残既知限界のみ）
+
+> **DONE**: 下表の構文はすべてクロスモジュールで Kotlin 形に復元され、`scripts/verify-roundtrip.sh` で常設緑。残るのは「残る既知の限界」（object シングルトン等・往復ブロッカーではない）のみ。
 
 #2 のうち **infix / operator（`+` `<` `in` `()` `[]`…）/ suspend / top-level / inline（non-local return 含む）/
 reified（落とす）** は実装済み（`docs/design-kotlin-metadata-attributes.md`、`scripts/verify-roundtrip.sh`）。
@@ -126,7 +138,9 @@ dispatch して拡張レシーバを先頭に付与。facadegen がメンバ `fu
 **設計メモ**: プロパティ往復は emit 側の .NET プロパティ化（private backing + PropertyDef + accessor）も選択肢だったが、
 ilemit の既存 field-fallback を活かす facadegen 側復元の方が低リスクで全 property サンプル無回帰を達成。`private set` の
 非対称可視性は `[KotlinReadOnly]` マーカーで運ぶ（フィールドは public のまま＝同一モジュール/C# 書込は可、Kotlin 消費側
-のみ読取専用）。新メタ属性は `[KotlinNullable]`・`[KotlinReadOnly]`（`DotKt.Runtime/Metadata.cs`）。
+のみ読取専用）。新メタ属性は `[KotlinNullable]`・`[KotlinReadOnly]`。
+> **更新 (2026-06-30)**: 起票当時これらは `DotKt.Runtime/Metadata.cs` にあったが、`DotKt.Runtime` は廃止中で、メタ属性は
+> **アセンブリ単位で埋め込まれる `DotKt.Runtime.CompilerServices.*` 型**に移行した（IN-FLIGHT、メモリ `embedded-metadata-attrs-embedded-nrt-nullability`）。
 
 ## メモ
 

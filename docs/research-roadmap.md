@@ -1,10 +1,12 @@
 # kotlin/clr — 長期研究ロードマップ
 
+> **状態 (2026-06-30 見直し)**: HISTORICAL（research as-planned の記録）。研究トラック M-D1（CIL 直接出力）/ M-D2（coroutine）/ M-S（言語・stdlib 補強）はいずれも完了。本書が前提にする「C# 経路を正解器とする差分オラクル」「`scripts/verify-all.sh`」「`runtime/csharp/KfcCoroutines`」「`import clrgen.*`」「**M-D2 の C# state-machine 方式**」はすべて現行では廃止/置換済み（coroutine は CLR-native `IAsyncStateMachine`＝戦略 B で実装、`csharp-retirement-design.md` 参照）。IL 出力の設計理由と純バインディング哲学は引き続き有効。現行アーキテクチャ/戦略の正は [docs/ship-tasks.md](ship-tasks.md) §0 ＋ [docs/csharp-retirement-design.md](csharp-retirement-design.md)。
+
 二大研究トラック **M-D1（CIL 直接出力）** と **M-D2（async/Task ⇄ coroutine）** を、検証可能な細かいマイルストーンへ分解する。加えて両者の前提となる **M-S（言語/stdlib 補強）** を定義する。
 
 ## 共通原則
 
-1. **差分オラクル（differential oracle）.** 既存の C# バックエンドは正解器として使える。新バックエンド（IL）や新機能の出力 stdout を、C# 経路の出力と一致比較する。`scripts/verify-all.sh` の枠組みを流用。
+1. **差分オラクル（differential oracle）.** ~~既存の C# バックエンドを正解器に使い、新バックエンド（IL）の出力 stdout を C# 経路と一致比較する（`scripts/verify-all.sh` の枠組み）。~~ 【現行・2026-06-30】C# バックエンドは完全引退。正解器は **kotlin/jvm 差分ハーネス**（`scripts/verify-differential.sh` ＋ `verify-il` / `verify-ktproj`、生成 IL は `ilverify` clean）。`verify-all.sh` は削除済み。
 2. **公式 lowering の再利用.** coroutine の state machine 変換など難所は、`org.jetbrains.kotlin.backend.common.lower.*` の抽象 lowering を継承して入手する（車輪の再発明をしない）。
 3. **façade 方式の継承.** .NET 型参照は `@Clr` façade（手書き or `facadegen` 自動生成）で表現済み。IL/coroutine ランタイムもこの seam の上に乗せる。
 4. **各マイルストーンに「動いた」判定（サンプル＋アサート）を必須化.** 量より検証可能性。
@@ -59,7 +61,7 @@ IL の stack 型規律（オペランド型の厳密一致）、例外領域の�
 Kotlin の `suspend` は `Continuation<T>` + `COROUTINE_SUSPENDED` センチネルを使う **state machine** にコンパイルされる。`org.jetbrains.kotlin.backend.common.lower.AbstractSuspendFunctionsLowering` / `…coroutines.AbstractAddContinuationToFunctionsLowering`（platform 非依存、本 jar に存在を確認）を **CLR 用に継承**して state machine を IR で入手し、生成された state machine クラス（= ふつうの class + when/switch + field）を既存 class codegen で C# 化する。**suspend の正しい意味論を公式 lowering から継承する**のが要。
 
 - **対象 = `kotlin.coroutines.*` stdlib intrinsics ＋最小 dispatcher ＋ Task ブリッジ.** `kotlinx.coroutines`（`launch`/`async`/`Flow`/構造化並行性）は巨大ゆえスコープ外。
-- **CLR ランタイム** = C# 実装の `Continuation`/`CoroutineContext`/intrinsics（`runtime/csharp/KfcCoroutines`）。Task との橋は `TaskCompletionSource` ⇄ `Continuation`。
+- **CLR ランタイム** = ~~C# 実装の `Continuation`/`CoroutineContext`/intrinsics（`runtime/csharp/KfcCoroutines`）。Task との橋は `TaskCompletionSource` ⇄ `Continuation`。~~ 【現行】この C# ランタイム（戦略 A）は採用されず、`runtime/csharp/KfcCoroutines` ツリーも撤去。実装は **CLR-native `IAsyncStateMachine` + `AsyncTaskMethodBuilder<T>`（戦略 B）でランタイム同梱不要** ＝ `Continuation` は公開 ABI に漏らさず `Task<T>` 表面のみ（`csharp-retirement-design.md` / `coroutine-il.md`）。
 
 ## 実装メモ（2026-06-16）— async-mapping 方式で非ブロッキング Task interop 達成（部分）
 
@@ -101,7 +103,7 @@ coroutine lowering は compiler 内部・stdlib intrinsics に密結合。phase 
 - **S2 — data class（S）✅ 達成.** `toString`/`copy`/`componentN`、フィールドから値等価 `Equals`/`GetHashCode` を生成、`==`(EQEQ) を値型/string/enum は `==`・参照型は `System.Object.Equals` へ写像、Object メソッド名を C# 名へ。`cases/m-s2`（`a==b` 構造等価が True）。
 - **S3 — collections stdlib（M）— 部分達成.** `listOf`/`mutableListOf`/`arrayListOf` → `new List<T>{...}`、`kotlin.collections.List/Set/Map` → BCL generics、`.size`→`.Count`、for-in→`foreach` 達成（`cases/m-s3`）。残: `mapOf`/`setOf`、`map`/`filter`/`forEach` 等拡張。
 - **S4 — generic 型の façade 自動生成（M）✅ 達成.** `facadegen` が generic type definition（`List\`1`）から `class List<T>` を自動生成（型パラメータ、indexer→operator get/set、generic param→T）。`cases/m-s4` が生成 façード経由で `List<Int>` を使用（count/indexer/add）。手書き m-i3 façード相当を自動化。
-- **S5 — FIR シンボル直接注入（✅ 達成・メタデータ駆動・実機）.** `import clrgen.Math; Math.Abs(-9)` / `Console.WriteLine(...)` を **façade .kt 無し**で解決 → `global::System.Math.Abs(-9)` 等 → 実行（`cases/m-s5`：`abs(-9)=9 / max(3,7)=7 / min(3,7)=3`、`verify-all` 常設）。
+- **S5 — FIR シンボル直接注入（✅ 達成・メタデータ駆動・実機）.** `import System.Math; Math.Abs(-9)`（**現行は `import System.X` がそのまま解決**＝旧 `clrgen` 合成パッケージは撤去）/ `Console.WriteLine(...)` を **façade .kt 無し**で解決 → `global::System.Math.Abs(-9)` 等 → 実行（`cases/m-s5`：`abs(-9)=9 / max(3,7)=7 / min(3,7)=3`）。
   - **機構**: `toolchain/kotc/.../frontend/ClrTypeInjection.kt` の `FirDeclarationGenerationExtension` が .NET 型を FIR に合成（object=静的メソッド / class=コンストラクタ+インスタンスメソッド、オーバーロード対応）。`ClrCompilerPluginRegistrar`→`COMPILER_PLUGIN_REGISTRARS` 経由で**再利用中の JVM frontend に登録**（`ClrPluginRegistrationPhase`、frontend 差し替え不要）。合成 FIR には注釈を付けず `ClrTypeRegistry`（Kotlin-FQN→.NET 名）を backend `clrName` が参照（注釈の Fir2Ir 透過問題を回避）。
   - **メタデータ駆動**: 注入型集合はハードコードでなく、`facadegen --meta`（既存 reflection を再利用）が**実 .NET アセンブリ**から生成する metadata ファイルから読む（環境変数 `CLR_TYPES_METADATA`）。
   - **対応メンバ（穴なし）**: object(静的メソッド) / class(コンストラクタ + インスタンスメソッド + **プロパティ**) / オーバーロード / 自己・他注入型参照。`cases/m-s5` は System.Math(90 メソッド)+System.Console+**System.Text.StringBuilder**(ctor/`Append` 自己返し/`Length` プロパティ/`ToString`) を façade 無しで実行。
@@ -132,7 +134,7 @@ coroutine lowering は compiler 内部・stdlib intrinsics に密結合。phase 
 
 **推奨着手順:** ① M-D1.0–D1.2（CIL の M0 を差分一致まで／自己完結で達成感が高い）→ ② M-S（S1 null安全, S3 collections）で実用度を底上げ → ③ M-D1 を D1.4 以降へ拡張（クラス/interop）→ ④ M-D2（coroutine）。M-D1 と M-D2 は独立に進行可。
 
-**横断的検証:** すべての段で `scripts/verify-all.sh` を緑に保ち、新バックエンド（IL）は C# 経路との差分一致を必須ゲートにする。
+**横断的検証:** 〔現行〕`verify-il` / `verify-differential`（kotlin/jvm 正解器）/ `verify-ktproj` を緑に保つ（旧 `verify-all.sh` ＝ C# 差分は引退・削除済み）。
 
 ---
 
@@ -140,7 +142,7 @@ coroutine lowering は compiler 内部・stdlib intrinsics に密結合。phase 
 
 M-D1 / M-D2 / M-S(S1–S5) は達成。ここからは「サンプルが動く」→「信頼できるコンパイラ・実用フレームワーク」への引き上げ。
 > **未実装の網羅チェックリストは [`docs/remaining-tasks.md`](remaining-tasks.md)（living）に集約**。本書は研究トラックの設計背景、あちらは漏れ防止のタスク表。
-原則1（穴なし）: 各段は **end-to-end・穴なし・verify-all 緑・想定外は明示メッセージ**。サイズ目安 S/M/L/XL。
+原則1（穴なし）: 各段は **end-to-end・穴なし・検証ゲート緑（現行 ＝ verify-il / verify-differential / verify-ktproj、旧 verify-all は削除済み）・想定外は明示メッセージ**。サイズ目安 S/M/L/XL。
 
 **原則2（スコープ＝純粋な .NET バインディング）.** Kotlin.NET は **Kotlin→.NET の「バインディング」（言語コンパイラ＋包括 interop）に徹し、独自ライブラリ（特に UI ライブラリ）を同梱しない**。
 - Windowing は `System.Windows`/XAML・WPF・WinUI・Avalonia の**実型を `import` して直接**使う。Kotlin.NET 提供の UI ランタイムに依存させない。
@@ -151,7 +153,7 @@ M-D1 / M-D2 / M-S(S1–S5) は達成。ここからは「サンプルが動く�
 - **P1 差分テストハーネス（M）**: 同一 `.kt` を kotlin/jvm と kotlin/clr で実行し stdout 一致を自動 assert。corpus を増やし回帰の正本を JVM oracle に。＝「デモ」と「コンパイラ」を分ける核。M0 からの積み残し。
 - **P2 診断品質（M）**: 未対応構文・interop エラーをソース位置付き・読めるメッセージで報告（現状は一部 throw/握りつぶし）。`-Xverify-ir` 相当の健全性ゲート常設。
 - **P3 境界の null 正当性（M）**: Kotlin null 安全 ↔ .NET 参照型 / `Nullable<T>` / NRT 注釈の対応を厳密化。プラットフォーム型の扱いを定義。
-- **P4 CI（S）**: verify-all + verify-il を CI 化、サンプル行列を拡張。
+- **P4 CI（S）**: 〔現行〕verify-il + verify-differential + verify-ktproj を CI 化（旧 verify-all は削除）、サンプル行列を拡張。
 
 ## Track I — interop 完全化（穴を残さない）
 - **I1 総称型の FIR 直接注入（L）**: `<KotlinClrType>` で `List<T>`/`Dictionary<K,V>` を façade 無し注入（現状は façade 経路へ誘導）。型パラメータ付き FIR 合成＋ codegen 総称。これで注入経路の最後の穴が閉じる。
@@ -193,4 +195,4 @@ M-D1 / M-D2 / M-S(S1–S5) は達成。ここからは「サンプルが動く�
 3. **W1 純 Kotlin App**（I3 の上に flagship デモ）。
 4. L1–L4（実プログラム網羅）→ C1–C3（coroutine）→ D-IL（IL parity）→ X（配布）。
 
-各段 verify-all/verify-il 緑を必須ゲート、IL は常に C# 経路と差分一致。
+各段の必須ゲートは〔現行〕verify-il / verify-differential（kotlin/jvm 差分）/ verify-ktproj（旧 verify-all ＝ C# 差分は引退・削除済み）。

@@ -1,5 +1,7 @@
 # 設計: ユーザ定義ジェネリクスの IL 化（generic TypeBuilder）
 
+> **状態 (2026-06-30 見直し)**: HISTORICAL-DONE。純粋な generics 機構 G-1..G-6 は landed（本文どおり）。本文末尾が「**残るは interop インフラ依存のみ**」とする tail（.NET 基底ジェネリック継承 / generic .NET 型の FIR 直接注入）も **その後 LANDED** ＝ .NET assignability は完備（base class ＋ generic / explicit / self-ref interface まで実装、`cases/il-netgen2` ほか）。本書の `birType` による型パラメータ erasure → ilemit という枠組みは **bir2cir（BIR→CIR）層の導入より前**の記述（現行は型関係 ＝ bir2cir の責務へ移管中）。それ以外の項目内容に腐敗は無し。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+
 **状態: 純粋な generics 機構は完遂 ✅**（G-1 generic class/fun、G-2 generic interface、G-3 境界型パラメータ、G-4 generic-on-generic メソッド、G-5 generic indexer、G-6 宣言箇所変性）。`cases/il-generic{,2,3,4,5,6}` 実機正＋ilverify clean、全 48 IL サンプル緑。設計は設計検証エージェント（Codex 役）で .NET 10 Reflection.Emit の 8 論点を事前検証済み（下記「検証結果」）。**残るは interop インフラ依存のみ**: .NET 基底ジェネリック継承（.NET 基底継承の IL 化が前提・E-1）、generic .NET 型の FIR 直接注入（C トラック）。**学んだ追加の落とし穴**: (a) メソッド型パラメータ置換は un-baked builder の `DeclaringMethod`/`GenericParameterPosition` 反射ではなく**参照同一性**（gp builder→type arg）で行う、(b) ジェネリック param 値は `IsValueType` だけでなく `IsGenericParameter` でも box が要る（`NeedsBoxToRef`）が、`isinst` 結果（`x as? T`）は既に ref なので再 box しない、(c) **変性は参照型引数のみ**（CLR 規則、`Source<Int>`→`Source<Any>` は不可＝reified generics の帰結）。
 
 ## 検証結果（設計エージェント, .NET 10）

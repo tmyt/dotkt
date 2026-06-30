@@ -4,9 +4,11 @@
 変換する。**フロントエンド（FIR）は本物の `kotlin-compiler-embeddable` なので有効な Kotlin 構文はすべて解決**する。
 ギャップが出るのは backend = BirEmitter 側だけ。
 
+> アーキテクチャ注記: BIR→CIR→IL には現在 **bir2cir 層**がある。BirEmitter に残る CLR lowering（型 substitute / @ClrIntrinsic 等）は bir2cir へ移設中（ship-tasks.md §6）。本書のノード単位カバレッジ（各 ✅/❌）はこの移設では変わらない。
+
 **重要な不変条件**: 未対応構文は黙ってクラッシュ/誤コンパイルせず、**必ずソース位置付きのコンパイルエラー**になる
 （`BirEmitter.unsupported(node, what, detail)` が message collector に ERROR を報告し、`ClrBackendPhase` が
-`COMPILATION_ERROR` を返す）。`unsupported()` 呼び出しは現在 **8 箇所**（B5 out/ref が surface 化）。
+`COMPILATION_ERROR` を返す）。`unsupported()` 呼び出しは現在 **10 箇所**（B5 out/ref が surface 化）。
 
 最終更新: 2026-06-23。検証方法: 広範な構文 probe ＋ 全サンプルコーパス（IL ~100 + 差分 ~36、すべて緑）。
 言語/stdlib long-tail も網羅: 複合条件 smart-cast・`return` 式利用・enum per-entry 本体（abstract 基底＋サブクラス）・

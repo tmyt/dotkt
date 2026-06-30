@@ -1,6 +1,8 @@
 # CLR stdlib: reference / runtime assembly split + app-emit substitution
 
-Status: **design (design owner, 2026-06-28).** Pivot away from the single-assembly @Clr binding (which forced the C3
+> **状態 (2026-06-30 見直し)**: この設計は一部が現行アーキテクチャに置き換えられている（partially superseded）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+
+Status: **design (design owner, 2026-06-28).** Pivot away from the single-assembly @ClrIntrinsic binding (which forced the C3
 reverse-direction cascade + an ilemit-generics whack-a-mole). Realizes [[clr-stdlib-grand-strategy]] concretely.
 
 ## The problem it solves
@@ -10,7 +12,7 @@ One assembly can't serve two masters. The stdlib must present:
    Iterable`, all members) so the Kotlin frontend resolves types correctly; and
 2. a **runtime face** = BCL-bound (`System.Char`, `IReadOnlyList`, ...) for execution + .NET interop.
 
-Doing both IN ONE assembly forces the **reverse direction (C3)**: a Kotlin class implementing the @Clr-bound interface
+Doing both IN ONE assembly forces the **reverse direction (C3)**: a Kotlin class implementing the @ClrIntrinsic-bound interface
 must ALSO satisfy the BCL interface (get_Count/get_Item/GetEnumerator from Kotlin size/get/iterator). That cascade is
 open-ended (every concrete collection class) and drags in ilemit-generics edge cases. **Splitting the two faces removes
 the tension.**
@@ -20,13 +22,13 @@ the tension.**
 ### 1. `stdlib.ref.dll` — COMPILE-TIME ONLY (never loaded at runtime)
 The stdlib emitted as **pure Kotlin type shapes, NO BCL mapping**:
 - `kotlin.collections.List : Collection : Iterable`, `kotlin.Char : Comparable<Char>` — all members, pure Kotlin types.
-- The `@Clr("System.Collections.Generic.IReadOnlyList")` binding info is emitted as a **`[Clr]` CUSTOM ATTRIBUTE** on the
+- The `@ClrIntrinsic("System.Collections.Generic.IReadOnlyList")` binding info is emitted as a **`[Clr]` CUSTOM ATTRIBUTE** on the
   type/member (metadata to be READ at app-emit), NOT consumed as a binding.
 - All the `[Kotlin*]` metadata (`infix`/`operator`/`suspend`, the `[KotlinInline]` BIR payloads) — kept (the round-trip
   face).
 - Bodies stubbed (`TODO`) — never executed.
 - This is ~what `DOTKT_STDLIB_COMPILE=1` already produces (the 3.2MB pure-Kotlin assembly), with one change: under
-  stdlib-compile, `@Clr` must NOT bind (clrName returns null) and instead be emitted as a `[Clr]` attribute. So it
+  stdlib-compile, `@ClrIntrinsic` must NOT bind (clrName returns null) and instead be emitted as a `[Clr]` attribute. So it
   COMPILES trivially — pure Kotlin, **no C3, no ilemit-generics whack-a-mole** (no clrg: BCL refs are emitted at all).
 
 The frontend + bir2cir compile an app against THIS. The app's BIR/CIR references `kotlin.*` types faithfully.
@@ -49,7 +51,7 @@ base/interface lists, generic args, custom-attribute args, and method-signature 
 ### 3. `stdlib.dll` — RUNTIME (loaded at runtime)
 The genuinely-Kotlin stdlib parts (extension funs `map`/`filter`/`listOf`, the iterator bridge adapters) compiled WITH
 the substitution applied (so they have BCL signatures), real bodies, and **ALL metadata STRIPPED** (`[Kotlin*]`/`[Clr]`/
-inline-BIR). The @Clr-bound TYPES (List/ArrayList) are NOT here — they're substituted to BCL. So the runtime dll is a
+inline-BIR). The @ClrIntrinsic-bound TYPES (List/ArrayList) are NOT here — they're substituted to BCL. So the runtime dll is a
 lean executable dll. (Benefit, design owner: the [KotlinInline] BIR payloads = ~73.8% of the size live ONLY in the ref
 assembly.)
 
@@ -62,10 +64,10 @@ assembly.)
 - Substitution is BOUNDED (a table applied at a resolution chokepoint) vs the open-ended C3 cascade.
 
 ## What's reusable from prior work (all committed)
-- The `@Clr` annotation + `clrName` -> becomes the SOURCE of the `[Clr]` metadata (just emit it as an attribute under
+- The `@ClrIntrinsic` annotation + `clrName` -> becomes the SOURCE of the `[Clr]` metadata (just emit it as an attribute under
   stdlib-compile instead of binding).
 - The iterator bridge (`ClrIteratorBridge.kt`) + the `iterator()` compiler lowering -> the runtime stdlib.
-- C3a (clrIfaceMemberName reads the overridden @Clr member's BCL name) + the ilemit generic-self-call / TypeBuilder
+- C3a (clrIfaceMemberName reads the overridden @ClrIntrinsic member's BCL name) + the ilemit generic-self-call / TypeBuilder
   Instantiation robustness fixes -> the runtime build.
 
 ## Open design points (Codex consult pending)
@@ -77,13 +79,13 @@ assembly.)
 
 ## VALIDATION (2026-06-28): the pivot's core assumption HOLDS
 
-Empirically confirmed the key claim. Gated `clrName` to return null under `DOTKT_STDLIB_COMPILE` (so @Clr does NOT bind),
-added @Clr to Collection/List, and built the stdlib: **frontend 0 errors, ilemit OK, sample runs — NO C3, NO ilemit-
+Empirically confirmed the key claim. Gated `clrName` to return null under `DOTKT_STDLIB_COMPILE` (so @ClrIntrinsic does NOT bind),
+added @ClrIntrinsic to Collection/List, and built the stdlib: **frontend 0 errors, ilemit OK, sample runs — NO C3, NO ilemit-
 generics whack-a-mole.** The single-assembly approach aborted here (clrOverride / TypeBuilderInstantiation); as
 metadata-only it's a trivial pure-Kotlin build. The pivot dissolves the cascade, as designed.
 
 ### Concrete next steps (implementation order)
-1. **Ref build:** `clrName` returns null under stdlib-compile (done in spike) + EMIT @Clr as a `[Clr]` attribute. GAP found:
+1. **Ref build:** `clrName` returns null under stdlib-compile (done in spike) + EMIT @ClrIntrinsic as a `[Clr]` attribute. GAP found:
    `interfaceDef`/`ifaceMethod`/interface-property emission do NOT call `attrsJson` (only `typeDef`/`method` do). Add attrs
    to the interface paths so the [Clr] metadata rides interfaces + their members (so app-emit can read it). ilemit must
    DefineCustomAttribute on interface types/methods.
@@ -97,7 +99,7 @@ metadata-only it's a trivial pure-Kotlin build. The pivot dissolves the cascade,
 
 ### The unification: ref-mode vs substitute-mode — ONE substitution, two emit modes
 There aren't really "two builds with different rules" — there's ONE substitution mechanism and a flag:
-- **ref mode** (`DOTKT_STDLIB_COMPILE`, substitute OFF): @Clr -> `[Clr]` attr, pure Kotlin shapes. Produces `stdlib.ref.dll`.
+- **ref mode** (`DOTKT_STDLIB_COMPILE`, substitute OFF): @ClrIntrinsic -> `[Clr]` attr, pure Kotlin shapes. Produces `stdlib.ref.dll`.
 - **substitute mode** (default — used for BOTH apps AND the runtime stdlib build): compile against `stdlib.ref.dll`, then
   at emit READ its `[Clr]` attrs and substitute `kotlin.* -> BCL`. Produces app IL / `stdlib.dll`.
 So the runtime stdlib build = "substitute mode applied to the stdlib source". Apps and the runtime stdlib are emitted by
@@ -106,8 +108,9 @@ else consumes).
 
 ### Q3/Q4 — ref vs runtime signature divergence is FINE (no binary compat needed)
 The app is FULLY substituted: every `kotlin.*` type/member/call in the app IL becomes BCL or a runtime-stdlib BCL-signature
-member. `stdlib.ref.dll` is NEVER loaded at runtime. ref and runtime share the assembly NAME (`DotKt.Stdlib`) so a call
-to `DotKt.Stdlib.CollectionsKt.map` resolves to the runtime dll, but they need NOT be binary-compatible — the app references
+member. `stdlib.ref.dll` is NEVER loaded at runtime. ref and runtime have DISTINCT assembly names (ref =
+`DotKt.Private.Stdlib.dll`, runtime = `DotKt.Stdlib.dll`) so a call resolves to the runtime dll `DotKt.Stdlib`, but they
+need NOT be binary-compatible — the app references
 the SUBSTITUTED (BCL) signature, and the runtime dll (same substitution applied) provides exactly that signature. The
 substitution is the single source of truth, applied consistently to the app AND the runtime build, so signatures match by
 construction. ref.dll = compile-time type-shape + metadata provider ONLY.
@@ -131,46 +134,55 @@ args, and by-shape method-overload matching all must route through the same chok
 
 ## Step 2 fork (2026-06-28): WHERE the substitution lives — kotc vs ilemit
 
+> **SUPERSEDED (2026-06-30 見直し).** This "kotc vs ilemit" fork (and option (A)'s kotc-level placement) is no longer
+> the architecture: `@ClrIntrinsic` / type substitution is a **bir2cir** responsibility, sourced from the ref assembly
+> (`DotKt.Private.Stdlib.dll`), and the substituted CIR is a plain BCL call before `ilemit`. See [docs/ship-tasks.md](ship-tasks.md) §3.
+> Known defect: the substitution code currently still sits in `kotc`'s `BirEmitter`; it is to be moved to bir2cir (ship-tasks §6, the "current violation").
+
 Step 1 done (ref assembly carries `[Clr]` on types + members, verified). For step 2, two places to apply substitution:
 
-- **(A) kotc-level (RECOMMENDED):** when an APP references stdlib.ref.dll, restore the `[clr.Clr]` attribute as an @Clr
+- **(A) kotc-level (RECOMMENDED):** when an APP references stdlib.ref.dll, restore the `[kotlin.clr.ClrIntrinsic]` attribute as an @ClrIntrinsic
   annotation (or populate ClrTypeRegistry) on the injected/restored stdlib types+members, so the app's EXISTING clrName
   mechanism binds `List -> IReadOnlyList`, `size -> Count` at the app's BIR/CIR. Then the app's CIR is ALREADY substituted
   (clrg:IReadOnlyList) and ilemit needs NO new substitution logic (it already emits clrg:, hardened this session). The
-  runtime stdlib build gets it for free (it also references the ref assembly). UNIFIES app+runtime via the existing @Clr
-  path. COST: facadegen `--scan-asm` must emit the `[clr.Clr]` info into the injection meta + the FIR injection must restore
-  it (type-level via ClrTypeRegistry.dotNetName fallback in clrName; member-level needs @Clr-on-member restoration). The app
+  runtime stdlib build gets it for free (it also references the ref assembly). UNIFIES app+runtime via the existing @ClrIntrinsic
+  path. COST: facadegen `--scan-asm` must emit the `[kotlin.clr.ClrIntrinsic]` info into the injection meta + the FIR injection must restore
+  it (type-level via ClrTypeRegistry.dotNetName fallback in clrName; member-level needs @ClrIntrinsic-on-member restoration). The app
   is NOT stdlib-compile, so clrName is NOT gated -> it binds.
 - **(B) ilemit-level:** ilemit reads `[Clr]` from the loaded ref assembly at emit and substitutes in ResolveType (types) +
   member resolution. Touches only ilemit, but must cover every emission path (base/iface lists, generic args, member
   calls, by-shape matching) — more edge cases, and leaves the app's CIR referencing kotlin.* (substituted late).
 
-Recommendation: **(A)** — substitution at the frontend/backend boundary keeps ilemit dumb, reuses the proven @Clr
-mechanism, and unifies the app + runtime builds. Confirmed: facadegen meta for `List` currently has NO @Clr (pure Kotlin
-shape only) — so (A)'s work is "facadegen emits @Clr from [clr.Clr] + injection restores it". (Codex cross-check of the
+Recommendation: **(A)** — substitution at the frontend/backend boundary keeps ilemit dumb, reuses the proven @ClrIntrinsic
+mechanism, and unifies the app + runtime builds. Confirmed: facadegen meta for `List` currently has NO @ClrIntrinsic (pure Kotlin
+shape only) — so (A)'s work is "facadegen emits @ClrIntrinsic from [kotlin.clr.ClrIntrinsic] + injection restores it". (Codex cross-check of the
 substitution chokepoint pending.)
 
 ## Step 2B (member substitution) — sub-parts identified (2026-06-28)
+
+> **SUPERSEDED (2026-06-30 見直し).** Describes the kotc-level member substitution plumbing. In the current
+> architecture the member/type substitution from `@ClrIntrinsic` lives in **bir2cir** (sourced from the ref assembly),
+> not kotc. See [docs/ship-tasks.md](ship-tasks.md) §3; it currently still sits in `BirEmitter` (ship-tasks §6, the "current violation").
 
 Step 2A (TYPE substitution) works: facadegen emits the BCL name as the injected dotNet token, the injection registers it
 in ClrTypeRegistry, clrName binds `List -> IReadOnlyList`. Member substitution (`size -> Count`, `get -> get_Item`) is the
 next slice and has more plumbing:
 - The ref-assembly List's `size` (a property under the CLR property model) is reflected by facadegen as `fun get_size`
   (a method), not restored as `prop size`. So the app referencing it sees `get_size`, not a `size` property. Two issues:
-  (a) facadegen should RESTORE the property (so the app uses `list.size`), and (b) carry the member's [clr.Clr("Count")].
+  (a) facadegen should RESTORE the property (so the app uses `list.size`), and (b) carry the member's [kotlin.clr.ClrIntrinsic("Count")].
 - The injection (ClrTypeInjection) has no PER-MEMBER clr-name today (only the type-level ClrTypeRegistry). So a member
-  registry (member fqn -> BCL name) OR attaching an @Clr annotation to the synthesized FIR member is needed, so
+  registry (member fqn -> BCL name) OR attaching an @ClrIntrinsic annotation to the synthesized FIR member is needed, so
   clrName(member) returns the BCL name (get_Count / get_Item) at the app's call sites.
-- Then the existing call-resolution (`clrName(callee) ?: name`, the @Clr member path) emits the BCL member call.
+- Then the existing call-resolution (`clrName(callee) ?: name`, the @ClrIntrinsic member path) emits the BCL member call.
 
-So 2B = facadegen (emit member [clr.Clr] + restore properties) + injection (per-member clr name) + (reuse) clrName. The
+So 2B = facadegen (emit member [kotlin.clr.ClrIntrinsic] + restore properties) + injection (per-member clr name) + (reuse) clrName. The
 TYPE path is done; the MEMBER path is the same idea one level down. After 2B: the end-to-end app-against-ref test, then
 the runtime build + bounded C3b.
 
 ### Current overall state (this session)
 DONE+committed: design (architecture, Q1-Q5, fork A), step 1 (ref [Clr] metadata, verified), step 2A (type substitution,
-verified at meta level). Plus reusable: @Clr mechanism (class/member/rollup/top-level/extension), iterator bridge +
-iterator() lowering, C3a (clrIfaceMemberName @Clr), and ilemit robustness (generic self-calls, TypeBuilderInstantiation,
+verified at meta level). Plus reusable: @ClrIntrinsic mechanism (class/member/rollup/top-level/extension), iterator bridge +
+iterator() lowering, C3a (clrIfaceMemberName @ClrIntrinsic), and ilemit robustness (generic self-calls, TypeBuilderInstantiation,
 clrg: arity). The pivot is on a clear, validated track with no remaining UNKNOWN difficulty — the rest is the same
 substitution pattern extended to members + the app/runtime build wiring.
 
@@ -196,10 +208,15 @@ bug slipped). NO unknown difficulty, just the coordinated edits + a real end-to-
 
 ## ★ SUBSTITUTION PROVEN END-TO-END (2026-06-28) ★
 
+> **SUPERSEDED (2026-06-30 見直し).** The mechanism proven here is the kotc-level (`BirEmitter.clrName`) substitution.
+> The current architecture relocates `@ClrIntrinsic` / type substitution into **bir2cir** (sourced from the ref assembly
+> `DotKt.Private.Stdlib.dll`, producing a plain BCL call in CIR — it never reaches `ilemit`). See [docs/ship-tasks.md](ship-tasks.md) §3.
+> Known defect: it currently still sits in `BirEmitter`, to be moved to bir2cir (ship-tasks §6, the "current violation").
+
 The `=`-encoding correction works. Implemented + verified with a C# consumer:
-- facadegen: `token[2] = KotlinFqn=BclName` for a @Clr type; `clr:Count`/`clr:get_Item` token on prop/fun lines.
+- facadegen: `token[2] = KotlinFqn=BclName` for a @ClrIntrinsic type; `clr:Count`/`clr:get_Item` token on prop/fun lines.
 - injection: split tok[2] on `=` (LEFT=Kotlin identity for namespace/ClassId, RIGHT=BCL binding -> ClrTypeRegistry); the
-  prop/fun `clr:` token -> per-member binding (ClrTypeRegistry.memberNames, key=member fqn). A @Clr type (clrBinding!=null)
+  prop/fun `clr:` token -> per-member binding (ClrTypeRegistry.memberNames, key=member fqn). A @ClrIntrinsic type (clrBinding!=null)
   is FILTERED OUT of byClassId — NOT re-created as a FIR type (the jar provides the builtin shape incl. operator/infix;
   only the binding is registered). This fixed `xs[0]` failing with "operator modifier required".
 - BirEmitter.clrName: looks up an IrProperty / non-accessor IrSimpleFunction in the member registry, walking
@@ -228,8 +245,9 @@ KEY INSIGHT — the RUNTIME stdlib is built in APP-FLOW mode, NOT stdlibCompile 
   kotlin.* out of injection (the jar owns them), so a source re-defining `kotlin.collections.List` would clash. Therefore
   the runtime build compiles ONLY the FUNCTION files (listOf/map/filter/asList...), referencing the ref's types. The type
   decls live only in the ref.
-- ref and runtime share an ASSEMBLY NAME (e.g. DotKt.Stdlib) -> the app compiles against the ref's List signatures and
-  RUNS against the runtime's IReadOnlyList impls (List ≡ IReadOnlyList post-substitution). Classic .NET ref/impl swap.
+- ref and runtime have DISTINCT assembly names (ref = `DotKt.Private.Stdlib.dll`, runtime = `DotKt.Stdlib.dll`) -> the
+  app compiles against the ref's List signatures and RUNS against the runtime's IReadOnlyList impls (List ≡ IReadOnlyList
+  post-substitution). This is NOT a same-name ref/impl swap — the two dll names differ.
 
 Next concrete step: a runtime-build script that compiles the stdlib FUNCTION files (not the type-decl files) in app-flow
 mode, producing the same-named runtime assembly; set the CLR actuals' bodies (asList = `this as List<T>`, etc.); strip
@@ -238,7 +256,7 @@ ranges) if they're in the compiled set — keep them in the ref/handle separatel
 
 ## Reverse GetEnumerator bridge (C3b) — DESIGN LOCKED (2026-06-28, Codex-reviewed)
 
-A concrete Kotlin collection class implementing the @Clr-bound `List`/`Collection`/`Iterable` (now CLR IReadOnly*/
+A concrete Kotlin collection class implementing the @ClrIntrinsic-bound `List`/`Collection`/`Iterable` (now CLR IReadOnly*/
 IEnumerable) must provide `IEnumerator<T> GetEnumerator()`, but only has a Kotlin `iterator(): Iterator<T>`. The bridge:
 
 - **(A) Adapter in IL, not Kotlin (A2).** Generate `EnumeratorOverKotlinIterator<T>` directly in the ilemit backend:
@@ -250,13 +268,13 @@ IEnumerable) must provide `IEnumerator<T> GetEnumerator()`, but only has a Kotli
   if many interop scenarios need it. So a small backend-generated helper type is lowest-risk.
 - **Generate `GetEnumerator()` on each qualifying class**: `IEnumerator<T> GetEnumerator() => new
   EnumeratorOverKotlinIterator<T>(this.iterator())` + the non-generic `IEnumerable.GetEnumerator()` returning the same.
-  Emit at the class that INTRODUCES the @Clr-Iterable impl (avoid hierarchy duplicates).
+  Emit at the class that INTRODUCES the @ClrIntrinsic-Iterable impl (avoid hierarchy duplicates).
 - **(B) Break the iterator<->GetEnumerator cycle via an EXPLICIT IR call-kind, not a clrName(declaringClass) heuristic**
   (Codex's biggest risk). The generated GetEnumerator's `this.iterator()` must be a KotlinMemberCall (real method), never
   the forward-bridge lowering (which calls GetEnumerator -> infinite recursion). Mark calls ClrInterfaceBridgeCall vs
   KotlinMemberCall in BIR/CIR. Regression tests: concrete override, inherited concrete impl, abstract base, fake override,
   value-type element enumerators.
-- **(C) Minimize the surface**: @Clr-bind concrete classes WITH BCL equivalents (ArrayList->System.Collections.Generic.
+- **(C) Minimize the surface**: @ClrIntrinsic-bind concrete classes WITH BCL equivalents (ArrayList->System.Collections.Generic.
   List, HashMap->Dictionary, HashSet->HashSet) so they ARE the BCL type (no bridge); ABSTRACT bases (AbstractList/
   AbstractCollection) stay Kotlin with un-bindable interface members left ABSTRACT (an abstract class need not fully
   satisfy the interface); generate the reverse bridge ONLY for irreducibly-Kotlin concretes (EmptyList, ranges,
@@ -268,13 +286,13 @@ Implementation order: the reverse bridge (A)+(B) is the highest-leverage (unbloc
 
 ## User-library reverse-substitution: decision (A) breadcrumb — DEFERRED (2026-06-28)
 
-A USER LIBRARY (built by KCC with substitution + KEEP attrs) has `IReadOnlyList<int>` in its IL signatures. At the ABI/call
+A USER LIBRARY (built by kotc with substitution + KEEP attrs) has `IReadOnlyList<int>` in its IL signatures. At the ABI/call
 level this is SMOOTH (List ≡ IReadOnlyList, identity-preserving — a consumer's List<Int> matches). BUT for an importer to
 see the idiomatic `kotlin.collections.List`, the reverse substitution IReadOnlyList->List is AMBIGUOUS: the IL can't tell a
 substituted `List<Int>` from an explicit `IReadOnlyList<int>` interop usage. DECISION (user): **(A) breadcrumb** — record
 the original Kotlin type at each substituted position in the kept [Kotlin*] metadata, so import can restore List precisely.
 **DEFERRED** (not blocking the stdlib runtime; the stdlib uses a ref/runtime split, not reverse-import). To do later: extend
-the per-member metadata with the pre-substitution type at collection/@Clr positions; the import path (facadegen --scan-asm /
+the per-member metadata with the pre-substitution type at collection/@ClrIntrinsic positions; the import path (facadegen --scan-asm /
 the round-trip injector) reads it to reverse-map. Until then, an imported user lib shows IReadOnlyList (functional, non-idiomatic).
 
 ## Primitive conversion lowering: hardcoded NUMBER_CONV -> metadata-driven (refinement, DEFERRED 2026-06-28)
@@ -284,6 +302,6 @@ the round-trip injector) reads it to reverse-map. Until then, an imported user l
 intrinsic; ideally drive it from stdlib metadata. CLEAN DESIGN (deferred): the conversion TARGET is already the method's
 RETURN TYPE (`Int.toDouble(): Double`), so a marker annotation on the stdlib conversion methods (e.g. `@clr.ClrConv`, or
 reuse `@IntrinsicConstEvaluation`) + `conv to birType(callee.returnType)` removes BOTH NUMBER_CONV's hardcoded targets AND
-the name set — same "stdlib declares, compiler reads" philosophy as @Clr. NOT urgent: a cast is a CIL `conv` instruction
-with no method to bind to (can't be @Clr proper), so a small fixed intrinsic is acceptable; the win is removing the
+the name set — same "stdlib declares, compiler reads" philosophy as @ClrIntrinsic. NOT urgent: a cast is a CIL `conv` instruction
+with no method to bind to (can't be @ClrIntrinsic proper), so a small fixed intrinsic is acceptable; the win is removing the
 hardcoded target map. Cost = annotating ~49 conversion methods (7 conversions × 7 numeric primitives).

@@ -1,6 +1,6 @@
 # Primitive dual-representation — how kotlin.Int/Short/… emit on the CLR
 
-Status: **design decision needed** (2026-06-28). This is the hardest type-representation problem in the stdlib; the
+Status: **decided (Model-B pragmatic)** (2026-06-28). This is the hardest type-representation problem in the stdlib; the
 trigger is dotPeek showing the garbage `public class kotlin.Short : Number, Comparable<short>` (an empty shell) and the
 primitive `toDouble` no-impl load errors.
 
@@ -26,7 +26,10 @@ Two things are wrong:
 - **`kotlin.Number` has NO BCL equivalent.** CLR's numeric value types (Int32, …) share no common `Number` base. So
   `kotlin.Number` must be a real emitted type, and `Byte : Number` only holds if `Byte` is a type that extends it.
 
-## The fork
+## Considered alternatives (historical) — the Model A vs B fork
+
+> Historical. The decision is **Model-B pragmatic** — the locked outcome is the general-rule section below. This fork
+> and the recommendation that follows are retained for context.
 
 The current state is an **incoherent hybrid**: kotc emits a `kotlin.Short` TYPE (so it can sit under `Number`) while
 ALSO mapping `Short -> System.Int16` at references (so arithmetic works). The shell is the collision of the two.
@@ -44,7 +47,7 @@ ALSO mapping `Short -> System.Int16` at references (so arithmetic works). The sh
   `bin`-on-Int32; it must be method calls (`Int.plus`) OR ilemit must resolve `@kotlin.Int -> System.Int32` for IL while
   keeping `@kotlin.Int` for type metadata (which collapses the separate type unless very carefully scoped).
 
-## Recommendation
+## Recommendation (historical)
 
 The grand strategy commits to **Model B**, and the dotPeek garbage is exactly Model B done halfway. But full Model B is
 a major project (substitution machinery + value/arithmetic rework). Proposed phasing:
@@ -89,7 +92,12 @@ Trade-off: this re-accepts boxing AT THE GENERIC BOUNDARY (a JVM-ism CLR could a
 coherent `Number` hierarchy, self-referential `Comparable`, and faithful Kotlin reflection. It is the pragmatic Model-B:
 the primitive types are pure `kotlin.*` reference types in the type system, BCL only at bare-value/IL positions. RECOMMENDED.
 
-**Implementation sketch:** in `birType`/`netType`, thread a "type-argument position" flag — a primitive at a type-arg
+**Artifact split (where the substitution happens).** `ref.dll` (the pure-Kotlin stdlib surface) keeps `kotlin.Int` with
+**NO** substitution. **Both `rt.dll` and the app** perform the `kotlin.Int → System.Int32` substitution at bare-value
+positions — it is **not app-only** (see [[artifact-emission-policy]]).
+
+**Implementation sketch:** in `birType`/`netType` (these primitive maps live in `bir2cir` under the four-layer split —
+`facadegen`/`kotc`/`bir2cir`/`ilemit`), thread a "type-argument position" flag — a primitive at a type-arg
 position emits `@kotlin.Int`; bare stays `int`/`System.Int32`. Emit the primitive type definitions (Number subtypes,
 Comparable<self>, conversion members — with bodies that box/convert). Insert box/unbox coercions where a bare value
 crosses into a type-arg slot and back. (Supertype args are just the first type-arg case this covers.)

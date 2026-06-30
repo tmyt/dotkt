@@ -1,12 +1,14 @@
 # bir2cir Handoff
 
+> **状態 (2026-06-30 見直し)**: この文書は大半が陳腐化している（MOSTLY-STALE）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+
 Last updated: 2026-06-27
 
 This note is for agents resuming the FIR -> BIR -> CIR -> IL split work.
 
 ## Current State
 
-The active `bir2cir` direction is documented in [design-fir-bir-cir-il.md](design-fir-bir-cir-il.md). The current implementation keeps `--compat-bir` as the production path and uses `--native-cir` for schema/lowering development only.
+The active `bir2cir` direction is documented in [design-fir-bir-cir-il.md](design-fir-bir-cir-il.md). `--native-cir` is the TARGET default mode; `--compat-bir` is being removed (nothing has shipped, so the byte-for-byte invariant is abandoned — [[break-for-elegance]]).
 
 Recent committed milestones on `main`:
 
@@ -19,7 +21,7 @@ Recent committed milestones on `main`:
 - `Lower resolved type sites in native draft`: resolved BIR type strings are replaced with `clr.typeRef` objects in `cirDraft.loweredBir`.
 - `Executable native CIR`: `cirDraft.executableCir` rewrites uniquely resolved reference constructors/methods/fields to native `clr.newobj`/`clr.call`/`clr.ldfld`/`clr.stfld` nodes with `memberRef` metadata, and `ilemit` emits those nodes directly. Generic method `typeArgs` are preserved on `clr.call` and emitted via `MakeGenericMethod`; constructed generic owners are preserved as node `ownerType`; physical `clrPropGet`/`clrPropSet` and `clrEventAdd`/`clrEventRemove` nodes are lowered to native calls/field ops when reference metadata is available. Physical type/nullable/reflection/enum operations are now lowered to `clr.conv`, `clr.isinst`, `clr.castclass`, `clr.isinst.ref`, `clr.safeCast.value`, `clr.nullable.*`, `clr.typeof`, `clr.getType`, and `clr.enum.*`. Object-identity helpers (`objEq` / `objMethod`) are lowered to `clr.obj.eq` / `clr.obj.method`.
 
-Important invariant: `--compat-bir` must remain byte-for-byte BIR-compatible because `ilemit` still consumes that mode.
+Note: the old `--compat-bir` byte-for-byte BIR-compatibility invariant is DROPPED ([[break-for-elegance]]) — nothing has shipped, so `--compat-bir` is being deleted rather than kept binary-stable.
 
 ## What Native CIR Emits Now
 
@@ -70,7 +72,7 @@ dotnet build/bir2cir-bin/bir2cir.dll /tmp/cir-compat-handoff build/bir-kctx/app.
 cmp -s build/bir-kctx/app.bir.json /tmp/cir-compat-handoff/app.cir.json
 ```
 
-Smoke-test the current production path:
+Smoke-test the legacy `--compat-bir` path (default today, being removed):
 
 ```bash
 scripts/dotkt.sh --no-stdlib --run -d /tmp/dotkt-bir2cir-check cases/m0/M0.kt
@@ -102,14 +104,6 @@ scripts/dotkt.sh --native-cir --no-stdlib --run -d /tmp/dotkt-native-cir-handoff
 
 They are stamped `[CompilerGenerated]` plus DotKt metadata and are read back by `facadegen` / `bir2cir` as ordinary `func:` types.
 
-The current stdlib emit still stops in `ilemit` at:
-
-```text
-System.NotSupportedException: field kotlin.random.Random.INSTANCE not found
-```
-
-That is a known downstream stdlib/ilemit issue, not a `bir2cir --compat-bir` regression by itself.
-
 ## Worktree Warning
 
 At the time this handoff was written, the repo had unrelated uncommitted work outside `bir2cir`:
@@ -131,7 +125,7 @@ Do not revert or clean these unless the user explicitly asks.
 The full remaining-work map is in **[bir2cir-migration-inventory.md](bir2cir-migration-inventory.md)**: all 102 BIR node kinds classified, with only ~34 being genuine near-term `bir2cir` `clr.*` targets (26 BasicLowering + 8 ClrProjection); the rest retire to stdlib (25), are control-flow pass-through (21), or belong to the deferred suspend (17) / inline (3) phases. The plan there is breaking-changes-aware ([[break-for-elegance]]): nothing has shipped, so the `--compat-bir` byte-for-byte invariant is being abandoned.
 
 1. **Wave 1 — DONE (2026-06-27).** All 12 self-contained physical primitives lower to `clr.*` in `ExecutableCirDraft` (`TryLowerPhysicalArrayOp`/`ArithOp`/`BasicOp`/`StackOp`), each with a `verify-native-cir-ilemit.sh` fixture: arrays (`clr.ldelem`/`clr.stelem`/`clr.ldlen`/`clr.newarr`), `bin`/`un` (`clr.bin`/`clr.un`), `const`/`default` (`clr.const`/`clr.default`), `nullableOf` (`clr.nullable.wrap`), `concat` (`clr.str.concat`), `stack*` (`clr.stackalloc`/`clr.stack.get`/`clr.stack.set`). Legacy ilemit cases are kept (still used by `--compat-bir`); they get deleted at Milestone 0.
-2. **Wave 2 — DONE (2026-06-27).** `spreadConcat` → `clr.array.spread`, `stackAsSpan` → `clr.stack.asSpan`, `constrainedCall` → `clr.constrained.compareTo` (`newArray` was Wave 1). `verify-native-cir-ilemit.sh` now has 18 PASS. **Milestone 0** (flip default to `--native-cir`, delete `--compat-bir`) is next but is BLOCKED on the DotKt.Stdlib emit crash (`ilemit` `DeclareMethod` `KeyNotFoundException: 'kotlin.collections.List'`); `.ktproj`/`verify-il` only survive on the *cached* `build/dotkt-stdlib/DotKt.Stdlib.dll` — do NOT run `scripts/build-dotkt-stdlib.sh` (it deletes the cache). Fixing that crash is the real unblock and also the gateway to the stdlib-retire core.
+2. **Wave 2 — DONE (2026-06-27).** `spreadConcat` → `clr.array.spread`, `stackAsSpan` → `clr.stack.asSpan`, `constrainedCall` → `clr.constrained.compareTo` (`newArray` was Wave 1). `verify-native-cir-ilemit.sh` now has 18 PASS. The earlier DotKt.Stdlib emit crash is resolved and the stdlib rebuilds (use the non-destructive `scripts/build-clr-stdlib.sh --emit`), so **Milestone 0**'s remaining work is purely the flip to `--native-cir` as default + deletion of the `--compat-bir` path; it is also the gateway to the stdlib-retire core.
 3. **Waves 3-6 are gated on shared infrastructure** (see inventory): a per-method scope/type environment (`this`/`local`), a same-module member resolver (`setField`/`lateinit`/byref family), then the reference-metadata overload resolver (physical `clr*` calls), and finally delegate/closure construction.
 4. **Parallel non-wave workstreams:** retire the 25 stdlib intrinsics out of the compiler (several ilemit cases are already dead code — delete, don't migrate), and the deferred suspend/inline phases.
 

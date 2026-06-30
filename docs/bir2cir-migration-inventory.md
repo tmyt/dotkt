@@ -12,13 +12,17 @@ each with a `verify-native-cir-ilemit.sh` fixture (18 PASS):
 `nullableOf` → `clr.nullable.wrap`; `concat` → `clr.str.concat`;
 `stackAlloc`/`stackGet`/`stackSet`/`stackAsSpan` → `clr.stackalloc`/`clr.stack.get`/`clr.stack.set`/`clr.stack.asSpan`;
 `spreadConcat` → `clr.array.spread`; `constrainedCall` → `clr.constrained.compareTo`.
-Next: **Milestone 0** (flip default to `--native-cir`, delete `--compat-bir`) — but see the blocker below, then
+Next: **Milestone 0** (flip default to `--native-cir`, delete `--compat-bir`), then
 Waves 3-6 (env / same-module resolver / reference-metadata resolver / delegates).
 
-**Blocker for Milestone 0 / corpus gate:** DotKt.Stdlib emit currently aborts in `ilemit` `DeclareMethod`
-(`KeyNotFoundException: 'kotlin.collections.List'`). `.ktproj`/`verify-il` builds only survive on a *cached*
-`build/dotkt-stdlib/DotKt.Stdlib.dll`; do NOT run `scripts/build-dotkt-stdlib.sh` (it deletes that cache and
-can't rebuild). Fixing this crash is a prerequisite for flipping the default and for the stdlib-retire core.
+**Milestone 0 status:** the earlier DotKt.Stdlib emit crash is resolved and the stdlib rebuilds (via the
+non-destructive `scripts/build-clr-stdlib.sh --emit`), so Milestone 0's only remaining work is the flip to
+`--native-cir` as default + deletion of the `--compat-bir` path.
+
+**Invariant:** `@ClrIntrinsic` is a substitution label sourced from the ref assembly and is consumed *in bir2cir*
+(rewritten to a plain BCL call in CIR) — it never appears in CIR nor reaches `ilemit`. The pipeline uses three
+distinct reference dlls: `kotc` → `stdlib.jar`; `bir2cir` → `DotKt.Private.Stdlib.dll` (ref); `ilemit` →
+`DotKt.Stdlib.dll` (rt).
 
 ## Summary
 
@@ -48,7 +52,7 @@ Of **102** BIR node kinds across 13 families, only **34** are genuine near-term 
 
 Kinds: `arrayLen`, `arrayGet`, `arraySet`, `bin`, `un`, `const`, `default`, `nullableOf`, `concat`, `stackAlloc`, `stackGet`, `stackSet`
 
-MILESTONE/PRECONDITION: before this wave, flip the default to --native-cir and DELETE the --compat-bir path - native-cir already passes through every unmigrated node byte-identically, so the only safety gate is verify-native-cir-ilemit.sh staying green, not BIR equality. Each kind here is a pure physical CIL op whose element/result type travels on the node (or needs none): no scope environment and no @Clr/reference lookup. They wrap cleanly because their operand children stay as raw local/this nodes that ilemit still consumes until later waves. Mirror the proven TryLowerPhysicalTypeOp->clr.conv/clr.isinst pattern with a sibling helper + a mirrored ilemit clr.* case; nullableOf is a zero-new-code alias onto the already-shipped clr.nullable.wrap. One TryLowerPhysical*+fixture+commit increment per kind; delete each legacy ilemit case and any retired intrinsic as it lands. Watch the hidden const-null->Nullable<T> coercion (EmitNullableCoerced): lift it to an explicit clr.nullable.null during lowering or it silently regresses Int? literals.
+MILESTONE/PRECONDITION: before this wave, flip the default to --native-cir and DELETE the --compat-bir path - native-cir already passes through every unmigrated node byte-identically, so the only safety gate is verify-native-cir-ilemit.sh staying green, not BIR equality. Each kind here is a pure physical CIL op whose element/result type travels on the node (or needs none): no scope environment and no @ClrIntrinsic/reference lookup. They wrap cleanly because their operand children stay as raw local/this nodes that ilemit still consumes until later waves. Mirror the proven TryLowerPhysicalTypeOp->clr.conv/clr.isinst pattern with a sibling helper + a mirrored ilemit clr.* case; nullableOf is a zero-new-code alias onto the already-shipped clr.nullable.wrap. One TryLowerPhysical*+fixture+commit increment per kind; delete each legacy ilemit case and any retired intrinsic as it lands. Watch the hidden const-null->Nullable<T> coercion (EmitNullableCoerced): lift it to an explicit clr.nullable.null during lowering or it silently regresses Int? literals.
 
 ### Wave 2: Composite/constructed physical primitives (still no env/metadata, med risk)
 
@@ -72,7 +76,7 @@ Builds on wave 3's env plus a NEW same-module field/member resolver (today's res
 
 Kinds: `clrStaticField`, `clrNew`, `clrStatic`, `clrInstance`, `boundClrDelegateNew`, `clrGenericStatic`, `clrGenericInstance`
 
-The heaviest shared dependency: a unified reference-metadata method/ctor/field resolver with real overload resolution (argTypes->exact/arity, generic clrg: owners, inherited interface members, generic-method shape + MakeGenericMethod). Mirror the existing TryLowerPhysicalProperty/Event into TryLowerPhysicalCall/New/StaticField; the consumers already exist (EmitNativeClrCall/NewObj/FieldGet) so ilemit then deletes six legacy reflection cases. Order within the wave by rising risk: clrStaticField (single Unit singleton - or retire as a fixed clr.ldsfld with no lookup) -> clrNew -> clrStatic/clrInstance -> boundClrDelegateNew (new delegate-bind resolved site) -> clrGenericStatic/clrGenericInstance LAST (generic shape resolution + variance + MakeGenericMethod). NB many clrStatic/clrGenericStatic producers are stdlib intrinsics (Math/String.Format/Convert/LINQ/Seq) that exit via the retire workstream, not this projection wave - the node KIND is still legitimate ClrProjection for genuine @Clr calls.
+The heaviest shared dependency: a unified reference-metadata method/ctor/field resolver with real overload resolution (argTypes->exact/arity, generic clrg: owners, inherited interface members, generic-method shape + MakeGenericMethod). Mirror the existing TryLowerPhysicalProperty/Event into TryLowerPhysicalCall/New/StaticField; the consumers already exist (EmitNativeClrCall/NewObj/FieldGet) so ilemit then deletes six legacy reflection cases. Order within the wave by rising risk: clrStaticField (single Unit singleton - or retire as a fixed clr.ldsfld with no lookup) -> clrNew -> clrStatic/clrInstance -> boundClrDelegateNew (new delegate-bind resolved site) -> clrGenericStatic/clrGenericInstance LAST (generic shape resolution + variance + MakeGenericMethod). NB many clrStatic/clrGenericStatic producers are stdlib intrinsics (Math/String.Format/Convert/LINQ/Seq) that exit via the retire workstream, not this projection wave - the node KIND is still legitimate ClrProjection for genuine @ClrIntrinsic calls.
 
 ### Wave 6: Delegate and closure construction (same-module lifted methods/closure types)
 

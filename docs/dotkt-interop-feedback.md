@@ -1,5 +1,9 @@
 # DotKt 言語基盤へのフィードバック — 実 .NET 型 interop の課題
 
+> **状態 (2026-06-30 見直し)**: これは 2026-06 の WinUI bring-up スナップショット（当時の不具合一覧）であり、**生きたブロッカー一覧ではない**。下記のうち (1)(2)(7)(8)(9) は既に解消済み（各項目に RESOLVED を付記）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+>
+> 解消の要点: .NET 代入互換（基底クラス＋ジェネリック/明示/自己参照インターフェース）が完成し、WinUI の Counter は実機で動作する（メモリ `inheritance-interface-injection`）。レシーバ付きラムダ・多段クロージャキャプチャ・ネストパラメータラムダは Flow の `capturedVars` 修正と suspend レシーバラムダ対応で解消。`<KotlinClrType>` は旧名で現行は `<DotKtImport>`（本文 (5) 参照）。
+
 `dotktx.ui.winui`（WinUI を Kotlin で宣言的に駆動するライブラリ）を実装する中で、DotKt の
 **型インジェクタ（`facadegen`）** と **IL バックエンド（`ilemit`）** に、実用上ふさぎたい
 制約が見つかった。Windows 実機ビルドのエラーと、各ツールのソース解析から、症状・根本原因・最小再現・
@@ -13,7 +17,8 @@ DSL の書き味（Compose 風レシーバラムダなど）を制約した。
 
 ## Part 1. 型インジェクタ（facadegen）— WinUI を阻む本丸
 
-### (1) 注入型に基底クラス／インターフェース階層が無い ★最優先
+### (1) 注入型に基底クラス／インターフェース階層が無い ★最優先 — ✅ RESOLVED (2026-06-22)
+> **RESOLVED**: .NET 代入互換が完成（基底クラス鎖＋ジェネリック/明示/自己参照インターフェースを注入）。`StackPanel` を `Panel` として、`TextBlock` を `UIElement` として渡せる。メモリ `inheritance-interface-injection`。
 - **症状（Windows 実機）**:
   `argument type mismatch: actual type is 'TextBlock', but 'UIElement' was expected`
   （`Panel.Children.Add(UIElement)` に `TextBlock` を渡せない。`StackPanel` を `Panel` として扱えない）
@@ -25,7 +30,8 @@ DSL の書き味（Compose 風レシーバラムダなど）を制約した。
   少なくとも「同時に注入されている祖先型」へはスーパータイプを張る。理想は、参照アセンブリから
   祖先・実装インターフェースを**自動的に併せて注入**して鎖を再構築する（→ (6) と同根）。
 
-### (2) public メンバしか注入しない → protected 仮想メソッドを override できない ★最優先
+### (2) public メンバしか注入しない → protected 仮想メソッドを override できない ★最優先 — ✅ RESOLVED (2026-06-22)
+> **RESOLVED**: protected/virtual メンバを注入し `open`/`abstract` として出すので Kotlin サブクラスから override 可能。`Application.OnLaunched` の override が通り、WinUI Counter が実機で起動する。
 - **症状（Windows 実機）**: `'OnLaunched' overrides nothing`
   （`Microsoft.UI.Xaml.Application` の `protected virtual void OnLaunched(...)` を override できない）
 - **根本原因**: メンバ収集が `BindingFlags.Public | Instance/Static`（`Program.cs:142, 222, 332`）。
@@ -77,13 +83,13 @@ DSL の書き味（Compose 風レシーバラムダなど）を制約した。
 Linux 上で純 Kotlin として bring-up する過程で判明（WinUI 非依存。再現コマンドは
 `dotktx.ui.winui/tools/verify-core.sh` 系）。回避はできているが、本来は通したい。
 
-- **(7) レシーバ付きラムダ非対応**: `build: Scope.() -> Unit` の暗黙レシーバ `$this$build` が
-  `load unknown var` で落ちる（inline でも不可）。→ Compose の `Column { Text() }` 形が書けず、
-  「引数なしラムダ + グローバルな現在の親」で代替した。
-- **(8) クロージャのキャプチャが 1 ラムダ境界まで**: 変数を使わない中間ラムダを跨ぐ多段キャプチャが
-  `load unknown var X` で落ちる。→ `State` は使うブロック内で宣言する制約に。
-- **(9) ネストしたラムダが自前パラメータを持つと不可**: `outer { x -> inner { s -> ... } }` の内側
-  `{ s -> }` が `load unknown var s`。引数なしラムダのネストは可。
+- **(7) レシーバ付きラムダ非対応 — ✅ RESOLVED**: `build: Scope.() -> Unit` の暗黙レシーバ `$this$build` が
+  `load unknown var` で落ちていた。suspend レシーバラムダ対応（`emitCoroutineBody` が拡張レシーバを先頭パラメータ/フィールド化）と
+  併せて解消し、Compose 風の `Column { Text() }` 形が書ける（design-coroutines-clr.md §13p）。
+- **(8) クロージャのキャプチャが 1 ラムダ境界まで — ✅ RESOLVED**: 変数を使わない中間ラムダを跨ぐ多段キャプチャが
+  `load unknown var X` で落ちていたが、Flow の `capturedVars` 修正（ネストラムダ自身のパラメータを宣言済み集合に加える）で解消（design-coroutines-clr.md §13i）。
+- **(9) ネストしたラムダが自前パラメータを持つと不可 — ✅ RESOLVED**: `outer { x -> inner { s -> ... } }` の内側
+  `{ s -> }` の `load unknown var s` も同じ `capturedVars` 修正で解消。
 - **(10) `object` シングルトン未 lowering**: `IrGetObjectValueImpl has no .NET lowering`。
   共有状態に `object` が使えない（companion object は facadegen が静的注入に使っているので要注意）。
 - **(11) クロスファイルのトップレベル可変プロパティ参照が壊れる**: 参照元ファイルの `<File>Kt` を

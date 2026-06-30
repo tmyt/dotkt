@@ -12,6 +12,12 @@ Background / decisions this plan builds on: [coroutine-abi.md](coroutine-abi.md)
 (two-layer Continuation/Task model). This doc is the *migration* plan, not new ABI design — the ABI is settled:
 **a `suspend fun` is `Task<T>` on the CLR surface; the Continuation core is the internal lowered form.**
 
+This plan **SUPERSEDES the runtime-home decision in [design-coroutines-clr.md](design-coroutines-clr.md) §14 / §14a**
+("all ship in DotKt.Runtime.dll"): the `kotlin.coroutines.*` / `kotlin.sequences.*` runtime moves into the stdlib
+`clr/` actuals and `DotKt.Runtime` is eliminated. Naming note: `@Clr` is the current `kotlin.clr.ClrIntrinsic`; and the
+Kotlin↔CLR suspend lowering is a **bir2cir-layer** concern (ilemit just emits the resolved CLR form) — the older
+BirEmitter→ilemit framing predates that split.
+
 ## 0. Goal
 
 The pure-Kotlin `DotKt.Stdlib` is the runtime. It must **self-provide every CLR coroutine type** an emitted `suspend

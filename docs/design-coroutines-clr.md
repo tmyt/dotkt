@@ -1,5 +1,13 @@
 # Design groundwork: coroutines on CLR / building kotlinx.coroutines
 
+> **状態 (2026-06-30 見直し)**: HISTORICAL/AS-BUILT record of Track-1 (the standalone coroutine compiler surface). 現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+>
+> 補足:
+> - **ABI (§1–§12) と Track-2 (本物の kotlinx-coroutines-core を `dotktx.coroutines` としてコンパイルする計画) は今も有効** — `suspend fun ⇔ Task<T>`（Continuation は internal）という ABI 契約は現行 ground truth と一致するので変更しない。
+> - **ランタイム配置 (§13b / §14 / §14a の「all ship in DotKt.Runtime.dll」) は SUPERSEDED** — コルーチンランタイムは stdlib の `clr/` actuals へ移動中で、`runtime/DotKt.Runtime/Coroutines.cs` は削除予定。正は [docs/coroutine-stdlib-port-plan.md](coroutine-stdlib-port-plan.md)。この移動は **IN-FLIGHT**（当該ファイルはまだ存在し、`CoroutineBridgeClr.kt` 等のブリッジは未作成）。
+> - **BirEmitter / ilemit という帰属は bir2cir レイヤ分割より前の枠組み** — 現行は 4 層（facadegen / kotc / bir2cir / ilemit）で、Kotlin↔CLR の suspend lowering は bir2cir の責務。当時の本文は BirEmitter→ilemit の 2 段で記述している。
+> - 命名: `@Clr` / `@ClrAwait` は現行 `kotlin.clr.ClrIntrinsic`。
+
 Status: **the coroutine compiler surface is FULLY IMPLEMENTED** (2026-06-22…06-23), all green + ilverify-clean.
 Done (each with an `il-*` sample in scripts/verify-il.sh): suspend funs (linear/loop/branch/spilling/
 condition-position suspension/try-catch- AND try-finally-around-await), suspend lambdas incl. receiver-style
@@ -211,6 +219,10 @@ withContext/coroutineScope/runBlocking) → 5 full commonMain (Flow/Channel) = h
 sequence{} fold-in (#42) + UI dispatcher. Full plan: `~/.claude/plans/eager-tinkering-scroll.md`.
 
 ## 13b. Phase 1 locked design (2026-06-21, PoC-proven)
+
+> **SUPERSEDED (runtime home).** The "ship in a runtime DLL" decision below is replaced by
+> [coroutine-stdlib-port-plan.md](coroutine-stdlib-port-plan.md): the Continuation runtime moves into the stdlib
+> `clr/` actuals (`DotKt.Runtime` being eliminated). IN-FLIGHT. The *shapes* (Result/Continuation/Context/sink) below remain accurate.
 
 **Continuation runtime = shared types in the `DotKt.Coroutines` NAMESPACE** (originally a separate `DotKt.Coroutines.dll`;
 folded into `DotKt.Runtime.dll` 2026-06-23, see §14 — and split by Kotlin namespace per §14a). The backend maps the
@@ -608,6 +620,11 @@ ALL of Track-1. A real `Dispatchers.Default`/`Main` (ThreadPool / Synchronizatio
 
 ## 14. Runtime assembly refactor — DotKt.Coroutines.dll folded into DotKt.Runtime.dll (2026-06-23)
 
+> **SUPERSEDED (runtime home).** "All ship in DotKt.Runtime.dll" is no longer the target. Per
+> [coroutine-stdlib-port-plan.md](coroutine-stdlib-port-plan.md) these `kotlin.coroutines.*` / `kotlin.sequences.*`
+> types move into the pure-Kotlin stdlib `clr/` actuals and `runtime/DotKt.Runtime/Coroutines.cs` is deleted — IN-FLIGHT
+> (that file still exists). The `kotlinx.*` stopgaps still graduate to `dotktx.coroutines` (Track 2).
+
 Per the namespace=boundary principle (`kotlin.*` → DotKt.Runtime; `kotlinx.*` → its own dotktx.* assembly), the
 stray `DotKt.Coroutines.dll` ASSEMBLY (it held `kotlin.coroutines` lowerings — Continuation/CoroutineContext/Result/
 Unit/intrinsics/intercepted + the sequence/Flow/Channel/select stopgap helpers) is folded into `DotKt.Runtime.dll`.
@@ -634,3 +651,6 @@ of the corresponding Kotlin namespace):
 All still ship in DotKt.Runtime.dll for now; the `DotKtx.*` (kotlinx) sets graduate to their own `dotktx.*`
 assemblies when the real upstream is compiled (Track 2). Compiler type maps + sample @Clr facades updated to match;
 full suite green, ilverify-clean.
+
+> **SUPERSEDED (runtime home).** "All still ship in DotKt.Runtime.dll" describes the 2026-06-23 state only; the
+> `kotlin.*` sets are being ported into the stdlib `clr/` actuals per [coroutine-stdlib-port-plan.md](coroutine-stdlib-port-plan.md) (IN-FLIGHT). The namespace-mirroring rationale is still the design intent.

@@ -14,8 +14,8 @@ compiler's filter-lowerings, not add more).
    the common stdlib source references (`Random`, `Grouping`, `StringBuilder`, ranges, the array/collection helpers) gets
    a Kotlin declaration in the CLR source set (`runtime/stdlib/clr/`) — a stub body (`= TODO()`) is fine at this step.
    This makes the library syntactically whole so it compiles + emits.
-2. **Fill in the annotations that lower each stub `actual` to its CLR type.** Annotate the stubs (`@Clr("System.Text.StringBuilder")`,
-   …) so the compiler's EXISTING @Clr/injection lowering turns them into the BCL type/call. This is purely stdlib-side
+2. **Fill in the annotations that lower each stub `actual` to its CLR type.** Annotate the stubs (`@ClrIntrinsic("System.Text.StringBuilder")`,
+   …) so the compiler's EXISTING @ClrIntrinsic/injection lowering turns them into the BCL type/call. This is purely stdlib-side
    work; when it's done **the stdlib actually works end to end** (no TODO throws left on the hot paths).
 3. **Reverse direction — FIR injection read-as.** When a .NET type arrives FROM the CLR and is injected into FIR, read it
    AS the corresponding Kotlin stdlib type (the `IEnumerable<T>`→`Iterator<T>`/`Iterable` reading already partly done).
@@ -43,7 +43,7 @@ The design owner (2026-06-25) drew the line: "最終的に一部の java.* packa
   This is the SAME role as the existing foundational `kotlin.collections.List/Set/Map → BCL` mapping — a fixed interop
   layer, not a per-op 固有実装 that grows. So `isSetType += java.util.HashSet` is correct *as a java.\* lowering*; a
   denylist or a `kotlin.collections.HashSet` special-case is not.
-- **@Clr / FIR-injection layer:** @Clr-annotated declarations + the reverse read-as (CLR `IEnumerable<T>` injected →
+- **@ClrIntrinsic / FIR-injection layer:** @ClrIntrinsic-annotated declarations + the reverse read-as (CLR `IEnumerable<T>` injected →
   `Iterator`/`Iterable`), so .NET types flow in as the Kotlin stdlib types.
 
 ## Goal
@@ -118,53 +118,56 @@ The residual ~280 (with the jar) / ~1283 (standalone) break down as:
 6. **Enum bootstrap** reconciliation (`name`/`ordinal`).
 7. Retire the `COLLECTION_OPS` hand-catalog as the compiled functions take over (keep a fast-path only where it pays).
 
-## How the compiled stdlib is consumed
+## How the compiled stdlib is consumed — the pipeline's three references
 
-`DotKt.Stdlib.dll` (the compiled `src` common + `clr` actuals) is **auto-referenced by every `.ktproj`** via the SDK
-— exactly the role DotKt.Runtime plays today. A user's `listOf(1).map { it*2 }` then emits **calls into
-DotKt.Stdlib's compiled methods** instead of the hand-lowering catalog; the collection TYPES are `@Clr`-bound to BCL
-(below), so values flow as BCL types and the compiled functions operate on them.
+The pipeline is **4 layers** (kotc → bir2cir → ilemit), and the stdlib is consumed through **three distinct
+references**, one per stage (ship-tasks.md §0):
 
-Frontend resolution falls out for free: **DotKt.Stdlib is self-describing by construction.** Because it is built with
+- **kotc → `stdlib.jar`** (the frontend jar built from the CLR stdlib sources). kotc resolves `kotlin.*` symbols against
+  it — Kotlin space only, **no CLR knowledge**, and no JVM `kotlin-stdlib.jar` leak. A user's `listOf(1).map { it*2 }`
+  resolves to the real stdlib functions here.
+- **bir2cir → `DotKt.Private.Stdlib.dll`** (the *ref* dll: pure `kotlin.*` with **every `@ClrIntrinsic` attribute
+  preserved**). bir2cir reads the `@ClrIntrinsic` labels and **substitutes the BCL call into CIR**; the collection TYPES
+  are `@ClrIntrinsic`-bound to BCL (below), so values flow as BCL types and the compiled functions operate on them.
+  This `@ClrIntrinsic` substitution is **bir2cir's responsibility (currently in BirEmitter, being migrated** —
+  ship-tasks.md §6 tracks it as a current layer violation).
+- **ilemit → `DotKt.Stdlib.dll`** (the *rt* dll: the emitted implementation). ilemit is **Kotlin-free** — it never sees
+  an `@ClrIntrinsic` label.
+
+Frontend resolution falls out for free: **the stdlib is self-describing by construction.** Because it is built with
 DotKt's OWN compiler, the round-trip metadata (`[KotlinFunction]` / `[KotlinFileClass]` / NRT, embedded per assembly —
-memory `metadata-attrs-embedded-nrt-nullability`) is emitted automatically, so kotc resolves `kotlin.*` against
-DotKt.Stdlib via facadegen (the round-trip path, memory `interop-surface-complete`) — **no kotlin-stdlib.jar in the
-consumer**. The model is simply **"forward `kotlin.*` to DotKt.Stdlib"**: the compiler's existing `kotlin.*`
-special-casing flips from "hand-lower to LINQ/intrinsic" to "resolve + call the compiled stdlib method."
-
-The jar survives only as a **bootstrap crutch for compiling the stdlib ITSELF** (and even that goes away once the `clr`
-actuals provide the platform layer, so `src + clr` compiles standalone). Consuming the stdlib never needs it.
+memory `metadata-attrs-embedded-nrt-nullability`) is emitted automatically, so facadegen recovers the Kotlin semantics
+from the ref dll (the round-trip path, memory `interop-surface-complete`). The model is **"resolve `kotlin.*` against the
+stdlib jar, then substitute `@ClrIntrinsic` → BCL at bir2cir"** — replacing the old "hand-lower to LINQ/intrinsic in the
+compiler."
 
 Because the stdlib exercises the *entire* language surface (generics, extensions, operators, inline, …), it is the
 ultimate stress test of the round-trip metadata — expect `interop-surface-complete` / `kotlin-modifier-roundtrip` gaps
 to surface here.
 
-**Hybrid:** the hot ops (`map`/`filter` → LINQ) stay hand-lowered as a fast-path (inlined, faster); the long tail comes
-from DotKt.Stdlib. So `COLLECTION_OPS` is demoted to an optimization, not fully retired.
-
-## Binding actuals: the `@Clr*` attribute family (stub types)
+## Binding actuals: the `@ClrIntrinsic*` attribute family (stub types)
 
 The `clr` actuals are **stub types** — ambient/external Kotlin declarations bound to a BCL type, resolved by the
 frontend but NOT emitted (codegen redirects to the real .NET type). **This stub mechanism already exists**: a
-`@Clr("System.X")` source class is filtered out of emission (`BirEmitter.kt`, `clrName(it) == null` guard) and
-references to it map to `clr:System.X`. So a hand-written `@Clr` stub works today — the injected facadegen types use the
+`@ClrIntrinsic("System.X")` source class is filtered out of emission (`BirEmitter.kt`, `clrName(it) == null` guard) and
+references to it map to `clr:System.X`. So a hand-written `@ClrIntrinsic` stub works today — the injected facadegen types use the
 same path.
 
-**Member-name lowering already works — no new attribute is needed.** `@Clr` is already applicable to FUNCTION and
+**Member-name lowering already works — no new attribute is needed.** `@ClrIntrinsic` is already applicable to FUNCTION and
 PROPERTY (`@Target(CLASS, FUNCTION, PROPERTY)`), and the call emitter already uses `clrName(callee) ?: name` /
-`clrName(prop) ?: name` (`BirEmitter.kt:3075/3090/3103`). So `@Clr("Add")` on a member lowers the call to the .NET name.
-**Verified end-to-end**: a hand-written `@Clr("System.Text.StringBuilder") class Buf { @Clr("Append") fun add(s); @Clr("ToString") fun render() }`
-runs (`b.add("hi").add("!"); b.render()` → "hi!"). So the `clr` actuals are written with `@Clr` alone:
+`clrName(prop) ?: name` (`BirEmitter.kt:3075/3090/3103`). So `@ClrIntrinsic("Add")` on a member lowers the call to the .NET name.
+**Verified end-to-end**: a hand-written `@ClrIntrinsic("System.Text.StringBuilder") class Buf { @ClrIntrinsic("Append") fun add(s); @ClrIntrinsic("ToString") fun render() }`
+runs (`b.add("hi").add("!"); b.render()` → "hi!"). So the `clr` actuals are written with `@ClrIntrinsic` alone:
 
 ```kotlin
-@Clr("System.Collections.Generic.List`1")   // class: stub, not emitted, redirected to the BCL type
+@ClrIntrinsic("System.Collections.Generic.List`1")   // class: stub, not emitted, redirected to the BCL type
 actual class ArrayList<T> {
-    @Clr("Add")   actual fun add(e: T)        // member: call lowers to List.Add
-    @Clr("Count") actual val size: Int        // property: lowers to List.Count
+    @ClrIntrinsic("Add")   actual fun add(e: T)        // member: call lowers to List.Add
+    @ClrIntrinsic("Count") actual val size: Int        // property: lowers to List.Count
 }
 ```
 
-Operators already map too (`op_*` handling at the call site). The remaining `@Clr*` ideas (`@ClrIndexer` for Kotlin
+Operators already map too (`op_*` handling at the call site). The remaining `@ClrIntrinsic*` ideas (`@ClrIndexer` for Kotlin
 `get`/`set` ↔ .NET indexer, `@ClrCtor` for ctor-signature selection) are refinements to add only where a stdlib member
 needs them — not prerequisites. This is a GENERAL idiomatic-.NET-binding mechanism; the stdlib is its first big consumer.
 
@@ -189,81 +192,37 @@ The vendored `src` declares **65 `expect`s**. Classified:
   5. **Misc, case by case** — `Annotation`, `MonotonicTimeSource`, `PlatformSpecific`, `EnumEntriesSerializationProxy`,
      `ReadObjectParameterType`, `ValueTimeMarkReading`.
 
-Each actual is `@Clr("<BCL type>") actual <class|fun interface> X { @Clr("<BCL member>") actual ... }` — the verified
+Each actual is `@ClrIntrinsic("<BCL type>") actual <class|fun interface> X { @ClrIntrinsic("<BCL member>") actual ... }` — the verified
 stub+rename mechanism. Layout: `runtime/stdlib/clr/<X>.kt` (platform fragment), `src/**` marked common via
 `-Xcommon-sources`, the build standalone (drop the `kotlin-stdlib.jar` crutch once the actuals cover the platform layer).
 
 ## Decide before the collections actuals: the iterator protocol
 
-Not every collection type is a clean `@Clr`-to-BCL bind. `expect interface Iterator<out T>` is Kotlin's protocol
+Not every collection type is a clean `@ClrIntrinsic`-to-BCL bind. `expect interface Iterator<out T>` is Kotlin's protocol
 (`next(): T` + `hasNext(): Boolean`), which does NOT match .NET `IEnumerator` (`MoveNext(): bool` + `Current`) — the
 shapes differ, so a name-map isn't enough. **DotKt already represents the Kotlin iterator protocol** via the
 monomorphized synthetic `@KIterator_<elem>` / `@KIterable_<elem>` interfaces (`birType`'s `iteratorElemIface` /
 `iterableElemIface`, and the `for (x in xs)` lowering). So the `Iterator`/`Iterable` actuals should bind to / reuse that
 machinery (a DotKt-side `IKIterator`-style interface), NOT raw `IEnumerable`/`IEnumerator`. Concrete collections
 (`List`→`IReadOnlyList`, `MutableList`→`IList`, `Map`→`IReadOnlyDictionary`) bind more directly (members map by
-`@Clr` name) but must still yield Kotlin iterators. This protocol reconciliation is the first design decision of the
+`@ClrIntrinsic` name) but must still yield Kotlin iterators. This protocol reconciliation is the first design decision of the
 collections actuals — resolve it before writing them.
 
-## Build attempt — empirical results and the remaining blocker
+## Build status (RESOLVED) — the stdlib builds clean
 
-A focused build attempt established the working configuration and the precise blocker.
+The stdlib now builds via the **jar-frontend route**: **ref + rt + frontend jar all build with 0 errors** (the
+Milestone-0 emit crash is resolved). kotc resolves the builtins/platform layer against the CLR-built `stdlib.jar`,
+which sidesteps the `-Xbuiltins-from-sources` bootstrap entirely.
 
-**Working flag set** (collapses all config noise to zero): `-no-stdlib -Xallow-kotlin-package
--opt-in=kotlin.contracts.ExperimentalContracts -opt-in=kotlin.ExperimentalMultiplatform -Xcontext-parameters
--Xbuiltins-from-sources`. The stdlib must compile **as one module from source** (both the jar-resolution and
-builtins-from-sources routes confirm this): with the jar on the classpath, source files can't access the jar's
-`internal` members ("cannot access X: it is internal in file"); standalone, the builtins must come from source — hence
-`-Xbuiltins-from-sources`, which is the right mode (`Int`/`String`/… then resolve from `Primitives.kt`/`String.kt`).
-
-**Funnel on a 28-file builtin closure** (core types + annotations + experimental, excluding the Kotlin/Native files):
-4002 (version skew) → 1283 (flags) → **10 errors**, all of ONE kind: `no value passed for parameter 'name'/'ordinal'`
-at enum entries (`DeprecationLevel`, `AnnotationTarget`, `AnnotationRetention`, `OptIn.Level`).
-
-**The blocker — the Kotlin builtins bootstrap.** Under `-Xbuiltins-from-sources`, the standard FIR frontend's enum-entry
-→ `Enum(name, ordinal)` super-call synthesis does NOT fire for the SOURCE `expect class Enum` (it special-cases the
-*builtin* Enum), so the entries are flagged as missing `name`/`ordinal`. This is standard Kotlin frontend behavior (kotc
-reuses `JvmFrontendPipelinePhase` verbatim — `ClrCliPipeline` swaps only the backend), not a kotc-specific bug. The real
-Kotlin stdlib build sidesteps it by **serializing the builtins** (`Any`/`Int`/`Enum`/… → `.kotlin_builtins`) in a
-separate pre-pass and compiling the rest against those — it does NOT run `-Xbuiltins-from-sources` over the whole stdlib.
-
-So completing the build needs one of:
-1. **Replicate the builtins-serialization bootstrap** — compile the builtin closure to serialized builtins first, then
-   the rest against them. The proper path; substantial (mirrors the Kotlin build's builtins pipeline).
-2. **A kotc FIR fix** — make the enum-entry synthesis recognize the source `Enum` under `-Xbuiltins-from-sources` (or
-   suppress the spurious diagnostic, since DotKt's backend synthesizes `__name`/`__ordinal` itself from the entry index
-   and never uses the source super-call). A FIR additional-checkers / synthesis extension in `ClrCompilerPluginRegistrar`.
-
-Beyond the builtin closure, the full stdlib still needs the platform `actual` layer (the ~40 clr actuals) and the
-collections iterator-protocol reconciliation — the build is gated FIRST on the builtins bootstrap above.
-
-**Conclusively, both compile routes hit complementary walls** (so "one module, from source" is mandatory and the
-builtins bootstrap is unavoidable):
-- `-Xbuiltins-from-sources` (standalone): the enum-entry synthesis fails for the source `expect Enum` (10 errors on the
-  builtin closure). Providing a CLR `actual class Enum` does NOT fix it — the synthesis is about source-Enum recognition,
-  not expect/actual.
-- `-classpath kotlin-stdlib.jar` (builtins from the jar, exclude the builtin-declaring source files): 475 "cannot access
-  X: it is internal in file" — the source files reference one another's `internal` members across what the compiler
-  treats as a module boundary against the jar.
-- `-Xbuiltins-from-sources` is a TEST-only flag with exactly these limitations; the production Kotlin stdlib build
-  **serializes the builtins** in a separate pre-pass and does not run it over the whole library.
-
-**The diagnostic-suppression route (option 2) is a dead-end — confirmed empirically.** A custom frontend phase
-(`ClrFrontendPhase` wrapping `JvmFrontendPipelinePhase`) that drops the `NO_VALUE_FOR_PARAMETER` diagnostics works at
-the frontend level, but: (a) the pipeline's between-phase error check aborts after the frontend's errors before any
-*inserted* phase runs, so the filter must wrap the frontend itself; (b) the diagnostics live in the collector's
-internal pending/committed maps as immutable lists, so reflective removal is fragile; and crucially (c) **suppressing
-the enum layer just surfaces the NEXT layer** — `expected X has no actual declaration for JVM` (the `multiPlatform=true`
-expect/actual checker now demands actuals for the builtin `expect class Throwable`/`Unit`/…). The bootstrap is
-multi-layer: `-Xbuiltins-from-sources` (a test flag) × `multiPlatform` × the custom backend fundamentally clash, and
-each suppressed layer reveals the next. All such experiments were reverted; the working single-module compiler is intact.
-
-**Decision: the build requires the builtins-serialization bootstrap (option 1), implemented deliberately.** The right
-shape for DotKt is a two-pass build: pass 1 compiles the builtin closure to a `DotKt.Builtins` assembly carrying the
-round-trip metadata (DotKt is self-describing — memory `metadata-attrs-embedded-nrt-nullability`); pass 2 compiles the
-rest referencing it, so `Enum`/`Int`/… resolve as referenced (not source) builtins and the enum synthesis fires. This
-is a substantial, careful addition to the build pipeline — not an end-of-session change — because it must not regress
-the working single-module compile path that every existing `.ktproj` depends on.
+> **History (no longer on the critical path).** An earlier standalone route (`-Xbuiltins-from-sources`, one module from
+> source) hit the Kotlin **builtins-serialization bootstrap**: the FIR enum-entry → `Enum(name, ordinal)` super-call
+> synthesis does NOT fire for a SOURCE `expect class Enum`, so the builtin closure failed with `no value passed for
+> parameter 'name'/'ordinal'` (`DeprecationLevel`/`AnnotationTarget`/…). Diagnostic suppression was a dead-end (each
+> suppressed layer surfaced the next — `multiPlatform` then demanded actuals for `expect class Throwable`/`Unit`/…), and
+> the two complementary walls (`-Xbuiltins-from-sources` enum synthesis vs. `-classpath kotlin-stdlib.jar` cross-module
+> `internal`-access errors) made "one module, from source" look mandatory. The proper long-term shape — a two-pass
+> builtins-serialization build (pass 1 → a `DotKt.Builtins` assembly, pass 2 against it) — remains the cleaner
+> direction, but the jar-frontend route unblocks the build without it.
 
 ## Realized: a first DotKt.Stdlib.dll slice (the growth approach)
 
@@ -306,13 +265,16 @@ current compiler splices inline functions originating from a CLR DLL correctly. 
 a time therefore routes each call to the real stdlib source.**
 
 ### Remaining productionization (all-or-nothing per op)
-Removing an op from `COLLECTION_OPS` breaks every build that doesn't reference DotKt.Stdlib (the guard fires). So the
-op's migration must land together with:
-- a **tracked first-party `DotKt.Stdlib` library** (like `DotKt.Runtime`) holding the migrated real-Kotlin ops (the
-  untracked vendored `runtime/stdlib/src` is the SOURCE we copy ops from as we migrate),
-- **auto-reference** of `DotKt.Stdlib` from every `.ktproj` (KotlinClr.targets: facadegen meta + ilemit `--ref`) and the
-  verify harnesses, then
-- the `COLLECTION_OPS` removal + a regression case.
+Removing an op from `COLLECTION_OPS` breaks every build that doesn't reference the stdlib (the guard fires). So the
+op's migration must land together with the **three pipeline references** wired through every `.ktproj` and the verify
+harnesses:
+- kotc resolves the op against **`stdlib.jar`** (the frontend jar),
+- bir2cir reads the op's `@ClrIntrinsic` labels from **`DotKt.Private.Stdlib.dll`** (the ref dll) and substitutes the
+  BCL calls,
+- ilemit emits against **`DotKt.Stdlib.dll`** (the rt dll),
+
+then the `COLLECTION_OPS` removal + a regression case land. (The untracked vendored `runtime/stdlib/src` is the SOURCE we
+copy ops from as we migrate.)
 
 Random-access ops (`first`/`last`/`getOrElse`/`get`/`indexOf`/`isEmpty`/`single`/…) are migratable now (no iteration).
 Iteration ops (`map`/`filter`/`fold`/…) additionally need the `Iterable`→`IEnumerable` reconciliation (today Kotlin
@@ -399,9 +361,13 @@ kotc now compiles the real `_Collections.kt` end-to-end (frontend 0 errors → 3
 two committed toolchain fixes: the `DOTKT_STDLIB_COMPILE` stub-on-unsupported flag (27 backend-gap ops emit a throwing
 `[DOTKT-STDLIB]` stub + stay on their COLLECTION_OPS lowering) and the NaN/±Infinity JSON-string encoding.
 
-ilemit over the BIR still needs the stdlib's **runtime class layer + JVM→CLR type maps**. Per-file emission surfaced:
-- **JVM types** referenced by the bodies need CLR maps: `java.lang.Appendable`/`java.lang.StringBuilder` →
-  `System.Text.StringBuilder`, `kotlin.random.Random` → `System.Random` (used by `shuffle`).
+The JVM types the bodies reference (`java.lang.Appendable`/`java.lang.StringBuilder`, `kotlin.random.Random`, …) must
+**NOT** become ilemit type maps. ilemit is **Kotlin-free** by the layer rule, and adding such a map violates the
+cardinal rule (the fix is ALWAYS stdlib-side, NEVER a new compiler map/lowering). The correct fix is stdlib-side: the
+platform `actual` carries an `@ClrIntrinsic` to the BCL type (`StringBuilder`, `System.Random`), and bir2cir consumes
+that label to substitute the BCL call — no ilemit map.
+
+What legitimately remains in ilemit is structural CLR codegen only (no Kotlin knowledge):
 - **The Abstract* class hierarchy** (`AbstractCollection`/`AbstractList`/`AbstractMutableList`/`ArrayDeque`/…) emits with
   cross-file refs (resolve only when emitted together) and hits an ilemit "unresolved generic type parameter E/T" in
   generic CLASS emission (distinct from the method-level GenericMethod fix — class bodies need the same TypeBuilder
@@ -410,14 +376,15 @@ ilemit over the BIR still needs the stdlib's **runtime class layer + JVM→CLR t
   actuals + the internal-helper FUNCTIONS (`collectionSizeOrDefault` from Iterables.kt, `checkIndexOverflow` from
   Collections.kt) — but helpers and Abstract classes share files, so a clean split needs care.
 
-This is the final, well-defined layer: a handful of JVM type maps + the generic-class type-param emission fix in ilemit,
-then the ops resolve and `_Collections.kt` emits to `DotKt.Stdlib.dll`. See [[stdlib-platform-actuals-as-bcl-lowering]].
+See [[stdlib-platform-actuals-as-bcl-lowering]] and [[compiler-layer-responsibilities]].
 
 ## Open questions
 
 - **Builtins boundary**: which `expect`s are "compiler builtins" (Int/String/Array — already bound, exclude the source
   file) vs "library actuals we author" (collections/comparator)? The 184-expect enumeration (step 3) answers this.
-- **One assembly or split?** The stdlib could be one `DotKt.Stdlib` assembly; the kotlinx libraries stay their own
-  `dotktx.*` (memory `refactor-stdlib-types-out-of-coroutines`). The metadata attrs are already embedded per-assembly
-  (memory `metadata-attrs-embedded-nrt-nullability`), and `Fmt` was removed — DotKt.Runtime keeps shrinking toward
-  "compiler runtime-support only," with `DotKt.Stdlib` as the user-facing standard library.
+- **One assembly or split? RESOLVED — split into a ref dll + an rt dll.** The stdlib ships as
+  **`DotKt.Private.Stdlib.dll`** (the *ref* dll: pure `kotlin.*` + `@ClrIntrinsic` metadata, consumed by bir2cir) plus
+  **`DotKt.Stdlib.dll`** (the *rt* dll: the emitted implementation, referenced by ilemit). The kotlinx libraries stay
+  their own `dotktx.*` (memory `refactor-stdlib-types-out-of-coroutines`). The metadata attrs are already embedded
+  per-assembly (memory `metadata-attrs-embedded-nrt-nullability`), and `Fmt` was removed — DotKt.Runtime keeps shrinking
+  toward "compiler runtime-support only," with the stdlib ref/rt pair as the user-facing standard library.

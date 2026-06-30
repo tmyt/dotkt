@@ -1,8 +1,11 @@
 # 設計スパイク: コルーチン（suspend）の IL 化 — 戦略 A/B 決定
 
-> **状態（2026-06-23）: 本書は 2026-06-18 時点の設計スパイク（歴史的記録）。** 戦略 B（CLR-native IAsyncStateMachine／
-> Continuation-class）に確定し、IL コルーチン lowering は全面実装済み。AS-BUILT の状況は
+> **状態（2026-06-23 / 2026-06-30 見直し）: 本書は 2026-06-18 時点の設計スパイク（歴史的記録）。** 戦略 B（CLR-native
+> IAsyncStateMachine／Continuation-class）に確定し、IL コルーチン lowering は全面実装済み。AS-BUILT の状況は
 > [[design-coroutines-clr]] §§13a–§14a を参照（「IL 経路はゼロ」等の現状記述は当時のもの）。
+> **C# バックエンドは全面廃止済み**: 本書 §0/§2/§6 が参照する C# 経路（`CSharpCodegen.kt`）と
+> `runtime/csharp/KfcCoroutines`（`Coroutines.cs`）は**削除済み**。戦略 B（CLR-native IAsyncStateMachine）が**唯一の実装**で、
+> 戦略 A（Continuation 合成）への言及は採用されなかった対比のための歴史的記録。
 
 フェーズ3（[[csharp-retirement-design]] §3.1）着手前の設計固定。ABI は不変（[[coroutine-abi-decision]]）:
 `suspend fun f(args): T` ⇔ CLR `Task<T> F(args)`（Unit→`Task`）、`Continuation` は公開 ABI に漏らさない。

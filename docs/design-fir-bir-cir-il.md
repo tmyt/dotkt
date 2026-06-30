@@ -1,33 +1,42 @@
 # FIR -> BIR -> CIR -> IL
 
+> **状態 (2026-06-30 見直し)**: パイプラインは facadegen / kotc / bir2cir / ilemit の **4 層**。`--native-cir` が目標モード（`--compat-bir` は撤去予定、その byte-for-byte BIR 不変条件は放棄）。Milestone 0 の emit crash ブロッカーは解消済み（stdlib は今ビルドできる）。本書の「CIR v1 互換スケルトン」系の記述は移行期のもので、下記で現状に合わせて更新済み。現行の出荷スコープは [docs/ship-tasks.md](ship-tasks.md) §0 が正。
+
 This is the target split for the Kotlin/CLR backend.
 
 For resume-oriented operational notes, see [bir2cir-handoff.md](bir2cir-handoff.md).
 
 ## Layer Contract
 
-- **FIR -> BIR** preserves Kotlin semantic structure and metadata. It should not decide CLR projection, inline bodies, suspend state machines, or physical CLR member references.
-- **BIR -> CIR** is the first CLR-semantic lowering stage. It consumes BIR plus referenced assembly metadata and produces CLR-resolved CIR.
-- **CIR -> IL** emits already-lowered CIR to IL with minimal policy decisions.
+The pipeline is **four** layers with strict responsibilities (see [ship-tasks.md](ship-tasks.md) §0):
 
-## CIR v1
+- **facadegen** — reads a CLR DLL and generates kotlin metadata for SYMBOL RESOLUTION (restores TopLevelFunction/inline/infix/operator from the Roundtrip Attributes; does the `System.Int32 -> kotlin.Int` type re-mapping). It does NOT resolve `@ClrIntrinsic` bindings.
+- **kotc** (`toolchain/kotc`) — user source -> FIR -> **BIR**. Symbol resolution uses `stdlib.jar` (the stdlib space) + the facadegen-generated meta (the .NET space). kotc does NOT know CLR; BIR preserves Kotlin semantic structure and metadata (Kotlin-level types, a `kotlin.math.sqrt` call). It must not decide CLR projection, inline bodies, suspend state machines, or physical CLR member references.
+- **bir2cir** (`toolchain/bir2cir`) — **BIR -> CIR**, the first CLR-semantic lowering stage. It consumes BIR plus referenced-assembly metadata and produces CLR-resolved CIR. The Kotlin<->CLR mapping lives HERE: `kotlin.Int -> System.Int32`, `@ClrIntrinsic` resolution, the math-map, primitive/array mapping, byref, suspend lowering, inline lowering.
+- **ilemit** (`toolchain/ilemit`) — **CIR -> IL**, emits already-lowered CIR with minimal policy. It knows ONLY the CLR representation; it does NOT know Kotlin.
 
-The first implementation is a compatibility skeleton:
+> **In-flight**: much of the `bir2cir` Kotlin<->CLR lowering (inline, type-substitute, `@ClrIntrinsic` resolution) still physically lives in kotc's `BirEmitter` today — see [ship-tasks.md](ship-tasks.md) §6 ("current violation"). The contract above is the target; the migration is not complete.
 
-- `toolchain/bir2cir` accepts BIR JSON files and `--ref <dll>` inputs.
-- It validates input JSON and writes `.cir.json` files that remain BIR-compatible.
-- `ilemit` can read these files unchanged while lowerings are migrated into `bir2cir`.
+### Three-reference model
 
-The driver is structured as a real compiler stage even while the transform is still mostly identity:
+Each stage references a DISTINCT stdlib artifact ([design-clr-stdlib-ref-runtime-split.md](design-clr-stdlib-ref-runtime-split.md), and the per-artifact emission policy):
+
+- **kotc** references `stdlib.jar` (the DotKt frontend metadata jar).
+- **bir2cir** references `DotKt.Private.Stdlib.dll` (the **ref.dll** — pure `kotlin.*`, keeps ALL attributes incl. `@ClrIntrinsic`). This is the SOURCE of `@ClrIntrinsic`.
+- **ilemit** references `DotKt.Stdlib.dll` (the **rt.dll** — runtime impls, metadata stripped).
+
+`@ClrIntrinsic` is the LABEL the ref.dll carries; **bir2cir consumes it** when emitting CIR (producing a plain BCL call). `@ClrIntrinsic` never appears in CIR and never reaches ilemit.
+
+## CIR
+
+`toolchain/bir2cir` accepts BIR JSON files and `--ref <dll>` inputs, validates the input, and writes `.cir.json`. The driver is structured as a real compiler stage:
 
 1. `LoadBirFiles`
 2. `BuildReferenceMetadataIndex`
 3. `TransformFiles`
 4. `WriteCirFiles`
 
-`--compat-bir` is the default output mode. It emits BIR-compatible JSON and remains the production path.
-
-`--native-cir` is experimental. It emits a CIR envelope with `cirVersion`, referenced assembly identities, and the original BIR payload. `ilemit` can now consume this envelope by compiling `cirDraft.executableCir`, but normal builds should keep using compatibility mode until more lowerings move across the boundary.
+`--native-cir` is the **target** output mode: it emits a CIR envelope (`cirVersion`, referenced-assembly identities, resolved call/type sites, and `cirDraft.executableCir`) which `ilemit` consumes directly. `--compat-bir` is the legacy mode that emits BIR-compatible JSON for the old `ilemit` path; it is being removed and its byte-for-byte BIR invariant is abandoned ([[break-for-elegance]]). The "Milestone 0" flip-to-native-cir was previously blocked by a DotKt.Stdlib emit crash; that blocker is **resolved** (the stdlib builds now), so the remaining work is the default flip + `--compat-bir` deletion.
 
 The first non-identity pass is `SuspendShapeAnalyzer`. It does not rewrite bodies yet; it identifies BIR suspend functions and records:
 
@@ -56,7 +65,7 @@ Each draft async function also carries `loweringStatus`:
 - `try`: async try/catch/finally markers are present.
 - `unsupported`: a step kind is not yet represented in the draft; `unknownSteps` lists the kinds.
 
-The draft lets the async shape evolve independently from `ilemit`; compatibility mode remains byte-for-byte BIR-compatible.
+The draft lets the async shape evolve independently from `ilemit`. (The legacy `--compat-bir` mode is being removed; its byte-for-byte BIR invariant no longer holds.)
 
 ## BIR -> CIR Lowering Order
 
@@ -74,25 +83,25 @@ BIR -> CIR is split into ordered lowering phases. The order matters because inli
 3. **Basic Type Lowering**
    - Lowers Kotlin built-in physical operations before projection lookup.
    - Handles primitive/value/string/array/nullability/type-test/runtime-type/enum basics that are necessary to represent Kotlin built-ins on CLR.
-   - Does not consult `@Clr` metadata and is not a fallback lookup mechanism.
+   - Does not consult `@ClrIntrinsic` metadata and is not a fallback lookup mechanism.
 4. **CLR Projection**
-   - Resolves explicit `@Clr` metadata from both the current source set and referenced assemblies.
+   - Resolves explicit `@ClrIntrinsic` metadata from both the current source set and referenced assemblies.
    - Applies only to the declaration that carries the annotation.
-   - Never infers member projection from an owner type's `@Clr`, CLR name equality, or a missing method body.
+   - Never infers member projection from an owner type's `@ClrIntrinsic`, CLR name equality, or a missing method body.
 5. **Ordinary Call Lowering**
    - Emits ordinary Kotlin calls that were not consumed by Basic Type Lowering or CLR Projection.
-   - Emits members declared on `@Clr` owner classes but not themselves annotated with `@Clr` as static forwarders/helpers with a physical receiver argument.
+   - Emits members declared on `@ClrIntrinsic` owner classes but not themselves annotated with `@ClrIntrinsic` as static forwarders/helpers with a physical receiver argument.
    - Leaves stdlib API behavior owned by the compiled stdlib rather than a compiler intrinsic catalog.
 6. **Async/Await Lowering**
    - Lowers the normalized suspend shape to CLR async/await CIR.
    - Introduces async functions/lambdas, awaits, task result types, and await-surviving locals.
    - Runs after ordinary expression/member lowering so suspend bodies contain CLR-shaped operations rather than Kotlin symbol calls.
 
-This means primitive/string basics are not "implicit `@Clr` lookup" exceptions. They are lowered by Basic Type Lowering before CLR Projection runs.
+This means primitive/string basics are not "implicit `@ClrIntrinsic` lookup" exceptions. They are lowered by Basic Type Lowering before CLR Projection runs.
 
 ## Reference Metadata Index
 
-`bir2cir` builds projection input from referenced assemblies and from projection metadata carried by the current BIR module. Current-module `@Clr` metadata is valid only as explicit declaration-level projection, not as implicit owner-based member lookup.
+`bir2cir` builds projection input from referenced assemblies and from projection metadata carried by the current BIR module. Current-module `@ClrIntrinsic` metadata is valid only as explicit declaration-level projection, not as implicit owner-based member lookup.
 
 The reference index currently records a small DotKt metadata surface:
 
@@ -104,7 +113,7 @@ The reference index currently records a small DotKt metadata surface:
 
 This data is emitted in `--native-cir` under `references[].dotkt`. It is the lookup source for referenced projection/type/inline lowering.
 
-The current `resolutionDraft` implementation is still reference-oriented: it probes `kotlin-symbol` call sites against referenced metadata and reports `resolved-in-reference`, `ambiguous-in-references`, or `unresolved-in-references`. The design target is broader: explicit `@Clr` projection metadata from the current source set should participate in the same projection-resolution phase as referenced metadata, while ordinary non-projected current-module Kotlin calls remain ordinary Kotlin calls.
+The current `resolutionDraft` implementation is still reference-oriented: it probes `kotlin-symbol` call sites against referenced metadata and reports `resolved-in-reference`, `ambiguous-in-references`, or `unresolved-in-references`. The design target is broader: explicit `@ClrIntrinsic` projection metadata from the current source set should participate in the same projection-resolution phase as referenced metadata, while ordinary non-projected current-module Kotlin calls remain ordinary Kotlin calls.
 
 `cirDraft.resolvedCalls` is the first lowering-facing view over that data. For uniquely resolved reference symbols it emits draft CLR operations:
 
@@ -212,7 +221,7 @@ event should emit real CLR event metadata:
 - Kotlin metadata sufficient for a DotKt consumer to restore the `CLREvent<T>` endpoint.
 
 The source declaration must be treated as an event declaration, not as a Kotlin property that happens to have an event
-type. Kotlin syntax does not have a native `event` member, so KCC can use an annotated compiler-intrinsic declaration
+type. Kotlin syntax does not have a native `event` member, so kotc can use an annotated compiler-intrinsic declaration
 shape:
 
 ```kotlin
@@ -284,7 +293,7 @@ class ViewModel(
 ```
 
 The outer class still implements `INotifyPropertyChanged`, so its CLR surface must still satisfy the interface event.
-KCC should emit `ViewModel.PropertyChanged` as a real CLR event on `ViewModel`, but its add/remove accessors may forward
+kotc should emit `ViewModel.PropertyChanged` as a real CLR event on `ViewModel`, but its add/remove accessors may forward
 to the delegated implementation:
 
 ```text
@@ -329,7 +338,7 @@ The exact property-delegate protocol can evolve, but the boundary rule is fixed:
   `INotifyPropertyChanged.PropertyChanged` implementation.
 
 If the declaration names an existing CLR delegate type, that delegate type is used. If it starts from a Kotlin function
-type, KCC may synthesize a delegate using the same delegate ABI as function types, including the wide `KFunc` / `KAction`
+type, kotc may synthesize a delegate using the same delegate ABI as function types, including the wide `KFunc` / `KAction`
 path when the handler arity exceeds BCL `Func` / `Action`. The resulting CLR event must still expose a concrete delegate
 type in metadata, because CLR events cannot be typed as a structural Kotlin function.
 
@@ -386,7 +395,7 @@ Kotlin source uses that singleton as a value:
 random(Random)
 ```
 
-For this case, flattening all companion semantics into parent static methods is insufficient. KCC should emit a concrete
+For this case, flattening all companion semantics into parent static methods is insufficient. kotc should emit a concrete
 singleton field or property on the parent CLR type whose type is the companion's effective value type, normally the first
 non-`Any` class supertype or the emitted companion class when necessary:
 
@@ -444,7 +453,7 @@ This keeps Kotlin metadata structural and stable while still producing ordinary 
 
 ## Kotlin Modifier Roundtrip
 
-Some Kotlin callable modifiers affect source-level resolution but do not have a direct CLR metadata concept. KCC must round-trip these modifiers through DotKt metadata so a referenced DotKt assembly can be consumed as Kotlin again.
+Some Kotlin callable modifiers affect source-level resolution but do not have a direct CLR metadata concept. kotc must round-trip these modifiers through DotKt metadata so a referenced DotKt assembly can be consumed as Kotlin again.
 
 The implemented roundtrip carriers are:
 
@@ -464,7 +473,7 @@ These function flags are not CLR call targets by themselves. They restore Kotlin
 
 ### Operator Functions
 
-`operator` is a Kotlin source-level convention, but many Kotlin operator names have a direct CLR operator ABI equivalent. KCC should use the CLR operator ABI when it can do so without changing Kotlin semantics.
+`operator` is a Kotlin source-level convention, but many Kotlin operator names have a direct CLR operator ABI equivalent. kotc should use the CLR operator ABI when it can do so without changing Kotlin semantics.
 
 ```kotlin
 class Vec {
@@ -517,7 +526,7 @@ BIR -> CIR
   lowers the resolved call like any other call
 ```
 
-For Kotlin operators that do not have a CLR operator ABI equivalent, KCC emits an ordinary method and relies on `[KotlinFunction(Operator)]` for Kotlin roundtrip. A method named `plus` without Kotlin operator metadata is just a method named `plus`; Kotlin operator status must not be rediscovered from an ordinary method name alone. CLR `specialname` `op_*` methods are different: the CLR ABI itself identifies them as operators, and the metadata reader maps them through the standard operator-name table.
+For Kotlin operators that do not have a CLR operator ABI equivalent, kotc emits an ordinary method and relies on `[KotlinFunction(Operator)]` for Kotlin roundtrip. A method named `plus` without Kotlin operator metadata is just a method named `plus`; Kotlin operator status must not be rediscovered from an ordinary method name alone. CLR `specialname` `op_*` methods are different: the CLR ABI itself identifies them as operators, and the metadata reader maps them through the standard operator-name table.
 
 Kotlin operators with direct CLR operator equivalents include:
 
@@ -541,7 +550,7 @@ Kotlin operators without a direct CLR operator method equivalent stay as Kotlin 
 - `iterator`: ordinary protocol method.
 - `getValue` / `setValue`: Kotlin delegate protocol methods.
 
-`compareTo` needs care. Kotlin relational syntax resolves through `compareTo`, while CLR relational operators are separate boolean-returning `op_LessThan` / `op_GreaterThan` methods. KCC should not silently turn every `compareTo` into the full CLR relational operator set. Emitting those operators is only valid when the declaration or a dedicated lowering explicitly requests that CLR ABI surface.
+`compareTo` needs care. Kotlin relational syntax resolves through `compareTo`, while CLR relational operators are separate boolean-returning `op_LessThan` / `op_GreaterThan` methods. kotc should not silently turn every `compareTo` into the full CLR relational operator set. Emitting those operators is only valid when the declaration or a dedicated lowering explicitly requests that CLR ABI surface.
 
 The existing roundtrip carrier set remains sufficient:
 
@@ -563,7 +572,7 @@ The existing roundtrip carrier set remains sufficient:
 When a Kotlin declaration projects to such an external member, the projection must be explicit:
 
 ```kotlin
-@Clr("op_Addition")
+@ClrIntrinsic("op_Addition")
 operator fun plus(other: Vec2): Vec2
 ```
 
@@ -574,13 +583,13 @@ Kotlin source
   a + b
 
 resolved Kotlin callable
-  @Clr("op_Addition") operator fun Vec2.plus(other: Vec2): Vec2
+  @ClrIntrinsic("op_Addition") operator fun Vec2.plus(other: Vec2): Vec2
 
 CIR
   clr.call static Vec2.op_Addition(a, b)
 ```
 
-This is explicit `@Clr` projection, not operator-name guessing. A Kotlin `operator fun plus` on an `@Clr` owner does not automatically become `op_Addition`; the member must carry the projection unless it is a user-defined Kotlin operator that KCC itself is emitting as a CLR operator method.
+This is explicit `@ClrIntrinsic` projection, not operator-name guessing. A Kotlin `operator fun plus` on an `@ClrIntrinsic` owner does not automatically become `op_Addition`; the member must carry the projection unless it is a user-defined Kotlin operator that kotc itself is emitting as a CLR operator method.
 
 ### Indexers
 
@@ -625,7 +634,7 @@ BIR -> CIR must lower these to CLR physical representations without consulting `
 
 This direct mapping is required even when the stdlib assembly also exposes Kotlin symbols and metadata for these types. The frontend needs those symbols for source compatibility and member resolution, but CIR must use the CLR physical type so that literals, boxing, arrays, overload resolution, reflection, C# interop, and BCL calls have the expected runtime identity. For example, a Kotlin string literal must become a `System.String`, not an instance of a wrapper class from `DotKt.Stdlib`.
 
-This does not mean the compiler owns the behavior of the Kotlin stdlib. A member or extension API on a built-in type is still provided by compiled stdlib IL unless it is one of the minimal operations required to express the physical type itself. These minimal operations are handled by Basic Lowering before `@Clr` projection lookup.
+This does not mean the compiler owns the behavior of the Kotlin stdlib. A member or extension API on a built-in type is still provided by compiled stdlib IL unless it is one of the minimal operations required to express the physical type itself. These minimal operations are handled by Basic Lowering before `@ClrIntrinsic` projection lookup.
 
 Basic Lowering handles built-in physical operations such as:
 
@@ -645,7 +654,7 @@ Stdlib APIs must not be reimplemented as compiler intrinsics merely because thei
 - range/progression helper APIs;
 - platform convenience wrappers over BCL methods.
 
-For such APIs, user code should call the compiled stdlib method. The stdlib method may then be implemented in Kotlin, or projected to a BCL member through explicit CLR actuals / `@Clr` metadata on the declaration itself. Conceptually:
+For such APIs, user code should call the compiled stdlib method. The stdlib method may then be implemented in Kotlin, or projected to a BCL member through explicit CLR actuals / `@ClrIntrinsic` metadata on the declaration itself. Conceptually:
 
 ```kotlin
 package kotlin.text
@@ -657,7 +666,7 @@ actual fun String.format(vararg args: Any?): String =
 or, where the projection model is expressive enough:
 
 ```kotlin
-@Clr("System.String.Format")
+@ClrIntrinsic("System.String.Format")
 actual fun String.format(vararg args: Any?): String
 ```
 
@@ -677,18 +686,18 @@ IL
   ordinary CLR call
 ```
 
-`@Clr` projection metadata is active wherever it is available: declarations in the current source set and declarations loaded from referenced assemblies are both valid projection sources. The lookup is explicit only. A class-level `@Clr` controls the physical type of that class. A member-level `@Clr` controls only that member. No member projection is inferred from an owner `@Clr`, CLR name equality, or a missing body.
+`@ClrIntrinsic` projection metadata is active wherever it is available: declarations in the current source set and declarations loaded from referenced assemblies are both valid projection sources. The lookup is explicit only. A class-level `@ClrIntrinsic` controls the physical type of that class. A member-level `@ClrIntrinsic` controls only that member. No member projection is inferred from an owner `@ClrIntrinsic`, CLR name equality, or a missing body.
 
-This avoids a bootstrap cycle: built-in type representation does not require a stdlib reference, while stdlib API behavior is still provided by the stdlib assembly. During stdlib compilation, explicit `@Clr` member declarations may project to BCL members, while unannotated members on `@Clr` owner classes are emitted as static stdlib forwarders/helpers.
+This avoids a bootstrap cycle: built-in type representation does not require a stdlib reference, while stdlib API behavior is still provided by the stdlib assembly. During stdlib compilation, explicit `@ClrIntrinsic` member declarations may project to BCL members, while unannotated members on `@ClrIntrinsic` owner classes are emitted as static stdlib forwarders/helpers.
 
-### `@Clr` Class vs Member Projection
+### `@ClrIntrinsic` Class vs Member Projection
 
-Class-level `@Clr` and member-level `@Clr` have different meanings.
+Class-level `@ClrIntrinsic` and member-level `@ClrIntrinsic` have different meanings.
 
 A class-level annotation binds the Kotlin type's physical receiver/storage representation:
 
 ```kotlin
-@Clr("System.String")
+@ClrIntrinsic("System.String")
 actual class String
 ```
 
@@ -697,21 +706,21 @@ This means values of that Kotlin type are represented as `System.String` in CIR/
 A member-level annotation binds that specific Kotlin member to a CLR member:
 
 ```kotlin
-@Clr("System.Text.StringBuilder")
+@ClrIntrinsic("System.Text.StringBuilder")
 actual class StringBuilder {
-    @Clr("Append")
+    @ClrIntrinsic("Append")
     actual fun append(value: String): StringBuilder
 }
 ```
 
-Here, `append` is projected to the `System.Text.StringBuilder.Append` instance member. The member annotation supplies the CLR member name; if absent, there is no implicit same-name CLR member projection just because the owner class has `@Clr`.
+Here, `append` is projected to the `System.Text.StringBuilder.Append` instance member. The member annotation supplies the CLR member name; if absent, there is no implicit same-name CLR member projection just because the owner class has `@ClrIntrinsic`.
 
-A member declared inside an `@Clr` class but not itself annotated with `@Clr` is still an explicit Kotlin/stdlib API. It is not projected to a CLR member. Because the physical owner type is external, the compiler cannot add an instance method to that owner; therefore the member body must be emitted into the Kotlin assembly as a static forwarder/helper with the physical receiver passed explicitly.
+A member declared inside an `@ClrIntrinsic` class but not itself annotated with `@ClrIntrinsic` is still an explicit Kotlin/stdlib API. It is not projected to a CLR member. Because the physical owner type is external, the compiler cannot add an instance method to that owner; therefore the member body must be emitted into the Kotlin assembly as a static forwarder/helper with the physical receiver passed explicitly.
 
 For example:
 
 ```kotlin
-@Clr("System.String")
+@ClrIntrinsic("System.String")
 actual class String {
     actual fun format(vararg args: Any?): String =
         System.String.Format(this, args)
@@ -727,9 +736,9 @@ DotKt.Stdlib.kotlin.String_format(self: System.String, args: object[]): System.S
   => body of kotlin.String.format
 ```
 
-Calls to that Kotlin member lower to the static forwarder unless the member declaration itself has `@Clr` metadata. The owner class's `@Clr` affects the receiver type of the forwarder (`System.String` here), not the call target selection.
+Calls to that Kotlin member lower to the static forwarder unless the member declaration itself has `@ClrIntrinsic` metadata. The owner class's `@ClrIntrinsic` affects the receiver type of the forwarder (`System.String` here), not the call target selection.
 
-This rule prevents class-level CLR binding from recreating the old compiler-owned stdlib lowering catalog. `@Clr("System.X") actual class K` decides the physical type. `@Clr("Member") actual fun f` decides a physical member projection. An unannotated `actual fun f` remains Kotlin code owned by the stdlib.
+This rule prevents class-level CLR binding from recreating the old compiler-owned stdlib lowering catalog. `@ClrIntrinsic("System.X") actual class K` decides the physical type. `@ClrIntrinsic("Member") actual fun f` decides a physical member projection. An unannotated `actual fun f` remains Kotlin code owned by the stdlib.
 
 ## Call Site Inventory
 
@@ -786,14 +795,14 @@ The migration order for suspend is:
 
 ## Projection Lookup Rule
 
-`@Clr` projection is valid from any source that participates in BIR -> CIR: declarations in the current source set and declarations restored from referenced assemblies are both lookup inputs.
+`@ClrIntrinsic` projection is valid from any source that participates in BIR -> CIR: declarations in the current source set and declarations restored from referenced assemblies are both lookup inputs.
 
 The rule is explicit declaration-level projection only:
 
-- `@Clr` on a class controls that class's physical CLR type.
-- `@Clr` on a function controls that function's physical CLR method projection.
-- `@Clr` on a property controls that property's physical CLR property/field/accessor projection.
-- A class-level `@Clr` never implies member projection for unannotated members.
+- `@ClrIntrinsic` on a class controls that class's physical CLR type.
+- `@ClrIntrinsic` on a function controls that function's physical CLR method projection.
+- `@ClrIntrinsic` on a property controls that property's physical CLR property/field/accessor projection.
+- A class-level `@ClrIntrinsic` never implies member projection for unannotated members.
 - CLR name equality is never used as a fallback projection rule.
 - Built-in primitive/string/array/nullability/type-test/runtime-type basics are not projection lookups; Basic Lowering handles them before projection resolution.
 

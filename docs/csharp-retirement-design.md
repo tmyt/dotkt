@@ -1,7 +1,9 @@
 # 設計: C# バックエンドの完全廃止（E トラック完遂）
 
-> **✅ 完了（2026-06-18）。** C# の3役すべてを置換: (a) 出荷 emit→純 IL（events/generic/coroutines まで gap ゼロ）、(b) オラクル→`verify-differential` が IL 経路を kotlin/jvm と突合（25 MATCH・C# 非依存）、(c) 意味解決→FIR（両経路同一 IR）。MSBuild 既定 `il`・C# は `KOTLIN_CLR_EMIT_CS=1` の opt-in（出荷経路から Kotlin 由来 .cs/csc ゼロ）。3 ハーネス（verify-il / verify-differential / verify-all）緑＋CI 化。
-> **唯一の残**: 5.2 コンパイル時 `<Reference>` retargeting は本トラックのブロッカーではなく（reflection-load 逆interop は動作）、**1.0 出荷タスクへ移管**（`docs/remaining-tasks.md`）。
+> **状態 (2026-06-30 見直し)**: HISTORICAL-DONE（E トラック完遂の as-built 記録）。本トラックは完了し、残課題（5.2）も解消済み（下記補正）。本書のパスは **リポジトリ再編前**の表記（`msbuild/` → `packaging/`、`compiler/` → `toolchain/kotc`、`runtime/csharp/` ツリーは撤去済み）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+
+> **✅ 完了（2026-06-18）。** C# の3役すべてを置換: (a) 出荷 emit→純 IL（events/generic/coroutines まで gap ゼロ）、(b) オラクル→`verify-differential` が IL 経路を kotlin/jvm と突合（25 MATCH・C# 非依存）、(c) 意味解決→FIR（両経路同一 IR）。MSBuild 既定 `il`・C# は `KOTLIN_CLR_EMIT_CS=1` の opt-in（出荷経路から Kotlin 由来 .cs/csc ゼロ）。3 ハーネス（verify-il / verify-differential / verify-all）緑＋CI 化。**【補正 2026-06-23】`verify-all.sh`（C# オラクルハーネス）はその後 *削除* ＝ C# オラクルは保持していない。現行ゲートは `verify-il` / `verify-differential`（kotlin/jvm 正解器）/ `verify-ktproj` のみ。**
+> ~~**唯一の残**: 5.2 コンパイル時 `<Reference>` retargeting は本トラックのブロッカーではなく（reflection-load 逆interop は動作）、**1.0 出荷タスクへ移管**（`docs/remaining-tasks.md`）。~~ **【解決 2026-06-23】5.2 コンパイル時 `<Reference>` は Cecil 製 `retarget` ツール（REVERSE 方向 .NET→Kotlin、emit 後の純メタデータ変換で TypeRef ごとに正しいコントラクト AssemblyRef へ振り分け）として実装済み（`cases/ktproj-bidir`）。「唯一の残」は解消。**
 
 **目的**: 出荷バックエンドを純 IL（`BirEmitter.kt` → `ilemit`）に一本化し、C# コード生成（`CSharpCodegen.kt` → csc）を出荷経路から外す。本書は「C# を捨てられた」の定義・残タスクの正確な棚卸し・各タスクの設計・着手順を固定する（[[il-primary-backend-pivot]] / [[kotlin-net-1.0-definition]] の E トラック完遂）。
 
@@ -173,7 +175,7 @@ IL 出力は通常の .NET アセンブリ＝C# から `ProjectReference` で消
 
 ### フェーズ 5 — 逆 interop（S-M）✅ 2026-06-18（5.1 完了、5.2 はアーキ制約でブロック）
 - [x] **5.1** IL 出力を **.NET（C#）ホストが消費**：`cases/il-revinterop`（C# `Program.cs` が `KotlinLib.dll` を reflection ロードし `Greeter("World").greet()`＝"Hi, World"、`LibKt.add(2,3)`＝5 を呼ぶ）＋ verify-il `il_revinterop`。IL 出力が**一級の消費可能 .NET アセンブリ**であることを実機実証。
-- [ ] **5.2 コンパイル時 `<Reference>`（根本ブロック・要 Reflection.Emit 新 API）**：ilemit は BCL を runtime reflection 型で解決するため、出力の **CoreLib 型全部（Object/String/`List`/`Dictionary`/`Task`…）が単一の `System.Private.CoreLib` AssemblyRef を共有**。C# の コンパイル時 `<Reference>` には型ごとに**正しいコントラクトアセンブリ**（Object/String→System.Runtime、`List`→System.Collections…）への分離が要る。
+- [x] **5.2 コンパイル時 `<Reference>`（解決済み 2026-06-23 — 下記「残された道」を Cecil 製 `retarget` ツールとして実装、REVERSE 方向、`docs/remaining-tasks.md` R-1）**：〔以下は当時の調査記録〕ilemit は BCL を runtime reflection 型で解決するため、出力の **CoreLib 型全部（Object/String/`List`/`Dictionary`/`Task`…）が単一の `System.Private.CoreLib` AssemblyRef を共有**。C# の コンパイル時 `<Reference>` には型ごとに**正しいコントラクトアセンブリ**（Object/String→System.Runtime、`List`→System.Collections…）への分離が要る。
   - **正攻法 MetadataLoadContext は不適合と実証**：MLC のジェネリック型/メソッドに**ユーザ TypeBuilder 型引数**を渡すと "not loaded by the MLC" 例外＝lambda→`Func<UserT>`・closure・`List<UserT>`・コルーチン `Start<SM>` 等が全滅。
   - **単一 AssemblyRef の PE 書換も不可と実証**：単一 CoreLib ref を System.Runtime に向けると `Object`/`String` は通るが `List<T>` が `TypeLoadException`（System.Runtime は List を forward しない＝System.Collections の管轄）。→ **撤回**。
   - 残された道＝型ごとの per-ref retargeting（メタデータ全面再構築）か、Reflection.Emit の参照アセンブリ対応 API 待ち。**C# 廃止のブロッカーではない**（reflection 消費は可・出荷経路は IL）。`[Nullable]` 注釈も後段。

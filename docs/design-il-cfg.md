@@ -1,5 +1,7 @@
 # 設計: E-0.5 — 制御フローの CFG ブロック IR 化（AST→CFG）
 
+> **状態 (2026-06-30 見直し)**: HISTORICAL-DONE（主要部）。CFG コア — **5.1 label/goto/brIf・5.2 while/do-while・5.3 if/when・5.5 break/continue/ラベル** は実装済み（2026-06-20）。**live な残りは 5.6 非ローカル return と 5.7 try/catch/finally 領域マーカーのみ。** 本書は CFG/制御フロー lowering を `BirEmitter → ilemit` に置く前提で書かれているが、**現行アーキテクチャでは制御フロー lowering は bir2cir（BIR→CIR）の責務へ移管中（migration in-flight・未完＝done とは主張しない）**。本書の「differential」検証は **IL 専用ハーネス（`verify-il` ＋ kotlin/jvm 差分の `verify-differential`）であって C# オラクルではない**（C# バックエンドは完全引退）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+
 **目的**: 構造化 AST（BIR の `if`/`while`/`when`/`try`/`break`…）から IL を直接吐くのをやめ、**基本ブロック＋明示分岐**の中間形（CFG ブロック IR）を BirEmitter で一度だけ生成し、ilemit はそれを機械的に emit する。これにより `do-while` 空ボディ・`break@outer`・**非ローカル return**・コルーチンの **spilling/条件式 suspend**（D トラック）が全部「ただの分岐」になり、形状ごとの特別扱いとバグ class が消える（[[lowering-lives-in-bir]] の三層 (2)）。
 
 作成 2026-06-20。前提: IL バックエンドは出荷経路（56 サンプル緑＋ilverify-clean）。**各増分で緑を維持**（[[no-half-baked-public-state]]）＝big-bang 書換をしない。
