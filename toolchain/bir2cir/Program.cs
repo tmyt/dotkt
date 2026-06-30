@@ -1956,7 +1956,7 @@ static class MemberCallSubstitution
             // bare-intrinsic extension: resolve by name + the first-arg's receiver key (disambiguates `set`).
             var sigParts0 = SplitSig(node);
             if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, RecvKeyOf(sigParts0[0]), out var extMember))
-                return TopLevelExtensionInstance(node, extMember, args0, sigParts0);
+                return TopLevelExtensionInstance(node, refs, extMember, args0, sigParts0);
             return null;
         }
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
@@ -1974,18 +1974,8 @@ static class MemberCallSubstitution
         if (instance && refs.TryInlineFieldGetter(ownerFqn, member, out var inlineConv))
             return new JsonObject { ["k"] = "conv", ["to"] = inlineConv, ["e"] = node["recv"]?.DeepClone() };
 
-        // The CLR owner TYPE the call addresses: a GENERIC alias keeps its element args (clrg:<bcl>[<args>]) so ilemit
-        // constructs the instantiation (a member on IReadOnlyList<int>); a non-generic alias is the bare BCL type. When
-        // the token is a RAW generic (no args, e.g. `kotlin.collections.Collection` with the element erased), default
-        // the args to `object` per the ref.dll arity so the generic BCL interface still resolves.
-        var obr = ownerToken.IndexOf('[');
-        string clrOwner;
-        if (obr >= 0 && ownerToken.EndsWith("]", StringComparison.Ordinal))
-            clrOwner = "clrg:" + bcl + "[" + ownerToken[(obr + 1)..^1] + "]";
-        else if (refs.OwnerArity(ownerFqn) is var ar && ar > 0)
-            clrOwner = "clrg:" + bcl + "[" + string.Join(",", Enumerable.Repeat("object", ar)) + "]";
-        else
-            clrOwner = bcl;
+        // The CLR owner TYPE the call addresses (a ClrRef-resolvable BCL token; see ClrOwnerType).
+        var clrOwner = ClrOwnerType(refs, ownerToken) ?? bcl;
 
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
@@ -2027,13 +2017,12 @@ static class MemberCallSubstitution
         // GetEnumerator/...). The ref.dll member is kept under its Kotlin name (`get`/`compareTo`), so rules 2/3 miss by
         // name; but the emitted name is already the BCL member, which exists on the alias's BCL type. A BCL name is
         // PascalCase or a get_/set_ accessor (Kotlin members are lowercase camelCase) -> route to clrInstance/clrPropGet
-        // on the BCL type. This also rescues the call from the bare-shorthand / clrg: owner that plain callInstance
-        // resolution (ilemit ParseOwner) cannot handle. A lowercase-camelCase name reaching here is genuinely unmapped.
-        if (member.Length > 0 && (char.IsUpper(member[0]) ||
-            member.StartsWith("get_", StringComparison.Ordinal) || member.StartsWith("set_", StringComparison.Ordinal)))
-            return ClrCallNode(node, clrOwner, member, member, args, instance);
-
-        return null;
+        // on the BCL type. A lowercase-camelCase name that reaches here is an UNBOUND Kotlin member with no BCL
+        // equivalent by that name (MutableCollection.addAll/removeAll/retainAll on ICollection) -> still route it to a
+        // clrInstance on the BCL owner: ilemit resolves the BCL member when one matches, and falls to dynamic dispatch
+        // (recv.GetType().GetMethod(name)) when none does. EITHER WAY this is correct AND it rescues the call from the
+        // clrg:/shorthand owner that plain `callInstance` resolution (ilemit ParseOwner / ResolveMethod) cannot handle.
+        return ClrCallNode(node, clrOwner, member, member, args, instance);
     }
 
     // Kotlin collection-interface member -> the rt ClrCollectionDefaults static (recv-first, generic over elem).
@@ -2092,10 +2081,28 @@ static class MemberCallSubstitution
         return ReferenceMetadataIndex.BareOwnerFqn(sig0);
     }
 
-    static JsonNode TopLevelExtensionInstance(JsonObject node, string intrinsic, JsonArray args, List<string> sigParts)
+    // A CLR-bound owner token's ClrRef-resolvable BCL type: a non-generic alias is its bare BCL FQN ("System.String"
+    // -- NOT the "string" shorthand, which ilemit ClrRef can't resolve as a clr* `type`); a generic alias keeps its
+    // element args (clrg:<bcl>[<args>], or [object x arity] when the token erased them). Null if not CLR-bound.
+    static string ClrOwnerType(ReferenceMetadataIndex refs, string ownerToken)
+    {
+        if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out _)) return null;
+        var fqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
+        var br = ownerToken.IndexOf('[');
+        if (br >= 0 && ownerToken.EndsWith("]", StringComparison.Ordinal))
+            return "clrg:" + bcl + "[" + ownerToken[(br + 1)..^1] + "]";
+        if (refs.OwnerArity(fqn) is var ar && ar > 0)
+            return "clrg:" + bcl + "[" + string.Join(",", Enumerable.Repeat("object", ar)) + "]";
+        return bcl;
+    }
+
+    static JsonNode TopLevelExtensionInstance(JsonObject node, ReferenceMetadataIndex refs, string intrinsic, JsonArray args, List<string> sigParts)
     {
         if (args.Count == 0) return null;   // no receiver -> not an extension shape; leave for FindStatic to report
-        var recvType = sigParts.Count > 0 ? sigParts[0] : InferExpressionType(args[0]);
+        var sig0 = sigParts.Count > 0 ? sigParts[0] : InferExpressionType(args[0]);
+        // The receiver type must be a ClrRef-resolvable BCL token (System.String / clrg:... / array:...), not a bare
+        // shorthand the later type-lowering would produce (`kotlin.String` -> "string" doesn't resolve in ClrRef).
+        var recvType = ClrOwnerType(refs, sig0) ?? sig0;
 
         var argTypes = new JsonArray();
         for (var i = 1; i < sigParts.Count; i++) argTypes.Add(sigParts[i]);
