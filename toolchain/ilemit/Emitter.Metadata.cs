@@ -42,6 +42,12 @@ sealed partial class Emitter
         tb.SetCustomAttribute(new CustomAttributeBuilder(_kFileAttr.GetConstructor(Type.EmptyTypes), new object[0]));
     }
 
+    // Returns null when the CLR custom-attribute encoder cannot represent this annotation's shape (so the caller
+    // skips it). kotc emits EVERY annotation verbatim (it is just metadata to the frontend); the CLR layer decides
+    // what is encodable. Some Kotlin annotations have a constructor-parameter type that Reflection.Emit's
+    // CustomAttributeBuilder rejects at validation — e.g. a generic-instantiation parameter, where
+    // TypeBuilderInstantiation.IsSubclassOf throws NotSupportedException. Such an attribute carries no CLR-attribute
+    // semantics we could preserve anyway, so we skip it with a diagnostic rather than abort the whole emit.
     CustomAttributeBuilder BuildCab(JsonElement a)
     {
         var attr = a.GetProperty("attr").GetString();
@@ -54,11 +60,21 @@ sealed partial class Emitter
             var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s.GetString())).ToArray();
             var nctor = at.GetConstructor(argTypes)
                         ?? at.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == args.Length);
-            return new CustomAttributeBuilder(nctor, args);
+            return TryCab(nctor, args, attr);
         }
         var ti = _types[attr];
         var ctor = ti.Ctors.Count > 0 ? ti.Ctors[0] : ti.TB.DefineDefaultConstructor(MethodAttributes.Public);
-        return new CustomAttributeBuilder(ctor, args);
+        return TryCab(ctor, args, attr);
+    }
+
+    CustomAttributeBuilder TryCab(ConstructorInfo ctor, object[] args, string attr)
+    {
+        try { return new CustomAttributeBuilder(ctor, args); }
+        catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException)
+        {
+            Console.Error.WriteLine($"ilemit: skipping un-encodable custom attribute [{attr}]: {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
     }
 
     static object ConstArgValue(JsonElement e)

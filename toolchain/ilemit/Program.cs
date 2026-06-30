@@ -529,13 +529,13 @@ sealed partial class Emitter
             // non-null and `String?` as nullable, through .NET's standard nullable-reference metadata.
             if (ti.TB != null) ApplyNullableContext(ti.TB);
             if (ti.Def.TryGetProperty("attrs", out var tattrs))
-                foreach (var a in tattrs.EnumerateArray()) ti.TB.SetCustomAttribute(BuildCab(a));
+                foreach (var a in tattrs.EnumerateArray()) { var cab = BuildCab(a); if (cab != null) ti.TB.SetCustomAttribute(cab); }
             if (ti.Def.TryGetProperty("methods", out var ms))
                 foreach (var m in ms.EnumerateArray())
                 {
                     if (!(m.TryGetProperty("attrs", out var mattrs) && mattrs.GetArrayLength() > 0)
                         || !ti.Methods.TryGetValue(m.GetProperty("name").GetString(), out var mb)) continue;
-                    foreach (var a in mattrs.EnumerateArray()) mb.SetCustomAttribute(BuildCab(a));
+                    foreach (var a in mattrs.EnumerateArray()) { var cab = BuildCab(a); if (cab != null) mb.SetCustomAttribute(cab); }
                 }
             // DotKt metadata: stamp Kotlin modifiers with no .NET analog so a consuming Kotlin module can restore
             // them. [KotlinFileClass] on a file-facade class -> its statics are top-level fns; [KotlinFunction(flags)] on
