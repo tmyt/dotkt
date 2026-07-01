@@ -29,18 +29,38 @@ premise); `dotkt-interop-feedback.md` is a 2026-06 snapshot. **A doc-sync pass (
 
 ---
 
-## 【1】 Layer-purity: the deep bir2cir migration  *(largest architectural remainder)*
-Sources: `bir2cir-migration-inventory.md`, `gap-analysis.md §2`, `ship-tasks.md §6–7`.
-- **Waves 3–6** (Waves 1 & 2 = physical primitives → `clr.*`, DONE): Wave 3 per-method scope/type env
-  (`this`/`local` → `clr.this`/`clr.local`, + `Program.cs:EmitAddr`) → Wave 4 same-module member resolver
-  (`setField`/`lateinitGet`/`byref*` → `clr.stfld`/…) → **Wave 5 reference-metadata overload resolver
-  (`ClrProjection`, HEAVIEST — real overload resolution + `MakeGenericMethod`; `clrStatic`/`clrInstance`/`clrNew`/…)**
-  → Wave 6 delegate/closure construction (`closureNew` = highest risk). Goal: move the CLR lowering still living in
-  `BirEmitter` down to bir2cir.
-- **Retire 25 ops from the compiler → stdlib** (`strRepeat`/`split`/`listNew`/`linq*`/`tupleNew`/`console`/…; several
-  are already dead code = delete only).
-- ⚠️ **Currency check needed first:** this 6-wave plan predates the #5 `netType`→bir2cir completion. Re-audit how much
-  Wave 3–6 is already absorbed by #5 before diving in.
+## 【1】 Layer-purity: retire kotc's hardcoded CLR lowerings  *(currency-corrected 2026-07-02)*
+Sources: `bir2cir-migration-inventory.md`, `gap-analysis.md §2`, `ship-tasks.md §6–7`. **The 6-wave plan in those docs
+is largely STALE** — a code-grounded currency check found:
+- **The "lower each kind to a `clr.*` node + mirror in ilemit" mechanism is ABANDONED** (dropped with the
+  `--native-cir`/`--compat-bir` removal, 2026-06-30). bir2cir emits only *reference tokens*
+  (`clr.typeRef`/`clr.methodRef`/`clr.fieldRef`); the `clr.bin`/`clr.newobj`/`clr.call`/… cases in ilemit are
+  **unreachable DEAD CODE** (`Emitter.Expressions.cs` has both `case "bin"` and `case "clr.bin"` → same emitter).
+- **bir2cir's reference-metadata resolver + `@ClrIntrinsic` substitution is ALREADY BUILT and live** in production
+  (`MemberCallSubstitution.Apply`, `bir2cir/Program.cs:2194`, wired `:118`, gated by `RefBuild` — rewrites plain
+  `callInstance`/`callStatic` → `clrInstance`/`clrStatic`/`clrNew` on the BCL owner; reads ref.dll via
+  `ReferenceMetadataIndex`; does `@ClrProperty`/`@ClrTypeAlias`/constrained-dispatch). So Wave 5's "heaviest resolver"
+  is **essentially done** (`gap-analysis §1` "substitution ZERO" is stale).
+- **Wave 3–4 are MOOT** — `this`/`local`/`setField`/`lateinitGet`/`byref*` are pure structural/physical nodes with NO
+  CLR language knowledge; raw-through to ilemit codegen is correct now that the `clr.*` lower mechanism is gone. The
+  per-method-type-env + same-module-resolver infra the 6-wave assumed is **unnecessary** (≈1/3 of the plan eliminated).
+
+**Genuinely remaining scope:**
+- **① Main body (mechanical, ~45+7 sites):** retire kotc's hardcoded CLR direct-lowerings — `System.Math`
+  (`BirEmitter.kt:3854/3861/3892`), `System.String` (Format/Substring, `:3805/3914/3929`), `System.Convert`
+  (`:3721`), `System.Char` (`:3941`), `System.Console.ReadLine` (`:3777`), `System.Text.RegularExpressions`
+  (`:3787`), `Task.Delay` (`:1386`), `IComparable.CompareTo` (`:3195`), `IDisposable.Dispose` (`:2312`),
+  `System.Lazy` (`:3177`), indexer `get_/set_Item` (`:3400/3414`), the generic `clrName→clrStatic` path
+  (`:3533+`) → move to stdlib `@ClrIntrinsic` + let the (already-built) bir2cir `MemberCallSubstitution` consume it;
+  then DELETE kotc's `clrName`/`annClr` read path (`BirEmitter.kt:4247`) so bir2cir is the SOLE substituter (today
+  they run idempotently in parallel — `bir2cir/Program.cs:114-117`). Plus the 7 STILL-OPEN retire ops
+  (`strRepeat`/`strReversed`/`split`/`console`/`listNew`/`setNew`/`mapNew`; `listNew`/`setNew` are emitted via a
+  computed `kind` var at `BirEmitter.kt:3247`, NOT dead).
+- **② Cleanup (low-risk, bulk):** delete the 18 DEAD retire-list ilemit cases (`listGet`/`mapGet`/`associate*`/
+  `groupBy`/`linq*`/`tupleNew`/… in `Emitter.Expressions.cs`) + the native-cir remnant physical `clr.*` cases
+  (`clr.bin`/`clr.newobj`/`clr.call`/…).
+- **③ Deferred:** Wave 6 (`delegateNew`/`boundDelegateNew`/`delegateInvoke`/`closureNew` — plumbing, low-pri;
+  `delegateInvoke` gated on the inline phase) + `clrStaticField`/coroutine hardcode (coroutine phase).
 
 ## 【2】 stdlib completeness  *(#1 rt-green residual)*
 - **~363 unbound `actual`s → `@ClrIntrinsic`** (Arrays / Char / StringBuilder / Unsigned / Regex families).
@@ -76,9 +96,13 @@ Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedbac
   - generic closure/HOF (`genclosure`/`genhof`) · virtual-property override dispatch (`netbase2`).
   - long-standing ilverify-only noise (`customexc`/`tryexpr`/`mc1`/`funref`) — runs correctly, ilverify complains.
 
-## 【5】 exception map → `@ClrTypeAlias`  *(#2)*
-- Retire kotc's `BirMappings.NET_EXCEPTIONS` hardcoded `kotlin.*Exception → System.*` map; `@ClrTypeAlias` the stdlib
-  exception classes + let bir2cir substitute. (The `clr.Clr` sample quarantine that #2 also listed is DONE.)
+## 【5】 exception map → `@ClrTypeAlias`  *(#2)* — ✅ DONE (verified 2026-07-02; was already complete)
+- `BirMappings.NET_EXCEPTIONS` DELETED (kotc `5907510`); the 11 stdlib exception classes carry `@ClrTypeAlias` (stdlib
+  `c119dd8`, `runtime/stdlib/clr/builtins/Throwable.kt`) with 11/11 parity to the retired map; bir2cir substitutes them
+  to `System.*` (verified via metadata: the 11 classes are absent from the rt.dll TypeDefs, present only as TypeRefs).
+  Samples throwx/reqnn/customexc/il-exc PASS. (`tryexpr`'s last-line crash is the unrelated `sum`-over-lazy-`map`
+  collection bug in 【4】, NOT exceptions.) The `clr.Clr` sample quarantine #2 also listed is DONE (26 deleted + 3
+  migrated this session).
 
 ---
 
