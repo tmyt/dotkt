@@ -5,6 +5,7 @@ import Theme.Palette
 class Greeter(val name: String) {
     fun greet(): String = "Hi, " + name + " (accent=" + Palette().Accent + ")"
 
-    // Returns a Kotlin List<String>; the C# consumer sees a real System.Collections.Generic.List<string>.
+    // Returns a Kotlin read-only List<String>; the @ClrTypeAlias exposes it to the C# consumer as
+    // System.Collections.Generic.IReadOnlyList<string> (the runtime instance is a real .Generic.List<string>).
     fun roster(): List<String> = listOf(name + " A", name + " B", name + " C")
 }
