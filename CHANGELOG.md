@@ -33,6 +33,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `reversed` (`StringBuilder(CharSequence)` has no .NET ctor), `padStart`/`padEnd` (StringBuilder append/capacity
   mis-bind), `replace(String,String)` (StringBuilder `append(seq,start,END)`→`Append(str,start,COUNT)`),
   `isBlank`/`isNotBlank` (`all { isWhitespace }` → CharSequence iteration `Iterator.hasNext` not found).
+- **Retired the kotc String-indexer lowering `s[i]`→`get_Chars` (bundle 4-B).** kotc no longer hardcodes
+  `String s[i]` → `System.String.get_Chars`; `kotlin.String.get(index)` carries `@ClrIntrinsic("get_Chars")`, so kotc
+  emits the plain operator-`get` member call and bir2cir's `MemberCallSubstitution` rewrites it to
+  `clrInstance System.String.get_Chars` off the ref.dll. Gate-neutral (run-fail set + ilverify set identical);
+  `il-charseq` (a user `class S : CharSequence` that indexes `s[index]`) still passes.
 
 ### Added
 - **CharSequence synthetic CANONICALIZATION (bundle 4-A) — cross-assembly CharSequence now works.** The synthetic

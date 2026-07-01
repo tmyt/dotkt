@@ -3395,9 +3395,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return if (name == "get") """{"k":"arrayGet","elem":${str(elemT)},"array":${expr(recv)},"index":${expr(a[0])}}"""
 				else """{"k":"arraySet","elem":${str(elemT)},"array":${expr(recv)},"index":${expr(a[0])},"value":${expr(a[1])}}"""
 			}
-			// String indexing `s[i]` -> System.String.get_Chars(i) (char).
-			if (recv != null && name == "get" && recv.type.classFqName?.asString() == "kotlin.String")
-				return """{"k":"clrInstance","type":"System.String","method":"get_Chars","argTypes":["System.Int32"],"ret":"System.Char","recv":${expr(recv)},"args":[${expr(regularArgs(call)[0])}]}"""
+			// String indexing `s[i]` is NO LONGER lowered here (RETIRED 2026-07-02, bundle 4-B). `kotlin.String.get(index)`
+			// carries @ClrIntrinsic("get_Chars") (runtime/stdlib/clr/builtins/String.kt); kotc emits the plain operator
+			// `get` member call on kotlin.String and bir2cir's MemberCallSubstitution rewrites it to
+			// `clrInstance System.String.get_Chars` off the ref.dll — the Kotlin<->CLR relation lives in bir2cir, not kotc.
 			// kotlin.* List/Map indexing `list[i]`/`m[k]` is NOT intercepted: in FIR it's already an operator call to
 			// `get`/`set` — fall through to the ordinary call path so it emits as a real kotlin.* `get`/`set` call.
 			// Injected .NET indexer `c[i]` / `c[i] = v` -> get_Item / set_Item on the constructed .NET type. The

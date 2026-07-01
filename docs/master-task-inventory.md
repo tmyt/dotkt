@@ -324,7 +324,9 @@ deeper stdlib-body bug (a stdlib-body-fix follow-up, NOT dual-rep):** `trim`/`tr
 method-ref not lowered + un-wrapped inlined `as CharSequence`), `reversed` (`StringBuilder(CharSequence)` no .NET ctor),
 `padStart`/`padEnd` (StringBuilder append/capacity mis-bind), `replace(String,String)` (StringBuilder
 `append(seq,start,END)`→`Append(str,start,COUNT)`), `isBlank`/`isNotBlank` (`all{isWhitespace}` CharSequence iteration
-`Iterator.hasNext` not found). The `s[i]` indexer + Regex retires: see (3b)/(4) below.
+`Iterator.hasNext` not found). (3b) **indexer `s[i]`→`get_Chars` — ✅ DONE 2026-07-02 (bundle 4-B).** kotc no longer
+lowers `String s[i]`; `kotlin.String.get(index)`@ClrIntrinsic("get_Chars") + bir2cir MemberCallSubstitution route it.
+Gate-neutral; `il-charseq` (user `class S : CharSequence` indexing `s[index]`) still green.
 (4) **Regex agent (NOW UNBLOCKED)** — retire Regex (its `CharSequence` inputs then coerce). Comparable-self and the
 collection-bridge are separate tracks (own agents), not gated on this fix.
 
