@@ -1114,7 +1114,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val propsList = klass.declarations.filterIsInstance<IrProperty>().filter { emitsGet(it) }.joinToString(",") { p ->
 			val getName = clrIfaceMemberName(p.getter!!) ?: "get_" + p.name.asString()
 			val setName = if (emitsSet(p)) str(clrIfaceMemberName(p.setter!!) ?: "set_" + p.name.asString()) else "null"
-			"""{"name":${str(p.name.asString())},"type":${str(birType(p.getter!!.returnType))},"get":${str(getName)},"set":$setName}"""
+			"""{"name":${str(p.name.asString())},"type":${str(birType(p.getter!!.returnType))},"get":${str(getName)},"set":$setName${overridesJson(p.getter!!)}}"""
 		}
 		val methods = (instMethods + statMethods + companionAccessors + clrAccessors + userAccessors).joinToString(",")
 		// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
@@ -3837,8 +3837,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// `set_p` method takes the extension receiver as a leading `__self` arg -> prepend it.
 				val pExt = extensionReceiver(call)?.let { expr(it) }
 				return if (callee === property.setter)
-					"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "set_" + property.name.asString())},"args":[${listOfNotNull(pExt, expr(regularArgs(call).first())).joinToString(",")}]}"""
-				else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "get_" + property.name.asString())},"args":[${pExt ?: ""}]${retHint('[' in ownerStr, call.type)}}"""
+					"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "set_" + property.name.asString())},"args":[${listOfNotNull(pExt, expr(regularArgs(call).first())).joinToString(",")}]${overridesJson(callee)}}"""
+				else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "get_" + property.name.asString())},"args":[${pExt ?: ""}]${retHint('[' in ownerStr, call.type)}${overridesJson(callee)}}"""
 			}
 			return if (callee === property.setter)
 				"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
@@ -4182,7 +4182,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// -- lives on the BCL interface FindMethod skips). ilemit gates on the owner-interface so non-collection misses
 			// still throw. See ilemit EmitDynamicCall.
 			val dynRet = ""","dynRet":${str(birType(call.type))}"""
-			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]}"""
+			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]${overridesJson(callee)}}"""
 		} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]}"""
 	}
 
