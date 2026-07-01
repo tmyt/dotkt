@@ -127,10 +127,20 @@
    overload, and a bir2cir pass re-points the for-loop iterator protocol at the real `kotlin.collections.Iterator<E>`
    (Gap A; needed the rt bridge made `public`); `cases/ktproj-coll` builds+runs (`first`/`getOrElse`/`contains`/`indexOf`/
    `count`/`isEmpty`/`take` + two `for`-loops). REMAINING app-consume gaps:
-   - **Collection-BUILDING ops (`map`/`filter`/`sorted`/`reversed`)** now reach the stdlib body (Gap B routed them) but
-     crash *inside* it: `mapTo`/`filterTo` do `ICollection<T>.Add` on the result `ArrayList`, which throws
-     `EntryPointNotFoundException` — the rt stdlib's **mutable-collection (ArrayList) actuals** are not bound. Layer =
-     **stdlib** (the mutable-collection platform actuals), not the compiler.
+   - **Collection-BUILDING ops (`map`/`filter`/`toList`/`toMutableList`/`reversed`) — FIXED (2026-07-02).** The diagnosis
+     was WRONG: the mutable-collection actuals ARE bound (`ArrayList`→`@ClrTypeAlias List`, `add`→`@ClrIntrinsic Add`) and
+     direct `ArrayList().add(...)` worked. Two GENERAL codegen bugs (NOT a stdlib special-case): (1) `mapTo`/`filterTo`'s
+     `destination.add(x)` on a generic param `C : MutableCollection<R>` lowered to `callvirt ICollection<object>::Add`
+     (the alias padded the missing type args with `object`) → mis-dispatch → `EntryPointNotFoundException`. bir2cir now
+     threads a type-param/param env (`SubstCtx`) and emits a `constrainedCall` (`constrained. !!C ; callvirt
+     ICollection<R>::Add`). (2) `ArrayList(collection)` copy ctor lowered to `new List<T>(...)` with argType `object` →
+     ilemit couldn't disambiguate `List(int)` vs `List(IEnumerable<T>)` → `InvalidProgramException`. bir2cir's
+     `TransformNew` now instantiates the declared ctor param types (`E:=Int` from the `new` type args, via a new ref.dll
+     type-param-name index) and ilemit adds an assignability ctor fallback (`PickCtorByAssignable`). Verified:
+     `map`/`filter`/`reversed`/`toList`/`toMutableList().apply{add}` all run; read-only path intact. **Residuals (separate
+     pre-existing bugs):** `sorted()` on a Collection (value-type `toTypedArray`/`Array.Sort` → `AccessViolationException`),
+     `mapNotNull` (nullable-generic `?.let` → `InvalidProgramException`), `for (x in this: Iterable<T>)` over a generic
+     receiver (unresolved iterator protocol → ilemit `ResolveMethod` NRE).
    - **Element-type-overloaded statics (`sum`)**: arity alone can't disambiguate `sum(Iterable<Int>)` vs `sum(Iterable<Double>)`
      (both 1 param) — needs element-type matching in ilemit's reflected lookup or a bir2cir owner+overload pick. `last`/`lastIndex`
      remain blocked by the known generic-ext-property-getter-typeargs bug.

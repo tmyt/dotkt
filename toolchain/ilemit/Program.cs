@@ -2100,10 +2100,20 @@ sealed partial class Emitter
             _il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(type, openCtor));
             return type;
         }
-        // Exact match first; else fall back to arity-based selection. The latter matters when a lambda arg's type was
-        // erased to `object` by the façade (the param is really a delegate, e.g. `new Thread(ThreadStart)`): the real
-        // ctor param type is recovered here so EmitArg can build the specific delegate.
-        var ci = (argTypes.All(t => t != null) ? type.GetConstructor(argTypes) : null) ?? PickClrCtor(type, args);
+        // Exact match first; else an assignability pick (the @Clr concrete-collection ABI: a `Collection<T>` arg lowered
+        // to IReadOnlyCollection<T> matches List's `IEnumerable<T>` ctor, disambiguating it from the `int` capacity ctor
+        // — an exact GetConstructor misses because the param type differs); else arity-based selection (matters when a
+        // lambda arg's type was erased to `object` by the façade — the real delegate param is recovered here).
+        // GetConstructor throws ArgumentException when argTypes contains an EMITTED TypeBuilder ("Type must be a type
+        // provided by the runtime") — precise ctor argTypes can now resolve to emitted stdlib types; null it and let the
+        // assignability/arity fallbacks (which tolerate emitted types) resolve. Mirrors the Tb-instantiation catch above.
+        ConstructorInfo exact = null;
+        if (argTypes.All(t => t != null))
+            try { exact = type.GetConstructor(argTypes); }
+            catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException) { }
+        var ci = exact
+                 ?? PickCtorByAssignable(type, argTypes, args.GetArrayLength())
+                 ?? PickClrCtor(type, args);
         if (ci == null) throw new NotSupportedException($"no matching constructor for {type.FullName} with {args.GetArrayLength()} arg(s)");
         EmitArgs(args, ci.GetParameters());
         _il.Emit(OpCodes.Newobj, ci);
@@ -2135,6 +2145,28 @@ sealed partial class Emitter
         EmitArgs(args, ci.GetParameters());
         _il.Emit(OpCodes.Newobj, ci);
         return type;
+    }
+
+    // When exact GetConstructor fails, pick the UNIQUE same-arity ctor on a (constructed/reflected) type whose params
+    // ACCEPT the KNOWN arg types by assignability — the @Clr collection ABI (a `Collection<T>` arg lowered to
+    // IReadOnlyCollection<T> is assignable to List's `IEnumerable<T>` ctor param, but NOT to its `int` capacity ctor).
+    // Null when arg types are unknown or the assignable match is not unique — the caller then falls back to arity scoring.
+    ConstructorInfo PickCtorByAssignable(Type type, Type[] argTypes, int n)
+    {
+        if (argTypes.Length != n || argTypes.Any(t => t == null)) return null;
+        ConstructorInfo hit = null;
+        try
+        {
+            foreach (var c in type.GetConstructors().Where(c => c.GetParameters().Length == n))
+            {
+                var ps = c.GetParameters();
+                if (!Enumerable.Range(0, n).All(i => ParamAccepts(ps[i].ParameterType, argTypes[i]))) continue;
+                if (hit != null) return null;   // ambiguous
+                hit = c;
+            }
+        }
+        catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException) { return null; }   // emitted/Tb types
+        return hit;
     }
 
     // Pick a ctor on an open generic def by arity + STRUCTURAL assignability (a Kotlin arg whose @Clr type derives from

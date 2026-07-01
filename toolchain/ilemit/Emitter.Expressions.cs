@@ -195,6 +195,22 @@ sealed partial class Emitter
             case "constrainedCall":
             case "clr.constrained.compareTo":
             {
+                // General N-arg form: a CLR-aliased INTERFACE member invoked on a generic-parameter receiver
+                // (`destination.add(x)` where `destination: C` and `C : MutableCollection<R>`). A plain callvirt on the
+                // padded ICollection<object> owner mis-dispatches (the runtime List<R> implements ICollection<R>) and
+                // throws EntryPointNotFoundException; `constrained. !!C ; callvirt ICollection<R>::Add` dispatches on
+                // the receiver's actual type. Distinguished from the single-`arg` compareTo form by the `args` array.
+                if (e.TryGetProperty("args", out var ccArgs) && ccArgs.ValueKind == JsonValueKind.Array)
+                {
+                    var rt2 = MapType(e.GetProperty("recvType").GetString());
+                    var if2 = MapType(e.GetProperty("iface").GetString());
+                    var mi2 = InterfaceMethodOn(if2, e.GetProperty("method").GetString());
+                    EmitAddr(e.GetProperty("recv"));            // &C  (a managed pointer, required by `constrained.`)
+                    EmitArgs(ccArgs, mi2.GetParameters());
+                    _il.Emit(OpCodes.Constrained, rt2);
+                    _il.Emit(OpCodes.Callvirt, mi2);
+                    return mi2.ReturnType;
+                }
                 // `a.compareTo(b)` on a Comparable -> `constrained. recvType; callvirt IComparable::CompareTo`.
                 // The receiver must be a managed pointer; `constrained.` then dispatches for value/ref/generic T.
                 var recvType = MapType(e.GetProperty("recvType").GetString());
