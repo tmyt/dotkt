@@ -31,12 +31,9 @@ internal val STRING_OPS = mapOf(
 	"contains" to "Contains", "indexOf" to "IndexOf", "padStart" to "PadLeft", "padEnd" to "PadRight",
 )
 
-// Char predicates / conversions -> static methods on System.Char.
-internal val CHAR_OPS = mapOf(
-	"isDigit" to "IsDigit", "isLetter" to "IsLetter", "isWhitespace" to "IsWhiteSpace",
-	"isLetterOrDigit" to "IsLetterOrDigit", "uppercaseChar" to "ToUpper", "lowercaseChar" to "ToLower",
-	"isUpperCase" to "IsUpper", "isLowerCase" to "IsLower",
-)
+// (RETIRED 2026-07-02) The Char-ops map (isDigit/isLetter/uppercaseChar/… -> System.Char statics) lived here. It was
+// CLR knowledge in kotc (a layer violation). kotc now emits a plain call to the stdlib Char fun; bir2cir substitutes it
+// from CharClr.kt's @ClrIntrinsic("System.Char.IsDigit"/"System.Char.ToUpperInvariant"/…) FQ bindings on the ref.dll.
 
 internal val PRIMITIVE_ARRAY_ELEM = mapOf(
 	"kotlin.IntArray" to "int", "kotlin.LongArray" to "long", "kotlin.DoubleArray" to "double",

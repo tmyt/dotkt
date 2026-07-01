@@ -3713,6 +3713,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"equals" -> return """{"k":"objMethod","method":"Equals","recv":${expr(dispatchReceiver(call)!!)},"arg":${expr(regularArgs(call).first())}}"""
 		}
 		// `n.toString(radix)` (Int/Long, a kotlin.text extension) -> System.Convert.ToString(value, base 2/8/10/16).
+		// NOT RETIRED (2026-07-02): bir2cir correctly attributes a plain call to the stdlib StringNumberConversionsKt.
+		// toString(int,int) digit-loop body, but that emitted body MISCOMPILES cross-module — base-2 is correct ("1010")
+		// yet the letter-digit branch is not: 255.toString(16) -> "ffffffff", (-255).toString(16) -> "1". Retiring would
+		// ship a correctness regression, so the kotc Convert lowering STAYS until the stdlib body is fixed (blocked; a
+		// deep stdlib/emit bug, out of scope for the layer-purity retire). See docs/master-task-inventory.md bundle 1.
 		if (name == "toString" && regularArgs(call).size == 1) {
 			val recv = extensionReceiver(call) ?: dispatchReceiver(call)
 			val rfq = recv?.type?.classFqName?.asString()
@@ -3905,12 +3910,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						return """{"k":"clrInstance","type":"System.String","method":${str(m)},"argTypes":[${args.joinToString(",") { str(birType(it.type)) }}],"ret":${str(birType(callee.returnType))},"recv":${expr(recv)},"args":[${args.joinToString(",") { expr(it) }}]}"""
 					}
 				}
-				// `c.isDigit()`/`c.uppercaseChar()` -> `System.Char.X(char)` (static, receiver as the arg).
-				CHAR_OPS[name]?.let { m ->
-					extensionReceiver(call)?.let { recv ->
-						return """{"k":"clrStatic","type":"System.Char","method":${str(m)},"argTypes":["System.Char"],"ret":${str(birType(callee.returnType))},"args":[${expr(recv)}]}"""
-					}
-				}
+				// `c.isDigit()`/`c.uppercaseChar()` are NO LONGER lowered here. kotc emits a plain call to the stdlib Char
+				// fun (kotlin.text extension); bir2cir substitutes it from CharClr.kt's @ClrIntrinsic("System.Char.IsDigit"/
+				// "System.Char.ToUpperInvariant"/…) FQ bindings on the ref.dll -> clrStatic System.Char.X(char). The
+				// Kotlin<->CLR relation lives in bir2cir, not kotc. (Retired 2026-07-02: Char family, bundle 1.)
 				// String predicates: isEmpty/isNotEmpty -> Length==0/!=0, isBlank/isNotBlank -> IsNullOrWhiteSpace (dual-rep).
 				if (name == "isEmpty" || name == "isNotEmpty" || name == "isBlank" || name == "isNotBlank") {
 					(extensionReceiver(call) ?: dispatchReceiver(call))?.takeIf { it.type.classFqName?.asString() == "kotlin.String" }?.let { recv ->
