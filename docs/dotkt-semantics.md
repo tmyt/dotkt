@@ -210,7 +210,10 @@ methods.
    reconstructor-only fix (read `GetGenericParameterConstraints()` / `GenericParameterAttributes`), no new attribute.
    Affects every generic library API (`<T : Comparable<T>>`, `Comparator<in T>`, …).
 2. **`object` singleton / companion implicit access** — pervasive in real Kotlin libraries; the ergonomic
-   `Type.member` call site does not round-trip.
+   `Type.member` call site does not round-trip. **KNOWN / ACCEPTED LIMITATION (2026-07-01): NOT a follow-up fix.**
+   `facadegen` *would* emit the restoration, but the pinned Kotlin **embedded compiler (2.2.0)** does not support the
+   implicit `Type.member`→companion/`.INSTANCE` resolution the consumer's FIR would need — so it is not facadegen-fixable
+   from our side. Consumers use `.Companion`/`.INSTANCE` explicitly (MEMORY `injected-static-members-need-companion`).
 3. **`fun interface` SAM** — a DotKt callback interface can't take a lambda from a consuming module.
 4. **`enum class`** restored as `object`/`class` — no exhaustive `when`, no `.entries`.
 5. **`sealed` hierarchies** — no exhaustive `when` cross-module.
