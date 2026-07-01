@@ -3766,8 +3766,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
 			if (fq == "kotlin.io" && (name == "println" || name == "print")) {
-				val m = if (name == "println") "WriteLine" else "Write"
 				// A collection operand prints Kotlin-style `[a, b]`, not .NET's type-name ToString -> route via clrCollToString.
+				// (Kotlin toString semantics — it calls a stdlib helper, NOT a CLR member; kept.) The println/print call
+				// ITSELF is emitted as a PLAIN top-level fun call: bir2cir substitutes it to System.Console.Write/WriteLine
+				// from the stdlib @ClrIntrinsic (runtime/stdlib/clr/kotlin/io/ConsoleClr.kt). The old hardcoded `{"k":"console"}`
+				// CLR node (kotc + the ilemit `case "console"`) is RETIRED — that CLR knowledge now lives in the stdlib
+				// binding + bir2cir's MemberCallSubstitution. (2026-07-02, bundle 1.)
 				val argJson = operands.joinToString(",") { op ->
 					val rfq = op.type.classFqName?.asString()
 					if (rfq != null && rfq.startsWith("kotlin.collections.") && (rfq.contains("List") || rfq.contains("Set") || rfq.endsWith("Collection"))) {
@@ -3775,11 +3779,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						"""{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollToString","args":[${expr(op)}],"typeArgs":[${str(elem)}]}"""
 					} else expr(op)
 				}
-				return """{"k":"console","method":${str(m)},"args":[$argJson]}"""
+				return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)},"args":[$argJson]}"""
 			}
-			// `readLine()` -> Console.ReadLine() (returns String?; null at EOF, like Kotlin).
-			if (fq == "kotlin.io" && name == "readLine")
-				return """{"k":"clrStatic","type":"System.Console","method":"ReadLine","argTypes":[],"ret":"System.String","args":[]}"""
+			// `readLine()` is NOT lowered: the CLR stdlib exposes readln()/readlnOrNull() (readlnOrNull is @ClrIntrinsic-bound
+			// to System.Console.ReadLine in ConsoleClr.kt). There is no `kotlin.io.readLine` symbol in the frontend jar, so
+			// this lowering was dead (like the retired String.format). (Retired 2026-07-02, bundle 1.)
 			// Regex: `"p".toRegex()` -> new Regex("p"); `r.containsMatchIn(s)` -> r.IsMatch(s); `r.replace(s,rep)` -> r.Replace(s,rep).
 			val RX = "System.Text.RegularExpressions.Regex"
 			if (name == "toRegex") extensionReceiver(call)?.let { p ->

@@ -261,19 +261,9 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Stsfld, FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString()));
                 return typeof(void);
             }
-            case "console":
-            {
-                var cargs = e.GetProperty("args").EnumerateArray().ToList();
-                if (cargs.Count == 0)   // bare `println()` -> Console.WriteLine() (blank line)
-                {
-                    _il.Emit(OpCodes.Call, typeof(Console).GetMethod(e.GetProperty("method").GetString(), Type.EmptyTypes));
-                    return typeof(void);
-                }
-                var t = EmitExpr(cargs[0]);
-                if (NeedsBoxToRef(t)) _il.Emit(OpCodes.Box, t);
-                _il.Emit(OpCodes.Call, typeof(Console).GetMethod(e.GetProperty("method").GetString(), new[] { typeof(object) }));
-                return typeof(void);
-            }
+            // NOTE: the `console` op (println/print -> System.Console.Write/WriteLine) was RETIRED (2026-07-02, bundle 1):
+            // kotc now emits println/print as PLAIN top-level fun calls and bir2cir substitutes them to the BCL from the
+            // stdlib @ClrIntrinsic (ConsoleClr.kt). This CLR-Console lowering is gone; no producer emits `k:"console"`.
             case "bin": return EmitBin(e);
             case "clr.bin": return EmitBin(e);
             case "objEq": return EmitObjEq(e);
