@@ -103,8 +103,12 @@ public actual class Regex {
     // CLR deviation vs Kotlin/JVM: this does not re-anchor/force backtracking, so a pattern whose leftmost match is shorter
     // than the full input (e.g. an alternation `a|ab` over "ab") yields null even though an anchored full match exists.
     public actual fun matchEntire(input: CharSequence): MatchResult? {
-        val match = nativeMatch(input.toString())
-        return if (match.success && match.index == 0 && match.length == input.length) ClrMatchResult(match) else null
+        // CLR: `CharSequence` has no BCL length (System.String does NOT implement the synthetic CharSequence interface),
+        // so materialize the input to a String ONCE and use its length — `input.length` on a String-at-runtime CharSequence
+        // has no dispatchable slot.
+        val text = input.toString()
+        val match = nativeMatch(text)
+        return if (match.success && match.index == 0 && match.length == text.length) ClrMatchResult(match) else null
     }
 
     // System...Regex.Match(input, index) searches forward from [index] over the full string (lookbehind transparent, `^`
@@ -112,20 +116,22 @@ public actual class Regex {
     @SinceKotlin("1.7")
     @WasExperimental(ExperimentalStdlibApi::class)
     public actual fun matchAt(input: CharSequence, index: Int): MatchResult? {
-        if (index < 0 || index > input.length) {
-            throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${input.length}")
+        val text = input.toString()   // CLR: use the String length (synthetic CharSequence has no dispatchable length on String)
+        if (index < 0 || index > text.length) {
+            throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${text.length}")
         }
-        val match = nativeMatch(input.toString(), index)
+        val match = nativeMatch(text, index)
         return if (match.success && match.index == index) ClrMatchResult(match) else null
     }
 
     @SinceKotlin("1.7")
     @WasExperimental(ExperimentalStdlibApi::class)
     public actual fun matchesAt(input: CharSequence, index: Int): Boolean {
-        if (index < 0 || index > input.length) {
-            throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${input.length}")
+        val text = input.toString()   // CLR: use the String length (synthetic CharSequence has no dispatchable length on String)
+        if (index < 0 || index > text.length) {
+            throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${text.length}")
         }
-        val match = nativeMatch(input.toString(), index)
+        val match = nativeMatch(text, index)
         return match.success && match.index == index
     }
 
@@ -279,7 +285,11 @@ internal class ClrMatchResult(private val nativeMatch: ClrMatch) : MatchResult {
         get() = nativeMatch.index until (nativeMatch.index + nativeMatch.length)
     override val value: String
         get() = nativeMatch.value
-    override val groups: MatchGroupCollection = ClrMatchGroupCollection(nativeMatch.groups)
+    // Lazy (getter, not an eager ctor field): building the group collection is only needed when `groups`/`groupValues`
+    // are actually read, and doing it eagerly forced ClrMatchGroupCollection (: AbstractCollection) to load on EVERY
+    // match — a needless dependency for the common value/range path.
+    override val groups: MatchGroupCollection
+        get() = ClrMatchGroupCollection(nativeMatch.groups)
     override val groupValues: List<String>
         get() {
             val g = nativeMatch.groups
