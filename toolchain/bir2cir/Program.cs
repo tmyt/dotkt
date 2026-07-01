@@ -354,7 +354,7 @@ sealed class ReferenceMetadataIndex
         if (t.StartsWith("gp:", StringComparison.Ordinal)) return "gp";
         return t switch
         {
-            "kotlin.Byte" or "System.SByte" or "sbyte" => "i8",
+            "kotlin.Byte" or "System.SByte" or "sbyte" or "byte" => "i8",   // kotc BIR shorthand "byte" IS kotlin.Byte (SByte)
             "kotlin.Short" or "System.Int16" or "short" => "i16",
             "kotlin.Int" or "System.Int32" or "int" => "i32",
             "kotlin.Long" or "System.Int64" or "long" => "i64",
@@ -2393,8 +2393,13 @@ static class MemberCallSubstitution
         var argTypes = InferArgTypes(node, args);
         var ret = RetToken(node);
 
-        var isGet = member.StartsWith("get_", StringComparison.Ordinal) && args.Count == 0;
-        var isSet = member.StartsWith("set_", StringComparison.Ordinal) && args.Count == 1;
+        // A property-accessor call has the `get_`/`set_` prefix on EITHER side: kotc's property convention emits it on the
+        // MEMBER (a `val length` -> the accessor call `get_length`, intrinsic bare "Length"), while a fun bound to an
+        // accessor slot carries it on the INTRINSIC (`fun ticks()`@ClrIntrinsic("get_Ticks"), member "ticks"). kotc's
+        // clrName treated a get_/set_ intrinsic as clrPropGet/clrPropSet, so bir2cir must too — accept the prefix on
+        // either side. (`prop` below strips it from whichever carries it.)
+        var isGet = (member.StartsWith("get_", StringComparison.Ordinal) || intrinsic.StartsWith("get_", StringComparison.Ordinal)) && args.Count == 0;
+        var isSet = (member.StartsWith("set_", StringComparison.Ordinal) || intrinsic.StartsWith("set_", StringComparison.Ordinal)) && args.Count == 1;
         if (instance && (isGet || isSet))
         {
             var prop = intrinsic.StartsWith("get_", StringComparison.Ordinal) || intrinsic.StartsWith("set_", StringComparison.Ordinal)
