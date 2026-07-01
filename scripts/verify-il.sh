@@ -225,7 +225,7 @@ il_check props Props "$ROOT/cases/il-props" "$(printf '20\n8\n16\nnot initialize
 il_check valcls ValCls "$ROOT/cases/il-valclass" "$(printf '1250\n12\n1250\nff\n1010\nff')"
 il_check ctorref CtorRef "$ROOT/cases/il-ctorref" "$(printf '(1,2)\n(3,4)\n(9,9)')"
 il_check getcls GetClass "$ROOT/cases/il-getclass" "$(printf 'String\nWidget\nWidget\nString')"
-il_check forin Forin "$ROOT/cases/il-forin" "$(printf '60\n10,20,30,\n3')"
+il_check_imports forin Forin "$ROOT/cases/il-forin" "$(printf '60\n10,20,30,\n3')"
 il_check ldeleg LocalDeleg "$ROOT/cases/il-localdeleg" "$(printf '42\n42\nHI\nWORLD')"
 il_check langf LangFeat "$ROOT/cases/il-langfeat" "$(printf '7\n1024\n120\ntf\ncircle=12\nsq=25\n1a\n2b')"
 il_check pair  Pair  "$ROOT/cases/il-pair"    "$(printf '3\n4\nx\n10\n11')"
@@ -266,24 +266,10 @@ il_check event   Ev  "$ROOT/cases/il-event"   "$(printf 'changed\nchanged\n2\nch
 il_check loopjump LjT "$ROOT/cases/il-loopjump" "$(printf 'break at 3\nsumOdd=9\nouter break at 1,2')"
 il_check netgen3 Ng3 "$ROOT/cases/il-netgen3" "$(printf '4\n8\n8\nFalse\nTrue\n20\n99\n3')" "$GMMETA"
 
-# Coroutines: a suspend fun lowered to a CLR-native IAsyncStateMachine, driven by an external runtime (--ref).
-il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
-	gate
-	{ name="$1"; asm="$2"; src="$3"; expected="$4"; rasm="$5"
-		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"
-		refdll="$(build_runtime "$src" "$rasm")"; echo "$refdll" > "$ROOT/build/refdll-$name"
-		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
-		if ! "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
-			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$refdll"; then
-			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		cp "$refdll" "$ildir/"
-		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
-		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
-			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
-	} &
-}
-il_check_ref fieldvis FieldVis "$ROOT/cases/il-fieldvis" "$(printf '150\nme\nPrivate\nPublic')" KfcFv
+# Reverse interop via an injected C# host: `il_check_inject` builds the sample's runtime.cs into a referenced .NET
+# assembly, scans the .kt imports through facadegen, and --refs it (the same façade-free `import Kfc.X` path the other
+# injected-runtime samples use). fieldvis: a .NET host reflects a DotKt-emitted property's CLR accessor visibility.
+il_check_inject fieldvis FieldVis "$ROOT/cases/il-fieldvis" "$(printf '150\nme\nPrivate\nPublic')" KfcFv
 il_check_inject delegatearg Dlg "$ROOT/cases/il-delegatearg" "$(printf '42\n20\n81')" KfcDel
 il_check_inject netenum NetEnum "$ROOT/cases/il-netenum" "$(printf '60\n6\nabbccc')" KfcNetEnum
 il_check_inject injbase InjBase "$ROOT/cases/il-injbase" "placed:0" KfcInjB
@@ -291,7 +277,7 @@ il_check_inject injfqn InjFqn "$ROOT/cases/il-injfqn" "42" KfcInjF
 il_check_inject injstatic InjStatic "$ROOT/cases/il-injstatic" "$(printf 'p=42\n7\n99\n123')" KfcStatic
 il_check_inject injuint InjUint "$ROOT/cases/il-injuint" "$(printf '65542\n42')" Boot
 # c1net consumes types from its OWN runtime.cs (Probe assembly) via `import Probe.X` -> il_check_inject (build the
-# runtime, scan the imports through facadegen, --ref it). il_check_ref (no import scan) was the dead @Clr-facade path.
+# runtime, scan the imports through facadegen, --ref it). The old no-import-scan @Clr-facade path is gone.
 il_check_inject c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
 il_check_inject firgap FirGap "$ROOT/cases/il-firgap" "$(printf '42\n60\n3\n20')" P
 il_check_inject inherit Inherit "$ROOT/cases/il-inherit" "$(printf 'run:derived\nshow:button\nbutton')" PInh
