@@ -946,7 +946,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** STEP-1 (kotc->bir2cir clrName migration) — a PURE-KOTLIN override marker for an emitted member: the transitive
 	 *  closure of interface/base members it overrides, each as {owner FQN, Kotlin member name, kind, arity}. NO CLR
 	 *  knowledge (no @ClrIntrinsic read, no BCL name). bir2cir (Step 2) consumes this + the ref.dll @ClrIntrinsic to
-	 *  derive the BCL slot name (the job [clrIfaceMemberName]'s `annClr` does today). Behavior-neutral: bir2cir strips
+	 *  derive the BCL slot name (the @ClrIntrinsic-reading kotc used to do is now REMOVED). Behavior-neutral: bir2cir strips
 	 *  the `overrides` key, so it never reaches ilemit (Step 1 keeps CIR byte-identical). `member` is the property name
 	 *  for an accessor (kind getter/setter) so bir2cir can resolve `get_`/`set_` + the property's @ClrIntrinsic. */
 	internal fun overridesJson(fn: IrSimpleFunction): String {
@@ -1005,7 +1005,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val virtual = clrIface || acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty()
 		val vis = if (clrIface) "public" else visOf(acc)
 		val isAbstract = acc.modality == Modality.ABSTRACT && acc.body == null
-		return """{"name":${str(mname)},"static":false,"override":$clrIface,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]${overridesJson(acc)}}"""
+		// REF BUILD ONLY: emit the PROPERTY's @ClrIntrinsic onto its accessor method so the ref.dll carries the binding
+		// (like a normal method's — method()/ifaceMethod already do). The @ClrIntrinsic is on the property (`@ClrIntrinsic
+		// ("Length") val length`), so read it from the corresponding property. bir2cir consumes it from the get_<name>
+		// accessor (TryMemberIntrinsic / DeclarationRename) to lower a `.length` read to clrPropGet Length. Gated to the
+		// ref build: the rt/app CIR must stay byte-identical to the annClr-era output (which emitted no accessor attrs),
+		// and the rt.dll never needs the binding — its call sites are already substituted. (See Task #5 clrName migration.)
+		// The REF build is COMPILE-without-SUBSTITUTE (the rt/app build sets BOTH env flags), so gate on exactly that.
+		val propAnns = (acc.correspondingPropertySymbol?.owner ?: acc).annotations
+		val accAttrs = if (stdlibCompile && !stdlibSubstitute) ""","attrs":[${attrsJson(propAnns)}]""" else ""
+		return """{"name":${str(mname)},"static":false,"override":$clrIface,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 	}
 
 	/** A user `annotation class Ann(val v: Int, …)` -> a `class Ann : System.Attribute` (ctor params -> public fields). */
@@ -4276,18 +4285,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// metadata attribute (attrsJson) and the BCL substitution is deferred to app-emit. So the ref assembly is PURE
 		// Kotlin shapes (no C3, no clrg: BCL refs). docs/design-clr-stdlib-ref-runtime-split.md.
 		if (stdlibCompile && !stdlibSubstitute) return null   // ref build = gated; runtime (substitute) build = @Clr binds
-		// @Clr binding source: the annotation on the decl (or, for a member, on any decl up its fake-override chain —
-		// `List.size` overrides `Collection.size`@ClrIntrinsic("Count")), else the registry the injection populated (app flow).
-		// [useAnnotation]=false skips the annotation source entirely (member-CALL routing — see [clrInteropName]).
-		fun annClr(d: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
-			if (!useAnnotation) return null
-			for (a in d.annotations) { val fq = (a as? IrConstructorCall)?.type?.classFqName?.asString(); if (fq == "kotlin.clr.ClrIntrinsic" || fq == "kotlin.clr.ClrIntrinsicAsDynamic") return (a.arguments.firstOrNull() as? IrConst)?.value as? String }
-			return null
-		}
-		annClr(decl)?.let { return it }
+		// kotc reads NEITHER @ClrIntrinsic NOR @ClrTypeAlias (Task #5, DONE): the stdlib member binding is sourced from the
+		// ref.dll by bir2cir, so there is NO annotation read here. What remains is the app-interop FIR-injection registry
+		// (ClrTypeRegistry, populated by the .NET-type injection) plus the app-build collection/StringBuilder slot maps
+		// below. `useAnnotation` is now vestigial (its only consumer, the old annClr @ClrIntrinsic reader, is removed).
 		(decl as? IrProperty)?.let { prop ->
 			fun lookup(p: IrProperty): String? {
-				annClr(p)?.let { return it }
 				p.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.memberClrName(it) }?.let { return it }
 				for (ov in p.overriddenSymbols) lookup(ov.owner)?.let { return it }
 				return null
@@ -4299,7 +4302,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		(decl as? IrSimpleFunction)?.takeIf { it.correspondingPropertySymbol == null }?.let { fn ->
 			fun lookupFn(m: IrSimpleFunction): String? {
-				annClr(m)?.let { return it }
 				m.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.memberClrName(it) }?.let { return it }
 				for (ov in m.overriddenSymbols) lookupFn(ov.owner)?.let { return it }
 				return null
