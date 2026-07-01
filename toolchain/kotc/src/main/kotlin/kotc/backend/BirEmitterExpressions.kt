@@ -139,7 +139,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val (prop, rt) = if (fldName == "message") "Message" to "System.String" else "InnerException" to "System.Exception"
 			"""{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
 		} else if (clr != null)
-			"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"retType":${str(netType(node.type))},"static":false,"recv":$recvJson}"""
+			"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"retType":${str(birType(node.type))},"static":false,"recv":$recvJson}"""
 		// A `lateinit var` backing-field read -> throw if still uninitialized (null) — proper lateinit semantics.
 		else if (node.symbol.owner.correspondingPropertySymbol?.owner?.isLateinit == true)
 			"""{"k":"lateinitGet","ownerType":${str(ownerSpec(ownerClass, node.receiver?.type))},"recv":$recvJson,"name":${str(fldName)}}"""
@@ -177,7 +177,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// A builtin-exception ctor (`throw IllegalStateException(msg)`) is NOT mapped here: it emits a plain `new
 		// @kotlin.IllegalStateException` and bir2cir rewrites it to `clrNew System.X` off the stdlib's @ClrTypeAlias.
 		if (clr != null)
-			"""{"k":"clrNew","type":${str(clr)},"argTypes":[${paramNetTypes(node.symbol.owner)}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
+			"""{"k":"clrNew","type":${str(clr)},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { str(birType(it.type)) }}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
 		else {
 			// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg.
 			val outerArg = if (klass?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null

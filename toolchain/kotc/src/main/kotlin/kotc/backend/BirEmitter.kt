@@ -1044,7 +1044,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val clr = clrName(ac)
 			val attrType = if (clr != null) "clr:$clr" else typeName(ac)
 			val args = regularArgs(ann)
-			"""{"attr":${str(attrType)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
+			"""{"attr":${str(attrType)},"argTypes":[${args.joinToString(",") { str(birType(it.type)) }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
 		}.joinToString(",")
 	}
 
@@ -2931,7 +2931,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (stdlibSubstitute && (fq == "kotlin.collections.Iterable" || fq == "kotlin.collections.MutableIterable")) return "ienum"
 		// Any other parameterized generic .NET type (Task<T>, Continuation<T>, …) -> "generic" (ilemit's IsGenericType default).
 		if ((t as? IrSimpleType)?.arguments?.isNotEmpty() == true) return "generic"
-		return netType(t).substringAfterLast('.')
+		// The default shape token equals ilemit's Shape(Type) = the parameter's .NET SIMPLE NAME (Int64/Single/…). kotc
+		// no longer has netType, so map the value primitives whose .NET name differs from the Kotlin FQN's last segment;
+		// a @Clr/injected class contributes its bound .NET name; anything unmapped erases to `Object` (ilemit's fallback
+		// shape for a reference param). This is an ilemit-Shape MATCHER (like the string/char/int early-returns above),
+		// not a type EMISSION — the removed netType's role here was exactly reproducing that .NET simple name.
+		return when (fq) {
+			"kotlin.Long" -> "Int64"; "kotlin.Short" -> "Int16"; "kotlin.Byte" -> "SByte"
+			"kotlin.Float" -> "Single"; "kotlin.Double" -> "Double"; "kotlin.Boolean" -> "Boolean"
+			"kotlin.Unit" -> "Void"
+			else -> (t.classifierOrNull?.owner as? IrClass)?.let { clrName(it) }?.substringAfterLast('.') ?: "Object"
+		}
 	}
 
 	internal fun extensionReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {
@@ -4240,10 +4250,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			} }
 			?: "System.Object"
 	}
-
-	internal fun paramNetTypes(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
-		callee.parameters.filter { it.kind == IrParameterKind.Regular }
-			.joinToString(",") { str(netType(it.type)) }
 
 	/** The `byref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. Matched by FULL name
 	 *  (`kotlin.clr.byref`) so a user function happening to be named `byref` is not mistaken for the intrinsic. */
