@@ -1794,7 +1794,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// A CONSTANT default arg -> carry it so ilemit stamps [DefaultParameterValue]; a cross-module caller can
 				// then omit the arg (ilemit's EmitDefaultArg fills it from the .NET metadata). Non-const defaults are dropped.
 				val default = (it.defaultValue?.expression as? org.jetbrains.kotlin.ir.expressions.IrConst)?.let { c -> ""","default":${expr(c)}""" } ?: ""
-				"""{"name":${str(it.name.asString())},"type":${str(birType(it.type))}$vararg$nullable$default}"""
+				// PARAMETER-level annotations -> .NET custom attributes on the emitted parameter (e.g. @ClrRefArgument,
+				// which bir2cir reads from the ref.dll to pass the arg by reference). attrsJson is stripped in the runtime
+				// build (DOTKT_STRIP_METADATA), so param attrs ride only the ref.dll — exactly bir2cir's read surface.
+				val pattrs = attrsJson(it.annotations).let { s -> if (s.isNotEmpty()) ""","attrs":[$s]""" else "" }
+				"""{"name":${str(it.name.asString())},"type":${str(birType(it.type))}$vararg$nullable$default$pattrs}"""
 			}
 
 	/** A `,"sig":"<paramtypes>"` field carried on a call so ilemit resolves the right OVERLOAD by name+signature. Emit
@@ -4140,15 +4144,24 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun byrefMarker(a: IrExpression): IrExpression? =
 		if (a is IrCall && a.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.clr.byref") regularArgs(a).firstOrNull() else null
 
-	/** Emit one regular call argument, unwrapping a `byref(x)` marker to its ADDRESSABLE lvalue (a property's backing
-	 *  FIELD node, else the lvalue itself) WHEN the matching callee parameter is a `ClrRef<T>` (`byref:`). A plain Kotlin
-	 *  call to such a byref-param method — the stdlib's @ClrIntrinsic Interlocked/TryParse/DivRem helpers, emitted as
-	 *  plain calls in the ref build and substituted to BCL `ref`/`out` calls by bir2cir in the rt build — thus passes the
-	 *  address; ilemit's EmitArg(want.IsByRef) does the `ldflda`/`ldloca`. A non-byref parameter is unaffected (so this
-	 *  is inert for every existing call), and a `ClrRef<T>` value used outside a byref arg slot still flows normally. */
+	/** A stdlib byref parameter marked `@kotlin.clr.ClrRefArgument`: its argument is passed BY REFERENCE to the bound
+	 *  BCL member (bir2cir wraps the arg position `byref:` at substitution). kotc reads it ONLY to SHAPE the argument
+	 *  addressably — the byref call-substitution decision itself is bir2cir's. */
+	internal fun isClrRefArgument(p: IrValueParameter): Boolean =
+		p.annotations.any { it.type.classFqName?.asString() == "kotlin.clr.ClrRefArgument" }
+
+	/** Emit one regular call argument as its ADDRESSABLE lvalue (a property's backing FIELD node, else the lvalue
+	 *  itself) when the matching callee parameter is byref, so ilemit's EmitArg(want.IsByRef) can `ldflda`/`ldloca` it.
+	 *  Two byref shapes: a USER `ClrRef<T>` param (`byref:`) unwraps its explicit `byref(x)` marker; a STDLIB
+	 *  `@ClrRefArgument` param (a PLAIN type, no marker) shapes the bare arg directly — the stdlib's @ClrIntrinsic
+	 *  Interlocked/TryParse/DivRem helpers, plain calls in the ref build, substituted to BCL `ref`/`out` calls by
+	 *  bir2cir in the rt build. A non-byref parameter is unaffected (inert for every existing call). */
 	internal fun argExpr(arg: IrExpression, param: IrValueParameter?): String {
-		if (param != null && birType(param.type).startsWith("byref:")) byrefMarker(arg)?.let { inner ->
-			return byrefBackingField(inner) ?: expr(inner)
+		if (param != null) {
+			if (birType(param.type).startsWith("byref:")) byrefMarker(arg)?.let { inner ->
+				return byrefBackingField(inner) ?: expr(inner)
+			}
+			else if (isClrRefArgument(param)) return byrefBackingField(arg) ?: expr(arg)
 		}
 		return expr(arg)
 	}

@@ -228,6 +228,7 @@ sealed class ReferenceMetadataIndex
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "<>dotkt_ClrH_*"
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
+    readonly Dictionary<string, int[]> _topLevelIntrinsicByref = new(StringComparer.Ordinal); // top-level fun name -> byref param positions
     readonly Dictionary<string, string> _extMemberIntrinsics = new(StringComparer.Ordinal); // "name|recvKey" -> bare member
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
     readonly Dictionary<string, List<(string Owner, string RecvKey)>> _topLevelStatics = new(StringComparer.Ordinal); // non-intrinsic top-level fun name -> [(file-class, recvKey)]
@@ -259,6 +260,7 @@ sealed class ReferenceMetadataIndex
                 list.Add(m);
             }
             foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.TopLevelIntrinsicByref) _topLevelIntrinsicByref.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ExtMemberIntrinsics) _extMemberIntrinsics.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.InlineBacking) _inlineBacking.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.TopLevelStatics)
@@ -397,6 +399,21 @@ sealed class ReferenceMetadataIndex
     // fully-qualified BCL static (e.g. clrTimestamp -> "System.Diagnostics.Stopwatch.GetTimestamp").
     public bool TryTopLevelIntrinsic(string funName, out string fqStatic) =>
         _topLevelIntrinsics.TryGetValue(funName, out fqStatic);
+
+    // The 0-based parameter positions a top-level @ClrIntrinsic fun's bound BCL static takes BY REFERENCE
+    // (@ClrRefArgument). Empty when none — the substituted call then wraps no argTypes.
+    public int[] TopLevelByrefPositions(string funName) =>
+        _topLevelIntrinsicByref.TryGetValue(funName, out var pos) ? pos : Array.Empty<int>();
+
+    // The 0-based parameter positions a bound MEMBER (owner.member, overload-matched by arg count) takes BY REFERENCE
+    // (@ClrRefArgument). Empty when none.
+    public int[] MemberByrefPositions(string ownerFqn, string memberName, int argCount)
+    {
+        if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return Array.Empty<int>();
+        var cands = list.Where(m => m.Name == memberName && m.ByrefPositions != null && m.ByrefPositions.Length > 0).ToList();
+        if (cands.Count == 0) return Array.Empty<int>();
+        return (cands.FirstOrDefault(m => m.ParamCount == argCount) ?? cands[0]).ByrefPositions;
+    }
 
     // A NON-intrinsic top-level fun (real Kotlin body) resolved to the file-class it lives in, so an APP's
     // `callStatic owner=null` gets an explicit owner ilemit reflects against the referenced runtime stdlib. When the
@@ -868,6 +885,7 @@ sealed class ReferenceMetadataIndex
                     {
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
+                        var byrefPositions = ByrefPositionsOf(method);
                         metadata.MemberBindings.Add(new MemberBinding(
                             ownerFqn,
                             method.Name,
@@ -877,7 +895,8 @@ sealed class ReferenceMetadataIndex
                             method.IsStatic,
                             method.GetParameters().Select(p => TypeName(p.ParameterType)).ToArray(),
                             prop?.Access ?? 0,
-                            prop?.Name));
+                            prop?.Name,
+                            byrefPositions));
                         // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
                         //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.
                         //   bare "Name"      -> a member on an EXTENSION receiver (`Array<T>.nativeClone()` ->
@@ -888,7 +907,10 @@ sealed class ReferenceMetadataIndex
                         {
                             var ps = method.GetParameters();
                             if (intrinsic.Contains('.'))
+                            {
                                 metadata.TopLevelIntrinsics.TryAdd(method.Name, intrinsic);
+                                if (byrefPositions.Length > 0) metadata.TopLevelIntrinsicByref.TryAdd(method.Name, byrefPositions);
+                            }
                             else if (ps.Length >= 1)
                                 metadata.ExtMemberIntrinsics.TryAdd(method.Name + "|" + RecvKey(ps[0].ParameterType), intrinsic);
                         }
@@ -947,6 +969,19 @@ sealed class ReferenceMetadataIndex
     {
         var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrIntrinsic" or "kotlin.clr.ClrIntrinsicAsDynamic");
         return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
+    }
+
+    // The PARAMETER positions (0-based, over the method's declared params) marked @ClrRefArgument — a plain-typed
+    // parameter the bound BCL member takes BY REFERENCE (`ref`/`out`). The substituted call wraps these argTypes
+    // positions `byref:` so ilemit resolves the ref/out overload + emits the address-load. Empty when none.
+    static int[] ByrefPositionsOf(MethodBase method)
+    {
+        var ps = method.GetParameters();
+        List<int> hits = null;
+        for (var i = 0; i < ps.Length; i++)
+            if (ps[i].GetCustomAttributesData().Any(a => a.AttributeType.FullName == "kotlin.clr.ClrRefArgument"))
+                (hits ??= new List<int>()).Add(i);
+        return hits?.ToArray() ?? Array.Empty<int>();
     }
 
     // The member-level PROPERTY-accessor binding: @ClrProperty(access, name). `access` is the READ(1)/WRITE(2) flag word;
@@ -1138,6 +1173,10 @@ sealed class ReferenceDotKtMetadata
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.
     public readonly Dictionary<string, string> TopLevelIntrinsics = new(StringComparer.Ordinal);
+    // Top-level @ClrIntrinsic fun name -> the 0-based parameter positions its bound BCL static takes BY REFERENCE
+    // (@ClrRefArgument). The substituted clrStatic wraps these argTypes positions `byref:` (tryParseInt32's `out result`,
+    // Interlocked's `ref location`, Math.DivRem's `out remainder`). Absent when the fun has no byref parameter.
+    public readonly Dictionary<string, int[]> TopLevelIntrinsicByref = new(StringComparer.Ordinal);
     // Bare-@ClrIntrinsic extension fun, keyed "funName|recvKey" (recvKey = the receiver/first-param type) -> the BCL
     // member name. Receiver-keyed because the bare name collides across receivers (set->set_Item vs set->set_Chars).
     public readonly Dictionary<string, string> ExtMemberIntrinsics = new(StringComparer.Ordinal);
@@ -1165,7 +1204,7 @@ sealed class ReferenceDotKtMetadata
 // A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the
 // @ClrIntrinsic BCL name or null (null + no @ClrProperty + !IsAbstract = a rule-3 hoist candidate). PropertyName (+ the
 // READ/WRITE access flags) is set when the member carries @ClrProperty — an EXPLICIT .NET property accessor binding.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null);
 
 sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool HasInlineBody)
 {
@@ -2237,7 +2276,7 @@ static class MemberCallSubstitution
             if (instance || string.IsNullOrEmpty(fn)) return null;
             var args0 = node["args"] as JsonArray ?? new JsonArray();
             if (refs.TryTopLevelIntrinsic(fn, out var fq) && fq.LastIndexOf('.') is var dot && dot > 0)
-                return ClrCallNode(node, fq[..dot], fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false);
+                return ClrCallNode(node, fq[..dot], fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false, refs.TopLevelByrefPositions(fn));
             // bare-intrinsic extension: resolve by name + the first-arg's receiver key (disambiguates `set`).
             var sigParts0 = SplitSig(node);
             if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, RecvKeyOf(sigParts0[0]), out var extMember))
@@ -2285,7 +2324,7 @@ static class MemberCallSubstitution
 
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
-            return ClrCallNode(node, clrOwner, intrinsic, member, args, instance);
+            return ClrCallNode(node, clrOwner, intrinsic, member, args, instance, refs.MemberByrefPositions(ownerFqn, member, args.Count));
 
         // Rule 3: a concrete member of a CLR-bound CLASS with NO @ClrIntrinsic carries a real Kotlin body, which kotc
         // hoists to the static helper `<>dotkt_ClrH_<owner>` (driven by the SAME class binding that brought us here).
@@ -2464,9 +2503,21 @@ static class MemberCallSubstitution
     // property convention: a `val length` -> the accessor call `get_length`, intrinsic bare "Length") emits clrPropGet/
     // clrPropSet on the bare intrinsic; otherwise a plain method call. A standalone accessor FUN bound to a property is
     // routed EXPLICITLY by @ClrProperty (Rule 2p) BEFORE this node is built, so there is no intrinsic-prefix sniff here.
-    static JsonNode ClrCallNode(JsonObject node, string bcl, string intrinsic, string member, JsonArray args, bool instance)
+    // Prefix `byref:` onto the argTypes at each @ClrRefArgument position (idempotent), so ilemit resolves the `ref`/`out`
+    // BCL overload and emits the address-load for that arg (the byref shape the removed `ClrRef<T>` param used to carry).
+    static void WrapByref(JsonArray argTypes, int[] byrefPositions)
+    {
+        if (byrefPositions == null) return;
+        foreach (var i in byrefPositions)
+            if (i >= 0 && i < argTypes.Count && argTypes[i] is JsonValue v && v.TryGetValue<string>(out var s)
+                && !s.StartsWith("byref:", StringComparison.Ordinal))
+                argTypes[i] = "byref:" + s;
+    }
+
+    static JsonNode ClrCallNode(JsonObject node, string bcl, string intrinsic, string member, JsonArray args, bool instance, int[] byrefPositions = null)
     {
         var argTypes = InferArgTypes(node, args);
+        WrapByref(argTypes, byrefPositions);
         var ret = RetToken(node);
 
         // Trigger ①: a genuine `val X` accessor — kotc emits the call on the MEMBER as `get_x`/`set_x`. The intrinsic is
