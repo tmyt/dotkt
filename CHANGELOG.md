@@ -38,6 +38,30 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     cross-module (base-2 OK, but `255.toString(16)` → `"ffffffff"`), so retiring would ship a correctness regression.
     Both retire only once the underlying stdlib/emit bugs are fixed. verify-il gate-neutral (il fail-set + full FAIL
     list identical before/after).
+- **Layer-purity: retired kotc's hardcoded `System.Console` (`println`/`print`) + `readLine` CLR lowering (bundle 1,
+  batch 3).** kotc no longer emits the hardcoded `{"k":"console"}` node — `println`/`print` are emitted as PLAIN
+  top-level fun calls and bir2cir's `MemberCallSubstitution` substitutes them to `System.Console.Write`/`WriteLine`
+  from `ConsoleClr.kt`'s existing `@ClrIntrinsic` bindings (top-level-intrinsic-by-name path; both are unambiguous, so
+  no stdlib or bir2cir change was needed). Value-type args box via ilemit's `EmitArg` (`object` param); the Kotlin
+  collection→`clrCollToString` toString adapter is KEPT (Kotlin semantics — it calls a stdlib helper, not a CLR
+  member). Deleted the now-dead ilemit `case "console"` consumer. `readLine()` deleted as **dead code** (like
+  `String.format`): the CLR frontend jar has no `kotlin.io.readLine` symbol — the CLR I/O API is `readln()`/
+  `readlnOrNull()` (the latter `@ClrIntrinsic`-bound to `System.Console.ReadLine`). verify-il gate-neutral (fail-set
+  identical, 36). This closes the mechanically-retirable part of bundle 1; the rest of the batch-3 families are
+  **BLOCKED on the dual-rep/collection-bridge (bundle 4) or the deferred delegate/coroutine layers, NOT retired:**
+  - `use{}`/`IDisposable.Dispose` — a structural `try/finally` inline desugar; `close→Dispose` is a `clrName`
+    member-rename (shared with the class-emit path), not an `@ClrIntrinsic` call-substitution.
+  - `by lazy`/`System.Lazy<T>` — structural delegate construction (`new Lazy<T>(Func<T>)` + `Value`); `kotlin.Lazy`
+    is a Kotlin interface with Kotlin implementors and there is no `@ClrIntrinsic` factory to substitute.
+  - `compareTo`/`IComparable.CompareTo` — the primitive path is the primitive dual-rep and the user-`Comparable<T>`
+    path is a `constrained.` callvirt (structural CLR lowering); `il-comparable`'s open Comparable-self dual-rep bug.
+  - indexer `get_/set_Item` — `String s[i]`→`get_Chars` is the String/CharSequence dual-rep (same class as the
+    batch-2-blocked String ops), and the injected-`.NET`-indexer arm is per-sample facadegen metadata (NOT stdlib
+    ref.dll), so bir2cir cannot substitute it.
+  - `listOf`/`setOf`/`mapOf`→`listNew`/`setNew`/`mapNew` — structural collection-literal factories that must retire
+    together with the `COLLECTION_MEMBER`/`COLLECTION_OPS` clrName table (the collection-bridge, bundle 4).
+  - `Regex` — CharSequence dual-rep + `MatchResult` adapters (`find`/`value`). `Task.Delay` — SKIPPED (inside
+    `coAwaitable`, the coroutine await machinery; the coroutine layer is deferred to bundle 6).
 - **Round-trip carrier attributes for Kotlin class-nature (`sealed` fully; `fun interface` nature) — re-consuming a
   DotKt `.dll` as Kotlin restores more of the original surface (round-trip gaps ③ + ⑤).** A `fun interface` (SAM) and a
   `sealed` class/interface lower to a plain CLR interface / abstract-class, dropping the Kotlin nature. Now: kotc emits

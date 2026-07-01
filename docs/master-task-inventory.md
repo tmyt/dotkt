@@ -86,6 +86,36 @@ is largely STALE** — a code-grounded currency check found:
     cross-module: base-2 is right (`"1010"`) but the letter-digit branch is not (`255.toString(16)` → `"ffffffff"`,
     `(-255).toString(16)` → `"1"`). Retiring ships a correctness regression, so the `System.Convert.ToString` lowering
     STAYS until the stdlib/emit bug (a `clrDigitToChar`/StringBuilder.insert path exercised only for radix>10) is fixed.
+  - ✅ **`System.Console` (`println`/`print` + `readLine`) — DONE 2026-07-02** (`f1a456d`; batch 3, final mechanical
+    batch). Retired the hardcoded `{"k":"console"}` node: kotc emits `println`/`print` as PLAIN top-level fun calls and
+    bir2cir's `MemberCallSubstitution` substitutes them to `System.Console.Write`/`WriteLine` from `ConsoleClr.kt`'s
+    `@ClrIntrinsic` bindings (top-level-intrinsic-by-name; both unambiguous → **NO stdlib or bir2cir change needed**).
+    Value-type args box via ilemit `EmitArg`; the Kotlin collection→`clrCollToString` toString adapter is KEPT (calls a
+    stdlib helper). Also deleted the now-dead ilemit `case "console"` consumer. `readLine()` deleted as DEAD (no
+    `kotlin.io.readLine` in the CLR frontend jar; the API is `readln`/`readlnOrNull`@ClrIntrinsic→`Console.ReadLine`).
+    Gate-neutral (36).
+  - **⛔ BLOCKED (batch 3, NOT retired — the mechanically-retirable part of bundle 1 is now CLOSED; these belong to
+    bundle 4 dual-rep/collection-bridge or the deferred delegate/coroutine families):**
+    - **`use{}` / `IDisposable.Dispose` (`inlineUse`, `:2312`)** — a STRUCTURAL `try/finally` inline desugar, not a
+      call-substitution. The only CLR bit (`close→System.IDisposable.Dispose`) is a `clrName` member-rename (`:931`,
+      SHARED with the class-emit path), so a clean retire means restructuring `inlineUse` to inline the real stdlib
+      body + route `close→Dispose` through bir2cir's clrName-migration — the same dual-rep bridge as collections.
+    - **`by lazy` / `System.Lazy<T>` (`:3177`)** — STRUCTURAL delegate construction (`new System.Lazy<T>(Func<T>)` +
+      `Value` prop). `kotlin.Lazy` is a Kotlin INTERFACE (UnsafeLazyImpl/…), the `→System.Lazy` map is a `netType`
+      (app-only, `:4318`), and there is no `@ClrIntrinsic` factory to substitute. Deferred delegate/closure family.
+    - **`compareTo` / `IComparable.CompareTo` (`:3195`/`:3205`)** — MIXED but dual-rep-blocked: the primitive arm is
+      the primitive dual-rep, the user-`Comparable<T>` arm is a `constrained.` callvirt (structural CLR lowering, not
+      `@ClrIntrinsic`), and `il-comparable` sits on the open Comparable-self dual-rep bug. Bundle-4 dual-rep.
+    - **indexer `get_/set_Item` (`:3400`/`:3414`)** — `String s[i]`→`get_Chars` is String/CharSequence dual-rep (same
+      class as batch-2-blocked String ops); the injected-`.NET`-indexer arm is per-sample facadegen metadata (NOT the
+      stdlib ref.dll), so bir2cir's ref-sourced substitution cannot reach it. Bundle-4 dual-rep + facadegen interop.
+    - **`listOf`/`setOf`/`mapOf` → `listNew`/`setNew`/`mapNew` (`:3247`/`:3254`)** — STRUCTURAL collection-literal
+      factories; must retire TOGETHER with the `COLLECTION_MEMBER`/`COLLECTION_OPS` clrName table so "kotlin lists ARE
+      BCL `List<T>`" stays coherent (the collection-bridge). Bundle-4.
+    - **`System.Text.RegularExpressions` (`:3785`)** — CharSequence dual-rep + `MatchResult` adapters (`find`/`value`).
+      Bundle-4 dual-rep.
+    - **`Task.Delay` (`:1386`) — SKIPPED** (not blocked): it lives inside `coAwaitable`, the coroutine await/suspend
+      machinery. Per the deferred-coroutine directive, untouched → bundle 6.
 
   > ### RETIRE-PATTERN RECIPE (hand this to each follow-up family: String/Convert/Char/Regex/Console/compareTo/…)
   > 1. **Precondition — confirm the binding exists stdlib-side.** grep `runtime/stdlib` for the target funs; each
