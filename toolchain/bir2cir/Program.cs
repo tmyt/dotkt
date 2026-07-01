@@ -232,7 +232,7 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _topLevelIntrinsicsBySig = new(StringComparer.Ordinal); // "name|paramKeys" -> FQ static (overload-disambiguated)
     readonly HashSet<string> _ambiguousTopLevelIntrinsics = new(StringComparer.Ordinal); // names whose overloads bind to DIFFERENT statics (Math vs MathF)
     readonly Dictionary<string, int[]> _topLevelIntrinsicByref = new(StringComparer.Ordinal); // top-level fun name -> byref param positions
-    readonly Dictionary<string, string> _extMemberIntrinsics = new(StringComparer.Ordinal); // "name|recvKey" -> bare member
+    readonly Dictionary<string, string> _extMemberIntrinsics = new(StringComparer.Ordinal); // "name|recvKey|paramCount" -> bare member
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
     readonly Dictionary<string, List<(string Owner, string RecvKey)>> _topLevelStatics = new(StringComparer.Ordinal); // non-intrinsic top-level fun name -> [(file-class, recvKey)]
 
@@ -460,10 +460,14 @@ sealed class ReferenceMetadataIndex
         return false;
     }
 
-    // A bare-@ClrIntrinsic extension fun resolved by name + the receiver-type key (the call's first-arg type), so
-    // `set` on a MutableMap receiver -> set_Item, not StringBuilder's set_Chars.
-    public bool TryExtMemberIntrinsic(string funName, string recvKey, out string member) =>
-        _extMemberIntrinsics.TryGetValue(funName + "|" + recvKey, out member);
+    // A bare-@ClrIntrinsic extension fun resolved by name + the receiver-type key (the call's first-arg type) + the
+    // FULL parameter count (receiver + args), so `set` on a MutableMap receiver -> set_Item (not StringBuilder's
+    // set_Chars) AND a same-name/same-receiver overload of a DIFFERENT arity does not collide: `substring(String,Int)`
+    // @ClrIntrinsic("Substring") must NOT capture the 3-param `substring(String,Int,Int)` real-body call (which would
+    // wrongly emit Substring(start,end) with end read as a LENGTH). The paramCount disambiguates them; the real-bodied
+    // overload misses here and falls through to its stdlib file-class attribution.
+    public bool TryExtMemberIntrinsic(string funName, string recvKey, int paramCount, out string member) =>
+        _extMemberIntrinsics.TryGetValue(funName + "|" + recvKey + "|" + paramCount, out member);
 
     // An @JvmInline value class's backing-field getter call (`x.get_data()`): the inline UNBOX. Returns the CLR conv
     // token for the field's declared type so the call collapses to `conv(recv)` (the erased primitive IS the value).
@@ -953,7 +957,7 @@ sealed class ReferenceMetadataIndex
                                 if (byrefPositions.Length > 0) metadata.TopLevelIntrinsicByref.TryAdd(method.Name, byrefPositions);
                             }
                             else if (ps.Length >= 1)
-                                metadata.ExtMemberIntrinsics.TryAdd(method.Name + "|" + RecvKey(ps[0].ParameterType), intrinsic);
+                                metadata.ExtMemberIntrinsics.TryAdd(method.Name + "|" + RecvKey(ps[0].ParameterType) + "|" + ps.Length, intrinsic);
                         }
                         // A NON-intrinsic top-level fun (a real Kotlin body in a file-class) -> index it by name so an APP
                         // build can attribute a referenced `callStatic owner=null` to this file-class (disambiguated by the
@@ -2433,8 +2437,9 @@ static class MemberCallSubstitution
                     || (!refs.IsAmbiguousTopLevelIntrinsic(fn) && refs.TryTopLevelIntrinsic(fn, out fq)))
                 && fq.LastIndexOf('.') is var dot && dot > 0)
                 return ClrCallNode(node, fq[..dot], fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false, refs.TopLevelByrefPositions(fn));
-            // bare-intrinsic extension: resolve by name + the first-arg's receiver key (disambiguates `set`).
-            if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, RecvKeyOf(sigParts0[0]), out var extMember))
+            // bare-intrinsic extension: resolve by name + the first-arg's receiver key + full param count (disambiguates
+            // `set`, and keeps `substring(String,Int)`@ClrIntrinsic from capturing the 3-arg `substring(String,Int,Int)`).
+            if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, RecvKeyOf(sigParts0[0]), sigParts0.Count, out var extMember))
                 return TopLevelExtensionInstance(node, refs, extMember, args0, sigParts0);
             // A NON-intrinsic referenced top-level stdlib fun (getOrElse/first/...): kotc emits owner=null (it cannot
             // know the file-class — that is CLR/ref knowledge). In an APP build, attribute it to the file-class the
