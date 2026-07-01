@@ -3,7 +3,14 @@
 > A **priority-ordered backlog**, NOT a ship checklist (no release is committed at any point here — see
 > MEMORY `release-flow-0.9.4-accumulate`). Last updated 2026-07-01.
 
-> **Session outcome (2026-07-01) — verify-il gate 83 → 62 failing (net −21).** The #5 netType→bir2cir + byref work landed:
+> **Session outcome (2026-07-01) — verify-il 83 → 61 failing (net −22); verify-ktproj ALL PASS (9/9).** The three failing
+> `.ktproj` cases were fixed: `ktproj-stdlib` (bir2cir alias-aware recvKey match so a top-level stdlib fn resolves when the
+> receiver rendered as its `@ClrTypeAlias` CLR form — `928c92f`), `ktproj-extlib` (kotc routes an injected .NET EVENT accessor
+> to `clrEventAdd` instead of the stdlib-only Rule-3 hoist; + ilemit `ApplyTypeArgs` null-guard — `32a1da6`), `ktproj-bidir`
+> (Kotlin read-only `List<T>`→`IReadOnlyList<T>` is correct per docs/design-clr-collection-binding.md; the C# consumer's
+> `List<string>` expectation was stale → fixed the test — `a5366fa`). The event-accessor fix also greened `il:event`.
+>
+> **Earlier in the session — verify-il gate 83 → 62 failing (net −21).** The #5 netType→bir2cir + byref work landed:
 > kotc is a PURE Kotlin frontend (netType deleted, coroutine lowering → neutral tags), `@ClrProperty` + ctor-argType +
 > `@ClrRefArgument` (ABI parity, stub jar deleted) done. The byref diagnosis surfaced a MAJOR general bug — **kotc was
 > re-emitting facadegen-injected external .NET types as in-assembly types** (the class buckets in `BirEmitter.emitFile`
