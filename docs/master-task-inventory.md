@@ -207,15 +207,27 @@ Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedbac
 > kotc injects the synthetic interface. There is **NO stdlib change** for foundation A. (`StringCharSequence.kt` was
 > tried in the stdlib first and REMOVED — it is dead cross-assembly.)
 >
-> **⚠️ THE DEEPER BLOCKER for (B), newly surfaced.** Foundation A fixes **intra-assembly** CharSequence polymorphism
-> (a String → an app-local CharSequence, used within the app). It does **NOT** fix calling a **stdlib**
-> CharSequence-extension (`StringsKt.trim`/`contains`/…, rt dll) with an app String, because that method's param is the
-> **rt dll's** `<>dotkt_CharSequence` — a DIFFERENT CLR type from the app's synthetic (and from the app-local adapter).
-> An app value passed there fails the same cross-assembly boundary. So **retiring `STRING_OPS` still needs the synthetic
-> UNIFIED** — the app must reference the rt dll's CharSequence type instead of re-synthesizing its own (repoint
-> `<>dotkt_CharSequence` app refs → the rt dll's, à la List→IReadOnlyList; or emit the synthetic once in the stdlib and
-> reference it). That unification is the real prerequisite for B/Regex and is an **open design fork** (kotc-emits-vs-
-> bir2cir-repoints; risk to `il-charseq`), NOT gated on foundation A. B was correctly NOT attempted.
+> **⚠️ THE DEEPER BLOCKER for (B) — ✅ RESOLVED 2026-07-02 (CANONICALIZATION, option A).** Foundation A fixed only
+> **intra-assembly** CharSequence polymorphism; calling a **stdlib** CharSequence-extension (`StringsKt.*`, rt dll) with
+> an app value still crossed the app↔rt synthetic boundary (`EntryPointNotFoundException` — the app's
+> `<>dotkt_CharSequence` copy is a DISTINCT CLR type from the rt dll's). **Canonicalization now makes the app REFERENCE
+> the rt dll's `<>dotkt_CharSequence` instead of re-emitting its own** (ilemit `93f…`/this session). Two ilemit changes,
+> both in CLR type-resolution (kotc/bir2cir unchanged): (1) **pass-1 skips the local definition** of a synthetic in
+> `CanonicalSynthetics` (currently `{<>dotkt_CharSequence}`) when it already resolves in a `--ref`'d assembly —
+> self-correcting, so a `--no-stdlib` build or the stdlib's OWN ref/rt build (ilemit gets no `--ref` there) still emits
+> the canonical copy locally; (2) the pass-2 MethodImpl loop **binds a user `class S : CharSequence` (and the injected
+> `<>dotkt_StringCharSequence` adapter) to the EXTERNAL canonical interface by reflection**, exactly like a `clr:`
+> interface. Reference/method resolution (`MapType`/`FindMethod`/`AddInterfaceImplementation`) already routed a
+> non-`_types` `@<>dotkt_X` through `ResolveType`→reflection over the `--ref`'d rt dll, so no call-site changes were
+> needed. Proven: before = `EntryPointNotFoundException at <>dotkt_CharSequence.get_length() at StringsKt.hasSurrogatePairAt`;
+> after = both `S("hi").hasSurrogatePairAt(0)` (user CharSequence) and `"hi".hasSurrogatePairAt(0)` (String → foundation-A
+> adapter → stdlib ext) RUN. New sample `il-charseqx`; `il-charseq` stays green (now implements the canonical type);
+> verify-il gate-neutral (36-fail set identical, PASS +1), verify-ktproj 9/9. **B / indexer / Regex are now UNBLOCKED**
+> (see ⑧). The other shared synthetics (`Result`/`KProperty`/`KIterator_*`/`RWProperty_*`) were intentionally NOT
+> canonicalized (scoped to `CharSequence`; each needs its own cross-assembly verification). **`il:injstatic` is NOT the
+> same root cause** — it is a rule-3 *misrouting* of an app facadegen-injected static-companion member into the
+> non-existent stdlib `<>dotkt_ClrH_<Type>` body-hoist helper (a facadegen/companion-resolution bug), not the shared-
+> synthetic *duplication* pattern.
 
 **① Mechanism (code-grounded).** Kotlin `String : CharSequence`. On CLR `kotlin.String` is `@ClrTypeAlias("System.String")`
 (`runtime/stdlib/clr/builtins/String.kt:22`) — a **sealed** BCL type; its CharSequence surface is bound in place via
@@ -296,13 +308,16 @@ retire recipe (baseline the fail-set, require gate-neutral). Cost: one allocatio
   precedent (`@ClrTypeAlias`), NOT an adapter.
 
 **⑧ Follow-up agents.** (1) ~~bir2cir+stdlib agent — foundation A~~ **✅ DONE 2026-07-02** (app-local injection; see the
-STATUS box above). (2) **synthetic-UNIFICATION agent (NEW prerequisite for B)** — the real blocker: make the app
-reference the rt stdlib dll's `<>dotkt_CharSequence` (or `kotlin.CharSequence`) instead of re-synthesizing its own, so a
-stdlib CharSequence-extension called with an app value type-checks. Open design fork (kotc-emits-vs-bir2cir-repoints);
-must keep `il-charseq` green. (3) **stdlib+kotc retire agent** — after unification lands, do the per-op B retires +
-delete `STRING_OPS` and the indexer lowering under the retire recipe, gate-neutral. (4) **Regex agent** — retire Regex
-once unification is in (its `CharSequence` inputs then coerce). Comparable-self and the collection-bridge are separate
-tracks (own agents), not gated on this fix.
+STATUS box above). (2) ~~synthetic-UNIFICATION agent~~ **✅ DONE 2026-07-02 (CANONICALIZATION, ilemit)** — the app now
+references the rt stdlib dll's `<>dotkt_CharSequence` (ilemit pass-1 skip + pass-2 reflection MethodImpl; `il-charseq`
+green, `il-charseqx` new-pass; see the STATUS box). The design fork resolved to **ilemit-resolves-external** (NOT
+kotc-emits / bir2cir-repoints) — kotc keeps synthesizing the token, ilemit derives "already in a `--ref` → reference it".
+(3) **stdlib+kotc retire agent (NOW UNBLOCKED)** — do the per-op B retires (`trim`/`contains`/`startsWith`/`endsWith`/
+`replace`/`indexOf`/`padStart`/`padEnd`/`split`/`strReversed`/`substring(2-arg)`/`isEmpty`/`isBlank`) + delete
+`STRING_OPS` and the `s[i]` indexer lowering under the retire recipe, gate-neutral. Each op's stdlib body is a
+`CharSequence` extension whose String receiver now coerces via foundation-A's bridge to the canonical interface.
+(4) **Regex agent (NOW UNBLOCKED)** — retire Regex (its `CharSequence` inputs then coerce). Comparable-self and the
+collection-bridge are separate tracks (own agents), not gated on this fix.
 
 ## 【5】 exception map → `@ClrTypeAlias`  *(#2)* — ✅ DONE (verified 2026-07-02; was already complete)
 - `BirMappings.NET_EXCEPTIONS` DELETED (kotc `5907510`); the 11 stdlib exception classes carry `@ClrTypeAlias` (stdlib

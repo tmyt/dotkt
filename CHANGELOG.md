@@ -6,6 +6,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Added
+- **CharSequence synthetic CANONICALIZATION (bundle 4-A) — cross-assembly CharSequence now works.** The synthetic
+  interface `<>dotkt_CharSequence` (kotc emits it for `kotlin.CharSequence`, which has no faithful BCL equivalent) is
+  now emitted ONCE, publicly, in the rt stdlib dll and REFERENCED by app assemblies instead of re-synthesized
+  per-assembly. Previously every dll emitted its OWN copy — a DISTINCT CLR type — so a value crossing the app↔rt
+  boundary (a stdlib `CharSequence`-extension called with an app value) threw `EntryPointNotFoundException`
+  (`<>dotkt_CharSequence.get_length` not found on the rt-dll copy). ilemit now (1) SKIPS the local definition of a
+  canonical synthetic when it already resolves in a `--ref`'d assembly (self-correcting: a `--no-stdlib` build, or the
+  stdlib's own ref/rt build — which passes ilemit no `--ref` — still emits it locally), and (2) binds a user
+  `class S : CharSequence` (and bir2cir's injected foundation-A `<>dotkt_StringCharSequence` adapter) to the EXTERNAL
+  canonical interface by reflection (the existing `clr:` MethodImpl path). Reference/method resolution already routed a
+  non-`_types` `@<>dotkt_X` through `ResolveType`/`FindMethod`→reflection, so no call-site changes were needed. Scoped
+  to `CharSequence` — the other shared synthetics (`Result`/`KProperty`/`KIterator_*`/`RWProperty_*`) still re-emit
+  per-assembly until each is verified cross-assembly. This UNBLOCKS retiring the remaining `STRING_OPS` + the `s[i]`
+  indexer + Regex (their stdlib bodies are `CharSequence` extensions). New sample `il-charseqx`:
+  `S("hello").hasSurrogatePairAt(0)` (user CharSequence → stdlib ext) and `"hi".hasSurrogatePairAt(0)` (String →
+  foundation-A adapter → stdlib ext) both run. verify-il gate-neutral (36-fail set identical; PASS +1 for il-charseqx),
+  verify-ktproj 9/9. kotc/bir2cir unchanged; ilemit only (CLR codegen reading .NET metadata — the layer that owns type
+  resolution). NB `il:injstatic` is a SEPARATE root cause (rule-3 misrouting of an app facadegen-injected static member
+  into the non-existent stdlib `<>dotkt_ClrH_<Type>` body-hoist helper), NOT this per-assembly-duplication pattern.
 - **String → CharSequence adapter bridge (bundle 4-A FOUNDATION).** A bare `System.String` flowing into a
   `kotlin.CharSequence` slot now works polymorphically (`val cs: CharSequence = "abc"; cs.length` → `3`, `cs[1]` →
   `'b'`; a `String` literal passed to a `CharSequence`-typed function). `kotlin.String` is `@ClrTypeAlias("System.String")`

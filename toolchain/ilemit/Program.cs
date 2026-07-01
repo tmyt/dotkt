@@ -225,6 +225,17 @@ sealed partial class Emitter
                     // so the first definition serves all references — skip the duplicates. (Per-file-DISTINCT synthetics
                     // — closures, ref cells, seq SMs — are now uniquely named by BirEmitter, so they never land here.)
                     if (name.StartsWith("<>dotkt_") && _types.ContainsKey(name)) continue;
+                    // Canonicalization: a shared synthetic ALREADY defined (public) by a REFERENCED assembly (the rt
+                    // stdlib dll) is REFERENCED, not re-emitted here — else the app's copy is a DISTINCT CLR type from
+                    // the rt dll's, so a value crossing the app<->rt boundary (a stdlib CharSequence-extension receiving
+                    // an app value) fails interface dispatch (EntryPointNotFound). Skipping the local definition routes
+                    // every `@<>dotkt_X` reference through MapType/FindMethod/AddInterfaceImplementation -> ResolveType,
+                    // which resolves it as the external canonical type in the --ref'd assembly. Scoped to the
+                    // verified-safe set (CharSequence); the other shared synthetics (Result/KProperty/KIterator/
+                    // RWProperty_*) still re-emit per-assembly until each is verified cross-assembly. Self-correcting:
+                    // only skips when the type ACTUALLY resolves externally, so a --no-stdlib build (or the stdlib's own
+                    // ref/rt build, which passes ilemit no --ref) still emits the canonical copy locally.
+                    if (CanonicalSynthetics.Contains(name) && ResolvesExternally(name)) continue;
                     if (kind == "enum")
                     {
                         // A real .NET enum: each entry is a literal field of the int-backed enum.
@@ -422,11 +433,20 @@ sealed partial class Emitter
                     // C3b transitive reverse bridge: a Kotlin collection interface (Set/MutableSet/... — extends Iterable
                     // but isn't itself @Clr) still makes the class IEnumerable<E> via its @Clr Collection supertype.
                     TryGenerateEnumeratorForKotlinIface(ti, spec);
+                    // A canonicalized shared synthetic (`<>dotkt_CharSequence`) this app REFERENCES from the rt stdlib
+                    // dll — NOT re-emitted here, so absent from `_types` — is an EXTERNAL interface: bind the class's
+                    // overrides to it by reflection, exactly like a `clr:` interface, so the interface slots are wired
+                    // explicitly rather than relying on an implicit name/sig match a canonicalized supertype must not
+                    // depend on. (Covers both a user `class S : CharSequence` and the injected `<>dotkt_StringCharSequence`.)
+                    // Checked on the RAW spec (a canonical synthetic interface spec is the bare name), so a `clr:`/`clrg:`
+                    // spec is NOT ParseOwner'd here — doing so eagerly mis-strips a `clrg:` self-ref interface (crash).
+                    bool externalSynthIface = CanonicalSynthetics.Contains(spec)
+                        && !_types.ContainsKey(spec) && ResolvesExternally(spec);
                     // A .NET-mapped interface (DotKt.Coroutines.Continuation<int>): bind each interface method to the
                     // class method of the same .NET name via reflection (the class emits PascalCase names already).
-                    if (spec.StartsWith("clr:") || spec.StartsWith("clrg:"))
+                    if (spec.StartsWith("clr:") || spec.StartsWith("clrg:") || externalSynthIface)
                     {
-                        var itype = MapType(spec);
+                        var itype = externalSynthIface ? ResolveType(spec) : MapType(spec);
                         // C3b reverse bridge: if this is a @Clr collection interface (IEnumerable<E>-derived) and the
                         // class has only a Kotlin iterator(), synthesize GetEnumerator (handles the two overloads itself).
                         GenerateGetEnumeratorIfNeeded(ti, itype);
@@ -2060,6 +2080,14 @@ sealed partial class Emitter
     }
 
     // ---- BCL interop (@Clr) via reflection ----
+    // A shared compiler-synthetic type that, once verified cross-assembly, is emitted ONCE (public) in the rt stdlib
+    // dll and REFERENCED by app assemblies instead of re-synthesized per-assembly (canonicalization), so a value
+    // crossing the app<->rt boundary keeps ONE CLR identity. CharSequence first; extend as each synthetic is verified.
+    static readonly HashSet<string> CanonicalSynthetics = new(StringComparer.Ordinal) { "<>dotkt_CharSequence" };
+    // True when `name` is already defined by a REFERENCED (--ref, Assembly.LoadFrom'd) assembly. The module under
+    // construction is a PersistedAssemblyBuilder (not a loaded AppDomain assembly), so it never self-matches.
+    static bool ResolvesExternally(string name) =>
+        AppDomain.CurrentDomain.GetAssemblies().Any(a => { try { return a.GetType(name) != null; } catch { return false; } });
     static readonly Dictionary<string, Type> _typeCache = new();
     static Type ResolveType(string name)
     {
