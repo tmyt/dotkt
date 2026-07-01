@@ -37,7 +37,14 @@
      fix comes free (birType preserves user tokens); `birType` already covers `Span`/`ClrRef`; the real gaps are the special
      stdlib types `Sequence`/`Result`/atomics (best fixed by `@ClrTypeAlias` in the stdlib → bir2cir uniform). Coroutine
      types (`CancellableContinuation`, `coCatchBegin`, `coTaskType`) stay on `netType` until the coroutine layer.
-   - **(b) property-accessor first-class binding** (member resolution): the current model is ASYMMETRIC — read = `@ClrIntrinsic("Length")`
+   - **(b) property-accessor first-class binding** (member resolution) — **DONE (2026-07-01)**: new `@kotlin.clr.ClrProperty(access, name)`
+     annotation (`READ`=1/`WRITE`=2 Int flags, combinable via `or`; `@Target(FUNCTION, PROPERTY)`) states the accessor role
+     EXPLICITLY. bir2cir reads it from the ref.dll (`ClrPropertyOf`/`TryMemberProperty`/Rule 2p) → `access&READ`→clrPropGet(name),
+     `access&WRITE`→clrPropSet(name); the fragile `get_`/`set_` intrinsic-string prefix-sniff (trigger ②) is REMOVED (only the
+     genuine `val X`→`get_x` member-prefix ① remains). Migrated the 5 fun-bound plain accessors (StringBuilder setLength/capacity/
+     nativeSetCapacity, MonoTimeSource ticks, ClrIterator current); indexers (`get_Item(i)` — index arg = real methods) stay
+     @ClrIntrinsic. Gate-neutral (verify-il FAIL set identical, 83). Commits: nested stdlib `f882102`, bir2cir `e9b3ec9`.
+     ORIGINAL PROBLEM (kept for context): the old model was ASYMMETRIC — read = `@ClrIntrinsic("Length")`
      bare name on the property → clrPropGet; write = a *standalone* `fun setLength(n) @ClrIntrinsic("set_Length")` whose call
      bir2cir routes to clrPropSet by **sniffing the `"set_"`/`"get_"` string prefix** of the intrinsic. This "folds a property
      into a method binding" + prefix-sniff is fragile (a real method named `get_foo` would mis-route). TARGET: a val/var's single
