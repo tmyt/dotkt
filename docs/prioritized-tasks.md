@@ -144,7 +144,13 @@
 - `@InlineOnly` drops `@ClrIntrinsic` cross-module (direct `s[i]=c`)
 
 ### B. Layer-purity follow-ups + performance
-- kotc "reads NEITHER annotation" final form — DONE so far: (1) rule-3 helper-EMISSION is fully bir2cir's
+- **kotc "reads NEITHER annotation" — COMPLETE (2026-07-01).** kotc is a PURE Kotlin frontend: `annClr`/`clrName`'s
+  `@ClrIntrinsic` reads DELETED, `netType` DELETED (`grep netType` in kotc = 0), coroutine lowering removed → neutral
+  tags. The prose below is the SUPERSEDED intermediate record (kept for history). (D-hygiene 2026-07-01: git branches
+  cleaned 21→1; the `facadegen --scan-asm` of the stdlib is NOT present in verify-il.sh/verify-differential.sh — only
+  comments explaining the ban — so that CLAUDE.md "still TODO" note is STALE/done; `scripts/build-dotkt-stdlib.sh` +
+  `build-stdlib.sh` still build the DELETED DotKt.Runtime and need retiring.)
+- ~~kotc "reads NEITHER annotation" final form — DONE so far~~: (1) rule-3 helper-EMISSION is fully bir2cir's
   (`clrHelperClassJson`/`clrHelperMethod`/`clrHelperMembers` DELETED); (2) the `@ClrTypeAlias` type-STRIP is fully
   bir2cir's (`substitutedAway`/`hasClrTypeAlias`/`hasHoistableBody`/`aliasPlainTypes`/alias-only-branch DELETED — kotc
   emits ALL types as ordinary Kotlin; bir2cir `AliasHelperHoist` drops every alias type def, helper only for `kind ==
