@@ -4154,8 +4154,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					}
 				}
 				// A suspend top-level fun's .NET method returns Task<T> (awaited by the coroutine machinery via expr(call)).
-				val ret = if (callee.isSuspend) coTaskType(call.type) else netType(callee.returnType)
-				return """{"k":"clrStatic","type":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { str(netType(it.type)) }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]}"""
+				val ret = if (callee.isSuspend) coTaskType(call.type) else birType(callee.returnType)
+				return """{"k":"clrStatic","type":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { str(birType(it.type)) }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]}"""
 			}
 		}
 		// Fill omitted constant default arguments at the call site (IL methods have no default mechanism).
