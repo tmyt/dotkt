@@ -13,8 +13,17 @@
    DivRem. Kotlin has no ref/out syntax → binding-metadata-driven. (MEMORY `implicit-ref-passing-to-stdlib-methods`)
 4. **facadegen app .NET interop** — operators (`op_*`), C#-origin extension methods, static `.Companion` routing,
    dual-rep collision (`import System.Text.StringBuilder` vs stdlib alias).
-5. **netType→bir2cir migration completion** — finish removing kotc's CLR knowledge (the `kotlin.*` half of the maps;
-   the `java.*` half is removed).
+5. **netType→bir2cir migration completion** — finish removing kotc's CLR knowledge so kotc reads NEITHER annotation +
+   emits pure FQN identities. **Progress (2026-07-01)**: the rule-3 helper hoist + the `@ClrTypeAlias` type-strip are moved
+   to bir2cir (kotc reads NO `@ClrTypeAlias`); the `@ClrIntrinsic`/`clrName` removal is in progress (decl/call/property
+   rename foundation laid + verified byte-identical). **The `netType` chunk is elevated to THE NEXT priority (user, 2026-07-01)**
+   — it is NOT just layer purity, it **improves overload resolution**: `netType` resolves `kotlin.*→System.*` in the
+   argTypes/ret/catch slots (which ilemit uses to pick the BCL overload), AND has no map for user classes so it **degrades
+   user/reference types to `System.Object`** (BirEmitter.kt ~1956), which LOSES overload fidelity — a user `Foo : IComparable`
+   passed to a BCL method with `(IComparable)` + `(object)` overloads can then only match `(object)`. Moving the resolution to
+   bir2cir (which has the ref.dll + the full type hierarchy) keeps the real static types → strictly MORE ACCURATE overload
+   resolution. NB: boxing of value types is a separate emit-time op (`EmitArg`), NOT an argType concern — the object-collapse
+   is *unconditionally* a loss (the only legit `System.Object` argType is when the static type is genuinely `Any`).
 6. **coroutine lowering layer** — deferred design (Task-based). (MEMORY `coroutine-lowering-layer-deferred`)
 
 ## App / MSBuild / round-trip (added 2026-07-01; cluster around #4/#5)
