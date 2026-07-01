@@ -1798,7 +1798,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// generic factory `fun <T> state(i:T): State<T>` emit a `newobj` on the open generic (invalid IL; item 13).
 		// A `Unit` TYPE-ARG can't be `void` (a generic arg of System.Void is invalid) — e.g. a `Continuation<Unit>`
 		// SUPERTYPE must be `Continuation[@kotlin.Unit]` to match `resumeWith(Result<Unit>)`, not `Continuation[void]`.
-		val all = enclArgs + (args?.map { if (it.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit") else birType(it) } ?: emptyList())
+		val all = enclArgs + (args?.map { if (it.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "kotlin.Unit") else birType(it) } ?: emptyList())
 		if (all.isEmpty()) return name
 		return "$name[${all.joinToString(",")}]"
 	}
@@ -2809,7 +2809,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// real Unit VALUE type, not `void` (a void parameter is invalid metadata -> "incorrect format"). E.g. the func
 		// type for `(Unit, Element) -> Unit` becomes `func:void:@kotlin.Unit,@Element`. The RETURN context special-cases
 		// Unit->void before ever calling this, so this only affects params.
-		if (t.isUnit()) return if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit"
+		if (t.isUnit()) return if (stdlibCompile) "@kotlin.Unit" else "kotlin.Unit"
 		return birType(t)
 	}
 
@@ -2821,7 +2821,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// real Unit VALUE type, not `void` — a `void` parameter is invalid metadata ("The signature is incorrect").
 			// Only a RETURN Unit erases to void. Mirrors firstArgBir's type-arg handling.
 			.joinToString(",") { p ->
-				val ty = if (p.type.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit") else birTypeDeleg(p.type)
+				val ty = if (p.type.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "kotlin.Unit") else birTypeDeleg(p.type)
 				"""{"name":${str(p.name.asString())},"type":${str(ty)}}"""
 			}
 
@@ -4484,9 +4484,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** The first type argument of a constructed type, as a generic-arg-safe spec: a `Unit` argument erases to the
 	 *  real `DotKt.Unit` (a CLR generic arg can't be `void`/`System.Void`); else birType/netType. T7. */
 	internal fun firstArgBir(t: IrType): String = ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
-		?.let { if (it.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit") else birType(it) } ?: "object"
+		?.let { if (it.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "kotlin.Unit") else birType(it) } ?: "object"
 	internal fun firstArgNet(t: IrType): String = ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type
-		?.let { if (it.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit") else netType(it) } ?: "object"
+		?.let { if (it.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "kotlin.Unit") else netType(it) } ?: "object"
 
 	internal fun birType(t: IrType): String {
 		// A type parameter `T` is a real generic parameter -> `gp:<name>` (resolved in IL context). On the CLR,
@@ -4642,7 +4642,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 							at == null -> "object"
 							// A `Unit` TYPE-ARG can't be `void` (a generic arg of System.Void is invalid -> "incorrect format",
 							// validated only when the instantiation resolves in the full type-load batch, e.g. Continuation<Unit>).
-							at.isUnit() -> if (stdlibCompile) "@kotlin.Unit" else "clr:DotKt.Unit"
+							at.isUnit() -> if (stdlibCompile) "@kotlin.Unit" else "kotlin.Unit"
 							else -> birType(at)
 						}
 					}

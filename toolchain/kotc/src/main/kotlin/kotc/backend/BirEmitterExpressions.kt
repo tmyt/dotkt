@@ -117,14 +117,11 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	}
 	// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (.NET-injected objects
 	// like Math are static call sites handled at the call site; only user singletons reach here as a value.)
+	// The `Unit` object as a VALUE (e.g. `Result.success(Unit)`) is just another singleton: the stdlib's own
+	// `kotlin.Unit` object INSTANCE (this-assembly under stdlib-compile, else resolved against the referenced
+	// stdlib) — no DotKt.Runtime.
 	is IrGetObjectValue ->
-		when (node.symbol.owner.fqNameWhenAvailable?.asString()) {
-			// The `Unit` object as a VALUE (e.g. `Result.success(Unit)`) -> the DotKt.Unit singleton; under
-			// stdlib-compile the stdlib's OWN kotlin.Unit object (its INSTANCE) is used (no DotKt.Runtime).
-			"kotlin.Unit" -> if (!stdlibCompile) """{"k":"clrStaticField","type":"DotKt.Unit","name":"Instance"}"""
-				else """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
-			else -> """{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
-		}
+		"""{"k":"staticField","ownerType":${str(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
 	is IrBlock -> blockExpr(node)
 	is IrGetField -> {
 		val ownerClass = node.symbol.owner.parent as? IrClass
