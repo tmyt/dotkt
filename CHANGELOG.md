@@ -23,6 +23,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `clrPropGet` vs `clrInstance get_X` routing edge, and 3 helper/closure body diffs.
 
 ### Fixed
+- **`il:regex` restored after the DotKt.Runtime retirement — `matches`/`find` now run on the real stdlib bodies (no
+  shim).** Removed two stale kotc CLR-lowerings the retirement missed: the `kotlin.text.MatchResult`→`System...Match`
+  type alias (which made `ClrMatchResult : MatchResult` implement a CLASS as an interface → `TypeLoadException`) and the
+  `MatchResult.value`→`Match.Value` call lowering. Stdlib-side, `matchEntire`/`matchAt`/`matchesAt` materialize the
+  `CharSequence` input to a `String` before reading `.length` (System.String does not implement the synthetic
+  `<>dotkt_CharSequence`), and `ClrMatchResult.groups` became a lazy getter (no eager `AbstractCollection` load).
+  kotc now OMITS a cross-module default arg whose value deserialized as an `IrErrorExpression` so ilemit fills it from
+  `[DefaultParameterValue]` metadata (fixes `Regex.find(input)` with `startIndex` omitted); `ilemit.EmitCallArgs` fills
+  omitted trailing defaults on the callStatic/callInstance path.
+- **`kotlin.Result` (and other pure-Kotlin, non-`@ClrTypeAlias` stdlib types) resolve as REFERENCED types cross-module.**
+  ilemit `MapType`/`ParseOwner`/`ResolveMethod` resolve a `@Name`/`Name[args]` token absent from this assembly's
+  `_types` as a referenced .NET type/generic (arity-suffixed), and resolve instance members on the reflection-constructed
+  instantiation; bir2cir attributes a multi-overload top-level fun (e.g. `runCatching`) to its shared file-class owner
+  when the receiver key doesn't disambiguate. `il:result` no longer crashes at emit (KeyNotFound gone); it now fully
+  resolves. **Residual (scoped follow-up):** `getOrNull(): T?` for a value-type `T` returns bare `Int32` where the call
+  site needs `Nullable<Int32>` (the pre-existing primitive-dual-representation gap) — `il:result` does not yet pass.
 - **ilemit: `@ClrIntrinsic` (and every user annotation) dropped from all-but-last overload in the ref build.** The
   user-annotation → `.NET` custom-attribute application (`Program.cs`) resolved the target `MethodBuilder` by NAME
   only (`ti.Methods[name]`), which is last-declared-wins for overloads — so for an overloaded intrinsic function
