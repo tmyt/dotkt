@@ -12,7 +12,7 @@ package kotlin.collections
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IEnumerator")
 public interface ClrEnumerator<out T> {
     fun MoveNext(): Boolean
-    @kotlin.clr.ClrIntrinsic("get_Current") fun current(): T
+    @kotlin.clr.ClrProperty(kotlin.clr.READ, "Current") fun current(): T
 }
 
 /** The BCL `IEnumerable<T>` surface — its `GetEnumerator()` returns the INTERFACE `IEnumerator<T>` (a `List<T>` value's

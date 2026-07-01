@@ -76,7 +76,7 @@ public actual class StringBuilder : Appendable, CharSequence {
     public actual fun append(value: String?): StringBuilder = TODO("clr binding should be implemented")
 
     @SinceKotlin("1.3")
-    @kotlin.clr.ClrIntrinsic("get_Capacity")
+    @kotlin.clr.ClrProperty(kotlin.clr.READ, "Capacity")
     public actual fun capacity(): Int = TODO("clr binding should be implemented")
 
     @SinceKotlin("1.4")
@@ -140,7 +140,7 @@ public actual class StringBuilder : Appendable, CharSequence {
     public actual fun insert(index: Int, value: String?): StringBuilder = TODO("clr binding should be implemented")
 
     @SinceKotlin("1.4")
-    @kotlin.clr.ClrIntrinsic("set_Length")
+    @kotlin.clr.ClrProperty(kotlin.clr.WRITE, "Length")
     public actual fun setLength(newLength: Int): Unit {
         TODO("clr binding should be implemented")
     }
@@ -157,7 +157,7 @@ public actual class StringBuilder : Appendable, CharSequence {
     private fun nativeSubstring(startIndex: Int, length: Int): String = TODO("@Clr System.Text.StringBuilder.ToString(int,int)")
 
     // Setter of .NET StringBuilder.Capacity; used to shrink the backing buffer to the current length.
-    @kotlin.clr.ClrIntrinsic("set_Capacity")
+    @kotlin.clr.ClrProperty(kotlin.clr.WRITE, "Capacity")
     private fun nativeSetCapacity(value: Int): Unit = TODO("@Clr System.Text.StringBuilder.set_Capacity(int)")
 
     @SinceKotlin("1.4")

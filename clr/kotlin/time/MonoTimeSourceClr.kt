@@ -19,7 +19,7 @@ internal actual typealias ValueTimeMarkReading = Long
 
 @kotlin.clr.ClrTypeAlias("System.TimeSpan")
 private class ClrTimeSpan {
-    @kotlin.clr.ClrIntrinsic("get_Ticks")
+    @kotlin.clr.ClrProperty(kotlin.clr.READ, "Ticks")
     fun ticks(): Long = TODO("clr binding should be implemented")
 }
 

@@ -11,6 +11,23 @@ package kotlin.clr
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 public annotation class ClrIntrinsic(val name: String)
 
+// Bitwise-combinable ACCESS flags for @ClrProperty. `READ` = a get accessor, `WRITE` = a set accessor; `READ or WRITE`
+// (const-foldable) marks a get+set property. Int (not enum/Boolean) because an Int primitive attr arg encodes into the
+// ref.dll reliably (an enum arg may not encode via ilemit), and `const val` inlines the literal at the use site.
+public const val READ: Int = 1
+public const val WRITE: Int = 2
+
+// Explicitly binds a Kotlin property OR a standalone accessor FUNCTION to a .NET PROPERTY `name`: bir2cir reads it from
+// the REFERENCE assembly (NOT kotc) and routes reads -> clrPropGet(name) [access has READ], writes -> clrPropSet(name)
+// [access has WRITE] — the accessor role stated EXPLICITLY, replacing the fragile get_/set_ intrinsic STRING-PREFIX
+// sniff. For the Kotlin idiom where a property's read/write is split across a read-only `val X` + a standalone
+// `fun setX(v)` (e.g. StringBuilder.length + setLength()), each accessor carries @ClrProperty with the SAME `name`.
+// Distinct from @ClrIntrinsic (which binds to a like-named .NET METHOD). Indexers (get_Item(i)/set_Item(i,v) — they take
+// an index arg) are genuine methods and STAY @ClrIntrinsic. No default arg on `access` (cross-module default-arg values
+// are dropped by the frontend jar); always pass both `access` and `name`.
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
+public annotation class ClrProperty(val access: Int, val name: String)
+
 // Like @ClrIntrinsic on a MEMBER, but the member binds to the named .NET member DYNAMICALLY: a CALL to it is emitted as
 // a runtime reflective dispatch instead of a static method reference. Slower, but it sidesteps static resolution that
 // otherwise cascades -- e.g. a Kotlin abstract collection (AbstractMutableList.SubList) calling get_Item where the
