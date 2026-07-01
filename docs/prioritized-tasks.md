@@ -28,6 +28,27 @@
    bir2cir (which has the ref.dll + the full type hierarchy) keeps the real static types → strictly MORE ACCURATE overload
    resolution. NB: boxing of value types is a separate emit-time op (`EmitArg`), NOT an argType concern — the object-collapse
    is *unconditionally* a loss (the only legit `System.Object` argType is when the static type is genuinely `Any`).
+
+   **UNIFIED SCOPE (user, 2026-07-01)** — #5 is "accurate bir2cir **type + member** resolution", THREE sibling workstreams
+   sharing one root (kotc emits pure FQN / no CLR resolution; bir2cir resolves accurately from the ref.dll + hierarchy):
+   - **(a) netType→bir2cir** (type resolution): as above. Investigation DONE (2026-07-01) — bir2cir's `BirTypeLowering`
+     already walks `argTypes`/`ret`/`retType`; the switch is a *vocabulary shift* (`System.Int32`→`int`, ilemit-equivalent)
+     NOT byte-identical, so verify FUNCTIONALLY (rt.dll emit+ilverify + `dotkt --run` passing samples); the Object-collapse
+     fix comes free (birType preserves user tokens); `birType` already covers `Span`/`ClrRef`; the real gaps are the special
+     stdlib types `Sequence`/`Result`/atomics (best fixed by `@ClrTypeAlias` in the stdlib → bir2cir uniform). Coroutine
+     types (`CancellableContinuation`, `coCatchBegin`, `coTaskType`) stay on `netType` until the coroutine layer.
+   - **(b) property-accessor first-class binding** (member resolution): the current model is ASYMMETRIC — read = `@ClrIntrinsic("Length")`
+     bare name on the property → clrPropGet; write = a *standalone* `fun setLength(n) @ClrIntrinsic("set_Length")` whose call
+     bir2cir routes to clrPropSet by **sniffing the `"set_"`/`"get_"` string prefix** of the intrinsic. This "folds a property
+     into a method binding" + prefix-sniff is fragile (a real method named `get_foo` would mis-route). TARGET: a val/var's single
+     `@ClrIntrinsic("X")` binds the .NET property as a UNIT (read→get_X, write→set_X), and a method that targets an accessor slot
+     is marked EXPLICITLY (not inferred from a `"set_"` string). Indexers (`operator get/set`→`get_Item`/`set_Item`) are genuinely
+     methods and stay method-bound.
+   - **(c) ctor overload argTypes**: kotc emits `new` nodes for stdlib/user types with NO `argTypes` (unlike `clrNew`), so when
+     bir2cir substitutes the type to a BCL type with overloaded ctors, ilemit value-infers and picks WRONG: `StringBuilder("hello")`
+     resolves to `StringBuilder(Int32)` (capacity) → ilverify `found 'string' expected Int32` → `InvalidProgramException`. FIX:
+     carry the arg static types on `new` (bir2cir attaches them on substitution, or kotc emits them as FQN) so the ctor resolves by
+     signature. Pre-existing (annClr's bir2cir changes are member-routing, not ctor selection); same family as the #9 app-consume gaps.
 6. **coroutine lowering layer** — deferred design (Task-based). (MEMORY `coroutine-lowering-layer-deferred`)
 
 ## App / MSBuild / round-trip (added 2026-07-01; cluster around #4/#5)
