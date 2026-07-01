@@ -5,6 +5,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+- **ilemit: `@ClrIntrinsic` (and every user annotation) dropped from all-but-last overload in the ref build.** The
+  user-annotation → `.NET` custom-attribute application (`Program.cs`) resolved the target `MethodBuilder` by NAME
+  only (`ti.Methods[name]`), which is last-declared-wins for overloads — so for an overloaded intrinsic function
+  (`sin(Double)`+`sin(Float)`, `sort(IntArray/…)`, `append(…)`, `println(…)`) every def's attrs landed on the single
+  last-declared builder while the earlier overloads got NONE. In `DotKt.Private.Stdlib.dll` this left `sin(Double)`
+  with `intr=[]` and doubled `sin(Float)` to `["System.Math.Sin","System.MathF.Sin"]`. Since the ref.dll is bir2cir's
+  binding source, the intrinsic was invisible for those overloads (blocked the `clrName`/annClr removal and mis-bound
+  cross-module calls). Fix: resolve by SIGNATURE first (`MethodsBySig[SigKey(name, m)]`), name-only fallback —
+  mirroring the Kotlin-metadata path. Verified 1:1: 262 ref.dll methods carry `@ClrIntrinsic` = 262 CIR method-defs
+  (was fewer, with doubled values). rt build unaffected (metadata stripped there).
+
 ### Changed
 - **kotc→bir2cir `clrName` migration, Step 3 part 2: CLR-property-entry slot rename.** kotc tags each emitted
   `properties:[{name,get,set}]` record with the getter's `overrides` marker, and bir2cir's `DeclarationRename` renames
