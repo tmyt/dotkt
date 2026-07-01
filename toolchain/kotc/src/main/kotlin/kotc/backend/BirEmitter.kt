@@ -512,16 +512,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
 		// @ClrTypeAlias classes (collections/StringBuilder/unsigned/primitives/String/…) are emitted here as ORDINARY
 		// types; bir2cir's AliasHelperHoist drops them (and hoists a class's rule-3 members). kotc no longer strips them.
-		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
+		// facadegen-INJECTED external .NET types (a `import P.Calc`/`P.SpanOps` host type, an inherited/implemented .NET
+		// base) enter the FIR via CLR_TYPES_METADATA in the synthetic `__GENERATED DECLARATIONS__` file with a PLUGIN
+		// origin (ClrGeneratedKey), NOT origin DEFINED. They are REFERENCED types (resolved via --ref), never ours to
+		// emit — a re-emitted stub (empty ctor / a bogus `INSTANCE` singleton) collides with the referenced type and
+		// crashes ilemit (Save "not created" / newobj on a ctor-less type). So filter every type bucket to origin
+		// DEFINED, exactly as `functions`/`topProps` above already exclude the injected top-level MEMBERS. (@ClrTypeAlias
+		// stdlib types are origin DEFINED in the stdlib build and thus kept; in an app build they come from the -classpath
+		// jar and are not re-declared here at all.)
+		val userDefined: (IrClass) -> Boolean = { it.origin.toString() == "DEFINED" }
+		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && userDefined(it) && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
 		// `object Foo { ... }` (non-companion) -> a singleton class with a static `INSTANCE` field; `IrGetObjectValue`
 		// loads it. The shared-state-via-`object` case (feedback item 10). Companion/anonymous objects are handled
 		// elsewhere; .NET-injected `object`s (Math, …) are static call sites, not user singletons.
-		val objects = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.OBJECT && !it.isCompanion }
+		val objects = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.OBJECT && !it.isCompanion && userDefined(it) }
 		// @ClrTypeAlias interfaces (Comparable/Iterable/Collection/List/…) are emitted as ordinary interfaces; bir2cir
 		// drops them (no helper for a non-class kind). At use-sites BirTypeLowering substitutes them to the BCL interface.
-		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE }
-		val enums = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ENUM_CLASS }
-		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS }
+		val interfaces = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.INTERFACE && userDefined(it) }
+		val enums = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ENUM_CLASS && userDefined(it) }
+		val annClasses = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.ANNOTATION_CLASS && userDefined(it) }
 		// Only USER properties (origin DEFINED) — a consuming module's FIR also holds plugin-INJECTED top-level props
 		// (restored extension properties from a referenced DotKt assembly); those are the library's, not ours to emit.
 		val topProps = file.declarations.filterIsInstance<IrProperty>().filter { it.origin.toString() == "DEFINED" }
