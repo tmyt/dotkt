@@ -39,10 +39,12 @@
     <UpToDateCheckInput Include="@(KotlinCompile)" />
   </ItemGroup>
 
-  <!-- DotKt.Runtime carries the runtime helpers AND the [Kotlin*] round-trip metadata attribute types. Referencing
-       it puts it on @(ReferencePath) so the shared pipeline can hand it to ilemit (else top-level functions / Kotlin
-       modifiers don't round-trip), the consumer's facadegen can load a round-tripped library, and it's there at
-       runtime. The shipping SDK gets this via a <PackageReference>. Opt out with <KotlinClrRuntimeRef>false</...>. -->
+  <!-- DotKt.Runtime carries the (legacy) runtime helpers. NOTE: it does NOT define the [Kotlin*] round-trip metadata
+       attribute types — ilemit SYNTHESIZES those per-assembly (embedded internal / CompilerGenerated, see
+       toolchain/ilemit/Emitter.CompilerServices.cs), so round-tripping does not depend on this reference. Referencing
+       it puts its runtime helpers on @(ReferencePath) for ilemit + the consumer's facadegen + runtime. (Those runtime
+       helpers are being retired now the real stdlib supersedes them.) The shipping SDK gets this via a
+       <PackageReference>. Opt out with <KotlinClrRuntimeRef>false</...>. -->
   <ItemGroup Condition="'$(KotlinClrRuntimeRef)' != 'false' and Exists('$(KotlinClrRoot)/build/dotkt-runtime/DotKt.Runtime.dll')">
     <Reference Include="DotKt.Runtime">
       <HintPath>$(KotlinClrRoot)/build/dotkt-runtime/DotKt.Runtime.dll</HintPath>

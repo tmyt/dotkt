@@ -59,7 +59,7 @@
     <ItemGroup>
       <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
       <_DotKtBir2CirRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
-      <!-- DotKt.Runtime (the [Kotlin*]/runtime attribute types) and the @Clr-metadata REFERENCE stdlib
+      <!-- DotKt.Runtime (its runtime helpers) and the @Clr-metadata REFERENCE stdlib
            (DotKt.Private.Stdlib) are compile-only references (NOT copy-local), so they're absent from
            @(ReferenceCopyLocalPaths) above; pull them from @(ReferencePath). bir2cir reads DotKt.Private.Stdlib's
            @ClrTypeAlias/@ClrIntrinsic labels to lower kotlin.* — the same ref scripts/verify-il.sh hands it. -->
@@ -78,12 +78,14 @@
     <ItemGroup>
       <_DotKtCir Include="$(DotKtCirOut)/*.cir.json" />
       <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
-      <!-- DotKt.Runtime defines the [Kotlin*] metadata attribute types ilemit stamps so this library round-trips
-           (is consumable AS KOTLIN by another .ktproj): [KotlinFileClass] on the file facade restores its statics as
-           top-level functions, [KotlinFunction] restores infix/operator/suspend, etc. It's a compile reference but
-           NOT copy-local, so it's absent from @(ReferenceCopyLocalPaths) above; pull it from @(ReferencePath)
-           explicitly. Without it ilemit can't resolve the attribute types and silently skips stamping, so a
-           consumer's `import pkg.topLevelFn` resolves to nothing ("unresolved reference"). -->
+      <!-- The [Kotlin*] round-trip metadata attributes ilemit stamps so this library round-trips (is consumable AS
+           KOTLIN by another .ktproj — [KotlinFileClass] restores a file facade's statics as top-level functions,
+           [KotlinFunction] restores infix/operator/suspend, etc.) are SYNTHESIZED PER-ASSEMBLY by ilemit (embedded
+           internal / CompilerGenerated) — added alongside the NRT System.Runtime.CompilerServices.Nullable*
+           attributes (the csc embedded-attribute model; see toolchain/ilemit/Emitter.CompilerServices.cs). So they do
+           NOT come from DotKt.Runtime. This reference pulls DotKt.Runtime's (legacy) runtime helpers into ilemit —
+           being retired now the real stdlib supersedes them; a compile reference but NOT copy-local, so it's absent
+           from @(ReferenceCopyLocalPaths) above; pull it from @(ReferencePath) explicitly. -->
       <_DotKtRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Runtime'" />
     </ItemGroup>
     <Message Importance="high" Text="DotKt: emitting CIL from CIR -> $(TargetName)$(TargetExt)" />

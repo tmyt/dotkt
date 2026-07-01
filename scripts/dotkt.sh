@@ -85,8 +85,9 @@ bir="$work/bir"; cir="$work/cir"; mkdir -p "$bir" "$cir" "$out_dir"
 cp="$JAR"; [[ -n "$CORO" ]] && cp="$cp:$CORO"
 
 # Reference assemblies. Mirroring verify-il, the two backend stages take DIFFERENT stdlib refs: bir2cir reads the
-# @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets DotKt.Runtime (the
-# [Kotlin*] attribute types + runtime helpers) plus the RUNTIME stdlib (the real Kotlin bodies). ilemit resolves the
+# @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets DotKt.Runtime (its runtime
+# helpers; the [Kotlin*] round-trip attributes are SYNTHESIZED per-assembly by ilemit, NOT taken from here) plus the
+# RUNTIME stdlib (the real Kotlin bodies). ilemit resolves the
 # BCL itself by runtime reflection, so the ref-pack is only for facadegen's .NET-type resolution (and retarget).
 refpack="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' 2>/dev/null | head -1)")"
 declare -a bir2cir_refs=() ilemit_refs=(--ref "$DOTKT_RT")
