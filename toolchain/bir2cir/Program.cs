@@ -120,6 +120,11 @@ sealed class Pipeline
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
             if (attributeTopLevelOwner) IteratorConsumerNormalization.Apply(substituted);
+            // String -> CharSequence adapter bridge: materialize a bare `System.String` flowing into a synthetic
+            // `<>dotkt_CharSequence` slot as `new kotlin.StringCharSequence(str)` (String is sealed, can't implement
+            // the synthetic interface). APP builds only — same gate as the iterator normalization; the ref/rt stdlib
+            // self-builds are left untouched. Purely additive: only positively-String values are wrapped.
+            if (attributeTopLevelOwner) substituted = StringCharSequenceBridge.Apply(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
@@ -2227,6 +2232,290 @@ static class IteratorConsumerNormalization
         }
         else if (node is JsonArray arr)
             foreach (var it in arr) if (it != null) Process(it, map);
+    }
+}
+
+// STRING -> CharSequence adapter bridge. `kotlin.String` is @ClrTypeAlias("System.String") — a SEALED BCL type whose
+// CharSequence face is bound in-place (@ClrIntrinsic Length/get_Chars). `kotlin.CharSequence` has NO BCL equivalent, so
+// kotc synthesizes the monomorphic interface `<>dotkt_CharSequence` (get_length/get/subSequence). A `System.String`
+// (sealed) cannot implement that interface, so a bare String flowing into a `@<>dotkt_CharSequence` slot crashes
+// (InvalidProgram / InvalidCast). This pass MATERIALIZES the coercion: wherever a value whose STATIC type is String
+// flows into a CharSequence slot, it inserts `new <>dotkt_StringCharSequence(theString)` — an App-local adapter class
+// this pass ALSO injects, modeled on the proven user `class S : CharSequence` shape (String-backed length/get/
+// subSequence delegating to get_Length/get_Chars/Substring). Five sites — a call's CharSequence-typed arg (covers an
+// extension receiver, which is arg[0] + sig[0], AND an ordinary CharSequence param), a return into a CharSequence
+// return type, a store into a CharSequence-typed local, and an `as CharSequence` cast. It wraps ONLY when the value is
+// POSITIVELY a bare String (const string literal, a String-typed local/param read, a String cast, or a String-returning
+// call) — never when the value is already a <>dotkt_CharSequence (StringBuilder / a user CharSequence / another
+// wrapper), so it is purely additive: genuine intra-assembly polymorphism (`val cs: CharSequence = "abc"; cs.length`)
+// now works, and no existing statically-String-receiver path (kotc's STRING_OPS lowering, which dispatches on the
+// String directly) is touched.
+//
+// WHY app-LOCAL (not a stdlib class): the synthetic `<>dotkt_CharSequence` is emitted PER-ASSEMBLY — the app defines
+// its OWN copy, distinct from the one in the rt stdlib dll. A stdlib adapter would implement the rt-dll copy, which the
+// app's interface dispatch (`callvirt <app>::<>dotkt_CharSequence::get_length`) can't find on it -> EntryPointNotFound.
+// So the adapter MUST implement the app's own synthetic -> it is injected into the app assembly, exactly where kotc
+// injects the synthetic interface. (This same per-assembly boundary is why calling a *stdlib* CharSequence-extension
+// with an app value is a SEPARATE, deeper blocker for the retire-B follow-up — see docs/master-task-inventory.md 4-A.)
+//
+// APP builds ONLY (gated on attributeTopLevelOwner at the call site — DOTKT_STDLIB_COMPILE unset), so the ref/rt stdlib
+// self-builds stay byte-identical. Runs AFTER MemberCallSubstitution (its emitted `new` is never re-substituted — the
+// adapter is not @ClrTypeAlias) and BEFORE BirTypeLowering (so it still sees the kotlin.* / @<>dotkt_CharSequence type
+// vocabulary; the injected type's kotlin.* signature tokens and the wrap node's `type`/`argTypes` are lowered
+// afterwards — the injected method bodies are already in CLR-call form, exactly as kotc emits them for `class S`).
+static class StringCharSequenceBridge
+{
+    const string CharSeq = "<>dotkt_CharSequence";
+    const string Adapter = "<>dotkt_StringCharSequence";
+    static readonly HashSet<string> StringTokens = new(StringComparer.Ordinal)
+        { "kotlin.String", "System.String", "string" };
+
+    // Injected exactly once per app assembly (dedup below). Pre-BirTypeLowering vocabulary: kotlin.* signature tokens
+    // (lowered by the next pass), CLR-call bodies (String.get_Chars/Length/Substring — the SAME shape kotc emits for a
+    // user `class S(val s:String): CharSequence`). Structurally mirrors that verified S class, renamed s->value.
+    const string AdapterTypeJson = """
+    {
+      "name": "<>dotkt_StringCharSequence",
+      "kind": "class", "abstract": false, "vis": "public", "isSealed": false, "base": null,
+      "interfaces": ["<>dotkt_CharSequence"],
+      "fields": [{"name": "value", "type": "kotlin.String", "vis": "internal"}],
+      "ctors": [{
+        "params": [{"name": "value", "type": "kotlin.String"}],
+        "baseArgs": null, "thisArgs": null, "vis": "public",
+        "body": [{"k": "setField", "ownerType": "<>dotkt_StringCharSequence", "recv": {"k": "this"}, "name": "value", "value": {"k": "local", "name": "value"}}]
+      }],
+      "methods": [
+        {"name": "get", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public", "operator": true,
+         "params": [{"name": "index", "type": "kotlin.Int"}], "ret": "kotlin.Char",
+         "body": [{"k": "return", "value": {"k": "clrInstance", "type": "System.String", "method": "get_Chars", "argTypes": ["System.Int32"], "ret": "System.Char",
+           "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
+           "args": [{"k": "local", "name": "index"}]}}], "attrs": []},
+        {"name": "subSequence", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
+         "params": [{"name": "startIndex", "type": "kotlin.Int"}, {"name": "endIndex", "type": "kotlin.Int"}], "ret": "@<>dotkt_CharSequence",
+         "body": [{"k": "return", "value": {"k": "new", "type": "<>dotkt_StringCharSequence", "argTypes": ["kotlin.String"],
+           "args": [{"k": "clrInstance", "type": "System.String", "method": "Substring", "argTypes": ["System.Int32", "System.Int32"], "ret": "System.String",
+             "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
+             "args": [{"k": "local", "name": "startIndex"}, {"k": "bin", "op": "-", "l": {"k": "local", "name": "endIndex"}, "r": {"k": "local", "name": "startIndex"}}]}]}}], "attrs": []},
+        {"name": "get_value", "static": false, "override": false, "virtual": false, "abstract": false, "objectOverride": false, "vis": "public",
+         "params": [], "ret": "kotlin.String",
+         "body": [{"k": "return", "value": {"k": "field", "ownerType": "<>dotkt_StringCharSequence", "recv": {"k": "this"}, "name": "value"}}]},
+        {"name": "get_length", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
+         "params": [], "ret": "kotlin.Int",
+         "body": [{"k": "return", "value": {"k": "clrPropGet", "type": "System.String", "name": "Length", "retType": "System.Int32", "static": false,
+           "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []}}}]}
+      ],
+      "properties": [
+        {"name": "value", "type": "kotlin.String", "get": "get_value", "set": null},
+        {"name": "length", "type": "kotlin.Int", "get": "get_length", "set": null}
+      ],
+      "attrs": []
+    }
+    """;
+
+    // Process-wide: the app-local adapter type is emitted into EXACTLY ONE file's `types` per assembly (all of an app's
+    // BIR files are lowered by a single bir2cir process; other files that also wrap resolve the type assembly-wide via
+    // ilemit's `_types`). Fresh per process; app builds only. `_fired` tracks whether the file just walked wrapped.
+    static bool _adapterEmitted;
+    static bool _fired;
+
+    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+
+    // A lexical name -> declared-type environment (method/lambda params + local `var` decls), plus the enclosing
+    // method's return type (for the return-site wrap). Copy-on-extend so a child scope never mutates its parent.
+    sealed class Env
+    {
+        public readonly Dictionary<string, string> Vars;
+        public readonly string RetType;
+        public Env() { Vars = new(StringComparer.Ordinal); RetType = null; }
+        Env(Dictionary<string, string> vars, string retType) { Vars = vars; RetType = retType; }
+
+        // A declaration node (has a `params` array — methods/lambdas always emit one, even empty) opens a child scope
+        // seeded with its params and return type. A non-decl node (call/expr — no `params`) returns `this` unchanged.
+        public Env WithDecl(JsonObject decl)
+        {
+            if (decl["params"] is not JsonArray ps) return this;
+            var vars = new Dictionary<string, string>(Vars, StringComparer.Ordinal);
+            foreach (var p in ps)
+                if (p is JsonObject po && Str(po["name"]) is string pn && Str(po["type"]) is string pt)
+                    vars[pn] = pt;
+            return new Env(vars, Str(decl["ret"]) ?? RetType);
+        }
+
+        public Env WithVar(string name, string type)
+        {
+            var vars = new Dictionary<string, string>(Vars, StringComparer.Ordinal) { [name] = type };
+            return new Env(vars, RetType);
+        }
+    }
+
+    public static JsonNode Apply(JsonNode root)
+    {
+        _fired = false;
+        var walked = Walk(root, new Env());
+        // Emit the app-local adapter type into this file's `types` if a wrap fired here and no other file already got
+        // it (one per assembly). ilemit resolves a wrap in a sibling file against it via the assembly-wide `_types`.
+        if (_fired && !_adapterEmitted && walked is JsonObject fileObj)
+        {
+            var types = fileObj["types"] as JsonArray;
+            if (types == null) { types = new JsonArray(); fileObj["types"] = types; }
+            types.Add(JsonNode.Parse(AdapterTypeJson));
+            _adapterEmitted = true;
+        }
+        return walked;
+    }
+
+    static JsonNode Walk(JsonNode node, Env env)
+    {
+        if (node is JsonObject obj)
+        {
+            var childEnv = env.WithDecl(obj);
+            var copy = new JsonObject();
+            foreach (var kv in obj)
+                copy[kv.Key] = kv.Value is JsonArray arr ? WalkArray(arr, childEnv)
+                             : kv.Value == null ? null : Walk(kv.Value, childEnv);
+            return Transform(copy, env);   // this node's own coercion sites use its ENCLOSING env
+        }
+        if (node is JsonArray topArr) return WalkArray(topArr, env);
+        return node.DeepClone();
+    }
+
+    // Walk an array's elements in document order, threading each `var` decl's name->type forward so a LATER sibling
+    // statement's read of that local resolves its static type (a `var`'s own init is walked BEFORE the var is added,
+    // so `val x = <x>` can't see itself). Non-body arrays (args/params/…) contain no `var` nodes, so this is a no-op
+    // for them.
+    static JsonArray WalkArray(JsonArray arr, Env env)
+    {
+        var copy = new JsonArray();
+        var cur = env;
+        foreach (var item in arr)
+        {
+            var walked = item == null ? null : Walk(item, cur);
+            copy.Add(walked);
+            if (walked is JsonObject wo && Str(wo["k"]) == "var"
+                && Str(wo["name"]) is string vn && Str(wo["type"]) is string vt)
+                cur = cur.WithVar(vn, vt);
+        }
+        return copy;
+    }
+
+    static JsonNode Transform(JsonObject node, Env env)
+    {
+        switch (Str(node["k"]))
+        {
+            case "callStatic":
+            case "callInstance":
+                WrapCallArgs(node, env);
+                return node;
+            case "var":
+                WrapVarInit(node, env);
+                return node;
+            case "return":
+                WrapReturn(node, env);
+                return node;
+            case "cast":
+                return WrapCast(node, env) ?? node;
+            default:
+                return node;
+        }
+    }
+
+    // (a)+(b): a call arg whose DECLARED slot (positional in `sig`, the comma-joined param types with the extension
+    // receiver first) is a CharSequence and whose value is statically a String. `sig` may be LONGER than `args` when
+    // trailing defaulted params were dropped — pair only the present args.
+    static void WrapCallArgs(JsonObject node, Env env)
+    {
+        if (node["args"] is not JsonArray args || Str(node["sig"]) is not string sig) return;
+        var parts = SplitTopLevel(sig);
+        var n = Math.Min(parts.Count, args.Count);
+        for (var i = 0; i < n; i++)
+            if (IsCharSeqSlot(parts[i]) && args[i] is JsonNode a && IsStaticString(a, env))
+                args[i] = WrapAdapter(a);
+    }
+
+    // (d): a store into a CharSequence-typed local `var cs: CharSequence = <String>`.
+    static void WrapVarInit(JsonObject node, Env env)
+    {
+        if (IsCharSeqSlot(Str(node["type"])) && node["init"] is JsonNode init && IsStaticString(init, env))
+            node["init"] = WrapAdapter(init);
+    }
+
+    // (c): a return of a static String into a CharSequence return type.
+    static void WrapReturn(JsonObject node, Env env)
+    {
+        if (IsCharSeqSlot(env.RetType) && node["value"] is JsonNode v && IsStaticString(v, env))
+            node["value"] = WrapAdapter(v);
+    }
+
+    // (e): `as CharSequence` on a static String -> REPLACE the (would-be InvalidCast) `castclass <>dotkt_CharSequence`
+    // with the materializing adapter. A non-statically-String cast (an `Any?`->CharSequence runtime check) is left as
+    // the plain cast — a runtime-type-check adapter helper for that is a follow-up (see docs 【4-A】).
+    static JsonNode WrapCast(JsonObject node, Env env)
+    {
+        if (IsCharSeqSlot(Str(node["type"])) && node["e"] is JsonNode e && IsStaticString(e, env))
+            return WrapAdapter(e);
+        return null;
+    }
+
+    // `new kotlin.StringCharSequence(<str>)`. Not @ClrTypeAlias, so MemberCallSubstitution.TransformNew (already run)
+    // leaves it; BirTypeLowering lowers `type`/`argTypes` (kotlin.String -> System.String); ilemit reflects the ctor
+    // against the runtime stdlib.
+    static JsonObject WrapAdapter(JsonNode strExpr)
+    {
+        _fired = true;   // request the app-local adapter type injection for this file (Apply)
+        return new JsonObject
+        {
+            ["k"] = "new",
+            ["type"] = Adapter,
+            ["argTypes"] = new JsonArray { "kotlin.String" },
+            ["args"] = new JsonArray { strExpr.DeepClone() },
+        };
+    }
+
+    // POSITIVE static-String detection: only forms whose static type is provably a bare String. Anything else (a
+    // StringBuilder, a user CharSequence, an already-wrapped value, an unknown expr) returns false -> no wrap.
+    static bool IsStaticString(JsonNode n, Env env)
+    {
+        if (n is not JsonObject o) return false;
+        switch (Str(o["k"]))
+        {
+            case "const": return IsStringTok(Str(o["type"]));
+            case "local": return Str(o["name"]) is string nm && env.Vars.TryGetValue(nm, out var t) && IsStringTok(t);
+            case "cast": return IsStringTok(Str(o["type"]));
+            case "this": return false;
+            default:
+                // A CLR/Kotlin call node carrying an explicit result type (`ret`/`retType` = System.String).
+                return IsStringTok(Str(o["ret"]) ?? Str(o["retType"]));
+        }
+    }
+
+    static bool IsStringTok(string t) => Bare(t) is string b && StringTokens.Contains(b);
+    static bool IsCharSeqSlot(string t) => Bare(t) == CharSeq;
+
+    // Strip a leading `nullable:` then `@` (the this-assembly-emitted marker) so `@<>dotkt_CharSequence` /
+    // `nullable:kotlin.String` compare by their bare identity.
+    static string Bare(string t)
+    {
+        if (t == null) return null;
+        t = t.Trim();
+        if (t.StartsWith("nullable:", StringComparison.Ordinal)) t = t["nullable:".Length..];
+        if (t.StartsWith("@", StringComparison.Ordinal)) t = t[1..];
+        return t;
+    }
+
+    static IReadOnlyList<string> SplitTopLevel(string value)
+    {
+        if (value.Length == 0) return Array.Empty<string>();
+        var result = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '[') depth++;
+            else if (value[i] == ']') depth--;
+            else if (value[i] == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
+        }
+        result.Add(value[start..].Trim());
+        return result;
     }
 }
 

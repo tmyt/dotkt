@@ -5,6 +5,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Added
+- **String → CharSequence adapter bridge (bundle 4-A FOUNDATION).** A bare `System.String` flowing into a
+  `kotlin.CharSequence` slot now works polymorphically (`val cs: CharSequence = "abc"; cs.length` → `3`, `cs[1]` →
+  `'b'`; a `String` literal passed to a `CharSequence`-typed function). `kotlin.String` is `@ClrTypeAlias("System.String")`
+  — a **sealed** BCL type that cannot implement the synthetic `<>dotkt_CharSequence` interface kotc emits for
+  `kotlin.CharSequence` — so bir2cir now MATERIALIZES the coercion: a new `StringCharSequenceBridge` pass detects a
+  statically-`String` value flowing into a `<>dotkt_CharSequence` slot (a call's CharSequence-typed arg / extension
+  receiver, a `CharSequence` return, a `CharSequence`-local store, an `as CharSequence` cast) and wraps it in
+  `new <>dotkt_StringCharSequence(str)` — an **app-local** adapter class the pass injects (String-backed
+  `length`/`get`/`subSequence`, modeled on the verified user-`class S : CharSequence` shape). App-local because the
+  synthetic interface is emitted per-assembly: a stdlib adapter would implement the rt-dll copy, unreachable by the
+  app's interface dispatch. Purely additive — wraps ONLY positively-`String` values, never an already-`CharSequence`
+  one — so kotc's `STRING_OPS` (statically-`String`-receiver ops) and every passing sample are untouched. APP builds
+  only (ref/rt stdlib self-builds byte-identical). kotc unchanged; ilemit emits the injected type as ordinary CLR.
+  verify-il gate-neutral. NOTE: this unblocks intra-assembly CharSequence polymorphism, but calling a *stdlib*
+  CharSequence-extension with an app value crosses the app↔rt synthetic-interface boundary — a separate, deeper blocker
+  for the String-op retire (B) / Regex follow-ups (see `docs/master-task-inventory.md` 【4-A】).
+
 ### Changed
 - **Layer-purity: retired kotc's hardcoded `kotlin.math.* → System.Math` lowering (the pilot of the "retire a kotc
   hardcoded CLR lowering" pattern).** kotc no longer rewrites `kotlin.math` calls into `clrStatic System.Math` nodes

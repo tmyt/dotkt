@@ -177,6 +177,133 @@ Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedbac
   - generic closure/HOF (`genclosure`/`genhof`) · virtual-property override dispatch (`netbase2`).
   - long-standing ilverify-only noise (`customexc`/`tryexpr`/`mc1`/`funref`) — runs correctly, ilverify complains.
 
+### 【4-A】 String ↔ CharSequence dual-representation — FIX PLAN  *(the highest-value bundle-4 blocker; 2026-07-02)*
+> **One blocker, wide gate.** Solving this retires the whole remaining String family (`trim`/`trimStart`/`trimEnd`/
+> `contains`/`startsWith`/`endsWith`/`replace`/`indexOf`/`padStart`/`padEnd`/`split`/`substring(2-arg)`/`isEmpty`/
+> `isBlank`/`strReversed`), the indexer `s[i]`→`get_Chars` retire, the Regex retire (its inputs are `CharSequence`),
+> and the verify-il `il-str`/`il-substr`/`il-regex` fails. It is investigation-complete; hand to the follow-up agents below.
+
+> ### ✅ FOUNDATION (A) DONE — 2026-07-02 (bir2cir `StringCharSequenceBridge`) — but the adapter is **app-local**, and it does NOT by itself unblock B
+> **What landed.** bir2cir gained a `StringCharSequenceBridge` pass (`toolchain/bir2cir/Program.cs`, app builds only,
+> gated on `attributeTopLevelOwner`, runs after `MemberCallSubstitution`/`IteratorConsumerNormalization` and before
+> `BirTypeLowering`). It wraps a value whose STATIC type is provably `String` (a `const` string, a String-typed
+> local/param read via a forward name→type env, a String cast, or a `ret`/`retType`=String call) flowing into a
+> `<>dotkt_CharSequence` slot at four sites — a call's CharSequence-typed **arg** (this covers site (a) the
+> extension **receiver**, which is arg[0]/sig[0], AND site (b) an ordinary CharSequence param), (c) a `return` into a
+> CharSequence return type, (d) a store into a CharSequence-typed local `var`, (e) an `as CharSequence` cast — into
+> `new <>dotkt_StringCharSequence(str)`. **Purely additive:** it wraps ONLY positively-String values (never an
+> already-`<>dotkt_CharSequence` StringBuilder/user-CharSequence), so kotc's `STRING_OPS` (which lowers a
+> statically-String receiver directly to `System.String` methods, e.g. `il-str`'s `contains`/`trim`) and every
+> passing sample are untouched → **verify-il gate-neutral**. Verified: `val cs: CharSequence = "abc"; cs.length`=3,
+> `cs[1]`='b', a String literal to a `CharSequence` param=5, `sub=cs.subSequence(0,2); sub.length`=2/`sub[0]`='a';
+> ilverify-clean.
+>
+> **KEY CORRECTION to the plan below (④A said "adapter in the STDLIB").** The synthetic `<>dotkt_CharSequence` is
+> emitted **per-assembly** — the app defines its OWN copy, DISTINCT from the one in the rt stdlib dll. A **stdlib**
+> adapter would implement the rt-dll's `<>dotkt_CharSequence`, which the app's interface dispatch
+> (`callvirt <app>::<>dotkt_CharSequence::get_length`) cannot find on it → `EntryPointNotFoundException`. So the
+> adapter MUST implement the **app's** synthetic → **bir2cir injects it into the app assembly** (a `<>dotkt_StringCharSequence`
+> class, String-backed, modeled byte-for-byte on the verified user `class S : CharSequence` CIR shape), exactly where
+> kotc injects the synthetic interface. There is **NO stdlib change** for foundation A. (`StringCharSequence.kt` was
+> tried in the stdlib first and REMOVED — it is dead cross-assembly.)
+>
+> **⚠️ THE DEEPER BLOCKER for (B), newly surfaced.** Foundation A fixes **intra-assembly** CharSequence polymorphism
+> (a String → an app-local CharSequence, used within the app). It does **NOT** fix calling a **stdlib**
+> CharSequence-extension (`StringsKt.trim`/`contains`/…, rt dll) with an app String, because that method's param is the
+> **rt dll's** `<>dotkt_CharSequence` — a DIFFERENT CLR type from the app's synthetic (and from the app-local adapter).
+> An app value passed there fails the same cross-assembly boundary. So **retiring `STRING_OPS` still needs the synthetic
+> UNIFIED** — the app must reference the rt dll's CharSequence type instead of re-synthesizing its own (repoint
+> `<>dotkt_CharSequence` app refs → the rt dll's, à la List→IReadOnlyList; or emit the synthetic once in the stdlib and
+> reference it). That unification is the real prerequisite for B/Regex and is an **open design fork** (kotc-emits-vs-
+> bir2cir-repoints; risk to `il-charseq`), NOT gated on foundation A. B was correctly NOT attempted.
+
+**① Mechanism (code-grounded).** Kotlin `String : CharSequence`. On CLR `kotlin.String` is `@ClrTypeAlias("System.String")`
+(`runtime/stdlib/clr/builtins/String.kt:22`) — a **sealed** BCL type; its CharSequence surface is bound in place via
+`@ClrIntrinsic("Length")` on `length` and `@ClrIntrinsic("get_Chars")` on `get(i)` (`String.kt:33/42`). But
+`kotlin.CharSequence` has **no faithful BCL equivalent**, so kotc *synthesizes a monomorphic interface*
+`<>dotkt_CharSequence` with `get_length()`/`get(int):char`/`subSequence(int,int)` (`BirEmitter.kt:357-369`
+`charSeqIface`/`charSeqIfaceDefs`; `birType` maps `kotlin.CharSequence`→`@<>dotkt_CharSequence` at `:4307`; the
+declaring-owner spec at `ownerSpec :1750`; member-name routing at `clrIfaceMemberName :934`). ilemit emits it as an
+ordinary abstract interface (`ilemit/Program.cs:239/260/690`; `MapType` resolves `@<>dotkt_CharSequence` from `_types`
+`:3070`). A **user** `class S : CharSequence` links this synthetic and works (`il-charseq` — the pure-Kotlin side). The
+problem: **`System.String` (sealed) does NOT implement `<>dotkt_CharSequence`**, and the stdlib's real String ops are
+`CharSequence` *extensions* whose compiled bodies dispatch `length`/`get`/`subSequence` against the synthetic-interface
+receiver.
+
+**② Exact failure (repro captured, tree left clean).** kotc emits e.g. `"hello".contains("ell")` as
+`callStatic kotlin.text.StringsKt.contains` with `sig=@<>dotkt_CharSequence,@<>dotkt_CharSequence,bool` while the pushed
+args are `System.String` constants (`scratchpad/str-cir/app.cir.json:144`) → the static-call boundary passes a
+`System.String` where `<>dotkt_CharSequence` is required → **InvalidProgramException / EntryPointNotFound**. `trim()` is
+the same class *plus* an explicit cast: the stdlib `String.trim()` body is `(this as CharSequence).trim().toString()`
+(`runtime/stdlib/src/kotlin/text/Strings.kt:181`) → `castclass <>dotkt_CharSequence` on a sealed `System.String` →
+InvalidCast; the target `CharSequence.trim(predicate)` body reads `length`, indexes `this[i]`, calls `subSequence`
+(`Strings.kt:77`) against the synthetic. bir2cir has **no** rule for CharSequence — it only lowers `@ClrTypeAlias` owners
+from the ref.dll (`bir2cir/Program.cs:2060/2101`), and CharSequence has none, so the synthetic survives to ilemit. This
+is exactly why kotc still hard-lowers `STRING_OPS` (`BirMappings.kt:28`, consumed `BirEmitter.kt:3905`).
+
+**③ Precedent — why this ISN'T like the already-fixed dual-reps.** Every fixed dual-rep aliased to a **real BCL type the
+values genuinely are**: `Iterable`→`@ClrTypeAlias("…IEnumerable")` (works because `List<T>` *is* `IEnumerable<T>` —
+`builtins/Collections.kt:13`), Exception→`System.Exception` (`builtins/Throwable.kt`), Closeable→`IDisposable`,
+Comparator→`IComparer` (since retired to a plain fun-interface), Comparable→`@ClrTypeAlias("System.IComparable")` +
+`@ClrIntrinsic("CompareTo")` (`builtins/Comparable.kt:21`). Shared mechanism: `typeDef` routes CLR-bound supertypes to
+`clr:`/`clrg:` (`BirEmitter.kt:1143/1164`); bir2cir drops the alias def + rewrites member calls to the BCL owner. **CharSequence
+is the sole dual-rep with NO alias target**: `System.String` is sealed (can't add the interface) and String/StringBuilder
+share **no** BCL indexed-char+length interface. So `@ClrTypeAlias` cannot solve it — it needs a **materializing adapter**.
+
+**④ Recommended fix — HYBRID (Codex-confirmed).**
+- **(A) Foundation — a String→CharSequence adapter, in the STDLIB, wrapped by bir2cir.** Define a stdlib
+  `internal class` implementing `CharSequence` (so it *is* `<>dotkt_CharSequence`) that delegates `length`→
+  `System.String.Length`, `get`→`get_Chars`, `subSequence`→`Substring` (its members carry the same `@ClrIntrinsic`s String
+  already uses). **bir2cir inserts the wrap** wherever a statically-`String` value flows into a `<>dotkt_CharSequence` slot
+  — extension-receiver arg, ordinary arg, return, field/local store, and explicit `as CharSequence` (for an `Any?`→
+  CharSequence cast, a helper that adapts a runtime `System.String` and otherwise does the plain interface cast).
+  bir2cir already tracks the static type needed to detect this (`MemberCallSubstitution` ctx, `Program.cs:2253`). This
+  makes the **entire** CharSequence-extension surface (dozens of funs, not just STRING_OPS) plus genuine polymorphism
+  (`val cs: CharSequence = "abc"; cs.isBlank()`) work — B alone cannot, since it only helps *statically*-String receivers.
+- **(B) Per-op directness — retire cleanly-substitutable ops WITHOUT the bridge** (the established retire recipe, member
+  substitution): ops that already have a **String-surface-only** actual — `substring(1&2-arg)` (`StringsClr.kt:223/231`
+  via `nativeSubstring`@ClrIntrinsic), `startsWith(String,…)` (`:235`), `endsWith(String,…)` (`:249`),
+  `replace(Char,Char)` (`:73`) — retire immediately (overload resolution prefers the `String` actual; its inner
+  `length`/`substring`/`==` all substitute). Ops that are **only** `CharSequence` extensions or whose String actual casts
+  to CharSequence — `contains`, `indexOf`, `trim*`, `padStart`/`padEnd`, `split`, `reversed`, `isEmpty`/`isBlank` — either
+  get a new String `@ClrIntrinsic` actual (`contains(String)`→`Contains`, `indexOf`→the existing `nativeIndexOf`
+  `@ClrIntrinsic("IndexOf")`) or ride the (A) bridge. NB `replace(String,String)`'s String actual (`:90`) calls public
+  `indexOf`, which is CharSequence-only — so it needs the bridge or an ordinal-`indexOf` String actual first.
+
+**⑤ Layer placement (per CLAUDE.md).** Adapter **TYPE = stdlib** (owns the Kotlin↔BCL semantics; keeps ilemit dumb).
+Wrap-insertion + detection = **bir2cir** (the Kotlin↔CLR relation; runs in the non-ref substitute/app builds only). kotc
+keeps synthesizing `<>dotkt_CharSequence` (frontend synthetic machinery — legitimate) and, once (A)+(B) land, **deletes
+`STRING_OPS` + the `s[i]` indexer lowering** (`BirEmitter.kt:3905`, indexer `:3400/3414`) — no new kotc CLR knowledge.
+ilemit only emits the interface + the adapter class = pure CLR codegen, **no Kotlin knowledge added**.
+
+**⑥ Unblock scope & risk.** Unblocks: bundle-1 ① residue (`trim`/`contains`/`startsWith`/`endsWith`/`replace`/`indexOf`/
+`padStart`/`padEnd`/`strReversed`/`split`/`substring(2-arg)`/`isEmpty`/`isBlank`), the indexer `s[i]`→`get_Chars` retire,
+the Regex retire (CharSequence inputs), and verify-il `il-str`/`il-substr`/`il-regex`. **`il-charseq` is NOT this bug** —
+it is the *user*-CharSequence path (`class S : CharSequence`) that rides the synthetic directly; verify it independently.
+Risk: retiring `STRING_OPS` regresses `il-str`/`il-substr` if the bridge/substitution is incomplete → gate each op via the
+retire recipe (baseline the fail-set, require gate-neutral). Cost: one allocation per String→CharSequence coercion
+(acceptable; optimize hot paths with B). Watch the `as CharSequence`-from-`Any?` runtime-type-check helper.
+
+**⑦ Sibling dual-reps — the adapter technique does NOT transfer; each needs a separate (smaller) plan.**
+- **Comparable-self (`compareTo`, `il-comparable`)** — already `@ClrTypeAlias("System.IComparable")` +
+  `@ClrIntrinsic("CompareTo")` (`builtins/Comparable.kt:21`), lowered via a `constrainedCall` to `IComparable<T>`
+  (`BirEmitter.kt:3205`). Blocker is **ilemit self-referential-generic interface-token resolution**
+  (`TypeBuilder.GetMethod` on `IComparable<SelfType>`), which MEMORY `value-type-generic-interface-token` reports FIXED for
+  *value* types — re-verify the user-type self-ref path; NO adapter needed.
+- **collection-element / `listNew` (`listOf`/`setOf`/`mapOf`)** — collections HAVE a BCL representation (`List<T>`, already
+  `@ClrTypeAlias` in `builtins/Collections.kt`); this is the **collection-bridge**: retire the `listNew`/`setNew`/`mapNew`
+  factories together with the `COLLECTION_MEMBER`/`COLLECTION_OPS` clrName tables, riding the Iterable→IEnumerable
+  precedent (`@ClrTypeAlias`), NOT an adapter.
+
+**⑧ Follow-up agents.** (1) ~~bir2cir+stdlib agent — foundation A~~ **✅ DONE 2026-07-02** (app-local injection; see the
+STATUS box above). (2) **synthetic-UNIFICATION agent (NEW prerequisite for B)** — the real blocker: make the app
+reference the rt stdlib dll's `<>dotkt_CharSequence` (or `kotlin.CharSequence`) instead of re-synthesizing its own, so a
+stdlib CharSequence-extension called with an app value type-checks. Open design fork (kotc-emits-vs-bir2cir-repoints);
+must keep `il-charseq` green. (3) **stdlib+kotc retire agent** — after unification lands, do the per-op B retires +
+delete `STRING_OPS` and the indexer lowering under the retire recipe, gate-neutral. (4) **Regex agent** — retire Regex
+once unification is in (its `CharSequence` inputs then coerce). Comparable-self and the collection-bridge are separate
+tracks (own agents), not gated on this fix.
+
 ## 【5】 exception map → `@ClrTypeAlias`  *(#2)* — ✅ DONE (verified 2026-07-02; was already complete)
 - `BirMappings.NET_EXCEPTIONS` DELETED (kotc `5907510`); the 11 stdlib exception classes carry `@ClrTypeAlias` (stdlib
   `c119dd8`, `runtime/stdlib/clr/builtins/Throwable.kt`) with 11/11 parity to the retired map; bir2cir substitutes them
