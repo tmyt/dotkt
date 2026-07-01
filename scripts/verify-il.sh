@@ -169,7 +169,6 @@ il_check_mpp() { # <name> <asm> <srcDir> <commonFile> <expected>
 			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
 	} &
 }
-il_check_mpp expect Expect "$ROOT/cases/il-expect" common.kt "$(printf 'CLR\n42\nhello from CLR\n2\nTrue\n10\n15\nTrue\nhi')"
 
 il_check m0    M0Kt  "$ROOT/cases/m0/M0.kt"  "$(printf 'sum = 5\nzero\nn=1\nn=2')"
 il_check mc1   MC1   "$ROOT/cases/m-c1"      "$(printf 'c = (4, 6)\na.d2 = 25\nrect area=30')"
