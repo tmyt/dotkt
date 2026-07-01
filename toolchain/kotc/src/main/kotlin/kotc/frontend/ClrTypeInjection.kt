@@ -104,6 +104,7 @@ private class ClrType(
 	val typeParamBounds: Map<String, List<String>> = emptyMap(), // gap ①: upper bound(s) per type param (`<T : Comparable<T>>`)
 	val isFunInterface: Boolean = false,   // round-trip: was a Kotlin `fun interface` (SAM) — restore `status.isFun` so lambdas convert
 	val isSealed: Boolean = false,         // round-trip: was a Kotlin `sealed` class/interface — restore Modality.SEALED
+	val iteratorElem: String? = null,      // IEnumerable<T> element -> a frontend-only `operator fun iterator(): Iterator<T>` (for-in resolves; backend uses GetEnumerator)
 )
 private class ClrModule(val types: List<ClrType>, val topLevel: List<ClrTopLevel> = emptyList(), val topLevelProps: List<ClrTopLevelProp> = emptyList())
 
@@ -136,6 +137,7 @@ private object ClrMetadataHolder {
 		val methods = ArrayList<ClrMethod>(); val ctors = ArrayList<List<ClrParam>>()
 		val props = ArrayList<ClrProperty>(); val events = ArrayList<ClrEvent>()
 		var indexer: ClrIndexer? = null
+		var iteratorElem: String? = null
 		var baseNoArgCtor = true
 		val staticMethods = ArrayList<ClrMethod>(); val staticProps = ArrayList<ClrProperty>()
 		val memberExtProps = ArrayList<ClrMemberExtProp>()
@@ -143,7 +145,7 @@ private object ClrMetadataHolder {
 			// gap ①: per-type-param variance/bounds accumulators for the CURRENT type (from `tvariance`/`tbound` lines);
 			// `lastMethod` is the most-recently-parsed fun/tlfun, the target of any following `mbound` (method-level) line.
 			val tpVariance = HashMap<String, String>(); val tpBounds = HashMap<String, MutableList<String>>(); var lastMethod: ClrMethod? = null
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(memberExtProps), clrBind, HashMap(tpVariance), tpBounds.mapValues { it.value.toList() }, isFunIface, isSealedTy)); clrBind = null }
+		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(memberExtProps), clrBind, HashMap(tpVariance), tpBounds.mapValues { it.value.toList() }, isFunIface, isSealedTy, iteratorElem)); clrBind = null }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
 			if (line.isEmpty()) continue
@@ -151,7 +153,7 @@ private object ClrMetadataHolder {
 			when (tok[0]) {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
 					// ref/runtime split: `token[2] = KotlinFqn=BclName` -> LEFT = Kotlin identity (drives namespace/ClassId),
 					// RIGHT (if any) = the BCL binding for clrName. Most injected types have no `=`.
 					val dn = tok[2]; val eq = dn.indexOf('='); dotNet = if (eq >= 0) dn.substring(0, eq) else dn; clrBind = if (eq >= 0) dn.substring(eq + 1) else null
@@ -164,7 +166,7 @@ private object ClrMetadataHolder {
 				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
 				// trailing params (from its longest ctor) become the single annotation constructor.
 				"annotation" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
 					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
 					ctors.add(parseParams(tok.drop(3)))
 				}
@@ -218,6 +220,8 @@ private object ClrMetadataHolder {
 				"event" -> events.add(ClrEvent(tok[1], tok[2], parseParams(tok.drop(3))))
 				// index <indexType> <valueType> <ro|rw> — `this[i]` indexer -> operator get/set.
 				"index" -> indexer = ClrIndexer(tok[1], tok[2], tok.getOrNull(3) == "rw")
+					// iterator <elem> — a type implementing IEnumerable<elem> -> a frontend-only `operator fun iterator(): Iterator<elem>`.
+					"iterator" -> iteratorElem = tok.getOrNull(1)
 					// round-trip: `funinterface` = the current interface was a Kotlin `fun interface` (restore status.isFun for SAM);
 					// `sealed` = the current class/interface was Kotlin `sealed` (restore Modality.SEALED). Standalone marker lines.
 					"funinterface" -> isFunIface = true
@@ -450,6 +454,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		type.memberExtProps.forEach { names.add(Name.identifier(it.name)) }
 		type.events.forEach { names.add(Name.identifier("add_${it.name}")); names.add(Name.identifier("remove_${it.name}")) }
 		type.indexer?.let { names.add(Name.identifier("get")); if (it.mutable) names.add(Name.identifier("set")) }
+		if (type.iteratorElem != null) names.add(Name.identifier("iterator"))
 		if (!type.isObject && !type.isInterface) names.add(SpecialNames.INIT)   // signals generateConstructors
 		return names
 	}
@@ -624,6 +629,21 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				if (type.open && !type.isObject) modality = Modality.OPEN
 				valueParameter(Name.identifier("index"), coneOf(ix.indexType, owner))
 				if (callName == "set") valueParameter(Name.identifier("value"), coneOf(ix.valueType, owner))
+			}
+			return listOf(fn.symbol)
+		}
+
+		// IEnumerable<T> -> `operator fun iterator(): Iterator<T>`. Frontend-only: it lets `for (x in it)` resolve to a
+		// single member (not the clashing stdlib extension iterator()s); the backend bypasses it and enumerates via
+		// GetEnumerator/MoveNext/Current (see BirEmitter forEachInline).
+		if (callName == "iterator" && type.iteratorElem != null) {
+			val iterCid = ClassId(FqName("kotlin.collections"), Name.identifier("Iterator"))
+			val iterSym = session.symbolProvider.getClassLikeSymbolByClassId(iterCid)
+			val ret = iterSym?.constructType(arrayOf(coneOf(type.iteratorElem, owner)), false)
+				?: session.builtinTypes.nullableAnyType.coneType
+			val fn = createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, ret) {
+				status { isOperator = true }
+				if (type.open && !type.isObject) modality = Modality.OPEN
 			}
 			return listOf(fn.symbol)
 		}
