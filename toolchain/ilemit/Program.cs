@@ -867,9 +867,15 @@ sealed partial class Emitter
             // keeps the stdlib assembly emitting so the (non-coroutine) load problems can be worked on. Replace with the
             // real state machine at port time (the seam is the `Co*` consts + EmitCoroutine).
             if (StdlibStub) { EmitThrowStub(mb, "suspend (coroutine port pending)"); return; }
-            if (m.TryGetProperty("coClass", out var cc) && cc.GetBoolean()) EmitCoroutineClass(ti, mb, m);
-            else EmitCoroutine(ti, mb, m);
-            return;
+            if (m.TryGetProperty("coClass", out var cc) && cc.GetBoolean()) { EmitCoroutineClass(ti, mb, m); return; }
+            // The retained `sequence { }` restricted-suspension builder still emits `steps` -> the CPS state machine.
+            if (m.TryGetProperty("steps", out _)) { EmitCoroutine(ti, mb, m); return; }
+            // A plain suspend FUNCTION (post #5(a) kotc-pure): kotc emits `"suspend":true` + a body of still-un-lowered
+            // coroutine nodes (delay/await/runBlocking) and NO CPS `steps` — the suspend->state-machine lowering moved to
+            // a DEFERRED downstream layer (coroutine-lowering-layer-deferred) that is not built yet. Emit a THROWING STUB
+            // (not the raw body, whose coroutine nodes EmitStmt can't lower) so ilemit does not crash; the method throws
+            // at call time until the downstream layer lands. Coroutine samples fail GRACEFULLY, they don't abort ilemit.
+            EmitThrowStub(mb, "suspend (coroutine lowering deferred)"); return;
         }
         // A non-suspend method that builds a `sequence { }` (`sequenceNew` -> the restricted-suspension SM binding
         // Seq/ISeqStep, also part of the pending coroutine port) -> the same throwing stub under stdlib-compile.
