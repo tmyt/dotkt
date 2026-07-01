@@ -29,13 +29,21 @@
    resolution. NB: boxing of value types is a separate emit-time op (`EmitArg`), NOT an argType concern — the object-collapse
    is *unconditionally* a loss (the only legit `System.Object` argType is when the static type is genuinely `Any`).
 
-   **(a) CORE DONE (2026-07-01)** — netType→`birType` migrated at the emitted `clr*` call nodes (Math/String/Char/.NET-interop/
-   cross-module-top-level categories); the **Object-collapse fix is verified** (`list[0]=Widget` argType `System.Object`→`@Widget`);
-   `Sequence`→IEnumerable `@ClrTypeAlias` added. Gate-neutral (verify-il FAIL set identical, 83). Commits: kotc `6ad3f24`/`bb455d3`/
-   `4330509`, nested stdlib `f8321c4`. `netType` is RETAINED for the DEFERRED sites (coroutine `coCatchBegin`/awaiter; `kotlinx.*`
-   atomicfu bespoke; `attrsJson`/`clrMethodShape`) — its full DELETION awaits the DotKt.Runtime retirement (removes the kotlinx/Result
-   forwarding) + the coroutine layer. NEXT: the **DotKt.Runtime retirement** (5-layer footprint: compiler forwarding + `runtime/DotKt.Runtime/`
-   project + build/test scripts + NuGet packaging + SDK config; KEEP ilemit's per-assembly CompilerServices attr synthesis).
+   **(a) DONE (2026-07-01) — kotc is now a PURE Kotlin frontend.** `grep netType` in kotc = **0** (deleted). kotc does NO
+   CLR type resolution (all sites emit pure-FQN `birType`; Unit→void + Sequence→IEnumerable resolve in bir2cir) and NO
+   coroutine lowering (the suspend→CPS/Task state machine is REMOVED — kotc emits neutral tags `"suspend":true` on decls +
+   `"suspendCall":true` at calls; the actual lowering is a DEFERRED downstream layer, coroutine-lowering-layer-deferred).
+   The **Object-collapse fix is verified** (`list[0]=Widget` argType `System.Object`→`@Widget`). Journey: core netType→birType
+   (`6ad3f24`/`bb455d3`/`4330509`, Sequence alias `f8321c4`) → DotKt.Runtime retirement (`03d1465`/`cb09ccd`/`09c9156`/
+   `2ae8b99`/`7eced37`, sheds the kotlinx/Result forwarding) → kotc-pure 4 stages (`de2531f`/`28f1eb5`/`0aae262`/`ea5248c`,
+   delete netType + coroutine lowering) → ilemit graceful-suspend stub (`00ad2f1`, an app suspend fn emits a throwing stub
+   instead of crashing the emit). Gate: passing core byte-identical; the ONE net regression is `cobuild` (the only
+   previously-passing coroutine sample) — an AUTHORIZED coroutine-deferred casualty (kotc no longer lowers it; now a clean
+   runtime throw, not an emit crash). Residual +1 follow-ups from the retirement: `il:regex` (CharSequence dual-rep — runs
+   but ilverify-fails) + `il:result` (value-type `T?`→Nullable dual-rep) — both pre-existing dual-rep gaps the real stdlib
+   exposed. **#5(a) netType→bir2cir migration is COMPLETE.** Remaining #5-adjacent CLR-interop cleanups (NOT the netType
+   migration): byref rework (`ClrRef`→`@ClrRefArgument`, stub-jar deletion — ABI parity), il:outref/il:stackalloc ilemit
+   byref crash, Span/stackBuffer→kotlin.clr namespace move.
 
    **UNIFIED SCOPE (user, 2026-07-01)** — #5 is "accurate bir2cir **type + member** resolution", THREE sibling workstreams
    sharing one root (kotc emits pure FQN / no CLR resolution; bir2cir resolves accurately from the ref.dll + hierarchy):
