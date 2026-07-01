@@ -62,6 +62,15 @@ sealed partial class Emitter
                         ?? at.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == args.Length);
             return TryCab(nctor, args, attr);
         }
+        // The attribute type must be emitted in THIS assembly (present in _types). A stdlib-only annotation that the app
+        // merely APPLIES — e.g. `@kotlin.OptIn(ExperimentalAtomicApi::class)` opting into an experimental stdlib API — is
+        // NOT defined here, so `_types[attr]` would KeyNotFound. Skip it (like an un-encodable attr): it is a compile-time
+        // opt-in marker with no need to survive into the app's IL.
+        if (!_types.ContainsKey(attr))
+        {
+            Console.Error.WriteLine($"ilemit: skipping custom attribute [{attr}]: type not emitted in this assembly");
+            return null;
+        }
         var ti = _types[attr];
         var ctor = ti.Ctors.Count > 0 ? ti.Ctors[0] : ti.TB.DefineDefaultConstructor(MethodAttributes.Public);
         return TryCab(ctor, args, attr);
