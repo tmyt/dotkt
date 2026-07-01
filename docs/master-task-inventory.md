@@ -72,11 +72,12 @@ is largely STALE** — a code-grounded currency check found:
     a stdlib binding, not a kotc lowering). **bir2cir gap fixed (reusable):** the bare-@ClrIntrinsic EXTENSION index was
     keyed `name|recvKey`, colliding across arities — `substring(String,Int)`@ClrIntrinsic captured the 3-arg
     `substring(String,Int,Int)` call → wrong `Substring(start,end)`. Now keyed `name|recvKey|paramCount`.
-    **BLOCKED (kept lowered, NOT retired):** `trim`/`contains`/`startsWith`/`endsWith`/`replace`/`indexOf`/`padStart`/
-    `padEnd`/**`strReversed`**/**`split`**/`substring(start,end)`/`isEmpty`/`isBlank` — their stdlib bodies are
-    `CharSequence` extensions, so a System.String receiver hits the **String/CharSequence dual-representation** crash
-    (InvalidProgram / EntryPointNotFound; `trim` also needs `::isWhitespace` method-ref lowering). Retire once
-    bir2cir/ilemit bridge String↔CharSequence.
+    **UPDATE — bundle 4-B (2026-07-02) retired most of these** now that CharSequence is canonical + the bridge runs on
+    the RT stdlib build (see §4-A ⑧(3)): `contains`/`startsWith`/`endsWith`/`indexOf`/`split`/`substring(start,end)`/
+    `isEmpty`/`isNotEmpty` RETIRED; `s[i]`→get_Chars + Regex RETIRED. **STILL LOWERED (distinct deeper stdlib-body
+    bugs, NOT dual-rep):** `trim`/`trimStart`/`trimEnd` (`Char::isWhitespace` method-ref not lowered), `strReversed`
+    (`StringBuilder(CharSequence)` no .NET ctor), `padStart`/`padEnd` (StringBuilder append/capacity), `replace(String,
+    String)` (StringBuilder `append(seq,start,END)`), `isBlank`/`isNotBlank` (CharSequence iteration).
   - ✅ **`System.Char` — DONE 2026-07-02** (`3aec0a1`+Char commit, same kotc retire pass). Deleted the `CHAR_OPS` map +
     emit site; `CharClr.kt`'s `@ClrIntrinsic("System.Char.IsDigit"/"ToUpperInvariant"/…)` FQ bindings substitute via
     bir2cir's top-level-intrinsic-by-signature path → `clrStatic System.Char.*`. No stdlib change; gate-neutral (il-char
