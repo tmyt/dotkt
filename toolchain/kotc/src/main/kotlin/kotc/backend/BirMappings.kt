@@ -13,16 +13,9 @@ internal val BINARY = mapOf(
 )
 internal val UNARY = mapOf("unaryMinus" to "-", "unaryPlus" to "+", "not" to "!", "inv" to "~")
 
-// kotlin.math.* -> System.Math.* (ilemit picks the int/double overload by argTypes).
-internal val MATH_FUNCS = mapOf(
-	"abs" to "Abs", "max" to "Max", "min" to "Min", "sqrt" to "Sqrt", "pow" to "Pow",
-	"round" to "Round", "floor" to "Floor", "ceil" to "Ceiling", "exp" to "Exp",
-	"ln" to "Log", "log10" to "Log10", "sin" to "Sin", "cos" to "Cos", "tan" to "Tan",
-	"asin" to "Asin", "acos" to "Acos", "atan" to "Atan", "atan2" to "Atan2",
-	"sinh" to "Sinh", "cosh" to "Cosh", "tanh" to "Tanh",
-	"asinh" to "Asinh", "acosh" to "Acosh", "atanh" to "Atanh",
-	"log" to "Log", "log2" to "Log2", "truncate" to "Truncate", "cbrt" to "Cbrt", "withSign" to "CopySign",
-)
+// (RETIRED 2026-07-02) The kotlin.math.* -> System.Math.* map lived here. It was CLR knowledge in kotc (a layer
+// violation). kotc now emits a plain call to the stdlib math fun; bir2cir substitutes it from MathClr.kt's
+// @ClrIntrinsic bindings on the ref.dll (System.Math.* for Double/Int/Long, System.MathF.* for Float).
 
 // kotlin.text String ops -> .NET System.String instance methods.
 internal val STRING_OPS = mapOf(

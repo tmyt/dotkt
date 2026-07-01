@@ -3873,24 +3873,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					return """{"k":"repeatInline","var":${str(vname)},"count":${expr(n)},"body":[$body]}"""
 				}
 			}
-			// `kotlin.math.*` -> `System.Math.*` lowered to a `clrStatic` (ilemit resolves the overload by argTypes).
-			if (fq == "kotlin.math") MATH_FUNCS[name]?.let { m ->
-				// An EXTENSION math fun (Double.pow(x)) carries the receiver as `this` -> it leads the static args: Pow(this, x).
-				// Value args then coerce to the receiver's numeric type so `2.0.pow(3)` (Int exponent) emits Pow(2.0,(double)3),
-				// not the ill-typed Pow(2.0, 3[int]). Non-extension funs (sqrt(x), max(a,b)) have a null receiver -> unchanged.
-				val extRecv = extensionReceiver(call)
-				// The receiver type is now its Kotlin FQN (kotc emits source types as FQN). The predicate compares FQN to
-				// FQN; the conv target stays the CLR shorthand ("double"/"float") like every other conv site (a CLR-internal
-				// token bir2cir passes through), so the emitted IL conv is unchanged.
-				val recvBir = extRecv?.let { birType(it.type) }?.takeIf { it == "kotlin.Double" || it == "kotlin.Float" }
-				val convTo = if (recvBir == "kotlin.Double") "double" else "float"
-				val parts = (listOfNotNull(extRecv) + regularArgs(call)).mapIndexed { i, a ->
-					if (i > 0 && recvBir != null && birType(a.type) != recvBir)
-						(if (recvBir == "kotlin.Double") "kotlin.Double" else "kotlin.Float") to """{"k":"conv","to":${str(convTo)},"e":${expr(a)}}"""
-					else birType(a.type) to expr(a)
-				}
-				return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${parts.joinToString(",") { str(it.first) }}],"ret":${str(birType(callee.returnType))},"args":[${parts.joinToString(",") { it.second }}]}"""
-			}
+			// `kotlin.math.*` is NO LONGER lowered here. kotc emits a plain call to the stdlib fun (owner=null callStatic /
+			// an extension instance for Double.pow); bir2cir's MemberCallSubstitution reads MathClr.kt's @ClrIntrinsic
+			// bindings off the ref.dll and substitutes System.Math.* / System.MathF.* — the CLR relation lives there, not
+			// in kotc. (Retired 2026-07-02: pilot of the "retire a kotc hardcoded CLR lowering" pattern.)
 			if (fq == "kotlin.text") {
 				// `s.repeat(n)` -> Concat(Repeat(s,n)); `s.reversed()` -> new string(Reverse(s).ToArray()).
 				if (name == "repeat") (extensionReceiver(call) ?: dispatchReceiver(call))?.takeIf { it.type.classFqName?.asString() == "kotlin.String" }?.let { recv ->
