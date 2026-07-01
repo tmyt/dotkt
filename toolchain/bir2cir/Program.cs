@@ -304,6 +304,19 @@ sealed class ReferenceMetadataIndex
 
     public int OwnerArity(string ownerFqn) => _ownerArity.GetValueOrDefault(ownerFqn, 0);
 
+    // The @ClrProperty accessor binding for owner.member: its READ/WRITE access flags + the .NET property name. Routes the
+    // call EXPLICITLY to clrPropGet/clrPropSet (no get_/set_ string-prefix sniff). Overload-disambiguated by arg count.
+    public bool TryMemberProperty(string ownerFqn, string memberName, int argCount, out int access, out string name)
+    {
+        access = 0; name = null;
+        if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return false;
+        var cands = list.Where(m => m.Name == memberName && m.PropertyName != null).ToList();
+        if (cands.Count == 0) return false;
+        var pick = cands.FirstOrDefault(m => m.ParamCount == argCount) ?? cands[0];
+        access = pick.PropertyAccess; name = pick.PropertyName;
+        return true;
+    }
+
     // The @ClrIntrinsic BCL member name for owner.member (overload-disambiguated by arg count when possible).
     public bool TryMemberIntrinsic(string ownerFqn, string memberName, int argCount, out string intrinsic)
     {
@@ -415,11 +428,13 @@ sealed class ReferenceMetadataIndex
     // Whether the owner is an @JvmInline value class erased to a primitive CLR form (so `new T(arg)` is the inline BOX).
     public bool IsInlineValueClass(string ownerFqn) => _inlineBacking.ContainsKey(ownerFqn);
 
-    // A rule-3 hoist candidate: owner.member exists, is concrete (non-abstract) and carries NO @ClrIntrinsic, so its
-    // real Kotlin body was hoisted by kotc to the static helper `<>dotkt_ClrH_<owner>`.
+    // A rule-3 hoist candidate: owner.member exists, is concrete (non-abstract) and carries NEITHER @ClrIntrinsic NOR
+    // @ClrProperty, so its real Kotlin body was hoisted by kotc to the static helper `<>dotkt_ClrH_<owner>`. A @ClrProperty
+    // accessor (setLength/capacity/nativeSetCapacity/ticks) is a BOUND stub — its call substitutes to clrPropGet/clrPropSet
+    // (Rule 2p) — so it must NOT hoist its throwing TODO body into the helper (the same exclusion @ClrIntrinsic gets).
     public bool IsRule3Member(string ownerFqn, string memberName) =>
         _membersByOwner.TryGetValue(ownerFqn, out var list) &&
-        list.Any(m => m.Name == memberName && m.Intrinsic == null && !m.IsAbstract);
+        list.Any(m => m.Name == memberName && m.Intrinsic == null && m.PropertyName == null && !m.IsAbstract);
 
     public static string HelperTypeName(string ownerFqn) =>
         "<>dotkt_ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
@@ -847,6 +862,7 @@ sealed class ReferenceMetadataIndex
                     foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                     {
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
+                        var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         metadata.MemberBindings.Add(new MemberBinding(
                             ownerFqn,
                             method.Name,
@@ -854,7 +870,9 @@ sealed class ReferenceMetadataIndex
                             intrinsic,
                             method.IsAbstract,
                             method.IsStatic,
-                            method.GetParameters().Select(p => TypeName(p.ParameterType)).ToArray()));
+                            method.GetParameters().Select(p => TypeName(p.ParameterType)).ToArray(),
+                            prop?.Access ?? 0,
+                            prop?.Name));
                         // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
                         //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.
                         //   bare "Name"      -> a member on an EXTENSION receiver (`Array<T>.nativeClone()` ->
@@ -924,6 +942,17 @@ sealed class ReferenceMetadataIndex
     {
         var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrIntrinsic" or "kotlin.clr.ClrIntrinsicAsDynamic");
         return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
+    }
+
+    // The member-level PROPERTY-accessor binding: @ClrProperty(access, name). `access` is the READ(1)/WRITE(2) flag word;
+    // `name` is the .NET property. Returns (access, name) or null when the member carries no @ClrProperty.
+    static (int Access, string Name)? ClrPropertyOf(IList<CustomAttributeData> attrs)
+    {
+        var a = attrs.FirstOrDefault(x => x.AttributeType.FullName == "kotlin.clr.ClrProperty");
+        if (a == null || a.ConstructorArguments.Count < 2) return null;
+        if (a.ConstructorArguments[1].Value is not string name) return null;
+        var access = a.ConstructorArguments[0].Value is null ? 0 : Convert.ToInt32(a.ConstructorArguments[0].Value);
+        return (access, name);
     }
 
     // A receiver-type key for an extension fun's first param, matched against a call's first-arg type. Arrays collapse
@@ -1129,8 +1158,9 @@ sealed class ReferenceDotKtMetadata
 }
 
 // A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the
-// @ClrIntrinsic BCL name or null (null + !IsAbstract = a rule-3 hoist candidate).
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null);
+// @ClrIntrinsic BCL name or null (null + no @ClrProperty + !IsAbstract = a rule-3 hoist candidate). PropertyName (+ the
+// READ/WRITE access flags) is set when the member carries @ClrProperty — an EXPLICIT .NET property accessor binding.
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null);
 
 sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool HasInlineBody)
 {
@@ -2241,6 +2271,13 @@ static class MemberCallSubstitution
         // The CLR owner TYPE the call addresses (a ClrRef-resolvable BCL token; see ClrOwnerType).
         var clrOwner = ClrOwnerType(refs, ownerToken) ?? bcl;
 
+        // Rule 2p (explicit PROPERTY accessor): the member carries @ClrProperty(access, name) -> route EXPLICITLY to
+        // clrPropGet(name) [READ] / clrPropSet(name) [WRITE] on the BCL owner, from the stated access role — NOT the old
+        // get_/set_ intrinsic-string-prefix sniff. Handled before Rule 2/3 so a @ClrProperty stub (setLength/capacity/
+        // ticks) is neither routed as a plain method nor hoisted as a rule-3 body.
+        if (instance && refs.TryMemberProperty(ownerFqn, member, args.Count, out var pAccess, out var pName))
+            return ClrPropNode(node, clrOwner, pName, pAccess, member, args);
+
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
             return ClrCallNode(node, clrOwner, intrinsic, member, args, instance);
@@ -2386,36 +2423,55 @@ static class MemberCallSubstitution
         return call;
     }
 
-    // A clrInstance / clrStatic node. For a property accessor call (`get_X`/`set_X` whose intrinsic is the bare
-    // property name) emit clrPropGet/clrPropSet per the property-name convention; otherwise a plain method call.
+    // @ClrProperty(access) flag values (mirror `kotlin.clr.READ`/`WRITE`): a get accessor / a set accessor; `READ|WRITE`
+    // (both bits) is a get+set property whose specific call is disambiguated by the accessor member prefix / arg count.
+    const int ClrPropRead = 1, ClrPropWrite = 2;
+
+    // Build a clrPropGet/clrPropSet node for a .NET property `prop` on the BCL owner `bcl`. Used by BOTH the explicit
+    // @ClrProperty accessor (Rule 2p; `prop` is the bare BCL property "Length") and the genuine `val X` member-prefix
+    // accessor (trigger ①), where `prop` may arrive as the full BCL accessor name kotc emits for a CLR-bound property
+    // (Rule 4: `get_Count`) — strip a leading get_/set_ so the clrProp `name` is the bare property. `access` = READ/WRITE
+    // flags; when BOTH are set (a var property) the accessor member prefix (`set_` -> write) or arg count (1 = write)
+    // picks the direction. WRITE takes the single value arg; READ carries the return type.
+    static JsonNode ClrPropNode(JsonObject node, string bcl, string prop, int access, string member, JsonArray args)
+    {
+        if (prop.StartsWith("get_", StringComparison.Ordinal) || prop.StartsWith("set_", StringComparison.Ordinal))
+            prop = prop[4..];
+        var wantRead = (access & ClrPropRead) != 0;
+        var wantWrite = (access & ClrPropWrite) != 0;
+        var write = wantRead && wantWrite
+            ? (member.StartsWith("set_", StringComparison.Ordinal) || args.Count == 1)
+            : wantWrite;
+        var pg = new JsonObject
+        {
+            ["k"] = write ? "clrPropSet" : "clrPropGet",
+            ["type"] = bcl,
+            ["name"] = prop,
+            ["static"] = false,
+            ["recv"] = node["recv"]?.DeepClone(),
+        };
+        if (!write && RetToken(node) is string ret) pg["retType"] = ret;
+        if (write && args.Count >= 1) pg["value"] = args[0].DeepClone();
+        return pg;
+    }
+
+    // A clrInstance / clrStatic node. A property-accessor call whose MEMBER carries the `get_`/`set_` prefix (kotc's
+    // property convention: a `val length` -> the accessor call `get_length`, intrinsic bare "Length") emits clrPropGet/
+    // clrPropSet on the bare intrinsic; otherwise a plain method call. A standalone accessor FUN bound to a property is
+    // routed EXPLICITLY by @ClrProperty (Rule 2p) BEFORE this node is built, so there is no intrinsic-prefix sniff here.
     static JsonNode ClrCallNode(JsonObject node, string bcl, string intrinsic, string member, JsonArray args, bool instance)
     {
         var argTypes = InferArgTypes(node, args);
         var ret = RetToken(node);
 
-        // A property-accessor call has the `get_`/`set_` prefix on EITHER side: kotc's property convention emits it on the
-        // MEMBER (a `val length` -> the accessor call `get_length`, intrinsic bare "Length"), while a fun bound to an
-        // accessor slot carries it on the INTRINSIC (`fun ticks()`@ClrIntrinsic("get_Ticks"), member "ticks"). kotc's
-        // clrName treated a get_/set_ intrinsic as clrPropGet/clrPropSet, so bir2cir must too — accept the prefix on
-        // either side. (`prop` below strips it from whichever carries it.)
-        var isGet = (member.StartsWith("get_", StringComparison.Ordinal) || intrinsic.StartsWith("get_", StringComparison.Ordinal)) && args.Count == 0;
-        var isSet = (member.StartsWith("set_", StringComparison.Ordinal) || intrinsic.StartsWith("set_", StringComparison.Ordinal)) && args.Count == 1;
+        // Trigger ①: a genuine `val X` accessor — kotc emits the call on the MEMBER as `get_x`/`set_x`. The intrinsic is
+        // the bare property name (convention: property @ClrIntrinsic values are bare, e.g. "Length"), so it becomes the
+        // clrProp `name` verbatim. (Indexers reaching here have member "get"/"set" with an index arg -> args.Count != 0/1,
+        // so they fall through to the method call below, not this branch.)
+        var isGet = member.StartsWith("get_", StringComparison.Ordinal) && args.Count == 0;
+        var isSet = member.StartsWith("set_", StringComparison.Ordinal) && args.Count == 1;
         if (instance && (isGet || isSet))
-        {
-            var prop = intrinsic.StartsWith("get_", StringComparison.Ordinal) || intrinsic.StartsWith("set_", StringComparison.Ordinal)
-                ? intrinsic[4..] : intrinsic;
-            var pg = new JsonObject
-            {
-                ["k"] = isGet ? "clrPropGet" : "clrPropSet",
-                ["type"] = bcl,
-                ["name"] = prop,
-                ["static"] = false,
-                ["recv"] = node["recv"]?.DeepClone(),
-            };
-            if (isGet && ret != null) pg["retType"] = ret;
-            if (isSet) pg["value"] = args[0].DeepClone();
-            return pg;
-        }
+            return ClrPropNode(node, bcl, intrinsic, isSet ? ClrPropWrite : ClrPropRead, member, args);
 
         var call = new JsonObject
         {
