@@ -274,6 +274,8 @@ static class FacadeGen
                 var idot = iclr != null ? ikt + "=" + iclr : ikt;
                 var itp = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
                 sb.Append($"interface {iname} {idot}{itp}\n");
+                // Round-trip gap ①: declaration-site variance (`out`/`in`) + upper bounds of the interface's type params.
+                if (t.IsGenericTypeDefinition) EmitTypeParamMeta(t.GetGenericArguments(), t, sb, isInterface: true, typeLevel: true);
                 // Interface->interface supertypes (GENERIC only) so an injected `IList<T>` carries its inherited
                 // members (`ICollection<T>.Add`, `IEnumerable<T>.GetEnumerator`) — the `IList<ResourceDictionary>.Add`
                 // case (item 3). Non-generic shadows (IEnumerable) are skipped to avoid GetEnumerator generic-vs-
@@ -302,6 +304,7 @@ static class FacadeGen
                     toks.AddRange(gp);
                     toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t)));
                     sb.Append(string.Join(" ", toks) + "\n");
+                    if (m.IsGenericMethodDefinition) EmitTypeParamMeta(m.GetGenericArguments(), t, sb, isInterface: false, typeLevel: false);  // gap ①: method type-param bounds
                 }
                 // Interface properties (Count, IsReadOnly, ...) + indexer (`this[i]`) -> abstract members so member
                 // access resolves on an interface-typed receiver.
@@ -341,6 +344,9 @@ static class FacadeGen
             // `class <Name> <DotNetName> <open|sealed> [<TypeParam>...]` carries inheritability + generic arity.
             sb.Append(isStatic ? $"object {simpleName} {dotNet}\n"
                                : $"class {simpleName} {dotNet} {(t.IsSealed ? "sealed" : "open")}{tparams}\n");
+            // Round-trip gap ①: upper bounds of the class's type params (a CLR class type param has no variance form, so
+            // only bounds — e.g. `class SortedPair<T : Comparable<T>>` -> `tbound T generic:Comparable[T]`).
+            if (!isStatic && t.IsGenericTypeDefinition) EmitTypeParamMeta(t.GetGenericArguments(), t, sb, isInterface: false, typeLevel: true);
             // (1)(2) Supertypes: emit the injectable base class + interfaces so subtype assignability and inherited-
             // member access hold. Members declared in the contiguous injectable base chain ("covered") arrive via
             // those supertypes, so we skip re-declaring them (avoids fake-override clashes). `IM` includes protected.
@@ -503,6 +509,7 @@ static class FacadeGen
                 toks.AddRange(gp);
                 toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t)));
                 sb.Append(string.Join(" ", toks) + "\n");
+                if (m.IsGenericMethodDefinition) EmitTypeParamMeta(m.GetGenericArguments(), t, sb, isInterface: false, typeLevel: false);  // gap ①: method type-param bounds
             }
             // .NET OPERATORS (`op_Addition`/`op_UnaryNegation`/…) are STATIC methods (IsSpecialName, so skipped above).
             // Surface them as Kotlin `operator fun`s on a genuine .NET value/ref type: the LEFT operand is the receiver,
@@ -955,6 +962,7 @@ static class FacadeGen
             toks.AddRange(gp);
             toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t)));
             sb.Append(string.Join(" ", toks) + "\n");
+            if (m.IsGenericMethodDefinition) EmitTypeParamMeta(m.GetGenericArguments(), t, sb, isInterface: false, typeLevel: false);  // gap ①: method type-param bounds
         }
         Console.WriteLine($"meta: {t.FullName} (kotlin file -> top-level)");
     }
@@ -1127,6 +1135,55 @@ static class FacadeGen
         if (fqn != null && fqn.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.')) return fqn;
         var n = t.Name;
         return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? n : "Any?";
+    }
+
+    // Round-trip gap ①: restore the generic CONSTRAINTS + declaration-site VARIANCE that ilemit wrote into the assembly
+    // (ApplyConstraints -> SetBaseTypeConstraint/SetInterfaceConstraints + GenericParameterAttributes.Covariant/
+    // Contravariant) but that facadegen previously DROPPED (it emitted only the bare type-param NAME). `genArgs` are the
+    // type parameters of a generic type definition or a generic method. Emitted as SEPARATE lines (`tvariance`/`tbound`
+    // for a type-level param, `mbound` for a method-level one) so an un-updated FIR injector safely IGNORES them — the
+    // metadata is a private wire format between facadegen and ClrTypeInjection, and unknown line kinds are skipped there.
+    static void EmitTypeParamMeta(Type[] genArgs, Type self, StringBuilder sb, bool isInterface, bool typeLevel)
+    {
+        foreach (var g in genArgs)
+        {
+            if (!g.IsGenericParameter) continue;
+            // Declaration-site variance is CLR-legal ONLY on an interface type param (a class type param has no variance
+            // form), so ilemit only stamps it there and Kotlin can only restore it there. `out` = Covariant, `in` = Contravariant.
+            if (typeLevel && isInterface)
+            {
+                var attrs = g.GenericParameterAttributes;
+                if ((attrs & GenericParameterAttributes.Covariant) != 0) sb.Append($"tvariance {g.Name} out\n");
+                else if ((attrs & GenericParameterAttributes.Contravariant) != 0) sb.Append($"tvariance {g.Name} in\n");
+            }
+            // Upper bound(s): the interface + base-class constraints (a `where` list becomes several lines). Skip the
+            // implicit System.Object/ValueType/Enum base (Kotlin's default `Any?`/no bound) and any bound that doesn't
+            // map to a resolvable Kotlin type token (-> Any?, dropped: no worse than today's unconstrained `T`).
+            Type[] cons; try { cons = g.GetGenericParameterConstraints(); } catch { cons = Array.Empty<Type>(); }
+            var kw = typeLevel ? "tbound" : "mbound";
+            foreach (var c in cons)
+            {
+                // Skip a bound with no meaningful/restorable Kotlin form: the implicit Object/ValueType/Enum base (Kotlin's
+                // default `Any?`/no bound) plus the special CLR bases (Delegate/MulticastDelegate/Array/…) and primitives
+                // that NO_INJECT already refuses. A constructed-generic BCL interface (IUnsignedNumber<T>, IComparable<T>)
+                // has a null FullName here and is NOT in NO_INJECT, so it still round-trips.
+                if (NO_INJECT.Contains(c.FullName ?? "")) continue;
+                var tok = MapBound(c, self);
+                if (tok == "Any?") continue;
+                sb.Append($"{kw} {g.Name} {tok}\n");
+            }
+        }
+    }
+
+    // Map a CLR generic-parameter CONSTRAINT type to a Kotlin bound token. ilemit lowers a Kotlin `Comparable<T>` bound to
+    // the CLR `System.IComparable<T>` (the Comparable<->IComparable alias, MEMORY comparable-iclr-typealias), so reverse
+    // that here — otherwise the common `<T : Comparable<T>>` would round-trip as the un-restorable BCL `IComparable`.
+    // Everything else goes through the ordinary type map (a BCL/injected bound resolves via the injection closure).
+    static string MapBound(Type c, Type self)
+    {
+        if (c.IsGenericType && c.GetGenericTypeDefinition().FullName == "System.IComparable`1")
+            return "generic:Comparable[" + Map(c.GetGenericArguments()[0], self) + "]";
+        return Map(c, self);
     }
 
     static string Sig(ParameterInfo[] ps, Type self) => string.Join(",", ps.Select(p => Map(p.ParameterType, self)));
