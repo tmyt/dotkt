@@ -6,6 +6,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Changed
+- **Layer-purity: retired kotc's hardcoded `kotlin.math.* → System.Math` lowering (the pilot of the "retire a kotc
+  hardcoded CLR lowering" pattern).** kotc no longer rewrites `kotlin.math` calls into `clrStatic System.Math` nodes
+  (`MATH_FUNCS` + the `BirEmitter` emit site are gone); it emits a plain call and bir2cir's `MemberCallSubstitution`
+  substitutes it from `MathClr.kt`'s existing `@ClrIntrinsic` bindings on the ref.dll (no stdlib change needed). Also
+  fixed a latent bir2cir bug this exposed: the top-level `@ClrIntrinsic` index was keyed by function NAME only, so
+  arg-type-discriminated overloads collided — `sqrt`/`abs`/`pow`/… and `isNaN`/`isInfinite`/`isFinite` silently used
+  the `System.Math`/`System.Double` overload for Float args instead of `System.MathF`/`System.Single`. Now resolved by
+  the exact call signature (Float math correctly hits `System.MathF`). verify-il gate-neutral (fail-set identical).
 - **Round-trip carrier attributes for Kotlin class-nature (`sealed` fully; `fun interface` nature) — re-consuming a
   DotKt `.dll` as Kotlin restores more of the original surface (round-trip gaps ③ + ⑤).** A `fun interface` (SAM) and a
   `sealed` class/interface lower to a plain CLR interface / abstract-class, dropping the Kotlin nature. Now: kotc emits

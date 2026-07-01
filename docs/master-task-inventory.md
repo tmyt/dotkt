@@ -56,6 +56,35 @@ is largely STALE** — a code-grounded currency check found:
   they run idempotently in parallel — `bir2cir/Program.cs:114-117`). Plus the 7 STILL-OPEN retire ops
   (`strRepeat`/`strReversed`/`split`/`console`/`listNew`/`setNew`/`mapNew`; `listNew`/`setNew` are emitted via a
   computed `kind` var at `BirEmitter.kt:3247`, NOT dead).
+  - ✅ **`System.Math` (kotlin.math.*) — DONE 2026-07-02, the PILOT** (`5a3ab8e` kotc retire, `c80760a` bir2cir).
+    Deleted `MATH_FUNCS` + the `BirEmitter.kt:3876-3893` emit site; MathClr.kt's `@ClrIntrinsic` bindings already
+    existed (no stdlib change). Gate-neutral (fail-set identical before/after). **NB the `coerceIn/coerceAtMost/
+    coerceAtLeast → Math.Min/Max/Clamp` sites (`:3837-3862`) are a SEPARATE family** — those stdlib funs are
+    pure-Kotlin bodies with NO `@ClrIntrinsic` (retiring them is the "real-body" mechanism, not intrinsic subst),
+    handle separately. **bir2cir gap found + fixed (recurs for other families):** the top-level `@ClrIntrinsic`
+    index was NAME-keyed (first-wins), so arg-type-discriminated overloads collided (Math vs MathF; Double.* vs
+    Single.* for isNaN/isInfinite/isFinite). Fixed by full-signature keying + ambiguity-guarded name fallback.
+
+  > ### RETIRE-PATTERN RECIPE (hand this to each follow-up family: String/Convert/Char/Regex/Console/compareTo/…)
+  > 1. **Precondition — confirm the binding exists stdlib-side.** grep `runtime/stdlib` for the target funs; each
+  >    must carry `@kotlin.clr.ClrIntrinsic("System.X.Y")` (member) or an FQ top-level binding. If MISSING, ADD the
+  >    binding stdlib-side (nested repo commit) — NEVER keep the kotc lowering. The bindings do nothing until bir2cir
+  >    consumes them from the ref.dll.
+  > 2. **Baseline.** Capture the sample's `dotkt.sh --run` output AND the verify-il fail-set (`build/fail-*` markers
+  >    are reliable even when stdout races) BEFORE touching anything.
+  > 3. **Retire in kotc.** Delete the hardcoded map + the `clrStatic/clrInstance` emit site in `BirEmitter.kt`. NO
+  >    compat shim (CLAUDE.md). kotc must emit the PLAIN call (`callStatic owner=null` / `callInstance` on the bare
+  >    Kotlin owner). Rebuild `:kotc:installDist`; dump the BIR to confirm it's now a plain call, not a `clrStatic`.
+  > 4. **Verify bir2cir substitutes.** Rebuild bir2cir; run the sample. Inspect the CIR: the plain call must become
+  >    `clrStatic/clrInstance` on the BCL owner with the right `argTypes`. If a call is left un-substituted or
+  >    mis-routed, the fix is in **bir2cir (`MemberCallSubstitution`) or the stdlib binding — NEVER re-add the kotc
+  >    lowering.** Watch for: (a) **overloads that map to different BCL statics** → the by-name collision fixed here
+  >    (full-sig key); (b) **non-intrinsic sibling overloads with real bodies** (e.g. `Double.pow(Int)`) must MISS the
+  >    intrinsic map and fall through to `_attributeTopLevelOwner`/rule-3; (c) **extension receiver** threaded as the
+  >    first arg (kotc emits `owner=null callStatic` with the receiver leading `args`); (d) receiver-drop on
+  >    property/indexer families.
+  > 5. **Gate.** Re-run verify-il; the fail-set must be UNCHANGED vs the baseline (gate-neutral). Commit incrementally
+  >    (bir2cir extension first — it's backward-compatible; then the kotc deletion). Co-Author + Claude-Session trailer.
 - **② Cleanup (low-risk, bulk):** delete the 18 DEAD retire-list ilemit cases (`listGet`/`mapGet`/`associate*`/
   `groupBy`/`linq*`/`tupleNew`/… in `Emitter.Expressions.cs`) + the native-cir remnant physical `clr.*` cases
   (`clr.bin`/`clr.newobj`/`clr.call`/…).
