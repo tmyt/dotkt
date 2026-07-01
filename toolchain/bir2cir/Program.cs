@@ -229,6 +229,8 @@ sealed class ReferenceMetadataIndex
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "<>dotkt_ClrH_*"
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
+    readonly Dictionary<string, string> _topLevelIntrinsicsBySig = new(StringComparer.Ordinal); // "name|paramKeys" -> FQ static (overload-disambiguated)
+    readonly HashSet<string> _ambiguousTopLevelIntrinsics = new(StringComparer.Ordinal); // names whose overloads bind to DIFFERENT statics (Math vs MathF)
     readonly Dictionary<string, int[]> _topLevelIntrinsicByref = new(StringComparer.Ordinal); // top-level fun name -> byref param positions
     readonly Dictionary<string, string> _extMemberIntrinsics = new(StringComparer.Ordinal); // "name|recvKey" -> bare member
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
@@ -262,6 +264,8 @@ sealed class ReferenceMetadataIndex
                 list.Add(m);
             }
             foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.TopLevelIntrinsicsBySig) _topLevelIntrinsicsBySig.TryAdd(kv.Key, kv.Value);
+            foreach (var n in asm.DotKt.AmbiguousTopLevelIntrinsics) _ambiguousTopLevelIntrinsics.Add(n);
             foreach (var kv in asm.DotKt.TopLevelIntrinsicByref) _topLevelIntrinsicByref.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ExtMemberIntrinsics) _extMemberIntrinsics.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.InlineBacking) _inlineBacking.TryAdd(kv.Key, kv.Value);
@@ -402,6 +406,19 @@ sealed class ReferenceMetadataIndex
     // fully-qualified BCL static (e.g. clrTimestamp -> "System.Diagnostics.Stopwatch.GetTimestamp").
     public bool TryTopLevelIntrinsic(string funName, out string fqStatic) =>
         _topLevelIntrinsics.TryGetValue(funName, out fqStatic);
+
+    // Overload-disambiguated variant: a top-level @ClrIntrinsic name that binds to DIFFERENT BCL statics per overload
+    // — kotlin.math `sqrt`/`abs`/`pow`/... -> System.Math.* for Double/Int/Long but System.MathF.* for Float. Keyed by
+    // name|<ParamKey-joined signature> so a call resolves the EXACT intrinsic overload (and a non-intrinsic sibling
+    // overload, e.g. `Double.pow(Int)`, correctly MISSES here and falls through to its real Kotlin body). `sigKey` is
+    // the call's ParamKey-normalized signature. This is what lets the by-name-first-wins map stop shadowing MathF.
+    public bool TryTopLevelIntrinsicBySig(string funName, string sigKey, out string fqStatic) =>
+        _topLevelIntrinsicsBySig.TryGetValue(funName + "|" + sigKey, out fqStatic);
+
+    // Whether a top-level intrinsic NAME binds to more than one distinct BCL static across its overloads (sqrt/abs/
+    // pow -> Math vs MathF). For such names the name-only fallback is UNSAFE (it would pick an arbitrary overload), so
+    // the caller must require an exact signature match; single-static names still fall back by name.
+    public bool IsAmbiguousTopLevelIntrinsic(string funName) => _ambiguousTopLevelIntrinsics.Contains(funName);
 
     // The 0-based parameter positions a top-level @ClrIntrinsic fun's bound BCL static takes BY REFERENCE
     // (@ClrRefArgument). Empty when none — the substituted call then wraps no argTypes.
@@ -921,7 +938,18 @@ sealed class ReferenceMetadataIndex
                             var ps = method.GetParameters();
                             if (intrinsic.Contains('.'))
                             {
-                                metadata.TopLevelIntrinsics.TryAdd(method.Name, intrinsic);
+                                // Name-only map (first-wins) is retained for single-static intrinsics (isNaN,
+                                // clrTimestamp); when a name is seen binding to a DIFFERENT static, mark it ambiguous so
+                                // the caller requires an exact-signature match instead (sqrt/abs/pow -> Math vs MathF).
+                                if (metadata.TopLevelIntrinsics.TryGetValue(method.Name, out var prior))
+                                {
+                                    if (prior != intrinsic) metadata.AmbiguousTopLevelIntrinsics.Add(method.Name);
+                                }
+                                else metadata.TopLevelIntrinsics[method.Name] = intrinsic;
+                                // ALSO key by name|<full ParamKey signature> so a call resolves the EXACT overload
+                                // (sqrt(Double)->System.Math.Sqrt, sqrt(Float)->System.MathF.Sqrt) and a non-intrinsic
+                                // sibling (Double.pow(Int)) misses -> falls through to its real Kotlin body.
+                                metadata.TopLevelIntrinsicsBySig.TryAdd(method.Name + "|" + SigKeyOf(ps), intrinsic);
                                 if (byrefPositions.Length > 0) metadata.TopLevelIntrinsicByref.TryAdd(method.Name, byrefPositions);
                             }
                             else if (ps.Length >= 1)
@@ -1018,6 +1046,11 @@ sealed class ReferenceMetadataIndex
         var def = t.IsGenericType ? t.GetGenericTypeDefinition() : t;
         return StripGenericArity(def.FullName ?? def.Name);
     }
+
+    // A method's full ParamKey-normalized signature ("f64", "f64,f64", "i32", ...), used to overload-disambiguate a
+    // top-level @ClrIntrinsic (sqrt(Double) vs sqrt(Float); pow(Double,Double) intrinsic vs pow(Double,Int) real-body).
+    // Runs each param's TypeName through ParamKey so the ref.dll declaration and the call's kotc `sig` agree.
+    static string SigKeyOf(ParameterInfo[] ps) => string.Join(",", ps.Select(p => ParamKey(TypeName(p.ParameterType))));
 
     // An @JvmInline backing-field's CLR `conv` target — the ilemit conv opcode token for the field's primitive type
     // (kotlin.Int -> "int", kotlin.Byte -> "byte"=sbyte, ...). Null if the field is not a primitive ilemit conv'able.
@@ -1187,6 +1220,8 @@ sealed class ReferenceDotKtMetadata
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.
     public readonly Dictionary<string, string> TopLevelIntrinsics = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> TopLevelIntrinsicsBySig = new(StringComparer.Ordinal);
+    public readonly HashSet<string> AmbiguousTopLevelIntrinsics = new(StringComparer.Ordinal);
     // Top-level @ClrIntrinsic fun name -> the 0-based parameter positions its bound BCL static takes BY REFERENCE
     // (@ClrRefArgument). The substituted clrStatic wraps these argTypes positions `byref:` (tryParseInt32's `out result`,
     // Interlocked's `ref location`, Math.DivRem's `out remainder`). Absent when the fun has no byref parameter.
@@ -2388,10 +2423,17 @@ static class MemberCallSubstitution
             var fn = (node["method"] as JsonValue)?.GetValue<string>();
             if (instance || string.IsNullOrEmpty(fn)) return null;
             var args0 = node["args"] as JsonArray ?? new JsonArray();
-            if (refs.TryTopLevelIntrinsic(fn, out var fq) && fq.LastIndexOf('.') is var dot && dot > 0)
+            var sigParts0 = SplitSig(node);
+            // A top-level @ClrIntrinsic bound to a FQ BCL static. Resolve the EXACT overload by the call's full
+            // ParamKey signature first (sqrt/abs/pow -> System.Math.* for Double/Int/Long but System.MathF.* for
+            // Float; a non-intrinsic sibling like Double.pow(Int) MISSES here). Fall back to the name-only map only for
+            // UNAMBIGUOUS names (isNaN, clrTimestamp) — never for a name whose overloads split across Math/MathF.
+            var sigKey0 = string.Join(",", sigParts0.Select(ReferenceMetadataIndex.ParamKey));
+            if ((refs.TryTopLevelIntrinsicBySig(fn, sigKey0, out var fq)
+                    || (!refs.IsAmbiguousTopLevelIntrinsic(fn) && refs.TryTopLevelIntrinsic(fn, out fq)))
+                && fq.LastIndexOf('.') is var dot && dot > 0)
                 return ClrCallNode(node, fq[..dot], fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false, refs.TopLevelByrefPositions(fn));
             // bare-intrinsic extension: resolve by name + the first-arg's receiver key (disambiguates `set`).
-            var sigParts0 = SplitSig(node);
             if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, RecvKeyOf(sigParts0[0]), out var extMember))
                 return TopLevelExtensionInstance(node, refs, extMember, args0, sigParts0);
             // A NON-intrinsic referenced top-level stdlib fun (getOrElse/first/...): kotc emits owner=null (it cannot
