@@ -198,7 +198,15 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
 			val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
 			val args = (listOfNotNull(outerArg) + capArgs + filledArgExprs(node).map { expr(it) }).joinToString(",")
-			"""{"k":"new","type":${str(klass?.let { ownerSpec(it, node.type) } ?: "object")},"args":[$args]}"""
+			// The resolved ctor's regular-parameter STATIC TYPES, as pure Kotlin FQNs (bir2cir/ilemit derive the CLR
+			// forms — kotc emits identity, not resolution). This lets a `new` of a type with overloaded constructors
+			// resolve by SIGNATURE, not by arg count alone (mirrors `clrNew`, which carries `argTypes`). Only the ctor's
+			// OWN params are described — prepended enclosing/capture args are not — so a consumer uses these only when
+			// their count lines up with the emitted args (in-assembly types stay arity-resolved).
+			val ctorArgTypes = node.symbol.owner.parameters
+				.filter { it.kind == IrParameterKind.Regular }
+				.joinToString(",") { str(birType(it.type)) }
+			"""{"k":"new","type":${str(klass?.let { ownerSpec(it, node.type) } ?: "object")},"argTypes":[$ctorArgTypes],"args":[$args]}"""
 		}
 		}
 	}
