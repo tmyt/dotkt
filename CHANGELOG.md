@@ -5,6 +5,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+- **kotc→bir2cir `clrName` migration, Step 3: the bir2cir compensation for removing `annClr` (member-strip + flags +
+  setter markers), verified byte-identical.** With the ilemit overload-attribute fix in place (ref.dll now carries every
+  overload's `@ClrIntrinsic`), bir2cir gained the machinery to reproduce what kotc's `annClr`/`clrIfaceMemberName` does,
+  so kotc can stop reading `@ClrIntrinsic`: (1) a `MemberStrip` pass (before `AliasHelperHoist`) that drops
+  `@ClrIntrinsic`-bound stub declarations by FULL SIGNATURE (`IsBoundStub` + a `ParamKey` canonicalizer over the new
+  `MemberBinding.ParamTypes`, so `StringBuilder.append(Char)` is dropped while `append(CharSequence?)` is kept; an
+  alias-class member that merely OVERRIDES a `@ClrIntrinsic` member is dropped too; INTERFACE members are never stripped
+  — they declare the CLR slot); (2) `DeclarationRename` restores the `override:true`/`vis:public` flags exactly when a
+  CLASS member's rename fires (kotc's `clrIfaceName`-driven `isOvr`/vis — never inside an interface); (3) kotc's
+  `overridesJson` now derives an accessor's marker from the PROPERTY's override closure (so a `var size` setter
+  overriding a `val size` still renames `set_size`→`set_Count`), and `ResolveSlot` looks the intrinsic up on the
+  `get_<name>` accessor for both getter and setter. All verified **byte-identical with annClr active** (idempotent
+  no-ops). This drops the annClr-OFF diff from 71 → 6; the actual `annClr` deletion awaits those last 6 (see
+  prioritized-tasks): top-level `sort`/`append` signature-strip (array-class param canonicalization), a call-side
+  `clrPropGet` vs `clrInstance get_X` routing edge, and 3 helper/closure body diffs.
+
 ### Fixed
 - **ilemit: `@ClrIntrinsic` (and every user annotation) dropped from all-but-last overload in the ref build.** The
   user-annotation → `.NET` custom-attribute application (`Program.cs`) resolved the target `MethodBuilder` by NAME

@@ -950,17 +950,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  the `overrides` key, so it never reaches ilemit (Step 1 keeps CIR byte-identical). `member` is the property name
 	 *  for an accessor (kind getter/setter) so bir2cir can resolve `get_`/`set_` + the property's @ClrIntrinsic. */
 	internal fun overridesJson(fn: IrSimpleFunction): String {
-		val ordered = LinkedHashSet<IrSimpleFunction>()
-		fun walk(f: IrSimpleFunction) { for (ov in f.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walk(o) } }
-		walk(fn)
-		if (ordered.isEmpty()) return ""
-		val items = ordered.mapNotNull { m ->
-			val owner = (m.parent as? IrClass)?.fqNameWhenAvailable?.asString() ?: return@mapNotNull null
-			val prop = m.correspondingPropertySymbol?.owner
-			val memberName = prop?.name?.asString() ?: m.name.asString()
-			val kind = if (prop != null) (if (m === prop.getter) "getter" else "setter") else "method"
-			val arity = m.parameters.count { it.kind == IrParameterKind.Regular }
-			"""{"owner":${str(owner)},"member":${str(memberName)},"kind":${str(kind)},"arity":$arity}"""
+		val prop = fn.correspondingPropertySymbol?.owner
+		val items = if (prop != null) {
+			// An ACCESSOR: walk the PROPERTY's override closure (the setter of a `var size` overriding a `val size` has
+			// NO own overriddenSymbols, but the PROPERTY overrides — so use the property chain, tagged with this accessor's
+			// kind). bir2cir resolves get_/set_ + the property's @ClrIntrinsic (which lives on the get_<name> accessor).
+			val kind = if (fn === prop.getter) "getter" else "setter"
+			val ordered = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrProperty>()
+			fun walkP(p: org.jetbrains.kotlin.ir.declarations.IrProperty) { for (ov in p.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walkP(o) } }
+			walkP(prop)
+			ordered.mapNotNull { p -> (p.parent as? IrClass)?.fqNameWhenAvailable?.asString()?.let { owner ->
+				"""{"owner":${str(owner)},"member":${str(p.name.asString())},"kind":${str(kind)},"arity":0}""" } }
+		} else {
+			val ordered = LinkedHashSet<IrSimpleFunction>()
+			fun walk(f: IrSimpleFunction) { for (ov in f.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walk(o) } }
+			walk(fn)
+			ordered.mapNotNull { m -> (m.parent as? IrClass)?.fqNameWhenAvailable?.asString()?.let { owner ->
+				"""{"owner":${str(owner)},"member":${str(m.name.asString())},"kind":"method","arity":${m.parameters.count { it.kind == IrParameterKind.Regular }}}""" } }
 		}
 		return if (items.isEmpty()) "" else ""","overrides":[${items.joinToString(",")}]"""
 	}

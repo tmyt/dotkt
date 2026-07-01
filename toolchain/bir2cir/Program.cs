@@ -101,6 +101,10 @@ sealed class Pipeline
             // Regex/unsigned) alike — and synthesizes NO <>dotkt_ClrH_* helper itself. This pass reads the ref.dll
             // @ClrTypeAlias index, turns each such plain type into the static helper + drops it, BEFORE call substitution
             // so the (already-BCL) member bodies and the rule-3 call routing both see a consistent helper. No-op for ref.
+            // MEMBER-STRIP (clrName migration): drop the @ClrIntrinsic-bound stub declarations kotc used to exclude
+            // (once it stops reading @ClrIntrinsic). BEFORE the hoist so an alias class's bound stubs / @ClrIntrinsic
+            // overrides don't over-hoist into the rule-3 helper.
+            if (!_options.RefBuild) MemberStrip.Apply(bir.Root, refs);
             var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs);
             // DECLARATION + CALL-NAME rename (clrName migration): a member declaration that overrides a CLR-bound
             // interface member carrying @ClrIntrinsic gets the BCL slot name (a `size` getter override -> get_Count,
@@ -320,6 +324,59 @@ sealed class ReferenceMetadataIndex
             ? list.FirstOrDefault(m => m.Name == memberName && m.Intrinsic != null && m.ParamCount == argCount)?.Intrinsic
             : null;
         return intrinsic != null;
+    }
+
+    // FULL-SIGNATURE @ClrIntrinsic lookup for the member-STRIP: is owner.name(paramKeys) a bound stub? Matches the
+    // @ClrIntrinsic member whose canonicalized param types equal the emitted method's — so `StringBuilder.append(Char)`
+    // (@ClrIntrinsic, dropped) is distinguished from `append(CharSequence?)` (rule-3, kept), which share name+arity.
+    public bool IsBoundStub(string ownerFqn, string memberName, IReadOnlyList<string> birParamKeys)
+    {
+        if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return false;
+        return list.Any(m => m.Name == memberName && m.Intrinsic != null && m.ParamTypes != null
+            && m.ParamTypes.Length == birParamKeys.Count
+            && m.ParamTypes.Select(ParamKey).SequenceEqual(birParamKeys));
+    }
+
+    // Canonicalize a type token (a kotc birType or a ref.dll reflected TypeName) to a comparable identity for signature
+    // matching: unwrap byref/array/nullable, drop the clr/@ marker + generic args, collapse a type param, fold primitives.
+    // Deliberately shallow (top-level identity) — enough to separate the real overloads without full structural matching.
+    public static string ParamKey(string t)
+    {
+        t = t.Trim();
+        if (t.EndsWith("?", StringComparison.Ordinal)) t = t[..^1];
+        foreach (var w in new[] { "byref:", "array:", "nullable:" })
+            if (t.StartsWith(w, StringComparison.Ordinal)) return w + ParamKey(t[w.Length..]);
+        foreach (var p in new[] { "clrg:", "clr:", "@" })
+            if (t.StartsWith(p, StringComparison.Ordinal)) { t = t[p.Length..]; break; }
+        if (t.StartsWith("func:", StringComparison.Ordinal)) return "func";
+        var br = t.IndexOf('[');
+        if (br >= 0) t = t[..br];
+        if (t.StartsWith("gp:", StringComparison.Ordinal)) return "gp";
+        return t switch
+        {
+            "kotlin.Byte" or "System.SByte" or "sbyte" => "i8",
+            "kotlin.Short" or "System.Int16" or "short" => "i16",
+            "kotlin.Int" or "System.Int32" or "int" => "i32",
+            "kotlin.Long" or "System.Int64" or "long" => "i64",
+            "kotlin.Float" or "System.Single" or "float" => "f32",
+            "kotlin.Double" or "System.Double" or "double" => "f64",
+            "kotlin.Boolean" or "System.Boolean" or "bool" => "bool",
+            "kotlin.Char" or "System.Char" or "char" => "char",
+            "kotlin.String" or "System.String" or "string" => "str",
+            "kotlin.Unit" or "System.Void" or "void" => "void",
+            "kotlin.Any" or "System.Object" or "object" => "obj",
+            // Primitive-array class spellings (kotc lowers to `array:int`, but the ref.dll may reflect the kotlin.IntArray
+            // class) -> the same array key so a top-level `sort(IntArray)`@ClrIntrinsic matches by signature.
+            "kotlin.IntArray" => "array:i32",
+            "kotlin.LongArray" => "array:i64",
+            "kotlin.ByteArray" => "array:i8",
+            "kotlin.ShortArray" => "array:i16",
+            "kotlin.FloatArray" => "array:f32",
+            "kotlin.DoubleArray" => "array:f64",
+            "kotlin.BooleanArray" => "array:bool",
+            "kotlin.CharArray" => "array:char",
+            _ => StripGenericArity(t),
+        };
     }
 
 
@@ -796,7 +853,8 @@ sealed class ReferenceMetadataIndex
                             method.GetParameters().Length,
                             intrinsic,
                             method.IsAbstract,
-                            method.IsStatic));
+                            method.IsStatic,
+                            method.GetParameters().Select(p => TypeName(p.ParameterType)).ToArray()));
                         // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
                         //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.
                         //   bare "Name"      -> a member on an EXTENSION receiver (`Array<T>.nativeClone()` ->
@@ -1072,7 +1130,7 @@ sealed class ReferenceDotKtMetadata
 
 // A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the
 // @ClrIntrinsic BCL name or null (null + !IsAbstract = a rule-3 hoist candidate).
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null);
 
 sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool HasInlineBody)
 {
@@ -2537,12 +2595,15 @@ static class DeclarationRename
     // `name`) and a CALL node (`callInstance`'s `method`) alike, so the implementor-side call `AbstractList.get_size`
     // tracks the renamed declaration `get_Count`. Runs BEFORE MemberCallSubstitution so a now-`get_Count` call on a
     // CLR-bound owner still falls through to clrPropGet. Idempotent while annClr is active (reproduces the kotc name).
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Walk(root, refs);
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Walk(root, refs, false);
 
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs)
+    static void Walk(JsonNode node, ReferenceMetadataIndex refs, bool inIface)
     {
         if (node is JsonObject obj)
         {
+            // Track whether we're inside an INTERFACE type def: kotc's ifaceMethod hardcodes `override:false` for
+            // interface members (even ones that bind a CLR slot), so bir2cir must NOT stamp override:true there.
+            if ((obj["kind"] as JsonValue)?.GetValue<string>() is string k) inIface = k == "interface";
             if (obj["overrides"] is JsonArray ovs)
             {
                 // A `properties:[{name,get,set,overrides}]` entry (kotc's CLR-property record): rename its accessor
@@ -2556,13 +2617,26 @@ static class DeclarationRename
                 else if (ResolveSlot(ovs, refs) is string slot)
                 {
                     if ((obj["k"] as JsonValue)?.GetValue<string>() == "callInstance") obj["method"] = slot;
-                    else if (obj.ContainsKey("name")) obj["name"] = slot;
+                    else if (obj.ContainsKey("name"))
+                    {
+                        obj["name"] = slot;
+                        // A CLASS member that overrides a @ClrIntrinsic ancestor is a CLR override -> `override:true` AND
+                        // `vis:public` (the flags kotc's `clrIfaceName != null` set via method()/accessorMethod: an
+                        // interface impl must be a public virtual). Without annClr kotc emits override:false / vis:visOf(fn)
+                        // for this case, so bir2cir restores them here, exactly when the rename fires. NOT in an interface
+                        // (kotc's ifaceMethod keeps override:false and emits no vis). isOverride/objName keep kotc's.
+                        if (!inIface)
+                        {
+                            if (obj.ContainsKey("override")) obj["override"] = true;
+                            if (obj.ContainsKey("vis")) obj["vis"] = "public";
+                        }
+                    }
                 }
             }
-            foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, refs);
+            foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, refs, inIface);
         }
         else if (node is JsonArray arr)
-            foreach (var it in arr) if (it != null) Walk(it, refs);
+            foreach (var it in arr) if (it != null) Walk(it, refs, inIface);
     }
 
     // The BARE property intrinsic ("Count") for a property record's override closure: the @ClrIntrinsic is on the
@@ -2583,7 +2657,7 @@ static class DeclarationRename
     // The first override entry whose (owner, Kotlin member name, arity) carries an @ClrIntrinsic in the ref.dll, mapped
     // to its CLR slot: a getter/setter -> get_/set_ + the intrinsic; a method -> the intrinsic verbatim. null = no
     // CLR-bound member in the closure (leave the kotc name).
-    static string ResolveSlot(JsonArray ovs, ReferenceMetadataIndex refs)
+    internal static string ResolveSlot(JsonArray ovs, ReferenceMetadataIndex refs)
     {
         foreach (var o in ovs)
         {
@@ -2596,11 +2670,70 @@ static class DeclarationRename
             // get_<name>/set_<name> ACCESSOR METHOD (not the property), and its value is the BCL PROPERTY name ("Count"),
             // so the slot is get_/set_ + that. A plain method's intrinsic is the BCL method name verbatim. EXACT arity
             // overload-matching (getter=arity 0, setter=arity 1) so `add(element)`->Add never grabs `add(i,e)`->Insert.
-            var lookupName = kind switch { "getter" => "get_" + member, "setter" => "set_" + member, _ => member };
-            if (!refs.TryMemberIntrinsicExact(owner, lookupName, arity, out var intr)) continue;
+            // A property's @ClrIntrinsic lives on the get_<name> accessor (arity 0) in the ref.dll — for a SETTER too
+            // (a `var` overriding a `val` base has no set_<name> to key on), so look up the getter and re-prefix. A plain
+            // method's intrinsic is on the method itself by exact arity.
+            var isAccessor = kind is "getter" or "setter";
+            var lookupName = isAccessor ? "get_" + member : member;
+            if (!refs.TryMemberIntrinsicExact(owner, lookupName, isAccessor ? 0 : arity, out var intr)) continue;
             return kind switch { "getter" => "get_" + intr, "setter" => "set_" + intr, _ => intr };
         }
         return null;
+    }
+}
+
+// MEMBER-STRIP (clrName migration) — the member-level mirror of the @ClrTypeAlias type-strip. Once kotc stops reading
+// @ClrIntrinsic it can no longer exclude a bound-stub declaration (the `clrName(it)==null` filters in BirEmitter), so
+// those @ClrIntrinsic-bound members/top-level funs get EMITTED (with throwing TODO bodies). This pass DROPS them: the
+// call sites are substituted to the BCL member by MemberCallSubstitution, so the stub itself must not survive. Matched
+// by FULL SIGNATURE (name + canonical param types) so StringBuilder.append(Char)@ClrIntrinsic is dropped while
+// append(CharSequence?) (rule-3, real body) is kept. For an ALIAS-class owner a member that merely OVERRIDES a
+// @ClrIntrinsic member is ALSO a bound stub (its call substitutes to the BCL), so it is dropped too (else it over-hoists
+// into the rule-3 helper). Runs BEFORE AliasHelperHoist. Never in ref.
+static class MemberStrip
+{
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    {
+        if (root is not JsonObject obj) return;
+        if ((obj["fileClass"] as JsonValue)?.GetValue<string>() is string fc && obj["methods"] is JsonArray rootMethods)
+            StripFrom(rootMethods, fc, refs, null, false);
+        if (obj["types"] is not JsonArray types) return;
+        foreach (var t in types)
+            if (t is JsonObject td && (td["name"] as JsonValue)?.GetValue<string>() is string owner)
+            {
+                // NEVER strip an INTERFACE's members: a non-alias interface (EnumEntries, MatchGroupCollection) declares
+                // the CLR slot (renamed get_Item/get_Count) that implementers bind to — it is not a throwing bound stub.
+                // (A @ClrTypeAlias interface is dropped whole by AliasHelperHoist anyway.)
+                if ((td["kind"] as JsonValue)?.GetValue<string>() == "interface") continue;
+                var stripped = new HashSet<string>(StringComparer.Ordinal);
+                var isAlias = ReferenceMetadataIndex.BareOwnerFqn(owner) is string bo && refs.Aliases.ContainsKey(bo);
+                if (td["methods"] is JsonArray methods) StripFrom(methods, owner, refs, stripped, isAlias);
+                if (td["properties"] is JsonArray props && stripped.Count > 0) DropDanglingProps(props, stripped);
+            }
+    }
+
+    static void StripFrom(JsonArray methods, string owner, ReferenceMetadataIndex refs, HashSet<string> stripped, bool alias)
+    {
+        for (var i = methods.Count - 1; i >= 0; i--)
+        {
+            if (methods[i] is not JsonObject mo) continue;
+            if ((mo["name"] as JsonValue)?.GetValue<string>() is not string name) continue;
+            var keys = (mo["params"] as JsonArray ?? new JsonArray())
+                .Select(p => ReferenceMetadataIndex.ParamKey((p as JsonObject)?["type"]?.GetValue<string>() ?? "")).ToList();
+            var drop = refs.IsBoundStub(owner, name, keys)
+                || (alias && mo["overrides"] is JsonArray ovs && DeclarationRename.ResolveSlot(ovs, refs) != null);
+            if (drop) { stripped?.Add(name); methods.RemoveAt(i); }
+        }
+    }
+
+    // A property record whose accessor method was stripped (a bound-stub property) is itself bound — drop the record.
+    static void DropDanglingProps(JsonArray props, HashSet<string> stripped)
+    {
+        for (var i = props.Count - 1; i >= 0; i--)
+            if (props[i] is JsonObject po
+                && (((po["get"] as JsonValue)?.GetValue<string>() is string g && stripped.Contains(g))
+                 || ((po["set"] as JsonValue)?.GetValue<string>() is string s && stripped.Contains(s))))
+                props.RemoveAt(i);
     }
 }
 
