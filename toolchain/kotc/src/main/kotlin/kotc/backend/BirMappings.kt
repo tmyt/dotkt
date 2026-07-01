@@ -125,7 +125,3 @@ internal val VALUE_PRIM_BIR = mapOf(
 // stdlib's exception classes now carry `@kotlin.clr.ClrTypeAlias("System.X")`, and bir2cir reads that off the ref.dll
 // to lower throw/catch/supertype/construction (the same @ClrTypeAlias path that lowers the collections). kotc emits
 // the bare `kotlin.*Exception` FQN and nothing more. See MEMORY `exception-map-to-clrtypealias`.
-internal val ATOMICFU_TYPES = setOf(
-	"kotlinx.atomicfu.AtomicInt", "kotlinx.atomicfu.AtomicLong",
-	"kotlinx.atomicfu.AtomicBoolean", "kotlinx.atomicfu.AtomicRef",
-)

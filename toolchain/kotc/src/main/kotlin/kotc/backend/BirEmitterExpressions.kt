@@ -138,17 +138,6 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		if (isThrowableProp) {
 			val (prop, rt) = if (fldName == "message") "Message" to "System.String" else "InnerException" to "System.Exception"
 			"""{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
-		} else if (!stdlibCompile && (ownerFq == "kotlin.Result" || recvFq == "kotlin.Result")) {
-			// kotlin.Result is an inline value class -> isSuccess/isFailure/value/failure arrive as IrGetField.
-			// Map onto the shared DotKt.Result<T> struct properties (see T4 / docs §13n).
-			val spec = node.receiver?.type?.let { birType(it) } ?: "clrg:DotKt.Result[object]"
-			val (prop, rt) = when (fldName) {
-				"isSuccess" -> "IsSuccess" to "bool"
-				"isFailure" -> "IsFailure" to "bool"
-				"failure" -> "ExceptionOrNull" to "clr:System.Exception"
-				else -> "Value" to netType(node.type)
-			}
-			"""{"k":"clrPropGet","type":${str(spec)},"name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
 		} else if (clr != null)
 			"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"retType":${str(netType(node.type))},"static":false,"recv":$recvJson}"""
 		// A `lateinit var` backing-field read -> throw if still uninitialized (null) — proper lateinit semantics.
