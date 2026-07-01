@@ -6,6 +6,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Changed
+- **Round-trip carrier attributes for Kotlin class-nature (`sealed` fully; `fun interface` nature) — re-consuming a
+  DotKt `.dll` as Kotlin restores more of the original surface (round-trip gaps ③ + ⑤).** A `fun interface` (SAM) and a
+  `sealed` class/interface lower to a plain CLR interface / abstract-class, dropping the Kotlin nature. Now: kotc emits
+  `isFun` (from `IrClass.isFun`) and `isSealed` (from `Modality.SEALED`) BIR flags; ilemit synthesizes + stamps two new
+  embedded metadata attributes `[KotlinFunInterface]` / `[KotlinSealed]` (the same self-embedded model as
+  `[KotlinFunction]`/`[KotlinFileClass]`, stripped in the runtime build); facadegen reads them back as `funinterface` /
+  `sealed` meta lines; and `ClrTypeInjection` restores `status.isFun` / `Modality.SEALED` on the re-consumer's FIR.
+  - **`sealed` (⑤) round-trips fully:** the modality, **cross-module inheritance enforcement** (a rogue subclass in
+    another module is rejected), AND **exhaustive `when` with no `else`** — the closed inheritor set is rediscovered
+    because the sealed type's subtypes are themselves injected into the consumer's session via their `super` edges.
+  - **`fun interface` (③) restores the NATURE, not the lambda:** a consumer sees a functional interface and can
+    implement it (incl. anonymous `object : Handler { … }`), but a bare **lambda** still won't SAM-convert — the pinned
+    Kotlin 2.2.0 `FirSamResolver.computeSamCandidateNames` scans `FirRegularClass.declarations` directly, which a
+    `FirDeclarationGenerationExtension`-injected interface leaves empty (members are scope-served). Documented as a
+    pinned-compiler limitation (same basis as `object`/companion).
+  - **`enum class` (④) NOT restored:** blocked at the injection layer — a `FirDeclarationGenerationExtension` (2.2.0)
+    cannot synthesize real `FirEnumEntry` declarations (FIR's exhaustiveness checker requires them; the plugin API has
+    no entry hook), so no `[KotlinEnum]` carrier is emitted. A basic enum still round-trips as an `object` of `val`s
+    (value access works). Flagged in `docs/dotkt-semantics.md` §10.2/§10.4.
+  - Covered by a new `roundtrip-markers` section in `scripts/verify-roundtrip.sh` (a `fun interface` + `sealed`
+    hierarchy + `enum` library, re-consumed: anonymous-object handler runs, exhaustive `when` compiles, a rogue
+    sealed subclass is rejected). `docs/dotkt-semantics.md` §10 updated.
 - **kotc→bir2cir `clrName` migration, Step 3: the bir2cir compensation for removing `annClr` (member-strip + flags +
   setter markers), verified byte-identical.** With the ilemit overload-attribute fix in place (ref.dll now carries every
   overload's `@ClrIntrinsic`), bir2cir gained the machinery to reproduce what kotc's `annClr`/`clrIfaceMemberName` does,

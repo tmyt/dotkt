@@ -177,6 +177,13 @@ methods. **Generic constraints/bounds and declaration-site variance also round-t
 reads `GetGenericParameterConstraints()`/`GenericParameterAttributes` and emits `tvariance`/`tbound`/`mbound` metadata,
 and `ClrTypeInjection` restores `out`/`in` (interfaces) + upper bounds — so `interface P<out T>`, `interface C<in T>`,
 `class SortedPair<T : Comparable<T>>`, and `fun <T : Comparable<T>> …` keep their variance and bounds cross-module.
+**`sealed` classes/interfaces also round-trip (gap ⑤, now fixed):** a Kotlin `sealed` type lowers to a CLR
+abstract-class / interface (which drops the sealed modality), so `ilemit` stamps `[KotlinSealed]`, `facadegen`
+emits a `sealed` meta line, and `ClrTypeInjection` restores `Modality.SEALED`. Cross-module this restores the full
+sealed contract: the modality, **cross-module inheritance enforcement** (a rogue subclass in another module is
+rejected), **and exhaustive `when`** with no `else` — the closed inheritor set is rediscovered because the sealed
+type's subtypes are themselves injected into the consumer's session via their `super` edges (importing
+`Circle`/`Square` alongside `Shape` makes `when (s) { is Circle -> …; is Square -> … }` exhaustive).
 
 ### 10.2 Partially restored (in metadata, but degraded on reconstruction)
 
@@ -184,7 +191,8 @@ and `ClrTypeInjection` restores `out`/`in` (interfaces) + upper bounds — so `i
 |---|---|---|
 | **Generic constraints / bounds** (`<T : Comparable<T>>`, `where`) | **NOW RESTORED (gap ①, §10.1)** | ~~`facadegen` never read `GetGenericParameterConstraints()`~~ — it now does, emitting `tbound`/`mbound` metadata that `ClrTypeInjection` restores as upper bounds (a `Comparable<T>` bound is reversed from the CLR `System.IComparable<T>` it lowers to). Multiple bounds (a `where` list) round-trip as several lines. |
 | **Declaration-site variance** (`class Box<out T>`, `interface Cmp<in T>`) | **NOW RESTORED for interfaces (gap ①, §10.1)** | `facadegen` now reads `GenericParameterAttributes` and emits `tvariance`, which `ClrTypeInjection` restores as `out`/`in`. **Class**-type-param variance still has no CLR form (stays invariant); **use-site** variance / **star projection** `Foo<*>`: no analog, lost. |
-| **`enum class`** | entry values | A *basic* enum → a real CLR `enum` → `facadegen` restores it as an **`object` of `val`s**; a *rich* enum (ctor args / methods / per-entry bodies, `isRichEnum`) → a singleton-field **class** → restored as a plain **`class`**. Either way it is **not** a Kotlin `enum class`: exhaustive `when`, `.entries`/`values()`/`valueOf`, `.ordinal`/`.name` identity degrade. |
+| **`fun interface` (SAM)** | a plain interface | **The `fun interface` NATURE now round-trips (gap ③):** `ilemit` stamps `[KotlinFunInterface]`, `facadegen` emits a `funinterface` meta line, and `ClrTypeInjection` restores `status.isFun`. So a consumer sees it as a functional interface and can implement it (incl. via an anonymous `object : Handler { … }`). **What still degrades:** a bare **lambda** (SAM conversion) does NOT convert — blocked by the pinned Kotlin **2.2.0** FIR `FirSamResolver.computeSamCandidateNames`, which scans `FirRegularClass.declarations` **directly** for the single abstract method's name; a `FirDeclarationGenerationExtension`-injected interface serves its members lazily via scopes (empty `declarations`), so no SAM candidate is found. Same class of pinned-compiler limitation as `object`/companion (§10.4 #2) — not fixable from our side without materialising the SAM method into `declarations` (against the plugin contract) or a compiler bump. |
+| **`enum class`** | entry values | A *basic* enum → a real CLR `enum` → `facadegen` restores it as an **`object` of `val`s** (value access like `Color.GREEN` works); a *rich* enum (ctor args / methods / per-entry bodies, `isRichEnum`) → a singleton-field **class** → restored as a plain **`class`**. Either way it is **not** a Kotlin `enum class`: exhaustive `when`, `.entries`/`values()`/`valueOf`, `.ordinal`/`.name` identity degrade. **Not fixable via the injection path (gap ④):** a `FirDeclarationGenerationExtension` (2.2.0) cannot synthesize real `FirEnumEntry` declarations — the exhaustiveness checker (`FirWhenExhaustivenessTransformer`) enumerates `enumClass.declarations.filterIsInstance<FirEnumEntry>()`, and the plugin API exposes no `createEnumEntry`/entry hook (only `createTopLevelClass`/`createMemberProperty`/…). Generating `ClassKind.ENUM_CLASS` with enum-shaped `val`s would mislead FIR without giving exhaustiveness, so no `[KotlinEnum]` carrier is emitted. |
 | **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried (consumer sees an ordinary class); a `copy(...)` with **non-constant/self-referential defaults** (`x = this.x`) fails the call-site default rule (§7). |
 | **Annotations** | RUNTIME/BINARY-retained with CLR-legal args; `KClass`→`System.Type` | `ilemit` **skips** annotations whose ctor-arg shape the CLR encoder rejects (`BuildCab`/`TryCab` → diagnostic, e.g. a generic-instantiation parameter). **SOURCE**-retention annotations are gone. **Use-site targets** (`@get:`/`@field:`/`@param:`) are only as faithful as which CLR target they landed on — the Kotlin intent is ambiguous. Repeatable-annotation semantics differ. |
 | **Default arguments** | constants (§7) | non-constant defaults (reference callee params/receiver) are rejected at the omitting call, not restored. |
@@ -196,8 +204,6 @@ and `ClrTypeInjection` restores `out`/`in` (interfaces) + upper bounds — so `i
 |---|---|---|
 | **`object` singleton** | class + static `INSTANCE` field | Restored as a plain **`class`**; the Kotlin singleton access `MyObject.member` does **not** round-trip (a consumer would need `.INSTANCE`/`.Companion`). |
 | **Companion implicit access** | synthesized companion (`sfun`/`sprop`) | `Class.member` must be written `Class.Companion.member` (MEMORY `injected-static-members-need-companion`). |
-| **`fun interface` (SAM)** | a plain interface | `kotc` does SAM-conversion in-module (`SAM_CONVERSION`/`samConversion`), but no `fun interface` marker is emitted and `facadegen` restores a **plain interface** → a consumer **cannot pass a lambda** (no SAM conversion) for a DotKt `fun interface`. |
-| **`sealed` class/interface** | abstract class / interface | The closed sub-hierarchy is not carried; CLR `sealed` means *final*, a different concept → no exhaustive-`when` guarantee cross-module. |
 | **`value`/inline class** (`@JvmInline`) | the erased underlying type | The wrapper identity is erased (the inline-class `.data` collapse) — a consumer sees the underlying type, not the value class. |
 | **`typealias`** | the expanded type | The alias name is not visible cross-module (it is expanded at use). |
 | **Contracts** (`@ExperimentalContracts`) | — | `callsInPlace`/returns-implies smart-cast facts are gone → consumer loses the smart-casts. |
@@ -219,15 +225,27 @@ and `ClrTypeInjection` restores `out`/`in` (interfaces) + upper bounds — so `i
    `facadegen` *would* emit the restoration, but the pinned Kotlin **embedded compiler (2.2.0)** does not support the
    implicit `Type.member`→companion/`.INSTANCE` resolution the consumer's FIR would need — so it is not facadegen-fixable
    from our side. Consumers use `.Companion`/`.INSTANCE` explicitly (MEMORY `injected-static-members-need-companion`).
-3. **`fun interface` SAM** — a DotKt callback interface can't take a lambda from a consuming module.
-4. **`enum class`** restored as `object`/`class` — no exhaustive `when`, no `.entries`.
-5. **`sealed` hierarchies** — no exhaustive `when` cross-module.
+3. **`fun interface` SAM** — **PARTIALLY FIXED (gap ③, 2026-07-02).** The `fun interface` *nature* now round-trips
+   (`[KotlinFunInterface]` → `funinterface` meta → `status.isFun`), so a consumer sees a functional interface and can
+   implement it (anonymous `object`). A bare **lambda** still won't SAM-convert — pinned-2.2.0 FIR `computeSamCandidateNames`
+   reads `FirRegularClass.declarations` directly, which a generation-extension interface leaves empty (§10.2). **KNOWN /
+   ACCEPTED LIMITATION** on the same basis as #2.
+4. **`enum class`** — **NOT FIXED (gap ④).** Blocked at the injection layer: a `FirDeclarationGenerationExtension` (2.2.0)
+   cannot synthesize real `FirEnumEntry` declarations, which FIR's exhaustiveness checker requires; the plugin API has no
+   enum-entry hook (§10.2). A basic enum still round-trips as an `object` of `val`s (value access works). **KNOWN /
+   ACCEPTED LIMITATION.**
+5. **`sealed` hierarchies** — **FIXED (gap ⑤, 2026-07-02).** `[KotlinSealed]` → `sealed` meta → `Modality.SEALED`
+   restores the modality, cross-module inheritance enforcement, AND exhaustive `when` (the injected subtypes supply the
+   closed inheritor set). See §10.1.
 6. **Non-constant default args / `data class copy` self-defaults** — rejected at the call (§7). **KNOWN / ACCEPTED
    LIMITATION (2026-07-01): NOT a follow-up fix for now.** A default that references callee params/receiver has no
    constant carrier; the omitting call is rejected rather than mis-restored (MEMORY `cross-module-default-args-not-preserved`).
 
-Each of 1–6 needs either a new `[Kotlin*]` carrier attribute (`object`/`enum`/`sealed`/`fun interface`/`data`/`value`
-markers) **or**, for #1, just a richer `facadegen` read of metadata that is already present. None are fixed yet.
+Status: **#1 (variance/bounds), #5 (sealed) are FIXED; #3 (fun interface) is PARTIAL** (nature restored, SAM-lambda
+pinned-compiler-blocked). **#2 (object/companion), #4 (enum class), #6 (non-constant defaults) remain KNOWN / ACCEPTED
+limitations** — each blocked by the pinned Kotlin 2.2.0 `FirDeclarationGenerationExtension` surface (no companion-
+implicit resolution, no `FirEnumEntry` synthesis) or the absence of a constant carrier, not by a missing `[Kotlin*]`
+attribute we could add.
 
 ---
 
@@ -241,4 +259,4 @@ markers) **or**, for #1, just a richer `facadegen` read of metadata that is alre
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`. §4.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
 - A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
-- Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ① fixed — `facadegen` reads them back, the injector re-applies them), but still restores `object`/`enum class`/`sealed`/`fun interface`/`data` only as plain classes. §10.
+- Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ①), **`sealed`** (gap ⑤ — modality, cross-module enforcement, exhaustive `when`), and the **`fun interface` nature** (gap ③ — usable, though a bare lambda still won't SAM-convert under the pinned 2.2.0 compiler); `enum class` and `object`/companion still restore as plain `object`/`class`. §10.
