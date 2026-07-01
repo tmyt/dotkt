@@ -500,7 +500,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		iterIfaces.clear(); iterableIfaces.clear(); roPropIfaces.clear(); rwPropIfaces.clear()
 		usesCharSeq = false; needsKProperty = false
 		// The `@ClrAwait` await intrinsic (`fun <T> Task<T>.await(): T`) is never emitted as a real method —
-		// its call sites are lowered to coroutine suspension points (see suspendMethod). Skip it.
+		// a suspend call site is flagged with `"suspendCall":true` and lowered by the deferred downstream layer. Skip it.
 		// The `byref` out/ref marker is an intrinsic consumed at its call sites (the arg becomes a `byref:` param) —
 		// never emitted as a real method.
 		// Only USER functions (origin DEFINED) — a consuming module's FIR also holds plugin-INJECTED top-level funs
@@ -1377,9 +1377,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal class CoroutineBody(val resultType: String, val cpsFields: String, val steps: String)
 
 	/**
-	 * CPS-linearize a suspend function/lambda body into (resultType, cpsFields, steps) JSON. Shared by
-	 * [suspendMethod] and the suspend-lambda path in [lambda] so both lower identically (`emitCps`/`spillExpr`/
-	 * `collectCpsVars` → flat steps + state-machine fields = params + live locals + spill temps).
+	 * CPS-linearize a RESTRICTED-suspension body (the `sequence { yield(…) }` builder) into (resultType, cpsFields,
+	 * steps) JSON. This is the only remaining coroutine-shaped lowering in kotc — suspend FUNCTIONS/lambdas are NOT
+	 * lowered here anymore (they emit plainly + `"suspend"`/`"suspendCall"` tags for the deferred downstream layer);
+	 * `sequence{}` stays because it is a restricted-suspension builder, a separate concern. (`emitCps`/`spillExpr`/
+	 * `collectCpsVars` → flat steps + state-machine fields = params + live locals + spill temps.)
 	 */
 	internal fun emitCoroutineBody(fn: IrSimpleFunction): CoroutineBody {
 		// Save/restore CPS state: a coroutine body can be lowered NESTED inside another (e.g. a `sequence{}` passed to
@@ -1412,62 +1414,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		coState = savedState; coLabelN = savedLabelN
 		coSpill.clear(); coSpill.putAll(savedSpill); coSpillFields.clear(); coSpillFields.addAll(savedSpillFields); coFields = savedCoFields
 		return CoroutineBody(resultType, cpsFields, steps.joinToString(","))
-	}
-
-	/**
-	 * Select the Continuation-class coroutine form (Path B) when: `@KCont` (explicit), the fun is generic (needs a
-	 * generic SM type), or its body directly uses the raw intrinsic `suspendCoroutineUninterceptedOrReturn` (a leaf
-	 * that hands out its own continuation — the struct/Task form can't). Ordinary suspend funs stay the struct/Task
-	 * form (and just await the leaves' Tasks), keeping that path's IsCompleted fast-path. See docs §13e A1.
-	 */
-	internal fun isCoClass(fn: IrSimpleFunction): Boolean =
-		fn.annotations.any { it.type.classFqName?.shortName()?.asString() == "KCont" } ||
-			fn.typeParameters.isNotEmpty() ||
-			(fn.body?.let { bodyUsesSuspendIntrinsic(it) } == true)
-
-	/** True if `e` directly calls `suspendCoroutineUninterceptedOrReturn` (not inside a nested lambda/local fun). */
-	internal fun bodyUsesSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement): Boolean {
-		var found = false
-		e.acceptVoid(object : IrVisitorVoid() {
-			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
-				if (found) return
-				if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
-				if (element is IrCall && (isSuspendIntrinsic(element) || isSuspendCancellable(element) ||
-						element.symbol.owner.correspondingPropertySymbol?.owner?.fqNameWhenAvailable?.asString() == "kotlin.coroutines.coroutineContext")) { found = true; return }
-				element.acceptChildrenVoid(this)
-			}
-		})
-		return found
-	}
-
-	internal fun suspendMethod(fn: IrSimpleFunction, static: Boolean): String {
-		// An extension `suspend fun T.f()` -> a static kickoff whose first param `__self` is the receiver, captured
-		// into the state machine like any other param; receiver references (`<this>`) resolve to `__self`.
-		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
-		val co = emitCoroutineBody(fn)
-		if (extRecv != null) selfSubst.remove(extRecv)
-		val selfJson = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
-		val ps = (listOfNotNull(selfJson) + paramsJsonList(fn.parameters)).joinToString(",")
-		val cps = (listOfNotNull(selfJson) + listOf(co.cpsFields).filter { it.isNotEmpty() }).joinToString(",")
-		val vis = visOf(fn)
-		val coClass = if (isCoClass(fn)) ""","coClass":true""" else ""
-		return """{"name":${str(fn.name.asString())},"static":$static,"override":false,"virtual":false,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}${kotlinModsJson(fn)},"suspend":true,"resultType":${str(co.resultType)}$coClass,"cpsFields":[$cps],"params":[$ps],"steps":[${co.steps}]}"""
-	}
-
-	/**
-	 * A suspend lambda body is "trivial" when it is a single tail suspend call (`{ f() }` / `{ return f() }`)
-	 * whose arguments don't themselves suspend: the kickoff Task is just forwarded, so no state machine is needed
-	 * and the body emits as-is. Anything else needs CPS lowering (Phase 0). See [lambda].
-	 */
-	internal fun isTrivialSuspendLambda(fn: IrSimpleFunction): Boolean {
-		val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
-		val single = stmts.singleOrNull() ?: return false
-		val e = when (single) { is IrReturn -> single.value; is IrExpression -> single; else -> return false }
-		return e is IrCall && e.symbol.owner.isSuspend && e.let { call ->
-			regularArgs(call).none { containsSuspend(it) } &&
-				(extensionReceiver(call) ?: dispatchReceiver(call))?.let { !containsSuspend(it) } ?: true
-		}
 	}
 
 	internal fun coFresh(): String = "__cor${coLabelN++}"
@@ -2282,16 +2228,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		return unsupported(node, "a method reference to a .NET method (`::${fn.name}`)",
 			"wrap the call in a lambda instead, e.g. `{ a -> x.${fn.name}(a) }`")
-	}
-
-	/** The kickoff/return BIR type for a `suspend (...) -> T`: `Task<T>` (or non-generic `Task` for Unit). */
-	internal fun coTaskType(ret: IrType): String =
-		if (ret.isUnit()) "clr:System.Threading.Tasks.Task" else "clrg:System.Threading.Tasks.Task[${birType(ret)}]"
-
-	/** The delegate type for a `suspend (P...) -> T`: `Func<P..., Task<T>>` encoded as `func:<Task<T>>:<P...>`. */
-	internal fun coSuspendFuncType(fn: IrSimpleFunction): String {
-		val ps = fn.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birTypeDeleg(it.type) }
-		return "func:${coTaskType(fn.returnType)}:$ps"
 	}
 
 	/**
@@ -4197,47 +4133,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { appColl(it) ?: kotc.ClrTypeRegistry.dotNetName(it) }
-	}
-
-	/** A type's fully-qualified .NET name, for IL reflection-based member resolution. */
-	internal fun netType(t: IrType): String = when (val fq = t.classFqName?.asString()) {
-		// The intrinsic `kotlin.clr.ClrRef<T>` is a managed reference -> `byref:<T>` (selects the out/ref overload in ilemit).
-		"kotlin.clr.ClrRef" -> "byref:" + ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) }.orEmpty()
-		// The intrinsic `Span<T>` -> the real `System.Span<T>`.
-		"Span" -> "clrg:System.Span[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
-		"kotlin.Int" -> "System.Int32"
-		"kotlin.Long" -> "System.Int64"
-		"kotlin.Short" -> "System.Int16"
-		"kotlin.Byte" -> "System.SByte"
-		"kotlin.Double" -> "System.Double"
-		"kotlin.Float" -> "System.Single"
-		"kotlin.Boolean" -> "System.Boolean"
-		"kotlin.Char" -> "System.Char"
-		// Primitive arrays are real BCL arrays (int[]/double[]/…). Without these they fall through to `System.Object`,
-		// so a clrStatic arg-type erases the receiver -> ilemit resolves the WRONG `sum`/`max`/… overload (silent wrong
-		// answer, e.g. `intArrayOf(3,1,2).sum()` -> 3). `array:<elem>` resolves via ClrRef -> elem[].
-		"kotlin.IntArray" -> "array:System.Int32"
-		"kotlin.LongArray" -> "array:System.Int64"
-		"kotlin.ShortArray" -> "array:System.Int16"
-		"kotlin.ByteArray" -> "array:System.SByte"
-		"kotlin.DoubleArray" -> "array:System.Double"
-		"kotlin.FloatArray" -> "array:System.Single"
-		"kotlin.BooleanArray" -> "array:System.Boolean"
-		"kotlin.CharArray" -> "array:System.Char"
-		"kotlin.String" -> "System.String"
-		"kotlin.Unit" -> "System.Void"
-		"kotlin.sequences.Sequence" -> "clrg:System.Collections.Generic.IEnumerable[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { netType(it) } ?: "object") + "]"
-		else -> (t.classifierOrNull?.owner as? IrClass)?.let { cls -> clrName(cls)?.let { netName ->
-				// A generic @Clr type needs its `clrg:Name[args]` form (resolvable via ClrRef/GenericType) — the bare
-				// `netName` would be the OPEN generic def, unresolvable. Fill a raw/star reference with `object`.
-				val a = (t as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::netType) }
-				when {
-					!a.isNullOrEmpty() -> "clrg:$netName[${a.joinToString(",")}]"
-					cls.typeParameters.isNotEmpty() -> "clrg:$netName[${cls.typeParameters.joinToString(",") { "object" }}]"
-					else -> netName
-				}
-			} }
-			?: "System.Object"
 	}
 
 	/** The `byref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. Matched by FULL name
