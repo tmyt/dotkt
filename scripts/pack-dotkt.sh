@@ -28,9 +28,6 @@ cp -r "$ROOT/build/bir2cir-bin"  "$TC/bir2cir"
 cp -r "$ROOT/build/facadegen-bin" "$TC/facadegen"
 cp -r "$ROOT/build/retarget-bin" "$TC/retarget"
 
-echo "== pack DotKt.Runtime =="
-dotnet pack "$ROOT/runtime/DotKt.Runtime" -c Release -o "$FEED" -v q --nologo
-
 echo "== pack DotKt.Toolchain + DotKt.Sdk =="
 dotnet pack "$ROOT/packaging/DotKt.Toolchain/DotKt.Toolchain.pack.csproj" -o "$FEED" -v q --nologo
 dotnet pack "$ROOT/packaging/DotKt.Sdk/DotKt.Sdk.pack.csproj" -o "$FEED" -v q --nologo

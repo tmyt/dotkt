@@ -1,7 +1,7 @@
 <Project>
-  <!-- The base SDK: thin build orchestration. The compiler binaries come from DotKt.Toolchain and the runtime
-       from DotKt.Runtime, both injected as implicit references below — so a consuming project needs only
-       `<Project Sdk="DotKt.Sdk">` + OutputType + TargetFramework. -->
+  <!-- The base SDK: thin build orchestration. The compiler binaries come from DotKt.Toolchain (injected as an
+       implicit build-only reference below) — so a consuming project needs only `<Project Sdk="DotKt.Sdk">` +
+       OutputType + TargetFramework. The pre-stdlib DotKt.Runtime DLL is retired (the real CLR stdlib supersedes it). -->
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
 
   <PropertyGroup>
@@ -16,10 +16,9 @@
     <ProduceReferenceAssembly Condition="'$(ProduceReferenceAssembly)' == ''">false</ProduceReferenceAssembly>
   </PropertyGroup>
 
-  <!-- Implicit references: the toolchain (build-only) and the runtime (a real reference). -->
+  <!-- Implicit reference: the toolchain (build-only). -->
   <ItemGroup>
     <PackageReference Include="DotKt.Toolchain" Version="$(DotKtVersion)" PrivateAssets="all" IncludeAssets="build" />
-    <PackageReference Include="DotKt.Runtime" Version="$(DotKtVersion)" />
   </ItemGroup>
 
   <!-- Every .kt under the project is a Kotlin source. -->

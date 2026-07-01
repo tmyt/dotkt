@@ -59,11 +59,10 @@
     <ItemGroup>
       <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
       <_DotKtBir2CirRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
-      <!-- DotKt.Runtime (its runtime helpers) and the @Clr-metadata REFERENCE stdlib
-           (DotKt.Private.Stdlib) are compile-only references (NOT copy-local), so they're absent from
-           @(ReferenceCopyLocalPaths) above; pull them from @(ReferencePath). bir2cir reads DotKt.Private.Stdlib's
+      <!-- The @Clr-metadata REFERENCE stdlib (DotKt.Private.Stdlib) is a compile-only reference (NOT copy-local), so
+           it's absent from @(ReferenceCopyLocalPaths) above; pull it from @(ReferencePath). bir2cir reads its
            @ClrTypeAlias/@ClrIntrinsic labels to lower kotlin.* — the same ref scripts/verify-il.sh hands it. -->
-      <_DotKtBir2CirRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Runtime' or '%(FileName)' == 'DotKt.Private.Stdlib'" />
+      <_DotKtBir2CirRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Private.Stdlib'" />
     </ItemGroup>
     <RemoveDir Directories="$(DotKtCirOut)" />
     <MakeDir Directories="$(DotKtCirOut)" />
@@ -72,8 +71,8 @@
   </Target>
 
   <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The
-       copy-local references (DotKt.Runtime + the project's package/project references, NOT the BCL, which ilemit
-       resolves by runtime reflection) are preloaded into ilemit as references. -->
+       copy-local references (the project's package/project references, NOT the BCL, which ilemit resolves by runtime
+       reflection) are preloaded into ilemit as references. -->
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir">
     <ItemGroup>
       <_DotKtCir Include="$(DotKtCirOut)/*.cir.json" />
@@ -82,11 +81,8 @@
            KOTLIN by another .ktproj — [KotlinFileClass] restores a file facade's statics as top-level functions,
            [KotlinFunction] restores infix/operator/suspend, etc.) are SYNTHESIZED PER-ASSEMBLY by ilemit (embedded
            internal / CompilerGenerated) — added alongside the NRT System.Runtime.CompilerServices.Nullable*
-           attributes (the csc embedded-attribute model; see toolchain/ilemit/Emitter.CompilerServices.cs). So they do
-           NOT come from DotKt.Runtime. This reference pulls DotKt.Runtime's (legacy) runtime helpers into ilemit —
-           being retired now the real stdlib supersedes them; a compile reference but NOT copy-local, so it's absent
-           from @(ReferenceCopyLocalPaths) above; pull it from @(ReferencePath) explicitly. -->
-      <_DotKtRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Runtime'" />
+           attributes (the csc embedded-attribute model; see toolchain/ilemit/Emitter.CompilerServices.cs). So no
+           DotKt.Runtime reference is needed (that pre-stdlib runtime DLL is retired). -->
     </ItemGroup>
     <Message Importance="high" Text="DotKt: emitting CIL from CIR -> $(TargetName)$(TargetExt)" />
     <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; @(_DotKtRef->'--ref &quot;%(FullPath)&quot;', ' ') @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
