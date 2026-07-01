@@ -33,8 +33,6 @@ LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 # RUNTIME assembly (DotKt.Stdlib.dll) so a stdlib op resolves to its real Kotlin body — exactly the canonical ref/rt
 # stdlib that dotkt.sh / verify-il use (NOT the stale build-dotkt-stdlib.sh). The banned facadegen --scan-asm of the
 # stdlib is GONE: kotlin.* comes from the jar, never a facadegen reconstruction.
-dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runtime" -v q --nologo >/dev/null 2>&1
-DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
 FE_JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
 STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
 STDLIB_DLL="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
@@ -70,8 +68,8 @@ for s in $PURE; do
 	  "$LAUNCHER" $src -no-stdlib -classpath "$FE_JAR" -d $cout >/dev/null 2>&1
 	  refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
 	  dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$ccir" "${refarg[@]}" "$cout"/*.bir.json >/dev/null 2>&1
-	  dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$cout" "$mainclass" --ref "$DOTKT_RT" --ref "$STDLIB_DLL" "$ccir"/*.cir.json >/dev/null 2>&1
-	  cp "$DOTKT_RT" "$STDLIB_DLL" "$cout/"
+	  dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$cout" "$mainclass" --ref "$STDLIB_DLL" "$ccir"/*.cir.json >/dev/null 2>&1
+	  cp "$STDLIB_DLL" "$cout/"
 	  clr="$(dotnet "$cout/$mainclass.dll" 2>/dev/null)"
 	  if [[ "$(norm <<<"$jvm")" == "$(norm <<<"$clr")" ]]; then echo "MATCH $s"; else
 		echo "DIFF  $s"; echo "--- jvm ---"; echo "$jvm"; echo "--- clr ---"; echo "$clr"; touch "/tmp/diff-fail-$s"; fi

@@ -545,7 +545,8 @@ sealed partial class Emitter
                 }
             // DotKt metadata: stamp Kotlin modifiers with no .NET analog so a consuming Kotlin module can restore
             // them. [KotlinFileClass] on a file-facade class -> its statics are top-level fns; [KotlinFunction(flags)] on
-            // methods carrying infix/operator/suspend. No-op when DotKt.Runtime isn't referenced (attrs unresolved).
+            // methods carrying infix/operator/suspend. The attribute types are SYNTHESIZED per-assembly (embedded
+            // internal) by DefineEmbeddedAttr (Emitter.CompilerServices.cs) — NOT loaded from DotKt.Runtime.
             if (ti.IsFileClass) ApplyKotlinFileClass(ti.TB);
             if (ti.Def.TryGetProperty("methods", out var kms))
                 foreach (var m in kms.EnumerateArray())

@@ -22,8 +22,6 @@ LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 dotnet build "$ROOT/toolchain/ilemit"        -c Release -o "$ROOT/build/ilemit-bin"     -v q --nologo >/dev/null
 dotnet build "$ROOT/toolchain/facadegen"     -c Release -o "$ROOT/build/facadegen-bin"  -v q --nologo >/dev/null
 dotnet build "$ROOT/toolchain/retarget"      -c Release -o "$ROOT/build/retarget-bin"   -v q --nologo >/dev/null
-dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runtime" -v q --nologo >/dev/null 2>&1
-DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
 REFPACK="$(ls -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/*/ref/net10.0 2>/dev/null | sort -V | tail -1)"
 REFS="$(ls "$REFPACK"/*.dll | tr '\n' ';')"
 
@@ -77,14 +75,14 @@ EOF
 
 # 1. compile + emit + retarget the library (the emit stamps [KotlinFunction]/[KotlinFileClass]).
 CLR_TYPES_METADATA="" "$LAUNCHER" "$R/lib" -no-stdlib -classpath "$CP" -d "$R/libbir" >/dev/null 2>&1
-emit_il "$R/libil" KLib --ref "$DOTKT_RT" "$R/libbir"/*.bir.json >/dev/null 2>&1
-dotnet "$ROOT/build/retarget-bin/retarget.dll" "$R/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
+emit_il "$R/libil" KLib "$R/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$R/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1
 # 2. facadegen --meta reads the attributes back into the injection metadata.
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$R/k.meta" --refs "$REFS$R/libil/KLib.dll;$DOTKT_RT" Vec LibKt >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$R/k.meta" --refs "$REFS$R/libil/KLib.dll" Vec LibKt >/dev/null 2>&1
 # 3. compile the consumer WITH the metadata (the injector restores infix/operator/suspend/top-level on FIR).
 CLR_TYPES_METADATA="$R/k.meta" "$LAUNCHER" "$R/app" -no-stdlib -classpath "$CP" -d "$R/appbir" >/dev/null 2>&1
-emit_il "$R/appil" KApp --ref "$R/libil/KLib.dll" --ref "$DOTKT_RT" "$R/appbir"/*.bir.json >/dev/null 2>&1
-cp "$R/libil/KLib.dll" "$DOTKT_RT" "$R/appil/"
+emit_il "$R/appil" KApp --ref "$R/libil/KLib.dll" "$R/appbir"/*.bir.json >/dev/null 2>&1
+cp "$R/libil/KLib.dll" "$R/appil/"
 
 expected="$(printf '11\n(4, 6)\nHi, Vec\n42\n(3, 6)')"
 actual="$(dotnet "$R/appil/KApp.dll" 2>/dev/null)"
@@ -149,13 +147,13 @@ fun main() {
 }
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$G/lib" -no-stdlib -classpath "$CP" -d "$G/libbir" >/dev/null 2>&1
-emit_il "$G/libil" GeomLib --ref "$DOTKT_RT" "$G/libbir"/*.bir.json >/dev/null 2>&1
-dotnet "$ROOT/build/retarget-bin/retarget.dll" "$G/libil/GeomLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
+emit_il "$G/libil" GeomLib "$G/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$G/libil/GeomLib.dll" --refs "$REFS" >/dev/null 2>&1
 "$LAUNCHER" --scan-imports --output "$G/imports.txt" "$G/app"/*.kt >/dev/null 2>&1
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$G/meta" --refs "$REFS$G/libil/GeomLib.dll;$DOTKT_RT" --import-list "$G/imports.txt" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$G/meta" --refs "$REFS$G/libil/GeomLib.dll" --import-list "$G/imports.txt" >/dev/null 2>&1
 CLR_TYPES_METADATA="$G/meta" "$LAUNCHER" "$G/app" -no-stdlib -classpath "$CP" -d "$G/appbir" >/dev/null 2>&1
-emit_il "$G/appil" GeomApp --ref "$G/libil/GeomLib.dll" --ref "$DOTKT_RT" "$G/appbir"/*.bir.json >/dev/null 2>&1
-cp "$G/libil/GeomLib.dll" "$DOTKT_RT" "$G/appil/"
+emit_il "$G/appil" GeomApp --ref "$G/libil/GeomLib.dll" "$G/appbir"/*.bir.json >/dev/null 2>&1
+cp "$G/libil/GeomLib.dll" "$G/appil/"
 pkgexpected="$(printf '11\nHi, pkg\nEAST\nString\n4\n25\n52\n52\n10\n7\ndef\nnone')"
 pkgactual="$(dotnet "$G/appil/GeomApp.dll" 2>/dev/null)"
 if [[ "$pkgactual" == "$pkgexpected" ]]; then
@@ -218,12 +216,12 @@ fun main() {
 }
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$GG/lib" -no-stdlib -classpath "$CP" -d "$GG/libbir" >/dev/null 2>&1
-emit_il "$GG/libil" KLib --ref "$DOTKT_RT" "$GG/libbir"/*.bir.json >/dev/null 2>&1
-dotnet "$ROOT/build/retarget-bin/retarget.dll" "$GG/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$GG/k.meta" --refs "$REFS$GG/libil/KLib.dll;$DOTKT_RT" Box Pair2 Holder LibKt >/dev/null 2>&1
+emit_il "$GG/libil" KLib "$GG/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$GG/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$GG/k.meta" --refs "$REFS$GG/libil/KLib.dll" Box Pair2 Holder LibKt >/dev/null 2>&1
 CLR_TYPES_METADATA="$GG/k.meta" "$LAUNCHER" "$GG/app" -no-stdlib -classpath "$CP" -d "$GG/appbir" >/dev/null 2>&1
-emit_il "$GG/appil" KApp --ref "$GG/libil/KLib.dll" --ref "$DOTKT_RT" "$GG/appbir"/*.bir.json >/dev/null 2>&1
-cp "$GG/libil/KLib.dll" "$DOTKT_RT" "$GG/appil/"
+emit_il "$GG/appil" KApp --ref "$GG/libil/KLib.dll" "$GG/appbir"/*.bir.json >/dev/null 2>&1
+cp "$GG/libil/KLib.dll" "$GG/appil/"
 gexpected="$(printf '3\n4\n10\n5\n1/z\n99\n8\n6\n7\nhi\nnone\nset\n4')"
 gactual="$(dotnet "$GG/appil/KApp.dll" 2>/dev/null)"
 if [[ "$gactual" == "$gexpected" ]]; then
@@ -258,12 +256,12 @@ fun main() {
 }
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$HF/lib" -no-stdlib -classpath "$CP" -d "$HF/libbir" >/dev/null 2>&1
-emit_il "$HF/libil" KLib --ref "$DOTKT_RT" "$HF/libbir"/*.bir.json >/dev/null 2>&1
-dotnet "$ROOT/build/retarget-bin/retarget.dll" "$HF/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$HF/k.meta" --refs "$REFS$HF/libil/KLib.dll;$DOTKT_RT" Box Wrap LibKt >/dev/null 2>&1
+emit_il "$HF/libil" KLib "$HF/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$HF/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$HF/k.meta" --refs "$REFS$HF/libil/KLib.dll" Box Wrap LibKt >/dev/null 2>&1
 CLR_TYPES_METADATA="$HF/k.meta" "$LAUNCHER" "$HF/app" -no-stdlib -classpath "$CP" -d "$HF/appbir" >/dev/null 2>&1
-emit_il "$HF/appil" KApp --ref "$HF/libil/KLib.dll" --ref "$DOTKT_RT" "$HF/appbir"/*.bir.json >/dev/null 2>&1
-cp "$HF/libil/KLib.dll" "$DOTKT_RT" "$HF/appil/"
+emit_il "$HF/appil" KApp --ref "$HF/libil/KLib.dll" "$HF/appbir"/*.bir.json >/dev/null 2>&1
+cp "$HF/libil/KLib.dll" "$HF/appil/"
 hfexpected="$(printf '5!\n6!\n7!\n8!\n9!\n42')"
 hfactual="$(dotnet "$HF/appil/KApp.dll" 2>/dev/null)"
 if [[ "$hfactual" == "$hfexpected" ]]; then
@@ -302,12 +300,12 @@ fun main() {
 }
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$ME/lib" -no-stdlib -classpath "$CP" -d "$ME/libbir" >/dev/null 2>&1
-emit_il "$ME/libil" KLib --ref "$DOTKT_RT" "$ME/libbir"/*.bir.json >/dev/null 2>&1
-dotnet "$ROOT/build/retarget-bin/retarget.dll" "$ME/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$ME/k.meta" --refs "$REFS$ME/libil/KLib.dll;$DOTKT_RT" Box Lib >/dev/null 2>&1
+emit_il "$ME/libil" KLib "$ME/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$ME/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$ME/k.meta" --refs "$REFS$ME/libil/KLib.dll" Box Lib >/dev/null 2>&1
 CLR_TYPES_METADATA="$ME/k.meta" "$LAUNCHER" "$ME/app" -no-stdlib -classpath "$CP" -d "$ME/appbir" >/dev/null 2>&1
-emit_il "$ME/appil" KApp --ref "$ME/libil/KLib.dll" --ref "$DOTKT_RT" "$ME/appbir"/*.bir.json >/dev/null 2>&1
-cp "$ME/libil/KLib.dll" "$DOTKT_RT" "$ME/appil/"
+emit_il "$ME/appil" KApp --ref "$ME/libil/KLib.dll" "$ME/appbir"/*.bir.json >/dev/null 2>&1
+cp "$ME/libil/KLib.dll" "$ME/appil/"
 meexpected="$(printf '15\n15\n22\n8\n110')"
 meactual="$(dotnet "$ME/appil/KApp.dll" 2>/dev/null)"
 if [[ "$meactual" == "$meexpected" ]]; then
@@ -357,12 +355,12 @@ fun main() {
 }
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$MP/lib" -no-stdlib -classpath "$CP" -d "$MP/libbir" >/dev/null 2>&1
-emit_il "$MP/libil" KLib --ref "$DOTKT_RT" "$MP/libbir"/*.bir.json >/dev/null 2>&1
-dotnet "$ROOT/build/retarget-bin/retarget.dll" "$MP/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$MP/k.meta" --refs "$REFS$MP/libil/KLib.dll;$DOTKT_RT" Box Lib >/dev/null 2>&1
+emit_il "$MP/libil" KLib "$MP/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$MP/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$MP/k.meta" --refs "$REFS$MP/libil/KLib.dll" Box Lib >/dev/null 2>&1
 CLR_TYPES_METADATA="$MP/k.meta" "$LAUNCHER" "$MP/app" -no-stdlib -classpath "$CP" -d "$MP/appbir" >/dev/null 2>&1
-emit_il "$MP/appil" KApp --ref "$MP/libil/KLib.dll" --ref "$DOTKT_RT" "$MP/appbir"/*.bir.json >/dev/null 2>&1
-cp "$MP/libil/KLib.dll" "$DOTKT_RT" "$MP/appil/"
+emit_il "$MP/appil" KApp --ref "$MP/libil/KLib.dll" "$MP/appbir"/*.bir.json >/dev/null 2>&1
+cp "$MP/libil/KLib.dll" "$MP/appil/"
 mpexpected="$(printf 'lbl:17\n30\n15\n1002\n15\n210')"
 mpactual="$(dotnet "$MP/appil/KApp.dll" 2>/dev/null)"
 if [[ "$mpactual" == "$mpexpected" ]]; then
@@ -400,12 +398,12 @@ fun main() {
 }
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$DA/lib" -no-stdlib -classpath "$CP" -d "$DA/libbir" >/dev/null 2>&1
-emit_il "$DA/libil" KLib --ref "$DOTKT_RT" "$DA/libbir"/*.bir.json >/dev/null 2>&1
-dotnet "$ROOT/build/retarget-bin/retarget.dll" "$DA/libil/KLib.dll" --refs "$REFS$DOTKT_RT" >/dev/null 2>&1
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$DA/k.meta" --refs "$REFS$DA/libil/KLib.dll;$DOTKT_RT" Pt LibKt >/dev/null 2>&1
+emit_il "$DA/libil" KLib "$DA/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$DA/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$DA/k.meta" --refs "$REFS$DA/libil/KLib.dll" Pt LibKt >/dev/null 2>&1
 CLR_TYPES_METADATA="$DA/k.meta" "$LAUNCHER" "$DA/app" -no-stdlib -classpath "$CP" -d "$DA/appbir" >/dev/null 2>&1
-emit_il "$DA/appil" KApp --ref "$DA/libil/KLib.dll" --ref "$DOTKT_RT" "$DA/appbir"/*.bir.json >/dev/null 2>&1
-cp "$DA/libil/KLib.dll" "$DOTKT_RT" "$DA/appil/"
+emit_il "$DA/appil" KApp --ref "$DA/libil/KLib.dll" "$DA/appbir"/*.bir.json >/dev/null 2>&1
+cp "$DA/libil/KLib.dll" "$DA/appil/"
 daexpected="$(printf 'Hi, A!\nYo, B!\nHi, C?\nHey, E!\n123\n129\n527\nTrue/x y\nTrue/z\n(0,4)\n(7,0)')"
 daactual="$(dotnet "$DA/appil/KApp.dll" 2>/dev/null)"
 if [[ "$daactual" == "$daexpected" ]]; then

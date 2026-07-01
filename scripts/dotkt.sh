@@ -25,7 +25,6 @@ ILEMIT="$ROOT/build/ilemit-bin/ilemit.dll"
 BIR2CIR="$ROOT/build/bir2cir-bin/bir2cir.dll"
 FACADEGEN="$ROOT/build/facadegen-bin/facadegen.dll"
 RETARGET="$ROOT/build/retarget-bin/retarget.dll"
-DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
 # CLR stdlib (the canonical build under runtime/stdlib/, mirrored from scripts/verify-il.sh): the REFERENCE assembly
 # (@Clr metadata) feeds bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution; the RUNTIME assembly carries the real
 # Kotlin bodies and is ilemit's --ref (and copy-local for the run phase).
@@ -69,7 +68,6 @@ done
 [[ -f "$ILEMIT" ]] || { echo "dotkt: building ilemit..." >&2; dotnet build "$ROOT/toolchain/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo; }
 [[ -f "$BIR2CIR" ]] || { echo "dotkt: building bir2cir..." >&2; dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo; }
 [[ -f "$FACADEGEN" ]] || { echo "dotkt: building facadegen..." >&2; dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo; }
-[[ -f "$DOTKT_RT" ]] || { echo "dotkt: building DotKt.Runtime..." >&2; dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runtime" -v q --nologo; }
 # The CLR frontend stdlib jar (kotc -classpath): build once if missing — exactly as verify-il bootstraps it.
 [[ -f "$JAR" ]] || { echo "dotkt: building CLR frontend stdlib jar..." >&2; bash "$ROOT/scripts/build-clr-stdlib-frontend.sh" >/dev/null; }
 # The CLR stdlib ref/rt assemblies are the canonical CACHED builds (scripts/build-clr-stdlib{,-runtime}.sh --emit). Do
@@ -85,13 +83,13 @@ bir="$work/bir"; cir="$work/cir"; mkdir -p "$bir" "$cir" "$out_dir"
 cp="$JAR"; [[ -n "$CORO" ]] && cp="$cp:$CORO"
 
 # Reference assemblies. Mirroring verify-il, the two backend stages take DIFFERENT stdlib refs: bir2cir reads the
-# @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets DotKt.Runtime (its runtime
-# helpers; the [Kotlin*] round-trip attributes are SYNTHESIZED per-assembly by ilemit, NOT taken from here) plus the
-# RUNTIME stdlib (the real Kotlin bodies). ilemit resolves the
-# BCL itself by runtime reflection, so the ref-pack is only for facadegen's .NET-type resolution (and retarget).
+# @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets the RUNTIME stdlib (the
+# real Kotlin bodies). The [Kotlin*] round-trip attributes are SYNTHESIZED per-assembly by ilemit (no DotKt.Runtime).
+# ilemit resolves the BCL itself by runtime reflection, so the ref-pack is only for facadegen's .NET-type resolution
+# (and retarget).
 refpack="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' 2>/dev/null | head -1)")"
-declare -a bir2cir_refs=() ilemit_refs=(--ref "$DOTKT_RT")
-refs_semi="$(ls "$refpack"/*.dll 2>/dev/null | tr '\n' ';')$DOTKT_RT"
+declare -a bir2cir_refs=() ilemit_refs=()
+refs_semi="$(ls "$refpack"/*.dll 2>/dev/null | tr '\n' ';')"
 (( use_stdlib )) && { bir2cir_refs+=(--ref "$STDLIB_REF"); ilemit_refs+=(--ref "$STDLIB_RT"); refs_semi="$refs_semi;$STDLIB_RT"; }
 for r in "${extra_refs[@]}"; do bir2cir_refs+=(--ref "$r"); ilemit_refs+=(--ref "$r"); refs_semi="$refs_semi;$r"; done
 
@@ -112,7 +110,7 @@ CLR_TYPES_METADATA="$meta" "$KOTC" "${kts[@]}" -no-stdlib -classpath "$cp" -d "$
 echo "dotkt: lowering BIR -> CIR" >&2
 dotnet "$BIR2CIR" "$cir" "${bir2cir_refs[@]}" "$bir"/*.bir.json >/dev/null
 
-# 4. ilemit: CIR -> CIL. Gets DotKt.Runtime + the RUNTIME stdlib (real Kotlin bodies).
+# 4. ilemit: CIR -> CIL. Gets the RUNTIME stdlib (real Kotlin bodies); [Kotlin*] attrs synthesized per-assembly.
 echo "dotkt: emitting $out_name.dll" >&2
 dotnet "$ILEMIT" "$out_dir" "$out_name" "${ilemit_refs[@]}" "$cir"/*.cir.json
 
@@ -121,7 +119,6 @@ dotnet "$ILEMIT" "$out_dir" "$out_name" "${ilemit_refs[@]}" "$cir"/*.cir.json
 
 # 6. exe scaffolding: copy copy-local refs + write a runtimeconfig so `dotnet <name>.dll` runs.
 if (( make_exe )); then
-	cp "$DOTKT_RT" "$out_dir/" 2>/dev/null || true
 	(( use_stdlib )) && cp "$STDLIB_RT" "$out_dir/" 2>/dev/null || true
 	for r in "${extra_refs[@]}"; do cp "$r" "$out_dir/" 2>/dev/null || true; done
 	cat > "$out_dir/$out_name.runtimeconfig.json" <<JSON

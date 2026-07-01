@@ -45,12 +45,9 @@ il_emit() { # <name> <ildir> <asm> <birdir> [extra ilemit args...]
 	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$ildir" "$asm" "$@" "$cirdir"/*.cir.json >/dev/null 2>&1
 }
 
-# DotKt.Runtime: the runtime assembly for promoted Kotlin lowerings (printf->composite format, AND the
-# kotlin.coroutines core — Continuation/CoroutineContext/Result/Unit/intercepted + sequence/Flow/Channel/select
-# helpers — in the DotKt.Coroutines namespace). Every compiled assembly references it (the SDK auto-references it),
-# so pass it globally to ilemit + ilverify, and copy it next to each emitted dll for the run phase.
-dotnet build "$ROOT/runtime/DotKt.Runtime" -c Release -o "$ROOT/build/dotkt-runtime" -v q --nologo >/dev/null 2>&1
-DOTKT_RT="$ROOT/build/dotkt-runtime/DotKt.Runtime.dll"
+# DotKt.Runtime is RETIRED: the roundtrip metadata attributes ([Kotlin*]/Nullable*) it once held are now synthesized
+# per-assembly (embedded internal) by ilemit, and the pre-stdlib coroutine/Result/Unit helpers are superseded by the
+# real CLR stdlib. No runtime DLL is referenced any more.
 
 # S5 FIR-injection metadata for samples that inherit a real .NET base type (façade-free).
 dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo >/dev/null 2>&1
@@ -102,7 +99,7 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT" --ref "$refdll"; then
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$refdll"; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
 		cp "$refdll" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
@@ -122,9 +119,9 @@ il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 		usemeta="${meta:-}"
 		if ! CLR_TYPES_METADATA="$usemeta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT" --ref "$STDLIB_DLL"; then
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$STDLIB_DLL"; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		cp "$DOTKT_RT" "$STDLIB_DLL" "$ildir/"
+		cp "$STDLIB_DLL" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
 		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
 			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
@@ -147,9 +144,9 @@ il_check_imports() { # <name> <asm> <srcDir> <expected>
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT" --ref "$STDLIB_DLL"; then
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$STDLIB_DLL"; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		cp "$DOTKT_RT" "$STDLIB_DLL" "$ildir/"
+		cp "$STDLIB_DLL" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
 		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
 			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
@@ -165,9 +162,8 @@ il_check_mpp() { # <name> <asm> <srcDir> <commonFile> <expected>
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! "$LAUNCHER" "$src"/*.kt -Xcommon-sources="$src/$common" -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT"; then
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" ; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		cp "$DOTKT_RT" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
 		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
 			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
@@ -284,9 +280,9 @@ il_check_ref() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			echo "FAIL  il:$name (compile error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT" --ref "$refdll"; then
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$refdll"; then
 			echo "FAIL  il:$name (ilemit error)"; touch "$ROOT/build/fail-$name"; exit 0; fi
-		cp "$refdll" "$ildir/"; cp "$DOTKT_RT" "$ildir/"
+		cp "$refdll" "$ildir/"
 		actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"
 		if [[ "$actual" == "$expected" ]]; then echo "PASS  il:$name"; else
 			echo "FAIL  il:$name"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual"; touch "$ROOT/build/fail-$name"; fi
@@ -363,7 +359,7 @@ il_revinterop() {
 	rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 	"$LAUNCHER" $src/lib.kt -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1 \
 		|| { echo "FAIL  il:$name (compile error)"; fail=1; return; }
-	il_emit revinterop "$ildir" "$asm" "$birdir" --ref "$DOTKT_RT"
+	il_emit revinterop "$ildir" "$asm" "$birdir"
 	cp "$src/Program.cs" "$ildir/Program.cs"
 	cat > "$ildir/consumer.csproj" <<EOF
 <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework>
@@ -395,7 +391,7 @@ if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 		[[ -f "$dll" ]] || continue
 		# A sample that references an external runtime dll needs it on ilverify's resolve path too.
 		refarg=(); [[ -n "${REFDLL[$n]:-}" ]] && refarg=(-r "${REFDLL[$n]}")
-		if dotnet "$ILV" "$dll" -r "$REFDIR/*.dll" -r "$DOTKT_RT" -r "$STDLIB_DLL" "${refarg[@]}" 2>&1 | grep -qi 'Verified\.'; then echo "VERIFY  $n"; else echo "VERIFY FAIL  $n"; fail=1; fi
+		if dotnet "$ILV" "$dll" -r "$REFDIR/*.dll" -r "$STDLIB_DLL" "${refarg[@]}" 2>&1 | grep -qi 'Verified\.'; then echo "VERIFY  $n"; else echo "VERIFY FAIL  $n"; fail=1; fi
 	done
 else
 	echo "(ilverify not installed; skipping formal verification — 'dotnet tool install -g dotnet-ilverify')"
