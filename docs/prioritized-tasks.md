@@ -3,6 +3,15 @@
 > A **priority-ordered backlog**, NOT a ship checklist (no release is committed at any point here — see
 > MEMORY `release-flow-0.9.4-accumulate`). Last updated 2026-07-01.
 
+> **Session outcome (2026-07-01) — verify-il gate 83 → 62 failing (net −21).** The #5 netType→bir2cir + byref work landed:
+> kotc is a PURE Kotlin frontend (netType deleted, coroutine lowering → neutral tags), `@ClrProperty` + ctor-argType +
+> `@ClrRefArgument` (ABI parity, stub jar deleted) done. The byref diagnosis surfaced a MAJOR general bug — **kotc was
+> re-emitting facadegen-injected external .NET types as in-assembly types** (the class buckets in `BirEmitter.emitFile`
+> lacked the `origin=="DEFINED"` filter the function/property buckets had); fixing it (commit `d3eb8f1`) turned **23 samples
+> green** (all the .NET-interop injection samples: inherit/clriface/clrimpl/geninj/injbase/injfqn/injuint/netgen/netattr/m2/
+> mi1/clrasm/selfref/mref/delegatearg/c1net/cbk/genim/firgap/netgen3 + outref/stackalloc/comparator). Net NEW: `regex`/`result`
+> (dual-rep residuals the DotKt.Runtime retirement exposed) + `cobuild` (coroutine-deferred, kotc no longer lowers it).
+
 ## Main sequence (priority order)
 
 1. **rt-green** — drive the rt stdlib build (`build-clr-stdlib-runtime.sh --emit`) to completion. *(in progress)*
