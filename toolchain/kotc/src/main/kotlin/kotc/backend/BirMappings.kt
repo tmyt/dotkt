@@ -17,19 +17,20 @@ internal val UNARY = mapOf("unaryMinus" to "-", "unaryPlus" to "+", "not" to "!"
 // violation). kotc now emits a plain call to the stdlib math fun; bir2cir substitutes it from MathClr.kt's
 // @ClrIntrinsic bindings on the ref.dll (System.Math.* for Double/Int/Long, System.MathF.* for Float).
 
-// kotlin.text String ops -> .NET System.String instance methods.
+// (PARTIALLY RETIRED 2026-07-02) The clean String ops LEFT this map: `uppercase`/`lowercase` (retired -> their stdlib
+// funs carry @ClrIntrinsic("ToUpperInvariant"/"ToLowerInvariant"), which bir2cir substitutes to the BCL, bypassing the
+// CharSequence body), `substring` (1-arg -> @ClrIntrinsic("Substring")), and the NUMBER_PARSE map ("42".toInt() ->
+// @ClrIntrinsic("System.Int32.Parse")). kotc emits a plain call for those; bir2cir substitutes them off the ref.dll.
+// The ops BELOW STAY compiler-lowered: their stdlib bodies are `CharSequence` extensions, so retiring them routes a
+// System.String receiver into a `<>dotkt_CharSequence`-typed body -> the String/CharSequence DUAL-REPRESENTATION crash
+// (MEMORY dual-representation-stdlib-types; InvalidProgram / EntryPointNotFound). They cannot retire until dual-rep is
+// solved (bir2cir/ilemit CharSequence<->String bridging), so they remain a direct System.String instance-method lowering.
 internal val STRING_OPS = mapOf(
-	"uppercase" to "ToUpper", "lowercase" to "ToLower", "trim" to "Trim",
-	"trimStart" to "TrimStart", "trimEnd" to "TrimEnd", "substring" to "Substring",
+	"trim" to "Trim", "trimStart" to "TrimStart", "trimEnd" to "TrimEnd",
 	"replace" to "Replace", "startsWith" to "StartsWith", "endsWith" to "EndsWith",
 	"contains" to "Contains", "indexOf" to "IndexOf", "padStart" to "PadLeft", "padEnd" to "PadRight",
 )
 
-// `"42".toInt()` etc. -> a static `Parse` on the target .NET numeric type.
-internal val NUMBER_PARSE = mapOf(
-	"toInt" to "System.Int32", "toLong" to "System.Int64", "toDouble" to "System.Double",
-	"toFloat" to "System.Single", "toShort" to "System.Int16", "toByte" to "System.Byte",
-)
 // Char predicates / conversions -> static methods on System.Char.
 internal val CHAR_OPS = mapOf(
 	"isDigit" to "IsDigit", "isLetter" to "IsLetter", "isWhitespace" to "IsWhiteSpace",
