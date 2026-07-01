@@ -312,10 +312,19 @@ STATUS box above). (2) ~~synthetic-UNIFICATION agent~~ **✅ DONE 2026-07-02 (CA
 references the rt stdlib dll's `<>dotkt_CharSequence` (ilemit pass-1 skip + pass-2 reflection MethodImpl; `il-charseq`
 green, `il-charseqx` new-pass; see the STATUS box). The design fork resolved to **ilemit-resolves-external** (NOT
 kotc-emits / bir2cir-repoints) — kotc keeps synthesizing the token, ilemit derives "already in a `--ref` → reference it".
-(3) **stdlib+kotc retire agent (NOW UNBLOCKED)** — do the per-op B retires (`trim`/`contains`/`startsWith`/`endsWith`/
-`replace`/`indexOf`/`padStart`/`padEnd`/`split`/`strReversed`/`substring(2-arg)`/`isEmpty`/`isBlank`) + delete
-`STRING_OPS` and the `s[i]` indexer lowering under the retire recipe, gate-neutral. Each op's stdlib body is a
-`CharSequence` extension whose String receiver now coerces via foundation-A's bridge to the canonical interface.
+(3) **stdlib+kotc retire agent — ✅ PARTIALLY DONE 2026-07-02 (bundle 4-B).** Two supporting infra fixes made the clean
+ops retire: (a) **ilemit** `FindReflectedMethodBySig` — sig-aware overload pick on a referenced file-class (String-face
+`substring(String,int,int)` vs CharSequence-face were arity-ambiguous → wrong body); (b) **bir2cir** — the
+StringCharSequenceBridge now runs on the RT stdlib self-build too (gate `attributeTopLevelOwner`→`!RefBuild`), so the
+stdlib's OWN internal String→CharSequence widenings (`indexOf(String)`→private `indexOf(CharSequence)`) materialize the
+adapter (injected once into the rt assembly, on the canonical interface). **RETIRED (route to real stdlib body):**
+`contains`, `indexOf`, `startsWith`, `endsWith`, `split`, `substring(2-arg)`, `isEmpty`/`isNotEmpty`. Gate-neutral
+(run-fail set identical) → IMPROVING (ilverify 21→20, `il-tryexpr` now fully green). **STILL LOWERED — each a DISTINCT
+deeper stdlib-body bug (a stdlib-body-fix follow-up, NOT dual-rep):** `trim`/`trimStart`/`trimEnd` (`Char::isWhitespace`
+method-ref not lowered + un-wrapped inlined `as CharSequence`), `reversed` (`StringBuilder(CharSequence)` no .NET ctor),
+`padStart`/`padEnd` (StringBuilder append/capacity mis-bind), `replace(String,String)` (StringBuilder
+`append(seq,start,END)`→`Append(str,start,COUNT)`), `isBlank`/`isNotBlank` (`all{isWhitespace}` CharSequence iteration
+`Iterator.hasNext` not found). The `s[i]` indexer + Regex retires: see (3b)/(4) below.
 (4) **Regex agent (NOW UNBLOCKED)** — retire Regex (its `CharSequence` inputs then coerce). Comparable-self and the
 collection-bridge are separate tracks (own agents), not gated on this fix.
 

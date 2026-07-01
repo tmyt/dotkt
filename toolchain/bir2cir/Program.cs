@@ -121,10 +121,16 @@ sealed class Pipeline
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
             if (attributeTopLevelOwner) IteratorConsumerNormalization.Apply(substituted);
             // String -> CharSequence adapter bridge: materialize a bare `System.String` flowing into a synthetic
-            // `<>dotkt_CharSequence` slot as `new kotlin.StringCharSequence(str)` (String is sealed, can't implement
-            // the synthetic interface). APP builds only — same gate as the iterator normalization; the ref/rt stdlib
-            // self-builds are left untouched. Purely additive: only positively-String values are wrapped.
-            if (attributeTopLevelOwner) substituted = StringCharSequenceBridge.Apply(substituted);
+            // `<>dotkt_CharSequence` slot as `new <>dotkt_StringCharSequence(str)` (String is sealed, can't implement
+            // the synthetic interface). Runs on EVERY non-ref build — app AND the RT stdlib self-build. The RT build
+            // NEEDS it too: the stdlib's own CharSequence-extension bodies widen a `String` into a `<>dotkt_CharSequence`
+            // slot INTERNALLY (`CharSequence.indexOf(string: String)` -> the private `indexOf(other: CharSequence)`;
+            // `String.trim()` -> `(this as CharSequence).trim()`), and without the wrap those compiled rt.dll bodies pass
+            // a raw String where the interface is required -> InvalidProgram / EntryPointNotFound at run. The adapter is
+            // injected into the rt assembly exactly once (dedup), implementing the RT's canonical `<>dotkt_CharSequence`,
+            // so an app that then routes a String op to a real stdlib body works. Skipped only for the ref build (its
+            // bodies are squashed to `throw` anyway). Purely additive: only positively-String values are wrapped.
+            if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the

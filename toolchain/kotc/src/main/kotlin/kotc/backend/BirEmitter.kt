@@ -3874,62 +3874,36 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// an extension instance for Double.pow); bir2cir's MemberCallSubstitution reads MathClr.kt's @ClrIntrinsic
 			// bindings off the ref.dll and substitutes System.Math.* / System.MathF.* — the CLR relation lives there, not
 			// in kotc. (Retired 2026-07-02: pilot of the "retire a kotc hardcoded CLR lowering" pattern.)
-			// `kotlin.text` String ops: the CLEAN ones were RETIRED (2026-07-02, String family, bundle 1) — kotc emits a
-			// plain call and bir2cir substitutes them off the ref.dll: `uppercase`/`lowercase` (@ClrIntrinsic ToUpper/
-			// ToLowerInvariant), `substring` (1-arg -> @ClrIntrinsic Substring), `repeat` (real String-returning body),
-			// and `"42".toInt()`/`toLong`/`toDouble`/`toFloat`/`toShort`/`toByte` (@ClrIntrinsic System.X.Parse). The ops
-			// BELOW STAY lowered: their stdlib bodies are `CharSequence` extensions, so a System.String receiver crashes
-			// on the `<>dotkt_CharSequence`-typed body (dual-representation, MEMORY dual-representation-stdlib-types) —
-			// they retire only once bir2cir/ilemit bridge String<->CharSequence. `substring(start,end)` also stays: its
-			// end->length conversion has no direct @ClrIntrinsic, and the real body resolves to the CharSequence overload.
+			// `kotlin.text` String ops: the CLEAN ones RETIRED (2026-07-02, bundle 4-B — see BirMappings.STRING_OPS
+			// comment). kotc emits a plain call; bir2cir attributes it to StringsKt and the StringCharSequenceBridge (now
+			// run on the RT stdlib build too) coerces the String receiver/args into the `<>dotkt_CharSequence` adapter so
+			// the CharSequence-extension body runs: `contains`/`indexOf`/`startsWith`/`endsWith`/`split`/`substring(2-arg)`/
+			// `isEmpty`/`isNotEmpty` (plus uppercase/lowercase/substring(1)/NUMBER_PARSE earlier). The ops BELOW STAY
+			// lowered — they route to a stdlib body that hits a DISTINCT deeper bug (a stdlib-body-fix follow-up, no longer
+			// dual-rep): trim/trimStart/trimEnd (`Char::isWhitespace` method-ref not lowered), reversed (`StringBuilder(
+			// CharSequence)` no .NET ctor), padStart/padEnd (StringBuilder append/capacity mis-bind), replace(String,String)
+			// (StringBuilder.append(seq,start,END)->Append(str,start,COUNT)), isBlank/isNotBlank (CharSequence iteration).
 			if (fq == "kotlin.text") {
-				// `s.reversed()` -> new string(Reverse(s).ToArray()) (dual-rep: stays lowered).
+				// `s.reversed()` -> new string(Reverse(s).ToArray()) (STAYS lowered: stdlib `StringBuilder(CharSequence)` bug).
 				if (name == "reversed") (extensionReceiver(call) ?: dispatchReceiver(call))?.takeIf { it.type.classFqName?.asString() == "kotlin.String" }?.let { recv ->
 					return """{"k":"strReversed","s":${expr(recv)}}"""
 				}
-				// `s.split(",")` -> ToList(s.Split(string[] delimiters, StringSplitOptions.None)) (dual-rep: stays lowered).
-				if (name == "split") extensionReceiver(call)?.let { recv ->
-					val seps = (regularArgs(call).firstOrNull() as? IrVararg)?.elements?.filterIsInstance<IrExpression>().orEmpty()
-					return """{"k":"split","recv":${expr(recv)},"seps":[${seps.joinToString(",") { expr(it) }}]}"""
-				}
-				// Kotlin `substring(start, end)` takes an END index (exclusive); .NET `Substring(start, LENGTH)`.
-				// Convert end -> (end - start). (1-arg `substring(start)` is retired -> @ClrIntrinsic Substring.)
-				if (name == "substring" && regularArgs(call).size == 2) {
-					val recv = extensionReceiver(call) ?: dispatchReceiver(call)
-					if (recv != null) {
-						val a = regularArgs(call)
-						val len = """{"k":"bin","op":"-","l":${expr(a[1])},"r":${expr(a[0])}}"""
-						return """{"k":"clrInstance","type":"System.String","method":"Substring","argTypes":["System.Int32","System.Int32"],"ret":"System.String","recv":${expr(recv)},"args":[${expr(a[0])},$len]}"""
-					}
-				}
-				// String ops (trim/contains/startsWith/replace/…) -> `System.String` instance methods (dual-rep: stay
-				// lowered; clrInstance, ilemit resolves the overload).
+				// String ops kept lowered (trim/trimStart/trimEnd/padStart/padEnd/replace) -> `System.String` instance
+				// methods (clrInstance; ilemit resolves the overload). See BirMappings.STRING_OPS for the per-op blocker.
 				STRING_OPS[name]?.let { m ->
 					val recv = extensionReceiver(call) ?: dispatchReceiver(call)
-					// `indexOf`'s 3-arg (ignoreCase: Boolean) and stdlib-internal overloads don't match a .NET
-					// String.IndexOf (whose 3rd arg is an int count) — only (value) / (value, startIndex) match.
-					// Guard: a Char receiver falls through to its real stdlib body (uppercase/lowercase name Char funs too).
-					if (recv != null && birType(recv.type) != "kotlin.Char" && !(name == "indexOf" && regularArgs(call).size > 2)) {
+					// Guard: a Char receiver falls through to its real stdlib body (trim/replace name Char funs too).
+					if (recv != null && birType(recv.type) != "kotlin.Char") {
 						val args = regularArgs(call)
 						return """{"k":"clrInstance","type":"System.String","method":${str(m)},"argTypes":[${args.joinToString(",") { str(birType(it.type)) }}],"ret":${str(birType(callee.returnType))},"recv":${expr(recv)},"args":[${args.joinToString(",") { expr(it) }}]}"""
 					}
 				}
-				// `c.isDigit()`/`c.uppercaseChar()` are NO LONGER lowered here. kotc emits a plain call to the stdlib Char
-				// fun (kotlin.text extension); bir2cir substitutes it from CharClr.kt's @ClrIntrinsic("System.Char.IsDigit"/
-				// "System.Char.ToUpperInvariant"/…) FQ bindings on the ref.dll -> clrStatic System.Char.X(char). The
-				// Kotlin<->CLR relation lives in bir2cir, not kotc. (Retired 2026-07-02: Char family, bundle 1.)
-				// String predicates: isEmpty/isNotEmpty -> Length==0/!=0, isBlank/isNotBlank -> IsNullOrWhiteSpace (dual-rep).
-				if (name == "isEmpty" || name == "isNotEmpty" || name == "isBlank" || name == "isNotBlank") {
+				// String predicates kept lowered: isBlank/isNotBlank -> IsNullOrWhiteSpace (stdlib `all{isWhitespace}` needs
+				// CharSequence iteration). isEmpty/isNotEmpty RETIRED (route to the stdlib `length == 0` CharSequence body).
+				if (name == "isBlank" || name == "isNotBlank") {
 					(extensionReceiver(call) ?: dispatchReceiver(call))?.takeIf { it.type.classFqName?.asString() == "kotlin.String" }?.let { recv ->
-						val r = expr(recv)
-						val len = """{"k":"clrPropGet","type":"System.String","name":"Length","retType":"System.Int32","static":false,"recv":$r}"""
-						val blank = """{"k":"clrStatic","type":"System.String","method":"IsNullOrWhiteSpace","argTypes":["System.String"],"ret":"System.Boolean","args":[$r]}"""
-						return when (name) {
-							"isEmpty" -> """{"k":"bin","op":"==","l":$len,"r":{"k":"const","type":"int","value":0}}"""
-							"isNotEmpty" -> """{"k":"bin","op":"!=","l":$len,"r":{"k":"const","type":"int","value":0}}"""
-							"isBlank" -> blank
-							else -> """{"k":"un","op":"!","e":$blank}"""
-						}
+						val blank = """{"k":"clrStatic","type":"System.String","method":"IsNullOrWhiteSpace","argTypes":["System.String"],"ret":"System.Boolean","args":[${expr(recv)}]}"""
+						return if (name == "isBlank") blank else """{"k":"un","op":"!","e":$blank}"""
 					}
 				}
 			}

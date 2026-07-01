@@ -1532,11 +1532,14 @@ sealed partial class Emitter
             Type ext = null;
             try { ext = ClrRef(typeName); } catch (NotSupportedException) { }
             if (ext == null) return null;
-            // The call's parameter count (from `sig`) disambiguates a referenced file-class's overloads (e.g.
-            // _CollectionsKt.first(List<T>) vs first(Iterable<T>, predicate)) — GetMethod(name) throws Ambiguous and
-            // an arbitrary pick emits a stack-mismatched call (InvalidProgramException at run).
+            // A referenced file-class can carry several overloads that share name AND arity but differ in PARAM TYPES —
+            // e.g. the stdlib's String-face `StringsKt.substring(String,int,int)` vs its CharSequence-face
+            // `substring(<>dotkt_CharSequence,int,int)`, or `trim(String)` vs `trim(<>dotkt_CharSequence)`. Arity alone
+            // then picks arbitrarily (reflection order) -> the wrong body runs (a String passed where the CharSequence
+            // interface is expected -> EntryPointNotFound). Resolve by the FULL `sig` first (the same signature-keyed
+            // disambiguation the in-`_types` path does via MethodsBySig); fall back to the arity pick on any miss.
             var extArgc = sig == null ? -1 : (sig.Length == 0 ? 0 : SplitTopLevel(sig).Count);
-            return FindReflectedMethod(ext, name, extArgc);
+            return FindReflectedMethodBySig(ext, name, sig) ?? FindReflectedMethod(ext, name, extArgc);
         }
         // Walk this type's own members, then its EMITTED base/interface chain. If the base is NOT emitted here (an
         // external .NET base, e.g. an emitted class extending a BCL type), fall through to a reflected lookup on the
@@ -1587,6 +1590,35 @@ sealed partial class Emitter
         return null;
     }
 
+
+    // Sig-aware overload pick on a REFERENCED file-class: several methods can share name+arity but differ in PARAM
+    // TYPES (a String-face vs a `<>dotkt_CharSequence`-face stdlib extension). Map each `sig` token to its Type and
+    // require an EXACT full match against a reflected overload's parameters; return the UNIQUE match, or null on a
+    // miss/ambiguity so the caller falls back to the arity pick (never a regression — this only ADDS disambiguation).
+    // A token that MapType can't resolve here (an unbound `gp:T`, a not-yet-emitted type) yields no match -> fall back.
+    MethodInfo FindReflectedMethodBySig(Type ext, string name, string sig)
+    {
+        if (sig == null) return null;
+        var toks = sig.Length == 0 ? new List<string>() : SplitTopLevel(sig).ToList();
+        var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+        MethodInfo match = null;
+        foreach (var m in ext.GetMethods(bf))
+        {
+            if (m.Name != name) continue;
+            var ps = m.GetParameters();
+            if (ps.Length != toks.Count) continue;
+            var ok = true;
+            for (var i = 0; i < ps.Length; i++)
+            {
+                Type want; try { want = MapType(toks[i]); } catch { want = null; }
+                if (want == null || want != ps[i].ParameterType) { ok = false; break; }
+            }
+            if (!ok) continue;
+            if (match != null) return null;   // ambiguous exact match -> let the arity fallback decide
+            match = m;
+        }
+        return match;
+    }
 
     // Throw IndexOutOfRangeException unless 0 <= index < len (unsigned compare catches negatives too).
     void EmitStackBounds(JsonElement e)

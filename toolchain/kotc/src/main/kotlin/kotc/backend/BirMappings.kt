@@ -17,18 +17,29 @@ internal val UNARY = mapOf("unaryMinus" to "-", "unaryPlus" to "+", "not" to "!"
 // violation). kotc now emits a plain call to the stdlib math fun; bir2cir substitutes it from MathClr.kt's
 // @ClrIntrinsic bindings on the ref.dll (System.Math.* for Double/Int/Long, System.MathF.* for Float).
 
-// (PARTIALLY RETIRED 2026-07-02) The clean String ops LEFT this map: `uppercase`/`lowercase` (retired -> their stdlib
-// funs carry @ClrIntrinsic("ToUpperInvariant"/"ToLowerInvariant"), which bir2cir substitutes to the BCL, bypassing the
-// CharSequence body), `substring` (1-arg -> @ClrIntrinsic("Substring")), and the NUMBER_PARSE map ("42".toInt() ->
-// @ClrIntrinsic("System.Int32.Parse")). kotc emits a plain call for those; bir2cir substitutes them off the ref.dll.
-// The ops BELOW STAY compiler-lowered: their stdlib bodies are `CharSequence` extensions, so retiring them routes a
-// System.String receiver into a `<>dotkt_CharSequence`-typed body -> the String/CharSequence DUAL-REPRESENTATION crash
-// (MEMORY dual-representation-stdlib-types; InvalidProgram / EntryPointNotFound). They cannot retire until dual-rep is
-// solved (bir2cir/ilemit CharSequence<->String bridging), so they remain a direct System.String instance-method lowering.
+// (PARTIALLY RETIRED 2026-07-02, bundle 4-B) Bundle 4-A canonicalized the `<>dotkt_CharSequence` synthetic and added
+// bir2cir's StringCharSequenceBridge; extending that bridge to the RT stdlib self-build (materializing the stdlib's own
+// internal String->CharSequence coercions) let these RETIRE cleanly to their real stdlib bodies: `contains`, `indexOf`,
+// `startsWith`, `endsWith`, `split`, `substring(2-arg)`, `isEmpty`/`isNotEmpty` (plus the earlier uppercase/lowercase/
+// substring(1-arg)/NUMBER_PARSE). kotc emits a plain call; bir2cir attributes it to StringsKt and the bridge coerces the
+// String receiver/args -> the CharSequence-extension body runs.
+//
+// The ops BELOW STAY compiler-lowered — retiring them routes to a stdlib body that hits a DISTINCT, deeper bug (each a
+// stdlib-body-fix follow-up, NOT a dual-rep issue any more):
+//   trim/trimStart/trimEnd  — `CharSequence.trim()` is `trim(Char::isWhitespace)`; a method reference to a .NET
+//                             (@ClrIntrinsic Char) method is "not lowered" -> throws at run. The vararg form also hits
+//                             an un-wrapped inlined `(this as CharSequence)` cast.
+//   reversed                — `CharSequence.reversed()` = `StringBuilder(this).reverse()`; `new StringBuilder(CharSequence)`
+//                             has no matching .NET ctor -> InvalidProgram.
+//   padStart/padEnd         — `CharSequence.padStart` uses StringBuilder append/capacity that mis-binds -> ArgumentException.
+//   replace(String,String)  — its body's `StringBuilder.append(seq, start, END)` maps to .NET Append(str, start, COUNT)
+//                             (end != count) -> ArgumentOutOfRange. (replace(Char,Char) alone would retire, but the map
+//                             covers both via System.String.Replace, which is correct for both, so it stays here.)
+// isBlank/isNotBlank stay too (`isBlank()` = `all { it.isWhitespace() }` -> CharSequence iteration: Iterator.hasNext
+// EntryPointNotFound), lowered inline below (IsNullOrWhiteSpace), NOT in this map.
 internal val STRING_OPS = mapOf(
 	"trim" to "Trim", "trimStart" to "TrimStart", "trimEnd" to "TrimEnd",
-	"replace" to "Replace", "startsWith" to "StartsWith", "endsWith" to "EndsWith",
-	"contains" to "Contains", "indexOf" to "IndexOf", "padStart" to "PadLeft", "padEnd" to "PadRight",
+	"replace" to "Replace", "padStart" to "PadLeft", "padEnd" to "PadRight",
 )
 
 // (RETIRED 2026-07-02) The Char-ops map (isDigit/isLetter/uppercaseChar/… -> System.Char statics) lived here. It was

@@ -5,6 +5,35 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+- **Retired the clean kotc String-op lowerings (bundle 4-B) — now that CharSequence is canonical.** Building on 4-A,
+  the hardcoded `kotlin.text` String lowerings in kotc (`STRING_OPS` + the `BirEmitter` emit sites) are RETIRED for the
+  ops whose real stdlib `CharSequence`-extension bodies now run cross-assembly: `contains`, `indexOf`, `startsWith`,
+  `endsWith`, `split`, `substring(2-arg)`, `isEmpty`/`isNotEmpty` (joining the earlier uppercase/lowercase/
+  substring(1)/NUMBER_PARSE). kotc emits a PLAIN call; bir2cir attributes it to `StringsKt` and the CharSequence bridge
+  coerces the `String` receiver/args → the real Kotlin body runs. Two supporting fixes made this work:
+  - **ilemit — sig-aware overload resolution on a referenced file-class.** `FindMethod`→`FindReflectedMethod` on an
+    EXTERNAL file-class (the rt `StringsKt`) disambiguated only by arity, so a String-face `substring(String,int,int)`
+    vs a CharSequence-face `substring(<>dotkt_CharSequence,int,int)` was an arbitrary pick → the wrong body ran
+    (`EntryPointNotFound`). New `FindReflectedMethodBySig` matches each `sig` token's mapped `Type` to the reflected
+    parameters (the same signature keying the in-`_types` path already does via `MethodsBySig`); falls back to the
+    arity pick on any miss — purely additive.
+  - **bir2cir — the StringCharSequenceBridge now runs on the RT stdlib self-build too** (gate widened from
+    `attributeTopLevelOwner` to `!RefBuild`). The stdlib's own `CharSequence`-extension bodies widen a `String` into a
+    `<>dotkt_CharSequence` slot INTERNALLY (`CharSequence.indexOf(string: String)` → the private
+    `indexOf(other: CharSequence)`), which the compiled rt.dll body left as a raw String passed where the interface is
+    required → `InvalidProgram`/`EntryPointNotFound` at run. The bridge now materializes those internal coercions and
+    injects the adapter once into the rt assembly (implementing the RT's canonical `<>dotkt_CharSequence`). Ref build
+    still skipped (its bodies are squashed to `throw`).
+
+  Gate-neutral to gate-improving: the verify-il run-fail set is IDENTICAL, and the ilverify set improved 21→20
+  (`il-tryexpr` is now fully green — the rt.dll's fixed internal coercions). `il-str`/`il-substr`/`il-char`/`il-charseq`/
+  `il-charseqx` all pass. STILL LOWERED (each a DISTINCT deeper stdlib-body bug — a follow-up, no longer dual-rep):
+  `trim`/`trimStart`/`trimEnd` (`Char::isWhitespace` method-ref not lowered + un-wrapped inlined `as CharSequence`),
+  `reversed` (`StringBuilder(CharSequence)` has no .NET ctor), `padStart`/`padEnd` (StringBuilder append/capacity
+  mis-bind), `replace(String,String)` (StringBuilder `append(seq,start,END)`→`Append(str,start,COUNT)`),
+  `isBlank`/`isNotBlank` (`all { isWhitespace }` → CharSequence iteration `Iterator.hasNext` not found).
+
 ### Added
 - **CharSequence synthetic CANONICALIZATION (bundle 4-A) — cross-assembly CharSequence now works.** The synthetic
   interface `<>dotkt_CharSequence` (kotc emits it for `kotlin.CharSequence`, which has no faithful BCL equivalent) is
