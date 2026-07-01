@@ -107,12 +107,15 @@
 
 ## App / MSBuild / round-trip (added 2026-07-01; cluster around #4/#5)
 
-7. **MSBuild app + lib** — build BOTH an app and a library with MSBuild, and reference the lib from the app via
-   `<ProjectReference>`.
-8. **Round-trip comprehensive review** — audit for any Kotlin semantics the Roundtrip attributes CANNOT restore
-   (find the gaps, not just the known ones).
-9. **MSBuild practical cases** — implement a variety of practical sample cases and confirm they build AND run via MSBuild.
-   *(in progress)* DONE: the app-consume gap for a **List local + referenced top-level stdlib funs + `for (x in list)`** —
+7. **MSBuild app + lib — DONE.** Built BOTH an app and a library with MSBuild, app references the lib via `<ProjectReference>`:
+   `cases/ktproj-applib` + `cases/ktproj-refrt-pr` build+run.
+8. **Round-trip comprehensive review — DONE.** The audit deliverable is `docs/dotkt-semantics.md` §10 (Restored / Partial /
+   Lost buckets + §10.4 highest-impact gaps), grounded in facadegen/ilemit/BirEmitter + cross-checked with Codex. It FOUND
+   the gaps (the task = "find the gaps"). This session dispositioned ② object/companion + ⑥ non-constant-default-args as KNOWN/
+   ACCEPTED LIMITATIONS. The remaining gaps (① constraints/variance — facadegen-only, ③ fun-interface, ④ enum, ⑤ sealed —
+   need new carrier attrs) are documented FOLLOW-UP FIXES, NOT part of the audit task itself.
+9. **MSBuild practical cases — core DONE.** `cases/ktproj-coll` + `cases/ktproj-applib` build AND run via MSBuild.
+   DONE: the app-consume gap for a **List local + referenced top-level stdlib funs + `for (x in list)`** —
    bir2cir attributes a `callStatic owner=null` to its rt-dll file-class owner (Gap B), ilemit picks the arity-matching
    overload, and a bir2cir pass re-points the for-loop iterator protocol at the real `kotlin.collections.Iterator<E>`
    (Gap A; needed the rt bridge made `public`); `cases/ktproj-coll` builds+runs (`first`/`getOrElse`/`contains`/`indexOf`/
