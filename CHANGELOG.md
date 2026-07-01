@@ -23,6 +23,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `clrPropGet` vs `clrInstance get_X` routing edge, and 3 helper/closure body diffs.
 
 ### Fixed
+- **App-consume of collection-BUILDING ops (`map`/`filter`/`toList`/`toMutableList`/`reversed`) now works — two general
+  codegen fixes (NOT a stdlib special-case; the mutable-collection actuals were already `@ClrTypeAlias`/`@ClrIntrinsic`
+  bound and direct `ArrayList().add(...)` worked).** (1) **Generic-parameter-receiver constrained dispatch:** the real
+  stdlib `mapTo`/`filterTo`/`toCollection` do `destination.add(x)` where `destination: C` and `C : MutableCollection<R>`.
+  bir2cir lowered this to a plain `callvirt` on the `ICollection<object>` owner (the alias padded the missing type args
+  with `object`), which mis-dispatches at runtime — a `List<R>` implements `ICollection<R>`, not `<object>`, so the JIT
+  found no slot and threw `EntryPointNotFoundException`. bir2cir's `MemberCallSubstitution` now threads a lexical
+  type-parameter/param environment (`SubstCtx`) and, when a CLR-aliased-interface member is invoked on a
+  generic-parameter receiver, emits a `constrainedCall` node (`recvType=gp:C`, `iface=ICollection<R>` from the
+  receiver's constraint); ilemit's `constrainedCall` handler gained an N-arg form that emits `constrained. !!C ; callvirt
+  ICollection<R>::Add`. (2) **Ctor overload argType precision:** `ArrayList(collection)` (used by `toMutableList`/`toList`/
+  `reversed`) lowered to `new List<T>(...)` with argType `object` (bir2cir dropped kotc's declared ctor param type and
+  re-inferred `object` from the bare local), so ilemit couldn't disambiguate `List(int capacity)` from
+  `List(IEnumerable<T>)` and picked the wrong one → `InvalidProgramException`. bir2cir's `TransformNew` now instantiates
+  the ctor's declared param types by substituting the class type params with the `new`'s type args (`ArrayList[Int]` ⇒
+  `E:=Int`, via a new ref.dll type-param-name index) — yielding a precise `IReadOnlyCollection<int>` overload key; ilemit
+  falls back to assignability (`PickCtorByAssignable`) when the exact ctor misses (`IReadOnlyCollection<int>` IS
+  `IEnumerable<int>`). Residuals (separate pre-existing bugs, unchanged): `sorted()` on a `Collection` (value-type
+  `toTypedArray`/`Array.Sort`), `mapNotNull` (nullable-generic `?.let`), and `for (x in this: Iterable<T>)` over a
+  generic receiver.
 - **Round-trip gap ①: generic CONSTRAINTS and declaration-site VARIANCE now survive re-consuming a DotKt assembly as
   Kotlin.** `ilemit` already wrote the CLR constraints (`SetBaseTypeConstraint`/`SetInterfaceConstraints`) and interface
   variance (`GenericParameterAttributes.Covariant/Contravariant`), but `facadegen` emitted only the bare type-param NAME
