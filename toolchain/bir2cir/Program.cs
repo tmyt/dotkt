@@ -409,6 +409,11 @@ sealed class ReferenceMetadataIndex
         if (cands.Count == 1) { owner = cands[0].Owner; return true; }
         foreach (var c in cands)
             if (c.RecvKey == recvKey) { owner = c.Owner; return true; }
+        // The receiver key didn't disambiguate the OVERLOAD, but if every candidate lives in the SAME file-class the
+        // OWNER is still unambiguous (e.g. both `runCatching(Func)` and `T.runCatching(Func)` are in kotlin.ResultKt).
+        // Emit the shared owner; ilemit's FindMethod then selects the exact overload by signature.
+        var owners = cands.Select(c => c.Owner).Distinct().ToList();
+        if (owners.Count == 1) { owner = owners[0]; return true; }
         return false;
     }
 

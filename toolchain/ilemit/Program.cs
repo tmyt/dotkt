@@ -1185,7 +1185,11 @@ sealed partial class Emitter
         if (br < 0) return (spec, null);
         var open = spec.Substring(0, br);
         var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapType).ToArray();
-        return (open, _types[open].TB.MakeGenericType(args));
+        if (_types.TryGetValue(open, out var ti)) return (open, ti.TB.MakeGenericType(args));
+        // Owner not emitted in THIS assembly -> a REFERENCED generic type (e.g. `kotlin.Result[int]` from
+        // DotKt.Stdlib.dll): construct it by reflection so ResolveMethod/ResolveField can reflect against the
+        // instantiation (its members carry substituted signatures).
+        return (open, ResolveType(open + "`" + args.Length).MakeGenericType(args));
     }
 
     // The constructed type's GetX helpers return members whose declared types are still the OPEN params (`!0`);
@@ -1212,6 +1216,17 @@ sealed partial class Emitter
     MethodInfo ResolveMethod(string spec, string name, out Type retType, string sig = null)
     {
         var (open, constructed) = ParseOwner(spec);
+        // A REFERENCED generic owner constructed from PURE reflection types (NOT a TypeBuilder instantiation): resolve
+        // the member directly on the constructed instantiation — its GetMethods carry the substituted signature, so no
+        // TypeBuilder.GetMethod re-anchoring (below) is needed. A referenced-generic instantiated with an EMITTED
+        // (TypeBuilder) arg stays on the TypeBuilder.GetMethod path below (reflection GetMethods throws on such a type).
+        if (constructed != null && !_types.ContainsKey(open) && !IsTbInstantiation(constructed))
+        {
+            var argc = sig == null ? -1 : (sig.Length == 0 ? 0 : SplitTopLevel(sig).Count);
+            var rrm = FindReflectedMethod(constructed, name, argc);
+            retType = rrm.ReturnType;
+            return rrm;
+        }
         var mb = FindMethod(open, name, sig);
         if (constructed == null) { retType = mb.ReturnType; return mb; }
         // The owner constructed with its OWN class type parameters (`RingBuffer<T>` referenced from inside
@@ -2804,6 +2819,15 @@ sealed partial class Emitter
             if (pt != null && i < pt.Length) EmitArg(a, pt[i]); else EmitExpr(a);
             i++;
         }
+        // Fill omitted trailing default/params args (a cross-module caller may omit a `= <const>` default; kotc drops the
+        // unrecoverable-from-metadata default expression, so the real value is stamped as [Optional]/DefaultParameterValue
+        // on the callee). Only referenced methods carry that metadata (in-assembly emitted params live in `_mparams`, no
+        // defaults there), so this fills from `mb.GetParameters()`.
+        if (pt == null)
+        {
+            var ps = mb.GetParameters();
+            for (; i < ps.Length; i++) EmitDefaultArg(ps[i]);
+        }
     }
 
     // BIR `func:<ret>:<arg1>,<arg2>,...` -> a System.Func<...> (ret != void) or System.Action<...>.
@@ -2994,13 +3018,17 @@ sealed partial class Emitter
         }
         if (t != null && t.StartsWith("@"))
         {
-            // `@Name` -> the user type; `@Name[arg,...]` -> that user generic type constructed (Box<int>).
+            // `@Name` -> the user type; `@Name[arg,...]` -> that user generic type constructed (Box<int>). The `@` marker
+            // is kotc's "emitted-type" hint, but a PURE-Kotlin stdlib type with no @ClrTypeAlias (kotlin.Result,
+            // kotlin.text.MatchResult) is emitted in a REFERENCED assembly (DotKt.Stdlib.dll), not this one — so when it
+            // isn't in THIS assembly's `_types`, resolve it as a referenced .NET type (by FQN, arity-suffixed for a generic).
             var spec = t.Substring(1);
             var br = spec.IndexOf('[');
-            if (br < 0) return _types[spec].AsType;
+            if (br < 0) return _types.TryGetValue(spec, out var ti0) ? ti0.AsType : ResolveType(spec);
             var open = spec.Substring(0, br);
             var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapArg).ToArray();
-            return _types[open].AsType.MakeGenericType(args);
+            if (_types.TryGetValue(open, out var oti)) return oti.AsType.MakeGenericType(args);
+            return ResolveType(open + "`" + args.Length).MakeGenericType(args);
         }
         return t switch
         {
@@ -3015,7 +3043,10 @@ sealed partial class Emitter
             // referenced .NET type by reflection (`System.X`), else fall back to object (the pre-existing default for an
             // erased/unknown non-dotted token). This is the ilemit half of "kotc emits pure FQNs; ilemit derives
             // resolution" — so a plain `kotlin.Int`/`Foo`/`kotlin.Any` reference resolves to its emitted TypeBuilder.
-            _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('.')) ? ResolveType(t) : typeof(object)),
+            // A bare constructed-generic `Name[args]` whose open name isn't emitted here (e.g. the `ownerType` of a
+            // referenced `kotlin.Result[int]` member call) resolves as a referenced generic (GenericType arity-suffixes).
+            _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('[')) ? GenericType(t)
+                 : (t != null && t.Contains('.')) ? ResolveType(t) : typeof(object)),
         };
     }
 

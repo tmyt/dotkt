@@ -2842,6 +2842,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val arg = if (i < call.arguments.size) call.arguments[i] else null
 			if (arg != null) out.add(arg)
 			else (p.defaultValue?.expression)?.let { def ->
+				// A CROSS-MODULE callee's default value does NOT deserialize from the jar/metadata as a real IR expression:
+				// the frontend hands back an IrErrorExpression placeholder. Inlining it would reach ilemit as "IrError-
+				// Expression has no .NET lowering". Instead, OMIT the (trailing) arg — ilemit's call path then fills it from
+				// the callee's .NET [DefaultParameterValue] metadata (EmitCallArgs), which carries the REAL constant default
+				// (e.g. Regex.find's startIndex=0). This is the intended "constant default -> metadata -> ilemit fill" path.
+				if (def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) return@let
 				// Filling an OMITTED default inlines the callee's default expression at THIS call site — fine for a
 				// constant/global, but a default that reads the callee's OWN parameters/receiver (`b: Int = a * 10`, or a
 				// data class `copy`'s `x = this.x`) must be evaluated in the callee's scope (cf. Kotlin/JVM's `$default`),
@@ -3049,11 +3055,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun call(call: IrCall): String {
 		val callee = call.symbol.owner
 		val calleeFqEarly = callee.fqNameWhenAvailable?.asString()
-		// kotlin.text.MatchResult.value -> System.Text.RegularExpressions.Match.Value (find(s)?.value). Handled early
-		// because it's a property getter (the generic property->field path would otherwise emit a bare-name field).
-		if (callee.correspondingPropertySymbol?.owner?.name?.asString() == "value" &&
-			dispatchReceiver(call)?.type?.classFqName?.asString() == "kotlin.text.MatchResult")
-			return """{"k":"clrPropGet","type":"System.Text.RegularExpressions.Match","name":"Value","retType":"System.String","static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
+		// NOTE: kotlin.text.MatchResult.value is a REAL interface property (realized by ClrMatchResult) — it must route
+		// through the ordinary member-call path, NOT a hardcoded System...Match.Value lowering (that leftover forced the
+		// broken MatchResult->Match aliasing above and mis-typed the call).
 		// `.message`/`.cause` on a Throwable subclass (incl. a user `class E : Exception`) -> System.Exception
 		// .Message/.InnerException. Handled early because for a user subclass the getter resolves to a fake-override
 		// whose owner is the user class, so the generic property->field path would emit a bare (missing) field.
@@ -4369,7 +4373,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val fqp = t.classFqName?.asString()
 		// kotlin.text.Regex -> System.Text.RegularExpressions.Regex.
 		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
-		if (fqp == "kotlin.text.MatchResult") return "clr:System.Text.RegularExpressions.Match"
+		// NOTE: kotlin.text.MatchResult is a REAL emitted Kotlin interface (runtime/stdlib/.../MatchResult.kt) with a real
+		// CLR realization (ClrMatchResult over a System...Match); it must NOT be aliased to System...Match here — doing so
+		// made `ClrMatchResult : MatchResult` try to implement a CLASS as an interface (TypeLoadException). A MatchResult
+		// reference resolves as a referenced stdlib type (ilemit's MapType referenced-type fallback).
 		// The JVM kotlin-stdlib.jar aliases `kotlin.Comparator = java.util.Comparator`, so app code compiled against that
 		// jar leaks the java.util name. Collapse it to OUR kotlin.Comparator, which in a ref/rt app is a REFERENCED rt
 		// type (loaded via --ref), NOT app-emitted -- so it must be the `clrg:` ref form (ilemit resolves clrg: from the
