@@ -2215,7 +2215,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val psJson = ps.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 				val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 				val retT = birType(ctor.returnType)
-				val newE = """{"k":"clrNew","type":${str(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { str(netType(it.type)) }}],"args":[$argsJson]}"""
+				val newE = """{"k":"clrNew","type":${str(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { str(birType(it.type)) }}],"args":[$argsJson]}"""
 				val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
 				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
 				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
@@ -2262,7 +2262,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val clrOwner = ownerClass?.let { clrName(it) }
 		if (clrOwner != null && !hasExt) {
 			val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }
-			val argTypes = regs.joinToString(",") { str(netType(it.type)) }
+			val argTypes = regs.joinToString(",") { str(birType(it.type)) }
 			val member = clrName(fn) ?: objectMethodName(fn) ?: fn.name.asString()
 			val virtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT
 			if (boundRecv != null)
@@ -2281,7 +2281,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val callE = if (member == "iterator" && ownerClass?.fqNameWhenAvailable?.asString()?.startsWith("kotlin.collections") == true) {
 					val elem = (fn.parameters[dispatchIdx].type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
 					"""{"k":"callStatic","owner":"kotlin.collections.ClrIteratorBridgeKt","method":"iteratorOverEnumerable","args":[{"k":"local","name":"__self"}],"typeArgs":[${str(elem)}]}"""
-				} else """{"k":"clrInstance","type":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${str(netType(fn.returnType))},"recv":{"k":"local","name":"__self"},"args":[$argsJson]}"""
+				} else """{"k":"clrInstance","type":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${str(birType(fn.returnType))},"recv":{"k":"local","name":"__self"},"args":[$argsJson]}"""
 				val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 				val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
 				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
@@ -3568,11 +3568,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// get_Item returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T), not netType's
 				// erased `object`: ilemit then hands back gp:T (matching the stack), so the value<->collection boundary
 				// box/unbox is correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
-				val retH = if (call.type.classifierOrNull?.owner is org.jetbrains.kotlin.ir.declarations.IrTypeParameter) birType(call.type) else netType(call.type)
+				val retH = birType(call.type)
 				return if (name == "get")
-					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrInteropName(callee) ?: "get_Item")},"argTypes":[${str(netType(a[0].type))}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
+					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrInteropName(callee) ?: "get_Item")},"argTypes":[${str(birType(a[0].type))}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
 				else
-					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrInteropName(callee) ?: "set_Item")},"argTypes":[${str(netType(a[0].type))},${str(netType(a[1].type))}],"ret":"System.Void","recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
+					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrInteropName(callee) ?: "set_Item")},"argTypes":[${str(birType(a[0].type))},${str(birType(a[1].type))}],"ret":"System.Void","recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
 			}
 		}
 
@@ -3663,22 +3663,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// `get_p(__self)`/`set_p(__self, v)` method on the dispatch type, the extension receiver as `__self`.
 				extensionReceiver(call)?.let { pExt ->
 					return if (callee === prop.setter)
-						"""{"k":"clrInstance","type":${str(memberType)},"method":${str("set_$pn")},"argTypes":[${str(netType(pExt.type))},${str(netType(regularArgs(call).first().type))}],"ret":"System.Void","recv":$recvJson,"args":[${expr(pExt)},${expr(regularArgs(call).first())}]}"""
-					else """{"k":"clrInstance","type":${str(memberType)},"method":${str("get_$pn")},"argTypes":[${str(netType(pExt.type))}],"ret":${str(netType(callee.returnType))},"recv":$recvJson,"args":[${expr(pExt)}]}"""
+						"""{"k":"clrInstance","type":${str(memberType)},"method":${str("set_$pn")},"argTypes":[${str(birType(pExt.type))},${str(birType(regularArgs(call).first().type))}],"ret":"System.Void","recv":$recvJson,"args":[${expr(pExt)},${expr(regularArgs(call).first())}]}"""
+					else """{"k":"clrInstance","type":${str(memberType)},"method":${str("get_$pn")},"argTypes":[${str(birType(pExt.type))}],"ret":${str(birType(callee.returnType))},"recv":$recvJson,"args":[${expr(pExt)}]}"""
 				}
 				return if (callee === prop.setter)
 					"""{"k":"clrPropSet","type":${str(memberType)},"name":${str(pn)},"static":$isStatic,"recv":$recvJson,"value":${expr(regularArgs(call).first())}}"""
-				else """{"k":"clrPropGet","type":${str(memberType)},"name":${str(pn)},"retType":${str(netType(callee.returnType))},"static":$isStatic,"recv":$recvJson}"""
+				else """{"k":"clrPropGet","type":${str(memberType)},"name":${str(pn)},"retType":${str(birType(callee.returnType))},"static":$isStatic,"recv":$recvJson}"""
 			}
 			val member = clrInteropName(callee) ?: objectMethodName(callee) ?: name
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
 			// A restored `suspend` member's .NET method returns Task<T> (awaited via the coroutine machinery), not T.
-			val ret = str(if (callee.isSuspend) coTaskType(call.type) else netType(callee.returnType))
+			val ret = str(if (callee.isSuspend) coTaskType(call.type) else birType(callee.returnType))
 			// A .NET operator/conversion (`op_Addition`/`op_Equality`/`op_Implicit`…) is a STATIC method; a Kotlin
 			// `operator fun` models it as an instance member, so prepend the receiver as the first argument.
 			if (member.startsWith("op_") && !isStatic && recv != null) {
 				val allArgs = (listOf(expr(recv)) + regularArgs(call).map { expr(it) }).joinToString(",")
-				val allArgTypes = (listOf(str(netType(recv.type))) + regularArgs(call).map { str(netType(it.type)) }).joinToString(",")
+				val allArgTypes = (listOf(str(birType(recv.type))) + regularArgs(call).map { str(birType(it.type)) }).joinToString(",")
 				return """{"k":"clrStatic","type":${str(memberType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]}"""
 			}
 			// A .NET extension method `static M(this T self, …)` exposed as a Kotlin extension `fun T.m()` on a @Clr
@@ -3686,14 +3686,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val extRecv = extensionReceiver(call)
 			if (isStatic && extRecv != null) {
 				val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
-				val allArgTypes = (listOf(str(netType(extRecv.type))) + regularArgs(call).map { str(netType(it.type)) }).joinToString(",")
+				val allArgTypes = (listOf(str(birType(extRecv.type))) + regularArgs(call).map { str(birType(it.type)) }).joinToString(",")
 				return """{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]}"""
 			}
 			// A restored MEMBER extension function (`class C { fun T.f() }`): an INSTANCE method on the dispatch receiver
 			// (C) whose first .NET param `__self` is the extension receiver -> dispatch on `recv`, prepend the receiver.
 			if (!isStatic && extRecv != null && recv != null) {
 				val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
-				val allArgTypes = (listOf(str(netType(extRecv.type))) + regularArgs(call).map { str(netType(it.type)) }).joinToString(",")
+				val allArgTypes = (listOf(str(birType(extRecv.type))) + regularArgs(call).map { str(birType(it.type)) }).joinToString(",")
 				return """{"k":"clrInstance","type":${str(memberType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]}"""
 			}
 			val (cArgs, cArgTypes) = clrCallArgs(call, callee)
@@ -3727,9 +3727,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					val recv = extensionReceiver(call)
 					if (callee === p.setter) {
 						val args = listOfNotNull(recv) + regularArgs(call)
-						return """{"k":"clrStatic","type":${str(fileClass)},"method":${str("set_" + p.name.asString())},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"ret":"System.Void","args":[${args.joinToString(",") { expr(it) }}]}"""
+						return """{"k":"clrStatic","type":${str(fileClass)},"method":${str("set_" + p.name.asString())},"argTypes":[${args.joinToString(",") { str(birType(it.type)) }}],"ret":"System.Void","args":[${args.joinToString(",") { expr(it) }}]}"""
 					}
-					return """{"k":"clrStatic","type":${str(fileClass)},"method":${str("get_" + p.name.asString())},"argTypes":[${recv?.let { str(netType(it.type)) } ?: ""}],"ret":${str(netType(callee.returnType))},"args":[${recv?.let { expr(it) } ?: ""}]}"""
+					return """{"k":"clrStatic","type":${str(fileClass)},"method":${str("get_" + p.name.asString())},"argTypes":[${recv?.let { str(birType(it.type)) } ?: ""}],"ret":${str(birType(callee.returnType))},"args":[${recv?.let { expr(it) } ?: ""}]}"""
 				}
 			}
 
@@ -4410,7 +4410,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  `x`, which ilemit passes by address (EmitArg routes an IsByRef param through EmitAddr). */
 	internal fun clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
 		val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
-		val tj = params.map { str(netType(it.type)) }
+		val tj = params.map { str(birType(it.type)) }
 		val aj = regularArgs(call).map { val inner = byrefMarker(it); if (inner != null) (byrefBackingField(inner) ?: expr(inner)) else expr(it) }
 		return aj.joinToString(",") to tj.joinToString(",")
 	}
