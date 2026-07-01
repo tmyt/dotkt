@@ -28,6 +28,18 @@ public const val WRITE: Int = 2
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 public annotation class ClrProperty(val access: Int, val name: String)
 
+// Marks a PLAIN-typed stdlib method parameter as passed BY REFERENCE (`ref`/`out`) to the bound BCL member. Kotlin has
+// no `ref`/`out` syntax, so the byref-ness is carried as binding METADATA on a normal parameter (a plain `Int`, NOT a
+// CLR-interop `ClrRef<T>`): bir2cir reads it from the REFERENCE assembly and wraps that argument position `byref:` in
+// the @ClrIntrinsic-substituted call, so ilemit resolves the `ref`/`out` overload and emits the address-load
+// (ldloca for a local, ldflda for a field). This keeps the CLR stdlib ABI identical to the standard (JVM) Kotlin
+// stdlib — the visible signature is unchanged — so user code stays source/ABI-compatible; `ClrRef<T>`/`byref` stay
+// USER-code CLR-interop intrinsics only and never appear in stdlib source. A marker (no args): the position is the
+// only datum. (kotc also reads it, but ONLY to shape the argument as an addressable lvalue — the backing FIELD of a
+// property read rather than its getter call; the CLR call-substitution decision itself is bir2cir's.)
+@Target(AnnotationTarget.VALUE_PARAMETER)
+public annotation class ClrRefArgument
+
 // Like @ClrIntrinsic on a MEMBER, but the member binds to the named .NET member DYNAMICALLY: a CALL to it is emitted as
 // a runtime reflective dispatch instead of a static method reference. Slower, but it sidesteps static resolution that
 // otherwise cascades -- e.g. a Kotlin abstract collection (AbstractMutableList.SubList) calling get_Item where the
