@@ -34,20 +34,10 @@ mapfile -t CLR_PLAT < <(find runtime/stdlib/clr -name '*.kt' ! -path 'runtime/st
 CLR_PLAT+=("$STAGE2/_ArraysClr.kt" "$STAGE3/JvmNameActual.kt")
 COMMON_SOURCES=("${COMMON[@]}" "${SRC[@]}" "${UNSIGNED[@]}"); COMMON_CSV="$(IFS=,; echo "${COMMON_SOURCES[*]}")"
 OPTIN="-opt-in=kotlin.ExperimentalUnsignedTypes,kotlin.experimental.ExperimentalTypeInference,kotlin.contracts.ExperimentalContracts,kotlin.ExperimentalMultiplatform,kotlin.ExperimentalStdlibApi,kotlin.ExperimentalSubclassOptIn,kotlin.io.encoding.ExperimentalEncodingApi,kotlin.time.ExperimentalTime,kotlin.uuid.ExperimentalUuidApi"
-# 3b. byref/ClrRef are kotc-INJECTED pure intrinsics (FIR generation extension), absent under stock K2JVMCompiler. The
-#     stdlib's atomics use them internally (pass a field by reference to Interlocked). Compile a tiny BINARY stub jar and
-#     put it on the main build's -classpath: resolved at compile time, but NOT a source -> neither serialized into the
-#     builtins metadata (which requires the package set == the standard builtin packages) nor packed into the frontend
-#     jar -> at APP compile the jar has no byref/ClrRef and kotc's own injection supplies them (no duplicate).
-KSTDLIB="$(echo toolchain/kotc/build/install/kotc/lib/kotlin-stdlib-*.jar)"
-STUBJAR="$OUT/clr-intrinsics-stub.jar"
-cat > "$STAGE3/ClrByRefStubSrc.kt" <<'KT'
-package kotlin.clr
-public class ClrRef<T>
-public fun <T> byref(x: T): ClrRef<T> = throw UnsupportedOperationException("frontend-jar byref stub")
-KT
-java -cp "$LIBCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler "$STAGE3/ClrByRefStubSrc.kt" \
-  -classpath "$KSTDLIB" -Xallow-kotlin-package -d "$STUBJAR"
+# NOTE: the CLR stdlib no longer references the kotc-injected `ClrRef<T>`/`byref` intrinsics — its implicit-byref
+# bindings (atomics Interlocked, tryParseInt32, mathDivRemInt) now use plain-typed params marked @kotlin.clr.ClrRefArgument
+# (a normal stdlib annotation, resolvable under stock K2JVMCompiler). So the old `clr-intrinsics-stub.jar` (which defined
+# ClrRef/byref just so this stock-compiler jar build could resolve them) is GONE — the stdlib ABI now matches the jar's.
 
 # 4. compile -- -Xoutput-builtins-metadata makes K2 WRITE the .kotlin_builtins FROM OUR sources (no JVM injection).
 #    It used to crash ("builtins must span ALL builtin pkgs") only because kotlin.coroutines had no builtin package
@@ -56,7 +46,7 @@ java -cp "$LIBCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler "$STAGE3/ClrByRefSt
 #    spanned by their sources under runtime/stdlib/src via -Xcompile-builtins-as-part-of-stdlib (package-based).
 java -cp "$LIBCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
   "${COMMON[@]}" "${SRC[@]}" "${UNSIGNED[@]}" "${BUILTINS[@]}" "${CLR_PLAT[@]}" \
-  -no-stdlib -classpath "$STUBJAR" -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters \
+  -no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters \
   -Xmulti-platform -Xcommon-sources="$COMMON_CSV" $OPTIN \
   -Xcompile-builtins-as-part-of-stdlib -Xoutput-builtins-metadata -Xuse-14-inline-classes-mangling-scheme -d "$JAR"
 # 5. verify -- the compiler itself wrote the 8 .kotlin_builtins; NO JVM kotlin-stdlib injection (the old hack is gone).
