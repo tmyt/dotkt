@@ -533,8 +533,14 @@ sealed partial class Emitter
             if (ti.Def.TryGetProperty("methods", out var ms))
                 foreach (var m in ms.EnumerateArray())
                 {
-                    if (!(m.TryGetProperty("attrs", out var mattrs) && mattrs.GetArrayLength() > 0)
-                        || !ti.Methods.TryGetValue(m.GetProperty("name").GetString(), out var mb)) continue;
+                    if (!(m.TryGetProperty("attrs", out var mattrs) && mattrs.GetArrayLength() > 0)) continue;
+                    // Resolve the target MethodBuilder by SIGNATURE first (MethodsBySig), name-only second — overloaded
+                    // methods (sin(Double)+sin(Float), append(...), println(...)) share a name, so a name-only lookup
+                    // collides on the last-declared overload: every def's attrs land on that ONE builder while the other
+                    // overloads get NONE (this dropped @ClrIntrinsic from all-but-last overloads in the ref.dll, which
+                    // bir2cir reads as its binding source). Mirror the Kotlin-metadata path below.
+                    var mname = m.GetProperty("name").GetString();
+                    if (!ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var mb) && !ti.Methods.TryGetValue(mname, out mb)) continue;
                     foreach (var a in mattrs.EnumerateArray()) { var cab = BuildCab(a); if (cab != null) mb.SetCustomAttribute(cab); }
                 }
             // DotKt metadata: stamp Kotlin modifiers with no .NET analog so a consuming Kotlin module can restore
