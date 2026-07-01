@@ -331,11 +331,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	private val clrRefClassId = ClassId(clrPkg, Name.identifier("ClrRef"))
 	// `stackBuffer(n) { buf -> … }` + `StackBuffer<T>`: a scoped stack allocation (CLR `localloc`). The block is
 	// splice-inlined so the buffer lives in the caller's frame; `StackBuffer<T>` (size/get/set/asSpan) is erased.
+	// Live in the `kotlin.clr` namespace (the CLR-intrinsic home, alongside `ClrRef`/`byref`) so they're IMPORTABLE
+	// from a named package — unlike a root-package symbol, which Kotlin cannot import into a named package.
 	private val stackBufferName = "stackBuffer"
-	private val stackBufferClassId = ClassId(FqName.ROOT, Name.identifier("StackBuffer"))
-	// `Span<T>`: a root-package intrinsic that maps to the real `System.Span<T>` (netType/birType -> clrg:System.Span)
+	private val stackBufferClassId = ClassId(clrPkg, Name.identifier("StackBuffer"))
+	// `Span<T>`: a `kotlin.clr` intrinsic that maps to the real `System.Span<T>` (netType/birType -> clrg:System.Span)
 	// — the surfaced form of a .NET Span parameter and the result of `StackBuffer.asSpan()`.
-	private val spanClassId = ClassId(FqName.ROOT, Name.identifier("Span"))
+	private val spanClassId = ClassId(clrPkg, Name.identifier("Span"))
 	// The intrinsics are CLR-context features -> available whenever .NET interop is active (metadata loaded).
 	private val clrActive = module != null
 
@@ -343,13 +345,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// claimed so the packaged stdlib — built with CLR_TYPES_METADATA="" (module==null -> clrActive==false) — can
 	// `import kotlin.clr.byref` / `ClrRef` to pass a field BY REFERENCE to a BCL `ref`/`out` method (the atomics'
 	// Interlocked, int.TryParse, Math.DivRem). The metadata-backed packages (System.*, the round-trip facades) and the
-	// metadata-context intrinsics (stackBuffer/Span) stay clrActive-gated.
+	// metadata-context intrinsics (stackBuffer/Span) stay clrActive-gated — but they now ALSO live under `kotlin.clr`
+	// (claimed above), so no root-package claim is needed (a root [KotlinFile] facade fun is covered by topLevelPackages).
 	override fun hasPackage(packageFqName: FqName): Boolean =
-		packageFqName == clrPkg || (clrActive && (packageFqName in packages || packageFqName in topLevelPackages || packageFqName.isRoot))
+		packageFqName == clrPkg || (clrActive && (packageFqName in packages || packageFqName in topLevelPackages))
 
 	override fun getTopLevelCallableIds(): Set<CallableId> =
 		if (!clrActive) hashSetOf(CallableId(clrPkg, Name.identifier(byrefName)))
-		else hashSetOf(CallableId(clrPkg, Name.identifier(byrefName)), CallableId(FqName.ROOT, Name.identifier(stackBufferName))) + topLevelByCallable.keys + topLevelPropByCallable.keys
+		else hashSetOf(CallableId(clrPkg, Name.identifier(byrefName)), CallableId(clrPkg, Name.identifier(stackBufferName))) + topLevelByCallable.keys + topLevelPropByCallable.keys
 
 	override fun getTopLevelClassIds(): Set<ClassId> =
 		if (!clrActive) hashSetOf(clrRefClassId) else byClassId.keys + clrRefClassId + stackBufferClassId + spanClassId

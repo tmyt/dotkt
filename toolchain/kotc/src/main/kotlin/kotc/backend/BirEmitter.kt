@@ -3046,7 +3046,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				"only a trivial block `{ suspendFun() }` is supported; extract the body into a `suspend fun` and call that")
 		}
 		// `stackBuffer(n) { … }` intrinsic -> scoped stack allocation (splice the block into the caller's frame).
-		if (callee.name.asString() == "stackBuffer" && callee.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+		// Matched by FULL name (`kotlin.clr.stackBuffer`, its CLR-intrinsic home) so a user function happening to be
+		// named `stackBuffer` is not mistaken for the intrinsic.
+		if (callee.fqNameWhenAvailable?.asString() == "kotlin.clr.stackBuffer")
 			return emitStackBuffer(call)
 		// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 		((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }
@@ -4291,8 +4293,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// The intrinsic `kotlin.clr.ClrRef<T>` -> `byref:T` (a managed reference; a ref-cell delegate local is a `ref T` local).
 		if (t.classFqName?.asString() == "kotlin.clr.ClrRef")
 			return "byref:" + ((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) }.orEmpty()
-		// The intrinsic `Span<T>` -> the real `System.Span<T>`.
-		if (t.classFqName?.asString() == "Span")
+		// The intrinsic `kotlin.clr.Span<T>` -> the real `System.Span<T>`.
+		if (t.classFqName?.asString() == "kotlin.clr.Span")
 			return "clrg:System.Span[" + (((t as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object") + "]"
 		// Nullable value type `Int?` -> System.Nullable<int> (reference nullables stay as the ref type).
 		nullableElem(t)?.let { return "nullable:$it" }

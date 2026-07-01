@@ -3,6 +3,7 @@
 // real System.Span<T> over the stack memory, passable to .NET Span APIs (which can read AND write it).
 // NOTE: like C#'s own stackalloc, the emitted method is intentionally UNVERIFIABLE (localloc) -> exempt from ilverify.
 import P.SpanOps
+import kotlin.clr.stackBuffer   // stackBuffer/StackBuffer/Span now live in the importable `kotlin.clr` namespace (was the root package)
 
 fun main() {
     val last = stackBuffer<Int, Int>(5) { buf ->
