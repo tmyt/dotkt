@@ -45,6 +45,64 @@ emit_il() {
 	dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$out" "$asm" "${refs[@]}" "$cir"/*.cir.json >/dev/null 2>&1
 }
 
+# ----- MARKER round-trip: Kotlin class-nature facts with no faithful .NET analog survive re-consumption -----
+# A `fun interface` (SAM), a `sealed` class/interface, and an `enum class` lower to a plain interface / abstract-class /
+# CLR-enum, LOSING the Kotlin nature. ilemit stamps [KotlinFunInterface]/[KotlinSealed]; facadegen reads them back
+# (`funinterface`/`sealed` meta lines); ClrTypeInjection restores `status.isFun` / `Modality.SEALED`. (Runs BEFORE the
+# suspend section below, which is blocked on the deferred coroutine lowering.) See docs/dotkt-semantics.md §10.
+M="$ROOT/build/roundtrip-markers"; rm -rf "$M"; mkdir -p "$M/lib" "$M/app" "$M/rogue" "$M/libbir" "$M/libil" "$M/appbir" "$M/appil"
+cat > "$M/lib/lib.kt" <<'EOF'
+package shapes
+fun interface Handler { fun on(x: Int): Int }
+sealed interface Shape { fun area(): Int }
+class Circle(val r: Int) : Shape { override fun area(): Int = r * r * 3 }
+class Square(val s: Int) : Shape { override fun area(): Int = s * s }
+enum class Color { RED, GREEN, BLUE }
+fun runHandler(h: Handler, v: Int): Int = h.on(v)
+fun describe(s: Shape): String = "area=" + s.area()
+EOF
+cat > "$M/app/app.kt" <<'EOF'
+import shapes.Handler
+import shapes.Shape
+import shapes.Circle
+import shapes.Square
+import shapes.Color
+import shapes.runHandler
+import shapes.describe
+fun classify(s: Shape): String = when (s) {   // exhaustive over the restored sealed hierarchy — no `else` needed
+    is Circle -> "circle"
+    is Square -> "square"
+}
+fun main() {
+    val h = object : Handler { override fun on(x: Int): Int = x * 10 }
+    println(runHandler(h, 5))       // fun interface (nature restored) usable across module
+    println(describe(Circle(2)))    // sealed supertype usable across module
+    println(classify(Square(3)))    // exhaustive `when` over the restored sealed type
+    println(Color.GREEN)            // enum value access (non-regression)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$M/lib" -no-stdlib -classpath "$CP" -d "$M/libbir" >/dev/null 2>&1
+emit_il "$M/libil" MarkLib "$M/libbir"/*.bir.json >/dev/null 2>&1
+dotnet "$ROOT/build/retarget-bin/retarget.dll" "$M/libil/MarkLib.dll" --refs "$REFS" >/dev/null 2>&1
+"$LAUNCHER" --scan-imports --output "$M/imports.txt" "$M/app"/*.kt >/dev/null 2>&1
+dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$M/meta" --refs "$REFS$M/libil/MarkLib.dll" --import-list "$M/imports.txt" >/dev/null 2>&1
+CLR_TYPES_METADATA="$M/meta" "$LAUNCHER" "$M/app" -no-stdlib -classpath "$CP" -d "$M/appbir" >/dev/null 2>&1
+emit_il "$M/appil" MarkApp --ref "$M/libil/MarkLib.dll" "$M/appbir"/*.bir.json >/dev/null 2>&1
+cp "$M/libil/MarkLib.dll" "$M/appil/"
+mkexpected="$(printf '50\narea=12\nsquare\nGREEN')"
+mkactual="$(dotnet "$M/appil/MarkApp.dll" 2>/dev/null)"
+# NEGATIVE: `sealed` is cross-module-enforced — a rogue subclass in another module MUST be rejected (proves Modality.SEALED restored).
+cat > "$M/rogue/rogue.kt" <<'EOF'
+import shapes.Shape
+class Rogue : Shape { override fun area(): Int = 0 }
+EOF
+if CLR_TYPES_METADATA="$M/meta" "$LAUNCHER" "$M/rogue" -no-stdlib -classpath "$CP" -d "$M/roguebir" >/dev/null 2>&1; then rogue_ok=1; else rogue_ok=0; fi
+if [[ "$mkactual" == "$mkexpected" && "$rogue_ok" == 0 ]]; then
+    echo "PASS  roundtrip-markers (fun interface nature; sealed modality+exhaustive-when+cross-module enforcement; enum)"
+else
+    echo "FAIL  roundtrip-markers"; printf -- '--- expected ---\n%s\n--- actual ---\n%s\n--- rogue accepted (want reject): %s ---\n' "$mkexpected" "$mkactual" "$rogue_ok"; exit 1
+fi
+
 R="$ROOT/build/roundtrip"; rm -rf "$R"; mkdir -p "$R/lib" "$R/app" "$R/libbir" "$R/libil" "$R/appbir" "$R/appil"
 
 # The Kotlin LIBRARY: a class with infix/operator/(member)suspend members + top-level (plain + suspend) functions.

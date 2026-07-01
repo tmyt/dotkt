@@ -274,6 +274,10 @@ static class FacadeGen
                 var idot = iclr != null ? ikt + "=" + iclr : ikt;
                 var itp = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
                 sb.Append($"interface {iname} {idot}{itp}\n");
+                // Round-trip class-nature markers (separate lines so an un-updated injector safely ignores them): a
+                // `fun interface` (SAM) -> `funinterface` (consumer can pass a lambda); a `sealed` interface -> `sealed`.
+                if (HasKotlinFunInterface(t)) sb.Append("funinterface\n");
+                if (HasKotlinSealed(t)) sb.Append("sealed\n");
                 // Round-trip gap ①: declaration-site variance (`out`/`in`) + upper bounds of the interface's type params.
                 if (t.IsGenericTypeDefinition) EmitTypeParamMeta(t.GetGenericArguments(), t, sb, isInterface: true, typeLevel: true);
                 // Interface->interface supertypes (GENERIC only) so an injected `IList<T>` carries its inherited
@@ -344,6 +348,10 @@ static class FacadeGen
             // `class <Name> <DotNetName> <open|sealed> [<TypeParam>...]` carries inheritability + generic arity.
             sb.Append(isStatic ? $"object {simpleName} {dotNet}\n"
                                : $"class {simpleName} {dotNet} {(t.IsSealed ? "sealed" : "open")}{tparams}\n");
+            // Round-trip: a Kotlin `sealed` class lowered to a CLR abstract (non-sealed) class, so the `open` token above
+            // understates it — mark it `sealed` (a separate line; an un-updated injector ignores it). The consumer sees
+            // `sealed` (restricted subclassing) but the closed inheritor set isn't carried (exhaustive `when` needs `else`).
+            if (!isStatic && HasKotlinSealed(t)) sb.Append("sealed\n");
             // Round-trip gap ①: upper bounds of the class's type params (a CLR class type param has no variance form, so
             // only bounds — e.g. `class SortedPair<T : Comparable<T>>` -> `tbound T generic:Comparable[T]`).
             if (!isStatic && t.IsGenericTypeDefinition) EmitTypeParamMeta(t.GetGenericArguments(), t, sb, isInterface: false, typeLevel: true);
@@ -808,6 +816,22 @@ static class FacadeGen
     static bool HasKotlinFileClass(Type t)
     {
         try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KFileAttr); }
+        catch { return false; }
+    }
+
+    // Class-nature round-trip markers: [KotlinFunInterface] on a `fun interface` (SAM), [KotlinSealed] on a `sealed`
+    // class/interface. Read back so the injector restores the Kotlin nature the CLR shape (plain interface / abstract
+    // class) dropped. Absent (a genuine .NET type, or an un-stamped assembly) -> the plain shape, as before.
+    const string KFunIfaceAttr = "DotKt.Runtime.CompilerServices.KotlinFunInterfaceAttribute";
+    const string KSealedAttr   = "DotKt.Runtime.CompilerServices.KotlinSealedAttribute";
+    static bool HasKotlinFunInterface(Type t)
+    {
+        try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KFunIfaceAttr); }
+        catch { return false; }
+    }
+    static bool HasKotlinSealed(Type t)
+    {
+        try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KSealedAttr); }
         catch { return false; }
     }
 

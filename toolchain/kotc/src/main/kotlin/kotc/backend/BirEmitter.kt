@@ -659,7 +659,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else (st.classifierOrNull?.owner as? IrClass)?.let { ownerSpec(it, st) }
 			}
 			.joinToString(",") { str(it) }
-		return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods],"properties":[$ifaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
+		// Round-trip class-nature facts (Kotlin, not CLR): `fun interface` (SAM) and `sealed` — carried so a re-consuming
+		// Kotlin module can restore them (ilemit stamps [KotlinFunInterface]/[KotlinSealed]; a plain CLR interface loses both).
+		val funSealed = ""","isFun":${iface.isFun},"isSealed":${iface.modality == Modality.SEALED}"""
+		return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn$funSealed${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods],"properties":[$ifaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
 	}
 
 	internal fun IrSimpleFunction.signatureMentionsJava(): Boolean =
@@ -1191,7 +1194,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// TypeParams), so flattening loses nothing; the type keeps its dotted name so references still resolve.
 		val nestedIn = emittedNestedParent(klass)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null && !anonNames.containsKey(klass) && it.typeParameters.isEmpty() }
 			?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
-		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn${typeParamsJson(innerEnclosingTypeParams(klass) + klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList],"attrs":[${attrsJson(klass.annotations)}]}"""
+		// Round-trip: a Kotlin `sealed` class lowers to a CLR abstract class (loses the sealed modality) — carry the fact
+		// so a re-consuming Kotlin module restores `sealed` (ilemit stamps [KotlinSealed]).
+		val sealedFlag = ""","isSealed":${klass.modality == Modality.SEALED}"""
+		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn$sealedFlag${typeParamsJson(innerEnclosingTypeParams(klass) + klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList],"attrs":[${attrsJson(klass.annotations)}]}"""
 	}
 
 	internal fun ctor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {

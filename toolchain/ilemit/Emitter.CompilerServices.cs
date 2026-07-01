@@ -40,6 +40,10 @@ sealed partial class Emitter
         _kFileAttr     = DefineEmbeddedAttr(CompilerServicesNs + "KotlinFileClassAttribute");               // <File>Kt facade marker
         _kInlineAttr   = DefineEmbeddedAttr(CompilerServicesNs + "KotlinInlineAttribute", typeof(string));  // carried BIR body
         _kReadOnlyAttr = DefineEmbeddedAttr(CompilerServicesNs + "KotlinReadOnlyAttribute");                // public field, `val`
+        // Round-trip class-nature markers with no faithful .NET analog (a `fun interface`->plain interface, a `sealed`
+        // class/interface->abstract-class/interface). Metadata-only, read back by facadegen to restore the Kotlin nature.
+        _kFunIfaceAttr = DefineEmbeddedAttr(CompilerServicesNs + "KotlinFunInterfaceAttribute");            // `fun interface` (SAM)
+        _kSealedAttr   = DefineEmbeddedAttr(CompilerServicesNs + "KotlinSealedAttribute");                  // `sealed` class/interface
         // Reference-type nullability uses .NET's OWN NRT metadata (not a DotKt attribute), embedded under its standard
         // System.Runtime.CompilerServices names so a C# consumer recognizes it too — the csc model. [NullableContext(b)]
         // is the per-type default (we emit 1 = non-null); [Nullable(2)] overrides a specific nullable reference position.

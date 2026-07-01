@@ -102,6 +102,8 @@ private class ClrType(
 	val clrBinding: String? = null,    // ref/runtime split: the BCL type this Kotlin type binds to (`List` -> IReadOnlyList)
 	val typeParamVariance: Map<String, String> = emptyMap(),   // gap ①: declaration-site variance (`out`/`in`) per type param (interfaces)
 	val typeParamBounds: Map<String, List<String>> = emptyMap(), // gap ①: upper bound(s) per type param (`<T : Comparable<T>>`)
+	val isFunInterface: Boolean = false,   // round-trip: was a Kotlin `fun interface` (SAM) — restore `status.isFun` so lambdas convert
+	val isSealed: Boolean = false,         // round-trip: was a Kotlin `sealed` class/interface — restore Modality.SEALED
 )
 private class ClrModule(val types: List<ClrType>, val topLevel: List<ClrTopLevel> = emptyList(), val topLevelProps: List<ClrTopLevelProp> = emptyList())
 
@@ -128,6 +130,7 @@ private object ClrMetadataHolder {
 		if (!file.isFile) return null
 		val types = ArrayList<ClrType>()
 		var name = ""; var dotNet = ""; var isObject = false; var isInterface = false; var isOpen = false; var isAnnotation = false
+		var isFunIface = false; var isSealedTy = false   // round-trip: `funinterface`/`sealed` marker lines for the CURRENT type
 		var clrBind: String? = null   // ref/runtime split: BCL binding from `token[2] = KotlinFqn=BclName`
 		var tparams = emptyList<String>(); var supers = emptyList<String>()
 		val methods = ArrayList<ClrMethod>(); val ctors = ArrayList<List<ClrParam>>()
@@ -140,7 +143,7 @@ private object ClrMetadataHolder {
 			// gap ①: per-type-param variance/bounds accumulators for the CURRENT type (from `tvariance`/`tbound` lines);
 			// `lastMethod` is the most-recently-parsed fun/tlfun, the target of any following `mbound` (method-level) line.
 			val tpVariance = HashMap<String, String>(); val tpBounds = HashMap<String, MutableList<String>>(); var lastMethod: ClrMethod? = null
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(memberExtProps), clrBind, HashMap(tpVariance), tpBounds.mapValues { it.value.toList() })); clrBind = null }
+		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(memberExtProps), clrBind, HashMap(tpVariance), tpBounds.mapValues { it.value.toList() }, isFunIface, isSealedTy)); clrBind = null }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
 			if (line.isEmpty()) continue
@@ -148,7 +151,7 @@ private object ClrMetadataHolder {
 			when (tok[0]) {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
 					// ref/runtime split: `token[2] = KotlinFqn=BclName` -> LEFT = Kotlin identity (drives namespace/ClassId),
 					// RIGHT (if any) = the BCL binding for clrName. Most injected types have no `=`.
 					val dn = tok[2]; val eq = dn.indexOf('='); dotNet = if (eq >= 0) dn.substring(0, eq) else dn; clrBind = if (eq >= 0) dn.substring(eq + 1) else null
@@ -161,7 +164,7 @@ private object ClrMetadataHolder {
 				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
 				// trailing params (from its longest ctor) become the single annotation constructor.
 				"annotation" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
 					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
 					ctors.add(parseParams(tok.drop(3)))
 				}
@@ -215,6 +218,10 @@ private object ClrMetadataHolder {
 				"event" -> events.add(ClrEvent(tok[1], tok[2], parseParams(tok.drop(3))))
 				// index <indexType> <valueType> <ro|rw> — `this[i]` indexer -> operator get/set.
 				"index" -> indexer = ClrIndexer(tok[1], tok[2], tok.getOrNull(3) == "rw")
+					// round-trip: `funinterface` = the current interface was a Kotlin `fun interface` (restore status.isFun for SAM);
+					// `sealed` = the current class/interface was Kotlin `sealed` (restore Modality.SEALED). Standalone marker lines.
+					"funinterface" -> isFunIface = true
+					"sealed" -> isSealedTy = true
 					// gap 1: `tvariance <param> <out|in>` = declaration-site variance of a class/interface type param.
 					"tvariance" -> if (tok.size >= 3) tpVariance[tok[1]] = tok[2]
 					// gap 1: `tbound <param> <boundToken>` = an upper bound of a class/interface type param (repeatable).
@@ -367,6 +374,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// A non-sealed .NET class is `open` so Kotlin can inherit it (the basis of framework-direct UI).
 		return createTopLevelClass(classId, ClrGeneratedKey, kind) {
 			if (type.open || type.isInterface) modality = Modality.OPEN
+			// round-trip: restore the Kotlin `sealed` modality (a DotKt sealed type lowered to a CLR abstract-class/
+			// interface). The closed inheritor set isn't carried, so cross-module exhaustive `when` still needs `else`.
+			if (type.isSealed) modality = Modality.SEALED
+			// round-trip: a Kotlin `fun interface` (SAM) — restore `status.isFun` so a consumer can pass a lambda where
+			// this interface is expected (FIR SAM resolution keys off isFun + the single abstract method facadegen emits).
+			if (type.isFunInterface) status { isFun = true }
 			// Generic .NET type (`Collection<T>`) -> declare its type parameters. gap ①: restore declaration-site variance
 			// (`out`/`in`, interfaces) and upper bound(s) (`<T : Comparable<T>>`) that facadegen now reads back (else invariant/unbounded).
 			for (tp in type.typeParams) {

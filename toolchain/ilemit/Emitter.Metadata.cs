@@ -12,7 +12,7 @@ sealed partial class Emitter
     // The embedded `DotKt.Runtime.CompilerServices.*` attribute types — defined into THIS module by EnsureKotlinAttrs
     // (Emitter.CompilerServices.cs). Always available once defined (no external reference needed to stamp).
     bool _kAttrsResolved;
-    Type _kFuncAttr, _kFileAttr, _kInlineAttr, _kReadOnlyAttr, _nullableAttr, _nullableCtxAttr;
+    Type _kFuncAttr, _kFileAttr, _kInlineAttr, _kReadOnlyAttr, _kFunIfaceAttr, _kSealedAttr, _nullableAttr, _nullableCtxAttr;
 
     // [KotlinReadOnly] — a public backing field whose Kotlin property isn't publicly settable (restore as `val`).
     void ApplyKotlinReadOnly(FieldBuilder fb)
@@ -40,6 +40,22 @@ sealed partial class Emitter
     {
         EnsureKotlinAttrs();
         tb.SetCustomAttribute(new CustomAttributeBuilder(_kFileAttr.GetConstructor(Type.EmptyTypes), new object[0]));
+    }
+
+    // [KotlinFunInterface] — marks an interface that was a Kotlin `fun interface` (SAM), so a re-consuming Kotlin
+    // module restores it as a functional interface and can pass a lambda where it's expected.
+    void ApplyKotlinFunInterface(TypeBuilder tb)
+    {
+        EnsureKotlinAttrs();
+        tb.SetCustomAttribute(new CustomAttributeBuilder(_kFunIfaceAttr.GetConstructor(Type.EmptyTypes), new object[0]));
+    }
+
+    // [KotlinSealed] — marks a type that was a Kotlin `sealed` class/interface (it lowers to a CLR abstract class /
+    // interface, which loses the sealed modality), so a re-consuming Kotlin module restores `Modality.SEALED`.
+    void ApplyKotlinSealed(TypeBuilder tb)
+    {
+        EnsureKotlinAttrs();
+        tb.SetCustomAttribute(new CustomAttributeBuilder(_kSealedAttr.GetConstructor(Type.EmptyTypes), new object[0]));
     }
 
     // Returns null when the CLR custom-attribute encoder cannot represent this annotation's shape (so the caller

@@ -548,6 +548,11 @@ sealed partial class Emitter
             // methods carrying infix/operator/suspend. The attribute types are SYNTHESIZED per-assembly (embedded
             // internal) by DefineEmbeddedAttr (Emitter.CompilerServices.cs) — NOT loaded from DotKt.Runtime.
             if (ti.IsFileClass) ApplyKotlinFileClass(ti.TB);
+            // Class-nature markers: a `fun interface` (SAM) lowers to a plain CLR interface, and a `sealed` class/
+            // interface lowers to a CLR abstract-class/interface — both lose the Kotlin nature. Stamp a marker so a
+            // re-consuming Kotlin module can restore it (facadegen reads them back; a C# consumer ignores them).
+            if (ti.TB != null && ti.Def.TryGetProperty("isFun", out var isFun) && isFun.GetBoolean()) ApplyKotlinFunInterface(ti.TB);
+            if (ti.TB != null && ti.Def.TryGetProperty("isSealed", out var isSealed) && isSealed.GetBoolean()) ApplyKotlinSealed(ti.TB);
             if (ti.Def.TryGetProperty("methods", out var kms))
                 foreach (var m in kms.EnumerateArray())
                 {
