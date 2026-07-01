@@ -15,8 +15,12 @@
    dual-rep collision (`import System.Text.StringBuilder` vs stdlib alias).
 5. **netType→bir2cir migration completion** — finish removing kotc's CLR knowledge so kotc reads NEITHER annotation +
    emits pure FQN identities. **Progress (2026-07-01)**: the rule-3 helper hoist + the `@ClrTypeAlias` type-strip are moved
-   to bir2cir (kotc reads NO `@ClrTypeAlias`); the `@ClrIntrinsic`/`clrName` removal is in progress (decl/call/property
-   rename foundation laid + verified byte-identical). **The `netType` chunk is elevated to THE NEXT priority (user, 2026-07-01)**
+   to bir2cir (kotc reads NO `@ClrTypeAlias`); the `@ClrIntrinsic`/`clrName` removal is **DONE** — `annClr` (kotc's
+   `@ClrIntrinsic` reader) is DELETED; bir2cir reproduces every rename/strip/property-routing from the ref.dll and the
+   rt-stdlib CIR is byte-identical (0/237 diff). **Proven gate-neutral**: the `verify-il` FAIL set is identical before
+   (`c140acf`) and after (`d4b243d`) the annClr removal — 83 pre-existing runtime FAILs + 5 pre-existing VERIFY FAILs
+   (`customexc`/`tryexpr`/`gen3`/`gen4`/`mc1`), none introduced or fixed by the removal. **Remaining = the `netType` chunk.
+   The `netType` chunk is elevated to THE NEXT priority (user, 2026-07-01)**
    — it is NOT just layer purity, it **improves overload resolution**: `netType` resolves `kotlin.*→System.*` in the
    argTypes/ret/catch slots (which ilemit uses to pick the BCL overload), AND has no map for user classes so it **degrades
    user/reference types to `System.Object`** (BirEmitter.kt ~1956), which LOSES overload fidelity — a user `Foo : IComparable`
