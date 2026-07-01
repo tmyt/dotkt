@@ -3559,12 +3559,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
 			// A restored `suspend` member's .NET method returns Task<T> (awaited via the coroutine machinery), not T.
 			val ret = str(if (callee.isSuspend) coTaskType(call.type) else birType(callee.returnType))
+			val suspendTag = suspendCallTag(callee)
 			// A .NET operator/conversion (`op_Addition`/`op_Equality`/`op_Implicit`…) is a STATIC method; a Kotlin
 			// `operator fun` models it as an instance member, so prepend the receiver as the first argument.
 			if (member.startsWith("op_") && !isStatic && recv != null) {
 				val allArgs = (listOf(expr(recv)) + regularArgs(call).map { expr(it) }).joinToString(",")
 				val allArgTypes = (listOf(str(birType(recv.type))) + regularArgs(call).map { str(birType(it.type)) }).joinToString(",")
-				return """{"k":"clrStatic","type":${str(memberType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]}"""
+				return """{"k":"clrStatic","type":${str(memberType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag}"""
 			}
 			// A .NET extension method `static M(this T self, …)` exposed as a Kotlin extension `fun T.m()` on a @Clr
 			// object: it's a STATIC call whose first argument is the extension receiver.
@@ -3572,20 +3573,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (isStatic && extRecv != null) {
 				val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
 				val allArgTypes = (listOf(str(birType(extRecv.type))) + regularArgs(call).map { str(birType(it.type)) }).joinToString(",")
-				return """{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]}"""
+				return """{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag}"""
 			}
 			// A restored MEMBER extension function (`class C { fun T.f() }`): an INSTANCE method on the dispatch receiver
 			// (C) whose first .NET param `__self` is the extension receiver -> dispatch on `recv`, prepend the receiver.
 			if (!isStatic && extRecv != null && recv != null) {
 				val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
 				val allArgTypes = (listOf(str(birType(extRecv.type))) + regularArgs(call).map { str(birType(it.type)) }).joinToString(",")
-				return """{"k":"clrInstance","type":${str(memberType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]}"""
+				return """{"k":"clrInstance","type":${str(memberType)},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag}"""
 			}
 			val (cArgs, cArgTypes) = clrCallArgs(call, callee)
 			return if (isStatic)
-				"""{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]}"""
+				"""{"k":"clrStatic","type":${str(clrType)},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag}"""
 			else
-				"""{"k":"clrInstance","type":${str(memberType)},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]}"""
+				"""{"k":"clrInstance","type":${str(memberType)},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag}"""
 		}
 
 		// Companion-object member -> a static member of the enclosing class (precedes user-property field access).
@@ -4029,7 +4030,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				}
 				// A suspend top-level fun's .NET method returns Task<T> (awaited by the coroutine machinery via expr(call)).
 				val ret = if (callee.isSuspend) coTaskType(call.type) else birType(callee.returnType)
-				return """{"k":"clrStatic","type":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { str(birType(it.type)) }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]}"""
+				return """{"k":"clrStatic","type":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { str(birType(it.type)) }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
 			}
 		}
 		// Fill omitted constant default arguments at the call site (IL methods have no default mechanism).
@@ -4050,9 +4051,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (recv != null) {
 				val ownerStr = ownerSpec(declaringClass, recv.type)
 				val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
-				return """{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$all]}"""
+				return """{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$all]${suspendCallTag(callee)}}"""
 			}
-			return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]}"""
+			return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]${suspendCallTag(callee)}}"""
 		}
 		// Instance method on a user class, or a sibling top-level call.
 		return if (recv != null) {
@@ -4071,8 +4072,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// -- lives on the BCL interface FindMethod skips). ilemit gates on the owner-interface so non-collection misses
 			// still throw. See ilemit EmitDynamicCall.
 			val dynRet = ""","dynRet":${str(birType(call.type))}"""
-			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]${overridesJson(callee)}}"""
-		} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]}"""
+			"""{"k":"callInstance","ownerType":${str(ownerStr)},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || '[' in ownerStr, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}}"""
+		} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}}"""
 	}
 
 	/**
@@ -4086,6 +4087,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** Like [retHint] but with a pre-computed return-type string (e.g. a suspend call's kickoff `Task<T>`). */
 	internal fun retHintStr(generic: Boolean, retStr: String): String =
 		if (generic) ""","retType":${str(retStr)}""" else ""
+
+	/** Neutral metadata tag marking a call whose callee is a `suspend` function. kotc records only the FACT
+	 *  (mirroring the `"suspend":true` fn-decl flag); the coroutine LOWERING (await / state machine / Task ABI)
+	 *  is a DEFERRED downstream layer that consumes this tag. kotc does NO coroutine lowering. */
+	internal fun suspendCallTag(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
+		if ((callee as? IrSimpleFunction)?.isSuspend == true) ""","suspendCall":true""" else ""
 
 	/** `,"typeArgs":["int"]` when the callee is a generic method (its own type params resolved at this call). */
 	internal fun typeArgsJson(call: IrCall): String {
