@@ -14,6 +14,30 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   arg-type-discriminated overloads collided — `sqrt`/`abs`/`pow`/… and `isNaN`/`isInfinite`/`isFinite` silently used
   the `System.Math`/`System.Double` overload for Float args instead of `System.MathF`/`System.Single`. Now resolved by
   the exact call signature (Float math correctly hits `System.MathF`). verify-il gate-neutral (fail-set identical).
+- **Layer-purity: retired kotc's hardcoded `String`/`Char` CLR lowerings (bundle 1, batch 2).** Following the Math
+  pilot's recipe, kotc no longer hardcodes the *cleanly-substitutable* `kotlin.text` ops — it emits a plain call and the
+  already-built bir2cir `MemberCallSubstitution` consumes the stdlib's `@ClrIntrinsic` bindings off the ref.dll:
+  - **String family:** `uppercase`/`lowercase` (→ `@ClrIntrinsic` `ToUpperInvariant`/`ToLowerInvariant`),
+    `substring(startIndex)` (→ `Substring`), `"42".toInt()`/`toLong`/`toDouble`/`toFloat`/`toShort`/`toByte` (→
+    `System.X.Parse`; the `NUMBER_PARSE` map deleted), and `repeat(n)` (the real StringBuilder body). `String.format`
+    deleted as **dead code** — a `java.util.Formatter` JVM-ism the CLR frontend jar has no symbol for (unresolved
+    before the backend runs); making it work is a stdlib `String.Companion.format` `@ClrIntrinsic` binding, not a kotc
+    lowering.
+  - **Char family:** `isDigit`/`isLetter`/`isWhitespace`/`isLetterOrDigit`/`uppercaseChar`/`lowercaseChar`/
+    `isUpperCase`/`isLowerCase` (the `CHAR_OPS` map deleted) → `CharClr.kt`'s `@ClrIntrinsic("System.Char.*")` FQ
+    bindings, substituted to `clrStatic System.Char.*`.
+  - **Reusable bir2cir fix:** the bare-`@ClrIntrinsic` extension-fun index was keyed by `name|recvKey`, so a same-name/
+    same-receiver overload of a **different arity** collided — `substring(String,Int)` captured the 3-arg
+    `substring(String,Int,Int)` call and emitted `Substring(start,end)` with `end` read as a LENGTH. Now keyed by
+    `name|recvKey|paramCount` (the sibling of the Math pilot's full-signature keying).
+  - **DELIBERATELY KEPT lowered (blocked, not retired):** `trim`/`contains`/`startsWith`/`endsWith`/`replace`/
+    `indexOf`/`padStart`/`padEnd`/`split`/`reversed`/`substring(start,end)`/`isEmpty`/`isBlank` — their stdlib bodies
+    are `CharSequence` extensions, so a `System.String` receiver hits the known String/CharSequence
+    **dual-representation** crash (InvalidProgram / EntryPointNotFound). And **`Int/Long.toString(radix)`** (the
+    `System.Convert.ToString` lowering) — bir2cir attributes it correctly but the stdlib digit-loop body miscompiles
+    cross-module (base-2 OK, but `255.toString(16)` → `"ffffffff"`), so retiring would ship a correctness regression.
+    Both retire only once the underlying stdlib/emit bugs are fixed. verify-il gate-neutral (il fail-set + full FAIL
+    list identical before/after).
 - **Round-trip carrier attributes for Kotlin class-nature (`sealed` fully; `fun interface` nature) — re-consuming a
   DotKt `.dll` as Kotlin restores more of the original surface (round-trip gaps ③ + ⑤).** A `fun interface` (SAM) and a
   `sealed` class/interface lower to a plain CLR interface / abstract-class, dropping the Kotlin nature. Now: kotc emits

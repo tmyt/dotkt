@@ -64,6 +64,28 @@ is largely STALE** — a code-grounded currency check found:
     handle separately. **bir2cir gap found + fixed (recurs for other families):** the top-level `@ClrIntrinsic`
     index was NAME-keyed (first-wins), so arg-type-discriminated overloads collided (Math vs MathF; Double.* vs
     Single.* for isNaN/isInfinite/isFinite). Fixed by full-signature keying + ambiguity-guarded name fallback.
+  - ✅ **`System.String` (partial) — DONE 2026-07-02** (`332462d` bir2cir arity fix, `3aec0a1` kotc retire). Retired the
+    CLEANLY-substitutable `kotlin.text` String ops: `uppercase`/`lowercase` (@ClrIntrinsic ToUpper/ToLowerInvariant),
+    `substring(startIndex)` (1-arg → @ClrIntrinsic Substring), the `NUMBER_PARSE` map (`"42".toInt()`/toLong/toDouble/
+    toFloat/toShort/toByte → @ClrIntrinsic System.X.Parse), **`strRepeat`** (real StringBuilder body works), and the
+    dead **`format`** lowering (JVM-ism; the CLR frontend jar has no `String.Companion.format`, so it never resolved —
+    a stdlib binding, not a kotc lowering). **bir2cir gap fixed (reusable):** the bare-@ClrIntrinsic EXTENSION index was
+    keyed `name|recvKey`, colliding across arities — `substring(String,Int)`@ClrIntrinsic captured the 3-arg
+    `substring(String,Int,Int)` call → wrong `Substring(start,end)`. Now keyed `name|recvKey|paramCount`.
+    **BLOCKED (kept lowered, NOT retired):** `trim`/`contains`/`startsWith`/`endsWith`/`replace`/`indexOf`/`padStart`/
+    `padEnd`/**`strReversed`**/**`split`**/`substring(start,end)`/`isEmpty`/`isBlank` — their stdlib bodies are
+    `CharSequence` extensions, so a System.String receiver hits the **String/CharSequence dual-representation** crash
+    (InvalidProgram / EntryPointNotFound; `trim` also needs `::isWhitespace` method-ref lowering). Retire once
+    bir2cir/ilemit bridge String↔CharSequence.
+  - ✅ **`System.Char` — DONE 2026-07-02** (`3aec0a1`+Char commit, same kotc retire pass). Deleted the `CHAR_OPS` map +
+    emit site; `CharClr.kt`'s `@ClrIntrinsic("System.Char.IsDigit"/"ToUpperInvariant"/…)` FQ bindings substitute via
+    bir2cir's top-level-intrinsic-by-signature path → `clrStatic System.Char.*`. No stdlib change; gate-neutral (il-char
+    run-correct).
+  - ⛔ **`System.Convert` (`toString(radix)`, `:3721`) — BLOCKED, kept lowered.** bir2cir correctly attributes a plain
+    call to the stdlib `StringNumberConversionsKt.toString(int,int)` digit-loop body, but that emitted body MISCOMPILES
+    cross-module: base-2 is right (`"1010"`) but the letter-digit branch is not (`255.toString(16)` → `"ffffffff"`,
+    `(-255).toString(16)` → `"1"`). Retiring ships a correctness regression, so the `System.Convert.ToString` lowering
+    STAYS until the stdlib/emit bug (a `clrDigitToChar`/StringBuilder.insert path exercised only for radix>10) is fixed.
 
   > ### RETIRE-PATTERN RECIPE (hand this to each follow-up family: String/Convert/Char/Regex/Console/compareTo/…)
   > 1. **Precondition — confirm the binding exists stdlib-side.** grep `runtime/stdlib` for the target funs; each
