@@ -51,11 +51,28 @@
      `@ClrIntrinsic("X")` binds the .NET property as a UNIT (read→get_X, write→set_X), and a method that targets an accessor slot
      is marked EXPLICITLY (not inferred from a `"set_"` string). Indexers (`operator get/set`→`get_Item`/`set_Item`) are genuinely
      methods and stay method-bound.
-   - **(c) ctor overload argTypes**: kotc emits `new` nodes for stdlib/user types with NO `argTypes` (unlike `clrNew`), so when
-     bir2cir substitutes the type to a BCL type with overloaded ctors, ilemit value-infers and picks WRONG: `StringBuilder("hello")`
-     resolves to `StringBuilder(Int32)` (capacity) → ilverify `found 'string' expected Int32` → `InvalidProgramException`. FIX:
-     carry the arg static types on `new` (bir2cir attaches them on substitution, or kotc emits them as FQN) so the ctor resolves by
-     signature. Pre-existing (annClr's bir2cir changes are member-routing, not ctor selection); same family as the #9 app-consume gaps.
+   - **(c) ctor overload argTypes** — **DONE (2026-07-01)**: `StringBuilder("hello")` was resolving to `StringBuilder(Int32)` →
+     `InvalidProgramException`. Root cause was DEEPER than "missing argTypes": bir2cir's `TransformNew` already synthesized argTypes,
+     but ilemit's `ClrRef` sent the lowered primitive-SHORTHAND token (`"string"`) straight to `ResolveType` (FQN reflection) which
+     can't resolve shorthand → threw → `EmitClrNew` nulled → ctor picked by ARITY only → wrong overload. FIX (general, no StringBuilder
+     special-case): ilemit `ClrRef` routes bare primitive/string/void/object shorthand through `MapType` (root fix); added `NewCtorBySig`
+     (ctor match by argTypes, arity fallback) for external `new`; kotc now emits `argTypes` (pure Kotlin FQN via `birType`) on the plain
+     `new` node. Verified: StringBuilder("hello")→5/hello ilverify-clean; String/Int/no-arg ctor paths all resolve; ref+rt clean;
+     gate-neutral (verify-il FAIL set identical, 83). Commits: ilemit `30d96aa`, kotc `dfcefcc`.
+
+   **netType (a) — REFINED PLAN (user, 2026-07-01), by NAMESPACE:** the "special types" split by namespace, NOT all @ClrTypeAlias'd —
+   - **kotlinx.\*** (`kotlinx.atomicfu.*`, `kotlinx.coroutines.*` types) are NOT stdlib (bundled libs, MEMORY kotlin-net-is-pure-binding):
+     their netType branches + bespoke BirEmitter lowering (atomicfu factory→`clrNew DotKtx.Atomicfu.*`) are BOTH a layer AND a scope
+     violation → REMOVE, do not alias/migrate. `DotKtx.*` bespoke names are the "compiler knows an external lib" smell, to retire.
+     (NB: `kotlin.concurrent.atomics.*` — the kotlin.\* stdlib atomics, `AtomicsClr.kt` — is DIFFERENT and STAYS as a real emitted type.)
+   - **kotlin.\* pure-Kotlin** (`kotlin.Result`, a `value class` with no BCL equivalent) → emit as the REAL `kotlin.Result` type,
+     RETIRE the `DotKt.Result` shared-struct + its bespoke BirEmitter lowering. @ClrTypeAlias is WRONG here (that's Kotlin↔BCL dual-rep only).
+   - **kotlin.\* dual-rep to BCL** (`kotlin.sequences.Sequence` → `System.Collections.Generic.IEnumerable`) → `@ClrTypeAlias` (the only alias case).
+   - **coroutine TYPES ≠ coroutine LOWERING**: the types are just CLR types (resolved like the above); only the suspend→state-machine
+     LOWERING is the deferred BIR-level decision. So NO coroutine-type carve-out in netType.
+   - Everything else (primitives/collections/exceptions/user types): netType→`birType` "just works" (bir2cir already lowers argTypes via
+     the rich @ClrTypeAlias set); the Object-collapse fix comes free. Verify FUNCTIONALLY (vocabulary shift `System.Int32`→`"int"`, NOT
+     byte-identical). `birType` already covers Span/ClrRef/Regex/Comparator/IDisposable.
 6. **coroutine lowering layer** — deferred design (Task-based). (MEMORY `coroutine-lowering-layer-deferred`)
 
 ## App / MSBuild / round-trip (added 2026-07-01; cluster around #4/#5)
