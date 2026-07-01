@@ -1227,7 +1227,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	internal fun method(fn: IrSimpleFunction, static: Boolean): String {
-		if (fn.isSuspend) return suspendMethod(fn, static)
 		// An override of a CLASS or ENUM_CLASS member (the latter: a per-entry enum body overriding an abstract enum
 		// member) reuses the base virtual slot. (Interface members bind by name/signature, handled elsewhere.)
 		val isOverride = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS } }
@@ -1277,7 +1276,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val inlineFlag = if (isInlineWithLambda(fn)) ""","inline":true""" else ""
 		// Return nullability (`fun f(): String?`) — the params carry their own `nullable` flag; ilemit stamps both as .NET NRT ([Nullable]/[NullableContext]).
 		val retNull = if (fn.returnType.isMarkedNullable()) ""","retNullable":true""" else ""
-		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}}"""
+		// A `suspend fun` carries the neutral `"suspend":true` FACT (+ `resultType` = its Kotlin result type). kotc does
+		// NO coroutine lowering: the body emits plainly (suspend calls carry `"suspendCall":true` from the call path), and
+		// the await/state-machine/Task-ABI lowering is a DEFERRED downstream layer. ilemit's own suspend handling reads
+		// `resultType` for the kickoff signature and (under stdlib-compile) emits a throwing stub. See MEMORY
+		// coroutine-lowering-layer-deferred.
+		val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${str(if (fn.returnType.isUnit()) "void" else birType(fn.returnType))}""" else ""
+		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull$suspendField,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}}"""
 	}
 
 	// ===== Rule 3 (CLR binding): static-helper hoist — SYNTHESIS + type-strip live in bir2cir =====
@@ -1713,7 +1718,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		emitCpsBlock(t.tryResult, ret, steps)
 		for (c in t.catches) {
 			val v = c.catchParameter.name.asString()
-			steps.add("""{"k":"coCatchBegin","id":$tid,"excType":${str(netType(c.catchParameter.type))},"var":${str(v)}}""")
+			steps.add("""{"k":"coCatchBegin","id":$tid,"excType":${str(birType(c.catchParameter.type))},"var":${str(v)}}""")
 			emitCpsBlock(c.result, ret, steps)
 		}
 		val finallyJson = if (hasFinally) {
@@ -2074,25 +2079,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	internal fun lambda(node: IrFunctionExpression): String {
 		val fn = node.function
-		// A `suspend () -> T` lambda is a coroutine; in the CLR ABI it is a `Func<Task<T>>` (coroutine-abi-decision).
-		// The trivial builder lambda `{ f() }` (a single tail suspend call) just returns f()'s kickoff Task, so the
-		// emitted body is correct as-is — only the declared return type / delegate type become Task<T> / Func<Task<T>>.
-		val ret = if (fn.isSuspend) coTaskType(fn.returnType) else if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
-		val ftype = if (fn.isSuspend) coSuspendFuncType(fn) else funcTypeOf(fn)
-		// A non-trivial suspend lambda body is itself a coroutine: CPS-linearize it (Phase 0) so ilemit emits a
-		// state machine + Task<T> kickoff for the lifted method / closure `invoke`, exactly like a `suspend fun`.
-		// Trivial `{ f() }` lambdas just forward f()'s kickoff Task and emit as-is. See isTrivialSuspendLambda.
-		val cps = fn.isSuspend && !isTrivialSuspendLambda(fn)
+		// kotc does NO coroutine lowering: a `suspend () -> T` lambda emits as a PLAIN lambda (its suspend calls carry
+		// `"suspendCall":true`); the Task-ABI / state-machine lowering is a deferred downstream layer. So the declared
+		// return / delegate type stay the plain Kotlin shapes here.
+		val ret = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		val ftype = funcTypeOf(fn)
 		// A lambda has no `this` of its own, so a referenced `<this>` is the enclosing instance -> capture it.
 		val captures = capturedVars(fn, includeThis = true)
 		if (captures.isEmpty()) {
 			val lname = "__lambda${lambdaCounter++}"
 			val freeTps = freeTypeParams(fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 			val typeParams = typeParamsJson(freeTps)
-			if (cps) {
-				val co = emitCoroutineBody(fn)
-				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false$typeParams,"suspend":true,"resultType":${str(co.resultType)},"cpsFields":[${co.cpsFields}],"params":[${lambdaParamsJson(fn.parameters)}],"steps":[${co.steps}]}""")
-			} else {
+			run {
 				val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
 			}
@@ -2113,10 +2111,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 		}
 		val invoke: String
-		if (cps) {
-			val co = emitCoroutineBody(fn)
-			invoke = """{"name":"invoke","static":false,"override":false,"virtual":false,"suspend":true,"resultType":${str(co.resultType)},"cpsFields":[${co.cpsFields}],"params":[${lambdaParamsJson(fn.parameters)}],"steps":[${co.steps}]}"""
-		} else {
+		run {
 			val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 			invoke = """{"name":"invoke","static":false,"override":false,"virtual":false,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}"""
 		}
@@ -3090,20 +3085,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val smName = "<>dotkt_${synthScope}_Seq${closureCounter++}"
 			return """{"k":"sequenceNew","sm":${str(smName)},"elem":${str(elem)},"cpsFields":[${co.cpsFields}],"steps":[${co.steps}]}"""
 		}
-		// `kotlinx.coroutines.runBlocking { … }` -> drive the coroutine synchronously. Only a TRIVIAL block
-		// (`{ suspendFun() }`, a single tail suspend call) is supported here (a non-trivial block needs suspend-lambda
-		// CPS). The block's kickoff Task is awaited via GetAwaiter().GetResult().
+		// `kotlinx.coroutines.runBlocking { … }` synchronously drives a coroutine — that is coroutine LOWERING, which
+		// kotc no longer does (deferred downstream layer). For a TRIVIAL block (`{ suspendFun() }`) emit the inner
+		// suspend call PLAINLY (it carries `"suspendCall":true`); the downstream layer turns it into the real drive.
 		if (callee.fqNameWhenAvailable?.asString() == "kotlinx.coroutines.runBlocking") {
 			val block = regularArgs(call).lastOrNull() as? IrFunctionExpression
 			val stmts = (block?.function?.body as? IrBlockBody)?.statements.orEmpty()
 			val tail = stmts.singleOrNull()?.let { if (it is IrReturn) it.value else it as? IrExpression }
-			if (block != null && tail is IrCall && tail.symbol.owner.isSuspend) {
-				val unit = call.type.isUnit()
-				val taskT = "clrg:System.Threading.Tasks.Task" + (if (unit) "" else "[${birType(tail.type)}]")
-				val awaiterT = "clrg:System.Runtime.CompilerServices.TaskAwaiter" + (if (unit) "" else "[${birType(tail.type)}]")
-				val getAwaiter = """{"k":"clrInstance","type":${str(taskT)},"method":"GetAwaiter","argTypes":[],"ret":${str(awaiterT)},"recv":${expr(tail)},"args":[]}"""
-				return """{"k":"clrInstance","type":${str(awaiterT)},"method":"GetResult","argTypes":[],"ret":${str(if (unit) "System.Void" else netType(tail.type))},"recv":$getAwaiter,"args":[]}"""
-			}
+			if (block != null && tail is IrCall && tail.symbol.owner.isSuspend) return expr(tail)
 			return unsupported(call, "this runBlocking block",
 				"only a trivial block `{ suspendFun() }` is supported; extract the body into a `suspend fun` and call that")
 		}
@@ -3567,8 +3556,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			val member = clrInteropName(callee) ?: objectMethodName(callee) ?: name
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
-			// A restored `suspend` member's .NET method returns Task<T> (awaited via the coroutine machinery), not T.
-			val ret = str(if (callee.isSuspend) coTaskType(call.type) else birType(callee.returnType))
+			// kotc emits the PLAIN Kotlin return type; a `suspend` callee is marked by `suspendTag` only (the Task/await
+			// lowering is a deferred downstream layer). No coroutine ABI (Task<T>) is baked here.
+			val ret = str(birType(callee.returnType))
 			val suspendTag = suspendCallTag(callee)
 			// A .NET operator/conversion (`op_Addition`/`op_Equality`/`op_Implicit`…) is a STATIC method; a Kotlin
 			// `operator fun` models it as an instance member, so prepend the receiver as the first argument.
@@ -4038,8 +4028,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						return """{"k":"clrGenericStatic","type":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapes":[$shapes],"args":[${a.joinToString(",") { expr(it) }}]}"""
 					}
 				}
-				// A suspend top-level fun's .NET method returns Task<T> (awaited by the coroutine machinery via expr(call)).
-				val ret = if (callee.isSuspend) coTaskType(call.type) else birType(callee.returnType)
+				// PLAIN Kotlin return type; a `suspend` callee is flagged by `suspendCallTag` (Task/await lowering deferred).
+				val ret = birType(callee.returnType)
 				return """{"k":"clrStatic","type":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { str(birType(it.type)) }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
 			}
 		}
@@ -4047,10 +4037,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val args = filledArgs(call).joinToString(",")
 		// A generic method `fun <T> id(...)` -> carry the resolved type args so ilemit can MakeGenericMethod.
 		val ta = typeArgsJson(call)
-		// A call to a `suspend fun` resolves to its kickoff, which returns `Task<T>` (not the result T). The retType
-		// hint (used by ilemit when typeArgs are present) must reflect that, else an awaited generic suspend call
-		// is typed as the result T and `GetAwaiter` can't be found. See docs §13k.
-		val effRet = if (callee.isSuspend) coTaskType(call.type) else birType(call.type)
+		// PLAIN Kotlin return type for the retType hint; a `suspend` callee is flagged by `suspendCallTag` on the node
+		// (the kickoff/Task/await lowering is a deferred downstream layer). kotc bakes no coroutine ABI here.
+		val effRet = birType(call.type)
 		val recv = dispatchReceiver(call)
 		// An extension function: the receiver is the `__self` first arg. TOP-LEVEL `fun T.f()` -> static `f(self,args)`.
 		// MEMBER `class C { fun T.f() }` has BOTH receivers -> instance method on the enclosing C (dispatch receiver),
@@ -4407,14 +4396,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return "clr:System.IDisposable"
 		// kotlin.CharSequence -> a synthetic interface (no faithful .NET equivalent). See charSeqIface.
 		charSeqIface(t)?.let { return "@$it" }
-		// A function type as a value (e.g. a `block: suspend (P)->R` parameter): `kotlin.FunctionN` -> Func/Action,
-		// `kotlin.coroutines.SuspendFunctionN` -> Func<P..,Task<R>> (suspend lambdas are Func<..,Task<R>> in the ABI).
+		// A function type as a value (e.g. a `(P)->R` parameter): `kotlin.FunctionN` -> a plain Func/Action. A
+		// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) is emitted as the PLAIN function type too —
+		// kotc bakes no coroutine ABI (no Func<..,Task<R>>); the suspend-delegate lowering is a deferred downstream layer.
 		if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.Function"))) {
-			val suspend = fqp.startsWith("kotlin.coroutines.SuspendFunction")
 			val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
 			if (args.isNotEmpty()) {
 				val ret = args.last(); val ps = args.dropLast(1)
-				val retEnc = if (suspend) coTaskType(ret) else if (ret.isUnit()) "void" else birTypeDeleg(ret)
+				val retEnc = if (ret.isUnit()) "void" else birTypeDeleg(ret)
 				return "func:$retEnc:${ps.joinToString(",") { birTypeDeleg(it) }}"
 			}
 		}
