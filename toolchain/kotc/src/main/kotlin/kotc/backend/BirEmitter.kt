@@ -4011,14 +4011,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						val loc = """{"k":"local","name":${str(tmp)}}"""
 						val first = """{"k":"field","ownerType":${str(owner)},"recv":$loc,"name":"first"}"""
 						val last = """{"k":"field","ownerType":${str(owner)},"recv":$loc,"name":"last"}"""
-						return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tmp)},"type":${str(rangeType)},"init":${expr(range)}}],"result":{"k":"clrStatic","type":"System.Math","method":"Clamp","argTypes":[${str(netType(recv.type))},${str(netType(recv.type))},${str(netType(recv.type))}],"ret":${str(netType(callee.returnType))},"args":[${expr(recv)},$first,$last]}}"""
+						return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tmp)},"type":${str(rangeType)},"init":${expr(range)}}],"result":{"k":"clrStatic","type":"System.Math","method":"Clamp","argTypes":[${str(birType(recv.type))},${str(birType(recv.type))},${str(birType(recv.type))}],"ret":${str(birType(callee.returnType))},"args":[${expr(recv)},$first,$last]}}"""
 					}
 					// non-progression range (ClosedFloatingPointRange/ClosedRange): not an intrinsic, emit the real call.
 				} else {
 					// value form: coerceAtMost(v) / coerceAtLeast(v) / coerceIn(min, max) -> Math.Min/Max/Clamp.
 					val m = when (calleeFq) { "kotlin.ranges.coerceAtMost" -> "Min"; "kotlin.ranges.coerceAtLeast" -> "Max"; else -> "Clamp" }
 					val all = listOf(extensionReceiver(call)!!) + regularArgs(call)
-					return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${all.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"args":[${all.joinToString(",") { expr(it) }}]}"""
+					return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${all.joinToString(",") { str(birType(it.type)) }}],"ret":${str(birType(callee.returnType))},"args":[${all.joinToString(",") { expr(it) }}]}"""
 				}
 			}
 			// repeat(n) { i -> body } -> an inline counter loop (no closure; body uses enclosing locals).
@@ -4046,10 +4046,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val convTo = if (recvBir == "kotlin.Double") "double" else "float"
 				val parts = (listOfNotNull(extRecv) + regularArgs(call)).mapIndexed { i, a ->
 					if (i > 0 && recvBir != null && birType(a.type) != recvBir)
-						(if (recvBir == "kotlin.Double") "System.Double" else "System.Single") to """{"k":"conv","to":${str(convTo)},"e":${expr(a)}}"""
-					else netType(a.type) to expr(a)
+						(if (recvBir == "kotlin.Double") "kotlin.Double" else "kotlin.Float") to """{"k":"conv","to":${str(convTo)},"e":${expr(a)}}"""
+					else birType(a.type) to expr(a)
 				}
-				return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${parts.joinToString(",") { str(it.first) }}],"ret":${str(netType(callee.returnType))},"args":[${parts.joinToString(",") { it.second }}]}"""
+				return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${parts.joinToString(",") { str(it.first) }}],"ret":${str(birType(callee.returnType))},"args":[${parts.joinToString(",") { it.second }}]}"""
 			}
 			if (fq == "kotlin.text") {
 				// `s.repeat(n)` -> Concat(Repeat(s,n)); `s.reversed()` -> new string(Reverse(s).ToArray()).
@@ -4084,21 +4084,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// `Char.uppercase()/lowercase()` (which return a multi-char String, NOT ToUpper on the char). A char
 					// receiver here would emit `String.ToUpper(recv=char)` -> char-as-String-recv -> NullRef. Only lower
 					// for a String receiver; a Char receiver falls through to its real stdlib body.
-					if (recv != null && netType(recv.type) != "System.Char" && !(name == "indexOf" && regularArgs(call).size > 2)) {
+					if (recv != null && birType(recv.type) != "kotlin.Char" && !(name == "indexOf" && regularArgs(call).size > 2)) {
 						val args = regularArgs(call)
-						return """{"k":"clrInstance","type":"System.String","method":${str(m)},"argTypes":[${args.joinToString(",") { str(netType(it.type)) }}],"ret":${str(netType(callee.returnType))},"recv":${expr(recv)},"args":[${args.joinToString(",") { expr(it) }}]}"""
+						return """{"k":"clrInstance","type":"System.String","method":${str(m)},"argTypes":[${args.joinToString(",") { str(birType(it.type)) }}],"ret":${str(birType(callee.returnType))},"recv":${expr(recv)},"args":[${args.joinToString(",") { expr(it) }}]}"""
 					}
 				}
 				// `"42".toInt()` -> `System.Int32.Parse(string)` (static, receiver passed as the arg).
 				NUMBER_PARSE[name]?.let { t ->
 					extensionReceiver(call)?.let { recv ->
-						return """{"k":"clrStatic","type":${str(t)},"method":"Parse","argTypes":["System.String"],"ret":${str(netType(callee.returnType))},"args":[${expr(recv)}]}"""
+						return """{"k":"clrStatic","type":${str(t)},"method":"Parse","argTypes":["System.String"],"ret":${str(birType(callee.returnType))},"args":[${expr(recv)}]}"""
 					}
 				}
 				// `c.isDigit()`/`c.uppercaseChar()` -> `System.Char.X(char)` (static, receiver as the arg).
 				CHAR_OPS[name]?.let { m ->
 					extensionReceiver(call)?.let { recv ->
-						return """{"k":"clrStatic","type":"System.Char","method":${str(m)},"argTypes":["System.Char"],"ret":${str(netType(callee.returnType))},"args":[${expr(recv)}]}"""
+						return """{"k":"clrStatic","type":"System.Char","method":${str(m)},"argTypes":["System.Char"],"ret":${str(birType(callee.returnType))},"args":[${expr(recv)}]}"""
 					}
 				}
 				// String predicates: isEmpty/isNotEmpty -> Length==0/!=0, isBlank/isNotBlank -> IsNullOrWhiteSpace.
