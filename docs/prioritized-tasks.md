@@ -9,8 +9,13 @@
 2. **exception map → @ClrTypeAlias** — retire kotc's `BirMappings.NET_EXCEPTIONS` hardcoded `kotlin.*Exception→System.*`
    map (`@ClrTypeAlias` the stdlib exception classes + bir2cir substitutes + delete the kotc map). Plus quarantine the
    33 old `clr.Clr` samples. (MEMORY `exception-map-to-clrtypealias`)
-3. **implicit ref-passing** — `@ClrRefArgument` byref for stdlib methods; unblocks atomics (Interlocked), TryParse,
-   DivRem. Kotlin has no ref/out syntax → binding-metadata-driven. (MEMORY `implicit-ref-passing-to-stdlib-methods`)
+3. **`@ClrRefArgument` — implicit stdlib→BCL ref-argument binding** (NOT "byref" — that word means the user-facing
+   interop, which this is deliberately NOT). Marks a stdlib method's PLAIN-typed param as passed by reference to the bound
+   BCL member (atomics Interlocked, TryParse, DivRem). Kotlin has no ref/out syntax → binding-metadata-driven; and it must
+   NOT use the user-facing `ClrRef<T>`/`byref` intrinsics — those change the visible ABI (ClrRef is compiler-consumed,
+   user-code-only) and break parity with the standard stdlib. DISTINCT from the user CLR-interop path (facadegen surfaces a
+   .NET `ref`/`out` param as `ClrRef<T>`; the user calls `byref(x)`; a `ref` RETURN surfaces as plain `T`). (MEMORY
+   `implicit-ref-passing-to-stdlib-methods`)
 4. **facadegen app .NET interop** — operators (`op_*`), C#-origin extension methods, static `.Companion` routing,
    dual-rep collision (`import System.Text.StringBuilder` vs stdlib alias).
 5. **netType→bir2cir migration completion** — finish removing kotc's CLR knowledge so kotc reads NEITHER annotation +
