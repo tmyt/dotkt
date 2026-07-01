@@ -67,7 +67,11 @@ private class ClrParam(val name: String, val type: String)
 // [KotlinFunction] (carried in the `fun`/`tlfun` modifier token as comma-suffixes). For a `suspend` fun the
 // returnType is already the unwrapped result T (facadegen unwrapped the emitted Task<T>).
 private class ClrMethod(val name: String, val returnType: String, val open: Boolean, val abstract: Boolean, val protected: Boolean, val params: List<ClrParam>, val typeParams: List<String> = emptyList(),
-	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false, val clrName: String? = null)
+	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false, val clrName: String? = null) {
+	// gap ①: upper bounds of this method's own type params (`<T : Comparable<T>>`), keyed by param name. Filled from the
+	// `mbound` lines that follow the `fun`/`tlfun` line (mutable so the line-by-line parser can append after construction).
+	val typeParamBounds: MutableMap<String, MutableList<String>> = HashMap()
+}
 // A restored top-level Kotlin function: its package, the .NET file-facade class to call, and the function itself.
 private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
 private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: String, val mutable: Boolean, val receiver: String)
@@ -96,6 +100,8 @@ private class ClrType(
 	val staticProps: List<ClrProperty>,// public static props/fields of a NORMAL class -> companion-object members
 	val memberExtProps: List<ClrMemberExtProp> = emptyList(),  // `class C { val T.p }` member extension properties
 	val clrBinding: String? = null,    // ref/runtime split: the BCL type this Kotlin type binds to (`List` -> IReadOnlyList)
+	val typeParamVariance: Map<String, String> = emptyMap(),   // gap ①: declaration-site variance (`out`/`in`) per type param (interfaces)
+	val typeParamBounds: Map<String, List<String>> = emptyMap(), // gap ①: upper bound(s) per type param (`<T : Comparable<T>>`)
 )
 private class ClrModule(val types: List<ClrType>, val topLevel: List<ClrTopLevel> = emptyList(), val topLevelProps: List<ClrTopLevelProp> = emptyList())
 
@@ -131,7 +137,10 @@ private object ClrMetadataHolder {
 		val staticMethods = ArrayList<ClrMethod>(); val staticProps = ArrayList<ClrProperty>()
 		val memberExtProps = ArrayList<ClrMemberExtProp>()
 		val topLevel = ArrayList<ClrTopLevel>(); val topLevelProps = ArrayList<ClrTopLevelProp>(); var filePkg: FqName? = null; var fileClass = ""   // current [KotlinFile] section
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(memberExtProps), clrBind)); clrBind = null }
+			// gap ①: per-type-param variance/bounds accumulators for the CURRENT type (from `tvariance`/`tbound` lines);
+			// `lastMethod` is the most-recently-parsed fun/tlfun, the target of any following `mbound` (method-level) line.
+			val tpVariance = HashMap<String, String>(); val tpBounds = HashMap<String, MutableList<String>>(); var lastMethod: ClrMethod? = null
+		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(memberExtProps), clrBind, HashMap(tpVariance), tpBounds.mapValues { it.value.toList() })); clrBind = null }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
 			if (line.isEmpty()) continue
@@ -139,7 +148,7 @@ private object ClrMetadataHolder {
 			when (tok[0]) {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null
 					// ref/runtime split: `token[2] = KotlinFqn=BclName` -> LEFT = Kotlin identity (drives namespace/ClassId),
 					// RIGHT (if any) = the BCL binding for clrName. Most injected types have no `=`.
 					val dn = tok[2]; val eq = dn.indexOf('='); dotNet = if (eq >= 0) dn.substring(0, eq) else dn; clrBind = if (eq >= 0) dn.substring(eq + 1) else null
@@ -152,14 +161,14 @@ private object ClrMetadataHolder {
 				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
 				// trailing params (from its longest ctor) become the single annotation constructor.
 				"annotation" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null
 					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
 					ctors.add(parseParams(tok.drop(3)))
 				}
 				// file <package> <fileClassFqn> — a Kotlin file facade ([KotlinFile]); subsequent `tlfun` lines are
 				// TOP-LEVEL functions in <package> (`-` = root), restored as a .NET static call to <fileClassFqn>.
 				"file" -> {
-					flush(); name = ""; supers = emptyList()
+					flush(); name = ""; supers = emptyList(); tpVariance.clear(); tpBounds.clear(); lastMethod = null
 					filePkg = if (tok.getOrNull(1) == "-" || tok.getOrNull(1).isNullOrEmpty()) FqName.ROOT else FqName(tok[1])
 					fileClass = tok.getOrNull(2) ?: ""
 				}
@@ -168,7 +177,7 @@ private object ClrMetadataHolder {
 					val fm = parseFunMods(tok.getOrNull(3))
 					val m = ClrMethod(tok[1], tok[2], fm.open, fm.abstract, fm.protected,
 						parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }, fm.infix, fm.operator, fm.suspend, fm.inline, fm.ext)
-					topLevel.add(ClrTopLevel(filePkg ?: FqName.ROOT, fileClass, m))
+					topLevel.add(ClrTopLevel(filePkg ?: FqName.ROOT, fileClass, m)); lastMethod = m   // gap ①: target of any following `mbound`
 				}
 				// tlextprop <Name> <type> <ro|rw> <receiverType> — a top-level EXTENSION property (`val T.p`); the file
 				// class holds its get_/set_<Name>(__self) accessors. Restored as a top-level extension property.
@@ -187,6 +196,7 @@ private object ClrMetadataHolder {
 					val body = rest.filterNot { it.startsWith("clr:") }
 					methods.add(ClrMethod(tok[1], tok[2], fm.open, fm.abstract, fm.protected,
 						parseParams(body), body.filterNot { it.contains(':') }, fm.infix, fm.operator, fm.suspend, fm.inline, fm.ext, mclr))
+						lastMethod = methods.last()   // gap ①: target of any following `mbound`
 				}
 				"ctor" -> ctors.add(parseParams(tok.drop(1)))
 				// sfun <Name> <ret> [<param>:<type>]* — a public STATIC method of a normal class (-> companion).
@@ -205,6 +215,12 @@ private object ClrMetadataHolder {
 				"event" -> events.add(ClrEvent(tok[1], tok[2], parseParams(tok.drop(3))))
 				// index <indexType> <valueType> <ro|rw> — `this[i]` indexer -> operator get/set.
 				"index" -> indexer = ClrIndexer(tok[1], tok[2], tok.getOrNull(3) == "rw")
+					// gap 1: `tvariance <param> <out|in>` = declaration-site variance of a class/interface type param.
+					"tvariance" -> if (tok.size >= 3) tpVariance[tok[1]] = tok[2]
+					// gap 1: `tbound <param> <boundToken>` = an upper bound of a class/interface type param (repeatable).
+					"tbound" -> if (tok.size >= 3) tpBounds.getOrPut(tok[1]) { ArrayList() }.add(tok[2])
+					// gap 1: `mbound <param> <boundToken>` = an upper bound of the most-recent fun/tlfun method type param.
+					"mbound" -> if (tok.size >= 3) lastMethod?.typeParamBounds?.getOrPut(tok[1]) { ArrayList() }?.add(tok[2])
 			}
 		}
 		flush()
@@ -348,8 +364,19 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// A non-sealed .NET class is `open` so Kotlin can inherit it (the basis of framework-direct UI).
 		return createTopLevelClass(classId, ClrGeneratedKey, kind) {
 			if (type.open || type.isInterface) modality = Modality.OPEN
-			// Generic .NET type (`Collection<T>`) -> declare its type parameters (invariant; bounds omitted).
-			for (tp in type.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+			// Generic .NET type (`Collection<T>`) -> declare its type parameters. gap ①: restore declaration-site variance
+			// (`out`/`in`, interfaces) and upper bound(s) (`<T : Comparable<T>>`) that facadegen now reads back (else invariant/unbounded).
+			for (tp in type.typeParams) {
+				val variance = when (type.typeParamVariance[tp]) {
+					"out" -> org.jetbrains.kotlin.types.Variance.OUT_VARIANCE
+					"in" -> org.jetbrains.kotlin.types.Variance.IN_VARIANCE
+					else -> org.jetbrains.kotlin.types.Variance.INVARIANT
+				}
+				typeParameter(Name.identifier(tp), variance, false, ClrGeneratedKey) {
+					for (b in type.typeParamBounds[tp].orEmpty())
+						bound { tps -> boundConeOf(b, type.typeParams, tps) ?: session.builtinTypes.nullableAnyType.coneType }
+				}
+			}
 			// Supertypes: a class's base (`Button` -> `Widget`, for assignability + inherited/protected members),
 			// and an interface's GENERIC base interfaces (`IList<T>` -> `ICollection<T>`, so inherited members like
 			// `Add` surface — item 3). A spec is either a simple name or `generic:Open[arg,arg]` (args are the owner's
@@ -498,7 +525,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					val trailingOpt = if (real) 0 else vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
 					((vps.size - trailingOpt)..vps.size).map { arity ->
 						createTopLevelFunction(ClrGeneratedKey, callableId, { tps -> coneOfMethod(m.returnType, null, m.typeParams, tps) }) {
-							for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+							for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey) {
+								for (b in m.typeParamBounds[tp].orEmpty())   // gap ①: `<T : Comparable<T>>` bound on a top-level fun
+									bound { tps -> boundConeOf(b, m.typeParams, tps) ?: session.builtinTypes.nullableAnyType.coneType }
+							}
 							if (m.suspend) status { isSuspend = true }
 							if (m.inline) status { isInline = true }   // accept non-local return; ilemit splices the carried body
 							if (m.infix || m.operator) status { isInfix = m.infix; isOperator = m.operator }   // top-level extension operators
@@ -622,7 +652,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					if (m.protected) visibility = Visibilities.Protected
 					if (m.infix || m.operator || m.suspend) status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
 					if (m.inline) status { isInline = true }
-					for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+					for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey) {
+						for (b in m.typeParamBounds[tp].orEmpty())   // gap ①: `<T : Comparable<T>>` bound on a member fun
+							bound { tps -> boundConeOf(b, m.typeParams, tps) ?: session.builtinTypes.nullableAnyType.coneType }
+					}
 					if (extRecv != null) extensionReceiverType { tps -> coneOfMethod(extRecv.type, owner, m.typeParams, tps) }
 					for (p in vps) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) }, hasDefaultValue = realDefaults(vps) && p.type.startsWith("opt:"))
 				}.also { if (realDefaults(vps)) applyDefaults(it, vps) }.symbol
@@ -675,6 +708,53 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			val i = methodTypeParams.indexOf(name)
 			if (i >= 0 && i < tps.size) tps[i].symbol.constructType(emptyArray(), false) else null
 		}
+
+	// gap ①: kotlin BUILTIN types that appear as generic-constraint targets but aren't in the injection metadata (the
+	// jar/frontend owns them). The common one: a Kotlin `T : Comparable<T>` bound lowers to the CLR `System.IComparable<T>`,
+	// which facadegen reverses to `generic:Comparable[T]` (MapBound). Resolve that back to the real kotlin.Comparable symbol.
+	private val builtinBoundOpen: Map<String, ClassId> = mapOf(
+		"Comparable" to ClassId(FqName("kotlin"), Name.identifier("Comparable")),
+		"Number" to ClassId(FqName("kotlin"), Name.identifier("Number")),
+		"Enum" to ClassId(FqName("kotlin"), Name.identifier("Enum")),
+		"CharSequence" to ClassId(FqName("kotlin"), Name.identifier("CharSequence")),
+	)
+
+	/** gap ①: the ClassId of a bound token's OPEN class — an INJECTED type (by name+arity, or a fully-qualified ClassId),
+	 *  or a well-known kotlin builtin. Null => resolves to nothing (the caller drops the bound, restoring an unconstrained
+	 *  `T` exactly as before — never worse than the previous behavior). NOTE: returns a ClassId, NOT a resolved symbol —
+	 *  the caller builds a LAZY lookup-tag cone from it (see boundConeOf), so it never eagerly resolves the symbol. */
+	private fun boundClassId(open: String, arity: Int): ClassId? =
+		ClrMetadataHolder.classIdFor(open, arity)
+			?: if ('.' in open) ClassId(FqName(open.substringBeforeLast('.')), Name.identifier(open.substringAfterLast('.'))) else builtinBoundOpen[open]
+
+	/** gap ①: resolve a generic-constraint bound token (`generic:Comparable[T]`, an injected type, or a bare name) to a
+	 *  cone, binding a self-referential arg (`T`) to the declaring type/function's own type parameters (`tps`). Null =>
+	 *  unresolvable (the caller falls back to `Any?`, i.e. no effective bound).
+	 *
+	 *  The open class is built as a LAZY lookup-tag cone (`ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(cid), ...)`),
+	 *  NOT by resolving its symbol — the curiously-recurring BCL bounds (`TSelf : INumber<TSelf>`, the whole numeric
+	 *  tower reachable from a `System.*` injection closure) reference types that are STILL BEING BUILT, so eagerly
+	 *  resolving the symbol here re-enters generation and StackOverflows (the same hazard superArgCone documents). The
+	 *  whole thing is also wrapped fail-soft: a pathological bound restores an unconstrained `T`, never a crash. */
+	private fun boundConeOf(token: String, declaredParams: List<String>, tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType? {
+		try {
+			val nullable = token.endsWith("?"); val t = token.removeSuffix("?")
+			val tv: (String) -> ConeKotlinType? = { name -> declaredParams.indexOf(name).let { i -> if (i in tps.indices) tps[i].symbol.constructType(emptyArray(), false) else null } }
+			tv(t)?.let { return if (nullable) it.withNullability(true, session.typeContext) else it }   // a whole-bound type-param ref
+			if (t.startsWith("generic:")) {
+				val rest = t.removePrefix("generic:"); val br = rest.indexOf('[')
+				val open = if (br < 0) rest else rest.substring(0, br)
+				val inner = if (br < 0) "" else rest.substring(br + 1, rest.length - 1)
+				val argToks = if (inner.isEmpty()) emptyList() else splitTopLevel(inner)
+				val cid = boundClassId(open, argToks.size) ?: return null
+				val args = argToks.map { coneOf(it, null, tv) }
+				@Suppress("UNCHECKED_CAST")
+				return ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(cid), args.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, nullable)
+			}
+			val cid = boundClassId(t, 0) ?: return null
+			return ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(cid), emptyArray(), nullable)
+		} catch (e: Throwable) { return null }
+	}
 
 	/** A Kotlin function type `(P...) -> R` = `kotlin.FunctionN<P..., R>`, for event handler params. */
 	private fun coneFunctionType(params: List<ConeKotlinType>, ret: ConeKotlinType): ConeKotlinType {

@@ -173,14 +173,17 @@ reference-type nullability, parameter names (named-arg calls), constant default 
 reified generics, and `final`/`open`/`abstract` + `public`/`protected` visibility. **Data-class generated members
 also round-trip**: `componentN()` carries `operator` (via `[KotlinFunction(Operator)]`, set from `fn.isOperator` in
 `BirEmitter.kt`), so destructuring works cross-module, and `copy`/`equals`/`hashCode`/`toString` are real callable
-methods.
+methods. **Generic constraints/bounds and declaration-site variance also round-trip** (gap ①, now fixed): `facadegen`
+reads `GetGenericParameterConstraints()`/`GenericParameterAttributes` and emits `tvariance`/`tbound`/`mbound` metadata,
+and `ClrTypeInjection` restores `out`/`in` (interfaces) + upper bounds — so `interface P<out T>`, `interface C<in T>`,
+`class SortedPair<T : Comparable<T>>`, and `fun <T : Comparable<T>> …` keep their variance and bounds cross-module.
 
 ### 10.2 Partially restored (in metadata, but degraded on reconstruction)
 
 | Kotlin construct | What survives | What degrades / is lost |
 |---|---|---|
-| **Generic constraints / bounds** (`<T : Comparable<T>>`, `where`) | — | **HIGHEST-IMPACT, FIXABLE.** `ilemit` *does* write the CLR constraint (`ApplyConstraints` → `SetBaseTypeConstraint`/interface constraints, `Program.cs`), but `facadegen` emits only the bare type-param **name** (`g.Name`) and never reads `GetGenericParameterConstraints()`. So a consumer sees an **unconstrained `T`** even though the bound is in the assembly. No new attribute needed — fixable purely in the reconstructor. |
-| **Declaration-site variance** (`class Box<out T>`, `interface Cmp<in T>`) | — | `ilemit` writes CLR variance on **interface** params (`GenericParameterAttributes.Covariant/Contravariant`, dropping CLR-illegal/conflicting ones); `facadegen` never reads it back → restored **invariant**. Class-type-param variance has no CLR form at all. **Use-site** variance / **star projection** `Foo<*>`: no analog, lost. |
+| **Generic constraints / bounds** (`<T : Comparable<T>>`, `where`) | **NOW RESTORED (gap ①, §10.1)** | ~~`facadegen` never read `GetGenericParameterConstraints()`~~ — it now does, emitting `tbound`/`mbound` metadata that `ClrTypeInjection` restores as upper bounds (a `Comparable<T>` bound is reversed from the CLR `System.IComparable<T>` it lowers to). Multiple bounds (a `where` list) round-trip as several lines. |
+| **Declaration-site variance** (`class Box<out T>`, `interface Cmp<in T>`) | **NOW RESTORED for interfaces (gap ①, §10.1)** | `facadegen` now reads `GenericParameterAttributes` and emits `tvariance`, which `ClrTypeInjection` restores as `out`/`in`. **Class**-type-param variance still has no CLR form (stays invariant); **use-site** variance / **star projection** `Foo<*>`: no analog, lost. |
 | **`enum class`** | entry values | A *basic* enum → a real CLR `enum` → `facadegen` restores it as an **`object` of `val`s**; a *rich* enum (ctor args / methods / per-entry bodies, `isRichEnum`) → a singleton-field **class** → restored as a plain **`class`**. Either way it is **not** a Kotlin `enum class`: exhaustive `when`, `.entries`/`values()`/`valueOf`, `.ordinal`/`.name` identity degrade. |
 | **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried (consumer sees an ordinary class); a `copy(...)` with **non-constant/self-referential defaults** (`x = this.x`) fails the call-site default rule (§7). |
 | **Annotations** | RUNTIME/BINARY-retained with CLR-legal args; `KClass`→`System.Type` | `ilemit` **skips** annotations whose ctor-arg shape the CLR encoder rejects (`BuildCab`/`TryCab` → diagnostic, e.g. a generic-instantiation parameter). **SOURCE**-retention annotations are gone. **Use-site targets** (`@get:`/`@field:`/`@param:`) are only as faithful as which CLR target they landed on — the Kotlin intent is ambiguous. Repeatable-annotation semantics differ. |
@@ -206,9 +209,11 @@ methods.
 
 ### 10.4 Highest-impact gaps (for a follow-up fix pass)
 
-1. **Generic constraints + interface variance dropped by `facadegen`** — the metadata already carries them; this is a
-   reconstructor-only fix (read `GetGenericParameterConstraints()` / `GenericParameterAttributes`), no new attribute.
-   Affects every generic library API (`<T : Comparable<T>>`, `Comparator<in T>`, …).
+1. ~~**Generic constraints + interface variance dropped by `facadegen`**~~ — **FIXED (gap ①, 2026-07-01).** `facadegen`
+   now reads `GetGenericParameterConstraints()` / `GenericParameterAttributes` and emits `tvariance`/`tbound`/`mbound`
+   metadata; `ClrTypeInjection` restores `out`/`in` variance + upper bounds (lazy lookup-tag cones, self-ref-safe for the
+   BCL numeric tower, fail-soft). Covers every generic library API (`<T : Comparable<T>>`, `Comparator<in T>`, …). No new
+   attribute — reconstructor-side only (`facadegen` emission + injector consumption).
 2. **`object` singleton / companion implicit access** — pervasive in real Kotlin libraries; the ergonomic
    `Type.member` call site does not round-trip. **KNOWN / ACCEPTED LIMITATION (2026-07-01): NOT a follow-up fix.**
    `facadegen` *would* emit the restoration, but the pinned Kotlin **embedded compiler (2.2.0)** does not support the
@@ -236,4 +241,4 @@ markers) **or**, for #1, just a richer `facadegen` read of metadata that is alre
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`. §4.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
 - A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
-- Re-consuming a DotKt `.dll` as Kotlin drops generic **bounds/variance** (in the metadata, but `facadegen` doesn't read them back), and restores `object`/`enum class`/`sealed`/`fun interface`/`data` only as plain classes. §10.
+- Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ① fixed — `facadegen` reads them back, the injector re-applies them), but still restores `object`/`enum class`/`sealed`/`fun interface`/`data` only as plain classes. §10.

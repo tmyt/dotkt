@@ -23,6 +23,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `clrPropGet` vs `clrInstance get_X` routing edge, and 3 helper/closure body diffs.
 
 ### Fixed
+- **Round-trip gap ①: generic CONSTRAINTS and declaration-site VARIANCE now survive re-consuming a DotKt assembly as
+  Kotlin.** `ilemit` already wrote the CLR constraints (`SetBaseTypeConstraint`/`SetInterfaceConstraints`) and interface
+  variance (`GenericParameterAttributes.Covariant/Contravariant`), but `facadegen` emitted only the bare type-param NAME
+  and the FIR injector hard-coded `Variance.INVARIANT` with no bounds — so a consumer saw an unconstrained, invariant
+  `T`. `facadegen` now reads `GetGenericParameterConstraints()` / `GenericParameterAttributes` and emits them as
+  backward-compatible metadata lines (`tvariance`/`tbound` for a class/interface type param, `mbound` for a method type
+  param; a Kotlin `Comparable<T>` bound is reversed from the CLR `System.IComparable<T>` it lowers to), and
+  `ClrTypeInjection` restores them on the synthesized FIR (`out`/`in` variance + upper bounds via lazy lookup-tag cones,
+  self-referential-safe for the curiously-recurring BCL numeric tower reachable from a `System.*` closure, and fail-soft
+  so a pathological bound degrades to an unconstrained `T` rather than crashing). A round-trip of `interface P<out T>` /
+  `interface C<in T>` / `class SortedPair<T : Comparable<T>>` / `fun <T : Comparable<T>> maxOf2` now restores the
+  variance (covariant/contravariant assignability compiles) and bounds cross-module. (docs/dotkt-semantics.md §10.)
 - **`il:regex` restored after the DotKt.Runtime retirement — `matches`/`find` now run on the real stdlib bodies (no
   shim).** Removed two stale kotc CLR-lowerings the retirement missed: the `kotlin.text.MatchResult`→`System...Match`
   type alias (which made `ClrMatchResult : MatchResult` implement a CLASS as an interface → `TypeLoadException`) and the
