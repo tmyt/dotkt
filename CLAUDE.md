@@ -84,11 +84,9 @@ scripts are the current, canonical build** (other stdlib scripts are STALE — s
 - Why the split: the **ref/runtime split** — `docs/design-clr-stdlib-ref-runtime-split.md`,
   MEMORY `clr-stdlib-ref-runtime-split`; the frontend jar — MEMORY `frontend-stdlib-jar-plan`.
 
-> ⚠️ **STALE — do NOT use:** `scripts/build-dotkt-stdlib.sh` and `scripts/build-stdlib.sh` build the
-> OLD stdlib (`runtime/DotKt.Stdlib/src` / an early slice), not `runtime/stdlib/`.
-> `build-dotkt-stdlib.sh` is actively dangerous: it `rm`s the cached `DotKt.Stdlib.dll` and the
-> rebuild currently crashes, breaking every `.ktproj`/verify build (MEMORY
-> `dont-run-build-dotkt-stdlib-directly`).
+> ✅ **REMOVED (2026-07-02):** the stale `scripts/build-dotkt-stdlib.sh` and `scripts/build-stdlib.sh` (they built the
+> OLD stdlib and referenced the now-deleted `DotKt.Runtime`) are DELETED. The canonical stdlib build is the three
+> `build-clr-stdlib*.sh` scripts above; there is no longer a dangerous "rm the cached dll" footgun to avoid.
 
 Toolchain: JDK is auto-provisioned by Gradle; **.NET SDK 10 required**. Kotlin/IR APIs are
 **pinned to 2.2.0** (internal/unstable — intentionally not tracking newer versions).
