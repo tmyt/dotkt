@@ -3421,12 +3421,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// on the .NET type itself.
 			?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrInteropName(it) }
 		if (clrType != null) {
+			// An injected .NET event accessor (`add_<E>`/`remove_<E>`) must route to the clrEventAdd/Remove shape below,
+			// NOT the Rule-3 helper hoist: a facadegen-injected EXTERNAL .NET type (Ext.Widget) has no synthesized
+			// `<>dotkt_ClrH_` helper — that hoist is only for stdlib @Clr classes whose Kotlin bodies bir2cir hoists.
+			// The synthesized accessor also lacks the interop marker `clrInteropName` reads (unlike Add/Fire), so absent
+			// this guard `w.add_Changed { .. }` falls into the hoist and emits a callStatic to a non-existent helper ->
+			// ilemit FindMethod returns null -> ApplyTypeArgs(null) crash (ktproj-extlib). Checked against the SAME
+			// declaring type the event handler below resolves (fake-overrides are already excluded from the hoist).
+			val injectedEvent = kotc.ClrEventRegistry.lookup(declaringClass?.fqNameWhenAvailable?.asString(), name)
 			// Rule 3 (CLR binding): a non-@Clr member WITH A BODY of a @Clr class -> its hoisted static helper
 			// (<>dotkt_ClrH_<Class>.m(__self, args)), NOT a BCL member by name. Abstract/@Clr members fall through.
 			// Non-abstract (concrete) rather than `body != null`: a CROSS-MODULE callee deserialized from the frontend
 			// jar carries NO body (bodies live in the .class, not metadata), so `body != null` would wrongly skip the
 			// hoist and emit a non-existent BCL member (e.g. StringBuilder.reverse). Modality survives deserialization.
-			if (clrInteropName(callee) == null && callee.modality != Modality.ABSTRACT && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
+			if (injectedEvent == null && clrInteropName(callee) == null && callee.modality != Modality.ABSTRACT && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
 				val hr = dispatchReceiver(call)
 				// The helper static method declares the CLASS type params THEN the method's own (bir2cir's HoistMethod /
 				// MergeTypeParams). A generic @Clr class (e.g. List<E>) needs them bound at the call: class args come from

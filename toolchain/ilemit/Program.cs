@@ -1336,6 +1336,14 @@ sealed partial class Emitter
 
     MethodInfo ApplyTypeArgs(MethodInfo m, JsonElement e, out Type retType, out Type[] paramTypes)
     {
+        // Defense: an unresolved call (FindMethod/FindStatic returned null — e.g. a bad owner the CIR should never carry)
+        // must fail with a legible message naming the call, not a cryptic Dictionary ArgumentNullException(key) below.
+        if (m == null)
+        {
+            var mn = e.TryGetProperty("method", out var mnEl) && mnEl.ValueKind == JsonValueKind.String ? mnEl.GetString() : "?";
+            var on = e.TryGetProperty("owner", out var onEl) && onEl.ValueKind == JsonValueKind.String ? onEl.GetString() : null;
+            throw new NotSupportedException($"unresolved method: {(on != null ? on + "." : "")}{mn}");
+        }
         var ps = _mparams.TryGetValue(m, out var p) ? p : null;
         if (e.TryGetProperty("typeArgs", out var ta) && ta.GetArrayLength() > 0)
         {
