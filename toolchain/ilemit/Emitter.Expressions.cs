@@ -158,8 +158,11 @@ sealed partial class Emitter
                 {
                     // External type (e.g. `new kotlin.ranges.IntRange(1,3)` from an APP linking the rt where IntRange
                     // lives): resolve the ctor via reflection on the loaded assembly instead of indexing `_types`.
+                    // Prefer a SIGNATURE match off the node's `argTypes` (kotc emits the resolved ctor's param types) so
+                    // an overloaded external type resolves correctly; fall back to the first same-arity ctor.
                     var ext = constructed ?? ResolveType(open);
-                    var ctorE = ext.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == nargs.GetArrayLength());
+                    var ctorE = NewCtorBySig(ext, e, nargs.GetArrayLength())
+                        ?? ext.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == nargs.GetArrayLength());
                     foreach (var a in nargs.EnumerateArray()) EmitExpr(a);
                     _il.Emit(OpCodes.Newobj, ctorE);
                     return ext;

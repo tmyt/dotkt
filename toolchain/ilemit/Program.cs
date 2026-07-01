@@ -2080,6 +2080,20 @@ sealed partial class Emitter
         return type;
     }
 
+    // A `new` node's `argTypes` (kotc's resolved ctor param types, pure Kotlin FQNs) -> the EXACT ctor on an
+    // external/reflected type, when the field is present, same-arity, and every entry resolves. Null tells the caller to
+    // fall back to arity-based selection: a mismatched count (prepended enclosing/capture args) or an unresolvable entry
+    // must not force a wrong pick, and `GetConstructor` itself returns null when nothing matches the signature.
+    ConstructorInfo NewCtorBySig(Type type, JsonElement e, int argc)
+    {
+        if (!e.TryGetProperty("argTypes", out var atEl) || atEl.ValueKind != JsonValueKind.Array) return null;
+        if (atEl.GetArrayLength() != argc) return null;
+        Type[] argTypes;
+        try { argTypes = atEl.EnumerateArray().Select(a => ClrRef(a.GetString())).ToArray(); } catch { return null; }
+        if (argTypes.Any(t => t == null)) return null;
+        try { return type.GetConstructor(argTypes); } catch { return null; }
+    }
+
     Type EmitNativeClrNewObj(JsonElement e)
     {
         var member = e.GetProperty("memberRef");
@@ -2882,7 +2896,16 @@ sealed partial class Emitter
         s.StartsWith("byref:") ? ClrRef(s.Substring(6)).MakeByRefType() :   // `out`/`ref` param type (T&)
         s.StartsWith("clrg:") ? GenericType(s.Substring(5)) :
         (s.StartsWith("func:") || s.StartsWith("clr:") || s.StartsWith("array:") || s.StartsWith("nullable:") || s.StartsWith("gp:") || s.StartsWith("@")) ? MapType(s) :
+        // A bare PRIMITIVE/string/void shorthand (int/long/bool/char/string/object/…) is CLR-resolution vocabulary that
+        // ResolveType (BCL reflection by FQN) cannot resolve — route it through MapType (which owns the shorthand switch).
+        // An `argTypes` entry can be such a shorthand: bir2cir's TransformNew synthesizes clrNew.argTypes from an arg's BIR
+        // token and the type-lowering pass lowers e.g. `kotlin.String` -> "string"; without this the ctor-overload lookup
+        // nulls that entry and falls back to arity, mis-picking StringBuilder(Int32) for StringBuilder(String).
+        PrimShorthand.Contains(s) ? MapType(s) :
         ResolveType(s);
+
+    static readonly HashSet<string> PrimShorthand = new(StringComparer.Ordinal)
+    { "void", "object", "string", "int", "long", "short", "byte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "ubyte" };
 
     // A generic TYPE ARGUMENT of `System.Void` is illegal in .NET; Kotlin `Unit`/`Nothing` map to `void` for a return
     // position but as a type arg (`Continuation<Unit>`, `Map<K, Unit>`, …) they must be a real type -> `object`.
