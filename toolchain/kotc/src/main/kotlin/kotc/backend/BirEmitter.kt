@@ -3785,19 +3785,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `readLine()` is NOT lowered: the CLR stdlib exposes readln()/readlnOrNull() (readlnOrNull is @ClrIntrinsic-bound
 			// to System.Console.ReadLine in ConsoleClr.kt). There is no `kotlin.io.readLine` symbol in the frontend jar, so
 			// this lowering was dead (like the retired String.format). (Retired 2026-07-02, bundle 1.)
-			// Regex: `"p".toRegex()` -> new Regex("p"); `r.containsMatchIn(s)` -> r.IsMatch(s); `r.replace(s,rep)` -> r.Replace(s,rep).
-			val RX = "System.Text.RegularExpressions.Regex"
-			if (name == "toRegex") extensionReceiver(call)?.let { p ->
-				return """{"k":"clrNew","type":${str(RX)},"argTypes":["System.String"],"args":[${expr(p)}]}"""
-			}
-			if (!stdlibCompile && (name == "containsMatchIn" || name == "replace") &&
-				dispatchReceiver(call)?.type?.classFqName?.asString() == "kotlin.text.Regex") {
-				val r = dispatchReceiver(call)!!; val a = regularArgs(call)
-				return when (name) {
-					"containsMatchIn" -> """{"k":"clrInstance","type":${str(RX)},"method":"IsMatch","argTypes":["System.String"],"ret":"System.Boolean","recv":${expr(r)},"args":[${expr(a[0])}]}"""
-					else -> """{"k":"clrInstance","type":${str(RX)},"method":"Replace","argTypes":["System.String","System.String"],"ret":"System.String","recv":${expr(r)},"args":[${expr(a[0])},${expr(a[1])}]}"""
-				}
-			}
+			// Regex is NO LONGER lowered here (RETIRED 2026-07-02, bundle 4-B). `kotlin.text.Regex` is
+			// @ClrTypeAlias("System.Text.RegularExpressions.Regex") with `containsMatchIn`@ClrIntrinsic("IsMatch") /
+			// `replace`@ClrIntrinsic("Replace") + real Kotlin bodies for `matches`/`find`/`split`/`.value`
+			// (runtime/stdlib/clr/kotlin/text/regex/RegexClr.kt). kotc emits `"p".toRegex()` as a plain call to the stdlib
+			// `String.toRegex()` extension (= `Regex(this)`) and `r.containsMatchIn(s)`/`r.replace(...)` as plain member
+			// calls on kotlin.text.Regex; bir2cir substitutes the @ClrTypeAlias ctor + @ClrIntrinsic members off the
+			// ref.dll and runs the real bodies. The Kotlin<->CLR relation lives in bir2cir, not kotc.
 			// `String.format` is NO LONGER lowered here. It was CLR knowledge in kotc (System.String.Format), and it is
 			// dead against the CLR frontend jar anyway — that jar has no `kotlin.text.String.Companion.format`, so the
 			// symbol is unresolved before the backend ever runs. Making `String.format` work is a stdlib concern (bind a

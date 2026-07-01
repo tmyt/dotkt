@@ -38,6 +38,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   emits the plain operator-`get` member call and bir2cir's `MemberCallSubstitution` rewrites it to
   `clrInstance System.String.get_Chars` off the ref.dll. Gate-neutral (run-fail set + ilverify set identical);
   `il-charseq` (a user `class S : CharSequence` that indexes `s[index]`) still passes.
+- **Retired the kotc Regex lowering (bundle 4-B).** kotc no longer hardcodes `"p".toRegex()`→`new Regex`,
+  `r.containsMatchIn(s)`→`IsMatch`, `r.replace(...)`→`Replace`. `kotlin.text.Regex` is
+  `@ClrTypeAlias("System.Text.RegularExpressions.Regex")` with `containsMatchIn`/`replace` bound
+  `@ClrIntrinsic("IsMatch")`/`("Replace")` and real Kotlin bodies for `matches`/`find`/`split`/`.value` (over the
+  `ClrMatch`/`ClrMatchResult` adapters). kotc emits plain calls; bir2cir substitutes the ctor + members off the ref.dll
+  and runs the real bodies. `il-regex` RUN-passes; gate-neutral (run-fail set + ilverify set identical — `il-regex`
+  stays run-pass / ilverify-fail exactly as in the baseline). NB retiring did NOT clear the `il-regex` ilverify FAIL:
+  the `@ClrIntrinsic("IsMatch")`/`("Replace")` bindings sit on a `CharSequence` param but the BCL method takes `string`,
+  so the substituted call carries the Kotlin `<>dotkt_CharSequence` argType while a raw `string` is pushed
+  (`StackUnexpected`); and the `find`/`.value` bodies (`ClrMatchResult : MatchResult`, `ClrMatchGroupCollection :
+  AbstractCollection`) have their own verify noise. Both are stdlib-body/binding follow-ups (materialize the
+  `CharSequence` via `toString()` behind a `nativeIsMatch(String)`/`nativeReplace(String,String)` helper, mirroring the
+  existing `nativeMatch`/`nativeReplaceFirst` pattern), not kotc lowerings. The kotc TYPE token map
+  `kotlin.text.Regex`→`clr:System...Regex` (`BirEmitter.kt`) is left in place (a type-token concern like the `netType`
+  maps, separate from the call lowering).
 
 ### Added
 - **CharSequence synthetic CANONICALIZATION (bundle 4-A) — cross-assembly CharSequence now works.** The synthetic

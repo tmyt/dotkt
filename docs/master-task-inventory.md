@@ -327,8 +327,15 @@ method-ref not lowered + un-wrapped inlined `as CharSequence`), `reversed` (`Str
 `Iterator.hasNext` not found). (3b) **indexer `s[i]`→`get_Chars` — ✅ DONE 2026-07-02 (bundle 4-B).** kotc no longer
 lowers `String s[i]`; `kotlin.String.get(index)`@ClrIntrinsic("get_Chars") + bir2cir MemberCallSubstitution route it.
 Gate-neutral; `il-charseq` (user `class S : CharSequence` indexing `s[index]`) still green.
-(4) **Regex agent (NOW UNBLOCKED)** — retire Regex (its `CharSequence` inputs then coerce). Comparable-self and the
-collection-bridge are separate tracks (own agents), not gated on this fix.
+(4) **Regex agent — ✅ DONE 2026-07-02 (bundle 4-B).** Retired the kotc `toRegex`/`containsMatchIn`/`replace` lowerings;
+`kotlin.text.Regex`@ClrTypeAlias + `containsMatchIn`/`replace`@ClrIntrinsic + real `matches`/`find`/`split`/`.value`
+bodies route via bir2cir. `il-regex` RUN-passes; gate-neutral (run-fail + ilverify sets identical). The `il-regex`
+ilverify FAIL was NOT cleared (pre-existing, still failing): the `@ClrIntrinsic("IsMatch")`/`("Replace")` bindings sit
+on a `CharSequence` param while the BCL method takes `string` (substituted call keeps the Kotlin `<>dotkt_CharSequence`
+argType, raw `string` pushed → `StackUnexpected`), plus the `find`/`.value` bodies' own verify noise — stdlib-body/
+binding follow-ups (add `nativeIsMatch(String)`/`nativeReplace(String,String)` helpers that `toString()`-materialize).
+The kotc `kotlin.text.Regex`→`clr:System...Regex` TYPE-token map is left in place (a `netType`-style concern).
+Comparable-self and the collection-bridge are separate tracks (own agents), not gated on this fix.
 
 ## 【5】 exception map → `@ClrTypeAlias`  *(#2)* — ✅ DONE (verified 2026-07-02; was already complete)
 - `BirMappings.NET_EXCEPTIONS` DELETED (kotc `5907510`); the 11 stdlib exception classes carry `@ClrTypeAlias` (stdlib
