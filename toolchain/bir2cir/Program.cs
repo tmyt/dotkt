@@ -2543,15 +2543,41 @@ static class DeclarationRename
     {
         if (node is JsonObject obj)
         {
-            if (obj["overrides"] is JsonArray ovs && ResolveSlot(ovs, refs) is string slot)
+            if (obj["overrides"] is JsonArray ovs)
             {
-                if ((obj["k"] as JsonValue)?.GetValue<string>() == "callInstance") obj["method"] = slot;
-                else if (obj.ContainsKey("name")) obj["name"] = slot;
+                // A `properties:[{name,get,set,overrides}]` entry (kotc's CLR-property record): rename its accessor
+                // references get_<name>/set_<name> -> get_/set_ + the property intrinsic ("Count"); its `name` stays the
+                // Kotlin property name (matching what annClr emits). Distinguished from a method decl by having `get`.
+                if (obj.ContainsKey("get") && !obj.ContainsKey("params") && ResolveBareIntrinsic(ovs, refs) is string pintr)
+                {
+                    obj["get"] = "get_" + pintr;
+                    if (obj["set"] is JsonValue) obj["set"] = "set_" + pintr;   // null set stays null
+                }
+                else if (ResolveSlot(ovs, refs) is string slot)
+                {
+                    if ((obj["k"] as JsonValue)?.GetValue<string>() == "callInstance") obj["method"] = slot;
+                    else if (obj.ContainsKey("name")) obj["name"] = slot;
+                }
             }
             foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, refs);
         }
         else if (node is JsonArray arr)
             foreach (var it in arr) if (it != null) Walk(it, refs);
+    }
+
+    // The BARE property intrinsic ("Count") for a property record's override closure: the @ClrIntrinsic is on the
+    // get_<name> accessor method in the ref.dll, so look that up (arity 0) and return the raw value (no get_/set_ prefix,
+    // which the caller applies for both accessors). null = the overridden property carries no @ClrIntrinsic.
+    static string ResolveBareIntrinsic(JsonArray ovs, ReferenceMetadataIndex refs)
+    {
+        foreach (var o in ovs)
+        {
+            if (o is not JsonObject oo) continue;
+            if ((oo["owner"] as JsonValue)?.GetValue<string>() is not string owner) continue;
+            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
+            if (refs.TryMemberIntrinsicExact(owner, "get_" + member, 0, out var intr)) return intr;
+        }
+        return null;
     }
 
     // The first override entry whose (owner, Kotlin member name, arity) carries an @ClrIntrinsic in the ref.dll, mapped

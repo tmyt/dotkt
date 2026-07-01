@@ -6,6 +6,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Changed
+- **kotc→bir2cir `clrName` migration, Step 3 part 2: CLR-property-entry slot rename.** kotc tags each emitted
+  `properties:[{name,get,set}]` record with the getter's `overrides` marker, and bir2cir's `DeclarationRename` renames
+  the record's `get`/`set` accessor references (`get_size`→`get_Count`, `set_size`→`set_Count`) via a new
+  `ResolveBareIntrinsic` (the @ClrIntrinsic lives on the `get_<name>` accessor in the ref.dll; the bare value is the BCL
+  property name, applied to both accessors). The record's `name` stays the Kotlin property name (matching annClr).
+  Verified rt CIR byte-identical with annClr active (idempotent); an annClr-off probe confirms it FIRES (the property
+  records emit `get_Count`). **Newly surfaced remainder for the annClr removal** (beyond the member-strip + SAM): the
+  `override`/`virtual`/`vis` FLAGS are also computed via `clrIfaceMemberName` (an interface-override method's
+  `override:true` depends on it) — these must move to a pure-Kotlin signal (`overridesIface`) or bir2cir; and the
+  member-strip needs full-SIGNATURE (param-type) matching, not just name+arity (StringBuilder.append has same-arity
+  @ClrIntrinsic + rule-3 overloads), and must run BEFORE AliasHelperHoist (else the rule-3 helper over-hoists).
 - **kotc→bir2cir `clrName` migration, Step 3 part 1: CALL-SITE slot rename.** kotc now emits the same pure-Kotlin
   `overrides` marker on the `callInstance` nodes whose member name `clrIfaceMemberName` resolves via `@ClrIntrinsic`
   (the property-accessor and method-call paths), and bir2cir's `DeclarationRename` is now a recursive walk that renames
