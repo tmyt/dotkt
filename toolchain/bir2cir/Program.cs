@@ -424,8 +424,14 @@ sealed class ReferenceMetadataIndex
         owner = null;
         if (!_topLevelStatics.TryGetValue(funName, out var cands) || cands.Count == 0) return false;
         if (cands.Count == 1) { owner = cands[0].Owner; return true; }
+        // The candidate RecvKey is the ref.dll's Kotlin receiver type (`kotlin.collections.List`); the call site's
+        // recvKey may already be that type's @ClrTypeAlias CLR form (`System.Collections.Generic.IReadOnlyList`), when
+        // kotc rendered the receiver local as its CLR alias (e.g. `val xs = listOf(...)` used only via an extension).
+        // Match through the alias so the overload disambiguates in either representation. (The forward alias map is
+        // unambiguous; a bare-Kotlin recvKey still matches the plain `c.RecvKey == recvKey` arm.)
         foreach (var c in cands)
-            if (c.RecvKey == recvKey) { owner = c.Owner; return true; }
+            if (c.RecvKey == recvKey || (_ownerAlias.TryGetValue(c.RecvKey, out var aliased) && aliased == recvKey))
+            { owner = c.Owner; return true; }
         // The receiver key didn't disambiguate the OVERLOAD, but if every candidate lives in the SAME file-class the
         // OWNER is still unambiguous (e.g. both `runCatching(Func)` and `T.runCatching(Func)` are in kotlin.ResultKt).
         // Emit the shared owner; ilemit's FindMethod then selects the exact overload by signature.
