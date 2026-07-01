@@ -217,7 +217,9 @@ methods.
 3. **`fun interface` SAM** — a DotKt callback interface can't take a lambda from a consuming module.
 4. **`enum class`** restored as `object`/`class` — no exhaustive `when`, no `.entries`.
 5. **`sealed` hierarchies** — no exhaustive `when` cross-module.
-6. **Non-constant default args / `data class copy` self-defaults** — rejected at the call (§7).
+6. **Non-constant default args / `data class copy` self-defaults** — rejected at the call (§7). **KNOWN / ACCEPTED
+   LIMITATION (2026-07-01): NOT a follow-up fix for now.** A default that references callee params/receiver has no
+   constant carrier; the omitting call is rejected rather than mis-restored (MEMORY `cross-module-default-args-not-preserved`).
 
 Each of 1–6 needs either a new `[Kotlin*]` carrier attribute (`object`/`enum`/`sealed`/`fun interface`/`data`/`value`
 markers) **or**, for #1, just a richer `facadegen` read of metadata that is already present. None are fixed yet.
