@@ -338,6 +338,117 @@ binding follow-ups (add `nativeIsMatch(String)`/`nativeReplace(String,String)` h
 The kotc `kotlin.text.Regex`→`clr:System...Regex` TYPE-token map is left in place (a `netType`-style concern).
 Comparable-self and the collection-bridge are separate tracks (own agents), not gated on this fix.
 
+### 【4-C】 Collection / sequence cluster — ROOT-CAUSE MAP + FIX PLAN  *(investigation-complete 2026-07-02)*
+> **Scope.** The 10 collection/sequence verify-il samples: run-FAILs `collops2`/`collrealkt`/`mutcoll` and (nominally)
+> "ilverify-only" `mapfilter`/`coll2`/`collmore`/`chunk`/`arrops`/`seq`/`sort`. Investigation was code-grounded (BIR/CIR
+> dumps + `dotnet` run + `ilverify` + throwaway repros; tree left clean, no source edits). **Two premise corrections up
+> front, then the de-duplicated root causes (5 distinct bugs), then the priority ranking.**
+
+> **⛔ PREMISE CORRECTION 1 (the task's lead hypothesis is DISPROVEN — record it so nobody re-chases it).** The idea that
+> the CharSequence CANONICALIZATION precedent (add to `ilemit` `CanonicalSynthetics`) also fixes the iterator synthetics
+> `<>dotkt_KIterator_*`/`<>dotkt_KIterable_*` is **WRONG** (Codex-traced, session `9b58bc57`). Those synthetics are
+> **monomorphized per-element-type** (`BirEmitter.kt:326/346` build the name from `elemBir`; `:335/351` register NOTHING
+> when the element is `gp:` generic). So for a generic `Iterable<T>` there is **no `<>dotkt_KIterator_gp_T` to
+> canonicalize** — nothing to reference. Unlike `<>dotkt_CharSequence` (one monomorphic shape shared app↔rt), the KIterator
+> family has a distinct concrete type per element and the rt stdlib (compiled generic-over-T) never emits the app's
+> concrete `<>dotkt_KIterator_kotlin_Int`. The generic `Iterable<T>`/`Sequence<T>` runtime path is **meant to lower to BCL
+> `IEnumerable<T>` enumeration** (`BirEmitter.kt:4045` app map, `:4022/1895` substitute `forEachInline`; `ilemit`
+> `Emitter.Expressions.cs:444` forEachInline uses `IEnumerable<T>.GetEnumerator`, falling back to the non-generic
+> `IEnumerable.GetEnumerator` for a TypeBuilder element `:455`), and `bir2cir.IteratorConsumerNormalization`
+> (`Program.cs:2191`) already rewrites app-side bridge consumers to the real referenced `kotlin.collections.Iterator[E]`.
+> **Do NOT add `KIterator_*`/`KIterable_*` to `CanonicalSynthetics`.** Any real iterator bug is in the BCL-enumeration /
+> generic-member-token path (RC3 below), NOT synthetic identity.
+
+> **⛔ PREMISE CORRECTION 2 (the "run correctly, ilverify complains" split is INACCURATE for the current tree).**
+> `mapfilter`/`coll2`/`collmore`/`chunk`/`seq`/`sort` do **NOT** run correctly — run directly they throw
+> `InvalidProgramException` at JIT of `main()` (reproduced deterministically). The gate's "no `build/fail-*` marker" for
+> them is a **false pass** (the documented gate stdout+marker race under concurrency — MEMORY
+> `verify-il-gate-reality-and-baseline-gotchas`). Their ilverify diagnostic and their runtime crash are the SAME defect
+> (RC1 below). Treat them as run-FAILs. (`arrops` is the one genuine ilverify-only case, RC2.)
+
+**The 5 distinct root causes (de-duplicated across the 10 samples).**
+
+- **RC1 — cross-module default arguments (`joinToString`). THE KEYSTONE: gates 9 of 10.** kotc emits the `joinToString`
+  call with only **2 args** (receiver + the one provided separator) against a **7-param** signature (`receiver, separator,
+  prefix, postfix, limit, truncated, transform` — confirmed in BIR: `#args=2` vs `sig params:7`). ilemit then emits
+  `call joinToString(7)` with 2 stack values → **stack underflow / `InvalidProgramException`** (ilverify:
+  `found <>dotkt_StringCharSequence, expected Func`2<int,<>dotkt_CharSequence>` + `found IReadOnlyList`1<int>, expected
+  <>dotkt_CharSequence` + `StackUnderflow`). **Mechanism:** `filledArgExprs` (`BirEmitter.kt:2786`) OMITS a cross-module
+  default because the frontend jar hands the default back as `IrErrorExpression` (`:2800`), by design deferring the fill to
+  ilemit's `[Optional]/DefaultParameterValue` metadata path (`EmitDefaultArg` `Program.cs:2874`; kotc stamps `"default"`
+  only for `IrConst`, `:1811`; ilemit stamps the attr `Emitter.Coroutines.cs:275-280`). This path works for
+  primitive/string/null constant defaults — but `joinToString`'s omitted defaults `prefix=""`/`postfix=""`/`truncated="..."`
+  are **`CharSequence`(object)-typed**, and an object param cannot carry a non-null `DefaultParameterValue` constant, so
+  nothing is stamped and nothing is filled. (This is the SAME bundle-4 cross-module-default bug listed for
+  `bmore`/`bymap`/`fmt` — those fail earlier, at compile.) **This surfaced when `joinToString` was retired from the kotc
+  COLLECTION_OPS/`String.Join` lowering into the real stdlib body** — the retirement is correct, but it exposed the latent
+  default-arg gap. **Samples:** blocks `mapfilter`,`coll2`,`chunk`,`sort` (RC1 is their ONLY blocker → fixing RC1 flips
+  them green) and is a co-blocker in `collmore`,`seq`,`collops2`,`collrealkt`,`mutcoll`. Only `arrops` escapes (its
+  `joinToString` rides the array/LINQ `String.Join` lowering, not the cross-module stdlib fn). **Fix (ranked):**
+  **(b) generate `$default` dispatcher synthetics** in the stdlib build (`joinToString$default(args…, mask:int, marker)`
+  filling each omitted param from its default expr in the callee scope) + kotc caller emits `fn$default` with a bitmask
+  when any default is omitted — the general, robust option (handles object/non-const/receiver-referencing defaults),
+  mirrors Kotlin/JVM. **Layer = kotc** (stdlib-build synthetic emission + caller-side mask). Effort **HIGH**. Narrower
+  alternatives — (a) ilemit stamps `DefaultParameterValue` for the constant defaults + a wrap-marker so an object
+  `CharSequence` default reconstructs `new <>dotkt_StringCharSequence(", ")` at the call site (kotc-visible only when the
+  default is a bare `IrConst`, which the String→CharSequence coercion defeats), or (c) frontend-jar preserves the default
+  expressions so kotc inlines the (all-constant, non-receiver-referencing) `joinToString` defaults at the call site
+  (`filledArgExprs` already inlines a non-`IrError` const default) — layer = `build-clr-stdlib-frontend.sh`, effort
+  MED-HIGH/unknown (frontend metadata format). **Recommend (b)**; it also clears `bmore`/`bymap`/`fmt`.
+
+- **RC2 — value-type `Nullable<T>` in generic return / transform position.** `firstOrNull`/`lastOrNull` on a value-type
+  `List<Int>` return **`default(int)=0`** instead of the real element (throwaway repro: `listOf(10,20,30).firstOrNull()`
+  prints `0`, not `10`); ilverify: `found Int32, expected Nullable`1<int32>` (`arrops` offset 0x35). `mapNotNull`'s
+  transform is typed `Func`2<int,int>` but the lambda `{…else null}` builds `Func`2<int,Nullable`1<int>>` (`collmore`
+  offset 0x36). Same family as MEMORY `primitive-dual-representation` — a bare value flowing where `System.Nullable<T>` is
+  expected (and vice-versa) without the box/wrap. **Samples:** `arrops` (its ONLY bug → RC2 alone flips it), `collmore`
+  (with RC1), and a latent risk for `chunk`'s value-type `filterNotNull().sum()`. **Fix:** box/unwrap value-type `T` ↔
+  `Nullable<T>` at the generic nullable boundary. **Layer = bir2cir/ilemit** (the primitive-dual-rep seam). Effort **MED**.
+
+- **RC3 — ilemit cannot resolve a member on an un-substituted generic Kotlin collection/iterator interface
+  (`ResolveMethod` NRE at `Program.cs:1278`, `mb` null because `FindMethod` returned 0 candidates).** Two instances:
+  `collrealkt` — `callInstance get owner=kotlin.collections.Map[gp:K,gp:V]` (the `Map<K,V>` indexer `this[k]` was **NOT**
+  substituted, whereas the sibling `List<T>` indexers DID become `clrInstance get_Item`/`set_Item`); `mutcoll` —
+  `callInstance hasNext/next owner=kotlin.collections.Iterator[gp:T]` (produced by `bir2cir`'s ClrIteratorBridge rewrite of
+  `for (item in this: Iterable<T>)` into `iteratorOverEnumerable(this).hasNext()/next()`). In both, the owner stays a bare
+  generic Kotlin interface with a `gp:` arg that ilemit's reflection fallback (added for external types in `70d51cb`)
+  fails to resolve. **Samples:** `collrealkt`,`mutcoll` (both ALSO carry RC1). **Fix:** either `bir2cir` substitutes
+  `Map.get`→`IReadOnlyDictionary.get_Item`/`TryGetValue` and routes the `Iterator[gp:T]` members like it already does
+  `List`, **or** ilemit's generic-member reflection fallback learns to resolve `hasNext`/`next`/`get` on a referenced
+  generic Kotlin interface (`kotlin.collections.Iterator[gp:T]`/`Map[gp:K,gp:V]`). **Layer = bir2cir (preferred) or
+  ilemit.** Effort **MED**. (Check first whether the stdlib `Map.get` even carries an `@ClrProperty`/`@ClrIntrinsic`
+  binding — the List indexer does; if Map's is missing, that stdlib-binding gap is the cheaper half.)
+
+- **RC4 — `kotlin.Pair` external-type member resolution (`FindField` `KeyNotFound: 'kotlin.Pair'`,
+  `Program.cs:1476`).** `collops2`'s `val (even, odd) = xs.partition{…}` (and `associate{}`) accesses `Pair.first`/`.second`
+  on the referenced (rt-dll) `kotlin.Pair`, which is not in ilemit `_types`. `FindMethod` got a reflection fallback for
+  external types (`70d51cb`); **`FindField`/`ResolveField` did not** — mirror it. **Layer = ilemit** (reflection fallback
+  in `FindField`), or `bir2cir` substitutes the Pair member access. Effort **LOW-MED**. NB `collops2` ALSO exercises
+  `partition`/`associate`/`windowed`/`scan`/`runningFold` (verify each once Pair + RC1 clear) and carries RC1.
+
+- **RC5 — lazy `Sequence` machinery is unimplemented (`asSequence` throws at runtime).** Throwaway repro
+  `listOf(...).asSequence().map{…}.sum()` → **`NotSupportedException: [DOTKT-STDLIB] not lowered: an object expression that
+  captures an enclosing generic type parameter` at `_CollectionsKt.asSequence[T]`** — the rt stdlib STUBBED `asSequence`'s
+  body to `throw` because its anonymous `Sequence` object captures the generic `T` (same kotc codegen gap as the
+  `genclosure`/`genhof` generic-closure run-FAILs). So EVERY lazy-sequence op is dead at runtime, independent of RC1.
+  **Samples:** `seq` (needs RC1 for static validity AND RC5 for runtime). **Fix:** lower object expressions / local classes
+  that capture an enclosing generic type parameter. **Layer = kotc** (generic-closure codegen). Effort **HIGH** (deep,
+  cross-cutting with `genclosure`/`genhof`; a separate track, not collection-specific).
+
+**PRIORITY (leverage ÷ effort) + agent routing.**
+1. **RC1 — cross-module default args (`joinToString`). DO FIRST.** Highest leverage in the whole cluster: alone flips
+   `mapfilter`/`coll2`/`chunk`/`sort` green and is a prerequisite for `collmore`/`seq`/`collops2`/`collrealkt`/`mutcoll`
+   (9/10). Also clears the non-collection `bmore`/`bymap`/`fmt`. Effort HIGH but singular. → **a kotc default-args agent**
+   (implement `$default` synthetics; consult Codex on the mask/marker ABI and same-module reuse). Gate each retirement
+   with the §1 RETIRE-PATTERN recipe (fail-set must not regress).
+2. **RC2 — value-type `Nullable<T>` boundary.** Second-highest: flips `arrops` outright, unblocks `collmore` (with RC1),
+   de-risks `chunk`. Effort MED. → **a bir2cir/ilemit primitive-dual-rep agent** (MEMORY `primitive-dual-representation`).
+3. **RC3 — generic Kotlin-collection member resolution.** Unblocks `collrealkt`+`mutcoll` (both also need RC1, so sequence
+   AFTER RC1). Effort MED, self-contained. → **a bir2cir agent** (extend the collection substitution to `Map.get` + the
+   ClrIteratorBridge `Iterator[gp:T]` members; verify the stdlib `Map.get` binding first).
+   RC4 (LOW-MED, ilemit `FindField` external fallback — quick win but `collops2` still needs RC1) and RC5 (HIGH, kotc
+   generic-closure track shared with `genclosure`/`genhof` — do with that family, not here) round out the cluster.
+
 ## 【5】 exception map → `@ClrTypeAlias`  *(#2)* — ✅ DONE (verified 2026-07-02; was already complete)
 - `BirMappings.NET_EXCEPTIONS` DELETED (kotc `5907510`); the 11 stdlib exception classes carry `@ClrTypeAlias` (stdlib
   `c119dd8`, `runtime/stdlib/clr/builtins/Throwable.kt`) with 11/11 parity to the retired map; bir2cir substitutes them
