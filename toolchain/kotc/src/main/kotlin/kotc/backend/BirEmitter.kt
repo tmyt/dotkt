@@ -3747,14 +3747,28 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		(callee.parent as? IrClass)?.takeIf { it.isCompanion && superTypedCompanion(it.parent as IrClass) == null }?.let { comp ->
 			val enclosing = typeName(comp.parent as IrClass)
 			val prop = callee.correspondingPropertySymbol?.owner
-			if (prop != null) return if (callee === prop.setter)
-				if (prop.backingField == null)
-					"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("set_" + prop.name.asString())},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
-				else
-					"""{"k":"staticFieldSet","ownerType":${str(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
-			else if (prop.backingField == null)
-				"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("get_" + prop.name.asString())},"args":[]${retHint(false, call.type)}}"""
-			else """{"k":"staticField","ownerType":${str(enclosing)},"name":${str(prop.name.asString())}}"""
+			if (prop != null) {
+				// A companion EXTENSION property (`val Int.seconds` on Duration.Companion) is NEVER a static field —
+				// extension properties have no backing field (a cross-module deserialized stub may claim one; trusting
+				// it dropped the receiver entirely: `2.seconds` emitted a bare `staticField Duration.seconds`, and the
+				// in-module getter path emitted `get_milliseconds` with `"args":[]`). Mirror the top-level-property
+				// branch: the static get_/set_<name>(__self, ...) on the enclosing class with the receiver as the
+				// leading arg; `sig` picks the right overload (get_seconds(Int|Long|Double)).
+				val ext = extensionReceiver(call)
+				if (ext != null) return if (callee === prop.setter) {
+					val args = listOf(ext) + regularArgs(call)
+					"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("set_" + prop.name.asString())}${overloadSigField(callee)},"args":[${args.joinToString(",") { expr(it) }}]}"""
+				} else
+					"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("get_" + prop.name.asString())}${overloadSigField(callee)},"args":[${expr(ext)}]${retHint(false, call.type)}}"""
+				return if (callee === prop.setter)
+					if (prop.backingField == null)
+						"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("set_" + prop.name.asString())},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
+					else
+						"""{"k":"staticFieldSet","ownerType":${str(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+				else if (prop.backingField == null)
+					"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("get_" + prop.name.asString())},"args":[]${retHint(false, call.type)}}"""
+				else """{"k":"staticField","ownerType":${str(enclosing)},"name":${str(prop.name.asString())}}"""
+			}
 			// A generic companion fun (`Result.Companion.success<T>`) carries its resolved type args — without them
 			// the emitted call references the uninstantiated generic method (invalid IL on a generic enclosing class).
 			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)}${overloadSigField(callee)}${typeArgsJson(call)},"args":[${filledArgs(call).joinToString(",")}]}"""
