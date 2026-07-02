@@ -725,8 +725,32 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val entries = ec.declarations.filterIsInstance<IrEnumEntry>()
 		val primaryCtor = ec.declarations.filterIsInstance<IrConstructor>().first { it.isPrimary }
 		val userParams = primaryCtor.parameters.filter { it.kind == IrParameterKind.Regular }
-		val userFields = ec.declarations.filterIsInstance<IrProperty>().mapNotNull { it.backingField }
-			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
+		// User properties follow the CLR property model exactly like typeDef: the access site emits
+		// `callInstance get_<name>` (there is no rich-enum special case for user props — only name/ordinal
+		// route to the __name/__ordinal fields), so the class must carry real get_/set_ accessors + a
+		// `properties` entry, with the backing field demoted to internal. A bare public field alone crashes
+		// ilemit with "<Enum>.get_<prop> not found".
+		// Only REAL user properties: kotlin.Enum's `name`/`ordinal` ride along as body-less fake overrides and
+		// `entries` as an IrSyntheticBody getter (call sites route all three to __name/__ordinal/values());
+		// emitting their accessors would produce empty methods (ilverify ReturnMissing). Gate on an IrBlockBody
+		// getter/setter — exactly what accessorMethod can emit.
+		val userProps = ec.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride }
+		fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
+		fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
+		val userFields = userProps.mapNotNull { p ->
+			val bf = p.backingField ?: return@mapNotNull null
+			val visJson = if (emitsGet(p)) ""","vis":"internal"""" else ""
+			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))}$visJson}"""
+		}
+		val propAccessors = userProps.flatMap { p ->
+			listOfNotNull(
+				p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
+				p.setter?.takeIf { emitsSet(p) }?.let { accessorMethod(it, p.name.asString(), false) })
+		}
+		val propsList = userProps.filter { emitsGet(it) }.joinToString(",") { p ->
+			val setName = if (emitsSet(p)) str("set_" + p.name.asString()) else "null"
+			"""{"name":${str(p.name.asString())},"type":${str(birType(p.getter!!.returnType))},"get":${str("get_" + p.name.asString())},"set":$setName}"""
+		}
 		val setThis = { f: String, v: String -> """{"k":"setField","ownerType":${str(name)},"recv":{"k":"this"},"name":${str(f)},"value":$v}""" }
 		val loc = { n: String -> """{"k":"local","name":${str(n)}}""" }
 		// ctor(__name, __ordinal, <user params>) storing each into a field.
@@ -780,8 +804,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val voThrow = throwExpr(newExc("System.ArgumentException", str("No enum constant $name")))
 		val voBody = """{"k":"if","branches":[$voBranches,{"else":true,"body":[{"k":"exprStmt","expr":$voThrow}]}]}"""
 		val valueOfM = """{"name":"valueOf","static":true,"override":false,"virtual":false,"vis":"public","params":[{"name":"name","type":"string"}],"ret":${str("@$name")},"body":[$voBody]}"""
-		val methods = (userMethods + listOf(toStr, valuesM, valueOfM)).joinToString(",")
-		val baseDef = """{"name":${str(name)},"kind":"class","abstract":$baseAbstract,"vis":${str(visOf(ec))},"base":null,"interfaces":[],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods]}"""
+		val methods = (userMethods + propAccessors + listOf(toStr, valuesM, valueOfM)).joinToString(",")
+		val baseDef = """{"name":${str(name)},"kind":"class","abstract":$baseAbstract,"vis":${str(visOf(ec))},"base":null,"interfaces":[],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods],"properties":[$propsList]}"""
 		// Emit the base enum class first, then each per-entry subclass.
 		return (listOf(baseDef) + subDefs).joinToString(",")
 	}
