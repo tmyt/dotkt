@@ -1131,14 +1131,19 @@ sealed class ReferenceMetadataIndex
     }
 
     // A receiver-type key for an extension fun's first param, matched against a call's first-arg type. Arrays collapse
-    // to "[]", generic params to "gp", a generic type to its open def's stripped FQN.
+    // to "[]", generic params to "gp", a generic type to its open def's stripped FQN. A NESTED type's reflection name
+    // ("kotlin.collections.Map`2+Map$Entry`2") is normalized to the BIR token convention the call side uses
+    // ("kotlin.collections.Map$Entry" = namespace + innermost simple name) — e.g. the Map.Entry.component1/2 extensions.
     static string RecvKey(Type t)
     {
         if (t.IsByRef && t.GetElementType() is Type e) t = e;
         if (t.IsArray) return "[]";
         if (t.IsGenericParameter) return "gp";
         var def = t.IsGenericType ? t.GetGenericTypeDefinition() : t;
-        return StripGenericArity(def.FullName ?? def.Name);
+        var full = def.IsNested
+            ? (string.IsNullOrEmpty(def.Namespace) ? "" : def.Namespace + ".") + def.Name
+            : def.FullName ?? def.Name;
+        return StripGenericArity(full);
     }
 
     // A method's full ParamKey-normalized signature ("f64", "f64,f64", "i32", ...), used to overload-disambiguate a
@@ -2299,6 +2304,44 @@ static class IteratorConsumerNormalization
                 map[vn] = elem;
                 obj["type"] = "clrg:kotlin.collections.Iterator[" + elem + "]";
             }
+            // An `Iterator[elem]`-typed var initialized by a call INTO THE RT STDLIB (a `kotlin.*` owner — an unaliased
+            // kotlin.collections interface like Set.iterator(), or an attributed top-level like MapsKt.iterator(map)):
+            // the runtime iterator is an rt-dll type implementing the REAL kotlin.collections.Iterator, never the app's
+            // monomorphized `<>dotkt_KIterator_<elem>` synthetic — so its hasNext/next consumers must be re-pointed
+            // exactly like the bridge case above. A USER-owned init (Countdown.iterator() returning an app-emitted
+            // `object : Iterator<Int>` that implements the synthetic) is deliberately NOT registered — app-internal
+            // producer/consumer stay consistent on the synthetic.
+            else if (k == "var" && Str(obj["name"]) is string vn2 && obj["init"] is JsonObject init2 &&
+                Str(obj["type"]) is string vt && IteratorVarElem(vt) is (string head, string elem2) &&
+                (Str(init2["owner"]) ?? Str(init2["ownerType"]) ?? "").StartsWith("kotlin.", StringComparison.Ordinal))
+            {
+                map[vn2] = elem2;
+                obj["type"] = "clrg:" + head + "[" + elem2 + "]";
+            }
+            // `iterator()` dispatched through the monomorphized `<>dotkt_KIterable_<elem>` synthetic on a value that
+            // came FROM THE RT STDLIB (`for ((i,v) in xs.withIndex())`: withIndex returns an rt IndexingIterable,
+            // which implements IEnumerable<elem> — Iterable is @ClrTypeAlias — never the app's synthetic ->
+            // EntryPointNotFound). Re-route the init through the ClrIteratorBridge (the same target kotc's aliased-
+            // receiver path uses) and register the var. Receiver-gated: an APP-emitted `class R : Iterable<Int>`
+            // (implements the synthetic; il-iterable) has a non-kotlin.* receiver owner and is left untouched.
+            else if (k == "var" && Str(obj["name"]) is string vn3 && obj["init"] is JsonObject init3 &&
+                Str(obj["type"]) is string vt3 && IteratorVarElem(vt3) is (string, string elem3) &&
+                Str(init3["k"]) == "callInstance" && Str(init3["method"]) == "iterator" &&
+                (Str(init3["ownerType"]) ?? "").StartsWith("<>dotkt_KIterable_", StringComparison.Ordinal) &&
+                init3["recv"] is JsonObject krecv &&
+                (Str(krecv["owner"]) ?? Str(krecv["ownerType"]) ?? "").StartsWith("kotlin.", StringComparison.Ordinal))
+            {
+                obj["init"] = new JsonObject
+                {
+                    ["k"] = "callStatic",
+                    ["owner"] = Bridge,
+                    ["method"] = "iteratorOverEnumerable",
+                    ["args"] = new JsonArray { krecv.DeepClone() },
+                    ["typeArgs"] = new JsonArray { elem3 },
+                };
+                map[vn3] = elem3;
+                obj["type"] = "clrg:kotlin.collections.Iterator[" + elem3 + "]";
+            }
             // A hasNext/next `callInstance` whose synthetic owner addresses one of those iterator locals -> a
             // `clrInstance` on the real referenced generic interface. callInstance routes through ResolveMethod/
             // ParseOwner (an EMITTED-type `_types` lookup that KeyNotFounds on a clrg: owner); the CLR-bound member path
@@ -2322,6 +2365,16 @@ static class IteratorConsumerNormalization
         }
         else if (node is JsonArray arr)
             foreach (var it in arr) if (it != null) Process(it, map);
+    }
+
+    // `@kotlin.collections.Iterator[<elem>]` / `@kotlin.collections.MutableIterator[<elem>]` -> (bare head, elem);
+    // null otherwise. The elem may itself be a constructed token (`@kotlin.collections.Map$Entry[string,int]`).
+    static (string, string)? IteratorVarElem(string vt)
+    {
+        foreach (var head in new[] { "@kotlin.collections.Iterator[", "@kotlin.collections.MutableIterator[" })
+            if (vt.StartsWith(head, StringComparison.Ordinal) && vt.EndsWith("]", StringComparison.Ordinal))
+                return (head[1..^1], vt[head.Length..^1]);
+        return null;
     }
 }
 
@@ -3283,13 +3336,50 @@ static class MemberCallSubstitution
         if (kind != "interface" && refs.IsRule3Member(ownerFqn, member))
             return Rule3HelperCall(node, refs, ownerFqn, member, args, instance);
 
+        // Rule 5m (MAP-interface defaults): Map/MutableMap both alias IDictionary<K,V> (see the stdlib rationale), but
+        // most Kotlin map members have no 1:1 IDictionary equivalent — `get` is null-on-missing while get_Item THROWS,
+        // put/remove return the previous value, and the keys/values/entries views are Kotlin-typed. Route them to the
+        // rt's ClrMapDefaults statics, generic over BOTH type args (the 2-type-arg mirror of CollDefaultCall). Members
+        // that DO bind 1:1 (@ClrIntrinsic size/containsKey/clear + MutableMap keys/values) were already renamed to
+        // their BCL slot by DeclarationRename and fall through to Rule 4; the defensive get_keys/get_values entries
+        // below catch an un-renamed MutableMap accessor call (no overrides metadata) as a direct property read.
+        if (instance && kind == "interface" &&
+            (ownerFqn == "kotlin.collections.Map" || ownerFqn == "kotlin.collections.MutableMap"))
+        {
+            var mutable = ownerFqn == "kotlin.collections.MutableMap";
+            var helper = (member, args.Count, mutable) switch
+            {
+                ("get", 1, _) => "clrMapGet",
+                ("isEmpty", 0, _) => "clrMapIsEmpty",
+                ("containsValue", 1, _) => "clrMapContainsValue",
+                ("getOrDefault", 2, _) => "clrMapGetOrDefault",
+                ("get_keys", 0, false) => "clrMapKeys",
+                ("get_values", 0, false) => "clrMapValues",
+                ("get_entries", 0, false) => "clrMapEntries",
+                ("get_entries", 0, true) => "clrMapMutableEntries",
+                ("put", 2, true) => "clrMapPut",
+                ("remove", 1, true) => "clrMapRemove",
+                ("remove", 2, true) => "clrMapRemoveKV",
+                ("putAll", 1, true) => "clrMapPutAll",
+                ("putIfAbsent", 2, true) => "clrMapPutIfAbsent",
+                ("replace", 2, true) => "clrMapReplace",
+                ("replace", 3, true) => "clrMapReplaceKVV",
+                _ => null,
+            };
+            if (helper != null)
+                return MapDefaultCall(node, helper, ownerToken, args);
+            if (mutable && args.Count == 0 && member is "get_keys" or "get_values")
+                return ClrPropNode(node, clrOwner, member == "get_keys" ? "Keys" : "Values", ClrPropRead, member, args);
+            // else fall through to Rule 4: an already-BCL member name on the aliased IDictionary owner.
+        }
+
         // Rule 5 (collection-interface defaults): the substituted BCL IReadOnly*/I* interfaces lack isEmpty/contains/
         // containsAll/indexOf/lastIndexOf/subList/listIterator/iterator, so an @ClrTypeAlias collection-interface call
         // routes to the rt's ClrCollectionDefaults / ClrIteratorBridge helpers — the SAME targets kotc's collDefault
         // path uses (its `clrName(declaringClass) != null` gate is now null for the @ClrTypeAlias collection interfaces,
         // so it no longer fires; this is the bir2cir home of that Kotlin<->CLR relation). The element type is the
         // owner token's first type arg; the helper is generic over it.
-        if (instance && kind == "interface" && ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal))
+        else if (instance && kind == "interface" && ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal))
         {
             var elem = OwnerElemArg(ownerToken);
             if (member == "iterator" && args.Count == 0)
@@ -3392,6 +3482,35 @@ static class MemberCallSubstitution
         };
     }
 
+    // The 2-type-arg map mirror of CollDefaultCall: `callStatic ClrMapDefaultsKt.<helper>(recv, args...)` typed over
+    // the map owner token's [K,V] instantiation args.
+    static JsonNode MapDefaultCall(JsonObject node, string helperMethod, string ownerToken, JsonArray args)
+    {
+        var hargs = new JsonArray();
+        if (node["recv"] != null) hargs.Add(node["recv"].DeepClone());
+        foreach (var a in args) hargs.Add(a?.DeepClone());
+        var (k, v) = OwnerKvArgs(ownerToken);
+        return new JsonObject
+        {
+            ["k"] = "callStatic",
+            ["owner"] = "kotlin.collections.ClrMapDefaultsKt",
+            ["method"] = helperMethod,
+            ["args"] = hargs,
+            ["typeArgs"] = new JsonArray { k, v },
+        };
+    }
+
+    // The first TWO top-level type arguments of a map owner token (`kotlin.collections.Map[gp:K,gp:V]`); `object` when
+    // erased/unbound.
+    static (string, string) OwnerKvArgs(string ownerToken)
+    {
+        var br = ownerToken.IndexOf('[');
+        if (br < 0 || !ownerToken.EndsWith("]", StringComparison.Ordinal)) return ("object", "object");
+        var parts = SplitTopLevel(ownerToken[(br + 1)..^1]);
+        return (parts.Count > 0 && parts[0].Length > 0 ? parts[0] : "object",
+                parts.Count > 1 && parts[1].Length > 0 ? parts[1] : "object");
+    }
+
     // The first top-level type argument of an owner token (`kotlin.collections.List[gp:E]` -> `gp:E`); `object` if none.
     static string OwnerElemArg(string ownerToken)
     {
@@ -3428,7 +3547,15 @@ static class MemberCallSubstitution
         var fqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
         var br = ownerToken.IndexOf('[');
         if (br >= 0 && ownerToken.EndsWith("]", StringComparison.Ordinal))
-            return "clrg:" + bcl + "[" + ownerToken[(br + 1)..^1] + "]";
+        {
+            // Pad a PARTIALLY-erased arg list to the alias's declared arity (a star-projection `Map<K, *>` reaches
+            // here as `kotlin.collections.Map[gp:K]` — 1 of IDictionary's 2 args; ilemit's GenericType would fail to
+            // resolve `IDictionary`1`). The trailing erased args become `object`, same as the fully-erased case below.
+            var kept = SplitTopLevel(ownerToken[(br + 1)..^1]).Where(a => a.Length > 0).ToList();
+            var arity = refs.OwnerArity(fqn);
+            for (var i = kept.Count; i < arity; i++) kept.Add("object");
+            return "clrg:" + bcl + "[" + string.Join(",", kept) + "]";
+        }
         if (refs.OwnerArity(fqn) is var ar && ar > 0)
             return "clrg:" + bcl + "[" + string.Join(",", Enumerable.Repeat("object", ar)) + "]";
         return bcl;

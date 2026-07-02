@@ -3403,17 +3403,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				if (field != null) return """{"k":"field","ownerType":${str(birType(r.type).removePrefix("@"))},"recv":${expr(r)},"name":${str(field)}}"""
 			}
 		}
-		// `entry.component1()/.component2()` on a Map.Entry (the `for ((k,v) in map)` desugaring; an EXTENSION
-		// function, so the receiver is the extension receiver) -> KeyValuePair.Key/.Value.
-		if (name == "component1" || name == "component2") {
-			val r = dispatchReceiver(call) ?: extensionReceiver(call)
-			if (r != null && r.type.classFqName?.asString() in setOf("kotlin.collections.Map.Entry", "kotlin.collections.MutableMap.MutableEntry")) {
-				val a = (r.type as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
-				val kt = a.getOrNull(0) ?: "object"; val vt = a.getOrNull(1) ?: "object"
-				val prop = if (name == "component1") "Key" else "Value"
-				return """{"k":"clrPropGet","type":"clrg:System.Collections.Generic.KeyValuePair[$kt,$vt]","name":${str(prop)},"retType":${str(if (name == "component1") kt else vt)},"static":false,"recv":${expr(r)}}"""
-			}
-		}
+		// (REMOVED 2026-07-02) The legacy `entry.component1()/.component2()` -> KeyValuePair.Key/.Value lowering is
+		// GONE: map entries are no longer BCL KeyValuePairs — the Map/MutableMap dual-rep (both alias IDictionary)
+		// surfaces entries as real `kotlin.collections.Map.Entry` objects (rt ClrMutableMapEntry), so the destructure
+		// components emit as the PLAIN Kotlin extension calls and resolve like any stdlib call. Reading a ref object
+		// as a KeyValuePair struct reinterpreted memory -> garbage values. (KeyValuePair was CLR knowledge inside
+		// kotc anyway — the layer rules forbid it.)
 
 		// Invoking a function-typed value `f(x)` -> delegate `Invoke` (Func/Action). Includes a callable-reference
 		// value `(c::method)(x)` whose static type is `KFunctionN` (also a delegate at the CLR level).
