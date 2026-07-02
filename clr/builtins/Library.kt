@@ -81,15 +81,19 @@ public actual fun booleanArrayOf(vararg elements: Boolean): BooleanArray = TODO(
 /**
  * Returns an array containing enum T entries.
  */
-// TODO(clr): top-level reified enum interception (see audit) -- should lower to System.Enum.GetValues(typeof(T)); the
-// call-site interception for top-level reified entries is not yet wired.
+// CALL-SITE INTERCEPTED (kotc): reified T is a real CLR type arg, so BirEmitter (ENUM_REIFIED_INTRINSICS) lowers
+// every call like `T.values()` — rich enum -> the synthesized static `values()`, basic enum / generic-param T -> the
+// semantic `enumValues` node (System.Enum.GetValues). This body is never invoked (filler). KNOWN GAP: through a
+// non-inlined generic context a RICH enum T is unreachable via System.Enum reflection (basic enums only).
 @SinceKotlin("1.1")
 public actual inline fun <reified T : Enum<T>> enumValues(): Array<T> = TODO("clr binding should be implemented")
 
 /**
  * Returns an enum entry with specified name.
  */
-// TODO(clr): top-level reified enum interception (see audit) -- should lower to System.Enum.Parse(typeof(T), name); the
-// call-site interception for top-level reified entries is not yet wired.
+// CALL-SITE INTERCEPTED (kotc): lowered like `T.valueOf(name)` — rich enum -> the synthesized static `valueOf()`,
+// basic enum / generic-param T -> the semantic `enumParse` node (System.Enum.Parse; an unknown name surfaces as
+// System.ArgumentException, the CLR face of IllegalArgumentException). Body never invoked (filler). Same rich-enum
+// generic-context gap as enumValues.
 @SinceKotlin("1.1")
 public actual inline fun <reified T : Enum<T>> enumValueOf(name: String): T = TODO("clr binding should be implemented")
