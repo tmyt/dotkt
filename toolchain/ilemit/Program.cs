@@ -1356,8 +1356,10 @@ sealed partial class Emitter
 
     // An interface member inherited through the interface chain (`IList<T>.Add` -> `ICollection<T>.Add`). Interface
     // `GetMethods` excludes base-interface members, so search the open def's transitively-flattened base interfaces,
-    // construct the declaring one with `typeArgs` (the SHARED type parameters of a generic interface chain like
-    // IList<T> : ICollection<T> : IEnumerable<T>) and re-anchor the method onto it. Null if not found.
+    // substitute the open def's type parameters with `typeArgs` into each base reference — which covers BOTH a
+    // shared-arity chain (IList<T> : ICollection<T>) AND an ARITY-CHANGING constructed-arg chain
+    // (IDictionary<K,V> : ICollection<KeyValuePair<K,V>>, where Count/Clear live 2->1 down the chain) — and
+    // re-anchor the method onto the constructed base. Null if not found.
     static MethodInfo ResolveInheritedIfaceMethod(Type open, Type[] typeArgs, string name, int argc, BindingFlags flags)
     {
         foreach (var bi in open.GetInterfaces())
@@ -1369,14 +1371,25 @@ sealed partial class Emitter
                 continue;
             }
             var biOpen = bi.GetGenericTypeDefinition();
-            if (biOpen.GetGenericArguments().Length != typeArgs.Length) continue;   // shared-arity chains only
             var bom = biOpen.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argc);
             if (bom == null) continue;
-            var biCon = biOpen.MakeGenericType(typeArgs);
+            var biCon = SubstituteIfaceArgs(bi, typeArgs);
             return IsTbInstantiation(biCon) ? TypeBuilder.GetMethod(biCon, bom)
                 : biCon.GetMethods(flags).First(m => m.Name == name && m.GetParameters().Length == argc);
         }
         return null;
+    }
+
+    // Substitute an open interface's own generic parameters (positionally = `typeArgs`) throughout a base-interface
+    // reference as declared on that open def — including CONSTRUCTED args (`ICollection<KeyValuePair<K,V>>` with
+    // K:=string,V:=int -> `ICollection<KeyValuePair<string,int>>`). Every generic parameter appearing in such a
+    // reference is declared by the open type, so GenericParameterPosition indexes `typeArgs` directly.
+    static Type SubstituteIfaceArgs(Type t, Type[] typeArgs)
+    {
+        if (t.IsGenericParameter) return typeArgs[t.GenericParameterPosition];
+        if (!t.IsGenericType) return t;
+        var args = t.GetGenericArguments().Select(a => SubstituteIfaceArgs(a, typeArgs)).ToArray();
+        return t.GetGenericTypeDefinition().MakeGenericType(args);
     }
 
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
@@ -2811,8 +2824,11 @@ sealed partial class Emitter
         var open = type.IsGenericType ? type.GetGenericTypeDefinition() : type;
         var openPi = open.GetProperty(name);
         if (openPi != null) return TypeBuilder.GetMethod(type, getter ? openPi.GetGetMethod() : openPi.GetSetMethod());
-        // Inherited interface property (`ICollection<T>.Count` accessed on `IList<T>`): interface GetProperty
-        // doesn't traverse base interfaces, so walk them and re-anchor (mirrors ResolveInheritedIfaceMethod).
+        // Inherited interface property (`ICollection<T>.Count` accessed on `IList<T>`, or the ARITY-CHANGING
+        // `IReadOnlyCollection<KeyValuePair<K,V>>.Count` accessed on `IReadOnlyDictionary<K,V>`/`IDictionary<K,V>`):
+        // interface GetProperty doesn't traverse base interfaces, so walk them, substitute the open def's type
+        // parameters into the (possibly constructed-arg) base reference, and re-anchor (mirrors
+        // ResolveInheritedIfaceMethod).
         var typeArgs = type.GetGenericArguments();
         foreach (var bi in open.GetInterfaces())
         {
@@ -2821,8 +2837,7 @@ sealed partial class Emitter
             var acc = getter ? bp?.GetGetMethod() : bp?.GetSetMethod();
             if (acc == null) continue;
             if (!bi.IsGenericType) return acc;
-            if (biOpen.GetGenericArguments().Length != typeArgs.Length) continue;
-            var biCon = biOpen.MakeGenericType(typeArgs);
+            var biCon = SubstituteIfaceArgs(bi, typeArgs);
             return IsTbInstantiation(biCon) ? TypeBuilder.GetMethod(biCon, acc)
                 : (getter ? biCon.GetProperty(name).GetGetMethod() : biCon.GetProperty(name).GetSetMethod());
         }
