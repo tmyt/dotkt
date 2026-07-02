@@ -76,6 +76,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   bare-V-returning helper (`Map`/`MutableMap.getOrDefault` → `clrMapGetOrDefault`) boxes the CONCRETE
   instantiation — previously the emitted `box !!1` used the callee's own method-generic token inside non-generic
   `main()` = invalid metadata → BadImageFormatException. New gate case `il-mapgen` covers both.
+- **facadegen/kotc: `Task`/`Task<T>` (same-name .NET arity families) now coexist — the silent last-wins
+  ClassId overwrite is fixed.** facadegen's meta emitted a generic definition under an arity-LESS .NET-name
+  token (`class Task System.Threading.Tasks.Task open TResult` vs the non-generic `class Task
+  System.Threading.Tasks.Task open`), and the kotc injector keyed `byClassId` by simple name — BFS order
+  decided which `Task` survived, and `generic:Task[T]` cross-refs could bind against the non-generic one
+  (directly under the coming suspend=`Task<T>` ABI). Now: (1) the meta's .NET-name token is the TRUE CLR name
+  (`` System.Threading.Tasks.Task`1 ``); (2) a generic definition in a multi-member `(namespace, simpleName)`
+  family gets an arity-suffixed KOTLIN name (`Task1<TResult>`, `Func2<T,R>` — the `kotlin.Function1`
+  precedent; singleton families like `` List`1 `` keep the plain name; family computed against the loaded
+  reference universe, so names are import-set-stable); (3) cross-refs (`generic:Task1[...]`) and supertype
+  refs agree; (4) `import ...Task` seeds the WHOLE arity family (and `import ...Task1` maps the digits back
+  to the backtick arity); (5) the injector strips the backtick when registering the backend name (the
+  `clrg:<open>[args]` + ilemit arity-append contract is unchanged — no bir2cir/ilemit change). Sibling fix:
+  NESTED generic definitions (`` List`1+Enumerator ``) previously injected under a nonexistent FQN
+  (`System.Collections.Generic.Enumerator`); they are now excluded (`ShouldInject`) and references degrade to
+  `Any?`. K2 cannot host two same-name classifiers in one package (one classifier per ClassId), hence the
+  naming projection; documented in `docs/dotkt-semantics.md` §8d.
+
 - **`scripts/` overhaul: one naming scheme + shared internal conventions + two harness bug fixes.**
   *Naming* — normalized to `<verb>-<noun>[-qualifier].sh`, aligned with the make target names (targets unchanged):
   `build-clr-stdlib.sh`→`build-stdlib-ref.sh`, `build-clr-stdlib-runtime.sh`→`build-stdlib-rt.sh`,
