@@ -76,6 +76,43 @@ stays the synthetic `<>dotkt_CharSequence`. ilemit emits per the resolved tokens
 5. Retire whatever synthetic-CharSequence machinery is no longer reachable once stdlib params are `string` (but keep
    the user-implementer path).
 
+## Status — what landed (2026-07-02)
+
+**LANDED (bir2cir, gate-neutral):** the `CharSeqStringLowering` pass (`toolchain/bir2cir/Program.cs`) implements points
+①/②/ for an **app build with NO user `class S : CharSequence`** (a "pure" assembly, decided by the driver's
+`hasUserCharSeqImpl` scan of every type's `interfaces` for `<>dotkt_CharSequence`):
+
+- a CharSequence-typed **param / return / local / field** declaration → `System.String`;
+- a member read on such a now-`string` value — `cs.length` / `cs[i]` / `cs.subSequence(a,b)` (kotc emits these as a
+  `callInstance` whose `ownerType` is the synthetic) → `System.String.Length` / `get_Chars` / `Substring(a, b-a)`;
+- a **local** call (a top-level fn in `localTopLevelFns`) whose CharSequence `sig` slot is now `string` has its arg
+  coerced — a `String` flows directly, a non-`String` (a `StringBuilder`) is snapshot with an implicit `.toString()`
+  (an `objMethod ToString`, virtual). Same for a CharSequence return / local init / `as CharSequence` cast.
+
+It runs BEFORE `StringCharSequenceBridge`, so a now-`string` value flowing into a *stdlib* CharSequence-extension (whose
+param is still the synthetic in the un-rebuilt stdlib) is still adapter-wrapped by the bridge — **the two compose**
+(verified: a pure-app `fun has(cs: CharSequence) = cs.contains(sub)` works for both a `String` and a `StringBuilder`).
+Sample: `cases/il-charseqs`. Existing `il-charseq` / `il-charseqx` (user `class S : CharSequence`) stay on the
+synthetic path unchanged (the per-assembly guard disables the pass) — both still green.
+
+**RETAINED (technical necessity):** the synthetic `<>dotkt_CharSequence` + `<>dotkt_StringCharSequence` adapter +
+`CanonicalSynthetics` machinery. Sealed `System.String` forbids a real `: string` supertype, so a user
+`class S : CharSequence` MUST implement the synthetic. This is the point-1 EXCEPTION. `il-charseq`'s intra-assembly
+polymorphic reads (`show(cs: CharSequence) = cs.length` with `show(S("hello"))` == 5; `val sub: CharSequence = c.subSequence(..)`)
+genuinely require the synthetic — collapsing them to `string` + `.toString()` would snapshot `S` via its (default,
+type-name) `toString` and lose the length. Hence: an assembly that declares a user implementer keeps `CharSequence`
+polymorphic **assembly-wide** (the pass is skipped there).
+
+**DEFERRED (follow-up — NOT done, needs a stdlib rebuild):** lowering the **stdlib's own** CharSequence-extension
+signatures (`StringsKt.contains`/`trim`/… params) from the synthetic to `string`. That is the change that would let the
+5 still-lowered String ops (`trim`/`reversed`/`padStart`/`replace(S,S)`/`isBlank`) retire cleanly to their stdlib bodies
+(their blockers are synthetic-CharSequence↔StringBuilder interop inside those bodies). It requires: (a) rebuilding the
+ref+rt stdlib with CharSequence→`string` (a multi-blocker emit grind), and (b) a cross-assembly call-site coercion so an
+app calls the now-`string`-param stdlib ext with a `string` arg (a String directly, a non-String via `.toString()`),
+replacing the adapter bridge for that path. Until then the 5 ops stay compiler-lowered and the stdlib CharSequence-ext
+ABI stays synthetic — so this landed increment is confined to app-OWN CharSequence declarations and is a no-op on every
+existing sample (none of them declare an app-own CharSequence signature outside the two `il-charseq*` cases).
+
 ## Open questions (decide during implementation)
 
 - A user `class S : CharSequence` passed to a stdlib `CharSequence`(=`string`) param → implicit `.toString()` calls the

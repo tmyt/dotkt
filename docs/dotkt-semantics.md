@@ -88,6 +88,32 @@ This is the single most surprising deviation, so it gets the most detail.
 - The JVM differential harness (`verify-differential.sh`) normalizes these cosmetic differences and checks the logic.
 - Memory `clr-native-primitive-formatting`.
 
+## 5b. `CharSequence` is `string` on the CLR — an immutable snapshot, not a live view
+
+`kotlin.CharSequence` is a JVM-shaped polymorphic char view with **no faithful .NET equivalent** (`System.String` is
+sealed; `System.Text.StringBuilder` shares no indexed-char interface with it; `ReadOnlySpan<char>` — the only real .NET
+"char view" — is a `ref struct` that cannot be a general parameter/field/generic-arg type). Per the project philosophy
+(*Kotlin carries JVM accidental complexity; on the CLR, identify and discard it*), DotKt **models `CharSequence` as
+`System.String`** at the CLR boundary. Consequences (a deliberate, declared deviation — like CLR-native
+stringification above):
+
+- A `CharSequence`-typed **parameter / return / local** is emitted as `System.String`; its member reads
+  (`length` / `get`/`[]` / `subSequence`) resolve to `System.String.Length` / `get_Chars` / `Substring`. In C# a
+  DotKt `fun f(cs: CharSequence)` therefore surfaces as `void f(string cs)` — clean interop, no synthetic type.
+- A **non-`String` `CharSequence` value** (a `StringBuilder`, any other char sequence) flowing into a `CharSequence`
+  (= `string`) slot is coerced with an **implicit `.toString()` snapshot** at the boundary. A `String` flows directly.
+- Therefore `CharSequence` has **`string` (immutable-snapshot) semantics** — the JVM "live view" (mutating a
+  `StringBuilder` after passing it as a `CharSequence` and observing the change through the parameter) is
+  **NOT supported**. It is honest because it is declared, not hidden.
+- The one construct that keeps a synthetic interface: a user-declared **`class S : CharSequence`**. Sealed
+  `System.String` cannot be a supertype, so such a class implements a synthetic monomorphic `<>dotkt_CharSequence`
+  interface, and an assembly that declares one keeps `CharSequence` polymorphic assembly-wide (so a
+  `show(cs: CharSequence) = cs.length` still dispatches to the user impl). Passing a user `S` into a *different*
+  assembly's `CharSequence` (= `string`) slot still snapshots it via `.toString()`.
+- Design + layer plan: `docs/design-charsequence-clr-string.md`. Implemented in bir2cir (`CharSeqStringLowering`,
+  app builds without a user implementer). The **stdlib's own** CharSequence-extension signatures are not yet lowered to
+  `string` (a follow-up needing a stdlib rebuild); they still route through the `<>dotkt_CharSequence` adapter bridge.
+
 ## 6. Consuming a DotKt assembly AS KOTLIN — what rides metadata vs. needs an attribute
 
 When another `.ktproj` consumes a DotKt assembly, the Kotlin facts with **no native .NET representation** are carried
