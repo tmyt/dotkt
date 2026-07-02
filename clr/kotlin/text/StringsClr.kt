@@ -302,3 +302,15 @@ public actual fun CharSequence.repeat(n: Int): String {
 
 public actual val String.Companion.CASE_INSENSITIVE_ORDER: Comparator<String>
     get() = Comparator { a, b -> a.compareTo(b, ignoreCase = true) }
+
+// `String.format` — CLR PLATFORM API (like Kotlin/JVM's own `format`, which is JVM-only platform API; Native/JS
+// have none). Bound to System.String.Format: the format string is the .NET COMPOSITE format ("{0} items",
+// "{0:D5}", "{0,-4}"), NOT Java printf ("%d") — host conventions win. See docs/dotkt-semantics.md.
+@kotlin.clr.ClrIntrinsic("System.String.Format")
+private fun clrStringFormat(format: String, args: Array<out Any?>): String = TODO("@Clr System.String.Format(string, object[])")
+
+/** Formats [args] into [format] using the .NET composite format (`"{0} items"`, `"{0:D5}"`). */
+public fun String.Companion.format(format: String, vararg args: Any?): String = clrStringFormat(format, args)
+
+/** Formats [args] into this string as a .NET composite format template (`"{0} items".format(5)`). */
+public fun String.format(vararg args: Any?): String = clrStringFormat(this, args)
