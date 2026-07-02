@@ -6,21 +6,56 @@ package kotlin
 
 import kotlin.internal.InlineOnly
 
-// TODO(clr): needs ilemit Div_Un (see audit)
+// Division/remainder are pure-Kotlin ports of the JVM actual (Guava's UnsignedLongs algorithm). They only run when
+// a call goes through the emitted method (e.g. `toString(radix)` below); a direct `a / b` on UInt/ULong is lowered
+// by the frontend to a raw `bin /` whose unsigned CLR operand type selects the native `div.un`/`rem.un` in ilemit.
 @PublishedApi
-internal actual fun uintRemainder(v1: UInt, v2: UInt): UInt = TODO("clr binding should be implemented")
+internal actual fun uintRemainder(v1: UInt, v2: UInt): UInt = (v1.toLong() % v2.toLong()).toUInt()
 
-// TODO(clr): needs ilemit Div_Un (see audit)
 @PublishedApi
-internal actual fun uintDivide(v1: UInt, v2: UInt): UInt = TODO("clr binding should be implemented")
+internal actual fun uintDivide(v1: UInt, v2: UInt): UInt = (v1.toLong() / v2.toLong()).toUInt()
 
-// TODO(clr): needs ilemit Div_Un (see audit)
 @PublishedApi
-internal actual fun ulongDivide(v1: ULong, v2: ULong): ULong = TODO("clr binding should be implemented")
+internal actual fun ulongDivide(v1: ULong, v2: ULong): ULong {
+    val dividend = v1.toLong()
+    val divisor = v2.toLong()
+    if (divisor < 0) { // i.e., divisor >= 2^63:
+        return if (v1 < v2) ULong(0) else ULong(1)
+    }
 
-// TODO(clr): needs ilemit Div_Un (see audit)
+    // Optimization - use signed division if both dividend and divisor < 2^63
+    if (dividend >= 0) {
+        return ULong(dividend / divisor)
+    }
+
+    // Otherwise, approximate the quotient, check, and correct if necessary.
+    val quotient = ((dividend ushr 1) / divisor) shl 1
+    val rem = dividend - quotient * divisor
+    return ULong(quotient + if (ULong(rem) >= ULong(divisor)) 1 else 0)
+}
+
 @PublishedApi
-internal actual fun ulongRemainder(v1: ULong, v2: ULong): ULong = TODO("clr binding should be implemented")
+internal actual fun ulongRemainder(v1: ULong, v2: ULong): ULong {
+    val dividend = v1.toLong()
+    val divisor = v2.toLong()
+    if (divisor < 0) { // i.e., divisor >= 2^63:
+        return if (v1 < v2) {
+            v1 // dividend < divisor
+        } else {
+            v1 - v2 // dividend >= divisor
+        }
+    }
+
+    // Optimization - use signed modulus if both dividend and divisor < 2^63
+    if (dividend >= 0) {
+        return ULong(dividend % divisor)
+    }
+
+    // Otherwise, approximate the quotient, check, and correct if necessary.
+    val quotient = ((dividend ushr 1) / divisor) shl 1
+    val rem = dividend - quotient * divisor
+    return ULong(rem - if (ULong(rem) >= ULong(divisor)) divisor else 0)
+}
 
 @PublishedApi
 internal actual fun uintCompare(v1: Int, v2: Int): Int =
@@ -81,12 +116,27 @@ internal actual fun doubleToULong(value: Double): ULong = when {
 @InlineOnly
 internal actual inline fun uintToString(value: Int): String = value.toUInt().toString()
 
-// TODO(clr): needs ilemit Div_Un (see audit)
 @InlineOnly
-internal actual inline fun uintToString(value: Int, base: Int): String = TODO("clr binding should be implemented")
+internal actual inline fun uintToString(value: Int, base: Int): String = ulongToString(value.toLong() and 0xFFFFFFFFL, base)
 
 @InlineOnly
 internal actual inline fun ulongToString(value: Long): String = value.toULong().toString()
 
-// TODO(clr): needs ilemit Div_Un (see audit)
-internal actual fun ulongToString(value: Long, base: Int): String = TODO("clr binding should be implemented")
+// Self-contained digit loop over the unsigned bit pattern via ulongDivide/ulongRemainder. Deliberately does NOT
+// delegate to `Long.toString(radix)` (the JVM actual's shape): that call site is still lowered to
+// System.Convert.ToString, which only supports bases 2/8/10/16 (see BirEmitter's toString(radix) lowering — kept
+// until the stdlib digit-loop body is fixed, master-task-inventory bundle 1). `base` is pre-checked by checkRadix
+// in the public UInt/ULong.toString(radix) wrappers.
+internal actual fun ulongToString(value: Long, base: Int): String {
+    if (value == 0L) return "0"
+    val digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    val b = ULong(base.toLong())
+    var n = value
+    val sb = StringBuilder()
+    while (n != 0L) {
+        sb.append(digits[ulongRemainder(ULong(n), b).toLong().toInt()])
+        n = ulongDivide(ULong(n), b).toLong()
+    }
+    sb.reverse()
+    return sb.toString()
+}
