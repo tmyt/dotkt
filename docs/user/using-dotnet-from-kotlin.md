@@ -39,18 +39,19 @@ fun main() {
 }
 ```
 
-## 2. Static members — go through `.Companion`
+## 2. Static members — just like Kotlin
 
-A .NET class's statics surface on a synthesized companion object, and the `.Companion` qualifier
-is **required** (the implicit `Type.member` shorthand is not supported for imported classes):
+A .NET class's statics surface on a synthesized companion object, and you call them the natural
+Kotlin way — `Type.member` works directly (the explicit `.Companion` form is also accepted):
 
 ```kotlin
 import Kfc.App
 
 fun main() {
-    App.Companion.start { p -> println("p=$p") }   // static method (lambda → .NET delegate)
-    println(App.Companion.Count)                   // static property
-    println(App.Companion.Answer)                  // static field
+    App.start { p -> println("p=$p") }   // static method (lambda → .NET delegate)
+    println(App.Count)                   // static property
+    println(App.Answer)                  // static field
+    App.Companion.start { }              // the explicit form works too (same BIR)
 }
 ```
 

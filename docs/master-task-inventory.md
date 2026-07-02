@@ -28,7 +28,8 @@ run-FAILs 15→0, PASS 101→132, zero regressions). The accepted tail, NOT open
   bundle-6 sequence-builder/coroutine work, not before.
 - `il:injstatic` was NOT the .Companion convention — a genuine bir2cir rule-3 classifier misfire on
   facadegen-injected owners (fixed `c8f5345`, mirroring the event-accessor precedent `32a1da6`). The `.Companion`
-  requirement itself (no implicit `App.start` on an injected class) remains the accepted frontend limitation.
+  requirement itself was then ALSO lifted (`50c2c9f`, 2026-07-02): implicit `App.start` now resolves via the eager
+  companion link + `FirInternals.java` shim — the old "frontend limitation" was a FIR wiring gap, not a K2 limit.
 
 ## The agreed execution order (user-directed 2026-07-02)
 
@@ -185,8 +186,11 @@ is largely STALE** — a code-grounded currency check found:
 ## 【3】 facadegen .NET interop breadth  *(#4 + interop-feedback)*
 Sources: `ship-tasks.md #4`, `archive/future-work-interop.md #4`, `archive/dotkt-interop-feedback.md`,
 `archive/research-roadmap.md I1`.
-- ~~static `.Companion` routing = the `il:injstatic` bug~~ — ✅ **FIXED (2026-07-02).** The real root cause was NOT
-  the `.Companion` convention (that stays the accepted access rule, MEMORY `injected-static-members-need-companion`):
+- ~~static `.Companion` routing = the `il:injstatic` bug~~ — ✅ **FIXED (2026-07-02).** And the `.Companion`
+  convention itself was subsequently **LIFTED** (`50c2c9f`): implicit `App.member` now resolves (eager companion
+  link + the `FirInternals.java` shim setting the FIR-internal `ownerGenerator`; the old NPE was a FIR wiring gap,
+  not a K2 limit — MEMORY `injected-static-members-need-companion` is RESOLVED). The injstatic bug's root cause was
+  NOT the convention:
   it was the **Rule-3 hoist classifier misfiring on an injected owner**. A facadegen-injected external .NET type's
   synthesized-companion static METHOD (`App.Companion.start(cb)`) naturally carries no member interop marker (it isn't
   a stdlib binding), so kotc's BirEmitter hoist condition matched and fabricated a phantom

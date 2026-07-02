@@ -38,7 +38,7 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 |---|---|
 | `import System.X` façade-free (+ transitive closure), import aliases | ✅ |
 | Constructors, methods, properties, indexers, all overloads, generics (`List<T>`, `Dictionary<K,V>`) | ✅ |
-| Statics via `.Companion` (the qualifier is required) | ✅ |
+| Statics — implicit `Type.member` (`.Companion` also accepted) | ✅ |
 | Events (`add_X`/`remove_X`), lambdas → any delegate (incl. custom generic delegates) | ✅ |
 | `out`/`ref` via `byref()`, nullable value types (`int?`), .NET enums | ✅ |
 | C# operator overloads and extension methods | ✅ |
