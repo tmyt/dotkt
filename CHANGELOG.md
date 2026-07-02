@@ -5,6 +5,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Gate hardening (pre-coroutine batch C1-C3): machine-readable XFAIL baselines + abort-proof harnesses.**
+  *C1 (verify-il)* — the known-fail baseline moved from prose/flat name lists to `XFAIL_RUN` / `XFAIL_ILVERIFY`
+  associative arrays (fail name → reason) diffed by the new shared `lib.sh xfail_diff`: exit 0 iff every actual
+  fail is XFAIL-listed; any other name prints `NEW-FAIL` and exits 1; an XFAIL entry that starts passing prints
+  `FIXED — remove it from the xfail list` without reddening the gate. CLAUDE.md's gate paragraph now points at
+  the mechanism instead of prose numbers. RECORDED (not fixed): `bymap` regressed with the stdlib subtree bump
+  (cde8afd) — the rt `clrMapGet` throws `EntryPointNotFoundException` on `IDictionary.ContainsKey`; XFAILed with
+  an explicit REGRESSION reason, owned by the Map/MutableMap dual-rep sub-track.
 - **`scripts/` overhaul: one naming scheme + shared internal conventions + two harness bug fixes.**
   *Naming* — normalized to `<verb>-<noun>[-qualifier].sh`, aligned with the make target names (targets unchanged):
   `build-clr-stdlib.sh`→`build-stdlib-ref.sh`, `build-clr-stdlib-runtime.sh`→`build-stdlib-rt.sh`,

@@ -5,14 +5,14 @@
 # if missing). Results: build/verify-il/run-<name> — ONE atomically-written record per sample (an EXIT
 # trap in each worker guarantees the record even if the worker crashes under set -e; the old runner
 # echoed directly from the parallel subshells, so a crashing sample could DROP its FAIL line and
-# interleave output — the documented false-pass race). Green = the fail set is within the KNOWN_*
-# baseline below (exit 0); ANY new fail name exits 1.
+# interleave output — the documented false-pass race). Green = every fail name is in the XFAIL_RUN /
+# XFAIL_ILVERIFY baseline below (exit 0); ANY name outside it prints NEW-FAIL and exits 1.
 source "$(dirname "$0")/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
 Runs the full IL sample gate (no flags). -h for this help.
-Green (exit 0) = no fail name outside the known-deferred baseline printed in the summary.
+Green (exit 0) = no fail name outside the XFAIL_RUN/XFAIL_ILVERIFY baseline declared in this script.
 EOF
 }
 while (( $# )); do
@@ -22,12 +22,28 @@ while (( $# )); do
 	esac
 done
 
-# The authoritative fail-name baseline (2026-07-03). Coroutine/SequenceScope-deferred samples compile+
-# emit but CRASH at run until the coroutine lowering lands (MEMORY coroutine-lowering-layer-deferred);
-# the ilverify names are run-correct, formal-verification-only findings. A sample failing OUTSIDE these
-# lists is a regression -> exit 1. A listed sample that starts passing prints a baseline-update note.
-KNOWN_RUN_FAIL="chunk cobuild collops2 seq"
-KNOWN_ILVERIFY_FAIL="chunk collops2 collrealkt gen3 iter iterable"
+# The authoritative XFAIL baseline — MACHINE-READABLE (fail name -> reason). The verdict at the bottom
+# is computed against these maps via lib.sh xfail_diff: exit 0 iff every actual fail is listed here;
+# any name outside them prints NEW-FAIL and exits 1; a listed name that starts passing prints
+# "FIXED — remove it from the xfail list" WITHOUT reddening the gate (prune the entry in the same
+# change). Coroutine/SequenceScope-deferred samples compile+emit but CRASH at run until the coroutine
+# lowering lands (MEMORY coroutine-lowering-layer-deferred); the ilverify names are formal-verification
+# findings, not run failures.
+declare -A XFAIL_RUN=(
+	[chunk]="coroutine/SequenceScope-deferred (bundle 6)"
+	[cobuild]="coroutine-deferred (kotlinx delay legacy removed; Task lowering = bundle 6)"
+	[collops2]="coroutine/SequenceScope-deferred (bundle 6)"
+	[seq]="coroutine/SequenceScope-deferred (bundle 6)"
+	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
+)
+declare -A XFAIL_ILVERIFY=(
+	[chunk]="ilverify formal finding (sample also run-XFAIL: coroutine-deferred)"
+	[collops2]="ilverify formal finding (sample also run-XFAIL: coroutine-deferred)"
+	[collrealkt]="ilverify formal-only finding (sample runs correct)"
+	[gen3]="ilverify formal-only finding (sample runs correct)"
+	[iter]="ilverify formal-only finding (sample runs correct)"
+	[iterable]="ilverify formal-only finding (sample runs correct)"
+)
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
 # -classpath, REPLACING the JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). This preserves
@@ -407,19 +423,16 @@ else
 	echo "(ilverify not installed; skipping formal verification — 'dotnet tool install -g dotnet-ilverify')"
 fi
 
-# ---- summary vs the known-fail baseline ----
-in_list() { local n="$1"; shift; [[ " $* " == *" $n "* ]]; }
-declare -a unexpected=()
-for n in ${run_fails[@]+"${run_fails[@]}"};    do in_list "$n" $KNOWN_RUN_FAIL      || unexpected+=("run:$n"); done
-for n in ${verify_fails[@]+"${verify_fails[@]}"}; do in_list "$n" $KNOWN_ILVERIFY_FAIL || unexpected+=("ilverify:$n"); done
-for n in $KNOWN_RUN_FAIL;      do in_list "$n" ${run_fails[@]+"${run_fails[@]}"}    || echo "note: known run-FAIL '$n' now PASSES — update the KNOWN_RUN_FAIL baseline"; done
-for n in $KNOWN_ILVERIFY_FAIL; do in_list "$n" ${verify_fails[@]+"${verify_fails[@]}"} || echo "note: known ilverify-FAIL '$n' now VERIFIES — update the KNOWN_ILVERIFY_FAIL baseline"; done
+# ---- verdict: diff the actual fail sets against the XFAIL baseline (lib.sh xfail_diff) ----
+echo "--- baseline diff (XFAIL = expected fail; NEW-FAIL = regression; FIXED = prune the xfail entry) ---"
+xfail_diff run      XFAIL_RUN      ${run_fails[@]+"${run_fails[@]}"}
+xfail_diff ilverify XFAIL_ILVERIFY ${verify_fails[@]+"${verify_fails[@]}"}
 
 echo "------------------------------------"
 echo "PASS(run) $run_pass   FAIL(run) ${#run_fails[@]}${run_fails[@]+ [${run_fails[*]}]}"
 echo "VERIFY $verify_pass   VERIFY-FAIL ${#verify_fails[@]}${verify_fails[@]+ [${verify_fails[*]}]}"
-if (( ${#unexpected[@]} )); then
-	echo "IL GATE RED — NEW fail name(s) vs the known baseline: ${unexpected[*]}"
+if (( ${#XFAIL_NEW[@]} )); then
+	echo "IL GATE RED — fail name(s) outside the XFAIL baseline: ${XFAIL_NEW[*]}"
 	exit 1
 fi
-echo "IL GATE GREEN (fail set within the known-deferred baseline: run[$KNOWN_RUN_FAIL] ilverify[$KNOWN_ILVERIFY_FAIL])"
+echo "IL GATE GREEN (every fail is XFAIL-listed; any FIXED line above means the baseline is stale — prune it)"

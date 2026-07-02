@@ -69,15 +69,17 @@ The build is a multi-stage native pipeline, not a single `gradle build`. Use the
 | Kotlin↔CLR round-trip (consume a DotKt dll as Kotlin) | `./scripts/verify-roundtrip.sh` |
 | **One-shot: compile + run a single `.kt`** | `./scripts/dotkt.sh --run path/to/Foo.kt` |
 
-`verify-il.sh` is the **canonical gate** — a change is not "done" without a run: the truthful 2026-07-03 baseline is
-**PASS(run) 132 / run-FAIL exactly the 4 coroutine/SequenceScope-deferred names (`chunk`/`cobuild`/`collops2`/`seq`)
-/ 6 known ilverify-formal-only names** (`chunk`/`collops2`/`collrealkt`/`gen3`/`iter`/`iterable` — run-correct).
-(The old "run-FAIL 0" figure was an artifact of the stdout/marker race: the 4 crashers died before printing their
-FAIL line. That race is FIXED — each sample now writes an atomic result record under `build/verify-il/`, so every
-sample always yields exactly one PASS/FAIL line.) The script itself encodes this baseline (`KNOWN_RUN_FAIL` /
-`KNOWN_ILVERIFY_FAIL`) and **exits 0 iff there is no NEW fail-name** — "green" is now machine-checked, no
-eyeballing needed. `dotkt.sh` is the fast dev wrapper over the same pipeline (`-h` for options: `--exe`,
-`--no-stdlib`, `--retarget`, `--ref <dll>`).
+`verify-il.sh` is the **canonical gate** — a change is not "done" without a run. The truthful fail-set
+baseline is **machine-readable, not prose**: the `XFAIL_RUN` / `XFAIL_ILVERIFY` maps at the top of
+`scripts/verify-il.sh` (one reason per name). The gate **exits 0 iff every actual fail is XFAIL-listed**
+and prints a `NEW-FAIL` / `FIXED` diff against that baseline either way; an XFAIL entry that starts
+passing prints "FIXED — remove it from the xfail list" **without** reddening the gate (prune the entry in
+the same change). So never copy fail counts/names into docs — run the gate and read its diff. (Each
+sample writes an atomic result record under `build/verify-il/`; the old stdout race that dropped FAIL
+lines is dead.) `verify-roundtrip.sh` follows the same discipline (`RT_XFAIL`: the suspend sections are
+expected-fail until the coroutine lowering lands — it is the coroutine bundle's E2E gate). `dotkt.sh` is
+the fast dev wrapper over the same pipeline (`-h` for options: `--exe`, `--no-stdlib`, `--retarget`,
+`--ref <dll>`).
 
 **Building the CLR stdlib** — the real pure-Kotlin stdlib under `libraries/stdlib/`. **These THREE
 scripts are the current, canonical build** (other stdlib scripts are STALE — see the warning):

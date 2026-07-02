@@ -35,6 +35,32 @@ die()  { echo "$SCRIPT_NAME: error: $*" >&2; exit 1; }
 # every script answers -h|--help; unknown flags go through usage_error.
 usage_error() { echo "$SCRIPT_NAME: $*" >&2; usage >&2; exit 2; }
 
+# --- XFAIL baseline verdict (shared by the verify gates) --------------------------------------------
+# A gate declares its expected failures as an associative array (fail name -> reason) and hands its
+# ACTUAL fail names to xfail_diff, which prints one classification line per name:
+#   XFAIL     <prefix>:<name> (<reason>)    expected fail, still failing — does NOT redden the gate
+#   NEW-FAIL  <prefix>:<name>               fail NOT in the baseline — a regression
+#   FIXED     <prefix>:<name> — fixed; remove it from the xfail list   (green; prune the entry)
+# Every NEW-FAIL is appended to the global XFAIL_NEW array; the caller's final verdict is
+# exit 0 iff XFAIL_NEW is empty after all xfail_diff calls.
+declare -a XFAIL_NEW=()
+xfail_diff() { # <prefix> <xfail-assoc-array-name> [actual-fail-name...]
+	local _pfx="$1"; local -n _xf="$2"; shift 2
+	local n
+	for n in "$@"; do
+		if [[ -v _xf[$n] ]]; then
+			echo "XFAIL     $_pfx:$n (${_xf[$n]})"
+		else
+			echo "NEW-FAIL  $_pfx:$n"; XFAIL_NEW+=("$_pfx:$n")
+		fi
+	done
+	for n in $(printf '%s\n' "${!_xf[@]}" | sort); do
+		if [[ " ${*:-} " != *" $n "* ]]; then
+			echo "FIXED     $_pfx:$n — fixed; remove it from the xfail list"
+		fi
+	done
+}
+
 # --- lazy builders (loud when they fire) -----------------------------------------------------------
 need_kotc() {
 	[[ -x "$KOTC" ]] || { info "building kotc (gradlew :kotc:installDist)" >&2; (cd "$ROOT" && ./gradlew -q :kotc:installDist); }
