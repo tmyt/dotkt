@@ -697,9 +697,25 @@ sealed partial class Emitter
     // Method-level generic params, keyed by MethodInfo, so call sites can MakeGenericMethod.
     readonly Dictionary<MethodBuilder, Dictionary<string, GenericTypeParameterBuilder>> _methodTypeParams = new();
 
+    // Body-phase occurrence counter for duplicate (name, params) defs — mirrors DeclareMethod's $dupN mangling.
+    readonly Dictionary<(TypeInfo, string), int> _bodyDupSeen = new();
+
     void DeclareMethod(TypeInfo ti, JsonElement m, bool isStatic)
     {
         var name = m.GetProperty("name").GetString();
+        // DUPLICATE (name, params) defs — Kotlin overloads distinguished ONLY by receiver types that COLLAPSE under a
+        // @ClrTypeAlias (Map.iterator() vs MutableMap.iterator(): both receivers lower to IDictionary<K,V>) — would
+        // otherwise share one MethodsBySig slot, concatenating BOTH bodies into a single MethodBuilder (malformed IL,
+        // BadImageFormatException). Mangle the SECOND-and-later defs' emitted names (deterministic, def order — the
+        // FIRST def keeps the clean name, so by-(name,params) reflection callers bind it unambiguously). EmitMethodBody
+        // consumes the same #dupN keys in the same def order.
+        var dupKey = SigKey(name, m);
+        if (ti.MethodsBySig.ContainsKey(dupKey))
+        {
+            var n = 2;
+            while (ti.MethodsBySig.ContainsKey(SigKey(name + "$dup" + n, m))) n++;
+            name = name + "$dup" + n;
+        }
         // Interface members are always public; otherwise map Kotlin visibility to a CLR access flag.
         var attrs = ti.IsInterface ? MethodAttributes.Public : AccessOf(m);
         // A method's own `static` flag (companion methods are static members of a user class).
@@ -877,6 +893,12 @@ sealed partial class Emitter
         // An abstract method has no IL body (subclasses provide it); GetILGenerator would throw.
         if (m.TryGetProperty("abstract", out var amb) && amb.GetBoolean()) return;
         var mname = m.GetProperty("name").GetString();
+        // A DUPLICATE (name, params) def was define-phase-mangled to `name$dupN` (see DeclareMethod); body emission
+        // walks the same def array in the same order, so consume the occurrences symmetrically — without this, both
+        // bodies would be written into ONE MethodBuilder (concatenated IL -> BadImageFormatException).
+        var dupCount = _bodyDupSeen.TryGetValue((ti, SigKey(mname, m)), out var seen) ? seen : 0;
+        _bodyDupSeen[(ti, SigKey(mname, m))] = dupCount + 1;
+        if (dupCount > 0) mname = mname + "$dup" + (dupCount + 1);
         // Pick THIS def's own MethodBuilder by signature (overloads share `mname`; the name-keyed map holds only the
         // last, so emitting by name alone routes a body into the wrong overload — the WinUI `text(String)` /
         // `text(()->String)` bug).
