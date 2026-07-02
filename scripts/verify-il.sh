@@ -181,6 +181,11 @@ il_check enum  Enum  "$ROOT/cases/il-enum"   "$(printf 'red\ngreen\nblue')"
 # scan (il_check_imports), NOT a bare il_check (which injects nothing, so the import would not resolve). No runtime.cs.
 il_check_imports m2  M2    "$ROOT/cases/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"
 il_check_imports mi1 MI1   "$ROOT/cases/m-i1"       "$(printf 'Hello, CLR 42\nlength = 13')"
+# alias: `import System.Text.StringBuilder as SB` — the PSI import scan keeps the aliased form (feedback (5)).
+il_check_imports alias Alias "$ROOT/cases/il-alias" "$(printf 'hello, alias\n12')"
+# dual-rep: the imported .NET view + the stdlib kotlin.text.StringBuilder coexist as two typed views of one CLR
+# type; an explicit cast crosses them (rule in docs/dotkt-semantics.md).
+il_check_imports dualrep DualRep "$ROOT/cases/il-dualrep" "$(printf 'net\n3\nkt\nnet')"
 il_check for   ForT  "$ROOT/cases/il-for"     "$(printf 'sum 1..5 = 15\ncountdown 5 = 54321')"
 il_check exc   Exc   "$ROOT/cases/il-exc"     "$(printf 'safeDiv(10,2) = 5\nsafeDiv(1,0) = -1')"
 il_check ops   Ops   "$ROOT/cases/il-ops"     "$(printf '3\n2\n7\n3\n16\n15\n-1\n3\n5')"
@@ -280,7 +285,10 @@ il_check_inject injstatic InjStatic "$ROOT/cases/il-injstatic" "$(printf 'p=42\n
 il_check_inject injuint InjUint "$ROOT/cases/il-injuint" "$(printf '65542\n42')" Boot
 # c1net consumes types from its OWN runtime.cs (Probe assembly) via `import Probe.X` -> il_check_inject (build the
 # runtime, scan the imports through facadegen, --ref it). The old no-import-scan @Clr-facade path is gone.
-il_check_inject c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21')" Probe
+il_check_inject c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21\n41\n117\n20\n5\nyo!')" Probe
+# I4 remnants battery: .NET enum (read/pass/==/when), generic delegates (Func<int,int> + custom Mapper<T>),
+# nullable value types (int?/double? both directions).
+il_check_inject netinterop NetInterop "$ROOT/cases/il-netinterop" "$(printf 'Green\n4\nTrue\nfresh\ncool\n15\n18\n42\n0\n7\n0\n1.5')" I4Probe
 il_check_inject firgap FirGap "$ROOT/cases/il-firgap" "$(printf '42\n60\n3\n20')" P
 il_check_inject inherit Inherit "$ROOT/cases/il-inherit" "$(printf 'run:derived\nshow:button\nbutton')" PInh
 il_check_inject geninj GenInj "$ROOT/cases/il-geninj" "$(printf '2\na')" PGI
