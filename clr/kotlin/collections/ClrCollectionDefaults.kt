@@ -11,6 +11,28 @@ package kotlin.collections
 
 public fun <T> clrCollIsEmpty(c: Collection<T>): Boolean = c.size == 0
 
+/** Raw ICollection Add — VOID on the BCL (the Kotlin changed-Boolean wrapper is [clrCollAdd]). */
+@kotlin.clr.ClrIntrinsic("Add")
+public fun <T> MutableCollection<T>.clrCollNativeAdd(element: T): Unit = TODO("clr binding should be implemented")
+
+/**
+ * `MutableCollection.add`: Kotlin returns whether the collection CHANGED; `ICollection<T>.Add` is void
+ * (a set silently ignores a duplicate). Synthesized as Add + size compare — true for a list always,
+ * duplicate-aware for a set.
+ */
+public fun <T> clrCollAdd(c: MutableCollection<T>, element: T): Boolean {
+    val before = c.size
+    c.clrCollNativeAdd(element)
+    return c.size != before
+}
+
+/** `MutableCollection.addAll`: no BCL slot on ICollection — element-wise [clrCollAdd], ORing the changes. */
+public fun <T> clrCollAddAll(c: MutableCollection<T>, elements: Collection<T>): Boolean {
+    var changed = false
+    for (e in elements) if (clrCollAdd(c, e)) changed = true
+    return changed
+}
+
 public fun <T> clrCollContains(c: Collection<T>, element: T): Boolean {
     for (x in c) if (x == element) return true
     return false

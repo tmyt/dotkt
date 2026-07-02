@@ -74,9 +74,14 @@ public fun <T : Comparable<*>> compareValues(a: T?, b: T?): Int {
     if (a == null) return -1
     if (b == null) return 1
 
-    @Suppress("UNCHECKED_CAST")
-    return (a as Comparable<Any>).compareTo(b)
+    // CLR adaptation: the JVM `(a as Comparable<Any>).compareTo(b)` unchecked cast lowers to the
+    // reified IComparable<object>, which a boxed primitive does NOT implement (Int32 : IComparable<int>
+    // only) -> InvalidCastException. Dispatch through the NON-generic System.IComparable instead.
+    return clrRawCompareTo(a, b)
 }
+
+/** CLR: erased-comparable dispatch through the NON-generic System.IComparable (see clr ComparisonsClr.kt). */
+internal expect fun clrRawCompareTo(a: Any, b: Any): Int
 
 /**
  * Creates a comparator using the sequence of functions to calculate a result of comparison.
