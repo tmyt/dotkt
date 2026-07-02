@@ -3089,8 +3089,22 @@ static class MemberCallSubstitution
             "new" => TransformNew(node, refs) ?? node,
             "callInstance" => TransformCall(node, refs, instance: true, ctx) ?? node,
             "callStatic" => TransformCall(node, refs, instance: false, ctx) ?? node,
+            "staticField" => TransformStaticField(node, refs) ?? node,
             _ => node,
         };
+    }
+
+    // A companion INSTANCE load on a CLR-bound owner (`String.Companion` as a value — e.g. the receiver arg of a
+    // companion-extension call like `String.format(...)`): the pure-Kotlin type the ref build emits carries the
+    // companion INSTANCE field, but the substituted BCL type (System.String) has none — the substitution erases the
+    // companion's runtime representation. kotc flattens a plain companion, so the companion-extension `__self`
+    // param is a plain `object` whose value is never used: lower the load to a null object const.
+    static JsonNode TransformStaticField(JsonObject node, ReferenceMetadataIndex refs)
+    {
+        if ((node["name"] as JsonValue)?.GetValue<string>() != "INSTANCE") return null;
+        var owner = (node["ownerType"] as JsonValue)?.GetValue<string>();
+        if (string.IsNullOrEmpty(owner) || !refs.TryResolveClrOwner(owner, out _, out _)) return null;
+        return new JsonObject { ["k"] = "const", ["type"] = "object", ["value"] = null };
     }
 
     // `new T(..)` on a CLR-bound REFERENCE owner -> clrNew. A value-type (struct) owner is left untouched: a value

@@ -6,6 +6,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Added
+- **`String.format` as CLR platform API — .NET composite format, bound to `System.String.Format` (fixes `il-fmt` +
+  `il-bmore` frontend failures).** Kotlin/JVM's `format` is JVM-only platform API (Native/JS have none); DotKt now
+  provides its own: `fun String.Companion.format(format, vararg args)` + `fun String.format(vararg args)` in the CLR
+  stdlib (`runtime/stdlib/clr/kotlin/text/StringsClr.kt`), delegating to a private `@ClrIntrinsic("System.String.Format")`
+  helper — the format string is the **.NET composite format** (`"{0} items"`, `"{0:D5}"`, `"{0,-4}"`), NOT Java printf
+  (`"%d"`), per the host-conventions rule (recorded in `docs/dotkt-semantics.md §5`). No compiler special-case: the
+  binding is pure stdlib metadata. One general bir2cir rule landed with it: a **companion `INSTANCE` load on a
+  CLR-bound owner** (`String.Companion` as the receiver arg of a companion-extension call) lowers to a null `object`
+  const — the substituted BCL type (`System.String`) has no companion singleton and the flattened-companion `__self`
+  param is never read. This makes companion-extension bindings (`Double.Companion.fromBits`, `CASE_INSENSITIVE_ORDER`)
+  callable from apps in general, not just `format`.
 - **`CharSequence` is `System.String` on the CLR — app-own declarations (the 3-point model, points ①/②).** A
   JVM-shaped `kotlin.CharSequence` has no faithful .NET equivalent, so DotKt models it as `string` (an immutable
   snapshot). New bir2cir pass `CharSeqStringLowering` (app build, no user `class S : CharSequence`): a CharSequence-typed

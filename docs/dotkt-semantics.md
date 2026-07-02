@@ -87,6 +87,10 @@ This is the single most surprising deviation, so it gets the most detail.
   `println(4.0)` → `4` (not `4.0`). Kotlin's `true`/`4.0` are JVM/JS inherited cosmetics, not language essence.
 - The JVM differential harness (`verify-differential.sh`) normalizes these cosmetic differences and checks the logic.
 - Memory `clr-native-primitive-formatting`.
+- **`String.format` exists on DotKt as platform API (like the JVM has its own; Native/JS have none), but uses the
+  .NET composite format (`"{0} items"`, `"{0:D5}"`, `"{0,-4}"`), not Java printf (`"%d"`)** — the same
+  host-convention family as the stringification above. Both shapes are provided (`String.format(fmt, args...)`
+  and `"fmt".format(args...)`), bound to `System.String.Format` (stdlib `@ClrIntrinsic`, no compiler lowering).
 
 ## 5b. `CharSequence` is `string` on the CLR — an immutable snapshot, not a live view
 
