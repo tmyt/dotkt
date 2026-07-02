@@ -286,6 +286,13 @@ static class FacadeGen
                 // nongeneric overload clashes. Interface inheritance needs no member satisfaction, so it's safe.
                 var isup = InterfaceSuperTypes(t);
                 if (isup.Count > 0) sb.Append("super " + string.Join(" ", isup) + "\n");
+                // (3)/(6): `for (x in it)` over an INTERFACE-typed receiver (an `IEnumerable<String>` return, an
+                // `IList<Widget>` property): emit the frontend-only iterator marker on `IEnumerable<T>` ITSELF (elem =
+                // its own type param). Every derived interface (ICollection/IList/IReadOnlyList/...) inherits it
+                // through the generic super chain — a single declaration point, so no duplicate-member clashes.
+                // The backend bypasses it and enumerates via GetEnumerator/MoveNext/Current, same as the class path.
+                if (t.FullName == "System.Collections.Generic.IEnumerable`1")
+                    sb.Append($"iterator {t.GetGenericArguments()[0].Name}\n");
                 var iseen = new HashSet<string>();
                 var iprops = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))

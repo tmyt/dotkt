@@ -643,7 +643,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				?: session.builtinTypes.nullableAnyType.coneType
 			val fn = createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, ret) {
 				status { isOperator = true }
-				if (type.open && !type.isObject) modality = Modality.OPEN
+				// On the injected `IEnumerable<T>` INTERFACE itself the member is abstract (interfaces carry no body);
+				// derived interfaces (IList<T>/IReadOnlyList<T>/...) inherit it, so `for (x in ilist)` resolves too.
+				if (type.isInterface) modality = Modality.ABSTRACT
+				else if (type.open && !type.isObject) modality = Modality.OPEN
 			}
 			return listOf(fn.symbol)
 		}
