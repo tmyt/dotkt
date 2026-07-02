@@ -43,8 +43,8 @@ object ImportScan {
 				for (directive in ktFile.importDirectives) {
 					val fqName = directive.importedFqName?.asString() ?: continue   // null for malformed/error imports
 					// Skip stdlib/Java/own-runtime imports — only .NET (and projected) types are injectable. NOTE: `kotlin.`
-					// (stdlib) is skipped but `kotlinx.` is NOT — kotlinx-* are external libraries (compiled for the CLR
-					// and consumable via a namespace projection), so they must reach facadegen to resolve.
+					// (stdlib) is skipped, but any OTHER non-kotlin package is NOT — external libraries (compiled for the
+					// CLR and consumable via a namespace projection) must reach facadegen to resolve.
 					if (fqName == "kotlin" || fqName.startsWith("kotlin.") || fqName.startsWith("java.") || fqName.startsWith("javax.")) continue
 					imports.add(if (directive.isAllUnder) "$fqName.*" else fqName)
 				}

@@ -1422,9 +1422,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** The `Task<T>` an await/suspend-call awaits: the `.await()` receiver, or the direct suspend call itself.
-	 *  (The old bespoke `kotlinx.coroutines.delay` -> `Task.Delay` lowering here was dead pre-stdlib legacy —
-	 *  REMOVED, not aliased: kotlinx.* is not the stdlib, and the coming Task-based coroutine lowering must not
-	 *  inherit it as a load-bearing hack. See MEMORY runtime-dll-coroutine-lowering-is-dead-legacy.) */
+	 *  (An old bespoke pre-stdlib coroutine-`delay` -> `Task.Delay` lowering used to live here — REMOVED, not
+	 *  aliased: the cold-core coroutine surface (`kotlin.clr.delay`/`blockOn`/`await`) supersedes it and must not
+	 *  inherit that as a load-bearing hack. See docs/design-coroutine-cold-core-task-bridge.md.) */
 	internal fun coAwaitable(call: IrCall): String {
 		val callee = call.symbol.owner
 		return if (isAwaitIntrinsic(callee)) expr(extensionReceiver(call) ?: dispatchReceiver(call)!!)
@@ -1631,15 +1631,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun isYieldAll(call: IrCall): Boolean =
 		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yieldAll"
 
-	/** `kotlinx.coroutines.suspendCancellableCoroutine { c -> … }` — like the raw intrinsic but `c` is a
-	 *  CancellableContinuation and the block ALWAYS suspends (returns Unit, not the sentinel). */
-	internal fun isSuspendCancellable(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
-		e is IrCall && e.symbol.owner.fqNameWhenAvailable?.asString() == "kotlinx.coroutines.suspendCancellableCoroutine"
-
 	/** A suspension point: start the awaitable; if incomplete, save state and return; on resume read the result. */
 	internal fun emitSuspend(call: IrCall, assignTo: String?, steps: MutableList<String>) {
 		if (isSuspendIntrinsic(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = false, selfKind = "coSelfCont"); return }
-		if (isSuspendCancellable(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = true, selfKind = "coSelfCancellable"); return }
 		if (isYield(call)) { val k = ++coState; steps.add("""{"k":"coYield","state":$k,"value":${expr(regularArgs(call).first())}}"""); return }
 		if (isYieldAll(call)) {
 			val k = ++coState
@@ -3277,17 +3271,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val co = emitCoroutineBody(block.function)   // yields -> coYield steps; live locals -> cpsFields
 			val smName = "<>dotkt_${synthScope}_Seq${closureCounter++}"
 			return """{"k":"sequenceNew","sm":${str(smName)},"elem":${str(elem)},"cpsFields":[${co.cpsFields}],"steps":[${co.steps}]}"""
-		}
-		// `kotlinx.coroutines.runBlocking { … }` synchronously drives a coroutine — that is coroutine LOWERING, which
-		// kotc no longer does (deferred downstream layer). For a TRIVIAL block (`{ suspendFun() }`) emit the inner
-		// suspend call PLAINLY (it carries `"suspendCall":true`); the downstream layer turns it into the real drive.
-		if (callee.fqNameWhenAvailable?.asString() == "kotlinx.coroutines.runBlocking") {
-			val block = regularArgs(call).lastOrNull() as? IrFunctionExpression
-			val stmts = (block?.function?.body as? IrBlockBody)?.statements.orEmpty()
-			val tail = stmts.singleOrNull()?.let { if (it is IrReturn) it.value else it as? IrExpression }
-			if (block != null && tail is IrCall && tail.symbol.owner.isSuspend) return expr(tail)
-			return unsupported(call, "this runBlocking block",
-				"only a trivial block `{ suspendFun() }` is supported; extract the body into a `suspend fun` and call that")
 		}
 		// `stackBuffer(n) { … }` intrinsic -> scoped stack allocation (splice the block into the caller's frame).
 		// Matched by FULL name (`kotlin.clr.stackBuffer`, its CLR-intrinsic home) so a user function happening to be
