@@ -19,6 +19,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   associate/withIndex/scan/runningFold/getOrElse lines all pass (blocked only by the separate `windowed` gap).
 
 ### Fixed
+- **kotc: rich-enum user properties now follow the CLR property model** (`il-enumbody`/`il-enumrich` greened).
+  `richEnumDef` emitted a ctor-val property (`enum class Op(val sym: String)`) as a bare public FIELD while the
+  general access site emits `callInstance get_<name>` → ilemit crashed `Op.get_sym not found`. The lowering now
+  mirrors `typeDef`: internal backing field + real `get_`/`set_` accessor methods + a `properties` entry.
+- **frontend jar: `@JvmInline` platform actual** (`il-valclass` greened). `kotlin.jvm.JvmInline` existed only as the
+  `@OptionalExpectation` common `expect`, so any app `@JvmInline value class` failed the frontend ("can only be used
+  in common module sources"). `build-clr-stdlib-frontend.sh` now stages a `JvmInlineActual.kt` (exactly the existing
+  `JvmName` precedent). A `value class` lowers to a real wrapper class — see `docs/dotkt-semantics.md` §10.3.
 - **ilemit: arity-changing constructed base-interface member/property resolution.** `PropAccessor` and
   `ResolveInheritedIfaceMethod` only walked SHARED-arity interface chains; `IDictionary<K,V>.Count`/`Clear` live on
   `ICollection<KeyValuePair<K,V>>` (2→1, constructed arg). New `SubstituteIfaceArgs` substitutes the open definition's

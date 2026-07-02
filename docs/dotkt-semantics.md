@@ -274,7 +274,7 @@ type's subtypes are themselves injected into the consumer's session via their `s
 |---|---|---|
 | **`object` singleton** | class + static `INSTANCE` field | Restored as a plain **`class`**; the Kotlin singleton access `MyObject.member` does **not** round-trip (a consumer would need `.INSTANCE`/`.Companion`). |
 | **Companion implicit access** | synthesized companion (`sfun`/`sprop`) | `Class.member` must be written `Class.Companion.member` (MEMORY `injected-static-members-need-companion`). |
-| **`value`/inline class** (`@JvmInline`) | the erased underlying type | The wrapper identity is erased (the inline-class `.data` collapse) — a consumer sees the underlying type, not the value class. |
+| **`value`/inline class** (`@JvmInline`) | a **real wrapper class** (never erased, never a struct) | The OPPOSITE of Kotlin/JVM: no inline-class erasure and no name mangling — `Money` is emitted as an ordinary reference class (backing field + property + the synthesized `equals`/`hashCode`/`toString`), i.e. permanently "boxed". Structural equality survives; what is lost is the value-ness itself (identityless-ness is not enforced, no .NET `struct`, and the `value` modifier does not round-trip). The frontend still REQUIRES `@JvmInline` (JVM-frontend checker); the emitted `[kotlin.jvm.JvmInline]` attribute is skipped by ilemit. |
 | **`typealias`** | the expanded type | The alias name is not visible cross-module (it is expanded at use). |
 | **Contracts** (`@ExperimentalContracts`) | — | `callsInPlace`/returns-implies smart-cast facts are gone → consumer loses the smart-casts. |
 | **`Nothing`** (bottom type) | `void` / a throwing method | The bottom-type semantics (unreachable, `List<Nothing>` covariance) have no CLR analog. |

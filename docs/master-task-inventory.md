@@ -175,7 +175,13 @@ Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedbac
   - cross-module default args (`bmore`/`bymap`/`fmt`/`mapfilter`) — the frontend jar drops default VALUES.
   - value-type array `sort` (`arrops` AccessViolation) · `mapNotNull` nullable generic · for-generic-receiver iterator.
   - dual-rep types (`regex` CharSequence, `result` Nullable, `comparable` self-ref).
-  - enum-with-body (`enumbody`/`enumr`) — `Op.get_sym not found`.
+  - ~~enum-with-body (`enumbody`/`enumr`) — `Op.get_sym not found`~~ — ✅ FIXED 2026-07-02: kotc `richEnumDef` emitted
+    user ctor-val props as bare public fields while the access site (CLR property model) calls `get_<name>`; it now
+    mirrors `typeDef` (internal backing field + `accessorMethod` get_/set_ + a `properties` entry). Both samples run-green.
+  - ~~`valcls` (`@JvmInline value class`, compile error)~~ — ✅ FIXED 2026-07-02: the frontend jar lacked a platform
+    `actual` for the `@OptionalExpectation` `kotlin.jvm.JvmInline` expect (same gap JvmName had) → any app value class
+    died at the frontend. `build-clr-stdlib-frontend.sh` now stages `JvmInlineActual.kt` (3b). The backend already
+    handles the class: `value class` lowers to a REAL wrapper class (see `docs/dotkt-semantics.md` §10.3), sample run-green.
   - generic closure/HOF (`genclosure`/`genhof`) · virtual-property override dispatch (`netbase2`).
   - long-standing ilverify-only noise (`customexc`/`tryexpr`/`mc1`/`funref`) — runs correctly, ilverify complains.
 
