@@ -1,0 +1,13 @@
+@file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
+
+// Step-1 CLR stub mirroring the JVM actual; bodies are TODO pending the @Clr/BCL binding step
+// (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
+
+package kotlin
+
+/**
+ * Returns an empty array of the specified type [T].
+ */
+// reified T -> arrayOfNulls<T>(0) lowers to a generic `newarr !T` (verified frontend-accepted in reified context).
+public actual inline fun <reified T> emptyArray(): Array<T> =
+    arrayOfNulls<T>(0) as Array<T>

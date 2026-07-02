@@ -1,0 +1,14 @@
+@file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
+// Step-1 CLR stub mirroring JVM actual; bodies are TODO pending @Clr/BCL binding.
+// See docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP".
+
+package kotlin
+
+// The thread-safe Lazy implementations (SynchronizedLazyImpl/SafePublicationLazyImpl)
+// are JVM-private and not part of this source set. As on Kotlin/JS, every mode falls
+// back to the shared `UnsafeLazyImpl`; the thread-safety mode is therefore ignored.
+public actual fun <T> lazy(initializer: () -> T): Lazy<T> = UnsafeLazyImpl(initializer)
+
+public actual fun <T> lazy(mode: LazyThreadSafetyMode, initializer: () -> T): Lazy<T> = UnsafeLazyImpl(initializer)
+
+public actual fun <T> lazy(lock: Any?, initializer: () -> T): Lazy<T> = UnsafeLazyImpl(initializer)

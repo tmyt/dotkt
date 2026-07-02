@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+
+    <!-- This project compiles the Kotlin standard library ITSELF, so it needs the stdlib-bootstrap kotc flags:
+         -Xallow-kotlin-package : authors in the reserved `kotlin` package
+         -opt-in=...            : the internal opt-in APIs the stdlib uses on itself (contracts, multiplatform)
+         -Xcontext-parameters   : context parameters used by some stdlib declarations
+         See docs/design-stdlib-compilation.md. -->
+    <DotKtKotcOptions>-Xallow-kotlin-package -opt-in=kotlin.contracts.ExperimentalContracts -opt-in=kotlin.ExperimentalMultiplatform -Xcontext-parameters</DotKtKotcOptions>
+
+    <!-- The stdlib is MORE fundamental than DotKt.Runtime — it must not reference it. -->
+    <KotlinClrRuntimeRef>false</KotlinClrRuntimeRef>
+  </PropertyGroup>
+
+  <!-- Build with the IN-REPO toolchain (not a published DotKt.Sdk package): the stdlib is a first-party repo
+       component, and using the published SDK would be circular + fight the NuGet same-version cache. -->
+  <Import Project="../../cases/KotlinClr.targets" />
+
+</Project>
