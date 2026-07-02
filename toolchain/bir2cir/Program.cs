@@ -297,6 +297,8 @@ sealed class ReferenceMetadataIndex
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string JvmInlineAttr = "kotlin.jvm.JvmInline";
+    // [KotlinFunction(flags)] flag word (mirrors ilemit Program.cs pass 4 / facadegen): Infix=1, Operator=2, Suspend=4.
+    const int KotlinFunctionSuspendFlag = 4;
 
     readonly List<ReferenceAssembly> _assemblies;
 
@@ -1019,6 +1021,12 @@ sealed class ReferenceMetadataIndex
                         var kdefaults = KotlinDefaultsOf(method);
                         if (kdefaults != null)
                             metadata.KotlinDefaults[ownerFqn + "|" + method.Name + "|" + method.GetParameters().Length] = kdefaults;
+                        // The `suspend` bit from the DotKt round-trip [KotlinFunction(flags)] attribute (Suspend = 4,
+                        // the flag word ilemit stamps; the dead Assembly.LoadFrom scan read it, this live scan didn't).
+                        // Channelled into MemberBinding.Suspend for the coroutine bundle (bundle 6) — no consumer yet.
+                        var suspend = (KotlinFunctionFlags(method.GetCustomAttributesData()) & KotlinFunctionSuspendFlag) != 0;
+                        if (suspend && Environment.GetEnvironmentVariable("DOTKT_BIR2CIR_DEBUG_SUSPEND") == "1")
+                            Console.Error.WriteLine($"bir2cir: ref-scan suspend member {ownerFqn}.{method.Name}/{method.GetParameters().Length} (Suspend=true)");
                         metadata.MemberBindings.Add(new MemberBinding(
                             ownerFqn,
                             method.Name,
@@ -1029,7 +1037,8 @@ sealed class ReferenceMetadataIndex
                             method.GetParameters().Select(p => TypeName(p.ParameterType)).ToArray(),
                             prop?.Access ?? 0,
                             prop?.Name,
-                            byrefPositions));
+                            byrefPositions,
+                            suspend));
                         // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
                         //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.
                         //   bare "Name"      -> a member on an EXTENSION receiver (`Array<T>.nativeClone()` ->
@@ -1382,7 +1391,11 @@ sealed class ReferenceDotKtMetadata
 // A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the
 // @ClrIntrinsic BCL name or null (null + no @ClrProperty + !IsAbstract = a rule-3 hoist candidate). PropertyName (+ the
 // READ/WRITE access flags) is set when the member carries @ClrProperty — an EXPLICIT .NET property accessor binding.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null);
+// Suspend = the Kotlin `suspend` modifier, read from the DotKt round-trip [KotlinFunction(flags)] attribute
+// (Suspend bit = 4) in the LIVE MetadataLoadContext scan. Populated for the Task-based coroutine bundle (bundle 6):
+// a cross-module call site must know "is this referenced callee suspend?" (its CLR shape is the Task<T> kickoff).
+// NO consumer reads it yet — bundle 6 wires it.
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false);
 
 sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool HasInlineBody)
 {
@@ -2330,7 +2343,10 @@ static class IteratorConsumerNormalization
                 obj["type"] = "clrg:kotlin.collections.Iterator[" + elem + "]";
             }
             // An `Iterator[elem]`-typed var initialized by a call INTO THE RT STDLIB (a `kotlin.*` owner — an unaliased
-            // kotlin.collections interface like Set.iterator(), or an attributed top-level like MapsKt.iterator(map)):
+            // kotlin.collections interface like Set.iterator(), or an attributed top-level like MapsKt.iterator(map)
+            // — or the ALREADY-SUBSTITUTED rule-3 helper `<>dotkt_ClrH_kotlin_*`: MemberCallSubstitution runs BEFORE
+            // this pass, so a concrete alias receiver's `ArrayList<Int>().iterator()` arrives as a callStatic on the
+            // rt helper owner, and its ArrayListIterator likewise implements the REAL Iterator, not the synthetic):
             // the runtime iterator is an rt-dll type implementing the REAL kotlin.collections.Iterator, never the app's
             // monomorphized `<>dotkt_KIterator_<elem>` synthetic — so its hasNext/next consumers must be re-pointed
             // exactly like the bridge case above. A USER-owned init (Countdown.iterator() returning an app-emitted
@@ -2338,7 +2354,9 @@ static class IteratorConsumerNormalization
             // producer/consumer stay consistent on the synthetic.
             else if (k == "var" && Str(obj["name"]) is string vn2 && obj["init"] is JsonObject init2 &&
                 Str(obj["type"]) is string vt && IteratorVarElem(vt) is (string head, string elem2) &&
-                (Str(init2["owner"]) ?? Str(init2["ownerType"]) ?? "").StartsWith("kotlin.", StringComparison.Ordinal))
+                (Str(init2["owner"]) ?? Str(init2["ownerType"]) ?? "") is string initOwner &&
+                (initOwner.StartsWith("kotlin.", StringComparison.Ordinal)
+                    || initOwner.StartsWith("<>dotkt_ClrH_kotlin_", StringComparison.Ordinal)))
             {
                 map[vn2] = elem2;
                 obj["type"] = "clrg:" + head + "[" + elem2 + "]";
@@ -3648,7 +3666,7 @@ static class MemberCallSubstitution
         // its abstract collection members (isEmpty/contains/iterator/...) need kotc's ClrCollectionDefaults routing, not
         // a non-existent helper. (The ref.dll mis-reports these as non-abstract, so IsRule3Member alone false-positives.)
         if (kind != "interface" && refs.IsRule3Member(ownerFqn, member))
-            return Rule3HelperCall(node, refs, ownerFqn, member, args, instance);
+            return Rule3HelperCall(node, refs, ownerToken, member, args, instance);
 
         // Rule 5m (MAP-interface defaults): Map/MutableMap both alias IDictionary<K,V> (see the stdlib rationale), but
         // most Kotlin map members have no 1:1 IDictionary equivalent — `get` is null-on-missing while get_Item THROWS,
@@ -3831,7 +3849,7 @@ static class MemberCallSubstitution
         if (node["recv"] != null) hargs.Add(node["recv"].DeepClone());
         foreach (var a in args) hargs.Add(a?.DeepClone());
         var (k, v) = OwnerKvArgs(ownerToken);
-        return new JsonObject
+        var call = new JsonObject
         {
             ["k"] = "callStatic",
             ["owner"] = "kotlin.collections.ClrMapDefaultsKt",
@@ -3839,6 +3857,12 @@ static class MemberCallSubstitution
             ["args"] = hargs,
             ["typeArgs"] = new JsonArray { k, v },
         };
+        // Carry the call's statically-known return (same rationale + `gp:` guard as Rule3HelperCall): a helper
+        // returning the BARE map value param (`getOrDefault` -> V) reflects as the callee's own `!!1` at the call
+        // site — boxing that out-of-scope token is invalid metadata -> BadImageFormatException at run (both the
+        // Map- and MutableMap-typed receivers). `retType` lets ilemit box/convert the concrete instantiation.
+        if (RetToken(node) is string ret && !ret.StartsWith("gp:", StringComparison.Ordinal)) call["retType"] = ret;
+        return call;
     }
 
     // The first TWO top-level type arguments of a map owner token (`kotlin.collections.Map[gp:K,gp:V]`); `object` when
@@ -4005,11 +4029,32 @@ static class MemberCallSubstitution
 
     // Rule-3: route to `<>dotkt_ClrH_<owner>.<member>(recv?, args..)`. The receiver is threaded as the helper's
     // first argument (the hoisted static's `__self`); type args are carried through when present.
-    static JsonNode Rule3HelperCall(JsonObject node, ReferenceMetadataIndex refs, string ownerFqn, string member, JsonArray args, bool instance)
+    //
+    // GENERIC alias owner: the hoisted helper declares the alias CLASS's type params FIRST, then the method's own
+    // (HoistMethod -> MergeTypeParams order), so the call must instantiate the helper with the receiver's static-type
+    // args (from the `ownerType` token, padded with `object` when erased) AHEAD of the method's own typeArgs.
+    // Copying only node["typeArgs"] left the helper OPEN for a concrete generic receiver
+    // (`HashMap<String,Int>().put(..)` -> an open-generic callStatic -> InvalidProgramException at run), and the bare
+    // ownerFqn sig slot lowered to the degenerate NON-generic BCL type (`clr:System...Dictionary`) — carry the
+    // instantiated token so the `__self` slot and the helper type args agree.
+    static JsonNode Rule3HelperCall(JsonObject node, ReferenceMetadataIndex refs, string ownerToken, string member, JsonArray args, bool instance)
     {
+        var ownerFqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
         var hargs = new JsonArray();
         if (instance && node["recv"] != null) hargs.Add(node["recv"].DeepClone());
         foreach (var a in args) hargs.Add(a?.DeepClone());
+
+        // The alias class's instantiation args, padded to its declared arity (a bare/partially-erased token — a raw
+        // or star-projected receiver — degrades to `object`, same as ClrOwnerType). Empty for a non-generic alias.
+        var classArgs = new List<string>();
+        var arity = refs.OwnerArity(ownerFqn);
+        if (arity > 0)
+        {
+            var obr = ownerToken.IndexOf('[');
+            if (obr >= 0 && ownerToken.EndsWith("]", StringComparison.Ordinal))
+                classArgs.AddRange(SplitTopLevel(ownerToken[(obr + 1)..^1]).Where(a => a.Length > 0));
+            for (var i = classArgs.Count; i < arity; i++) classArgs.Add("object");
+        }
 
         var call = new JsonObject
         {
@@ -4018,17 +4063,37 @@ static class MemberCallSubstitution
             ["method"] = member,
             ["args"] = hargs,
         };
-        if (node["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
+        var typeArgs = new JsonArray();
+        foreach (var ca in classArgs) typeArgs.Add(ca);
+        if (node["typeArgs"] is JsonArray ta) foreach (var t in ta) typeArgs.Add(t?.DeepClone());
+        if (typeArgs.Count > 0) call["typeArgs"] = typeArgs;
+        // Positional map class-param NAME -> instantiation arg (E -> kotlin.Int), applied to the declared `sig`
+        // tokens below so a `gp:K,gp:V` sig becomes the call's concrete slot types (they are OUT of scope at the
+        // call site; an unbound gp token is useless to the bridge and to ilemit's overload keys).
+        var gpMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        var names = refs.OwnerTypeParamNames(ownerFqn);
+        if (names != null)
+            for (var i = 0; i < names.Length && i < classArgs.Count; i++) gpMap[names[i]] = classArgs[i];
         // Carry the callee's param-type list (receiver-first, mirroring the hoisted helper's __self) so the
         // String->CharSequence bridge sees the synthetic-CharSequence slots: without a `sig` the app pushed a raw
         // string at `Regex.matches(input: CharSequence)`/`find` -> ilverify StackUnexpected (il-regex).
         var sigParts = new List<string>();
-        if (instance && node["recv"] != null) sigParts.Add(ownerFqn);
+        if (instance && node["recv"] != null)
+            sigParts.Add(classArgs.Count > 0 ? ownerFqn + "[" + string.Join(",", classArgs) + "]" : ownerFqn);
         var origSig = (node["sig"] as JsonValue)?.GetValue<string>();
-        if (!string.IsNullOrWhiteSpace(origSig)) foreach (var p in SplitTopLevel(origSig)) sigParts.Add(p);
+        if (!string.IsNullOrWhiteSpace(origSig))
+            foreach (var p in SplitTopLevel(origSig)) sigParts.Add(SubstituteGenericParams(p, gpMap));
         // `sig` may be LONGER than args (omitted defaulted params, filled downstream) — the bridge matches
         // positionally from the left; only a SHORTER sig would misalign.
         if (sigParts.Count >= hargs.Count) call["sig"] = string.Join(",", sigParts);
+        // Carry the call's statically-known return: a helper returning the alias class's BARE type param
+        // (`ArrayList<Int>.removeAt` -> E) reflects as the callee's own `!!n` at the call site, and boxing that
+        // out-of-scope token is invalid IL (BadImageFormat); ilemit's RetOr/CoerceReturn recover the concrete type
+        // from `retType` (same channel the erased nullable-generic return conversion reads). NEVER a bare `gp:`
+        // token (an open call site inside another generic body): it buys no conversion there, and when the callee's
+        // return is the ERASED nullable-generic `object`, CoerceReturn would `unbox.any !!X` a possibly-null —
+        // NullReferenceException for a value instantiation. The open representation of such a value stays `object`.
+        if (RetToken(node) is string ret && !ret.StartsWith("gp:", StringComparison.Ordinal)) call["retType"] = ret;
         return call;
     }
 

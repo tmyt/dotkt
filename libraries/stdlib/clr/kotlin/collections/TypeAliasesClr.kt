@@ -202,12 +202,31 @@ public actual class HashMap<K, V> : MutableMap<K, V> {
 
     // From MutableMap
 
+    // NOTE (put/remove): never hold the previous value as a `V?` LOCAL — a nullable unconstrained-generic local
+    // erases to a bare `gp:V` slot and a null flowing into it is invalid IL / NRE for a value instantiation (the
+    // same landmine documented on ClrMapDefaults). Structure the bodies so only a KNOWN-PRESENT value (guarded by
+    // containsKey) ever sits in a V-typed local; the null flows directly into the object-erased return.
     @kotlin.clr.ClrIntrinsic("set_Item")
     private fun nativeSet(key: K, value: V): Unit = TODO("clr binding should be implemented")
-    actual override fun put(key: K, value: V): V? { val old = get(key); nativeSet(key, value); return old }
+    actual override fun put(key: K, value: V): V? {
+        if (containsKey(key)) {
+            val old = nativeGet(key)
+            nativeSet(key, value)
+            return old
+        }
+        nativeSet(key, value)
+        return null
+    }
     @kotlin.clr.ClrIntrinsic("Remove")
     private fun nativeRemove(key: K): Boolean = TODO("clr binding should be implemented")
-    actual override fun remove(key: K): V? { val old = get(key); nativeRemove(key); return old }
+    actual override fun remove(key: K): V? {
+        if (containsKey(key)) {
+            val old = nativeGet(key)
+            nativeRemove(key)
+            return old
+        }
+        return null
+    }
     actual override fun putAll(from: Map<out K, V>) = clrMapPutAll(this, from)
     @kotlin.clr.ClrIntrinsic("Clear")
     actual override fun clear() { TODO("clr binding should be implemented") }
@@ -248,12 +267,28 @@ public actual class LinkedHashMap<K, V> : MutableMap<K, V> {
 
     // From MutableMap
 
+    // put/remove: the null-safe containsKey-guarded shape — see the NOTE on HashMap above.
     @kotlin.clr.ClrIntrinsic("set_Item")
     private fun nativeSet(key: K, value: V): Unit = TODO("clr binding should be implemented")
-    actual override fun put(key: K, value: V): V? { val old = get(key); nativeSet(key, value); return old }
+    actual override fun put(key: K, value: V): V? {
+        if (containsKey(key)) {
+            val old = nativeGet(key)
+            nativeSet(key, value)
+            return old
+        }
+        nativeSet(key, value)
+        return null
+    }
     @kotlin.clr.ClrIntrinsic("Remove")
     private fun nativeRemove(key: K): Boolean = TODO("clr binding should be implemented")
-    actual override fun remove(key: K): V? { val old = get(key); nativeRemove(key); return old }
+    actual override fun remove(key: K): V? {
+        if (containsKey(key)) {
+            val old = nativeGet(key)
+            nativeRemove(key)
+            return old
+        }
+        return null
+    }
     actual override fun putAll(from: Map<out K, V>) = clrMapPutAll(this, from)
     @kotlin.clr.ClrIntrinsic("Clear")
     actual override fun clear() { TODO("clr binding should be implemented") }
