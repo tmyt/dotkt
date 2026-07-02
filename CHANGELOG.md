@@ -6,6 +6,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Fixed
+- **User `Comparable<T>` sorting (`il-comparable`)** — `listOf(v1,v2,v3).sorted()` over a user `class Ver :
+  Comparable<Ver>` crashed silently (rt `sorted[T]` invoked an OPEN-generic `Array.Sort[T]` → "not fully
+  instantiated"). Three coordinated fixes: (1) **bir2cir** no longer lets the name-only top-level `@ClrIntrinsic`
+  fallback capture a call that has a REAL-BODIED (non-intrinsic) top-level sibling — `sort`'s 8 primitive-array
+  intrinsics all bind "System.Array.Sort" (so the name wasn't "ambiguous"), yet `MutableList<T>.sort()` is a real
+  Kotlin body; such names now substitute only on a sig-exact intrinsic match. (2) **bir2cir** new
+  `ComparableBridgeSynthesis` pass: every emitted class implementing the generic `System.IComparable<X>` also gets
+  the NON-generic `System.IComparable` + a `CompareTo(object)` forward bridge — the BCL convention the CLR-side
+  natural-ordering dispatch (compareValues / the sortWith SAM shim's constrained fallback) depends on.
+  (3) **ilemit** `clr:`/`clrg:` interface-slot wiring now disambiguates same-name body OVERLOADS by the slot's
+  substituted param types instead of the name-keyed pick (which mis-wired the new CompareTo pair → TypeLoad).
+- **`kotlin.Result` / `runCatching` (`il-result`)** — crashed silently (InvalidProgram inside the rt's
+  `runCatching[R]`). Four coordinated fixes around a GENERIC class's companion statics: (1) **ilemit** anchors a
+  static method of a generic emitted class (`Result<T>`'s companion `fun <T> success`) onto an `object`-instantiated
+  owner (`TypeBuilder.GetMethod`) — the previous open-typedef parent token is invalid IL at a foreign call site;
+  (2) **kotc** companion-member `callStatic` now carries the call's type args (`typeArgsJson`) so the anchored
+  method is `MakeGenericMethod`'d; (3) **kotc** `ownerSpec` renders a STAR-projection type arg as `object` instead
+  of dropping it (a dropped star collapsed `Result<*>.throwOnFailure`'s receiver owner to the bare open generic);
+  (4) **ilemit** `new` ctor args now BOX to the ctor's declared `argTypes` (a bare `!!T` flowed unboxed into
+  `Result(object)` — InvalidProgram at value instantiations).
 - **Map delegation `val name by data` (`il-bymap`)** — three coordinated fixes across the layers it crosses:
   (1) **kotc** routes a delegated property whose convention resolved to a TOP-LEVEL extension (the stdlib
   `kotlin.collections.getValue/setValue`, MapAccessors.kt) by re-emitting the accessor body's RESOLVED call at the

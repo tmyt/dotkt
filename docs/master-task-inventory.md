@@ -354,11 +354,12 @@ retire recipe (baseline the fail-set, require gate-neutral). Cost: one allocatio
 (acceptable; optimize hot paths with B). Watch the `as CharSequence`-from-`Any?` runtime-type-check helper.
 
 **⑦ Sibling dual-reps — the adapter technique does NOT transfer; each needs a separate (smaller) plan.**
-- **Comparable-self (`compareTo`, `il-comparable`)** — already `@ClrTypeAlias("System.IComparable")` +
-  `@ClrIntrinsic("CompareTo")` (`builtins/Comparable.kt:21`), lowered via a `constrainedCall` to `IComparable<T>`
-  (`BirEmitter.kt:3205`). Blocker is **ilemit self-referential-generic interface-token resolution**
-  (`TypeBuilder.GetMethod` on `IComparable<SelfType>`), which MEMORY `value-type-generic-interface-token` reports FIXED for
-  *value* types — re-verify the user-type self-ref path; NO adapter needed.
+- **Comparable-self (`compareTo`, `il-comparable`) — ✅ DONE 2026-07-02** (`6f57048`; full record in the
+  il-comparable/il-result section below). The recorded "ilemit self-ref interface-token" hypothesis was NOT the
+  blocker — three other bugs were: the bir2cir name-only `sort` intrinsic fallback capturing the real-bodied
+  `MutableList<T>.sort()`, the missing NON-generic `System.IComparable` face on user Comparable implementors
+  (new bir2cir `ComparableBridgeSynthesis`), and ilemit's name-keyed clr-iface slot wiring mis-binding the
+  resulting CompareTo overloads. NO adapter needed, as predicted.
 - **collection-element / `listNew` (`listOf`/`setOf`/`mapOf`)** — collections HAVE a BCL representation (`List<T>`, already
   `@ClrTypeAlias` in `builtins/Collections.kt`); this is the **collection-bridge**: retire the `listNew`/`setNew`/`mapNew`
   factories together with the `COLLECTION_MEMBER`/`COLLECTION_OPS` clrName tables, riding the Iterable→IEnumerable
@@ -641,6 +642,43 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
   (Baseline correction discovered en route: `il-comparable` was ALREADY failing pre-change — the 18:26 cached
   verify-il artifacts (`build/il-comparable/`, old rt dll md5 `97cb1025`) reproduce `Array.Sort[T] … not fully
   instantiated` inside rt `sorted[T]`; a REFLECTED open-generic-invoke bug in the rt body emission, separate track.)
+
+- **`il-comparable` + `il-result` ✅ (2026-07-02, `6f57048` + `94e4226`)** — the LAST two non-coroutine-deferred
+  line-less gate crashers (the subshell died before printing a result line; reproduced via `dotkt.sh --run`).
+  **`il-comparable`** (rt `sorted[T]` → OPEN `Array.Sort[T]`, the baseline correction above) = THREE stacked bugs:
+  (i) **bir2cir** — the name-only top-level-@ClrIntrinsic fallback captured the REAL-BODIED `MutableList<T>.sort()`
+  call inside the compiled `sorted()` body (all 8 primitive-array `sort()` intrinsics agree on "System.Array.Sort",
+  so the name was not "ambiguous"); the fallback is now also gated on `HasNonIntrinsicTopLevel(fn)` — a name with a
+  real-bodied sibling substitutes only on a sig-EXACT match, so `sorted()` routes to the real `sort→sortWith`.
+  (ii) **bir2cir `ComparableBridgeSynthesis` (new pass)** — `class Ver : Comparable<Ver>` lowered to the GENERIC
+  `IComparable<Ver>` face only, but the CLR natural-ordering dispatch spine is the NON-generic `System.IComparable`
+  (the il-sort `compareValues` design + the constrained-compareTo value-type-safe fallback the rt SAM shim rides) →
+  `EntryPointNotFoundException`; every emitted class implementing `clrg:System.IComparable[X]` now also gets
+  `clr:System.IComparable` + a `CompareTo(object)` cast-and-forward bridge (the Int32/String/DateTime BCL convention).
+  (iii) **ilemit** — the `clr:`/`clrg:` interface-slot wiring picked the body method NAME-keyed; with the new
+  CompareTo(object) overload it wired the wrong one to `IComparable`1<V>` (TypeLoad "signature … do not match") —
+  overloads now disambiguate by the slot's instantiation-substituted param types (`SlotParamMatches`), mirroring the
+  Kotlin-branch MethodsBySig rule. **`il-result`** (InvalidProgram at rt `runCatching[R]`; the recorded "value-type
+  `T?`→Nullable dual-rep" diagnosis was STALE — RC2 had landed; the crash was elsewhere) = FOUR stacked bugs around
+  a generic class's companion statics: (i) **ilemit `AnchorOpenGenericOwnerStatic`** — `Result<T>`'s companion
+  `fun <T> success` emits as a static generic method ON `Result`1`, and the call site referenced the open-typedef
+  parent (`call kotlin.Result`1::success<T>` — invalid IL); such statics now anchor onto the `object`-instantiated
+  owner via `TypeBuilder.GetMethod` (a companion member cannot reference the class's T, so any instantiation is
+  signature-identical; Codex-confirmed) and ride the gen4 concrete-owner `MakeGenericMethod` path. (ii) **kotc** —
+  the companion-member `callStatic` dropped the call's TYPE ARGS (`typeArgsJson` never applied) → even anchored, the
+  uninstantiated generic method (BadImageFormat); now carried like every other generic call. (iii) **kotc
+  `ownerSpec`** — a STAR-projection type arg was DROPPED (`Result<*>.throwOnFailure` → bare open `kotlin.Result`
+  ownerType → `get_value` open-typedef token, "not fully instantiated"); a star arg now renders `object`, mirroring
+  `birType`'s star rule. (iv) **ilemit `EmitNewArgs`** — `new` ctor args ignored the node's declared `argTypes`: a
+  bare `!!T` flowed UNBOXED into `Result`1<!!T>..ctor(object)` (InvalidProgram at any value instantiation, surfaced
+  by `success<int>` once the call path worked); ctor args now box to their declared param types like
+  `EmitArgsTyped`. Both samples now print their full expected output; protected set verified green (rt+ref stdlib,
+  il-sort/il-comparator/il-valclass/il-generic4/il-deleg/il-charseq{,x,s}). **Authoritative full-gate numbers
+  (2026-07-02, no siblings): PASS(run) 129 → 131 (+comparable +result, BOTH also ilverify-clean); fail-name set
+  UNCHANGED at 7 = 6 ilverify-FAIL (chunk/collops2/collrealkt/gen3/iter/iterable) + 1 run-FAIL (`il:injstatic`,
+  `<>dotkt_ClrH_Kfc_App.start` unresolved — verified PRE-EXISTING by replaying the same BIR through the HEAD~2
+  bir2cir+ilemit, which fail identically; kotc/bir2cir paths provably untouched for that node); line-less crashers
+  6 → 4, now exactly the coroutine/SequenceScope-deferred set (chunk/cobuild/collops2/seq); ktproj 9/9.**
 
 - **`il-bymap` ✅ (2026-07-02)** — Map delegation (`val name by data`) — the recorded "cross-assembly KProperty
   identity, NOT trivial" turned out to be canonicalizable after all: `<>dotkt_KProperty`(+`Impl`) IS monomorphic
