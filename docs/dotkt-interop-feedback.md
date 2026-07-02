@@ -1,6 +1,6 @@
 # DotKt 言語基盤へのフィードバック — 実 .NET 型 interop の課題
 
-> **状態 (2026-06-30 見直し)**: これは 2026-06 の WinUI bring-up スナップショット（当時の不具合一覧）であり、**生きたブロッカー一覧ではない**。下記のうち (1)(2)(7)(8)(9) は既に解消済み（各項目に RESOLVED を付記）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+> **状態 (2026-07-02 見直し)**: これは 2026-06 の WinUI bring-up スナップショット（当時の不具合一覧）であり、**生きたブロッカー一覧ではない**。下記のうち (1)(2)(3)(6)(7)(8)(9) は既に解消済み（各項目に RESOLVED を付記）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
 >
 > 解消の要点: .NET 代入互換（基底クラス＋ジェネリック/明示/自己参照インターフェース）が完成し、WinUI の Counter は実機で動作する（メモリ `inheritance-interface-injection`）。レシーバ付きラムダ・多段クロージャキャプチャ・ネストパラメータラムダは Flow の `capturedVars` 修正と suspend レシーバラムダ対応で解消。`<KotlinClrType>` は旧名で現行は `<DotKtImport>`（本文 (5) 参照）。
 
@@ -40,7 +40,12 @@ DSL の書き味（Compose 風レシーバラムダなど）を制約した。
 - **修正方針**: protected メンバも注入する。さらに virtual/abstract を `open`/`abstract` として出し、
   Kotlin サブクラスから `override` 可能にする（注入型の継承可否は既に `open|sealed` を出しているので拡張は素直）。
 
-### (3) ジェネリック型のメンバが `Any?` に潰れる
+### (3) ジェネリック型のメンバが `Any?` に潰れる — ✅ RESOLVED (2026-07-02 検証)
+> **RESOLVED**: `CrossType` が構築ジェネリックを `generic:<OpenSimple>[<arg>,...]`（括弧文法・再帰ネスト可）で
+> 出力し、ClrTypeInjection の `coneOf` が (name, arity) 解決で実型に復元する。`IList<T>`/`IReadOnlyList<T>`/
+> `ICollection<T>`/`IEnumerable<T>`/`Dictionary<K,V>`/`List<T>` のメンバ位置を `cases/il-geninj` +
+> `cases/il-transinj`（gate 常設）で検証済み。for-in はインターフェース型レシーバでも通る（`IEnumerable<T>`
+> 自体に frontend-only `iterator` を注入し、派生インターフェースは継承で受ける — 2026-07-02 追補）。
 - **症状（Windows 実機）**: `unresolved reference 'MergedDictionaries'`
   （`Application.Resources.MergedDictionaries`。`MergedDictionaries` は `IList<ResourceDictionary>`）
 - **根本原因**: `CrossType` で `if (t.IsGenericType ...) return "Any?"`（`Program.cs:401`）。
@@ -68,7 +73,14 @@ DSL の書き味（Compose 風レシーバラムダなど）を制約した。
   `KotlinClr.targets` の `@(DotKtImport)` / 旧 `<KotlinClrType>`）で個別救済はできるが、
   普通の `import` で安定して通るのが望ましい。
 
-### (6) 中間戻り値の型が未注入だと連鎖アクセスが切れる
+### (6) 中間戻り値の型が未注入だと連鎖アクセスが切れる — ✅ RESOLVED (2026-07-02 検証)
+> **RESOLVED**: facadegen の `EmitMeta` が import 型を **シード**として、API サーフェスが参照する型
+> （基底鎖・実装インターフェース・メンバの戻り値/引数/要素/型引数）へ **BFS で到達可能閉包**を注入する。
+> 設計: 深さ制限（1〜2 hop）ではなく**全到達閉包 + ハードキャップ 5000 型**（`NO_INJECT` の BCL 特別型と
+> `kotlin.*` は除外、dedupe 済み、1 型の反射失敗は warning でスキップ）。深さ制限より単純で、「N+1 hop 目で
+> また `Any?` に切れる」段差がない一方、WinUI 級でも実測は数百型（`System.Console`+`Exception` で ~265）で
+> キャップに遠い。未 import の中間型（`w.Make(): Gadget` → `g.Core(): Sprocket` の 2 hop）は
+> `cases/il-transinj`（gate 常設）で検証済み。
 - **症状（Windows 実機）**: `unresolved reference 'Add'`（`panel.Children.Add(...)`。
   `Children` の戻り `UIElementCollection` が未注入だと `Any?` になり `.Add` に届かない）
 - **根本原因**: `CrossType` は「同時に注入された型のみ単純名で解決、その他は `Any?`」（`Program.cs:400-403`）。
@@ -110,7 +122,7 @@ Linux 上で純 Kotlin として bring-up する過程で判明（WinUI 非依�
 1. **(2) protected/virtual の注入と override** — 起動部（`Application.OnLaunched`）の前提。
 2. **(1) 基底クラス／インターフェース階層** — コントロールの受け渡し全般の前提。
 3. **(4) デリゲート→関数型マップ** — `Application.Start` / `Thread` / イベントの前提。
-4. **(6) 参照型の推移的自動注入** + **(3) 代表的ジェネリックの構築型注入** — 連鎖アクセスの前提。
+4. ~~**(6) 参照型の推移的自動注入** + **(3) 代表的ジェネリックの構築型注入** — 連鎖アクセスの前提。~~ ✅ RESOLVED (2026-07-02)
 5. **(5) import パーサ安定化（alias 対応 + 警告）** — 開発体験。
 
 (1)〜(4) が入れば、`dotktx.ui.winui` の `App.kt`（`Application` サブクラス + `OnLaunched` override +

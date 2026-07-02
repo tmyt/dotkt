@@ -155,14 +155,21 @@ Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedbac
   accepted 2026-06-23); `il:injstatic` sits in that accepted-limitation space and is NOT a fix target now.
 - `op_*` operators · C#-origin extension methods · **dual-rep collision** (`import System.Text.StringBuilder` vs the
   stdlib alias).
-- **(3) generic-type members collapse to `Any?`** — inject `IList<T>`/`ICollection<T>`/`IEnumerable<T>`/`List<T>`
-  construction types (reaches `Application.Resources.MergedDictionaries`).
+- ~~**(3) generic-type members collapse to `Any?`**~~ — ✅ DONE (verified 2026-07-02): `CrossType` emits
+  `generic:Open[args]` (recursive bracket grammar) and ClrTypeInjection resolves it by (name, arity);
+  `IList<T>`/`IReadOnlyList<T>`/`ICollection<T>`/`IEnumerable<T>`/`Dictionary<K,V>`/`List<T>` member positions
+  covered by `cases/il-geninj` + `cases/il-transinj` (gate). For-in over an INTERFACE-typed receiver fixed
+  2026-07-02 (frontend-only `iterator` marker on the injected `IEnumerable<T>` itself; derived ifaces inherit it).
 - **(4) delegate-type args collapse to `Any?`** → map delegate → Kotlin function type `(A,B)->R`.
 - **(5) aliased import silently ignored** (`import … as X`) → support + warn on non-injection.
-- **(6)/future#4/roadmap-I1 transitive / on-demand type injection** — chain-inject an import type's member
-  arg/return/property types (1–2 hops).
-- **generic-type FIR direct injection (roadmap I1, L)** — `List<T>`/`Dictionary<K,V>` façade-free (last hole in the
-  injection path).
+- ~~**(6)/future#4/roadmap-I1 transitive / on-demand type injection**~~ — ✅ DONE (verified 2026-07-02):
+  `EmitMeta` BFS-injects the full reachable closure of the imported seeds (member signatures + supertypes), capped
+  at 5000 types, NO_INJECT/kotlin.* excluded, dedupe + fail-soft per type. 2-hop chain (un-imported
+  `Gadget`→`Sprocket`) verified by `cases/il-transinj`. Design: full closure + cap, NOT depth-limited — no
+  "hop N+1 collapses to Any?" cliff; measured closures stay small (~265 types for Console+Exception).
+- ~~**generic-type FIR direct injection (roadmap I1, L)** — `List<T>`/`Dictionary<K,V>` façade-free (last hole in the
+  injection path).~~ — ✅ subsumed by (3)/(6): generic DEFINITIONS (`List`1`) are injected with type params and
+  constructed forms resolve at member positions (`il-transinj` exercises `Dictionary<String,Widget>` façade-free).
 - I4 remnants: `out`/`ref`, nullable value types, .NET enum import, generic delegates.
 
 ## 【4】 ilemit codegen bugs  *(interop-feedback (10)-(14) + the verify-il 36 clusters)*

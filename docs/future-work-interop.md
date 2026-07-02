@@ -2,7 +2,7 @@
 
 後々やりたいことのメモ（2026-06-23 起票）。
 
-> **状態 (2026-06-30 見直し)**: #1（ProjectReference）/ #2（DotKt 製アセンブリを Kotlin として消費）/ #5（往復抜け漏れ）は **DONE で着地済み**、#3（名前空間射影）は削除済み、**#4（推移的/オンデマンド型注入）のみが本当に未着手の future item**。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+> **状態 (2026-07-02 見直し)**: #1（ProjectReference）/ #2（DotKt 製アセンブリを Kotlin として消費）/ #5（往復抜け漏れ）は **DONE で着地済み**、#3（名前空間射影）は削除済み、**#4（推移的/オンデマンド型注入）も DONE**（本文参照 — facadegen の到達可能閉包 BFS で解消、`cases/il-transinj` で常設検証）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
 >
 > 着地の要点: infix/operator/suspend/top-level/inline（non-local return 含む）は **アセンブリ埋め込みの DotKt メタ属性**（`DotKt.Runtime.CompilerServices.*` 配下の `[Kotlin*]` 型）で復元（メモリ `embedded-metadata-attrs-embedded-nrt-nullability`、`kotlin-modifier-roundtrip`）。reverse の ProjectReference は Cecil ベースの retarget ツールで実現（サンプル `ktproj-bidir`、メモリ `r1-reverse-projectreference-retargeter`）。`scripts/verify-roundtrip.sh` 常設。
 
@@ -61,7 +61,15 @@ DotKt が出した dll を、別の Kotlin コンパイルから `import` して
 DotKt アセンブリの型は実 .NET 名前空間 = Kotlin パッケージとして 1:1 で見える。`kotlinx.coroutines` のようなライブラリは
 最初から `package kotlinx.coroutines` で書く（名前空間リネームに頼らない）。
 
-## 4. 推移的（transitive / on-demand）型注入
+## 4. 推移的（transitive / on-demand）型注入 — ✅ DONE（2026-07-02 検証）
+
+> **DONE**: facadegen `EmitMeta` が import 型をシードに、API サーフェス参照型（基底鎖・インターフェース・
+> メンバの戻り値/引数/要素/型引数）を **BFS で到達可能閉包ごと注入**する。採った設計は下記候補の 3 番目
+> （facadegen 側でクロージャ）＋爆発ガードは深さ制限ではなく **ハードキャップ 5000 型**（`NO_INJECT` の
+> BCL 特別型・`kotlin.*` は除外、dedupe、1 型の反射失敗は warning でスキップ）。深さ制限を捨てた理由:
+> 「N+1 hop 目でまた `Any?` に切れる」段差が無く、実測の閉包は小さい（Console+Exception で ~265 型、
+> WinUI 級でも数百）。未 import の 2 hop 連鎖（`a.member(): B` → `b.member(): C`）は `cases/il-transinj`
+> （verify-il gate 常設）で検証。構築ジェネリック・メンバ型（interop-feedback (3)）も同時に解消済み。
 
 **問題（ユーザー指摘 2026-06-23）**: 注入は **import 駆動**（C-2 / [[s5-fir-injection-seam]]）なので、`import` した型しか FIR に materialize されない。ある注入型のメンバ・シグネチャに**間接的に出るだけの型**（イベントハンドラ引数、戻り値、プロパティ型）は自動注入されず、`e.Message` のように「値の型は分かっているのにメンバが見えない」という直感に反する挙動になる（facadegen は簡易名で出すが、未 import だと injector が解決できず実質 `Any?`）。
 

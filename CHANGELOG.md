@@ -6,6 +6,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Added
+- **facadegen interop gaps (3)+(6) closed and gate-covered: constructed-generic member types + transitive
+  injection.** Verified end-to-end and hardened: a .NET member typed as a constructed generic
+  (`IList<Widget>`, `IReadOnlyList<Widget>`, `Dictionary<String,Widget>`, `IEnumerable<String>`) resolves as the
+  real generic type (not `Any?`), and types appearing only in member signatures (never imported) are injected
+  transitively by the facadegen reachable-closure BFS — full closure with a 5000-type cap, NOT depth-limited, so
+  a 2-hop chain (`w.Make(): Gadget` → `g.Core(): Sprocket`) works with zero extra imports. New fix on top: for-in
+  over an **interface-typed** receiver (`for (n in panel.Names())` where `Names(): IEnumerable<String>`) — the
+  frontend-only `iterator` marker is now emitted on the injected `IEnumerable<T>` interface itself (abstract
+  member; derived interfaces `IList<T>`/`ICollection<T>`/`IReadOnlyList<T>` inherit it through the generic super
+  chain, one declaration point → no duplicate-member clash with a concrete class's own marker). New gate sample
+  `cases/il-transinj`; 15 existing injection samples re-verified green. `docs/dotkt-interop-feedback.md` (3)/(6)
+  and `docs/future-work-interop.md` #4 marked RESOLVED.
 - **`Map`/`MutableMap` → `IDictionary<K,V>` dual-rep (Track B) — real Kotlin maps run on BCL dictionaries.** BOTH
   interfaces are `@ClrTypeAlias("System.Collections.Generic.IDictionary")` — deliberately NOT the List-style
   read-only/mutable split (IDictionary does not extend IReadOnlyDictionary, so a split breaks `MutableMap : Map`
