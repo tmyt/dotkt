@@ -37,7 +37,11 @@ private object EmptyMap : Map<Any?, Nothing>, Serializable {
  * The returned map is serializable (JVM).
  * @sample samples.collections.Maps.Instantiation.emptyReadOnlyMap
  */
-public fun <K, V> emptyMap(): Map<K, V> = @Suppress("UNCHECKED_CAST") (EmptyMap as Map<K, V>)
+// CLR deviation: a fresh Dictionary-backed map, NOT the EmptyMap singleton. Map/MutableMap alias IDictionary on the
+// CLR, and the pure-Kotlin EmptyMap object cannot satisfy the full IDictionary surface (its un-renamed `get` leaves
+// get_Item unimplemented -> the type fails to LOAD). Read-only-ness is Kotlin-frontend-enforced, exactly as for the
+// Dictionary that mapOf(pairs) returns. See docs/dotkt-semantics.md.
+public fun <K, V> emptyMap(): Map<K, V> = LinkedHashMap()
 
 /**
  * Returns a new read-only map with the specified contents, given as a list of pairs

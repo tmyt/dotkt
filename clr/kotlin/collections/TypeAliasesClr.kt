@@ -208,31 +208,20 @@ public actual class HashMap<K, V> : MutableMap<K, V> {
     @kotlin.clr.ClrIntrinsic("Remove")
     private fun nativeRemove(key: K): Boolean = TODO("clr binding should be implemented")
     actual override fun remove(key: K): V? { val old = get(key); nativeRemove(key); return old }
-    actual override fun putAll(from: Map<out K, V>) {
-        for (entry in from.entries) nativeSet(entry.key, entry.value)
-    }
+    actual override fun putAll(from: Map<out K, V>) = clrMapPutAll(this, from)
     @kotlin.clr.ClrIntrinsic("Clear")
     actual override fun clear() { TODO("clr binding should be implemented") }
 
-    // Dictionary.Keys is a read-only KeyCollection (NOT an ISet) so it cannot directly back `keys: MutableSet<K>`;
-    // bind it as an IEnumerable<K> and snapshot it for a live mutable key/entry view.
+    // MutableSet<K>/MutableCollection<V> lower to ICollection<K>/<V>, which Dictionary.Keys/.Values (KeyCollection/
+    // ValueCollection) implement directly — bind them. entries has no BCL equivalent -> the ClrMapDefaults snapshot
+    // of LIVE entries (this replaced the old lambda-view machinery, whose generic-capturing object expressions the
+    // backend could only stub to throw).
     @kotlin.clr.ClrIntrinsic("Keys")
-    private val nativeKeys: Iterable<K> get() = TODO("clr binding should be implemented")
-    private fun keySnapshot(): ArrayList<K> {
-        val out = ArrayList<K>()
-        for (k in nativeKeys) out.add(k)
-        return out
-    }
-
-    actual override val keys: MutableSet<K>
-        get() = clrMapKeysView({ size }, { keySnapshot() }, { k -> containsKey(k) }, { k -> nativeRemove(k) }, { clear() })
+    actual override val keys: MutableSet<K> get() = TODO("clr binding should be implemented")
     @kotlin.clr.ClrIntrinsic("Values")
     actual override val values: MutableCollection<V> get() = TODO("clr binding should be implemented")
     actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>>
-        get() = clrMapEntriesView(
-            { size }, { keySnapshot() }, { k -> containsKey(k) },
-            { k -> nativeGet(k) }, { k, v -> nativeSet(k, v) }, { k -> nativeRemove(k) }, { clear() }
-        )
+        get() = clrMapMutableEntries(this)
 }
 
 
@@ -265,120 +254,18 @@ public actual class LinkedHashMap<K, V> : MutableMap<K, V> {
     @kotlin.clr.ClrIntrinsic("Remove")
     private fun nativeRemove(key: K): Boolean = TODO("clr binding should be implemented")
     actual override fun remove(key: K): V? { val old = get(key); nativeRemove(key); return old }
-    actual override fun putAll(from: Map<out K, V>) {
-        for (entry in from.entries) nativeSet(entry.key, entry.value)
-    }
+    actual override fun putAll(from: Map<out K, V>) = clrMapPutAll(this, from)
     @kotlin.clr.ClrIntrinsic("Clear")
     actual override fun clear() { TODO("clr binding should be implemented") }
 
     // CAVEAT: plain Dictionary does not preserve insertion order, so this LinkedHashMap actual does not either.
+    // Keys/Values bind directly (the lowered ICollection slots); entries -> the ClrMapDefaults live-entry snapshot.
     @kotlin.clr.ClrIntrinsic("Keys")
-    private val nativeKeys: Iterable<K> get() = TODO("clr binding should be implemented")
-    private fun keySnapshot(): ArrayList<K> {
-        val out = ArrayList<K>()
-        for (k in nativeKeys) out.add(k)
-        return out
-    }
-
-    actual override val keys: MutableSet<K>
-        get() = clrMapKeysView({ size }, { keySnapshot() }, { k -> containsKey(k) }, { k -> nativeRemove(k) }, { clear() })
+    actual override val keys: MutableSet<K> get() = TODO("clr binding should be implemented")
     @kotlin.clr.ClrIntrinsic("Values")
     actual override val values: MutableCollection<V> get() = TODO("clr binding should be implemented")
     actual override val entries: MutableSet<MutableMap.MutableEntry<K, V>>
-        get() = clrMapEntriesView(
-            { size }, { keySnapshot() }, { k -> containsKey(k) },
-            { k -> nativeGet(k) }, { k, v -> nativeSet(k, v) }, { k -> nativeRemove(k) }, { clear() }
-        )
-}
-
-/** A live map entry backed by getter/setter lambdas over the owning map (no live BCL `KeyValuePair` setValue exists). */
-private class ClrMapEntry<K, V>(
-    override val key: K,
-    private val getValue: (K) -> V,
-    private val putValue: (K, V) -> Unit
-) : MutableMap.MutableEntry<K, V> {
-    override val value: V get() = getValue(key)
-    override fun setValue(newValue: V): V {
-        val old = getValue(key)
-        putValue(key, newValue)
-        return old
-    }
-}
-
-/** A `MutableSet<K>` key view over a CLR-backed map. Iteration is over a key snapshot; remove() deletes from the map. */
-private fun <K> clrMapKeysView(
-    sizeOf: () -> Int,
-    keySnapshot: () -> List<K>,
-    containsK: (K) -> Boolean,
-    removeKey: (K) -> Unit,
-    clearAll: () -> Unit
-): MutableSet<K> = object : AbstractMutableSet<K>() {
-    override val size: Int get() = sizeOf()
-    override fun add(element: K): Boolean = throw UnsupportedOperationException("Add is not supported on keys")
-    override fun clear() { clearAll() }
-    override fun contains(element: K): Boolean = containsK(element)
-    override fun iterator(): MutableIterator<K> {
-        val keys = keySnapshot()
-        return object : MutableIterator<K> {
-            private var index = 0
-            private var lastKey: K? = null
-            private var hasLast = false
-            override fun hasNext(): Boolean = index < keys.size
-            override fun next(): K {
-                if (index >= keys.size) throw NoSuchElementException()
-                val k = keys[index]
-                index++
-                lastKey = k
-                hasLast = true
-                return k
-            }
-            override fun remove() {
-                if (!hasLast) throw IllegalStateException("next() has not been called")
-                removeKey(lastKey as K)
-                hasLast = false
-            }
-        }
-    }
-}
-
-/** A `MutableSet<MutableEntry>` entry view over a CLR-backed map (snapshot iteration; entries read/write live). */
-private fun <K, V> clrMapEntriesView(
-    sizeOf: () -> Int,
-    keySnapshot: () -> List<K>,
-    containsK: (K) -> Boolean,
-    getValue: (K) -> V,
-    putValue: (K, V) -> Unit,
-    removeKey: (K) -> Unit,
-    clearAll: () -> Unit
-): MutableSet<MutableMap.MutableEntry<K, V>> = object : AbstractMutableSet<MutableMap.MutableEntry<K, V>>() {
-    override val size: Int get() = sizeOf()
-    override fun add(element: MutableMap.MutableEntry<K, V>): Boolean =
-        throw UnsupportedOperationException("Add is not supported on entries")
-    override fun clear() { clearAll() }
-    override fun contains(element: MutableMap.MutableEntry<K, V>): Boolean =
-        containsK(element.key) && getValue(element.key) == element.value
-    override fun iterator(): MutableIterator<MutableMap.MutableEntry<K, V>> {
-        val keys = keySnapshot()
-        return object : MutableIterator<MutableMap.MutableEntry<K, V>> {
-            private var index = 0
-            private var lastKey: K? = null
-            private var hasLast = false
-            override fun hasNext(): Boolean = index < keys.size
-            override fun next(): MutableMap.MutableEntry<K, V> {
-                if (index >= keys.size) throw NoSuchElementException()
-                val k = keys[index]
-                index++
-                lastKey = k
-                hasLast = true
-                return ClrMapEntry(k, getValue, putValue)
-            }
-            override fun remove() {
-                if (!hasLast) throw IllegalStateException("next() has not been called")
-                removeKey(lastKey as K)
-                hasLast = false
-            }
-        }
-    }
+        get() = clrMapMutableEntries(this)
 }
 
 
