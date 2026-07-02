@@ -103,6 +103,11 @@ genuinely require the synthetic — collapsing them to `string` + `.toString()` 
 type-name) `toString` and lose the length. Hence: an assembly that declares a user implementer keeps `CharSequence`
 polymorphic **assembly-wide** (the pass is skipped there).
 
+> *Currency note (2026-07-03):* bundle 4-B has since retired the CLEAN String ops (`contains`/`indexOf`/`startsWith`/
+> `endsWith`/`split`/`substring(2-arg)`/`isEmpty`, the `s[i]` indexer, Regex) via the adapter-bridge path — see
+> `master-task-inventory.md` §4-A ⑧. The remaining lowered set (`trim*`/`reversed`/`padStart`/`padEnd`/
+> `replace(S,S)`/`isBlank`) is blocked by distinct stdlib-BODY bugs, and the full signature-lowering below is still open.
+
 **DEFERRED (follow-up — NOT done, needs a stdlib rebuild):** lowering the **stdlib's own** CharSequence-extension
 signatures (`StringsKt.contains`/`trim`/… params) from the synthetic to `string`. That is the change that would let the
 5 still-lowered String ops (`trim`/`reversed`/`padStart`/`replace(S,S)`/`isBlank`) retire cleanly to their stdlib bodies

@@ -7,7 +7,32 @@ non-obvious interpretations — the things a Kotlin/JVM developer would otherwis
 deep dives are linked per section.
 
 Guiding principle: *Kotlin carries JVM accidental complexity; on the CLR, identify it and discard it — don't
-reproduce it.* (See `docs/research-roadmap.md`; memory `clr-not-jvm-discard-jvmisms`.)
+reproduce it.* (Memory `clr-not-jvm-discard-jvmisms`.)
+
+> Looking for the friendly tour instead of the canonical reference? Read
+> [`docs/user/kotlin-on-clr-differences.md`](user/kotlin-on-clr-differences.md) first.
+
+**Contents**
+
+| § | Deviation |
+|---|---|
+| [1](#1-kotlin-packages--net-namespaces) | Kotlin packages → .NET namespaces |
+| [2](#2-generics-are-reified--so-kotlin-reified-is-almost-a-no-op) | Reified generics — `reified` is (almost) a no-op |
+| [3](#3-inline-happens-at-emit-time-and-is-decoration-unless-a-lambda-literal-is-passed) | `inline` is emit-time, decoration unless a lambda is passed |
+| [4](#4-suspend-fun--an-async-taskt-function-hot-not-cold) | `suspend fun` = an async `Task<T>` function; **hot, not cold** |
+| [5](#5-primitive-stringification-is-clr-native-not-kotlinjvm-cosmetics) | CLR-native stringification; `String.format` = .NET composite format |
+| [5b](#5b-charsequence-is-string-on-the-clr--an-immutable-snapshot-not-a-live-view) | **`CharSequence` is `string`** — snapshot, not live view |
+| [5c](#5c-mapmutablemap-both-erase-to-idictionarykv--read-only-ness-is-frontend-enforced) | `Map`/`MutableMap` → `IDictionary<K,V>` |
+| [5d](#5d-appendable-is-systemtextstringbuilder) | `Appendable` is `System.Text.StringBuilder` |
+| [5e](#5e-enum-classes-have-two-clr-shapes) | Enum classes: basic → real CLR `enum`, rich → singleton class |
+| [5f](#5f-value-class-is-a-real-wrapper-class-never-erased) | `value class` = a real class (never erased) |
+| [6](#6-consuming-a-dotkt-assembly-as-kotlin--what-rides-metadata-vs-needs-an-attribute) | Round-trip: what rides metadata vs. needs an attribute |
+| [7](#7-default-arguments--a-two-tier-rule-native-metadata-else-a-carried-bir-expression) | Default arguments — the two-tier rule |
+| [8](#8-reverse--cross-assembly-interop) | Reverse / cross-assembly interop |
+| [8b](#8b-dual-representation-import-systemtextstringbuilder-vs-kotlintextstringbuilder--two-typed-views-of-one-clr-type) | Dual view: imported .NET type vs. its stdlib alias |
+| [8c](#8c-injected-net-static-members-are-accessed-via-companion) | Injected .NET statics need `.Companion` |
+| [9](#9-reference-type-nullability--net-nrt-un-annotated-net-types-are-platform-types) | Nullability ⇔ .NET NRT; platform types `T!` |
+| [10](#10-round-trip-fidelity-audit--what-re-consuming-a-dotkt-assembly-as-kotlin-loses) | Round-trip fidelity audit (incl. pinned-2.2.0 limitations) |
 
 ---
 
@@ -43,7 +68,7 @@ This is the single most surprising deviation, so it gets the most detail.
 
 - **JVM:** inline functions are inlined during a frontend/IR lowering; the body is also serialized into `@Metadata`
   so other modules can re-inline at *their* call sites.
-- **DotKt pipeline (four layers: `facadegen` / `kotc` / `bir2cir` / `ilemit`; `native-cir` is the target).** The
+- **DotKt pipeline (four layers: `facadegen` / `kotc` / `bir2cir` / `ilemit`).** The
   frontend is `…Fir2Ir then ClrBackendPhase` — **there is NO JVM `FunctionInlining` lowering.** The IR that reaches the
   backend still has un-inlined `inline` calls. **Inlining (and the `[KotlinInline]` splice) is a `bir2cir` (BIR→CIR)
   responsibility — currently still partly in `BirEmitter`, being migrated** (`ilemit` is meant to be Kotlin-free):
@@ -69,17 +94,28 @@ This is the single most surprising deviation, so it gets the most detail.
   the frontend accept a non-local return but leaves nothing to splice → `InvalidProgramException` at runtime (worse
   than the clean compile error). `inline` restoration and the carried body are a package deal.
 
-## 4. `suspend` ⇔ `Task<T>` (the Continuation is hidden)
+## 4. `suspend fun` = an async `Task<T>` function; hot, not cold
+
+**A `suspend` function IS, on the CLR, an async function returning `Task<T>`, and a suspend CALL is an `await`.**
+This is a user-stated foundational deviation, not an implementation detail.
 
 - **JVM:** a `suspend fun f(): T` compiles to `Object f(…, Continuation)` — the Continuation is an explicit parameter,
   CPS the public ABI.
 - **DotKt:** the **public CLR ABI is `Task<T> f(…)`** — the Continuation never appears in the signature (it's the
-  internal lowered form, with a `Task` sink). A C# caller `await`s it; a Kotlin caller in another module sees a
+  internal lowered form, with a `Task` sink). Calling a suspend function from suspend context is emitted as an
+  **await** of that `Task<T>`. A C# caller `await`s it natively; a Kotlin caller in another module sees a
   `suspend fun` again (restored from a `[KotlinFunction(Suspend)]` attribute, with the `Task<T>` unwrapped to `T`).
+- **Execution is HOT, not cold.** A .NET `Task` starts running when created — so invoking a suspend function starts
+  its execution immediately, exactly like C# `async`. This deliberately deviates from the kotlinx-coroutines
+  cold-by-default framing (a `suspend` body that only runs when awaited/launched). Kotlin's *language* semantics for
+  a direct suspend call (call = run to the first suspension and continue) are preserved; what does NOT carry over is
+  the kotlinx-style cold-start expectation around builders. Structured concurrency (`Job`/`CoroutineScope`) is a
+  separate later track.
 - Gotcha: a member `suspend fun` returning a **user type** drove out a Reflection.Emit limitation
   (`AsyncTaskMethodBuilder<UserT>` is a TypeBuilder instantiation) — fixed by re-anchoring those members via
   `TypeBuilder.GetMethod`.
-- Deep dives: `docs/design-coroutines-clr.md`, `docs/coroutine-abi.md`, memory `coroutine-abi-decision`.
+- Deep dives: `docs/coroutine-abi.md` (the ABI contract), `docs/design-coroutines-clr.md` (design + Track-2 plan),
+  `docs/coroutine-stdlib-port-plan.md` (the live implementation plan), memory `coroutine-abi-decision`.
 
 ## 5. Primitive stringification is CLR-native (not Kotlin/JVM cosmetics)
 
@@ -154,6 +190,37 @@ Consequences (deliberate, declared):
   `EntryPointNotFoundException`. Consequence: delegating through a `Map<Any, V>` receiver (legal for `Map<in
   String, V>` and fine under JVM erasure) `castclass`-fails on the CLR, because that value is an
   `IDictionary<object,V>`. Use a `Map<String, …>`-typed map for `by`-delegation.
+
+## 5d. `Appendable` is `System.Text.StringBuilder`
+
+`kotlin.text.Appendable` is a JVM-ism (`java.lang.Appendable`) with **no distinct .NET representation** —
+`StringBuilder` is the CLR's sole general appendable char sink. Mirroring the `CharSequence`→`string` collapse (§5b),
+DotKt aliases `Appendable` to `System.Text.StringBuilder` (`@ClrTypeAlias` + `@ClrIntrinsic("Append")` on
+`append(Char)`/`append(CharSequence?)`). Consequences:
+
+- An `Appendable`-typed parameter / return / bound (`<A : Appendable>`) surfaces to C# as `StringBuilder` — this is
+  what makes `joinTo(StringBuilder(), …)`-style stdlib generics verifiable on the CLR.
+- A **user class implementing `Appendable`** is therefore NOT supported (you cannot subclass the sealed-in-practice
+  role); write to a `StringBuilder` instead. This is narrower than the JVM, and deliberate.
+
+## 5e. Enum classes have two CLR shapes
+
+- A **basic** `enum class` (constants only, no ctor params / methods / per-entry bodies) → a **real CLR `enum`** —
+  ideal for .NET interop (usable in C# `switch`, attributes, etc.).
+- A **rich** enum (constructor params, methods, per-entry bodies) → a **singleton-field class** (one static readonly
+  instance per entry, with real properties/methods; `name`/`ordinal`/`values()`/`valueOf()` synthesized).
+- Within a DotKt module both behave like Kotlin enums. **Across the round-trip** (re-consuming the dll as Kotlin)
+  neither is restored as a Kotlin `enum class` — see §10.2 — so exhaustive `when` over a *consumed* enum degrades.
+  A facadegen-imported **.NET** enum arrives as an object of enum-typed `val`s (read, pass, `==`, `when` all work,
+  without exhaustiveness).
+
+## 5f. `value class` is a real wrapper class — never erased
+
+The OPPOSITE of Kotlin/JVM: a `@JvmInline value class Money(val amount: Int)` is emitted as an **ordinary reference
+class** (private backing field + property + synthesized `equals`/`hashCode`/`toString`) — no inline-class erasure, no
+mangled `-impl` statics, no .NET `struct`. Structural equality survives; what is lost is the value-ness itself
+(identityless-ness is not enforced). The frontend still *requires* the `@JvmInline` annotation (a pinned-frontend
+checker); the attribute itself is not emitted. See §10.3 for the round-trip view.
 
 ## 6. Consuming a DotKt assembly AS KOTLIN — what rides metadata vs. needs an attribute
 
@@ -240,6 +307,21 @@ thing the import asks for — the raw .NET member surface — and breaking the .
 frontend path, which the layer rules forbid (kotc reads no CLR-binding metadata). Two views with a clear boundary
 diagnostic is the clean 1.0 rule; an explicit `clrView<T>()`-style conversion intrinsic is possible later if the
 cast proves too blunt.
+
+## 8c. Injected .NET STATIC members are accessed via `.Companion`
+
+A facadegen-injected .NET class's static members surface on a synthesized **companion object**, and the pinned
+Kotlin 2.2.0 plugin API does not support the implicit `Type.member` → companion resolution for injected classifiers.
+So a .NET static is called **explicitly through `.Companion`**:
+
+```kotlin
+import Avalonia.Application
+Application.Companion.Start(...)   // NOT Application.Start(...)
+```
+
+Accepted rule (2026-06-23; MEMORY `injected-static-members-need-companion`) — the same pinned-compiler limitation
+family as §10.4 #2. Instance members, constructors, properties, events, operators and extension methods all resolve
+directly with no `.Companion`.
 
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
@@ -362,7 +444,13 @@ attribute we could add.
 - Inlining is done by the backend at emit, not the frontend. §3.
 - A non-local `return` into a cross-module inline lambda → works (body is carried in `[KotlinInline]`). §3.
 - `println(true)` prints `True`, `println(4.0)` prints `4`. §5.
-- `suspend fun` has no Continuation parameter — it returns `Task<T>`. §4.
+- `String.format` uses the .NET composite format (`"{0}"`), not Java printf (`"%d"`). §5.
+- `suspend fun` has no Continuation parameter — it returns `Task<T>`, and it starts **hot** (like C# `async`), not cold. §4.
+- A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
+- A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
+- A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.
+- `import System.Text.StringBuilder` and `kotlin.text.StringBuilder` are two distinct typed views of one CLR type; mixing them is a type error (cast to cross). §8b.
+- An injected .NET class's statics are called via `.Companion` (`Application.Companion.Start(...)`). §8c.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
 - A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
 - Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ①), **`sealed`** (gap ⑤ — modality, cross-module enforcement, exhaustive `when`), and the **`fun interface` nature** (gap ③ — usable, though a bare lambda still won't SAM-convert under the pinned 2.2.0 compiler); `enum class` and `object`/companion still restore as plain `object`/`class`. §10.

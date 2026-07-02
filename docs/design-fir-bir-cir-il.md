@@ -1,6 +1,6 @@
 # FIR -> BIR -> CIR -> IL
 
-> **状態 (2026-06-30 見直し)**: パイプラインは facadegen / kotc / bir2cir / ilemit の **4 層**。`--native-cir` が目標モード（`--compat-bir` は撤去予定、その byte-for-byte BIR 不変条件は放棄）。Milestone 0 の emit crash ブロッカーは解消済み（stdlib は今ビルドできる）。本書の「CIR v1 互換スケルトン」系の記述は移行期のもので、下記で現状に合わせて更新済み。現行の出荷スコープは [docs/ship-tasks.md](ship-tasks.md) §0 が正。
+> **状態 (2026-07-03 見直し)**: パイプラインは facadegen / kotc / bir2cir / ilemit の **4 層・単一経路**。`--native-cir`/`--compat-bir` の出力選択フラグは **2026-06-30 に両方撤去済み**（supersede — 「目標モード/撤去予定」ではない）。bir2cir の参照メタデータ置換（`MemberCallSubstitution`、ref.dll の `@ClrIntrinsic`/`@ClrTypeAlias` を消費）は**本番稼働中**。本書の価値は Layer Contract（層責務境界）と三参照モデル — これは binding のまま。CIR v1 互換スケルトン系の記述は移行期の歴史。層責務の正は [docs/ship-tasks.md](ship-tasks.md) §0、現行タスクは [docs/master-task-inventory.md](master-task-inventory.md)。
 
 This is the target split for the Kotlin/CLR backend.
 

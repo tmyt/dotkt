@@ -1,13 +1,13 @@
 # kotlin/clr — 残タスク計画書 ＝ Kotlin.NET 1.0 出荷チェックリスト
 
-> **状態 (2026-06-30 見直し)**: 広域 1.0 チェックリスト。完了済みトラック A/B/C/E は historical 集約（下記の各トラック先頭ポインタ）、live な残タスクは D coroutine 残項目と F production ツーリングのみ。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+> **状態 (2026-07-03 見直し)**: 広域 1.0 チェックリスト。完了済みトラック A/B/C/E は historical 集約（下記の各トラック先頭ポインタ）、live な残タスクは **D coroutine（= master-task-inventory 【6】）と F production ツーリング（= inventory 【7】）のみ**。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0、日次のタスク台帳は [docs/master-task-inventory.md](master-task-inventory.md)。
 >
-> **現行アーキテクチャ（4 層パイプライン）**: facadegen / kotc / bir2cir / ilemit（native-cir が目標）。C# バックエンドは完全引退し `scripts/verify-all.sh` は削除済み（オラクル＝JVM 差分ハーネス）。`runtime/csharp/` ツリーと `clrgen` 合成パッケージは撤去（`import System.X` がそのまま解決）。リポジトリ再編済み（compiler/→toolchain/kotc、tools/→toolchain/、samples/→cases/）。`@Clr`/`clr.Clr` は `kotlin.clr.ClrIntrinsic` に改称。
+> **現行アーキテクチャ（4 層パイプライン）**: facadegen / kotc / bir2cir / ilemit（単一経路 — `--compat-bir`/`--native-cir` の二重化は 2026-06-30 撤去）。C# バックエンドは完全引退し `scripts/verify-all.sh` は削除済み（オラクル＝JVM 差分ハーネス）。`runtime/csharp/` ツリーと `clrgen` 合成パッケージは撤去（`import System.X` がそのまま解決）。リポジトリ再編済み（compiler/→toolchain/kotc、tools/→toolchain/、samples/→cases/）。`@Clr`/`clr.Clr` は `kotlin.clr.ClrIntrinsic` に改称。
 
-最終更新: 2026-06-16。これは「純 .NET Binding として縦は貫通済み」状態からの**残タスク網羅リスト**。
+これは「純 .NET Binding として縦は貫通済み」状態からの**残タスク網羅リスト**。
 **本書のチェックボックスを全て埋めた時点を Kotlin.NET 1.0 のリリース可能ライン（definition of done）とする。**
 完了済みの大枠（M0 / M-D1 IL / M-D2 coroutine CPS / M-S S1–S5 / interop I2–I4 / framework-direct 継承 W0–W1）は
-`docs/research-roadmap.md` を参照。本書は**まだ無いもの**を漏れなく列挙し、チェックボックスで進捗を追う。
+`docs/archive/research-roadmap.md`（historical）を参照。本書は**まだ無いもの**を漏れなく列挙し、チェックボックスで進捗を追う。
 
 ## 1.0 の出荷ゲート（全カテゴリ完了に加え、横断で必須）
 - [ ] **任意の実用 Kotlin プログラム**が kotlin/clr でコンパイル・実行できる（A 言語網羅 ＋ B stdlib）。
@@ -48,7 +48,13 @@
 
 # D. coroutine 完全意味論
 
-> **状態（2026-06-23）: コルーチン表面はコンパイラ機能として全面実装済み**（design-coroutines-clr.md §§13a–§14a / task #55 dotktx 基盤）。
+> **⚠️ 現況補正（2026-07-03）**: 下記 2026-06-23 の「全面実装済み」は **pre-stdlib 時代（合成 facade + 手書き
+> DotKt.Runtime ランタイム）の記録**。実 CLR stdlib への移行でその stopgap 経路と `il-k*` サンプル群は撤去され、
+> コルーチンは **master-task-inventory 【6】として意図的に deferred**（ABI は確定済み — `suspend`⇔`Task<T>`、hot
+> start。`docs/dotkt-semantics.md` §4）。**live な実装計画は [docs/coroutine-stdlib-port-plan.md](coroutine-stdlib-port-plan.md)**
+> （coroutine ランタイムを stdlib `clr/` actuals として移植）。下記の個別 ✅ は当時の実証記録として読むこと。
+>
+> **状態（2026-06-23、historical）: コルーチン表面はコンパイラ機能として全面実装済み**（design-coroutines-clr.md §§13a–§14a / task #55 dotktx 基盤）。
 > 単発 suspend・spilling・条件式内 suspend・try-catch/try-finally-around-await・suspend lambda（receiver 形含む）・
 > generic/Unit/extension suspend・raw intrinsics・resume・startCoroutine・suspendCancellableCoroutine・unified Result・
 > user `Continuation<T>` 実装・`Unit` 型引数・sequence/yieldAll/generateSequence・**Flow（generic 含む）+ Flow⇄

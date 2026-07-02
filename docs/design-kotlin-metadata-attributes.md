@@ -29,8 +29,8 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | generics, including `reified` | real CLR generic method `<T>` | **yes** — CLR generics are reified | (none) |
 
 The attributes are **compiler-EMBEDDED per-assembly** as internal `DotKt.Runtime.CompilerServices.*` types (like csc's
-own `NullableAttribute`/`IsReadOnlyAttribute`) — there is **no referenced `DotKt.Runtime` DLL** (that runtime is being
-eliminated, in-flight). They are metadata-only, never executed ([[dotkt-naming-and-runtime-split]]).
+own `NullableAttribute`/`IsReadOnlyAttribute`) — there is **no referenced `DotKt.Runtime` DLL** (that runtime is
+ELIMINATED; the real CLR stdlib superseded it). They are metadata-only, never executed ([[dotkt-naming-and-runtime-split]]).
 
 ## Pipeline (mirror of the forward `--refs` injection)
 

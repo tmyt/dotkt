@@ -1,5 +1,12 @@
 # Compiling the real Kotlin standard library for the CLR (Path B)
 
+> **STATUS UPDATE (2026-07-03): the roadmap below was EXECUTED** — the real CLR stdlib exists (`runtime/stdlib/`),
+> is ~93.5% bound-or-implemented, and the compiler's stdlib lowerings are retired (bundles 1–2,
+> `master-task-inventory.md`). **One approach herein is superseded:** the `actual typealias X = java.util.X`
+> (TypeAliasesJVM-mimicking) idea — the shipped mechanism is `@ClrTypeAlias`/`@ClrIntrinsic` metadata consumed by
+> bir2cir from the ref.dll. The cardinal rule (fix stdlib-side, never add a compiler lowering) remains binding
+> (also in CLAUDE.md).
+
 Status: **design + spike done; groundwork landed (the `<DotKtKotcOptions>` flag channel).**
 
 ## THE CANONICAL ROADMAP (design owner, 2026-06-25) — read this first

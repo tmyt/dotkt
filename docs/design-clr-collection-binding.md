@@ -1,5 +1,10 @@
 # CLR collection binding — the iterator bridge (design)
 
+> **STATUS UPDATE (2026-07-03): LANDED.** The type map (`List`→IReadOnlyList/IList, `Map`/`MutableMap`→IDictionary —
+> see `dotkt-semantics.md` §5c — Iterable→IEnumerable, …) and the iterator bridge are shipped; the "remaining
+> wiring"/"WIRING BLOCKER" sections below are historical exploration. The living rationale here is WHY
+> `Iterator<T>` is not bound to `IEnumerator<T>` directly and the two protocol-boundary adapters.
+
 Status: **design (Codex-assisted, 2026-06-28)**. The HARD fork of the @ClrIntrinsic stdlib binding ([[clr-binding-actuals]]):
 the collection hierarchy, where Kotlin `Iterator.hasNext()/next()` ≠ BCL `IEnumerator.MoveNext()/Current`.
 

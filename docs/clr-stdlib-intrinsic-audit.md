@@ -1,5 +1,10 @@
 # CLR stdlib `@ClrIntrinsic` binding audit
 
+> **STATUS UPDATE (2026-07-03): the worklist is LANDED** — stdlib completeness closed as bundle 【2】
+> (`master-task-inventory.md`; audited reality: 1481 actuals, 93.5% bound-or-implemented; the "~363 unbound" figure
+> was a ~3.8× stale over-count). This doc survives as the **reference for the binding model (the three rules) and
+> the per-area binding decisions**; its counts/worklists are historical.
+
 Status: **verification (2026-06-30, 6 parallel sub-agent audits)**. Scope: all **490** `TODO("clr binding")` / `TODO("@Clr…")` stubs across **47** files under `runtime/stdlib/clr/`. This document is the verification result before the implementation pass; it records, for every stub, how it must be bound.
 
 ## Binding model (the three rules)

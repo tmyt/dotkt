@@ -1,7 +1,8 @@
 # kotlin/clr — 出荷タスクリスト（stdlib + パイプライン）
 
-最終更新: 2026-06-30。ユーザ指示で整理した **現在の出荷スコープ**。広域 1.0 チェックリストは `docs/remaining-tasks.md`、
-本書は「stdlib を全 Projection 対応し、kotc/bir2cir/ilemit パイプラインを出荷品質にする」現タスクの単一の真実とする。
+最終更新: 2026-07-03。**§0（確定アーキテクチャ）は現在も binding**（CLAUDE.md が直接参照）。
+一方 §1 以降の 8 ゴールは **完了または `docs/master-task-inventory.md` に吸収済み**（下記クローズアウト参照）—
+現在のタスク台帳は master-task-inventory、広域 1.0 チェックリストは `docs/remaining-tasks.md`。
 
 ## 0. 確定アーキテクチャ（層責務 — これに反する実装はバグ）
 
@@ -19,57 +20,26 @@
 > 重要な不変条件②: **`kotlin.*`（stdlib 全体）は jar から供給する。facadegen 経由で注入しては絶対にならない。** kotc は stdlib 空間を frontend **jar**（`-classpath`）から解決し、jar は Companion object を含む Kotlin 意味論を完全に保持する。facadegen は **.NET 空間専用**（`System.*` + 参照 .NET アセンブリ。System.* に限らない）。
 > - 理由: facadegen は inline/operator/infix を Roundtrip Attribute で復元できるが、**Companion object の暗黙呼び出し（`Type.method`、method が Companion 上）を完全復元できない**（`Type.Companion.method` が要る）。stdlib は Companion object 前提で実装されているため、facadegen 製の `kotlin.*` シンボルは意味論が劣化し、かつ jar のものと**二重化して衝突**する（本セッション実例: facadegen の非reified `arrayOf` が jar の reified `arrayOf` と衝突 → `overload resolution ambiguity`）。
 > - 直し方: 「アプリビルドで stdlib シンボルが無い/曖昧」の修正は**常に jar**。facadegen 側に `kotlin.*` ガードを足すのは**対症療法で筋が悪い** — 根本は **stdlib.dll を facadegen に `--scan-asm` で渡していること自体**。
-> - 状態: 本番経路 `packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets` + `scripts/dotkt.sh` から除去済（commit `522bdc8`）。**`scripts/verify-il.sh` / `scripts/verify-differential.sh` は未対応**（同じ `--scan-asm "$STDLIB_DLL"` の除去が要る）。`[[stdlib-jar-only-not-facadegen]]`
+> - 状態: 本番経路 `packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets` + `scripts/dotkt.sh` から除去済（commit `522bdc8`）。`scripts/verify-il.sh` / `scripts/verify-differential.sh` の `--scan-asm` も**除去済み**（2026-07-02、master-task-inventory META 参照）。`[[stdlib-jar-only-not-facadegen]]`
 
 ---
 
-## 1. stdlib.dll の全 Projection 対応
-- [ ] `runtime/stdlib/clr/` の **未束縛** `actual` をゼロにする = ほぼ全 `actual` に `@kotlin.clr.ClrIntrinsic` を付与（①直接対応が既定。audit 台帳 490 スタブ → 残 ~363 が未束縛。直接対応クラス無し→②全 Kotlin 実装、単一 member が 1:1 無し→③クラス `@ClrIntrinsic`＋"Rule 3" 実 body）。
-  - ⚠️ **判別子は `@kotlin.clr.ClrIntrinsic` の有無。`TODO("clr binding should be implemented")` body は束縛しても消えず、そのまま runtime (`DotKt.Stdlib.dll`) に "未呼び出しの throw スタブ" として乗る**（呼び出し側が app-emit で BCL に substitute されるので body が実行されないだけ）。逆に未束縛のまま出荷すると実際に `NotImplementedError` を投げる。∴ **進捗を TODO 数で測らない** — 未束縛 actual 数 / ref・runtime ビルドの load count（例 724/0）/ `docs/clr-stdlib-intrinsic-audit.md` で測る。`grep TODO|wc` は誤指標。
-- [ ] 各 `@ClrIntrinsic` が bir2cir の type-substitute で正しく BCL 呼び出しへ落ちる（型メンバ・top-level・expect/actual・inline すべて）。
-- [ ] BCL に転送できない箇所は Kotlin 実装（rule-3 等）で body を持つ。
-- 状態: バインド作業は大半完了。**substitute の出所が問題**（下記 #3 と一体）。`docs/clr-stdlib-intrinsic-audit.md` が検証台帳。
+## 1–8. ゴールのクローズアウト（2026-07-03）
 
-## 2. stdlib.jar の生成
-- [ ] CLR stdlib ソースから frontend jar（`kotlin-clr-stdlib.jar` 相当）を生成（[[frontend-stdlib-jar]]）。
-- [ ] jar は kotc の `-classpath` として JVM `kotlin-stdlib.jar` を置換し、`java.*` typealias 漏れが無い。
-- 状態: K2JVMCompiler 経路は実証済み。出荷用ビルドの固定化が残。
+8 ゴールは完了、または現行台帳 `docs/master-task-inventory.md` に吸収済み。要点のみ:
 
-## 3. パイプライン三参照でのコード生成（**最重要・現在の主戦場**）
-- [ ] kotc が (2) の **stdlib.jar** を参照してシンボル解決できる。
-- [ ] **bir2cir が stdlib.ref.dll を参照**し、`@ClrIntrinsic` ラベルを読んで **CIR に BCL 呼び出しを substitute** する。
-- [ ] ilemit が **stdlib.rt.dll** を参照して IL を生成できる。
-- **既知の欠陥（このセッションで特定）**:
-  - @ClrIntrinsic 置換機構は存在する（現状 `BirEmitter.kt:3183` の `clrName(callee)→clrStatic`）が、**kotc backend に居る**（本来 bir2cir）。
-  - `isNaN` 等 **expect/actual top-level fun が失敗**: 置換は `clrName(callee)` がラベルを返した時だけ発火するが、app は jar の **expect**（無注釈）に解決し、ラベルは **actual（ref.dll）** にある → ラベルが置換点に届かない。
-  - **正しい修正**: 置換を bir2cir 側で行い、**ref.dll の @ClrIntrinsic を出所**にする。`ReferenceMetadataIndex` は ref.dll を読めており、`isNaN`→`kotlin.NumbersKt.isNaN` まで解決済み（実証済み）。あとは「解決した参照メソッドが @ClrIntrinsic を持つなら CIR を BCL 呼び出しへ置換」を bir2cir に実装（ilemit へラベルを渡さない）。
-
-## 4. facadegen の Kotlin 意味論復元（round-trip）
-- [ ] (3) で生成したライブラリを参照した facadegen が、TopLevelFunction / inline / infix / operator / suspct 等の Kotlin 意味論を Roundtrip Attribute から復元できる（[[kotlin-modifier-roundtrip]]）。
-- [ ] `System.Int32→kotlin.Int` 等の型読み替えが正しい。
-
-## 5. アプリのビルド・実行
-- [ ] (3) で生成したライブラリを参照したアプリが MSBuild / `.ktproj` でビルドでき、`dotnet run` で期待出力（[[clr-annotation-namespace-proposal]] の app build 経路）。
-- [ ] 代表サンプル（コレクション/文字列/数値/StringBuilder/range 等）が緑。
-
-## 6. 既知リファクタポイントの解消
-- [ ] **DLL 名**を最終形に: `DotKt.Private.Stdlib.dll`（ref）/ `DotKt.Stdlib.dll`（rt）。※build 出力は既にこの名前。経路全体で一貫しているか確認。
-- [ ] **`clr.Clr` → `kotlin.clr.ClrIntrinsic` リネーム完了**: stdlib 移行済みだが compiler が両方マッチ・facadegen が legacy 保持中（[[clr-annotation-namespace-proposal]]）。legacy 撤去で完了。
-- [ ] **クラスに付く `@ClrIntrinsic` を `@ClrTypeAlias` にリネーム**: クラス注釈は「**型エイリアス**（型同一性／インスタンス生成の substitute）」で、メンバ注釈の「**呼び出し substitute**」とは役割が異なる。役割で注釈を分離する（メンバ＝`@ClrIntrinsic` のまま、クラス＝`@ClrTypeAlias`）。bir2cir の type-substitute（型解決）と call-substitute（呼び出し解決）の区別とも一致（[[comparable-iclr-typealias]]）。
-- [ ] **ilemit から Kotlin の事情を排除**: `BirEmitter` / ilemit に残る Kotlin 特化（netType→System.*、math-map、primitive→System.X、@ClrIntrinsic lowering 等）を **bir2cir へ移設**（[[compiler-layer-responsibilities]] の "Current violation"）。
-- [x] **`byref` / `ClrRef` を root パッケージから `kotlin.clr.*` へ移動** — **既達**（kotc 合成、`ClrTypeInjection.kt:311,315,331`、gap-analysis §4 確認）。※ `stackBuffer`/`Span` は `FqName.ROOT` 残存（別件、`ClrTypeInjection.kt:319,322`）。
-- [ ] **Kotlin 実装（BCL 非転送）箇所の性能確認**: rule-3 helper 等が非効率になっていないか。
-
-## 7. パイプライン（kotc/bir2cir/ilemit）の出荷品質化
-- [ ] 三層の責務分離が完了（kotc=CLR 非依存 / bir2cir=Kotlin↔CLR / ilemit=Kotlin 非依存）。
-- [ ] `--native-cir` が既定・`--compat-bir` 撤去（Milestone 0、ブロッカーの emit crash は解消済み）。
-- [ ] 想定外入力は明示エラー（silent miscompile 禁止）、診断はソース位置付き。
-
-## 8. リポジトリの出荷品質化
-- [ ] 古い scripts の整理（引退済みバックエンド由来の不要 script を削除/統合）。
-- [ ] verify 群が CI で緑（verify-il / differential / ktproj / native-cir-ilemit / roundtrip）。
-
----
-
-## 今すぐの着手点
-**#3 の bir2cir 実装**: `ReferenceMetadataIndex` で解決した候補が ref.dll 上で `@ClrIntrinsic` を持つ場合、`ExecutableCirDraft` で CIR を BCL 呼び出しへ substitute する（fqn を最後の `.` で owner/method に分割、`BirEmitter.kt:3183` と同型の変換、ただし bir2cir 側・CIR は plain BCL 呼び出し）。これが #1/#5 の expect/actual 系を一箇所で解く。
+- **#1 stdlib 全 Projection** — ✅ 実質完了（監査で「~363 未束縛」は約 3.8 倍の過大計上と判明。実態 1481 actuals /
+  93.5% bound-or-implemented。残＝coroutine intrinsics 等、inventory 【2】）。
+- **#2 stdlib.jar 生成** — ✅ `scripts/build-clr-stdlib-frontend.sh` として本番化（`kotlin-stdlib-clr-frontend.jar`）。
+- **#3 三参照コード生成** — ✅ **bir2cir `MemberCallSubstitution` が ref.dll の `@ClrIntrinsic`/`@ClrTypeAlias`/
+  `@ClrProperty` を消費して substitute**（本書が指摘した「kotc 側に居る」欠陥は解消 — kotc の `clrName`/`annClr`
+  読み取りは削除済み）。
+- **#4 facadegen round-trip 復元** — ✅（bounds/variance/sealed/fun-interface まで拡張。`dotkt-semantics.md` §10）。
+- **#5 アプリのビルド・実行** — ✅ ゲート green（verify-il run-FAIL 0 / PASS 132、verify-ktproj 9/9、2026-07-03
+  クローズアウト）。
+- **#6 リファクタポイント** — ✅ dll 名確定 / `clr.Clr` legacy 撤去 / `@ClrTypeAlias` 役割分離、いずれも完了。
+  残る ilemit/kotc の細目は inventory 【1】②③。
+- **#7 パイプライン出荷品質** — 層分離 ✅（kotc の CLR 直下ろしは bundle 1 で退役）。`--native-cir`/`--compat-bir`
+  は「既定化」ではなく **両方撤去**（2026-06-30、単一経路化）。診断品質は inventory 【7】へ。
+- **#8 リポジトリ出荷品質** — 旧 script 削除 ✅（`build-dotkt-stdlib.sh`/`build-stdlib.sh`/native-cir 系 verify）。
+  CI/配布の残は inventory 【7】へ。

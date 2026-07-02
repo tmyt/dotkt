@@ -4,7 +4,7 @@
 変換する。**フロントエンド（FIR）は本物の `kotlin-compiler-embeddable` なので有効な Kotlin 構文はすべて解決**する。
 ギャップが出るのは backend = BirEmitter 側だけ。
 
-> アーキテクチャ注記: BIR→CIR→IL には現在 **bir2cir 層**がある。BirEmitter に残る CLR lowering（型 substitute / @ClrIntrinsic 等）は bir2cir へ移設中（ship-tasks.md §6）。本書のノード単位カバレッジ（各 ✅/❌）はこの移設では変わらない。
+> アーキテクチャ注記: BIR→CIR→IL には現在 **bir2cir 層**がある。BirEmitter の CLR lowering 退役は bundle 1 で概ね完了（残件は master-task-inventory 【1】②③）。本書のノード単位カバレッジ（各 ✅/❌）はこの移設では変わらない。**コルーチン系ノードの「実装済み」記述は pre-stdlib 時代の記録** — コルーチンは現在 deferred（inventory 【6】、live plan = coroutine-stdlib-port-plan.md）。
 
 **重要な不変条件**: 未対応構文は黙ってクラッシュ/誤コンパイルせず、**必ずソース位置付きのコンパイルエラー**になる
 （`BirEmitter.unsupported(node, what, detail)` が message collector に ERROR を報告し、`ClrBackendPhase` が
