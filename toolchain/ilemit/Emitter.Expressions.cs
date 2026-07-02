@@ -265,7 +265,10 @@ sealed partial class Emitter
             }
             case "staticField":
             {
-                var f = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString());
+                // A miss on an EXTERNAL owner returns null from FindField — surface it as a legible error
+                // (an unchecked Ldsfld(null) was an opaque ArgumentNullException deep in ILGenerator).
+                var f = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString())
+                    ?? throw new NotSupportedException($"static field {e.GetProperty("ownerType").GetString()}.{e.GetProperty("name").GetString()} not found");
                 _il.Emit(OpCodes.Ldsfld, f);
                 return f.FieldType;
             }
@@ -278,8 +281,9 @@ sealed partial class Emitter
             }
             case "staticFieldSet":
             {
-                var sfsf = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString());
-                EmitStoreCoerced(e.GetProperty("value"), sfsf?.FieldType);
+                var sfsf = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString())
+                    ?? throw new NotSupportedException($"static field {e.GetProperty("ownerType").GetString()}.{e.GetProperty("name").GetString()} not found");
+                EmitStoreCoerced(e.GetProperty("value"), sfsf.FieldType);
                 _il.Emit(OpCodes.Stsfld, sfsf);
                 return typeof(void);
             }
