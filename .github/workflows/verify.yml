@@ -41,10 +41,10 @@ jobs:
       - name: Build compiler + tools
         run: |
           ./gradlew --no-daemon :kotc:installDist
-          dotnet build toolchain/ilemit   -c Release -o build/ilemit-bin   --nologo
+          dotnet build toolchain/ilemit    -c Release -o build/ilemit-bin    --nologo
+          dotnet build toolchain/bir2cir   -c Release -o build/bir2cir-bin   --nologo
           dotnet build toolchain/facadegen -c Release -o build/facadegen-bin --nologo
           dotnet build toolchain/retarget  -c Release -o build/retarget-bin  --nologo
-          dotnet build runtime/DotKt.Runtime -c Release -o build/dotkt-runtime --nologo
 
       # The shipping IL backend (functional + ilverify) — the primary gate.
       - name: verify-il (IL backend + ilverify)
