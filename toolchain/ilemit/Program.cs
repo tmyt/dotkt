@@ -3218,6 +3218,24 @@ sealed partial class Emitter
             _il.Emit(OpCodes.Box, got);
     }
 
+    // Coerce a just-emitted return VALUE (static type `got`, on the stack) to the declared method return type.
+    // Shared by ALL return sites — the plain `return`, the return-inside-try store into the _methodRetType-typed
+    // result local, and both `returnExpr` twins — so every path applies the identical coercion:
+    //  - `T` returned where the declared type is `T?` -> wrap in Nullable<T> (e.g. a `sortedBy` selector typed
+    //    `(T)->R?` whose body yields a non-null R). Mirrors EmitArg's coercion.
+    //  - a value-type / generic-param value returned where the method returns `object` (an erased generic `T?` —
+    //    NullableGenericReturnErasure) must be boxed so `ldnull`/boxed-value share the object return. A null-const
+    //    return already left a real null (no box). Mirrors the var-store box.
+    void EmitReturnCoerced(Type got)
+    {
+        if (got == null) return;
+        if (_methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == typeof(Nullable<>)
+            && _methodRetType.GetGenericArguments()[0] == got)
+            _il.Emit(OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
+        else if (_methodRetType == typeof(object) && NeedsBoxToRef(got))
+            _il.Emit(OpCodes.Box, got);
+    }
+
     // Args for a user method/ctor, boxing value types passed to reference (e.g. `object`/`Any`) params.
     // When the param type is unknown (lifted/unrecorded), emit the arg as-is (no spurious boxing).
     void EmitCallArgs(JsonElement args, MethodInfo mb)
