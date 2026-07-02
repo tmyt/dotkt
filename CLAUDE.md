@@ -49,8 +49,14 @@
   bir2cir type-lowering path. Always choose a clean rebuild over an incremental compat shim, even when the rebuild is larger.
 - **Prefer dedicated subagents for tasks, and actively use Codex.** Delegate substantive work to dedicated
   (specialized) subagents rather than doing it inline — the coordinator orchestrates and integrates. Use **Codex**
-  (`codex exec -s read-only "<question in English>"`) for design and investigation, and **instruct every subagent to
-  USE Codex** (not merely note it's "available") — both the coordinator and subagents should consult it. (User-directed.)
+  for design and investigation, and **instruct every subagent to USE Codex** (not merely note it's "available") —
+  both the coordinator and subagents should consult it. (User-directed.) **The canonical invocation is**
+  `codex exec -s read-only --skip-git-repo-check "<question in English>" </dev/null` — the **`</dev/null` is
+  MANDATORY in this harness**: even with a prompt argument, codex reads stdin to EOF ("stdin is appended as a
+  `<stdin>` block"), and the harness keeps stdin open → an un-redirected call hangs forever (the repeated
+  "Codex stalled on stdin" incidents). Also beware: the CLI can block on an interactive self-update prompt on the
+  user's terminal — if Codex goes silent across agents, ask the user to check it, and fall back to empirical
+  verification meanwhile.
 
 # Build & test (do NOT guess commands)
 
