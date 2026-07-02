@@ -5,6 +5,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir: generic-token fixes for CONCRETE generic alias receivers + map defaults (pre-coroutine hardening A6).**
+  *(a)* `Rule3HelperCall` now instantiates the hoisted `<>dotkt_ClrH_*` helper with the receiver's class args
+  (class-first, then method args — the `MergeTypeParams` order), carries the INSTANTIATED receiver token in the
+  call `sig` and substitutes class `gp:` names positionally (was: an open-generic `callStatic` + the degenerate
+  non-generic `clr:Dictionary` owner → `HashMap<String,Int>().put(..)` = InvalidProgramException).
+  `IteratorConsumerNormalization` additionally treats the substituted helper owner (`<>dotkt_ClrH_kotlin_*`) as an
+  rt-stdlib iterator source, so `for (x in ArrayList<Int>())` re-points hasNext/next at the real
+  `kotlin.collections.Iterator` (was EntryPointNotFound). Stdlib companion: HashMap/LinkedHashMap `put`/`remove`
+  restructured to the containsKey-guarded shape (never hold a `V?` in a bare `gp:V` local — the documented
+  ClrMapDefaults null-unbox landmine).
+  *(b)* `MapDefaultCall`/`Rule3HelperCall` carry the call's `retType` (guarded against bare `gp:` tokens) so a
+  bare-V-returning helper (`Map`/`MutableMap.getOrDefault` → `clrMapGetOrDefault`) boxes the CONCRETE
+  instantiation — previously the emitted `box !!1` used the callee's own method-generic token inside non-generic
+  `main()` = invalid metadata → BadImageFormatException. New gate case `il-mapgen` covers both.
 - **`scripts/` overhaul: one naming scheme + shared internal conventions + two harness bug fixes.**
   *Naming* — normalized to `<verb>-<noun>[-qualifier].sh`, aligned with the make target names (targets unchanged):
   `build-clr-stdlib.sh`→`build-stdlib-ref.sh`, `build-clr-stdlib-runtime.sh`→`build-stdlib-rt.sh`,

@@ -3836,7 +3836,7 @@ static class MemberCallSubstitution
         if (node["recv"] != null) hargs.Add(node["recv"].DeepClone());
         foreach (var a in args) hargs.Add(a?.DeepClone());
         var (k, v) = OwnerKvArgs(ownerToken);
-        return new JsonObject
+        var call = new JsonObject
         {
             ["k"] = "callStatic",
             ["owner"] = "kotlin.collections.ClrMapDefaultsKt",
@@ -3844,6 +3844,12 @@ static class MemberCallSubstitution
             ["args"] = hargs,
             ["typeArgs"] = new JsonArray { k, v },
         };
+        // Carry the call's statically-known return (same rationale + `gp:` guard as Rule3HelperCall): a helper
+        // returning the BARE map value param (`getOrDefault` -> V) reflects as the callee's own `!!1` at the call
+        // site — boxing that out-of-scope token is invalid metadata -> BadImageFormatException at run (both the
+        // Map- and MutableMap-typed receivers). `retType` lets ilemit box/convert the concrete instantiation.
+        if (RetToken(node) is string ret && !ret.StartsWith("gp:", StringComparison.Ordinal)) call["retType"] = ret;
+        return call;
     }
 
     // The first TWO top-level type arguments of a map owner token (`kotlin.collections.Map[gp:K,gp:V]`); `object` when
