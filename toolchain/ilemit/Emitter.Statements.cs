@@ -79,6 +79,11 @@ sealed partial class Emitter
                         if (got != null && _methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == typeof(Nullable<>)
                             && _methodRetType.GetGenericArguments()[0] == got)
                             _il.Emit(OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
+                        // A value-type / generic-param value returned where the method returns `object` (an erased
+                        // generic `T?` — NullableGenericReturnErasure) must be boxed so `ldnull`/boxed-value share the
+                        // object return. A null-const return already left a real null (no box). Mirrors the var-store box.
+                        else if (got != null && _methodRetType == typeof(object) && NeedsBoxToRef(got))
+                            _il.Emit(OpCodes.Box, got);
                     }
                     _il.Emit(OpCodes.Ret);
                 }

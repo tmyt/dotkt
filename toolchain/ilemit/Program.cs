@@ -1427,6 +1427,25 @@ sealed partial class Emitter
     Type RetOr(JsonElement e, Type fallback) =>
         e.TryGetProperty("retType", out var r) ? MapType(r.GetString()) : fallback;
 
+    // Boundary conversion after a call whose ACTUAL return is `System.Object` — the erased representation of a
+    // generic `T?` (NullableGenericReturnErasure in bir2cir). The caller's statically-known type (`retType`) says
+    // what to recover: a value-type nullable `Nullable<V>` via `unbox.any` (a null ref -> HasValue=false; a boxed V
+    // -> HasValue=true), a reference type via `castclass` (null stays null). When the caller ALSO wants `object`
+    // (an internal nullable->nullable hand-off) there is nothing to do. A non-object actual return is untouched.
+    Type CoerceReturn(JsonElement e, Type actual)
+    {
+        if (actual == typeof(object) && e.TryGetProperty("retType", out var r))
+        {
+            var want = MapType(r.GetString());
+            if (want != null && want != typeof(object))
+            {
+                if (want.IsValueType || want.IsGenericParameter) { _il.Emit(OpCodes.Unbox_Any, want); return want; }
+                _il.Emit(OpCodes.Castclass, want); return want;
+            }
+        }
+        return RetOr(e, actual);
+    }
+
 
     // Resolve a method on a (possibly generic) interface. When the instantiation carries a TypeBuilder/generic
     // param arg (e.g. IComparable<!!0>), its own GetMethod throws on the persisted builder -> use the static helper.
@@ -2053,6 +2072,10 @@ sealed partial class Emitter
             _il.Emit(OpCodes.Newobj, want.GetConstructor(new[] { got }));
             return want;
         }
+        // A value-type / generic-param branch flowing into an `object` want (an erased generic `T?` return whose
+        // branch type-tag was retyped to object by bir2cir's NullableGenericReturnErasure) must box; a `null` branch
+        // already left a real null ref (EmitExpr(null-const) is a reference), so it is unaffected.
+        if (want == typeof(object) && got != null && NeedsBoxToRef(got)) { _il.Emit(OpCodes.Box, got); return want; }
         return got;
     }
 

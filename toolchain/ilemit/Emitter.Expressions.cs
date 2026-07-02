@@ -190,7 +190,7 @@ sealed partial class Emitter
                 EmitExpr(e.GetProperty("recv"));
                 if (m == m0) EmitCallArgs(e.GetProperty("args"), m); else EmitArgsTyped(e.GetProperty("args"), mps);
                 _il.Emit(e.GetProperty("virtual").GetBoolean() ? OpCodes.Callvirt : OpCodes.Call, m);
-                return RetOr(e, m == m0 ? rt : mrt);
+                return CoerceReturn(e, m == m0 ? rt : mrt);
             }
             case "constrainedCall":
             case "clr.constrained.compareTo":
@@ -240,7 +240,7 @@ sealed partial class Emitter
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps);
                 else EmitCallArgs(e.GetProperty("args"), mb);
                 _il.Emit(OpCodes.Call, mb);
-                return RetOr(e, srt);
+                return CoerceReturn(e, srt);
             }
             case "staticField":
             {

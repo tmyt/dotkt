@@ -92,6 +92,15 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
+            // NULLABLE-GENERIC-RETURN erasure (ALL builds, so ref.dll + rt.dll signatures agree): a Kotlin method
+            // declaring a nullable generic-parameter return (`fun <T> …(): T?`) has its nullability erased by kotc to
+            // a bare `gp:T` return (Nullable<T> is inexpressible for an unconstrained T). That is CORRECT for a
+            // reference T (`ldnull` is a real null) but for a VALUE T `ldnull; ret !!T` collapses to default(T)=0 —
+            // null-ness is LOST (firstOrNull on a value-type list returns 0, not the element / not null-for-empty).
+            // The CLR-faithful representation of a generic `T?` is `System.Object` (the boxed/erased nullable form).
+            // Rewrite the return to `object`; ilemit boxes value returns and the CALL boundary converts object ->
+            // the caller's Nullable<V> / reference type. Runs BEFORE the rest so type-lowering/substitution see it.
+            NullableGenericReturnErasure.Apply(bir.Root);
             // CALL substitution (substitute/app builds only): a member call / construction whose OWNER is a CLR-bound
             // type in the ref.dll (@ClrTypeAlias, or the legacy class-level @ClrIntrinsic) is rewritten to a plain BCL
             // call/new. This is the bir2cir home of what kotc's clrName() member routing used to do — sourced from the
@@ -120,6 +129,10 @@ sealed class Pipeline
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
             if (attributeTopLevelOwner) IteratorConsumerNormalization.Apply(substituted);
+            // Cross-module default-argument splice: fill a call's OMITTED defaulted args from the callee's @KotlinDefault
+            // BIR (ref.dll), for a non-null object/CharSequence default the metadata backfill can't carry. Runs before the
+            // CharSequence bridge + type lowering so a spliced String default is coerced/lowered like an explicit arg.
+            if (attributeTopLevelOwner) DefaultArgSplice.Apply(substituted, refs);
             // String -> CharSequence adapter bridge: materialize a bare `System.String` flowing into a synthetic
             // `<>dotkt_CharSequence` slot as `new <>dotkt_StringCharSequence(str)` (String is sealed, can't implement
             // the synthetic interface). Runs on EVERY non-ref build — app AND the RT stdlib self-build. The RT build
@@ -246,6 +259,7 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _extMemberIntrinsics = new(StringComparer.Ordinal); // "name|recvKey|paramCount" -> bare member
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
     readonly Dictionary<string, List<(string Owner, string RecvKey)>> _topLevelStatics = new(StringComparer.Ordinal); // non-intrinsic top-level fun name -> [(file-class, recvKey)]
+    readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaults = new(StringComparer.Ordinal); // "owner|name|paramCount" -> (argPos -> default BIR)
 
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
     // kotlin.* -> CLR type map already hardcoded in this file). Listed here so member-call / construction
@@ -286,8 +300,15 @@ sealed class ReferenceMetadataIndex
                     _topLevelStatics[kv.Key] = lst = new List<(string, string)>();
                 lst.AddRange(kv.Value);
             }
+            foreach (var kv in asm.DotKt.KotlinDefaults) _kotlinDefaults.TryAdd(kv.Key, kv.Value);
         }
     }
+
+    // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> default-expression BIR-json). Matched by
+    // owner FQN + method name + total parameter count (the emitted-call arity, extension receiver included). Null when
+    // the callee carries no @KotlinDefault (a function with only metadata-representable defaults).
+    public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount) =>
+        _kotlinDefaults.TryGetValue(owner + "|" + method + "|" + paramCount, out var m) ? m : null;
 
     public int Count => _assemblies.Count;
     public IReadOnlyList<ReferenceAssembly> Assemblies => _assemblies;
@@ -931,6 +952,10 @@ sealed class ReferenceMetadataIndex
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
+                        // @KotlinDefault(index, bir) on the method's params -> the cross-module default-arg splice source.
+                        var kdefaults = KotlinDefaultsOf(method);
+                        if (kdefaults != null)
+                            metadata.KotlinDefaults[ownerFqn + "|" + method.Name + "|" + method.GetParameters().Length] = kdefaults;
                         metadata.MemberBindings.Add(new MemberBinding(
                             ownerFqn,
                             method.Name,
@@ -1038,6 +1063,22 @@ sealed class ReferenceMetadataIndex
             if (ps[i].GetCustomAttributesData().Any(a => a.AttributeType.FullName == "kotlin.clr.ClrRefArgument"))
                 (hits ??= new List<int>()).Add(i);
         return hits?.ToArray() ?? Array.Empty<int>();
+    }
+
+    // @KotlinDefault(index, bir) on the method's parameters -> (argPosition -> default-expression BIR-json). Returns null
+    // when no parameter carries it. `index` is the parameter's position in the emitted call (extension receiver first);
+    // `bir` is the default expression as a raw BIR-json string (opaque here — spliced pre-lowering by DefaultArgSplice).
+    static Dictionary<int, string> KotlinDefaultsOf(MethodBase method)
+    {
+        Dictionary<int, string> map = null;
+        foreach (var p in method.GetParameters())
+        {
+            var a = p.GetCustomAttributesData().FirstOrDefault(x => x.AttributeType.FullName == "kotlin.clr.KotlinDefault");
+            if (a == null || a.ConstructorArguments.Count < 2) continue;
+            if (a.ConstructorArguments[0].Value is null || a.ConstructorArguments[1].Value is not string bir) continue;
+            (map ??= new Dictionary<int, string>())[Convert.ToInt32(a.ConstructorArguments[0].Value)] = bir;
+        }
+        return map;
     }
 
     // The member-level PROPERTY-accessor binding: @ClrProperty(access, name). `access` is the READ(1)/WRITE(2) flag word;
@@ -1254,6 +1295,11 @@ sealed class ReferenceDotKtMetadata
     // type when the name is defined across multiple file-classes (CollectionsKt vs ArraysKt vs MapsKt). NOT consulted in
     // a stdlib self-build (the fun is local there; owner=null + FindStatic finds the sibling).
     public readonly Dictionary<string, List<(string Owner, string RecvKey)>> TopLevelStatics = new(StringComparer.Ordinal);
+    // A defaulted parameter's default-value expression as BIR (from @KotlinDefault), for CROSS-MODULE splice of an
+    // omitted argument. Keyed "ownerFqn|methodName|paramCount" -> (argPosition -> BIR-json string). The DefaultArgSplice
+    // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
+    // is coerced exactly like an explicit arg). Rides the ref.dll only (param attrs stripped in the rt build).
+    public readonly Dictionary<string, Dictionary<int, string>> KotlinDefaults = new(StringComparer.Ordinal);
 
     public JsonObject ToJson() => new()
     {
@@ -2269,6 +2315,71 @@ static class IteratorConsumerNormalization
 // adapter is not @ClrTypeAlias) and BEFORE BirTypeLowering (so it still sees the kotlin.* / @<>dotkt_CharSequence type
 // vocabulary; the injected type's kotlin.* signature tokens and the wrap node's `type`/`argTypes` are lowered
 // afterwards — the injected method bodies are already in CLR-call form, exactly as kotc emits them for `class S`).
+// CROSS-MODULE DEFAULT-ARGUMENT SPLICE. A call that OMITS a defaulted argument reaches bir2cir with fewer args than
+// the callee's signature (kotc emitted only the provided args — correct). For a callee whose defaulted params carry
+// @KotlinDefault (a non-null object/CharSequence default the frontend jar dropped + .NET [DefaultParameterValue]
+// metadata cannot carry), this pass reads the default-expression BIR from the ref.dll and SPLICES it as each trailing
+// omitted argument. Runs in the app build AFTER MemberCallSubstitution (owner attributed, so the ref.dll callee is
+// identifiable) and BEFORE StringCharSequenceBridge + BirTypeLowering (so a spliced String default is CharSequence-
+// coerced and type-lowered exactly like an explicit argument). Mirrors the [KotlinInline] body-splice mechanism, but
+// for default arguments. Callees with only metadata-representable defaults carry no @KotlinDefault -> untouched (their
+// omitted args still ride ilemit's [DefaultParameterValue] backfill). Omission is TRAILING (kotc emits positional
+// cross-module calls); a default expression that references earlier params is out of scope (the stdlib RC1 defaults
+// are all self-contained constants) — a mixed/gap map bails, leaving the call unchanged.
+static class DefaultArgSplice
+{
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Walk(root, refs);
+
+    static void Walk(JsonNode node, ReferenceMetadataIndex refs)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, refs);
+            TrySplice(obj, refs);
+        }
+        else if (node is JsonArray arr) foreach (var it in arr) if (it != null) Walk(it, refs);
+    }
+
+    static void TrySplice(JsonObject node, ReferenceMetadataIndex refs)
+    {
+        var k = Str(node["k"]);
+        if (k != "callStatic" && k != "callInstance") return;
+        if (node["args"] is not JsonArray args || Str(node["sig"]) is not string sig) return;
+        var sigCount = SplitTopLevel(sig).Count;
+        if (args.Count >= sigCount) return;                              // no omitted arg
+        var owner = Str(node["owner"]) ?? Str(node["ownerType"]);
+        var method = Str(node["method"]);
+        if (owner == null || method == null) return;
+        var defaults = refs.KotlinDefaultsFor(owner, method, sigCount);
+        if (defaults == null) return;
+        var spliced = new List<JsonNode>();
+        for (var pos = args.Count; pos < sigCount; pos++)
+        {
+            if (!defaults.TryGetValue(pos, out var bir)) return;         // gap -> bail (leave the call unchanged)
+            JsonNode parsed; try { parsed = JsonNode.Parse(bir); } catch { return; }
+            spliced.Add(parsed);
+        }
+        foreach (var n in spliced) args.Add(n);
+    }
+
+    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+
+    static IReadOnlyList<string> SplitTopLevel(string value)
+    {
+        var result = new List<string>();
+        int depth = 0, start = 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (c == '[' || c == '<' || c == '(') depth++;
+            else if (c == ']' || c == '>' || c == ')') depth--;
+            else if (c == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
+        }
+        result.Add(value[start..].Trim());
+        return result;
+    }
+}
+
 static class StringCharSequenceBridge
 {
     const string CharSeq = "<>dotkt_CharSequence";
@@ -2522,6 +2633,57 @@ static class StringCharSequenceBridge
         }
         result.Add(value[start..].Trim());
         return result;
+    }
+}
+
+// Erase a nullable generic-parameter return (`fun <T> …(): T?`, kotc-lowered to `ret=gp:X` + `retNullable=true`)
+// to a `System.Object` return — the only CLR representation of a generic `T?` that can carry a real null for a
+// VALUE-type instantiation. The method body's `ldnull` (null case) then stays a genuine null; value returns are
+// boxed by ilemit's return/cond emitters; and the CALL boundary (ilemit) converts the object back to the caller's
+// statically-known Nullable<V> (unbox.any) or reference type (castclass). Runs in EVERY build so the ref.dll and
+// rt.dll signatures — and the app's view of them — agree. A no-op for a method that is not a nullable-generic return.
+static class NullableGenericReturnErasure
+{
+    public static void Apply(JsonNode root)
+    {
+        if (root is not JsonObject o) return;
+        if (o["methods"] is JsonArray methods)
+            foreach (var m in methods) ApplyToMethod(m);
+        // Nested types (a generic class' member methods) carry their own method list.
+        if (o["types"] is JsonArray types)
+            foreach (var t in types) Apply(t);
+    }
+
+    static void ApplyToMethod(JsonNode m)
+    {
+        if (m is not JsonObject mo) return;
+        var ret = (mo["ret"] as JsonValue)?.TryGetValue<string>(out var rs) == true ? rs : null;
+        if (ret == null || !ret.StartsWith("gp:", StringComparison.Ordinal)) return;
+        if ((mo["retNullable"] as JsonValue)?.TryGetValue<bool>(out var rn) != true || !rn) return;
+        mo["ret"] = "object";
+        // A return-value expression whose STATIC type is the (now-erased) `gp:X` must also flow as object so its
+        // null/value coercion targets object: a `return (cond typed gp:X)` (if-empty-null-else-elem) and a
+        // `return (delegating call retType=gp:X)` (find -> firstOrNull) both become object end-to-end.
+        RetypeReturns(mo["body"], ret);
+    }
+
+    static void RetypeReturns(JsonNode node, string gp)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "return"
+                    && obj["value"] is JsonObject v)
+                {
+                    if ((v["type"] as JsonValue)?.TryGetValue<string>(out var vt) == true && vt == gp) v["type"] = "object";
+                    if ((v["retType"] as JsonValue)?.TryGetValue<string>(out var vr) == true && vr == gp) v["retType"] = "object";
+                }
+                foreach (var kv in obj) RetypeReturns(kv.Value, gp);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) RetypeReturns(it, gp);
+                break;
+        }
     }
 }
 
