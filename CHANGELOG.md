@@ -5,6 +5,31 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+- **Collection/sequence + language-feature 4-bug batch: `il-sort`/`il-collmore`/`il-regex`/`il-langf` all green
+  (run-correct AND ilverify-clean); verify-il fail-names 18 → 9, PASS(run) 121 → 124, ktproj 9/9.**
+  - `sorted`/`sortedDescending`/`sortedBy`: three JVM erasure-isms fixed stdlib-side —
+    `naturalOrder()`/`reverseOrder()` singleton-cast (now genuinely generic comparator classes), `sortedWith`'s
+    `toTypedArray as Array<T>` fast-path (now the `toMutableList` branch), and `compareValues`' `as
+    Comparable<Any>` cast (now dispatched through the NON-generic `System.IComparable` via the internal
+    `ClrRawComparable` binding; ilemit's `cast` boxes a value/generic source before `castclass`).
+  - RC2 transform side: a `(T) -> R?` function slot preserves its return nullability
+    (kotc `func:nullable:gp:R:...`) and bir2cir's new `NullableFuncReturnErasure` lowers every nullable-marked
+    func return to `Func<…, object>` uniformly (backing lambda rets erased + local dataflow repaired), fixing
+    the delegate-reinterpretation crashes (`mapNotNull` InvalidProgram, `sortedBy` AccessViolation).
+  - kotc inline-splice type-arg substitution re-keyed by `IrTypeParameter` SYMBOL (a name-keyed map erased a
+    caller's same-named generic to `object` and cross-captured outer params: `mapNotNullTo`→`forEach`,
+    `let<T,R:=Unit>`).
+  - `MutableCollection.add`/`addAll` calls route to new `clrCollAdd`/`clrCollAddAll` stdlib defaults
+    (`ICollection<T>.Add` is void vs Kotlin's changed-Boolean; `addAll` has no BCL slot).
+  - Rule-3 helper calls carry their receiver-first `sig` so the String→CharSequence bridge wraps raw-string
+    args (`Regex.matches`/`find` ilverify StackUnexpected).
+  - kotc no longer emits class-inherited fake-override property accessors as empty-bodied methods (ilverify
+    ReturnMissing on every derived class of a property-carrying base) — also greened
+    `netbase`/`netbase2`/`netgen2`/`customexc`/`mc1`; abstract interface-only fake-overrides are kept (CLR
+    re-declaration requirement). ilemit base-chain resolution handles the inner-generic `base[gp:E]` encoding
+    (`BareTypeKey`) and probes interface tokens best-effort.
+
 ### Added
 - **facadegen interop gaps (3)+(6) closed and gate-covered: constructed-generic member types + transitive
   injection.** Verified end-to-end and hardened: a .NET member typed as a constructed generic

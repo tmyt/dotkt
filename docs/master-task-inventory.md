@@ -542,6 +542,51 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
   that capture an enclosing generic type parameter. **Layer = kotc** (generic-closure codegen). Effort **HIGH** (deep,
   cross-cutting with `genclosure`/`genhof`; a separate track, not collection-specific).
 
+**✅ 2026-07-02 (session `9b58bc57`, later): the 4-bug batch `sort`/`collmore`/`regex`/`langf` — ALL GREEN
+(run-correct AND ilverify-clean). Gate: fail-names 18 → 9, PASS(run) 121 → 124, ktproj 9/9.**
+- **`il-sort` ✅** — three stacked JVM erasure-isms, all stdlib-side (+ the RC2 transform side below):
+  (i) `naturalOrder()`/`reverseOrder()` were erased singleton objects (`Comparator<Comparable<Any>>`)
+  unchecked-cast to `Comparator<T>` → InvalidCast under reified generics; now genuinely generic private classes
+  (the `ReversedComparator<T>` pattern; `reversed()`'s natural↔reverse identity swap dropped — an uncontracted
+  optimization untypable for unconstrained T). (ii) `sortedWith`'s `toTypedArray<Any?>() as Array<T>` Collection
+  fast-path (Object[]≠Int32[]) → always `toMutableList().sortWith()`, mirroring `sorted()`'s existing CLR
+  adaptation. (iii) `compareValues`' `a as Comparable<Any>` → reified `IComparable<object>`, which a boxed
+  primitive does NOT implement → dispatch through the NON-generic `System.IComparable` (internal
+  `@ClrTypeAlias` iface `ClrRawComparable` + expect/actual seam; ilemit `cast` now boxes a value/gp source
+  before `castclass`). Stdlib `905ee49`/`be4eb93`, outer `b15ace4`.
+- **`il-collmore` ✅ = RC2 TRANSFORM SIDE DONE** (outer `b15ace4`): kotc emits `func:nullable:gp:R:...` for a
+  nullable generic func return (funcTypeOf + both birType function-type paths — the Kotlin fact only); bir2cir
+  `NullableFuncReturnErasure` (all builds) lowers every nullable-marked func return to `Func<…, object>`
+  (the one rep the open/value views agree on; reference instantiations stay bare and ride Func's out-covariance),
+  erases the backing delegateNew/closureNew lambda-method rets, and repairs the local dataflow (gp: var →
+  object; re-narrowing inits get the universal `cast`). ilemit never sees a stacked `nullable:gp:` (its
+  FuncRetEnd parses one prefix). **Two more root causes surfaced under it:** (a) kotc's inline-splice
+  `typeArgSubst` was NAME-keyed — `mapNotNullTo<T>` splicing `forEach<T>` erased the OUTER T to object, and
+  `let<T,R:=Unit>` rewrote the outer R to `kotlin.Unit`; now keyed by the `IrTypeParameter` SYMBOL (self-star
+  detection by classifier identity). (b) `MutableCollection.add` was `@ClrIntrinsic("Add")` but
+  `ICollection<T>.Add` is VOID vs Kotlin's changed-Boolean (brIf on the phantom result = stack underflow), and
+  1-arg `addAll` has no ICollection slot: bir2cir pre-Rule-2 routes them to new `clrCollAdd`/`clrCollAddAll`
+  defaults (Add + size compare — set-duplicate-aware), element type recovered from the receiver's generic-param
+  constraint (`CollElemArg`).
+- **`il-regex` ✅** (outer `ec9aed6`) — NOT the recorded IsMatch/Replace binding shape (those substitute to the
+  BCL `Regex.IsMatch/Replace(string)` and verify fine): the rule-3 helper calls (`matches`/`find` →
+  `<>dotkt_ClrH_kotlin_text_Regex`) DROPPED the call `sig`, so the String→CharSequence bridge (positional off
+  `sig`) never wrapped the app's raw string. `Rule3HelperCall` now carries the receiver-first param list
+  (longer-than-args OK — omitted defaults fill downstream). Remaining rt-side `ClrMatch*` noise
+  (`ClrMatchGroupCollection : AbstractCollection` missing iface synthesis, `get_destructured` ReturnMissing) is
+  the documented pure-Kotlin dual-rep gap — not sample-reachable, NOT forced. Known edge: `println(null)`
+  prints an EMPTY line (Console.WriteLine(null)) where Kotlin prints "null" — unasserted by the gate, unfixed.
+- **`il-langf` ✅ +5 bonus greens (`netbase`/`netbase2`/`netgen2`/`customexc`/`mc1`)** (outer `da602e9`): kotc
+  emitted a class-inherited FAKE-OVERRIDE property (`Sq : Shape("sq")` inheriting `name`) as a REAL accessor
+  with an EMPTY body → ilverify ReturnMissing on every derived class of a property-carrying base (and an empty
+  fake-override SETTER silently no-opped). `emitsGet/emitsSet` drop a fake-override resolved to a base CLASS;
+  an ABSTRACT fake-override resolved only to an INTERFACE member is KEPT (the CLR requires the abstract class
+  to re-declare the slot — dropping it broke the rt build). ilemit hardening surfaced by the drop: base-chain
+  walks strip the inner-generic base's `[gp:E]` instantiation args (`BareTypeKey`); `FindInInterfaces` probes
+  the open name best-effort. **Remaining known-wrong bindings of the same class (not sample-reachable, TODO):**
+  `MutableList.set(i,e)`→`set_Item` (returns previous E vs void), `removeAt`→`RemoveAt` (returns E vs void),
+  `removeAll`/`retainAll` (unbound, no ICollection slot — will need clrColl defaults like add/addAll).
+
 **PRIORITY (leverage ÷ effort) + agent routing.**
 1. **RC1 — cross-module default args (`joinToString`). DO FIRST.** Highest leverage in the whole cluster: alone flips
    `mapfilter`/`coll2`/`chunk`/`sort` green and is a prerequisite for `collmore`/`seq`/`collops2`/`collrealkt`/`mutcoll`
