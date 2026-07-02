@@ -6,6 +6,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Fixed
+- **Injected .NET static-companion members (`il-injstatic`)** — `App.Companion.start(cb)` on a facadegen-injected
+  C# host type crashed with `unresolved method: <>dotkt_ClrH_Kfc_App.start`: kotc's Rule-3 hoist classifier
+  ("no interop marker + concrete → its body was hoisted to the `<>dotkt_ClrH_<owner>` static helper") misfired on
+  the synthesized companion's static method — an injected member naturally has no marker (it isn't a stdlib
+  binding), and no helper exists for an external .NET type (the hoist is only for @Clr classes with hoisted Kotlin
+  bodies). The hoist is now gated on the injected `ClrTypeRegistry`: an owner (or a companion's host class)
+  registered there routes to the direct .NET member shapes (`clrStatic Kfc.App::start` etc.), never the hoist —
+  generalizing (and subsuming) the narrower `ClrEventRegistry` gate from the event-accessor fix `32a1da6`. This was
+  the last run-FAIL: verify-il PASS(run) 131 → 132, fail-names 7 → 6 (all remaining are the documented ilverify
+  set: chunk/collops2/collrealkt/gen3/iter/iterable), verify-ktproj 9/9.
 - **User `Comparable<T>` sorting (`il-comparable`)** — `listOf(v1,v2,v3).sorted()` over a user `class Ver :
   Comparable<Ver>` crashed silently (rt `sorted[T]` invoked an OPEN-generic `Array.Sort[T]` → "not fully
   instantiated"). Three coordinated fixes: (1) **bir2cir** no longer lets the name-only top-level `@ClrIntrinsic`

@@ -3555,20 +3555,28 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// on the .NET type itself.
 			?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrInteropName(it) }
 		if (clrType != null) {
-			// An injected .NET event accessor (`add_<E>`/`remove_<E>`) must route to the clrEventAdd/Remove shape below,
-			// NOT the Rule-3 helper hoist: a facadegen-injected EXTERNAL .NET type (Ext.Widget) has no synthesized
-			// `<>dotkt_ClrH_` helper — that hoist is only for stdlib @Clr classes whose Kotlin bodies bir2cir hoists.
-			// The synthesized accessor also lacks the interop marker `clrInteropName` reads (unlike Add/Fire), so absent
-			// this guard `w.add_Changed { .. }` falls into the hoist and emits a callStatic to a non-existent helper ->
-			// ilemit FindMethod returns null -> ApplyTypeArgs(null) crash (ktproj-extlib). Checked against the SAME
-			// declaring type the event handler below resolves (fake-overrides are already excluded from the hoist).
-			val injectedEvent = kotc.ClrEventRegistry.lookup(declaringClass?.fqNameWhenAvailable?.asString(), name)
+			// A member of a facadegen-INJECTED external .NET type must route to the direct .NET member shapes below
+			// (clrStatic/clrInstance/clrPropGet/clrEventAdd/...), NEVER the Rule-3 helper hoist: an injected type
+			// (Kfc.App, Ext.Widget) has no Kotlin bodies and no synthesized `<>dotkt_ClrH_` helper — that hoist is
+			// only for @Clr classes whose Kotlin bodies were hoisted (the appColl collections / StringBuilder alias).
+			// An injected member also naturally lacks the interop marker `clrInteropName` reads (it isn't a stdlib
+			// binding), so absent this gate a synthesized-COMPANION static (`App.Companion.start(cb)`, il-injstatic)
+			// or event accessor (`w.add_Changed { .. }`, ktproj-extlib) falls into the hoist and emits a callStatic
+			// to the phantom helper nothing ever emitted -> ilemit "unresolved method: <>dotkt_ClrH_Kfc_App.start".
+			// Gate on the injected ClrTypeRegistry (the same source that resolved clrType): the owner — or, for a
+			// companion member, the companion's HOST class (the 3rd clrType fallback above) — being registered means
+			// every concrete member is a real .NET member. Subsumes the narrower ClrEventRegistry gate (32a1da6):
+			// the event accessor's declaring class is the injected type itself.
+			val injectedOwner = declaringClass?.let { dc ->
+				val host = (if (dc.isCompanion) dc.parent as? IrClass else null) ?: dc
+				host.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.dotNetName(it) }
+			}
 			// Rule 3 (CLR binding): a non-@Clr member WITH A BODY of a @Clr class -> its hoisted static helper
 			// (<>dotkt_ClrH_<Class>.m(__self, args)), NOT a BCL member by name. Abstract/@Clr members fall through.
 			// Non-abstract (concrete) rather than `body != null`: a CROSS-MODULE callee deserialized from the frontend
 			// jar carries NO body (bodies live in the .class, not metadata), so `body != null` would wrongly skip the
 			// hoist and emit a non-existent BCL member (e.g. StringBuilder.reverse). Modality survives deserialization.
-			if (injectedEvent == null && clrInteropName(callee) == null && callee.modality != Modality.ABSTRACT && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
+			if (injectedOwner == null && clrInteropName(callee) == null && callee.modality != Modality.ABSTRACT && callee.correspondingPropertySymbol == null && !callee.isFakeOverride && declaringClass != null) {
 				val hr = dispatchReceiver(call)
 				// The helper static method declares the CLASS type params THEN the method's own (bir2cir's HoistMethod /
 				// MergeTypeParams). A generic @Clr class (e.g. List<E>) needs them bound at the call: class args come from

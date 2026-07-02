@@ -168,9 +168,17 @@ is largely STALE** — a code-grounded currency check found:
 
 ## 【3】 facadegen .NET interop breadth  *(#4 + interop-feedback)*
 Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedback.md`, `research-roadmap.md I1`.
-- ~~static `.Companion` routing = the `il:injstatic` bug~~ — **DEPRIORITIZED (user 2026-07-02: "not our problem").**
-  Accessing a .NET static via `.Companion` is the accepted convention (MEMORY `injected-static-members-need-companion`,
-  accepted 2026-06-23); `il:injstatic` sits in that accepted-limitation space and is NOT a fix target now.
+- ~~static `.Companion` routing = the `il:injstatic` bug~~ — ✅ **FIXED (2026-07-02).** The real root cause was NOT
+  the `.Companion` convention (that stays the accepted access rule, MEMORY `injected-static-members-need-companion`):
+  it was the **Rule-3 hoist classifier misfiring on an injected owner**. A facadegen-injected external .NET type's
+  synthesized-companion static METHOD (`App.Companion.start(cb)`) naturally carries no member interop marker (it isn't
+  a stdlib binding), so kotc's BirEmitter hoist condition matched and fabricated a phantom
+  `<>dotkt_ClrH_Kfc_App.start` callStatic (that helper exists only for stdlib @Clr classes with hoisted Kotlin
+  bodies) → ilemit "unresolved method". Fix mirrors the event precedent `32a1da6`, generalized: the hoist is now
+  gated on `ClrTypeRegistry.dotNetName(owner-or-companion-host) == null` — a registry hit means the owner is a real
+  .NET type whose every concrete member is a real .NET member, so it routes to the direct `clrStatic`/`clrInstance`/
+  `clrPropGet`/`clrEvent*` shapes (subsumes the narrower `ClrEventRegistry` gate). `il:injstatic` GREEN
+  (`p=42/7/99/123`); this was the LAST run-FAIL — gates now PASS(run) 132 / fail-names 6 (all ilverify) / ktproj 9/9.
 - ~~`op_*` operators · C#-origin extension methods~~ — ✅ DONE (verified 2026-07-02): facadegen surfaces a genuine
   .NET type's `op_Addition`/`op_Subtraction`/`op_Multiply`/`op_Division`/`op_Modulus`/`op_UnaryNegation`/
   `op_UnaryPlus`/`op_Increment`/`op_Decrement` as Kotlin `operator fun`s (left operand = receiver, `clr:op_*`
