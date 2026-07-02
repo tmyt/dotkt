@@ -26,12 +26,21 @@ package kotlin.jvm
 @MustBeDocumented
 public actual annotation class JvmName(actual val name: String)
 KT
+# 3b. kotlin.jvm.JvmInline ACTUAL — same @OptionalExpectation situation as JvmName: without a platform actual in the
+#     jar, an APP-side `@JvmInline value class` dies with "declaration annotated with '@OptionalExpectation' can only
+#     be used in common module sources" (the JVM-frontend value-class checker REQUIRES @JvmInline, so apps must write it).
+cat > "$STAGE3/JvmInlineActual.kt" <<'KT'
+package kotlin.jvm
+@Target(AnnotationTarget.CLASS)
+@MustBeDocumented
+public actual annotation class JvmInline
+KT
 mapfile -t COMMON   < <(find runtime/stdlib/common/src -name '*.kt')
 mapfile -t SRC      < <(find runtime/stdlib/src -name '*.kt')
 mapfile -t UNSIGNED < <(find runtime/stdlib/unsigned/src -name '*.kt')
 mapfile -t BUILTINS < <(find "$STAGE" -name '*.kt')
 mapfile -t CLR_PLAT < <(find runtime/stdlib/clr -name '*.kt' ! -path 'runtime/stdlib/clr/builtins/*' ! -name '_ArraysClr.kt')
-CLR_PLAT+=("$STAGE2/_ArraysClr.kt" "$STAGE3/JvmNameActual.kt")
+CLR_PLAT+=("$STAGE2/_ArraysClr.kt" "$STAGE3/JvmNameActual.kt" "$STAGE3/JvmInlineActual.kt")
 COMMON_SOURCES=("${COMMON[@]}" "${SRC[@]}" "${UNSIGNED[@]}"); COMMON_CSV="$(IFS=,; echo "${COMMON_SOURCES[*]}")"
 OPTIN="-opt-in=kotlin.ExperimentalUnsignedTypes,kotlin.experimental.ExperimentalTypeInference,kotlin.contracts.ExperimentalContracts,kotlin.ExperimentalMultiplatform,kotlin.ExperimentalStdlibApi,kotlin.ExperimentalSubclassOptIn,kotlin.io.encoding.ExperimentalEncodingApi,kotlin.time.ExperimentalTime,kotlin.uuid.ExperimentalUuidApi"
 # NOTE: the CLR stdlib no longer references the kotc-injected `ClrRef<T>`/`byref` intrinsics — its implicit-byref
