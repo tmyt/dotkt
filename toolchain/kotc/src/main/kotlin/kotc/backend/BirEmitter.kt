@@ -3967,8 +3967,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// (kotlin.Int.plus) and the IR compare intrinsics (kotlin.internal.ir.less/greater/...) are top-level with
 			// plain value params — neither has an EXTENSION receiver. A stdlib EXTENSION that shares the name
 			// (`Array<T>.plus(element)`, `List.plus`, `CharSequence.plus`…) is a real function call, NOT arithmetic:
-			// lowering it to a CIL add corrupts the receiver reference. Gate on the extension receiver.
-			BINARY[name]?.let { op -> if (operands.size == 2 && callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }) {
+			// lowering it to a CIL add corrupts the receiver reference. Gate on the extension receiver AND on
+			// primitive operand types: a kotlin.* VALUE-CLASS member operator (kotlin.time.Duration.plus/unaryMinus —
+			// `isBuiltin` because the FQN starts with "kotlin") is a REAL method call, not an IL op; raw add/neg on
+			// Duration values produced InvalidProgram inside the rt (LongSaturatedMathKt.saturatingFiniteDiff). An
+			// operand may also be an un-narrowed smart-cast box (Any) — allowed IFF the other operand pins a concrete
+			// primitive (the cast-to-concrete coercion below handles it).
+			fun primOperand(o: IrExpression) = o.type.classFqName?.asString() in PRIMITIVE_OP_FQ
+			fun boxedAny(o: IrExpression) = birType(o.type).let { it == "object" || it == "kotlin.Any" }
+			BINARY[name]?.let { op -> if (operands.size == 2 && callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }
+					&& operands.any { primOperand(it) } && operands.all { primOperand(it) || boxedAny(it) }) {
 				// A boxed (Any) operand via an un-narrowed smart-cast (`x is Int && x > 10`) against a primitive:
 				// cast it to the other operand's type so the numeric/compare op sees the right value, not the box.
 				fun operand(o: IrExpression, other: IrExpression): String {
@@ -3981,10 +3989,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				}
 				return """{"k":"bin","op":${str(op)},"l":${operand(operands[0], operands[1])},"r":${operand(operands[1], operands[0])}}"""
 			} }
-			UNARY[name]?.let { if (operands.size == 1) return """{"k":"un","op":${str(it)},"e":${expr(operands[0])}}""" }
+			// Same primitive gate for unary/inc/dec: `Duration.unaryMinus()` is a real member call, not a CIL neg.
+			UNARY[name]?.let { if (operands.size == 1 && primOperand(operands[0])) return """{"k":"un","op":${str(it)},"e":${expr(operands[0])}}""" }
 			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) -> `(i + 1)`/`(i - 1)`.
-			if (name == "inc" && operands.size == 1) return """{"k":"bin","op":"+","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
-			if (name == "dec" && operands.size == 1) return """{"k":"bin","op":"-","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
+			if (name == "inc" && operands.size == 1 && primOperand(operands[0])) return """{"k":"bin","op":"+","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
+			if (name == "dec" && operands.size == 1 && primOperand(operands[0])) return """{"k":"bin","op":"-","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
 			// Numeric conversion `x.toLong()`/`x.toInt()`/… (numeric receiver) -> a CIL conv.
 			NUMBER_CONV[name]?.let { to ->
 				val recv = dispatchReceiver(call)

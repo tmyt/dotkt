@@ -129,6 +129,12 @@ internal val VALUE_PRIM_BIR = mapOf(
 	"kotlin.Double" to "double", "kotlin.Float" to "float", "kotlin.Boolean" to "bool", "kotlin.Char" to "char",
 )
 
+// Kotlin types whose values ARE CLR primitives (the signed/bool/char primitives + the unsigned inline classes,
+// which lower to native CLR unsigned primitives; unsigned arithmetic is already frontend-lowered to plain ops).
+// ONLY these may have their operators lowered to raw CIL bin/un ops — any other kotlin.* owner (a VALUE CLASS
+// like kotlin.time.Duration) keeps its member operator as a real method call.
+internal val PRIMITIVE_OP_FQ = PRIMITIVE_EQ_FQ + setOf("kotlin.UInt", "kotlin.ULong", "kotlin.UByte", "kotlin.UShort")
+
 // The kotlin.* -> System.* exception map was RETIRED: it was CLR knowledge living in kotc (a layer violation). The
 // stdlib's exception classes now carry `@kotlin.clr.ClrTypeAlias("System.X")`, and bir2cir reads that off the ref.dll
 // to lower throw/catch/supertype/construction (the same @ClrTypeAlias path that lowers the collections). kotc emits
