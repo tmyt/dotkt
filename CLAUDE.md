@@ -69,9 +69,12 @@ The build is a multi-stage native pipeline, not a single `gradle build`. Use the
 | Kotlin↔CLR round-trip (consume a DotKt dll as Kotlin) | `./scripts/verify-roundtrip.sh` |
 | **One-shot: compile + run a single `.kt`** | `./scripts/dotkt.sh --run path/to/Foo.kt` |
 
-`verify-il.sh` is the **canonical gate** — a change is not "done" until it stays green (35 samples,
-all run-correct *and* `ilverify`-clean). `dotkt.sh` is the fast dev wrapper over the same pipeline
-(`-h` for options: `--exe`, `--no-stdlib`, `--retarget`, `--ref <dll>`).
+`verify-il.sh` is the **canonical gate** — a change is not "done" without a run: the 2026-07-03 baseline is
+**run-FAIL 0 / PASS(run) 132 / 6 known ilverify-formal-only names** (`chunk`/`collops2`/`collrealkt`/`gen3`/`iter`/
+`iterable` — run-correct; `chunk`/`cobuild`/`collops2`/`seq` are additionally coroutine/SequenceScope-deferred).
+"Green" = **no NEW fail-name vs that baseline** (capture the FULL output; the gate has a documented stdout/marker
+race — confirm suspicious samples with a direct `dotkt.sh --run`). `dotkt.sh` is the fast dev wrapper over the same
+pipeline (`-h` for options: `--exe`, `--no-stdlib`, `--retarget`, `--ref <dll>`).
 
 **Building the CLR stdlib** — the real pure-Kotlin stdlib under `runtime/stdlib/`. **These THREE
 scripts are the current, canonical build** (other stdlib scripts are STALE — see the warning):
@@ -130,9 +133,12 @@ The **authoritative** layer table — including the reference artifact each stag
 | `toolchain/facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) | |
 | `toolchain/retarget/` | repoint emitted BCL refs so C# can `<Reference>` the dll | |
 
-The CLR-specific lowering still living in `BirEmitter` is **legacy being migrated to `bir2cir`** —
-when you touch it, move it toward the boundary above, don't entrench it. (MEMORY
-`compiler-layer-responsibilities`; plan in `docs/bir2cir-migration-inventory.md`.)
+The bulk of that migration is DONE (2026-07-03: kotc reads neither CLR annotation; Math/Char/String/Console/
+NUMBER_PARSE/exception hardcodes retired; bir2cir `MemberCallSubstitution` is the sole substituter). Residual
+CLR-specific lowering in `BirEmitter` (genuine primitive IL ops + the deferred delegate/closure + coroutine
+families) follows the same rule: when you touch it, move it toward the boundary above, don't entrench it.
+(MEMORY `compiler-layer-responsibilities`; status in `docs/master-task-inventory.md` 【1】; the old 6-wave
+taxonomy is archived at `docs/archive/bir2cir-migration-inventory.md`.)
 
 > ### kotc reads NEITHER `@ClrIntrinsic` NOR `@ClrTypeAlias` — the substitution is bir2cir's (2026-06-30, user, foundational)
 > `BirEmitter.clrName()` (it reads `@ClrIntrinsic` to do member call-substitution) is **legacy that must be
@@ -189,10 +195,10 @@ on the left, open the doc on the right:
 
 | If you are about to… | Read first |
 |----------------------|-----------|
-| **pick up work / know the current ship scope / confirm layer placement** | **`docs/ship-tasks.md`** (THE current task list; §0 = confirmed architecture, binding; "今すぐの着手点" = the immediate task) |
+| **pick up work / know what's left** | **`docs/master-task-inventory.md`** (THE de-duplicated remaining-work ledger; bundles 1-5 CLOSED 2026-07-03) — `docs/ship-tasks.md` §0 stays the binding architecture reference |
 | change the backend pipeline (BIR/CIR/IL, layer boundaries) | `docs/design-fir-bir-cir-il.md` + MEMORY `compiler-layer-responsibilities` |
 | touch stdlib bindings / `@Clr*` / lowerings | `docs/clr-stdlib-intrinsic-audit.md`, `docs/design-clr-stdlib-ref-runtime-split.md` |
-| retire / migrate an intrinsic | `docs/bir2cir-migration-inventory.md` |
+| retire / migrate an intrinsic | `docs/master-task-inventory.md` 【1】 (the old 6-wave plan is `docs/archive/bir2cir-migration-inventory.md`) |
 | ask "how does Kotlin map to the CLR, or why does it differ?" | `docs/dotkt-semantics.md` (canonical) |
 | check what is left for 1.0 | `docs/remaining-tasks.md` |
 | **record a new behavioral difference** from Kotlin/JVM | write it **into** `docs/dotkt-semantics.md` (not a code comment) |
