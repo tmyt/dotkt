@@ -297,6 +297,8 @@ sealed class ReferenceMetadataIndex
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string JvmInlineAttr = "kotlin.jvm.JvmInline";
+    // [KotlinFunction(flags)] flag word (mirrors ilemit Program.cs pass 4 / facadegen): Infix=1, Operator=2, Suspend=4.
+    const int KotlinFunctionSuspendFlag = 4;
 
     readonly List<ReferenceAssembly> _assemblies;
 
@@ -1019,6 +1021,12 @@ sealed class ReferenceMetadataIndex
                         var kdefaults = KotlinDefaultsOf(method);
                         if (kdefaults != null)
                             metadata.KotlinDefaults[ownerFqn + "|" + method.Name + "|" + method.GetParameters().Length] = kdefaults;
+                        // The `suspend` bit from the DotKt round-trip [KotlinFunction(flags)] attribute (Suspend = 4,
+                        // the flag word ilemit stamps; the dead Assembly.LoadFrom scan read it, this live scan didn't).
+                        // Channelled into MemberBinding.Suspend for the coroutine bundle (bundle 6) — no consumer yet.
+                        var suspend = (KotlinFunctionFlags(method.GetCustomAttributesData()) & KotlinFunctionSuspendFlag) != 0;
+                        if (suspend && Environment.GetEnvironmentVariable("DOTKT_BIR2CIR_DEBUG_SUSPEND") == "1")
+                            Console.Error.WriteLine($"bir2cir: ref-scan suspend member {ownerFqn}.{method.Name}/{method.GetParameters().Length} (Suspend=true)");
                         metadata.MemberBindings.Add(new MemberBinding(
                             ownerFqn,
                             method.Name,
@@ -1029,7 +1037,8 @@ sealed class ReferenceMetadataIndex
                             method.GetParameters().Select(p => TypeName(p.ParameterType)).ToArray(),
                             prop?.Access ?? 0,
                             prop?.Name,
-                            byrefPositions));
+                            byrefPositions,
+                            suspend));
                         // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
                         //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.
                         //   bare "Name"      -> a member on an EXTENSION receiver (`Array<T>.nativeClone()` ->
@@ -1382,7 +1391,11 @@ sealed class ReferenceDotKtMetadata
 // A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the
 // @ClrIntrinsic BCL name or null (null + no @ClrProperty + !IsAbstract = a rule-3 hoist candidate). PropertyName (+ the
 // READ/WRITE access flags) is set when the member carries @ClrProperty — an EXPLICIT .NET property accessor binding.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null);
+// Suspend = the Kotlin `suspend` modifier, read from the DotKt round-trip [KotlinFunction(flags)] attribute
+// (Suspend bit = 4) in the LIVE MetadataLoadContext scan. Populated for the Task-based coroutine bundle (bundle 6):
+// a cross-module call site must know "is this referenced callee suspend?" (its CLR shape is the Task<T> kickoff).
+// NO consumer reads it yet — bundle 6 wires it.
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false);
 
 sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool HasInlineBody)
 {
