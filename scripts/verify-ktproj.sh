@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
-# MSBuild / .ktproj end-to-end integration on the SHIPPING IL backend (the default; no C# backend involved).
-# Builds & runs real .ktproj (and a reverse-interop .csproj) via `dotnet run`, asserting stdout. This is the
-# only MSBuild-level gate now that the C# backend is retired — its old harness (verify-all.sh) was removed
-# because there's no point regression-testing a backend we no longer ship. See docs/csharp-retirement-design.md.
-set -euo pipefail
-export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
-# No KotlinClrBackend override -> the default IL backend.
+# MSBuild / .ktproj end-to-end integration gate on the SHIPPING IL backend (the default; no C# backend
+# involved). Builds & runs real .ktproj (and reverse-interop .csproj) samples via `dotnet run`, asserting
+# stdout. This is the only MSBuild-level gate now that the C# backend is retired — its old harness
+# (verify-all.sh) was removed because there's no point regression-testing a backend we no longer ship.
+# See docs/csharp-retirement-design.md. Inputs: cases/ktproj*/ + the toolchain. Exits nonzero on any FAIL.
+source "$(dirname "$0")/lib.sh"
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+usage() { cat <<EOF
+usage: $SCRIPT_NAME
+Runs every .ktproj integration sample (no flags). -h for this help.
+EOF
+}
+while (( $# )); do
+	case "$1" in
+		-h|--help) usage; exit 0 ;;
+		*) usage_error "unknown argument '$1'" ;;
+	esac
+done
+
 fail=0
-
 # Build the compiler launcher once (a plain Java app) so the MSBuild EnsureKotlinClrCompiler bootstrap is a no-op.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 

@@ -78,12 +78,12 @@ $(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-ref.sh \
 	@test -f "$@" || { echo "make: stdlib-ref did not produce $@ (see build/clr-stdlib/*.err)"; exit 1; }
 
 stdlib-rt: $(STDLIB_RT) ## DotKt.Stdlib.dll (the shipping runtime assembly)
-# NOTE the `|| true`: the script's final error-grep exits 1 precisely when it finds NO errors
-# (a clean build); existence of the dll below is the real success signal.
+# The script exits 0 on success / nonzero on real failure (the old final-error-grep footgun — exit 1
+# exactly when the build was CLEAN — is fixed, so no compensating `|| true` here any more).
 $(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) scripts/build-stdlib-rt.sh \
               $(call tool_src,bir2cir) $(call tool_src,ilemit) \
               | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
-	bash scripts/build-stdlib-rt.sh --emit || true
+	bash scripts/build-stdlib-rt.sh --emit
 	@test -f "$@" || { echo "make: stdlib-rt did not produce $@ (see build/clr-stdlib-rt/*.err)"; exit 1; }
 
 # ---- packaging -----------------------------------------------------------------------------------

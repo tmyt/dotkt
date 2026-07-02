@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
-# Regression check for function types wider than System.Func/Action supports.
-#
-# System.Func tops out at 16 value parameters plus TResult (Func`17). Kotlin
-# function values can be wider, so ilemit synthesizes module-local delegate
-# types DotKt.Runtime.CompilerServices.KFunc`N / KAction`N when needed.
-set -euo pipefail
-export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+# Regression gate for function types wider than System.Func/Action supports: System.Func tops out at 16
+# value parameters plus TResult (Func`17); Kotlin function values can be wider, so ilemit synthesizes
+# module-local delegate types DotKt.Runtime.CompilerServices.KFunc`N / KAction`N when needed. Feeds a
+# hand-written 17-arg BIR file to ilemit, runs it, checks the synthesized types exist in the dll, and
+# that facadegen restores the wide type as a Kotlin function type. Exits nonzero on any failure.
+source "$(dirname "$0")/lib.sh"
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+usage() { cat <<EOF
+usage: $SCRIPT_NAME
+Runs the >16-arg delegate synthesis regression check (no flags). -h for this help.
+EOF
+}
+while (( $# )); do
+	case "$1" in
+		-h|--help) usage; exit 0 ;;
+		*) usage_error "unknown argument '$1'" ;;
+	esac
+done
+
 OUT="$ROOT/build/ilemit-wide-delegates"
 rm -rf "$OUT"
 mkdir -p "$OUT/bir" "$OUT/il"
 
-dotnet build "$ROOT/toolchain/ilemit" -c Release -o "$ROOT/build/ilemit-bin" -v q --nologo >/dev/null
-dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo >/dev/null
-dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo >/dev/null
+build_tool ilemit; build_tool facadegen   # unconditional: the gate tests current sources
 
 cat > "$OUT/bir/Wide.bir.json" <<'EOF'
 {
@@ -50,7 +58,7 @@ cat > "$OUT/bir/Wide.bir.json" <<'EOF'
         {"name":"p17","type":"int"}
       ],
       "ret": "void",
-      "body": [{"k":"exprStmt","expr":{"k":"console","method":"WriteLine","args":[{"k":"local","name":"p17"}]}}]
+      "body": [{"k":"exprStmt","expr":{"k":"clrStatic","type":"System.Console","method":"WriteLine","argTypes":["int"],"args":[{"k":"local","name":"p17"}]}}]
     },
     {
       "name": "accept",
@@ -116,7 +124,9 @@ cat > "$OUT/bir/Wide.bir.json" <<'EOF'
         {
           "k": "exprStmt",
           "expr": {
-            "k": "console",
+            "k": "clrStatic",
+            "type": "System.Console",
+            "argTypes": ["int"],
             "method": "WriteLine",
             "args": [
               {
@@ -157,7 +167,7 @@ cat > "$OUT/bir/Wide.bir.json" <<'EOF'
 }
 EOF
 
-dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$OUT/il" Wide "$OUT/bir/Wide.bir.json" >/dev/null
+dotnet "$ILEMIT_DLL" "$OUT/il" Wide "$OUT/bir/Wide.bir.json" >/dev/null
 actual="$(dotnet "$OUT/il/Wide.dll")"
 expected="$(printf '17\n17')"
 if [[ "$actual" != "$expected" ]]; then
@@ -178,11 +188,11 @@ fi
 REFPACK="$(ls -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/*/ref/net10.0 2>/dev/null | sort -V | tail -1)"
 RUNTIMEPACK="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/* 2>/dev/null | sort -V | tail -1)"
 REFS="$(ls "$REFPACK"/*.dll "$RUNTIMEPACK"/*.dll | tr '\n' ';')$OUT/il/Wide.dll"
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$OUT/wide.meta" --refs "$REFS" WideKt >/dev/null
+dotnet "$FACADEGEN_DLL" --meta "$OUT/wide.meta" --refs "$REFS" WideKt >/dev/null
 if ! rg -q 'tlfun accept Int final cb:func:\[Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int\]' "$OUT/wide.meta"; then
     echo "FAIL  facadegen did not restore KFunc\`18 as a Kotlin function type" >&2
     cat "$OUT/wide.meta" >&2
     exit 1
 fi
 
-echo "PASS  ilemit wide synthetic delegates"
+info "PASS  ilemit wide synthetic delegates"

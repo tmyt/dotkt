@@ -1,59 +1,69 @@
 #!/usr/bin/env bash
-# Build the REAL pure-Kotlin Kotlin/CLR standard library: compile the multiplatform common source
-# (runtime/stdlib/common/src + runtime/stdlib/src + runtime/stdlib/unsigned/src)
-# against the CLR platform `actual`s (runtime/stdlib/clr), emit BIR,
-# then ilemit -> DotKt.Private.Stdlib.dll. This is the REFERENCE assembly (compile-time only, keeps @Clr metadata, never
-# loaded at runtime — fully substituted away at app-emit); the shipping RUNTIME assembly is DotKt.Stdlib.dll
-# (build-stdlib-rt.sh). The 'Private' name marks it as an internal reference face, not an external artifact.
-#
-#   scripts/build-stdlib-ref.sh [--emit]   # --emit also runs ilemit; default = frontend+BIR only (faster triage)
-set -uo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-L="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
-OUT="$ROOT/build/clr-stdlib"; BIR="$OUT/bir"; CIR="$OUT/cir"; DLL="$OUT/dll"
-# NOTE: the pure-kotlin stdlib is SELF-CONTAINED — it must NOT reference DotKt.Runtime (that assembly only carried the
-# OLD stdlib-lowering helpers: DotKt.Unit/Result/Coroutines.*/Text.Regexes). Those kotlin.*->DotKt.Runtime lowerings
-# are being retired so the stdlib uses its own kotlin.* types. No --ref here on purpose.
-do_emit=0; [[ "${1:-}" == "--emit" ]] && do_emit=1
+# Build the stdlib REFERENCE assembly (DotKt.Private.Stdlib.dll): compile the real pure-Kotlin stdlib
+# (runtime/stdlib/{common,src,unsigned}/src + the clr/ actuals) in ref mode (DOTKT_STDLIB_COMPILE=1, no
+# SUBSTITUTE — @Clr stays metadata) to BIR, then with --emit bir2cir -> ilemit -> retarget. The ref is
+# compile-time only (bir2cir's --ref, sourcing the @ClrTypeAlias/@ClrIntrinsic labels), never loaded at
+# runtime — fully substituted away at app-emit; the shipping RUNTIME assembly is DotKt.Stdlib.dll
+# (build-stdlib-rt.sh). The 'Private' name marks it as an internal reference face, not an external
+# artifact. Inputs: runtime/stdlib sources + kotc + the bir2cir/ilemit/retarget dlls. Outputs:
+# build/clr-stdlib/{bir,cir,dll} + *.err logs. NOTE: the pure-Kotlin stdlib is SELF-CONTAINED — it must
+# NOT reference DotKt.Runtime (retired), so the kotc step takes no --ref on purpose.
+source "$(dirname "$0")/lib.sh"
 
-[[ -x "$L" ]] || (cd "$ROOT" && ./gradlew -q :kotc:installDist)
+usage() {
+	cat <<EOF
+usage: $SCRIPT_NAME [--emit]
+  --emit       also run bir2cir + ilemit + retarget to produce DotKt.Private.Stdlib.dll
+               (default: frontend + BIR only, for fast triage)
+  -h, --help   this help
+Exits nonzero if the frontend produced no BIR, or (with --emit) if the dll was not emitted.
+EOF
+}
+
+do_emit=0
+while (( $# )); do
+	case "$1" in
+		--emit) do_emit=1; shift ;;
+		-h|--help) usage; exit 0 ;;
+		*) usage_error "unknown argument '$1'" ;;
+	esac
+done
+
+OUT="$ROOT/build/clr-stdlib"; BIR="$OUT/bir"; CIR="$OUT/cir"; DLL="$OUT/dll"
+need_kotc
 rm -rf "$BIR"; mkdir -p "$BIR"
 
-# Common = the multiplatform expect/impl source; Platform(CLR) = the clr/ actuals (NOT in -Xcommon-sources).
-mapfile -t COMMON < <(find "$ROOT/runtime/stdlib/common/src" -name '*.kt')
-mapfile -t SRC < <(find "$ROOT/runtime/stdlib/src" -name '*.kt')
-mapfile -t UNSIGNED < <(find "$ROOT/runtime/stdlib/unsigned/src" -name '*.kt')
-mapfile -t CLR < <(find "$ROOT/runtime/stdlib/clr" -name '*.kt')
-COMMON_SOURCES=("${COMMON[@]}" "${SRC[@]}" "${UNSIGNED[@]}")
-COMMON_CSV="$(IFS=,; echo "${COMMON_SOURCES[*]}")"
+collect_stdlib_sources
+FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters -Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN)
 
-OPTIN="-opt-in=kotlin.ExperimentalUnsignedTypes,kotlin.experimental.ExperimentalTypeInference,kotlin.contracts.ExperimentalContracts,kotlin.ExperimentalMultiplatform,kotlin.ExperimentalStdlibApi,kotlin.ExperimentalSubclassOptIn,kotlin.io.encoding.ExperimentalEncodingApi,kotlin.time.ExperimentalTime,kotlin.uuid.ExperimentalUuidApi,kotlin.ExperimentalUnsignedTypes"
-FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters -Xcommon-sources="$COMMON_CSV" $OPTIN)
-
-echo "== kotc: ${#COMMON[@]} common + ${#SRC[@]} src + ${#UNSIGNED[@]} unsigned + ${#CLR[@]} clr -> BIR =="
-DOTKT_STDLIB_COMPILE=1 CLR_TYPES_METADATA="" "$L" "${COMMON[@]}" "${SRC[@]}" "${UNSIGNED[@]}" "${CLR[@]}" "${FLAGS[@]}" -d "$BIR" 2> $OUT/kotc.err
-echo "frontend errors: $(grep -c ': error:' "$OUT/kotc.err")   BIR files: $(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)"
+info "kotc: ${#STDLIB_COMMON[@]} common + ${#STDLIB_SRC[@]} src + ${#STDLIB_UNSIGNED[@]} unsigned + ${#STDLIB_CLR[@]} clr -> BIR (ref mode)"
+# kotc exits nonzero when there are frontend errors; this script's job is to REPORT them, so tolerate it.
+DOTKT_STDLIB_COMPILE=1 CLR_TYPES_METADATA="" "$KOTC" \
+	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
+	"${FLAGS[@]}" -d "$BIR" 2>"$OUT/kotc.err" || true
+bir_count="$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)"
+echo "frontend errors: $(grep -c ': error:' "$OUT/kotc.err")   BIR files: $bir_count"
 echo "--- top error kinds ---"
-grep ': error:' "$OUT/kotc.err" | sed -E 's/^.*: error: //; s/'"'"'[^'"'"']*'"'"'/X/g; s/[0-9]+/N/g' | sort | uniq -c | sort -rn | head -15
+grep ': error:' "$OUT/kotc.err" | sed -E 's/^.*: error: //; s/'"'"'[^'"'"']*'"'"'/X/g; s/[0-9]+/N/g' | sort | uniq -c | sort -rn | head -15 || true
+(( bir_count > 0 )) || die "frontend produced no BIR (see $OUT/kotc.err)"
 
-if (( do_emit )) && [[ "$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)" -gt 0 ]]; then
-  [[ -f "$ROOT/build/bir2cir-bin/bir2cir.dll" ]] || dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo >/dev/null
-  rm -rf "$CIR" "$DLL"; mkdir -p "$CIR" "$DLL"
-  echo "== bir2cir -> CIR =="
-  DOTKT_STDLIB_COMPILE=1 dotnet "$ROOT/build/bir2cir-bin/bir2cir.dll" "$CIR" "$BIR"/*.bir.json 2>"$OUT/bir2cir.err"
-  echo "CIR files: $(ls "$CIR"/*.cir.json 2>/dev/null | wc -l)"
-  echo "== ilemit(CIR compat) -> DotKt.Private.Stdlib.dll =="
-  DOTKT_STDLIB_COMPILE=1 dotnet "$ROOT/build/ilemit-bin/ilemit.dll" "$DLL" DotKt.Private.Stdlib "$CIR"/*.cir.json 2>"$OUT/ilemit.err" | tail -2
-  grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3
-  # Retarget: the emitted dll references the IMPLEMENTATION core (System.Private.CoreLib); repoint those refs at the
-  # REFERENCE assemblies (+ self) so a downstream MetadataLoadContext reader — facadegen --scan-asm, ilverify — can
-  # resolve its types. The pure-kotlin stdlib stays SELF-CONTAINED (no DotKt.Runtime ref), so retarget against the BCL
-  # reference pack only. (Mirrors the legacy build-dotkt-stdlib.sh retarget step.)
-  if [[ -f "$DLL/DotKt.Private.Stdlib.dll" ]]; then
-    [[ -f "$ROOT/build/retarget-bin/retarget.dll" ]] || dotnet build "$ROOT/toolchain/retarget" -c Release -o "$ROOT/build/retarget-bin" -v q --nologo >/dev/null
-    REFPACK="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' | head -1)")"
-    echo "== retarget: repoint CoreLib refs (so facadegen/ilverify can read it back) =="
-    dotnet "$ROOT/build/retarget-bin/retarget.dll" "$DLL/DotKt.Private.Stdlib.dll" --refs "$(ls "$REFPACK"/*.dll | tr '\n' ';')" 2>&1 | tail -1
-  fi
-  ls -la "$DLL"/DotKt.Private.Stdlib.dll 2>/dev/null && echo "*** DotKt.Private.Stdlib.dll emitted ***"
+if (( do_emit )); then
+	need_tool bir2cir; need_tool ilemit
+	rm -rf "$CIR" "$DLL"; mkdir -p "$CIR" "$DLL"
+	info "bir2cir -> CIR (ref mode)"
+	DOTKT_STDLIB_COMPILE=1 dotnet "$BIR2CIR_DLL" "$CIR" "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true
+	echo "CIR files: $(ls "$CIR"/*.cir.json 2>/dev/null | wc -l)"
+	info "ilemit(CIR) -> DotKt.Private.Stdlib.dll"
+	{ DOTKT_STDLIB_COMPILE=1 dotnet "$ILEMIT_DLL" "$DLL" DotKt.Private.Stdlib "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
+	grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3 || true
+	[[ -f "$DLL/DotKt.Private.Stdlib.dll" ]] || die "DotKt.Private.Stdlib.dll was not emitted (see $OUT/ilemit.err)"
+	# Retarget: the emitted dll references the IMPLEMENTATION core (System.Private.CoreLib); repoint those refs at
+	# the REFERENCE assemblies (+ self) so a downstream MetadataLoadContext reader — facadegen --scan-asm, ilverify —
+	# can resolve its types. Self-contained (no DotKt.Runtime ref), so retarget against the BCL ref pack only.
+	need_tool retarget
+	REFPACK="$(dirname "$(find /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref -name 'System.Runtime.dll' -path '*net10.0*' | head -1)")"
+	info "retarget: repoint CoreLib refs (so facadegen/ilverify can read it back)"
+	dotnet "$RETARGET_DLL" "$DLL/DotKt.Private.Stdlib.dll" --refs "$(ls "$REFPACK"/*.dll | tr '\n' ';')" 2>&1 | tail -1
+	ls -la "$DLL/DotKt.Private.Stdlib.dll"
+	info "*** DotKt.Private.Stdlib.dll emitted ***"
 fi

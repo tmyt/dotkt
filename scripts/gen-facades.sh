@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # Generate FIR-injection metadata for .NET types (façade-FREE interop — facadegen's only mode; the old
 # @Clr .kt-facade generation is retired, apps take .NET types via `import System.X` + this metadata).
-#   scripts/gen-facades.sh <out.meta> <Type.Full.Name> [<Type.Full.Name> ...]
-# Pass the result to kotc via CLR_TYPES_METADATA=<out.meta> (the MSBuild targets do this automatically).
-set -euo pipefail
-export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+# Input: fully-qualified .NET type names. Output: the metadata file, passed to kotc via
+# CLR_TYPES_METADATA=<out.meta> (the MSBuild targets do this automatically).
+source "$(dirname "$0")/lib.sh"
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="${1:?usage: gen-facades.sh <out.meta> <Type.Full.Name>...}"; shift
-[[ -f "$ROOT/build/facadegen-bin/facadegen.dll" ]] || \
-	dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo >/dev/null
-dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$OUT" "$@"
-echo "gen-facades: wrote $OUT"
+usage() {
+	cat <<EOF
+usage: $SCRIPT_NAME <out.meta> <Type.Full.Name> [<Type.Full.Name> ...]
+Writes FIR-injection metadata for the given .NET types to <out.meta>. -h for this help.
+EOF
+}
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+(( $# >= 2 )) || usage_error "need an output file and at least one type name"
+
+OUT="$1"; shift
+need_tool facadegen
+dotnet "$FACADEGEN_DLL" --meta "$OUT" "$@"
+info "wrote $OUT"
