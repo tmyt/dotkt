@@ -377,3 +377,70 @@ ilemit:
 - `Sequence` and `IAsyncEnumerable` are cold multi-shot adapters, not Task-shaped coroutines.
 - Builder/sink selection should be explicit: known stdlib/kotlinx builders or marker metadata, not receiver-name
   guessing.
+
+## 11. Implementation contract (P0 lock, 2026-07-03 — the approved bundle-6 plan)
+
+Locked decisions the implementation phases (P1-P6) build against. The full phased plan lives in the
+approved plan file; `docs/master-task-inventory.md 【6】` mirrors it.
+
+### Naming + shapes
+
+```text
+suspend fun f(x: Int): String        (in class C / top-level file class FKt)
+  ── cold entry:  public static/instance  object f$dotkt_suspend(int x, Continuation<object> completion)
+  ── SM class:    internal sealed  class <owner>_f$sm : kotlin.coroutines.clr.internal.ContinuationImpl
+                    fields: int label; <spilled params/locals>; object $result-plumbing via base
+                    method: object invokeSuspend(object result)   // label dispatch: label/brIf/goto
+  ── public bridge: Task<string> f(int x)                          // [KotlinFunction(Suspend)] rides here
+```
+
+- **The erased completion signature is `Continuation<object>`** (the CLR instantiation
+  `kotlin.coroutines.Continuation`1<object>`), everywhere — JVM-equivalent erasure. Rationale: CLR
+  interface contravariance (`in T`) does not lift value types (`Continuation<object>` is NOT
+  convertible to `Continuation<int>`), so a uniformly-erased signature + boxing at the boundaries is
+  the only shape that composes for generic/value results. `invokeSuspend` is `(object) -> object`.
+  Boxing of value results at resume boundaries is accepted v1 cost (same as Kotlin/JVM).
+- `COROUTINE_SUSPENDED` = the stdlib's existing `kotlin.coroutines.intrinsics` sentinel (already a
+  real emitted singleton; ilemit consts NOT used — the SM references it as ordinary CIR).
+- The SM extends **`kotlin.coroutines.clr.internal.ContinuationImpl`** (new stdlib CLR-internal base,
+  ported from kotlin.coroutines.jvm.internal): `BaseContinuationImpl.resumeWith` drives the
+  invokeSuspend loop + completion chaining + exception capture; `SuspendLambda` adds the
+  create/invoke protocol for suspend lambdas. These are plain (non-suspend) Kotlin classes.
+
+### Cross-assembly cold-call ABI
+
+- The cold entry is a PUBLIC method named `<kotlinName>$dotkt_suspend`, emitted next to the bridge
+  (same owner type; file-class for top-level). The name convention IS the linkage — no extra
+  attribute. A consumer resolves it from the callee assembly via the already-scanned
+  `MemberBinding.Suspend` flag + the convention (bir2cir rewrites the call site).
+- The BRIDGE keeps the Kotlin-visible name (`f`) and the `Task<T>` signature — the C#-facing ABI and
+  the `[KotlinFunction(Suspend)]` carrier (round-trip restore unchanged: kcc consumers see
+  `suspend fun f(x: Int): String`; their suspend CALLS lower to the cold entry, non-suspend contexts
+  and C# use the bridge).
+
+### The kotlin.clr surface (names locked)
+
+```kotlin
+package kotlin.clr
+public suspend fun <T> Task<T>.await(): T      // bir2cir-lowered: awaiter fast path / OnCompleted resume
+public suspend fun Task0.await()               // non-generic System.Threading.Tasks.Task
+public fun <T> blockOn(block: suspend () -> T): T   // start on the cold core + drain (the runBlocking analog)
+public suspend fun delay(ms: Long)             // Task.Delay(ms).await()
+```
+
+(`Task`/`Task0` = the stdlib alias classes binding `System.Threading.Tasks.Task`1`/`Task`.)
+
+### v1 limits (policy = call-time NotSupportedException, never an emit crash)
+
+- No suspension inside `catch`/`finally` blocks (try/catch AROUND suspension works).
+- No `suspendCancellableCoroutine` (kotlinx — purged). Plain `suspendCoroutine` works (stdlib source
+  over the real intrinsics + SafeContinuation).
+- No CancellationToken/Job/interceptor dispatch (later layers); `intercepted()` = identity v1.
+
+### Supersession notes
+
+- `coroutine-il.md`'s strategy-B (`IAsyncStateMachine`/`AsyncTaskMethodBuilder`) SM framing is
+  SUPERSEDED: the SM is `ContinuationImpl`-based plain CIR; the ATMB machinery is deleted with
+  `Emitter.Coroutines.cs` in P6. The hot-Task PUBLIC ABI (`coroutine-abi.md` §1) is unchanged.
+- `coroutine-stdlib-port-plan.md`'s TypedCont/Builders port is DEAD (the class-form bridge types are
+  never ported; the TCS RootContinuation replaces them).
