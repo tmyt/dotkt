@@ -142,13 +142,14 @@ sealed partial class Emitter
                 if (ExternalPropAccessor(son, "set_" + snm) is { } setter)
                 {
                     EmitExpr(e.GetProperty("recv"));
-                    EmitExpr(e.GetProperty("value"));
+                    EmitStoreCoerced(e.GetProperty("value"), SetterValueType(setter));
                     _il.Emit(OpCodes.Callvirt, setter);
                     return typeof(void);
                 }
+                var sfefld = ResolveField(son, snm, out var sfet);
                 EmitExpr(e.GetProperty("recv"));
-                EmitExpr(e.GetProperty("value"));
-                _il.Emit(OpCodes.Stfld, ResolveField(son, snm, out _));
+                EmitStoreCoerced(e.GetProperty("value"), sfet);
+                _il.Emit(OpCodes.Stfld, sfefld);
                 return typeof(void);
             }
             case "lateinitGet":
@@ -264,7 +265,10 @@ sealed partial class Emitter
             }
             case "staticField":
             {
-                var f = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString());
+                // A miss on an EXTERNAL owner returns null from FindField — surface it as a legible error
+                // (an unchecked Ldsfld(null) was an opaque ArgumentNullException deep in ILGenerator).
+                var f = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString())
+                    ?? throw new NotSupportedException($"static field {e.GetProperty("ownerType").GetString()}.{e.GetProperty("name").GetString()} not found");
                 _il.Emit(OpCodes.Ldsfld, f);
                 return f.FieldType;
             }
@@ -277,8 +281,10 @@ sealed partial class Emitter
             }
             case "staticFieldSet":
             {
-                EmitExpr(e.GetProperty("value"));
-                _il.Emit(OpCodes.Stsfld, FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString()));
+                var sfsf = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString())
+                    ?? throw new NotSupportedException($"static field {e.GetProperty("ownerType").GetString()}.{e.GetProperty("name").GetString()} not found");
+                EmitStoreCoerced(e.GetProperty("value"), sfsf.FieldType);
+                _il.Emit(OpCodes.Stsfld, sfsf);
                 return typeof(void);
             }
             // NOTE: the `console` op (println/print -> System.Console.Write/WriteLine) was RETIRED (2026-07-02, bundle 1):
@@ -934,22 +940,21 @@ sealed partial class Emitter
             case "returnExpr":
             {
                 // `return` in expression position: emit the method return; no value reaches the surrounding merge
-                // (mirrors the "return" statement, incl. the protected-region leave).
+                // (mirrors the "return" statement, incl. the protected-region leave and the return coercion).
                 if (_tryStack.Count > 0)
                 {
                     var ctx = _tryStack.Peek();
-                    if (e.TryGetProperty("value", out var trv)) { EmitExpr(trv); if (ctx.result != null) _il.Emit(OpCodes.Stloc, ctx.result); else _il.Emit(OpCodes.Pop); }
+                    if (e.TryGetProperty("value", out var trv))
+                    {
+                        var tgot = EmitExpr(trv);
+                        if (ctx.result != null) { EmitReturnCoerced(tgot); _il.Emit(OpCodes.Stloc, ctx.result); }
+                        else _il.Emit(OpCodes.Pop);
+                    }
                     _il.Emit(OpCodes.Leave, ctx.end);
                 }
                 else
                 {
-                    if (e.TryGetProperty("value", out var rv))
-                    {
-                        var got = EmitExpr(rv);
-                        if (got != null && _methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == typeof(Nullable<>)
-                            && _methodRetType.GetGenericArguments()[0] == got)
-                            _il.Emit(OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
-                    }
+                    if (e.TryGetProperty("value", out var rv)) EmitReturnCoerced(EmitExpr(rv));
                     _il.Emit(OpCodes.Ret);
                 }
                 return typeof(object);

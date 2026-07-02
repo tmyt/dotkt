@@ -23,8 +23,7 @@ sealed partial class Emitter
                     if (s.TryGetProperty("init", out var cinit) && cinit.ValueKind != JsonValueKind.Null)
                     {
                         _il.Emit(OpCodes.Ldarg_0);
-                        var cg = EmitExpr(cinit);
-                        if (cg != null && NeedsBoxToRef(cg) && !cf.FieldType.IsValueType && !cf.FieldType.IsGenericParameter) _il.Emit(OpCodes.Box, cg);
+                        EmitStoreCoerced(cinit, cf.FieldType);
                         _il.Emit(OpCodes.Stfld, cf);
                     }
                     break;
@@ -33,9 +32,9 @@ sealed partial class Emitter
                 _locals[vname] = local;
                 if (s.TryGetProperty("init", out var init) && init.ValueKind != JsonValueKind.Null)
                 {
-                    var got = EmitExpr(init);
-                    // Assigning a value type to a reference local (e.g. an `Any`/`object` temp) needs boxing.
-                    if (got != null && NeedsBoxToRef(got) && !declared.IsValueType && !declared.IsGenericParameter) _il.Emit(OpCodes.Box, got);
+                    // Boxing a value type assigned to a reference local (an `Any`/`object` temp) etc. — the shared
+                    // store coercion (EmitStoreCoerced).
+                    EmitStoreCoerced(init, declared);
                     _il.Emit(OpCodes.Stloc, local);
                 }
                 break;
@@ -46,12 +45,13 @@ sealed partial class Emitter
                 if (_coFields != null && _coFields.TryGetValue(sname, out var sf))
                 {
                     _il.Emit(OpCodes.Ldarg_0);
-                    EmitExpr(s.GetProperty("value"));
+                    EmitStoreCoerced(s.GetProperty("value"), sf.FieldType);
                     _il.Emit(OpCodes.Stfld, sf);
                     break;
                 }
-                EmitExpr(s.GetProperty("value"));
-                StoreVar(sname);
+                if (_locals.TryGetValue(sname, out var slb)) { EmitStoreCoerced(s.GetProperty("value"), slb.LocalType); _il.Emit(OpCodes.Stloc, slb); }
+                else if (_args.TryGetValue(sname, out var sa)) { EmitStoreCoerced(s.GetProperty("value"), _argTypes[sname]); _il.Emit(OpCodes.Starg, sa); }
+                else throw new NotSupportedException("store unknown var " + sname);
                 break;
             }
             case "setField":
@@ -63,39 +63,35 @@ sealed partial class Emitter
                 if (ExternalPropAccessor(fon, "set_" + fnm) is { } setter)
                 {
                     EmitExpr(s.GetProperty("recv"));
-                    EmitExpr(s.GetProperty("value"));
+                    EmitStoreCoerced(s.GetProperty("value"), SetterValueType(setter));
                     _il.Emit(OpCodes.Callvirt, setter);
                     break;
                 }
+                var sfld = ResolveField(fon, fnm, out var sft);
                 EmitExpr(s.GetProperty("recv"));
-                EmitExpr(s.GetProperty("value"));
-                _il.Emit(OpCodes.Stfld, ResolveField(fon, fnm, out _));
+                EmitStoreCoerced(s.GetProperty("value"), sft);
+                _il.Emit(OpCodes.Stfld, sfld);
                 break;
             }
             case "return":
                 if (_tryStack.Count > 0)
                 {
-                    // Can't `ret` inside a protected region: store the value and leave the block.
+                    // Can't `ret` inside a protected region: store the value and leave the block. The result local
+                    // is _methodRetType-typed, so the value takes the SAME return coercion as the plain path
+                    // (EmitReturnCoerced) BEFORE the store — a raw store used to skip the Nullable<T> wrap, so
+                    // `fun f(): Int? { try { return 1 } finally {} }` read a default(Nullable<int>) back (printed 0).
                     var ctx = _tryStack.Peek();
-                    if (s.TryGetProperty("value", out var trv)) { EmitExpr(trv); if (ctx.result != null) _il.Emit(OpCodes.Stloc, ctx.result); else _il.Emit(OpCodes.Pop); }
+                    if (s.TryGetProperty("value", out var trv))
+                    {
+                        var tgot = EmitExpr(trv);
+                        if (ctx.result != null) { EmitReturnCoerced(tgot); _il.Emit(OpCodes.Stloc, ctx.result); }
+                        else _il.Emit(OpCodes.Pop);
+                    }
                     _il.Emit(OpCodes.Leave, ctx.end);
                 }
                 else
                 {
-                    if (s.TryGetProperty("value", out var rv))
-                    {
-                        var got = EmitExpr(rv);
-                        // `T` returned where the declared type is `T?` -> wrap in Nullable<T> (e.g. a `sortedBy`
-                        // selector typed `(T)->R?` whose body yields a non-null R). Mirrors EmitArg's coercion.
-                        if (got != null && _methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == typeof(Nullable<>)
-                            && _methodRetType.GetGenericArguments()[0] == got)
-                            _il.Emit(OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
-                        // A value-type / generic-param value returned where the method returns `object` (an erased
-                        // generic `T?` — NullableGenericReturnErasure) must be boxed so `ldnull`/boxed-value share the
-                        // object return. A null-const return already left a real null (no box). Mirrors the var-store box.
-                        else if (got != null && _methodRetType == typeof(object) && NeedsBoxToRef(got))
-                            _il.Emit(OpCodes.Box, got);
-                    }
+                    if (s.TryGetProperty("value", out var rv)) EmitReturnCoerced(EmitExpr(rv));
                     _il.Emit(OpCodes.Ret);
                 }
                 break;
@@ -138,20 +134,38 @@ sealed partial class Emitter
                 if (hasRet)
                 {
                     bool allRet = StmtsAlwaysReturn(bodyArr) && catchesArr.EnumerateArray().All(c => StmtsAlwaysReturn(c.GetProperty("body")));
-                    if (!allRet)   // a fall-through path exists -> it skips the ret and continues
+                    // The pending return at retLabel: a real `ret` is legal only OUTSIDE every protected region.
+                    // When this try is NESTED inside another try, retLabel still sits inside the OUTER protected
+                    // region — a `ret` there is invalid IL (ilverify ReturnFromTry; InvalidProgramException at JIT).
+                    // Propagate one level instead: copy the result into the OUTER frame's result local and `leave`
+                    // to its retLabel (each level's finally runs on its own leave); only the outermost level rets.
+                    void EmitPendingReturn()
+                    {
+                        if (_tryStack.Count > 0)
+                        {
+                            var outer = _tryStack.Peek();
+                            if (result != null && outer.result != null)
+                            { _il.Emit(OpCodes.Ldloc, result); _il.Emit(OpCodes.Stloc, outer.result); }
+                            _il.Emit(OpCodes.Leave, outer.end);
+                        }
+                        else
+                        {
+                            if (result != null) _il.Emit(OpCodes.Ldloc, result);
+                            _il.Emit(OpCodes.Ret);
+                        }
+                    }
+                    if (!allRet)   // a fall-through path exists -> it skips the pending return and continues
                     {
                         Label cont = _il.DefineLabel();
                         _il.Emit(OpCodes.Br, cont);
                         _il.MarkLabel(retLabel);
-                        if (result != null) _il.Emit(OpCodes.Ldloc, result);
-                        _il.Emit(OpCodes.Ret);
+                        EmitPendingReturn();
                         _il.MarkLabel(cont);
                     }
-                    else           // every path returns -> the ret is the sole exit (fall-through unreachable)
+                    else           // every path returns -> the pending return is the sole exit
                     {
                         _il.MarkLabel(retLabel);
-                        if (result != null) _il.Emit(OpCodes.Ldloc, result);
-                        _il.Emit(OpCodes.Ret);
+                        EmitPendingReturn();
                     }
                 }
                 break;

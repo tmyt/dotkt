@@ -544,6 +544,67 @@ sealed partial class Emitter
                         }
                 }
             }
+
+        // An INTERFACE with an EXTERNAL (clr:/clrg:) base interface — e.g. ComparableTimeMark : IComparable<CTM>
+        // (via the Comparable alias) — must wire its own DEFAULT (bodied) method to the external base slot with an
+        // explicit MethodImpl: unlike a class, an interface method does NOT implicitly implement a same-name+sig
+        // base-interface method, so without the .override the DIM is an unrelated NewSlot and every implementing
+        // class fails to LOAD ("Method 'CompareTo' in type 'ValueTimeMark' ... does not have an implementation").
+        // The loader requires a MethodImpl body on an INTERFACE to be a FINAL method ("must be a final method"),
+        // so the public (overridable) DIM can't carry the .override itself — emit C#'s explicit-impl shape: a
+        // private final bridge that callvirts the DIM (keeping virtual dispatch for class overrides) and hangs
+        // the MethodImpl on the bridge. Classes providing their own override still win ("most specific"), so
+        // this only FILLS previously-unimplemented slots.
+        foreach (var (_, ti) in _types)
+        {
+            if (!ti.IsInterface || ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var extIbs)) continue;
+            _curTypeParams = EffectiveTps(ti);
+            // Only a BODIED method (a DIM) can implement an external slot; an abstract redeclaration stays for the class.
+            var bodied = new HashSet<string>();
+            foreach (var m in ti.Def.GetProperty("methods").EnumerateArray())
+                if (m.TryGetProperty("name", out var bn) && m.TryGetProperty("body", out var bb)
+                    && bb.ValueKind == JsonValueKind.Array && bb.GetArrayLength() > 0)
+                    bodied.Add(bn.GetString());
+            if (bodied.Count == 0) continue;
+            foreach (var ib in extIbs.EnumerateArray())
+            {
+                var spec = ib.GetString();
+                if (!spec.StartsWith("clr:") && !spec.StartsWith("clrg:")) continue;
+                var itype = MapType(spec);
+                // A generic instantiation over an EMITTED TypeBuilder arg can't GetMethods() — enumerate the OPEN
+                // definition and re-anchor each slot onto the instantiation (same pattern as the class wiring).
+                MethodInfo[] ifaceMs; bool reanchor;
+                try { ifaceMs = itype.GetMethods(); reanchor = false; }
+                catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
+                foreach (var im in ifaceMs)
+                {
+                    if (!bodied.Contains(im.Name) || !ti.Methods.TryGetValue(im.Name, out MethodBuilder dim)) continue;
+                    var ips = im.GetParameters().Select(p => reanchor
+                        ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
+                        : p.ParameterType).ToArray();
+                    // Overload disambiguation by the slot's (substituted) param types — mirrors the class wiring.
+                    var cands = ti.MethodsBySig.Values.Where(b => b.Name == im.Name).Distinct().ToList();
+                    if (cands.Count > 1)
+                    {
+                        var match = cands.FirstOrDefault(b => _mparams.TryGetValue(b, out var bps)
+                            && bps.Length == ips.Length && bps.Zip(ips, SlotParamMatches).All(x => x));
+                        if (match == null) continue;   // no exact overload -> skip rather than mis-wire
+                        dim = match;
+                    }
+                    var iret = reanchor ? SubstituteIfaceArgs(im.ReturnType, itype.GetGenericArguments()) : im.ReturnType;
+                    var bridge = ti.TB.DefineMethod("<>dotkt_dimimpl$" + im.Name + "$" + (_covarBridge++),
+                        MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
+                        iret, ips);
+                    var bil = bridge.GetILGenerator();
+                    bil.Emit(OpCodes.Ldarg_0);
+                    for (int i = 0; i < ips.Length; i++) bil.Emit(OpCodes.Ldarg, i + 1);
+                    var dimCall = ti.IsGeneric ? TypeBuilder.GetMethod(ti.TB.MakeGenericType(ti.TB.GetGenericArguments()), dim) : (MethodInfo)dim;
+                    bil.Emit(OpCodes.Callvirt, dimCall);
+                    bil.Emit(OpCodes.Ret);
+                    ti.TB.DefineMethodOverride(bridge, reanchor ? TypeBuilder.GetMethod(itype, im) : im);
+                }
+            }
+        }
         _curTypeParams = null;
 
         // Pass 4: emit all bodies (every ctor/method signature already exists).
@@ -1079,11 +1140,28 @@ sealed partial class Emitter
         _il.MarkLabel(end);
     }
 
-    void StoreVar(string name)
+    // Emit `value` COERCED to the store target's type — the ONE shared RHS coercion for every store site
+    // (var init, setLocal into a local/arg/cps-field, setField/setFieldExpr via setter or field, staticFieldSet):
+    //  - `T`/null-const stored into a `Nullable<T>` slot -> wrap / default(Nullable<T>) (EmitNullableCoerced);
+    //  - a value-type / generic-param RHS stored into a REFERENCE slot -> box (the var-init rule; the other store
+    //    sites used to emit the raw RHS, so `var a: Any = "x"; a = 42` stored a raw int32 into an object local ->
+    //    NRE/heap corruption at use).
+    // A null/unknown target emits the value as-is (no spurious boxing).
+    void EmitStoreCoerced(JsonElement value, Type target)
     {
-        if (_locals.TryGetValue(name, out var l)) _il.Emit(OpCodes.Stloc, l);
-        else if (_args.TryGetValue(name, out var a)) _il.Emit(OpCodes.Starg, a);
-        else throw new NotSupportedException("store unknown var " + name);
+        if (target == null) { EmitExpr(value); return; }
+        var got = EmitNullableCoerced(value, target);
+        if (got != null && NeedsBoxToRef(got) && !target.IsValueType && !target.IsGenericParameter)
+            _il.Emit(OpCodes.Box, got);
+    }
+
+    // The value-parameter type of a property setter, when retrievable: a TypeBuilder-anchored accessor
+    // (a TypeBuilder.GetMethod re-anchor) throws NotSupportedException on GetParameters() — treat as unknown
+    // (EmitStoreCoerced then emits the RHS as-is, the pre-helper behavior for that path).
+    static Type SetterValueType(MethodInfo setter)
+    {
+        try { var ps = setter.GetParameters(); return ps.Length > 0 ? ps[^1].ParameterType : null; }
+        catch (NotSupportedException) { return null; }
     }
 
     // An ownerType spec is either `Name` (plain) or `Name[arg,...]` (a constructed user generic, e.g. `Box[int]`).
@@ -1310,11 +1388,15 @@ sealed partial class Emitter
         if (constructed != null && !_types.ContainsKey(open) && !IsTbInstantiation(constructed))
         {
             var argc = sig == null ? -1 : (sig.Length == 0 ? 0 : SplitTopLevel(sig).Count);
-            var rrm = FindReflectedMethod(constructed, name, argc);
+            // A miss must be a LEGIBLE error (and lets callInstance's dynRet fallback catch it) — an unchecked
+            // deref here was an opaque NRE.
+            var rrm = FindReflectedMethod(constructed, name, argc)
+                ?? throw new NotSupportedException($"method {name} not found on referenced type {constructed}");
             retType = rrm.ReturnType;
             return rrm;
         }
-        var mb = FindMethod(open, name, sig);
+        var mb = FindMethod(open, name, sig)
+            ?? throw new NotSupportedException($"method {open}.{name}({sig}) not found (external owner did not resolve or lacks the member)");
         if (constructed == null) { retType = mb.ReturnType; return mb; }
         // The owner constructed with its OWN class type parameters (`RingBuffer<T>` referenced from inside
         // RingBuffer<T>) is the self instantiation. A call must reference the method on that self-instantiation
@@ -2063,6 +2145,12 @@ sealed partial class Emitter
         // compareTo does the UNSIGNED compare and the outer `> 0` is a plain signed int compare. (`byte`/`ushort`
         // arithmetic promotes to UInt, so only uint/ulong reach a direct unsigned div here.)
         bool isUns = lt == typeof(uint) || lt == typeof(ulong);
+        // Float/double `<=`/`>=` need the UNORDERED-inverted compare (C#'s shape): `a <= b` == !(a > b treating
+        // unordered as TRUE) -> `cgt.un; ldc.i4.0; ceq` (resp. `>=` -> `clt.un; ...`). The plain signed cgt/clt
+        // inversion returns TRUE for a NaN operand (`NaN <= 1.0` was True) because cgt/clt yield 0 on unordered
+        // and the inversion flips it. `<`/`>` stay ordered clt/cgt (0 on unordered = correct false), and integer
+        // paths keep the signed opcodes (unsigned compares never reach a direct bin — see the note above).
+        bool isFloat = lt == typeof(float) || lt == typeof(double);
         switch (op)
         {
             case "+": _il.Emit(OpCodes.Add); return lt;
@@ -2080,8 +2168,8 @@ sealed partial class Emitter
             case "!=": _il.Emit(OpCodes.Ceq); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
             case "<": _il.Emit(OpCodes.Clt); return typeof(bool);
             case ">": _il.Emit(OpCodes.Cgt); return typeof(bool);
-            case "<=": _il.Emit(OpCodes.Cgt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
-            case ">=": _il.Emit(OpCodes.Clt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
+            case "<=": _il.Emit(isFloat ? OpCodes.Cgt_Un : OpCodes.Cgt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
+            case ">=": _il.Emit(isFloat ? OpCodes.Clt_Un : OpCodes.Clt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
             default: throw new NotSupportedException("bin " + op);
         }
     }
@@ -2398,6 +2486,15 @@ sealed partial class Emitter
             ?? Type.GetType(name + ", System.Text.RegularExpressions")
             ?? Type.GetType(name + ", System.Console")
             ?? AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType(name)).FirstOrDefault(x => x != null);
+        // A dotted FQN may denote a NESTED type: CLR metadata separates nesting with '+' (Outer+Inner) while the
+        // producer's spec is dotted (`kotlin.time.Clock.System` -> `kotlin.time.Clock+System`). Probe by replacing
+        // the LAST '.' with '+' and re-resolving; the recursion (via TryResolveType) walks deeper nesting levels
+        // (a.b.C.D -> a.b.C+D -> a.b+C+D). Pure CLR name resolution — no source-language knowledge.
+        if (t == null)
+        {
+            var dot = name.LastIndexOf('.');
+            if (dot > 0) t = TryResolveType(name[..dot] + "+" + name[(dot + 1)..]);
+        }
         if (t == null) throw new NotSupportedException("cannot resolve .NET type " + name);
         _typeCache[name] = t;
         return t;
@@ -3215,6 +3312,24 @@ sealed partial class Emitter
         // Box a value/generic-param arg passed to a reference param — but NOT when the param is itself a generic
         // param (passing `T` to a `T` slot flows the value as-is at the instantiation).
         if (NeedsBoxToRef(got) && !want.IsValueType && !want.IsGenericParameter)
+            _il.Emit(OpCodes.Box, got);
+    }
+
+    // Coerce a just-emitted return VALUE (static type `got`, on the stack) to the declared method return type.
+    // Shared by ALL return sites — the plain `return`, the return-inside-try store into the _methodRetType-typed
+    // result local, and both `returnExpr` twins — so every path applies the identical coercion:
+    //  - `T` returned where the declared type is `T?` -> wrap in Nullable<T> (e.g. a `sortedBy` selector typed
+    //    `(T)->R?` whose body yields a non-null R). Mirrors EmitArg's coercion.
+    //  - a value-type / generic-param value returned where the method returns `object` (an erased generic `T?` —
+    //    NullableGenericReturnErasure) must be boxed so `ldnull`/boxed-value share the object return. A null-const
+    //    return already left a real null (no box). Mirrors the var-store box.
+    void EmitReturnCoerced(Type got)
+    {
+        if (got == null) return;
+        if (_methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == typeof(Nullable<>)
+            && _methodRetType.GetGenericArguments()[0] == got)
+            _il.Emit(OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
+        else if (_methodRetType == typeof(object) && NeedsBoxToRef(got))
             _il.Emit(OpCodes.Box, got);
     }
 
