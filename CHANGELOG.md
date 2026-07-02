@@ -6,6 +6,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Fixed
+- **Generic method on a generic class, called with a CONCRETE owner instantiation (`il-generic4`)** — `Holder<int>.pairWith<string>()`
+  threw `InvalidOperationException: … not fully instantiated` at runtime: ilemit's `ApplyTypeArgs` replaced the
+  `TypeBuilder.GetMethod`-anchored member with the OPEN method's instantiation (`Holder`1::pairWith<string>`), losing the
+  container's `<int>`. Fix (ilemit): when the constructed owner carries NO generic-parameter args, keep the anchored
+  `MethodOnTypeBuilderInstantiation` and `MakeGenericMethod` it directly (the documented GetMethod→MakeGenericMethod
+  order; verified supported on .NET 10 persisted emit). The erased-context path (owner constructed with enclosing
+  generic params — the rt-stdlib self-instantiation case that broke a previous naive fix) is gated out unchanged.
 - **Unsigned division/remainder/`toString(radix)` (bundle 【2】b-A)** — the 6 `UnsignedClr.kt` TODO stubs
   (`uintDivide`/`uintRemainder`/`ulongDivide`/`ulongRemainder`/`uintToString(base)`/`ulongToString(base)`) now have
   **real pure-Kotlin bodies** (JVM-actual ports; ULong via the Guava UnsignedLongs algorithm; radix `toString` via a

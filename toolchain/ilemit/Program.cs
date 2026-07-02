@@ -1366,6 +1366,13 @@ sealed partial class Emitter
         (t.GetGenericTypeDefinition() is TypeBuilder
          || t.GetGenericArguments().Any(a => a is TypeBuilder || a is GenericTypeParameterBuilder || (a.IsGenericType && IsTbInstantiation(a))));
 
+    // True when `t` is (or transitively contains) a generic PARAMETER — a GenericTypeParameterBuilder of the enclosing
+    // emitting context. Distinguishes a concrete owner instantiation (`Holder<int>`) from an erased-context one
+    // (`Holder<E>` referenced from inside another generic). Recursive, NOT Type.ContainsGenericParameters (unreliable
+    // on un-baked builder instantiations); GenericTypeParameterBuilder reports IsGenericParameter reliably.
+    static bool ContainsGenericParam(Type t) =>
+        t.IsGenericParameter || (t.IsGenericType && t.GetGenericArguments().Any(ContainsGenericParam));
+
     static ConstructorInfo GenericCtor(Type constructed, params Type[] argTypes) =>
         IsTbInstantiation(constructed)
             ? TypeBuilder.GetConstructor(constructed, constructed.GetGenericTypeDefinition().GetConstructor(argTypes))
@@ -1473,6 +1480,25 @@ sealed partial class Emitter
                 {
                     int k = 0;
                     foreach (var gp in ogps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
+                    // A CONCRETE owner instantiation (`Holder<int>.pairWith<string>` — a call site OUTSIDE any generic
+                    // context, e.g. main): the open-method form below loses the container's `<int>` and throws "not
+                    // fully instantiated" at runtime. Here the anchored MethodOnTypeBuilderInstantiation (m, produced
+                    // by ResolveMethod's TypeBuilder.GetMethod) DOES support MakeGenericMethod (the documented
+                    // TypeBuilder.GetMethod-then-MakeGenericMethod order; verified on .NET 10 persisted emit), carrying
+                    // BOTH instantiations. Gated STRICTLY to owners with no generic-parameter args so the erased-context
+                    // path below (the rt-stdlib self/enclosing-generic case) is untouched.
+                    if (!dt.GetGenericArguments().Any(ContainsGenericParam))
+                    {
+                        var cpars = openTb.GetGenericArguments();
+                        var cargs = dt.GetGenericArguments();
+                        for (int i = 0; i < cpars.Length && i < cargs.Length; i++) sub[cpars[i]] = cargs[i];
+                        retType = sub.TryGetValue(openMb.ReturnType, out var cr) ? cr : m.ReturnType;
+                        paramTypes = _mparams.TryGetValue(openMb, out var ops)
+                            ? ops.Select(x => sub.TryGetValue(x, out var s) ? s : x).ToArray() : ps;
+                        return m.MakeGenericMethod(targs);
+                    }
+                    // Owner constructed with enclosing GENERIC PARAMS (`ringBuffer<E>.toArray<T>()` from inside another
+                    // generic) — erases to the open owner in IL, so the OPEN method's instantiation is the right shape.
                     retType = sub.TryGetValue(openMb.ReturnType, out var or) ? or : m.ReturnType;
                     paramTypes = ps;
                     return openMb.MakeGenericMethod(targs);

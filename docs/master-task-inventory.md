@@ -629,6 +629,19 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
   `MutableList.set(i,e)`→`set_Item` (returns previous E vs void), `removeAt`→`RemoveAt` (returns E vs void),
   `removeAll`/`retainAll` (unbound, no ICollection slot — will need clrColl defaults like add/addAll).
 
+- **`il-generic4` ✅ (2026-07-02)** — a generic METHOD on a generic CLASS called at a concrete instantiation
+  (`Holder<int>.pairWith<string>()`) ran as the OPEN `Holder`1::pairWith<string>` → runtime
+  `InvalidOperationException: not fully instantiated`. ilemit `ApplyTypeArgs`'s constructed-TypeBuilder-owner branch
+  now splits on the owner's args: NO generic params (an external-style call site) → keep the
+  `TypeBuilder.GetMethod`-anchored `MethodOnTypeBuilderInstantiation` and `MakeGenericMethod` it directly (the
+  documented order; empirically supported on .NET 10 persisted emit — the "no clean API" assumption in the old
+  comment was wrong for this case); args contain enclosing generic params (the rt-stdlib self/erased context that
+  REVERTED the previous naive fix, MEMORY `generic-extension-property-getter-typeargs`) → the open-method path,
+  byte-identical. rt/ref stdlib rebuilds stay green; il-sort/il-comparator/il-valclass/il-generic{,2,3,5,6} unchanged.
+  (Baseline correction discovered en route: `il-comparable` was ALREADY failing pre-change — the 18:26 cached
+  verify-il artifacts (`build/il-comparable/`, old rt dll md5 `97cb1025`) reproduce `Array.Sort[T] … not fully
+  instantiated` inside rt `sorted[T]`; a REFLECTED open-generic-invoke bug in the rt body emission, separate track.)
+
 **PRIORITY (leverage ÷ effort) + agent routing.**
 1. **RC1 — cross-module default args (`joinToString`). DO FIRST.** Highest leverage in the whole cluster: alone flips
    `mapfilter`/`coll2`/`chunk`/`sort` green and is a prerequisite for `collmore`/`seq`/`collops2`/`collrealkt`/`mutcoll`
