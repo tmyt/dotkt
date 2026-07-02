@@ -6,6 +6,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Fixed
+- **Generic `Array<T>` ops bound with real stdlib bodies (bundle 【2】a): `copyOf(newSize)`, `copyOfRange`,
+  `plus(element)`, `plus(Array)`, `plus(Collection)`, `plusElement`, `orEmpty()`, `arrayOfNulls(reference, size)`**
+  — all pure Kotlin in `runtime/stdlib/clr` (allocate via `arrayOfNulls<T>(n)` → generic `newarr !T`, reified-on-CLR;
+  `TYPE_PARAMETER_AS_REIFIED` suppressed deliberately) mirroring the primitive-array siblings; **zero new
+  `@ClrIntrinsic`/compiler special-casing**. Three compiler *wrong-code* fixes were required to make them behave:
+  - ilemit `arraySet`/`clr.stelem`: don't `box` a value stored into a GENERIC-PARAM-element array (`stelem !T` with a
+    boxed ref corrupts value-type instantiations — printed pointer bits); same guard as the local/field/coroutine box
+    sites.
+  - ilemit `FindReflectedMethodBySig`: STRUCTURAL matching for sig tokens `MapType` can't resolve at a cross-module
+    call site (`gp:T`/`array:gp:T`/`clrg:X[gp:T]`), so `copyOf(array:gp:T,int)` selects the generic `copyOf<T>(T[],int)`
+    over same-arity concrete siblings (previously: arity-pick chose `copyOf(sbyte[],int)` → short/sbyte reinterpretation
+    garbage) and the three generic `plus` overloads stay distinguishable.
+  - kotc BINARY operator lowering gated on "callee has NO extension receiver": `Array<Int> + 4` / `Array<String> + "d"`
+    were lowered to a raw CIL `add` on the array REFERENCE (garbage/crash). Primitive operators are members and the IR
+    compare intrinsics are top-level with plain params, so both still lower; stdlib `plus`/`minus` EXTENSIONS now emit
+    real calls.
+  - KNOWN GAP (pre-existing, unchanged): element reads of an `Array<Int?>` (e.g. the result of `Array<Int>.copyOf(n)`)
+    emit `ldelem Nullable<int32>` against a runtime `int[]` — the nullable-primitive-array dual-representation is
+    unresolved; reference-type `T` is fully correct. `enumValues`/`enumValueOf` skipped (need reified-enum lowering /
+    typeArgs on `clrStatic` — compiler-side, follow-up).
 - **facadegen interop bundle 【3】b closed — alias imports, op_* battery, C# extensions, dual-rep rule, I4 remnants
   (all verification + rule-setting; no compiler changes needed).**
   - **(5) aliased import**: `import System.Text.StringBuilder as SB` works end-to-end (the PSI import scan already

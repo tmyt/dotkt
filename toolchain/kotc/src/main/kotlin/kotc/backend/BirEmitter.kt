@@ -3830,7 +3830,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			if (name == "EQEQEQ" && operands.size == 2)
 				return """{"k":"bin","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
-			BINARY[name]?.let { op -> if (operands.size == 2) {
+			// Arithmetic/compare lowering applies to the primitive OPERATORS only: a primitive's operator is a MEMBER
+			// (kotlin.Int.plus) and the IR compare intrinsics (kotlin.internal.ir.less/greater/...) are top-level with
+			// plain value params — neither has an EXTENSION receiver. A stdlib EXTENSION that shares the name
+			// (`Array<T>.plus(element)`, `List.plus`, `CharSequence.plus`…) is a real function call, NOT arithmetic:
+			// lowering it to a CIL add corrupts the receiver reference. Gate on the extension receiver.
+			BINARY[name]?.let { op -> if (operands.size == 2 && callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }) {
 				// A boxed (Any) operand via an un-narrowed smart-cast (`x is Int && x > 10`) against a primitive:
 				// cast it to the other operand's type so the numeric/compare op sees the right value, not the box.
 				fun operand(o: IrExpression, other: IrExpression): String {

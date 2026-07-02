@@ -452,7 +452,10 @@ sealed partial class Emitter
                 // Storing a value-type/generic-param value into a REFERENCE-element array (`Array<Any?>[i] = aT`) needs a
                 // box -- `stelem object` with an unboxed value on the stack is invalid (garbage/NullRef). The matching
                 // read side is `a[i] as T` -> unbox.any. (Reference values and value-element arrays need no box.)
-                if (!selem.IsValueType && svt != null && NeedsBoxToRef(svt)) _il.Emit(OpCodes.Box, svt);
+                // A GENERIC-PARAM element (`T[]`, stelem !T) must NOT box: `box T` yields object, and for a value-type
+                // instantiation stelem !T then stores the reference bits as the value (garbage). Same guard as the
+                // local/field/coroutine box sites (Emitter.Statements 27/38, Emitter.Coroutines 187).
+                if (!selem.IsValueType && !selem.IsGenericParameter && svt != null && NeedsBoxToRef(svt)) _il.Emit(OpCodes.Box, svt);
                 _il.Emit(OpCodes.Stelem, selem); return typeof(void);
             }
             case "arrayLen":
