@@ -526,9 +526,13 @@ sealed partial class Emitter
                 // `castclass` is INVALID for a VALUE-type instantiation (the JIT rejects `castclass int` ->
                 // InvalidProgram). `unbox.any` is the universal cast: unbox for value types, castclass for reference
                 // types, and resolves a generic param correctly at JIT -- exactly what C# emits for `(T)objExpr`.
-                EmitExpr(e.GetProperty("e"));
+                // A VALUE/GENERIC source flowing into a REFERENCE target must be boxed first (castclass on an
+                // unboxed !!T / struct is invalid IL) -- `(x: T) as IComparable` in compareValues.
+                var castSrc = EmitExpr(e.GetProperty("e"));
                 var t = MapType(e.GetProperty("type").GetString());
-                _il.Emit(t.IsValueType || t.IsGenericParameter ? OpCodes.Unbox_Any : OpCodes.Castclass, t);
+                var toRef = !(t.IsValueType || t.IsGenericParameter);
+                if (toRef && NeedsBoxToRef(castSrc)) _il.Emit(OpCodes.Box, castSrc);
+                _il.Emit(toRef ? OpCodes.Castclass : OpCodes.Unbox_Any, t);
                 return t;
             }
             case "classRef":

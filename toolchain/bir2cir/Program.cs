@@ -111,6 +111,15 @@ sealed class Pipeline
             // Rewrite the return to `object`; ilemit boxes value returns and the CALL boundary converts object ->
             // the caller's Nullable<V> / reference type. Runs BEFORE the rest so type-lowering/substitution see it.
             NullableGenericReturnErasure.Apply(bir.Root);
+            // FUNC-SLOT nullable-return erasure (ALL builds — the transform-side twin of the pass above): a function
+            // TYPE with a nullable return (`(T) -> R?`) is kotc-tokenized `func:nullable:<ret>:<args>` (the open
+            // generic view `nullable:gp:R`; a value instantiation `nullable:int`). Its only CLR rep that agrees
+            // across open/value/reference instantiations is Func<…, object> (reference instantiations stay bare-typed
+            // and ride Func's `out TResult` covariance into the object slot). Rewrites every such token (param slots,
+            // sig strings, delegateNew/delegateInvoke funcTypes), erases the backing lambda methods' returns to
+            // object, and repairs the local dataflow (see the class). MUST consume every `nullable:`-marked func ret:
+            // ilemit's FuncRetEnd parses a single leading prefix and would misparse a stacked `nullable:gp:R`.
+            NullableFuncReturnErasure.Apply(bir.Root);
             // CALL substitution (substitute/app builds only): a member call / construction whose OWNER is a CLR-bound
             // type in the ref.dll (@ClrTypeAlias, or the legacy class-level @ClrIntrinsic) is rewritten to a plain BCL
             // call/new. This is the bir2cir home of what kotc's clrName() member routing used to do — sourced from the
@@ -3056,6 +3065,198 @@ static class NullableGenericReturnErasure
     }
 }
 
+// The TRANSFORM-SIDE twin of NullableGenericReturnErasure: erase a nullable FUNCTION-TYPE return
+// (`(T) -> R?`, kotc-tokenized `func:nullable:<ret>:<args>`) to a `Func<…, object>` slot. Rationale: the open
+// stdlib view (`nullable:gp:R`) and a caller's value instantiation (`nullable:int`) must lower to the SAME
+// delegate type or the passed delegate is reinterpreted through a foreign Invoke signature (Func<int,int> read
+// as Func<int,object> — the il-collmore mapNotNull InvalidProgram / il-sort sortedBy AccessViolation). `object`
+// is the one rep every instantiation agrees on: value/generic returns box (null stays a real null); a REFERENCE
+// instantiation is never nullable-marked by kotc and keeps its bare Func<…, T>, which flows into the object slot
+// via Func's `out TResult` covariance. Three coordinated rewrites:
+//   1. every `func:` TOKEN whose return segment is `nullable:`-marked (param slots, call sig strings,
+//      delegateNew/closureNew/delegateInvoke funcTypes, nested occurrences) — ret segment -> `object`;
+//   2. the backing lambda method of an erased delegateNew/closureNew — its `ret` -> `object` (+ the return-value
+//      expression types, mirroring NullableGenericReturnErasure.RetypeReturns);
+//   3. local dataflow repair where an erased delegateInvoke result lands in a typed var: a `gp:X` var is retyped
+//      to `object` (it must still hold the null); a `nullable:V`/reference var keeps its type and the init is
+//      wrapped in a `cast` (ilemit's universal unbox.any/castclass); a later var re-narrowing an object-retyped
+//      local into a typed slot (the post-null-check `gp:R` copy) gets the same cast wrap.
+static class NullableFuncReturnErasure
+{
+    public static void Apply(JsonNode root)
+    {
+        if (root is not JsonObject o) return;
+        var erasedDelegateMethods = new HashSet<string>(StringComparer.Ordinal);
+        var erasedClosureInvokes = new HashSet<string>(StringComparer.Ordinal);   // closure TYPE names
+        // Structural sweep first (records delegate targets + repairs var dataflow off the PRE-rewrite tokens),
+        // then the token rewrite.
+        StructuralSweep(o, erasedDelegateMethods, erasedClosureInvokes);
+        RewriteAllStrings(o);
+        if (o["methods"] is JsonArray methods)
+            foreach (var m in methods)
+                if (m is JsonObject mo && (mo["name"] as JsonValue)?.GetValue<string>() is string mn
+                    && erasedDelegateMethods.Contains(mn))
+                    EraseMethodRet(mo);
+        if (o["types"] is JsonArray types)
+            foreach (var t in types)
+                if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn
+                    && erasedClosureInvokes.Contains(tn) && to["methods"] is JsonArray tms)
+                    foreach (var tm in tms)
+                        if (tm is JsonObject tmo && (tmo["name"] as JsonValue)?.GetValue<string>() == "invoke")
+                            EraseMethodRet(tmo);
+    }
+
+    static void EraseMethodRet(JsonObject mo)
+    {
+        var ret = (mo["ret"] as JsonValue)?.GetValue<string>();
+        if (ret == null || ret == "object" || ret == "void") return;
+        mo["ret"] = "object";
+        RetypeReturnValues(mo["body"], ret);
+    }
+
+    static void RetypeReturnValues(JsonNode node, string oldRet)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "return"
+                    && obj["value"] is JsonObject v)
+                {
+                    if ((v["type"] as JsonValue)?.TryGetValue<string>(out var vt) == true && vt == oldRet) v["type"] = "object";
+                    if ((v["retType"] as JsonValue)?.TryGetValue<string>(out var vr) == true && vr == oldRet) v["retType"] = "object";
+                }
+                foreach (var kv in obj) RetypeReturnValues(kv.Value, oldRet);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) RetypeReturnValues(it, oldRet);
+                break;
+        }
+    }
+
+    // Walks the tree recording (a) delegateNew/closureNew whose funcType RETURN is nullable-marked and
+    // (b) `var` nodes needing dataflow repair. Carries the per-walk set of var names retyped to object so a
+    // downstream `var y: gp:R = local(x_object)` re-narrowing gets a cast wrap.
+    static void StructuralSweep(JsonNode node, HashSet<string> delegateMethods, HashSet<string> closureTypes)
+        => Sweep(node, delegateMethods, closureTypes, new HashSet<string>(StringComparer.Ordinal));
+
+    static void Sweep(JsonNode node, HashSet<string> delegateMethods, HashSet<string> closureTypes, HashSet<string> objectVars)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+            {
+                var k = (obj["k"] as JsonValue)?.TryGetValue<string>(out var ks) == true ? ks : null;
+                if (k == "delegateNew" && HasErasedRet(obj) && (obj["method"] as JsonValue)?.GetValue<string>() is string dm)
+                    delegateMethods.Add(dm);
+                else if (k == "closureNew" && HasErasedRet(obj) && (obj["closureType"] as JsonValue)?.GetValue<string>() is string ct)
+                    closureTypes.Add(ct);
+                else if (k == "var" && (obj["type"] as JsonValue)?.GetValue<string>() is string vt && obj["init"] is JsonObject init)
+                {
+                    var ik = (init["k"] as JsonValue)?.TryGetValue<string>(out var iks) == true ? iks : null;
+                    var vn = (obj["name"] as JsonValue)?.GetValue<string>();
+                    if (ik == "delegateInvoke" && HasErasedRet(init))
+                    {
+                        if (vt.StartsWith("gp:", StringComparison.Ordinal))
+                        {
+                            obj["type"] = "object";
+                            if (vn != null) objectVars.Add(vn);
+                        }
+                        else if (vt != "object")
+                            obj["init"] = new JsonObject { ["k"] = "cast", ["type"] = vt, ["e"] = init.DeepClone() };
+                    }
+                    else if (ik == "local" && vt != "object" && !vt.StartsWith("nullable:", StringComparison.Ordinal)
+                        && (init["name"] as JsonValue)?.GetValue<string>() is string src && objectVars.Contains(src))
+                        // Post-null-check narrowing of an object-retyped local back into its typed slot:
+                        // unbox.any/castclass via the universal `cast`.
+                        obj["init"] = new JsonObject { ["k"] = "cast", ["type"] = vt, ["e"] = init.DeepClone() };
+                }
+                foreach (var kv in obj) Sweep(kv.Value, delegateMethods, closureTypes, objectVars);
+                break;
+            }
+            case JsonArray arr:
+                foreach (var it in arr) Sweep(it, delegateMethods, closureTypes, objectVars);
+                break;
+        }
+    }
+
+    static bool HasErasedRet(JsonObject node)
+        => (node["funcType"] as JsonValue)?.TryGetValue<string>(out var ft) == true
+            && ft.StartsWith("func:nullable:", StringComparison.Ordinal);
+
+    static void RewriteAllStrings(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                foreach (var key in obj.Select(kv => kv.Key).ToList())
+                {
+                    var child = obj[key];
+                    if (child is JsonValue jv && jv.TryGetValue<string>(out var s))
+                    {
+                        var rewritten = RewriteToken(s);
+                        if (!ReferenceEquals(rewritten, s) && rewritten != s) obj[key] = rewritten;
+                    }
+                    else RewriteAllStrings(child);
+                }
+                break;
+            case JsonArray arr:
+                for (var i = 0; i < arr.Count; i++)
+                {
+                    var child = arr[i];
+                    if (child is JsonValue jv && jv.TryGetValue<string>(out var s))
+                    {
+                        var rewritten = RewriteToken(s);
+                        if (!ReferenceEquals(rewritten, s) && rewritten != s) arr[i] = rewritten;
+                    }
+                    else RewriteAllStrings(child);
+                }
+                break;
+        }
+    }
+
+    // Rewrites every `func:nullable:<ret>` occurrence in a (possibly composite: sig lists, nested generics)
+    // token string to `func:object`. The ret segment may itself be prefixed (`nullable:gp:R`,
+    // `nullable:clrg:X[..]`) — skip the inner prefix once, then scan to the depth-0 `:` separating ret from args.
+    internal static string RewriteToken(string s)
+    {
+        const string marker = "func:nullable:";
+        var idx = s.IndexOf(marker, StringComparison.Ordinal);
+        if (idx < 0) return s;
+        var sb = new System.Text.StringBuilder(s.Length);
+        var pos = 0;
+        while (idx >= 0)
+        {
+            var retStart = idx + 5;                      // after "func:"
+            var scan = retStart + "nullable:".Length;    // after "nullable:"
+            foreach (var pre in new[] { "clrg:", "clr:", "array:", "gp:", "byref:", "func:" })
+                if (s.AsSpan(scan).StartsWith(pre, StringComparison.Ordinal)) { scan += pre.Length; break; }
+            var depth = 0;
+            var retEnd = -1;
+            for (var i = scan; i < s.Length; i++)
+            {
+                if (s[i] == '[') depth++;
+                else if (s[i] == ']') { if (depth == 0) break; depth--; }   // closing an OUTER bracket: ret ends here
+                else if ((s[i] == ':' || s[i] == ',') && depth == 0) { retEnd = s[i] == ':' ? i : -1; break; }
+            }
+            if (retEnd < 0)
+            {
+                // Malformed / arg-less tail — leave this occurrence untouched.
+                sb.Append(s, pos, retStart - pos);
+                pos = retStart;
+            }
+            else
+            {
+                sb.Append(s, pos, retStart - pos);
+                sb.Append("object");
+                pos = retEnd;
+            }
+            idx = s.IndexOf(marker, Math.Max(pos, retStart), StringComparison.Ordinal);
+        }
+        sb.Append(s, pos, s.Length - pos);
+        return sb.ToString();
+    }
+}
+
 static class MemberCallSubstitution
 {
     // Top-level fun names DEFINED in the current compilation (this assembly's file-class statics). A `callStatic
@@ -3322,6 +3523,16 @@ static class MemberCallSubstitution
         if (instance && refs.TryMemberProperty(ownerFqn, member, args.Count, out var pAccess, out var pName))
             return ClrPropNode(node, clrOwner, pName, pAccess, member, args);
 
+        // PRE-Rule-2 semantic override: MutableCollection.add is @ClrIntrinsic("Add") (the binding drives the
+        // implementor-side DeclarationRename), but the CALL semantics diverge — Kotlin `add` returns the
+        // changed-Boolean while `ICollection<T>.Add` is VOID (a brIf on the phantom result was a stack underflow),
+        // and 1-arg `addAll` has no ICollection slot at all. Route these calls to the ClrCollectionDefaults
+        // helpers BEFORE the intrinsic rule; the 2-arg add(index, e)/addAll(index, c) Insert forms fall through.
+        if (instance && kind == "interface" && ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal)
+            && args.Count == 1 && member is "add" or "Add" or "addAll")
+            return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
+                member == "addAll" ? "clrCollAddAll" : "clrCollAdd", CollElemArg(node, refs, ctx, ownerToken), args);
+
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
             return Constrainify(ClrCallNode(node, clrOwner, intrinsic, member, args, instance, refs.MemberByrefPositions(ownerFqn, member, args.Count)), node, refs, ctx, ownerToken);
@@ -3451,6 +3662,33 @@ static class MemberCallSubstitution
         if (call["argTypes"] is JsonArray at) cc["argTypes"] = at.DeepClone();
         if (call["ret"] is JsonValue rv) cc["ret"] = rv.DeepClone();
         return cc;
+    }
+
+    // The collection ELEMENT type arg for a defaults-helper call: the owner token's own arg
+    // (`MutableCollection[gp:R]` -> gp:R), or — when the owner is BARE because the receiver is a generic
+    // parameter (`destination: C where C : MutableCollection<R>`) — the receiver's collection-interface
+    // constraint's arg (the same recovery Constrainify performs). Falls back to `object`.
+    static string CollElemArg(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx, string ownerToken)
+    {
+        var own = OwnerElemArg(ownerToken);
+        if (own != "object" || ownerToken.Contains('[')) return own;
+        if (ctx != null && node["recv"] is JsonObject recv && (recv["k"] as JsonValue)?.GetValue<string>() == "local"
+            && (recv["name"] as JsonValue)?.GetValue<string>() is string vn
+            && ctx.VarTypes.TryGetValue(vn, out var vt) && vt.StartsWith("gp:", StringComparison.Ordinal)
+            && ctx.TpConstraints.TryGetValue(vt.Substring(3), out var cons))
+        {
+            foreach (var c in cons)
+            {
+                if (!refs.TryResolveClrOwner(c, out _, out var ck) || ck != "interface") continue;
+                var b = c.IndexOf('[');
+                if (b >= 0 && c.EndsWith("]", StringComparison.Ordinal))
+                {
+                    var inner = SplitTopLevel(c.Substring(b + 1, c.Length - b - 2));
+                    if (inner.Count >= 1 && !string.IsNullOrEmpty(inner[0])) return inner[0];
+                }
+            }
+        }
+        return "object";
     }
 
     // Kotlin collection-interface member -> the rt ClrCollectionDefaults static (recv-first, generic over elem).

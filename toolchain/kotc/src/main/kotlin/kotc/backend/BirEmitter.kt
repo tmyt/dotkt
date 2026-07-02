@@ -134,8 +134,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
 	internal val valSubst = HashMap<String, String>()
-	// While splicing an `inline fun` body: its type param name -> the call's substituted type-argument BIR (see birType).
-	internal val typeArgSubst = HashMap<String, String>()
+	// While splicing an `inline fun` body: its type PARAM (the IrTypeParameter itself, NOT its name — a name-keyed
+	// map cross-captured an OUTER function's same-named param: let<T,R:=Unit> spliced inside mapNotNullTo<T,R>
+	// rewrote the OUTER `R` to kotlin.Unit) -> the call's substituted type-argument BIR (see birType).
+	internal val typeArgSubst = HashMap<IrTypeParameter, String>()
 
 	// Lambda lifting: non-capturing lambdas become named static methods appended to the file class;
 	// capturing lambdas become synthesized closure classes appended to the file's types.
@@ -151,7 +153,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun cfgFresh(): Int = cfgLabelN++
 	// Inlining ([[function-inlining-spike]]): lambda params currently being inlined -> the lambda passed for them.
 	internal val inlineLambdas = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueDeclaration, IrFunctionExpression>()
-	internal data class TypeArgScope(val keys: List<String>, val old: Map<String, String?>, val had: Set<String>)
+	internal data class TypeArgScope(val keys: List<IrTypeParameter>, val old: Map<IrTypeParameter, String?>, val had: Set<IrTypeParameter>)
 	internal val inlineLambdaTypeScopes = java.util.IdentityHashMap<IrFunctionExpression, TypeArgScope>()
 	internal var inlCounter = 0
 	internal var scopeCounter = 0
@@ -2467,30 +2469,36 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// param's temp type (`birType(p.type)`) AND the spliced body resolve `gp:T` to the inferred type (a `*` star
 		// projection with no concrete arg -> `object`/Any?). E.g. `with(e){…}`'s receiver temp gets `@Entry`, not `gp:T`.
 		val tps = callee.typeParameters
-		val subKeys = ArrayList<String>()
-		val calleeTypeArgs = HashMap<String, String>()
-		val oldTypeArgs = HashMap<String, String?>()
-		val hadOldTypeArg = HashSet<String>()
+		val subKeys = ArrayList<IrTypeParameter>()
+		val calleeTypeArgs = HashMap<IrTypeParameter, String>()
+		val oldTypeArgs = HashMap<IrTypeParameter, String?>()
+		val hadOldTypeArg = HashSet<IrTypeParameter>()
 		for (i in tps.indices) {
-			val nm = tps[i].name.asString()
-			if (typeArgSubst.containsKey(nm)) {
-				hadOldTypeArg.add(nm)
-				oldTypeArgs[nm] = typeArgSubst[nm]
+			val tp = tps[i]
+			if (typeArgSubst.containsKey(tp)) {
+				hadOldTypeArg.add(tp)
+				oldTypeArgs[tp] = typeArgSubst[tp]
 			}
 			val ta = call.typeArguments.getOrNull(i)
 			val bt = ta?.let { birType(it) }
-			val subst = if (bt == null || bt == "gp:$nm") "object" else bt   // unresolved/self star -> object
-			calleeTypeArgs[nm] = subst
-			typeArgSubst[nm] = subst
-			subKeys.add(nm)
+			// "Self star" = the arg IS the callee's OWN type param (unresolved) -> object. Discriminate by SYMBOL
+			// identity, not the token string: the CALLER's param with the SAME NAME also prints `gp:T`
+			// (mapNotNullTo<T,..> body calling forEach<T> with the outer T) and is perfectly resolved — erasing it
+			// to object detached the splice from the enclosing generic (Iterable[object] temp, object element into
+			// Func<!!T,..>.Invoke -> InvalidProgramException).
+			val selfOwned = ((ta as? IrSimpleType)?.classifierOrNull as? IrTypeParameterSymbol)?.owner?.parent == callee
+			val subst = if (bt == null || selfOwned) "object" else bt
+			calleeTypeArgs[tp] = subst
+			typeArgSubst[tp] = subst
+			subKeys.add(tp)
 		}
 		fun restoreCalleeTypeArgs() {
-			for (nm in subKeys) typeArgSubst[nm] = calleeTypeArgs[nm]!!
+			for (tp in subKeys) typeArgSubst[tp] = calleeTypeArgs[tp]!!
 		}
 		fun <T> withCallerTypeArgs(block: () -> T): T {
-			for (nm in subKeys) {
-				if (hadOldTypeArg.contains(nm)) typeArgSubst[nm] = oldTypeArgs[nm]!!
-				else typeArgSubst.remove(nm)
+			for (tp in subKeys) {
+				if (hadOldTypeArg.contains(tp)) typeArgSubst[tp] = oldTypeArgs[tp]!!
+				else typeArgSubst.remove(tp)
 			}
 			return try { block() } finally { restoreCalleeTypeArgs() }
 		}
@@ -2530,15 +2538,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val result = spliceBody(bodyStatements(callee.body), callee.returnType.isUnit(), pre)
 		boundVals.forEach { name -> if (hadOldVals.contains(name)) valSubst[name] = oldVals[name]!! else valSubst.remove(name) }
 		boundLams.forEach { inlineLambdas.remove(it)?.let { lam -> inlineLambdaTypeScopes.remove(lam) } }
-		subKeys.forEach { nm -> if (hadOldTypeArg.contains(nm)) typeArgSubst[nm] = oldTypeArgs[nm]!! else typeArgSubst.remove(nm) }
+		subKeys.forEach { tp -> if (hadOldTypeArg.contains(tp)) typeArgSubst[tp] = oldTypeArgs[tp]!! else typeArgSubst.remove(tp) }
 		if (boundExt) selfSubst.remove(extParam)
 		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
 	}
 
 	internal fun <T> withTypeArgScope(scope: TypeArgScope?, block: () -> T): T {
 		if (scope == null) return block()
-		val saved = HashMap<String, String?>()
-		val hadSaved = HashSet<String>()
+		val saved = HashMap<IrTypeParameter, String?>()
+		val hadSaved = HashSet<IrTypeParameter>()
 		for (nm in scope.keys) {
 			if (typeArgSubst.containsKey(nm)) {
 				hadSaved.add(nm)
@@ -2803,8 +2811,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** The BIR function-type string `func:<ret>:<arg1>,<arg2>,...` for a lambda's signature (receiver first). */
 	internal fun funcTypeOf(fn: IrSimpleFunction): String {
 		val ps = orderedLambdaParams(fn).joinToString(",") { birTypeDeleg(it.type) }
-		val ret = if (fn.returnType.isUnit()) "void" else birTypeDeleg(fn.returnType)
+		val ret = funcRetTypeOf(fn.returnType)
 		return "func:$ret:$ps"
+	}
+
+	/**
+	 * A function type's RETURN token, preserving generic-parameter nullability: a `(T) -> R?` slot emits
+	 * `nullable:gp:R` (the Kotlin FACT that the func's return is nullable — otherwise LOST for an unconstrained
+	 * generic, since a value instantiation already rides `nullable:int` but `gp:R` carries no flag). bir2cir
+	 * CONSUMES the marker (a nullable-marked func return lowers to `object`, the erased CLR rep); it must never
+	 * reach ilemit (whose `FuncRetEnd` parses a single leading prefix).
+	 */
+	internal fun funcRetTypeOf(t: IrType): String {
+		if (t.isUnit()) return "void"
+		val enc = birTypeDeleg(t)
+		return if (t.isMarkedNullable() && enc.startsWith("gp:")) "nullable:$enc" else enc
 	}
 
 	/**
@@ -4298,9 +4319,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// While splicing an `inline fun`'s body, its OWN type params are substituted with the call's type arguments
 			// (the splice site has no such param in scope) — e.g. `all<T>` spliced into `containsAll` resolves `T` to the
 			// inferred element type. A `*` star projection lands here as the param itself -> render `object` (Any?).
-			val nm = tp.owner.name.asString()
-			typeArgSubst[nm]?.let { return it }
-			return "gp:" + nm
+			typeArgSubst[tp.owner]?.let { return it }
+			return "gp:" + tp.owner.name.asString()
 		}
 		// The intrinsic `kotlin.clr.ClrRef<T>` -> `byref:T` (a managed reference; a ref-cell delegate local is a `ref T` local).
 		if (t.classFqName?.asString() == "kotlin.clr.ClrRef")
@@ -4342,7 +4362,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
 			if (args.isNotEmpty()) {
 				val ret = args.last(); val ps = args.dropLast(1)
-				val retEnc = if (ret.isUnit()) "void" else birTypeDeleg(ret)
+				val retEnc = funcRetTypeOf(ret)
 				return "func:$retEnc:${ps.joinToString(",") { birTypeDeleg(it) }}"
 			}
 		}
@@ -4365,7 +4385,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val tys = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
 			if (tys.isNotEmpty()) {
 				val retT = tys.last()
-				val ret = if (retT.isUnit()) "void" else birType(retT)
+				val ret = if (retT.isUnit()) "void" else (if (retT.isMarkedNullable() && birType(retT).startsWith("gp:")) "nullable:" + birType(retT) else birType(retT))
 				return "func:$ret:${tys.dropLast(1).joinToString(",") { birType(it) }}"
 			}
 		}
