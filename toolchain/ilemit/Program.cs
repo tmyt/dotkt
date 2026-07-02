@@ -1579,9 +1579,18 @@ sealed partial class Emitter
                     }
             return ext == null ? null : FindReflectedField(ext, name);
         }
-        for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
+        for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(BareTypeKey(ti.BaseName)) ? _types[BareTypeKey(ti.BaseName)] : null)
             if (ti.Fields.TryGetValue(name, out var f)) return f;
         throw new NotSupportedException($"field {typeName}.{name} not found");
+    }
+
+    // A `base` token's `_types` key: bases are normally stored OPEN (bare name), but an INNER generic class's base
+    // carries its instantiation args (`AbstractList$IteratorImpl[gp:E]`, the nested-generic encoding) — strip them
+    // for the emitted-type lookup (the constructed form is only needed at SetParent).
+    static string BareTypeKey(string n)
+    {
+        var b = n.IndexOf('[');
+        return b < 0 ? n : n[..b];
     }
 
     // name + parameter-type signature -> the overload key. `m` is a method DEF (or a call carrying "sig"); the param
@@ -1617,7 +1626,12 @@ sealed partial class Emitter
             {
                 var spec = i.GetString();
                 if (spec.StartsWith("clr:") || spec.StartsWith("clrg:")) continue;
-                var (open, _) = ParseOwner(spec);
+                // Best-effort probe: only the OPEN name matters here, but ParseOwner eagerly maps the `[args]`
+                // (a `[gp:T]` of an inner generic class is unresolvable in an enclosing ctor context — skip the
+                // interface rather than abort; the base-chain walk continues past it).
+                string open;
+                try { (open, _) = ParseOwner(spec); }
+                catch (NotSupportedException) { continue; }
                 if (!seenIfaces.Add(open) || !_types.TryGetValue(open, out var iti)) continue;
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
                 if (sig != null && UniqueGenericOverload(iti, name) is { } igm) return igm;
@@ -1662,7 +1676,7 @@ sealed partial class Emitter
         // Walk this type's own members, then its EMITTED base/interface chain. If the base is NOT emitted here (an
         // external .NET base, e.g. an emitted class extending a BCL type), fall through to a reflected lookup on the
         // resolved base type so inherited .NET members are still found.
-        for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
+        for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(BareTypeKey(ti.BaseName)) ? _types[BareTypeKey(ti.BaseName)] : null)
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
             if (sig != null && UniqueGenericOverload(ti, name) is { } gm) return gm;
@@ -1671,7 +1685,7 @@ sealed partial class Emitter
             if (im != null) return im;
             // Base is an EXTERNAL (non-emitted) type -> inherited member must come from reflection on it. `ti.ClrBase`
             // is set when the base parsed to a `clr:`/`clrg:` type; otherwise resolve the base name on demand.
-            if (ti.BaseName != null && !_types.ContainsKey(ti.BaseName))
+            if (ti.BaseName != null && !_types.ContainsKey(BareTypeKey(ti.BaseName)))
             {
                 Type extBase = ti.ClrBase;
                 if (extBase == null) { try { extBase = ClrRef(ti.BaseName); } catch (NotSupportedException) { } }
@@ -1709,6 +1723,24 @@ sealed partial class Emitter
     }
 
 
+    // STRUCTURAL match for a sig token MapType could not resolve (an open generic-parameter token from the declared
+    // callee's sig, e.g. `gp:T` / `array:gp:T` / `clrg:Collection[gp:T]`, unbound at a cross-module call site):
+    // the token's SHAPE must agree with the candidate parameter's (generic param / array-of / constructed-generic).
+    // Concrete tokens never reach here (MapType resolves them), so this cannot loosen an exact-type comparison.
+    static bool SigTokenMatchesOpen(string tok, Type p)
+    {
+        if (tok.StartsWith("byref:", StringComparison.Ordinal))
+            return p.IsByRef && SigTokenMatchesOpen(tok.Substring(6), p.GetElementType());
+        if (tok.StartsWith("array:", StringComparison.Ordinal))
+            return p.IsArray && SigTokenMatchesOpen(tok.Substring(6), p.GetElementType());
+        if (tok.StartsWith("nullable:", StringComparison.Ordinal))
+            return SigTokenMatchesOpen(tok.Substring(9), p.IsGenericType && p.GetGenericTypeDefinition() == typeof(Nullable<>) ? p.GetGenericArguments()[0] : p);
+        if (tok.StartsWith("gp:", StringComparison.Ordinal)) return p.IsGenericParameter;
+        if (tok.StartsWith("clrg:", StringComparison.Ordinal) || tok.StartsWith("func:", StringComparison.Ordinal))
+            return p.IsGenericType;
+        return false;
+    }
+
     // Sig-aware overload pick on a REFERENCED file-class: several methods can share name+arity but differ in PARAM
     // TYPES (a String-face vs a `<>dotkt_CharSequence`-face stdlib extension). Map each `sig` token to its Type and
     // require an EXACT full match against a reflected overload's parameters; return the UNIQUE match, or null on a
@@ -1729,7 +1761,14 @@ sealed partial class Emitter
             for (var i = 0; i < ps.Length; i++)
             {
                 Type want; try { want = MapType(toks[i]); } catch { want = null; }
-                if (want == null || want != ps[i].ParameterType) { ok = false; break; }
+                // An unresolvable token (an open `gp:T` from the DECLARED generic callee's sig, unbound in this caller's
+                // context) can't exact-match — compare STRUCTURALLY instead, so `copyOf(array:gp:T,int)` selects the
+                // generic `copyOf<T>(T[],int)` over its same-arity concrete siblings (`copyOf(sbyte[],int)`...), and
+                // `plus(array:gp:T,gp:T)` / `(array:gp:T,array:gp:T)` / `(array:gp:T,clrg:Collection[gp:T])` stay
+                // distinguishable. (The in-`_types` path gets this via MethodsBySig's verbatim sig keys; this is the
+                // referenced-assembly mirror. Additive-only: a resolvable token still requires the exact type.)
+                if (want == null) { if (!SigTokenMatchesOpen(toks[i], ps[i].ParameterType)) { ok = false; break; } }
+                else if (want != ps[i].ParameterType) { ok = false; break; }
             }
             if (!ok) continue;
             if (match != null)

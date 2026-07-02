@@ -1150,8 +1150,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// METHOD to bind the interface slot (property-accessor analog of the method-side overridesIface fix; e.g.
 		// ComparableRange.start over ClosedRange.start). See design-clr-property-model.md.
 		fun ovIface(a: IrSimpleFunction) = a.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
-		fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
-		fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
+		// A FAKE-OVERRIDE property whose implementation is INHERITED FROM A BASE CLASS (`name` in `Sq : Shape("sq")`)
+		// has accessors with NO body — emitting them produced an empty-bodied get_name (ilverify ReturnMissing,
+		// il-langf); CLR class inheritance provides the slot. An ABSTRACT fake-override resolved only to an INTERFACE
+		// member (AbstractMutableList.size over MutableList.size) is KEPT: the CLR requires the (abstract) class to
+		// re-declare the unimplemented interface slot.
+		fun classInherited(a: IrSimpleFunction?) = (a?.resolveFakeOverride()?.parent as? IrClass)?.kind == ClassKind.CLASS
+		fun dropFake(p: IrProperty) = p.isFakeOverride && classInherited(p.getter)
+		fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p)
+		fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p)
 		val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 			listOfNotNull(
 				p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
