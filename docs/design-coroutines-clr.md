@@ -1,5 +1,10 @@
 # Design groundwork: coroutines on CLR / building kotlinx.coroutines
 
+> **STATUS (2026-07-03, bundle-6 P0):** partially SUPERSEDED by
+> `design-coroutine-cold-core-task-bridge.md` — the core is cold/Continuation-based; the hot Task
+> ABI survives only as the boundary bridge. DotKt.Runtime placement herein is historical.
+
+
 > **状態 (2026-06-30 見直し)**: HISTORICAL/AS-BUILT record of Track-1 (the standalone coroutine compiler surface). 現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
 >
 > 補足:

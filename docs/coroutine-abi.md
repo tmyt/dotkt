@@ -1,5 +1,10 @@
 # Kotlin `suspend` ⇔ CLR の ABI 契約（coroutine 完全実装の前提）
 
+> **STATUS (2026-07-03, bundle-6 P0):** §1 (public CLR ABI = hot `Task<T>`) STANDS. The internal
+> representation is now the COLD Continuation core — see `design-coroutine-cold-core-task-bridge.md`
+> (the authoritative bundle-6 design). Continuation-in-ABI remarks herein describe the internal layer.
+
+
 > **状態 (2026-06-30 見直し)**: §1（`suspend ⇔ Task<T>` 不変契約）と §4（意味論対応表）は今も生きた契約。§2/§6 の C# 実装記述は HISTORICAL。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
 >
 > 補足: 実装は**戦略 B（CLR-native `IAsyncStateMachine`）が唯一**で確定済み（[coroutine-il.md](coroutine-il.md)）。§2 の「戦略 A = C# `async Task<T>` 写像（現状）」と §6 の D2.0/D2.1（`runtime/csharp/KfcCoroutines`・`@Sm`・`CSharpCodegen.kt`）は**廃止済みの経路**で、当時の記録として残す。`@ClrAwait` は現行 `kotlin.clr.ClrIntrinsic`。

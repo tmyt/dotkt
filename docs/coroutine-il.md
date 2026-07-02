@@ -1,5 +1,11 @@
 # 設計スパイク: コルーチン（suspend）の IL 化 — 戦略 A/B 決定
 
+> **STATUS (2026-07-03, bundle-6 P0):** strategy-B (`IAsyncStateMachine`/`AsyncTaskMethodBuilder`)
+> as the SM representation is SUPERSEDED — the SM is `ContinuationImpl`-based plain CIR emitted by
+> bir2cir; `Emitter.Coroutines.cs` is deleted in P6. Kept for the Reflection.Emit findings (generic
+> anchoring etc.), which still apply.
+
+
 > **状態（2026-06-23 / 2026-06-30 見直し）: 本書は 2026-06-18 時点の設計スパイク（歴史的記録）。** 戦略 B（CLR-native
 > IAsyncStateMachine／Continuation-class）に確定し、IL コルーチン lowering は全面実装済み。AS-BUILT の状況は
 > [[design-coroutines-clr]] §§13a–§14a を参照（「IL 経路はゼロ」等の現状記述は当時のもの）。

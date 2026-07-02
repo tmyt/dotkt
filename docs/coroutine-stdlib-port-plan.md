@@ -1,5 +1,10 @@
 # Coroutine ABI port plan — move the CLR coroutine runtime into the stdlib
 
+> **STATUS (2026-07-03, bundle-6 P0):** SUPERSEDED by `design-coroutine-cold-core-task-bridge.md` §11.
+> The TypedCont/Builders port planned here is DEAD (TCS RootContinuation replaces them); the six
+> IntrinsicsClr stubs get REAL cold-core bodies instead of bridge bindings.
+
+
 Status: **planning** (2026-06-28). Prereqs already landed this session:
 - `DotKt.Runtime` removed from the stdlib build (`scripts/build-stdlib-ref.sh` no longer `--ref`s it).
 - `kotlin.Result` / `kotlin.Unit` lowerings retired under `DOTKT_STDLIB_COMPILE` (stdlib uses its own types).
