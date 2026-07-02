@@ -17,10 +17,22 @@ deleted) · legacy `clr.Clr` app-façade reader (gone; its 26 samples deleted, 3
 `netType`→bir2cir / kotc-is-pure-Kotlin-frontend (#5). `research-roadmap.md` is almost entirely HISTORICAL (C#-backend
 premise); `dotkt-interop-feedback.md` is a 2026-06 snapshot. **A doc-sync pass (phase ④) is needed.**
 
+## ✅ BUNDLES 1–5 CLOSED (2026-07-03)
+
+Authoritative close-out gate: **run-FAIL 0 / PASS(run) 132 / verify-ktproj 9/9** (phase arc: fail-names 36→6,
+run-FAILs 15→0, PASS 101→132, zero regressions). The accepted tail, NOT open work:
+- **ilverify-formal-only (6, run-correct):** `collrealkt`/`gen3`/`iter`/`iterable` (+ `chunk`/`collops2`, also
+  sequence-gated) — the IL runs correctly; ilverify's strict-verifiability complaints = documented noise.
+- **coroutine/SequenceScope-deferred (4, by design):** `chunk`/`cobuild`/`collops2`/`seq` — unblocked by the
+  bundle-6 sequence-builder/coroutine work, not before.
+- `il:injstatic` was NOT the .Companion convention — a genuine bir2cir rule-3 classifier misfire on
+  facadegen-injected owners (fixed `c8f5345`, mirroring the event-accessor precedent `32a1da6`). The `.Companion`
+  requirement itself (no implicit `App.start` on an injected class) remains the accepted frontend limitation.
+
 ## The agreed execution order (user-directed 2026-07-02)
 
 1. **Save this inventory** (this file). ✅
-2. **Address bundles 【1】–【5】** below (the engineering remainder).
+2. **Address bundles 【1】–【5】** below (the engineering remainder). ✅ **CLOSED 2026-07-03 (see above).**
 3. **Build-script cleanup + one-shot build** — a single script that builds facadegen · kotc · bir2cir · ilemit ·
    stdlib.jar · stdlib.ref.dll · stdlib.rt.dll · the nupack(s), and tidy the per-artifact scripts.
 4. **Doc maintenance** — reconcile all task docs to reality (the META note above); archive `research-roadmap.md`.
