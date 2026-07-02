@@ -1,9 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="$(MSBuildThisFileDirectory)../DotKt.Versions.props" />
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <NuspecFile>DotKt.Toolchain.nuspec</NuspecFile>
-    <NuspecProperties>version=0.9.3+kotlin-2.2.0</NuspecProperties>
+    <!-- Version is single-sourced in packaging/DotKt.Versions.props ($(Version) comes from the import). -->
+    <NuspecProperties>version=$(Version)</NuspecProperties>
     <NoWarn>NU5128;NU5100</NoWarn>
   </PropertyGroup>
 </Project>

@@ -16,9 +16,25 @@
     <ProduceReferenceAssembly Condition="'$(ProduceReferenceAssembly)' == ''">false</ProduceReferenceAssembly>
   </PropertyGroup>
 
-  <!-- Implicit reference: the toolchain (build-only). -->
+  <!-- Implicit references: the toolchain (build-only) + the CLR stdlib runtime (a normal copy-local
+       compile+runtime reference — its dll sits at lib/net10.0, so the plain PackageReference is the packaged
+       equivalent of the in-repo dev entry's <Reference Private=true> to build/clr-stdlib-rt/dll/DotKt.Stdlib.dll,
+       cases/KotlinClr.targets). Opt out of the stdlib with <KotlinClrStdlibRef>false</KotlinClrStdlibRef>. -->
   <ItemGroup>
     <PackageReference Include="DotKt.Toolchain" Version="$(DotKtVersion)" PrivateAssets="all" IncludeAssets="build" />
+    <PackageReference Include="DotKt.Stdlib" Version="$(DotKtVersion)" Condition="'$(KotlinClrStdlibRef)' != 'false'" />
+  </ItemGroup>
+
+  <!-- The @Clr-metadata REFERENCE stdlib (DotKt.Private.Stdlib.dll, shipped inside DotKt.Toolchain at
+       tools/stdlib/): COMPILE-TIME ONLY, never copied to output — bir2cir reads its @ClrTypeAlias/@ClrIntrinsic
+       labels to lower kotlin.* (the shared DotKtBir2Cir target picks it off @(ReferencePath) by file name).
+       $(DotKtStdlibRefAsm) comes from DotKt.Toolchain.props (auto-imported via the PackageReference above, i.e.
+       already defined by the time this ItemGroup evaluates). Mirrors cases/KotlinClr.targets' non-copy Reference. -->
+  <ItemGroup Condition="'$(KotlinClrStdlibRef)' != 'false' and '$(DotKtStdlibRefAsm)' != '' and Exists('$(DotKtStdlibRefAsm)')">
+    <Reference Include="DotKt.Private.Stdlib">
+      <HintPath>$(DotKtStdlibRefAsm)</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Every .kt under the project is a Kotlin source. -->

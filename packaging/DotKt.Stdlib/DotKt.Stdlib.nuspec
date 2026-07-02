@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>DotKt.Stdlib</id>
+    <version>$version$</version>
+    <authors>DotKt</authors>
+    <description>The Kotlin/CLR standard library RUNTIME assembly (DotKt.Stdlib.dll): the real pure-Kotlin stdlib bodies apps link and ship against (copy-local). The compile-time @Clr-metadata reference face (DotKt.Private.Stdlib.dll) ships with the compiler in DotKt.Toolchain instead. DotKt.Sdk references this package implicitly.</description>
+    <tags>kotlin clr dotnet stdlib runtime kotlin-2.2.0</tags>
+    <dependencies>
+      <group targetFramework="net10.0" />
+    </dependencies>
+  </metadata>
+  <files>
+    <!-- lib/<tfm> so a plain PackageReference yields the copy-local compile+runtime reference
+         (the packaged equivalent of cases/KotlinClr.targets' <Reference Private=true> to the rt dll).
+         The dll is staged here from build/clr-stdlib-rt/dll by scripts/pack-dotkt.sh. -->
+    <file src="lib/net10.0/DotKt.Stdlib.dll" target="lib/net10.0" />
+  </files>
+</package>

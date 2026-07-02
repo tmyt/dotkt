@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IncludeBuildOutput>false</IncludeBuildOutput>
-    <NuspecFile>DotKt.Sdk.nuspec</NuspecFile>
+    <NuspecFile>DotKt.Stdlib.nuspec</NuspecFile>
     <!-- Version is single-sourced in packaging/DotKt.Versions.props ($(Version) comes from the import). -->
     <NuspecProperties>version=$(Version)</NuspecProperties>
     <NoWarn>NU5128;NU5100</NoWarn>

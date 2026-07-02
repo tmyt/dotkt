@@ -14,6 +14,7 @@
 
 # DotKt packaging (generated)
 packaging/DotKt.Toolchain/tools/
+packaging/DotKt.Stdlib/lib/
 packaging/**/obj/
 packaging/**/bin/
 build/nuget-feed/
@@ -21,6 +22,8 @@ build/nuget-feed/
 # Local dev artifacts (symlinks to NuGet cache; reference IL dumps) — not source
 /dist/
 /refs/
+/upstream/
+/scratchpad/
 
 # DotKt per-project build outputs (custom names not covered by bin/obj)
 **/kotlin-cs/
