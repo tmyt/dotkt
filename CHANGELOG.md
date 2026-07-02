@@ -5,6 +5,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: kotlin.time (B4) enablement — five root causes fixed; `2.seconds + 3.seconds` runs end-to-end.**
+  (1) A companion EXTENSION property accessor (`val Int.seconds` on `Duration.Companion`) dropped its
+  receiver: the getter emitted `get_<name>` with `"args":[]` and the cross-module backing-field probe
+  degraded `2.seconds` to a bare `staticField Duration.seconds`. Now mirrors the top-level-property
+  branch: static `get_/set_<name>(__self, …)` with the receiver as the leading arg + `sig` for overload
+  resolution (`get_seconds(Int|Long|Double)`). (2) The BINARY/UNARY/inc/dec operator lowering gated only
+  on "no extension receiver", so a `kotlin.*` VALUE-CLASS member operator (`Duration.plus/unaryMinus`)
+  became a raw CIL `bin +`/`un -` (InvalidProgram inside the rt, `saturatingFiniteDiff`); the gate now
+  also requires primitive operand types (`PRIMITIVE_OP_FQ` = signed/bool/char + unsigned, which the raw
+  lowering legitimately serves) — anything else is a real method call. (3) A `private` TOP-LEVEL fun is
+  FILE-private in Kotlin, but the file splits across CLR types, so CLR `private` broke same-file class
+  access (`Duration..cctor` → `DurationKt.durationOfMillis` MethodAccessException); top-level private
+  funs now emit `internal`. (4) An EARLY `return` inside a spliced inline body emitted a raw method
+  return (void caller + Int32 on the stack = invalid IL, `indexOfLast` in `appendFractional`); spliced
+  returns now route through a result local + end label (`spliceBodyWithReturns`). (5) A MEMBER inline
+  fun's DISPATCH receiver was never bound — the spliced body's `this` fell through to the CALLER's this
+  (`absoluteValue.toComponents{}` read the negative outer duration: `-1s` printed `--1s`); now bound to
+  a temp like the extension receiver. New gate case: `il-duration`.
 - **kotc: removed the dead `kotlinx.coroutines.delay` → `Task.Delay` lowering from `coAwaitable`.**
   Pre-stdlib bespoke kotlinx legacy (kotlinx.* is not the stdlib); it was unreachable on the current
   pipeline — unrestricted suspend fns emit plainly with `"suspendCall":true`, and the only `coAwaitable`

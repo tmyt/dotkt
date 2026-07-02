@@ -134,6 +134,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
 	internal val valSubst = HashMap<String, String>()
+	// While splicing an inline fun / inlined-lambda body: the SPLICED target's own `return`s must NOT emit as raw
+	// method returns (the splice is a valueBlock INSIDE the caller). Maps the return target -> (result local or
+	// null-for-unit, end label id); stmt(IrReturn) rewrites to `res = v; goto end`. See spliceBodyWithReturns.
+	internal val inlineReturnSubst = HashMap<org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol, Pair<String?, Int>>()
 	// While splicing an `inline fun` body: its type PARAM (the IrTypeParameter itself, NOT its name — a name-keyed
 	// map cross-captured an OUTER function's same-named param: let<T,R:=Unit> spliced inside mapNotNullTo<T,R>
 	// rewrote the OUTER `R` to kotlin.Unit) -> the call's substituted type-argument BIR (see birType).
@@ -2526,6 +2530,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return try { block() } finally { restoreCalleeTypeArgs() }
 		}
 		val callerTypeScope = TypeArgScope(subKeys.toList(), HashMap(oldTypeArgs), HashSet(hadOldTypeArg))
+		// A MEMBER inline fun's DISPATCH receiver must be bound like the extension receiver: the spliced body's
+		// `this` (IrGetValue of the callee's dispatch param) otherwise falls through to the CALLER's `{"k":"this"}` —
+		// `absoluteValue.toComponents { … }` inside Duration.toString read the NEGATIVE outer duration instead of
+		// absoluteValue (printed "--1s"), and in a static caller a bare `this` is not even valid.
+		val dispatchParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }
+		val dispatchArg = dispatchReceiver(call)
+		var boundDispatch = false
+		if (dispatchParam != null && dispatchArg != null) {
+			val tmp = "__inl${inlCounter++}"
+			pre.add("""{"k":"var","name":${str(tmp)},"type":${str(birType(dispatchParam.type))},"init":${withCallerTypeArgs { expr(dispatchArg) }}}""")
+			selfSubst[dispatchParam] = """{"k":"local","name":${str(tmp)}}"""
+			boundDispatch = true
+		}
 		if (extParam != null && extArg != null) {
 			val tmp = "__inl${inlCounter++}"
 			pre.add("""{"k":"var","name":${str(tmp)},"type":${str(birType(extParam.type))},"init":${withCallerTypeArgs { expr(extArg) }}}""")
@@ -2558,11 +2575,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				bindVal(p.name.asString(), """{"k":"local","name":${str(tmp)}}""")
 			}
 		}
-		val result = spliceBody(bodyStatements(callee.body), callee.returnType.isUnit(), pre)
+		val result = spliceBodyWithReturns(callee, callee.returnType.isUnit(), pre)
 		boundVals.forEach { name -> if (hadOldVals.contains(name)) valSubst[name] = oldVals[name]!! else valSubst.remove(name) }
 		boundLams.forEach { inlineLambdas.remove(it)?.let { lam -> inlineLambdaTypeScopes.remove(lam) } }
 		subKeys.forEach { tp -> if (hadOldTypeArg.contains(tp)) typeArgSubst[tp] = oldTypeArgs[tp]!! else typeArgSubst.remove(tp) }
 		if (boundExt) selfSubst.remove(extParam)
+		if (boundDispatch) selfSubst.remove(dispatchParam)
 		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
 	}
 
@@ -2636,11 +2654,72 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			valSubst[p.name.asString()] = """{"k":"local","name":${str(tmp)}}"""; bound.add(p.name.asString())
 		}
 		val result = withTypeArgScope(inlineLambdaTypeScopes[lambda]) {
-			spliceBody(bodyStatements(fn.body), fn.returnType.isUnit() || call.type.isUnit(), pre)
+			spliceBodyWithReturns(fn, fn.returnType.isUnit() || call.type.isUnit(), pre)
 		}
 		bound.forEach { valSubst.remove(it) }
 		if (boundExt) selfSubst.remove(extParam)
 		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
+	}
+
+	/** True iff [body] contains an IrReturn TARGETING [target] anywhere other than as the body's LAST top-level
+	 *  statement (spliceBody already folds a tail return into the value expression). Nested lambdas are walked too:
+	 *  a labeled return inside one can target the enclosing spliced fn. */
+	internal fun hasEarlyReturn(body: org.jetbrains.kotlin.ir.IrElement?, target: org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol): Boolean {
+		val stmts = bodyStatements(body)
+		val tail = stmts.lastOrNull()
+		var found = false
+		val walker = object : IrVisitorVoid() {
+			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
+				if (found) return
+				if (element is IrReturn && element.returnTargetSymbol == target) { found = true; return }
+				element.acceptChildrenVoid(this)
+			}
+		}
+		for (s in stmts) {
+			// The tail return itself is fine (spliceBody folds it) — but its VALUE could still nest one.
+			if (s === tail && s is IrReturn && s.returnTargetSymbol == target) s.value.acceptVoid(walker)
+			else s.acceptVoid(walker)
+			if (found) return true
+		}
+		return false
+	}
+
+	/**
+	 * spliceBody + EARLY-return support. A `return v` in the middle of a spliced inline body (indexOfLast's
+	 * `return index` inside its loop) must not emit a raw method return — the splice is a valueBlock INSIDE the
+	 * caller, so the raw return used the CALLER's frame (a void caller got an Int32 on the stack at ret:
+	 * kotlin.time.Duration.appendFractional, ilverify ReturnVoid + InvalidProgramException at run). Route every
+	 * return targeting the spliced fn through a RESULT LOCAL + an END LABEL (`res = v; goto end`; the natural tail
+	 * value assigns res too; the valueBlock result reads res after the label). Early-return-free bodies (the
+	 * overwhelmingly common case) keep the plain spliceBody shape — zero BIR churn.
+	 */
+	internal fun spliceBodyWithReturns(target: IrSimpleFunction, unit: Boolean, pre: MutableList<String>): String {
+		val stmts = bodyStatements(target.body)
+		if (!hasEarlyReturn(target.body, target.symbol)) return spliceBody(stmts, unit, pre)
+		val res = if (unit) null else "__inlRet${inlCounter++}"
+		val end = cfgFresh()
+		res?.let {
+			val rt = birType(target.returnType)
+			pre.add("""{"k":"var","name":${str(it)},"type":${str(rt)},"init":{"k":"default","type":${str(rt)}}}""")
+		}
+		val saved = inlineReturnSubst[target.symbol]
+		inlineReturnSubst[target.symbol] = res to end
+		// A NOTHING-typed tail expression (a when whose branches all return/throw) is a STATEMENT, not the splice
+		// value — its returns route through the subst; reading it as the value would render IrReturn as an expr.
+		val last = stmts.lastOrNull()
+		val tail = if (!unit && last is IrExpression && last !is IrReturn && last.type.classFqName?.asString() == "kotlin.Nothing") {
+			stmts.forEach { pre.add(stmt(it)) }
+			null
+		} else spliceBody(stmts, unit, pre)
+		if (saved != null) inlineReturnSubst[target.symbol] = saved else inlineReturnSubst.remove(target.symbol)
+		return if (res != null) {
+			tail?.let { pre.add("""{"k":"setLocal","name":${str(res)},"value":$it}""") }
+			pre.add("""{"k":"label","id":$end}""")
+			"""{"k":"local","name":${str(res)}}"""
+		} else {
+			pre.add("""{"k":"label","id":$end}""")
+			"""{"k":"const","type":"void","value":null}"""
+		}
 	}
 
 	/** Emit body statements into `pre`, returning the value expression (Unit -> void const; else the last expr). */
