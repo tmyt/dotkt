@@ -1,3 +1,8 @@
+> **HISTORICAL — superseded by `docs/master-task-inventory.md` 【1】.** The 6-wave "lower each BIR kind to a `clr.*`
+> node" mechanism was ABANDONED with the `--compat-bir`/`--native-cir` removal (2026-06-30); bir2cir substitutes via
+> reference metadata (`MemberCallSubstitution`) instead. Kept for the BIR node-kind taxonomy (which kinds are
+> structural vs stdlib-retire vs CLR-relation).
+
 # bir2cir Lowering Migration Inventory
 
 Last updated: 2026-06-27

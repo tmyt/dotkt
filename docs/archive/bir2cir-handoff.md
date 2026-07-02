@@ -1,3 +1,6 @@
+> **HISTORICAL — superseded by `docs/master-task-inventory.md` 【1】.** An operational handoff for the abandoned
+> native-CIR migration path (both modes removed 2026-06-30). Kept for context only.
+
 # bir2cir Handoff
 
 > **状態 (2026-06-30 見直し)**: この文書は大半が陳腐化している（MOSTLY-STALE）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。

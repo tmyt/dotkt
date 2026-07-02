@@ -1,3 +1,6 @@
+> **HISTORICAL — superseded by `docs/master-task-inventory.md`.** Written on the retired C#-backend premise
+> (differential oracle, M-D tracks); kept for the original research rationale only. Do not work from this file.
+
 # kotlin/clr — 長期研究ロードマップ
 
 > **状態 (2026-06-30 見直し)**: HISTORICAL（research as-planned の記録）。研究トラック M-D1（CIL 直接出力）/ M-D2（coroutine）/ M-S（言語・stdlib 補強）はいずれも完了。本書が前提にする「C# 経路を正解器とする差分オラクル」「`scripts/verify-all.sh`」「`runtime/csharp/KfcCoroutines`」「`import clrgen.*`」「**M-D2 の C# state-machine 方式**」はすべて現行では廃止/置換済み（coroutine は CLR-native `IAsyncStateMachine`＝戦略 B で実装、`csharp-retirement-design.md` 参照）。IL 出力の設計理由と純バインディング哲学は引き続き有効。現行アーキテクチャ/戦略の正は [docs/ship-tasks.md](ship-tasks.md) §0 ＋ [docs/csharp-retirement-design.md](csharp-retirement-design.md)。

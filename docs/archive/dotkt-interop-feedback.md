@@ -1,3 +1,7 @@
+> **HISTORICAL — superseded by `docs/master-task-inventory.md` 【3】.** A 2026-06 WinUI-bring-up snapshot;
+> items (1)–(9) are all RESOLVED (facadegen transitive injection / generics / delegates / aliases / enums / statics).
+> Kept for the original failure descriptions only.
+
 # DotKt 言語基盤へのフィードバック — 実 .NET 型 interop の課題
 
 > **状態 (2026-07-02 見直し)**: これは 2026-06 の WinUI bring-up スナップショット（当時の不具合一覧）であり、**生きたブロッカー一覧ではない**。下記のうち (1)(2)(3)(6)(7)(8)(9) は既に解消済み（各項目に RESOLVED を付記）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。

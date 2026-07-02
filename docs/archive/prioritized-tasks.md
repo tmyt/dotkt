@@ -1,3 +1,6 @@
+> **HISTORICAL — fully absorbed by `docs/master-task-inventory.md`** (the canonical task ledger). Kept as a
+> point-in-time backlog snapshot (2026-07-01) only.
+
 # Prioritized task list
 
 > A **priority-ordered backlog**, NOT a ship checklist (no release is committed at any point here — see

@@ -1,3 +1,7 @@
+> **HISTORICAL — superseded by `docs/master-task-inventory.md` 【3】 and `docs/dotkt-semantics.md` §7/§10.**
+> #1/#2/#4/#5 are DONE; #3 was deleted; the non-constant-default-args remnant is tracked in dotkt-semantics §7
+> (KNOWN/ACCEPTED) + the inventory. Kept for rationale only.
+
 # Future work — interop / consuming DotKt-built assemblies from Kotlin
 
 後々やりたいことのメモ（2026-06-23 起票）。

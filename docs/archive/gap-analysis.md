@@ -1,3 +1,7 @@
+> **HISTORICAL — superseded by `docs/master-task-inventory.md` 【1】.** Its core findings ("bir2cir is a skeleton",
+> "@ClrIntrinsic substitution ZERO") were closed by `MemberCallSubstitution` + bundles 1–5 (2026-07-03). Kept for
+> the gap-analysis method/rationale only.
+
 # ギャップ分析: 設計 vs 現状コード (2026-06-30)
 
 正 = [design-compiler-modes.md](design-compiler-modes.md) + [ship-tasks.md](ship-tasks.md) §0。5ステージ（facadegen/kotc/bir2cir/ilemit/属性·stdlib）を担当エージェントで調査した統合結果。各ギャップは file:line 付き。

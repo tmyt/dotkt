@@ -1,9 +1,9 @@
 # Master task inventory — the de-duplicated "what's left" ledger
 
 > **Canonical remaining-work list (2026-07-02).** This is a *de-duplicated* stocktake that consolidates the
-> scattered task docs (`ship-tasks.md`, `remaining-tasks.md`, `bir2cir-migration-inventory.md`,
-> `gap-analysis.md`, `future-work-interop.md`, `dotkt-interop-feedback.md`, `research-roadmap.md`,
-> `coroutine-stdlib-port-plan.md`, `prioritized-tasks.md`). Where those docs disagree with reality, **this file +
+> scattered task docs (`ship-tasks.md`, `remaining-tasks.md`, `coroutine-stdlib-port-plan.md`, and — now in
+> `docs/archive/` — `bir2cir-migration-inventory.md`, `gap-analysis.md`, `future-work-interop.md`,
+> `dotkt-interop-feedback.md`, `research-roadmap.md`, `prioritized-tasks.md`). Where those docs disagree with reality, **this file +
 > the code win** — many items those docs still mark "open" are actually DONE (see the META note). When you finish an
 > item here, update it AND flag the stale source doc.
 
@@ -15,7 +15,8 @@ A large fraction of the doc-listed "open" items are **already DONE** (this sessi
 `--compat-bir`/`--native-cir` dual-track removal · stale-script cleanup (`build-dotkt-stdlib.sh`/`build-stdlib.sh`
 deleted) · legacy `clr.Clr` app-façade reader (gone; its 26 samples deleted, 3 migrated to facadegen `import`) ·
 `netType`→bir2cir / kotc-is-pure-Kotlin-frontend (#5). `research-roadmap.md` is almost entirely HISTORICAL (C#-backend
-premise); `dotkt-interop-feedback.md` is a 2026-06 snapshot. **A doc-sync pass (phase ④) is needed.**
+premise); `dotkt-interop-feedback.md` is a 2026-06 snapshot. **The doc-sync pass (phase ④) LANDED 2026-07-03** —
+both (plus 5 more superseded docs) moved to `docs/archive/`; see 【９】.
 
 ## ✅ BUNDLES 1–5 CLOSED (2026-07-03)
 
@@ -35,14 +36,17 @@ run-FAILs 15→0, PASS 101→132, zero regressions). The accepted tail, NOT open
 2. **Address bundles 【1】–【5】** below (the engineering remainder). ✅ **CLOSED 2026-07-03 (see above).**
 3. **Build-script cleanup + one-shot build** — a single script that builds facadegen · kotc · bir2cir · ilemit ·
    stdlib.jar · stdlib.ref.dll · stdlib.rt.dll · the nupack(s), and tidy the per-artifact scripts.
-4. **Doc maintenance** — reconcile all task docs to reality (the META note above); archive `research-roadmap.md`.
+4. **Doc maintenance** — ✅ **DONE 2026-07-03**: 7 superseded docs → `docs/archive/` (research-roadmap,
+   dotkt-interop-feedback, future-work-interop, prioritized-tasks, gap-analysis, bir2cir-migration-inventory,
+   bir2cir-handoff); dotkt-semantics overhauled (TOC + suspend-hot/Appendable/enum/value-class/.Companion);
+   `docs/user/` created (getting-started / using-dotnet-from-kotlin / kotlin-on-clr-differences); README refreshed.
 5. **Coroutine** — the long-awaited one. It is *implementation grind, not a design fork* (the Task-based ABI is
    already decided); truly last. Plan = `coroutine-stdlib-port-plan.md` (see 【6】).
 
 ---
 
 ## 【1】 Layer-purity: retire kotc's hardcoded CLR lowerings  *(currency-corrected 2026-07-02)*
-Sources: `bir2cir-migration-inventory.md`, `gap-analysis.md §2`, `ship-tasks.md §6–7`. **The 6-wave plan in those docs
+Sources: `archive/bir2cir-migration-inventory.md`, `archive/gap-analysis.md §2`, `ship-tasks.md §6–7`. **The 6-wave plan in those docs
 is largely STALE** — a code-grounded currency check found:
 - **The "lower each kind to a `clr.*` node + mirror in ilemit" mechanism is ABANDONED** (dropped with the
   `--native-cir`/`--compat-bir` removal, 2026-06-30). bir2cir emits only *reference tokens*
@@ -179,7 +183,8 @@ is largely STALE** — a code-grounded currency check found:
   cross-module generic call with a basic-enum type arg — orthogonal, still open).
 
 ## 【3】 facadegen .NET interop breadth  *(#4 + interop-feedback)*
-Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedback.md`, `research-roadmap.md I1`.
+Sources: `ship-tasks.md #4`, `archive/future-work-interop.md #4`, `archive/dotkt-interop-feedback.md`,
+`archive/research-roadmap.md I1`.
 - ~~static `.Companion` routing = the `il:injstatic` bug~~ — ✅ **FIXED (2026-07-02).** The real root cause was NOT
   the `.Companion` convention (that stays the accepted access rule, MEMORY `injected-static-members-need-companion`):
   it was the **Rule-3 hoist classifier misfiring on an injected owner**. A facadegen-injected external .NET type's
@@ -740,7 +745,8 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
 ---
 
 ## 【6】 Coroutine  *(deferred — truly last; implementation grind, not a design fork)*
-Sources: `coroutine-stdlib-port-plan.md`, `gap-analysis.md §3`, `remaining-tasks.md D`, `research-roadmap.md C`.
+Sources: `coroutine-stdlib-port-plan.md` (the LIVE plan), `archive/gap-analysis.md §3`, `remaining-tasks.md D`,
+`archive/research-roadmap.md C`.
 - Lock design gates **G1–G6** (G6 BCL Task binding = biggest risk) → **Phases 1–6** (ilemit resolves `kotlin.*`
   coroutine types during stdlib-compile → port `TypedCont<T>` + suspended sentinel → port `Builders`
   (Root/Future/AwaitOnto/RunBlocking/StartCoroutine) → port the sequence builder → end-to-end verify → retire
@@ -749,7 +755,7 @@ Sources: `coroutine-stdlib-port-plan.md`, `gap-analysis.md §3`, `remaining-task
   compiling kotlinx, "Track 2").
 
 ## 【7】 1.0 ship gate  *(non-code / production)*
-Sources: `remaining-tasks.md F`, `research-roadmap.md Track P/X`.
+Sources: `remaining-tasks.md F`, `archive/research-roadmap.md Track P/X`.
 - **Licensing / attribution** (KotlinForCLR Apache-2.0 compliance, NOTICE) — **ship-blocking**.
 - **User docs** (getting-started, `.ktproj`, importing .NET types, supported/unsupported feature matrix).
 - **Distribution** (`dotnet new ktproj` template, NuGet/SDK, versioned release, self-contained, remove relative-path
@@ -765,11 +771,24 @@ Sources: `remaining-tasks.md F`, `research-roadmap.md Track P/X`.
   member `suspend` (BadImageFormat) · `Pair<T,T>` generic construction (`Pair2<A,B>` workaround) · private/internal
   not exported.
 
-## 【9】 Doc hygiene  *(phase ④)*
-- `research-roadmap.md` — mostly HISTORICAL → mark/archive. `dotkt-interop-feedback.md` — 2026-06 snapshot.
-- Many doc "open" items are stale (done — see META) → one reconciliation pass.
-- `@ClrRefArgument(index)` vs `@ClrRefArguments(mask)` doc inconsistency (the impl is a per-param `VALUE_PARAMETER`
-  marker, not a bitmask).
-- facadegen REQ7 design-inconsistency prose (reads `@Clr`, legacy `package clr` generation).
-- Heavy cross-doc duplication: the bir2cir 6-wave, the coroutine port, transitive injection, and diagnostics/dist all
-  appear in 3–4 docs each — consolidation has high value.
+## 【9】 Doc hygiene  *(phase ④)* — ✅ DONE 2026-07-03 (the doc overhaul pass)
+- ✅ 7 superseded docs ARCHIVED to `docs/archive/` with HISTORICAL headers + inbound-ref repointing:
+  `research-roadmap` · `dotkt-interop-feedback` · `future-work-interop` · `prioritized-tasks` · `gap-analysis` ·
+  `bir2cir-migration-inventory` · `bir2cir-handoff`.
+- ✅ Cross-doc duplication resolved to ONE home each: bir2cir 6-wave → 【1】 here (the archive keeps the taxonomy);
+  coroutine port → `coroutine-stdlib-port-plan.md`; transitive injection → 【3】 here + `dotkt-semantics.md`;
+  diagnostics/dist → 【7】 here + `remaining-tasks.md F`.
+- ✅ Task docs reconciled: `ship-tasks.md` §1–8 closed out (§0 stays binding); `remaining-tasks.md` D-track
+  currency-corrected (pre-stdlib coroutine claims marked historical); this file's source pointers updated.
+- ✅ `dotkt-semantics.md` overhauled (TOC; §4 suspend=hot async Task; §5d Appendable; §5e enum shapes; §5f value
+  class; §8c `.Companion`); user-facing set created under `docs/user/`; README refreshed.
+- Still open (small, code-side or otherwise-owned):
+  - `@ClrRefArgument(index)` vs `@ClrRefArguments(mask)` doc inconsistency (the impl is a per-param
+    `VALUE_PARAMETER` marker, not a bitmask).
+  - facadegen REQ7 design-inconsistency prose (reads `@Clr`, legacy `package clr` generation).
+  - Stale code-comment doc pointers: `facadegen/Program.cs:161` → archive/dotkt-interop-feedback,
+    `BirEmitter.kt:2909` → archive/future-work-interop, `ClrTypeInjection.kt` → archive/research-roadmap
+    (toolchain edits — outside the doc pass).
+  - CLAUDE.md's `bir2cir-migration-inventory.md` pointer → repoint to this file 【1】 (coordinator-owned).
+  - `clr-stdlib-actual-index.md` numbers are a 2026-06-30 snapshot → regenerate via
+    `scripts/gen-clr-stdlib-actual-index.py`.

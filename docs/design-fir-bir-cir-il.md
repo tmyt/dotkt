@@ -4,7 +4,7 @@
 
 This is the target split for the Kotlin/CLR backend.
 
-For resume-oriented operational notes, see [bir2cir-handoff.md](bir2cir-handoff.md).
+For the (historical) native-CIR-era operational notes, see [archive/bir2cir-handoff.md](archive/bir2cir-handoff.md).
 
 ## Layer Contract
 
