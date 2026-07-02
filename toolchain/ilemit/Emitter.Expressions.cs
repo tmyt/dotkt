@@ -509,8 +509,12 @@ sealed partial class Emitter
             }
             case "isinst":
             {
-                // `x is T` -> isinst T; (ref != null) as bool.
-                EmitExpr(e.GetProperty("e"));
+                // `x is T` -> isinst T; (ref != null) as bool. A value-type / generic-param receiver MUST be boxed
+                // first: `isinst` consumes an object reference off the stack, so reading an unboxed value type (or an
+                // `!!T` whose runtime T is a value type) as a reference gives an NRE. This is what C# emits for
+                // `element is X` when `element` is a generic `T` (box !!T; isinst X).
+                var rt0 = EmitExpr(e.GetProperty("e"));
+                if (NeedsBoxToRef(rt0)) _il.Emit(OpCodes.Box, rt0);
                 _il.Emit(OpCodes.Isinst, MapType(e.GetProperty("type").GetString()));
                 _il.Emit(OpCodes.Ldnull);
                 _il.Emit(OpCodes.Cgt_Un);
@@ -540,7 +544,8 @@ sealed partial class Emitter
                 // `x as? T` for reference T -> `isinst T` (leaves the ref, or null on mismatch). The result is a
                 // reference (objref or null), so report `object` — never a generic-param type that would make a
                 // downstream consumer (objMethod/objEq) wrongly re-box an already-reference value.
-                EmitExpr(e.GetProperty("e"));
+                var rtr = EmitExpr(e.GetProperty("e"));
+                if (NeedsBoxToRef(rtr)) _il.Emit(OpCodes.Box, rtr);
                 var t = MapType(e.GetProperty("type").GetString());
                 _il.Emit(OpCodes.Isinst, t);
                 return typeof(object);

@@ -2732,7 +2732,10 @@ static class StringCharSequenceBridge
         {"name": "get_length", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
          "params": [], "ret": "kotlin.Int",
          "body": [{"k": "return", "value": {"k": "clrPropGet", "type": "System.String", "name": "Length", "retType": "System.Int32", "static": false,
-           "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []}}}]}
+           "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []}}}]},
+        {"name": "ToString", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": true, "vis": "public",
+         "params": [], "ret": "kotlin.String",
+         "body": [{"k": "return", "value": {"k": "field", "ownerType": "<>dotkt_StringCharSequence", "recv": {"k": "this"}, "name": "value"}}]}
       ],
       "properties": [
         {"name": "value", "type": "kotlin.String", "get": "get_value", "set": null},

@@ -2469,6 +2469,23 @@ sealed partial class Emitter
         return typeof(void);
     }
 
+    // Does a candidate overload's parameter accept the resolved arg type? A null (un-resolvable) arg or an open generic
+    // param binds anything. `object` accepts every ref (and boxed value). Two reference types: accept only if PROVABLY
+    // assignable — an emitted TypeBuilder arg makes IsAssignableFrom throw OR return false; either way it is not provably
+    // assignable to a concrete BCL class (only to `object`), so we reject, steering a `<>dotkt_CharSequence` to
+    // `Append(object)` (ToStrings) rather than `Append(String)` (reinterprets the object -> corruption). A value-type is
+    // matched by identity (no implicit numeric widening in the fallback pick).
+    static bool ParamAcceptsArg(Type param, Type arg)
+    {
+        if (arg == null || param.IsGenericParameter || param.ContainsGenericParameters) return true;
+        if (param == typeof(object)) return true;
+        if (!param.IsValueType && !arg.IsValueType)
+        {
+            try { return param.IsAssignableFrom(arg); } catch { return false; }
+        }
+        return param == arg;
+    }
+
     Type EmitClrCall(JsonElement e, bool instance, bool deref = true)
     {
         // `ClrRef` (not `ResolveType`) so a method on a constructed generic .NET type (`Collection<int>`) resolves.
@@ -2497,7 +2514,22 @@ sealed partial class Emitter
                 catch (ArgumentException) { mi = null; }
             // Fall back to name + arity — e.g. a generic-parameter arg type (`Add(T)` on `Collection<int>`) that
             // doesn't name a plain .NET type; on the constructed type GetMethods returns the substituted overload.
-            mi ??= type.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argSpecs.Count);
+            // When SEVERAL overloads share the arity (StringBuilder.Append has ~19 one-arg overloads) an arbitrary
+            // FirstOrDefault can pick a param the arg is NOT assignable to — e.g. a non-String `<>dotkt_CharSequence`
+            // into `Append(String)` reinterprets the object as a string -> memory corruption. So, when the arg types
+            // resolved, keep only overloads whose every param ACCEPTS the resolved arg (is assignable-from it), then
+            // prefer the MOST-SPECIFIC (fewest `object` params): a real String still binds `Append(String)`, while a
+            // synthetic/emitted ref (a `<>dotkt_CharSequence` adapter) binds `Append(object)` which ToStrings it.
+            if (mi == null)
+            {
+                var cand = type.GetMethods(flags).Where(m => m.Name == name && m.GetParameters().Length == argSpecs.Count).ToList();
+                if (cand.Count > 1)
+                {
+                    var ok = cand.Where(m => m.GetParameters().Select(p => p.ParameterType).Zip(resolved, ParamAcceptsArg).All(b => b)).ToList();
+                    if (ok.Count > 0) cand = ok.OrderBy(m => m.GetParameters().Count(p => p.ParameterType == typeof(object))).ToList();
+                }
+                mi = cand.FirstOrDefault();
+            }
         }
         catch (NotSupportedException) { }
         // A constructed generic type whose arg is an emitted generic parameter (TypeBuilderInstantiation) refuses
