@@ -179,6 +179,14 @@ sealed class Pipeline
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
             // hardcoded primitives) wherever it appears as a type token.
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases);
+            // Non-generic `System.IComparable` bridge (non-ref builds): a Kotlin `class C : Comparable<C>` lowers to
+            // `C : System.IComparable<C>` ONLY, but the CLR dispatch spine for natural ordering goes through the
+            // NON-generic `System.IComparable` (compareValues' `as IComparable` + ilemit's constrained-compareTo
+            // value-type-safe fallback — boxed primitives implement IComparable but not a reified IComparable<object>).
+            // Every comparable BCL type (Int32/String/DateTime) implements BOTH; a user Kotlin type must too, or a
+            // stdlib body sorting it hits EntryPointNotFound/InvalidCast on `IComparable.CompareTo(object)`. Add the
+            // missing interface + a `CompareTo(object)` bridge that casts and forwards to the generic CompareTo.
+            if (!_options.RefBuild) ComparableBridgeSynthesis.Apply(lowered);
             // REFERENCE build only: squash every declaration body to `throw NotImplementedException()` so the ref
             // assembly is metadata-only. Keeps ALL metadata (signatures/types/supertypes/generics/attrs) intact —
             // only the body STATEMENTS change. This is what makes it safe for a bare-value kotlin.* primitive kept
@@ -498,6 +506,14 @@ sealed class ReferenceMetadataIndex
     // pow -> Math vs MathF). For such names the name-only fallback is UNSAFE (it would pick an arbitrary overload), so
     // the caller must require an exact signature match; single-static names still fall back by name.
     public bool IsAmbiguousTopLevelIntrinsic(string funName) => _ambiguousTopLevelIntrinsics.Contains(funName);
+
+    // Whether the ref.dll ALSO has a NON-intrinsic (real-Kotlin-body) top-level fun of this name. Such a name is
+    // unsafe for the NAME-ONLY intrinsic fallback even when every intrinsic overload agrees on one BCL static:
+    // `sort` binds all 8 primitive-array overloads to "System.Array.Sort" (so it is NOT "ambiguous"), but
+    // `MutableList<T>.sort()` / `Array<out T>.sort()` are real bodies — the name fallback rewrote the real-bodied
+    // call inside the compiled `sorted()` to an open-generic `Array.Sort` ("not fully instantiated" at runtime).
+    // With a real-bodied sibling present, only the sig-EXACT intrinsic match may substitute.
+    public bool HasNonIntrinsicTopLevel(string funName) => _topLevelStatics.ContainsKey(funName);
 
     // The 0-based parameter positions a top-level @ClrIntrinsic fun's bound BCL static takes BY REFERENCE
     // (@ClrRefArgument). Empty when none — the substituted call then wraps no argTypes.
@@ -3014,6 +3030,89 @@ static class StringCharSequenceBridge
     }
 }
 
+// Non-generic `System.IComparable` bridge. A Kotlin `class C : Comparable<C>` lowers (via the stdlib's
+// `@ClrTypeAlias("System.IComparable")` on `kotlin.Comparable`) to `C : System.IComparable<C>` — the GENERIC
+// interface only. But the CLR-side natural-ordering dispatch spine is the NON-generic `System.IComparable`:
+// the stdlib's `compareValues` casts `a as IComparable` and ilemit's constrained-compareTo emits the value-type-safe
+// `IComparable.CompareTo(object)` fallback (a boxed primitive implements IComparable but NOT a reified
+// `IComparable<object>`). Every comparable BCL type (Int32/String/DateTime/...) therefore implements BOTH faces;
+// a user Kotlin type that implements only the generic face hits `EntryPointNotFoundException` (SAM-shim
+// `a.compareTo(b)` inside the rt's `sortWith`) or `InvalidCastException` (`compareValues`) the moment a compiled
+// stdlib body sorts it. Mirror the BCL convention: for every emitted CLASS whose lowered interfaces include
+// `clrg:System.IComparable[X]`, add `clr:System.IComparable` + a `CompareTo(object)` bridge that casts the arg
+// to X and forwards to the generic CompareTo. Non-ref builds only (the ref surface stays pure Kotlin).
+static class ComparableBridgeSynthesis
+{
+    const string GenericIface = "clrg:System.IComparable[";
+
+    public static void Apply(JsonNode root)
+    {
+        if (root is not JsonObject o || o["types"] is not JsonArray types) return;
+        foreach (var t in types)
+        {
+            if (t is not JsonObject to) continue;
+            if ((to["kind"] as JsonValue)?.GetValue<string>() != "class") continue;   // interfaces carry no bodies
+            if (to["interfaces"] is not JsonArray ifaces) continue;
+            string selfArg = null; var hasNonGeneric = false;
+            foreach (var i in ifaces)
+            {
+                if (i is not JsonValue v || !v.TryGetValue<string>(out var s)) continue;
+                if (s is "clr:System.IComparable" or "System.IComparable") hasNonGeneric = true;
+                else if (s.StartsWith(GenericIface, StringComparison.Ordinal) && s.EndsWith("]", StringComparison.Ordinal))
+                    selfArg = s[GenericIface.Length..^1];
+            }
+            if (selfArg == null || hasNonGeneric || selfArg.Contains(',')) continue;   // 1-arg IComparable<X> only
+            if (to["methods"] is not JsonArray methods) { methods = new JsonArray(); to["methods"] = methods; }
+            // Idempotence: skip when a 1-arg CompareTo(object) is already declared (user-written or a prior pass).
+            var exists = methods.OfType<JsonObject>().Any(m =>
+                (m["name"] as JsonValue)?.GetValue<string>() == "CompareTo"
+                && m["params"] is JsonArray ps && ps.Count == 1
+                && ((ps[0] as JsonObject)?["type"] as JsonValue)?.GetValue<string>() is "object" or "kotlin.Any");
+            if (exists) continue;
+            var owner = (to["name"] as JsonValue)?.GetValue<string>();
+            if (string.IsNullOrEmpty(owner)) continue;
+            // Forward target: the generic-face method as DECLARED on this type (normally renamed `CompareTo` by
+            // DeclarationRename; tolerate an un-renamed `compareTo`). Virtual dispatch covers a base-declared slot.
+            var target = methods.OfType<JsonObject>().FirstOrDefault(m =>
+                (m["name"] as JsonValue)?.GetValue<string>() is "CompareTo" or "compareTo"
+                && m["params"] is JsonArray ps1 && ps1.Count == 1);
+            var targetName = target != null ? (target["name"] as JsonValue)?.GetValue<string>() : "CompareTo";
+            ifaces.Add("clr:System.IComparable");
+            methods.Add(new JsonObject
+            {
+                ["name"] = "CompareTo",
+                ["static"] = false,
+                ["override"] = false,
+                ["virtual"] = true,
+                ["abstract"] = false,
+                ["objectOverride"] = false,
+                ["vis"] = "public",
+                ["params"] = new JsonArray(new JsonObject { ["name"] = "obj", ["type"] = "object" }),
+                ["ret"] = "int",
+                ["body"] = new JsonArray(new JsonObject
+                {
+                    ["k"] = "return",
+                    ["value"] = new JsonObject
+                    {
+                        ["k"] = "callInstance",
+                        ["ownerType"] = owner,
+                        ["virtual"] = true,
+                        ["recv"] = new JsonObject { ["k"] = "this" },
+                        ["method"] = targetName,
+                        ["sig"] = selfArg,
+                        ["args"] = new JsonArray(new JsonObject
+                        {
+                            ["k"] = "cast",
+                            ["type"] = selfArg,
+                            ["e"] = new JsonObject { ["k"] = "local", ["name"] = "obj" },
+                        }),
+                    },
+                }),
+            });
+        }
+    }
+}
+
 // Erase a nullable generic-parameter return (`fun <T> …(): T?`, kotc-lowered to `ret=gp:X` + `retNullable=true`)
 // to a `System.Object` return — the only CLR representation of a generic `T?` that can carry a real null for a
 // VALUE-type instantiation. The method body's `ldnull` (null case) then stays a genuine null; value returns are
@@ -3472,10 +3571,14 @@ static class MemberCallSubstitution
             // A top-level @ClrIntrinsic bound to a FQ BCL static. Resolve the EXACT overload by the call's full
             // ParamKey signature first (sqrt/abs/pow -> System.Math.* for Double/Int/Long but System.MathF.* for
             // Float; a non-intrinsic sibling like Double.pow(Int) MISSES here). Fall back to the name-only map only for
-            // UNAMBIGUOUS names (isNaN, clrTimestamp) — never for a name whose overloads split across Math/MathF.
+            // UNAMBIGUOUS names (isNaN, clrTimestamp) — never for a name whose overloads split across Math/MathF,
+            // and never for a name that ALSO has a real-bodied (non-intrinsic) top-level overload: `sort`'s 8
+            // primitive-array intrinsics all agree on "System.Array.Sort" (not "ambiguous"), yet the name fallback
+            // captured the real-bodied `MutableList<T>.sort()` call inside the compiled `sorted()` body.
             var sigKey0 = string.Join(",", sigParts0.Select(ReferenceMetadataIndex.ParamKey));
             if ((refs.TryTopLevelIntrinsicBySig(fn, sigKey0, out var fq)
-                    || (!refs.IsAmbiguousTopLevelIntrinsic(fn) && refs.TryTopLevelIntrinsic(fn, out fq)))
+                    || (!refs.IsAmbiguousTopLevelIntrinsic(fn) && !refs.HasNonIntrinsicTopLevel(fn)
+                        && refs.TryTopLevelIntrinsic(fn, out fq)))
                 && fq.LastIndexOf('.') is var dot && dot > 0)
                 return ClrCallNode(node, fq[..dot], fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false, refs.TopLevelByrefPositions(fn));
             // bare-intrinsic extension: resolve by name + the first-arg's receiver key + full param count (disambiguates

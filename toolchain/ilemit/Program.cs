@@ -463,8 +463,27 @@ sealed partial class Emitter
                         try { ifaceMs = itype.GetMethods(); reanchor = false; }
                         catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
                         foreach (var im in ifaceMs)
-                            if (im.Name != "GetEnumerator" && have.Contains(im.Name))   // GetEnumerator: handled by the reverse bridge above
-                                ti.TB.DefineMethodOverride(ti.Methods[im.Name], reanchor ? TypeBuilder.GetMethod(itype, im) : im);
+                        {
+                            if (im.Name == "GetEnumerator" || !have.Contains(im.Name)) continue;   // GetEnumerator: handled by the reverse bridge above
+                            // OVERLOADED body methods (e.g. the generic CompareTo(V) + the non-generic IComparable bridge
+                            // CompareTo(object)) collide in the name-keyed ti.Methods — wiring the wrong one to the slot
+                            // is a TypeLoad "signature ... do not match". Disambiguate by the interface method's
+                            // (instantiation-substituted) parameter types against each overload's recorded params.
+                            var body = ti.Methods[im.Name];
+                            var cands = ti.MethodsBySig.Values.Where(b => b.Name == im.Name).Distinct().ToList();
+                            if (cands.Count > 1)
+                            {
+                                var ips = im.GetParameters().Select(p => reanchor
+                                    ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
+                                    : p.ParameterType).ToArray();
+                                var match = cands.FirstOrDefault(b => _mparams.TryGetValue(b, out var bps)
+                                    && bps.Length == ips.Length
+                                    && bps.Zip(ips, SlotParamMatches).All(x => x));
+                                if (match == null) continue;   // no exact overload -> skip rather than mis-wire
+                                body = match;
+                            }
+                            ti.TB.DefineMethodOverride(body, reanchor ? TypeBuilder.GetMethod(itype, im) : im);
+                        }
                         continue;
                     }
                     var (open, constructed) = ParseOwner(spec);
@@ -1420,6 +1439,15 @@ sealed partial class Emitter
         var args = t.GetGenericArguments().Select(a => SubstituteIfaceArgs(a, typeArgs)).ToArray();
         return t.GetGenericTypeDefinition().MakeGenericType(args);
     }
+
+    // Overload disambiguation for interface-slot wiring: does a body method's declared param type satisfy the
+    // interface method's (substituted) param type? Reference/Type equality first; builders vs runtime
+    // instantiations of the same shape compare by name (TypeBuilderInstantiation instances are not reference-equal
+    // even for identical shapes). Deliberately shallow — the caller only disambiguates same-name OVERLOADS, whose
+    // param lists differ at the top level (CompareTo(Ver) vs CompareTo(object)).
+    static bool SlotParamMatches(Type body, Type iface) =>
+        ReferenceEquals(body, iface) || body == iface
+        || (body.Name == iface.Name && (body.Namespace ?? "") == (iface.Namespace ?? ""));
 
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
     // `retType`/`paramTypes` give the SUBSTITUTED (concrete) signature, since the instantiation's own reflection
