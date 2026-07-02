@@ -79,7 +79,7 @@ sample always yields exactly one PASS/FAIL line.) The script itself encodes this
 eyeballing needed. `dotkt.sh` is the fast dev wrapper over the same pipeline (`-h` for options: `--exe`,
 `--no-stdlib`, `--retarget`, `--ref <dll>`).
 
-**Building the CLR stdlib** — the real pure-Kotlin stdlib under `runtime/stdlib/`. **These THREE
+**Building the CLR stdlib** — the real pure-Kotlin stdlib under `libraries/stdlib/`. **These THREE
 scripts are the current, canonical build** (other stdlib scripts are STALE — see the warning):
 
 - `./scripts/build-stdlib-ref.sh --emit` — the **reference** assembly (`DotKt.Private.Stdlib.dll`;
@@ -90,7 +90,7 @@ scripts are the current, canonical build** (other stdlib scripts are STALE — s
   leak. It generates all 8 `.kotlin_builtins` **from our own sources** via `-Xoutput-builtins-metadata`
   (the old `jar uf` injection of a JVM kotlin-stdlib's `.kotlin_builtins` is GONE — it dragged JVM
   semantics into the frontend). The `kotlin.coroutines` package-fragment marker
-  `runtime/stdlib/clr/builtins/Coroutines.kt` is what keeps that flag from crashing ("builtins must
+  `libraries/stdlib/clr/builtins/Coroutines.kt` is what keeps that flag from crashing ("builtins must
   span ALL builtin pkgs"). Backs up nothing — it `rm -rf`s its output dir, so back up the working jar first.
 - `--emit` makes the first two actually run `ilemit` (without it: frontend + BIR only, for fast triage).
 - Why the split: the **ref/runtime split** — `docs/design-clr-stdlib-ref-runtime-split.md`,
@@ -175,12 +175,12 @@ taxonomy is archived at `docs/archive/bir2cir-migration-inventory.md`.)
 
 # The cardinal rule: do NOT special-case the compiler
 
-There is now a real CLR stdlib (`runtime/stdlib/`). The whole point of compiling it is to **retire**
+There is now a real CLR stdlib (`libraries/stdlib/`). The whole point of compiling it is to **retire**
 the compiler's hand-written stdlib lowerings — so:
 
 - **NEVER** add compiler special-casing (denylist / type-map / `ilemit` stub) to force a stdlib
   function to work. The fix is **always stdlib-side**: emit the real type, or add an `actual`/stub in
-  `runtime/stdlib/clr/`. (MEMORY `stdlib-compile-retires-lowerings-never-adds`.)
+  `libraries/stdlib/clr/`. (MEMORY `stdlib-compile-retires-lowerings-never-adds`.)
 - **Prefer `@ClrIntrinsic` bindings over compiler lowerings.** Bind named BCL methods
   (`String.format` → `System.String.Format`) as `@ClrIntrinsic` metadata in the stdlib. Only genuine
   primitive IL ops stay compiler-lowered. (MEMORY `intrinsic-over-compiler-lowering`,

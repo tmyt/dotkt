@@ -101,7 +101,7 @@ dotnet "$FACADEGEN_DLL" --meta "$OBSCOLLMETA" System.Collections.ObjectModel.Obs
 GMMETA="$ROOT/build/gm.meta"
 dotnet "$FACADEGEN_DLL" --meta "$GMMETA" System.Runtime.CompilerServices.Unsafe System.Runtime.CompilerServices.RuntimeHelpers System.Collections.ObjectModel.Collection >/dev/null 2>&1
 
-# CLR stdlib (the canonical build under runtime/stdlib/): the RUNTIME assembly is --ref'd into every
+# CLR stdlib (the canonical build under libraries/stdlib/): the RUNTIME assembly is --ref'd into every
 # emitted case so a stdlib op resolves to its real Kotlin body (and copied next to each output for the
 # run phase); the REFERENCE assembly is bir2cir's @Clr-metadata input. Build if missing, reuse if present.
 need_stdlib_ref; need_stdlib_rt

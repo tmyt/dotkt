@@ -5,7 +5,7 @@
 > was a ~3.8× stale over-count). This doc survives as the **reference for the binding model (the three rules) and
 > the per-area binding decisions**; its counts/worklists are historical.
 
-Status: **verification (2026-06-30, 6 parallel sub-agent audits)**. Scope: all **490** `TODO("clr binding")` / `TODO("@Clr…")` stubs across **47** files under `runtime/stdlib/clr/`. This document is the verification result before the implementation pass; it records, for every stub, how it must be bound.
+Status: **verification (2026-06-30, 6 parallel sub-agent audits)**. Scope: all **490** `TODO("clr binding")` / `TODO("@Clr…")` stubs across **47** files under `libraries/stdlib/clr/`. This document is the verification result before the implementation pass; it records, for every stub, how it must be bound.
 
 ## Binding model (the three rules)
 

@@ -4,7 +4,7 @@
 # ACTIVE, so @Clr-bound TYPES resolve to the BCL and are NOT emitted (no clash with the ref's pure-Kotlin
 # shapes) while the stdlib FUNCTIONS (listOf/map/filter/asList) are emitted with substituted signatures.
 # bir2cir reads the REFERENCE assembly (build-stdlib-ref.sh — must exist first) for the @ClrTypeAlias/
-# @ClrIntrinsic call-substitution labels. Inputs: runtime/stdlib sources + kotc + bir2cir/ilemit dlls +
+# @ClrIntrinsic call-substitution labels. Inputs: libraries/stdlib sources + kotc + bir2cir/ilemit dlls +
 # the ref dll. Outputs: build/clr-stdlib-rt/{bir,cir,dll} + *.err logs.
 # See docs/design-clr-stdlib-ref-runtime-split.md "Runtime-build architecture".
 source "$(dirname "$0")/lib.sh"

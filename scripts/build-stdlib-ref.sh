@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build the stdlib REFERENCE assembly (DotKt.Private.Stdlib.dll): compile the real pure-Kotlin stdlib
-# (runtime/stdlib/{common,src,unsigned}/src + the clr/ actuals) in ref mode (DOTKT_STDLIB_COMPILE=1, no
+# (libraries/stdlib/{common,src,unsigned}/src + the clr/ actuals) in ref mode (DOTKT_STDLIB_COMPILE=1, no
 # SUBSTITUTE — @Clr stays metadata) to BIR, then with --emit bir2cir -> ilemit -> retarget. The ref is
 # compile-time only (bir2cir's --ref, sourcing the @ClrTypeAlias/@ClrIntrinsic labels), never loaded at
 # runtime — fully substituted away at app-emit; the shipping RUNTIME assembly is DotKt.Stdlib.dll
 # (build-stdlib-rt.sh). The 'Private' name marks it as an internal reference face, not an external
-# artifact. Inputs: runtime/stdlib sources + kotc + the bir2cir/ilemit/retarget dlls. Outputs:
+# artifact. Inputs: libraries/stdlib sources + kotc + the bir2cir/ilemit/retarget dlls. Outputs:
 # build/clr-stdlib/{bir,cir,dll} + *.err logs. NOTE: the pure-Kotlin stdlib is SELF-CONTAINED — it must
 # NOT reference DotKt.Runtime (retired), so the kotc step takes no --ref on purpose.
 source "$(dirname "$0")/lib.sh"

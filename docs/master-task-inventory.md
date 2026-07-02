@@ -141,7 +141,7 @@ is largely STALE** — a code-grounded currency check found:
       machinery. Per the deferred-coroutine directive, untouched → bundle 6.
 
   > ### RETIRE-PATTERN RECIPE (hand this to each follow-up family: String/Convert/Char/Regex/Console/compareTo/…)
-  > 1. **Precondition — confirm the binding exists stdlib-side.** grep `runtime/stdlib` for the target funs; each
+  > 1. **Precondition — confirm the binding exists stdlib-side.** grep `libraries/stdlib` for the target funs; each
   >    must carry `@kotlin.clr.ClrIntrinsic("System.X.Y")` (member) or an FQ top-level binding. If MISSING, ADD the
   >    binding stdlib-side (nested repo commit) — NEVER keep the kotc lowering. The bindings do nothing until bir2cir
   >    consumes them from the ref.dll.
@@ -321,7 +321,7 @@ Sources: `ship-tasks.md #4`, `archive/future-work-interop.md #4`, `archive/dotkt
 > synthetic *duplication* pattern.
 
 **① Mechanism (code-grounded).** Kotlin `String : CharSequence`. On CLR `kotlin.String` is `@ClrTypeAlias("System.String")`
-(`runtime/stdlib/clr/builtins/String.kt:22`) — a **sealed** BCL type; its CharSequence surface is bound in place via
+(`libraries/stdlib/clr/builtins/String.kt:22`) — a **sealed** BCL type; its CharSequence surface is bound in place via
 `@ClrIntrinsic("Length")` on `length` and `@ClrIntrinsic("get_Chars")` on `get(i)` (`String.kt:33/42`). But
 `kotlin.CharSequence` has **no faithful BCL equivalent**, so kotc *synthesizes a monomorphic interface*
 `<>dotkt_CharSequence` with `get_length()`/`get(int):char`/`subSequence(int,int)` (`BirEmitter.kt:357-369`
@@ -338,7 +338,7 @@ receiver.
 args are `System.String` constants (`scratchpad/str-cir/app.cir.json:144`) → the static-call boundary passes a
 `System.String` where `<>dotkt_CharSequence` is required → **InvalidProgramException / EntryPointNotFound**. `trim()` is
 the same class *plus* an explicit cast: the stdlib `String.trim()` body is `(this as CharSequence).trim().toString()`
-(`runtime/stdlib/src/kotlin/text/Strings.kt:181`) → `castclass <>dotkt_CharSequence` on a sealed `System.String` →
+(`libraries/stdlib/src/kotlin/text/Strings.kt:181`) → `castclass <>dotkt_CharSequence` on a sealed `System.String` →
 InvalidCast; the target `CharSequence.trim(predicate)` body reads `length`, indexes `this[i]`, calls `subSequence`
 (`Strings.kt:77`) against the synthetic. bir2cir has **no** rule for CharSequence — it only lowers `@ClrTypeAlias` owners
 from the ref.dll (`bir2cir/Program.cs:2060/2101`), and CharSequence has none, so the synthetic survives to ilemit. This
@@ -745,7 +745,7 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
 
 ## 【5】 exception map → `@ClrTypeAlias`  *(#2)* — ✅ DONE (verified 2026-07-02; was already complete)
 - `BirMappings.NET_EXCEPTIONS` DELETED (kotc `5907510`); the 11 stdlib exception classes carry `@ClrTypeAlias` (stdlib
-  `c119dd8`, `runtime/stdlib/clr/builtins/Throwable.kt`) with 11/11 parity to the retired map; bir2cir substitutes them
+  `c119dd8`, `libraries/stdlib/clr/builtins/Throwable.kt`) with 11/11 parity to the retired map; bir2cir substitutes them
   to `System.*` (verified via metadata: the 11 classes are absent from the rt.dll TypeDefs, present only as TypeRefs).
   Samples throwx/reqnn/customexc/il-exc PASS. (`tryexpr`'s last-line crash is the unrelated `sum`-over-lazy-`map`
   collection bug in 【4】, NOT exceptions.) The `clr.Clr` sample quarantine #2 also listed is DONE (26 deleted + 3

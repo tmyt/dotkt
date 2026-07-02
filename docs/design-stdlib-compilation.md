@@ -1,6 +1,6 @@
 # Compiling the real Kotlin standard library for the CLR (Path B)
 
-> **STATUS UPDATE (2026-07-03): the roadmap below was EXECUTED** — the real CLR stdlib exists (`runtime/stdlib/`),
+> **STATUS UPDATE (2026-07-03): the roadmap below was EXECUTED** — the real CLR stdlib exists (`libraries/stdlib/`),
 > is ~93.5% bound-or-implemented, and the compiler's stdlib lowerings are retired (bundles 1–2,
 > `master-task-inventory.md`). **One approach herein is superseded:** the `actual typealias X = java.util.X`
 > (TypeAliasesJVM-mimicking) idea — the shipped mechanism is `@ClrTypeAlias`/`@ClrIntrinsic` metadata consumed by
@@ -19,7 +19,7 @@ compiler's filter-lowerings, not add more).
 
 1. **Assemble the CLR stub `actual`s, in Kotlin, inside the stdlib.** Every platform `expect` and every JVM/runtime type
    the common stdlib source references (`Random`, `Grouping`, `StringBuilder`, ranges, the array/collection helpers) gets
-   a Kotlin declaration in the CLR source set (`runtime/stdlib/clr/`) — a stub body (`= TODO()`) is fine at this step.
+   a Kotlin declaration in the CLR source set (`libraries/stdlib/clr/`) — a stub body (`= TODO()`) is fine at this step.
    This makes the library syntactically whole so it compiles + emits.
 2. **Fill in the annotations that lower each stub `actual` to its CLR type.** Annotate the stubs (`@ClrIntrinsic("System.Text.StringBuilder")`,
    …) so the compiler's EXISTING @ClrIntrinsic/injection lowering turns them into the BCL type/call. This is purely stdlib-side
@@ -39,7 +39,7 @@ thing the stdlib is meant to eliminate.
 The design owner (2026-06-25) drew the line: "最終的に一部の java.* package みたいなやつはコンパイラ側で固定の lowering を
 持たないといけない気がするけど、それは stdlib とはまた違うレイヤーの話".
 
-- **Stdlib layer (Kotlin, in `runtime/stdlib/clr/`):** the `kotlin.*` expect classes get a CLR `actual` — and the
+- **Stdlib layer (Kotlin, in `libraries/stdlib/clr/`):** the `kotlin.*` expect classes get a CLR `actual` — and the
   idiomatic form is exactly JVM's: an **`actual typealias`** to the underlying platform type, e.g.
   `actual typealias HashSet<E> = java.util.HashSet<E>` (mirrors `TypeAliasesJVM.kt`). `kotlin.*` behaviour types with no
   platform analogue (`Grouping`) are just their real common source, emitted.
@@ -78,7 +78,7 @@ open-ended slog.
 
 ## Evidence: the error funnel
 
-Naively building `runtime/stdlib/stdlib.ktproj` produced ~4002 errors. They triage almost entirely to configuration:
+Naively building `libraries/stdlib/stdlib.ktproj` produced ~4002 errors. They triage almost entirely to configuration:
 
 | step | errors | what it was |
 |---|---|---|
@@ -107,7 +107,7 @@ The residual ~280 (with the jar) / ~1283 (standalone) break down as:
 - **`<DotKtKotcOptions>`** — a project may pass raw kotc flags through the shared pipeline
   (`packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets`, appended to the compile command). `stdlib.ktproj` uses it
   for the bootstrap flags above. Verified: it collapses the config-noise band to zero.
-- **`runtime/stdlib/stdlib.ktproj`** builds with the **in-repo toolchain** (`Sdk="Microsoft.NET.Sdk"` +
+- **`libraries/stdlib/stdlib.ktproj`** builds with the **in-repo toolchain** (`Sdk="Microsoft.NET.Sdk"` +
   `<Import ../../cases/KotlinClr.targets>`), not a published `DotKt.Sdk` package — the stdlib is a first-party repo
   component; using the published SDK would be circular and fight the NuGet same-version cache. It sets
   `<KotlinClrRuntimeRef>false</KotlinClrRuntimeRef>` (the stdlib is more fundamental than DotKt.Runtime).
@@ -200,7 +200,7 @@ The vendored `src` declares **65 `expect`s**. Classified:
      `ReadObjectParameterType`, `ValueTimeMarkReading`.
 
 Each actual is `@ClrIntrinsic("<BCL type>") actual <class|fun interface> X { @ClrIntrinsic("<BCL member>") actual ... }` — the verified
-stub+rename mechanism. Layout: `runtime/stdlib/clr/<X>.kt` (platform fragment), `src/**` marked common via
+stub+rename mechanism. Layout: `libraries/stdlib/clr/<X>.kt` (platform fragment), `src/**` marked common via
 `-Xcommon-sources`, the build standalone (drop the `kotlin-stdlib.jar` crutch once the actuals cover the platform layer).
 
 ## Decide before the collections actuals: the iterator protocol
@@ -280,7 +280,7 @@ harnesses:
   BCL calls,
 - ilemit emits against **`DotKt.Stdlib.dll`** (the rt dll),
 
-then the `COLLECTION_OPS` removal + a regression case land. (The untracked vendored `runtime/stdlib/src` is the SOURCE we
+then the `COLLECTION_OPS` removal + a regression case land. (The untracked vendored `libraries/stdlib/src` is the SOURCE we
 copy ops from as we migrate.)
 
 Random-access ops (`first`/`last`/`getOrElse`/`get`/`indexOf`/`isEmpty`/`single`/…) are migratable now (no iteration).
@@ -289,7 +289,7 @@ Iteration ops (`map`/`filter`/`fold`/…) additionally need the `Iterable`→`IE
 
 ## Compiling the REAL generated `_Collections.kt` — the recipe (2026-06-25)
 
-The user supplied the generated stdlib source under `runtime/stdlib/common/src/generated/` (`_Collections.kt` = 3793
+The user supplied the generated stdlib source under `libraries/stdlib/common/src/generated/` (`_Collections.kt` = 3793
 lines, `_Maps.kt`, `_Sequences.kt`, …). Hand-writing the ops is OUT (guessed signatures are wrong — `reduce` is
 `<S, T : S>`, `count` has a `Collection<T>` overload, …). Compiling the real source needs its dependency closure + the
 right module flags. Established recipe (errors 119 → 15):
@@ -318,7 +318,7 @@ compiles, the BACKEND (ilemit) pass over the full `_Collections.kt` bodies is th
 ### The platform-actual layer (the remaining frontend work)
 
 Past the recipe above, `_Collections.kt` (119 → ~10) needs CLR `actual`s for the multiplatform `expect`s the common
-collection source declares. Found + written so far (`runtime/stdlib/clr/`):
+collection source declares. Found + written so far (`libraries/stdlib/clr/`):
 - factories `listOf(e)`/`setOf(e)`/`mapOf(pair)`, builders `buildList/Map/SetInternal`, `Array.asArrayList`
 - internal helpers `checkIndexOverflow`/`checkCountOverflow`/`mapCapacity`, `MutableList.reverse`
 - array bridges `collectionToArray`(×2)/`terminateCollectionToArray`/`copyToArrayOfAny`/`arrayOfNulls(ref,size)`
@@ -339,7 +339,7 @@ well-defined layer — the path to full `_Collections.kt` compilation is concret
 
 ### MILESTONE: the real `_Collections.kt` FRONTEND compiles (BIR emitted)
 
-With the platform-actual layer written (`runtime/stdlib/clr/`), the real generated `_Collections.kt` now compiles all
+With the platform-actual layer written (`libraries/stdlib/clr/`), the real generated `_Collections.kt` now compiles all
 the way through the frontend — **30 BIR files emitted, 0 frontend errors**. The full actual set:
 - `kotlin.collections` (PlatformClr.kt, PLATFORM): `listOf(e)`/`setOf(e)`/`mapOf(pair)`, builders ×2 each (with/without
   capacity), `asArrayList`, `checkIndexOverflow`/`checkCountOverflow`/`mapCapacity`, `reverse`, `collectionToArray`×2/

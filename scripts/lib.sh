@@ -56,10 +56,10 @@ need_stdlib_rt()  { [[ -f "$STDLIB_RT_DLL"  ]] || { info "building stdlib RUNTIM
 # Sets the arrays STDLIB_COMMON/STDLIB_SRC/STDLIB_UNSIGNED/STDLIB_CLR and STDLIB_COMMON_CSV.
 # Common = the multiplatform expect/impl source; Platform(CLR) = the clr/ actuals (NOT common sources).
 collect_stdlib_sources() {
-	mapfile -t STDLIB_COMMON   < <(find "$ROOT/runtime/stdlib/common/src" -name '*.kt')
-	mapfile -t STDLIB_SRC      < <(find "$ROOT/runtime/stdlib/src" -name '*.kt')
-	mapfile -t STDLIB_UNSIGNED < <(find "$ROOT/runtime/stdlib/unsigned/src" -name '*.kt')
-	mapfile -t STDLIB_CLR      < <(find "$ROOT/runtime/stdlib/clr" -name '*.kt')
+	mapfile -t STDLIB_COMMON   < <(find "$ROOT/libraries/stdlib/common/src" -name '*.kt')
+	mapfile -t STDLIB_SRC      < <(find "$ROOT/libraries/stdlib/src" -name '*.kt')
+	mapfile -t STDLIB_UNSIGNED < <(find "$ROOT/libraries/stdlib/unsigned/src" -name '*.kt')
+	mapfile -t STDLIB_CLR      < <(find "$ROOT/libraries/stdlib/clr" -name '*.kt')
 	local all=("${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}")
 	STDLIB_COMMON_CSV="$(IFS=,; echo "${all[*]}")"
 }

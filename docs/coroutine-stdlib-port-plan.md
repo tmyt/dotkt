@@ -26,7 +26,7 @@ deleted; the stdlib emits and a `suspend fun` runs as `Task<T>`.
 
 ## 1. Current state — what already exists vs. what must be ported
 
-The stdlib ALREADY defines the full Kotlin-facing `kotlin.coroutines.*` API (in `runtime/stdlib/src/kotlin/coroutines/`
+The stdlib ALREADY defines the full Kotlin-facing `kotlin.coroutines.*` API (in `libraries/stdlib/src/kotlin/coroutines/`
 + `clr/` actuals):
 - `Continuation<in T>` (`resumeWith`), `RestrictsSuspension`, `SafeContinuation` (clr actual), `ContinuationInterceptor`.
 - `createCoroutine` / `startCoroutine` / `suspendCoroutine` starters.
@@ -71,8 +71,8 @@ CoSeq          = "kotlin.sequences.Seq"                  (PORT — sequence buil
 
 - **G1 — where the ported bridge types live.** Recommend: `internal` Kotlin declarations in the stdlib `clr/` actuals,
   fqnames matching the seam consts exactly. `kotlin.coroutines.TypedCont`, `kotlin.coroutines.Builders` (new file
-  `runtime/stdlib/clr/kotlin/coroutines/CoroutineBridgeClr.kt`); `kotlin.sequences.Seq` / `ISeqStep` (new
-  `runtime/stdlib/clr/kotlin/sequences/SequenceBridgeClr.kt`). They are CLR-platform-only, so they belong in `clr/`,
+  `libraries/stdlib/clr/kotlin/coroutines/CoroutineBridgeClr.kt`); `kotlin.sequences.Seq` / `ISeqStep` (new
+  `libraries/stdlib/clr/kotlin/sequences/SequenceBridgeClr.kt`). They are CLR-platform-only, so they belong in `clr/`,
   not `common`/`src`. (Kotlin upstream keeps platform-internal coroutine impl in `kotlin.coroutines.jvm.internal`; the
   "jvm" name is wrong on CLR, so a flat internal `kotlin.coroutines` declaration is cleaner. Final names are whatever
   the seam consts say — change in ONE place.)
@@ -118,8 +118,8 @@ CoSeq          = "kotlin.sequences.Seq"                  (PORT — sequence buil
 
 - Touch: `toolchain/ilemit/Program.cs` (G3 resolution + final seam const names), `toolchain/ilemit/Emitter.Expressions.cs`
   (G2 sentinel getter).
-- Create: `runtime/stdlib/clr/kotlin/coroutines/CoroutineBridgeClr.kt` (TypedCont, Builders),
-  `runtime/stdlib/clr/kotlin/sequences/SequenceBridgeClr.kt` (Seq, ISeqStep).
+- Create: `libraries/stdlib/clr/kotlin/coroutines/CoroutineBridgeClr.kt` (TypedCont, Builders),
+  `libraries/stdlib/clr/kotlin/sequences/SequenceBridgeClr.kt` (Seq, ISeqStep).
 - Delete (phase 6): `runtime/DotKt.Runtime/Coroutines.cs`.
 
 ## 6. Risks
