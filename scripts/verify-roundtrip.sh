@@ -3,7 +3,7 @@
 # Kotlin modifiers with no .NET analog (infix / operator / suspend / top-level) survive the trip. They're
 # stamped onto the emitted IL as DotKt.Metadata attributes ([KotlinFunction]/[KotlinFileClass]) by ilemit,
 # then read back by facadegen (--meta) and restored on the synthesized FIR by ClrTypeInjection. This is
-# the basis of consuming compiled Kotlin libraries (kotlinx-*) as Kotlin. Inputs: inline heredoc samples
+# the basis of consuming compiled Kotlin libraries as Kotlin. Inputs: inline heredoc samples
 # under build/roundtrip-*. EVERY section runs to completion regardless of earlier failures — results are
 # collected, and a crashing consumer app (SIGABRT from the deliberate suspend stub) is captured, never
 # allowed to take the gate down mid-script. Verdict: exit 0 iff every failing section is RT_XFAIL-listed;
@@ -24,14 +24,14 @@ while (( $# )); do
 	esac
 done
 
-# The XFAIL baseline — MACHINE-READABLE (name -> reason). The three suspend-consuming sections crash on
-# the DELIBERATE runtime stub ("DOTKT-STDLIB stub: suspend (coroutine lowering deferred)") until the
-# coroutine lowering lands. This gate is the coroutine bundle's E2E check: when suspend works end-to-end
-# these flip to FIXED lines below — remove them from this map in the same change.
+# The XFAIL baseline — MACHINE-READABLE (name -> reason). The three suspend-consuming sections drive the
+# suspend funs via the cold-core surface `kotlin.clr.blockOn`, which is not resolvable until its frontend
+# injection is wired (cold-core P4) and the coroutine lowering lands. This gate is the coroutine bundle's
+# E2E check: when suspend works end-to-end these flip to FIXED lines below — remove them in the same change.
 declare -A RT_XFAIL=(
-	[roundtrip]="coroutine lowering deferred (bundle 6)"
-	[roundtrip-generic]="coroutine lowering deferred (bundle 6)"
-	[roundtrip-memext2]="coroutine lowering deferred (bundle 6)"
+	[roundtrip]="cold-core P4 pending: kotlin.clr.blockOn frontend injection + coroutine lowering (bundle 6)"
+	[roundtrip-generic]="cold-core P4 pending: kotlin.clr.blockOn frontend injection + coroutine lowering (bundle 6)"
+	[roundtrip-memext2]="cold-core P4 pending: kotlin.clr.blockOn frontend injection + coroutine lowering (bundle 6)"
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
@@ -73,10 +73,9 @@ run_app() {
 }
 
 # kotc resolves the stdlib (kotlin.*) from the CLR FRONTEND JAR (scripts/build-stdlib-jar.sh), REPLACING the
-# JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). kotlinx.coroutines stays a separate jar (the consumer
-# awaits suspend funs via runBlocking).
-CORO="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-1.8.0.jar' 2>/dev/null | head -1 || true)"
-CP="$FE_JAR:$CORO"
+# JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). (legacy coroutines jar dropped 2026-07-03: the
+# consumer drives suspend funs via the cold-core surface kotlin.clr.blockOn.)
+CP="$FE_JAR"
 
 # Build the toolchain once (UNCONDITIONALLY — the gate tests the current sources).
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
@@ -178,15 +177,15 @@ EOF
 
 # The Kotlin CONSUMER: uses every restored modifier with idiomatic Kotlin syntax.
 cat > "$R/app/app.kt" <<'EOF'
-import kotlinx.coroutines.runBlocking
+import kotlin.clr.blockOn
 fun main() {
     val a = Vec(1, 2)
     val b = Vec(3, 4)
     println(a dot b)                          // infix notation
     println((a + b).show())                   // operator +
     println(greet("Vec"))                     // top-level function (no qualifier)
-    println(runBlocking { addAsync(20, 22) })       // top-level suspend fun, awaited
-    println(runBlocking { a.scaleAsync(3) }.show())  // member suspend fun returning a user type, awaited
+    println(blockOn { addAsync(20, 22) })       // top-level suspend fun, awaited
+    println(blockOn { a.scaleAsync(3) }.show())  // member suspend fun returning a user type, awaited
 }
 EOF
 
@@ -306,7 +305,7 @@ fun <T> orDefault(x: T?, label: String = "none"): String =         // generic + 
 fun <T> countAll(vararg xs: T): Int = xs.size                      // generic + VARARG
 EOF
 cat > "$GG/app/app.kt" <<'EOF'
-import kotlinx.coroutines.runBlocking
+import kotlin.clr.blockOn
 fun main() {
     val a = Box(3); val b = Box(4)
     println((a + b).first)                    // 3    generic operator +
@@ -318,7 +317,7 @@ fun main() {
     println(unwrap(Box(8)))                   // 8    generic param type
     println(Box(6).twice().first)             // 6    generic extension on a generic type
     println(Box(6) * 7)                       // 7    generic extension operator
-    println(runBlocking { echoAsync("hi") })  // hi   generic top-level suspend
+    println(blockOn { echoAsync("hi") })  // hi   generic top-level suspend
     println(orDefault<String>(null))          // none generic + nullable + default omitted
     println(orDefault("set"))                 // set  default present
     println(countAll(1, 2, 3, 4))             // 4    generic vararg
@@ -435,7 +434,7 @@ open class Lib(val k: Int) {
 }
 EOF
 cat > "$MP/app/app.kt" <<'EOF'
-import kotlinx.coroutines.runBlocking
+import kotlin.clr.blockOn
 suspend fun doFetch(lib: Lib, b: Box<Int>): Int = with(lib) { b.fetch() }   // suspend member ext via with() (scope-fn CPS)
 suspend fun doHidden(lib: Lib, b: Box<Int>): Int = lib.useHidden(b)
 fun main() {
@@ -447,8 +446,8 @@ fun main() {
         println(last)             // 15
     }
     println(lib.peek(Box(2)))                       // 1002 (protected member ext property)
-    println(runBlocking { doFetch(lib, Box(5)) })   // 15   (suspend member ext consumed via with(lib){ b.fetch() })
-    println(runBlocking { doHidden(lib, Box(2)) })  // 210  (protected suspend member ext via helper)
+    println(blockOn { doFetch(lib, Box(5)) })   // 15   (suspend member ext consumed via with(lib){ b.fetch() })
+    println(blockOn { doHidden(lib, Box(2)) })  // 210  (protected suspend member ext via helper)
 }
 EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$MP/lib" -no-stdlib -classpath "$CP" -d "$MP/libbir" >/dev/null 2>&1 || true

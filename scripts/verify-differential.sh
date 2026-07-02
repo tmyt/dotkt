@@ -25,11 +25,10 @@ JAVA=/usr/lib/jvm/java-21-openjdk-amd64/bin/java
 [[ -x "$JAVA" ]] || JAVA="$(command -v java)"
 STDLIBJ="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.2.0.jar' | head -1)"
 EMB="$(find "$HOME/.gradle" -name 'kotlin-compiler-embeddable-2.2.0.jar' | head -1)"
-COR="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-*.jar' | head -1)"
 REFLECT="$(find "$HOME/.gradle/caches" -name 'kotlin-reflect-*.jar' | head -1)"
 SCRIPT="$(find "$HOME/.gradle/caches" -name 'kotlin-script-runtime-2.2.0.jar' | head -1)"
 ANNOT="$(find "$HOME/.gradle/caches" -path '*org.jetbrains/annotations*' -name 'annotations-*.jar' | head -1)"
-CCP="$EMB:$STDLIBJ:$COR:$REFLECT:$SCRIPT:$ANNOT"   # classpath to RUN the kotlin/jvm compiler
+CCP="$EMB:$STDLIBJ:$REFLECT:$SCRIPT:$ANNOT"   # classpath to RUN the kotlin/jvm compiler
 
 # E-2: the clr side runs through the SHIPPING IL backend, so this harness validates the actual shipping
 # path against real Kotlin semantics. Build the toolchain once (UNCONDITIONALLY — the gate tests current sources).

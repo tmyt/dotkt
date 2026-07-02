@@ -66,10 +66,9 @@ if (( use_stdlib )); then
 fi
 (( do_retarget )) && need_tool retarget
 
-CORO="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-*.jar' 2>/dev/null | head -1)"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 bir="$work/bir"; cir="$work/cir"; mkdir -p "$bir" "$cir" "$out_dir"
-cp="$FE_JAR"; [[ -n "$CORO" ]] && cp="$cp:$CORO"
+cp="$FE_JAR"
 
 # Reference assemblies. Mirroring verify-il, the two backend stages take DIFFERENT stdlib refs: bir2cir
 # reads the @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets

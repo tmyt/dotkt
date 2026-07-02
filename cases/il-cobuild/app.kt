@@ -1,11 +1,11 @@
-// kotlinx.coroutines on the CLR coroutine model: `delay` -> Task.Delay (a suspension point inside the existing
-// suspend-fun CPS machinery), `runBlocking { … }` drives a trivial block synchronously (GetAwaiter().GetResult()).
-// Pure BCL (System.Threading.Tasks) — no DotKt.Runtime needed for these.
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
+// kotlin.clr cold-core coroutine surface: `delay` -> a suspension point (Task.Delay) inside the
+// suspend-fun CPS machinery, `blockOn { … }` synchronously drives a suspend block to completion
+// (the cold Continuation core's boundary bridge). Pure kotlin.clr — no legacy coroutine stopgap, no DotKt.Runtime.
+import kotlin.clr.delay
+import kotlin.clr.blockOn
 
 suspend fun compute(n: Int): Int {
-    delay(1)              // kotlinx.coroutines.delay -> await Task.Delay
+    delay(1)              // kotlin.clr.delay -> await Task.Delay
     return n * n
 }
 
@@ -16,5 +16,5 @@ suspend fun total(): Int {
 }
 
 fun main() {
-    println(runBlocking { total() })   // 25
+    println(blockOn { total() })   // 25
 }
