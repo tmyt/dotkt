@@ -34,6 +34,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `EntryPointNotFoundException`, the same Map dual-rep family as verify-il's `bymap`). These 4 stdlib-bump
   regressions (incl. bymap) are stdlib-side work, NOT gate bugs — the XFAIL entries carry the full symptom
   so the owning track can pick them up.
+  *C3b (CI)* — `.github/workflows/verify.yml`: an explicit `make stdlib` step (now that `libraries/stdlib`
+  is tracked, a stdlib-build failure is attributed to its own step instead of a silenced lazy `need_*()`
+  call inside the first verify script), a `verify-widedelegates` step, and the XFAIL exit semantics
+  documented in the header — the workflow consumes the gates' exit codes directly, so it is expected GREEN;
+  a red run means a real regression, not a known gap. Locally `make verify` (all 5 gates) is exit 0.
 - **`scripts/` overhaul: one naming scheme + shared internal conventions + two harness bug fixes.**
   *Naming* — normalized to `<verb>-<noun>[-qualifier].sh`, aligned with the make target names (targets unchanged):
   `build-clr-stdlib.sh`→`build-stdlib-ref.sh`, `build-clr-stdlib-runtime.sh`→`build-stdlib-rt.sh`,

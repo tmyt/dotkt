@@ -1,7 +1,14 @@
-# CI: the three regression harnesses that lock kotlin/clr.
-#  - verify-il          : the SHIPPING IL backend (BIR -> ilemit -> CIL) over the full sample corpus + ilverify.
-#  - verify-differential: the IL path vs real kotlin/jvm semantics (the C#-independent oracle).
-#  - verify-ktproj      : MSBuild/.ktproj end-to-end integration on the IL backend (incl. bidirectional ProjectReference).
+# CI: the regression harnesses that lock kotlin/clr.
+#  - verify-il           : the SHIPPING IL backend (kotc -> bir2cir -> ilemit -> CIL) over the full sample corpus + ilverify.
+#  - verify-differential : the IL path vs real kotlin/jvm semantics (the C#-independent oracle).
+#  - verify-ktproj       : MSBuild/.ktproj end-to-end integration on the IL backend (incl. bidirectional ProjectReference).
+#  - verify-roundtrip    : consume a DotKt assembly AS KOTLIN (modifier round-trip via DotKt.Metadata attributes).
+#  - verify-widedelegates: >16-arg function types (KFunc/KAction synthesis) through the real pipeline.
+#
+# Green semantics: verify-il and verify-roundtrip carry an explicit XFAIL baseline (XFAIL_RUN /
+# XFAIL_ILVERIFY / RT_XFAIL in the scripts) — they exit 0 iff every fail is a listed, reasoned
+# expected-fail (coroutine lowering deferred to bundle 6), and exit 1 on any NEW fail name. So this
+# workflow is expected to be GREEN today; a red run means a real regression, not a known gap.
 name: verify
 
 on:
@@ -46,7 +53,14 @@ jobs:
           dotnet build toolchain/facadegen -c Release -o build/facadegen-bin --nologo
           dotnet build toolchain/retarget  -c Release -o build/retarget-bin  --nologo
 
-      # The shipping IL backend (functional + ilverify) — the primary gate.
+      # The CLR stdlib (frontend jar + ref dll + rt dll) from the tracked libraries/stdlib sources.
+      # Built explicitly so a stdlib-build failure is attributed HERE, not inside a silenced lazy
+      # need_*() call in the first verify script that happens to want it.
+      - name: Build CLR stdlib (jar + ref + rt)
+        run: make stdlib
+
+      # The shipping IL backend (functional + ilverify) — the primary gate. Exit 0 iff the fail set
+      # is within the XFAIL_RUN/XFAIL_ILVERIFY baseline declared in the script.
       - name: verify-il (IL backend + ilverify)
         run: bash scripts/verify-il.sh
 
@@ -58,6 +72,12 @@ jobs:
       - name: verify-ktproj (IL MSBuild integration)
         run: bash scripts/verify-ktproj.sh
 
-      # Consume a DotKt assembly AS KOTLIN: infix/operator/suspend/top-level restored via DotKt.Metadata attributes.
+      # Consume a DotKt assembly AS KOTLIN: infix/operator/suspend/top-level restored via DotKt.Metadata
+      # attributes. Exit 0 iff only the RT_XFAIL-listed suspend sections fail (coroutine bundle's E2E gate).
       - name: verify-roundtrip (Kotlin-modifier round-trip)
         run: bash scripts/verify-roundtrip.sh
+
+      # >16-arg function values: KFunc`N/KAction`N synthesis through the real kotc -> bir2cir -> ilemit
+      # pipeline, plus the facadegen wide-function-type restore.
+      - name: verify-widedelegates (KFunc/KAction synthesis)
+        run: bash scripts/verify-wide-delegates.sh
