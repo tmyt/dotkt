@@ -109,20 +109,30 @@ runtime.
 
 Deep dive: `docs/design-kotlin-metadata-attributes.md`.
 
-## 7. Default arguments are filled at the CALL site (constants only)
+## 7. Default arguments — a two-tier rule (native metadata, else a carried BIR expression)
 
 Kotlin's default arguments are semantically **callee-side** (the default expression is evaluated inside the function, in
-its scope) — Kotlin/JVM implements this with a synthetic `f$default(…, mask)` method. The .NET backend instead fills an
-omitted argument by **inlining the default expression at the call site** (like C#'s `[Optional]`/`[DefaultParameterValue]`,
-which it also emits, so C#/VB/F# consumers get the defaults natively). Consequences:
+its scope) — Kotlin/JVM implements this with a synthetic `f$default(…, mask)` method. kotc emits only the arguments the
+caller **actually wrote** (correct); an OMITTED argument is filled by one of two mechanisms, chosen per-parameter by a
+single test — **can the parameter's own CLR type carry its default as a `[DefaultParameterValue]` constant?**
 
-- **Constant defaults work everywhere** — including named-middle and reordered omission (`greet("C", punct = "?")`,
-  `box(1, c = 9)`, `Pt(y = 4)`): call-site inlining and caller-side evaluation agree for a constant.
-- **A non-constant default that references the callee's own parameters/receiver is rejected** at the omitting call with
-  a clean source-located error (`b: Int = a * 10`; a data class `copy`'s `x = this.x` when you write `p.copy(y = 9)`).
-  `a`/`this` aren't in scope at the call site, so it can't be inlined there — it needs callee-side evaluation, which the
-  backend doesn't do yet. Rejected at the **call** (not the declaration): a data class always *declares* `copy` with
-  `this.x` defaults, but compiles fine as long as you don't arg-omit `copy`.
+- **Tier 1 — YES (native).** A primitive/char/bool const on its primitive param, a `String` const on a `String` param,
+  or a `null` const on any reference/nullable param → the parameter is emitted `[Optional]` + `[DefaultParameterValue(const)]`.
+  ilemit's `EmitDefaultArg` fills the omitted arg from that metadata, and **C#/VB/F# consumers get the default natively**.
+  Works for named-middle and reordered omission (`greet("C", punct = "?")`, `box(1, c = 9)`, `Pt(y = 4)`).
+- **Tier 2 — NO (a carried BIR expression).** The prime cases are a `String` const on a `CharSequence`/interface-typed
+  param (a string constant cannot sit in a `[DefaultParameterValue]` on an interface type) and **any non-constant
+  default**. Such a parameter is emitted **REQUIRED** (no `[Optional]`) and its default EXPRESSION is carried as embedded
+  BIR on a `@kotlin.clr.KotlinDefault(index, birJson)` attribute (ref.dll-only, mirroring `[KotlinInline]`). A **kcc**
+  consumer reads it from the ref.dll and **splices the expression** as the omitted argument in the callee's scope
+  (`bir2cir.DefaultArgSplice`, run before the CharSequence bridge + type-lowering, so a String default is coerced/lowered
+  exactly like an explicit arg — and a default that references earlier params evaluates in the callee scope, unlike the
+  old call-site inlining). A **C#** consumer sees a required parameter and passes it explicitly (accepted: a Tier-2
+  default is not natively omittable from C#). A function with ≥1 Tier-2 parameter carries `@KotlinDefault` on ALL its
+  defaulted parameters, so an omitted trailing run that interleaves Tier-1 and Tier-2 params splices contiguously from
+  one source. Example — `Iterable.joinToString`: `limit: Int = -1` is Tier 1; `separator`/`prefix`/`postfix`/`truncated`
+  (`CharSequence = "…"`) and `transform (…)? = null` are Tier 2, so `list.joinToString("-")` fills the omitted CharSequence
+  defaults by splice (kcc) or requires them (C#).
 
 ## 8. Reverse / cross-assembly interop
 
