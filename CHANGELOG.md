@@ -21,6 +21,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   ops (`trim`/`reversed`/`padStart`/`replace(S,S)`/`isBlank`).
 
 ### Fixed
+- **`StringBuilder` → `Appendable` dual-rep: `joinToString`/`joinTo` now run (bundle 4-C RC1 blocker (1)).** `Appendable`
+  is a JVM-shaped abstraction with no distinct .NET representation — the only CLR appendable char sink is
+  `System.Text.StringBuilder` (its sole CLR implementer) — so, mirroring the `CharSequence`→`System.String` collapse,
+  it is now `@ClrTypeAlias("System.Text.StringBuilder")` (stdlib). bir2cir lowers every `Appendable` token from the
+  ref.dll, so the generic bound `A : Appendable` on `joinTo` becomes the satisfiable `A : System.Text.StringBuilder`
+  (was: `VerificationException` "type argument System.Text.StringBuilder violates the constraint of A"). Three supporting
+  codegen fixes make the joinTo/appendElement body run: (a) **ilemit** — the name+arity overload FALLBACK could pick a
+  BCL overload the arg is NOT assignable to (a `<>dotkt_CharSequence` into `StringBuilder.Append(String)` reinterpreted
+  the object as a string → memory corruption "Destination is too short"); it now keeps only overloads whose params
+  ACCEPT the resolved arg, preferring the most-specific — a real `String` binds `Append(String)`, a synthetic ref binds
+  `Append(object)` (which ToStrings it); (b) **ilemit** — `x is T` / `x as? T` on a value-type / generic-param receiver
+  emitted `isinst` on an UNBOXED value → NRE; it now boxes a value-type/gp receiver first (as C# does for `element is X`
+  on a generic `T`), exposed by `appendElement`'s `element is CharSequence?`/`element is Char`; (c) **bir2cir** — the
+  `<>dotkt_StringCharSequence` adapter gained a `ToString()` override returning its backing string, so
+  `Append(object).ToString()` materializes the real content. Greens `il-mapfilter`/`il-coll2`/`il-mutcoll`/`il-arrops`;
+  unblocks `il-collrealkt` up to `Map.get` (the separate Map/MutableMap dual-rep track).
 - **Cross-module default arguments via a 2-tier rule (bundle 4-C RC1).** kotc emits only the args a caller wrote
   (correct); the frontend jar drops a callee's default VALUES (`IrErrorExpression`), so an OMITTED cross-module default
   is filled by one of two per-parameter mechanisms, chosen by "can the param's own CLR type carry the default as a

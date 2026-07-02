@@ -382,12 +382,45 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
   `listOf(1,2,3).joinToString("-")` now fills all 7 args and dispatches `joinToString` correctly (the stack-underflow /
   `InvalidProgramException` is GONE); gate-neutral spot-check (charseq/charseqx/str/arr/exc/cp/coll3/enum unaffected).
   **⛔ REMAINING SAMPLE BLOCKERS (separate, pre-existing, NOT default-args — RC1 exposed them):**
-  (1) **`joinTo`/`Appendable`/`StringBuilder` dual-rep** — `joinToString`'s body calls `joinTo<T, A : Appendable>(StringBuilder(), …)`;
-  `StringBuilder` is `@ClrTypeAlias("System.Text.StringBuilder")` yet declares `: Appendable`, so the BCL-aliased type loses
-  the CLR interface → `VerificationException: type argument 'System.Text.StringBuilder' violates the constraint of 'A'`.
-  Fails IDENTICALLY with all args explicit → NOT a default-arg bug. Gates `bmore`/`mapfilter`/`coll2`/`chunk`/`sort`
-  (all route through `joinToString`). Fix = a StringBuilder→Appendable adapter, analogous to the CharSequence dual-rep
-  (own dual-rep track). (2) **`bymap`** — `by data` Map-delegation unsupported (kotc delegate resolution). (3) **`fmt`/`bmore`** —
+  (1) **`joinTo`/`Appendable`/`StringBuilder` dual-rep — ✅ DONE 2026-07-02 (Track A).** `joinToString`'s body calls
+  `joinTo<T, A : Appendable>(StringBuilder(), …)`; `StringBuilder` is `@ClrTypeAlias("System.Text.StringBuilder")` yet
+  declared `: Appendable`, so the BCL-aliased type lost the synthetic CLR interface →
+  `VerificationException: type argument 'System.Text.StringBuilder' violates the constraint of 'A'`. **FIX:** `Appendable`
+  is a JVM-ism with no distinct .NET rep (StringBuilder is the sole CLR appendable char sink), so — mirroring the
+  CharSequence→String collapse — `Appendable` is `@ClrTypeAlias("System.Text.StringBuilder")` + `@ClrIntrinsic("Append")`
+  on its `append(Char)`/`append(CharSequence?)` members (stdlib). bir2cir lowers every `Appendable` token from the
+  ref.dll, so the bound `A : Appendable` becomes the satisfiable `A : System.Text.StringBuilder` (a SEALED-class
+  constraint verifies fine — the option-a "sealed constraint" worry was moot). Three supporting codegen fixes (see below)
+  made the joinTo/appendElement body run. **Layer:** stdlib binding (Appendable @ClrTypeAlias) + bir2cir (adapter
+  ToString) + ilemit (overload/isinst codegen). **Greened:** `mapfilter`/`coll2`/`mutcoll`/`arrops` (verify-il PASS(run)
+  108→113, run-FAIL + ilverify-FAIL sets both unchanged = gate-neutral-or-better; ktproj 9/9). `bmore` still blocked by
+  `String.format` (blocker 3); `chunk` by `windowed`/SequenceScope-not-instantiated; `sort` by `reverseOrder`/Comparator
+  InvalidCast; `collmore` by `mapNotNull` (RC2 transform-side) — each a DISTINCT blocker, NOT joinTo. `collrealkt`
+  reaches `b,a,c` (joinToString) then hits `Map.get` (Track B). **Supporting ilemit/bir2cir fixes (general):**
+  (a) ilemit `EmitClrCall` arity-fallback is now assignability-aware (`ParamAcceptsArg`): never picks a BCL overload the
+  arg isn't assignable to (a `<>dotkt_CharSequence` → `Append(object)` not `Append(String)`; the latter reinterpreted the
+  object → "Destination is too short" corruption); (b) ilemit `isinst`/`isinstRef` now BOX a value-type/generic-param
+  receiver before `isinst` (was: NRE reading an unboxed value as a ref — `element is CharSequence?`/`element is Char` in
+  appendElement); (c) bir2cir `<>dotkt_StringCharSequence` adapter gained a `ToString()`→backing-string override.
+  <br>**Track B — Map/MutableMap → Dictionary dual-rep — ⚠️ INVESTIGATED, DEEPER THAN "same as List"; NOT landed
+  2026-07-02.** `mapOf` returns a BCL Dictionary typed as the pure-Kotlin `Map`/`MutableMap` (no `@ClrTypeAlias`) →
+  `Map.get` throws `EntryPointNotFoundException`. The List parallel BREAKS on three counts: (i) `Map.size` is declared on
+  `Map` itself (not a `Collection` base like `List.size`), and `IReadOnlyDictionary<K,V>.Count` is INHERITED from
+  `IReadOnlyCollection<KeyValuePair<K,V>>` — an ARITY-CHANGING (2→1), constructed-arg (`KeyValuePair<K,V>`) interface
+  chain that ilemit's `PropAccessor` base-interface walk skips (it only handles SHARED-arity chains); (ii) `Map.get`
+  returns `V?` (null on miss) while `IReadOnlyDictionary.get_Item` THROWS — needs a `containsKey`+raw-`get_Item` (or
+  `TryGetValue`-out) helper, plus a new 2-type-arg Rule-5 map-defaults routing in bir2cir (single-elem `CollDefaultCall`
+  is K-only); (iii) `MutableMap : Map` (Kotlin) does NOT map to `IDictionary : IReadOnlyDictionary` (BCL — neither
+  extends the other), so aliasing both breaks the supertype relation. Also `keys`/`values`/`entries` interface-typed
+  routing is unhandled, and `collops2` (the 2nd Track-B target) is ALSO blocked by an INDEPENDENT early
+  `InvalidProgramException` (partition/joinToString-in-string-template), so it would not fully green from the Map fix
+  alone. **A working prototype (Map `@ClrTypeAlias(IReadOnlyDictionary)` + `clrMapGet`/`clrMapItem` helpers + bir2cir
+  2-type-arg map-defaults) was built and REVERTED** (the ilemit inherited-arity-changing-property gap was the immediate
+  rt-build blocker; the remaining blockers made it out of scope for this pass). **To land Track B:** (1) generalize
+  ilemit `PropAccessor` (and `ResolveInheritedIfaceMethod`) to substitute an ARITY-CHANGING base-interface chain
+  (`IReadOnlyDictionary`2` → `IReadOnlyCollection`1<KeyValuePair`2>`); (2) the 2-type-arg Rule-5 map-defaults + null-safe
+  `get` helper (prototype available); (3) decide the `MutableMap`/`Map` alias so the subtyping stays coherent; (4)
+  separately fix `collops2`'s early IL bug. (2) **`bymap`** — `by data` Map-delegation unsupported (kotc delegate resolution). (3) **`fmt`/`bmore`** —
   `String.format` unresolved (the CLR frontend jar has no `String.Companion.format`; a stdlib-binding gap). — Historical
   root-cause analysis of the original stack-underflow follows:
   kotc emits the `joinToString`
