@@ -150,8 +150,9 @@ is largely STALE** — a code-grounded currency check found:
 
 ## 【3】 facadegen .NET interop breadth  *(#4 + interop-feedback)*
 Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedback.md`, `research-roadmap.md I1`.
-- **static `.Companion` routing = the `il:injstatic` bug** (an app-injected static-companion call misroutes into the
-  stdlib `<>dotkt_ClrH_` helper → unresolved method). Flagged 2026-07-02.
+- ~~static `.Companion` routing = the `il:injstatic` bug~~ — **DEPRIORITIZED (user 2026-07-02: "not our problem").**
+  Accessing a .NET static via `.Companion` is the accepted convention (MEMORY `injected-static-members-need-companion`,
+  accepted 2026-06-23); `il:injstatic` sits in that accepted-limitation space and is NOT a fix target now.
 - `op_*` operators · C#-origin extension methods · **dual-rep collision** (`import System.Text.StringBuilder` vs the
   stdlib alias).
 - **(3) generic-type members collapse to `Any?`** — inject `IList<T>`/`ICollection<T>`/`IEnumerable<T>`/`List<T>`
