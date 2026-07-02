@@ -5,6 +5,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **`scripts/` overhaul: one naming scheme + shared internal conventions + two harness bug fixes.**
+  *Naming* — normalized to `<verb>-<noun>[-qualifier].sh`, aligned with the make target names (targets unchanged):
+  `build-clr-stdlib.sh`→`build-stdlib-ref.sh`, `build-clr-stdlib-runtime.sh`→`build-stdlib-rt.sh`,
+  `build-clr-stdlib-frontend.sh`→`build-stdlib-jar.sh`, `pack-dotkt.sh`→`pack-nuget.sh`,
+  `verify-ilemit-wide-delegates.sh`→`verify-wide-delegates.sh`, `gen-clr-stdlib-actual-index.py`→
+  `gen-stdlib-actual-index.py`; `run-clr-sample.sh` DELETED (pre-dated and duplicated `dotkt.sh`/`make dev`).
+  All live references updated; `docs/archive/**` and released CHANGELOG entries intentionally keep the old names.
+  *Conventions* — new `scripts/lib.sh` sourced by every script: strict mode (`set -euo pipefail`; tolerated
+  failures are explicit `|| true`), `ROOT`, the tool/artifact paths as a single source, `info`/`warn`/`die`,
+  a `usage()`/`-h` convention, lazy `need_*()` builders vs the UNCONDITIONAL `build_tool` the verify gates use.
+  *Bug fix 1 (the rt grep-exit-1 footgun)* — `build-stdlib-rt.sh` ended with an error-grep that exited 1 exactly
+  when the build was CLEAN; both stdlib build scripts now exit 0 on success / nonzero on real failure, and the
+  compensating `|| true` in the Makefile and pack-nuget.sh is gone.
+  *Bug fix 2 (the verify-il dropped-FAIL-line / stdout race)* — a crashing sample died before printing its FAIL
+  line (`set -e` killed the parallel subshell) and concurrent output interleaved → false-pass headlines. Every
+  sample now writes ONE atomic result record (`build/verify-il/run-<name>`, guaranteed by an EXIT trap),
+  aggregated after `wait`. The 4 coroutine-deferred crashers (`chunk`/`cobuild`/`collops2`/`seq`) that used to
+  drop their lines now PRINT as FAILs; the script encodes the known-fail baseline (`KNOWN_RUN_FAIL`/
+  `KNOWN_ILVERIFY_FAIL`) and exits 0 iff there is no NEW fail name — green is machine-checked. Truthful baseline:
+  **PASS(run) 132 / run-FAIL = exactly those 4 / 6 known ilverify-formal-only names**.
+  Also un-broke `verify-wide-delegates.sh` (pre-existing: its hand-written BIR fixture still used the retired
+  `k:"console"` expr; now the current `clrStatic` form — the gate passes again).
 - **kotc: implicit companion access for injected .NET statics — `.Companion` no longer required.**
   `Application.Start(...)` / `App.Count` now resolve directly; previously only `App.Companion.Start(...)` worked
   (the old form stays supported — both forms emit byte-identical BIR). Root cause was a wiring gap, not a K2 limit:

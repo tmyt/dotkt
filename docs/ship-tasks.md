@@ -35,8 +35,9 @@
   `@ClrProperty` を消費して substitute**（本書が指摘した「kotc 側に居る」欠陥は解消 — kotc の `clrName`/`annClr`
   読み取りは削除済み）。
 - **#4 facadegen round-trip 復元** — ✅（bounds/variance/sealed/fun-interface まで拡張。`dotkt-semantics.md` §10）。
-- **#5 アプリのビルド・実行** — ✅ ゲート green（verify-il run-FAIL 0 / PASS 132、verify-ktproj 9/9、2026-07-03
-  クローズアウト）。
+- **#5 アプリのビルド・実行** — ✅ ゲート green（verify-il PASS 132、verify-ktproj 9/9、2026-07-03
+  クローズアウト。同日の scripts 整備で stdout レースを修正し再ベースライン: run-FAIL は「0」ではなく
+  coroutine-deferred の `chunk`/`cobuild`/`collops2`/`seq` がそのまま FAIL 表示される — 実態は同じ）。
 - **#6 リファクタポイント** — ✅ dll 名確定 / `clr.Clr` legacy 撤去 / `@ClrTypeAlias` 役割分離、いずれも完了。
   残る ilemit/kotc の細目は inventory 【1】②③。
 - **#7 パイプライン出荷品質** — 層分離 ✅（kotc の CLR 直下ろしは bundle 1 で退役）。`--native-cir`/`--compat-bir`

@@ -21,7 +21,10 @@ both (plus 5 more superseded docs) moved to `docs/archive/`; see 【９】.
 ## ✅ BUNDLES 1–5 CLOSED (2026-07-03)
 
 Authoritative close-out gate: **run-FAIL 0 / PASS(run) 132 / verify-ktproj 9/9** (phase arc: fail-names 36→6,
-run-FAILs 15→0, PASS 101→132, zero regressions). The accepted tail, NOT open work:
+run-FAILs 15→0, PASS 101→132, zero regressions). *Re-baselined 2026-07-03 (scripts overhaul): the gate's stdout
+race is fixed, so the 4 coroutine-deferred crashers now PRINT as FAILs — the truthful figure is PASS(run) 132 /
+run-FAIL exactly `chunk`/`cobuild`/`collops2`/`seq`; same underlying state, honestly counted (see CLAUDE.md).*
+The accepted tail, NOT open work:
 - **ilverify-formal-only (6, run-correct):** `collrealkt`/`gen3`/`iter`/`iterable` (+ `chunk`/`collops2`, also
   sequence-gated) — the IL runs correctly; ilverify's strict-verifiability complaints = documented noise.
 - **coroutine/SequenceScope-deferred (4, by design):** `chunk`/`cobuild`/`collops2`/`seq` — unblocked by the
