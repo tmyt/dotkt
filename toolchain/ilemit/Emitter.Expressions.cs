@@ -180,12 +180,12 @@ sealed partial class Emitter
                     var ext = constructed ?? ResolveType(open);
                     var ctorE = NewCtorBySig(ext, e, nargs.GetArrayLength())
                         ?? ext.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == nargs.GetArrayLength());
-                    foreach (var a in nargs.EnumerateArray()) EmitExpr(a);
+                    EmitNewArgs(e, nargs);
                     _il.Emit(OpCodes.Newobj, ctorE);
                     return ext;
                 }
                 var ctor = SelectCtor(ti, nargs.GetArrayLength());
-                foreach (var a in nargs.EnumerateArray()) EmitExpr(a);
+                EmitNewArgs(e, nargs);
                 // Constructed user generic `Box<int>` -> resolve the ctor onto the instantiation (static helper).
                 _il.Emit(OpCodes.Newobj, constructed != null ? TypeBuilder.GetConstructor(constructed, ctor) : (ConstructorInfo)ctor);
                 return constructed ?? (Type)ti.TB;
@@ -252,8 +252,11 @@ sealed partial class Emitter
                 var name = e.GetProperty("method").GetString();
                 var csig = e.TryGetProperty("sig", out var csEl) && csEl.ValueKind == JsonValueKind.String ? csEl.GetString() : null;
                 // owner present -> a static method on that named class (companion); else a file-class sibling.
-                var mb = ApplyTypeArgs((e.TryGetProperty("owner", out var ow) && ow.ValueKind == JsonValueKind.String)
-                    ? FindMethod(ow.GetString(), name, csig) : FindStatic(name, csig), e, out var srt, out var sps);
+                // A static on a GENERIC emitted class (a generic class's companion fun) must be anchored onto a
+                // constructed owner — an open-typedef parent token is invalid IL at a foreign call site.
+                var mb = ApplyTypeArgs(AnchorOpenGenericOwnerStatic(
+                    (e.TryGetProperty("owner", out var ow) && ow.ValueKind == JsonValueKind.String)
+                        ? FindMethod(ow.GetString(), name, csig) : FindStatic(name, csig)), e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps);
                 else EmitCallArgs(e.GetProperty("args"), mb);
                 _il.Emit(OpCodes.Call, mb);

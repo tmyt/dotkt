@@ -1787,13 +1787,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val enclArgs = innerEnclosingTypeParams(klass).map { "gp:" + it.name.asString() }
 		if (klass.typeParameters.isEmpty())
 			return if (enclArgs.isNotEmpty()) "$name[${enclArgs.joinToString(",")}]" else name
-		val args = (recvType as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }
 		// A type-parameter argument is emitted via its `gp:T` form (resolvable by ilemit in the enclosing generic
 		// method/class context) — NOT dropped to the raw open type, which would make `new State<T>(i)` inside a
 		// generic factory `fun <T> state(i:T): State<T>` emit a `newobj` on the open generic (invalid IL; item 13).
 		// A `Unit` TYPE-ARG can't be `void` (a generic arg of System.Void is invalid) — e.g. a `Continuation<Unit>`
 		// SUPERTYPE must be `Continuation[@kotlin.Unit]` to match `resumeWith(Result<Unit>)`, not `Continuation[void]`.
-		val all = enclArgs + (args?.map { if (it.isUnit()) (if (stdlibCompile) "@kotlin.Unit" else "kotlin.Unit") else birType(it) } ?: emptyList())
+		// A STAR projection (`Result<*>` — a star-projected extension receiver like `Result<*>.throwOnFailure`)
+		// -> `object`, mirroring birType: DROPPING it collapsed the owner to the bare OPEN generic, whose member
+		// refs (`kotlin.Result`1::get_value` with an open-typedef parent) are invalid IL at the call site.
+		val args = (recvType as? IrSimpleType)?.arguments?.map { a ->
+			val at = (a as? IrTypeProjection)?.type
+			when {
+				at == null -> "object"
+				at.isUnit() -> if (stdlibCompile) "@kotlin.Unit" else "kotlin.Unit"
+				else -> birType(at)
+			}
+		}
+		val all = enclArgs + (args ?: emptyList())
 		if (all.isEmpty()) return name
 		return "$name[${all.joinToString(",")}]"
 	}
@@ -3684,7 +3694,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			else if (prop.backingField == null)
 				"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("get_" + prop.name.asString())},"args":[]${retHint(false, call.type)}}"""
 			else """{"k":"staticField","ownerType":${str(enclosing)},"name":${str(prop.name.asString())}}"""
-			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)}${overloadSigField(callee)},"args":[${filledArgs(call).joinToString(",")}]}"""
+			// A generic companion fun (`Result.Companion.success<T>`) carries its resolved type args — without them
+			// the emitted call references the uninstantiated generic method (invalid IL on a generic enclosing class).
+			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)}${overloadSigField(callee)}${typeArgsJson(call)},"args":[${filledArgs(call).joinToString(",")}]}"""
 		}
 
 			// An INJECTED top-level EXTENSION property (`val T.p` from a DotKt assembly) -> its get_/set_<name>(__self)

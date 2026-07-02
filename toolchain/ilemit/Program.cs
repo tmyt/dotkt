@@ -1449,6 +1449,26 @@ sealed partial class Emitter
         ReferenceEquals(body, iface) || body == iface
         || (body.Name == iface.Name && (body.Namespace ?? "") == (iface.Namespace ?? ""));
 
+    // A STATIC method declared on a GENERIC emitted class (a Kotlin companion fun of a generic class —
+    // `Result<T>`'s `fun <T> success(value: T)` emitted as a static generic method on `Result`1`) resolved via a
+    // bare owner spec is an open MethodBuilder. Emitting a call with that open-typedef parent from ANOTHER class
+    // is invalid IL (`call kotlin.Result`1::success<T>` -> InvalidProgramException at JIT: a member of a generic
+    // type must be referenced through a constructed typespec). Anchor it onto a concrete instantiation — `object`
+    // for each class param: a Kotlin companion member cannot reference the enclosing class's type parameters, so
+    // every instantiation is signature-identical and `object` is canonical (Codex-confirmed: the documented
+    // TypeBuilder.GetMethod owner-form; ApplyTypeArgs' concrete-owner branch then MakeGenericMethod's the anchored
+    // method with the call's own type args). No-op for non-generic owners and non-builder methods.
+    MethodInfo AnchorOpenGenericOwnerStatic(MethodInfo m)
+    {
+        if (m is not MethodBuilder mb || !mb.IsStatic) return m;
+        if (mb.DeclaringType is not TypeBuilder tb || !tb.IsGenericTypeDefinition) return m;
+        var constructed = tb.MakeGenericType(tb.GetGenericArguments().Select(_ => (Type)typeof(object)).ToArray());
+        var anchored = TypeBuilder.GetMethod(constructed, mb);
+        // Keep the param-type record visible through the anchored identity (call-site boxing decisions).
+        if (_mparams.TryGetValue(mb, out var ps)) _mparams[anchored] = ps;
+        return anchored;
+    }
+
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
     // `retType`/`paramTypes` give the SUBSTITUTED (concrete) signature, since the instantiation's own reflection
     // still reports `!!0` (and throws pre-bake) — needed so value args to `object`/concrete params get boxed.
@@ -1548,6 +1568,20 @@ sealed partial class Emitter
     {
         int i = 0;
         foreach (var a in args.EnumerateArray()) { if (pt != null && i < pt.Length) EmitArg(a, pt[i]); else EmitExpr(a); i++; }
+    }
+
+    // Emit `new T(..)` ctor args honoring the node's declared ctor param types (`argTypes`): a value/generic-param
+    // arg flowing into an `object`/reference ctor param must be BOXED (`Result<T>..ctor(object)` receiving a bare
+    // `!!T` was InvalidProgram at a value instantiation), exactly like EmitArgsTyped does for method calls.
+    // Falls back to raw emission when the node carries no (or arity-mismatched) argTypes, or a type fails to map.
+    void EmitNewArgs(JsonElement e, JsonElement nargs)
+    {
+        Type[] want = null;
+        if (e.TryGetProperty("argTypes", out var at) && at.ValueKind == JsonValueKind.Array
+            && at.GetArrayLength() == nargs.GetArrayLength())
+            want = at.EnumerateArray().Select(x => { try { return MapType(x.GetString()); } catch { return null; } }).ToArray();
+        int i = 0;
+        foreach (var a in nargs.EnumerateArray()) { if (want?[i] != null) EmitArg(a, want[i]); else EmitExpr(a); i++; }
     }
 
     // Prefer a BIR-carried concrete result type (`retType`) over reflecting an un-baked builder's `!0`/`!!0`.
