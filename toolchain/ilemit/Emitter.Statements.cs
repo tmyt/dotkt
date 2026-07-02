@@ -23,8 +23,7 @@ sealed partial class Emitter
                     if (s.TryGetProperty("init", out var cinit) && cinit.ValueKind != JsonValueKind.Null)
                     {
                         _il.Emit(OpCodes.Ldarg_0);
-                        var cg = EmitExpr(cinit);
-                        if (cg != null && NeedsBoxToRef(cg) && !cf.FieldType.IsValueType && !cf.FieldType.IsGenericParameter) _il.Emit(OpCodes.Box, cg);
+                        EmitStoreCoerced(cinit, cf.FieldType);
                         _il.Emit(OpCodes.Stfld, cf);
                     }
                     break;
@@ -33,9 +32,9 @@ sealed partial class Emitter
                 _locals[vname] = local;
                 if (s.TryGetProperty("init", out var init) && init.ValueKind != JsonValueKind.Null)
                 {
-                    var got = EmitExpr(init);
-                    // Assigning a value type to a reference local (e.g. an `Any`/`object` temp) needs boxing.
-                    if (got != null && NeedsBoxToRef(got) && !declared.IsValueType && !declared.IsGenericParameter) _il.Emit(OpCodes.Box, got);
+                    // Boxing a value type assigned to a reference local (an `Any`/`object` temp) etc. — the shared
+                    // store coercion (EmitStoreCoerced).
+                    EmitStoreCoerced(init, declared);
                     _il.Emit(OpCodes.Stloc, local);
                 }
                 break;
@@ -46,12 +45,13 @@ sealed partial class Emitter
                 if (_coFields != null && _coFields.TryGetValue(sname, out var sf))
                 {
                     _il.Emit(OpCodes.Ldarg_0);
-                    EmitExpr(s.GetProperty("value"));
+                    EmitStoreCoerced(s.GetProperty("value"), sf.FieldType);
                     _il.Emit(OpCodes.Stfld, sf);
                     break;
                 }
-                EmitExpr(s.GetProperty("value"));
-                StoreVar(sname);
+                if (_locals.TryGetValue(sname, out var slb)) { EmitStoreCoerced(s.GetProperty("value"), slb.LocalType); _il.Emit(OpCodes.Stloc, slb); }
+                else if (_args.TryGetValue(sname, out var sa)) { EmitStoreCoerced(s.GetProperty("value"), _argTypes[sname]); _il.Emit(OpCodes.Starg, sa); }
+                else throw new NotSupportedException("store unknown var " + sname);
                 break;
             }
             case "setField":
@@ -63,13 +63,14 @@ sealed partial class Emitter
                 if (ExternalPropAccessor(fon, "set_" + fnm) is { } setter)
                 {
                     EmitExpr(s.GetProperty("recv"));
-                    EmitExpr(s.GetProperty("value"));
+                    EmitStoreCoerced(s.GetProperty("value"), SetterValueType(setter));
                     _il.Emit(OpCodes.Callvirt, setter);
                     break;
                 }
+                var sfld = ResolveField(fon, fnm, out var sft);
                 EmitExpr(s.GetProperty("recv"));
-                EmitExpr(s.GetProperty("value"));
-                _il.Emit(OpCodes.Stfld, ResolveField(fon, fnm, out _));
+                EmitStoreCoerced(s.GetProperty("value"), sft);
+                _il.Emit(OpCodes.Stfld, sfld);
                 break;
             }
             case "return":

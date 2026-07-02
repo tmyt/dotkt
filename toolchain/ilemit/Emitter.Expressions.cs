@@ -142,13 +142,14 @@ sealed partial class Emitter
                 if (ExternalPropAccessor(son, "set_" + snm) is { } setter)
                 {
                     EmitExpr(e.GetProperty("recv"));
-                    EmitExpr(e.GetProperty("value"));
+                    EmitStoreCoerced(e.GetProperty("value"), SetterValueType(setter));
                     _il.Emit(OpCodes.Callvirt, setter);
                     return typeof(void);
                 }
+                var sfefld = ResolveField(son, snm, out var sfet);
                 EmitExpr(e.GetProperty("recv"));
-                EmitExpr(e.GetProperty("value"));
-                _il.Emit(OpCodes.Stfld, ResolveField(son, snm, out _));
+                EmitStoreCoerced(e.GetProperty("value"), sfet);
+                _il.Emit(OpCodes.Stfld, sfefld);
                 return typeof(void);
             }
             case "lateinitGet":
@@ -277,8 +278,9 @@ sealed partial class Emitter
             }
             case "staticFieldSet":
             {
-                EmitExpr(e.GetProperty("value"));
-                _il.Emit(OpCodes.Stsfld, FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString()));
+                var sfsf = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString());
+                EmitStoreCoerced(e.GetProperty("value"), sfsf?.FieldType);
+                _il.Emit(OpCodes.Stsfld, sfsf);
                 return typeof(void);
             }
             // NOTE: the `console` op (println/print -> System.Console.Write/WriteLine) was RETIRED (2026-07-02, bundle 1):

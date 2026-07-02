@@ -1079,11 +1079,28 @@ sealed partial class Emitter
         _il.MarkLabel(end);
     }
 
-    void StoreVar(string name)
+    // Emit `value` COERCED to the store target's type — the ONE shared RHS coercion for every store site
+    // (var init, setLocal into a local/arg/cps-field, setField/setFieldExpr via setter or field, staticFieldSet):
+    //  - `T`/null-const stored into a `Nullable<T>` slot -> wrap / default(Nullable<T>) (EmitNullableCoerced);
+    //  - a value-type / generic-param RHS stored into a REFERENCE slot -> box (the var-init rule; the other store
+    //    sites used to emit the raw RHS, so `var a: Any = "x"; a = 42` stored a raw int32 into an object local ->
+    //    NRE/heap corruption at use).
+    // A null/unknown target emits the value as-is (no spurious boxing).
+    void EmitStoreCoerced(JsonElement value, Type target)
     {
-        if (_locals.TryGetValue(name, out var l)) _il.Emit(OpCodes.Stloc, l);
-        else if (_args.TryGetValue(name, out var a)) _il.Emit(OpCodes.Starg, a);
-        else throw new NotSupportedException("store unknown var " + name);
+        if (target == null) { EmitExpr(value); return; }
+        var got = EmitNullableCoerced(value, target);
+        if (got != null && NeedsBoxToRef(got) && !target.IsValueType && !target.IsGenericParameter)
+            _il.Emit(OpCodes.Box, got);
+    }
+
+    // The value-parameter type of a property setter, when retrievable: a TypeBuilder-anchored accessor
+    // (a TypeBuilder.GetMethod re-anchor) throws NotSupportedException on GetParameters() — treat as unknown
+    // (EmitStoreCoerced then emits the RHS as-is, the pre-helper behavior for that path).
+    static Type SetterValueType(MethodInfo setter)
+    {
+        try { var ps = setter.GetParameters(); return ps.Length > 0 ? ps[^1].ParameterType : null; }
+        catch (NotSupportedException) { return null; }
     }
 
     // An ownerType spec is either `Name` (plain) or `Name[arg,...]` (a constructed user generic, e.g. `Box[int]`).
