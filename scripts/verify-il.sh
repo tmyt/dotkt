@@ -26,7 +26,13 @@ done
 # emit but CRASH at run until the coroutine lowering lands (MEMORY coroutine-lowering-layer-deferred);
 # the ilverify names are run-correct, formal-verification-only findings. A sample failing OUTSIDE these
 # lists is a regression -> exit 1. A listed sample that starts passing prints a baseline-update note.
-KNOWN_RUN_FAIL="chunk cobuild collops2 seq"
+# `bymap` (added 2026-07-03): PRE-EXISTING producer defect, unrelated to the ilemit hardening batch that
+# surfaced it (verified: the pre-batch ilemit emits byte-identical Bm.dll/MapAccessorsKt from the same CIR
+# and fails identically; the main tree's own gate artifacts crash too). Root cause: `Map<in String, V>`'s
+# in-projection lowers getValue's CIR call to getOrImplicitDefault with typeArgs ["object","gp:V"], so
+# clrMapGet dispatches IDictionary<object,object>.ContainsKey on a Dictionary<string,object> receiver ->
+# EntryPointNotFoundException. Fix belongs in kotc/bir2cir (the K type-arg must stay `string`).
+KNOWN_RUN_FAIL="bymap chunk cobuild collops2 seq"
 KNOWN_ILVERIFY_FAIL="chunk collops2 collrealkt gen3 iter iterable"
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on

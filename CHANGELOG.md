@@ -5,6 +5,29 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit hardening: 5 codegen defect fixes (pre-coroutine batch A1-A4+B4).**
+  *A1 nested-try return* — a `return` inside nested try/finally emitted the pending `ret` INSIDE the outer
+  protected region (ilverify ReturnFromTry / InvalidProgramException); the pending return now propagates
+  per level (store to the outer frame's result local + `leave` to its retLabel), only the outermost `ret`s.
+  *A2 return coercion inside try* — the return-inside-try store (and both `returnExpr` twins) skipped the
+  Nullable-wrap/object-box coercion the plain return applies (`fun f(): Int? { try { return 1 } finally {} }`
+  printed 0); one shared `EmitReturnCoerced` now runs at all four return sites.
+  *A3 store coercion asymmetry* — only `var`-init boxed a value/generic RHS into a reference slot; setLocal
+  (local+arg), the cps-field stores, setField/setFieldExpr (setter+field) and staticFieldSet emitted the raw
+  RHS (`var a: Any = "x"; a = 42` NRE'd); one shared `EmitStoreCoerced` (Nullable wrap + box) now runs at
+  every store site.
+  *A4 float NaN `<=`/`>=`* — lowered with the signed-inverted compare, so `NaN <= 1.0`/`NaN >= 1.0` were TRUE;
+  float/double now emit C#'s unordered-inverted forms (`cgt.un`/`clt.un` + invert); integer paths unchanged.
+  *B4 kotlin.time surface (ilemit portions)* — ResolveType resolves CLR NESTED type names (last `.` → `+`
+  probing: `kotlin.time.Clock.System` → `Clock+System`; fixes `Clock.System.now()`); 4 unchecked resolver
+  derefs now throw legible NotSupportedException instead of NRE/ArgumentNullException; and an emitted
+  interface with an external (clr:/clrg:) base now wires its bodied DIM to the base slot via a private FINAL
+  bridge + MethodImpl (C#'s explicit-impl-in-interface shape) — without it every implementer of
+  `ComparableTimeMark : IComparable<CTM>` failed to LOAD (`ValueTimeMark`/`LongTimeMark`/`DoubleTimeMark`
+  TypeLoadException; unblocks `measureTime` type loading). New gate cases: il-nestedtry, il-trynullable,
+  il-setlocalbox, il-nancmp. Remaining kotlin.time breakage is kotc-side (companion-extension-property
+  receiver drop `2.seconds`; value-class operator mislowering in longSaturatedMath) — producer defects, not
+  emitter ones.
 - **`scripts/` overhaul: one naming scheme + shared internal conventions + two harness bug fixes.**
   *Naming* — normalized to `<verb>-<noun>[-qualifier].sh`, aligned with the make target names (targets unchanged):
   `build-clr-stdlib.sh`→`build-stdlib-ref.sh`, `build-clr-stdlib-runtime.sh`→`build-stdlib-rt.sh`,
