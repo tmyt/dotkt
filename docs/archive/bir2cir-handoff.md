@@ -3,7 +3,7 @@
 
 # bir2cir Handoff
 
-> **状態 (2026-06-30 見直し)**: この文書は大半が陳腐化している（MOSTLY-STALE）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+> **状態 (2026-06-30 見直し)**: この文書は大半が陳腐化している（MOSTLY-STALE）。現行アーキテクチャの正は [docs/ship-tasks.md](../ship-tasks.md) §0。
 
 Last updated: 2026-06-27
 
@@ -11,7 +11,7 @@ This note is for agents resuming the FIR -> BIR -> CIR -> IL split work.
 
 ## Current State
 
-The active `bir2cir` direction is documented in [design-fir-bir-cir-il.md](design-fir-bir-cir-il.md). `--native-cir` is the TARGET default mode; `--compat-bir` is being removed (nothing has shipped, so the byte-for-byte invariant is abandoned — [[break-for-elegance]]).
+The active `bir2cir` direction is documented in [design-fir-bir-cir-il.md](../design-fir-bir-cir-il.md). `--native-cir` is the TARGET default mode; `--compat-bir` is being removed (nothing has shipped, so the byte-for-byte invariant is abandoned — [[break-for-elegance]]).
 
 Recent committed milestones on `main`:
 

@@ -6,7 +6,7 @@
 
 後々やりたいことのメモ（2026-06-23 起票）。
 
-> **状態 (2026-07-02 見直し)**: #1（ProjectReference）/ #2（DotKt 製アセンブリを Kotlin として消費）/ #5（往復抜け漏れ）は **DONE で着地済み**、#3（名前空間射影）は削除済み、**#4（推移的/オンデマンド型注入）も DONE**（本文参照 — facadegen の到達可能閉包 BFS で解消、`cases/il-transinj` で常設検証）。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。
+> **状態 (2026-07-02 見直し)**: #1（ProjectReference）/ #2（DotKt 製アセンブリを Kotlin として消費）/ #5（往復抜け漏れ）は **DONE で着地済み**、#3（名前空間射影）は削除済み、**#4（推移的/オンデマンド型注入）も DONE**（本文参照 — facadegen の到達可能閉包 BFS で解消、`cases/il-transinj` で常設検証）。現行アーキテクチャの正は [docs/ship-tasks.md](../ship-tasks.md) §0。
 >
 > 着地の要点: infix/operator/suspend/top-level/inline（non-local return 含む）は **アセンブリ埋め込みの DotKt メタ属性**（`DotKt.Runtime.CompilerServices.*` 配下の `[Kotlin*]` 型）で復元（メモリ `embedded-metadata-attrs-embedded-nrt-nullability`、`kotlin-modifier-roundtrip`）。reverse の ProjectReference は Cecil ベースの retarget ツールで実現（サンプル `ktproj-bidir`、メモリ `r1-reverse-projectreference-retargeter`）。`scripts/verify-roundtrip.sh` 常設。
 

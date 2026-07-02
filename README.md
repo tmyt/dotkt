@@ -21,6 +21,8 @@ Kotlin via their real .NET types).
 - **[Kotlin on the CLR — what's different](docs/user/kotlin-on-clr-differences.md)** — the
   readable tour of deliberate deviations from Kotlin/JVM (`True`/`4` printing,
   `CharSequence`=`string`, `suspend`=`Task<T>`, …).
+- **[Supported features](docs/user/supported-features.md)** — the scannable ✅/🚧/❌ matrix.
+  Full doc index: [`docs/README.md`](docs/README.md).
 
 ## Backend
 

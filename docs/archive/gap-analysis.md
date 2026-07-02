@@ -4,7 +4,7 @@
 
 # ギャップ分析: 設計 vs 現状コード (2026-06-30)
 
-正 = [design-compiler-modes.md](design-compiler-modes.md) + [ship-tasks.md](ship-tasks.md) §0。5ステージ（facadegen/kotc/bir2cir/ilemit/属性·stdlib）を担当エージェントで調査した統合結果。各ギャップは file:line 付き。
+正 = [design-compiler-modes.md](../design-compiler-modes.md) + [ship-tasks.md](../ship-tasks.md) §0。5ステージ（facadegen/kotc/bir2cir/ilemit/属性·stdlib）を担当エージェントで調査した統合結果。各ギャップは file:line 付き。
 
 ## 0. 結論 — 単一の根本ギャップ
 
@@ -42,7 +42,7 @@
 - **`@ClrRefArguments(mask)` 新設**: bitmask（bit 位置=引数位置）。substitution 段で `@ClrIntrinsic` と併用時に該当引数を managed pointer 化。atomics CAS を `Interlocked` へ。**工数: 中**。⚠️ **`docs/clr-stdlib-intrinsic-audit.md` が単数 `@ClrRefArgument(index)` と書いており canonical の bitmask と食い違う→doc 修正要**。
 - **frontend jar 切替**: JVM `kotlin-stdlib.jar`（全配線）→ `kotlin-clr-stdlib.jar`（CLR向け）。生成スクリプト `scripts/build-clr-stdlib-frontend.sh` は**未追跡・未配線**。切替で `appColl`/`NET_EXCEPTIONS`/`SEQUENCED_COLLECTION_LEAK` の java.* 処理を削除可。**工数: 中**。
 - **legacy `clr.Clr` 撤去**: dual-match 3サイト（`BirEmitter.kt:1203,2141,4260`）+ facadegen（`Program.cs:54,227`）+ `runtime/stdlib/clr/clr/Clr.kt` 削除。**工数: 小**。
-- **coroutine class/sequence ABI**: hardcode `kotlin.coroutines.*`/`kotlin.sequences.*`/`kotlin.Result`（ilemit `Program.cs:143-151`, `Coroutines.cs:313-671`）。コルーチン runtime の stdlib 移植に依存（[coroutine-stdlib-port-plan.md](coroutine-stdlib-port-plan.md)）。
+- **coroutine class/sequence ABI**: hardcode `kotlin.coroutines.*`/`kotlin.sequences.*`/`kotlin.Result`（ilemit `Program.cs:143-151`, `Coroutines.cs:313-671`）。コルーチン runtime の stdlib 移植に依存（[coroutine-stdlib-port-plan.md](../coroutine-stdlib-port-plan.md)）。
 
 ## 4. 既達 / MATCHES（再実装しない）
 

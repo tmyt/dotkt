@@ -8,6 +8,7 @@ Next steps after this page:
 - [Using .NET from Kotlin](using-dotnet-from-kotlin.md) — `import System.X` and everything interop.
 - [Kotlin on the CLR — what's different](kotlin-on-clr-differences.md) — the friendly tour of
   deviations from Kotlin/JVM.
+- [Supported features](supported-features.md) — the scannable ✅/🚧/❌ matrix.
 
 ## 1. Prerequisites
 

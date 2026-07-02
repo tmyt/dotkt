@@ -3,7 +3,7 @@
 
 # kotlin/clr — 長期研究ロードマップ
 
-> **状態 (2026-06-30 見直し)**: HISTORICAL（research as-planned の記録）。研究トラック M-D1（CIL 直接出力）/ M-D2（coroutine）/ M-S（言語・stdlib 補強）はいずれも完了。本書が前提にする「C# 経路を正解器とする差分オラクル」「`scripts/verify-all.sh`」「`runtime/csharp/KfcCoroutines`」「`import clrgen.*`」「**M-D2 の C# state-machine 方式**」はすべて現行では廃止/置換済み（coroutine は CLR-native `IAsyncStateMachine`＝戦略 B で実装、`csharp-retirement-design.md` 参照）。IL 出力の設計理由と純バインディング哲学は引き続き有効。現行アーキテクチャ/戦略の正は [docs/ship-tasks.md](ship-tasks.md) §0 ＋ [docs/csharp-retirement-design.md](csharp-retirement-design.md)。
+> **状態 (2026-06-30 見直し)**: HISTORICAL（research as-planned の記録）。研究トラック M-D1（CIL 直接出力）/ M-D2（coroutine）/ M-S（言語・stdlib 補強）はいずれも完了。本書が前提にする「C# 経路を正解器とする差分オラクル」「`scripts/verify-all.sh`」「`runtime/csharp/KfcCoroutines`」「`import clrgen.*`」「**M-D2 の C# state-machine 方式**」はすべて現行では廃止/置換済み（coroutine は CLR-native `IAsyncStateMachine`＝戦略 B で実装、`csharp-retirement-design.md` 参照）。IL 出力の設計理由と純バインディング哲学は引き続き有効。現行アーキテクチャ/戦略の正は [docs/ship-tasks.md](../ship-tasks.md) §0 ＋ [docs/csharp-retirement-design.md](../csharp-retirement-design.md)。
 
 二大研究トラック **M-D1（CIL 直接出力）** と **M-D2（async/Task ⇄ coroutine）** を、検証可能な細かいマイルストーンへ分解する。加えて両者の前提となる **M-S（言語/stdlib 補強）** を定義する。
 
@@ -144,7 +144,7 @@ coroutine lowering は compiler 内部・stdlib intrinsics に密結合。phase 
 # 残マイルストーン計画（2026-06-16）— production grade への道
 
 M-D1 / M-D2 / M-S(S1–S5) は達成。ここからは「サンプルが動く」→「信頼できるコンパイラ・実用フレームワーク」への引き上げ。
-> **未実装の網羅チェックリストは [`docs/remaining-tasks.md`](remaining-tasks.md)（living）に集約**。本書は研究トラックの設計背景、あちらは漏れ防止のタスク表。
+> **未実装の網羅チェックリストは [`docs/remaining-tasks.md`](../remaining-tasks.md)（living）に集約**。本書は研究トラックの設計背景、あちらは漏れ防止のタスク表。
 原則1（穴なし）: 各段は **end-to-end・穴なし・検証ゲート緑（現行 ＝ verify-il / verify-differential / verify-ktproj、旧 verify-all は削除済み）・想定外は明示メッセージ**。サイズ目安 S/M/L/XL。
 
 **原則2（スコープ＝純粋な .NET バインディング）.** Kotlin.NET は **Kotlin→.NET の「バインディング」（言語コンパイラ＋包括 interop）に徹し、独自ライブラリ（特に UI ライブラリ）を同梱しない**。
