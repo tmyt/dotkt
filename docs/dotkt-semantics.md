@@ -327,6 +327,32 @@ attribute through a bytecode-public Java shim (`kotc/frontend/FirInternals.java`
 framework's only assignment site unreachable, upstream `FirGeneratedScopes.kt:245-255`/`:290`). Instance members,
 constructors, properties, events, operators and extension methods resolve directly as before.
 
+## 8d. Same-name .NET arity families: `Task` stays `Task`, `Task<TResult>` becomes `Task1<TResult>`
+
+.NET allows a non-generic type and generic definitions that differ **only by arity** in one namespace
+(`Task`/`Task``1`, `TaskCompletionSource`/`TaskCompletionSource``1`, `Tuple`/`Tuple``1..``8`, `Func``1..``17`,
+`IComparable`/`IComparable``1`). C# disambiguates at the use site by type-argument count; a **Kotlin classifier
+cannot be overloaded by arity** (one classifier per `(package, name)` — a K2 hard limit, typealiases included).
+DotKt therefore projects the names (the `kotlin.Function0/Function1/…` precedent):
+
+- the family's **non-generic** member keeps the plain simple name: `Task`, `Tuple` — so `Task.Delay(100)`,
+  `Task.WhenAll(...)` read exactly like C#;
+- each **generic** definition in a multi-member family is named `<Simple><arity>`: `Task1<TResult>`,
+  `TaskCompletionSource1<T>`, `Func2<T,R>`, `Tuple2<A,B>`;
+- a **singleton** generic family keeps the plain name: `List<T>`, `IEnumerable<T>` (`IEnumerable` non-generic
+  lives in a *different namespace*, so no clash), `HashSet<T>`, …
+
+The family is computed against the **loaded reference universe** (all `--refs` assemblies + BCL), not the
+emitted closure, so a type's Kotlin name never changes when an unrelated import is added. `import
+System.Threading.Tasks.Task` injects the **whole family** (both `Task` and `Task1`); `import
+System.Threading.Tasks.Task1` also works (facadegen maps the trailing digits back to the CLR backtick arity).
+In the injection metadata the .NET-name token is the **true CLR name** (`System.Threading.Tasks.Task``1`), so
+the wire format itself is collision-free.
+
+**Nested generic types are not injected** (`List<T>.Enumerator` — no CLR-addressable open name in the meta
+grammar); members referencing them degrade to `Any?`. Iteration is unaffected (`for (x in list)` rides the
+injected `IEnumerable<T>` iterator marker, and the backend enumerates via `GetEnumerator/MoveNext/Current`).
+
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
 A Kotlin value-type `X?` is the structural `System.Nullable<X>` (§ value types). A **reference-type** `X?` has no

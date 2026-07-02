@@ -165,25 +165,42 @@ static class FacadeGen
         var done = new HashSet<string>();        // by FullName — already emitted
         void Enqueue(Type ty) { var fn = ty?.FullName; if (fn != null && enqueued.Add(fn)) queue.Enqueue(ty); }
         var seeds = 0;
+        // An imported name may denote a whole ARITY FAMILY (Task AND Task`1..`n share one source name): seed EVERY
+        // member, so `import System.Threading.Tasks.Task` surfaces BOTH the non-generic Task and Task1<TResult>.
+        static List<Type> ResolveFamily(string nm)
+        {
+            var fam = new List<Type>();
+            if (Resolve(nm) is { } plain) fam.Add(plain);
+            for (var n = 1; n <= 17; n++) if (Resolve(nm + "`" + n) is { } g) fam.Add(g);
+            // An ARITY-QUALIFIED Kotlin name (`import System.Threading.Tasks.Task1` — our own naming for Task`1):
+            // when nothing resolves plainly, re-probe the trailing digits as the CLR backtick arity. Fires only on a
+            // total miss, so real digit-suffixed .NET names (Vector2, Int32) — which resolve plainly — are unaffected.
+            if (fam.Count == 0)
+            {
+                var i = nm.Length; while (i > 0 && char.IsDigit(nm[i - 1])) i--;
+                if (i > 0 && i < nm.Length && nm[i - 1] != '.' && Resolve(nm.Substring(0, i) + "`" + nm.Substring(i)) is { } q) fam.Add(q);
+            }
+            return fam;
+        }
         foreach (var typeName in typeNames)
         {
             var dn = typeName;   // a Kotlin type name IS its .NET name (no namespace projection)
-            // Resolve a plain type, or a generic type definition (Collection -> Collection`1, etc.).
-            var seed = Resolve(dn) ?? Resolve(dn + "`1") ?? Resolve(dn + "`2") ?? Resolve(dn + "`3");
+            // Resolve the full arity family: the plain type and/or generic definitions (Collection`1, Func`1..`17, …).
+            var fam = ResolveFamily(dn);
             // A top-level function import (`import geom.greet`) isn't a type — resolve it to the [KotlinFileClass] facade
             // class that holds it (EmitOneType then emits `file`/`tlfun`). `import geom.*` already yields the facade
             // type directly via TypesInNamespace, so this only covers the single-function form.
-            if (seed == null) seed = ResolveTopLevelFacade(dn);
+            if (fam.Count == 0 && ResolveTopLevelFacade(dn) is { } facade) fam.Add(facade);
             // A MEMBER import (`import Probe.Ext.tripled` — a member of an object/static class, e.g. a C#-origin
             // extension fun) doesn't resolve to a type; inject its CONTAINING type (the prefix) so the member comes into
             // scope. Walk successive prefixes (handles a member of a nested type) and stop at the first that resolves.
-            for (var prefix = dn; seed == null && prefix.Contains('.'); )
+            for (var prefix = dn; fam.Count == 0 && prefix.Contains('.'); )
             {
                 prefix = prefix.Substring(0, prefix.LastIndexOf('.'));
-                seed = Resolve(prefix) ?? Resolve(prefix + "`1") ?? Resolve(prefix + "`2") ?? Resolve(prefix + "`3");
+                fam = ResolveFamily(prefix);
             }
-            if (seed == null) { Console.Error.WriteLine($"warning: .NET import resolved to no type (injected nothing): {typeName}"); continue; }
-            seeds++; Enqueue(seed);
+            if (fam.Count == 0) { Console.Error.WriteLine($"warning: .NET import resolved to no type (injected nothing): {typeName}"); continue; }
+            seeds++; foreach (var seed in fam) Enqueue(seed);
         }
         while (queue.Count > 0)
         {
@@ -265,11 +282,12 @@ static class FacadeGen
             // `generic:IList:Foo` resolves to a real `interface IList<T>` (P1-2). `interface <Name> <DotNet> [<TP>...]`.
             if (t.IsInterface)
             {
-                var iname = SimpleName(t);
+                var iname = KotlinName(t);
                 // app-emit substitution (kotc-level): a @Clr-bound stdlib interface keeps its KOTLIN identity (drives the
-                // injection's namespace/ClassId) and carries the BCL binding via `=`: token[2] = `kotlin.collections.List=
+                // injection's namespace/ClassId) and carries the BCL binding via `=`: token[2] = `kotlin.collections.List`1=
                 // System.Collections.Generic.IReadOnlyList`. The injection splits it -> app's clrName binds List->IReadOnlyList.
-                var ikt = t.IsGenericTypeDefinition ? OpenName(t) : t.FullName;
+                // The .NET-name side is the TRUE CLR name (backtick arity) — see ClrOpenName.
+                var ikt = t.IsGenericTypeDefinition ? ClrOpenName(t) : t.FullName;
                 var iclr = ClrAttrName(t);
                 var idot = iclr != null ? ikt + "=" + iclr : ikt;
                 var itp = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
@@ -347,10 +365,11 @@ static class FacadeGen
                 return;
             }
             var isStatic = t.IsAbstract && t.IsSealed;
-            // A generic type definition (`Collection`1`) -> simple name `Collection`, OPEN .NET name (namespace +
-            // simple, no `1` — the backend appends the arity), and the type parameter names as trailing tokens.
-            var simpleName = t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name;
-            var dotNet = t.IsGenericTypeDefinition ? OpenName(t) : t.FullName;
+            // A generic type definition (`Collection`1`) -> Kotlin simple name (arity-suffixed iff its name family
+            // clashes — see KotlinName), the TRUE CLR name (`Namespace.Collection`1`, arity-qualified so `Task` and
+            // `Task`1` are distinct tokens), and the type parameter names as trailing tokens.
+            var simpleName = KotlinName(t);
+            var dotNet = t.IsGenericTypeDefinition ? ClrOpenName(t) : t.FullName;
             var tparams = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
             // `class <Name> <DotNetName> <open|sealed> [<TypeParam>...]` carries inheritability + generic arity.
             sb.Append(isStatic ? $"object {simpleName} {dotNet}\n"
@@ -662,6 +681,10 @@ static class FacadeGen
     {
         if (t == null || t.IsGenericParameter || t.IsPointer || t.IsByRef) return false;
         if (string.IsNullOrEmpty(t.Namespace) || t.FullName == null) return false;
+        // A NESTED generic type (`List`1+Enumerator` — it inherits the enclosing type's params, so IsGenericType is
+        // true even without own params) has no CLR-addressable open name in the meta grammar; excluded, and CrossType
+        // degrades references to it to Any?. Non-generic nested types (Environment+SpecialFolder) stay injectable.
+        if (t.IsNested && t.IsGenericType) return false;
         return !NO_INJECT.Contains(t.FullName);
     }
 
@@ -690,10 +713,54 @@ static class FacadeGen
 
     static string SimpleName(Type t) => t.Name.Contains('`') ? t.Name.Substring(0, t.Name.IndexOf('`')) : t.Name;
 
-    // OPEN .NET name of a generic type definition: namespace + simple name, WITHOUT the `<arity> suffix (the backend
-    // appends it). `t.FullName` carries the arity, so we rebuild it — but for a ROOT-namespace type `t.Namespace` is
-    // null, and `null + "." + "Box"` would yield the broken `.Box` (a leading dot the consumer's ilemit can't resolve).
+    // OPEN .NET name of a generic type definition: namespace + simple name, WITHOUT the `<arity> suffix. Used as the
+    // ARITY FAMILY key (HasArityClash); the meta's .NET-name token itself is ClrOpenName (arity-qualified). For a
+    // ROOT-namespace type `t.Namespace` is null, and `null + "." + "Box"` would yield the broken `.Box`.
     static string OpenName(Type t) => string.IsNullOrEmpty(t.Namespace) ? SimpleName(t) : t.Namespace + "." + SimpleName(t);
+
+    // The CLR metadata name of a generic type definition (`System.Threading.Tasks.Task`1`): namespace + CLR simple
+    // name INCLUDING the backtick arity. The meta's .NET-name token carries this TRUE name, so `Task` and `Task`1`
+    // are never ambiguous in the format. Consumers derive the arity-less open form by stripping at '`' (the kotc
+    // injector registers that open form for the backend, which re-appends the arity from the constructed args).
+    static string ClrOpenName(Type t) => string.IsNullOrEmpty(t.Namespace) ? t.Name : t.Namespace + "." + t.Name;
+
+    // ---- arity-family Kotlin naming ----------------------------------------------------------------------------
+    // .NET permits a non-generic type and generic definitions that differ only by arity in ONE namespace
+    // (Task / Task`1, TaskCompletionSource / TaskCompletionSource`1, Tuple / Tuple`1..`8, Func`1..`17). A Kotlin
+    // classifier is keyed by (package, simpleName) — it CANNOT be overloaded by type-argument count — so injecting
+    // both under one name silently dropped one (ClassId last-wins in the injector). Kotlin-side naming rule
+    // (kotlin.Function0/Function1/... arity-suffix precedent): the family's NON-generic member keeps the plain
+    // simple name; when the (namespace, simpleName) family has MORE THAN ONE member, each GENERIC definition is
+    // Kotlin-named `<Simple><arity>` (Task1<TResult>, Func2<T,R>). A SINGLETON generic family (List`1 — no
+    // non-generic List anywhere) keeps the plain name. The family is computed against the LOADED REFERENCE
+    // UNIVERSE (Resolve probes), NOT the emitted closure, so a type's Kotlin name is stable under import-set
+    // changes (the BCL is always in the universe: Task`1 is ALWAYS Task1).
+    static readonly Dictionary<string, bool> ARITY_CLASH = new();   // key = arity-less "Namespace.Simple"
+    static bool HasArityClash(Type t)
+    {
+        var baseName = OpenName(t);
+        if (ARITY_CLASH.TryGetValue(baseName, out var clash)) return clash;
+        var members = Resolve(baseName) != null ? 1 : 0;
+        for (var n = 1; n <= 17 && members < 2; n++)
+            if (Resolve(baseName + "`" + n) != null) members++;
+        return ARITY_CLASH[baseName] = members > 1;
+    }
+
+    // The Kotlin-visible simple name of a .NET type: plain for a non-generic / singleton-family generic;
+    // `<Simple><arity>` for a generic definition (or constructed generic's definition) in a clashing family.
+    static string KotlinName(Type t)
+    {
+        var simple = SimpleName(t);
+        if (!t.IsGenericType && !t.IsGenericTypeDefinition) return simple;
+        var def = t.IsGenericTypeDefinition ? t : t.GetGenericTypeDefinition();
+        if (!HasArityClash(def)) return simple;
+        var named = simple + def.GetGenericArguments().Length;
+        // Insurance: a REAL .NET type already named `<Simple><arity>` in this namespace would collide with the
+        // synthesized Kotlin name — surface it loudly instead of silently shadowing (never seen in the BCL).
+        if (Resolve((string.IsNullOrEmpty(def.Namespace) ? "" : def.Namespace + ".") + named) != null)
+            Console.Error.WriteLine($"warning: arity-qualified Kotlin name {named} collides with a real .NET type in {def.Namespace}");
+        return named;
+    }
 
     // The contiguous run of base classes from t.BaseType upward whose supertype edge IS emitted — members declared
     // there reach `t` through the injected supertype chain, so `t` must NOT re-declare them (fake-override clash).
@@ -1115,7 +1182,7 @@ static class FacadeGen
             }
             return "Any?";
         }
-        if (t.FullName == self.FullName) return self.Name.Contains('`') ? self.Name.Substring(0, self.Name.IndexOf('`')) : self.Name;
+        if (t.FullName == self.FullName) return KotlinName(self);
         return t.FullName switch
         {
             "System.Int32" => "Int",
@@ -1156,7 +1223,11 @@ static class FacadeGen
         if (t.IsGenericType)
         {
             var open = t.GetGenericTypeDefinition();
-            var openName = SimpleName(open);
+            // A NESTED generic definition (`List`1+Enumerator`) is NOT injected (ShouldInject rejects it: the meta
+            // grammar has no CLR-addressable open name for it, and the old rendering produced the nonexistent FQN
+            // `System.Collections.Generic.Enumerator`). Degrade the reference to Any? — consistent with the injected set.
+            if (open.IsNested) return "Any?";
+            var openName = KotlinName(open);   // arity-suffixed iff the name family clashes (Task`1 -> Task1)
             // A root-namespace open def (`open.Namespace` null) is a legitimately injectable user type (`Box<T>`), not a
             // global/compiler type — only reject the explicitly non-injectable ones and names that aren't a simple ident.
             if (NO_INJECT.Contains(open.FullName ?? "")

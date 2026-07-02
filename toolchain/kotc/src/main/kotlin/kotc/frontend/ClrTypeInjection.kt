@@ -255,10 +255,15 @@ private object ClrMetadataHolder {
 		for (t in types) {
 			// Register at the real .NET-namespace fqn (e.g. System.Text.StringBuilder), so the backend's clrName
 			// resolves the .NET type for `import System.Text.StringBuilder`. Namespace-less types fall back to bare name.
+			// A generic definition's Kotlin fqn uses its ARITY-QUALIFIED Kotlin name (facadegen: Task`1 -> Task1 when
+			// the name family clashes) — that matches the injected FIR ClassId, which is what the backend looks up.
 			val ns = namespaceOf(t.dotNetName)   // the .NET namespace IS the Kotlin package
 			val fqn = if (ns.isNotEmpty()) "$ns.${t.kotlinName}" else t.kotlinName
 			// ref/runtime split: register the BCL BINDING (clrBinding) if present, else the type's own .NET name.
-			ClrTypeRegistry.register(fqn, t.clrBinding ?: t.dotNetName)
+			// The meta's .NET-name token carries the TRUE CLR arity (`System.Threading.Tasks.Task`1`); the BACKEND
+			// contract is the arity-LESS open name (BirEmitter emits `clrg:<open>[args]`, ilemit re-appends the arity
+			// from the constructed arg count — Program.cs GenericType) — so strip the backtick suffix here.
+			ClrTypeRegistry.register(fqn, t.clrBinding ?: t.dotNetName.substringBefore('`'))
 			// per-member BCL name (size -> Count): key = the member's Kotlin fqn so clrName(prop) can resolve it.
 			for (p in t.properties) p.clrName?.let { ClrTypeRegistry.registerMember("$fqn.${p.name}", it) }
 			for (m in t.methods) m.clrName?.let { ClrTypeRegistry.registerMember("$fqn.${m.name}", it) }
@@ -275,7 +280,9 @@ private object ClrMetadataHolder {
 
 	// Shared lookups (also used by ClrSupertypeInjector). Each .NET type resolves at its REAL namespace, so
 	// `import System.Text.StringBuilder` works through Kotlin's normal package machinery (the .NET namespace IS the
-	// Kotlin package); nested "+" and generic arity are already stripped in the metadata.
+	// Kotlin package). The .NET-name token is the TRUE CLR name — a generic definition carries its backtick arity
+	// (`System.Threading.Tasks.Task`1`) and a nested type its '+' — both live in the SIMPLE-name part, so the
+	// namespace is everything before the last '.' of the '+'-stripped form.
 	fun namespaceOf(dotNet: String): String = dotNet.substringBefore('+').substringBeforeLast('.', "")
 	val byClassId: Map<ClassId, ClrType> by lazy {
 		// ref/runtime split: a @Clr stdlib type (clrBinding != null, e.g. List/Collection) is a builtin the jar/
@@ -286,14 +293,15 @@ private object ClrMetadataHolder {
 		module?.types?.filter { it.clrBinding == null && !it.dotNetName.startsWith("kotlin.") }?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
 	}
 	val classIdByName: Map<String, ClassId> by lazy { byClassId.entries.associate { (id, t) -> t.kotlinName to id } }
-	// Generic and non-generic types share a simple name (`IEnumerable<T>` vs `IEnumerable`) — resolve by (name, arity)
-	// so `generic:IEnumerable[Item]` picks the generic one and a bare `IEnumerable` picks the non-generic one.
+	// Generic and non-generic types share a simple name across NAMESPACES (`IEnumerable<T>` in .Generic vs the legacy
+	// `IEnumerable`) — resolve by (name, arity) so `generic:IEnumerable[Item]` picks the generic one and a bare
+	// `IEnumerable` picks the non-generic one. SAME-namespace families (Task/Task`1) no longer collide at all:
+	// facadegen arity-qualifies the generic's KOTLIN name (Task`1 -> Task1, kotlin.Function1 precedent), so every
+	// (kotlinName, arity) — and every ClassId in byClassId — is unique, and BOTH family members coexist in FIR.
 	private val byNameArity: Map<Pair<String, Int>, ClassId> by lazy {
 		byClassId.entries.associate { (id, t) -> (t.kotlinName to t.typeParams.size) to id }
 	}
-	// STRICT on arity, NO fallback. .NET allows a generic and a non-generic type with the same name+namespace
-	// (`IComparable` and `IComparable<T>`); Kotlin's ClassId can't tell them apart, so byClassId keeps only one and
-	// the other arity is simply absent. Resolving a reference to the ABSENT arity by falling back to the present one
+	// STRICT on arity, NO fallback. Resolving a reference to an ABSENT arity by falling back to a present one
 	// builds a generic type with the wrong number of arguments and crashes the fir2ir fake-override builder
 	// ("typeParameters size != typeArguments size"). Returning null instead just skips that reference (-> Any?/no edge).
 	fun classIdFor(name: String, arity: Int): ClassId? = byNameArity[name to arity]
