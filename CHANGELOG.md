@@ -5,6 +5,40 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+- **Cross-module default arguments via a 2-tier rule (bundle 4-C RC1).** kotc emits only the args a caller wrote
+  (correct); the frontend jar drops a callee's default VALUES (`IrErrorExpression`), so an OMITTED cross-module default
+  is filled by one of two per-parameter mechanisms, chosen by "can the param's own CLR type carry the default as a
+  `[DefaultParameterValue]`?": **Tier 1** (a primitive/String/null const on a matching param) → native `[Optional]`+
+  `[DefaultParameterValue]` (C#-consumable, unchanged); **Tier 2** (a String const on a `CharSequence`/interface param —
+  a string constant can't sit on an interface-typed param — or ANY non-constant default) → the param is emitted REQUIRED
+  and its default EXPRESSION is carried as embedded BIR on the new `@kotlin.clr.KotlinDefault(index, bir)` attribute
+  (ref.dll-only, mirroring `[KotlinInline]`); bir2cir's `DefaultArgSplice` pass reads it and splices the expression as
+  the omitted arg (before the CharSequence bridge + type lowering, so a String default is coerced/lowered exactly like an
+  explicit arg — and callee-scope evaluation now handles a param-referencing default). A Tier-2-carrying function stamps
+  `@KotlinDefault` on ALL its defaulted params (uniform contiguous splice source). `listOf(1,2,3).joinToString("-")` now
+  fills all 7 args and dispatches correctly (the prior stack-underflow / `InvalidProgramException` is gone). NOTE: the
+  `joinToString` SAMPLE remains blocked DOWNSTREAM by a separate pre-existing dual-rep bug (`joinTo`'s `A : Appendable`
+  constraint unsatisfiable by the BCL-aliased `StringBuilder`), tracked in `docs/master-task-inventory.md §4-C RC1`.
+- **Value-type nullable generic return (`T?`) now round-trips as `System.Nullable<T>` (bundle 4-C RC2).** A Kotlin
+  `fun <T> …(): T?` has its nullability erased by kotc to a bare `gp:T` return (`Nullable<T>` is inexpressible for an
+  unconstrained T), with the null case emitted as `ldnull`. That is correct for a reference T, but for a VALUE T
+  `ldnull; ret !!T` collapses to `default(T)=0` — null-ness was LOST: `listOf(10,20).firstOrNull()` returned `0` (not
+  `10`), and the result stored into a `Nullable<int>` slot corrupted (`ilverify: found Int32, expected Nullable<int32>`).
+  The CLR-faithful representation of a generic `T?` is `System.Object` (the boxed/erased nullable form, which carries a
+  real null for a value T): `bir2cir.NullableGenericReturnErasure` (all builds, so ref.dll + rt.dll signatures agree)
+  rewrites a `ret=gp:X` + `retNullable=true` method to return `object`; ilemit boxes value/gp returns and, at the call
+  boundary (`CoerceReturn`), converts the `object` actual to the caller's `Nullable<V>` (`unbox.any`) or reference type
+  (`castclass`). Reference-type nullable returns keep working. Now `listOf(10,20).firstOrNull()`=10,
+  `listOf<Int>().firstOrNull()`=null, `lastOrNull` correct. (`mapNotNull`'s transform-side `R?` is a separate,
+  kotc-gated case — the delegate-return nullability is not preserved in the BIR func token.)
+- **ilemit — a duplicate-emitted reflected overload resolves to the first exact match.** `FindReflectedMethodBySig`
+  returned null on a SECOND exact-signature match ("ambiguous"), but two methods matching the same sig token have
+  identical parameter types — so a second match can only be a DUPLICATE method emission (the stdlib expect/actual
+  fileClass merge emits some top-level fns twice; `_ArraysKt.sum(int[])` carries two distinct method tokens). The null
+  dropped to the arity-only fallback, which picked the wrong same-arity overload: `arrayOf(3,1,4,1,5).sum()` bound to
+  `sum(sbyte[])` and read the int[] as bytes → `4` instead of `14`. Now keeps the first exact-sig match.
+
 ### Changed
 - **Retired the clean kotc String-op lowerings (bundle 4-B) — now that CharSequence is canonical.** Building on 4-A,
   the hardcoded `kotlin.text` String lowerings in kotc (`STRING_OPS` + the `BirEmitter` emit sites) are RETIRED for the

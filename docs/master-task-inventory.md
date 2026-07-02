@@ -368,7 +368,29 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
 
 **The 5 distinct root causes (de-duplicated across the 10 samples).**
 
-- **RC1 — cross-module default arguments (`joinToString`). THE KEYSTONE: gates 9 of 10.** kotc emits the `joinToString`
+- **RC1 — cross-module default arguments. ✅ DEFAULT-ARG MECHANISM DONE 2026-07-02** (`9613de4` kotc + stdlib
+  `@KotlinDefault`; bir2cir `DefaultArgSplice` committed in `b7caaf7`). **But the collection SAMPLES do NOT green from
+  RC1 alone — each is ALSO gated by a SEPARATE pre-existing bug (see below), which RC1 correctly EXPOSED.** Implemented as
+  the user-decided **2-tier rule** (superseding the `$default`-dispatcher and the `[KotlinDefault]`-for-everything and the
+  CharSequence→string-collapse designs), keyed on "can the param's own CLR type carry its default as a
+  `[DefaultParameterValue]`?": **Tier 1** (primitive/String/null const on a matching param) → native `[Optional]`+
+  `[DefaultParameterValue]` (unchanged, C#-consumable); **Tier 2** (a String const on a `CharSequence`/interface param, or
+  ANY non-constant default) → param emitted **REQUIRED** + its default EXPRESSION carried as embedded BIR on
+  `@kotlin.clr.KotlinDefault(index, bir)` (ref.dll-only, mirrors `[KotlinInline]`); bir2cir's `DefaultArgSplice` reads it
+  and splices the expression as the omitted arg (before the CharSequence bridge + type lowering). A Tier-2-carrying
+  function stamps `@KotlinDefault` on ALL its defaulted params (uniform contiguous splice source). **VERIFIED:**
+  `listOf(1,2,3).joinToString("-")` now fills all 7 args and dispatches `joinToString` correctly (the stack-underflow /
+  `InvalidProgramException` is GONE); gate-neutral spot-check (charseq/charseqx/str/arr/exc/cp/coll3/enum unaffected).
+  **⛔ REMAINING SAMPLE BLOCKERS (separate, pre-existing, NOT default-args — RC1 exposed them):**
+  (1) **`joinTo`/`Appendable`/`StringBuilder` dual-rep** — `joinToString`'s body calls `joinTo<T, A : Appendable>(StringBuilder(), …)`;
+  `StringBuilder` is `@ClrTypeAlias("System.Text.StringBuilder")` yet declares `: Appendable`, so the BCL-aliased type loses
+  the CLR interface → `VerificationException: type argument 'System.Text.StringBuilder' violates the constraint of 'A'`.
+  Fails IDENTICALLY with all args explicit → NOT a default-arg bug. Gates `bmore`/`mapfilter`/`coll2`/`chunk`/`sort`
+  (all route through `joinToString`). Fix = a StringBuilder→Appendable adapter, analogous to the CharSequence dual-rep
+  (own dual-rep track). (2) **`bymap`** — `by data` Map-delegation unsupported (kotc delegate resolution). (3) **`fmt`/`bmore`** —
+  `String.format` unresolved (the CLR frontend jar has no `String.Companion.format`; a stdlib-binding gap). — Historical
+  root-cause analysis of the original stack-underflow follows:
+  kotc emits the `joinToString`
   call with only **2 args** (receiver + the one provided separator) against a **7-param** signature (`receiver, separator,
   prefix, postfix, limit, truncated, transform` — confirmed in BIR: `#args=2` vs `sig params:7`). ilemit then emits
   `call joinToString(7)` with 2 stack values → **stack underflow / `InvalidProgramException`** (ilverify:
@@ -396,14 +418,31 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
   (`filledArgExprs` already inlines a non-`IrError` const default) — layer = `build-clr-stdlib-frontend.sh`, effort
   MED-HIGH/unknown (frontend metadata format). **Recommend (b)**; it also clears `bmore`/`bymap`/`fmt`.
 
-- **RC2 — value-type `Nullable<T>` in generic return / transform position.** `firstOrNull`/`lastOrNull` on a value-type
-  `List<Int>` return **`default(int)=0`** instead of the real element (throwaway repro: `listOf(10,20,30).firstOrNull()`
-  prints `0`, not `10`); ilverify: `found Int32, expected Nullable`1<int32>` (`arrops` offset 0x35). `mapNotNull`'s
-  transform is typed `Func`2<int,int>` but the lambda `{…else null}` builds `Func`2<int,Nullable`1<int>>` (`collmore`
-  offset 0x36). Same family as MEMORY `primitive-dual-representation` — a bare value flowing where `System.Nullable<T>` is
-  expected (and vice-versa) without the box/wrap. **Samples:** `arrops` (its ONLY bug → RC2 alone flips it), `collmore`
-  (with RC1), and a latent risk for `chunk`'s value-type `filterNotNull().sum()`. **Fix:** box/unwrap value-type `T` ↔
-  `Nullable<T>` at the generic nullable boundary. **Layer = bir2cir/ilemit** (the primitive-dual-rep seam). Effort **MED**.
+- **RC2 — value-type `Nullable<T>` in generic return / transform position. ✅ RETURN-SIDE DONE 2026-07-02
+  (`b7caaf7` bir2cir+ilemit; `4f4d848` ilemit overload).** `firstOrNull`/`lastOrNull` on a value-type
+  `List<Int>` returned **`default(int)=0`** instead of the real element; ilverify: `found Int32, expected Nullable`1<int32>`.
+  **ROOT CAUSE (return side):** a Kotlin `fun <T> …(): T?` has its nullability erased by kotc to a bare `gp:T` return
+  (`Nullable<T>` is inexpressible for an unconstrained T), null case = `ldnull`. Correct for a reference T, but for a value
+  T `ldnull; ret !!T` collapses to `default(T)=0` — null-ness LOST. **FIX:** the CLR-faithful representation of a generic
+  `T?` is `System.Object` (boxed/erased nullable). `bir2cir.NullableGenericReturnErasure` (all builds — ref.dll + rt.dll
+  agree) rewrites a method with `ret=gp:X` + `retNullable=true` to return `object` (and its return-value `gp:X` type tags
+  to `object`); ilemit boxes value/gp returns to the object slot; `CoerceReturn` at the call boundary converts the object
+  actual → the caller's `Nullable<V>` (`unbox.any`: null→HasValue=false, boxed→HasValue=true) or reference type
+  (`castclass`). Reference-type nullable returns keep working. **Also fixed en route (a pre-existing ilemit bug arrops hit):**
+  `FindReflectedMethodBySig` returned null on a DUPLICATE-emitted overload (the stdlib expect/actual merge emits some
+  top-level fns twice — `_ArraysKt.sum(int[])` has two method tokens), dropping to the arity fallback which picked
+  `sum(sbyte[])` → `arrayOf(3,1,4,1,5).sum()` read int[] as bytes = 4; now keeps the first exact-sig match (=14).
+  **Verified:** `listOf(10,20).firstOrNull()`=10, `listOf<Int>().firstOrNull()`=null, `lastOrNull`, ref-type `firstOrNull`,
+  `arrayOf<Int>().firstOrNull()`=-1, `xs.sum()`=14, `xs.count{}`=2, `xs.map{}.filter{}` — arrops lines 5/7/8/9/12/13 all
+  correct. **arrops line 6 (`…joinToString(",")`) STILL blocks arrops full-green — that is RC1**, not RC2: with the RC1
+  `$default` synthetic partially landed in kotc, the omitted `transform` default emits as a `default type=func:…gp:T` node
+  whose `gp:T` is unresolved at the app call site → `unresolved generic type parameter T` at emit. **TRANSFORM SIDE
+  (`mapNotNull`) NOT done — BLOCKED ON kotc:** the transform param `(T)->R?` is erased to `func:gp:R:gp:T` with NO
+  func-slot nullability flag (unlike `retNullable`), so bir2cir cannot soundly know R is nullable in that position
+  (Codex: inferring from a `val != null` body is too-late/ambiguous). Needs kotc to preserve func-return nullability
+  (`func(args,ret=gp:R,retNullable=true)`); then apply the same object-erasure to the delegate return. **Samples:** `arrops`
+  return-side FIXED (only its RC1 joinToString line remains); `collmore` needs RC1 + the transform-side fix; a latent risk
+  for `chunk`'s value-type `filterNotNull().sum()`. **Layer = bir2cir/ilemit** (done for the return side). Effort **MED**.
 
 - **RC3 — ilemit cannot resolve a member on an un-substituted generic Kotlin collection/iterator interface
   (`ResolveMethod` NRE at `Program.cs:1278`, `mb` null because `FindMethod` returned 0 candidates).** Two instances:
