@@ -3032,6 +3032,32 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"block","body":[]}"""
 	}
 
+	/**
+	 * Bind a subject/receiver expression for exactly-ONCE evaluation before splicing it into several use sites.
+	 * A STABLE expression (a const, or a read of an immutable non-ref-cell local/parameter) splices directly —
+	 * re-reading it is free and side-effect-free. Anything else gets a temp local (returned as a `var` statement
+	 * for a wrapping valueBlock) and the use sites splice the local READ: splicing the rendered initializer JSON
+	 * itself re-evaluates it per splice (the when-subject / safe-call / range-membership double-eval defect).
+	 * Returns (varStmtJson or null-if-stable, useJson). Only safe where the expression is suspension-free —
+	 * expression position is; a suspension-bearing tree is CPS-linearized by emitCps/spillExpr before render.
+	 */
+	internal fun bindOnce(init: IrExpression, type: IrType, prefix: String): Pair<String?, String> {
+		val stable = init is IrConst || (init as? IrGetValue)?.symbol?.owner?.let { o ->
+			!isRefCell(o) && (o is IrValueParameter || (o as? IrVariable)?.isVar == false)
+		} == true
+		if (stable) return null to expr(init)
+		val tv = "$prefix${scopeCounter++}"
+		// A NULLABLE generic-param subject (`T?`, e.g. `x as? T`) must NOT become a `gp:T` local: `!T` cannot
+		// hold null when T is instantiated with a value type, and the `isinst` REF result stored into a `!T`
+		// slot is unverifiable ([found ref 'T'][expected value 'T'] — the stdlib's documented "never hold a V?
+		// in a local" rule, ClrMapDefaults.kt). Erase to object: every use site of a nullable subject is
+		// ref-typed (objEq null-check / objMethod / ref member).
+		val bt = birType(type)
+		val vt = if (bt.startsWith("gp:") && type.isMarkedNullable()) "object" else bt
+		return """{"k":"var","name":${str(tv)},"type":${str(vt)},"init":${expr(init)}}""" to
+			"""{"k":"local","name":${str(tv)}}"""
+	}
+
 	internal fun blockExpr(block: IrBlock): String {
 		// `object : I { … }` -> a synthetic named class (lifted) + `new`. Instance fields are real fields;
 		// captured outer values (incl. the enclosing `this`) become extra ctor params / capture fields.
@@ -3062,19 +3088,39 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"new","type":${str(cname)},"args":[$capArgs]}"""
 			}
 		}
-		// `when (subject)` lowers to `{ val tmp = subject; WHEN }` in expression position.
+		// `when (subject)` lowers to `{ val tmp = subject; WHEN }` in expression position. The subject is bound
+		// ONCE (bindOnce): the old code stored valSubst[key] = the RENDERED initializer JSON, so every IrGetValue
+		// of the subject re-spliced — and re-EVALUATED — it (a when-subject call ran once per branch test; a
+		// safe-call receiver ran twice).
 		val tmp = block.statements.getOrNull(0) as? IrVariable
 		val whenExpr = block.statements.getOrNull(1) as? IrWhen
 		if (block.statements.size == 2 && tmp != null && whenExpr != null && tmp.initializer != null) {
 			val key = tmp.name.asString()
 			val origin = block.origin?.toString()
-			// `a?.member` where member is a value type -> Nullable<T>: cond(a==null, default(T?), new T?(a.member)).
+			// Save/restore (not remove) the key: a nested same-named subject must not clobber the outer splice.
+			val saved = valSubst[key]
+			fun restore() { if (saved != null) valSubst[key] = saved else valSubst.remove(key) }
+			// `a?.member` where member is a value type -> Nullable<T>: bind `a` once, then null-gate. A nullable
+			// VALUE-type receiver (`Char?`) is gated by HasValue and the member sees the UNWRAPPED .Value (the
+			// ELVIS shape below) — splicing the raw Nullable<T> where the element is required emitted invalid IL
+			// (e.g. `conv int` over a Nullable<char> -> InvalidProgramException).
 			if (origin == "SAFE_CALL") nullableElem(block.type)?.let { elem ->
-				valSubst[key] = expr(tmp.initializer!!)
-				val nullCheck = expr(whenExpr.branches.first().condition)
-				val member = expr(whenExpr.branches.last().result)
-				valSubst.remove(key)
-				return """{"k":"cond","cond":$nullCheck,"then":{"k":"nullableNull","elem":${str(elem)}},"else":{"k":"nullableWrap","elem":${str(elem)},"e":$member}}"""
+				val (subjVar, subj) = bindOnce(tmp.initializer!!, tmp.type, "__nv")
+				val recvElem = nullableElem(tmp.type)
+				val core: String
+				if (recvElem != null) {
+					valSubst[key] = """{"k":"nullableValue","elem":${str(recvElem)},"e":$subj}"""
+					val member = expr(whenExpr.branches.last().result)
+					core = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(recvElem)},"e":$subj},"then":{"k":"nullableWrap","elem":${str(elem)},"e":$member},"else":{"k":"nullableNull","elem":${str(elem)}}}"""
+				} else {
+					valSubst[key] = subj
+					val nullCheck = expr(whenExpr.branches.first().condition)
+					val member = expr(whenExpr.branches.last().result)
+					core = """{"k":"cond","cond":$nullCheck,"then":{"k":"nullableNull","elem":${str(elem)}},"else":{"k":"nullableWrap","elem":${str(elem)},"e":$member}}"""
+				}
+				restore()
+				return if (subjVar == null) core
+				else """{"k":"valueBlock","type":${str(birType(block.type))},"stmts":[$subjVar],"result":$core}"""
 			}
 			// `nv ?: d` where nv is a Nullable<T> -> evaluate once, then HasValue ? Value : d.
 			if (origin == "ELVIS") nullableElem(tmp.type)?.let { elem ->
@@ -3086,10 +3132,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val nvLoc = """{"k":"local","name":${str(nv)}}"""
 				return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${str("nullable:$elem")},"init":$init}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(elem)},"e":$nvLoc},"then":{"k":"nullableValue","elem":${str(elem)},"e":$nvLoc},"else":$elseResult}}"""
 			}
-			valSubst[key] = expr(tmp.initializer!!)
+			val (subjVar, subj) = bindOnce(tmp.initializer!!, tmp.type, "__subj")
+			valSubst[key] = subj
 			val result = ternary(whenExpr)
-			valSubst.remove(key)
-			return result
+			restore()
+			// The wrapping valueBlock carries the when's result type: the old bare `cond` surfaced it (ternary's
+			// "type"), and bir2cir's call-arg type inference sniffs the argument node's type field.
+			return if (subjVar == null) result
+			else """{"k":"valueBlock","type":${str(birType(whenExpr.type))},"stmts":[$subjVar],"result":$result}"""
 		}
 		// A general block in value position: emit its preceding (side-effecting) statements, then the last value.
 		// e.g. `{ counter++ }` lowers to `{ val <unary> = counter; counter = counter + 1; <unary> }` — dropping the
@@ -3401,7 +3451,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
-		// `x in a..b` (range membership) -> `(x >= a && x <op> b)` via a short-circuit cond.
+		// `x in a..b` (range membership) -> `(x >= a && x <op> b)` via a short-circuit cond. `x` is bound ONCE
+		// (bindOnce): rendering it into both comparison legs re-evaluated a side-effecting `x` twice.
 		if (name == "contains") {
 			val range = dispatchReceiver(call) as? IrCall
 			val value = regularArgs(call).firstOrNull()
@@ -3409,8 +3460,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val ops = range.arguments.filterNotNull()
 				val cmp = when (range.symbol.owner.name.asString()) { "rangeTo" -> "<="; "until", "rangeUntil" -> "<"; else -> null }
 				if (cmp != null && ops.size == 2) {
-					val x = expr(value); val lo = expr(ops[0]); val hi = expr(ops[1])
-					return """{"k":"cond","cond":{"k":"bin","op":">=","l":$x,"r":$lo},"then":{"k":"bin","op":${str(cmp)},"l":$x,"r":$hi},"else":{"k":"const","type":"bool","value":false}}"""
+					val (xVar, x) = bindOnce(value, value.type, "__in")
+					val lo = expr(ops[0]); val hi = expr(ops[1])
+					val core = """{"k":"cond","cond":{"k":"bin","op":">=","l":$x,"r":$lo},"then":{"k":"bin","op":${str(cmp)},"l":$x,"r":$hi},"else":{"k":"const","type":"bool","value":false}}"""
+					return if (xVar == null) core else """{"k":"valueBlock","stmts":[$xVar],"result":$core}"""
 				}
 			}
 		}

@@ -26,7 +26,10 @@ done
 # emit but CRASH at run until the coroutine lowering lands (MEMORY coroutine-lowering-layer-deferred);
 # the ilverify names are run-correct, formal-verification-only findings. A sample failing OUTSIDE these
 # lists is a regression -> exit 1. A listed sample that starts passing prints a baseline-update note.
-KNOWN_RUN_FAIL="chunk cobuild collops2 seq"
+# bymap: REGRESSION 2026-07-02, stdlib subtree bump cde8afd — rt clrMapGet -> EntryPointNotFound on
+# IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track (already XFAIL'd on main's
+# newer machine-readable baseline; mirrored here for this worktree's older list).
+KNOWN_RUN_FAIL="chunk cobuild collops2 seq bymap"
 KNOWN_ILVERIFY_FAIL="chunk collops2 collrealkt gen3 iter iterable"
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
@@ -343,6 +346,12 @@ two')"
 il_check mutcoll MutColl "$ROOT/cases/il-mutcoll" "$(printf '2,3,4\n2,4\n2\n0\n11,22,33')"
 il_check mapfilter MapF "$ROOT/cases/il-mapfilter" "$(printf '10,20,30,40,50\n2,4\n4,5,6\n100,200,300\n2,4,6')"
 il_check nan Nan "$ROOT/cases/il-nan" "$(printf 'True\nTrue\nTrue\nFalse\nFalse')"
+# A5 exactly-once evaluation gates: when-subject / safe-call receiver / range-membership operand each
+# evaluate ONCE (the old rendered-JSON valSubst splice re-evaluated per use), and a nullable-VALUE-type
+# safe-call receiver unwraps via HasValue/.Value (raw Nullable splice was invalid IL).
+il_check whensubj WhenSubj "$ROOT/cases/il-whensubj" "$(printf 'b\n1\nz\n2\nseven')"
+il_check safecallnv SafeCallNv "$ROOT/cases/il-safecallnv" "$(printf '120\n\n3\n\n4')"
+il_check rangein RangeIn "$ROOT/cases/il-rangein" "$(printf 'True\n1\nFalse\n2\nTrue')"
 
 # Reverse interop: a .NET (C#) host loads the IL-emitted Kotlin assembly and calls a Kotlin class + top-level
 # fun. Proves the IL output is a consumable .NET assembly. (Compile-time <Reference> needs per-type contract-
@@ -391,7 +400,7 @@ ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
 REFDIR="$(dirname "$(find /usr/share/dotnet/shared/Microsoft.NETCore.App -name System.Private.CoreLib.dll 2>/dev/null | sort | tail -1)")"
 if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 	echo "--- ilverify ---"
-	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [refcell]=RefCell [annot]=Annot [props]=Props [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob [dsl]=Dsl [object]=TObj [gfac]=TGfac [xprop]=Xprop [arrops]=Arro [langtail]=LangTail [enumbody]=EnumBody [fieldvis]=FieldVis [bytearg]=ByteArg [iterable]=Iterable [customexc]=CustomExc [comparator]=Comparator [use]=Use [comparable]=Comparable [charseq]=CS [charseqx]=CSX [charseqs]=CSStr [substr]=Substr [injbase]=InjBase [injfqn]=InjFqn [injstatic]=InjStatic [mfclosure]=MfClosure [mflambda]=MFL [injuint]=InjUint [exprbody]=EB [overload]=OV [collrealkt]=CollRealKt [mutcoll]=MutColl [mapfilter]=MapF [nan]=Nan )
+	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [refcell]=RefCell [annot]=Annot [props]=Props [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob [dsl]=Dsl [object]=TObj [gfac]=TGfac [xprop]=Xprop [arrops]=Arro [langtail]=LangTail [enumbody]=EnumBody [fieldvis]=FieldVis [bytearg]=ByteArg [iterable]=Iterable [customexc]=CustomExc [comparator]=Comparator [use]=Use [comparable]=Comparable [charseq]=CS [charseqx]=CSX [charseqs]=CSStr [substr]=Substr [injbase]=InjBase [injfqn]=InjFqn [injstatic]=InjStatic [mfclosure]=MfClosure [mflambda]=MFL [injuint]=InjUint [exprbody]=EB [overload]=OV [collrealkt]=CollRealKt [mutcoll]=MutColl [mapfilter]=MapF [nan]=Nan [whensubj]=WhenSubj [safecallnv]=SafeCallNv [rangein]=RangeIn )
 	for n in $(printf '%s\n' "${!ASMS[@]}" | sort); do
 		dll="$ROOT/build/il-$n/${ASMS[$n]}.dll"
 		[[ -f "$dll" ]] || continue

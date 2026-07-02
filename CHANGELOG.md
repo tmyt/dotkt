@@ -5,6 +5,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: exactly-once evaluation for when-subject / safe-call receiver / range-membership operand.**
+  `BirEmitter.blockExpr` stored the RENDERED initializer JSON in `valSubst`, so every `IrGetValue` of the
+  subject re-spliced — and re-EVALUATED — it: a when-subject call ran once per branch test, a safe-call
+  receiver ran twice, and `x in a..b` rendered `x` into both comparison legs. Worse, a safe call on a
+  nullable VALUE-type receiver (`g(): Char?; g()?.code`) spliced the raw `Nullable<char>` under `conv int`
+  → `System.InvalidProgramException` at run. Fixed with the ELVIS temp-local pattern (`bindOnce`): the
+  subject is bound once into a `valueBlock` temp (stable const/immutable-local reads still splice
+  directly), and a nullable-VALUE receiver is HasValue-gated with the member seeing the unwrapped
+  `.Value`. A nullable generic-param subject (`x as? T`) object-erases its temp (a `gp:T` local can't
+  hold the `isinst` REF result — unverifiable). New gate cases: `il-whensubj`, `il-safecallnv`,
+  `il-rangein`.
 - **`scripts/` overhaul: one naming scheme + shared internal conventions + two harness bug fixes.**
   *Naming* — normalized to `<verb>-<noun>[-qualifier].sh`, aligned with the make target names (targets unchanged):
   `build-clr-stdlib.sh`→`build-stdlib-ref.sh`, `build-clr-stdlib-runtime.sh`→`build-stdlib-rt.sh`,
