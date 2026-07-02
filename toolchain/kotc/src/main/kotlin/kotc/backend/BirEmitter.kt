@@ -1272,7 +1272,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (extRecv != null) selfSubst.remove(extRecv)
 		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
 		val ps = if (erasesSam) (listOfNotNull(selfParam) + erasedParams.mapIndexed { i, _ -> """{"name":"__sam$i","type":"object"}""" }).joinToString(",")
-			else (listOfNotNull(selfParam) + paramsJsonList(fn.parameters)).joinToString(",")
+			else (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
 		// `override fun toString()/equals()/hashCode()` -> System.Object.ToString/Equals/GetHashCode so that
 		// CLR virtual dispatch (Console.WriteLine, structural `==`) finds the override.
 		val objName = objectMethodName(fn)
@@ -1798,23 +1798,64 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"name":${str(emitName)},"static":false,"override":true,"virtual":true,"objectOverride":false,"clrOverride":${str(clrOwner)},"vis":"public","params":[$ps],"ret":${str(ret)},"body":[$body]}"""
 	}
 
-	internal fun paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): List<String> =
-		params.filter { isValueParameter(it) }
-			.map {
+	/** THE 2-TIER default-argument test (docs/dotkt-semantics.md): can the parameter's OWN CLR type carry its default as
+	 *  a `[DefaultParameterValue]` constant? TRUE (Tier 1) — a primitive/char/bool const on its primitive param, a String
+	 *  const on a `String` param, or a null const on any nullable/reference param → native `[Optional]`+`[DefaultParameterValue]`.
+	 *  FALSE (Tier 2) — a String const on a NON-String reference param (`CharSequence`: a string constant cannot sit on an
+	 *  interface-typed param), or ANY non-constant default → `@KotlinDefault(bir)` + a REQUIRED param (a kcc consumer
+	 *  splices the expression, a C# consumer passes the arg explicitly). */
+	internal fun isMetadataRepresentableDefault(p: org.jetbrains.kotlin.ir.declarations.IrValueParameter): Boolean {
+		val def = p.defaultValue?.expression as? org.jetbrains.kotlin.ir.expressions.IrConst ?: return false
+		val v = def.value
+		return when {
+			v == null -> true                                                   // null fits any nullable/reference param (ldnull)
+			v is String -> p.type.classFqName?.asString() == "kotlin.String"    // a string const only fits a String param
+			else -> true                                                        // a primitive/char/bool const on its primitive param
+		}
+	}
+
+	/** True if `fn` is a top-level / extension function (static-emitted, dispatch-receiver-less, non-suspend) with at
+	 *  least one Tier-2 default (not metadata-representable). Then ALL its defaulted params carry `@KotlinDefault` (a
+	 *  UNIFORM splice source for bir2cir — so an omitted trailing run of args, which interleaves Tier-1 and Tier-2 params,
+	 *  fills contiguously from ONE source). A function with only Tier-1 defaults carries no `@KotlinDefault` and keeps the
+	 *  pure native `[DefaultParameterValue]` path (unchanged) — no currently-working call changes path. */
+	internal fun carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
+		!fn.isSuspend && fn.parameters.none { it.kind == IrParameterKind.DispatchReceiver } &&
+			fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null && !isMetadataRepresentableDefault(it) }
+
+	internal fun paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>,
+			ownerFn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction? = null): List<String> {
+		// A `@KotlinDefault(index, bir)` on each defaulted param of a qualifying function: `index` = the param's position
+		// in the emitted call (extension receiver first, if any), `bir` = the default expression as a BIR-json STRING (so
+		// bir2cir splices it PRE-lowering; it is opaque to this build's type lowering). Stamped on ALL defaulted params of
+		// a Tier-2-carrying function (uniform splice source); rides the ref.dll (stripped in the rt build with all attrs).
+		val emitKotlinDefault = ownerFn != null && !stripMetadata && carriesKotlinDefault(ownerFn)
+		val extOffset = if (ownerFn?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true) 1 else 0
+		return params.filter { isValueParameter(it) }
+			.mapIndexed { regIdx, it ->
 				// `vararg xs: T` -> mark the param so ilemit stamps [ParamArray] (native .NET varargs; a cross-module
 				// consumer can then call `f(1, 2, 3)`). A nullable type rides a `nullable` flag (ref types are nullable
 				// in IL anyway; the flag is for the consumer's FIR to restore `T?`).
 				val vararg = if (it.varargElementType != null) ""","vararg":true""" else ""
 				val nullable = if (it.type.isMarkedNullable()) ""","nullable":true""" else ""
-				// A CONSTANT default arg -> carry it so ilemit stamps [DefaultParameterValue]; a cross-module caller can
-				// then omit the arg (ilemit's EmitDefaultArg fills it from the .NET metadata). Non-const defaults are dropped.
-				val default = (it.defaultValue?.expression as? org.jetbrains.kotlin.ir.expressions.IrConst)?.let { c -> ""","default":${expr(c)}""" } ?: ""
+				// TIER 1 — a metadata-representable default -> carry it so ilemit stamps [Optional]+[DefaultParameterValue]
+				// (a C# OR kcc caller can omit the arg; ilemit's EmitDefaultArg fills it from the .NET metadata). A TIER-2
+				// default carries NO `default` field, so the param is emitted REQUIRED (no [Optional]) — a C# caller must
+				// pass it; a kcc caller relies on the @KotlinDefault splice below.
+				val default = if (isMetadataRepresentableDefault(it)) ""","default":${expr(it.defaultValue!!.expression)}""" else ""
 				// PARAMETER-level annotations -> .NET custom attributes on the emitted parameter (e.g. @ClrRefArgument,
 				// which bir2cir reads from the ref.dll to pass the arg by reference). attrsJson is stripped in the runtime
 				// build (DOTKT_STRIP_METADATA), so param attrs ride only the ref.dll — exactly bir2cir's read surface.
-				val pattrs = attrsJson(it.annotations).let { s -> if (s.isNotEmpty()) ""","attrs":[$s]""" else "" }
+				val srcAttrs = attrsJson(it.annotations)
+				val kotlinDefault = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
+					val bir = expr(def)   // BIR of the default expression (real IR here — the callee's own build)
+					"""{"attr":"kotlin.clr.KotlinDefault","argTypes":["kotlin.Int","kotlin.String"],"args":[{"k":"const","type":"kotlin.Int","value":${regIdx + extOffset}},{"k":"const","type":"kotlin.String","value":${str(bir)}}]}"""
+				} else null
+				val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
+				val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
 				"""{"name":${str(it.name.asString())},"type":${str(birType(it.type))}$vararg$nullable$default$pattrs}"""
 			}
+	}
 
 	/** A `,"sig":"<paramtypes>"` field carried on a call so ilemit resolves the right OVERLOAD by name+signature. Emit
 	 *  it ALWAYS: for a non-overloaded callee it's harmless (ilemit's `MethodsBySig` lookup hits the sole method, or
