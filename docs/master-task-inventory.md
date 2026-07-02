@@ -642,6 +642,17 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
   verify-il artifacts (`build/il-comparable/`, old rt dll md5 `97cb1025`) reproduce `Array.Sort[T] … not fully
   instantiated` inside rt `sorted[T]`; a REFLECTED open-generic-invoke bug in the rt body emission, separate track.)
 
+- **`il-bymap` ✅ (2026-07-02)** — Map delegation (`val name by data`) — the recorded "cross-assembly KProperty
+  identity, NOT trivial" turned out to be canonicalizable after all: `<>dotkt_KProperty`(+`Impl`) IS monomorphic
+  (one get_name/ctor(string) shape everywhere — the KIterator_* per-element objection does not apply) and joined
+  `CanonicalSynthetics` (apps reference the rt dll's copy; self-correcting for --no-stdlib). Two more pieces:
+  kotc's delegate lowering now routes a TOP-LEVEL-extension delegate convention (the accessor body's resolved
+  `kotlin.collections.getValue/setValue`) as a plain owner-null callStatic (was: "unsupported delegated property"
+  compile error — the doc line above saying "the delegate ROUTES" was stale); and stdlib `MapAccessors.kt` pins
+  `getOrImplicitDefault`'s K:=String (the `Map<in String,V>` captured-type approximation made reified CLR dispatch
+  `IDictionary<object,V>.ContainsKey` on a `Dictionary<string,V>` → EntryPointNotFound; a variance JVM-ism).
+  il-lazy/il-deleg/il-deleg2/il-rwp/il-localdeleg stay green.
+
 **PRIORITY (leverage ÷ effort) + agent routing.**
 1. **RC1 — cross-module default args (`joinToString`). DO FIRST.** Highest leverage in the whole cluster: alone flips
    `mapfilter`/`coll2`/`chunk`/`sort` green and is a prerequisite for `collmore`/`seq`/`collops2`/`collrealkt`/`mutcoll`

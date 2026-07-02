@@ -6,6 +6,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Fixed
+- **Map delegation `val name by data` (`il-bymap`)** — three coordinated fixes across the layers it crosses:
+  (1) **kotc** routes a delegated property whose convention resolved to a TOP-LEVEL extension (the stdlib
+  `kotlin.collections.getValue/setValue`, MapAccessors.kt) by re-emitting the accessor body's RESOLVED call at the
+  access site as the plain owner-null static call (receiver-first args + declared sig + typeArgs) — previously this
+  fell to "unsupported delegated property". (2) **ilemit** canonicalizes `<>dotkt_KProperty`/`<>dotkt_KPropertyImpl`
+  (added to `CanonicalSynthetics`): the synthetic is MONOMORPHIC (one get_name/ctor(string) shape everywhere, unlike
+  KIterator_*), and a per-assembly copy made the rt's `MapAccessorsKt.getValue(map, thisRef, KProperty)` fail
+  `EntryPointNotFound` on `get_name` when handed the APP's KPropertyImpl — apps now reference the rt dll's single
+  copy (self-correcting: a --no-stdlib build still emits it locally). (3) **stdlib** `MapAccessors.kt` pins
+  `getOrImplicitDefault`'s K to String via `(this as Map<String, V>)`: on the projected receiver `Map<in String, V>`
+  the frontend approximates the captured K to Any — fine under JVM erasure, but reified CLR generics then dispatch
+  `IDictionary<object,V>.ContainsKey` on a `Dictionary<string,V>` → EntryPointNotFound (a variance JVM-ism, discarded).
 - **Generic method on a generic class, called with a CONCRETE owner instantiation (`il-generic4`)** — `Holder<int>.pairWith<string>()`
   threw `InvalidOperationException: … not fully instantiated` at runtime: ilemit's `ApplyTypeArgs` replaced the
   `TypeBuilder.GetMethod`-anchored member with the OPEN method's instantiation (`Holder`1::pairWith<string>`), losing the

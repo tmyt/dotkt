@@ -1486,7 +1486,9 @@ sealed partial class Emitter
                     // by ResolveMethod's TypeBuilder.GetMethod) DOES support MakeGenericMethod (the documented
                     // TypeBuilder.GetMethod-then-MakeGenericMethod order; verified on .NET 10 persisted emit), carrying
                     // BOTH instantiations. Gated STRICTLY to owners with no generic-parameter args so the erased-context
-                    // path below (the rt-stdlib self/enclosing-generic case) is untouched.
+                    // path below (the rt-stdlib self/enclosing-generic case) is untouched. KNOWN EDGE (Codex review,
+                    // no failing sample): a MIXED owner (`Holder<int, U>` — concrete + enclosing-generic args) still
+                    // takes the open path and would lose the concrete arg; if such CIR ever appears, route it here too.
                     if (!dt.GetGenericArguments().Any(ContainsGenericParam))
                     {
                         var cpars = openTb.GetGenericArguments();
@@ -2311,7 +2313,12 @@ sealed partial class Emitter
     // A shared compiler-synthetic type that, once verified cross-assembly, is emitted ONCE (public) in the rt stdlib
     // dll and REFERENCED by app assemblies instead of re-synthesized per-assembly (canonicalization), so a value
     // crossing the app<->rt boundary keeps ONE CLR identity. CharSequence first; extend as each synthetic is verified.
-    static readonly HashSet<string> CanonicalSynthetics = new(StringComparer.Ordinal) { "<>dotkt_CharSequence" };
+    // KProperty(+Impl) verified 2026-07-02: MONOMORPHIC (one shape — get_name/ctor(string) — everywhere, unlike the
+    // per-element KIterator_* family), and Map delegation (`val x by map`) passes the app's KPropertyImpl into the rt's
+    // `MapAccessorsKt.getValue(map, thisRef, <>dotkt_KProperty)` — a distinct per-assembly copy EntryPointNotFound-s
+    // on `get_name`. Both names skip together (Impl's iface/method sigs reference the canonical interface).
+    static readonly HashSet<string> CanonicalSynthetics = new(StringComparer.Ordinal)
+        { "<>dotkt_CharSequence", "<>dotkt_KProperty", "<>dotkt_KPropertyImpl" };
     // True when `name` is already defined by a REFERENCED (--ref, Assembly.LoadFrom'd) assembly. The module under
     // construction is a PersistedAssemblyBuilder (not a loaded AppDomain assembly), so it never self-matches.
     static bool ResolvesExternally(string name) =>

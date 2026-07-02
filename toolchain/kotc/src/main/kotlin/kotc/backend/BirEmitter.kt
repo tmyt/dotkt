@@ -3794,6 +3794,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"setValue","args":[$recv,$kprop,${expr(regularArgs(call).first())}]}"""
 				else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue","args":[$recv,$kprop]}"""
 			}
+			// `val x by map` (a TOP-LEVEL-extension delegate convention): FIR resolved the accessor to the stdlib
+			// `kotlin.collections.getValue/setValue(thisRef, property)` extension (MapAccessors.kt) — the resolved
+			// symbol sits in the accessor's own generated body. Re-emit it at the access site as the plain owner-null
+			// static call the general top-level-extension path produces (receiver-first args + declared sig +
+			// typeArgs), so bir2cir/ilemit resolve the real rt-stdlib method like any other cross-module stdlib call.
+			// (Pure Kotlin: the target comes from FIR resolution, no CLR knowledge here.)
+			run {
+				val accessor = callee as? IrSimpleFunction ?: return@run
+				val stmts = (accessor.body as? IrBlockBody)?.statements ?: return@run
+				val bodyCall = stmts.mapNotNull { st -> (st as? IrReturn)?.value as? IrCall ?: st as? IrCall }.singleOrNull() ?: return@run
+				val target = bodyCall.symbol.owner
+				if (delegate == null || target.parent is IrClass) return@run
+				if (target.name.asString() != "getValue" && target.name.asString() != "setValue") return@run
+				needsKProperty = true
+				val kprop = """{"k":"new","type":"<>dotkt_KPropertyImpl","args":[{"k":"const","type":"string","value":${str(property.name.asString())}}]}"""
+				val ta = typeArgsJson(bodyCall)
+				val setArg = if (callee === property.setter) ",${expr(regularArgs(call).first())}" else ""
+				return """{"k":"callStatic","owner":null,"method":${str(target.name.asString())}${overloadSigField(target)}$ta${retHintStr(ta.isNotEmpty(), birType(callee.returnType))},"args":[$delegate,$recv,$kprop$setArg]}"""
+			}
 			return unsupported(call, "this delegated property",
 				"its delegate type could not be resolved to a supported form (lazy, a custom getValue/setValue, or a Map)")
 		}

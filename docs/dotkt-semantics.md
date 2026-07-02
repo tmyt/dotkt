@@ -147,6 +147,13 @@ Consequences (deliberate, declared):
 - A **user class implementing `Map`/`MutableMap` in pure Kotlin** must satisfy the full `IDictionary` surface; today
   only the `@ClrIntrinsic`-renamed slots are generated, so such classes (stdlib `AbstractMap`, `MapWithDefaultImpl`)
   fail to LOAD when touched — the known under-tested pure-Kotlin dual-rep path (`dual-representation-stdlib-types`).
+- **Map delegation (`val name by data`) requires a String-KEYED map at runtime.** The stdlib
+  `Map<in String, V>.getValue` body pins `getOrImplicitDefault`'s K to `String` (a `(this as Map<String, V>)` CLR
+  adaptation in `MapAccessors.kt`): the frontend approximates the contravariant captured K to `Any`, which under
+  REIFIED generics dispatched `IDictionary<object,V>.ContainsKey` on a `Dictionary<string,V>` →
+  `EntryPointNotFoundException`. Consequence: delegating through a `Map<Any, V>` receiver (legal for `Map<in
+  String, V>` and fine under JVM erasure) `castclass`-fails on the CLR, because that value is an
+  `IDictionary<object,V>`. Use a `Map<String, …>`-typed map for `by`-delegation.
 
 ## 6. Consuming a DotKt assembly AS KOTLIN — what rides metadata vs. needs an attribute
 
