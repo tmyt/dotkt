@@ -77,7 +77,8 @@ passing prints "FIXED — remove it from the xfail list" **without** reddening t
 the same change). So never copy fail counts/names into docs — run the gate and read its diff. (Each
 sample writes an atomic result record under `build/verify-il/`; the old stdout race that dropped FAIL
 lines is dead.) `verify-roundtrip.sh` follows the same discipline (`RT_XFAIL`: the suspend sections are
-expected-fail until the coroutine lowering lands — it is the coroutine bundle's E2E gate). `dotkt.sh` is
+expected-fail until the coroutine lowering lands — it is the coroutine bundle's E2E gate), and so does
+`verify-differential.sh` (`XFAIL_DIFF`). `dotkt.sh` is
 the fast dev wrapper over the same pipeline (`-h` for options: `--exe`, `--no-stdlib`, `--retarget`,
 `--ref <dll>`).
 

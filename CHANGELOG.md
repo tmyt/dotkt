@@ -27,6 +27,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   a wide-typed parameter) through the canonical kotc → bir2cir → ilemit pipeline and keeps all three
   assertions: run output, KFunc`18/KAction`17 synthesis in the dll, facadegen restoring the wide Kotlin
   function type (`rg` → `grep` for CI portability).
+  *C3 (verify-differential)* — same `XFAIL_DIFF` mechanism: the 2 coroutine DIFFs (`il-seq`/`il-collops2`,
+  mirroring verify-il's run-XFAILs) plus 3 RECORDED regressions from the 2026-07-02 stdlib subtree bump
+  (cde8afd): `m-b6` (ilemit aborts on the rt's Double-specialized `maxOrNull` — "not a
+  GenericMethodDefinition"), `m-b9` (`sumOf {}` returns 0 on CLR), `m-b10` (`groupBy` → `clrMapGet`
+  `EntryPointNotFoundException`, the same Map dual-rep family as verify-il's `bymap`). These 4 stdlib-bump
+  regressions (incl. bymap) are stdlib-side work, NOT gate bugs — the XFAIL entries carry the full symptom
+  so the owning track can pick them up.
 - **`scripts/` overhaul: one naming scheme + shared internal conventions + two harness bug fixes.**
   *Naming* — normalized to `<verb>-<noun>[-qualifier].sh`, aligned with the make target names (targets unchanged):
   `build-clr-stdlib.sh`→`build-stdlib-ref.sh`, `build-clr-stdlib-runtime.sh`→`build-stdlib-rt.sh`,
