@@ -103,6 +103,12 @@ internal val SEQUENCED_COLLECTION_LEAK = setOf("getFirst", "getLast", "addFirst"
 // is a range VALUE (e.g. `for (i in indices)`), avoiding the iterator protocol + its covariant-return iterator.
 internal val INT_PROGRESSION_FQ = setOf("kotlin.ranges.IntRange", "kotlin.ranges.IntProgression")
 
+// Top-level reified enum intrinsics, lowered at the call site to the same BIR nodes as `T.values()`/`T.valueOf()`
+// (all type args are reified on the CLR). See the interception block in BirEmitter's call lowering.
+internal val ENUM_REIFIED_INTRINSICS = setOf(
+	"kotlin.enumValues", "kotlin.enumValueOf", "kotlin.enums.enumEntries", "kotlin.enums.enumEntriesIntrinsic",
+)
+
 // Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.
 internal val NUMBER_CONV = mapOf(
 	"toInt" to "int", "toLong" to "long", "toDouble" to "double", "toFloat" to "float",

@@ -6,6 +6,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Fixed
+- **Unsigned division/remainder/`toString(radix)` (bundle 【2】b-A)** — the 6 `UnsignedClr.kt` TODO stubs
+  (`uintDivide`/`uintRemainder`/`ulongDivide`/`ulongRemainder`/`uintToString(base)`/`ulongToString(base)`) now have
+  **real pure-Kotlin bodies** (JVM-actual ports; ULong via the Guava UnsignedLongs algorithm; radix `toString` via a
+  self-contained digit loop — NOT `Long.toString(radix)`, whose call sites still lower to `Convert.ToString`,
+  bases 2/8/10/16 only). **Zero compiler change**: direct `a / b` on UInt/ULong was already frontend-lowered to a raw
+  `bin /` whose unsigned CLR operand type selects `div.un`/`rem.un` in ilemit (no BCL bind exists — `op_Division` on
+  `UInt32`/`UInt64` is an explicit-interface generic-math impl, not a callable static). Fixes
+  `UInt/ULong.toString(radix)` (previously threw `NotImplementedException`); verified incl. `2^63.toString(7)`,
+  `ULong.MAX_VALUE.toString(10/16/36)`, unsigned div/rem edges (`2^63` divisor, `MAX/MAX`); `il-unsigned` unchanged.
+- **Enum reflection `enumValues<T>()`/`enumValueOf<T>(name)`/`enumEntries<T>()`/`enumEntriesIntrinsic<T>()`
+  (bundle 【2】b-B)** — kotc lowers the top-level reified intrinsics at the CALL SITE like `T.values()`/`T.valueOf()`
+  (`ENUM_REIFIED_INTRINSICS`): a **rich** enum type arg → the synthesized static `values()`/`valueOf()`; a **basic**
+  enum / generic-param type arg → the semantic `enumValues`/`enumParse` BIR nodes (`System.Enum.GetValues/Parse` in
+  ilemit; an unknown name surfaces as `ArgumentException`, the CLR face of `IllegalArgumentException`). Previously
+  every such call threw (`VerificationException`: the cross-module generic call's `T : kotlin.Enum<T>` constraint is
+  unsatisfiable for a basic enum, which derives `System.Enum`). The entries family is not intercepted under
+  `stdlibCompile` (the rt `enumEntries<T>` body would return `T[]` where `EnumEntries<T>` is declared — invalid IL).
+  KNOWN GAPS (documented in the stubs): a RICH enum through a **non-inlined generic** context is invisible to
+  `System.Enum` reflection; user-defined `inline fun <reified T : Enum<T>>` helpers still hit the pre-existing
+  `kotlin.Enum<T>`-constraint emission issue (orthogonal — any Enum-bounded generic call, not enum reflection).
+  Gates kept green: `il-enum`/`il-enumbody`/`il-enumrich`.
 - **Generic `Array<T>` ops bound with real stdlib bodies (bundle 【2】a): `copyOf(newSize)`, `copyOfRange`,
   `plus(element)`, `plus(Array)`, `plus(Collection)`, `plusElement`, `orEmpty()`, `arrayOfNulls(reference, size)`**
   — all pure Kotlin in `runtime/stdlib/clr` (allocate via `arrayOfNulls<T>(n)` → generic `newarr !T`, reified-on-CLR;

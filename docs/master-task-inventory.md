@@ -147,6 +147,14 @@ is largely STALE** — a code-grounded currency check found:
 ## 【2】 stdlib completeness  *(#1 rt-green residual)*
 - **~363 unbound `actual`s → `@ClrIntrinsic`** (Arrays / Char / StringBuilder / Unsigned / Regex families).
 - The 25 "retire from compiler" ops in 【1】 become real stdlib `@ClrIntrinsic`.
+- ✅ **Unsigned family DONE (bundle 【2】b-A, 2026-07-02)**: the 6 `UnsignedClr.kt` div/rem/`toString(radix)` stubs
+  got real pure-Kotlin bodies (JVM-actual/Guava ports; no BCL bind exists — unsigned `op_Division` is an
+  explicit-interface generic-math impl); zero compiler change (call-site `bin /` + ilemit `div.un` pre-existed).
+- ✅ **Enum reflection DONE (bundle 【2】b-B, 2026-07-02)**: `enumValues`/`enumValueOf`/`enumEntries`/
+  `enumEntriesIntrinsic` call-site-lowered by kotc (`ENUM_REIFIED_INTRINSICS`) like `T.values()`/`T.valueOf()` —
+  rich → synthesized statics, basic/generic-param → semantic `enumValues`/`enumParse` nodes. Gaps: rich enums via
+  non-inlined generic contexts; the pre-existing `kotlin.Enum<T>` CLR-constraint emission (breaks ANY Enum-bounded
+  cross-module generic call with a basic-enum type arg — orthogonal, still open).
 
 ## 【3】 facadegen .NET interop breadth  *(#4 + interop-feedback)*
 Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedback.md`, `research-roadmap.md I1`.

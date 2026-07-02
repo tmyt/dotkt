@@ -3418,6 +3418,33 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"enumValues","type":${str(et)}}"""
 			if (name == "valueOf") return """{"k":"enumParse","type":${str(et)},"arg":${expr(regularArgs(call).first())}}"""
 		}
+		// Top-level reified enum intrinsics: `enumValues<T>()` / `enumValueOf<T>(name)` / `enumEntries<T>()` /
+		// `enumEntriesIntrinsic<T>()`. On the CLR every type arg is REIFIED (real generics), so these lower at the
+		// call site exactly like `T.values()` / `T.valueOf(name)` above — a Kotlin-level equivalence, same BIR
+		// vocabulary. A CONCRETE enum type arg reuses the rich/basic split (rich -> the synthesized static
+		// values()/valueOf(); basic -> the semantic enumValues/enumParse nodes). A GENERIC-PARAM type arg emits the
+		// semantic node with the param token (`gp:T`) — runtime-resolvable for BASIC enums only (a rich enum is a
+		// plain class invisible to System.Enum reflection; documented gap). The entries family is NOT intercepted
+		// under stdlibCompile: the rt-emitted `enumEntries<T>` body would return `T[]` where its declared return is
+		// the `EnumEntries<T>` interface (invalid IL); its TODO body stays and call sites are intercepted instead.
+		if (calleeFq in ENUM_REIFIED_INTRINSICS && call.typeArguments.size == 1) {
+			val isValueOf = calleeFq == "kotlin.enumValueOf"
+			val isEntries = calleeFq == "kotlin.enums.enumEntries" || calleeFq == "kotlin.enums.enumEntriesIntrinsic"
+			val args = regularArgs(call)
+			if (args.size == (if (isValueOf) 1 else 0) && !(isEntries && stdlibCompile)) {
+				val ta = call.typeArguments[0]
+				val klass = (ta?.classifierOrNull?.owner as? IrClass)?.takeIf { it.kind == ClassKind.ENUM_CLASS }
+				if (klass != null && isRichEnum(klass)) {
+					return if (isValueOf)
+						"""{"k":"callStatic","owner":${str(klass.name.asString())},"method":"valueOf","args":[${expr(args[0])}]}"""
+					else """{"k":"callStatic","owner":${str(klass.name.asString())},"method":"values","args":[]}"""
+				}
+				val tok = ta?.let { birType(it) }
+				if (tok != null)
+					return if (isValueOf) """{"k":"enumParse","type":${str(tok)},"arg":${expr(args[0])}}"""
+					else """{"k":"enumValues","type":${str(tok)}}"""
+			}
+		}
 		// `c.code` (Char -> Int code point) -> the char value as an int.
 		if (callee.correspondingPropertySymbol?.owner?.name?.asString() == "code")
 			(dispatchReceiver(call) ?: extensionReceiver(call))?.takeIf { it.type.classFqName?.asString() == "kotlin.Char" }?.let { c ->
