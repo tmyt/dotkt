@@ -5,6 +5,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: removed the dead `kotlinx.coroutines.delay` → `Task.Delay` lowering from `coAwaitable`.**
+  Pre-stdlib bespoke kotlinx legacy (kotlinx.* is not the stdlib); it was unreachable on the current
+  pipeline — unrestricted suspend fns emit plainly with `"suspendCall":true`, and the only `coAwaitable`
+  caller is the `sequence{}` restricted-suspension CPS path where `delay` cannot appear. Deleted (not
+  aliased) so the Task-based coroutine lowering (bundle 6) does not inherit it as a load-bearing hack;
+  `il-cobuild` BIR and run behavior are unchanged (the legible deferred-coroutine stub).
 - **kotc: exactly-once evaluation for when-subject / safe-call receiver / range-membership operand.**
   `BirEmitter.blockExpr` stored the RENDERED initializer JSON in `valSubst`, so every `IrGetValue` of the
   subject re-spliced — and re-EVALUATED — it: a when-subject call ran once per branch test, a safe-call

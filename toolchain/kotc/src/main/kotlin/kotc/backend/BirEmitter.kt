@@ -1411,12 +1411,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 	}
 
-	/** The `Task<T>` an await/suspend-call awaits: the `.await()` receiver, or the direct suspend call itself. */
+	/** The `Task<T>` an await/suspend-call awaits: the `.await()` receiver, or the direct suspend call itself.
+	 *  (The old bespoke `kotlinx.coroutines.delay` -> `Task.Delay` lowering here was dead pre-stdlib legacy —
+	 *  REMOVED, not aliased: kotlinx.* is not the stdlib, and the coming Task-based coroutine lowering must not
+	 *  inherit it as a load-bearing hack. See MEMORY runtime-dll-coroutine-lowering-is-dead-legacy.) */
 	internal fun coAwaitable(call: IrCall): String {
 		val callee = call.symbol.owner
-		// `kotlinx.coroutines.delay(ms)` -> `Task.Delay((int)ms)` (the awaitable; a non-generic Task -> void result).
-		if (callee.fqNameWhenAvailable?.asString() == "kotlinx.coroutines.delay")
-			return """{"k":"clrStatic","type":"System.Threading.Tasks.Task","method":"Delay","argTypes":["System.Int32"],"ret":"clr:System.Threading.Tasks.Task","args":[{"k":"conv","to":"int","e":${expr(regularArgs(call).first())}}]}"""
 		return if (isAwaitIntrinsic(callee)) expr(extensionReceiver(call) ?: dispatchReceiver(call)!!)
 		else expr(call)   // a direct suspend call: its kickoff returns Task<T>
 	}
