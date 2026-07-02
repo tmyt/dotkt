@@ -28,7 +28,9 @@ The accepted tail, NOT open work:
 - **ilverify-formal-only (6, run-correct):** `collrealkt`/`gen3`/`iter`/`iterable` (+ `chunk`/`collops2`, also
   sequence-gated) — the IL runs correctly; ilverify's strict-verifiability complaints = documented noise.
 - **coroutine/SequenceScope-deferred (4, by design):** `chunk`/`cobuild`/`collops2`/`seq` — unblocked by the
-  bundle-6 sequence-builder/coroutine work, not before.
+  bundle-6 sequence-builder/coroutine work, not before. **`verify-roundtrip`'s suspend section is the same bucket**
+  (investigated 2026-07-03: the consumer runs `11/(4,6)/Hi, Vec` correctly, then SIGABRTs at the first suspend
+  member call — the deferred throwing stub, NOT a 50c2c9f regression; the markers/packaged/generic sections PASS).
 - `il:injstatic` was NOT the .Companion convention — a genuine bir2cir rule-3 classifier misfire on
   facadegen-injected owners (fixed `c8f5345`, mirroring the event-accessor precedent `32a1da6`). The `.Companion`
   requirement itself was then ALSO lifted (`50c2c9f`, 2026-07-02): implicit `App.start` now resolves via the eager
