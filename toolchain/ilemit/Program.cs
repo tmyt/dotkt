@@ -2080,6 +2080,12 @@ sealed partial class Emitter
         // compareTo does the UNSIGNED compare and the outer `> 0` is a plain signed int compare. (`byte`/`ushort`
         // arithmetic promotes to UInt, so only uint/ulong reach a direct unsigned div here.)
         bool isUns = lt == typeof(uint) || lt == typeof(ulong);
+        // Float/double `<=`/`>=` need the UNORDERED-inverted compare (C#'s shape): `a <= b` == !(a > b treating
+        // unordered as TRUE) -> `cgt.un; ldc.i4.0; ceq` (resp. `>=` -> `clt.un; ...`). The plain signed cgt/clt
+        // inversion returns TRUE for a NaN operand (`NaN <= 1.0` was True) because cgt/clt yield 0 on unordered
+        // and the inversion flips it. `<`/`>` stay ordered clt/cgt (0 on unordered = correct false), and integer
+        // paths keep the signed opcodes (unsigned compares never reach a direct bin — see the note above).
+        bool isFloat = lt == typeof(float) || lt == typeof(double);
         switch (op)
         {
             case "+": _il.Emit(OpCodes.Add); return lt;
@@ -2097,8 +2103,8 @@ sealed partial class Emitter
             case "!=": _il.Emit(OpCodes.Ceq); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
             case "<": _il.Emit(OpCodes.Clt); return typeof(bool);
             case ">": _il.Emit(OpCodes.Cgt); return typeof(bool);
-            case "<=": _il.Emit(OpCodes.Cgt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
-            case ">=": _il.Emit(OpCodes.Clt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
+            case "<=": _il.Emit(isFloat ? OpCodes.Cgt_Un : OpCodes.Cgt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
+            case ">=": _il.Emit(isFloat ? OpCodes.Clt_Un : OpCodes.Clt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
             default: throw new NotSupportedException("bin " + op);
         }
     }
