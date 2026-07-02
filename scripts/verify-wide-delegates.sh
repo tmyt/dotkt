@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Regression gate for function types wider than System.Func/Action supports: System.Func tops out at 16
 # value parameters plus TResult (Func`17); Kotlin function values can be wider, so ilemit synthesizes
-# module-local delegate types DotKt.Runtime.CompilerServices.KFunc`N / KAction`N when needed. Feeds a
-# hand-written 17-arg BIR file to ilemit, runs it, checks the synthesized types exist in the dll, and
-# that facadegen restores the wide type as a Kotlin function type. Exits nonzero on any failure.
+# module-local delegate types DotKt.Runtime.CompilerServices.KFunc`N / KAction`N when needed. Drives
+# cases/il-widedeleg/wide.kt (17-arg function values) through the REAL pipeline — kotc -> bir2cir ->
+# ilemit, the same single path every other gate uses; the old hand-written .bir.json fixture that was
+# fed STRAIGHT to ilemit (bypassing kotc + bir2cir, with a hand-maintained expr vocabulary that rotted
+# twice) is gone. Runs the app, checks the synthesized delegate types exist in the dll, and that
+# facadegen restores the wide type as a Kotlin function type. Exits nonzero on any failure.
 source "$(dirname "$0")/lib.sh"
 
 usage() { cat <<EOF
@@ -18,181 +21,52 @@ while (( $# )); do
 	esac
 done
 
-OUT="$ROOT/build/ilemit-wide-delegates"
-rm -rf "$OUT"
-mkdir -p "$OUT/bir" "$OUT/il"
+OUT="$ROOT/build/wide-delegates"
+rm -rf "$OUT"; mkdir -p "$OUT/bir" "$OUT/cir" "$OUT/il"
 
-build_tool ilemit; build_tool facadegen   # unconditional: the gate tests current sources
+# Unconditional tool builds: the gate tests the CURRENT sources. Stdlib artifact roles mirror verify-il:
+# the frontend JAR is kotc's -classpath (kotlin.* comes from the jar, never facadegen), the REFERENCE
+# dll feeds bir2cir's @Clr labels, the RUNTIME dll backs println at run time.
+"$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
+build_tool ilemit; build_tool bir2cir; build_tool facadegen
+need_fe_jar; need_stdlib_ref; need_stdlib_rt
 
-cat > "$OUT/bir/Wide.bir.json" <<'EOF'
-{
-  "fileClass": "WideKt",
-  "hasMain": true,
-  "fields": [],
-  "methods": [
-    {
-      "name": "__lambda0",
-      "static": true,
-      "override": false,
-      "virtual": false,
-      "params": [
-        {"name":"p1","type":"int"},{"name":"p2","type":"int"},{"name":"p3","type":"int"},{"name":"p4","type":"int"},
-        {"name":"p5","type":"int"},{"name":"p6","type":"int"},{"name":"p7","type":"int"},{"name":"p8","type":"int"},
-        {"name":"p9","type":"int"},{"name":"p10","type":"int"},{"name":"p11","type":"int"},{"name":"p12","type":"int"},
-        {"name":"p13","type":"int"},{"name":"p14","type":"int"},{"name":"p15","type":"int"},{"name":"p16","type":"int"},
-        {"name":"p17","type":"int"}
-      ],
-      "ret": "int",
-      "body": [{"k":"return","value":{"k":"local","name":"p17"}}]
-    },
-    {
-      "name": "__lambda1",
-      "static": true,
-      "override": false,
-      "virtual": false,
-      "params": [
-        {"name":"p1","type":"int"},{"name":"p2","type":"int"},{"name":"p3","type":"int"},{"name":"p4","type":"int"},
-        {"name":"p5","type":"int"},{"name":"p6","type":"int"},{"name":"p7","type":"int"},{"name":"p8","type":"int"},
-        {"name":"p9","type":"int"},{"name":"p10","type":"int"},{"name":"p11","type":"int"},{"name":"p12","type":"int"},
-        {"name":"p13","type":"int"},{"name":"p14","type":"int"},{"name":"p15","type":"int"},{"name":"p16","type":"int"},
-        {"name":"p17","type":"int"}
-      ],
-      "ret": "void",
-      "body": [{"k":"exprStmt","expr":{"k":"clrStatic","type":"System.Console","method":"WriteLine","argTypes":["int"],"args":[{"k":"local","name":"p17"}]}}]
-    },
-    {
-      "name": "accept",
-      "static": true,
-      "override": false,
-      "virtual": false,
-      "params": [
-        {
-          "name": "cb",
-          "type": "func:int:int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int"
-        }
-      ],
-      "ret": "int",
-      "body": [
-        {
-          "k": "return",
-          "value": {
-            "k": "delegateInvoke",
-            "funcType": "func:int:int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int",
-            "recv": {"k":"local","name":"cb"},
-            "args": [
-              {"k":"const","type":"int","value":1},{"k":"const","type":"int","value":2},{"k":"const","type":"int","value":3},{"k":"const","type":"int","value":4},
-              {"k":"const","type":"int","value":5},{"k":"const","type":"int","value":6},{"k":"const","type":"int","value":7},{"k":"const","type":"int","value":8},
-              {"k":"const","type":"int","value":9},{"k":"const","type":"int","value":10},{"k":"const","type":"int","value":11},{"k":"const","type":"int","value":12},
-              {"k":"const","type":"int","value":13},{"k":"const","type":"int","value":14},{"k":"const","type":"int","value":15},{"k":"const","type":"int","value":16},
-              {"k":"const","type":"int","value":17}
-            ]
-          }
-        }
-      ]
-    },
-    {
-      "name": "main",
-      "static": true,
-      "override": false,
-      "virtual": false,
-      "abstract": false,
-      "objectOverride": false,
-      "vis": "public",
-      "params": [],
-      "ret": "void",
-      "body": [
-        {
-          "k": "var",
-          "name": "f",
-          "type": "func:int:int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int",
-          "init": {
-            "k": "delegateNew",
-            "method": "__lambda0",
-            "funcType": "func:int:int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int"
-          }
-        },
-        {
-          "k": "var",
-          "name": "a",
-          "type": "func:void:int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int",
-          "init": {
-            "k": "delegateNew",
-            "method": "__lambda1",
-            "funcType": "func:void:int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int"
-          }
-        },
-        {
-          "k": "exprStmt",
-          "expr": {
-            "k": "clrStatic",
-            "type": "System.Console",
-            "argTypes": ["int"],
-            "method": "WriteLine",
-            "args": [
-              {
-                "k": "delegateInvoke",
-                "funcType": "func:int:int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int",
-                "recv": {"k":"local","name":"f"},
-                "args": [
-                  {"k":"const","type":"int","value":1},{"k":"const","type":"int","value":2},{"k":"const","type":"int","value":3},{"k":"const","type":"int","value":4},
-                  {"k":"const","type":"int","value":5},{"k":"const","type":"int","value":6},{"k":"const","type":"int","value":7},{"k":"const","type":"int","value":8},
-                  {"k":"const","type":"int","value":9},{"k":"const","type":"int","value":10},{"k":"const","type":"int","value":11},{"k":"const","type":"int","value":12},
-                  {"k":"const","type":"int","value":13},{"k":"const","type":"int","value":14},{"k":"const","type":"int","value":15},{"k":"const","type":"int","value":16},
-                  {"k":"const","type":"int","value":17}
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "k": "exprStmt",
-          "expr": {
-            "k": "delegateInvoke",
-            "funcType": "func:void:int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int,int",
-            "recv": {"k":"local","name":"a"},
-            "args": [
-              {"k":"const","type":"int","value":1},{"k":"const","type":"int","value":2},{"k":"const","type":"int","value":3},{"k":"const","type":"int","value":4},
-              {"k":"const","type":"int","value":5},{"k":"const","type":"int","value":6},{"k":"const","type":"int","value":7},{"k":"const","type":"int","value":8},
-              {"k":"const","type":"int","value":9},{"k":"const","type":"int","value":10},{"k":"const","type":"int","value":11},{"k":"const","type":"int","value":12},
-              {"k":"const","type":"int","value":13},{"k":"const","type":"int","value":14},{"k":"const","type":"int","value":15},{"k":"const","type":"int","value":16},
-              {"k":"const","type":"int","value":17}
-            ]
-          }
-        }
-      ],
-      "attrs": []
-    }
-  ],
-  "types": []
-}
-EOF
+"$KOTC" "$ROOT/cases/il-widedeleg" -no-stdlib -classpath "$FE_JAR" -d "$OUT/bir" >/dev/null 2>&1 \
+	|| die "kotc failed on cases/il-widedeleg"
+dotnet "$BIR2CIR_DLL" "$OUT/cir" --ref "$STDLIB_REF_DLL" "$OUT/bir"/*.bir.json >/dev/null 2>&1 \
+	|| die "bir2cir failed"
+dotnet "$ILEMIT_DLL" "$OUT/il" Wide --ref "$STDLIB_RT_DLL" "$OUT/cir"/*.cir.json >/dev/null 2>&1 \
+	|| die "ilemit failed"
+cp "$STDLIB_RT_DLL" "$OUT/il/"
 
-dotnet "$ILEMIT_DLL" "$OUT/il" Wide "$OUT/bir/Wide.bir.json" >/dev/null
-actual="$(dotnet "$OUT/il/Wide.dll")"
-expected="$(printf '17\n17')"
+expected="$(printf '17\n17\n17')"
+if ! actual="$(dotnet "$OUT/il/Wide.dll" 2>/dev/null)"; then actual+="${actual:+$'\n'}(app crashed: exit $?)"; fi
 if [[ "$actual" != "$expected" ]]; then
-    echo "FAIL  wide delegate invocation" >&2
-    printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual" >&2
-    exit 1
+	echo "FAIL  wide delegate invocation" >&2
+	printf -- '--- expected ---\n%s\n--- actual ---\n%s\n' "$expected" "$actual" >&2
+	exit 1
 fi
 
-if ! strings "$OUT/il/Wide.dll" | rg -q 'KFunc`18'; then
-    echo "FAIL  emitted assembly is missing KFunc\`18" >&2
-    exit 1
+# The wide shapes must have forced the module-local synthesized delegate types (not Func/Action).
+if ! strings "$OUT/il/Wide.dll" | grep -q 'KFunc`18'; then
+	echo "FAIL  emitted assembly is missing KFunc\`18" >&2
+	exit 1
 fi
-if ! strings "$OUT/il/Wide.dll" | rg -q 'KAction`17'; then
-    echo "FAIL  emitted assembly is missing KAction\`17" >&2
-    exit 1
+if ! strings "$OUT/il/Wide.dll" | grep -q 'KAction`17'; then
+	echo "FAIL  emitted assembly is missing KAction\`17" >&2
+	exit 1
 fi
 
+# Round-trip surface: facadegen must restore the KFunc`18-typed parameter as a Kotlin function type.
 REFPACK="$(ls -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/*/ref/net10.0 2>/dev/null | sort -V | tail -1)"
 RUNTIMEPACK="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/* 2>/dev/null | sort -V | tail -1)"
-REFS="$(ls "$REFPACK"/*.dll "$RUNTIMEPACK"/*.dll | tr '\n' ';')$OUT/il/Wide.dll"
-dotnet "$FACADEGEN_DLL" --meta "$OUT/wide.meta" --refs "$REFS" WideKt >/dev/null
-if ! rg -q 'tlfun accept Int final cb:func:\[Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int\]' "$OUT/wide.meta"; then
-    echo "FAIL  facadegen did not restore KFunc\`18 as a Kotlin function type" >&2
-    cat "$OUT/wide.meta" >&2
-    exit 1
+REFS="$(ls "$REFPACK"/*.dll "$RUNTIMEPACK"/*.dll | tr '\n' ';')$STDLIB_RT_DLL;$OUT/il/Wide.dll"
+dotnet "$FACADEGEN_DLL" --meta "$OUT/wide.meta" --refs "$REFS" WideKt >/dev/null 2>&1 \
+	|| die "facadegen failed"
+if ! grep -q 'tlfun accept Int final cb:func:\[Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int\]' "$OUT/wide.meta"; then
+	echo "FAIL  facadegen did not restore KFunc\`18 as a Kotlin function type" >&2
+	cat "$OUT/wide.meta" >&2
+	exit 1
 fi
 
-info "PASS  ilemit wide synthetic delegates"
+info "PASS  wide synthetic delegates (kotc -> bir2cir -> ilemit; run + KFunc\`18/KAction\`17 + facadegen restore)"

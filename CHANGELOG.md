@@ -21,6 +21,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   ("coroutine lowering deferred (bundle 6)"), and the final summary prints per-section PASS/FAIL/XFAIL with
   exit 0 iff no unexpected outcome. This script is the coroutine bundle's E2E gate: the suspend sections
   flipping to PASS surface as "FIXED — remove it from the RT_XFAIL baseline" lines.
+  *C3a (verify-wide-delegates)* — the hand-written 17-arg `.bir.json` fixture, fed STRAIGHT to ilemit
+  (bypassing kotc + bir2cir — a single-path violation whose hand-maintained expr vocabulary rotted twice), is
+  DELETED. The gate now drives a real Kotlin source (`cases/il-widedeleg/wide.kt`: 17-arg function values +
+  a wide-typed parameter) through the canonical kotc → bir2cir → ilemit pipeline and keeps all three
+  assertions: run output, KFunc`18/KAction`17 synthesis in the dll, facadegen restoring the wide Kotlin
+  function type (`rg` → `grep` for CI portability).
 - **`scripts/` overhaul: one naming scheme + shared internal conventions + two harness bug fixes.**
   *Naming* — normalized to `<verb>-<noun>[-qualifier].sh`, aligned with the make target names (targets unchanged):
   `build-clr-stdlib.sh`→`build-stdlib-ref.sh`, `build-clr-stdlib-runtime.sh`→`build-stdlib-rt.sh`,
