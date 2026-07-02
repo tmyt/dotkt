@@ -757,15 +757,40 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
 
 ---
 
-## 【6】 Coroutine  *(deferred — truly last; implementation grind, not a design fork)*
-Sources: `coroutine-stdlib-port-plan.md` (the LIVE plan), `archive/gap-analysis.md §3`, `remaining-tasks.md D`,
-`archive/research-roadmap.md C`.
-- Lock design gates **G1–G6** (G6 BCL Task binding = biggest risk) → **Phases 1–6** (ilemit resolves `kotlin.*`
-  coroutine types during stdlib-compile → port `TypedCont<T>` + suspended sentinel → port `Builders`
-  (Root/Future/AwaitOnto/RunBlocking/StartCoroutine) → port the sequence builder → end-to-end verify → retire
-  `DotKt.Runtime/Coroutines.cs`).
-- C2 `CancellationToken` in the ABI (S). C4 structured concurrency (`Job`/`CoroutineScope`/`launch`/`async`, XL —
-  compiling kotlinx, "Track 2").
+## 【6】 Coroutine — cold Continuation core + hot CLR Task bridge  *(IN PROGRESS 2026-07-03, plan APPROVED)*
+**Authoritative design: `docs/design-coroutine-cold-core-task-bridge.md` (+ its §11 implementation contract).**
+The old G1-G6/TypedCont-port plan (`coroutine-stdlib-port-plan.md`) is SUPERSEDED. Summary:
+- Core = COLD, Continuation-based (`f$dotkt_suspend(args, Continuation<object>): object` returning value |
+  `COROUTINE_SUSPENDED`); public CLR ABI stays hot `Task<T>` via a synthesized TCS+RootContinuation BRIDGE;
+  Kotlin→Kotlin suspend calls go direct to the cold body; builders (`sequence{}`, Flow, future kotlinx) are
+  ordinary library code over the shared core — the compiler knows NO builder.
+- kotc withdraws ALL coroutine lowering (its CPS engine dies at P5 sequence-cutover); **bir2cir does the whole
+  SM transform as PLAIN CIR** (`SuspendColdLowering`, after MemberCallSubstitution / before BirTypeLowering;
+  skipped in ref build); **ilemit becomes coroutine-free** (Emitter.Coroutines.cs + Co* consts + kickoff
+  signature rewrite + suspend stubs all deleted in P6; keeps only the [KotlinFunction(Suspend)] stamp).
+- stdlib: `kotlin.coroutines.clr.internal` bases (BaseContinuationImpl/ContinuationImpl/SuspendLambda) +
+  RootContinuation/TCS + REAL bodies for the 6 IntrinsicsClr stubs + `kotlin.clr` surface
+  (`Task.await()` / `blockOn` / `delay`). **kotlinx is PURGED outright** (user-directed breaking change).
+- Phases P0(design-lock ✅)→P1(stdlib cold core+purge)→P2(transform v1)→P3(control flow/generics/lambdas)→
+  P4(interop: await/blockOn/delay, cobuild)→P5(sequence cutover, kotc CPS dies)→P6(cleanup; baseline →
+  `XFAIL_RUN={bymap}`). Gates at every phase; full plan in the approved plan file.
+- Later layers (NOT this bundle): CancellationToken ABI (S); structured concurrency (`Job`/`launch`/`async`) =
+  Track 2 = compiling kotlinx over the cold core.
+
+## 【6b】 kotc purity completion  *(NEW 2026-07-03 — user-deferred separate bundle; does NOT gate 1.0)*
+Removing the coroutine family does NOT make kotc CLR-free: a 10-family audit (2026-07-03) found the residual.
+Keystone = **A2: the `clrName`/`clrInteropName`/`ClrTypeRegistry` facadegen-interop resolution living in the
+kotc frontend** (`BirEmitter.kt:4375-4430` + `frontend/ClrTypeInjection.kt` population) — moving it to bir2cir
+(same shape as the DONE stdlib `@ClrIntrinsic`→`MemberCallSubstitution` migration, extended to app-injected
+types) makes kotc truly CLR-free. Satellites: A1 `appColl` collection-shape map, A3's registry `clr:`/`clrg:`
+arm, A6 residual named-BCL-method lowerings (Math/String/Convert/Type/Lazy — some blocked on stdlib-body bugs).
+Quick wins (mechanical, independent): A9 fun-interface `@ClrTypeAlias`/`@ClrIntrinsic` DIRECT READ at
+`BirEmitter.kt:2216` (a bug vs the "reads NEITHER annotation" invariant), A4 BCL exception-type + accessor
+decisions (~12 sites), A5 primitive `System.Int32` shapes, A3 single-type arms (Span/Regex/Closeable/Lazy/
+Comparator). Medium: A7 `func:`/Func-Action delegate-shape encoding + `birTypeDeleg` CLR tokens, A8 the
+monomorphized `<>dotkt_KIterator/KIterable/CharSequence/RW-ROProperty` synthetics (`<>dotkt_Ref`/`KProperty`
+are structural-Kotlin and STAY). Order: A9+A4+A5+A3-single → A7+A8 → A2+A1+A6. (NB: some quick wins may have
+landed via the concurrent kotc batch `3db4846` — re-audit before starting.)
 
 ## 【7】 1.0 ship gate  *(non-code / production)*
 Sources: `remaining-tasks.md F`, `archive/research-roadmap.md Track P/X`.
