@@ -3,7 +3,7 @@
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 
-@file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
+@file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS", "TYPE_PARAMETER_AS_REIFIED")
 
 // Step-1 CLR stub mirroring the JVM `actual` declarations of _ArraysJvm.kt.
 // Bodies are `TODO` pending the @Clr/BCL binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
@@ -575,11 +575,24 @@ public actual inline fun BooleanArray.copyOf(newSize: Int): BooleanArray = Boole
 @kotlin.internal.InlineOnly
 public actual inline fun CharArray.copyOf(newSize: Int): CharArray = CharArray(newSize) { if (it < this.size) this[it] else ' ' }
 
+// Generic Array<T> copyOf/copyOfRange/plus: CLR generics are reified, so `arrayOfNulls<T>(n)` in a non-reified
+// generic body lowers to a plain `newarr !T` (kotc's newArraySized) whose runtime element type is EXACT — the
+// TYPE_PARAMETER_AS_REIFIED suppression (file-level) is safe here, unlike the JVM where erasure would yield Object[].
+// This is the CLR replacement for the JVM's `java.util.Arrays.copyOf` reflective re-allocation.
 @kotlin.internal.InlineOnly
-public actual inline fun <T> Array<T>.copyOf(newSize: Int): Array<T?> = TODO("clr binding should be implemented")
+public actual inline fun <T> Array<T>.copyOf(newSize: Int): Array<T?> {
+    val result = arrayOfNulls<T>(newSize)
+    val limit = if (newSize < this.size) newSize else this.size
+    for (i in 0 until limit) result[i] = this[i]
+    return result
+}
 
 @kotlin.internal.InlineOnly
-public actual inline fun <T> Array<T>.copyOfRange(fromIndex: Int, toIndex: Int): Array<T> = TODO("clr binding should be implemented")
+public actual inline fun <T> Array<T>.copyOfRange(fromIndex: Int, toIndex: Int): Array<T> {
+    val result = arrayOfNulls<T>(toIndex - fromIndex)
+    for (i in 0 until (toIndex - fromIndex)) result[i] = this[fromIndex + i]
+    return result as Array<T>
+}
 
 @kotlin.internal.InlineOnly
 public actual inline fun ByteArray.copyOfRange(fromIndex: Int, toIndex: Int): ByteArray = ByteArray(toIndex - fromIndex) { this[fromIndex + it] }
@@ -655,7 +668,12 @@ public actual fun CharArray.fill(element: Char, fromIndex: Int = 0, toIndex: Int
     for (i in fromIndex until toIndex) this[i] = element
 }
 
-public actual operator fun <T> Array<T>.plus(element: T): Array<T> = TODO("clr binding should be implemented")
+public actual operator fun <T> Array<T>.plus(element: T): Array<T> {
+    val result = arrayOfNulls<T>(this.size + 1)
+    for (i in this.indices) result[i] = this[i]
+    result[this.size] = element
+    return result as Array<T>
+}
 
 public actual operator fun ByteArray.plus(element: Byte): ByteArray = ByteArray(this.size + 1) { if (it < this.size) this[it] else element }
 
@@ -673,7 +691,16 @@ public actual operator fun BooleanArray.plus(element: Boolean): BooleanArray = B
 
 public actual operator fun CharArray.plus(element: Char): CharArray = CharArray(this.size + 1) { if (it < this.size) this[it] else element }
 
-public actual operator fun <T> Array<T>.plus(elements: Collection<T>): Array<T> = TODO("clr binding should be implemented")
+public actual operator fun <T> Array<T>.plus(elements: Collection<T>): Array<T> {
+    val result = arrayOfNulls<T>(this.size + elements.size)
+    for (i in this.indices) result[i] = this[i]
+    var index = this.size
+    for (e in elements) {
+        result[index] = e
+        index++
+    }
+    return result as Array<T>
+}
 
 public actual operator fun ByteArray.plus(elements: Collection<Byte>): ByteArray {
     val result = ByteArray(this.size + elements.size)
@@ -763,7 +790,12 @@ public actual operator fun CharArray.plus(elements: Collection<Char>): CharArray
     return result
 }
 
-public actual operator fun <T> Array<T>.plus(elements: Array<out T>): Array<T> = TODO("clr binding should be implemented")
+public actual operator fun <T> Array<T>.plus(elements: Array<out T>): Array<T> {
+    val result = arrayOfNulls<T>(this.size + elements.size)
+    for (i in this.indices) result[i] = this[i]
+    for (i in elements.indices) result[this.size + i] = elements[i]
+    return result as Array<T>
+}
 
 public actual operator fun ByteArray.plus(elements: ByteArray): ByteArray {
     val result = ByteArray(this.size + elements.size)
@@ -822,7 +854,7 @@ public actual operator fun CharArray.plus(elements: CharArray): CharArray {
 }
 
 @kotlin.internal.InlineOnly
-public actual inline fun <T> Array<T>.plusElement(element: T): Array<T> = TODO("clr binding should be implemented")
+public actual inline fun <T> Array<T>.plusElement(element: T): Array<T> = this + element
 
 @kotlin.clr.ClrIntrinsic("System.Array.Sort")
 public actual fun IntArray.sort(): Unit { TODO("clr binding should be implemented") }

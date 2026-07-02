@@ -14,7 +14,9 @@ package kotlin.collections
  * Returns the array if it's not `null`, or an empty array otherwise.
  * @sample samples.collections.Arrays.Usage.arrayOrEmpty
  */
-public actual inline fun <reified T> Array<out T>?.orEmpty(): Array<out T> = TODO("clr binding should be implemented")
+// `arrayOfNulls<T>(0)` lowers to `newarr !T` (kotc newArraySized) — a zero-length T[] IS an Array<out T>.
+// Written directly (not via emptyArray()) to avoid a nested cross-module inline hop.
+public actual inline fun <reified T> Array<out T>?.orEmpty(): Array<out T> = this ?: (arrayOfNulls<T>(0) as Array<out T>)
 
 /**
  * Returns a *typed* array containing all the elements of this collection.
@@ -59,4 +61,10 @@ public actual inline fun <reified T> Collection<T>.toTypedArray(): Array<T> {
 }
 
 /** Internal unsafe construction of array based on reference array type */
-internal actual fun <T> arrayOfNulls(reference: Array<T>, size: Int): Array<T> = TODO("clr binding should be implemented")
+// The JVM re-allocates via `reference`'s RUNTIME component type (java.lang.reflect.Array.newInstance). On the CLR
+// generics are reified, so the STATIC instantiation `newarr !T` already carries the exact element type — `reference`
+// is unused. TYPE_PARAMETER_AS_REIFIED is suppressed deliberately: kotc lowers `arrayOfNulls<T>(size)` for a
+// non-reified T to the same generic `newarr !T` (see MEMORY clr-all-type-args-reified); the JVM erasure hazard the
+// diagnostic guards against does not exist here.
+@Suppress("TYPE_PARAMETER_AS_REIFIED", "UNUSED_PARAMETER")
+internal actual fun <T> arrayOfNulls(reference: Array<T>, size: Int): Array<T> = arrayOfNulls<T>(size) as Array<T>
