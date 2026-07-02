@@ -3916,6 +3916,16 @@ static class MemberCallSubstitution
             ["args"] = hargs,
         };
         if (node["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
+        // Carry the callee's param-type list (receiver-first, mirroring the hoisted helper's __self) so the
+        // String->CharSequence bridge sees the synthetic-CharSequence slots: without a `sig` the app pushed a raw
+        // string at `Regex.matches(input: CharSequence)`/`find` -> ilverify StackUnexpected (il-regex).
+        var sigParts = new List<string>();
+        if (instance && node["recv"] != null) sigParts.Add(ownerFqn);
+        var origSig = (node["sig"] as JsonValue)?.GetValue<string>();
+        if (!string.IsNullOrWhiteSpace(origSig)) foreach (var p in SplitTopLevel(origSig)) sigParts.Add(p);
+        // `sig` may be LONGER than args (omitted defaulted params, filled downstream) — the bridge matches
+        // positionally from the left; only a SHORTER sig would misalign.
+        if (sigParts.Count >= hargs.Count) call["sig"] = string.Join(",", sigParts);
         return call;
     }
 
