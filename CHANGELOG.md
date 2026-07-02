@@ -53,6 +53,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   fileClass merge emits some top-level fns twice; `_ArraysKt.sum(int[])` carries two distinct method tokens). The null
   dropped to the arity-only fallback, which picked the wrong same-arity overload: `arrayOf(3,1,4,1,5).sum()` bound to
   `sum(sbyte[])` and read the int[] as bytes → `4` instead of `14`. Now keeps the first exact-sig match.
+- **ilemit resolves members/fields on referenced generic Kotlin types (bundle 4-C RC3+RC4).** An APP that links the rt
+  stdlib via `--ref` and touches a REFERENCED generic Kotlin type absent from this assembly's `_types` crashed at emit.
+  **RC3:** a call on an un-substituted generic Kotlin interface owner — `kotlin.collections.Iterator[gp:T]`.hasNext/next
+  (the `ClrIteratorBridge` rewrite of `for (x in genericIterable)`) or `kotlin.collections.Map[gp:K,gp:V]`.get — NRE'd at
+  `ResolveMethod` because `FindMethod` returned 0 candidates: `ParseOwner` strips the `[gp:..]` args off, leaving the BARE
+  open name, but reflection knows a generic interface only by its arity suffix (`Iterator`1`/`Map`2`). `FindMethod`'s
+  external branch now probes `typeName`+backtick-N (N=1..8) and takes the unique resolvable open definition;
+  `ResolveMethod`'s existing `TypeBuilder.GetMethod` re-anchors it onto the constructed instantiation. **RC4:**
+  `kotlin.Pair`.first/.second (a destructuring `component1()`/`component2()` that kotc lowers to a `field` access) hit
+  `FindField` KeyNotFound on the external `kotlin.Pair`; once resolved, a direct `Ldfld` of the PRIVATE backing field
+  threw `FieldAccessException` cross-assembly (the CLR property model gives every Kotlin property a private backing field
+  + public accessors). `FindField`/`ResolveField` gain the same external-type reflection fallback (incl. the arity probe),
+  and a new `ExternalPropAccessor` routes an external type's `field` read/write through the public `get_`/`set_<name>`
+  accessor (falling back to the field for a public `@ClrField`). Greens `il-genclosure`/`il-genhof`/`il-pair` (verify-il
+  run-FAIL 15 → 8) and advances `il-collops2`/`il-collrealkt`/`il-mutcoll` past emit. The three §4-C target samples don't
+  fully green yet — each also calls `joinToString` (blocked by the separate rt-baked `StringBuilder`→`Appendable`
+  dual-rep) and `collrealkt`/`collops2` additionally hit the Map/MutableMap dual-rep (`mapOf`/`associate` return a BCL
+  `Dictionary` that doesn't implement `kotlin.collections.Map`) — separate dual-rep tracks, tracked in
+  `docs/master-task-inventory.md §4-C`.
 
 ### Changed
 - **Retired the clean kotc String-op lowerings (bundle 4-B) — now that CharSequence is canonical.** Building on 4-A,

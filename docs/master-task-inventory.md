@@ -444,26 +444,35 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
   return-side FIXED (only its RC1 joinToString line remains); `collmore` needs RC1 + the transform-side fix; a latent risk
   for `chunk`'s value-type `filterNotNull().sum()`. **Layer = bir2cir/ilemit** (done for the return side). Effort **MED**.
 
-- **RC3 — ilemit cannot resolve a member on an un-substituted generic Kotlin collection/iterator interface
-  (`ResolveMethod` NRE at `Program.cs:1278`, `mb` null because `FindMethod` returned 0 candidates).** Two instances:
-  `collrealkt` — `callInstance get owner=kotlin.collections.Map[gp:K,gp:V]` (the `Map<K,V>` indexer `this[k]` was **NOT**
-  substituted, whereas the sibling `List<T>` indexers DID become `clrInstance get_Item`/`set_Item`); `mutcoll` —
-  `callInstance hasNext/next owner=kotlin.collections.Iterator[gp:T]` (produced by `bir2cir`'s ClrIteratorBridge rewrite of
-  `for (item in this: Iterable<T>)` into `iteratorOverEnumerable(this).hasNext()/next()`). In both, the owner stays a bare
-  generic Kotlin interface with a `gp:` arg that ilemit's reflection fallback (added for external types in `70d51cb`)
-  fails to resolve. **Samples:** `collrealkt`,`mutcoll` (both ALSO carry RC1). **Fix:** either `bir2cir` substitutes
-  `Map.get`→`IReadOnlyDictionary.get_Item`/`TryGetValue` and routes the `Iterator[gp:T]` members like it already does
-  `List`, **or** ilemit's generic-member reflection fallback learns to resolve `hasNext`/`next`/`get` on a referenced
-  generic Kotlin interface (`kotlin.collections.Iterator[gp:T]`/`Map[gp:K,gp:V]`). **Layer = bir2cir (preferred) or
-  ilemit.** Effort **MED**. (Check first whether the stdlib `Map.get` even carries an `@ClrProperty`/`@ClrIntrinsic`
-  binding — the List indexer does; if Map's is missing, that stdlib-binding gap is the cheaper half.)
+- **RC3 — ✅ DONE 2026-07-02 (`aea0e4e` ilemit).** ilemit couldn't resolve a member on an un-substituted generic Kotlin
+  collection/iterator interface (`ResolveMethod` NRE, `mb` null because `FindMethod` returned 0 candidates). Two instances:
+  `collrealkt` — `callInstance get owner=kotlin.collections.Map[gp:K,gp:V]`; `mutcoll` — `callInstance hasNext/next
+  owner=kotlin.collections.Iterator[gp:T]` (the ClrIteratorBridge rewrite of `for (item in this: Iterable<T>)`). **ROOT
+  CAUSE:** `ParseOwner` strips the `[gp:..]` args off, leaving the BARE open name, but reflection knows a generic interface
+  only under its arity suffix (`Iterator`1`/`Map`2`), so `ClrRef(typeName)` returned null and `FindMethod`'s external
+  branch gave up. **FIX (ilemit, NOT bir2cir):** these are genuine Kotlin interface calls (no BCL substitution — the
+  concrete Iterator/Map is a real rt-dll type), so `FindMethod`'s external branch now probes `typeName`+backtick-N (N=1..8)
+  and takes the unique resolvable open definition; `ResolveMethod`'s existing `TypeBuilder.GetMethod` re-anchors it onto
+  the constructed instantiation. **VERIFIED:** the generic `for`-over-`List<T>`/`Iterable<T>` iteration RUNS — new bonus
+  greens `il-genclosure`+`il-genhof` (same `Iterator[gp:T]` bridge path), and `mutcoll`'s Iterator + `collrealkt`'s
+  List/Map member resolution emit. **⛔ SAMPLES NOT green (separate blockers, NOT RC3):** all of `collrealkt`/`mutcoll`
+  call `joinToString` (rt-baked `StringBuilder`→`Appendable` dual-rep, see RC1 blocker (1)); `collrealkt`'s `Map.get`
+  additionally throws `EntryPointNotFoundException` at RUN because `mapOf` returns a BCL `Dictionary` (`LinkedHashMap` is
+  `@ClrTypeAlias("System.Collections.Generic.Dictionary")`) that does NOT implement the pure-Kotlin `kotlin.collections.Map`
+  interface — the **Map/MutableMap dual-rep** (parallel to List but with null-vs-throw `get` semantics; needs `Map`/
+  `MutableMap` `@ClrTypeAlias` + a null-returning `get` binding, or the collection-bridge). Own dual-rep track.
 
-- **RC4 — `kotlin.Pair` external-type member resolution (`FindField` `KeyNotFound: 'kotlin.Pair'`,
-  `Program.cs:1476`).** `collops2`'s `val (even, odd) = xs.partition{…}` (and `associate{}`) accesses `Pair.first`/`.second`
-  on the referenced (rt-dll) `kotlin.Pair`, which is not in ilemit `_types`. `FindMethod` got a reflection fallback for
-  external types (`70d51cb`); **`FindField`/`ResolveField` did not** — mirror it. **Layer = ilemit** (reflection fallback
-  in `FindField`), or `bir2cir` substitutes the Pair member access. Effort **LOW-MED**. NB `collops2` ALSO exercises
-  `partition`/`associate`/`windowed`/`scan`/`runningFold` (verify each once Pair + RC1 clear) and carries RC1.
+- **RC4 — ✅ DONE 2026-07-02 (`aea0e4e` ilemit).** `kotlin.Pair`.first/.second (a destructuring `component1()`/
+  `component2()` that kotc lowers to a `field` access) hit `FindField` `KeyNotFound: 'kotlin.Pair'` on the referenced
+  (rt-dll) type absent from `_types`. **The task's "mirror the FindMethod fallback into FindField" was necessary but NOT
+  sufficient:** once the field resolved, a direct `Ldfld` of the PRIVATE backing field threw `FieldAccessException`
+  cross-assembly (the CLR property model gives every Kotlin property a private backing field + public accessors). **FIX
+  (ilemit):** `FindField`/`ResolveField` gained the external-type reflection fallback (incl. the arity probe + a
+  `FindReflectedField` helper); a new `ExternalPropAccessor` routes an external type's `field` read/write through the
+  public `get_`/`set_<name>` accessor (falling back to the field for a public `@ClrField`). **VERIFIED:** `il-pair` now
+  RUNS (bonus green), and `collops2`'s `xs.partition{…}` → `Pair.first`/`.second` prints correctly. **⛔ `collops2` NOT
+  green (separate, NOT RC4):** it also calls `joinToString` (StringBuilder→Appendable) and `associate{}` (→ `associateTo`
+  with `LinkedHashMap`→BCL `Dictionary` violating the `M : MutableMap` constraint — the same Map dual-rep as RC3).
 
 - **RC5 — lazy `Sequence` machinery is unimplemented (`asSequence` throws at runtime).** Throwaway repro
   `listOf(...).asSequence().map{…}.sum()` → **`NotSupportedException: [DOTKT-STDLIB] not lowered: an object expression that
@@ -482,11 +491,15 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
    with the §1 RETIRE-PATTERN recipe (fail-set must not regress).
 2. **RC2 — value-type `Nullable<T>` boundary.** Second-highest: flips `arrops` outright, unblocks `collmore` (with RC1),
    de-risks `chunk`. Effort MED. → **a bir2cir/ilemit primitive-dual-rep agent** (MEMORY `primitive-dual-representation`).
-3. **RC3 — generic Kotlin-collection member resolution.** Unblocks `collrealkt`+`mutcoll` (both also need RC1, so sequence
-   AFTER RC1). Effort MED, self-contained. → **a bir2cir agent** (extend the collection substitution to `Map.get` + the
-   ClrIteratorBridge `Iterator[gp:T]` members; verify the stdlib `Map.get` binding first).
-   RC4 (LOW-MED, ilemit `FindField` external fallback — quick win but `collops2` still needs RC1) and RC5 (HIGH, kotc
-   generic-closure track shared with `genclosure`/`genhof` — do with that family, not here) round out the cluster.
+3. **RC3 + RC4 — ✅ DONE 2026-07-02 (`aea0e4e` ilemit).** The ilemit member/field resolution on referenced generic Kotlin
+   types was fixed in ilemit (NOT bir2cir): the fork resolved to **ilemit-resolves-external** — these are genuine Kotlin
+   interface/field references (no BCL substitution), so ilemit derives the open generic def by arity + re-anchors, and
+   routes external property field access through the public accessor. Bonus greens: `il-genclosure`/`il-genhof` (shared
+   `Iterator[gp:T]` bridge — so RC5's premise that they need generic-closure codegen is WRONG for the iteration path) +
+   `il-pair`. `collrealkt`/`mutcoll`/`collops2` themselves stay RED, now gated ONLY by joinToString (StringBuilder→
+   Appendable, RC1 blocker (1)) and the **Map/MutableMap dual-rep** (`mapOf`/`associate` → BCL `Dictionary` not
+   implementing `kotlin.collections.Map`/`MutableMap` — a new sub-track surfaced here, parallel to List/CharSequence,
+   with null-vs-throw `get` semantics). RC5 (HIGH, kotc generic-closure) rounds out the cluster.
 
 ## 【5】 exception map → `@ClrTypeAlias`  *(#2)* — ✅ DONE (verified 2026-07-02; was already complete)
 - `BirMappings.NET_EXCEPTIONS` DELETED (kotc `5907510`); the 11 stdlib exception classes carry `@ClrTypeAlias` (stdlib
