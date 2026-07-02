@@ -153,15 +153,34 @@ Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedbac
 - ~~static `.Companion` routing = the `il:injstatic` bug~~ — **DEPRIORITIZED (user 2026-07-02: "not our problem").**
   Accessing a .NET static via `.Companion` is the accepted convention (MEMORY `injected-static-members-need-companion`,
   accepted 2026-06-23); `il:injstatic` sits in that accepted-limitation space and is NOT a fix target now.
-- `op_*` operators · C#-origin extension methods · **dual-rep collision** (`import System.Text.StringBuilder` vs the
-  stdlib alias).
+- ~~`op_*` operators · C#-origin extension methods~~ — ✅ DONE (verified 2026-07-02): facadegen surfaces a genuine
+  .NET type's `op_Addition`/`op_Subtraction`/`op_Multiply`/`op_Division`/`op_Modulus`/`op_UnaryNegation`/
+  `op_UnaryPlus`/`op_Increment`/`op_Decrement` as Kotlin `operator fun`s (left operand = receiver, `clr:op_*`
+  routing), and `[ExtensionAttribute]` static methods as Kotlin extension functions (Int AND String receivers
+  verified). `op_Equality`/`op_Inequality` are deliberately NOT mapped — Kotlin `==` routes to `Equals(Any?)`, the
+  correct Kotlin semantics (a well-formed .NET type keeps op_Equality consistent with Equals); `op_Implicit`/
+  `op_Explicit` have no Kotlin analog and are skipped. Gate: `cases/il-c1net` (full battery: `+ - * / unary-` on a
+  C# struct + int/string extension methods).
+- ~~**dual-rep collision** (`import System.Text.StringBuilder` vs the stdlib alias)~~ — ✅ DECIDED+DONE (2026-07-02):
+  the two are **two typed views of one CLR type** — they coexist, never unified; mixing identities is a clear
+  frontend type error; an explicit cast (`as kotlin.text.StringBuilder`) is the escape hatch (same CLR type at
+  runtime). Rule + rationale: `docs/dotkt-semantics.md` §8b; gate: `cases/il-dualrep`.
 - ~~**(3) generic-type members collapse to `Any?`**~~ — ✅ DONE (verified 2026-07-02): `CrossType` emits
   `generic:Open[args]` (recursive bracket grammar) and ClrTypeInjection resolves it by (name, arity);
   `IList<T>`/`IReadOnlyList<T>`/`ICollection<T>`/`IEnumerable<T>`/`Dictionary<K,V>`/`List<T>` member positions
   covered by `cases/il-geninj` + `cases/il-transinj` (gate). For-in over an INTERFACE-typed receiver fixed
   2026-07-02 (frontend-only `iterator` marker on the injected `IEnumerable<T>` itself; derived ifaces inherit it).
-- **(4) delegate-type args collapse to `Any?`** → map delegate → Kotlin function type `(A,B)->R`.
-- **(5) aliased import silently ignored** (`import … as X`) → support + warn on non-injection.
+- ~~**(4) delegate-type args collapse to `Any?`**~~ — ✅ DONE (re-verified 2026-07-02): `Map` emits a delegate as the
+  bracketed function-type token `func:[ret,args…]` (from the delegate's `Invoke`), ClrTypeInjection restores a Kotlin
+  function type, a lambda binds, and the backend builds the specific delegate from the call-site param. Covers BCL
+  `Func<int,int>`/`Action` AND custom GENERIC delegates (`delegate T Mapper<T>(T)`). Gates: `cases/il-delegatearg`,
+  `cases/il-netinterop`.
+- ~~**(5) aliased import silently ignored** (`import … as X`)~~ — ✅ DONE (verified 2026-07-02): the PSI import scan
+  (`ImportScan.kt`, `importedFqName`) keeps aliased imports (canonical FQN out; Kotlin's own import machinery binds
+  the alias to the injected classifier); facadegen warns on a no-match import, and a nonexistent type errors at the
+  frontend (`unresolved reference`) — nothing is silent. Gate: `cases/il-alias`
+  (`import System.Text.StringBuilder as SB`). Remaining nit: the wrappers (`dotkt.sh`/MSBuild targets) discard
+  facadegen stderr, so the warning TEXT doesn't reach the build log (the frontend error still does).
 - ~~**(6)/future#4/roadmap-I1 transitive / on-demand type injection**~~ — ✅ DONE (verified 2026-07-02):
   `EmitMeta` BFS-injects the full reachable closure of the imported seeds (member signatures + supertypes), capped
   at 5000 types, NO_INJECT/kotlin.* excluded, dedupe + fail-soft per type. 2-hop chain (un-imported
@@ -170,7 +189,12 @@ Sources: `ship-tasks.md #4`, `future-work-interop.md #4`, `dotkt-interop-feedbac
 - ~~**generic-type FIR direct injection (roadmap I1, L)** — `List<T>`/`Dictionary<K,V>` façade-free (last hole in the
   injection path).~~ — ✅ subsumed by (3)/(6): generic DEFINITIONS (`List`1`) are injected with type params and
   constructed forms resolve at member positions (`il-transinj` exercises `Dictionary<String,Widget>` façade-free).
-- I4 remnants: `out`/`ref`, nullable value types, .NET enum import, generic delegates.
+- ~~I4 remnants: `out`/`ref`, nullable value types, .NET enum import, generic delegates.~~ — ✅ ASSESSED, ALL WORKING
+  (2026-07-02): `out`/`ref` = the `byref()`/`ClrRef` path, long gated by `cases/il-outref`; nullable value types
+  (`int?`/`double?` both directions, incl. a plain Int and a null into an `int?` param) work via the `Nullable`1 → X?`
+  map; a .NET enum imports as an object of enum-typed vals (read, pass, `==`, `when` all work); generic delegates via
+  `func:[…]` (see (4)). New gate `cases/il-netinterop` locks enum+delegate+nullable in one sample.
+  (Naming trap: `il-netenum` is the IEnumerable-for-in sample, not enums.)
 
 ## 【4】 ilemit codegen bugs  *(interop-feedback (10)-(14) + the verify-il 36 clusters)*
 - **(10)** `object` singleton — no .NET lowering. **(11)** cross-file top-level mutable property (`field XKt.foo not

@@ -205,6 +205,35 @@ single test — **can the parameter's own CLR type carry its default as a `[Defa
   injects the referenced types into FIR). See `docs/design-kotlin-metadata-attributes.md` and memory
   `c2-import-driven-resolution`, `s5-fir-injection-seam`.
 
+## 8b. Dual representation: `import System.Text.StringBuilder` vs `kotlin.text.StringBuilder` — two typed VIEWS of one CLR type
+
+A BCL type that the stdlib **also** aliases (`kotlin.text.StringBuilder` is `@ClrTypeAlias`-bound to
+`System.Text.StringBuilder`; same pattern for the aliased collections, exceptions, …) can appear in a program under
+**two distinct frontend identities**:
+
+- **the stdlib view** — default-imported, Kotlin-flavored members (`append`, `length`, the stdlib extensions);
+- **the imported .NET view** — `import System.Text.StringBuilder` injects the RAW reflected surface
+  (`Append`, `Length`, `ToString`, every BCL overload) as a separate classifier at its .NET namespace.
+
+**The rule (deliberate, decided 2026-07-02): both views are legal and coexist; they are NOT unified.** Each is a
+typed view of the SAME CLR runtime type (both erase to `System.Text.StringBuilder` at emit), but the frontend keeps
+them distinct:
+
+- Used separately in one program, both just work (`il-dualrep` gates this).
+- **Mixing identities is a frontend type error** with an explicit message
+  (`actual type is 'System.Text.StringBuilder', but 'kotlin.text.StringBuilder' was expected`). This is the
+  intended diagnostic, not a bug.
+- **Escape hatch**: an explicit cast crosses the views — `net as kotlin.text.StringBuilder`
+  (plus `@Suppress("CAST_NEVER_SUCCEEDS")`; the frontend can't know they unify, the runtime checkcast is a no-op
+  because the CLR type is literally the same).
+
+Why not unify (the Kotlin/JVM `typealias` precedent)? Resolving the import TO the stdlib type would erase the very
+thing the import asks for — the raw .NET member surface — and breaking the .NET view would break real interop code
+(`sb.Append(...)`, `sb.Length`). Rejecting the import needs the alias map (`@ClrTypeAlias`, stdlib ref.dll) in the
+frontend path, which the layer rules forbid (kotc reads no CLR-binding metadata). Two views with a clear boundary
+diagnostic is the clean 1.0 rule; an explicit `clrView<T>()`-style conversion intrinsic is possible later if the
+cast proves too blunt.
+
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
 A Kotlin value-type `X?` is the structural `System.Nullable<X>` (§ value types). A **reference-type** `X?` has no

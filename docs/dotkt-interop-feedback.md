@@ -62,16 +62,20 @@ DSL の書き味（Compose 風レシーバラムダなど）を制約した。
   変換を既に持つ）。これでオーバーロードが区別でき、ラムダが正しいデリゲートにバインドされる。
   併せて、イベントの `add_X` が 2 引数ハンドラを受けるのと整合する。
 
-### (5) import パーサが脆い（aliased import を黙って無視）★メモ: 安定化したい
+### (5) import パーサが脆い（aliased import を黙って無視） — ✅ RESOLVED (2026-07-02 検証)
+> **RESOLVED**: import スキャンは正規表現ではなく **Kotlin PSI パーサ**（`kotc --scan-imports`,
+> `toolchain/kotc/src/main/kotlin/kotc/tools/ImportScan.kt`）になっており、`importedFqName` が `as` 別名を
+> 剥がした正準 FQN を返す（`.*`・複数行・コメント・バッククォートも扱える）。別名の束縛は Kotlin 通常の
+> import 機構がそのまま解決する（注入された classifier は実 .NET 名前空間に生成されるため）。
+> `import System.Text.StringBuilder as SB` の end-to-end は `cases/il-alias`（gate 常設）で検証済み。
+> **黙殺もしない**: facadegen `EmitMeta` は解決できなかった import に
+> `warning: .NET import resolved to no type (injected nothing): <name>` を stderr へ出し、さらに存在しない型の
+> import はフロントエンドが `unresolved reference` エラーにする（サイレント成功はない）。
+> 残メモ: ラッパー（`scripts/dotkt.sh` / MSBuild targets）は facadegen の stderr を `>/dev/null` に捨てるため、
+> 警告文自体はビルドログに出ない（エラーは出る）。表示させたければラッパー側の 1 行変更。
 - **症状（Windows 実機）**: `unresolved reference 'System'`
   （`import System.Collections.Generic.List as ClrList` が**何も注入しない**）
-- **根本原因**: スキャンの正規表現（`Program.cs:103`）が `import A.B.C` のみを拾い、
-  **`as` 別名と `.*` を明示的に除外**（`Program.cs:99` のコメント通り）。`kotlin.collections.List` との
-  名前衝突を避けるための別名がそのまま「注入なし」になる。
-- **修正方針**: aliased import に対応（右辺の型を注入し、別名にバインド）。さらに、`.NET` 型に見える
-  import が注入されなかった場合は**黙殺せず警告**を出す（debuggability）。`<DotKtImport>`（明示注入。
-  `KotlinClr.targets` の `@(DotKtImport)` / 旧 `<KotlinClrType>`）で個別救済はできるが、
-  普通の `import` で安定して通るのが望ましい。
+- **根本原因（当時）**: スキャンの正規表現が `import A.B.C` のみを拾い、**`as` 別名と `.*` を明示的に除外**。
 
 ### (6) 中間戻り値の型が未注入だと連鎖アクセスが切れる — ✅ RESOLVED (2026-07-02 検証)
 > **RESOLVED**: facadegen の `EmitMeta` が import 型を **シード**として、API サーフェスが参照する型
@@ -123,7 +127,7 @@ Linux 上で純 Kotlin として bring-up する過程で判明（WinUI 非依�
 2. **(1) 基底クラス／インターフェース階層** — コントロールの受け渡し全般の前提。
 3. **(4) デリゲート→関数型マップ** — `Application.Start` / `Thread` / イベントの前提。
 4. ~~**(6) 参照型の推移的自動注入** + **(3) 代表的ジェネリックの構築型注入** — 連鎖アクセスの前提。~~ ✅ RESOLVED (2026-07-02)
-5. **(5) import パーサ安定化（alias 対応 + 警告）** — 開発体験。
+5. ~~**(5) import パーサ安定化（alias 対応 + 警告）** — 開発体験。~~ ✅ RESOLVED (2026-07-02: PSI スキャン + `cases/il-alias`)
 
 (1)〜(4) が入れば、`dotktx.ui.winui` の `App.kt`（`Application` サブクラス + `OnLaunched` override +
 STA スレッド + `Application.Start`）が**ワークアラウンドなしの純 Kotlin で書ける**ようになる。

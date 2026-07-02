@@ -6,6 +6,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Fixed
+- **facadegen interop bundle 【3】b closed — alias imports, op_* battery, C# extensions, dual-rep rule, I4 remnants
+  (all verification + rule-setting; no compiler changes needed).**
+  - **(5) aliased import**: `import System.Text.StringBuilder as SB` works end-to-end (the PSI import scan already
+    canonicalizes the alias; Kotlin's import machinery binds it) — new gate `cases/il-alias`. A no-match .NET import
+    warns in facadegen and errors at the frontend (nothing silent).
+  - **`op_*` operators / C#-origin `[Extension]` methods**: full battery verified on a C# struct
+    (`+ - * / unary-` + int/string extension receivers) — `cases/il-c1net` extended. `op_Equality`/`op_Inequality`
+    deliberately unmapped (Kotlin `==` → `Equals(Any?)`); `op_Implicit`/`op_Explicit` skipped (no Kotlin analog).
+  - **Dual-representation rule (DECIDED)**: an imported BCL type (`System.Text.StringBuilder`) and its stdlib alias
+    (`kotlin.text.StringBuilder`) are TWO TYPED VIEWS of one CLR type — coexist, never unified; mixing is a clear
+    frontend type error; explicit cast is the escape hatch. `docs/dotkt-semantics.md` §8b; gate `cases/il-dualrep`.
+  - **I4 remnants assessed, all working**: .NET enum import (read/pass/`==`/`when`), generic delegates
+    (`Func<int,int>` + custom `Mapper<T>`), nullable value types (`int?` both directions), `out`/`ref` (il-outref) —
+    new gate `cases/il-netinterop` locks enum+delegate+nullable.
 - **Collection/sequence + language-feature 4-bug batch: `il-sort`/`il-collmore`/`il-regex`/`il-langf` all green
   (run-correct AND ilverify-clean); verify-il fail-names 18 → 9, PASS(run) 121 → 124, ktproj 9/9.**
   - `sorted`/`sortedDescending`/`sortedBy`: three JVM erasure-isms fixed stdlib-side —
