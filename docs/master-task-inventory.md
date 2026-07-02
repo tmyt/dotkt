@@ -144,8 +144,18 @@ is largely STALE** — a code-grounded currency check found:
 - **③ Deferred:** Wave 6 (`delegateNew`/`boundDelegateNew`/`delegateInvoke`/`closureNew` — plumbing, low-pri;
   `delegateInvoke` gated on the inline phase) + `clrStaticField`/coroutine hardcode (coroutine phase).
 
-## 【2】 stdlib completeness  *(#1 rt-green residual)*
-- **~363 unbound `actual`s → `@ClrIntrinsic`** (Arrays / Char / StringBuilder / Unsigned / Regex families).
+## 【2】 stdlib completeness — ✅ ESSENTIALLY CLOSED (audited + executed 2026-07-02)
+- ~~"~363 unbound actuals"~~ — **the doc number was ~3.8× inflated** (a stale early-stub count). Audited reality
+  (discriminator = the binding ANNOTATION, not `TODO()` — MEMORY `stdlib-todo-is-filler-not-backlog`): 1481 actuals,
+  **93.5% bound-or-implemented**; 96 real stubs, of which 60 = primitive IL lowering (never annotated, NOT backlog),
+  10 = structural array-literal factories, and only ~24 were genuine work. **Char + StringBuilder were already fully
+  bound** (the doc's family list was stale).
+- The genuine remainder was then EXECUTED: ✅ generic `Array<T>` ops (copyOf/copyOfRange/plus×3/plusElement/orEmpty/
+  arrayOfNulls — pure-Kotlin bodies leveraging CLR reified generics, bundle 2a, + 3 wrong-code compiler fixes) ·
+  ✅ Unsigned div/rem/toString (below) · ✅ enum reflection (below). Still open (reclassified, small): Regex 3
+  (Sequence-return, dual-rep-adjacent) · coroutine intrinsics 6 (→ bundle 【6】) · `Long.toString(radix)` beyond
+  bases 2/8/10/16 (Convert.ToString limit, bundle-1 blocked note) · the `Array<Int?>` nullable-primitive-array
+  element-read gap (KNOWN GAP, dual-rep design) · Enum-bounded cross-module generic constraint (§2 note by 2b agent).
 - The 25 "retire from compiler" ops in 【1】 become real stdlib `@ClrIntrinsic`.
 - ✅ **Unsigned family DONE (bundle 【2】b-A, 2026-07-02)**: the 6 `UnsignedClr.kt` div/rem/`toString(radix)` stubs
   got real pure-Kotlin bodies (JVM-actual/Guava ports; no BCL bind exists — unsigned `op_Division` is an
