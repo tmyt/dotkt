@@ -12,75 +12,111 @@ Kotlin via their real .NET types).
 > ships no library of its own. You reference real .NET assemblies and call their types directly
 > from Kotlin. A Kotlin-idiomatic UI DSL would be a separate downstream product.
 
+## New here? (user documentation)
+
+- **[Getting started](docs/user/getting-started.md)** — install the NuGet packages, `dotnet new
+  dotkt-cli`, hello world, `dotnet build`/`run`.
+- **[Using .NET from Kotlin](docs/user/using-dotnet-from-kotlin.md)** — `import System.X`
+  façade-free interop: statics, events, delegates, `out`/`ref`, operators, enums.
+- **[Kotlin on the CLR — what's different](docs/user/kotlin-on-clr-differences.md)** — the
+  readable tour of deliberate deviations from Kotlin/JVM (`True`/`4` printing,
+  `CharSequence`=`string`, `suspend`=`Task<T>`, …).
+
 ## Backend
 
-Direct IL, one path: **Kotlin IR → `BirEmitter` → `BIR` (JSON) → `bir2cir` → `CIR` (JSON) → `ilemit` → CIL**. The output is
-[`ilverify`](https://github.com/dotnet/runtime/tree/main/src/coreclr/tools/ILVerify)-clean. (An earlier
-Kotlin-IR→C#-text oracle backend was retired and removed; BIR→CIR→ilemit is the sole backend.)
+Direct IL, one unflagged path:
+
+```
+Kotlin IR → BirEmitter → BIR (JSON) → bir2cir → CIR (JSON) → ilemit → CIL
+```
+
+Each stage owns one concern: **kotc** (the Kotlin frontend, no CLR knowledge) emits BIR;
+**bir2cir** owns the Kotlin↔CLR relation (it reads the stdlib reference dll's
+`@ClrTypeAlias`/`@ClrIntrinsic` bindings and lowers Kotlin types/calls to their BCL forms);
+**ilemit** is pure CLR codegen via `Reflection.Emit` (no Kotlin knowledge); **facadegen** turns
+.NET metadata into FIR-injection metadata for façade-free `import System.X`. (An earlier
+Kotlin-IR→C#-text oracle backend, and the interim `--compat-bir`/`--native-cir` dual-track, were
+both retired and removed.)
+
+## The stdlib is real Kotlin, compiled for the CLR
+
+`runtime/stdlib/` holds the Kotlin standard library built as a genuine CLR assembly — not a
+hand-written compiler mapping. It ships as three artifacts: a **frontend jar**
+(`kotlin-stdlib-clr-frontend.jar`, what kotc resolves `kotlin.*` against), a **reference dll**
+(`DotKt.Private.Stdlib.dll`, compile-time metadata carrying the `@Clr*` bindings), and the
+shipping **runtime dll** (`DotKt.Stdlib.dll`). Where a Kotlin type *is* a BCL type
+(`List`→BCL list interfaces, `Map`→`IDictionary`, `StringBuilder`, exceptions, …) the binding is
+declared **in the stdlib source** as `@ClrTypeAlias`/`@ClrIntrinsic` metadata and applied by
+bir2cir at app-emit — the compiler itself stays generic.
 
 ## What works today
 
-The direct-IL backend runs a broad, practical subset end-to-end (every item below is exercised by
-`scripts/verify-il.sh` — 35 samples, all run-correct **and** `ilverify`-clean).
+The gates: `scripts/verify-il.sh` (compile → IL → run → assert → `ilverify` over the ~140-sample
+`cases/il-*` corpus; **0 run-failures**, with a small documented tail of ilverify-strictness
+noise and coroutine-deferred samples) and `scripts/verify-ktproj.sh` (MSBuild end-to-end, 9/9).
 
 **Language**
-- Top-level functions; primitives (`Int`/`Long`/`Double`/`Float`/`Short`/`Byte`/`Boolean`/`Char`/`String`); arithmetic, comparison, bitwise (`and`/`or`/`xor`/`shl`/`shr`/`ushr`/`inv`)
-- Control flow: `if`/`when` (subject, `is`, ranges, multi-value branches), `while`, `do-while`, `for` (ranges, arrays, collections), labeled `break`/`continue`
-- Strings: templates, multi-line/raw `"""…"""`, escapes
-- Functions: default args, `vararg`, local functions + closures, extension functions, `inline`, **`reified`** (`T::class`, `x is T`, `x as? T`), `tailrec`
-- Classes: properties, primary **and secondary constructors + `init {}`**, inheritance, `override`/`virtual`/`abstract`, interfaces, **visibility** (`private`/`internal`/`protected`/`public` → real CLR access), `companion object`, **nested classes**, **object expressions** (anonymous, non-capturing), `data class` (`toString`/`equals`/`hashCode`/`componentN`/`copy`), `typealias`, `lateinit`
-- **Operator overloading** (`plus`/`minus`/`times`/`get`/`set`/`invoke`/`compareTo`/`contains`/`unaryMinus`); structural `==` (value/reference/`Nullable<T>`)
-- **Enums**: simple enums → real CLR enums (for .NET interop); **rich enums** (constructor params, methods, `name`/`ordinal`/`values()`/`valueOf`) → singleton classes
-- Null safety: `?.`, `?:`, `!!`, smart casts, `as?`/`is`, and **nullable value types** (`Int?` → `System.Nullable<T>`)
-- Exceptions: `try`/`catch`/`throw`, `throw` as an expression, `require`/`check`/`error`/`TODO`/`requireNotNull`/`checkNotNull`; Kotlin exception types → .NET (`IllegalStateException` → `InvalidOperationException`, …)
+- Top-level functions; primitives; arithmetic, comparison, bitwise; control flow (`if`/`when`
+  with subjects/`is`/ranges, loops, labeled `break`/`continue`); string templates and raw strings
+- Functions: default args (incl. cross-module, two-tier rule), `vararg`, local functions +
+  closures, extension functions, `inline` (incl. cross-module non-local return), **`reified`**,
+  `tailrec`, function references, generic functions/classes end-to-end
+- Classes: properties (every Kotlin property is a real CLR property), primary/secondary
+  constructors + `init`, inheritance, interfaces, visibility → real CLR access, `companion
+  object`, nested classes, object expressions, `data class`, `value class`, `typealias`,
+  `lateinit`, delegation (`by lazy`, `by map`, `ReadWriteProperty`), sealed hierarchies
+- **Enums**: basic → real CLR enums; rich (ctor params/methods/bodies) → singleton classes
+- Null safety: `?.`, `?:`, `!!`, smart casts, `Int?` → `System.Nullable<T>`, NRT interop
+- Exceptions: `try`/`catch`/`throw` (+ as expression), `require`/`check`/`error`; Kotlin
+  exception types are `@ClrTypeAlias`-bound to `System.*`
 
-**Stdlib (mapped to the BCL)**
-- Collections: `listOf`/`mutableListOf`/`setOf`/`mapOf` → `List`/`HashSet`/`Dictionary`; **30+ operations** (`map`/`filter`/`fold`/`reduce`/`sumOf`/`groupBy`/`associate*`/`zip`/`sorted*`/`max*`/`min*`/`joinToString`/…) → LINQ
-- Strings: `uppercase`/`lowercase`/`trim*`/`substring`/`replace`/`split`/`startsWith`/`contains`/`padStart`/… → `System.String`
-- `kotlin.math.*` → `System.Math`; `Pair`/`Triple`/`to` → `ValueTuple`; scope functions `let`/`run`/`with`/`apply`/`also`; destructuring
+**Stdlib**
+- Collections (`listOf`/`mapOf`/…, `map`/`filter`/`fold`/`groupBy`/`joinToString`/`sorted*`/…),
+  strings + `Regex`, `kotlin.math`, ranges, `Pair`/`Triple`, scope functions, destructuring,
+  unsigned types, `Array<T>` ops, `Result`/`runCatching`, atomics — the real stdlib bodies run
+  on the CLR (lazy `Sequence`/coroutine builders are the in-progress tail)
 
 **Kotlin ↔ .NET interop**
-- Call real .NET types: static calls, `new`, instance methods + chaining, properties, generics (`List<T>`), indexers (`list[i]`)
-- **Inherit .NET base classes**, **implement .NET interfaces**, **subscribe to .NET events** (`+=`)
-- Kotlin lambdas → CLR delegates (`Action`/`Func<T>`); `use`/`AutoCloseable` → `IDisposable`; .NET enums
-- Reverse interop: the generated assembly is plain public IL, consumable from C# (`ProjectReference`)
+- `import System.X` façade-free (+ transitive closure injection of everything reachable);
+  statics via `.Companion`; events; lambdas → any delegate type (incl. custom generic
+  delegates); `out`/`ref` via `byref()`; nullable value types; .NET enums; C# operator
+  overloads + extension methods; inherit .NET bases / implement .NET interfaces
+- Reverse interop: the emitted assembly is plain public IL — C# consumes it via
+  `<ProjectReference>`; re-consuming it **as Kotlin** restores `infix`/`operator`/`suspend`/
+  inline/nullability/sealed/bounds via `[Kotlin*]` attributes (see
+  `docs/dotkt-semantics.md` §6/§10)
 
-See `docs/remaining-tasks.md` for the full 1.0 checklist and what is still in progress (e.g. per-entry
-enum bodies, the iterator operator / `Sequence`, `by lazy`, coroutines).
+Still in progress: coroutines/`Sequence` builders (the `suspend`⇔`Task<T>` ABI is settled;
+`docs/coroutine-stdlib-port-plan.md` is the live plan) — see `docs/master-task-inventory.md`
+(the canonical task ledger) and `docs/remaining-tasks.md` (the 1.0 ship checklist).
 
-## Quick start
+## Quick start (repo)
 
 Prereqs: the repo's Gradle auto-provisions a JDK; you need the **.NET SDK 10**.
 
-### Run the full IL test suite (compile → IL → run → assert → `ilverify`)
-
 ```bash
-./scripts/verify-il.sh
+make help                          # all targets
+make all                           # toolchain + stdlib artifacts
+make dev SRC=cases/m0/M0.kt        # compile + run one file (wraps scripts/dotkt.sh --run)
+make verify                        # the gates: verify-il + verify-ktproj
+make pack                          # NuGet packages into a local feed
 ```
 
-### Compile and run one file through the IL backend
+Or the scripts directly:
 
 ```bash
-# 0. build the BIR→CIR and CIR→CIL tools once
-dotnet build toolchain/ilemit -c Release -o build/ilemit-bin
-dotnet build toolchain/bir2cir -c Release -o build/bir2cir-bin
-
-# 1. Kotlin → BIR (JSON).  One run also writes Foo.cs (the C# oracle) + KIR@Raw.txt (IR dump)
-STDLIB=$(find ~/.gradle/caches -name 'kotlin-stdlib-2.2.0.jar' | head -1)
-./gradlew :kotc:run --args="$PWD/cases/m0/M0.kt -no-stdlib -classpath $STDLIB -d $PWD/build/out"
-
-# 2. BIR → CIR → CIL assembly
-dotnet build/bir2cir-bin/bir2cir.dll build/cir build/out/*.bir.json
-dotnet build/ilemit-bin/ilemit.dll build/out M0Kt build/cir/*.cir.json
-
-# 3. run it
-dotnet build/out/M0Kt.dll          # -> sum = 5 / zero / n=1 / n=2
+./scripts/verify-il.sh                 # the canonical gate (run-correct + ilverify-clean)
+./scripts/verify-ktproj.sh             # MSBuild/.ktproj end-to-end
+./scripts/verify-roundtrip.sh          # consume a DotKt dll as Kotlin
+./scripts/dotkt.sh --run path/Foo.kt   # one-shot compile + run (-h for options)
 ```
 
-For the experimental native-CIR envelope path, use the dev wrapper:
+Building the CLR stdlib (three artifacts — see `CLAUDE.md` for details):
 
 ```bash
-./scripts/dotkt.sh --native-cir --no-stdlib --run cases/m0/M0.kt
+./scripts/build-clr-stdlib.sh --emit           # reference dll (DotKt.Private.Stdlib.dll)
+./scripts/build-clr-stdlib-runtime.sh --emit   # runtime dll  (DotKt.Stdlib.dll)
+./scripts/build-clr-stdlib-frontend.sh         # frontend jar (kotlin-stdlib-clr-frontend.jar)
 ```
 
 ### Build a project with MSBuild / `.ktproj`
@@ -88,73 +124,52 @@ For the experimental native-CIR envelope path, use the dev wrapper:
 A Kotlin.NET project builds with plain `dotnet build` / `dotnet run` (and thus in Visual Studio):
 
 ```xml
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="DotKt.Sdk/0.9.3">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-    <StartupObject>AppKt</StartupObject>
-    <!-- 'cs' (default, via C# source) or 'il' (direct CIL) -->
-    <KotlinClrBackend>il</KotlinClrBackend>
   </PropertyGroup>
-  <!-- expose .NET types to Kotlin: <KotlinClrType> injects them façade-free,
-       <KotlinClrFacade> generates façades at build time -->
-  <ItemGroup><KotlinClrType Include="System.Text.StringBuilder" /></ItemGroup>
-  <Import Project="path/to/msbuild/KotlinClr.targets" />
 </Project>
 ```
 
-`dotnet build foo.ktproj` runs the kotlin/clr compiler on the `.kt` files, then finishes the
-assembly via the chosen backend. See `cases/ktproj/` (C# path), `cases/ktproj-il/` (IL path),
-`cases/ktproj-ref/` and `cases/ktproj-inject/` (.NET type injection).
-
-```bash
-./scripts/verify-il.sh      # the shipping IL backend over the sample corpus + ilverify
-./scripts/verify-ktproj.sh  # MSBuild/.ktproj end-to-end (forward + bidirectional ProjectReference)
-./scripts/verify-bir2cir-native.sh  # native-CIR draft + compat identity guard
-./scripts/verify-native-cir-ilemit.sh  # native-CIR envelope consumed by ilemit
-./scripts/verify-ilemit-wide-delegates.sh  # synthetic delegates beyond System.Func/Action arity
-```
+Every `.kt` under the project is compiled; `import System.X` in source injects .NET types
+automatically (an explicit `<DotKtImport Include="..." />` item does the same from MSBuild).
+See `cases/ktproj-il/` and `docs/user/getting-started.md`.
 
 ## Layout
 
 | Path | Role |
 |------|------|
 | `toolchain/kotc/` | the Kotlin→BIR compiler frontend (Kotlin/JVM gradle module; source package `kotc.*`) |
-| `toolchain/kotc/.../kotc/pipeline/ClrCliPipeline.kt` | driver: stock JVM phases + our backend phase |
-| `toolchain/kotc/.../kotc/backend/BirEmitter.kt` (+ `BirEmitterExpressions/Statements`, `BirMappings`) | **Kotlin IR → BIR** (currently still hosts legacy lowering being migrated to CIR) |
-| `toolchain/bir2cir/` | **BIR (JSON) → CIR (JSON)** lowering stage; compat mode plus native-CIR draft/ilemit bridge |
-| `toolchain/ilemit/` | **CIR-compatible JSON → CIL** via `System.Reflection.Emit` (split: `Emitter.Expressions/Coroutines/Statements/Metadata`) |
+| `toolchain/bir2cir/` | **BIR (JSON) → CIR (JSON)**: the Kotlin↔CLR lowering (reads the stdlib ref.dll bindings) |
+| `toolchain/ilemit/` | **CIR (JSON) → CIL** via `System.Reflection.Emit` |
 | `toolchain/facadegen/` | .NET metadata → FIR-injection metadata (façade-free `import System.X`) |
 | `toolchain/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
-| `runtime/DotKt.Runtime/` | .NET runtime helpers + the `[Kotlin*]` round-trip metadata attributes |
-| `packaging/` | NuGet packages: `DotKt.Sdk` (thin), `DotKt.Toolchain` (tools + the build pipeline), `DotKt.Runtime` |
-| `cases/` | `il-*` (IL-backend samples), `m-*` (language/interop), `ktproj-*` (MSBuild) |
-| `scripts/verify-il.sh` | IL differential + `ilverify` gate |
-| `scripts/verify-ktproj.sh` | MSBuild/.ktproj integration (IL backend) |
-| `scripts/verify-bir2cir-native.sh` | Native-CIR draft shape + `--compat-bir` identity check |
-| `scripts/verify-native-cir-ilemit.sh` | Native-CIR envelope consumed directly by `ilemit` through `cirDraft.executableCir` |
-| `scripts/verify-ilemit-wide-delegates.sh` | Wide Kotlin function types using synthetic KFunc/KAction delegates |
-| `scripts/dotkt.sh --native-cir` | Developer-only native-CIR pipeline switch; normal builds still default to compat mode |
-| `docs/dotkt-semantics.md` | **how Kotlin maps to the CLR + where DotKt deliberately differs from Kotlin/JVM** |
-| `docs/design-fir-bir-cir-il.md` | backend layer contract and CIR migration target |
+| `runtime/stdlib/` | the **CLR Kotlin stdlib** sources (common Kotlin + `clr/` actuals + `@Clr*` bindings) |
+| `packaging/` | NuGet packages: `DotKt.Sdk`, `DotKt.Toolchain`, `DotKt.Stdlib`, `DotKt.Templates` |
+| `cases/` | `il-*` (IL-backend samples = the gate corpus), `m-*` (language/interop), `ktproj-*` (MSBuild) |
+| `scripts/` | the gates (`verify-il.sh`, `verify-ktproj.sh`, `verify-roundtrip.sh`), `dotkt.sh`, the three `build-clr-stdlib*.sh` |
+| `docs/user/` | **user-facing docs** (getting started / .NET interop / CLR differences) |
+| `docs/dotkt-semantics.md` | **canonical**: how Kotlin maps to the CLR + deliberate deviations from Kotlin/JVM |
+| `docs/design-fir-bir-cir-il.md` | backend layer contract (kotc / bir2cir / ilemit responsibilities) |
+| `docs/master-task-inventory.md` | the canonical "what's left" task ledger |
 | `docs/remaining-tasks.md` | the 1.0 ship checklist |
+| `docs/archive/` | historical design/plan docs (superseded; kept for rationale) |
 
 ## How it works (design)
 
 The frontend is the **stock JVM pipeline** (Configuration → FIR → Fir2Ir); we own only the final
-backend phase, so resolution against the real `kotlin-stdlib` is correct. Lowering is being split
-between `BirEmitter` (Kotlin IR → a compact JSON "BIR") and `bir2cir`; `ilemit` emits CIL
-from CIR-compatible JSON. Keeping lowering before IL emission (rather than emitting IL straight from the structured AST) is what
-makes control flow, generics-shaped overloads, nullable value types, etc. tractable.
-
-stdlib is mapped to the BCL at codegen (Kotlin's `inline` stdlib bodies are not present in our IR),
-e.g. collection ops → LINQ, `kotlin.math` → `System.Math`. Reified generics are handled by a
-targeted inline expansion at the call site (the type argument is substituted, so `T::class` and
-`x is T` materialize).
+backend phase, so resolution against the (CLR-built) Kotlin stdlib is correct. `kotc` serializes
+Kotlin IR to a compact JSON "BIR" with **no CLR knowledge**; `bir2cir` applies the Kotlin↔CLR
+relation (type lowering, `@ClrTypeAlias`/`@ClrIntrinsic` substitution from the stdlib reference
+dll, the String↔CharSequence bridge, default-argument splicing); `ilemit` emits verifiable CIL.
+Keeping lowering before IL emission is what makes control flow, generics-shaped overloads,
+nullable value types, etc. tractable. Reified CLR generics carry Kotlin's type arguments for
+real, so `T::class` / `is T` need no inlining tricks.
 
 ## Toolchain / caveats
 
 - JDK auto-provisioned by Gradle (foojay); **.NET SDK 10** required.
 - Kotlin/IR APIs are **version-pinned to 2.2.0** (internal, unstable — intentionally not tracking
-  newer versions).
+  newer versions). Some round-trip limits stem from this pin (`docs/dotkt-semantics.md` §10).
 - WPF/WinUI samples build on Windows only; **Avalonia** windowing runs cross-platform (incl. WSLg).
