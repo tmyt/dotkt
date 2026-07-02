@@ -1313,7 +1313,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val emitName = clrIfaceName ?: objName ?: fn.name.asString()
 		val isOvr = isOverride || objName != null || clrIfaceName != null
 		// Object-overrides / interface members must stay public for virtual dispatch.
-		val vis = if (objName != null || clrIfaceName != null) "public" else visOf(fn)
+		// A PRIVATE TOP-LEVEL fun is FILE-private in Kotlin, but kotc's emission splits a file across CLR types
+		// (the XKt file class + the file's classes), so CLR `private` under-approximates it: a same-file class
+		// calling the helper threw MethodAccessException at run (Duration..cctor -> DurationKt.durationOfMillis).
+		// Emit `internal` — the tightest CLR visibility that preserves same-file access (the same reasoning that
+		// makes routed property backing fields internal). Class members keep their real visibility.
+		val vis = if (objName != null || clrIfaceName != null) "public"
+			else visOf(fn).let { if (it == "private" && fn.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment) "internal" else it }
 		val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
 		// Kotlin modifiers with no .NET analog -> stamped as [KotlinFunction] by ilemit so a consuming Kotlin module
 		// can restore them (infix/operator call resolution). `final/open/abstract` ride .NET virtual-ness already.
