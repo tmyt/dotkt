@@ -67,16 +67,22 @@ stdlib-jar: $(FE_JAR) ## kotlin-stdlib-clr-frontend.jar (kotc -classpath input)
 $(FE_JAR): $(KOTC) $(STDLIB_SRC) scripts/build-clr-stdlib-frontend.sh
 	bash scripts/build-clr-stdlib-frontend.sh
 
+# The stdlib dlls depend on the emitter tools via their SOURCES (real change signal) plus ORDER-ONLY
+# deps on the dlls (existence). Depending on the dll mtimes directly would spuriously retrigger these
+# slow builds: the verify scripts' internal `dotnet build` refreshes the dlls even when nothing changed.
 stdlib-ref: $(STDLIB_REF) ## DotKt.Private.Stdlib.dll (compile-time @Clr metadata; bir2cir's --ref)
-$(STDLIB_REF): $(KOTC) build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll build/retarget-bin/retarget.dll \
-               $(STDLIB_SRC) scripts/build-clr-stdlib.sh
+$(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-clr-stdlib.sh \
+               $(call tool_src,bir2cir) $(call tool_src,ilemit) $(call tool_src,retarget) \
+               | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll build/retarget-bin/retarget.dll
 	bash scripts/build-clr-stdlib.sh --emit
 	@test -f "$@" || { echo "make: stdlib-ref did not produce $@ (see build/clr-stdlib/*.err)"; exit 1; }
 
 stdlib-rt: $(STDLIB_RT) ## DotKt.Stdlib.dll (the shipping runtime assembly)
 # NOTE the `|| true`: the script's final error-grep exits 1 precisely when it finds NO errors
 # (a clean build); existence of the dll below is the real success signal.
-$(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) scripts/build-clr-stdlib-runtime.sh
+$(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) scripts/build-clr-stdlib-runtime.sh \
+              $(call tool_src,bir2cir) $(call tool_src,ilemit) \
+              | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
 	bash scripts/build-clr-stdlib-runtime.sh --emit || true
 	@test -f "$@" || { echo "make: stdlib-rt did not produce $@ (see build/clr-stdlib-rt/*.err)"; exit 1; }
 
