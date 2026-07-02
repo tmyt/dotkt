@@ -119,8 +119,8 @@ dev: ## compile (and run) one .kt: make dev SRC=Foo.kt [RUN=1 EXE=1 REF=x.dll NO
 		$(if $(NO_STDLIB),--no-stdlib) $(if $(RETARGET),--retarget) \
 		$(if $(OUT),-o "$(OUT)") $(if $(DIR),-d "$(DIR)") $(SRC)
 
-facades: ## generate @Clr Kotlin façades: make facades OUT=outDir TYPES="System.Text.StringBuilder ..."
-	@test -n "$(OUT)" && test -n "$(TYPES)" || { echo 'usage: make facades OUT=outDir TYPES="Full.Type.Name ..."'; exit 2; }
+facades: ## FIR-injection metadata for .NET types: make facades OUT=out.meta TYPES="System.Text.StringBuilder ..."
+	@test -n "$(OUT)" && test -n "$(TYPES)" || { echo 'usage: make facades OUT=out.meta TYPES="Full.Type.Name ..."'; exit 2; }
 	bash scripts/gen-facades.sh "$(OUT)" $(TYPES)
 
 # ==================================================================================================
