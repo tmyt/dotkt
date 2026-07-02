@@ -71,7 +71,7 @@ is largely STALE** — a code-grounded currency check found:
 - **① Main body (mechanical, ~45+7 sites):** retire kotc's hardcoded CLR direct-lowerings — `System.Math`
   (`BirEmitter.kt:3854/3861/3892`), `System.String` (Format/Substring, `:3805/3914/3929`), `System.Convert`
   (`:3721`), `System.Char` (`:3941`), `System.Console.ReadLine` (`:3777`), `System.Text.RegularExpressions`
-  (`:3787`), `Task.Delay` (`:1386`), `IComparable.CompareTo` (`:3195`), `IDisposable.Dispose` (`:2312`),
+  (`:3787`), `IComparable.CompareTo` (`:3195`), `IDisposable.Dispose` (`:2312`),
   `System.Lazy` (`:3177`), indexer `get_/set_Item` (`:3400/3414`), the generic `clrName→clrStatic` path
   (`:3533+`) → move to stdlib `@ClrIntrinsic` + let the (already-built) bir2cir `MemberCallSubstitution` consume it;
   then DELETE kotc's `clrName`/`annClr` read path (`BirEmitter.kt:4247`) so bir2cir is the SOLE substituter (today
@@ -137,8 +137,12 @@ is largely STALE** — a code-grounded currency check found:
       BCL `List<T>`" stays coherent (the collection-bridge). Bundle-4.
     - **`System.Text.RegularExpressions` (`:3785`)** — CharSequence dual-rep + `MatchResult` adapters (`find`/`value`).
       Bundle-4 dual-rep.
-    - **`Task.Delay` (`:1386`) — SKIPPED** (not blocked): it lives inside `coAwaitable`, the coroutine await/suspend
-      machinery. Per the deferred-coroutine directive, untouched → bundle 6.
+    - **`Task.Delay` (`coAwaitable`) — ✅ REMOVED (2026-07-03, pre-coroutine hardening B1):** the bespoke
+      `kotlinx.coroutines.delay` → `Task.Delay` lowering was dead pre-stdlib legacy (reachable only from the
+      `sequence{}` restricted-suspension CPS path, where an unrestricted suspend call like `delay` cannot appear;
+      unrestricted suspend fns emit plainly with `"suspendCall":true`). Deleted — not aliased — so the Task-based
+      coroutine bundle (6) does not inherit it as a load-bearing hack. `il-cobuild` behavior unchanged (still the
+      legible deferred-coroutine `NotSupportedException` stub at run).
 
   > ### RETIRE-PATTERN RECIPE (hand this to each follow-up family: String/Convert/Char/Regex/Console/compareTo/…)
   > 1. **Precondition — confirm the binding exists stdlib-side.** grep `libraries/stdlib` for the target funs; each

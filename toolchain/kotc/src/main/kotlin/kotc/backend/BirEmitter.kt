@@ -134,6 +134,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
 	internal val valSubst = HashMap<String, String>()
+	// While splicing an inline fun / inlined-lambda body: the SPLICED target's own `return`s must NOT emit as raw
+	// method returns (the splice is a valueBlock INSIDE the caller). Maps the return target -> (result local or
+	// null-for-unit, end label id); stmt(IrReturn) rewrites to `res = v; goto end`. See spliceBodyWithReturns.
+	internal val inlineReturnSubst = HashMap<org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol, Pair<String?, Int>>()
 	// While splicing an `inline fun` body: its type PARAM (the IrTypeParameter itself, NOT its name — a name-keyed
 	// map cross-captured an OUTER function's same-named param: let<T,R:=Unit> spliced inside mapNotNullTo<T,R>
 	// rewrote the OUTER `R` to kotlin.Unit) -> the call's substituted type-argument BIR (see birType).
@@ -1313,7 +1317,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val emitName = clrIfaceName ?: objName ?: fn.name.asString()
 		val isOvr = isOverride || objName != null || clrIfaceName != null
 		// Object-overrides / interface members must stay public for virtual dispatch.
-		val vis = if (objName != null || clrIfaceName != null) "public" else visOf(fn)
+		// A PRIVATE TOP-LEVEL fun is FILE-private in Kotlin, but kotc's emission splits a file across CLR types
+		// (the XKt file class + the file's classes), so CLR `private` under-approximates it: a same-file class
+		// calling the helper threw MethodAccessException at run (Duration..cctor -> DurationKt.durationOfMillis).
+		// Emit `internal` — the tightest CLR visibility that preserves same-file access (the same reasoning that
+		// makes routed property backing fields internal). Class members keep their real visibility.
+		val vis = if (objName != null || clrIfaceName != null) "public"
+			else visOf(fn).let { if (it == "private" && fn.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment) "internal" else it }
 		val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
 		// Kotlin modifiers with no .NET analog -> stamped as [KotlinFunction] by ilemit so a consuming Kotlin module
 		// can restore them (infix/operator call resolution). `final/open/abstract` ride .NET virtual-ness already.
@@ -1411,12 +1421,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 	}
 
-	/** The `Task<T>` an await/suspend-call awaits: the `.await()` receiver, or the direct suspend call itself. */
+	/** The `Task<T>` an await/suspend-call awaits: the `.await()` receiver, or the direct suspend call itself.
+	 *  (The old bespoke `kotlinx.coroutines.delay` -> `Task.Delay` lowering here was dead pre-stdlib legacy —
+	 *  REMOVED, not aliased: kotlinx.* is not the stdlib, and the coming Task-based coroutine lowering must not
+	 *  inherit it as a load-bearing hack. See MEMORY runtime-dll-coroutine-lowering-is-dead-legacy.) */
 	internal fun coAwaitable(call: IrCall): String {
 		val callee = call.symbol.owner
-		// `kotlinx.coroutines.delay(ms)` -> `Task.Delay((int)ms)` (the awaitable; a non-generic Task -> void result).
-		if (callee.fqNameWhenAvailable?.asString() == "kotlinx.coroutines.delay")
-			return """{"k":"clrStatic","type":"System.Threading.Tasks.Task","method":"Delay","argTypes":["System.Int32"],"ret":"clr:System.Threading.Tasks.Task","args":[{"k":"conv","to":"int","e":${expr(regularArgs(call).first())}}]}"""
 		return if (isAwaitIntrinsic(callee)) expr(extensionReceiver(call) ?: dispatchReceiver(call)!!)
 		else expr(call)   // a direct suspend call: its kickoff returns Task<T>
 	}
@@ -2520,6 +2530,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return try { block() } finally { restoreCalleeTypeArgs() }
 		}
 		val callerTypeScope = TypeArgScope(subKeys.toList(), HashMap(oldTypeArgs), HashSet(hadOldTypeArg))
+		// A MEMBER inline fun's DISPATCH receiver must be bound like the extension receiver: the spliced body's
+		// `this` (IrGetValue of the callee's dispatch param) otherwise falls through to the CALLER's `{"k":"this"}` —
+		// `absoluteValue.toComponents { … }` inside Duration.toString read the NEGATIVE outer duration instead of
+		// absoluteValue (printed "--1s"), and in a static caller a bare `this` is not even valid.
+		val dispatchParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }
+		val dispatchArg = dispatchReceiver(call)
+		var boundDispatch = false
+		if (dispatchParam != null && dispatchArg != null) {
+			val tmp = "__inl${inlCounter++}"
+			pre.add("""{"k":"var","name":${str(tmp)},"type":${str(birType(dispatchParam.type))},"init":${withCallerTypeArgs { expr(dispatchArg) }}}""")
+			selfSubst[dispatchParam] = """{"k":"local","name":${str(tmp)}}"""
+			boundDispatch = true
+		}
 		if (extParam != null && extArg != null) {
 			val tmp = "__inl${inlCounter++}"
 			pre.add("""{"k":"var","name":${str(tmp)},"type":${str(birType(extParam.type))},"init":${withCallerTypeArgs { expr(extArg) }}}""")
@@ -2552,11 +2575,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				bindVal(p.name.asString(), """{"k":"local","name":${str(tmp)}}""")
 			}
 		}
-		val result = spliceBody(bodyStatements(callee.body), callee.returnType.isUnit(), pre)
+		val result = spliceBodyWithReturns(callee, callee.returnType.isUnit(), pre)
 		boundVals.forEach { name -> if (hadOldVals.contains(name)) valSubst[name] = oldVals[name]!! else valSubst.remove(name) }
 		boundLams.forEach { inlineLambdas.remove(it)?.let { lam -> inlineLambdaTypeScopes.remove(lam) } }
 		subKeys.forEach { tp -> if (hadOldTypeArg.contains(tp)) typeArgSubst[tp] = oldTypeArgs[tp]!! else typeArgSubst.remove(tp) }
 		if (boundExt) selfSubst.remove(extParam)
+		if (boundDispatch) selfSubst.remove(dispatchParam)
 		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
 	}
 
@@ -2630,11 +2654,72 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			valSubst[p.name.asString()] = """{"k":"local","name":${str(tmp)}}"""; bound.add(p.name.asString())
 		}
 		val result = withTypeArgScope(inlineLambdaTypeScopes[lambda]) {
-			spliceBody(bodyStatements(fn.body), fn.returnType.isUnit() || call.type.isUnit(), pre)
+			spliceBodyWithReturns(fn, fn.returnType.isUnit() || call.type.isUnit(), pre)
 		}
 		bound.forEach { valSubst.remove(it) }
 		if (boundExt) selfSubst.remove(extParam)
 		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
+	}
+
+	/** True iff [body] contains an IrReturn TARGETING [target] anywhere other than as the body's LAST top-level
+	 *  statement (spliceBody already folds a tail return into the value expression). Nested lambdas are walked too:
+	 *  a labeled return inside one can target the enclosing spliced fn. */
+	internal fun hasEarlyReturn(body: org.jetbrains.kotlin.ir.IrElement?, target: org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol): Boolean {
+		val stmts = bodyStatements(body)
+		val tail = stmts.lastOrNull()
+		var found = false
+		val walker = object : IrVisitorVoid() {
+			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
+				if (found) return
+				if (element is IrReturn && element.returnTargetSymbol == target) { found = true; return }
+				element.acceptChildrenVoid(this)
+			}
+		}
+		for (s in stmts) {
+			// The tail return itself is fine (spliceBody folds it) — but its VALUE could still nest one.
+			if (s === tail && s is IrReturn && s.returnTargetSymbol == target) s.value.acceptVoid(walker)
+			else s.acceptVoid(walker)
+			if (found) return true
+		}
+		return false
+	}
+
+	/**
+	 * spliceBody + EARLY-return support. A `return v` in the middle of a spliced inline body (indexOfLast's
+	 * `return index` inside its loop) must not emit a raw method return — the splice is a valueBlock INSIDE the
+	 * caller, so the raw return used the CALLER's frame (a void caller got an Int32 on the stack at ret:
+	 * kotlin.time.Duration.appendFractional, ilverify ReturnVoid + InvalidProgramException at run). Route every
+	 * return targeting the spliced fn through a RESULT LOCAL + an END LABEL (`res = v; goto end`; the natural tail
+	 * value assigns res too; the valueBlock result reads res after the label). Early-return-free bodies (the
+	 * overwhelmingly common case) keep the plain spliceBody shape — zero BIR churn.
+	 */
+	internal fun spliceBodyWithReturns(target: IrSimpleFunction, unit: Boolean, pre: MutableList<String>): String {
+		val stmts = bodyStatements(target.body)
+		if (!hasEarlyReturn(target.body, target.symbol)) return spliceBody(stmts, unit, pre)
+		val res = if (unit) null else "__inlRet${inlCounter++}"
+		val end = cfgFresh()
+		res?.let {
+			val rt = birType(target.returnType)
+			pre.add("""{"k":"var","name":${str(it)},"type":${str(rt)},"init":{"k":"default","type":${str(rt)}}}""")
+		}
+		val saved = inlineReturnSubst[target.symbol]
+		inlineReturnSubst[target.symbol] = res to end
+		// A NOTHING-typed tail expression (a when whose branches all return/throw) is a STATEMENT, not the splice
+		// value — its returns route through the subst; reading it as the value would render IrReturn as an expr.
+		val last = stmts.lastOrNull()
+		val tail = if (!unit && last is IrExpression && last !is IrReturn && last.type.classFqName?.asString() == "kotlin.Nothing") {
+			stmts.forEach { pre.add(stmt(it)) }
+			null
+		} else spliceBody(stmts, unit, pre)
+		if (saved != null) inlineReturnSubst[target.symbol] = saved else inlineReturnSubst.remove(target.symbol)
+		return if (res != null) {
+			tail?.let { pre.add("""{"k":"setLocal","name":${str(res)},"value":$it}""") }
+			pre.add("""{"k":"label","id":$end}""")
+			"""{"k":"local","name":${str(res)}}"""
+		} else {
+			pre.add("""{"k":"label","id":$end}""")
+			"""{"k":"const","type":"void","value":null}"""
+		}
 	}
 
 	/** Emit body statements into `pre`, returning the value expression (Unit -> void const; else the last expr). */
@@ -3032,6 +3117,32 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"block","body":[]}"""
 	}
 
+	/**
+	 * Bind a subject/receiver expression for exactly-ONCE evaluation before splicing it into several use sites.
+	 * A STABLE expression (a const, or a read of an immutable non-ref-cell local/parameter) splices directly —
+	 * re-reading it is free and side-effect-free. Anything else gets a temp local (returned as a `var` statement
+	 * for a wrapping valueBlock) and the use sites splice the local READ: splicing the rendered initializer JSON
+	 * itself re-evaluates it per splice (the when-subject / safe-call / range-membership double-eval defect).
+	 * Returns (varStmtJson or null-if-stable, useJson). Only safe where the expression is suspension-free —
+	 * expression position is; a suspension-bearing tree is CPS-linearized by emitCps/spillExpr before render.
+	 */
+	internal fun bindOnce(init: IrExpression, type: IrType, prefix: String): Pair<String?, String> {
+		val stable = init is IrConst || (init as? IrGetValue)?.symbol?.owner?.let { o ->
+			!isRefCell(o) && (o is IrValueParameter || (o as? IrVariable)?.isVar == false)
+		} == true
+		if (stable) return null to expr(init)
+		val tv = "$prefix${scopeCounter++}"
+		// A NULLABLE generic-param subject (`T?`, e.g. `x as? T`) must NOT become a `gp:T` local: `!T` cannot
+		// hold null when T is instantiated with a value type, and the `isinst` REF result stored into a `!T`
+		// slot is unverifiable ([found ref 'T'][expected value 'T'] — the stdlib's documented "never hold a V?
+		// in a local" rule, ClrMapDefaults.kt). Erase to object: every use site of a nullable subject is
+		// ref-typed (objEq null-check / objMethod / ref member).
+		val bt = birType(type)
+		val vt = if (bt.startsWith("gp:") && type.isMarkedNullable()) "object" else bt
+		return """{"k":"var","name":${str(tv)},"type":${str(vt)},"init":${expr(init)}}""" to
+			"""{"k":"local","name":${str(tv)}}"""
+	}
+
 	internal fun blockExpr(block: IrBlock): String {
 		// `object : I { … }` -> a synthetic named class (lifted) + `new`. Instance fields are real fields;
 		// captured outer values (incl. the enclosing `this`) become extra ctor params / capture fields.
@@ -3062,19 +3173,39 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"new","type":${str(cname)},"args":[$capArgs]}"""
 			}
 		}
-		// `when (subject)` lowers to `{ val tmp = subject; WHEN }` in expression position.
+		// `when (subject)` lowers to `{ val tmp = subject; WHEN }` in expression position. The subject is bound
+		// ONCE (bindOnce): the old code stored valSubst[key] = the RENDERED initializer JSON, so every IrGetValue
+		// of the subject re-spliced — and re-EVALUATED — it (a when-subject call ran once per branch test; a
+		// safe-call receiver ran twice).
 		val tmp = block.statements.getOrNull(0) as? IrVariable
 		val whenExpr = block.statements.getOrNull(1) as? IrWhen
 		if (block.statements.size == 2 && tmp != null && whenExpr != null && tmp.initializer != null) {
 			val key = tmp.name.asString()
 			val origin = block.origin?.toString()
-			// `a?.member` where member is a value type -> Nullable<T>: cond(a==null, default(T?), new T?(a.member)).
+			// Save/restore (not remove) the key: a nested same-named subject must not clobber the outer splice.
+			val saved = valSubst[key]
+			fun restore() { if (saved != null) valSubst[key] = saved else valSubst.remove(key) }
+			// `a?.member` where member is a value type -> Nullable<T>: bind `a` once, then null-gate. A nullable
+			// VALUE-type receiver (`Char?`) is gated by HasValue and the member sees the UNWRAPPED .Value (the
+			// ELVIS shape below) — splicing the raw Nullable<T> where the element is required emitted invalid IL
+			// (e.g. `conv int` over a Nullable<char> -> InvalidProgramException).
 			if (origin == "SAFE_CALL") nullableElem(block.type)?.let { elem ->
-				valSubst[key] = expr(tmp.initializer!!)
-				val nullCheck = expr(whenExpr.branches.first().condition)
-				val member = expr(whenExpr.branches.last().result)
-				valSubst.remove(key)
-				return """{"k":"cond","cond":$nullCheck,"then":{"k":"nullableNull","elem":${str(elem)}},"else":{"k":"nullableWrap","elem":${str(elem)},"e":$member}}"""
+				val (subjVar, subj) = bindOnce(tmp.initializer!!, tmp.type, "__nv")
+				val recvElem = nullableElem(tmp.type)
+				val core: String
+				if (recvElem != null) {
+					valSubst[key] = """{"k":"nullableValue","elem":${str(recvElem)},"e":$subj}"""
+					val member = expr(whenExpr.branches.last().result)
+					core = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(recvElem)},"e":$subj},"then":{"k":"nullableWrap","elem":${str(elem)},"e":$member},"else":{"k":"nullableNull","elem":${str(elem)}}}"""
+				} else {
+					valSubst[key] = subj
+					val nullCheck = expr(whenExpr.branches.first().condition)
+					val member = expr(whenExpr.branches.last().result)
+					core = """{"k":"cond","cond":$nullCheck,"then":{"k":"nullableNull","elem":${str(elem)}},"else":{"k":"nullableWrap","elem":${str(elem)},"e":$member}}"""
+				}
+				restore()
+				return if (subjVar == null) core
+				else """{"k":"valueBlock","type":${str(birType(block.type))},"stmts":[$subjVar],"result":$core}"""
 			}
 			// `nv ?: d` where nv is a Nullable<T> -> evaluate once, then HasValue ? Value : d.
 			if (origin == "ELVIS") nullableElem(tmp.type)?.let { elem ->
@@ -3086,10 +3217,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val nvLoc = """{"k":"local","name":${str(nv)}}"""
 				return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${str("nullable:$elem")},"init":$init}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(elem)},"e":$nvLoc},"then":{"k":"nullableValue","elem":${str(elem)},"e":$nvLoc},"else":$elseResult}}"""
 			}
-			valSubst[key] = expr(tmp.initializer!!)
+			val (subjVar, subj) = bindOnce(tmp.initializer!!, tmp.type, "__subj")
+			valSubst[key] = subj
 			val result = ternary(whenExpr)
-			valSubst.remove(key)
-			return result
+			restore()
+			// The wrapping valueBlock carries the when's result type: the old bare `cond` surfaced it (ternary's
+			// "type"), and bir2cir's call-arg type inference sniffs the argument node's type field.
+			return if (subjVar == null) result
+			else """{"k":"valueBlock","type":${str(birType(whenExpr.type))},"stmts":[$subjVar],"result":$result}"""
 		}
 		// A general block in value position: emit its preceding (side-effecting) statements, then the last value.
 		// e.g. `{ counter++ }` lowers to `{ val <unary> = counter; counter = counter + 1; <unary> }` — dropping the
@@ -3401,7 +3536,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
-		// `x in a..b` (range membership) -> `(x >= a && x <op> b)` via a short-circuit cond.
+		// `x in a..b` (range membership) -> `(x >= a && x <op> b)` via a short-circuit cond. `x` is bound ONCE
+		// (bindOnce): rendering it into both comparison legs re-evaluated a side-effecting `x` twice.
 		if (name == "contains") {
 			val range = dispatchReceiver(call) as? IrCall
 			val value = regularArgs(call).firstOrNull()
@@ -3409,8 +3545,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val ops = range.arguments.filterNotNull()
 				val cmp = when (range.symbol.owner.name.asString()) { "rangeTo" -> "<="; "until", "rangeUntil" -> "<"; else -> null }
 				if (cmp != null && ops.size == 2) {
-					val x = expr(value); val lo = expr(ops[0]); val hi = expr(ops[1])
-					return """{"k":"cond","cond":{"k":"bin","op":">=","l":$x,"r":$lo},"then":{"k":"bin","op":${str(cmp)},"l":$x,"r":$hi},"else":{"k":"const","type":"bool","value":false}}"""
+					val (xVar, x) = bindOnce(value, value.type, "__in")
+					val lo = expr(ops[0]); val hi = expr(ops[1])
+					val core = """{"k":"cond","cond":{"k":"bin","op":">=","l":$x,"r":$lo},"then":{"k":"bin","op":${str(cmp)},"l":$x,"r":$hi},"else":{"k":"const","type":"bool","value":false}}"""
+					return if (xVar == null) core else """{"k":"valueBlock","stmts":[$xVar],"result":$core}"""
 				}
 			}
 		}
@@ -3694,14 +3832,28 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		(callee.parent as? IrClass)?.takeIf { it.isCompanion && superTypedCompanion(it.parent as IrClass) == null }?.let { comp ->
 			val enclosing = typeName(comp.parent as IrClass)
 			val prop = callee.correspondingPropertySymbol?.owner
-			if (prop != null) return if (callee === prop.setter)
-				if (prop.backingField == null)
-					"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("set_" + prop.name.asString())},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
-				else
-					"""{"k":"staticFieldSet","ownerType":${str(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
-			else if (prop.backingField == null)
-				"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("get_" + prop.name.asString())},"args":[]${retHint(false, call.type)}}"""
-			else """{"k":"staticField","ownerType":${str(enclosing)},"name":${str(prop.name.asString())}}"""
+			if (prop != null) {
+				// A companion EXTENSION property (`val Int.seconds` on Duration.Companion) is NEVER a static field —
+				// extension properties have no backing field (a cross-module deserialized stub may claim one; trusting
+				// it dropped the receiver entirely: `2.seconds` emitted a bare `staticField Duration.seconds`, and the
+				// in-module getter path emitted `get_milliseconds` with `"args":[]`). Mirror the top-level-property
+				// branch: the static get_/set_<name>(__self, ...) on the enclosing class with the receiver as the
+				// leading arg; `sig` picks the right overload (get_seconds(Int|Long|Double)).
+				val ext = extensionReceiver(call)
+				if (ext != null) return if (callee === prop.setter) {
+					val args = listOf(ext) + regularArgs(call)
+					"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("set_" + prop.name.asString())}${overloadSigField(callee)},"args":[${args.joinToString(",") { expr(it) }}]}"""
+				} else
+					"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("get_" + prop.name.asString())}${overloadSigField(callee)},"args":[${expr(ext)}]${retHint(false, call.type)}}"""
+				return if (callee === prop.setter)
+					if (prop.backingField == null)
+						"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("set_" + prop.name.asString())},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
+					else
+						"""{"k":"staticFieldSet","ownerType":${str(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+				else if (prop.backingField == null)
+					"""{"k":"callStatic","owner":${str(enclosing)},"method":${str("get_" + prop.name.asString())},"args":[]${retHint(false, call.type)}}"""
+				else """{"k":"staticField","ownerType":${str(enclosing)},"name":${str(prop.name.asString())}}"""
+			}
 			// A generic companion fun (`Result.Companion.success<T>`) carries its resolved type args — without them
 			// the emitted call references the uninstantiated generic method (invalid IL on a generic enclosing class).
 			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)}${overloadSigField(callee)}${typeArgsJson(call)},"args":[${filledArgs(call).joinToString(",")}]}"""
@@ -3900,8 +4052,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// (kotlin.Int.plus) and the IR compare intrinsics (kotlin.internal.ir.less/greater/...) are top-level with
 			// plain value params — neither has an EXTENSION receiver. A stdlib EXTENSION that shares the name
 			// (`Array<T>.plus(element)`, `List.plus`, `CharSequence.plus`…) is a real function call, NOT arithmetic:
-			// lowering it to a CIL add corrupts the receiver reference. Gate on the extension receiver.
-			BINARY[name]?.let { op -> if (operands.size == 2 && callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }) {
+			// lowering it to a CIL add corrupts the receiver reference. Gate on the extension receiver AND on
+			// primitive operand types: a kotlin.* VALUE-CLASS member operator (kotlin.time.Duration.plus/unaryMinus —
+			// `isBuiltin` because the FQN starts with "kotlin") is a REAL method call, not an IL op; raw add/neg on
+			// Duration values produced InvalidProgram inside the rt (LongSaturatedMathKt.saturatingFiniteDiff). An
+			// operand may also be an un-narrowed smart-cast box (Any) — allowed IFF the other operand pins a concrete
+			// primitive (the cast-to-concrete coercion below handles it).
+			fun primOperand(o: IrExpression) = o.type.classFqName?.asString() in PRIMITIVE_OP_FQ
+			fun boxedAny(o: IrExpression) = birType(o.type).let { it == "object" || it == "kotlin.Any" }
+			BINARY[name]?.let { op -> if (operands.size == 2 && callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }
+					&& operands.any { primOperand(it) } && operands.all { primOperand(it) || boxedAny(it) }) {
 				// A boxed (Any) operand via an un-narrowed smart-cast (`x is Int && x > 10`) against a primitive:
 				// cast it to the other operand's type so the numeric/compare op sees the right value, not the box.
 				fun operand(o: IrExpression, other: IrExpression): String {
@@ -3914,10 +4074,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				}
 				return """{"k":"bin","op":${str(op)},"l":${operand(operands[0], operands[1])},"r":${operand(operands[1], operands[0])}}"""
 			} }
-			UNARY[name]?.let { if (operands.size == 1) return """{"k":"un","op":${str(it)},"e":${expr(operands[0])}}""" }
+			// Same primitive gate for unary/inc/dec: `Duration.unaryMinus()` is a real member call, not a CIL neg.
+			UNARY[name]?.let { if (operands.size == 1 && primOperand(operands[0])) return """{"k":"un","op":${str(it)},"e":${expr(operands[0])}}""" }
 			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) -> `(i + 1)`/`(i - 1)`.
-			if (name == "inc" && operands.size == 1) return """{"k":"bin","op":"+","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
-			if (name == "dec" && operands.size == 1) return """{"k":"bin","op":"-","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
+			if (name == "inc" && operands.size == 1 && primOperand(operands[0])) return """{"k":"bin","op":"+","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
+			if (name == "dec" && operands.size == 1 && primOperand(operands[0])) return """{"k":"bin","op":"-","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
 			// Numeric conversion `x.toLong()`/`x.toInt()`/… (numeric receiver) -> a CIL conv.
 			NUMBER_CONV[name]?.let { to ->
 				val recv = dispatchReceiver(call)
