@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Added
+- **`CharSequence` is `System.String` on the CLR — app-own declarations (the 3-point model, points ①/②).** A
+  JVM-shaped `kotlin.CharSequence` has no faithful .NET equivalent, so DotKt models it as `string` (an immutable
+  snapshot). New bir2cir pass `CharSeqStringLowering` (app build, no user `class S : CharSequence`): a CharSequence-typed
+  param/return/local/field → `System.String`; member reads (`length`/`get`/`subSequence`) → `System.String.Length`/
+  `get_Chars`/`Substring(a, b-a)`; a non-`String` value (a `StringBuilder`) flowing into a now-`string` slot is snapshot
+  with an implicit `.toString()` (a `String` flows directly). Composes with the existing `StringCharSequenceBridge` (a
+  now-`string` value into an un-rebuilt stdlib CharSequence-extension is still adapter-wrapped). Sample: `il-charseqs`.
+  The synthetic `<>dotkt_CharSequence` is RETAINED for a user `class S : CharSequence` supertype (sealed `System.String`
+  can't be subclassed) — an assembly declaring one keeps `CharSequence` polymorphic assembly-wide (`il-charseq`/
+  `il-charseqx` unchanged). Snapshot-not-live-view deviation recorded in `docs/dotkt-semantics.md §5b`; design +
+  landed/deferred split in `docs/design-charsequence-clr-string.md`. DEFERRED (needs a stdlib rebuild): lowering the
+  stdlib's OWN CharSequence-extension signatures to `string` — the change that would retire the 5 still-lowered String
+  ops (`trim`/`reversed`/`padStart`/`replace(S,S)`/`isBlank`).
+
 ### Fixed
 - **Cross-module default arguments via a 2-tier rule (bundle 4-C RC1).** kotc emits only the args a caller wrote
   (correct); the frontend jar drops a callee's default VALUES (`IrErrorExpression`), so an OMITTED cross-module default

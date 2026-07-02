@@ -88,6 +88,16 @@ sealed class Pipeline
         // never runs MemberCallSubstitution at all (see the RefBuild gate below).
         var attributeTopLevelOwner = Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") == null;
 
+        // Does THIS assembly declare a user `class S : CharSequence` (a type whose `interfaces` names the synthetic
+        // `<>dotkt_CharSequence`)? If so, CharSequence must stay the polymorphic synthetic ASSEMBLY-WIDE: a
+        // CharSequence param/local in such an assembly may hold that user impl and be read polymorphically
+        // (`show(cs: CharSequence) = cs.length` with `show(S("hello"))` == 5) — collapsing it to `string` would
+        // snapshot the value via `.toString()` and lose the length. So the CharSequence -> System.String lowering
+        // (CharSeqStringLowering) is DISABLED for such assemblies (they keep the synthetic, unchanged), and enabled
+        // only for a "pure" app assembly with no user implementer. Sealed System.String forbids a real `: string`
+        // supertype, so this synthetic-retention is a technical necessity, not a preference. (docs/design-charsequence-clr-string.md)
+        var hasUserCharSeqImpl = birFiles.Any(f => DeclaresCharSeqImplementer(f.Root));
+
         var files = new List<CirFile>();
         foreach (var bir in birFiles)
         {
@@ -143,6 +153,17 @@ sealed class Pipeline
             // injected into the rt assembly exactly once (dedup), implementing the RT's canonical `<>dotkt_CharSequence`,
             // so an app that then routes a String op to a real stdlib body works. Skipped only for the ref build (its
             // bodies are squashed to `throw` anyway). Purely additive: only positively-String values are wrapped.
+            // CharSequence -> System.String (the 3-point model, point ①/②). In a "pure" APP assembly (no user
+            // `class S : CharSequence`, so no polymorphic implementer can flow through a CharSequence slot) an app's
+            // OWN CharSequence-typed param/return/local is lowered to `System.String`, its member reads
+            // (length/get/subSequence) resolve to System.String.Length/get_Chars/Substring, and a non-String value
+            // (a StringBuilder) flowing into such a now-`string` slot is snapshot with an implicit `.toString()`.
+            // Runs BEFORE the StringCharSequenceBridge so a now-`string` value flowing into a *stdlib* CharSequence-ext
+            // (whose param stays the synthetic in the un-rebuilt stdlib) is still adapter-wrapped by the bridge — the
+            // two compose. Skipped for the stdlib self-build (attributeTopLevelOwner) and for any assembly that
+            // declares a user CharSequence implementer (hasUserCharSeqImpl) — those keep the synthetic verbatim.
+            if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
+                substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns);
             if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
@@ -171,6 +192,23 @@ sealed class Pipeline
         if (root is not JsonObject o) return false;
         static bool Empty(JsonNode? n) => n is not JsonArray a || a.Count == 0;
         return Empty(o["types"]) && Empty(o["methods"]) && Empty(o["fields"]);
+    }
+
+    // True iff this file declares a type whose `interfaces` names the synthetic `<>dotkt_CharSequence` — i.e. a user
+    // `class S : CharSequence`. Such a type is a genuine polymorphic implementer, so the whole assembly must keep the
+    // synthetic (CharSeqStringLowering is disabled). Only kotc's `interfaces` array carries this name at the top level
+    // of a type; the synthetic interface DEFINITION itself (name == the synthetic) has an EMPTY interfaces list, so it
+    // is not counted.
+    static bool DeclaresCharSeqImplementer(JsonNode root)
+    {
+        if (root is not JsonObject o || o["types"] is not JsonArray types) return false;
+        foreach (var t in types)
+            if (t is JsonObject to && to["interfaces"] is JsonArray ifaces)
+                foreach (var i in ifaces)
+                    if (i is JsonValue v && v.TryGetValue<string>(out var s) &&
+                        s.TrimStart('@') == "<>dotkt_CharSequence")
+                        return true;
+        return false;
     }
 
     void WriteCirFiles(IReadOnlyList<CirFile> files)
@@ -2373,6 +2411,281 @@ static class DefaultArgSplice
             var c = value[i];
             if (c == '[' || c == '<' || c == '(') depth++;
             else if (c == ']' || c == '>' || c == ')') depth--;
+            else if (c == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
+        }
+        result.Add(value[start..].Trim());
+        return result;
+    }
+}
+
+// CHARSEQUENCE -> System.String (docs/design-charsequence-clr-string.md, the 3-point model). `kotlin.CharSequence` is
+// a JVM-shaped polymorphic char view with no faithful .NET equivalent; on the CLR DotKt models it as `string` (an
+// immutable snapshot). kotc emits it as the synthetic monomorphic interface `<>dotkt_CharSequence` in every type
+// position. In a "pure" APP assembly (no user `class S : CharSequence` — verified by the driver's hasUserCharSeqImpl)
+// this pass collapses that synthetic to `System.String`:
+//   ① a CharSequence-typed param / return / local / field DECLARATION -> System.String (via kotlin.String, which the
+//      subsequent BirTypeLowering renders as the CLR `string`);
+//   member reads on such a now-`string` value — `cs.length` / `cs[i]` / `cs.subSequence(a,b)` (emitted by kotc as a
+//      callInstance whose ownerType is the synthetic) -> System.String.Length / get_Chars / Substring(a, b-a);
+//   ② a NON-String value (a StringBuilder) flowing into a now-`string` slot (a local call's CharSequence arg, a
+//      CharSequence-return, an `as CharSequence` cast, a CharSequence-local init) -> an implicit `.toString()` snapshot
+//      (an `objMethod ToString`, virtual — StringBuilder's override yields its content). A String flows directly.
+// It touches ONLY this assembly's own declarations + LOCAL calls (a top-level fn in localTopLevelFns) + member reads on
+// the synthetic; a call to an EXTERNAL stdlib CharSequence-extension keeps its synthetic `sig` untouched so the
+// following StringCharSequenceBridge still adapter-wraps the (now-`string`) argument for the un-rebuilt stdlib. Lowering
+// the STDLIB's own CharSequence-ext params to `string` (which would let the retire-B string ops route cleanly) needs a
+// stdlib rebuild + a cross-assembly call-site coercion and is a documented follow-up — NOT done here.
+static class CharSeqStringLowering
+{
+    const string CharSeq = "<>dotkt_CharSequence";
+    static readonly HashSet<string> StringTokens = new(StringComparer.Ordinal)
+        { "kotlin.String", "System.String", "string" };
+
+    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+
+    // Strip a leading `nullable:`/`array:` modifier then a `@` (this-assembly-emitted) marker, so `@<>dotkt_CharSequence`
+    // / `nullable:<>dotkt_CharSequence` compare by bare identity.
+    static string Bare(string t)
+    {
+        if (t == null) return null;
+        t = t.Trim();
+        foreach (var p in new[] { "nullable:", "array:" })
+            if (t.StartsWith(p, StringComparison.Ordinal)) t = t[p.Length..];
+        if (t.StartsWith("@", StringComparison.Ordinal)) t = t[1..];
+        return t;
+    }
+
+    static bool IsCharSeq(string t) => Bare(t) == CharSeq;
+    static bool IsStringTok(string t) => Bare(t) is string b && StringTokens.Contains(b);
+
+    // Replace a CharSequence type token with `kotlin.String` (BirTypeLowering renders it as `string`), preserving a
+    // leading `nullable:`/`array:` modifier; drops the `@` (String is foundational, not this-assembly-emitted).
+    static string LowerTok(string t)
+    {
+        if (t == null) return null;
+        foreach (var p in new[] { "nullable:", "array:" })
+            if (t.StartsWith(p, StringComparison.Ordinal)) return p + LowerTok(t[p.Length..]);
+        return "kotlin.String";
+    }
+
+    // Lexical name -> declared type (params + local vars, with CharSequence already mapped to kotlin.String), plus
+    // whether the enclosing method's return type was CharSequence. Copy-on-extend (mirrors StringCharSequenceBridge.Env).
+    sealed class Env
+    {
+        public readonly Dictionary<string, string> Vars;
+        public readonly bool RetWasCharSeq;
+        public Env() { Vars = new(StringComparer.Ordinal); RetWasCharSeq = false; }
+        Env(Dictionary<string, string> vars, bool ret) { Vars = vars; RetWasCharSeq = ret; }
+
+        public Env WithDecl(JsonObject decl)
+        {
+            if (decl["params"] is not JsonArray ps) return this;
+            var vars = new Dictionary<string, string>(Vars, StringComparer.Ordinal);
+            foreach (var p in ps)
+                if (p is JsonObject po && Str(po["name"]) is string pn && Str(po["type"]) is string pt)
+                    vars[pn] = IsCharSeq(pt) ? "kotlin.String" : pt;
+            var ret = decl["ret"] is JsonValue rv && rv.TryGetValue<string>(out var rs) ? IsCharSeq(rs) : RetWasCharSeq;
+            return new Env(vars, ret);
+        }
+
+        public Env WithVar(string name, string type)
+        {
+            var vars = new Dictionary<string, string>(Vars, StringComparer.Ordinal) { [name] = type };
+            return new Env(vars, RetWasCharSeq);
+        }
+    }
+
+    static HashSet<string> _localFns = new(StringComparer.Ordinal);
+
+    public static JsonNode Apply(JsonNode root, HashSet<string> localTopLevelFns)
+    {
+        _localFns = localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal);
+        return Walk(root, new Env());
+    }
+
+    static JsonNode Walk(JsonNode node, Env env)
+    {
+        if (node is JsonObject obj)
+        {
+            var childEnv = env.WithDecl(obj);
+            var copy = new JsonObject();
+            foreach (var kv in obj)
+                copy[kv.Key] = kv.Value is JsonArray arr ? WalkArray(arr, childEnv)
+                             : kv.Value == null ? null : Walk(kv.Value, childEnv);
+            return Transform(copy, env);
+        }
+        if (node is JsonArray topArr) return WalkArray(topArr, env);
+        return node.DeepClone();
+    }
+
+    // Thread each `var` decl's (already-lowered) name->type forward so a later sibling's read resolves its static type.
+    static JsonArray WalkArray(JsonArray arr, Env env)
+    {
+        var copy = new JsonArray();
+        var cur = env;
+        foreach (var item in arr)
+        {
+            var walked = item == null ? null : Walk(item, cur);
+            copy.Add(walked);
+            if (walked is JsonObject wo && Str(wo["k"]) == "var"
+                && Str(wo["name"]) is string vn && Str(wo["type"]) is string vt)
+                cur = cur.WithVar(vn, IsCharSeq(vt) ? "kotlin.String" : vt);
+        }
+        return copy;
+    }
+
+    static JsonNode Transform(JsonObject node, Env env)
+    {
+        var k = Str(node["k"]);
+
+        // A member READ on a CharSequence value (kotc: callInstance whose ownerType is the synthetic). A stdlib
+        // CharSequence-EXTENSION is a callStatic (receiver as arg[0]), never this shape, so this only ever hits the
+        // synthetic interface's own length/get/subSequence.
+        if (k == "callInstance" && IsCharSeq(Str(node["ownerType"])))
+        {
+            var rewritten = RewriteMemberRead(node);
+            if (rewritten != null) return rewritten;
+        }
+
+        switch (k)
+        {
+            case null:   // a declaration node (method/lambda def, field): lower its own signature tokens
+                LowerDeclTypes(node);
+                return node;
+            case "var":
+                if (node["type"] is JsonValue vt && vt.TryGetValue<string>(out var vts) && IsCharSeq(vts))
+                {
+                    node["type"] = LowerTok(vts);
+                    if (node["init"] is JsonNode init && CoerceOrNull(init, env) is JsonNode w) node["init"] = w;
+                }
+                return node;
+            case "callStatic":
+                LowerLocalCall(node, env);
+                return node;
+            case "return":
+                if (env.RetWasCharSeq && node["value"] is JsonNode rvv && CoerceOrNull(rvv, env) is JsonNode rw)
+                    node["value"] = rw;
+                return node;
+            case "cast":
+                if (IsCharSeq(Str(node["type"])) && node["e"] is JsonNode ce)
+                    return CoerceOrNull(ce, env) ?? ce.DeepClone();
+                return node;
+            default:
+                return node;
+        }
+    }
+
+    // Lower a declaration's own type tokens: params[].type, ret, and a bare `type` (a field). Never a call `sig`.
+    static void LowerDeclTypes(JsonObject node)
+    {
+        if (node["params"] is JsonArray ps)
+            foreach (var p in ps)
+                if (p is JsonObject po && Str(po["type"]) is string pt && IsCharSeq(pt)) po["type"] = LowerTok(pt);
+        if (Str(node["ret"]) is string ret && IsCharSeq(ret)) node["ret"] = LowerTok(ret);
+        if (node["k"] == null && Str(node["type"]) is string ft && IsCharSeq(ft) && node["name"] != null)
+            node["type"] = LowerTok(ft);   // a field {name,type}
+    }
+
+    // A LOCAL top-level call (owner null, method in this assembly): lower each CharSequence `sig` slot to kotlin.String
+    // and coerce the matching arg (a non-String value -> implicit .toString()). An EXTERNAL stdlib call (attributed
+    // owner, or a name absent from localTopLevelFns) is left untouched -> the StringCharSequenceBridge handles it.
+    static void LowerLocalCall(JsonObject node, Env env)
+    {
+        if (node["owner"] is JsonValue ov && ov.TryGetValue<string>(out _)) return;   // attributed -> external
+        if (Str(node["method"]) is not string method || !_localFns.Contains(method)) return;
+        if (Str(node["sig"]) is not string sig) return;
+        var parts = SplitTopLevel(sig).ToList();
+        var args = node["args"] as JsonArray;
+        var changed = false;
+        for (var i = 0; i < parts.Count; i++)
+            if (IsCharSeq(parts[i]))
+            {
+                parts[i] = LowerTok(parts[i]);
+                changed = true;
+                if (args != null && i < args.Count && args[i] is JsonNode a && CoerceOrNull(a, env) is JsonNode w)
+                    args[i] = w;
+            }
+        if (changed) node["sig"] = string.Join(",", parts);
+        if (Str(node["dynRet"]) is string dr && IsCharSeq(dr)) node["dynRet"] = LowerTok(dr);
+    }
+
+    // `cs.length` -> System.String.Length; `cs[i]` (get) -> get_Chars; `cs.subSequence(a,b)` -> Substring(a, b-a).
+    // Structurally identical to the <>dotkt_StringCharSequence adapter's proven bodies. Returns null for an
+    // unrecognized member (leave as-is).
+    static JsonObject RewriteMemberRead(JsonObject node)
+    {
+        var recv = node["recv"];
+        var args = node["args"] as JsonArray;
+        switch (Str(node["method"]))
+        {
+            case "get_length":
+                return new JsonObject
+                {
+                    ["k"] = "clrPropGet", ["type"] = "System.String", ["name"] = "Length",
+                    ["retType"] = "System.Int32", ["static"] = false, ["recv"] = recv?.DeepClone(),
+                };
+            case "get":
+                return new JsonObject
+                {
+                    ["k"] = "clrInstance", ["type"] = "System.String", ["method"] = "get_Chars",
+                    ["argTypes"] = new JsonArray { "System.Int32" }, ["ret"] = "System.Char",
+                    ["recv"] = recv?.DeepClone(),
+                    ["args"] = new JsonArray { args != null && args.Count > 0 ? args[0].DeepClone() : null },
+                };
+            case "subSequence":
+                if (args == null || args.Count < 2) return null;
+                return new JsonObject
+                {
+                    ["k"] = "clrInstance", ["type"] = "System.String", ["method"] = "Substring",
+                    ["argTypes"] = new JsonArray { "System.Int32", "System.Int32" }, ["ret"] = "System.String",
+                    ["recv"] = recv?.DeepClone(),
+                    ["args"] = new JsonArray
+                    {
+                        args[0].DeepClone(),
+                        new JsonObject { ["k"] = "bin", ["op"] = "-", ["l"] = args[1].DeepClone(), ["r"] = args[0].DeepClone() },
+                    },
+                };
+            default:
+                return null;
+        }
+    }
+
+    // A value flowing into a now-`string` slot: a provably-String value needs NO coercion (return null); anything else
+    // (a StringBuilder, an Any) is snapshot via a virtual `.toString()` (objMethod ToString — the returned wrapper is a
+    // fresh, detached node). Callers assign the wrapper only when non-null, avoiding a JsonNode reparenting error.
+    static JsonNode CoerceOrNull(JsonNode value, Env env)
+    {
+        if (IsStaticString(value, env)) return null;
+        return new JsonObject { ["k"] = "objMethod", ["method"] = "ToString", ["recv"] = value.DeepClone() };
+    }
+
+    // POSITIVE static-String detection (mirrors StringCharSequenceBridge.IsStaticString, extended with dynRet and the
+    // already-rewritten clr* String result nodes).
+    static bool IsStaticString(JsonNode n, Env env)
+    {
+        if (n is not JsonObject o) return false;
+        switch (Str(o["k"]))
+        {
+            case "const": return IsStringTok(Str(o["type"]));
+            case "local": return Str(o["name"]) is string nm && env.Vars.TryGetValue(nm, out var t) && IsStringTok(t);
+            case "cast": return IsStringTok(Str(o["type"]));
+            case "concat": return true;   // string concatenation
+            case "this": return false;
+            default:
+                return IsStringTok(Str(o["ret"]) ?? Str(o["retType"]) ?? Str(o["dynRet"]));
+        }
+    }
+
+    static IReadOnlyList<string> SplitTopLevel(string value)
+    {
+        if (value.Length == 0) return Array.Empty<string>();
+        var result = new List<string>();
+        int depth = 0, start = 0;
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (c is '[' or '<' or '(') depth++;
+            else if (c is ']' or '>' or ')') depth--;
             else if (c == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
         }
         result.Add(value[start..].Trim());
