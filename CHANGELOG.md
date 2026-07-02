@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **docs: overhaul** — 7 superseded docs archived to `docs/archive/` (HISTORICAL headers); `dotkt-semantics.md` gains a TOC + suspend-hot/Appendable/enum/value-class/.Companion sections; new user-facing set `docs/user/` (getting-started / using-dotnet-from-kotlin / kotlin-on-clr-differences / supported-features) + `docs/README.md` index; `README.md` refreshed to the single-path 4-layer reality.
 ### Added
 - **Unified build interface (`Makefile`)** — a thin orchestrator over the canonical scripts, with incremental
   file targets for the whole artifact DAG (kotc → the 4 .NET tools → stdlib jar/ref/rt → pack). `make help`
