@@ -43,7 +43,7 @@
 ## Audit / generated
 
 - [clr-stdlib-intrinsic-audit.md](clr-stdlib-intrinsic-audit.md) — the `@ClrIntrinsic` binding model (three rules) + per-area decisions
-- [clr-stdlib-actual-index.md](clr-stdlib-actual-index.md) — GENERATED (`scripts/gen-clr-stdlib-actual-index.py`); do not hand-edit
+- [clr-stdlib-actual-index.md](clr-stdlib-actual-index.md) — GENERATED (`scripts/gen-stdlib-actual-index.py`); do not hand-edit
 - [bir-coverage.md](bir-coverage.md) — which IR nodes the backend lowers
 
 ## archive/

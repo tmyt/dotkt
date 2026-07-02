@@ -13,7 +13,7 @@
   <files>
     <!-- lib/<tfm> so a plain PackageReference yields the copy-local compile+runtime reference
          (the packaged equivalent of cases/KotlinClr.targets' <Reference Private=true> to the rt dll).
-         The dll is staged here from build/clr-stdlib-rt/dll by scripts/pack-dotkt.sh. -->
+         The dll is staged here from build/clr-stdlib-rt/dll by scripts/pack-nuget.sh. -->
     <file src="lib/net10.0/DotKt.Stdlib.dll" target="lib/net10.0" />
   </files>
 </package>

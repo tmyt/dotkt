@@ -392,7 +392,8 @@ for-loop needs Iterable+List+listOf together):
   (@ClrIntrinsic each 1:1 one with a TODO body, leave the rest bodied for rule 3).
 - `listOf`/`mutableListOf`/`emptyList` factories → create an @ClrIntrinsic List.
 Each rule-3-hoisted member needs a REAL Kotlin body (the current stubs are `TODO()`, which would throw). Iterate with
-`scripts/run-clr-sample.sh` once enough of the chain is in to make `for (x in listOf(1,2,3))` resolvable.
+`scripts/dotkt.sh --run` (the stdlib-binding dev loop; the old `run-clr-sample.sh` is deleted) once enough of the
+chain is in to make `for (x in listOf(1,2,3))` resolvable.
 
 ## WIRING BLOCKER found (2026-06-28): expect/actual forces `iterator()` abstract
 

@@ -1,7 +1,7 @@
 # Coroutine ABI port plan — move the CLR coroutine runtime into the stdlib
 
 Status: **planning** (2026-06-28). Prereqs already landed this session:
-- `DotKt.Runtime` removed from the stdlib build (`scripts/build-clr-stdlib.sh` no longer `--ref`s it).
+- `DotKt.Runtime` removed from the stdlib build (`scripts/build-stdlib-ref.sh` no longer `--ref`s it).
 - `kotlin.Result` / `kotlin.Unit` lowerings retired under `DOTKT_STDLIB_COMPILE` (stdlib uses its own types).
 - ilemit's suspend/sequence emitter no longer hardcodes `DotKt.Coroutines.*` / `DotKt.Sequences.*`; the type names are
   centralized into one seam (the `Co*` consts in `toolchain/ilemit/Program.cs`) pointing at the canonical

@@ -1,6 +1,6 @@
 # CLR stdlib: reference / runtime assembly split + app-emit substitution
 
-> **状態 (2026-07-03 見直し)**: ref/rt 分割 + app-emit 置換という骨格は**出荷済みアーキテクチャ**（`DotKt.Private.Stdlib.dll` / `DotKt.Stdlib.dll` / `kotlin-stdlib-clr-frontend.jar`、ビルドは `scripts/build-clr-stdlib*.sh` 3 本）。ただし本文の「置換は **ilemit** が行う / kotc-vs-ilemit fork」の探索記述は **superseded** — 置換は **bir2cir の `MemberCallSubstitution`**（ref.dll の `@ClrIntrinsic`/`@ClrTypeAlias` を消費）に着地した。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。生きているのは「1 アセンブリで 2 つの顔は成立しない（C3 cascade を割る）」という動機と 3 アーティファクトの役割定義。
+> **状態 (2026-07-03 見直し)**: ref/rt 分割 + app-emit 置換という骨格は**出荷済みアーキテクチャ**（`DotKt.Private.Stdlib.dll` / `DotKt.Stdlib.dll` / `kotlin-stdlib-clr-frontend.jar`、ビルドは `scripts/build-stdlib-*.sh` 3 本）。ただし本文の「置換は **ilemit** が行う / kotc-vs-ilemit fork」の探索記述は **superseded** — 置換は **bir2cir の `MemberCallSubstitution`**（ref.dll の `@ClrIntrinsic`/`@ClrTypeAlias` を消費）に着地した。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0。生きているのは「1 アセンブリで 2 つの顔は成立しない（C3 cascade を割る）」という動機と 3 アーティファクトの役割定義。
 
 Status: **design (design owner, 2026-06-28).** Pivot away from the single-assembly @ClrIntrinsic binding (which forced the C3
 reverse-direction cascade + an ilemit-generics whack-a-mole). Realizes [[clr-stdlib-grand-strategy]] concretely.

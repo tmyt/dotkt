@@ -116,9 +116,9 @@ Or the scripts directly:
 Building the CLR stdlib (three artifacts — see `CLAUDE.md` for details):
 
 ```bash
-./scripts/build-clr-stdlib.sh --emit           # reference dll (DotKt.Private.Stdlib.dll)
-./scripts/build-clr-stdlib-runtime.sh --emit   # runtime dll  (DotKt.Stdlib.dll)
-./scripts/build-clr-stdlib-frontend.sh         # frontend jar (kotlin-stdlib-clr-frontend.jar)
+./scripts/build-stdlib-ref.sh --emit   # reference dll (DotKt.Private.Stdlib.dll)
+./scripts/build-stdlib-rt.sh --emit    # runtime dll  (DotKt.Stdlib.dll)
+./scripts/build-stdlib-jar.sh          # frontend jar (kotlin-stdlib-clr-frontend.jar)
 ```
 
 ### Build a project with MSBuild / `.ktproj`
@@ -150,7 +150,7 @@ See `cases/ktproj-il/` and `docs/user/getting-started.md`.
 | `runtime/stdlib/` | the **CLR Kotlin stdlib** sources (common Kotlin + `clr/` actuals + `@Clr*` bindings) |
 | `packaging/` | NuGet packages: `DotKt.Sdk`, `DotKt.Toolchain`, `DotKt.Stdlib`, `DotKt.Templates` |
 | `cases/` | `il-*` (IL-backend samples = the gate corpus), `m-*` (language/interop), `ktproj-*` (MSBuild) |
-| `scripts/` | the gates (`verify-il.sh`, `verify-ktproj.sh`, `verify-roundtrip.sh`), `dotkt.sh`, the three `build-clr-stdlib*.sh` |
+| `scripts/` | the gates (`verify-il.sh`, `verify-ktproj.sh`, `verify-roundtrip.sh`), `dotkt.sh`, the three `build-stdlib-*.sh` |
 | `docs/user/` | **user-facing docs** (getting started / .NET interop / CLR differences) |
 | `docs/dotkt-semantics.md` | **canonical**: how Kotlin maps to the CLR + deliberate deviations from Kotlin/JVM |
 | `docs/design-fir-bir-cir-il.md` | backend layer contract (kotc / bir2cir / ilemit responsibilities) |

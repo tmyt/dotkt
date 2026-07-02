@@ -30,7 +30,7 @@
 
 - **#1 stdlib 全 Projection** — ✅ 実質完了（監査で「~363 未束縛」は約 3.8 倍の過大計上と判明。実態 1481 actuals /
   93.5% bound-or-implemented。残＝coroutine intrinsics 等、inventory 【2】）。
-- **#2 stdlib.jar 生成** — ✅ `scripts/build-clr-stdlib-frontend.sh` として本番化（`kotlin-stdlib-clr-frontend.jar`）。
+- **#2 stdlib.jar 生成** — ✅ `scripts/build-stdlib-jar.sh` として本番化（`kotlin-stdlib-clr-frontend.jar`）。
 - **#3 三参照コード生成** — ✅ **bir2cir `MemberCallSubstitution` が ref.dll の `@ClrIntrinsic`/`@ClrTypeAlias`/
   `@ClrProperty` を消費して substitute**（本書が指摘した「kotc 側に居る」欠陥は解消 — kotc の `clrName`/`annClr`
   読み取りは削除済み）。

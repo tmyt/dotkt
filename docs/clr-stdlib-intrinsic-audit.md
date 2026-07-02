@@ -134,4 +134,4 @@ Remaining 4 failures are **compiler-layer, not binding errors** (task #6, belong
 - `reverse()` — rule-3 static-helper hoist NullRef (codegen).
 - `char.uppercase()` — `this.toString()` returns null inside an extension body (primitive-`toString` codegen); `'a'.toString()` works standalone.
 
-Note: `build-clr-stdlib.sh` AND `build-clr-stdlib-runtime.sh` BOTH need `--emit` (without it they stop after BIR and `rm -rf` their dll dir). Never run `build-dotkt-stdlib.sh`.
+Note: `build-stdlib-ref.sh` AND `build-stdlib-rt.sh` BOTH need `--emit` (without it they stop after BIR and `rm -rf` their dll dir). Never run `build-dotkt-stdlib.sh`.

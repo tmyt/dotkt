@@ -64,31 +64,31 @@ $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 stdlib: stdlib-jar stdlib-ref stdlib-rt ## the CLR stdlib: frontend jar + reference dll + runtime dll
 
 stdlib-jar: $(FE_JAR) ## kotlin-stdlib-clr-frontend.jar (kotc -classpath input)
-$(FE_JAR): $(KOTC) $(STDLIB_SRC) scripts/build-clr-stdlib-frontend.sh
-	bash scripts/build-clr-stdlib-frontend.sh
+$(FE_JAR): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-jar.sh
+	bash scripts/build-stdlib-jar.sh
 
 # The stdlib dlls depend on the emitter tools via their SOURCES (real change signal) plus ORDER-ONLY
 # deps on the dlls (existence). Depending on the dll mtimes directly would spuriously retrigger these
 # slow builds: the verify scripts' internal `dotnet build` refreshes the dlls even when nothing changed.
 stdlib-ref: $(STDLIB_REF) ## DotKt.Private.Stdlib.dll (compile-time @Clr metadata; bir2cir's --ref)
-$(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-clr-stdlib.sh \
+$(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-ref.sh \
                $(call tool_src,bir2cir) $(call tool_src,ilemit) $(call tool_src,retarget) \
                | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll build/retarget-bin/retarget.dll
-	bash scripts/build-clr-stdlib.sh --emit
+	bash scripts/build-stdlib-ref.sh --emit
 	@test -f "$@" || { echo "make: stdlib-ref did not produce $@ (see build/clr-stdlib/*.err)"; exit 1; }
 
 stdlib-rt: $(STDLIB_RT) ## DotKt.Stdlib.dll (the shipping runtime assembly)
 # NOTE the `|| true`: the script's final error-grep exits 1 precisely when it finds NO errors
 # (a clean build); existence of the dll below is the real success signal.
-$(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) scripts/build-clr-stdlib-runtime.sh \
+$(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) scripts/build-stdlib-rt.sh \
               $(call tool_src,bir2cir) $(call tool_src,ilemit) \
               | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
-	bash scripts/build-clr-stdlib-runtime.sh --emit || true
+	bash scripts/build-stdlib-rt.sh --emit || true
 	@test -f "$@" || { echo "make: stdlib-rt did not produce $@ (see build/clr-stdlib-rt/*.err)"; exit 1; }
 
 # ---- packaging -----------------------------------------------------------------------------------
 pack: toolchain stdlib ## the 4 NuGet packages (Sdk/Toolchain/Stdlib/Templates) -> build/nuget-feed
-	bash scripts/pack-dotkt.sh
+	bash scripts/pack-nuget.sh
 
 # ==================================================================================================
 # Verification gates (the scripts are called VERBATIM; behavior is identical to invoking them)
@@ -108,7 +108,7 @@ verify-differential: ## direct-IL differential vs the C# oracle
 	bash scripts/verify-differential.sh
 
 verify-widedelegates: ## >16-arg function types (KFunc/KAction synthesis)
-	bash scripts/verify-ilemit-wide-delegates.sh
+	bash scripts/verify-wide-delegates.sh
 
 # ==================================================================================================
 # Dev conveniences

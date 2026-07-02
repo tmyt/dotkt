@@ -4,9 +4,9 @@
 # against the CLR platform `actual`s (runtime/stdlib/clr), emit BIR,
 # then ilemit -> DotKt.Private.Stdlib.dll. This is the REFERENCE assembly (compile-time only, keeps @Clr metadata, never
 # loaded at runtime — fully substituted away at app-emit); the shipping RUNTIME assembly is DotKt.Stdlib.dll
-# (build-clr-stdlib-runtime.sh). The 'Private' name marks it as an internal reference face, not an external artifact.
+# (build-stdlib-rt.sh). The 'Private' name marks it as an internal reference face, not an external artifact.
 #
-#   scripts/build-clr-stdlib.sh [--emit]   # --emit also runs ilemit; default = frontend+BIR only (faster triage)
+#   scripts/build-stdlib-ref.sh [--emit]   # --emit also runs ilemit; default = frontend+BIR only (faster triage)
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 L="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"

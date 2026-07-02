@@ -1472,7 +1472,7 @@ sealed partial class Emitter
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
     // `retType`/`paramTypes` give the SUBSTITUTED (concrete) signature, since the instantiation's own reflection
     // still reports `!!0` (and throws pre-bake) — needed so value args to `object`/concrete params get boxed.
-    // Set by build-clr-stdlib.sh: while compiling the pure-kotlin stdlib, methods the backend can't yet emit are
+    // Set by build-stdlib-ref.sh: while compiling the pure-kotlin stdlib, methods the backend can't yet emit are
     // stubbed (throw) instead of aborting the whole assembly — the "= TODO()" stdlib still emits and loads.
     static readonly bool StdlibStub = Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") == "1";
 

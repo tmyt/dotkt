@@ -69,12 +69,12 @@ done
 [[ -f "$BIR2CIR" ]] || { echo "dotkt: building bir2cir..." >&2; dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo; }
 [[ -f "$FACADEGEN" ]] || { echo "dotkt: building facadegen..." >&2; dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo; }
 # The CLR frontend stdlib jar (kotc -classpath): build once if missing — exactly as verify-il bootstraps it.
-[[ -f "$JAR" ]] || { echo "dotkt: building CLR frontend stdlib jar..." >&2; bash "$ROOT/scripts/build-clr-stdlib-frontend.sh" >/dev/null; }
-# The CLR stdlib ref/rt assemblies are the canonical CACHED builds (scripts/build-clr-stdlib{,-runtime}.sh --emit). Do
+[[ -f "$JAR" ]] || { echo "dotkt: building CLR frontend stdlib jar..." >&2; bash "$ROOT/scripts/build-stdlib-jar.sh" >/dev/null; }
+# The CLR stdlib ref/rt assemblies are the canonical CACHED builds (scripts/build-stdlib-{ref,rt}.sh --emit). Do
 # NOT auto-rebuild them here: the runtime emit is the slow, blocker-prone path; a cached green pair is what we want.
 if (( use_stdlib )); then
-	[[ -f "$STDLIB_REF" ]] || { echo "dotkt: missing $STDLIB_REF — build it with: scripts/build-clr-stdlib.sh --emit (or pass --no-stdlib)" >&2; exit 1; }
-	[[ -f "$STDLIB_RT" ]]  || { echo "dotkt: missing $STDLIB_RT — build it with: scripts/build-clr-stdlib-runtime.sh --emit (or pass --no-stdlib)" >&2; exit 1; }
+	[[ -f "$STDLIB_REF" ]] || { echo "dotkt: missing $STDLIB_REF — build it with: scripts/build-stdlib-ref.sh --emit (or pass --no-stdlib)" >&2; exit 1; }
+	[[ -f "$STDLIB_RT" ]]  || { echo "dotkt: missing $STDLIB_RT — build it with: scripts/build-stdlib-rt.sh --emit (or pass --no-stdlib)" >&2; exit 1; }
 fi
 if (( do_retarget )) && [[ ! -f "$RETARGET" ]]; then dotnet build "$ROOT/toolchain/retarget" -c Release -o "$ROOT/build/retarget-bin" -v q --nologo; fi
 

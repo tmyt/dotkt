@@ -631,7 +631,7 @@ Unit/intrinsics/intercepted + the sequence/Flow/Channel/select stopgap helpers) 
 The `DotKt.Coroutines` NAMESPACE is unchanged, so the compiler's type maps (`clr:DotKt.Coroutines.X`) need NO change
 — this was purely a build/packaging move: the 7 .cs files moved into runtime/DotKt.Runtime/, the DotKt.Coroutines
 project deleted, and verify-il.sh drops the separate DOTKT_CO build/ref/copy (the types resolve via DOTKT_RT, which
-is now copied next to each emitted dll for the run). `DotKt.Coroutines.dll` was never packaged (pack-dotkt only
+is now copied next to each emitted dll for the run). `DotKt.Coroutines.dll` was never packaged (pack-nuget only
 packs DotKt.Runtime), so the distribution naturally gains the coroutine runtime. Full suite green, ilverify-clean.
 (When the real kotlinx-coroutines-core is compiled — Track 2 — it ships as its own `dotktx.coroutines`, and the
 stopgap kotlinx-ish helpers here are superseded.)

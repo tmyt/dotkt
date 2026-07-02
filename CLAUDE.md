@@ -21,7 +21,7 @@
 - **But docs and scripts go stale.** A `docs/` file explains *rationale*; it may lag the code. For
   *current commands, paths, and canonical workflow*, **this file and the actual scripts win** — when
   a doc disagrees with them, trust this file, verify against the code, and flag the stale doc rather
-  than following it. (E.g. the canonical stdlib build is the three `build-clr-stdlib*.sh` scripts
+  than following it. (E.g. the canonical stdlib build is the three `build-stdlib-*.sh` scripts
   below, regardless of what older docs/scripts imply.)
 - **Durable rules live in *this file*, not in auto-memory.** CLAUDE.md is loaded in full every
   session and is authoritative. Auto-memory is a *recall-gated side-store*: its file bodies are not
@@ -79,10 +79,10 @@ pipeline (`-h` for options: `--exe`, `--no-stdlib`, `--retarget`, `--ref <dll>`)
 **Building the CLR stdlib** — the real pure-Kotlin stdlib under `runtime/stdlib/`. **These THREE
 scripts are the current, canonical build** (other stdlib scripts are STALE — see the warning):
 
-- `./scripts/build-clr-stdlib.sh --emit` — the **reference** assembly (`DotKt.Private.Stdlib.dll`;
+- `./scripts/build-stdlib-ref.sh --emit` — the **reference** assembly (`DotKt.Private.Stdlib.dll`;
   compile-time only, keeps `@Clr` metadata, substituted away at app-emit).
-- `./scripts/build-clr-stdlib-runtime.sh --emit` — the shipping **runtime** assembly (`DotKt.Stdlib.dll`).
-- `./scripts/build-clr-stdlib-frontend.sh` — the **frontend jar** (`kotlin-stdlib-clr-frontend.jar`)
+- `./scripts/build-stdlib-rt.sh --emit` — the shipping **runtime** assembly (`DotKt.Stdlib.dll`).
+- `./scripts/build-stdlib-jar.sh` — the **frontend jar** (`kotlin-stdlib-clr-frontend.jar`)
   that replaces `kotlin-stdlib.jar` as kotc's `-classpath` input, killing the `java.util.*` typealias
   leak. It generates all 8 `.kotlin_builtins` **from our own sources** via `-Xoutput-builtins-metadata`
   (the old `jar uf` injection of a JVM kotlin-stdlib's `.kotlin_builtins` is GONE — it dragged JVM
@@ -95,7 +95,7 @@ scripts are the current, canonical build** (other stdlib scripts are STALE — s
 
 > ✅ **REMOVED (2026-07-02):** the stale `scripts/build-dotkt-stdlib.sh` and `scripts/build-stdlib.sh` (they built the
 > OLD stdlib and referenced the now-deleted `DotKt.Runtime`) are DELETED. The canonical stdlib build is the three
-> `build-clr-stdlib*.sh` scripts above; there is no longer a dangerous "rm the cached dll" footgun to avoid.
+> `build-stdlib-*.sh` scripts above; there is no longer a dangerous "rm the cached dll" footgun to avoid.
 
 Toolchain: JDK is auto-provisioned by Gradle; **.NET SDK 10 required**. Kotlin/IR APIs are
 **pinned to 2.2.0** (internal/unstable — intentionally not tracking newer versions).

@@ -24,7 +24,7 @@ dotnet build "$ROOT/toolchain/retarget"  -c Release -o "$ROOT/build/retarget-bin
 # whose java.util.* typealiases leaked into the frontend. Consumes the kotc install lib/*.jar produced by installDist.
 echo "== build CLR frontend stdlib jar =="
 FE_JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
-[[ -f "$FE_JAR" ]] || bash "$ROOT/scripts/build-clr-stdlib-frontend.sh"
+[[ -f "$FE_JAR" ]] || bash "$ROOT/scripts/build-stdlib-jar.sh"
 
 # The CLR stdlib dll pair — REQUIRED package contents (the shipped DotKt.Toolchain.targets needs both: the ref feeds
 # bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution, the rt is the app's copy-local runtime). Build if missing.
@@ -33,10 +33,10 @@ FE_JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
 echo "== ensure CLR stdlib (ref + rt) =="
 STDLIB_REF="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
 STDLIB_RT="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
-[[ -f "$STDLIB_REF" ]] || bash "$ROOT/scripts/build-clr-stdlib.sh" --emit
-[[ -f "$STDLIB_RT"  ]] || bash "$ROOT/scripts/build-clr-stdlib-runtime.sh" --emit || true
-[[ -f "$STDLIB_REF" ]] || { echo "pack-dotkt: missing $STDLIB_REF (scripts/build-clr-stdlib.sh --emit failed?)" >&2; exit 1; }
-[[ -f "$STDLIB_RT"  ]] || { echo "pack-dotkt: missing $STDLIB_RT (scripts/build-clr-stdlib-runtime.sh --emit failed?)" >&2; exit 1; }
+[[ -f "$STDLIB_REF" ]] || bash "$ROOT/scripts/build-stdlib-ref.sh" --emit
+[[ -f "$STDLIB_RT"  ]] || bash "$ROOT/scripts/build-stdlib-rt.sh" --emit || true
+[[ -f "$STDLIB_REF" ]] || { echo "pack-nuget: missing $STDLIB_REF (scripts/build-stdlib-ref.sh --emit failed?)" >&2; exit 1; }
+[[ -f "$STDLIB_RT"  ]] || { echo "pack-nuget: missing $STDLIB_RT (scripts/build-stdlib-rt.sh --emit failed?)" >&2; exit 1; }
 
 echo "== assemble DotKt.Toolchain/tools =="
 TC="$ROOT/packaging/DotKt.Toolchain/tools"; rm -rf "$TC"; mkdir -p "$TC"

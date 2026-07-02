@@ -7,7 +7,7 @@
 set -euo pipefail
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# kotc resolves the stdlib (kotlin.*) from the CLR FRONTEND JAR (scripts/build-clr-stdlib-frontend.sh), REPLACING the
+# kotc resolves the stdlib (kotlin.*) from the CLR FRONTEND JAR (scripts/build-stdlib-jar.sh), REPLACING the
 # JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). kotlinx.coroutines stays a separate jar (the consumer
 # awaits suspend funs via runBlocking). The frontend jar is built below once the launcher (its lib jars) exists.
 FE_JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
@@ -18,7 +18,7 @@ CP="$FE_JAR:$CORO"
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 # Frontend stdlib jar (kotc's -classpath input): build once if missing (consumes the kotc lib jars from installDist).
-[[ -f "$FE_JAR" ]] || bash "$ROOT/scripts/build-clr-stdlib-frontend.sh" >/dev/null 2>&1
+[[ -f "$FE_JAR" ]] || bash "$ROOT/scripts/build-stdlib-jar.sh" >/dev/null 2>&1
 dotnet build "$ROOT/toolchain/ilemit"        -c Release -o "$ROOT/build/ilemit-bin"     -v q --nologo >/dev/null
 dotnet build "$ROOT/toolchain/facadegen"     -c Release -o "$ROOT/build/facadegen-bin"  -v q --nologo >/dev/null
 dotnet build "$ROOT/toolchain/retarget"      -c Release -o "$ROOT/build/retarget-bin"   -v q --nologo >/dev/null
@@ -31,7 +31,7 @@ REFS="$(ls "$REFPACK"/*.dll | tr '\n' ';')"
 # REFERENCE stdlib supplies bir2cir's @ClrTypeAlias labels (built once if missing; the roundtrip types are pure-Kotlin).
 dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -v q --nologo >/dev/null
 STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
-[[ -f "$STDLIB_REF_DLL" ]] || bash "$ROOT/scripts/build-clr-stdlib.sh" --emit >/dev/null 2>&1
+[[ -f "$STDLIB_REF_DLL" ]] || bash "$ROOT/scripts/build-stdlib-ref.sh" --emit >/dev/null 2>&1
 # emit_il: drop-in for `ilemit <outdir> <asm> [--ref X]... <bir files...>`, inserting the BIR->CIR (bir2cir) lowering.
 emit_il() {
 	local out="$1" asm="$2"; shift 2

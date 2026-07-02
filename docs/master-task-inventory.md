@@ -254,7 +254,7 @@ Sources: `ship-tasks.md #4`, `archive/future-work-interop.md #4`, `archive/dotkt
     mirrors `typeDef` (internal backing field + `accessorMethod` get_/set_ + a `properties` entry). Both samples run-green.
   - ~~`valcls` (`@JvmInline value class`, compile error)~~ — ✅ FIXED 2026-07-02: the frontend jar lacked a platform
     `actual` for the `@OptionalExpectation` `kotlin.jvm.JvmInline` expect (same gap JvmName had) → any app value class
-    died at the frontend. `build-clr-stdlib-frontend.sh` now stages `JvmInlineActual.kt` (3b). The backend already
+    died at the frontend. `build-stdlib-jar.sh` now stages `JvmInlineActual.kt` (3b). The backend already
     handles the class: `value class` lowers to a REAL wrapper class (see `docs/dotkt-semantics.md` §10.3), sample run-green.
   - generic closure/HOF (`genclosure`/`genhof`) · virtual-property override dispatch (`netbase2`).
   - long-standing ilverify-only noise (`customexc`/`tryexpr`/`mc1`/`funref`) — runs correctly, ilverify complains.
@@ -542,7 +542,7 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
   `CharSequence` default reconstructs `new <>dotkt_StringCharSequence(", ")` at the call site (kotc-visible only when the
   default is a bare `IrConst`, which the String→CharSequence coercion defeats), or (c) frontend-jar preserves the default
   expressions so kotc inlines the (all-constant, non-receiver-referencing) `joinToString` defaults at the call site
-  (`filledArgExprs` already inlines a non-`IrError` const default) — layer = `build-clr-stdlib-frontend.sh`, effort
+  (`filledArgExprs` already inlines a non-`IrError` const default) — layer = `build-stdlib-jar.sh`, effort
   MED-HIGH/unknown (frontend metadata format). **Recommend (b)**; it also clears `bmore`/`bymap`/`fmt`.
 
 - **RC2 — value-type `Nullable<T>` in generic return / transform position. ✅ RETURN-SIDE DONE 2026-07-02
@@ -791,4 +791,4 @@ Sources: `remaining-tasks.md F`, `archive/research-roadmap.md Track P/X`.
     (toolchain edits — outside the doc pass).
   - CLAUDE.md's `bir2cir-migration-inventory.md` pointer → repoint to this file 【1】 (coordinator-owned).
   - `clr-stdlib-actual-index.md` numbers are a 2026-06-30 snapshot → regenerate via
-    `scripts/gen-clr-stdlib-actual-index.py`.
+    `scripts/gen-stdlib-actual-index.py`.

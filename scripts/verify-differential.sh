@@ -27,7 +27,7 @@ dotnet build "$ROOT/toolchain/bir2cir" -c Release -o "$ROOT/build/bir2cir-bin" -
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 
-# The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-clr-stdlib-frontend.sh) on the clr
+# The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on the clr
 # side's -classpath, REPLACING the JVM kotlin-stdlib.jar (the JVM oracle below keeps the JVM jar — it IS the oracle).
 # bir2cir then reads the REFERENCE assembly (DotKt.Private.Stdlib.dll) for the @Clr labels, and ilemit references the
 # RUNTIME assembly (DotKt.Stdlib.dll) so a stdlib op resolves to its real Kotlin body — exactly the canonical ref/rt
@@ -36,9 +36,9 @@ LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 FE_JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
 STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
 STDLIB_DLL="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
-[[ -f "$FE_JAR" ]]         || bash "$ROOT/scripts/build-clr-stdlib-frontend.sh" >/dev/null 2>&1
-[[ -f "$STDLIB_REF_DLL" ]] || bash "$ROOT/scripts/build-clr-stdlib.sh" --emit >/dev/null 2>&1
-[[ -f "$STDLIB_DLL" ]]     || bash "$ROOT/scripts/build-clr-stdlib-runtime.sh" --emit >/dev/null 2>&1
+[[ -f "$FE_JAR" ]]         || bash "$ROOT/scripts/build-stdlib-jar.sh" >/dev/null 2>&1
+[[ -f "$STDLIB_REF_DLL" ]] || bash "$ROOT/scripts/build-stdlib-ref.sh" --emit >/dev/null 2>&1
+[[ -f "$STDLIB_DLL" ]]     || bash "$ROOT/scripts/build-stdlib-rt.sh" --emit >/dev/null 2>&1
 
 # Pure-Kotlin samples only (no @Clr / injected .NET types — those can't run on the JVM).
 PURE="m0 m-a1 m-a2 m-a3 m-a4 m-a5 m-a6 m-a7 m-a8 m-b1 m-b2 m-b3 m-b4 m-b5 m-b6 m-b7 m-b8 m-b9 m-b10 m-b11 m-b12 m-b13 m-s1 m-s2 m-s3 il-seq il-char il-sort il-funref il-getclass il-localdeleg il-langfeat il-mapdes il-ctorref il-collmore il-tryexpr il-localclass il-collops2 il-refcell il-annot il-props il-mixnum il-arrops"
