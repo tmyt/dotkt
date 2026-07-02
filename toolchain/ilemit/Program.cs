@@ -1633,7 +1633,16 @@ sealed partial class Emitter
                 if (want == null || want != ps[i].ParameterType) { ok = false; break; }
             }
             if (!ok) continue;
-            if (match != null) return null;   // ambiguous exact match -> let the arity fallback decide
+            if (match != null)
+            {
+                // Two methods matching the SAME sig token necessarily have identical parameter types (each was
+                // checked against the same MapType(toks)). A genuine overload set can't collide here — a distinct
+                // overload has a distinct sig. So a second exact match is a DUPLICATE method emission (the stdlib
+                // expect/actual fileClass merge can emit a top-level fn twice, e.g. `_ArraysKt.sum(int[])` x2) — NOT
+                // a real ambiguity. Keeping the first is correct (the bodies are identical); returning null here
+                // would drop to the arity fallback and pick the wrong same-arity overload (sum(int[]) -> sum(sbyte[])).
+                continue;
+            }
             match = m;
         }
         return match;
