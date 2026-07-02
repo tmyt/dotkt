@@ -5,6 +5,30 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Added
+- **Unified build interface (`Makefile`)** — a thin orchestrator over the canonical scripts, with incremental
+  file targets for the whole artifact DAG (kotc → the 4 .NET tools → stdlib jar/ref/rt → pack). `make help`
+  self-documents; key targets: `all` (toolchain → stdlib → pack), `toolchain`, `stdlib{,-jar,-ref,-rt}`, `pack`,
+  `verify{,-il,-ktproj,-roundtrip,-differential,-widedelegates}` (the gate scripts are called verbatim),
+  `dev SRC=… [RUN=1 …]` (wraps `dotkt.sh`), `facades`, `clean{,-tools,-stdlib,-pack}`. `make -j` builds the
+  independent tools in parallel. The load-bearing output paths (`build/<tool>-bin`, `build/clr-stdlib*/dll`,
+  `build/clr-stdlib-frontend-jvm`) are unchanged.
+- **4-package NuGet structure + the stdlib packaging gap fixed** — `pack-dotkt.sh` shipped NO stdlib dlls while
+  the shipped `DotKt.Toolchain.targets` needs both; the packed SDK could not actually compile. Now exactly four
+  packages: **DotKt.Sdk** (MSBuild SDK; implicit refs to Toolchain + Stdlib), **DotKt.Toolchain** (kotc + bir2cir +
+  ilemit + facadegen + retarget + `kotlin-stdlib-clr-frontend.jar` + the COMPILE-TIME reference stdlib
+  `tools/stdlib/DotKt.Private.Stdlib.dll`, exposed as `$(DotKtStdlibRefAsm)` → a non-copy `<Reference>` in
+  Sdk.props), **DotKt.Stdlib** (NEW: the RUNTIME stdlib `lib/net10.0/DotKt.Stdlib.dll`, copy-local via the SDK's
+  implicit PackageReference; opt out with `<KotlinClrStdlibRef>false</KotlinClrStdlibRef>`), **DotKt.Templates**
+  (unchanged). `DotKt.Runtime` stays retired — nothing creates or references it. Verified end-to-end: a fresh
+  `.ktproj` consumer restored from the local feed alone builds and runs stdlib calls, with `DotKt.Stdlib.dll`
+  copy-local and the reference face absent from output. Package version is single-sourced from
+  `packaging/DotKt.Versions.props` (both `*.pack.csproj` now import it; the dead `VER` in `pack-dotkt.sh` is gone).
+
+### Removed
+- **`scripts/run-m0.sh`** — drove the retired C# backend (`kotc` → C# → dotnet); the IL pipeline gates
+  (`verify-il.sh` / `make verify-il`) are the canonical entry.
+
 ### Fixed
 - **Injected .NET static-companion members (`il-injstatic`)** — `App.Companion.start(cb)` on a facadegen-injected
   C# host type crashed with `unresolved method: <>dotkt_ClrH_Kfc_App.start`: kotc's Rule-3 hoist classifier
