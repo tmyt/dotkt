@@ -5,6 +5,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: implicit companion access for injected .NET statics — `.Companion` no longer required.**
+  `Application.Start(...)` / `App.Count` now resolve directly; previously only `App.Companion.Start(...)` worked
+  (the old form stays supported — both forms emit byte-identical BIR). Root cause was a wiring gap, not a K2 limit:
+  stock FIR only links `companionObjectSymbol` for source/deserialized classes (`FirCompanionGenerationProcessor`
+  walks FirFiles only), so a fully-generated owner never got the link the implicit-qualifier path consults
+  (`typeForQualifierByDeclaration` → `canBeValue`). Fix: `ClrTypeInjector` eagerly creates + links the companion for
+  injected classes with statics and sets the FIR-internal `ownerGenerator` attribute via a bytecode-public Java shim
+  (`kotc/frontend/FirInternals.java`) — required because the eager link makes the framework's only nested assignment
+  site unreachable (`FirGeneratedScopes.kt:245-255`) and generated-origin member lookup dies on `ownerGenerator!!`
+  (`:290`). `il-injstatic` now exercises both forms.
 - **docs: overhaul** — 7 superseded docs archived to `docs/archive/` (HISTORICAL headers); `dotkt-semantics.md` gains a TOC + suspend-hot/Appendable/enum/value-class/.Companion sections; new user-facing set `docs/user/` (getting-started / using-dotnet-from-kotlin / kotlin-on-clr-differences / supported-features) + `docs/README.md` index; `README.md` refreshed to the single-path 4-layer reality.
 ### Added
 - **Unified build interface (`Makefile`)** — a thin orchestrator over the canonical scripts, with incremental

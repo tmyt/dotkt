@@ -352,6 +352,11 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// The intrinsics are CLR-context features -> available whenever .NET interop is active (metadata loaded).
 	private val clrActive = module != null
 
+	// Companions created EAGERLY in generateTopLevelClassLikeDeclaration (statics -> implicit `App.Start` support),
+	// keyed by companion ClassId. Per-extension-instance (= per-session); generateNestedClassLikeDeclaration must
+	// return the SAME instance — a second FirRegularClassSymbol for one ClassId breaks provider/fir2ir identity.
+	private val eagerCompanions = java.util.concurrent.ConcurrentHashMap<ClassId, org.jetbrains.kotlin.fir.declarations.FirRegularClass>()
+
 	// `byref`/`ClrRef` are PURE compiler intrinsics (no .NET metadata needed) -> the `kotlin.clr` package is ALWAYS
 	// claimed so the packaged stdlib — built with CLR_TYPES_METADATA="" (module==null -> clrActive==false) — can
 	// `import kotlin.clr.byref` / `ClrRef` to pass a field BY REFERENCE to a BCL `ref`/`out` method (the atomics'
@@ -376,7 +381,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		val type = byClassId[classId] ?: return null
 		val kind = when { type.isAnnotation -> ClassKind.ANNOTATION_CLASS; type.isObject -> ClassKind.OBJECT; type.isInterface -> ClassKind.INTERFACE; else -> ClassKind.CLASS }
 		// A non-sealed .NET class is `open` so Kotlin can inherit it (the basis of framework-direct UI).
-		return createTopLevelClass(classId, ClrGeneratedKey, kind) {
+		val klass = createTopLevelClass(classId, ClrGeneratedKey, kind) {
 			if (type.open || type.isInterface) modality = Modality.OPEN
 			// round-trip: restore the Kotlin `sealed` modality (a DotKt sealed type lowered to a CLR abstract-class/
 			// interface). The closed inheritor set isn't carried, so cross-module exhaustive `when` still needs `else`.
@@ -411,7 +416,22 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				val scid = ClrMetadataHolder.classIdFor(openName, arity) ?: continue
 				superType { tps -> superTypeCone(spec, scid, tps) }
 			}
-		}.symbol
+		}
+		// A class with STATIC members: create its companion EAGERLY and LINK it (`replaceCompanionObjectSymbol`), so the
+		// IMPLICIT form `App.Start(...)` resolves — the resolver types the bare qualifier off that link (upstream
+		// ResolveUtils.kt:457 `typeForQualifierByDeclaration` -> `canBeValue`), and nothing in stock K2 sets it for a
+		// fully-generated owner (FirCompanionGenerationProcessor only walks FirFiles). The link makes the framework's
+		// nested-generation fallback unreachable (FirGeneratedScopes.kt:245-248 early-returns the linked companion before
+		// the :255 `ownerGenerator` assignment), and generated-origin member lookup dies on `ownerGenerator!!`
+		// (FirGeneratedScopes.kt:290) — so we set that attribute ourselves via [FirInternals]. The instance is cached:
+		// generateNestedClassLikeDeclaration must return THIS companion (one symbol per ClassId, never a second one).
+		if (type.staticMethods.isNotEmpty() || type.staticProps.isNotEmpty()) {
+			val companion = createCompanionObject(klass.symbol, ClrGeneratedKey)
+			FirInternals.setOwnerGenerator(companion, this)
+			eagerCompanions[companion.symbol.classId] = companion
+			klass.replaceCompanionObjectSymbol(companion.symbol)
+		}
+		return klass.symbol
 	}
 
 	/** The owner ClrType of a companion symbol (its static members live here), or null if not a companion-with-statics. */
@@ -430,6 +450,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 
 	override fun generateNestedClassLikeDeclaration(owner: FirClassSymbol<*>, name: Name, context: NestedClassGenerationContext): FirClassLikeSymbol<*>? {
 		if (name != SpecialNames.DEFAULT_NAME_FOR_COMPANION_OBJECT) return null
+		// Same-instance invariant: the eager companion built (and linked) in generateTopLevelClassLikeDeclaration is
+		// THE companion for this ClassId — never create a second one. (Reached only if the framework's early return on
+		// the linked companionObjectSymbol — FirGeneratedScopes.kt:245-248 — didn't already answer the lookup.)
+		eagerCompanions[owner.classId.createNestedClassId(name)]?.let { return it.symbol }
 		val type = byClassId[owner.classId] ?: return null
 		if (type.staticMethods.isEmpty() && type.staticProps.isEmpty()) return null
 		return createCompanionObject(owner, ClrGeneratedKey).symbol

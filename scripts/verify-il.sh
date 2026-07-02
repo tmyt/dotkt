@@ -3,7 +3,7 @@
 set -euo pipefail
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-clr-stdlib-frontend.sh) on
+# The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
 # -classpath, REPLACING the JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). This preserves full Kotlin
 # semantics and is the BINDING invariant: kotlin.* comes from the JAR, never from facadegen --scan-asm. kotlinx.coroutines
 # stays a separate jar (the 3 cases that use kotlinx.* — kcancel/cobuild/expect). Built below once the launcher exists.
@@ -19,7 +19,7 @@ LAUNCHER="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 
 # Frontend stdlib jar (kotc's -classpath input): build it once if missing (it consumes the kotc lib jars produced by
 # installDist above), else reuse. This is what supplies kotlin.* to the frontend — not facadegen.
-[[ -f "$FE_JAR" ]] || bash "$ROOT/scripts/build-clr-stdlib-frontend.sh" >/dev/null 2>&1
+[[ -f "$FE_JAR" ]] || bash "$ROOT/scripts/build-stdlib-jar.sh" >/dev/null 2>&1
 
 # Run samples concurrently (each compile is an independent ~2s JVM startup). A job pool caps parallelism; results
 # (FAIL markers, runtime-dll paths for the ilverify phase) cross back from the subshells via files.
@@ -61,17 +61,17 @@ GMMETA="$ROOT/build/gm.meta"
 dotnet "$ROOT/build/facadegen-bin/facadegen.dll" --meta "$GMMETA" System.Runtime.CompilerServices.Unsafe System.Runtime.CompilerServices.RuntimeHelpers System.Collections.ObjectModel.Collection >/dev/null 2>&1
 
 # CLR stdlib (the NEW canonical build under runtime/stdlib/, not the STALE runtime/DotKt.Stdlib/src):
-#   - RUNTIME assembly DotKt.Stdlib.dll (scripts/build-clr-stdlib-runtime.sh) — `--ref`'d into every emitted case so a
+#   - RUNTIME assembly DotKt.Stdlib.dll (scripts/build-stdlib-rt.sh) — `--ref`'d into every emitted case so a
 #     stdlib op resolves to its real Kotlin body, and copied next to each output for the run phase.
-#   - REFERENCE assembly DotKt.Private.Stdlib.dll (scripts/build-clr-stdlib.sh) — the @Clr-metadata face (bir2cir input).
+#   - REFERENCE assembly DotKt.Private.Stdlib.dll (scripts/build-stdlib-ref.sh) — the @Clr-metadata face (bir2cir input).
 # The stdlib's kotlin.* is supplied to kotc via the FRONTEND JAR on -classpath (above), NOT via `facadegen --scan-asm`
 # (that is a banned layer violation — facadegen cannot restore the Companion-object semantics the stdlib is premised on,
 # and a reconstructed kotlin.* symbol collides with the jar's). facadegen is used ONLY for per-case .NET imports below.
 # Build if missing, reuse if present.
 STDLIB_DLL="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
 STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
-[[ -f "$STDLIB_REF_DLL" ]] || bash "$ROOT/scripts/build-clr-stdlib.sh" --emit >/dev/null 2>&1
-[[ -f "$STDLIB_DLL" ]]     || bash "$ROOT/scripts/build-clr-stdlib-runtime.sh" --emit >/dev/null 2>&1
+[[ -f "$STDLIB_REF_DLL" ]] || bash "$ROOT/scripts/build-stdlib-ref.sh" --emit >/dev/null 2>&1
+[[ -f "$STDLIB_DLL" ]]     || bash "$ROOT/scripts/build-stdlib-rt.sh" --emit >/dev/null 2>&1
 
 declare -A REFDLL=()   # sample name -> external runtime dll it references (for ilverify -r)
 
@@ -281,7 +281,7 @@ il_check_inject delegatearg Dlg "$ROOT/cases/il-delegatearg" "$(printf '42\n20\n
 il_check_inject netenum NetEnum "$ROOT/cases/il-netenum" "$(printf '60\n6\nabbccc')" KfcNetEnum
 il_check_inject injbase InjBase "$ROOT/cases/il-injbase" "placed:0" KfcInjB
 il_check_inject injfqn InjFqn "$ROOT/cases/il-injfqn" "42" KfcInjF
-il_check_inject injstatic InjStatic "$ROOT/cases/il-injstatic" "$(printf 'p=42\n7\n99\n123')" KfcStatic
+il_check_inject injstatic InjStatic "$ROOT/cases/il-injstatic" "$(printf 'p=42\n7\n99\n123\np=42\n7\n99\n123')" KfcStatic
 il_check_inject injuint InjUint "$ROOT/cases/il-injuint" "$(printf '65542\n42')" Boot
 # c1net consumes types from its OWN runtime.cs (Probe assembly) via `import Probe.X` -> il_check_inject (build the
 # runtime, scan the imports through facadegen, --ref it). The old no-import-scan @Clr-facade path is gone.

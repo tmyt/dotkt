@@ -30,7 +30,7 @@ reproduce it.* (Memory `clr-not-jvm-discard-jvmisms`.)
 | [7](#7-default-arguments--a-two-tier-rule-native-metadata-else-a-carried-bir-expression) | Default arguments — the two-tier rule |
 | [8](#8-reverse--cross-assembly-interop) | Reverse / cross-assembly interop |
 | [8b](#8b-dual-representation-import-systemtextstringbuilder-vs-kotlintextstringbuilder--two-typed-views-of-one-clr-type) | Dual view: imported .NET type vs. its stdlib alias |
-| [8c](#8c-injected-net-static-members-are-accessed-via-companion) | Injected .NET statics need `.Companion` |
+| [8c](#8c-injected-net-static-members-implicit-typemember-works-companion-optional) | Injected .NET statics: implicit `Type.member` works |
 | [9](#9-reference-type-nullability--net-nrt-un-annotated-net-types-are-platform-types) | Nullability ⇔ .NET NRT; platform types `T!` |
 | [10](#10-round-trip-fidelity-audit--what-re-consuming-a-dotkt-assembly-as-kotlin-loses) | Round-trip fidelity audit (incl. pinned-2.2.0 limitations) |
 
@@ -308,20 +308,24 @@ frontend path, which the layer rules forbid (kotc reads no CLR-binding metadata)
 diagnostic is the clean 1.0 rule; an explicit `clrView<T>()`-style conversion intrinsic is possible later if the
 cast proves too blunt.
 
-## 8c. Injected .NET STATIC members are accessed via `.Companion`
+## 8c. Injected .NET STATIC members: implicit `Type.member` works (`.Companion` optional)
 
-A facadegen-injected .NET class's static members surface on a synthesized **companion object**, and the pinned
-Kotlin 2.2.0 plugin API does not support the implicit `Type.member` → companion resolution for injected classifiers.
-So a .NET static is called **explicitly through `.Companion`**:
+A facadegen-injected .NET class's static members surface on a synthesized **companion object**, and resolve
+**implicitly** — exactly like a hand-written Kotlin companion:
 
 ```kotlin
 import Avalonia.Application
-Application.Companion.Start(...)   // NOT Application.Start(...)
+Application.Start(...)             // implicit companion access — the natural form
+Application.Companion.Start(...)   // explicit form — still works, identical BIR
 ```
 
-Accepted rule (2026-06-23; MEMORY `injected-static-members-need-companion`) — the same pinned-compiler limitation
-family as §10.4 #2. Instance members, constructors, properties, events, operators and extension methods all resolve
-directly with no `.Companion`.
+The old rule requiring `.Companion` (2026-06-23; MEMORY `injected-static-members-need-companion`) was **retired
+2026-07-03**: it was a wiring gap, not a pinned-compiler limitation. Stock K2 only links `companionObjectSymbol`
+(the field the implicit-qualifier path consults) for source/deserialized classes — never for a fully-generated
+owner — so kotc now eagerly creates + links the companion itself and sets the FIR-internal `ownerGenerator`
+attribute through a bytecode-public Java shim (`kotc/frontend/FirInternals.java`; the eager link makes the
+framework's only assignment site unreachable, upstream `FirGeneratedScopes.kt:245-255`/`:290`). Instance members,
+constructors, properties, events, operators and extension methods resolve directly as before.
 
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
@@ -450,7 +454,7 @@ attribute we could add.
 - A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.
 - `import System.Text.StringBuilder` and `kotlin.text.StringBuilder` are two distinct typed views of one CLR type; mixing them is a type error (cast to cross). §8b.
-- An injected .NET class's statics are called via `.Companion` (`Application.Companion.Start(...)`). §8c.
+- An injected .NET class's statics resolve implicitly (`Application.Start(...)`); `.Companion` is optional. §8c.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
 - A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
 - Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ①), **`sealed`** (gap ⑤ — modality, cross-module enforcement, exhaustive `when`), and the **`fun interface` nature** (gap ③ — usable, though a bare lambda still won't SAM-convert under the pinned 2.2.0 compiler); `enum class` and `object`/companion still restore as plain `object`/`class`. §10.
