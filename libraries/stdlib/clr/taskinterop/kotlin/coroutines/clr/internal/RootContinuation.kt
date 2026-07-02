@@ -1,3 +1,6 @@
+// clr/taskinterop/: jar-EXCLUDED, CLR-build-ONLY (design note §5 — references the TaskCompletionSource
+// alias; build-stdlib-jar.sh skips this dir, build-stdlib-{ref,rt}.sh compile it).
+//
 // The Task-bridge sink (bundle-6 P1, docs/design-coroutine-cold-core-task-bridge.md §2): the root
 // [Continuation] of a hot `Task<T>` bridge over a cold suspend body. The generated bridge (P2) does
 //   tcs = TaskCompletionSource<T>(); root = RootContinuation(tcs); r = f$dotkt_suspend(args, root)

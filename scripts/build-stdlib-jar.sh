@@ -63,7 +63,14 @@ mapfile -t COMMON   < <(find libraries/stdlib/common/src -name '*.kt')
 mapfile -t SRC      < <(find libraries/stdlib/src -name '*.kt')
 mapfile -t UNSIGNED < <(find libraries/stdlib/unsigned/src -name '*.kt')
 mapfile -t BUILTINS < <(find "$STAGE" -name '*.kt')
-mapfile -t CLR_PLAT < <(find libraries/stdlib/clr -name '*.kt' ! -path 'libraries/stdlib/clr/builtins/*' ! -name '_ArraysClr.kt')
+# CONVENTION: libraries/stdlib/clr/taskinterop/ is the jar-EXCLUDED, CLR-build-ONLY source set — the
+# Task-facing kotlin.clr surface (Task/Task0/TaskCompletionSource aliases, await/blockOn/delay,
+# RootContinuation). The frontend jar must stay the PURE Kotlin stdlib surface and not carry
+# System.Threading.Tasks-bound symbols (docs/design-coroutine-cold-core-task-bridge.md §5); frontend
+# resolution for await/blockOn/delay consumers rides kotc's kotlin.clr injection seam
+# (ClrTypeInjection.kt — bundle-6 P2), NOT this jar. build-stdlib-{ref,rt}.sh DO compile taskinterop/
+# (lib.sh collect_stdlib_sources finds all of clr/), so the declarations + bodies live in ref.dll/rt.dll.
+mapfile -t CLR_PLAT < <(find libraries/stdlib/clr -name '*.kt' ! -path 'libraries/stdlib/clr/builtins/*' ! -path 'libraries/stdlib/clr/taskinterop/*' ! -name '_ArraysClr.kt')
 CLR_PLAT+=("$STAGE2/_ArraysClr.kt" "$STAGE3/JvmNameActual.kt" "$STAGE3/JvmInlineActual.kt")
 COMMON_SOURCES=("${COMMON[@]}" "${SRC[@]}" "${UNSIGNED[@]}"); COMMON_CSV="$(IFS=,; echo "${COMMON_SOURCES[*]}")"
 # NOTE: the CLR stdlib no longer references the kotc-injected `ClrRef<T>`/`byref` intrinsics — its implicit-byref

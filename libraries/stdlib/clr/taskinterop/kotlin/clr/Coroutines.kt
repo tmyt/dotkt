@@ -1,3 +1,7 @@
+// clr/taskinterop/: jar-EXCLUDED, CLR-build-ONLY (design note §5 — the frontend jar stays the pure
+// Kotlin surface; build-stdlib-jar.sh skips this dir, build-stdlib-{ref,rt}.sh compile it; frontend
+// resolution for consumers rides kotc's kotlin.clr injection seam, bundle-6 P2).
+//
 // The kotlin.clr coroutine surface (bundle-6 P1; names LOCKED by
 // docs/design-coroutine-cold-core-task-bridge.md §11):
 //   suspend fun <T> Task<T>.await(): T   — bir2cir-LOWERED at the call site (P4): awaiter fast path /
