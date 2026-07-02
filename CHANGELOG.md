@@ -13,6 +13,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the mechanism instead of prose numbers. RECORDED (not fixed): `bymap` regressed with the stdlib subtree bump
   (cde8afd) — the rt `clrMapGet` throws `EntryPointNotFoundException` on `IDictionary.ContainsKey`; XFAILed with
   an explicit REGRESSION reason, owned by the Map/MutableMap dual-rep sub-track.
+  *C2 (verify-roundtrip)* — the gate used to die silently mid-script (SIGABRT 134 inside a `$(...)` under
+  `set -e`) at the FIRST suspend-stub crash, so the 5 sections after it never ran and piping through `tail`
+  masked the exit to 0. Now every section runs to completion (crash-safe captures via the `if var="$(cmd)"`
+  errexit-exempt pattern; every pipeline step tolerates failure so it surfaces as its section's verdict), the 3
+  suspend-consuming sections (`roundtrip`, `roundtrip-generic`, `roundtrip-memext2`) are `RT_XFAIL`-listed
+  ("coroutine lowering deferred (bundle 6)"), and the final summary prints per-section PASS/FAIL/XFAIL with
+  exit 0 iff no unexpected outcome. This script is the coroutine bundle's E2E gate: the suspend sections
+  flipping to PASS surface as "FIXED — remove it from the RT_XFAIL baseline" lines.
 - **`scripts/` overhaul: one naming scheme + shared internal conventions + two harness bug fixes.**
   *Naming* — normalized to `<verb>-<noun>[-qualifier].sh`, aligned with the make target names (targets unchanged):
   `build-clr-stdlib.sh`→`build-stdlib-ref.sh`, `build-clr-stdlib-runtime.sh`→`build-stdlib-rt.sh`,
