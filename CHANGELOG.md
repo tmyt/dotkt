@@ -6,6 +6,37 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 ### Added
+- **`Map`/`MutableMap` → `IDictionary<K,V>` dual-rep (Track B) — real Kotlin maps run on BCL dictionaries.** BOTH
+  interfaces are `@ClrTypeAlias("System.Collections.Generic.IDictionary")` — deliberately NOT the List-style
+  read-only/mutable split (IDictionary does not extend IReadOnlyDictionary, so a split breaks `MutableMap : Map`
+  verifiability on the hot path; both-IDictionary mirrors Kotlin/JVM's java.util.Map erasure — see
+  `docs/dotkt-semantics.md §5c`). Kotlin-semantic members route through the new rt `kotlin.collections.ClrMapDefaults`
+  via bir2cir **Rule 5m** (2-type-arg `MapDefaultCall`): null-on-missing `get` (= `ContainsKey` + raw `get_Item`),
+  previous-value-returning `put`/`remove`, `putAll`/`getOrDefault`/`isEmpty`/`containsValue`, and the
+  `keys`/`values`/`entries` views (pure-Kotlin snapshot Sets; entry values live). `size`/`containsKey`/`clear` and
+  `MutableMap.keys`/`values` bind 1:1 (`Count`/`ContainsKey`/`Clear`/`Keys`/`Values`). `il-collrealkt` and `il-mapdes`
+  now run correct end-to-end (`mapOf`/`mutableMapOf`/`associate`/`for ((k,v) in m)`); `il-collops2`'s partition/
+  associate/withIndex/scan/runningFold/getOrElse lines all pass (blocked only by the separate `windowed` gap).
+
+### Fixed
+- **ilemit: arity-changing constructed base-interface member/property resolution.** `PropAccessor` and
+  `ResolveInheritedIfaceMethod` only walked SHARED-arity interface chains; `IDictionary<K,V>.Count`/`Clear` live on
+  `ICollection<KeyValuePair<K,V>>` (2→1, constructed arg). New `SubstituteIfaceArgs` substitutes the open definition's
+  type parameters positionally through the (possibly nested-constructed) base reference — a strict generalization.
+- **ilemit: duplicate `(name, params)` method defs no longer merge into one MethodBuilder.** Kotlin overload pairs
+  distinguished only by receiver types that COLLAPSE under an alias (`Map.iterator()`/`MutableMap.iterator()` both →
+  `IDictionary<K,V>`) had both bodies written into a single builder (concatenated IL → `BadImageFormatException`, one
+  body-less method). The second-and-later defs now get deterministic `$dupN` names; the first keeps the clean name.
+- **kotc: deleted the legacy `Map.Entry.component1/2` → `KeyValuePair.Key/.Value` lowering** (CLR knowledge in kotc;
+  it read the new ref-object entries as a struct → garbage values in `for ((k,v) in map)`). The components now emit as
+  plain Kotlin extension calls resolved via the rt stdlib; bir2cir `RecvKey` learned to normalize NESTED ref-type
+  names (`kotlin.collections.Map`2+Map$Entry`2` → `kotlin.collections.Map$Entry`) so the attribution matches.
+- **bir2cir: `IteratorConsumerNormalization` generalized to rt-returned iterators.** Iterator-typed for-loop vars
+  initialized from a `kotlin.*` owner (Set.iterator(), MapsKt.iterator(map)) and `<>dotkt_KIterable_*` synthetic
+  consumers with rt receivers (`xs.withIndex()` loops) are re-pointed at the real `kotlin.collections.Iterator[E]` /
+  the ClrIteratorBridge. Receiver-gated: app-emitted synthetic producers (il-iter/il-iterable) are untouched.
+- **stdlib: `emptyMap()` returns a Dictionary-backed map** — the pure-Kotlin `EmptyMap` singleton cannot satisfy the
+  IDictionary surface under the alias (its type fails to load). Read-only-ness stays frontend-enforced.
 - **`String.format` as CLR platform API — .NET composite format, bound to `System.String.Format` (fixes `il-fmt` +
   `il-bmore` frontend failures).** Kotlin/JVM's `format` is JVM-only platform API (Native/JS have none); DotKt now
   provides its own: `fun String.Companion.format(format, vararg args)` + `fun String.format(vararg args)` in the CLR

@@ -403,25 +403,37 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
   object → "Destination is too short" corruption); (b) ilemit `isinst`/`isinstRef` now BOX a value-type/generic-param
   receiver before `isinst` (was: NRE reading an unboxed value as a ref — `element is CharSequence?`/`element is Char` in
   appendElement); (c) bir2cir `<>dotkt_StringCharSequence` adapter gained a `ToString()`→backing-string override.
-  <br>**Track B — Map/MutableMap → Dictionary dual-rep — ⚠️ INVESTIGATED, DEEPER THAN "same as List"; NOT landed
-  2026-07-02.** `mapOf` returns a BCL Dictionary typed as the pure-Kotlin `Map`/`MutableMap` (no `@ClrTypeAlias`) →
-  `Map.get` throws `EntryPointNotFoundException`. The List parallel BREAKS on three counts: (i) `Map.size` is declared on
-  `Map` itself (not a `Collection` base like `List.size`), and `IReadOnlyDictionary<K,V>.Count` is INHERITED from
-  `IReadOnlyCollection<KeyValuePair<K,V>>` — an ARITY-CHANGING (2→1), constructed-arg (`KeyValuePair<K,V>`) interface
-  chain that ilemit's `PropAccessor` base-interface walk skips (it only handles SHARED-arity chains); (ii) `Map.get`
-  returns `V?` (null on miss) while `IReadOnlyDictionary.get_Item` THROWS — needs a `containsKey`+raw-`get_Item` (or
-  `TryGetValue`-out) helper, plus a new 2-type-arg Rule-5 map-defaults routing in bir2cir (single-elem `CollDefaultCall`
-  is K-only); (iii) `MutableMap : Map` (Kotlin) does NOT map to `IDictionary : IReadOnlyDictionary` (BCL — neither
-  extends the other), so aliasing both breaks the supertype relation. Also `keys`/`values`/`entries` interface-typed
-  routing is unhandled, and `collops2` (the 2nd Track-B target) is ALSO blocked by an INDEPENDENT early
-  `InvalidProgramException` (partition/joinToString-in-string-template), so it would not fully green from the Map fix
-  alone. **A working prototype (Map `@ClrTypeAlias(IReadOnlyDictionary)` + `clrMapGet`/`clrMapItem` helpers + bir2cir
-  2-type-arg map-defaults) was built and REVERTED** (the ilemit inherited-arity-changing-property gap was the immediate
-  rt-build blocker; the remaining blockers made it out of scope for this pass). **To land Track B:** (1) generalize
-  ilemit `PropAccessor` (and `ResolveInheritedIfaceMethod`) to substitute an ARITY-CHANGING base-interface chain
-  (`IReadOnlyDictionary`2` → `IReadOnlyCollection`1<KeyValuePair`2>`); (2) the 2-type-arg Rule-5 map-defaults + null-safe
-  `get` helper (prototype available); (3) decide the `MutableMap`/`Map` alias so the subtyping stays coherent; (4)
-  separately fix `collops2`'s early IL bug. (2) **`bymap`** — `by data` Map-delegation unsupported (kotc delegate resolution). (3) **`fmt`/`bmore`** —
+  <br>**Track B — Map/MutableMap → Dictionary dual-rep — ✅ DONE 2026-07-02.** `mapOf` returned a BCL Dictionary typed
+  as the pure-Kotlin `Map`/`MutableMap` → `Map.get` threw `EntryPointNotFoundException`. **Landed as: BOTH `Map` and
+  `MutableMap` `@ClrTypeAlias("System.Collections.Generic.IDictionary")`** (Codex-concurred; NOT the List-style
+  IReadOnlyDictionary/IDictionary split — IDictionary does not extend IReadOnlyDictionary, so the split breaks
+  `MutableMap : Map` at the IL level; empirically the existing IList→IReadOnlyList store is ALREADY ilverify-dirty, and
+  a split Map pair would put that hole on the hot path. Both-IDictionary = the Kotlin/JVM model (both erase to
+  java.util.Map) + the Iterable/MutableIterable→IEnumerable precedent; read-only-ness is frontend-enforced —
+  `docs/dotkt-semantics.md §5c`). The three recorded hardnesses, as fixed: (i) ilemit `PropAccessor` +
+  `ResolveInheritedIfaceMethod` now substitute ARITY-CHANGING constructed-arg base-interface chains
+  (`SubstituteIfaceArgs`: `IDictionary`2.Count/Clear` on `ICollection`1<KeyValuePair`2>`); (ii) null-on-missing `get` =
+  `ClrMapDefaults.clrMapGet` (`ContainsKey` + raw `get_Item` ext-intrinsic `clrMapItem`) behind the new bir2cir
+  **Rule 5m** 2-type-arg map routing (`MapDefaultCall`, the K,V mirror of `CollDefaultCall`; also put/remove/putAll/
+  getOrDefault/isEmpty/containsValue/keys/values/entries); (iii) subtyping preserved trivially by the identical alias.
+  Supporting fixes: stdlib `Map.size/containsKey/MutableMap.clear/keys/values` @ClrIntrinsic (Count/ContainsKey/Clear/
+  Keys/Values); `Map$Entry`/`MutableMap$MutableEntry` survive the alias-drop as top-level types (`nestedIn` fallback);
+  ilemit now `$dupN`-mangles DUPLICATE (name, params) defs (Map/MutableMap-receiver extension pairs collapse under the
+  shared alias — both `iterator()` bodies previously concatenated into ONE MethodBuilder → BadImageFormatException);
+  bir2cir `IteratorConsumerNormalization` generalized to rt-returned iterators (Set.iterator/MapsKt.iterator vars) and
+  KIterable-synthetic consumers with rt receivers (`withIndex` for-loops) — receiver-gated so app-side synthetic
+  producer/consumer pairs (il-iter/il-iterable) stay untouched; kotc's legacy Map.Entry→`KeyValuePair.Key/.Value`
+  destructure lowering DELETED (read a ref Entry object as a struct → garbage); bir2cir `RecvKey` normalizes NESTED
+  ref-type names (`Map`2+Map$Entry`2` → `kotlin.collections.Map$Entry`) so Entry-receiver extensions attribute;
+  `ClrOwnerType` pads a star-projection-erased arg list to the alias arity; `emptyMap()` returns a Dictionary-backed
+  map (pure `EmptyMap` can't satisfy IDictionary). **Greened:** `collrealkt` + `mapdes` full-correct; `collops2`'s
+  partition/associate/withIndex/scan/runningFold/getOrElse lines all pass — it stays run-FAIL ONLY on `windowed`
+  (the SequenceScope blocker it shares with `chunk`, a separate track). Known accepted edges (recorded in §5c):
+  snapshot (not live) read views; `MutableMap.iterator` degrades to the Map shape ($dup mangling keeps the first
+  overload); pure-Kotlin Map implementers (AbstractMap/MapWithDefaultImpl) still fail to LOAD (the pre-existing
+  dual-rep pure-path gap; +3 rt loader errors, 13→16, none sample-reachable). (2) **`bymap`** — `by data` Map-delegation unsupported (kotc delegate resolution — now the delegate ROUTES but needs a
+  KProperty bridge: the stdlib `MapAccessorsKt.getValue` takes the RT `kotlin.reflect.KProperty`, the app materializes
+  its own `<>dotkt_KPropertyImpl` synthetic — cross-assembly KProperty identity, NOT trivial). (3) **`fmt`/`bmore`** —
   `String.format` unresolved (the CLR frontend jar has no `String.Companion.format`; a stdlib-binding gap). — Historical
   root-cause analysis of the original stack-underflow follows:
   kotc emits the `joinToString`
