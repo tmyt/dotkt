@@ -56,9 +56,20 @@ sealed partial class Emitter
             }
             case "setField":
             {
+                var fon = s.GetProperty("ownerType").GetString();
+                var fnm = s.GetProperty("name").GetString();
+                // An EXTERNAL type's property write goes through the public setter (its backing field is private
+                // cross-assembly -> Stfld would throw FieldAccessException). Falls back to the field when no setter.
+                if (ExternalPropAccessor(fon, "set_" + fnm) is { } setter)
+                {
+                    EmitExpr(s.GetProperty("recv"));
+                    EmitExpr(s.GetProperty("value"));
+                    _il.Emit(OpCodes.Callvirt, setter);
+                    break;
+                }
                 EmitExpr(s.GetProperty("recv"));
                 EmitExpr(s.GetProperty("value"));
-                _il.Emit(OpCodes.Stfld, ResolveField(s.GetProperty("ownerType").GetString(), s.GetProperty("name").GetString(), out _));
+                _il.Emit(OpCodes.Stfld, ResolveField(fon, fnm, out _));
                 break;
             }
             case "return":

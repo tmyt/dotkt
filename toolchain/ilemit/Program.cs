@@ -1237,11 +1237,26 @@ sealed partial class Emitter
     FieldInfo ResolveField(string spec, string name, out Type fieldType)
     {
         var (open, constructed) = ParseOwner(spec);
+        // A REFERENCED generic owner constructed from PURE reflection types (NOT a TypeBuilder instantiation): reflect
+        // the field directly on the constructed instantiation — its GetField carries the substituted field type, so no
+        // TypeBuilder.GetField re-anchoring is needed. Mirrors ResolveMethod's external-constructed branch. (Reaches a
+        // referenced data class's public fields, e.g. `kotlin.Pair[..]`.first/.second from `partition`/`associate`.)
+        if (constructed != null && !_types.ContainsKey(open) && !IsTbInstantiation(constructed))
+        {
+            var rf = FindReflectedField(constructed, name) ?? throw new NotSupportedException($"field {open}.{name} not found");
+            fieldType = rf.FieldType;
+            return rf;
+        }
         var fb = FindField(open, name);
         if (constructed == null) { fieldType = fb.FieldType; return fb; }
         fieldType = Subst(fb.FieldType, constructed.GetGenericArguments());
         return TypeBuilder.GetField(constructed, fb);
     }
+
+    // Resolve a field by name on an already-RESOLVED (referenced .NET / baked) type, walking its base-class chain
+    // (reflection's GetField already includes inherited members). Pure CLR resolution; null if absent.
+    static FieldInfo FindReflectedField(Type t, string name) =>
+        t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
 
     // Resolve a method for emit; out-param gives the substituted (concrete) return type for boxing decisions.
     MethodInfo ResolveMethod(string spec, string name, out Type retType, string sig = null)
@@ -1279,6 +1294,27 @@ sealed partial class Emitter
         // An INHERITED method on a NON-self constructed generic (mb declared on a base/interface, not on `constructed`'s
         // own generic def — e.g. AbstractMutableCollection<E> calling the inherited iterator()) throws the same
         // "method must be declared on the generic type definition" as the self case -> fall back to the open MethodBuilder.
+        try { return TypeBuilder.GetMethod(constructed, mb); }
+        catch (ArgumentException) { return mb; }
+    }
+
+    // A property read/write on an EXTERNAL type must go through the public accessor (`get_`/`set_<name>`), NOT the
+    // backing field: the CLR property model gives every Kotlin property a PRIVATE backing field, which is inaccessible
+    // cross-assembly (a direct Ldfld/Stfld -> FieldAccessException at runtime, e.g. `kotlin.Pair`.first/.second read
+    // via a destructuring `component1()`/`component2()` that kotc lowers to a field access). Returns the accessor
+    // anchored on the (possibly constructed-generic) owner, or null when the owner is emitted in THIS assembly (its
+    // backing field is directly accessible) or no such accessor exists (a public `@ClrField` -> keep the direct field).
+    MethodInfo ExternalPropAccessor(string spec, string accessor)
+    {
+        var (open, constructed) = ParseOwner(spec);
+        if (_types.ContainsKey(open)) return null;
+        // Pure-reflection constructed generic: resolve directly on the instantiation (its accessor carries the
+        // SUBSTITUTED return/param types, so no TypeBuilder re-anchoring is needed) — mirrors ResolveMethod's branch.
+        if (constructed != null && !IsTbInstantiation(constructed))
+            return FindReflectedMethod(constructed, accessor);
+        var mb = FindMethod(open, accessor);
+        if (mb == null) return null;
+        if (constructed == null) return mb;
         try { return TypeBuilder.GetMethod(constructed, mb); }
         catch (ArgumentException) { return mb; }
     }
@@ -1490,8 +1526,24 @@ sealed partial class Emitter
     }
 
     // Members may be declared on a base type (inherited / fake-overridden); walk the chain.
-    FieldBuilder FindField(string typeName, string name)
+    FieldInfo FindField(string typeName, string name)
     {
+        // A type NOT in this assembly's `_types` is EXTERNAL (a referenced .NET / rt-stdlib type) -> reflect the field
+        // on the resolved type instead of indexing `_types` (which would KeyNotFound). Mirrors FindMethod's external
+        // branch; reaches a referenced type's public/static fields (e.g. a data class field on the rt stdlib dll).
+        if (!_types.ContainsKey(typeName))
+        {
+            Type ext = null;
+            try { ext = ClrRef(typeName); } catch (NotSupportedException) { }
+            if (ext == null && !typeName.Contains('`'))
+                for (int arity = 1; arity <= 8; arity++)
+                    if (TryResolveType(typeName + "`" + arity) is { } cand)
+                    {
+                        if (ext != null) { ext = null; break; }
+                        ext = cand;
+                    }
+            return ext == null ? null : FindReflectedField(ext, name);
+        }
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
             if (ti.Fields.TryGetValue(name, out var f)) return f;
         throw new NotSupportedException($"field {typeName}.{name} not found");
@@ -1550,6 +1602,18 @@ sealed partial class Emitter
             // including the reflected base-class + interface chain.
             Type ext = null;
             try { ext = ClrRef(typeName); } catch (NotSupportedException) { }
+            // A bare OPEN generic Kotlin interface name (`kotlin.collections.Iterator`/`Map`, arrived via ParseOwner
+            // stripping the `[gp:T]` args off `Iterator[gp:T]`.hasNext / `Map[gp:K,gp:V]`.get) has no reflection type
+            // under its arity-less name — reflection knows it only as `Iterator`1`/`Map`2`. ResolveMethod then re-anchors
+            // the returned OPEN member onto the constructed instantiation (TypeBuilder.GetMethod). Probe the arity suffix
+            // and take the UNIQUE resolvable open definition (ambiguous bare name -> give up, keep the arity/null path).
+            if (ext == null && !typeName.Contains('`'))
+                for (int arity = 1; arity <= 8; arity++)
+                    if (TryResolveType(typeName + "`" + arity) is { } cand)
+                    {
+                        if (ext != null) { ext = null; break; }   // ambiguous bare generic name
+                        ext = cand;
+                    }
             if (ext == null) return null;
             // A referenced file-class can carry several overloads that share name AND arity but differ in PARAM TYPES —
             // e.g. the stdlib's String-face `StringsKt.substring(String,int,int)` vs its CharSequence-face

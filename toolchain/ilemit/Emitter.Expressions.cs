@@ -122,6 +122,14 @@ sealed partial class Emitter
                     _il.Emit(OpCodes.Callvirt, m);
                     return m.ReturnType;
                 }
+                // An EXTERNAL type's property read must go through the public getter (its backing field is private
+                // cross-assembly -> Ldfld would throw FieldAccessException). Falls back to the field when no getter.
+                if (ExternalPropAccessor(fon, "get_" + fnm) is { } getter)
+                {
+                    EmitExpr(e.GetProperty("recv"));
+                    _il.Emit(OpCodes.Callvirt, getter);
+                    return RetOr(e, getter.ReturnType);
+                }
                 EmitExpr(e.GetProperty("recv"));
                 var fb = ResolveField(fon, fnm, out var ft);
                 _il.Emit(OpCodes.Ldfld, fb);
@@ -129,9 +137,18 @@ sealed partial class Emitter
             }
             case "setFieldExpr":
             {
+                var son = e.GetProperty("ownerType").GetString();
+                var snm = e.GetProperty("name").GetString();
+                if (ExternalPropAccessor(son, "set_" + snm) is { } setter)
+                {
+                    EmitExpr(e.GetProperty("recv"));
+                    EmitExpr(e.GetProperty("value"));
+                    _il.Emit(OpCodes.Callvirt, setter);
+                    return typeof(void);
+                }
                 EmitExpr(e.GetProperty("recv"));
                 EmitExpr(e.GetProperty("value"));
-                _il.Emit(OpCodes.Stfld, ResolveField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString(), out _));
+                _il.Emit(OpCodes.Stfld, ResolveField(son, snm, out _));
                 return typeof(void);
             }
             case "lateinitGet":
