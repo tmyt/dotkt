@@ -1082,11 +1082,9 @@ public fun <T : Comparable<T>> Iterable<T>.sortedDescending(): List<T> {
  * The sort is _stable_. It means that equal elements preserve their order relative to each other after sorting.
  */
 public fun <T> Iterable<T>.sortedWith(comparator: Comparator<in T>): List<T> {
-    if (this is Collection) {
-       if (size <= 1) return this.toList()
-       @Suppress("UNCHECKED_CAST")
-       return (toTypedArray<Any?>() as Array<T>).apply { sortWith(comparator) }.asList()
-    }
+    // CLR adaptation: the JVM Collection fast-path `(toTypedArray<Any?>() as Array<T>)` relies on array ERASURE
+    // (Object[] == T[]); on CLR's reified arrays Object[] != Int32[] -> InvalidCast. Always use
+    // toMutableList().sortWith(comparator) (the original non-Collection branch), correct for all element types.
     return toMutableList().apply { sortWith(comparator) }
 }
 
