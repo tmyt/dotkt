@@ -108,7 +108,10 @@ sealed class Pipeline
         // supertype, so this synthetic-retention is a technical necessity, not a preference. (docs/design-charsequence-clr-string.md)
         var hasUserCharSeqImpl = birFiles.Any(f => DeclaresCharSeqImplementer(f.Root));
 
-        var files = new List<CirFile>();
+        // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
+        // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
+        // so its cold-entry callee may live in another file — the transformability fixpoint spans all files).
+        var staged = new List<(JsonNode Root, string OutputName)>();
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
@@ -184,17 +187,27 @@ sealed class Pipeline
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
                 substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns);
             if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted);
-            // SUSPEND COLD LOWERING (bundle-6 P2): rewrite straight-line top-level `suspend fun`s into the cold
-            // Continuation state-machine shape (SM class + `f$dotkt_suspend` cold entry + suspend-main drain).
-            // Runs after call substitution (its synthesized calls are already-final sibling/BCL shapes) and
-            // before type lowering (its kotlin.* type tokens flow through BirTypeLowering). Non-v1 suspend funs
-            // are left untouched (they keep `"suspend":true` for the existing ilemit throw-stub path). Skipped in
-            // the ref build; a verified no-op in the rt-stdlib build (no stdlib suspend fun matches the v1 gate).
-            // APP-BUILD gate (attributeTopLevelOwner == DOTKT_STDLIB_COMPILE unset): the stdlib self-build must NOT
-            // cold-transform its own suspend funs (await/delay interop) — that belongs to the P4 Task-bridge path,
-            // and a P2 cold rewrite would rename e.g. `Task0.await` to `await$dotkt_suspend` in rt.dll only,
-            // diverging from the ref.dll signature. So the pass is an explicit no-op in the ref AND rt-stdlib builds.
-            if (!_options.RefBuild && attributeTopLevelOwner) SuspendColdLowering.Apply(substituted, refs, localTypeFqns);
+            staged.Add((substituted, outputName));
+        }
+
+        // PHASE 1.5 — SUSPEND COLD LOWERING (bundle-6 P2/P3/P3-wave2a): rewrite eligible `suspend fun`s (top-level
+        // statics, extensions, INSTANCE members) into the cold Continuation state-machine shape (SM class +
+        // `f$dotkt_suspend` cold entry + suspend-main drain), and rewrite member/cross-file/cross-assembly suspend
+        // CALLS to the callee's cold shape. Runs GLOBALLY across all files (a same-assembly cross-file suspend call
+        // keeps `owner:null`, so the transformability fixpoint must span every input file). After call substitution
+        // (its synthesized calls are already-final sibling/BCL shapes) and before type lowering (its kotlin.* type
+        // tokens flow through BirTypeLowering). Non-v1 suspend funs are left untouched (they keep `"suspend":true`
+        // for the existing ilemit throw-stub path). Skipped in the ref build; a verified no-op in the rt-stdlib
+        // build (no stdlib suspend fun matches the v1 gate). APP-BUILD gate (attributeTopLevelOwner ==
+        // DOTKT_STDLIB_COMPILE unset): the stdlib self-build must NOT cold-transform its own suspend funs
+        // (await/delay interop) — that belongs to the P4 Task-bridge path — so the pass is an explicit no-op there.
+        if (!_options.RefBuild && attributeTopLevelOwner)
+            SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns);
+
+        // PHASE 2 — per-file type lowering onwards.
+        var files = new List<CirFile>();
+        foreach (var (substituted, outputName) in staged)
+        {
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
@@ -387,6 +400,14 @@ sealed class ReferenceMetadataIndex
     // the callee carries no @KotlinDefault (a function with only metadata-representable defaults).
     public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount) =>
         _kotlinDefaults.TryGetValue(owner + "|" + method + "|" + paramCount, out var m) ? m : null;
+
+    // Cross-assembly suspend-call resolution (bundle-6 P3 wave 2a): does the referenced owner declare a suspend
+    // member of this name? The cold entry is the naming-convention linkage (`<name>$dotkt_suspend` on the same
+    // owner type), keyed off the [KotlinFunction(Suspend)] flag scanned into MemberBinding.Suspend. Used by
+    // SuspendColdLowering to rewrite a cross-assembly `x.g()` suspend call to `x.g$dotkt_suspend(…, completion)`.
+    public bool HasSuspendMember(string owner, string name) =>
+        owner != null && _membersByOwner.TryGetValue(owner, out var list)
+        && list.Any(m => m.Suspend && string.Equals(m.Name, name, StringComparison.Ordinal));
 
     public int Count => _assemblies.Count;
     public IReadOnlyList<ReferenceAssembly> Assemblies => _assemblies;

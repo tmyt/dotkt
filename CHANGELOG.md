@@ -76,6 +76,39 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   member/cross-assembly suspend calls (owner'd `callStatic` / `callInstance suspendCall`), instance suspend
   MEMBERS (`static==false`, live in `types`), suspension inside a catch/finally, a nested suspending try. The
   pass stays gated to app builds (skipped in ref AND rt-stdlib), so stdlib ref/rt symmetry is unchanged.
+- **Coroutine bundle-6 P3 wave-2a: `SuspendColdLowering` — INSTANCE suspend members + MEMBER/cross-file/
+  cross-assembly suspend CALLS + the `get_context` workaround removal (bir2cir).** Retires three of the P3
+  policy-passthrough items in one pass.
+  - **Instance suspend members** (`class C { suspend fun m(args): R }`, `static==false`, living inside a
+    `types[]` class): the pass now iterates each file's `types[]` and transforms suspend methods inside each
+    class. The SM carries a `$this` field of type `C`; the method body's `this`/implicit-receiver reads become
+    `SM.$this` reads. The cold entry `m$dotkt_suspend` is an **INSTANCE** method on `C` (so a
+    direct/no-suspension member body keeps `this` verbatim — the cold entry itself is the CLR virtual-dispatch
+    boundary; per Codex, the static-explicit-receiver alternative would have to reimplement virtual resolution
+    by hand). A generic class combines cleanly for a direct member (`Box<T>.get(): T` inherits the class type
+    param); a suspending member of a generic class, and OPEN/overridden members (which would need a per-override
+    virtual/override cold entry in lockstep), are deferred (policy-stub, kept `suspend:true`).
+  - **Member + cross-file/cross-assembly suspend CALLS**: a `callInstance suspendCall` (`x.g()`) and a same-
+    assembly cross-file top-level suspend call (kotc emits it with `owner:null`, identical to same-file) are
+    rewritten to the callee's `<name>$dotkt_suspend` cold shape on the correct receiver. Because a cross-file
+    callee's cold entry may live in another file, the whole analysis is now **GLOBAL** across the compilation's
+    files (`ApplyAll` — Program.cs `TransformFiles` split into a stage-1 per-file transform / stage-1.5 global
+    suspend lowering / stage-2 per-file type lowering); the transformability fixpoint spans every input file.
+    Cross-assembly callees resolve via the ref.dll `MemberBinding.Suspend` flag (`ReferenceMetadataIndex.
+    HasSuspendMember`) + the naming convention; an unresolvable suspend call makes its caller non-transformable
+    (policy-stub). A call site's instantiated `ownerType` (`Box[kotlin.Int]`) is stripped to its bare class key
+    for the registry/ref.dll lookup.
+  - **`get_context` workaround REMOVED**: the P2/P3 SM classes re-overrode `ContinuationImpl.get_context` to fill
+    `BaseContinuationImpl`'s abstract slot. kotc commit `a65b44d` now emits `ContinuationImpl.get_context` as a
+    proper base-slot override, so a synthesized SM subclass no longer needs the re-override — deleted. Verified:
+    after rebuilding the stdlib rt so the fixed `ContinuationImpl` is in the dll, the coldcf/coldgen/coldinst SMs
+    still class-load and run.
+  - New gate sample `il-coldinst` (INST1 `Counter.bump` instance member, INST2 `Svc.chain` → `this.helper()`,
+    INSTGEN generic `Box<T>.get`, MCALL1 top-level → `c.bump()`, MCALL2 a suspend fun in a second source file),
+    run-correct (`11 12 10 42 hi 101 7`) and ilverify-clean. `make verify-il` GREEN (PASS(run) 145, no NEW-FAIL
+    vs the `bymap/chunk/cobuild/collops2/seq` XFAIL baseline). App-build-gated as before, so ref/rt symmetry is
+    structurally preserved. LEFT UNTOUCHED (wave-2b/P4): suspend LAMBDAS / `sfunc:`, open/overridden and
+    generic-class suspending members, the public `Task<T>` bridge / `Task.await` / real `blockOn` drain.
 - **Gate hardening (pre-coroutine batch C1-C3): machine-readable XFAIL baselines + abort-proof harnesses.**
   *C1 (verify-il)* — the known-fail baseline moved from prose/flat name lists to `XFAIL_RUN` / `XFAIL_ILVERIFY`
   associative arrays (fail name → reason) diffed by the new shared `lib.sh xfail_diff`: exit 0 iff every actual
