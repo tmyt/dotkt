@@ -26,10 +26,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   OUTSIDE bir2cir, tracked in `il-cobuild`'s `XFAIL_RUN` reason: (1) **ilemit** cannot emit a cross-assembly call to
   `kotlin.Result.success` (a public static on the generic `Result\`1`) — `FindMethod`/`AnchorOpenGenericOwnerStatic`
   only anchor LOCAL `MethodBuilder`s, so the external static-on-generic emits a bad-scoped memberref →
-  `TypeLoadException`; (2) **stdlib** `blockOn`'s Monitor drain returns immediately instead of waiting for a
-  truly-suspending coroutine (`lam1/lam2/coldcf` only ever exercised synchronous completion). `il-cobuild` is
-  rewritten to the honest `Task.Delay(1).await()` form (the retired `kotlin.clr.delay` crutch dropped) and stays
-  XFAIL until those two land.
+  `TypeLoadException`; (2) the await SLOW PATH does not yet drive a genuine cross-thread suspension — for
+  `Task.Delay(1).await()` the coroutine completes SYNCHRONOUSLY during `startCoroutine` (bir2cir's suspend counter
+  reports `0 await`; instrumentation confirms `blockOn` finds `sink.done == true` before it can Wait), so `blockOn`
+  faithfully returns the (default `0`) synchronous result. This is NOT a `blockOn` drain defect — see the drain
+  verification bullet below. `il-cobuild` is rewritten to the honest `Task.Delay(1).await()` form (the retired
+  `kotlin.clr.delay` crutch dropped) and stays XFAIL until those two land.
+- **stdlib: `kotlin.clr.blockOn`'s Monitor Wait/Pulse drain VERIFIED correct — no fix needed; the immediate
+  `0` return is the await synchronous-completion path above, not the drain.** The drain logic is textbook: the
+  waiter does `Enter(sink)/while(!sink.done) Wait(sink)/Exit(sink)` and the completer (`BlockOnSink.resumeWith`)
+  does `Enter(this)/value=…/done=true/Pulse(this)/Exit(this)` on the SAME `BlockOnSink` monitor — the `while(!done)`
+  guard is robust against a lost pre-Wait Pulse. Confirmed three ways: (a) the rt-build CIR shows the four
+  `@ClrIntrinsic` bindings substitute exactly to `System.Threading.Monitor.Enter/Wait/Exit(sink)` and
+  `Enter/Pulse/Exit(this)` on the same object (owner `System.Threading.Monitor`, correct one-arg overloads);
+  (b) an instrumented `blockOn` shows both the sync (`lam1`) and would-be-async (`cobuild`) paths reach
+  `sink.done == true` immediately after `startCoroutine` — the coroutine completes synchronously, so Wait is never
+  entered (the drain is never the cause of `0`); (c) **new `cases/il-monitordrain`** exercises those exact four
+  Monitor primitives with a GENUINE cross-thread hand-off (a worker thread sleeps, then sets the value + Pulses
+  under the monitor) and the main thread BLOCKS in `Wait` until woken — printing `99`, which is only observable
+  after the cross-thread Pulse. This locks the drain mechanism `blockOn` is built on; the end-to-end
+  `blockOn`-waits proof only awaits the await slow-path suspension landing.
 - **bir2cir + ilemit: synthesize the public `Task<R>` BRIDGE for exported suspend funs (bundle-6 P4 — the hot
   CLR ABI; design §11).** `SuspendColdLowering` now emits, next to each transformable suspend fun's cold entry
   `f$dotkt_suspend`, a public `Task<R> f(args)` bridge that C#/F# callers consume as a normal hot `Task`:
