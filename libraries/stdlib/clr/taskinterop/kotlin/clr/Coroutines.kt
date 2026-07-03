@@ -1,15 +1,21 @@
 // clr/taskinterop/: jar-EXCLUDED, CLR-build-ONLY (design note §5 — the frontend jar stays the pure
-// Kotlin surface; build-stdlib-jar.sh skips this dir, build-stdlib-{ref,rt}.sh compile it; frontend
-// resolution for consumers rides kotc's kotlin.clr injection seam, bundle-6 P2).
+// Kotlin surface; build-stdlib-jar.sh skips this dir, build-stdlib-{ref,rt}.sh compile it).
+//
+// Frontend resolution split (design note §12 "P4 symbol-surfacing mechanism", user 2026-07-03):
+//   - blockOn / delay: CLR-free SIGNATURES -> declared `expect` in the jar-INCLUDED common set
+//     (libraries/stdlib/common/src/kotlin/clr/CoroutinesH.kt); the REAL `actual` bodies live below and
+//     ride only ref.dll/rt.dll. The jar stages a throwing STUB actual (build-stdlib-jar.sh). So
+//     `import kotlin.clr.blockOn`/`delay` resolve from the classpath with ZERO kotc special-casing.
+//   - await: its signature names Task -> surfaced by facadegen (NOT expect/actual), bir2cir-lowered.
 //
 // The kotlin.clr coroutine surface (bundle-6 P1; names LOCKED by
 // docs/design-coroutine-cold-core-task-bridge.md §11):
 //   suspend fun <T> Task<T>.await(): T   — bir2cir-LOWERED at the call site (P4): awaiter fast path /
 //   suspend fun Task0.await()              OnCompleted resume. The bodies here are placeholders that are
 //                                          replaced by the lowering, never meant to run.
-//   fun <T> blockOn(block): T            — the runBlocking analog: start `block` on the COLD CORE and
+//   actual fun <T> blockOn(block): T     — the runBlocking analog: start `block` on the COLD CORE and
 //                                          block the calling thread until the root completion resumes.
-//   suspend fun delay(ms)                — Task.Delay(ms).await().
+//   actual suspend fun delay(ms)         — Task.Delay(ms).await().
 //
 // blockOn is REAL Kotlin already (P1): it drains through a Monitor Wait/Pulse sink (the JVM
 // RunSuspend.kt pattern) rather than `TaskCompletionSource.Task.<drain>` — same "start on the cold
@@ -42,7 +48,7 @@ public suspend fun Task0.await(): Unit =
  * Runs [block] as a coroutine on the cold core and BLOCKS the calling thread until it completes —
  * the `runBlocking` analog for CLR entry points / tests. Rethrows the block's exception raw.
  */
-public fun <T> blockOn(block: suspend () -> T): T {
+public actual fun <T> blockOn(block: suspend () -> T): T {
     val sink = BlockOnSink()
     block.startCoroutine(sink) // Continuation<Any?> is a Continuation<T> by contravariance
     monitorEnter(sink)
@@ -56,7 +62,7 @@ public fun <T> blockOn(block: suspend () -> T): T {
 }
 
 /** Suspends for [ms] milliseconds via `Task.Delay` (a value beyond Int.MAX_VALUE delays forever). */
-public suspend fun delay(ms: Long) {
+public actual suspend fun delay(ms: Long) {
     if (ms <= 0) return
     // -1 is Timeout.Infinite; Task.Delay has no Int64 overload.
     clrTaskDelay(if (ms > Int.MAX_VALUE.toLong()) -1 else ms.toInt()).await()

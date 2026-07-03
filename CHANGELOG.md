@@ -20,6 +20,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `BaseContinuationImpl.create`'s erased CLR ABI so ilemit's clrOverride binds the base slot. Fixture-tested
   (hand-crafted arity-0 + arity-1 lambdas): bir2cir → ilemit → ilverify clean.
   `toolchain/bir2cir/{Program.cs,SuspendColdLowering.cs,SuspendLambdaLowering.cs}`.
+- **stdlib: `kotlin.clr.blockOn` / `kotlin.clr.delay` are now FRONTEND-RESOLVABLE via `expect`/`actual` (bundle-6
+  P4 symbol-surfacing, user-directed).** `import kotlin.clr.blockOn` / `import kotlin.clr.delay` now type-check at
+  the kotc frontend with ZERO compiler special-casing. Their signatures are CLR-free, so they split into an
+  `expect` in the jar-INCLUDED common set (`libraries/stdlib/common/src/kotlin/clr/CoroutinesH.kt`) plus two
+  actuals across the two separate K2 compilations: `build-stdlib-jar.sh` stages a throwing STUB actual
+  (`BlockOnStubActual.kt` — the frontend jar is a never-executed classpath; exact precedent = the
+  `@OptionalExpectation` JvmName/JvmInline stub actuals), while `build-stdlib-{ref,rt}.sh` compile the REAL
+  `actual` bodies in `libraries/stdlib/clr/taskinterop/kotlin/clr/Coroutines.kt` (Monitor-drain / `Task.Delay`).
+  `await` is unchanged (its signature names `Task` → facadegen-surfaced, not expect/actual). This retires the
+  planned "kotc kotlin.clr coroutine injection seam" — kotc cares about ZERO coroutine symbols. The
+  `verify-il` `cobuild` and `verify-roundtrip` suspend sections now pass the frontend and fail LATER at ilemit
+  (the blockOn suspend-lambda SM + suspend-fun cold-entry/Task-bridge are the remaining wave-2b work); their
+  XFAIL reasons were updated to the new stage.
 - **kotc: `override val`/`override var` accessors now fill the base CLASS abstract vtable slot (bundle-6 P3, general
   override-property fix).** An `override` property whose accessor overrides a base **class** (or per-entry enum)
   accessor was emitted as `override:false, virtual:true` — a fresh `NewSlot` — instead of reusing the base's virtual
