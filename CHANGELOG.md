@@ -37,6 +37,30 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   regression, and a verified no-op in the rt-stdlib build). No ilemit/stdlib changes. Control flow / try /
   suspend lambdas / generics / `Task.await` / the public Task bridge / async-resume exception propagation are
   P3-P4.
+- **Coroutine bundle-6 P3: `SuspendColdLowering` — control flow / try / generics / extensions (bir2cir).**
+  Lifts the P2 straight-line transform to the full non-lambda control-flow surface, all as plain CIR (no
+  ilemit change). Key observation: kotc already FLATTENS `while`/`for`/`do-while` into structured
+  `block`/`label`/`brIf`/`goto` BIR, so loops need no re-segmentation — only `if`/`when` survive as `cond`
+  (ternary) expressions, which the pass lowers to `label`/`brIf`/`goto` control flow (a result field, only
+  the taken branch's suspension runs) when they contain a suspension. Locals crossing a suspension (loop
+  induction/accumulator vars, the `for` `<iterator>`) become SM fields. **`throwOnFailure(result)` prologue**
+  now emitted at every resume merge point (the `kotlin.coroutines.clr.internal.throwOnFailure` rethrow that
+  surfaces a failed async resume — the CLR analog of the JVM SM's `ResultKt.throwOnFailure($result)`).
+  **try/catch** with the suspension in the try BODY works via a two-level dispatch (the outer method-top
+  dispatch enters the try at a pre-try label; the try body begins with an inner dispatch that branches to the
+  actual resume point inside the protected region — both branches stay in-region, legal IL); the SUSPENDED
+  exit is emitted INLINE (`if (result===SUSPENDED) return SUSPENDED`) so a suspension inside a `.try` returns
+  via ilemit's structured-try `leave` with no cross-region branch. **Generic suspend funs**
+  (`suspend fun <T> f(x): T`) lower to a generic SM `<file>_f$sm<T>` with T-typed fields + a generic cold
+  entry; invokeSuspend returns `object` (boxing a value T), an awaited T is read back via `unbox.any !T` — the
+  **generic-SM spike is GREEN and ilverify-clean, confirming plain CIR fully expresses generic state machines
+  with no ilemit gap.** **Extension** suspend funs come free (kotc lowers the receiver to a `__self` param).
+  New gate samples `il-coldcf` (if/when/while/for + try/catch + extension) and `il-coldgen` (the generic
+  spike), both run-correct and ilverify-clean. LEFT UNTOUCHED (P3-wave2/P4, ride the ilemit throw-stub, zero
+  regression): suspend lambdas / closures / the inline `suspendCoroutine{}` intrinsic (emits a `closureNew`),
+  member/cross-assembly suspend calls (owner'd `callStatic` / `callInstance suspendCall`), instance suspend
+  MEMBERS (`static==false`, live in `types`), suspension inside a catch/finally, a nested suspending try. The
+  pass stays gated to app builds (skipped in ref AND rt-stdlib), so stdlib ref/rt symmetry is unchanged.
 - **Gate hardening (pre-coroutine batch C1-C3): machine-readable XFAIL baselines + abort-proof harnesses.**
   *C1 (verify-il)* — the known-fail baseline moved from prose/flat name lists to `XFAIL_RUN` / `XFAIL_ILVERIFY`
   associative arrays (fail name → reason) diffed by the new shared `lib.sh xfail_diff`: exit 0 iff every actual
