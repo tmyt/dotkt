@@ -3838,7 +3838,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					val otherConcrete = tt != "object" && tt != "kotlin.Any"
 					return if (anyTok && otherConcrete) """{"k":"cast","type":${str(tt)},"e":${expr(o)}}""" else expr(o)
 				}
-				return """{"k":"bin","op":${str(op)},"l":${operand(operands[0], operands[1])},"r":${operand(operands[1], operands[0])}}"""
+				val core = """{"k":"bin","op":${str(op)},"l":${operand(operands[0], operands[1])},"r":${operand(operands[1], operands[0])}}"""
+				// Char arithmetic result typing. Kotlin: `Char.minus(Char): Int`, but `Char.plus(Int)`/`Char.minus(Int): Char`.
+				// ilemit types a `bin` result as its LEFT operand and promotes a Char (uint16) operand to Int in a mixed
+				// Char+Int op — so a Char result would render as a number and an Int result as the invisible control glyph
+				// U+001F (`'a'-'B'` printed blank instead of `31`, `'a'+1` printed `98` instead of `b`). Force the
+				// operator's DECLARED Kotlin return type (Int -> conv int, Char -> conv char) so the value carries the right
+				// type. Comparisons return Boolean, so they never enter this branch; the left operand is always the Char
+				// (Kotlin defines Char.plus/minus, not Int.plus(Char)), so `leftChar` alone selects the Char operators.
+				val leftChar = operands[0].type.classFqName?.asString() == "kotlin.Char"
+				val retFq = callee.returnType.classFqName?.asString()
+				return if (leftChar && retFq == "kotlin.Int") """{"k":"conv","to":"int","e":$core}"""
+					else if (leftChar && retFq == "kotlin.Char") """{"k":"conv","to":"char","e":$core}"""
+					else core
 			} }
 			// Same primitive gate for unary/inc/dec: `Duration.unaryMinus()` is a real member call, not a CIL neg.
 			UNARY[name]?.let { if (operands.size == 1 && primOperand(operands[0])) return """{"k":"un","op":${str(it)},"e":${expr(operands[0])}}""" }
@@ -3861,7 +3873,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// binding + bir2cir's MemberCallSubstitution. (2026-07-02, bundle 1.)
 				val argJson = operands.joinToString(",") { op ->
 					val rfq = op.type.classFqName?.asString()
-					if (rfq != null && rfq.startsWith("kotlin.collections.") && (rfq.contains("List") || rfq.contains("Set") || rfq.endsWith("Collection"))) {
+					// A Map operand prints Kotlin-style `{a=1, b=2}`, not .NET's `System.Collections.Generic.Dictionary`2[...]`
+					// -> route via clrMapToString (the map mirror of clrCollToString). Static-type routing (as the List path
+					// below): a runtime `is Map<*,*>` test is unreliable for @ClrTypeAlias-lowered BCL dictionaries. (Map is
+					// NOT a Collection, so it needs its own branch.)
+					if (rfq != null && rfq.startsWith("kotlin.collections.") && rfq.contains("Map")) {
+						val ta = (op.type as? IrSimpleType)?.arguments
+						fun arg(i: Int) = ta?.getOrNull(i)?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+						"""{"k":"callStatic","owner":"kotlin.collections.ClrMapDefaultsKt","method":"clrMapToString","args":[${expr(op)}],"typeArgs":[${str(arg(0))},${str(arg(1))}]}"""
+					} else if (rfq != null && rfq.startsWith("kotlin.collections.") && (rfq.contains("List") || rfq.contains("Set") || rfq.endsWith("Collection"))) {
 						val elem = (op.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
 						"""{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollToString","args":[${expr(op)}],"typeArgs":[${str(elem)}]}"""
 					} else expr(op)

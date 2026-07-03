@@ -57,6 +57,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     facadegen alone is inert/harmful. ②'s E2E round-trip of a nullable suspend result needs bir2cir (SuspendColdLowering `BuildBridge` doesn't carry
     the inner nullability) + ilemit (only stamps a scalar position-0 `[Nullable]`, no nested array). ③'s suspend flag on an *abstract* interface member
     needs bir2cir to mark it (interface suspend members currently emit with no Suspend marker); facadegen restores it automatically once present.
+- **kotc (bundle-6): 3 frontend/emitter fixes — 1 async-interop enabler + 2 stdlib-correctness.**
+  - **① generic .NET static factories now surface (the `Task<T>`-from-Kotlin enabler).** The `.NET`-type injector dropped
+    generic STATIC methods: the `sfun` meta parser (`ClrTypeInjection.kt`) discarded the bare type-param tokens, and the
+    companion static-method builder had no type-parameter support (`coneOf`, not the method-type-param-aware provider).
+    The `sfun` parser now KEEPS the type-param tokens (mirroring `fun`/`tlfun`), and the companion builder declares the
+    method type parameters and resolves the return/params against them (like the generic instance path). So
+    `Task.FromResult(42)` binds as `FromResult<Int>(42): Task<Int>` and emits a `clrGenericStatic` node (bir2cir/ilemit
+    already lower it — verified E2E to `42` with a hand-authored generic `sfun` meta). New il-gate case `il-taskgen`
+    (XFAIL until facadegen surfaces the generic `sfun`: it still skips `m.IsGenericMethod` at `facadegen/Program.cs:557`).
+  - **② `Map`/`MutableMap` operands of `println` print Kotlin-style `{a=1, b=2}`, not the raw .NET Dictionary type name.**
+    The println collection-stringifier routing (`BirEmitter.kt`) covered only `List`/`Set`/`Collection`; `Map` (not a
+    `Collection`) fell through to the BCL `Dictionary`2[…]` ToString. Added a static-type-level `Map` branch routing to the
+    stdlib `ClrMapDefaultsKt.clrMapToString` (mirroring the `clrCollToString` List path); routing is by static type because a
+    runtime `is Map<*,*>` is unreliable for `@ClrTypeAlias`-lowered BCL dictionaries. New il-gate case `il-maptostr`.
+    (Nested-collection ELEMENTS still print raw names — that needs runtime dispatch in the stdlib stringifier + the ilemit
+    isinst-vs-@ClrTypeAlias fix, reported. Single-pair `mapOf(pair)` yields an empty map — an orthogonal stdlib actual bug, reported.)
+  - **③ `Char.minus(Char)` returns `Int`, and `Char.plus/minus(Int)` return `Char`.** The primitive `bin` node is untyped;
+    ilemit types the result as the left operand and promotes a `Char` (uint16) operand to `Int` in a mixed `Char+Int` op —
+    so `'a'-'B'` printed the invisible control glyph U+001F instead of `31`, and `'a'+1` printed `98` instead of `b`. kotc
+    now wraps the Char-arithmetic `bin` in a conv to the operator's DECLARED Kotlin return type (`Int → conv int`,
+    `Char → conv char`); comparisons (Boolean) are excluded. New il-gate case `il-charminus`.
 - **Stdlib correctness (bundle-6 ④): number-conversion parsing fixed to match JVM (culture + exception type).**
   - `String.toInt()/toLong()/toByte()/toShort()` now delegate to the base-10 radix implementation instead of the
     culture-sensitive `System.<T>.Parse`. They are strict base-10 (no whitespace/group-separator leniency) and, crucially,
