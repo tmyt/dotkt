@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir: `sfunc:` suspend-fn-type token + `suspendLambdaNew` → SuspendLambda state-machine builder (bundle-6
+  P3 wave-2b STEP 1, DORMANT consumer).** Lands the bir2cir *consumer* BEFORE kotc emits either (a deliberate
+  dormant-first ordering — an unrecognized `sfunc:` prefix or unknown node would otherwise break ilemit), so both
+  changes are a verified no-op against current input. **Part A:** `sfunc:<ret>:<args>` (the suspend function type,
+  mirroring `func:` receiver-first) is folded to `func:` at the two type-token funnels (`LowerTypeString`,
+  `NormalizeType`) + `ParamKey`/`StatusFor`/`PrefixLength`, so the delegate-shape lowering treats it exactly like
+  `func:` and ilemit NEVER receives `sfunc:` (its suspend-ness is consumed by Part B, not the delegate path).
+  **Part B:** the new `suspendLambdaNew` BIR node (the cold suspend-lambda value) is lowered by a new
+  `SuspendLambdaLowering` pass (app-build only, after the cold lowering, before type lowering) to
+  `new <mangled>_lambdaN$sm(captures…, null)` + a synthesized `<mangled>_lambdaN$sm : SuspendLambda` state machine
+  built from `SuspendColdLowering`'s FunGen (the shared invokeSuspend/label/spill/field machinery). The SM carries
+  the create(completion)/create(value, completion) override protocol (arities 0/1; ≥2 refused) matching
+  `BaseContinuationImpl.create`'s erased CLR ABI so ilemit's clrOverride binds the base slot. Fixture-tested
+  (hand-crafted arity-0 + arity-1 lambdas): bir2cir → ilemit → ilverify clean.
+  `toolchain/bir2cir/{Program.cs,SuspendColdLowering.cs,SuspendLambdaLowering.cs}`.
 - **kotc: `override val`/`override var` accessors now fill the base CLASS abstract vtable slot (bundle-6 P3, general
   override-property fix).** An `override` property whose accessor overrides a base **class** (or per-entry enum)
   accessor was emitted as `override:false, virtual:true` — a fresh `NewSlot` — instead of reusing the base's virtual
