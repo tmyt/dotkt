@@ -5,6 +5,34 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 ① BUG 1): a cross-module suspend consume threw `InvalidCastException Task<Int> -> Int`.**
+  `blockOn { lib.crossFn() }` over a suspend fun in ANOTHER DotKt assembly resolved `crossFn` to its public `Task<T>` BRIDGE (the
+  exported ABI) and cast the `Task<Int>` to `Int`. kotc emits a suspend call to a REFERENCED assembly in the `clr*` vocabulary —
+  `clrStatic`/`clrInstance` (and `clrGenericStatic`/`clrGenericInstance` for a generic callee) carrying `suspendCall:true` — NOT
+  `callStatic`/`callInstance`, so `SuspendColdLowering.Rewrite` never recognized it as a cold suspension point. It now routes every
+  `clr*` `suspendCall` (except the `await` marker) through `EmitSuspensionPoint`; `ColdCall` retargets the referenced-owner call to the
+  callee's `<name>$dotkt_suspend` cold entry (+ the completion arg: an appended `clrg:kotlin.coroutines.Continuation[object]` argType for
+  `clrStatic`/`clrInstance`, a `"generic"` param-shape for the generic forms), exactly like a same-assembly suspend call. Consuming a DotKt
+  suspend library from Kotlin now works; `verify-roundtrip`'s `roundtrip` + `roundtrip-generic` sections flip to GREEN (RT_XFAIL pruned).
+- **bir2cir (bundle-6 ① BUG 4): a genuinely-suspending `suspend fun main` NRE'd / lost its result.**
+  The synthesized plain `main` drove the cold body with a NULL completion, so when `main` actually suspended (e.g. awaits an incomplete
+  `Task`) the threadpool resume dereferenced null. `DrainMain` now drives the cold entry under a REAL `RootContinuation<Unit>` over a
+  `TaskCompletionSource<Unit>` and, only when the cold call returns `COROUTINE_SUSPENDED`, BLOCKS on `tcs.Task.Wait()` until the resume
+  completes it — a fully-synchronous main still returns inline (unchanged; a raw synchronous throw still propagates). New gate sample
+  `il-comaindrain` (`suspend fun main` awaiting `Task.Delay` -> `start`,`42`).
+- **bir2cir (bundle-6 ② BUG 2): the Task<R> bridge now emits `retNullableFlags` — a `suspend fun f(): String?` round-trips the inner `?`.**
+  `BuildBridge` dropped the inner nullability: a `suspend fun f(): String?`'s bridge return `Task<String?>` emitted `Task<String>`. It now
+  emits the flattened pre-order NullableAttribute byte walk (`{1,2}` = Task outer non-null, `String` inner nullable) as CIR `retNullableFlags`
+  when the suspend result is a nullable REFERENCE type (value types / `Unit` skip — no NRT byte). ilemit (already landed) stamps it verbatim
+  as the nested `[Nullable(byte[])]`, so facadegen's read side restores the `?`. This completes the E2E the ilemit-BUG-2 entry below staged.
+- **bir2cir (bundle-6 ③ BUG 3): an abstract-class suspend member now round-trips its full vtable (bridge signature + suspend flag).**
+  An `abstract suspend fun` (and its concrete overrides) previously got ONLY the object-returning `$dotkt_suspend` cold entry — no `Task<T>`
+  bridge, so facadegen saw nothing to restore. `BuildBridge` now also emits the public `Task<T>` bridge for abstract/open/override suspend
+  members (in APP builds only — the rt-stdlib is unaffected), with its virtuality in LOCKSTEP with the cold entry: an abstract member gets an
+  abstract bridge SIGNATURE carrying `[KotlinFunction(Suspend)]`; concrete overrides fill both the bridge and cold-entry slots (`override`).
+  New gate sample `il-coldabstract` (`abstract class Base { abstract suspend fun poll() }` + override, virtual-dispatched -> `42`). The
+  INTERFACE case stays blocked on a kotc gap (an interface member is emitted without the `suspend`/`abstract`/`override` flags, so bir2cir
+  cannot recognize it — the fix is kotc-side, `BirEmitter.kt` ".NET-member generic branch missing suspend tag").
 - **ilemit (bundle-6 BUG Y): external constructed-generic method resolution now consumes the cold-call `sig` — unblocks `yieldAll`.**
   `sequence { yield("a"); yieldAll(listOf("b","c")) }.toList()` BadImageFormatException'd: `SequenceScope<T>` carries three same-name,
   same-arity `yieldAll$dotkt_suspend` overloads (over `Iterator<T>` / `IEnumerable<T>` / `Sequence<T>`), and `ResolveMethod`'s

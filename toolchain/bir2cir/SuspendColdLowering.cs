@@ -714,9 +714,14 @@ static class SuspendColdLowering
         {
             if (_memberAbstract)
             {
-                // An abstract suspend member -> just the abstract cold-entry DECLARATION (no SM, no bridge, no
-                // drain). Concrete overrides fill the slot; a Kotlin virtual `scope.yield(x)` dispatches through it.
+                // An abstract suspend member -> the abstract cold-entry DECLARATION (no SM, no drain). Concrete
+                // overrides fill the slot; a Kotlin virtual `scope.yield(x)` dispatches through it.
                 newMethods.Add(ColdEntryAbstract());
+                // BUG 3 (interface/abstract suspend round-trip): also emit the ABSTRACT Task<T> bridge SIGNATURE so the
+                // member carries the [KotlinFunction(Suspend)] trigger (via suspendBridge) — else facadegen sees only the
+                // object-returning `$dotkt_suspend` cold entry and cannot restore `suspend fun` on a re-consuming Kotlin.
+                // Concrete overrides emit the matching override bridge (below), filling this abstract slot.
+                if (WantsBridge) newMethods.Add(BuildBridge());
                 return;
             }
 
@@ -786,10 +791,11 @@ static class SuspendColdLowering
         //    primitives being DEFINED here, not external .NET refs — a bridge would `clrNew` a local type as if it
         //    were referenced (NotSupported). The stdlib's own suspend members (yield/yieldAll/callRecursive) are
         //    internal machinery, not C#-facing Task APIs; the bridge is an APP-build concern (consumers of the dll).
-        //  - a virtual/abstract/override member: only the cold entry (+ SM) is wanted (a public Task bridge in
-        //    vtable lockstep with the override is a separate, unneeded feature v1).
-        bool WantsBridge => !_isLambda && _name != "main" && _tcsBcl != null && _taskBcl != null
-            && !_baseIsLocal && !(_memberAbstract || _memberOverride || _memberVirtual);
+        // A virtual/abstract/override member DOES get a bridge (BUG 3): the bridge's virtuality rides in lockstep with
+        // the cold entry (abstract -> an abstract signature; open -> virtual; override -> override), so an interface
+        // `suspend fun` round-trips (its [KotlinFunction(Suspend)] trigger lives on the bridge) and its concrete
+        // overrides fill both the bridge and the cold-entry slots.
+        bool WantsBridge => !_isLambda && _name != "main" && _tcsBcl != null && _taskBcl != null && !_baseIsLocal;
 
         static int MaxLabelId(JsonNode node)
         {
@@ -1165,6 +1171,17 @@ static class SuspendColdLowering
                 if ((k == "clrStatic" || k == "clrGenericStatic") && Bool(o["suspendCall"])
                     && Str(o["type"]) == AwaitMarkerOwner && Str(o["method"]) == "await")
                     return EmitAwaitPoint(o, outp);
+                // BUG 1 (cross-module suspend consume): kotc emits a suspend call to a CROSS-ASSEMBLY (referenced)
+                // suspend fun in the `clr*` vocabulary — `clrStatic`/`clrInstance` on the referenced file-class/owner,
+                // `clrGenericStatic`/`clrGenericInstance` for a generic one — NOT `callStatic`/`callInstance`. Such a
+                // call still carries `suspendCall:true`; without this it fell through to a plain BCL call resolving to
+                // the callee's public Task<T> BRIDGE, so `blockOn { lib.crossFn() }` read a Task<Int> where an Int was
+                // expected (InvalidCastException Task`1[Int32] -> Int32). Route it to the cold entry
+                // `crossFn$dotkt_suspend` on the SAME referenced owner (the ColdCall clr-form path), exactly like a
+                // same-assembly suspend call. (The await marker above is caught first, so it is excluded here.)
+                if ((k == "clrStatic" || k == "clrInstance" || k == "clrGenericStatic" || k == "clrGenericInstance")
+                    && Bool(o["suspendCall"]))
+                    return EmitSuspensionPoint(o, outp);
                 if (k == "cond" && HasSuspension(o))
                     return EmitCondValue(o, outp);
                 // BUG 2 (left-to-right evaluation order across a suspension): when an ordered-eval node contains a
@@ -1340,6 +1357,10 @@ static class SuspendColdLowering
         {
             var retTok = NonEmpty(Str(callNode["retType"]))
                 ?? NonEmpty(Str(callNode["dynRet"]))
+                // A CROSS-ASSEMBLY suspend call arrives in the `clr*` vocabulary, whose declared return type rides `ret`
+                // (not `retType`/`sig`) and is absent from _calleeRet (a same-assembly-only map). Read it so the awaited
+                // value gets its real type (+ unbox/castclass) instead of falling to kotlin.Any.
+                ?? NonEmpty(Str(callNode["ret"]))
                 ?? (_calleeRet.TryGetValue(Str(callNode["method"]) ?? "", out var d) ? d : null)
                 ?? NonEmpty(Str(callNode["sig"]))
                 ?? "kotlin.Any";
@@ -1654,15 +1675,23 @@ static class SuspendColdLowering
             (!_fields.Contains("__self") && _fields.Contains("__outer"))
                 ? FieldOf("__outer", FieldType("__outer")) : null;
 
-        // The cold call. Two shapes:
-        //   callStatic  -> <method>$dotkt_suspend(<args>, cast(this -> Continuation<Any?>))   (owner preserved)
-        //   callInstance-> recv.<method>$dotkt_suspend(<args>, cast(this -> Continuation<Any?>))
-        // `this` (the caller SM) is the callee's completion. typeArgs are preserved. Args/receiver are rewritten
-        // (spilling nested suspensions, redirecting locals/`this`).
+        // The cold call. Shapes (same-assembly callStatic/callInstance, and — BUG 1 — the CROSS-ASSEMBLY
+        // clr forms kotc emits for a referenced suspend callee):
+        //   callStatic         -> <method>$dotkt_suspend(<args>, cast(this))                     (owner preserved)
+        //   callInstance       -> recv.<method>$dotkt_suspend(<args>, cast(this))
+        //   clrStatic          -> LibKt.<method>$dotkt_suspend(<args>, cast(this))               (referenced owner)
+        //   clrInstance        -> recv.<method>$dotkt_suspend(<args>, cast(this))                (referenced owner)
+        //   clrGenericStatic   -> LibKt.<method>$dotkt_suspend<T>(<args>, cast(this))
+        //   clrGenericInstance -> recv.<method>$dotkt_suspend<T>(<args>, cast(this))
+        // `this` (the caller SM, a Continuation) is the callee's completion. typeArgs are preserved. Args/receiver
+        // are rewritten (spilling nested suspensions, redirecting locals/`this`).
         JsonObject ColdCall(JsonObject callNode, List<JsonNode> outp)
         {
+            var k = Str(callNode["k"]);
             var method = Str(callNode["method"]) + "$dotkt_suspend";
-            var isInstance = Str(callNode["k"]) == "callInstance";
+            var isInstance = k is "callInstance" or "clrInstance" or "clrGenericInstance";
+            var isClr = k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance";
+            var isGeneric = k is "clrGenericStatic" or "clrGenericInstance";
             // Evaluate recv (instance) then args LEFT-TO-RIGHT, spilling any impure operand that precedes a later
             // suspending operand (BUG 2 — a nested suspension inside a suspend call's own argument list).
             var kids = new List<JsonNode>();
@@ -1673,12 +1702,48 @@ static class SuspendColdLowering
             var recvRw = isInstance ? rw[ri++] : null;
             var args = new JsonArray();
             for (; ri < rw.Count; ri++) args.Add(rw[ri]);
-            args.Add(new JsonObject
+            var completion = new JsonObject
             {
                 ["k"] = "cast",
                 ["type"] = ContinuationOfAny,
                 ["e"] = new JsonObject { ["k"] = "this" },
-            });
+            };
+            args.Add(completion);
+
+            if (isClr)
+            {
+                // A referenced suspend callee: keep the `clr*` node kind + referenced `type` owner, retarget the method
+                // to the cold entry, append the completion. ilemit's EmitClrCall/ResolveGenericMethod resolves the cold
+                // entry on the referenced assembly by name (uniquely named) + arg/shape — no fileClass sig lookup.
+                var clr = new JsonObject
+                {
+                    ["k"] = k,
+                    ["type"] = callNode["type"]?.DeepClone(),
+                    ["method"] = method,
+                    ["args"] = args,
+                    ["ret"] = "kotlin.Any",
+                };
+                if (isInstance) clr["recv"] = recvRw;
+                if (isGeneric)
+                {
+                    // clrGeneric* resolves by (typeArgs, param SHAPES). Preserve typeArgs; append the completion's shape
+                    // ("generic" — Continuation<Any> is a constructed generic type) so the cold entry's trailing
+                    // completion param is matched instead of required to be optional.
+                    if (callNode["typeArgs"] is JsonArray gta) clr["typeArgs"] = gta.DeepClone();
+                    var shapes = (callNode["shapes"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
+                    shapes.Add("generic");
+                    clr["shapes"] = shapes;
+                }
+                else
+                {
+                    // clrStatic/clrInstance resolves by argTypes. Append the completion's type (clrg: so ilemit's ClrRef
+                    // constructs Continuation<object>, the exact cold-entry `completion` param type after lowering).
+                    var argTypes = (callNode["argTypes"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
+                    argTypes.Add("clrg:" + ContinuationOfAny);
+                    clr["argTypes"] = argTypes;
+                }
+                return clr;
+            }
 
             JsonObject call;
             if (isInstance)
@@ -2072,15 +2137,99 @@ static class SuspendColdLowering
             return method;
         }
 
-        // A synthesized PLAIN `fun main(...)` (no `suspend`) that drains the cold body. v1: pass a null
-        // completion — a fully-synchronous body completes inline (never returns SUSPENDED); the real
-        // TCS/blockOn drain that supports genuine async resumption lands in P4.
+        // A synthesized PLAIN `fun main(...)` (no `suspend`) that drains the cold body.
+        //
+        // BUG 4 (main-drain): drive the cold body under a REAL root continuation (a RootContinuation<Unit> over a
+        // TaskCompletionSource<Unit>) — NOT a null completion. A fully-synchronous suspend main returns a non-SUSPENDED
+        // value and needs no wait (the root is unused, byte-for-byte the old behaviour, and a raw synchronous throw
+        // still propagates because there is no try/catch on the sync path). A GENUINELY-suspending main (e.g. it awaits
+        // an incomplete Task) returns COROUTINE_SUSPENDED; the eventual resume lands in RootContinuation.resumeWith on a
+        // threadpool thread and completes the TCS, so main must BLOCK on `tcs.Task` until then (`Task.Wait()`) — with a
+        // null completion the resume dereferenced null (NRE / lost result). When the Task-family aliases are absent (a
+        // stdlib predating taskinterop) fall back to the old null-completion drive (correct for the synchronous case).
         JsonObject DrainMain()
         {
             var ps = new JsonArray();
-            var fwd = new JsonArray();
-            foreach (var p in _params) { ps.Add(p.DeepClone()); fwd.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) }); }
-            fwd.Add(NullConst(ContinuationOfAny));
+            foreach (var p in _params) ps.Add(p.DeepClone());
+
+            JsonArray body;
+            if (_tcsBcl == null || _taskBcl == null)
+            {
+                // No Task aliases: the legacy null-completion drive (a synchronous main completes inline).
+                var fwd = new JsonArray();
+                foreach (var p in _params) fwd.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
+                fwd.Add(NullConst(ContinuationOfAny));
+                body = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["k"] = "exprStmt",
+                        ["expr"] = new JsonObject
+                        {
+                            ["k"] = "callStatic", ["owner"] = null, ["method"] = _coldName,
+                            ["args"] = fwd, ["ret"] = "kotlin.Any",
+                        },
+                    },
+                };
+            }
+            else
+            {
+                // main returns Unit, so the root sink is typed over Unit.
+                var tcsType = "clrg:" + _tcsBcl + "[kotlin.Unit]";
+                var taskType = "clrg:" + _taskBcl + "[kotlin.Unit]";
+                var rootType = "clrg:" + RootContinuationFqn + "[kotlin.Unit]";
+
+                var coldArgs = new JsonArray();
+                foreach (var p in _params) coldArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
+                coldArgs.Add(new JsonObject { ["k"] = "cast", ["type"] = ContinuationOfAny, ["e"] = Local("__root") });
+
+                body = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["k"] = "var", ["name"] = "__tcs", ["type"] = tcsType,
+                        ["init"] = new JsonObject { ["k"] = "clrNew", ["type"] = tcsType, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray() },
+                    },
+                    new JsonObject
+                    {
+                        ["k"] = "var", ["name"] = "__root", ["type"] = rootType,
+                        ["init"] = new JsonObject
+                        {
+                            ["k"] = "clrNew", ["type"] = rootType,
+                            ["argTypes"] = new JsonArray { tcsType }, ["args"] = new JsonArray { Local("__tcs") },
+                        },
+                    },
+                    // r = main$dotkt_suspend(args..., (Continuation)root)   — a synchronous throw propagates RAW.
+                    new JsonObject
+                    {
+                        ["k"] = "var", ["name"] = "__r", ["type"] = "kotlin.Any",
+                        ["init"] = new JsonObject
+                        {
+                            ["k"] = "callStatic", ["owner"] = null, ["method"] = _coldName,
+                            ["args"] = coldArgs, ["ret"] = "kotlin.Any",
+                        },
+                    },
+                };
+                // if (r !== COROUTINE_SUSPENDED) return;   else  tcs.Task.Wait();   (block for the async resume)
+                var skipL = NextLabel();
+                body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["l"] = Local("__r"), ["r"] = Suspended() }, false, skipL));
+                body.Add(new JsonObject
+                {
+                    ["k"] = "exprStmt",
+                    ["expr"] = new JsonObject
+                    {
+                        ["k"] = "clrInstance", ["type"] = taskType, ["method"] = "Wait",
+                        ["recv"] = new JsonObject
+                        {
+                            ["k"] = "clrPropGet", ["type"] = tcsType, ["name"] = "Task", ["static"] = false,
+                            ["recv"] = Local("__tcs"), ["retType"] = taskType,
+                        },
+                        ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = "void",
+                    },
+                });
+                body.Add(Label(skipL));
+            }
+
             return new JsonObject
             {
                 ["name"] = "main",
@@ -2092,21 +2241,7 @@ static class SuspendColdLowering
                 ["vis"] = "public",
                 ["params"] = ps,
                 ["ret"] = "kotlin.Unit",
-                ["body"] = new JsonArray
-                {
-                    new JsonObject
-                    {
-                        ["k"] = "exprStmt",
-                        ["expr"] = new JsonObject
-                        {
-                            ["k"] = "callStatic",
-                            ["owner"] = null,
-                            ["method"] = _coldName,
-                            ["args"] = fwd,
-                            ["ret"] = "kotlin.Any",
-                        },
-                    },
-                },
+                ["body"] = body,
                 ["attrs"] = new JsonArray(),
             };
         }
@@ -2132,8 +2267,41 @@ static class SuspendColdLowering
         JsonObject BuildBridge()
         {
             var rKotlin = _resultType is "void" or "kotlin.Unit" ? "kotlin.Unit" : _resultType;
-            var tcsType = "clrg:" + _tcsBcl + "[" + rKotlin + "]";
             var taskType = "clrg:" + _taskBcl + "[" + rKotlin + "]";
+
+            // BUG 3: an ABSTRACT interface/member suspend fun -> an abstract Task<T> bridge SIGNATURE (no body, no
+            // TCS drive). It carries the [KotlinFunction(Suspend)] trigger for round-trip; concrete overrides supply the
+            // real driving body (the non-abstract path below, emitted override:true).
+            if (_memberAbstract)
+            {
+                var aps = new JsonArray();
+                foreach (var p in _params) aps.Add(p.DeepClone());
+                var am = new JsonObject
+                {
+                    ["name"] = _name,
+                    ["static"] = false,
+                    ["override"] = _memberOverride,
+                    ["virtual"] = true,
+                    ["abstract"] = true,
+                    ["objectOverride"] = false,
+                    ["suspendBridge"] = true,
+                    ["vis"] = "public",
+                    ["params"] = aps,
+                    ["ret"] = taskType,
+                    ["body"] = new JsonArray(),
+                    ["attrs"] = new JsonArray(),
+                };
+                if (_typeParams.Count > 0)
+                {
+                    var tp = new JsonArray();
+                    foreach (var n in _typeParams) tp.Add(n);
+                    am["typeParams"] = tp;
+                }
+                if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
+                return am;
+            }
+
+            var tcsType = "clrg:" + _tcsBcl + "[" + rKotlin + "]";
             var rootType = "clrg:" + RootContinuationFqn + "[" + rKotlin + "]";
 
             var body = new JsonArray
@@ -2197,8 +2365,11 @@ static class SuspendColdLowering
             {
                 ["name"] = _name,
                 ["static"] = !_isMember,
-                ["override"] = false,
-                ["virtual"] = false,
+                // BUG 3: the bridge's virtuality rides in lockstep with the cold entry — an `override` member's bridge
+                // fills the base (interface/open) bridge slot; an `open` member's bridge opens a new virtual slot; a
+                // plain (final) member's bridge stays non-virtual (unchanged from the original single-shape path).
+                ["override"] = _memberOverride,
+                ["virtual"] = _memberVirtual,
                 ["abstract"] = false,
                 ["objectOverride"] = false,
                 ["suspendBridge"] = true,
@@ -2214,7 +2385,66 @@ static class SuspendColdLowering
                 foreach (var n in _typeParams) tp.Add(n);
                 method["typeParams"] = tp;
             }
+            // BUG 2 (nested return nullability): a `suspend fun f(): String?`'s bridge return `Task<string?>` needs the
+            // inner `?` — the scalar retNullable can't express a nullability that rides an INNER type arg. Emit the
+            // flattened NullableAttribute byte walk (ilemit stamps it verbatim on the return; facadegen reads it back).
+            if (TaskReturnNullableFlags() is JsonArray rnf) method["retNullableFlags"] = rnf;
             return method;
+        }
+
+        // Value-type Kotlin FQNs — NRT [Nullable] never annotates these (a nullable value type is `Nullable<T>`, a
+        // DISTINCT type, not an attribute), so they contribute NO byte to the pre-order NullableAttribute walk.
+        static readonly HashSet<string> ValueTypeFqns = new(StringComparer.Ordinal)
+        {
+            "kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte", "kotlin.Char", "kotlin.Boolean",
+            "kotlin.Double", "kotlin.Float", "kotlin.UInt", "kotlin.ULong", "kotlin.UShort", "kotlin.UByte",
+        };
+
+        // BUG 2: the pre-order NullableAttribute byte walk for the bridge return `Task<R>`, or null when it carries no
+        // nullable position (then the type-level [NullableContext(1)] non-null default suffices). Reference nodes get 1
+        // (non-null) or 2 (nullable); value-type / Unit nodes are skipped (no byte). kotc conveys only R's OUTER
+        // nullability (`retNullable` on the suspend method), so inner reference args stay non-null (1) — the common
+        // `suspend fun f(): String?` -> {1,2}; `List<String>?` -> {1,2,1}.
+        JsonArray TaskReturnNullableFlags()
+        {
+            if (!Bool(_m?["retNullable"])) return null;   // no outer `?` -> nothing nullable to encode
+            var rKotlin = _resultType is "void" or "kotlin.Unit" ? "kotlin.Unit" : _resultType;
+            var flags = new List<int> { 1 };             // the Task<...> outer node is a non-null reference
+            if (!WalkNullable(rKotlin, outerNullable: true, flags)) return null;   // R was a value type -> Nullable<T>
+            var arr = new JsonArray();
+            foreach (var b in flags) arr.Add(b);
+            return arr;
+        }
+
+        // Append the pre-order NRT bytes for `token` (a Kotlin type FQN, possibly `Owner[arg,...]`). Returns whether any
+        // nullable (2) byte was emitted. `outerNullable` marks this node's own `?`; inner args are non-null.
+        static bool WalkNullable(string token, bool outerNullable, List<int> flags)
+        {
+            if (token == null) return false;
+            var br = token.IndexOf('[');
+            var open = br < 0 ? token : token.Substring(0, br);
+            if (ValueTypeFqns.Contains(open) || open is "kotlin.Unit" or "void") return false;   // value/void -> no byte
+            flags.Add(outerNullable ? 2 : 1);
+            var any = outerNullable;
+            if (br >= 0)
+            {
+                var inner = token.Substring(br + 1, token.Length - br - 2);
+                foreach (var arg in SplitTopLevelArgs(inner))
+                    any |= WalkNullable(arg.Trim(), outerNullable: false, flags);
+            }
+            return any;
+        }
+
+        static IEnumerable<string> SplitTopLevelArgs(string s)
+        {
+            var depth = 0; var start = 0;
+            for (var i = 0; i < s.Length; i++)
+            {
+                if (s[i] == '[') depth++;
+                else if (s[i] == ']') depth--;
+                else if (s[i] == ',' && depth == 0) { yield return s.Substring(start, i - start); start = i + 1; }
+            }
+            if (s.Length > start) yield return s.Substring(start);
         }
 
         // The bridge's cold-entry call: forward the bridge params + the RootContinuation (cast to the erased
