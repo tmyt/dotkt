@@ -1040,6 +1040,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (extRecv != null) selfSubst.remove(extRecv)
 		val ret = if (isGetter) birType(acc.returnType) else "void"
 		val clrIface = clrIfaceMemberName(acc) != null
+		// An `override val/var` whose accessor overrides a base CLASS/ENUM_CLASS accessor must REUSE that base virtual
+		// slot (`override`, not a fresh NewSlot) — EXACTLY like an overriding method (see method()'s `isOverride`).
+		// Otherwise a concrete subclass leaves the base's abstract accessor slot unfilled -> TypeLoadException at load
+		// ("get_X ... does not have an implementation"). This mirrors method() so property accessors and methods agree.
+		// Interface members bind by name/signature (ilemit's DefineMethodOverride pass) so they don't need this flag;
+		// use the accessor's OWN overriddenSymbols (a setter that ADDS to a base `val` has none -> stays a NewSlot).
+		val isOverrideClass = acc.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS } }
 		val virtual = clrIface || acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty()
 		val vis = if (clrIface) "public" else visOf(acc)
 		val isAbstract = acc.modality == Modality.ABSTRACT && acc.body == null
@@ -1052,7 +1059,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// The REF build is COMPILE-without-SUBSTITUTE (the rt/app build sets BOTH env flags), so gate on exactly that.
 		val propAnns = (acc.correspondingPropertySymbol?.owner ?: acc).annotations
 		val accAttrs = if (stdlibCompile && !stdlibSubstitute) ""","attrs":[${attrsJson(propAnns)}]""" else ""
-		return """{"name":${str(mname)},"static":false,"override":$clrIface,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
+		return """{"name":${str(mname)},"static":false,"override":${clrIface || isOverrideClass},"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 	}
 
 	/** A user `annotation class Ann(val v: Int, …)` -> a `class Ann : System.Attribute` (ctor params -> public fields). */
