@@ -605,7 +605,13 @@ static class FacadeGen
                     if (!m.IsSpecialName || !OPERATOR_NAMES.TryGetValue(m.Name, out var kop)) continue;
                     var unary = UNARY_OPERATORS.Contains(kop);
                     var ps = m.GetParameters();
-                    if (ps.Length != (unary ? 1 : 2) || ps[0].ParameterType.FullName != t.FullName) continue;
+                    // The LEFT operand must be the declaring type itself (so the operator becomes a member on `t`). Bug ⑤:
+                    // an OPEN generic type (`Vector<T>`) has a non-null definition FullName, but the operand `Vector<T>`
+                    // (referencing the type's own param) has a NULL FullName -> the old `FullName != FullName` guard was
+                    // ALWAYS true and dropped every generic-type operator. Compare the operand's OPEN definition against `t`.
+                    var p0 = ps.Length > 0 ? ps[0].ParameterType : null;
+                    var p0def = p0 != null && p0.IsGenericType ? p0.GetGenericTypeDefinition() : p0;
+                    if (ps.Length != (unary ? 1 : 2) || p0def == null || (p0def != t && p0def.FullName != t.FullName)) continue;
                     if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
                     var vps = unary ? Array.Empty<ParameterInfo>() : ps.Skip(1).ToArray();
                     if (!seen.Add("op:" + kop + "(" + Sig(vps, t) + ")")) continue;
