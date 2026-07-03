@@ -34,6 +34,34 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   regression). BUG-2 is latent — the `dyn:true` node is emitted only from a stdlib `@ClrIntrinsicAsDynamic` binding
   forwarding a generic-parameter arg — so the fix is a consistency hardening with the sibling paths; trigger conditions
   documented. `verify-il` GREEN, `verify-ktproj` 9/9.
+- **bir2cir (bundle-6 ④ stdlib-correctness routing): six coroutine-unrelated correctness wins across comparison,
+  exceptions, mutable collections, and type-tests.** All six consume the ref.dll @Clr metadata in bir2cir (no
+  kotc/ilemit changes), routing to the stdlib helpers a prior stdlib agent added.
+  1. **`String.compareTo` is now ORDINAL, not culture-sensitive.** The stdlib rule-3 ordinal body (builtins/String.kt)
+     was being (a) stripped by `MemberStrip` — an alias member that overrides `Comparable.compareTo`@ClrIntrinsic was
+     treated as a bound stub — and (b) its call renamed `compareTo`→`CompareTo` by `DeclarationRename`, resolving to the
+     culture-sensitive `System.String.CompareTo`. `MemberStrip` now exempts genuine rule-3 members (concrete +
+     intrinsic-less in the ref.dll) from the override-drop so the ordinal body is hoisted into `<>dotkt_ClrH_kotlin_String`;
+     `DeclarationRename` skips the rename for a rule-3 member on a @ClrTypeAlias CLASS owner so the call routes to that
+     helper. `"a".compareTo("B")` → `31` (JVM ordinal), not `-1`. (Polymorphic `sorted()` through `Comparable`/`IComparable`
+     still uses the BCL slot — a separate dual-representation follow-up.)
+  2. **`printStackTrace()` on any Throwable subclass receiver works (no NRE).** `IsRule3Member` keyed only on the static
+     owner (`kotlin.Exception`), missing the body that lives on `kotlin.Throwable`; `MemberCallSubstitution` Rule 3 now
+     walks the `overrides` marker to the CLR-bound ancestor that declares the concrete rule-3 body and routes to its helper.
+  3. **`MutableList.set`/`removeAt` return the previous/removed element (no InvalidProgramException).** They bound to the
+     VOID BCL slots (`IList.set_Item`/`RemoveAt`); a consumed return underflowed the stack. Routed pre-intrinsic to
+     `clrListSet`/`clrListRemoveAt` (which read the old element, mutate, and return it), like `MutableCollection.add`.
+  4. **`HashSet`/`HashMap`(initialCapacity, loadFactor) construct.** The JVM loadFactor ctor has no `(int, float)` BCL
+     equivalent, so the call mis-resolved to the `IEnumerable` overload and threw; the trailing loadFactor arg is now
+     dropped in `TransformNew` → the capacity-only `(int)` ctor.
+  5. **`catch (e: IndexOutOfBoundsException)` catches both .NET out-of-range types.** A Kotlin exception @ClrTypeAlias-es
+     to ONE .NET type, but `List[i]` throws `ArgumentOutOfRangeException` while an array throws `IndexOutOfRangeException`.
+     A new `CatchClauseWidening` pass expands the single clause into two covering both.
+  6. **`x is Collection<*>` / `is Map<*,*>` holds for value-type collections.** The reified generic isinst
+     (`IReadOnlyCollection<object>` / `IDictionary<object,object>`) is FALSE for a `List<int>` (no .NET value-type
+     covariance). A new `StarProjectionIsTest` pass lowers a star-projected @ClrTypeAlias collection/map is-test to the
+     NON-generic BCL interface (`ICollection`/`IList`/`IEnumerable`/`IDictionary`). New cases:
+     `il-cmpord`/`il-mutset`/`il-hashset2`/`il-iscoll`/`il-excmap`.
 - **kotc (CRITICAL: ref/rt stdlib build un-broken): a `mapOf(this[0])` NPE was silently dropping ~120 stdlib type-defs.**
   `make stdlib-ref` was crashing downstream with `NotSupportedException: cannot resolve .NET type kotlin.sequences.Sequence`
   because kotc was emitting only **460** type-defs (vs the cached **777**): `kotlin.sequences.Sequence`, the 8 primitive

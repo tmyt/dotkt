@@ -187,6 +187,14 @@ sealed class Pipeline
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
                 substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns);
             if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted);
+            // CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (IndexOutOfBoundsException)` @ClrTypeAlias-es to a
+            // SINGLE .NET type, but .NET index ops throw TWO distinct ones (List.get_Item -> ArgumentOutOfRangeException,
+            // array -> IndexOutOfRangeException). Expand each such clause into two clauses covering BOTH so the Kotlin
+            // "one catch handles any out-of-range access" semantics hold. Non-ref only (the ref surface stays pure Kotlin).
+            if (!_options.RefBuild) CatchClauseWidening.Apply(substituted);
+            // STAR-PROJECTION IS-TEST (bundle-6 ④): `is Collection<*>`/`is Map<*,*>` -> the non-generic BCL interface,
+            // so the check holds for value-type collections (reified generic isinst has no value-type covariance).
+            if (!_options.RefBuild) StarProjectionIsTest.Apply(substituted);
             staged.Add((substituted, outputName));
         }
 
@@ -3427,6 +3435,85 @@ static class NullableGenericReturnErasure
 //      to `object` (it must still hold the null); a `nullable:V`/reference var keeps its type and the init is
 //      wrapped in a `cast` (ilemit's universal unbox.any/castclass); a later var re-narrowing an object-retyped
 //      local into a typed slot (the post-null-check `gp:R` copy) gets the same cast wrap.
+// CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (e: IndexOutOfBoundsException)` @ClrTypeAlias-es to a SINGLE .NET
+// type, but .NET raises TWO unrelated out-of-range exceptions — `System.ArgumentOutOfRangeException` (List<T>.get_Item /
+// most BCL collection indexers) and `System.IndexOutOfRangeException` (raw array access). Neither is a subtype of the
+// other, so a single-type catch misses half the cases. Kotlin's semantics are "one IndexOutOfBoundsException catches
+// any out-of-range access", so widen each such clause into TWO consecutive clauses (same body + var) covering both .NET
+// types. Emits `clr:` tokens that pass through type-lowering unchanged. Keyed on the pure-Kotlin type name (runs before
+// type lowering), so it is independent of whichever single .NET type the alias picks.
+// STAR-PROJECTION IS-TEST (bundle-6 ④): `x is Collection<*>` / `is Map<*,*>` lowers (via the @ClrTypeAlias type map)
+// to a REIFIED generic isinst — `isinst IReadOnlyCollection<object>` / `IDictionary<object,object>`. On .NET, reified
+// generics have NO covariance on VALUE-type args (and IDictionary is invariant), so `List<int> is IReadOnlyCollection<object>`
+// is FALSE — the check silently fails for every value-type collection. Kotlin's `is` on a star-projected type is a pure
+// runtime shape test (the args are erased), so lower it to the NON-generic BCL interface, which a `List<int>`/`Dictionary<int,int>`
+// DOES implement regardless of element type. A concrete-arg generic is-check is a Kotlin compile error, so every
+// `is Collection<...>` here is necessarily `<*>` — keying on the alias FQN alone is sufficient. Only the isinst node's
+// type token is rewritten (a Collection-typed VARIABLE keeps its generic form for member access). Runs before type
+// lowering; emits `clr:` tokens that pass through unchanged. Non-ref only. (Set/MutableSet are intentionally absent:
+// .NET HashSet<T> implements no non-generic collection interface beyond IEnumerable, so no faithful single token exists.)
+static class StarProjectionIsTest
+{
+    static readonly Dictionary<string, string> NonGenericIface = new(StringComparer.Ordinal)
+    {
+        ["kotlin.collections.Collection"] = "clr:System.Collections.ICollection",
+        ["kotlin.collections.MutableCollection"] = "clr:System.Collections.ICollection",
+        ["kotlin.collections.List"] = "clr:System.Collections.IList",
+        ["kotlin.collections.MutableList"] = "clr:System.Collections.IList",
+        ["kotlin.collections.Iterable"] = "clr:System.Collections.IEnumerable",
+        ["kotlin.collections.MutableIterable"] = "clr:System.Collections.IEnumerable",
+        ["kotlin.collections.Map"] = "clr:System.Collections.IDictionary",
+        ["kotlin.collections.MutableMap"] = "clr:System.Collections.IDictionary",
+    };
+
+    public static void Apply(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if ((obj["k"] as JsonValue)?.GetValue<string>() == "isinst"
+                && (obj["type"] as JsonValue)?.GetValue<string>() is string t
+                && NonGenericIface.TryGetValue(ReferenceMetadataIndex.BareOwnerFqn(t), out var ng))
+                obj["type"] = ng;
+            foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value);
+        }
+        else if (node is JsonArray arr)
+            foreach (var it in arr) if (it != null) Apply(it);
+    }
+}
+
+static class CatchClauseWidening
+{
+    static readonly string[] IndexOobNet = { "clr:System.ArgumentOutOfRangeException", "clr:System.IndexOutOfRangeException" };
+
+    public static void Apply(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if (obj["catches"] is JsonArray catches) WidenCatches(catches);
+            foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value);
+        }
+        else if (node is JsonArray arr)
+            foreach (var it in arr) if (it != null) Apply(it);
+    }
+
+    static void WidenCatches(JsonArray catches)
+    {
+        for (var i = catches.Count - 1; i >= 0; i--)
+        {
+            if (catches[i] is not JsonObject c) continue;
+            if ((c["excType"] as JsonValue)?.GetValue<string>() is not string et) continue;
+            if (ReferenceMetadataIndex.BareOwnerFqn(et) != "kotlin.IndexOutOfBoundsException") continue;
+            catches.RemoveAt(i);
+            for (var j = IndexOobNet.Length - 1; j >= 0; j--)   // insert in reverse -> keeps [ArgumentOOR, IndexOOR] order
+            {
+                var clone = (JsonObject)c.DeepClone();
+                clone["excType"] = IndexOobNet[j];
+                catches.Insert(i, clone);
+            }
+        }
+    }
+}
+
 static class NullableFuncReturnErasure
 {
     public static void Apply(JsonNode root)
@@ -3736,6 +3823,21 @@ static class MemberCallSubstitution
             typeTok = "clrg:" + bcl + "[" + ownerToken[(br + 1)..^1] + "]";
 
         var args = node["args"] as JsonArray ?? new JsonArray();
+
+        // JVM (initialCapacity: Int, loadFactor: Float) collection ctor -> the capacity-only (int) BCL ctor. .NET's
+        // HashSet/Dictionary have NO (int, float) constructor (loadFactor is a JVM hashtable concept), so a
+        // `HashSet<Int>(16, 0.75f)` call would mis-resolve to the `(IEnumerable, IEqualityComparer)` overload and throw
+        // at run. Drop the trailing loadFactor arg (and its declared argType) so the overload key becomes a bare (int).
+        // Gated on a @ClrTypeAlias owner whose declared 2nd ctor param is a Float — the loadFactor idiom is unique to
+        // the stdlib collection aliases (no BCL type reaching here has a genuine (int, float) ctor).
+        if (args.Count == 2 && refs.Aliases.ContainsKey(ReferenceMetadataIndex.BareOwnerFqn(ownerToken))
+            && node["argTypes"] is JsonArray dat && dat.Count == 2
+            && (dat[1] as JsonValue)?.GetValue<string>() is string p1 && (p1 == "kotlin.Float" || p1 == "float"))
+        {
+            args = new JsonArray { args[0].DeepClone() };
+            node["argTypes"] = new JsonArray { dat[0].DeepClone() };
+        }
+
         return new JsonObject
         {
             ["k"] = "clrNew",
@@ -3883,6 +3985,22 @@ static class MemberCallSubstitution
             return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
                 member == "addAll" ? "clrCollAddAll" : "clrCollAdd", CollElemArg(node, refs, ctx, ownerToken), args);
 
+        // PRE-Rule-2 semantic override: MutableList.set(i,e) / removeAt(i) @ClrIntrinsic(set_Item/RemoveAt), but the
+        // BCL slots are VOID while Kotlin RETURNS the previous/removed element — binding the intrinsic directly
+        // underflows the stack when the result is consumed (`val old = list.set(i,e)` -> InvalidProgramException).
+        // Route to the ClrCollectionDefaults wrappers (clrListSet/clrListRemoveAt) that read the old element, perform
+        // the void mutation, and return it. `retType` carries the concrete element type for the boxing/convert at the
+        // call site (the helper's own `!!0` is out of scope). The void-returning 2-arg add(i,e) Insert form is left
+        // on the intrinsic path.
+        if (instance && kind == "interface" && ownerFqn == "kotlin.collections.MutableList"
+            && (((member is "set" or "set_Item") && args.Count == 2) || ((member is "removeAt" or "RemoveAt") && args.Count == 1)))
+        {
+            var listHelper = member is "set" or "set_Item" ? "clrListSet" : "clrListRemoveAt";
+            var listCall = (JsonObject)CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", listHelper, OwnerElemArg(ownerToken), args);
+            if (RetToken(node) is string lret && !lret.StartsWith("gp:", StringComparison.Ordinal)) listCall["retType"] = lret;
+            return listCall;
+        }
+
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
             return Constrainify(ClrCallNode(node, clrOwner, intrinsic, member, args, instance, refs.MemberByrefPositions(ownerFqn, member, args.Count)), node, refs, ctx, ownerToken);
@@ -3896,6 +4014,21 @@ static class MemberCallSubstitution
         // a non-existent helper. (The ref.dll mis-reports these as non-abstract, so IsRule3Member alone false-positives.)
         if (kind != "interface" && refs.IsRule3Member(ownerFqn, member))
             return Rule3HelperCall(node, refs, ownerToken, member, args, instance);
+
+        // Rule 3-inherited: the concrete rule-3 body lives on an ANCESTOR, not the static call owner. `printStackTrace`
+        // has its real body on kotlin.Throwable but is called through a kotlin.Exception/RuntimeException subclass
+        // receiver — IsRule3Member keys on the static owner (Exception) and misses it, so the call would fall through to
+        // Rule 4 as a bogus `System.Exception.printStackTrace` (NRE). Walk the `overrides` marker to the CLR-bound
+        // non-interface ancestor that actually declares the concrete intrinsic-less body and route to ITS helper; the
+        // subclass receiver is assignable to the ancestor-typed __self. Only when the direct owner had no rule-3 match.
+        if (kind != "interface" && instance && node["overrides"] is JsonArray ovChain)
+            foreach (var o in ovChain)
+                if (o is JsonObject oo
+                    && (oo["owner"] as JsonValue)?.GetValue<string>() is string ovOwner
+                    && (oo["member"] as JsonValue)?.GetValue<string>() is string ovMember
+                    && refs.TryResolveClrOwner(ovOwner, out _, out var ovKind) && ovKind != "interface"
+                    && refs.IsRule3Member(ovOwner, ovMember))
+                    return Rule3HelperCall(node, refs, ovOwner, ovMember, args, instance);
 
         // Rule 5m (MAP-interface defaults): Map/MutableMap both alias IDictionary<K,V> (see the stdlib rationale), but
         // most Kotlin map members have no 1:1 IDictionary equivalent — `get` is null-on-missing while get_Item THROWS,
@@ -4498,7 +4631,24 @@ static class DeclarationRename
                 }
                 else if (ResolveSlot(ovs, refs) is string slot)
                 {
-                    if ((obj["k"] as JsonValue)?.GetValue<string>() == "callInstance") obj["method"] = slot;
+                    if ((obj["k"] as JsonValue)?.GetValue<string>() == "callInstance")
+                    {
+                        // SKIP the BCL-slot rename when the call targets a rule-3 member on a @ClrTypeAlias CLASS
+                        // owner (an intrinsic-less concrete override carrying a real body that AliasHelperHoist lifts
+                        // into a <>dotkt_ClrH_* helper — String.compareTo's ordinal body must NOT resolve to the
+                        // culture-sensitive System.String.CompareTo slot). Leaving it the Kotlin name lets
+                        // MemberCallSubstitution's Rule 3 route it to that helper. Mirrors Rule 3's own gate exactly:
+                        // a CLR-bound NON-interface owner whose member is rule-3. (An INTERFACE owner is excluded —
+                        // the ref.dll mis-reports its abstract members as non-abstract, so IsRule3Member false-positives
+                        // there; and a REAL non-alias class like ArrayDeque.size -> the emitted Count slot still renames.)
+                        var ot = (obj["ownerType"] as JsonValue)?.GetValue<string>();
+                        var mn = (obj["method"] as JsonValue)?.GetValue<string>();
+                        var otFqn = ot != null ? ReferenceMetadataIndex.BareOwnerFqn(ot) : null;
+                        var isRule3Alias = otFqn != null && mn != null
+                            && refs.TryResolveClrOwner(ot, out _, out var otKind) && otKind != "interface"
+                            && refs.IsRule3Member(otFqn, mn);
+                        if (!isRule3Alias) obj["method"] = slot;
+                    }
                     else if (obj.ContainsKey("name"))
                     {
                         obj["name"] = slot;
@@ -4602,8 +4752,14 @@ static class MemberStrip
             if ((mo["name"] as JsonValue)?.GetValue<string>() is not string name) continue;
             var keys = (mo["params"] as JsonArray ?? new JsonArray())
                 .Select(p => ReferenceMetadataIndex.ParamKey((p as JsonObject)?["type"]?.GetValue<string>() ?? "")).ToList();
+            // An alias-class member that overrides a @ClrIntrinsic ancestor is normally a bound stub (its call
+            // substitutes to the BCL), so it is dropped. But a GENUINE rule-3 member — concrete + intrinsic-less in
+            // the ref.dll (String.compareTo's ordinal body overriding the culture-sensitive Comparable.compareTo@ClrIntrinsic)
+            // — carries a REAL Kotlin body that must be PRESERVED and hoisted (else the call would resolve to the
+            // semantically-wrong BCL slot). IsRule3Member is exactly that ref.dll signal, so exempt it from the override-drop.
             var drop = refs.IsBoundStub(owner, name, keys)
-                || (alias && mo["overrides"] is JsonArray ovs && DeclarationRename.ResolveSlot(ovs, refs) != null);
+                || (alias && mo["overrides"] is JsonArray ovs && DeclarationRename.ResolveSlot(ovs, refs) != null
+                    && !refs.IsRule3Member(owner, name));
             if (drop) { stripped?.Add(name); methods.RemoveAt(i); }
         }
     }
