@@ -31,7 +31,7 @@ done
 # findings, not run failures.
 declare -A XFAIL_RUN=(
 	[chunk]="coroutine/SequenceScope-deferred (bundle 6)"
-	[cobuild]="bundle-6 P4: bir2cir's Task.await() lowering is DONE (awaiter dance + fast path verified green by il-taskawait), but the genuine-ASYNC resume needs two CROSS-LAYER fixes outside bir2cir: (1) ilemit — the resume callback's cross-assembly `kotlin.Result.success` (a public static on the generic Result\`1) emits a bad-scoped memberref -> runtime TypeLoadException 'kotlin.Result\`1 from assembly rung'; FindMethod/AnchorOpenGenericOwnerStatic only anchors LOCAL MethodBuilders, not external static-on-generic; (2) stdlib — blockOn's Monitor Wait/Pulse drain returns immediately (value 0) instead of waiting for a truly-suspending coroutine (proven with a no-op resume callback; lam1/lam2/coldcf never exercised true async). Fast path (already-completed task) works E2E."
+	[cobuild]="bundle-6 P4: bir2cir Task.await() lowering is DONE (awaiter dance + fast path verified green by il-taskawait), but the genuine-ASYNC resume needs two CROSS-LAYER fixes outside bir2cir: (1) ilemit cannot emit a cross-assembly call to kotlin.Result.success (a public static on the generic Result-arity-1 type): FindMethod/AnchorOpenGenericOwnerStatic only anchor LOCAL MethodBuilders, so the external static-on-generic emits a bad-scoped memberref -> runtime TypeLoadException loading kotlin.Result from the app assembly; (2) stdlib blockOn Monitor Wait/Pulse drain returns immediately (value 0) instead of waiting for a truly-suspending coroutine (proven with a no-op resume callback; lam1/lam2/coldcf never exercised true async). Fast path (already-completed task) works E2E."
 	[collops2]="coroutine/SequenceScope-deferred (bundle 6)"
 	[seq]="coroutine/SequenceScope-deferred (bundle 6)"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
@@ -43,6 +43,8 @@ declare -A XFAIL_ILVERIFY=(
 	[gen3]="ilverify formal-only finding (sample runs correct)"
 	[iter]="ilverify formal-only finding (sample runs correct)"
 	[iterable]="ilverify formal-only finding (sample runs correct)"
+	[taskawait]="ilverify formal-only finding (sample runs correct): CallVirtOnValueType — the TaskAwaiter STRUCT's OnCompleted (an interface-impl method) is emitted callvirt without a constrained. prefix by ilemit; benign at runtime (JIT resolves it), the verifiable form is an ilemit constrained.-prefix improvement"
+	[cobuild]="ilverify formal finding (sample also run-XFAIL: bundle-6 P4 async blockers): same CallVirtOnValueType on the TaskAwaiter struct as taskawait"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
