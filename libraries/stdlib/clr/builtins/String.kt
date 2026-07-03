@@ -46,9 +46,23 @@ public actual class String : Comparable<String>, CharSequence {
     // Rule-3 real body delegating to the substring extension (which adapts end -> length via nativeSubstring).
     public actual override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = substring(startIndex, endIndex)
 
+    // No @ClrIntrinsic: System.String.CompareTo(String) is CULTURE-sensitive (StringComparison.CurrentCulture),
+    // whereas Kotlin/JVM String.compareTo is ORDINAL (lexicographic by UTF-16 code unit). A rule-3 real body does the
+    // ordinal comparison using only the intrinsic siblings (length / get) + primitive Char arithmetic, matching JVM.
     @kotlin.internal.IntrinsicConstEvaluation
-    @kotlin.clr.ClrIntrinsic("CompareTo")
-    public actual override fun compareTo(other: String): Int = TODO("clr binding should be implemented")
+    public actual override fun compareTo(other: String): Int {
+        val thisLength = this.length
+        val otherLength = other.length
+        val minLength = if (thisLength < otherLength) thisLength else otherLength
+        var i = 0
+        while (i < minLength) {
+            val a = this[i]
+            val b = other[i]
+            if (a != b) return a.code - b.code
+            i++
+        }
+        return thisLength - otherLength
+    }
 
     /**
      * Indicates if [other] object is equal to this [String].
