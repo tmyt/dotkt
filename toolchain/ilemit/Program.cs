@@ -3369,10 +3369,18 @@ sealed partial class Emitter
     void EmitCallArgs(JsonElement args, MethodInfo mb)
     {
         var pt = _mparams.TryGetValue(mb, out var p) ? p : null;
+        // An in-assembly method's declared params live in `_mparams`; a REFERENCED method's don't (MethodBuilder can't
+        // be reflected pre-bake, but a resolved referenced MethodInfo can). Read its real ParameterInfo so a value-type
+        // / Nullable<> / gp: arg still BOXES into an `object`/reference param — mirrors EmitArgsTyped and the typeArgs
+        // referenced path. Without this the `pt==null` branch emitted the arg raw (no box) -> InvalidProgram for e.g.
+        // `toString(object)` of an `Int?` (`box Nullable<int>` yields the boxed underlying value, or null).
+        var ps = pt == null ? mb.GetParameters() : null;
         int i = 0;
         foreach (var a in args.EnumerateArray())
         {
-            if (pt != null && i < pt.Length) EmitArg(a, pt[i]); else EmitExpr(a);
+            if (pt != null && i < pt.Length) EmitArg(a, pt[i]);
+            else if (ps != null && i < ps.Length) EmitArg(a, ps[i].ParameterType);
+            else EmitExpr(a);
             i++;
         }
         // Fill omitted trailing default/params args (a cross-module caller may omit a `= <const>` default; kotc drops the
@@ -3380,10 +3388,7 @@ sealed partial class Emitter
         // on the callee). Only referenced methods carry that metadata (in-assembly emitted params live in `_mparams`, no
         // defaults there), so this fills from `mb.GetParameters()`.
         if (pt == null)
-        {
-            var ps = mb.GetParameters();
             for (; i < ps.Length; i++) EmitDefaultArg(ps[i]);
-        }
     }
 
     // BIR `func:<ret>:<arg1>,<arg2>,...` -> a System.Func<...> (ret != void) or System.Action<...>.
