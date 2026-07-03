@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit (bundle-6 BUG Y): external constructed-generic method resolution now consumes the cold-call `sig` — unblocks `yieldAll`.**
+  `sequence { yield("a"); yieldAll(listOf("b","c")) }.toList()` BadImageFormatException'd: `SequenceScope<T>` carries three same-name,
+  same-arity `yieldAll$dotkt_suspend` overloads (over `Iterator<T>` / `IEnumerable<T>` / `Sequence<T>`), and `ResolveMethod`'s
+  pure-reflection constructed-generic branch (Program.cs:~1342) bound one by ARITY alone → the wrong overload. It now prefers
+  `FindReflectedMethodBySig(constructed, name, sig)` (falling back to the arity pick), and `SigTokenMatchesOpen`'s `clrg:` branch matches on
+  the generic-type-DEFINITION owner (not merely `IsGenericType`) so an open `gp:T` arg still distinguishes `IEnumerable<T>` from `Iterator<T>`.
+  bir2cir already synthesizes the disambiguating `sig`; ilemit now consumes it. `seqyieldall` runs `a,b,c` + ilverify-clean → pruned from XFAIL.
+
+- **ilemit (bundle-6 BUG 2): `ApplyNullable` can now stamp the NESTED `[Nullable(byte[])]` form — inner-position nullability round-trips.**
+  Previously ilemit only emitted a scalar `[Nullable(2)]` on position 0, so a `suspend fun f(): String?`'s CLR bridge return `Task<string?>`
+  (or any `List<String?>` param) lost the inner `?` and facadegen couldn't restore it. The embedded `NullableAttribute` now carries BOTH the
+  `(byte)` and `(byte[])` constructors (csc's model), and `ApplyNullable(pb, byte[])` stamps the flattened pre-order byte walk
+  (`Task<string?>` -> `{1,2}` = outer non-null, inner nullable). Consumed from new CIR fields `retNullableFlags` (method) / `nullableFlags`
+  (param), which take precedence over the scalar `retNullable`/`nullable`. bir2cir does not yet emit the walk (its `BuildBridge` still drops the
+  inner nullability), so this is a verified-ready no-op until that lands — the ilemit half of the E2E; see the reported CIR contract.
+
 - **facadegen (bundle-6 ②): async/generic .NET interop — 5 symbol-surface fixes for consuming/building `Task<T>` and generic .NET from Kotlin.**
   All are symbol-face restorations (facadegen reads a CLR dll → FIR-injection metadata); no downstream binding. Gates: verify-il GREEN
   (no NEW-FAIL — c1net/netbase/netgen*/event/taskfam unchanged), verify-ktproj 9/9, verify-roundtrip GREEN (RT_XFAIL suspend baseline unchanged).

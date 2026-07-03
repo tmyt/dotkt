@@ -143,18 +143,22 @@ sealed partial class Emitter
             // parameter builder must exist even if it otherwise carries no name/vararg/default. (A value-type `X?` is the
             // structural Nullable<X> instead; the [Nullable] on it is simply ignored by readers — harmless.)
             bool nullable = p.TryGetProperty("nullable", out var pn) && pn.GetBoolean();
+            // NESTED param nullability (bundle-6 BUG 2): the flattened byte walk when a nullable `?` rides an inner
+            // type arg (a `List<String?>` param). Supplied by bir2cir; takes precedence over the scalar `nullable`.
+            byte[] pFlags = p.TryGetProperty("nullableFlags", out var pnf) && pnf.ValueKind == JsonValueKind.Array ? ReadNullableFlags(pnf) : null;
             // PARAMETER-level custom attributes (e.g. [ClrRefArgument], which bir2cir reads from the ref.dll to pass the
             // arg by reference). Stripped in the runtime build (kotc emits none), so this rides only the ref.dll.
             JsonElement pattrs = default;
             bool hasAttrs = !_stripMetadata && p.TryGetProperty("attrs", out pattrs) && pattrs.GetArrayLength() > 0;
-            if (name.Length == 0 && !vararg && !hasDefault && !nullable && !hasAttrs) { i++; continue; }
+            if (name.Length == 0 && !vararg && !hasDefault && !nullable && pFlags == null && !hasAttrs) { i++; continue; }
             // A constant default -> [Optional] + DefaultParameterValue, so a cross-module caller can omit the arg.
             var attrs = hasDefault ? ParameterAttributes.Optional | ParameterAttributes.HasDefault : ParameterAttributes.None;
             var pb = defineParam(i, attrs, name.Length > 0 ? name : null);
             // `vararg xs: T` -> [ParamArray] so the .NET signature is a params array (a C# OR Kotlin consumer can spread).
             if (vararg) pb.SetCustomAttribute(new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
             if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
-            if (nullable) ApplyNullable(pb);
+            if (pFlags != null) ApplyNullable(pb, pFlags);
+            else if (nullable) ApplyNullable(pb);
             // Apply each param attribute whose type this assembly can encode (in-assembly emitted type or a clr:-imported
             // one); an attr referencing a type not in `_types` is skipped (BuildCab would KeyNotFound) — the same "the CLR
             // layer decides what is encodable" policy the method-level attr path uses.

@@ -1,6 +1,7 @@
 // AUTO-SPLIT from Program.cs — part of the `Emitter` partial class (see Program.cs for the overview).
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Text.Json;
 
 // Synthesizes the `DotKt.Runtime.CompilerServices.*` round-trip metadata attributes and EMBEDS them (internal) into
 // the emitted assembly — the same model the C# compiler uses for its own compiler-generated attributes
@@ -16,17 +17,27 @@ sealed partial class Emitter
     // Define a sealed internal `: Attribute` (by FULL name) with a single constructor of the given parameter types,
     // embedded in this module. Metadata-only: the ctor body just chains to Attribute(); the APPLIED constructor
     // arguments live in the metadata blob (read via GetCustomAttributesData().ConstructorArguments), so no fields needed.
-    Type DefineEmbeddedAttr(string fullName, params Type[] ctorParams)
+    Type DefineEmbeddedAttr(string fullName, params Type[] ctorParams) => DefineEmbeddedAttrN(fullName, new[] { ctorParams });
+
+    // As DefineEmbeddedAttr, but defines SEVERAL constructor overloads on the one attribute type. Mirrors csc's
+    // System.Runtime.CompilerServices.NullableAttribute, which carries BOTH a scalar `NullableAttribute(byte)` (a
+    // single reference-type position) AND an array `NullableAttribute(byte[])` (a NESTED type, one flattened byte per
+    // type node — e.g. `Task<string?>` -> {1,2}, outer non-null + inner nullable). ilemit needs both so a bridge
+    // return whose nullable `?` rides an INNER type arg round-trips (facadegen reads the array form).
+    Type DefineEmbeddedAttrN(string fullName, Type[][] ctorParamSets)
     {
         var tb = _mod.DefineType(fullName,
             TypeAttributes.NotPublic | TypeAttributes.Sealed | TypeAttributes.Class, typeof(Attribute));
-        var ctor = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, ctorParams);
-        var il = ctor.GetILGenerator();
-        il.Emit(OpCodes.Ldarg_0);
         // Attribute's parameterless constructor is PROTECTED, so it needs non-public binding flags to resolve.
-        il.Emit(OpCodes.Call, typeof(Attribute).GetConstructor(
-            BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null));
-        il.Emit(OpCodes.Ret);
+        var baseCtor = typeof(Attribute).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+        foreach (var ctorParams in ctorParamSets)
+        {
+            var ctor = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, ctorParams);
+            var il = ctor.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, baseCtor);
+            il.Emit(OpCodes.Ret);
+        }
         return tb.CreateType();
     }
 
@@ -47,7 +58,8 @@ sealed partial class Emitter
         // Reference-type nullability uses .NET's OWN NRT metadata (not a DotKt attribute), embedded under its standard
         // System.Runtime.CompilerServices names so a C# consumer recognizes it too — the csc model. [NullableContext(b)]
         // is the per-type default (we emit 1 = non-null); [Nullable(2)] overrides a specific nullable reference position.
-        _nullableAttr    = DefineEmbeddedAttr("System.Runtime.CompilerServices.NullableAttribute", typeof(byte));
+        _nullableAttr    = DefineEmbeddedAttrN("System.Runtime.CompilerServices.NullableAttribute",
+                               new[] { new[] { typeof(byte) }, new[] { typeof(byte[]) } });
         _nullableCtxAttr = DefineEmbeddedAttr("System.Runtime.CompilerServices.NullableContextAttribute", typeof(byte));
     }
 
@@ -64,5 +76,37 @@ sealed partial class Emitter
     {
         EnsureKotlinAttrs();
         pb.SetCustomAttribute(new CustomAttributeBuilder(_nullableAttr.GetConstructor(new[] { typeof(byte) }), new object[] { (byte)2 }));
+    }
+
+    // [Nullable(new byte[]{...})] — the NESTED form: one flattened byte per type node (0=oblivious, 1=non-null,
+    // 2=nullable), pre-order. Used when the nullable `?` rides an INNER type-arg rather than the top-level type, e.g.
+    // a `suspend fun f(): String?`'s CLR bridge return `Task<string?>` -> {1,2}. A single-element (or all-equal)
+    // array is the scalar case; csc collapses it, but the array ctor is equally valid metadata, so callers may pass
+    // either. `flags` is supplied verbatim by bir2cir (which owns the Kotlin->CLR nullability walk); ilemit only stamps.
+    void ApplyNullable(ParameterBuilder pb, byte[] flags)
+    {
+        if (flags == null || flags.Length == 0) return;
+        EnsureKotlinAttrs();
+        if (flags.Length == 1) { ApplyNullable(pb, flags[0]); return; }
+        pb.SetCustomAttribute(new CustomAttributeBuilder(_nullableAttr.GetConstructor(new[] { typeof(byte[]) }), new object[] { flags }));
+    }
+
+    // [Nullable(b)] — scalar with an explicit byte (2=nullable is the common case; 1=non-null appears inside a
+    // collapsed nested walk). Kept distinct from the byte[] overload so a genuine single position stays the compact form.
+    void ApplyNullable(ParameterBuilder pb, byte b)
+    {
+        EnsureKotlinAttrs();
+        pb.SetCustomAttribute(new CustomAttributeBuilder(_nullableAttr.GetConstructor(new[] { typeof(byte) }), new object[] { b }));
+    }
+
+    // Read a CIR `retNullableFlags`/`nullableFlags` JSON array (bir2cir's flattened NullableAttribute byte walk) into
+    // a byte[]. Each element is 0 (oblivious) / 1 (non-null ref) / 2 (nullable ref) per type node, pre-order.
+    static byte[] ReadNullableFlags(JsonElement arr)
+    {
+        var n = arr.GetArrayLength();
+        var flags = new byte[n];
+        int i = 0;
+        foreach (var b in arr.EnumerateArray()) flags[i++] = (byte)b.GetInt32();
+        return flags;
     }
 }
