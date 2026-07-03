@@ -30,6 +30,7 @@ done
 # lowering lands (MEMORY coroutine-lowering-layer-deferred); the ilverify names are formal-verification
 # findings, not run failures.
 declare -A XFAIL_RUN=(
+	[taskgen]="bundle-6 async-interop: Task.FromResult<T> generic-static resolves + emits E2E in kotc/bir2cir/ilemit, but facadegen (Program.cs:557 IsGenericMethod skip) does not yet SURFACE the generic static from .NET metadata — pending facadegen (in flight); prune when it lands"
 	[chunk]="bundle-6 P5: cold-core sequences RUN (chunk output correct); the tail filterNotNull() on List<Int?> NREs on the value-type-nullable T?->T drop. kotc NOW emits the nullable:gp:T type-arg marker on Iterable<T?> (filterNotNullTo receiver); PENDS the bir2cir consumer that erases the marked arg -> object (sibling P5). Until then forEachInline unboxes a null Nullable<Int> to Int"
 	[collops2]="bundle-6 P5: cross-module default-argument drop — windowed(3) is emitted with 2 args against the 4-param windowed(iterable,size,step,partialWindows) sig (step=1/partialWindows=false defaults lost by the frontend jar) -> InvalidProgramException (StackUnexpected: List<int32> where Int32 expected). KNOWN BUG cross-module-default-args-not-preserved"
 	[seq]="bundle-6 P5: lifted anon-object MethodAccessException FIXED (CrossClassPrivateWidening + GenericSelfInstantiation); reference-typed sequences construct+iterate, but the VALUE-typed chain (map{it*it}) crashes on the kotc T?->T nullability drop — <>dotkt_obj*.next()'s nextItem:T? field is emitted as value-T (ldnull into a !0 slot / value-T cast as objref)"
