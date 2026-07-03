@@ -2911,11 +2911,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		fn.parameters.filter { it.kind == IrParameterKind.ExtensionReceiver } +
 			fn.parameters.filter { it.kind == IrParameterKind.Regular }
 
-	/** The BIR function-type string `func:<ret>:<arg1>,<arg2>,...` for a lambda's signature (receiver first). */
+	/** The BIR function-type string `func:<ret>:<arg1>,<arg2>,...` for a lambda's signature (receiver first).
+	 *  A `suspend` lambda emits the `sfunc:` variant — same delegate shape, carrying the suspend FACT for the
+	 *  suspendLambdaNew SM builder. bir2cir folds `sfunc:`→`func:` (all builds), so this stays behavior-preserving. */
 	internal fun funcTypeOf(fn: IrSimpleFunction): String {
 		val ps = orderedLambdaParams(fn).joinToString(",") { birTypeDeleg(it.type) }
 		val ret = funcRetTypeOf(fn.returnType)
-		return "func:$ret:$ps"
+		val prefix = if (fn.isSuspend) "sfunc" else "func"
+		return "$prefix:$ret:$ps"
 	}
 
 	/**
@@ -4585,14 +4588,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// kotlin.CharSequence -> a synthetic interface (no faithful .NET equivalent). See charSeqIface.
 		charSeqIface(t)?.let { return "@$it" }
 		// A function type as a value (e.g. a `(P)->R` parameter): `kotlin.FunctionN` -> a plain Func/Action. A
-		// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) is emitted as the PLAIN function type too —
-		// kotc bakes no coroutine ABI (no Func<..,Task<R>>); the suspend-delegate lowering is a deferred downstream layer.
+		// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) emits the `sfunc:` variant — the SAME
+		// delegate shape, carrying only the suspend FACT (which the suspendLambdaNew SM builder needs). bir2cir folds
+		// `sfunc:`→`func:` in EVERY build (incl. ref), so kotc bakes no coroutine ABI here — behavior-preserving.
 		if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.Function"))) {
 			val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
 			if (args.isNotEmpty()) {
 				val ret = args.last(); val ps = args.dropLast(1)
 				val retEnc = funcRetTypeOf(ret)
-				return "func:$retEnc:${ps.joinToString(",") { birTypeDeleg(it) }}"
+				val prefix = if (fqp.startsWith("kotlin.coroutines.SuspendFunction")) "sfunc" else "func"
+				return "$prefix:$retEnc:${ps.joinToString(",") { birTypeDeleg(it) }}"
 			}
 		}
 		// `by lazy` delegate: kotlin.Lazy<T> -> System.Lazy<T>. NOT in the runtime (substitute) build: kotlin.Lazy is an
