@@ -30,14 +30,14 @@ done
 # lowering lands (MEMORY coroutine-lowering-layer-deferred); the ilverify names are formal-verification
 # findings, not run failures.
 declare -A XFAIL_RUN=(
-	[chunk]="coroutine/SequenceScope-deferred (bundle 6)"
-	[collops2]="coroutine/SequenceScope-deferred (bundle 6)"
-	[seq]="coroutine/SequenceScope-deferred (bundle 6)"
+	[chunk]="bundle-6 P5: cold-core sequences RUN (chunk output correct); the tail filterNotNull() on List<Int?> NREs on the value-type-nullable T?->T drop (kotc emits Iterable<T?> as IEnumerable<gp:T>, no marker) — forEachInline unboxes a null Nullable<Int> to Int"
+	[collops2]="bundle-6 P5: cross-module default-argument drop — windowed(3) is emitted with 2 args against the 4-param windowed(iterable,size,step,partialWindows) sig (step=1/partialWindows=false defaults lost by the frontend jar) -> InvalidProgramException (StackUnexpected: List<int32> where Int32 expected). KNOWN BUG cross-module-default-args-not-preserved"
+	[seq]="bundle-6 P5: lifted anon-object MethodAccessException FIXED (CrossClassPrivateWidening + GenericSelfInstantiation); reference-typed sequences construct+iterate, but the VALUE-typed chain (map{it*it}) crashes on the kotc T?->T nullability drop — <>dotkt_obj*.next()'s nextItem:T? field is emitted as value-T (ldnull into a !0 slot / value-T cast as objref)"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
 )
 declare -A XFAIL_ILVERIFY=(
-	[chunk]="ilverify formal finding (sample also run-XFAIL: coroutine-deferred)"
-	[collops2]="ilverify formal finding (sample also run-XFAIL: coroutine-deferred)"
+	[chunk]="ilverify formal finding (sample also run-XFAIL: value-type-nullable filterNotNull)"
+	[collops2]="ilverify formal finding (sample also run-XFAIL: cross-module default-arg drop, windowed(3))"
 	[collrealkt]="ilverify formal-only finding (sample runs correct)"
 	[gen3]="ilverify formal-only finding (sample runs correct)"
 	[iter]="ilverify formal-only finding (sample runs correct)"

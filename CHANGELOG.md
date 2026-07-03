@@ -5,6 +5,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 P5 BUG A): make a lifted GENERIC anon-object reach its enclosing class's privates and
+  self-instantiate.** A Kotlin `object : I { … }` inside a class body (e.g. `FilteringSequence.iterator()`'s anon
+  `Iterator`) is emitted by kotc as a SEPARATE top-level CLR class (`<>dotkt_obj*`) that captures the enclosing
+  instance as `__outer` — but on the CLR a separate top-level class cannot reach another class's `private` members
+  (legal on the JVM via nesting) → `System.MethodAccessException` on `FilteringSequence.get_sequence()`. Two new
+  GLOBAL bir2cir passes, run in non-ref builds after the suspend passes and before type lowering:
+  (1) `CrossClassPrivateWidening` — for every local type, collect the members it reaches cross-class
+  (callInstance/callStatic/field/setField whose owner names a DIFFERENT local type) and widen any matching PRIVATE
+  member (method / field / property get_/set_ accessor) to `internal` (valid Kotlin can never author a cross-class
+  private access, so every such access is compiler-lifted → widening exactly those is minimal and correct;
+  generalizes `SuspendColdLowering.WidenPrivatesAccessedBySm`).
+  (2) `GenericSelfInstantiation` — a lifted GENERIC anon-object emits its SELF instance accesses with the BARE type
+  name (`<>dotkt_obj144`, no type args) → runtime "method/type not fully instantiated"; derive the constructed self
+  `<>dotkt_obj144[gp:T]` for those executable instance accesses (a NORMAL generic class already emits the
+  instantiated token — kotc emits the FQN identity, bir2cir derives the CLR instantiation). Lazy `Sequence`
+  pipelines over REFERENCE element types now construct + iterate; the IL gate stays green (il-seq now passes formal
+  ilverify). VALUE-typed sequences still fail on a separate kotc `T?`→`T` nullability drop (see below).
 - **kotc (bundle-6 P5): fix the object-expression generic-capture OVER-capture regression that broke the rt-stdlib build.**
   The `object : Box<T>` generic-capture support (`typeDef` capture-augmentation) computed a lifted class's captured
   enclosing type params by REGEX-scanning the rendered member JSON for `gp:` tokens, for EVERY class. Two defects:

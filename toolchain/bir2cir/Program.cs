@@ -218,6 +218,22 @@ sealed class Pipeline
         if (!_options.RefBuild)
             SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
 
+        // PHASE 1.7 — CROSS-CLASS PRIVATE WIDENING (bundle-6 P5 BUG A): a LIFTED anon-object / closure class
+        // (`<>dotkt_obj*`) is a SEPARATE top-level CLR class that reads its enclosing class's PRIVATE members
+        // via its captured `__outer` — legal on the JVM (nested class), a System.MethodAccessException on the
+        // CLR. Widen exactly the private members reached CROSS-CLASS to `internal` (assembly-visible). Runs
+        // GLOBALLY, in non-ref builds, AFTER the suspend passes (so synthesized SM types are covered too) and
+        // BEFORE type lowering (owner tokens are still the kotlin.* FQN that match local type names).
+        if (!_options.RefBuild)
+            CrossClassPrivateWidening.ApplyAll(staged.Select(s => s.Root).ToList());
+
+        // PHASE 1.8 — GENERIC SELF INSTANTIATION (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object emits
+        // its self instance accesses with the BARE type name (`<>dotkt_obj144`, no type args) -> ".NET method/type
+        // not fully instantiated" at runtime. Derive the constructed self `<>dotkt_obj144[gp:T]` for those
+        // executable instance accesses (kotc emits the FQN identity; bir2cir derives the CLR instantiation).
+        if (!_options.RefBuild)
+            GenericSelfInstantiation.ApplyAll(staged.Select(s => s.Root).ToList());
+
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
         foreach (var (substituted, outputName) in staged)
