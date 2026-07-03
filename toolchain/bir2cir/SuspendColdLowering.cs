@@ -54,6 +54,7 @@ using System.Text.Json.Nodes;
 static class SuspendColdLowering
 {
     const string ContinuationImplFqn = "kotlin.coroutines.clr.internal.ContinuationImpl";
+    const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
     const string BaseContinuationImplFqn = "kotlin.coroutines.clr.internal.BaseContinuationImpl";
     const string ContinuationOfAny = "kotlin.coroutines.Continuation[kotlin.Any]";
     const string IntrinsicsKtFqn = "kotlin.coroutines.intrinsics.IntrinsicsKt";
@@ -66,6 +67,9 @@ static class SuspendColdLowering
     {
         "closureNew", "delegateNew", "lambda", "sequenceNew", "forEachInline", "repeatInline",
         "steps", "coClass",
+        // Part B: a suspend-lambda VALUE inside a suspend fun disqualifies the enclosing fun from cold
+        // transform (its own SM is built separately by SuspendLambdaLowering, which runs after).
+        "suspendLambdaNew",
     };
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
@@ -159,6 +163,21 @@ static class SuspendColdLowering
         var a = new JsonArray();
         o[key] = a;
         return a;
+    }
+
+    // Part B entry: build a suspend-LAMBDA state-machine TYPE from a suspendLambdaNew node's parts (used by
+    // SuspendLambdaLowering). Returns null for arity >= 2 — the create()/invoke protocol covers arities 0/1
+    // only (JVM parity), so a wider lambda is not expressible v1 and the caller keeps the node (reports it).
+    public static JsonObject BuildLambdaSm(string smName, int arity,
+        List<(string name, string type)> captures, List<JsonObject> lambdaParams, JsonArray body,
+        string resultType, List<string> typeParams, bool baseIsLocal)
+    {
+        if (arity is < 0 or > 1) return null;
+        var gen = new FunGen(smName, arity, captures ?? new List<(string, string)>(), lambdaParams, body,
+            resultType, typeParams, new Dictionary<string, string>(StringComparer.Ordinal), baseIsLocal);
+        var types = new List<JsonNode>();
+        gen.Build(new List<JsonNode>(), types);
+        return types.Count > 0 ? (JsonObject)types[0] : null;
     }
 
     // Can a suspend call site be rewritten to a cold entry? Same-assembly: the callee is in `transformable`
@@ -317,6 +336,12 @@ static class SuspendColdLowering
         readonly bool _isMember;
         readonly Dictionary<string, string> _calleeRet;
         readonly bool _baseIsLocal;
+        // Lambda mode (bundle-6 P3 wave-2b Part B): a suspend LAMBDA SM (extends SuspendLambda, no cold
+        // entry/main-drain, adds the create() override protocol). Left at defaults for the named-fun path.
+        readonly bool _isLambda;
+        readonly int _arity;                     // the lambda's own param count (v1: 0 or 1)
+        readonly List<(string name, string type)> _captures;   // captured vars -> ctor params + fields
+        readonly JsonArray _lambdaBody;          // the lambda's structured body (no `_m` in lambda mode)
         readonly string _smType;                 // bare SM type name
         readonly string _smTypeInst;             // instantiated (`f$sm[gp:T]`) or bare when non-generic
         readonly string _coldName;
@@ -348,6 +373,33 @@ static class SuspendColdLowering
                 : _smType + "[" + string.Join(",", _typeParams.Select(t => "gp:" + t)) + "]";
         }
 
+        // Lambda-mode ctor (Part B). Builds a `<smName> : SuspendLambda` SM from a suspendLambdaNew node's
+        // parts. Captures become ctor params + fields; the lambda's own params become fields set by create().
+        public FunGen(string smName, int arity, List<(string name, string type)> captures,
+            List<JsonObject> lambdaParams, JsonArray body, string resultType, List<string> typeParams,
+            Dictionary<string, string> calleeRet, bool baseIsLocal)
+        {
+            _isLambda = true;
+            _m = null;
+            _arity = arity;
+            _captures = captures;
+            _lambdaBody = body;
+            _name = smName;
+            _fileClass = null;
+            _ownerClass = null;
+            _isMember = false;
+            _calleeRet = calleeRet;
+            _baseIsLocal = baseIsLocal;
+            _smType = smName;
+            _coldName = null;
+            _resultType = string.IsNullOrEmpty(resultType) ? "void" : resultType;
+            _params = lambdaParams ?? new List<JsonObject>();
+            _typeParams = typeParams ?? new List<string>();
+            _smTypeInst = _typeParams.Count == 0
+                ? _smType
+                : _smType + "[" + string.Join(",", _typeParams.Select(t => "gp:" + t)) + "]";
+        }
+
         static List<string> ReadTypeParamNames(JsonNode tps)
         {
             var names = new List<string>();
@@ -362,14 +414,15 @@ static class SuspendColdLowering
 
         public void Build(List<JsonNode> newMethods, List<JsonNode> newTypes)
         {
-            var body = (_m["body"] as JsonArray) ?? new JsonArray();
+            var body = _isLambda ? _lambdaBody : ((_m["body"] as JsonArray) ?? new JsonArray());
             var hasSuspension = HasSuspension(body);
 
-            if (!hasSuspension)
+            if (!_isLambda && !hasSuspension)
             {
                 // No suspension point: the cold entry IS the body directly (extra unused completion param,
                 // Any? return so a value return boxes). No SM needed. For an instance member the cold entry
                 // stays an INSTANCE method on the class, so a `this`/receiver in the body remains valid.
+                // (A suspend LAMBDA always becomes an SM even without suspension — its VALUE is the SM instance.)
                 newMethods.Add(ColdEntryDirect(body));
                 if (_name == "main" && !_isMember) newMethods.Add(DrainMain());
                 return;
@@ -379,8 +432,10 @@ static class SuspendColdLowering
 
             AddField("label", "kotlin.Int");
             if (_isMember) AddField(ThisField, _ownerClass);        // holds the enclosing instance
+            if (_isLambda)
+                foreach (var (n, t) in _captures) AddField(n, t);   // captured vars -> ctor-set fields
             foreach (var p in _params)
-                AddField(Str(p["name"]), Str(p["type"]));
+                AddField(Str(p["name"]), Str(p["type"]));           // lambda: create()-set param field(s)
             CollectVarFields(body, inHandler: false);
 
             var bodyOut = new List<JsonNode>();
@@ -392,6 +447,12 @@ static class SuspendColdLowering
             foreach (var (state, label) in _dispatch)
                 invoke.Add(BrIf(BinEq(FieldOf("label", "kotlin.Int"), IntConst(state)), true, label));
             foreach (var st in bodyOut) invoke.Add(st);
+
+            if (_isLambda)
+            {
+                newTypes.Add(SmTypeLambda(invoke));
+                return;
+            }
 
             newTypes.Add(SmType(invoke));
             newMethods.Add(ColdEntrySm());
@@ -818,6 +879,170 @@ static class SuspendColdLowering
                 type["typeParams"] = tp;
             }
             return type;
+        }
+
+        // The suspend-LAMBDA SM (Part B): `<smName>[<tp>] : SuspendLambda`. Mirrors SmType but (1) the base is
+        // SuspendLambda (ctor `base(arity, completion)`), (2) the ctor params are the CAPTURES (+ completion),
+        // NOT the lambda's own params, and (3) it adds the create() override(s) — the cold-lambda VALUE protocol
+        // (createCoroutineUnintercepted / startCoroutineUninterceptedOrReturn: IntrinsicsClr.kt:42-56). The
+        // lambda's own params are fields set by create() on the fresh instance, not by the ctor.
+        JsonObject SmTypeLambda(JsonArray invokeBody)
+        {
+            var fields = new JsonArray();
+            foreach (var (n, t) in _fieldDecls)
+                fields.Add(new JsonObject { ["name"] = n, ["type"] = t, ["vis"] = "internal" });
+
+            var ctorParams = new JsonArray();
+            var ctorBody = new JsonArray();
+            foreach (var (n, t) in _captures)
+            {
+                ctorParams.Add(new JsonObject { ["name"] = n, ["type"] = t });
+                ctorBody.Add(SetField(n, new JsonObject { ["k"] = "local", ["name"] = n }));
+            }
+            ctorParams.Add(new JsonObject { ["name"] = "completion", ["type"] = ContinuationOfAny });
+
+            var invoke = new JsonObject
+            {
+                ["name"] = "invokeSuspend",
+                ["static"] = false,
+                ["override"] = _baseIsLocal,
+                ["virtual"] = false,
+                ["abstract"] = false,
+                ["objectOverride"] = false,
+                ["vis"] = "public",
+                ["params"] = new JsonArray { new JsonObject { ["name"] = "result", ["type"] = "kotlin.Any" } },
+                ["ret"] = "kotlin.Any",
+                ["body"] = invokeBody,
+                ["attrs"] = new JsonArray(),
+            };
+            if (!_baseIsLocal) invoke["clrOverride"] = BaseContinuationImplFqn;
+
+            var methods = new JsonArray { invoke };
+            foreach (var cm in CreateMethods()) methods.Add(cm);
+
+            var type = new JsonObject
+            {
+                ["name"] = _smType,
+                ["kind"] = "class",
+                ["abstract"] = false,
+                ["vis"] = "public",
+                ["isSealed"] = false,
+                ["base"] = _baseIsLocal ? SuspendLambdaFqn : "clr:" + SuspendLambdaFqn,
+                ["interfaces"] = new JsonArray(),
+                ["fields"] = fields,
+                ["ctors"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["params"] = ctorParams,
+                        // SuspendLambda(arity: Int, completion: Continuation<Any?>?) — the 2-arg base ctor.
+                        ["baseArgs"] = new JsonArray
+                        {
+                            IntConst(_arity),
+                            new JsonObject { ["k"] = "local", ["name"] = "completion" },
+                        },
+                        ["thisArgs"] = null,
+                        ["vis"] = "public",
+                        ["body"] = ctorBody,
+                    },
+                },
+                ["methods"] = methods,
+                ["properties"] = new JsonArray(),
+                ["attrs"] = new JsonArray(),
+            };
+            if (_typeParams.Count > 0)
+            {
+                var tp = new JsonArray();
+                foreach (var n in _typeParams) tp.Add(n);
+                type["typeParams"] = tp;
+            }
+            return type;
+        }
+
+        // The create() override(s) — a fresh SM bound to a new completion, carrying THIS SM's captures.
+        //   arity-0:  create(completion): Continuation            -> new SM(captures..., completion)
+        //   arity-1:  create(value, completion): Continuation     -> sm = new SM(captures..., completion);
+        //                                                             sm.<param> = value; return sm
+        // Matches BaseContinuationImpl.create's erased CLR ABI: params (Continuation<object>) / (object,
+        // Continuation<object>), return Continuation<object> (Unit-as-typearg erases to object). ilemit binds
+        // the base slot by name + param types (clrOverride), so the param types MUST match exactly.
+        IEnumerable<JsonObject> CreateMethods()
+        {
+            if (_arity == 0)
+            {
+                yield return CreateMethod(
+                    new JsonArray { new JsonObject { ["name"] = "completion", ["type"] = ContinuationOfAny } },
+                    new JsonArray { Ret(NewSm()) });
+            }
+            else
+            {
+                // arity-1: the lambda's single own param (extension receiver OR value) -> a field set here.
+                // The `value` param is erased `object`; storing it into the (possibly value-typed) param field
+                // needs an explicit unbox/castclass (ilemit's setField does not auto-coerce object -> value) —
+                // the same `cast` wrap FunGen uses for await fields. A kotlin.Any field takes the value verbatim.
+                var paramName = Str(_params[0]["name"]);
+                var paramType = Str(_params[0]["type"]) ?? "kotlin.Any";
+                JsonNode storedValue = paramType == "kotlin.Any"
+                    ? new JsonObject { ["k"] = "local", ["name"] = "value" }
+                    : new JsonObject { ["k"] = "cast", ["type"] = paramType, ["e"] = new JsonObject { ["k"] = "local", ["name"] = "value" } };
+                yield return CreateMethod(
+                    new JsonArray
+                    {
+                        new JsonObject { ["name"] = "value", ["type"] = "kotlin.Any" },
+                        new JsonObject { ["name"] = "completion", ["type"] = ContinuationOfAny },
+                    },
+                    new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["k"] = "var",
+                            ["name"] = "__sm",
+                            ["type"] = _smTypeInst,
+                            ["init"] = NewSm(),
+                        },
+                        new JsonObject
+                        {
+                            ["k"] = "setField",
+                            ["ownerType"] = _smTypeInst,
+                            ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "__sm" },
+                            ["name"] = paramName,
+                            ["value"] = storedValue,
+                        },
+                        Ret(new JsonObject { ["k"] = "local", ["name"] = "__sm" }),
+                    });
+            }
+        }
+
+        // `new SM(this.cap1, ..., this.capN, completion)` — captures read from THIS SM's fields (create runs on
+        // the template SM); the `completion` local is the create() parameter.
+        JsonObject NewSm()
+        {
+            var args = new JsonArray();
+            var argTypes = new JsonArray();
+            foreach (var (n, t) in _captures) { args.Add(FieldOf(n, t)); argTypes.Add(t); }
+            args.Add(new JsonObject { ["k"] = "local", ["name"] = "completion" });
+            argTypes.Add(ContinuationOfAny);
+            return new JsonObject { ["k"] = "new", ["type"] = _smTypeInst, ["argTypes"] = argTypes, ["args"] = args };
+        }
+
+        JsonObject CreateMethod(JsonArray createParams, JsonArray body)
+        {
+            var m = new JsonObject
+            {
+                ["name"] = "create",
+                ["static"] = false,
+                ["override"] = _baseIsLocal,
+                ["virtual"] = false,
+                ["abstract"] = false,
+                ["objectOverride"] = false,
+                ["vis"] = "public",
+                ["params"] = createParams,
+                ["ret"] = ContinuationOfAny,
+                ["body"] = body,
+                ["attrs"] = new JsonArray(),
+            };
+            if (!_baseIsLocal) m["clrOverride"] = BaseContinuationImplFqn;
+            return m;
         }
 
         // object f$dotkt_suspend[<tp>](params..., completion) {

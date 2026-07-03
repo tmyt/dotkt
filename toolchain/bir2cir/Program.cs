@@ -204,6 +204,15 @@ sealed class Pipeline
         if (!_options.RefBuild && attributeTopLevelOwner)
             SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns);
 
+        // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, DORMANT): replace each `suspendLambdaNew`
+        // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
+        // (SuspendColdLowering.BuildLambdaSm, the shared FunGen machinery). Runs after the cold lowering (so a
+        // suspend-lambda relocated into a synthesized SM invokeSuspend body is still caught — this pass walks
+        // the newly-added SM types too) and before type lowering. kotc emits NO suspendLambdaNew yet, so this is
+        // a verified no-op against current input; same app-build gate as the cold lowering.
+        if (!_options.RefBuild && attributeTopLevelOwner)
+            SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns);
+
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
         foreach (var (substituted, outputName) in staged)
