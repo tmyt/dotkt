@@ -30,7 +30,7 @@ sealed partial class Emitter
         var name = e.GetProperty("method").GetString();
         var args = e.GetProperty("args").EnumerateArray().ToArray();
         var recvT = EmitExpr(e.GetProperty("recv"));
-        if (recvT.IsValueType) _il.Emit(OpCodes.Box, recvT);
+        if (NeedsBoxToRef(recvT)) _il.Emit(OpCodes.Box, recvT);   // box a value-type OR a `gp:T` receiver to object
         var recvLocal = _il.DeclareLocal(typeof(object));
         _il.Emit(OpCodes.Stloc, recvLocal);
         // mi = recv.GetType().GetMethod(name)   (this for Invoke)
@@ -47,7 +47,7 @@ sealed partial class Emitter
             _il.Emit(OpCodes.Dup);
             _il.Emit(OpCodes.Ldc_I4, i);
             var at = EmitExpr(args[i]);
-            if (at.IsValueType) _il.Emit(OpCodes.Box, at);
+            if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);   // box a value-type OR a `gp:T` arg before stelem_ref into object[]
             _il.Emit(OpCodes.Stelem_Ref);
         }
         _il.Emit(OpCodes.Callvirt, typeof(MethodInfo).GetMethod("Invoke", new[] { typeof(object), typeof(object[]) }));

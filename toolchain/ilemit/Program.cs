@@ -3217,7 +3217,9 @@ sealed partial class Emitter
                 .FirstOrDefault(mm => mm.Name == "set_" + propName && mm.GetParameters().Length == 1);
             if (sm != null)
             {
-                if (!isStatic && !sm.IsStatic) EmitExpr(e.GetProperty("recv"));
+                // A value-type receiver's setter takes `this` by managed pointer -> load its ADDRESS so the mutation
+                // lands on the real struct (an addressable lvalue), not a spilled copy. Mirrors the getter path.
+                if (!isStatic && !sm.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
                 EmitArgs2(new[] { e.GetProperty("value") }, sm.GetParameters());
                 _il.Emit(sm.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, sm);
                 return typeof(void);
@@ -3225,12 +3227,14 @@ sealed partial class Emitter
             // A writable .NET FIELD surfaced as a Kotlin (mutable) property -> field store.
             var fld = type.GetField(propName, BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
                 ?? throw new InvalidOperationException($"ilemit: no writable property OR field '{propName}' on .NET type '{type}' (spec '{typeName}'). Available properties: [{PropList(type)}]");
-            if (!isStatic && !fld.IsStatic) EmitExpr(e.GetProperty("recv"));
+            // `stfld` on a value-type receiver needs the struct's ADDRESS (managed pointer), not a copy.
+            if (!isStatic && !fld.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
             EmitNullableCoerced(e.GetProperty("value"), fld.FieldType);
             _il.Emit(fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
             return typeof(void);
         }
-        if (!isStatic) EmitExpr(e.GetProperty("recv"));
+        // A property setter on a VALUE type takes `this` by managed pointer -> load the receiver ADDRESS.
+        if (!isStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitArgs2(new[] { e.GetProperty("value") }, setter.GetParameters());
         _il.Emit(setter.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, setter);
         return typeof(void);
