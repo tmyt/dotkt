@@ -486,3 +486,19 @@ Do NOT hand-care kotlin.clr coroutine symbols in kotc. Split by whether the SIGN
 2. **ilemit `coSuspendedSentinel` dead node** (`Emitter.Expressions.cs:72-73`) references a non-existent
    `IntrinsicsKt.COROUTINE_SUSPENDED` *field* — the real symbol is the property getter
    `get_COROUTINE_SUSPENDED()` (P2 references the getter directly, bypassing the node). Delete in P6.
+
+## 13. `delay` is DROPPED from kotlin.clr (user, 2026-07-03) — it belongs to Track 2
+
+`delay` is NOT a stdlib primitive: in upstream Kotlin it lives in `kotlinx.coroutines` (structured
+concurrency / the dispatcher-scheduler world), NOT `kotlin-stdlib`. It was pushed into `kotlin.clr` only
+as a test crutch to have "something to suspend on" after the kotlinx purge — a category error. So:
+- **`delay` is REMOVED** from `kotlin.clr` (the expect in `common/src/kotlin/clr/CoroutinesH.kt`, the jar
+  stub actual staged in `build-stdlib-jar.sh`, and the real actual in `taskinterop/Coroutines.kt`). A
+  proper `delay` (with cancellation + dispatcher semantics) is a future **Track 2** (kotlinx port) member.
+- **`blockOn` STAYS** — it is the `runBlocking` analog, a STRUCTURAL sync→coroutine bridge (the Kotlin form
+  of `.GetAwaiter().GetResult()`), genuine infra, not a library convenience.
+- **`await` STAYS** — the CLR async boundary itself (facadegen-injected, P4).
+- Tests that need a real suspension use HONEST primitives instead of the crutch: `suspendCoroutine { cont ->
+  cont.resume(v) }` (pure stdlib — exercises the real suspend/resume machinery) or
+  `System.Threading.Tasks.Task.Delay(ms).await()` (real .NET async over the `await` boundary — the form CLR
+  users actually write). `cobuild` + the roundtrip suspend sections are rewritten off `delay` accordingly.
