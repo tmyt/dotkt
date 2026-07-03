@@ -474,6 +474,12 @@ attribute we could add.
 - Inlining is done by the backend at emit, not the frontend. §3.
 - A non-local `return` into a cross-module inline lambda → works (body is carried in `[KotlinInline]`). §3.
 - `println(true)` prints `True`, `println(4.0)` prints `4`. §5.
+- `String.toInt()/toLong()/toByte()/toShort()` are strict base-10 (like JVM): no leading/trailing whitespace, no group
+  separators, and a bad string throws `NumberFormatException` (a `catch (IllegalArgumentException)` also catches it). §5.
+- `String.toDouble()/toFloat()` parse with **InvariantCulture** (a `,` is always rejected, never a group separator, so
+  `"3,14".toDouble()` throws like JVM). The accepted grammar is otherwise .NET's `Double/Single.Parse`
+  (decimal point, sign, exponent, `NaN`/`Infinity`); the JVM-only hex-float and trailing `d`/`f` suffix forms are **not**
+  accepted. Failure throws `NumberFormatException`. §5.
 - `String.format` uses the .NET composite format (`"{0}"`), not Java printf (`"%d"`). §5.
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`, and it starts **hot** (like C# `async`), not cold. §4.
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
