@@ -23,6 +23,13 @@ public actual open class Throwable actual constructor(public open actual val mes
     public actual constructor(cause: Throwable?) : this(cause?.toString(), cause)
 
     public actual constructor() : this(null, null)
+
+    // java.lang.Throwable.printStackTrace is a MEMBER mapped onto kotlin.Throwable, so the frontend resolves an app's
+    // `e.printStackTrace()` to a MEMBER (shadowing the Throwable.printStackTrace() EXTENSION in ExceptionsClr) — and that
+    // member, on the substituted System.Exception, has no BCL equivalent -> dynamic dispatch to a missing method -> NRE.
+    // Declare it as a real member (rule-3 body) so the call routes to the shared impl instead. Not `actual` (the expect is
+    // an extension); this is the CLR-platform member that satisfies the mapped-member resolution.
+    public open fun printStackTrace(): Unit = printStackTraceImpl(this)
 }
 
 @kotlin.clr.ClrTypeAlias("System.Exception")

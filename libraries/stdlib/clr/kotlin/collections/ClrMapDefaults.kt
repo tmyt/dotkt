@@ -35,6 +35,24 @@ public fun <K, V> Map<K, V>.clrMapNativeKeys(): Iterable<K> = TODO("clr binding 
 
 // ---- Map (read) defaults ------------------------------------------------------------------------------------------
 
+// Kotlin's Map.toString is `{a=1, b=2}` (AbstractMap.toString). The substituted BCL Dictionary renders its default
+// `System.Collections.Generic.Dictionary`2[...]` instead, so the backend should route `map.toString()` / `println(map)`
+// here (the map mirror of clrCollToString). Emitted into the rt assembly for kotc/bir2cir to target.
+public fun <K, V> clrMapToString(m: Map<K, V>): String {
+    val sb = StringBuilder()
+    sb.append("{")
+    var first = true
+    for (k in m.clrMapNativeKeys()) {
+        if (!first) sb.append(", ")
+        first = false
+        sb.append(k.toString())
+        sb.append("=")
+        sb.append(m.clrMapItem(k).toString())
+    }
+    sb.append("}")
+    return sb.toString()
+}
+
 public fun <K, V> clrMapGet(m: Map<K, V>, key: K): V? = if (m.containsKey(key)) m.clrMapItem(key) else null
 
 public fun <K, V> clrMapIsEmpty(m: Map<K, V>): Boolean = m.size == 0

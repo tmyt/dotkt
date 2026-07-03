@@ -29,7 +29,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     facadegen alone is inert/harmful. ②'s E2E round-trip of a nullable suspend result needs bir2cir (SuspendColdLowering `BuildBridge` doesn't carry
     the inner nullability) + ilemit (only stamps a scalar position-0 `[Nullable]`, no nested array). ③'s suspend flag on an *abstract* interface member
     needs bir2cir to mark it (interface suspend members currently emit with no Suspend marker); facadegen restores it automatically once present.
-
+- **Stdlib correctness (bundle-6 ④): number-conversion parsing fixed to match JVM (culture + exception type).**
+  - `String.toInt()/toLong()/toByte()/toShort()` now delegate to the base-10 radix implementation instead of the
+    culture-sensitive `System.<T>.Parse`. They are strict base-10 (no whitespace/group-separator leniency) and, crucially,
+    throw the **real Kotlin `NumberFormatException`** — so `"abc".toInt()` is catchable as `NumberFormatException` (and as
+    its `IllegalArgumentException` supertype), instead of aborting the process with an uncaught `System.FormatException`.
+  - `String.toDouble()/toFloat()` now parse with `CultureInfo.InvariantCulture` and reject the group separator `,`, so
+    `"3,14".toDouble()` throws `NumberFormatException` (previously it silently parsed to `314.0` under a comma-decimal
+    locale / `AllowThousands`). Failures surface as `NumberFormatException`. New il-gate case `il-strnum`; deviation
+    recorded in `docs/dotkt-semantics.md`.
+- **Stdlib correctness (bundle-6 ④): `Throwable.printStackTrace()` on a `Throwable`-typed receiver no longer NREs.**
+  The JVM `java.lang.Throwable.printStackTrace` member is mapped onto `kotlin.Throwable` and shadows the stdlib
+  extension, so app calls resolved to a member that (on the substituted `System.Exception`) dynamic-dispatched to a
+  missing method → `NullReferenceException`. Declared a real `printStackTrace()` member (rule-3 body writing
+  `stackTraceToString()` to `Console.Error`) on the Throwable class; a `Throwable`-typed receiver now routes correctly.
+  (Subclass-typed receivers still need a bir2cir override-chain rule-3 resolution — reported.)
 - **Gate XFAIL audit (bundle-6): restore verify-roundtrip + verify-differential baselines to accurate "Expected" state.**
   The coroutine machinery landed but two gate scripts still carried stale XFAIL reasons and one had a broken oracle.
   - **verify-differential — JVM-oracle startup crash (whole gate was red).** `kotlin-compiler-embeddable` 2.2.0 has an

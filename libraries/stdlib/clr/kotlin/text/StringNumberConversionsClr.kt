@@ -92,8 +92,11 @@ public actual fun Long.toString(radix: Int): String {
 @kotlin.internal.InlineOnly
 public actual inline fun String?.toBoolean(): Boolean = this != null && this.equals("true", ignoreCase = true)
 
-@kotlin.clr.ClrIntrinsic("System.SByte.Parse")
-public actual fun String.toByte(): Byte = TODO("clr binding should be implemented")
+// Integer parses delegate to the base-10 radix impl (below), NOT to System.<T>.Parse. Two reasons: (1) System.<T>.Parse
+// is CULTURE-sensitive and lenient (accepts leading/trailing whitespace, group separators) — JVM's is strict base-10;
+// (2) it throws System.FormatException, which a Kotlin `catch (e: NumberFormatException)` cannot catch. The radix impl
+// throws the real Kotlin NumberFormatException (full IllegalArgumentException hierarchy), matching JVM exactly.
+public actual fun String.toByte(): Byte = this.toByte(10)
 
 @SinceKotlin("1.1")
 public actual fun String.toByte(radix: Int): Byte {
@@ -102,8 +105,7 @@ public actual fun String.toByte(radix: Int): Byte {
     return v.toByte()
 }
 
-@kotlin.clr.ClrIntrinsic("System.Int16.Parse")
-public actual fun String.toShort(): Short = TODO("clr binding should be implemented")
+public actual fun String.toShort(): Short = this.toShort(10)
 
 @SinceKotlin("1.1")
 public actual fun String.toShort(radix: Int): Short {
@@ -112,8 +114,7 @@ public actual fun String.toShort(radix: Int): Short {
     return v.toShort()
 }
 
-@kotlin.clr.ClrIntrinsic("System.Int32.Parse")
-public actual fun String.toInt(): Int = TODO("clr binding should be implemented")
+public actual fun String.toInt(): Int = this.toInt(10)
 
 @SinceKotlin("1.1")
 public actual fun String.toInt(radix: Int): Int {
@@ -150,8 +151,7 @@ public actual fun String.toInt(radix: Int): Int {
     return if (isNegative) result else -result
 }
 
-@kotlin.clr.ClrIntrinsic("System.Int64.Parse")
-public actual fun String.toLong(): Long = TODO("clr binding should be implemented")
+public actual fun String.toLong(): Long = this.toLong(10)
 
 @SinceKotlin("1.1")
 public actual fun String.toLong(radix: Int): Long {
@@ -187,11 +187,39 @@ public actual fun String.toLong(radix: Int): Long {
     return if (isNegative) result else -result
 }
 
+// System.<T>.Parse(string) uses the CURRENT culture, so e.g. "3,14".toDouble() silently succeeds in a comma-decimal
+// locale instead of throwing (JVM parses '.' only). Bind the InvariantCulture-taking overloads and route through them,
+// then convert the .NET FormatException into Kotlin's NumberFormatException so `catch (e: NumberFormatException)` works.
+@kotlin.clr.ClrTypeAlias("System.IFormatProvider")
+private interface ClrFormatProvider
+
+@kotlin.clr.ClrIntrinsic("System.Globalization.CultureInfo.get_InvariantCulture")
+private fun clrInvariantCulture(): ClrFormatProvider = TODO("clr binding should be implemented")
+
 @kotlin.clr.ClrIntrinsic("System.Single.Parse")
-public actual fun String.toFloat(): Float = TODO("clr binding should be implemented")
+private fun clrParseFloat(s: String, provider: ClrFormatProvider): Float = TODO("clr binding should be implemented")
 
 @kotlin.clr.ClrIntrinsic("System.Double.Parse")
-public actual fun String.toDouble(): Double = TODO("clr binding should be implemented")
+private fun clrParseDouble(s: String, provider: ClrFormatProvider): Double = TODO("clr binding should be implemented")
+
+// System.<T>.Parse(string, provider) implicitly enables NumberStyles.AllowThousands, so an InvariantCulture parse of
+// "3,14" would read the comma as a GROUP separator (-> 314.0) instead of throwing. JVM never accepts a group separator,
+// and InvariantCulture's group separator is exactly ',', so reject any ',' up front — this pins the accepted grammar to
+// JVM's (leading/trailing sign, decimal point, exponent) and makes "3,14".toDouble() throw as required.
+private fun clrRejectGroupSeparator(s: String) {
+    var i = 0
+    while (i < s.length) { if (s[i] == ',') clrNumberFormatError(s); i++ }
+}
+
+public actual fun String.toFloat(): Float {
+    clrRejectGroupSeparator(this)
+    return try { clrParseFloat(this, clrInvariantCulture()) } catch (e: Throwable) { clrNumberFormatError(this) }
+}
+
+public actual fun String.toDouble(): Double {
+    clrRejectGroupSeparator(this)
+    return try { clrParseDouble(this, clrInvariantCulture()) } catch (e: Throwable) { clrNumberFormatError(this) }
+}
 
 @SinceKotlin("1.1")
 public actual fun String.toFloatOrNull(): Float? = try { this.toFloat() } catch (e: Throwable) { null }

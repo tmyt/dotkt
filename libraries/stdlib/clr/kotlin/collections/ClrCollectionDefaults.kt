@@ -59,6 +59,31 @@ public fun <T> clrCollToString(c: Collection<T>): String {
     return sb.toString()
 }
 
+// `MutableList.set(i,e)` / `removeAt(i)` RETURN the previous/removed element in Kotlin, but `IList<T>.set_Item` /
+// `RemoveAt` are VOID on the BCL — binding the calls directly to the void slots underflows the stack when the return is
+// consumed (`val old = list.set(i,e)` -> InvalidProgramException). These wrappers read the old element first (get_Item),
+// then perform the void mutation, and return it — the list mirror of ClrMapDefaults.clrMapPut. The backend should route
+// `MutableList.set`/`removeAt` here (a pre-intrinsic-rule override, like MutableCollection.add -> clrCollAdd).
+/** Raw IList set_Item — VOID on the BCL (the previous-value-returning wrapper is [clrListSet]). */
+@kotlin.clr.ClrIntrinsic("set_Item")
+public fun <T> MutableList<T>.clrListNativeSet(index: Int, element: T): Unit = TODO("clr binding should be implemented")
+
+/** Raw IList RemoveAt — VOID on the BCL (the removed-value-returning wrapper is [clrListRemoveAt]). */
+@kotlin.clr.ClrIntrinsic("RemoveAt")
+public fun <T> MutableList<T>.clrListNativeRemoveAt(index: Int): Unit = TODO("clr binding should be implemented")
+
+public fun <T> clrListSet(list: MutableList<T>, index: Int, element: T): T {
+    val old = list[index]
+    list.clrListNativeSet(index, element)
+    return old
+}
+
+public fun <T> clrListRemoveAt(list: MutableList<T>, index: Int): T {
+    val old = list[index]
+    list.clrListNativeRemoveAt(index)
+    return old
+}
+
 public fun <T> clrListIndexOf(list: List<T>, element: T): Int {
     var i = 0
     for (x in list) { if (x == element) return i; i++ }
