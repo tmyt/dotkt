@@ -204,6 +204,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.
 	internal val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()
+	// A lifted anon-object / local class that captures ENCLOSING generic type parameters: the `gp:`-token names it was
+	// made generic over (detected by typeDef from its own rendered members). The construction site brackets these onto
+	// the constructed type (`<>dotkt_objN[gp:T]`) so ilemit instantiates it with the enclosing args. Keyed by the IrClass.
+	internal val liftedTypeArgNames = java.util.IdentityHashMap<IrClass, List<String>>()
 	// A local delegated property's getter/setter function -> the IrLocalDelegatedProperty, so call() rewrites a
 	// `<get-x>`/`<set-x>` call to access on the delegate local (mirrors the member-property delegate path).
 	internal val localDelegates = java.util.IdentityHashMap<IrSimpleFunction, IrLocalDelegatedProperty>()
@@ -1248,7 +1252,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Round-trip: a Kotlin `sealed` class lowers to a CLR abstract class (loses the sealed modality) — carry the fact
 		// so a re-consuming Kotlin module restores `sealed` (ilemit stamps [KotlinSealed]).
 		val sealedFlag = ""","isSealed":${klass.modality == Modality.SEALED}"""
-		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn$sealedFlag${typeParamsJson(innerEnclosingTypeParams(klass) + klass.typeParameters)},"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList],"attrs":[${attrsJson(klass.annotations)}]}"""
+		// A lifted anonymous-object / local class that CAPTURES enclosing generic type parameters (reified CLR generics —
+		// `object : Box<T>`, or an inlined `object` whose supertype/captures resolve to the enclosing `T`) must be GENERIC
+		// over them itself: the members already reference `gp:T` (birType put it there, honoring any inline `typeArgSubst`),
+		// so the class must DECLARE `T` and the construction site instantiates it with the enclosing arg. Detect exactly the
+		// captured params from the `gp:` tokens birType rendered into the members MINUS the class's own params — this is
+		// robust to inline substitution (a monomorphized param leaves no `gp:` token; one remapped to `gp:X` yields `X`),
+		// and single-render (the member strings are already built above; no side-effecting re-emit). Mirrors closureNew/samNew.
+		val ownTps = innerEnclosingTypeParams(klass) + klass.typeParameters
+		val ownNames = ownTps.map { it.name.asString() }.toHashSet()
+		val capturedTpNames = LinkedHashSet<String>()
+		Regex("gp:([A-Za-z0-9_]+)").findAll("$baseJson$ifaces$fields$ctors$methods$propsList").forEach {
+			val n = it.groupValues[1]; if (n !in ownNames) capturedTpNames.add(n)
+		}
+		liftedTypeArgNames[klass] = capturedTpNames.toList()
+		val ownTpsJson = typeParamsJson(ownTps).removePrefix(""","typeParams":[""").removeSuffix("]")
+		val extraJson = capturedTpNames.joinToString(",") { str(it) }
+		val tpEntries = listOf(ownTpsJson, extraJson).filter { it.isNotEmpty() }.joinToString(",")
+		val tpJson = if (tpEntries.isEmpty()) "" else ""","typeParams":[$tpEntries]"""
+		return """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn$sealedFlag$tpJson,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList],"attrs":[${attrsJson(klass.annotations)}]}"""
 	}
 
 	internal fun ctor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): String {
@@ -3198,21 +3220,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				if (captured.any { it in mutatedIn(anon) && !isRefCell(it) })
 					return unsupported(block, "an object expression that writes to a captured outer variable",
 						"read-only capture works; to mutate shared state, use a small class with a field instead")
-				// Capturing an ENCLOSING TYPE PARAMETER would require the synthesized object class to be generic over it
-				// (reified CLR generics) AND every use of its (anonymous) type to carry the args — not yet supported, so
-				// fail with a clear error instead of emitting invalid IL. (A capturing lambda or local fn does work.)
-				if (freeTypeParams(captured.map { it.type }).isNotEmpty())
-					return unsupported(block, "an object expression that captures an enclosing generic type parameter",
-						"move the logic into a (capturing) lambda or a local fun, which do support it")
+				// Capturing an ENCLOSING TYPE PARAMETER (`fun <T> mk(v:T) = object : Box<T> { ... }`, or an inlined object
+				// whose supertype/captures resolve to the enclosing `T`): typeDef makes the synthesized class GENERIC over
+				// the params its members reference (reified CLR generics), recording them in `liftedTypeArgNames`. The `new`
+				// site must then INSTANTIATE it with the enclosing args — bracket those `gp:` tokens onto the constructed type
+				// (they resolve at THIS site, i.e. the enclosing method/type scope). Mirrors closureNew/samNew's `typeArgs`.
 				val capPairs = captured.map { it to captureFieldName(it) }
 				capPairs.forEach { (decl, fname) ->
 					captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 				}
 				liftedTypes.add(typeDef(anon, capPairs))
 				capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
+				val tpNames = liftedTypeArgNames[anon].orEmpty()
 				// Capture values are evaluated in the OUTER context (captureSubst now cleared).
 				val capArgs = captured.joinToString(",") { capValueExpr(it) }
-				return """{"k":"new","type":${str(cname)},"args":[$capArgs]}"""
+				val newType = if (tpNames.isEmpty()) cname else "$cname[${tpNames.joinToString(",") { "gp:$it" }}]"
+				return """{"k":"new","type":${str(newType)},"args":[$capArgs]}"""
 			}
 		}
 		// `when (subject)` lowers to `{ val tmp = subject; WHEN }` in expression position. The subject is bound
