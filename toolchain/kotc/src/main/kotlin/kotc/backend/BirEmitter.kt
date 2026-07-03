@@ -3310,7 +3310,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	internal fun call(call: IrCall): String {
 		val callee = call.symbol.owner
-		val calleeFqEarly = callee.fqNameWhenAvailable?.asString()
 		// NOTE: kotlin.text.MatchResult.value is a REAL interface property (realized by ClrMatchResult) — it must route
 		// through the ordinary member-call path, NOT a hardcoded System...Match.Value lowering (that leftover forced the
 		// broken MatchResult->Match aliasing above and mis-typed the call).
@@ -3323,19 +3322,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
 			}
 		}
-		// `kotlin.sequences.sequence { yield(…) }` -> a lazy IEnumerable<T> backed by a yield state machine that
-		// implements ISeqStep<T>, wrapped by DotKt.Sequences.Seq.Of. The block's yields CPS-linearize to coYield
-		// steps (multi-shot). See docs §13h. v1: the block must not capture outer state (loud error otherwise).
-		if (calleeFqEarly == "kotlin.sequences.sequence") {
-			val block = regularArgs(call).firstOrNull() as? IrFunctionExpression
-				?: return unsupported(call, "this sequence{} block", "expected a literal lambda")
-			if (capturedVars(block.function, includeThis = true).isNotEmpty())
-				return unsupported(call, "a capturing sequence{} block", "v1 supports only non-capturing sequence builders")
-			val elem = ((call.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
-			val co = emitCoroutineBody(block.function)   // yields -> coYield steps; live locals -> cpsFields
-			val smName = "<>dotkt_${synthScope}_Seq${closureCounter++}"
-			return """{"k":"sequenceNew","sm":${str(smName)},"elem":${str(elem)},"cpsFields":[${co.cpsFields}],"steps":[${co.steps}]}"""
-		}
+		// `kotlin.sequences.sequence { yield(…) }` is now ORDINARY library code: it resolves to the real stdlib
+		// `sequence(block)` function over the cold core (SequenceBuilderIterator), with `{ yield(...) }` flowing through
+		// the ordinary suspend-lambda path (suspendLambdaNew -> bir2cir's RestrictedSuspendLambda SM). kotc has NO
+		// knowledge of the `sequence`/`yield`/`yieldAll` symbols — the compiler no longer knows the builder exists.
 		// `stackBuffer(n) { … }` intrinsic -> scoped stack allocation (splice the block into the caller's frame).
 		// Matched by FULL name (`kotlin.clr.stackBuffer`, its CLR-intrinsic home) so a user function happening to be
 		// named `stackBuffer` is not mistaken for the intrinsic.
