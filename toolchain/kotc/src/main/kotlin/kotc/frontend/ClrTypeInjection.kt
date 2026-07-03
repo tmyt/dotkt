@@ -204,8 +204,11 @@ private object ClrMetadataHolder {
 						lastMethod = methods.last()   // gap ①: target of any following `mbound`
 				}
 				"ctor" -> ctors.add(parseParams(tok.drop(1)))
-				// sfun <Name> <ret> [<param>:<type>]* — a public STATIC method of a normal class (-> companion).
-				"sfun" -> staticMethods.add(ClrMethod(tok[1], tok[2], false, false, false, parseParams(tok.drop(3))))
+				// sfun <Name> <ret> [<TypeParam>...] [<param>:<type>]* — a public STATIC method of a normal class (-> companion).
+				// Bare trailing tokens (no `:`) are the method's own type parameters (`Task.FromResult<TResult>`), mirroring
+				// the `fun`/`tlfun` convention — KEEP them so a generic static (Task.FromResult<T>/Run<T>) can build Task<T>.
+				"sfun" -> { val rest = tok.drop(3)
+					staticMethods.add(ClrMethod(tok[1], tok[2], false, false, false, parseParams(rest), rest.filterNot { it.contains(':') })) }
 				// sprop <Name> <type> <ro|rw> — a public STATIC prop/field of a normal class (-> companion).
 				"sprop" -> staticProps.add(ClrProperty(tok[1], tok[2], tok.getOrNull(3) == "rw", false, false, false))
 				// prop <Name> <type> <ro|rw> <prot-?open|final|abstract>
@@ -633,9 +636,20 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		companionOwnerType(owner.classId)?.let { ct ->
 			val cn = callableId.callableName.asString()
 			return ct.staticMethods.filter { it.name == cn }.map { m ->
-				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
-					for (p in m.params) valueParameter(Name.identifier(p.name), coneOf(p.type, owner))
-				}.symbol
+				if (m.typeParams.isEmpty())
+					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
+						for (p in m.params) valueParameter(Name.identifier(p.name), coneOf(p.type, owner))
+					}.symbol
+				else
+					// A GENERIC static (`Task.FromResult<TResult>(TResult): Task<TResult>`, `Task.Run<TResult>`): declare the
+					// method's own type parameters, then resolve the return type and any T-typed params against THEM (via the
+					// provider forms — the params don't exist until the function is being built), like the generic instance path.
+					// This is the seam that lets Kotlin BUILD a Task<T> from a .NET generic factory (async interop).
+					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName,
+						{ tps -> coneOfMethod(m.returnType, owner, m.typeParams, tps) }) {
+						for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+						for (p in m.params) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
+					}.symbol
 			}
 		}
 		val type = byClassId[owner.classId] ?: return emptyList()
