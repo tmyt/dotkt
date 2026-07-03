@@ -194,7 +194,15 @@ sealed class Pipeline
             if (!_options.RefBuild) CatchClauseWidening.Apply(substituted);
             // STAR-PROJECTION IS-TEST (bundle-6 ④): `is Collection<*>`/`is Map<*,*>` -> the non-generic BCL interface,
             // so the check holds for value-type collections (reified generic isinst has no value-type covariance).
-            if (!_options.RefBuild) StarProjectionIsTest.Apply(substituted);
+            // Fix #6 (StarProjectionIsTest) REVERTED 2026-07-04: lowering `is Collection<*>` to the non-generic
+            // ICollection made the is-test TRUE for a value-type-element collection, but the subsequent SMART-CAST
+            // member access (`(this as Collection<*>).size` in collectionSizeOrDefault) still cast to the reified
+            // IReadOnlyCollection<object> -> InvalidCast (List<int> !-> IReadOnlyCollection<object>), regressing
+            // map/filter (coll/coll2/coll3/bmore/funref/mapfilter). Full star-projection lowering must also route
+            // the smart-cast + member access to the non-generic interface (hard: `Collection[object]` star vs real
+            // Any are ambiguous). Deferred — iscoll stays XFAIL. Pre-#6 behavior (is-test false for value collections
+            // -> safe default) is correct enough; restore it.
+            // if (!_options.RefBuild) StarProjectionIsTest.Apply(substituted);
             staged.Add((substituted, outputName));
         }
 

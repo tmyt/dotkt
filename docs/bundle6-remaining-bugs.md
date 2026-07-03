@@ -33,3 +33,10 @@ String.compareTo culture-dependent (order reversed vs JVM) [builtins/String.kt:5
 
 ## ⑤ latent/narrow
 kotc .NET-member generic branch missing suspend tag [BirEmitter.kt:3524] · bir2cir shadowed-var intrinsic-capture skip [:775] · ilemit clrPropSet value-type receiver not by-address [Program.cs:3190] · EmitDynamicCall gp not boxed [Expressions.cs:50] · bir2cir null→ToString NRE [Program.cs:2884] · subSequence double-eval [:2870]
+
+
+## Deferred follow-ups (2026-07-04)
+- **star-projection is-test full lowering** (iscoll XFAIL): `x is Collection<*>` lowering the isinst to non-generic ICollection makes it true for value-type collections, but the smart-cast member access (`(this as Collection<*>).size`) still castclasses the reified `IReadOnlyCollection<object>` -> InvalidCast. Needs the star-cast + member-access to ALSO route to the non-generic BCL interface (ambiguity: `Collection[object]` star vs real Any). Fix #6 reverted to protect map/filter (collectionSizeOrDefault hot path).
+- **FilteringSequence.filter value-type**: value-type `asSeq.filter{}` still InvalidPrograms (map/toList/first work).
+- ⑤ bir2cir latent: shadowed-var intrinsic-capture / null->ToString NRE / subSequence double-eval.
+- Map dual-rep sub-track (bymap, m-b6/m-b9/m-b10, map is Collection): separate track.
