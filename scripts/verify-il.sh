@@ -38,6 +38,7 @@ declare -A XFAIL_RUN=(
 declare -A XFAIL_ILVERIFY=(
 	[chunk]="value-type-nullable: nextValue:T? field now erases to object (FIXED), but a remaining value-type site in the map/filter sequence iterator still InvalidPrograms — under diagnosis"
 	[chunk]="ilverify shadow of run:chunk (value-type-nullable, bir2cir/kotc P5 IN-FLIGHT): filterNotNull's Iterable<T?> receiver lowers to IEnumerable<object> but the arg is IReadOnlyList<Nullable<int>> -> StackUnexpected. SAME root cause as the run-XFAIL: PENDS the bir2cir consumer that erases the kotc nullable:gp:T marked arg -> object. NOT ilemit — verified: the pre-change ilemit produces the identical finding from the same CIR"
+	[chunk]="value-type-nullable: nextValue:T? field now erases to object (FIXED), but a remaining value-type site in the map/filter sequence iterator still InvalidPrograms — sibling P5 (bir2cir coroutine-① change proven not to touch chunk: CIR byte-identical)"
 	[collops2]="ilverify formal finding (sample also run-XFAIL: cross-module default-arg drop, windowed(3))"
 	[collrealkt]="ilverify formal-only finding (sample runs correct)"
 	[gen3]="ilverify formal-only finding (sample runs correct)"
@@ -390,6 +391,15 @@ il_check_imports genasync GenAsync "$ROOT/cases/il-genasync" "7"  # genuine-asyn
 # cross-thread hand-off, so it proves Wait blocks + Pulse wakes. (blockOn's own E2E true-suspension
 # waits on await's slow path; this isolates the primitives it depends on — verified drain-correct.)
 il_check_imports monitordrain MonitorDrainKt "$ROOT/cases/il-monitordrain" "99"
+# cofinally: bundle-6 ① BUG 1 — a genuine `Task.Delay(1).await()` suspension INSIDE a try/finally (the
+# use{}/withLock{} shape). bir2cir's EmitTry now gates the finally on the $suspending flag so `close()`
+# runs EXACTLY ONCE at the post-resume exit (before the fix it ran EARLY + TWICE). RUNS correct -> close,42
+# and passes ilverify (the gated finally shape emits no TaskAwaiter CallVirtOnValueType finding).
+il_check_imports cofinally CoFinally "$ROOT/cases/il-cofinally" "$(printf 'close\n42')"
+# coevalorder: bundle-6 ① BUG 2 — strict left-to-right eval across a suspension. In `side() + g()` (g
+# suspend), bir2cir now spills the impure LEFT operand into an SM field BEFORE g()'s suspension segments
+# so its side effect (println "L") happens before g()'s ("G"). Before the fix: G,L; after: L,G,3.
+il_check coevalorder CoEvalOrder "$ROOT/cases/il-coevalorder" "$(printf 'L\nG\n3')"
 # lam1/lam2: bundle-6 P3 wave-2b — the suspend-LAMBDA payoff. kotc emits `suspendLambdaNew` (STEP 2,
 # landed) and bir2cir builds the SuspendLambda SM, but the generated SM `create()` returns
 # Continuation<object> while the stdlib base BaseContinuationImpl.create returns Continuation<Unit> ->

@@ -177,6 +177,26 @@ static class SuspendColdLowering
         foreach (var (k, e) in entries)
             calleeRet[k.Name] = Str(e.Method["resultType"]) ?? "kotlin.Any";
 
+        // A global (owner#name -> resultType) index of EVERY method (not just suspend). The eval-order spill
+        // (BUG 2 fix, Rewrite/RewriteEvalOrder) uses it to type a temp SM field holding a left-of-suspension
+        // operand whose own node carries no return type (a same-assembly `callStatic side()` has no `ret`).
+        // Top-level -> "#name"; member -> "owner#name".
+        var methodRets = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var r in roots)
+        {
+            if (r is not JsonObject file) continue;
+            if (file["methods"] is JsonArray fms)
+                foreach (var m in fms)
+                    if (m is JsonObject mo && Str(mo["name"]) is string mn)
+                        methodRets["#" + mn] = Str(mo["resultType"]) ?? Str(mo["ret"]) ?? "kotlin.Any";
+            if (file["types"] is JsonArray fts2)
+                foreach (var t in fts2)
+                    if (t is JsonObject to && Str(to["name"]) is string ow && to["methods"] is JsonArray tms)
+                        foreach (var m in tms)
+                            if (m is JsonObject mo && Str(mo["name"]) is string mn)
+                                methodRets[ow + "#" + mn] = Str(mo["resultType"]) ?? Str(mo["ret"]) ?? "kotlin.Any";
+        }
+
         if (entries.Count == 0) return calleeRet;
 
         // 2. Fixpoint: a fun stays transformable only if EVERY suspend call it makes is RESOLVABLE — a
@@ -238,7 +258,7 @@ static class SuspendColdLowering
                 foreach (var t in otps)
                     if (t is JsonValue tv2 && tv2.TryGetValue<string>(out var s2)) ownerTps.Add(s2);
                     else if (t is JsonObject to2 && Str(to2["name"]) is string n2) ownerTps.Add(n2);
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key]);
+            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], methodRets);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -524,11 +544,39 @@ static class SuspendColdLowering
         }
     }
 
+    // BUG 1: does the subtree contain a `try` whose finally is non-empty AND whose body spans a suspension?
+    // Such a finally needs the $suspending gate (it would otherwise run on the suspend-return leave and again at
+    // exit). SuspensionsSupported guarantees at most one such level (nested suspending try is left untransformed).
+    static bool HasSuspendingFinally(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                if (Str(o["k"]) == "try" && o["finally"] is JsonArray fin && fin.Count > 0
+                    && o["body"] != null && HasSuspension(o["body"]))
+                    return true;
+                foreach (var kv in o) if (kv.Value != null && HasSuspendingFinally(kv.Value)) return true;
+                return false;
+            case JsonArray a:
+                foreach (var it in a) if (it != null && HasSuspendingFinally(it)) return true;
+                return false;
+            default:
+                return false;
+        }
+    }
+
     // --- per-fun code generation -----------------------------------------------------------------------
 
     sealed class FunGen
     {
         const string ThisField = "$this";
+        // BUG 1 (try/finally across a suspension): a boolean SM field gating a suspending-try's finally. Set true
+        // right before every `return COROUTINE_SUSPENDED`, reset false at the top of each invokeSuspend; the
+        // finally runs its real body only when it is false — so it is SKIPPED on the suspend-return unwind (when
+        // the CLR runs the finally on the `leave`) and RUNS EXACTLY ONCE on the post-resume normal/exception exit.
+        // This mirrors the C#/JVM state-gated finally (a per-label finally-route table collapsed to one flag,
+        // valid because SuspensionsSupported admits only a SINGLE level of suspending try).
+        const string SuspendingField = "$suspending";
         // The Task-bridge root sink (a real emitted stdlib class, referenced cross-assembly like ContinuationImpl).
         const string RootContinuationFqn = "kotlin.coroutines.clr.internal.RootContinuation";
         // bundle-6 P4 REVERSE bridge — the facadegen-injected Task.await marker + the BCL awaiter family.
@@ -574,20 +622,26 @@ static class SuspendColdLowering
         // that re-drives THIS SM via resumeWith). Populated during body emission; spliced into the SM type.
         readonly List<JsonObject> _awaitResumeMethods = new();
 
+        // Global (owner#name -> resultType) index for typing eval-order spill fields (BUG 2). Empty in lambda mode.
+        readonly Dictionary<string, string> _methodRets;
+
         int _state;                              // resume-state counter (>=1)
         int _label;                              // label id allocator (above kotc's low ids)
         int _condCounter;
+        int _ordCounter;                         // eval-order spill temp-field counter (BUG 2)
+        bool _needSuspendGuard;                  // fun has a suspending try/finally -> emit the $suspending gate (BUG 1)
         readonly List<(int state, int label)> _dispatch = new();
         readonly Stack<(List<(int state, int label)> inner, int tryEntry)> _tryStack = new();
 
         public FunGen(JsonObject m, string name, string fileClass, string ownerClass,
             Dictionary<string, string> calleeRet, bool baseIsLocal, string tcsBcl = null, string taskBcl = null,
             List<string> ownerTypeParams = null, IReadOnlyDictionary<string, JsonObject> closures = null,
-            string smNameSuffix = "")
+            string smNameSuffix = "", Dictionary<string, string> methodRets = null)
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
             _isMember = ownerClass != null;
             _calleeRet = calleeRet; _baseIsLocal = baseIsLocal;
+            _methodRets = methodRets ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _tcsBcl = tcsBcl; _taskBcl = taskBcl;
             _closures = closures ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _ownerTypeParams = ownerTypeParams ?? new List<string>();
@@ -620,6 +674,7 @@ static class SuspendColdLowering
         {
             _isLambda = true;
             _restrictedBase = restricted;
+            _methodRets = new Dictionary<string, string>(StringComparer.Ordinal);
             _ownerTypeParams = new List<string>();
             _closures = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _m = null;
@@ -671,6 +726,9 @@ static class SuspendColdLowering
             // when there is no type clash; a renamed CLONE otherwise (never mutates the shared/retained body).
             body = DisambiguateShadowedVars(body);
             var hasSuspension = HasSuspension(body);
+            // BUG 1: does the body contain a try whose finally spans a suspension? If so, the finally must be
+            // gated (see SuspendingField) so it does not run on the suspend-return unwind and re-run at exit.
+            _needSuspendGuard = hasSuspension && HasSuspendingFinally(body);
 
             if (!_isLambda && !hasSuspension)
             {
@@ -687,6 +745,7 @@ static class SuspendColdLowering
             _label = MaxLabelId(body) + 1000;
 
             AddField("label", "kotlin.Int");
+            if (_needSuspendGuard) AddField(SuspendingField, "kotlin.Boolean");   // BUG 1: the finally gate flag
             if (_isMember) AddField(ThisField, _selfType);          // holds the enclosing (constructed) instance
             if (_isLambda)
                 foreach (var (n, t) in _captures) AddField(n, t);   // captured vars -> ctor-set fields
@@ -700,6 +759,10 @@ static class SuspendColdLowering
                 bodyOut.Add(Ret(NullConst("kotlin.Any")));
 
             var invoke = new JsonArray();
+            // BUG 1: reset the finally gate at every entry (first call + each resume) BEFORE the label dispatch,
+            // so a finally reached on the normal/exception path runs its real body; the suspend-return path sets
+            // it true just before returning SUSPENDED (see the EmitSuspensionPoint/EmitAwaitPoint sites).
+            if (_needSuspendGuard) invoke.Add(SetField(SuspendingField, BoolConst(false)));
             foreach (var (state, label) in _dispatch)
                 invoke.Add(BrIf(BinEq(FieldOf("label", "kotlin.Int"), IntConst(state)), true, label));
             foreach (var st in bodyOut) invoke.Add(st);
@@ -1014,7 +1077,18 @@ static class SuspendColdLowering
                 var finOut = new List<JsonNode>();
                 foreach (var s in fin) EmitStmt(s, finOut);
                 var finArr = new JsonArray();
-                foreach (var st in finOut) finArr.Add(st);
+                // BUG 1: this try body spans a suspension (bodyHasSusp is true here), so its finally would be run
+                // by the CLR on the suspend-return `leave` AND again at the post-resume exit. Gate it on the
+                // $suspending flag: `if ($suspending) goto skip; <finally>; skip:` — skipped on the suspend-return
+                // unwind, run exactly once on the real normal/exception exit.
+                if (_needSuspendGuard)
+                {
+                    var skipL = NextLabel();
+                    finArr.Add(BrIf(FieldOf(SuspendingField, "kotlin.Boolean"), true, skipL));
+                    foreach (var st in finOut) finArr.Add(st);
+                    finArr.Add(Label(skipL));
+                }
+                else foreach (var st in finOut) finArr.Add(st);
                 tryNode["finally"] = finArr;
             }
             outp.Add(tryNode);
@@ -1093,6 +1167,25 @@ static class SuspendColdLowering
                     return EmitAwaitPoint(o, outp);
                 if (k == "cond" && HasSuspension(o))
                     return EmitCondValue(o, outp);
+                // BUG 2 (left-to-right evaluation order across a suspension): when an ordered-eval node contains a
+                // suspension in a LATER operand, any impure earlier operand must be evaluated + SPILLED into a temp
+                // SM field BEFORE the suspension's segments are appended (else its side effects run after the
+                // suspension resumes). Applies to `bin` (l,r) and call/new arg lists (recv,args...).
+                if (HasSuspension(o))
+                {
+                    if (k == "bin")
+                    {
+                        var rw = RewriteEvalOrder(new List<JsonNode> { o["l"], o["r"] }, outp);
+                        var binCopy = new JsonObject();
+                        foreach (var kv in o) binCopy[kv.Key] = kv.Value?.DeepClone();
+                        binCopy["l"] = rw[0];
+                        binCopy["r"] = rw[1];
+                        return binCopy;
+                    }
+                    if (k is "callStatic" or "callInstance" or "clrStatic" or "clrInstance"
+                        or "clrGenericStatic" or "new" or "clrNew")
+                        return RewriteCallOrdered(o, outp);
+                }
                 var copy = new JsonObject();
                 foreach (var kv in o) copy[kv.Key] = kv.Value == null ? null : Rewrite(kv.Value, outp);
                 return copy;
@@ -1104,6 +1197,122 @@ static class SuspendColdLowering
                 return copy;
             }
             return node?.DeepClone();
+        }
+
+        // BUG 2: rewrite a left-to-right eval sequence, SPILLING each impure operand that precedes a later
+        // suspension into a temp SM field NOW (so its side effects happen before the suspension's segments are
+        // appended by a subsequent Rewrite). An operand that itself carries the suspension is already spilled to
+        // its own `__aw` field by EmitSuspensionPoint, so it needs no extra spill; a pure operand (no call/new/
+        // assignment anywhere in it) is stable across the suspension and stays inline (keeps output byte-identical
+        // for the common `acc + one()` case where the left operand is a plain field/local read).
+        List<JsonNode> RewriteEvalOrder(List<JsonNode> kids, List<JsonNode> outp)
+        {
+            var lastSusp = -1;
+            for (var i = 0; i < kids.Count; i++)
+                if (kids[i] != null && HasSuspension(kids[i])) lastSusp = i;
+            var res = new List<JsonNode>(kids.Count);
+            for (var i = 0; i < kids.Count; i++)
+            {
+                var child = kids[i];
+                if (child == null) { res.Add(null); continue; }
+                var rw = Rewrite(child, outp);
+                if (i < lastSusp && !HasSuspension(child) && !IsPureExpr(child))
+                {
+                    var ty = TypeOfExpr(child);
+                    var tmp = "__ord$" + (++_ordCounter);
+                    AddFieldTyped(tmp, ty);
+                    outp.Add(SetField(tmp, rw));
+                    res.Add(FieldOf(tmp, ty));
+                }
+                else res.Add(rw);
+            }
+            return res;
+        }
+
+        // BUG 2 for call/new nodes that CONTAIN (but are not themselves) a suspension: rewrite recv then args in
+        // eval order, spilling impure operands to the left of a suspending operand.
+        JsonNode RewriteCallOrdered(JsonObject o, List<JsonNode> outp)
+        {
+            var recv = o["recv"];
+            var argsArr = o["args"] as JsonArray;
+            var kids = new List<JsonNode>();
+            if (recv != null) kids.Add(recv);
+            if (argsArr != null) foreach (var arg in argsArr) kids.Add(arg);
+            var rw = RewriteEvalOrder(kids, outp);
+            var idx = 0;
+            var recvRw = recv != null ? rw[idx++] : null;
+            var argsRw = new JsonArray();
+            if (argsArr != null) foreach (var _ in argsArr) argsRw.Add(rw[idx++]);
+            var copy = new JsonObject();
+            foreach (var kv in o)
+            {
+                if (kv.Key == "recv") copy["recv"] = recvRw;
+                else if (kv.Key == "args") copy["args"] = argsRw;
+                else copy[kv.Key] = kv.Value?.DeepClone();
+            }
+            return copy;
+        }
+
+        // Impure kinds whose PRESENCE anywhere in a subtree makes it unsafe to defer past a suspension (a call,
+        // an allocation, or an assignment has an observable effect). A subtree free of them is "pure" — stable to
+        // read after the suspension resumes, so it stays inline. (A suspend fun's plain locals are its OWN private
+        // SM fields, unreachable by the callee it suspends into, so a `local` read is stable — treated pure.)
+        static readonly HashSet<string> ImpureKinds = new(StringComparer.Ordinal)
+        {
+            "callStatic", "callInstance", "clrStatic", "clrInstance", "clrGenericStatic",
+            "new", "clrNew", "setLocal", "setField", "throwExpr", "dynCall",
+        };
+        static bool IsPureExpr(JsonNode n)
+        {
+            var impure = false;
+            void Walk(JsonNode x)
+            {
+                if (impure || x == null) return;
+                if (x is JsonObject o)
+                {
+                    if (Str(o["k"]) is string k && ImpureKinds.Contains(k)) { impure = true; return; }
+                    foreach (var kv in o) if (kv.Value != null) Walk(kv.Value);
+                }
+                else if (x is JsonArray a) foreach (var it in a) if (it != null) Walk(it);
+            }
+            Walk(n);
+            return !impure;
+        }
+
+        // The static type token of an expression, for typing an eval-order spill field. Reads an explicit type key
+        // when present; else resolves a same-assembly call's declared return type from the global method index; a
+        // `bin`'s result is its left-operand type (comparisons -> Boolean). Falls back to kotlin.Any.
+        string TypeOfExpr(JsonNode n)
+        {
+            if (n is not JsonObject o) return "kotlin.Any";
+            if (NonEmpty(Str(o["retType"])) is string t0) return t0;
+            if (NonEmpty(Str(o["ret"])) is string t1) return t1;
+            if (NonEmpty(Str(o["dynRet"])) is string t2) return t2;
+            var k = Str(o["k"]);
+            switch (k)
+            {
+                case "const": case "cast": case "new": case "clrNew": case "valueBlock": case "var":
+                    if (NonEmpty(Str(o["type"])) is string t) return t;
+                    break;
+                case "callStatic":
+                {
+                    var name = Str(o["method"]);
+                    var owner = Str(o["owner"]);
+                    var key = (owner == null ? "#" : BareOwner(owner) + "#") + name;
+                    if (_methodRets.TryGetValue(key, out var rt)) return rt;
+                    if (_methodRets.TryGetValue("#" + name, out var rt2)) return rt2;
+                    break;
+                }
+                case "callInstance":
+                {
+                    var ot = BareOwner(Str(o["ownerType"]));
+                    if (ot != null && _methodRets.TryGetValue(ot + "#" + Str(o["method"]), out var rt)) return rt;
+                    break;
+                }
+                case "bin":
+                    return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" ? "kotlin.Boolean" : TypeOfExpr(o["l"]);
+            }
+            return "kotlin.Any";
         }
 
         JsonNode EmitCondValue(JsonObject c, List<JsonNode> outp)
@@ -1149,6 +1358,7 @@ static class SuspendColdLowering
                 ["l"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
                 ["r"] = Suspended(),
             }, false, resumeLabel));
+            if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));   // BUG 1: mark the suspend-return
             outp.Add(Ret(Suspended()));
             outp.Add(Label(resumeLabel));
             outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ThrowOnFailure() });
@@ -1231,6 +1441,7 @@ static class SuspendColdLowering
                 ["l"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
                 ["r"] = Suspended(),
             }, false, resumeLabel));
+            if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));   // BUG 1: mark the suspend-return
             outp.Add(Ret(Suspended()));
             outp.Add(Label(resumeLabel));
             outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ThrowOnFailure() });
@@ -1359,6 +1570,7 @@ static class SuspendColdLowering
                     ["ret"] = "void",
                 },
             });
+            if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));   // BUG 1: mark the suspend-return
             outp.Add(Ret(Suspended()));
             outp.Add(Label(afterLabel));
 
@@ -1450,9 +1662,17 @@ static class SuspendColdLowering
         JsonObject ColdCall(JsonObject callNode, List<JsonNode> outp)
         {
             var method = Str(callNode["method"]) + "$dotkt_suspend";
+            var isInstance = Str(callNode["k"]) == "callInstance";
+            // Evaluate recv (instance) then args LEFT-TO-RIGHT, spilling any impure operand that precedes a later
+            // suspending operand (BUG 2 — a nested suspension inside a suspend call's own argument list).
+            var kids = new List<JsonNode>();
+            if (isInstance) kids.Add(callNode["recv"]);
+            if (callNode["args"] is JsonArray oa) foreach (var arg in oa) kids.Add(arg);
+            var rw = RewriteEvalOrder(kids, outp);
+            var ri = 0;
+            var recvRw = isInstance ? rw[ri++] : null;
             var args = new JsonArray();
-            if (callNode["args"] is JsonArray oa)
-                foreach (var arg in oa) args.Add(arg == null ? null : Rewrite(arg, outp));
+            for (; ri < rw.Count; ri++) args.Add(rw[ri]);
             args.Add(new JsonObject
             {
                 ["k"] = "cast",
@@ -1461,14 +1681,14 @@ static class SuspendColdLowering
             });
 
             JsonObject call;
-            if (Str(callNode["k"]) == "callInstance")
+            if (isInstance)
             {
                 call = new JsonObject
                 {
                     ["k"] = "callInstance",
                     ["ownerType"] = Str(callNode["ownerType"]),
                     ["virtual"] = Bool(callNode["virtual"]),
-                    ["recv"] = Rewrite(callNode["recv"], outp),
+                    ["recv"] = recvRw,
                     ["method"] = method,
                     ["args"] = args,
                     ["retType"] = "kotlin.Any",
@@ -2096,6 +2316,7 @@ static class SuspendColdLowering
 
         static JsonObject Ret(JsonNode value) => new() { ["k"] = "return", ["value"] = value };
         static JsonObject IntConst(int v) => new() { ["k"] = "const", ["type"] = "kotlin.Int", ["value"] = v };
+        static JsonObject BoolConst(bool v) => new() { ["k"] = "const", ["type"] = "kotlin.Boolean", ["value"] = v };
         static JsonObject NullConst(string type) => new() { ["k"] = "const", ["type"] = type, ["value"] = null };
         static JsonObject Label(int id) => new() { ["k"] = "label", ["id"] = id };
         static JsonObject Goto(int id) => new() { ["k"] = "goto", ["id"] = id };
