@@ -3897,6 +3897,21 @@ static class MemberCallSubstitution
         if (kind != "interface" && refs.IsRule3Member(ownerFqn, member))
             return Rule3HelperCall(node, refs, ownerToken, member, args, instance);
 
+        // Rule 3-inherited: the concrete rule-3 body lives on an ANCESTOR, not the static call owner. `printStackTrace`
+        // has its real body on kotlin.Throwable but is called through a kotlin.Exception/RuntimeException subclass
+        // receiver — IsRule3Member keys on the static owner (Exception) and misses it, so the call would fall through to
+        // Rule 4 as a bogus `System.Exception.printStackTrace` (NRE). Walk the `overrides` marker to the CLR-bound
+        // non-interface ancestor that actually declares the concrete intrinsic-less body and route to ITS helper; the
+        // subclass receiver is assignable to the ancestor-typed __self. Only when the direct owner had no rule-3 match.
+        if (kind != "interface" && instance && node["overrides"] is JsonArray ovChain)
+            foreach (var o in ovChain)
+                if (o is JsonObject oo
+                    && (oo["owner"] as JsonValue)?.GetValue<string>() is string ovOwner
+                    && (oo["member"] as JsonValue)?.GetValue<string>() is string ovMember
+                    && refs.TryResolveClrOwner(ovOwner, out _, out var ovKind) && ovKind != "interface"
+                    && refs.IsRule3Member(ovOwner, ovMember))
+                    return Rule3HelperCall(node, refs, ovOwner, ovMember, args, instance);
+
         // Rule 5m (MAP-interface defaults): Map/MutableMap both alias IDictionary<K,V> (see the stdlib rationale), but
         // most Kotlin map members have no 1:1 IDictionary equivalent — `get` is null-on-missing while get_Item THROWS,
         // put/remove return the previous value, and the keys/values/entries views are Kotlin-typed. Route them to the
@@ -4498,7 +4513,24 @@ static class DeclarationRename
                 }
                 else if (ResolveSlot(ovs, refs) is string slot)
                 {
-                    if ((obj["k"] as JsonValue)?.GetValue<string>() == "callInstance") obj["method"] = slot;
+                    if ((obj["k"] as JsonValue)?.GetValue<string>() == "callInstance")
+                    {
+                        // SKIP the BCL-slot rename when the call targets a rule-3 member on a @ClrTypeAlias CLASS
+                        // owner (an intrinsic-less concrete override carrying a real body that AliasHelperHoist lifts
+                        // into a <>dotkt_ClrH_* helper — String.compareTo's ordinal body must NOT resolve to the
+                        // culture-sensitive System.String.CompareTo slot). Leaving it the Kotlin name lets
+                        // MemberCallSubstitution's Rule 3 route it to that helper. Mirrors Rule 3's own gate exactly:
+                        // a CLR-bound NON-interface owner whose member is rule-3. (An INTERFACE owner is excluded —
+                        // the ref.dll mis-reports its abstract members as non-abstract, so IsRule3Member false-positives
+                        // there; and a REAL non-alias class like ArrayDeque.size -> the emitted Count slot still renames.)
+                        var ot = (obj["ownerType"] as JsonValue)?.GetValue<string>();
+                        var mn = (obj["method"] as JsonValue)?.GetValue<string>();
+                        var otFqn = ot != null ? ReferenceMetadataIndex.BareOwnerFqn(ot) : null;
+                        var isRule3Alias = otFqn != null && mn != null
+                            && refs.TryResolveClrOwner(ot, out _, out var otKind) && otKind != "interface"
+                            && refs.IsRule3Member(otFqn, mn);
+                        if (!isRule3Alias) obj["method"] = slot;
+                    }
                     else if (obj.ContainsKey("name"))
                     {
                         obj["name"] = slot;
@@ -4602,8 +4634,14 @@ static class MemberStrip
             if ((mo["name"] as JsonValue)?.GetValue<string>() is not string name) continue;
             var keys = (mo["params"] as JsonArray ?? new JsonArray())
                 .Select(p => ReferenceMetadataIndex.ParamKey((p as JsonObject)?["type"]?.GetValue<string>() ?? "")).ToList();
+            // An alias-class member that overrides a @ClrIntrinsic ancestor is normally a bound stub (its call
+            // substitutes to the BCL), so it is dropped. But a GENUINE rule-3 member — concrete + intrinsic-less in
+            // the ref.dll (String.compareTo's ordinal body overriding the culture-sensitive Comparable.compareTo@ClrIntrinsic)
+            // — carries a REAL Kotlin body that must be PRESERVED and hoisted (else the call would resolve to the
+            // semantically-wrong BCL slot). IsRule3Member is exactly that ref.dll signal, so exempt it from the override-drop.
             var drop = refs.IsBoundStub(owner, name, keys)
-                || (alias && mo["overrides"] is JsonArray ovs && DeclarationRename.ResolveSlot(ovs, refs) != null);
+                || (alias && mo["overrides"] is JsonArray ovs && DeclarationRename.ResolveSlot(ovs, refs) != null
+                    && !refs.IsRule3Member(owner, name));
             if (drop) { stripped?.Add(name); methods.RemoveAt(i); }
         }
     }
