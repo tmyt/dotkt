@@ -26,6 +26,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
     cold-entry returns a `Task<T>` neither the caller SM nor `blockOn` awaits (runtime `InvalidCastException Task<T>→T`);
     `roundtrip-memext2` = ilemit `NotSupportedException` on a suspending call inside a `with` scope-function sub-expression.
     Reasons re-attributed; gate stays GREEN.
+- **kotc (bundle-6 P5): emit the value-type-nullable marker on generic FIELDS / PROPERTIES / nested TYPE-ARGS.**
+  kotc already tagged `retNullable`/`nullable` on method returns and standalone value-params, but DROPPED the
+  nullability of a `T?` (nullable type-parameter) in field/property/type-arg positions — so a value-type `T?` slot
+  (e.g. `Int`) faulted on a real null (`SequenceBuilderIterator.nextValue: T?` → the `sequence{}` InvalidProgram/NRE
+  root; `filterNotNullTo`'s `Iterable<T?>` receiver → the `filterNotNull` NRE root). Now, when the type is
+  `isMarkedNullable()` AND its CLR rep is a bare `gp:T`: an instance/companion field and a CLR property carry a
+  sibling `"nullable":true`; a nested nullable type-parameter arg (`Iterable<T?>` → inner `T?`) rides the inline
+  token `nullable:gp:T` inside the bracketed arg list (both the `clrg:Owner[...]` and `@Owner[...]` branches). This
+  extends the PROVEN `T?`→`object` return-erasure model to fields/props/type-args. The markers are INERT in the
+  current pipeline (verified gate-green) and PEND the matching bir2cir consumer (sibling P5) that erases the marked
+  slot/arg → `object`; at CIR level bir2cir already lowers the owner so the consumer sees the contracted
+  `clrg:...IEnumerable[...,nullable:gp:T,...]`.
+
+- **kotc (bundle-6 P5): route a for-in over `kotlin.sequences.Sequence` through the enumerator path.**
+  `Sequence` is `@ClrTypeAlias(IEnumerable)` (an `Iterable` peer), but the for-in faithful-ization recognized only
+  the `clrName`/`isSubstIterable` families — both gated OFF in app builds — so a concrete-element `for (x in seq)`
+  synthesized a monomorphized iterator interface (`<>dotkt_KIterator_string`) the runtime `SequenceBuilderIterator`
+  doesn't implement (runtime `EntryPointNotFound`). kotc now recognizes `kotlin.sequences.Sequence` by FQN directly
+  (Kotlin-layer knowledge) and lowers its for-in through the same `forEachInline` (GetEnumerator) path as `Iterable`,
+  independent of substitute-mode; `kotlin.sequences.Sequence` is also added to `appColl`/`isSubstIterable` for the
+  rt-internal path. New `cases/il-seqforin` (`for (x in sequence { yield("a"); yield("b") })` → `a`/`b`) in the gate.
 
 - **ilemit (bundle-6 P5 Phase-B): delete the dead coroutine/sequence CODEGEN — ilemit is now coroutine-free.**
   After the A2 ignition + the kotc CPS-engine deletion, NOTHING produces the old CPS/sequence CIR any more (the

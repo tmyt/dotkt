@@ -1103,6 +1103,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}.joinToString(",")
 	}
 
+	/** Nullable generic-parameter marker for a FIELD / PROPERTY slot: a `T?` (nullable type-parameter) whose CLR
+	 *  rep is a bare `gp:T` carries no nullability in IL, so a value-type instantiation (`Int`) would fault on a
+	 *  real null (SequenceBuilderIterator.nextValue: T?). Emit the sibling `"nullable":true` so bir2cir's extended
+	 *  NullableGenericReturnErasure erases the slot's `type` -> `object` (the SAME `T?`->object model the method-return
+	 *  path uses, just extended from returns to fields/props). Inert until bir2cir consumes it. */
+	private fun nullableGpFieldFlag(t: IrType): String =
+		if (t.isMarkedNullable() && birType(t).startsWith("gp:")) ""","nullable":true""" else ""
+
 	internal fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false, liftedAnon: Boolean = false): String {
 		val baseType = klass.superTypes
 			.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
@@ -1123,14 +1131,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A property that isn't publicly SETTABLE (`val`, or `var ... private/protected set`) -> mark the public
 			// backing field read-only so a consuming Kotlin module restores it as `val` (rejecting external writes).
 			val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public"))) ""","readOnly":true""" else ""
-			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))}$visJson$ro}"""
+			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))}$visJson$ro${nullableGpFieldFlag(bf.type)}}"""
 		}
 		// Companion non-const `val`/`var` -> static fields (with initializer run in a static ctor); const is inlined.
 		val statFields = companion?.declarations?.filterIsInstance<IrProperty>()?.mapNotNull { p ->
 			val bf = p.backingField ?: return@mapNotNull null
 			if (p.isConst) return@mapNotNull null
 			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
-			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))},"static":true,"init":$init}"""
+			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))},"static":true,"init":$init${nullableGpFieldFlag(bf.type)}}"""
 		}.orEmpty()
 		// A capturing object literal carries its captured outer values as extra instance fields.
 		val capFields = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
@@ -1187,7 +1195,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val propsList = klass.declarations.filterIsInstance<IrProperty>().filter { emitsGet(it) }.joinToString(",") { p ->
 			val getName = clrIfaceMemberName(p.getter!!) ?: "get_" + p.name.asString()
 			val setName = if (emitsSet(p)) str(clrIfaceMemberName(p.setter!!) ?: "set_" + p.name.asString()) else "null"
-			"""{"name":${str(p.name.asString())},"type":${str(birType(p.getter!!.returnType))},"get":${str(getName)},"set":$setName${overridesJson(p.getter!!)}}"""
+			"""{"name":${str(p.name.asString())},"type":${str(birType(p.getter!!.returnType))}${nullableGpFieldFlag(p.getter!!.returnType)},"get":${str(getName)},"set":$setName${overridesJson(p.getter!!)}}"""
 		}
 		val methods = (instMethods + statMethods + companionAccessors + clrAccessors + userAccessors).joinToString(",")
 		// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
@@ -1700,7 +1708,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// (forEachInline). This runs only after the frontend has resolved an iterator operation from source/stdlib
 		// declarations; the FIR injector no longer synthesizes Kotlin's iterator protocol for .NET types.
 		// Element type = the source's first type arg (e.g. Collection<Int> -> Int), else the loop var's type.
-		if (source != null && source.type.classFqName?.asString() != "kotlin.ranges.IntRange" && source.type.classFqName?.asString() !in INT_PROGRESSION_FQ && ((source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null || isSubstIterable(source.type))) {
+		// `kotlin.sequences.Sequence` is an enumerable BY KOTLIN SEMANTICS (@ClrTypeAlias(IEnumerable), which bir2cir
+		// expands) — recognize it here by FQN so a CONCRETE-element `for (x in seq)` takes forEachInline (GetEnumerator)
+		// like Iterable, NOT the monomorphized synthetic KIterator the rt SequenceBuilderIterator doesn't implement
+		// (EntryPointNotFound). This is Kotlin-layer knowledge ("this type is for-in enumerable"), independent of the
+		// substitute-mode gating on clrName/isSubstIterable (both OFF in app builds). `.toList()` already uses the
+		// generic-T CLR-native IEnumerator path; this covers the concrete-element for-in.
+		val forInEnumerable = source != null && ((source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null
+			|| isSubstIterable(source.type) || source.type.classFqName?.asString() == "kotlin.sequences.Sequence")
+		if (source != null && source.type.classFqName?.asString() != "kotlin.ranges.IntRange" && source.type.classFqName?.asString() !in INT_PROGRESSION_FQ && forInEnumerable) {
 			val elem = (source.type as? IrSimpleType)?.arguments?.firstOrNull()
 				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
 			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
@@ -4101,7 +4117,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (!(stdlibCompile && stdlibSubstitute)) return false
 		val collFqs = setOf("kotlin.collections.Iterable", "kotlin.collections.MutableIterable", "kotlin.collections.Collection",
 			"kotlin.collections.MutableCollection", "kotlin.collections.List", "kotlin.collections.MutableList",
-			"kotlin.collections.Set", "kotlin.collections.MutableSet")
+			"kotlin.collections.Set", "kotlin.collections.MutableSet",
+			// Sequence is @ClrTypeAlias(IEnumerable) — an Iterable peer; a `for (x in seq)` must take the SAME forEachInline
+			// (GetEnumerator) path, else a synthesized monomorphized iterator iface the rt SequenceBuilderIterator doesn't
+			// implement -> runtime EntryPointNotFound.
+			"kotlin.sequences.Sequence")
 		val seen = HashSet<String>()
 		fun walk(c: IrClass): Boolean {
 			val fq = c.fqNameWhenAvailable?.asString() ?: return false
@@ -4120,6 +4140,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.collections.Map" -> "System.Collections.Generic.IReadOnlyDictionary"
 		"kotlin.collections.MutableMap" -> "System.Collections.Generic.IDictionary"
 		"kotlin.collections.Iterable", "kotlin.collections.MutableIterable" -> "System.Collections.Generic.IEnumerable"
+		// Sequence is @ClrTypeAlias(IEnumerable) — a for-in over it lowers through the SAME GetEnumerator path as Iterable.
+		"kotlin.sequences.Sequence" -> "System.Collections.Generic.IEnumerable"
 		else -> null
 	}
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = true)
@@ -4417,7 +4439,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// (`Collection<Int>`) carries its concrete args as `clrg:<openName>[int]`.
 		val clrTypeParams = klass?.typeParameters
 		klass?.let { clrName(it) }?.let { netName ->
-			val args = (t as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
+			// A nested type-argument that is a NULLABLE type-parameter (`Iterable<T?>` -> the inner `T?`) rides the inline
+			// `nullable:gp:T` marker (SAME model as funcRetTypeOf) so bir2cir erases the marked arg -> `object`; a bare
+			// `gp:T` would fault on a value-type `T?` null (filterNotNullTo's `Iterable<T?>` receiver). Inert until consumed.
+			val args = (t as? IrSimpleType)?.arguments?.mapNotNull { arg ->
+				(arg as? IrTypeProjection)?.type?.let { at ->
+					val enc = birType(at)
+					if (at.isMarkedNullable() && enc.startsWith("gp:")) "nullable:$enc" else enc
+				}
+			}
 			return when {
 				!args.isNullOrEmpty() -> "clrg:$netName[${args.joinToString(",")}]"
 				// A GENERIC @Clr type referenced raw / star-projected (no args) still needs its `\`N` arity — emit `clrg:`
@@ -4449,7 +4479,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 							// A `Unit` TYPE-ARG can't be `void` (a generic arg of System.Void is invalid -> "incorrect format",
 							// validated only when the instantiation resolves in the full type-load batch, e.g. Continuation<Unit>).
 							at.isUnit() -> if (stdlibCompile) "@kotlin.Unit" else "kotlin.Unit"
-							else -> birType(at)
+							// A NULLABLE type-parameter arg (`Iterable<T?>` -> inner `T?`) rides the inline `nullable:gp:T`
+							// marker (SAME model as funcRetTypeOf / the clrg branch above), so bir2cir erases the marked arg
+							// -> `object`; a bare `gp:T` would fault on a value-type `T?` null (filterNotNullTo's receiver).
+							else -> birType(at).let { enc -> if (at.isMarkedNullable() && enc.startsWith("gp:")) "nullable:$enc" else enc }
 						}
 					}
 					return "@" + typeName(klass) + "[" + (enclArgs + ownArgs).joinToString(",") + "]"
