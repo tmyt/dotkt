@@ -36,6 +36,7 @@ declare -A XFAIL_RUN=(
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
 )
 declare -A XFAIL_ILVERIFY=(
+	[chunk]="ilverify shadow of run:chunk (value-type-nullable, bir2cir/kotc P5 IN-FLIGHT): filterNotNull's Iterable<T?> receiver lowers to IEnumerable<object> but the arg is IReadOnlyList<Nullable<int>> -> StackUnexpected. SAME root cause as the run-XFAIL: PENDS the bir2cir consumer that erases the kotc nullable:gp:T marked arg -> object. NOT ilemit — verified: the pre-change ilemit produces the identical finding from the same CIR"
 	[collops2]="ilverify formal finding (sample also run-XFAIL: cross-module default-arg drop, windowed(3))"
 	[collrealkt]="ilverify formal-only finding (sample runs correct)"
 	[gen3]="ilverify formal-only finding (sample runs correct)"
