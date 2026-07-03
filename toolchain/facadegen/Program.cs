@@ -220,9 +220,42 @@ static class FacadeGen
             if (done.Count >= CAP) { Console.Error.WriteLine($"warning: injection closure hit cap {CAP}; truncating reachable set"); break; }
         }
         Console.WriteLine($"closure: {seeds} seed(s) -> {done.Count} injected type(s)");
+        // bundle-6 P4 — Task.await CLR platform extension. When the injection closure surfaced the BCL Task family
+        // (an `import System.Threading.Tasks.Task`, or a .NET API returning a Task that the closure reached), ALSO
+        // inject the Kotlin-facing `suspend fun Task.await()` extensions in package `kotlin.clr` — the sole frontend
+        // surfacing of the CLR async boundary (the extension is deliberately EXCLUDED from the frontend stdlib jar,
+        // design-coroutine-cold-core-task-bridge.md §5/§12). facadegen only SURFACES the symbol so kotc resolves
+        // `task.await()` in a suspend context and emits it as a suspend call; the BODY is bir2cir-lowered at the call
+        // site to the TaskAwaiter + Continuation bridge — facadegen binds NO intrinsic here.
+        EmitTaskAwait(done, sb);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
         File.WriteAllText(outFile, sb.ToString());
         return 0;
+    }
+
+    // The BCL Task-family type names whose surfacing triggers the `kotlin.clr.await` extension injection.
+    const string TaskGeneric = "System.Threading.Tasks.Task`1";
+    const string TaskNonGeneric = "System.Threading.Tasks.Task";
+
+    // Inject the `kotlin.clr.await` suspend extensions as a top-level [KotlinFile] section, keyed off whichever Task
+    // arity the closure actually surfaced. The `file`'s .NET class token is `kotlin.clr.CoroutinesKt` — where the real
+    // (bir2cir-lowered / TODO-bodied) declaration lives in `libraries/stdlib/clr/taskinterop/kotlin/clr/Coroutines.kt`;
+    // it is the marker bir2cir keys on (type == "kotlin.clr.CoroutinesKt", method == "await") to lower the call site.
+    // Receiver tokens use the facadegen-surfaced BCL Task's Kotlin names: the generic `Task`1` -> arity-qualified
+    // `Task1` (ALWAYS arity-clashes in the BCL, so KotlinName is stable), the non-generic `Task` -> plain `Task`.
+    // So `import System.Threading.Tasks.Task; import kotlin.clr.await; task.await()` resolves on the ONE
+    // facadegen-surfaced Task (design §12 "removes the two Tasks").
+    static void EmitTaskAwait(HashSet<string> injected, StringBuilder sb)
+    {
+        var hasGeneric = injected.Contains(TaskGeneric);
+        var hasNonGeneric = injected.Contains(TaskNonGeneric);
+        if (!hasGeneric && !hasNonGeneric) return;
+        sb.Append("file kotlin.clr kotlin.clr.CoroutinesKt\n");
+        // `suspend fun <T> Task<T>.await(): T` — receiver Task`1 (Kotlin Task1), returns the element type T.
+        if (hasGeneric) sb.Append("tlfun await T final,ext,suspend T __self:generic:Task1[T]\n");
+        // `suspend fun Task.await(): Unit` — non-generic Task receiver.
+        if (hasNonGeneric) sb.Append("tlfun await Unit final,ext,suspend __self:Task\n");
+        Console.WriteLine("meta: kotlin.clr.await (Task.await CLR platform suspend extension — bir2cir-lowered)");
     }
 
     // Emit one type's FIR-injection metadata (enum/interface/annotation/object/class + members).

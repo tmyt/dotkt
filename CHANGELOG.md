@@ -5,6 +5,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **facadegen: inject the `kotlin.clr.await` CLR async-boundary suspend extension when the BCL Task family is
+  surfaced (bundle-6 P4 — the frontend surfacing half).** `toolchain/facadegen/Program.cs` now emits, whenever the
+  injection closure reaches `System.Threading.Tasks.Task` and/or `Task`1` (an `import System.Threading.Tasks.Task`,
+  or any .NET API returning a Task), a top-level `[KotlinFile]` section `file kotlin.clr kotlin.clr.CoroutinesKt`
+  with `tlfun await ... ,ext,suspend` extensions: `suspend fun <T> Task<T>.await(): T` (receiver `generic:Task1[T]`)
+  and `suspend fun Task.await(): Unit` (receiver `Task`). This is the SOLE frontend surfacing of the extension —
+  it is deliberately EXCLUDED from the frontend stdlib jar (design-coroutine-cold-core-task-bridge.md §5/§12), so
+  `import System.Threading.Tasks.Task; import kotlin.clr.await; task.await()` now RESOLVES at the kotc frontend on
+  the ONE facadegen-surfaced Task (design §12 "removes the two Tasks"). facadegen only SURFACES the symbol and binds
+  NO intrinsic; the non-generic await emits as `{"k":"clrStatic","type":"kotlin.clr.CoroutinesKt","method":"await",
+  …,"suspendCall":true}` and the generic as `clrGenericStatic` — the marker (type == `kotlin.clr.CoroutinesKt`,
+  method == `await`) bir2cir keys on to lower the call site to the TaskAwaiter + Continuation bridge (P4 follow-up).
+  Existing façade Task samples (`taskfam` runs `plain=True`/`generic=42`) are unaffected — the injected extension is
+  inert until `.await()` is actually called.
 - **bir2cir: erase the coroutine ABI to a MONOMORPHIC `Continuation<object>` (bundle-6 §11, bug #5 ROOT — the
   `blockOn { 42 }` payoff RUNS).** New pass `ContinuationErasure` (`toolchain/bir2cir/ContinuationErasure.cs`, run in
   ALL builds before `BirTypeLowering`) rewrites EVERY `kotlin.coroutines.Continuation[X]` type token —
