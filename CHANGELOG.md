@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc (bundle-6 P5 Phase-B): delete the dead CPS coroutine engine — kotc withdraws ALL coroutine lowering.**
+  After the A2 ignition removed the `kotlin.sequences.sequence` special-case (its only caller), the entire
+  `emitCoroutineBody` CPS state-machine family in `BirEmitter.kt` was unreachable dead code. Removed
+  `emitCoroutineBody` + the `CoroutineBody` holder and every CPS helper (`emitCps`/`emitCpsValue`/`emitCpsBlock`/
+  `emitScopeCps`/`emitWhenCps`/`emitTryCps`/`emitWhileCps`/`emitSuspend`/`emitSuspendIntrinsic`/`spillExpr`/
+  `store0Local`/`coAwaitable`/`collectCpsVars`/`coStmtsOf`/`coReturnJson`/`coFresh`/`coUnsupported`/
+  `isSuspendIntrinsic`/`scopeSuspendCall`) plus the CPS mutable state (`coState`/`coLabelN`/`coFields`/`coSpill`/
+  `coSpillFields`) and the now-dead `coSpill` residual-render hook in `expr()`. ~337 net lines removed. kotc now
+  holds ZERO coroutine LOWERING: the only coroutine code left is FACT emission — `"suspend":true`+resultType on
+  decls, `"suspendCall":true` at call sites, `suspendLambdaNew` for suspend lambdas — driven by the kept
+  `containsSuspend`/`isSuspensionCall`/`isAwaitIntrinsic` helpers, which bir2cir consumes to build the
+  `ContinuationImpl` state machine + public `Task<T>` bridge. Pure dead-code deletion: IL gate byte-identical
+  green (zero sample changes), verify-ktproj 9/9. Completes the design's kotc-column goal
+  (`docs/design-coroutine-cold-core-task-bridge.md` §8).
+
 - **bir2cir (bundle-6 P5 BUG A): make a lifted GENERIC anon-object reach its enclosing class's privates and
   self-instantiate.** A Kotlin `object : I { … }` inside a class body (e.g. `FilteringSequence.iterator()`'s anon
   `Iterator`) is emitted by kotc as a SEPARATE top-level CLR class (`<>dotkt_obj*`) that captures the enclosing

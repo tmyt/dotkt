@@ -73,12 +73,7 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
 // BIR expression rendering: an IrExpression -> a BIR JSON node (extension on BirEmitter).
-internal fun BirEmitter.expr(node: IrExpression): String {
-	// Spilled suspension: a nested `.await()` already hoisted into a state-machine field by spillExpr; the
-	// residual expression references that field instead of re-evaluating the suspension. (await spilling, D)
-	coSpill[node]?.let { return """{"k":"local","name":${str(it)}}""" }
-	return exprInner(node)
-}
+internal fun BirEmitter.expr(node: IrExpression): String = exprInner(node)
 
 internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrConst -> """{"k":"const","type":${str(birType(node.type))},"value":${constJson(node)}}"""

@@ -476,7 +476,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal val SCOPE_FUNCTIONS = setOf("kotlin.let", "kotlin.run", "kotlin.with", "kotlin.apply", "kotlin.also")
 
 	/** A scope-function call (`with(c){…}`, `c.let/run/apply/also {…}`) -> (fqName, receiver, lambda). These are INLINE,
-	 *  so a suspension in the lambda body is the ENCLOSING coroutine's — the CPS path linearizes them (emitScopeCps). */
+	 *  so a suspension in the lambda body is the ENCLOSING coroutine's — `containsSuspend` descends into it for the fact. */
 	internal fun scopeCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? {
 		val call = e as? IrCall ?: return null
 		val fq = call.symbol.owner.fqNameWhenAvailable?.asString() ?: return null
@@ -486,11 +486,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val lambda = (if (isWith) regularArgs(call).getOrNull(1) else regularArgs(call).getOrNull(0)) as? IrFunctionExpression ?: return null
 		return Triple(fq, recv, lambda)
 	}
-
-	/** A scope-function call whose lambda body DIRECTLY contains a suspension (so it must be CPS-inlined, not rendered
-	 *  as a value-block). The receiver expression is checked too (`with(suspendExpr()){…}`). */
-	internal fun scopeSuspendCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? =
-		scopeCall(e)?.takeIf { (_, recv, lambda) -> lambda.function.body?.let { containsSuspend(it) } == true || containsSuspend(recv) }
 
 	// CLR-bound (@ClrTypeAlias) TYPE-STRIP — MOVED to bir2cir (kotc reads NEITHER @ClrTypeAlias NOR @ClrIntrinsic).
 	// A @ClrTypeAlias class/interface/primitive (kotlin.Int, kotlin.collections.List, kotlin.text.StringBuilder, …) is
@@ -1428,23 +1423,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun isInlineWithLambda(fn: IrSimpleFunction): Boolean =
 		fn.isInline && fn.parameters.any { it.kind == IrParameterKind.Regular && !it.isNoinline && birType(it.type).startsWith("func:") }
 
-	// ===== Coroutine (suspend fun) -> CLR-native async state machine (strategy B) =====
-	// A `suspend fun f(args): T` lowers to a kickoff `Task<T> f(args)` + a struct IAsyncStateMachine (emitted by
-	// ilemit). Here we CPS-linearize the body into a FLAT list of steps so ilemit need not reconstruct control
-	// flow: ordinary statements stay as-is (ilemit redirects references to cpsFields onto state-machine fields),
-	// suspension points become `coSuspend`, and if/while linearize to `coLabel`/`coGoto`/`coCondGoto`. The lowered
-	// FORM is Task/awaiter-based. See docs/coroutine-il.md. Capability bar: linear / loop / branch /
-	// direct-suspend-call; try-catch-around-await needs exception regions (E-0.5) -> loud error.
-	internal var coState = 0
-	internal var coLabelN = 0
-	internal var coFields: Set<String> = emptySet()
-
-	// await spilling (D): a nested suspending call -> a fresh state-machine field holding its result, plus a
-	// suspension step assigning it. coSpill maps the call node to that field so expr() renders a field reference
-	// instead of the call; coSpillFields accumulates (field, type) to declare alongside the params/live-vars.
-	internal val coSpill = java.util.IdentityHashMap<IrCall, String>()
-	internal val coSpillFields = ArrayList<Pair<String, IrType>>()
-
+	// ===== Coroutine SUSPEND FACTS (kotc emits facts only; ALL coroutine lowering is bir2cir's) =====
+	// kotc does NO coroutine lowering. A `suspend fun`/lambda body emits PLAINLY: decls carry `"suspend":true`
+	// (+ `resultType`), suspend call sites carry `"suspendCall":true`, and a suspend lambda emits `suspendLambdaNew`.
+	// bir2cir consumes those facts to build the `ContinuationImpl` state machine + the public `Task<T>` bridge; kotc
+	// bakes NO coroutine ABI. The helpers below (isAwaitIntrinsic / isSuspensionCall / containsSuspend) are the ONLY
+	// coroutine code left in kotc, and they exist purely to DRIVE the fact emission (skip the await intrinsic method,
+	// tag suspend calls). The former CPS state-machine engine that lived here (emitCoroutineBody + the emitCps / spill /
+	// coSuspend / emit*Cps family) is DELETED — it was reachable only from the `sequence{}` special-case, itself removed
+	// once `sequence`/`yield` became ordinary library code over the cold core.
 	internal fun isAwaitIntrinsic(fn: IrSimpleFunction): Boolean =
 		fn.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrAwait" }
 
@@ -1468,325 +1455,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		})
 		return found
-	}
-
-	internal fun coStmtsOf(e: IrExpression): List<org.jetbrains.kotlin.ir.IrStatement> = when (e) {
-		is IrBlock -> e.statements
-		is IrComposite -> e.statements
-		else -> listOf(e)
-	}
-
-	/** Variables declared on any suspension-bearing path -> state-machine fields (survive across resume). */
-	internal fun collectCpsVars(stmts: List<org.jetbrains.kotlin.ir.IrStatement>, out: MutableList<IrVariable>) {
-		for (s in stmts) when (s) {
-			is IrVariable -> out.add(s)
-			is IrWhen -> if (containsSuspend(s)) s.branches.forEach { collectCpsVars(coStmtsOf(it.result), out) }
-			is IrWhileLoop -> if (containsSuspend(s)) s.body?.let { collectCpsVars(coStmtsOf(it), out) }
-			is IrTry -> if (containsSuspend(s)) { collectCpsVars(coStmtsOf(s.tryResult), out); s.catches.forEach { collectCpsVars(coStmtsOf(it.result), out) } }
-			is IrBlock -> if (containsSuspend(s)) collectCpsVars(s.statements, out)
-			is IrComposite -> if (containsSuspend(s)) collectCpsVars(s.statements, out)
-			else -> {}
-		}
-	}
-
-	/** The `Task<T>` an await/suspend-call awaits: the `.await()` receiver, or the direct suspend call itself.
-	 *  (An old bespoke pre-stdlib coroutine-`delay` -> `Task.Delay` lowering used to live here — REMOVED, not
-	 *  aliased: the cold-core coroutine surface (`kotlin.clr.delay`/`blockOn`/`await`) supersedes it and must not
-	 *  inherit that as a load-bearing hack. See docs/design-coroutine-cold-core-task-bridge.md.) */
-	internal fun coAwaitable(call: IrCall): String {
-		val callee = call.symbol.owner
-		return if (isAwaitIntrinsic(callee)) expr(extensionReceiver(call) ?: dispatchReceiver(call)!!)
-		else expr(call)   // a direct suspend call: its kickoff returns Task<T>
-	}
-
-	/** CPS state captured by [emitCoroutineBody] for the caller to assemble the method/lambda JSON. */
-	internal class CoroutineBody(val resultType: String, val cpsFields: String, val steps: String)
-
-	/**
-	 * CPS-linearize a RESTRICTED-suspension body (the `sequence { yield(…) }` builder) into (resultType, cpsFields,
-	 * steps) JSON. This is the only remaining coroutine-shaped lowering in kotc — suspend FUNCTIONS/lambdas are NOT
-	 * lowered here anymore (they emit plainly + `"suspend"`/`"suspendCall"` tags for the deferred downstream layer);
-	 * `sequence{}` stays because it is a restricted-suspension builder, a separate concern. (`emitCps`/`spillExpr`/
-	 * `collectCpsVars` → flat steps + state-machine fields = params + live locals + spill temps.)
-	 */
-	internal fun emitCoroutineBody(fn: IrSimpleFunction): CoroutineBody {
-		// Save/restore CPS state: a coroutine body can be lowered NESTED inside another (e.g. a `sequence{}` passed to
-		// `yieldAll` inside an enclosing `sequence{}`); without this the inner reset corrupts the outer's state ids.
-		val savedState = coState; val savedLabelN = coLabelN
-		val savedSpill = HashMap(coSpill); val savedSpillFields = ArrayList(coSpillFields); val savedCoFields = coFields
-		coState = 0; coLabelN = 0
-		coSpill.clear(); coSpillFields.clear()
-		// Include the extension receiver (a `suspend Scope.() -> R` lambda's implicit `$this$...`) as a leading
-		// param/field, so receiver references inside the CPS body resolve to a state-machine field (T11). It is also
-		// the first entry in lambdaParamsJson, so the SM constructor receives it in the same position. EXCLUDE the
-		// SequenceScope receiver: `sequence{}` is the restricted-suspension builder whose scope IS the SM (the
-		// receiver is synthetic, not a passed value), and its block is lowered by the sequence-special path.
-		val realExtRecv = fn.parameters.filter {
-			it.kind == IrParameterKind.ExtensionReceiver && it.type.classFqName?.asString() != "kotlin.sequences.SequenceScope"
-		}
-		val params = realExtRecv + regularParams(fn)
-		val body = (fn.body as? IrBlockBody)?.statements.orEmpty()
-		val liveVars = ArrayList<IrVariable>()
-		if (fn.body?.let { containsSuspend(it) } == true) collectCpsVars(body, liveVars)
-		coFields = (params.map { it.name.asString() } + liveVars.map { it.name.asString() }).toSet()
-		val steps = ArrayList<String>()
-		for (s in body) emitCps(s, fn.returnType, steps)
-		if (body.lastOrNull() !is IrReturn) steps.add("""{"k":"coReturn","value":null}""")
-		val resultType = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
-		val cpsFields = (params.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" } +
-			liveVars.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" } +
-			coSpillFields.map { """{"name":${str(it.first)},"type":${str(birType(it.second))}}""" }).joinToString(",")
-		// Restore the enclosing coroutine's CPS state (no-op at the top level).
-		coState = savedState; coLabelN = savedLabelN
-		coSpill.clear(); coSpill.putAll(savedSpill); coSpillFields.clear(); coSpillFields.addAll(savedSpillFields); coFields = savedCoFields
-		return CoroutineBody(resultType, cpsFields, steps.joinToString(","))
-	}
-
-	internal fun coFresh(): String = "__cor${coLabelN++}"
-
-	internal fun emitCps(stmt: org.jetbrains.kotlin.ir.IrElement, ret: IrType, steps: MutableList<String>) {
-		when (stmt) {
-			is IrVariable -> {
-				val init = stmt.initializer
-				when {
-					init != null && scopeSuspendCall(init) != null -> emitCpsValue(init, ret, steps, stmt.name.asString(), false)
-					init != null && isSuspensionCall(init) -> emitSuspend(init as IrCall, stmt.name.asString(), steps)
-					init != null && containsSuspend(init) -> { spillExpr(init, steps); steps.add(stmt(stmt)) }
-					else -> steps.add(stmt(stmt))   // sync var; ilemit redirects a cpsField name to a field store
-				}
-			}
-			is IrReturn -> {
-				val v = stmt.value
-				when {
-					scopeSuspendCall(v) != null -> emitCpsValue(v, ret, steps, null, true)
-					isSuspensionCall(v) -> {
-						val t = coFresh()
-						emitSuspend(v as IrCall, t, steps)
-						steps.add(coReturnJson(ret, """{"k":"local","name":${str(t)}}"""))
-					}
-					containsSuspend(v) -> {
-						spillExpr(v, steps)
-						if (ret.isUnit() || v.type.isUnit()) {
-							steps.add("""{"k":"exprStmt","expr":${expr(v)}}"""); steps.add("""{"k":"coReturn","value":null}""")
-						} else steps.add(coReturnJson(ret, expr(v)))
-					}
-					ret.isUnit() || v.type.isUnit() -> steps.add("""{"k":"coReturn","value":null}""")
-					else -> steps.add(coReturnJson(ret, expr(v)))
-				}
-			}
-			is IrWhen -> if (containsSuspend(stmt)) emitWhenCps(stmt, ret, steps) else steps.add(stmt(stmt))
-			is IrWhileLoop -> if (containsSuspend(stmt)) emitWhileCps(stmt, ret, steps) else steps.add(stmt(stmt))
-			is IrBlock -> if (containsSuspend(stmt)) stmt.statements.forEach { emitCps(it, ret, steps) } else steps.add(stmt(stmt))
-			is IrComposite -> if (containsSuspend(stmt)) stmt.statements.forEach { emitCps(it, ret, steps) } else steps.add(stmt(stmt))
-			is IrCall -> when {
-				scopeSuspendCall(stmt) != null -> emitScopeCps(scopeSuspendCall(stmt)!!, ret, steps, null, false)   // discard result
-				isSuspensionCall(stmt) -> emitSuspend(stmt, null, steps)
-				containsSuspend(stmt) -> { spillExpr(stmt, steps); steps.add("""{"k":"exprStmt","expr":${expr(stmt)}}""") }
-				else -> steps.add("""{"k":"exprStmt","expr":${expr(stmt)}}""")
-			}
-			is IrSetValue -> if (containsSuspend(stmt)) { spillExpr(stmt, steps); steps.add(stmt(stmt)) } else steps.add(stmt(stmt))
-			// A type-operator wrapper around a suspension (e.g. `b.await()` discarded -> IMPLICIT_COERCION_TO_UNIT,
-			// or an implicit cast from a generic substitution) -> recurse on the inner expression.
-			is IrTypeOperatorCall -> if (containsSuspend(stmt)) emitCps(stmt.argument, ret, steps) else steps.add(stmt(stmt))
-			is IrTry -> if (containsSuspend(stmt)) emitTryCps(stmt, ret, steps) else steps.add(stmt(stmt))
-			else -> {
-				if (stmt is IrExpression && containsSuspend(stmt)) steps.add(coUnsupported("suspension in an unsupported position (${stmt::class.simpleName})"))
-				else steps.add(stmt(stmt as? org.jetbrains.kotlin.ir.IrStatement ?: return))
-			}
-		}
-	}
-
-	internal fun coReturnJson(ret: IrType, value: String): String =
-		if (ret.isUnit()) """{"k":"coReturn","value":null}""" else """{"k":"coReturn","value":$value}"""
-
-	/** Emit `assignTo = e` (assignTo a CPS field name) — or `return e` (assignTo==null, isReturn) — as coroutine steps,
-	 *  routing a suspending value (incl. a scope-function call) through the state machine. Shared by emitCps/emitScopeCps. */
-	internal fun emitCpsValue(e: IrExpression, ret: IrType, steps: MutableList<String>, assignTo: String?, isReturn: Boolean) {
-		fun store(json: String) = when {
-			assignTo != null -> steps.add("""{"k":"var","name":${str(assignTo)},"type":${str(birType(e.type))},"init":$json}""")
-			ret.isUnit() || e.type.isUnit() -> { steps.add("""{"k":"exprStmt","expr":$json}"""); steps.add("""{"k":"coReturn","value":null}""") }
-			else -> steps.add(coReturnJson(ret, json))
-		}
-		when {
-			scopeSuspendCall(e) != null -> emitScopeCps(scopeSuspendCall(e)!!, ret, steps, assignTo, isReturn)
-			isSuspensionCall(e) -> {
-				// `add(plain())`: spill the suspending args/receiver first (no-op if none), THEN await the call itself.
-				spillExpr(e, steps)
-				if (assignTo != null) emitSuspend(e as IrCall, assignTo, steps)
-				else { val t = coFresh(); emitSuspend(e as IrCall, t, steps); store0Local(t, e.type, ret, steps, isReturn) }
-			}
-			containsSuspend(e) -> { spillExpr(e, steps); store(expr(e)) }
-			else -> store(expr(e))
-		}
-	}
-
-	/** Return/forward an already-spilled suspend temp `t` (only the return case reaches here). */
-	internal fun store0Local(t: String, ty: IrType, ret: IrType, steps: MutableList<String>, isReturn: Boolean) {
-		if (ret.isUnit() || ty.isUnit()) steps.add("""{"k":"coReturn","value":null}""")
-		else steps.add(coReturnJson(ret, """{"k":"local","name":${str(t)}}"""))
-	}
-
-	/** Inline a suspend-bearing scope function (`with(c){…}`, `c.run/let/apply/also {…}`) into the coroutine step list:
-	 *  bind the receiver to a CPS field, substitute `this`/`it`, linearize the lambda body (so inner suspensions become
-	 *  real await steps), then hand the result (last expr, or the receiver for apply/also) to emitCpsValue. */
-	internal fun emitScopeCps(sc: Triple<String, IrExpression, IrFunctionExpression>, ret: IrType, steps: MutableList<String>, assignTo: String?, isReturn: Boolean) {
-		val (fq, recvExpr, lambda) = sc
-		val fn = lambda.function
-		val vname = "__coscope${coLabelN++}"
-		coSpillFields.add(vname to recvExpr.type); coFields = coFields + vname   // a CPS field: survives the body's suspensions
-		if (containsSuspend(recvExpr)) spillExpr(recvExpr, steps)
-		steps.add("""{"k":"var","name":${str(vname)},"type":${str(birType(recvExpr.type))},"init":${expr(recvExpr)}}""")
-		val recvParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-		val itParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
-		recvParam?.let { selfSubst[it] = """{"k":"local","name":${str(vname)}}""" }
-		itParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(vname)}}""" }
-		val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
-		val returnsRecv = fq == "kotlin.apply" || fq == "kotlin.also"
-		if (returnsRecv) {
-			stmts.forEach { if (it !is IrReturn) emitCps(it, ret, steps) }
-			recvParam?.let { selfSubst.remove(it) }; itParam?.let { valSubst.remove(it.name.asString()) }
-			// result = the receiver field
-			val recvLocal = """{"k":"local","name":${str(vname)}}"""
-			when {
-				assignTo != null -> steps.add("""{"k":"var","name":${str(assignTo)},"type":${str(birType(recvExpr.type))},"init":$recvLocal}""")
-				isReturn -> steps.add(coReturnJson(ret, recvLocal))
-			}
-		} else {
-			stmts.dropLast(1).forEach { emitCps(it, ret, steps) }
-			val last = stmts.lastOrNull()
-			val lastE = when (last) { is IrReturn -> last.value; is IrExpression -> last; else -> { last?.let { emitCps(it, ret, steps) }; null } }
-			if (lastE != null) emitCpsValue(lastE, ret, steps, assignTo, isReturn)
-			else if (isReturn) steps.add("""{"k":"coReturn","value":null}""")
-			recvParam?.let { selfSubst.remove(it) }; itParam?.let { valSubst.remove(it.name.asString()) }
-		}
-	}
-
-	internal fun coUnsupported(of: String): String = """{"k":"coUnsupported","of":${str(of)}}"""
-
-	/**
-	 * await spilling: hoist every nested suspending sub-call of `e` into its own state-machine field + suspension
-	 * step, in left-to-right evaluation order, so the residual `e` (re-rendered via expr(), which consults coSpill)
-	 * is suspension-free. Post-order = a call's receiver/args spill before the call itself, so `f(a.await()).await()`
-	 * and `a.await() + b.await()` both linearize correctly. Each spilled value lives in a field because another
-	 * suspension may follow before the residual reads it (e.g. `a.await() + b.await()` resumes twice).
-	 */
-	internal fun spillExpr(e: org.jetbrains.kotlin.ir.IrElement, steps: MutableList<String>) {
-		e.acceptChildrenVoid(object : IrVisitorVoid() {
-			override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
-				// Don't spill suspensions that live inside a nested lambda / local fun (a separate coroutine).
-				if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
-				element.acceptChildrenVoid(this)   // receiver/args (earlier in eval order) spill first
-				if (element is IrCall && isSuspensionCall(element) && !coSpill.containsKey(element)) {
-					val t = coFresh()
-					emitSuspend(element, t, steps)   // coAwaitable() reads already-spilled inner temps via expr()
-					coSpill[element] = t
-					coSpillFields.add(t to element.type)
-				}
-			}
-		})
-	}
-
-	/** The raw `kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn { c -> ... }` leaf intrinsic. */
-	internal fun isSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
-		e is IrCall && e.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn"
-
-	/** A suspension point: start the awaitable; if incomplete, save state and return; on resume read the result. */
-	internal fun emitSuspend(call: IrCall, assignTo: String?, steps: MutableList<String>) {
-		if (isSuspendIntrinsic(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = false, selfKind = "coSelfCont"); return }
-		val k = ++coState
-		steps.add("""{"k":"coSuspend","state":$k,"awaitable":${coAwaitable(call)},"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(birType(call.type))}}""")
-	}
-
-	/**
-	 * The raw suspension intrinsics: the block receives the coroutine's OWN continuation. For
-	 * `suspendCoroutineUninterceptedOrReturn` (alwaysSuspend=false) the block returns a value (resume synchronously)
-	 * or COROUTINE_SUSPENDED; for `suspendCancellableCoroutine` (alwaysSuspend=true) it returns Unit and always
-	 * suspends. We inline the block: bind `c` to the SM itself (`selfKind` = a typed adapter over `this`), emit the
-	 * body statements, and carry the result into a `coSuspendIntrinsic` step. Continuation-class form only.
-	 */
-	internal fun emitSuspendIntrinsic(call: IrCall, assignTo: String?, steps: MutableList<String>, alwaysSuspend: Boolean, selfKind: String) {
-		val k = ++coState
-		val resultT = birType(call.type)
-		val block = regularArgs(call).firstOrNull() as? IrFunctionExpression
-			?: run { steps.add(coUnsupported("a raw suspension intrinsic without a literal block")); return }
-		val cParam = block.function.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
-		if (cParam != null) captureSubst[cParam] = """{"k":"$selfKind","resultType":${str(resultT)}}"""
-		val pre = ArrayList<String>()
-		var valueExpr = """{"k":"coSuspendedSentinel"}"""
-		for (s in (block.function.body as? IrBlockBody)?.statements.orEmpty()) {
-			when {
-				// alwaysSuspend: the block returns Unit — keep its (possibly side-effecting) tail as a pre-statement.
-				alwaysSuspend && s is IrReturn -> s.value?.takeIf { !it.type.isUnit() }?.let { pre.add("""{"k":"exprStmt","expr":${expr(it)}}""") }
-				s is IrReturn -> valueExpr = expr(s.value)
-				else -> pre.add(stmt(s))
-			}
-		}
-		if (cParam != null) captureSubst.remove(cParam)
-		steps.add("""{"k":"coSuspendIntrinsic","state":$k,"pre":[${pre.joinToString(",")}],"value":$valueExpr,"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(resultT)}}""")
-	}
-
-	internal fun emitCpsBlock(e: IrExpression, ret: IrType, steps: MutableList<String>) =
-		coStmtsOf(e).forEach { emitCps(it, ret, steps) }
-
-	internal fun emitWhenCps(w: IrWhen, ret: IrType, steps: MutableList<String>) {
-		val end = coLabelN++
-		for (branch in w.branches) {
-			val isElse = branch.condition.let { it is IrConst && it.value == true }
-			if (isElse) {
-				emitCpsBlock(branch.result, ret, steps)
-				steps.add("""{"k":"coGoto","id":$end}""")
-			} else {
-				if (containsSuspend(branch.condition)) spillExpr(branch.condition, steps)   // await in the condition -> spilled before the test
-				val next = coLabelN++
-				steps.add("""{"k":"coCondGoto","id":$next,"cond":${expr(branch.condition)}}""")
-				emitCpsBlock(branch.result, ret, steps)
-				steps.add("""{"k":"coGoto","id":$end}""")
-				steps.add("""{"k":"coLabel","id":$next}""")
-			}
-		}
-		steps.add("""{"k":"coLabel","id":$end}""")
-	}
-
-	/**
-	 * try/catch around a suspension point (D capstone). The flat step list carries `coTryBegin`/`coCatchBegin`/
-	 * `coTryEnd` markers; ilemit turns them into a `.try`/catch with a TWO-LEVEL dispatch (outer dispatch enters
-	 * the try, inner dispatch resumes at the suspension inside it) + a single-exit MoveNext (suspension/return use
-	 * `leave` not `ret`). v1 scope: catch clauses only (no `finally`), and the suspension must be in the TRY body
-	 * (not inside a catch) — both else clean `coUnsupported` (resume-into-catch / finally-aware leave deferred).
-	 */
-	internal fun emitTryCps(t: IrTry, ret: IrType, steps: MutableList<String>) {
-		val hasFinally = t.finallyExpression != null
-		// `finally` around a suspension is NOT a CLR finally clause (a suspend `leave`s the .try, which would run a
-		// real finally on every suspend). Instead ilemit emits the finally body explicitly on the normal-exit path
-		// AND in a synthesized catch-all that rethrows (T10 / docs §13v). v1: finally only when there are no `catch`
-		// clauses, and neither the finally nor any catch suspends.
-		if (hasFinally && t.catches.isNotEmpty()) { steps.add(coUnsupported("try with both catch and finally around a suspension")); return }
-		if (hasFinally && containsSuspend(t.finallyExpression!!)) { steps.add(coUnsupported("a suspension inside a finally")); return }
-		if (t.catches.any { containsSuspend(it.result) }) { steps.add(coUnsupported("suspension inside a catch clause")); return }
-		val tid = coLabelN++
-		steps.add("""{"k":"coTryBegin","id":$tid}""")
-		emitCpsBlock(t.tryResult, ret, steps)
-		for (c in t.catches) {
-			val v = c.catchParameter.name.asString()
-			steps.add("""{"k":"coCatchBegin","id":$tid,"excType":${str(birType(c.catchParameter.type))},"var":${str(v)}}""")
-			emitCpsBlock(c.result, ret, steps)
-		}
-		val finallyJson = if (hasFinally) {
-			val fin = ArrayList<String>(); emitCpsBlock(t.finallyExpression!!, ret, fin)
-			""","finally":[${fin.joinToString(",")}]"""
-		} else ""
-		steps.add("""{"k":"coTryEnd","id":$tid$finallyJson}""")
-	}
-
-	internal fun emitWhileCps(loop: IrWhileLoop, ret: IrType, steps: MutableList<String>) {
-		val start = coLabelN++; val end = coLabelN++
-		steps.add("""{"k":"coLabel","id":$start}""")
-		// await in the condition -> spilled AFTER the loop-start label, so it re-runs (re-suspends) each iteration.
-		if (containsSuspend(loop.condition)) spillExpr(loop.condition, steps)
-		steps.add("""{"k":"coCondGoto","id":$end,"cond":${expr(loop.condition)}}""")
-		loop.body?.let { emitCpsBlock(it, ret, steps) }
-		steps.add("""{"k":"coGoto","id":$start}""")
-		steps.add("""{"k":"coLabel","id":$end}""")
 	}
 
 	/**
@@ -2442,12 +2110,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 */
 	internal fun inlineScope(fq: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
 		val fn = lambda.function
-		// A suspending call inside a scope-function lambda is CPS-linearized in STATEMENT position (emitScopeCps) — but
-		// reaching here means the scope fn is in a SUB-EXPRESSION position (e.g. `c.apply{ s() }.x`), which inlines to a
-		// value-block the CPS path can't open. Reject cleanly (rare). Workaround: bind it to a `val` first.
+		// A suspending call inside a scope-function lambda used as a SUB-EXPRESSION (e.g. `c.apply{ s() }.x`) inlines to
+		// a value-block the downstream coroutine lowering can't open. Reject cleanly (rare). Workaround: bind it to a
+		// `val` first (a statement-position scope call emits plainly, with its suspend calls carrying `"suspendCall"`).
 		if (fn.body?.let { containsSuspend(it) } == true)
 			return unsupported(lambda, "a suspending call inside a `${fq.substringAfterLast('.')}` scope function used as a sub-expression",
-				"bind the scope-function result to a `val` first (it's CPS-linearized in statement position), or extract the body into its own `suspend fun`")
+				"bind the scope-function result to a `val` first, or extract the body into its own `suspend fun`")
 		val vname = "__scope${scopeCounter++}"
 		val recvInit = expr(recvExpr)   // emit the receiver expression before binding `it`/`this`
 		val recvParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
@@ -3220,7 +2888,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * for a wrapping valueBlock) and the use sites splice the local READ: splicing the rendered initializer JSON
 	 * itself re-evaluates it per splice (the when-subject / safe-call / range-membership double-eval defect).
 	 * Returns (varStmtJson or null-if-stable, useJson). Only safe where the expression is suspension-free —
-	 * expression position is; a suspension-bearing tree is CPS-linearized by emitCps/spillExpr before render.
+	 * expression position is; a suspend call there just renders plainly with `"suspendCall":true` for bir2cir.
 	 */
 	internal fun bindOnce(init: IrExpression, type: IrType, prefix: String): Pair<String?, String> {
 		val stable = init is IrConst || (init as? IrGetValue)?.symbol?.owner?.let { o ->
