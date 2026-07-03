@@ -61,12 +61,28 @@ static class FacadeGen
     static void LoadRefs(string[] paths)
     {
         if (paths.Length == 0) return;
-        // The core assembly (System.Private.CoreLib / System.Runtime) must be in the path set.
+        // The core assembly (System.Private.CoreLib / System.Runtime) must be in the path set. Chosen from the CALLER's
+        // paths (before the CoreLib backfill below), so the ref-pack's System.Runtime stays the core when present.
         var core = new[] { "System.Private.CoreLib", "System.Runtime", "mscorlib", "netstandard" }
             .FirstOrDefault(n => paths.Any(p => Path.GetFileNameWithoutExtension(p).Equals(n, StringComparison.OrdinalIgnoreCase)))
             ?? "System.Runtime";
-        Mlc = new System.Reflection.MetadataLoadContext(new System.Reflection.PathAssemblyResolver(paths), core);
-        foreach (var p in paths)
+        // Bug ⑥ (wiring): a DotKt assembly emitted against the runtime (e.g. an un-retargeted DotKt.Stdlib.dll) references
+        // System.Private.CoreLib — and the ref-pack's System.Runtime carries TYPE FORWARDERS to it. If that CoreLib is
+        // absent from the resolver's path set, reflecting ANY member whose signature touches a stdlib type throws
+        // FileNotFoundException, and EmitMeta's per-type guard then SKIPS the whole owning type — so a user-library
+        // function with a stdlib-typed signature (e.g. `fun makePair(): Pair<Int,Int>`) SILENTLY vanishes from the meta.
+        // Backfill the running runtime's System.Private.CoreLib so those refs (and the forwarders to them) resolve.
+        // Types are compared by FullName throughout facadegen (not identity), so a ref-pack System.Object and this
+        // runtime System.Object coexisting is already the anticipated case (see Map's I2 note). Harmless when the caller
+        // already retargeted everything to System.Runtime (the path is just unused).
+        var pathList = paths.ToList();
+        if (!pathList.Any(p => Path.GetFileNameWithoutExtension(p).Equals("System.Private.CoreLib", StringComparison.OrdinalIgnoreCase)))
+        {
+            var coreLib = typeof(object).Assembly.Location;
+            if (!string.IsNullOrEmpty(coreLib) && File.Exists(coreLib)) pathList.Add(coreLib);
+        }
+        Mlc = new System.Reflection.MetadataLoadContext(new System.Reflection.PathAssemblyResolver(pathList), core);
+        foreach (var p in pathList)
             try { Mlc.LoadFromAssemblyPath(p); } catch { /* skip unloadable */ }
     }
 
