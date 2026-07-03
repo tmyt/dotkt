@@ -645,16 +645,24 @@ sealed partial class Emitter
                     uint nmask = 0;
                     if (m.TryGetProperty("retNullable", out var rn) && rn.GetBoolean()) nmask |= 1u;
                     if (m.TryGetProperty("params", out var nps)) { int pi = 0; foreach (var p in nps.EnumerateArray()) { if (p.TryGetProperty("nullable", out var pn) && pn.GetBoolean()) nmask |= 1u << (pi + 1); pi++; } }
-                    if (kf == 0 && !inl && nmask == 0) continue;
+                    // NESTED return nullability (bundle-6 BUG 2): when the nullable `?` rides an INNER type arg — a
+                    // `suspend fun f(): String?`'s bridge return `Task<string?>` — the scalar `retNullable` can't express
+                    // it. bir2cir supplies the flattened byte walk in `retNullableFlags` ([1,2] = outer non-null, inner
+                    // nullable); it takes precedence over the scalar. (No emitter today -> a verified no-op until bir2cir
+                    // lands the walk; see the reported CIR contract.)
+                    byte[] retFlags = m.TryGetProperty("retNullableFlags", out var rnf) && rnf.ValueKind == JsonValueKind.Array ? ReadNullableFlags(rnf) : null;
+                    if (kf == 0 && !inl && nmask == 0 && retFlags == null) continue;
                     var name = m.GetProperty("name").GetString();
                     if (!ti.MethodsBySig.TryGetValue(SigKey(name, m), out var mb) && !ti.Methods.TryGetValue(name, out mb)) continue;
                     if (kf != 0) ApplyKotlinFunction(mb, kf);
                     // [KotlinInline(body)]: carry this inline+lambda fn's BIR (params + body) so a consumer can splice it.
                     if (inl) ApplyKotlinInline(mb, "{\"params\":" + m.GetProperty("params").GetRawText() + ",\"body\":" + m.GetProperty("body").GetRawText() + "}");
-                    // Nullable RETURN -> [Nullable(2)] on the return parameter (position 0; param nullability is stamped
+                    // Nullable RETURN -> [Nullable(...)] on the return parameter (position 0; param nullability is stamped
                     // by DefineParamNames, which owns the parameter builders). The type's [NullableContext(1)] is the
-                    // non-null default, so only the nullable positions need an override.
-                    if ((nmask & 1u) != 0) ApplyNullable(mb.DefineParameter(0, ParameterAttributes.None, null));
+                    // non-null default, so only the nullable positions need an override. The nested byte-array form wins
+                    // over the scalar when present.
+                    if (retFlags != null) ApplyNullable(mb.DefineParameter(0, ParameterAttributes.None, null), retFlags);
+                    else if ((nmask & 1u) != 0) ApplyNullable(mb.DefineParameter(0, ParameterAttributes.None, null));
                 }
         }
 
