@@ -23,11 +23,15 @@ private class ClrTextWriter {
 @kotlin.clr.ClrIntrinsic("System.Console.get_Error")
 private fun clrStdErr(): ClrTextWriter = TODO("clr binding should be implemented")
 
+// The stack-trace text is written to Console.Error. Exposed as @PublishedApi internal so the Throwable-class member
+// (builtins/Throwable.kt) — which the frontend resolves to over this extension (java.lang.Throwable.printStackTrace is a
+// mapped MEMBER and members win over extensions) — can share the same real body.
 @PublishedApi
 internal fun printStackTraceImpl(throwable: Throwable): Unit = clrStdErr().writeLine(throwable.stackTraceToString())
 
-@kotlin.internal.InlineOnly
-public actual inline fun Throwable.printStackTrace(): Unit = printStackTraceImpl(this)
+// NOT inline: an @InlineOnly `inline` actual is not inlined cross-module here. Kept as a plain extension for the
+// expect/actual; app call sites resolve to the Throwable MEMBER (see builtins/Throwable.kt) which shares printStackTraceImpl.
+public actual fun Throwable.printStackTrace(): Unit = printStackTraceImpl(this)
 
 // System.Exception.ToString() renders the message and the stack trace (the .NET text differs from the JVM's).
 @SinceKotlin("1.4")
