@@ -187,6 +187,14 @@ sealed class Pipeline
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
                 substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns);
             if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted);
+            // CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (IndexOutOfBoundsException)` @ClrTypeAlias-es to a
+            // SINGLE .NET type, but .NET index ops throw TWO distinct ones (List.get_Item -> ArgumentOutOfRangeException,
+            // array -> IndexOutOfRangeException). Expand each such clause into two clauses covering BOTH so the Kotlin
+            // "one catch handles any out-of-range access" semantics hold. Non-ref only (the ref surface stays pure Kotlin).
+            if (!_options.RefBuild) CatchClauseWidening.Apply(substituted);
+            // STAR-PROJECTION IS-TEST (bundle-6 ④): `is Collection<*>`/`is Map<*,*>` -> the non-generic BCL interface,
+            // so the check holds for value-type collections (reified generic isinst has no value-type covariance).
+            if (!_options.RefBuild) StarProjectionIsTest.Apply(substituted);
             staged.Add((substituted, outputName));
         }
 
@@ -3427,6 +3435,85 @@ static class NullableGenericReturnErasure
 //      to `object` (it must still hold the null); a `nullable:V`/reference var keeps its type and the init is
 //      wrapped in a `cast` (ilemit's universal unbox.any/castclass); a later var re-narrowing an object-retyped
 //      local into a typed slot (the post-null-check `gp:R` copy) gets the same cast wrap.
+// CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (e: IndexOutOfBoundsException)` @ClrTypeAlias-es to a SINGLE .NET
+// type, but .NET raises TWO unrelated out-of-range exceptions — `System.ArgumentOutOfRangeException` (List<T>.get_Item /
+// most BCL collection indexers) and `System.IndexOutOfRangeException` (raw array access). Neither is a subtype of the
+// other, so a single-type catch misses half the cases. Kotlin's semantics are "one IndexOutOfBoundsException catches
+// any out-of-range access", so widen each such clause into TWO consecutive clauses (same body + var) covering both .NET
+// types. Emits `clr:` tokens that pass through type-lowering unchanged. Keyed on the pure-Kotlin type name (runs before
+// type lowering), so it is independent of whichever single .NET type the alias picks.
+// STAR-PROJECTION IS-TEST (bundle-6 ④): `x is Collection<*>` / `is Map<*,*>` lowers (via the @ClrTypeAlias type map)
+// to a REIFIED generic isinst — `isinst IReadOnlyCollection<object>` / `IDictionary<object,object>`. On .NET, reified
+// generics have NO covariance on VALUE-type args (and IDictionary is invariant), so `List<int> is IReadOnlyCollection<object>`
+// is FALSE — the check silently fails for every value-type collection. Kotlin's `is` on a star-projected type is a pure
+// runtime shape test (the args are erased), so lower it to the NON-generic BCL interface, which a `List<int>`/`Dictionary<int,int>`
+// DOES implement regardless of element type. A concrete-arg generic is-check is a Kotlin compile error, so every
+// `is Collection<...>` here is necessarily `<*>` — keying on the alias FQN alone is sufficient. Only the isinst node's
+// type token is rewritten (a Collection-typed VARIABLE keeps its generic form for member access). Runs before type
+// lowering; emits `clr:` tokens that pass through unchanged. Non-ref only. (Set/MutableSet are intentionally absent:
+// .NET HashSet<T> implements no non-generic collection interface beyond IEnumerable, so no faithful single token exists.)
+static class StarProjectionIsTest
+{
+    static readonly Dictionary<string, string> NonGenericIface = new(StringComparer.Ordinal)
+    {
+        ["kotlin.collections.Collection"] = "clr:System.Collections.ICollection",
+        ["kotlin.collections.MutableCollection"] = "clr:System.Collections.ICollection",
+        ["kotlin.collections.List"] = "clr:System.Collections.IList",
+        ["kotlin.collections.MutableList"] = "clr:System.Collections.IList",
+        ["kotlin.collections.Iterable"] = "clr:System.Collections.IEnumerable",
+        ["kotlin.collections.MutableIterable"] = "clr:System.Collections.IEnumerable",
+        ["kotlin.collections.Map"] = "clr:System.Collections.IDictionary",
+        ["kotlin.collections.MutableMap"] = "clr:System.Collections.IDictionary",
+    };
+
+    public static void Apply(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if ((obj["k"] as JsonValue)?.GetValue<string>() == "isinst"
+                && (obj["type"] as JsonValue)?.GetValue<string>() is string t
+                && NonGenericIface.TryGetValue(ReferenceMetadataIndex.BareOwnerFqn(t), out var ng))
+                obj["type"] = ng;
+            foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value);
+        }
+        else if (node is JsonArray arr)
+            foreach (var it in arr) if (it != null) Apply(it);
+    }
+}
+
+static class CatchClauseWidening
+{
+    static readonly string[] IndexOobNet = { "clr:System.ArgumentOutOfRangeException", "clr:System.IndexOutOfRangeException" };
+
+    public static void Apply(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if (obj["catches"] is JsonArray catches) WidenCatches(catches);
+            foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value);
+        }
+        else if (node is JsonArray arr)
+            foreach (var it in arr) if (it != null) Apply(it);
+    }
+
+    static void WidenCatches(JsonArray catches)
+    {
+        for (var i = catches.Count - 1; i >= 0; i--)
+        {
+            if (catches[i] is not JsonObject c) continue;
+            if ((c["excType"] as JsonValue)?.GetValue<string>() is not string et) continue;
+            if (ReferenceMetadataIndex.BareOwnerFqn(et) != "kotlin.IndexOutOfBoundsException") continue;
+            catches.RemoveAt(i);
+            for (var j = IndexOobNet.Length - 1; j >= 0; j--)   // insert in reverse -> keeps [ArgumentOOR, IndexOOR] order
+            {
+                var clone = (JsonObject)c.DeepClone();
+                clone["excType"] = IndexOobNet[j];
+                catches.Insert(i, clone);
+            }
+        }
+    }
+}
+
 static class NullableFuncReturnErasure
 {
     public static void Apply(JsonNode root)
