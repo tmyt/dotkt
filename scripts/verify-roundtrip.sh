@@ -25,15 +25,14 @@ while (( $# )); do
 done
 
 # The XFAIL baseline — MACHINE-READABLE (name -> reason). The three suspend-consuming sections drive the
-# suspend funs via the cold-core surface `kotlin.clr.blockOn`, which now RESOLVES at the frontend (P4
-# expect/actual surfacing landed); they still fail at ilemit (SIGABRT) because the blockOn suspend-LAMBDA
-# isn't a real SM and the suspend-fun cold-entry/Task-bridge isn't emitted (coroutine lowering, wave-2b).
-# This gate is the coroutine bundle's E2E check: when suspend works end-to-end these flip to FIXED lines
-# below — remove them in the same change.
+# library's suspend funs via the cold-core surface `kotlin.clr.blockOn`. The suspend machinery now emits
+# (P2/P3/P4 done: in-module async runs — cf. verify-il genasync/cobuild), so these no longer abort on a
+# bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
+# (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
-	[roundtrip]="cold-core wave2b pending: blockOn/delay RESOLVE (expect/actual) but ilemit lacks the suspend-lambda SM + suspend-fun cold-entry/Task-bridge (bundle 6)"
-	[roundtrip-generic]="cold-core wave2b pending: blockOn/delay RESOLVE (expect/actual) but ilemit lacks the suspend-lambda SM + suspend-fun cold-entry/Task-bridge (bundle 6)"
-	[roundtrip-memext2]="cold-core wave2b pending: blockOn/delay RESOLVE (expect/actual) but ilemit lacks the suspend-lambda SM + suspend-fun cold-entry/Task-bridge (bundle 6)"
+	[roundtrip]="cross-module suspend Task-bridge unwrap MISSING: the sync prefix prints, then blockOn over a cross-assembly suspend cold-entry throws InvalidCastException 'Task\`1[Int32] -> Int32' — the cold-entry returns a Task<T> that neither the caller SM nor blockOn awaits (stdlib/bir2cir coroutine bundle)"
+	[roundtrip-generic]="cross-module suspend Task-bridge unwrap MISSING (generic): blockOn over the cross-assembly generic suspend fun echoAsync throws InvalidCastException 'Task\`1[String] -> String' — same un-awaited cold-entry Task<T> as [roundtrip] (stdlib/bir2cir coroutine bundle)"
+	[roundtrip-memext2]="ilemit NotSupportedException: a suspending call inside a \`with\` scope function used as a sub-expression is unsupported (doFetch = with(lib){ b.fetch() }) — needs scope-function CPS lowering (bir2cir/ilemit coroutine bundle)"
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
@@ -86,25 +85,35 @@ need_fe_jar
 build_tool ilemit; build_tool facadegen; build_tool retarget
 REFPACK="$(ls -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/*/ref/net10.0 2>/dev/null | sort -V | tail -1)"
 REFS="$(ls "$REFPACK"/*.dll | tr '\n' ';')"
+# The RUNTIME stdlib joins the reference set: a suspend-carrying DotKt lib references the coroutine runtime
+# (DotKt.Stdlib's kotlin.coroutines.Continuation) in its emitted CPS signatures, so retarget/facadegen must be
+# able to LOAD it to walk KLib's type surface (else facadegen skips every seed type -> empty meta -> the
+# consumer can't resolve the library). Harmless for the non-suspend sections (they reference no stdlib type).
+REFS="$REFS$STDLIB_RT_DLL;"
 
 # kotc emits bare kotlin.* type tokens (the frontend jar resolves the stdlib to our real kotlin.* declarations); bir2cir
 # lowers them to the CLR-codegen vocabulary ilemit consumes. So route every emit through bir2cir (mirrors verify-il) —
 # feeding BIR straight to ilemit would leave kotlin.* tokens un-lowered ("cannot resolve .NET type kotlin.String"). The
 # REFERENCE stdlib supplies bir2cir's @ClrTypeAlias labels (built once if missing; the roundtrip types are pure-Kotlin).
 build_tool bir2cir
-need_stdlib_ref
+need_stdlib_ref; need_stdlib_rt
 # emit_il: drop-in for `ilemit <outdir> <asm> [--ref X]... <bir files...>`, inserting the BIR->CIR (bir2cir) lowering.
 # Both stages tolerate failure (|| true): a broken emit surfaces as its SECTION's FAIL, not a script abort.
+# ilemit references the RUNTIME stdlib (--ref) so REAL emitted kotlin.* types resolve — notably the coroutine
+# runtime (`kotlin.coroutines.Continuation`, injected into a suspend fun's CPS signature by bir2cir's suspend
+# lowering); and the rt dll is dropped beside the emitted assembly so the run resolves it (mirrors verify-il).
 emit_il() {
 	local out="$1" asm="$2"; shift 2
 	local refs=() birs=()
 	while (( $# )); do
 		if [[ "$1" == --ref ]]; then refs+=(--ref "$2"); shift 2; else birs+=("$1"); shift; fi
 	done
+	[[ -f "$STDLIB_RT_DLL" ]] && refs+=(--ref "$STDLIB_RT_DLL")
 	local cir="$out.cir"; rm -rf "$cir"; mkdir -p "$cir"
 	local refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
 	dotnet "$BIR2CIR_DLL" "$cir" "${refarg[@]}" "${birs[@]}" >/dev/null 2>&1 || true
 	dotnet "$ILEMIT_DLL" "$out" "$asm" "${refs[@]}" "$cir"/*.cir.json >/dev/null 2>&1 || true
+	[[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$out/" 2>/dev/null || true
 }
 
 # ----- MARKER round-trip: Kotlin class-nature facts with no faithful .NET analog survive re-consumption -----
