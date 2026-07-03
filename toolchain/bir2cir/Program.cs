@@ -3271,11 +3271,111 @@ static class NullableGenericReturnErasure
     public static void Apply(JsonNode root)
     {
         if (root is not JsonObject o) return;
+        ApplyRec(o);
+        // NESTED / STANDALONE nullable-generic TYPE-ARG erasure (FIX 1 part-2). A `T?` that kotc left as the
+        // inline token `nullable:gp:T` — nested in a `clrg:Owner[...]` arg list (e.g.
+        // `clrg:System.Collections.Generic.IEnumerable[nullable:gp:T]`) or standalone as a param/field type —
+        // has the SAME value-type-null fault as the return case: `nullable:gp:T` lowers to `Nullable<T>`, invalid
+        // for an unconstrained (reference-allowed) T. Erase every such token to `object` (the boxed/erased nullable
+        // rep that carries a real null), everywhere a type token appears (params, returns, fields, `sig`). ilemit
+        // must NEVER see `nullable:gp:` — this fully consumes it, exactly as NullableFuncReturnErasure consumes the
+        // `func:nullable:` returns (which this pass deliberately leaves for that twin — see EraseNullableGpToken).
+        EraseNullableGpAllStrings(o);
+    }
+
+    static void ApplyRec(JsonObject o)
+    {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods) ApplyToMethod(m);
-        // Nested types (a generic class' member methods) carry their own method list.
+        // FIELD / PROPERTY nullable-generic erasure (FIX 1 part-1). kotc marks a nullable-generic field/property
+        // slot with a SEPARATE `"nullable":true` boolean next to `"type":"gp:T"` (a bare `gp:T` slot silently drops
+        // the `?`, so a value-type instantiation stores default(T)=0 instead of a real null). Rewrite the `type` to
+        // `object` so the slot becomes a reference slot holding a genuine null; ilemit boxes the value store and the
+        // read boundary re-narrows (unbox.any / castclass), mirroring the return-erasure boundary handling.
+        EraseNullableGpDecls(o["fields"]);
+        EraseNullableGpDecls(o["properties"]);
+        // Nested types (a generic class' member methods / fields) carry their own declaration lists.
         if (o["types"] is JsonArray types)
-            foreach (var t in types) Apply(t);
+            foreach (var t in types) if (t is JsonObject to) ApplyRec(to);
+    }
+
+    // A field/property whose slot is a nullable generic parameter (`type:"gp:T"` + sibling `nullable:true`) -> the
+    // reference `object` slot. Only the boolean-marked `gp:` form; the inline `nullable:gp:T` form (should it appear
+    // on a decl `type`) is caught by the blanket EraseNullableGpAllStrings sweep.
+    static void EraseNullableGpDecls(JsonNode arr)
+    {
+        if (arr is not JsonArray a) return;
+        foreach (var d in a)
+            if (d is JsonObject fo
+                && (fo["nullable"] as JsonValue)?.TryGetValue<bool>(out var nb) == true && nb
+                && (fo["type"] as JsonValue)?.TryGetValue<string>(out var ft) == true
+                && ft.StartsWith("gp:", StringComparison.Ordinal))
+                fo["type"] = "object";
+    }
+
+    // Blanket string sweep applying EraseNullableGpToken to every string value in the tree — a string only changes
+    // if it contains the `nullable:gp:` type token, so const/name strings are untouched in practice. Mirrors
+    // NullableFuncReturnErasure.RewriteAllStrings.
+    static void EraseNullableGpAllStrings(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                foreach (var key in obj.Select(kv => kv.Key).ToList())
+                {
+                    var child = obj[key];
+                    if (child is JsonValue jv && jv.TryGetValue<string>(out var s))
+                    {
+                        var rewritten = EraseNullableGpToken(s);
+                        if (rewritten != s) obj[key] = rewritten;
+                    }
+                    else EraseNullableGpAllStrings(child);
+                }
+                break;
+            case JsonArray arr:
+                for (var i = 0; i < arr.Count; i++)
+                {
+                    var child = arr[i];
+                    if (child is JsonValue jv && jv.TryGetValue<string>(out var s))
+                    {
+                        var rewritten = EraseNullableGpToken(s);
+                        if (rewritten != s) arr[i] = rewritten;
+                    }
+                    else EraseNullableGpAllStrings(child);
+                }
+                break;
+        }
+    }
+
+    // Replace every `nullable:gp:<ident>` occurrence in a (possibly composite: sig lists, nested `clrg:` generics)
+    // token string with `object`. Skips an occurrence that is the RETURN segment of a func type (`func:`/`sfunc:`
+    // immediately before it, e.g. `func:nullable:gp:R:args`): those belong to NullableFuncReturnErasure, whose
+    // StructuralSweep detects them via the `func:nullable:` prefix — erasing them here would blind that detection.
+    // (A func ARG position — not preceded by `func:` — does not gate that detection and is safe to erase; kotc's
+    // marker contract only emits `nullable:gp:` in clrg-nested type-arg / field / standalone-param positions.)
+    internal static string EraseNullableGpToken(string s)
+    {
+        const string marker = "nullable:gp:";
+        var idx = s.IndexOf(marker, StringComparison.Ordinal);
+        if (idx < 0) return s;
+        var sb = new System.Text.StringBuilder(s.Length);
+        var pos = 0;
+        while (idx >= 0)
+        {
+            if (idx >= 5 && string.CompareOrdinal(s, idx - 5, "func:", 0, 5) == 0)
+            {
+                idx = s.IndexOf(marker, idx + marker.Length, StringComparison.Ordinal);
+                continue;
+            }
+            var end = idx + marker.Length;
+            while (end < s.Length && (char.IsLetterOrDigit(s[end]) || s[end] == '_')) end++;
+            sb.Append(s, pos, idx - pos);
+            sb.Append("object");
+            pos = end;
+            idx = s.IndexOf(marker, pos, StringComparison.Ordinal);
+        }
+        sb.Append(s, pos, s.Length - pos);
+        return sb.ToString();
     }
 
     static void ApplyToMethod(JsonNode m)
