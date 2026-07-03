@@ -5,6 +5,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: emit `retNullable:true` on ABSTRACT/interface methods with a nullable type-parameter return, matching the
+  concrete-impl path (bundle-6 coroutine, general bug #4).** `BirEmitter.ifaceMethod()` (the interface-member emission
+  path) never emitted `retNullable`, while the concrete `method()` path did — so an interface `fun <E> get(key): E?`
+  emitted `ret=gp:E, retNullable=None` but its override emitted `ret=gp:E, retNullable=True`. bir2cir's
+  `NullableGenericReturnErasure` then erased only the override to `object get(...)`, leaving the interface slot as
+  `E get(...)`, so the CLR method-impl link had a signature mismatch → `TypeLoadException` (first hit:
+  `kotlin.coroutines.EmptyCoroutineContext` overriding `CoroutineContext.get`). Now both emit `retNullable:true`
+  symmetrically. General fix at the root (the retNullable computation), not a coroutine special-case — any interface
+  `fun <E> foo(): E?` + impl is fixed. Unblocks `EmptyCoroutineContext`/`CombinedContext`/`CoroutineContext.Element`
+  type-load in the `blockOn { .. }` path; the next (downstream) coroutine blocker is `Continuation.resumeWith`.
 - **bir2cir: erase the `sfunc:` suspend-fn TYPE token to `object`, not `Func` — a suspend-lambda VALUE flows as its
   SuspendLambda state machine (bundle-6 P3 wave-2b FINAL).** The Part-A fold `sfunc:`→`func:` made a
   `suspend () -> T` param/receiver a CLR `Func<T>` delegate — but a suspend-lambda VALUE is a SuspendLambda SM

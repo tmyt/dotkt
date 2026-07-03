@@ -613,7 +613,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// must emit its overriding members with the BCL slot names (size getter -> get_Count) so implementers satisfy
 			// the BCL interface. clrIfaceMemberName is null in the ref build (pure Kotlin: get_size) and binds in substitute.
 			val name = clrIfaceMemberName(fn) ?: (prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString())
-			val ret = if (prop != null && fn == prop.setter) "void" else birType(fn.returnType)
+			val isSetter = prop != null && fn == prop.setter
+			val ret = if (isSetter) "void" else birType(fn.returnType)
+			// Return nullability (`fun <E> get(key): E?`) — same computation the concrete `method()` path applies. An abstract
+			// interface member whose return is a nullable type-parameter MUST carry `retNullable:true` so it stays symmetric
+			// with its concrete override; else bir2cir's NullableGenericReturnErasure erases only the override to `object`,
+			// leaving the interface slot as `E`, and the method-impl link fails with a signature mismatch (TypeLoadException,
+			// CoroutineContext.get / EmptyCoroutineContext.get).
+			val retNull = if (!isSetter && fn.returnType.isMarkedNullable()) ""","retNullable":true""" else ""
 			// A Kotlin interface method with a DEFAULT implementation (a body, not abstract) -> carry that body so ilemit
 			// emits a CLR default interface method; an implementer that doesn't override it then INHERITS the default
 			// instead of failing to load ("does not have an implementation", e.g. CoroutineContext.plus, ClosedRange.contains).
@@ -624,7 +631,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `attrs`: ride the @Clr/[Kotlin*] metadata so the ref assembly carries the BCL binding hint (for app-emit
 			// substitution). For a PROPERTY accessor the binding is on the property (size @ClrIntrinsic("Count")), so read from there.
 			val memberAttrs = attrsJson((prop ?: fn).annotations)
-			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
+			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}$retNull,"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 			.filterNot { it.signatureMentionsJava() }
