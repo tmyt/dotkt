@@ -2966,7 +2966,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** The BIR function-type string `func:<ret>:<arg1>,<arg2>,...` for a lambda's signature (receiver first).
 	 *  A `suspend` lambda emits the `sfunc:` variant — same delegate shape, carrying the suspend FACT for the
-	 *  suspendLambdaNew SM builder. bir2cir folds `sfunc:`→`func:` (all builds), so this stays behavior-preserving. */
+	 *  suspendLambdaNew SM builder. bir2cir ERASES an `sfunc:` token to `object` wherever it appears in a TYPE
+	 *  slot; only the `funcType` node key itself stays `func:`. So this stays behavior-preserving. */
 	internal fun funcTypeOf(fn: IrSimpleFunction): String {
 		val ps = orderedLambdaParams(fn).joinToString(",") { birTypeDeleg(it.type) }
 		val ret = funcRetTypeOf(fn.returnType)
@@ -4642,8 +4643,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		charSeqIface(t)?.let { return "@$it" }
 		// A function type as a value (e.g. a `(P)->R` parameter): `kotlin.FunctionN` -> a plain Func/Action. A
 		// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) emits the `sfunc:` variant — the SAME
-		// delegate shape, carrying only the suspend FACT (which the suspendLambdaNew SM builder needs). bir2cir folds
-		// `sfunc:`→`func:` in EVERY build (incl. ref), so kotc bakes no coroutine ABI here — behavior-preserving.
+		// delegate shape, carrying only the suspend FACT (which the suspendLambdaNew SM builder needs). bir2cir ERASES
+		// an `sfunc:` token to `object` wherever it lands in a TYPE slot (only the `funcType` node key stays `func:`),
+		// so kotc bakes no coroutine ABI here — behavior-preserving.
 		if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.Function"))) {
 			val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
 			if (args.isNotEmpty()) {
