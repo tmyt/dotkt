@@ -30,8 +30,10 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
-	[roundtrip]="cross-module suspend Task-bridge unwrap MISSING: the sync prefix prints, then blockOn over a cross-assembly suspend cold-entry throws InvalidCastException 'Task\`1[Int32] -> Int32' — the cold-entry returns a Task<T> that neither the caller SM nor blockOn awaits (stdlib/bir2cir coroutine bundle)"
-	[roundtrip-generic]="cross-module suspend Task-bridge unwrap MISSING (generic): blockOn over the cross-assembly generic suspend fun echoAsync throws InvalidCastException 'Task\`1[String] -> String' — same un-awaited cold-entry Task<T> as [roundtrip] (stdlib/bir2cir coroutine bundle)"
+	# [roundtrip] + [roundtrip-generic] FIXED 2026-07-04 (bundle-6 ① BUG 1): a cross-assembly suspend call is
+	# emitted by kotc in the clr* vocabulary (clrStatic/clrInstance/clrGeneric*), which bir2cir's cold lowering
+	# now recognizes as a suspension point and routes to the callee's `$dotkt_suspend` cold entry (instead of
+	# leaving the plain BCL call that resolved to the Task<T> bridge -> InvalidCast).
 	[roundtrip-memext2]="ilemit NotSupportedException: a suspending call inside a \`with\` scope function used as a sub-expression is unsupported (doFetch = with(lib){ b.fetch() }) — needs scope-function CPS lowering (bir2cir/ilemit coroutine bundle)"
 )
 
