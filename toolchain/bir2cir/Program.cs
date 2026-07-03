@@ -3883,6 +3883,22 @@ static class MemberCallSubstitution
             return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
                 member == "addAll" ? "clrCollAddAll" : "clrCollAdd", CollElemArg(node, refs, ctx, ownerToken), args);
 
+        // PRE-Rule-2 semantic override: MutableList.set(i,e) / removeAt(i) @ClrIntrinsic(set_Item/RemoveAt), but the
+        // BCL slots are VOID while Kotlin RETURNS the previous/removed element — binding the intrinsic directly
+        // underflows the stack when the result is consumed (`val old = list.set(i,e)` -> InvalidProgramException).
+        // Route to the ClrCollectionDefaults wrappers (clrListSet/clrListRemoveAt) that read the old element, perform
+        // the void mutation, and return it. `retType` carries the concrete element type for the boxing/convert at the
+        // call site (the helper's own `!!0` is out of scope). The void-returning 2-arg add(i,e) Insert form is left
+        // on the intrinsic path.
+        if (instance && kind == "interface" && ownerFqn == "kotlin.collections.MutableList"
+            && (((member is "set" or "set_Item") && args.Count == 2) || ((member is "removeAt" or "RemoveAt") && args.Count == 1)))
+        {
+            var listHelper = member is "set" or "set_Item" ? "clrListSet" : "clrListRemoveAt";
+            var listCall = (JsonObject)CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", listHelper, OwnerElemArg(ownerToken), args);
+            if (RetToken(node) is string lret && !lret.StartsWith("gp:", StringComparison.Ordinal)) listCall["retType"] = lret;
+            return listCall;
+        }
+
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
             return Constrainify(ClrCallNode(node, clrOwner, intrinsic, member, args, instance, refs.MemberByrefPositions(ownerFqn, member, args.Count)), node, refs, ctx, ownerToken);
