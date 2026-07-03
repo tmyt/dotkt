@@ -5,6 +5,29 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir: erase the coroutine ABI to a MONOMORPHIC `Continuation<object>` (bundle-6 §11, bug #5 ROOT — the
+  `blockOn { 42 }` payoff RUNS).** New pass `ContinuationErasure` (`toolchain/bir2cir/ContinuationErasure.cs`, run in
+  ALL builds before `BirTypeLowering`) rewrites EVERY `kotlin.coroutines.Continuation[X]` type token —
+  params/returns/fields/base-args/`sig`/`funcType`/star-projection bare tokens — to `Continuation[kotlin.Any]`
+  (→ `Continuation<object>` in rt/app, kept verbatim in ref). Rationale: CLR interface contravariance (`in T`) does
+  not lift value types (`Continuation<object>` is not a `Continuation<int>`) AND the declared `in T` is illegal
+  anyway (`T` sits inside the invariant `Result<T>`), so ilemit emits Continuation INVARIANT — uniform erasure +
+  boundary boxing (JVM-equivalent) is the only shape that composes. The `resumeWith(Result<T>)` boundary uses
+  Option A (Codex-verified): keep `resumeWith(Result<object>)` uniformly (the cold-core bases already hand-declare
+  `Result<Any?>`), and — SCOPED to the resume protocol only (user `Result<X>` in `runCatching`/`il-result`
+  untouched) — erase every `Result[X]` in a `resumeWith` method (decl + body `result.get_value`/`exceptionOrNull`
+  owners) and every `Result.success/failure` construction feeding a `resumeWith` call to `Result<object>`, so the
+  invariant reference-class instances all match the slot. Now the `BlockOnSink → startCoroutine →
+  createCoroutineUnintercepted → SM → resumeWith` chain type-checks and dispatches; `cases/il-lam1`
+  (`blockOn { 42 }`) prints **42** and `cases/il-lam2` (a capturing suspend lambda with a real `h()` suspend call)
+  prints **15** — the cold-core suspend-lambda E2E milestone. ref/rt symmetric (Continuation/ContinuationImpl/
+  SafeContinuation/RootContinuation all re-emit on `Continuation<object>`); gate GREEN, ktproj 9/9.
+- **bir2cir: type a suspend-LAMBDA's awaited value with the callee's real return type (bundle-6, bug #6 — the
+  lam2 half).** `SuspendColdLowering.ApplyAll` now RETURNS its callee-return-type map (cold-entry name → Kotlin
+  resultType) and `SuspendLambdaLowering`/`BuildLambdaSm` thread it into the lambda SM's `FunGen` — previously a
+  lambda SM got an EMPTY map, so a lambda's `h()` await fell back to `kotlin.Any` and the spilled value was never
+  unboxed, emitting `object + int` (`h() + n`) → runtime corruption. `toolchain/bir2cir/{SuspendColdLowering,
+  SuspendLambdaLowering,Program}.cs`.
 - **ilemit: substitute interface type-args THROUGH nested (value-class) method-param types when matching the override
   body, so a generic-interface method with a value-class-generic param binds its `.override` at a CONCRETE
   instantiation (bundle-6 coroutine, general bug #5 — the ilemit half).** The `_types` interface-wiring loop

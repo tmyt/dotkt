@@ -35,8 +35,6 @@ declare -A XFAIL_RUN=(
 	[collops2]="coroutine/SequenceScope-deferred (bundle 6)"
 	[seq]="coroutine/SequenceScope-deferred (bundle 6)"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
-	[lam1]="bundle-6 P3 wave-2b: EmptyCoroutineContext.get retNullable interface/impl asymmetry FIXED (kotc, both now retNullable=True, TypeLoadException gone); NEXT blocker (bug #5, downstream) is EntryPointNotFoundException at Continuation<T>.resumeWith during blockOn->startCoroutine->resume — the resumeWith method-impl override link (interface `resumeWith(Result<T>)` vs impl `resumeWith(Result<Any>)`, kotlin.Result value-class param) is not wired -> bir2cir/ilemit coroutine-SM/value-class method-impl layer"
-	[lam2]="bundle-6 P3 wave-2b: same as lam1 (retNullable asymmetry FIXED; now blocked on the downstream Continuation.resumeWith EntryPointNotFoundException, bir2cir/ilemit) + capture/suspend-call path"
 )
 declare -A XFAIL_ILVERIFY=(
 	[chunk]="ilverify formal finding (sample also run-XFAIL: coroutine-deferred)"
@@ -45,8 +43,6 @@ declare -A XFAIL_ILVERIFY=(
 	[gen3]="ilverify formal-only finding (sample runs correct)"
 	[iter]="ilverify formal-only finding (sample runs correct)"
 	[iterable]="ilverify formal-only finding (sample runs correct)"
-	[lam1]="ilverify formal finding (sample also run-XFAIL: retNullable asymmetry FIXED; now blocked downstream on Continuation.resumeWith EntryPointNotFoundException, bir2cir/ilemit)"
-	[lam2]="ilverify formal finding (sample also run-XFAIL: retNullable asymmetry FIXED; now blocked downstream on Continuation.resumeWith EntryPointNotFoundException, bir2cir/ilemit)"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
