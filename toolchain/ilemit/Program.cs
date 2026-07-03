@@ -697,7 +697,10 @@ sealed partial class Emitter
             _args.Clear(); _argTypes.Clear(); _locals.Clear(); _methodRetType = typeof(void);
             // A field initializer can contain CFG control flow (a `while`/`when` lowered to label/goto), so its labels
             // must be pre-defined just like a method body — otherwise MarkLabel/Br throws "key not in _cfgLabels".
-            foreach (var f in inits) { PrescanCfgLabels(f.GetProperty("init")); EmitExpr(f.GetProperty("init")); _il.Emit(OpCodes.Stsfld, ti.Fields[f.GetProperty("name").GetString()]); }
+            // Coerce the init value to the field's declared type (box a value-type/enum RHS stored into an
+            // `object`/wider reference field) — the SAME shared store coercion the method-body sites use; without
+            // it, `val X: Any = SomeEnum.ENTRY` stored the raw ordinal (int) into an object field as a null ref.
+            foreach (var f in inits) { var fb = ti.Fields[f.GetProperty("name").GetString()]; PrescanCfgLabels(f.GetProperty("init")); EmitStoreCoerced(f.GetProperty("init"), fb.FieldType); _il.Emit(OpCodes.Stsfld, fb); }
             _il.Emit(OpCodes.Ret);
         }
 
