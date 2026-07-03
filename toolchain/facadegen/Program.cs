@@ -554,11 +554,24 @@ static class FacadeGen
                         sb.Append($"sprop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p)} {(p.CanWrite ? "rw" : "ro")}\n");
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
                 {
-                    if (m.IsSpecialName || OBJECT_MEMBERS.Contains(m.Name) || m.IsGenericMethod) continue;
+                    // A CONSTRUCTED generic static (`Task.FromResult<Int>`) is skipped; a generic METHOD DEFINITION
+                    // (`Task.FromResult<T>`/`Task.Run<T>`) is now surfaced so Kotlin can BUILD a `Task<T>` — its method
+                    // type params + any T-typed param/return map to bare type-param tokens (Map returns the param Name),
+                    // mirroring the `fun`/`tlfun` generic-method emission. kotc's generic-static companion builder resolves
+                    // `Task.FromResult(42)` -> `FromResult<Int>(42): Task<Int>` from this shape (bundle-6 async interop §②).
+                    if (m.IsSpecialName || OBJECT_MEMBERS.Contains(m.Name) || (m.IsGenericMethod && !m.IsGenericMethodDefinition)) continue;
+                    var sgp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                     var sps = m.GetParameters();
                     if (!sps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
-                    if (!seen.Add("sm:" + m.Name + "(" + Sig(sps, t) + ")")) continue;
-                    sb.Append($"sfun {m.Name} {MapRet(m.ReturnType, t)} {MetaParams(sps, t)}".TrimEnd() + "\n");
+                    if (!seen.Add("sm:" + m.Name + "<" + string.Join(",", sgp) + ">(" + Sig(sps, t) + ")")) continue;
+                    // `sfun <Name> <ret> [<TypeParam>...] [<param>:<type>]*` — bare (colon-free) type-param tokens sit
+                    // between the return type and the params (identical to `fun`/`tlfun`); an empty `sgp` leaves the
+                    // non-generic shape byte-for-byte unchanged (additive).
+                    var stoks = new List<string> { "sfun", m.Name, MapRet(m.ReturnType, t) };
+                    stoks.AddRange(sgp);
+                    stoks.AddRange(sps.Select((p, i) => ParamTok(p, i, t)));
+                    sb.Append(string.Join(" ", stoks) + "\n");
+                    if (m.IsGenericMethodDefinition) EmitTypeParamMeta(m.GetGenericArguments(), t, sb, isInterface: false, typeLevel: false);  // gap ①: method type-param bounds
                 }
             }
             else
