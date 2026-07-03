@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit (bundle-6 P5): `class D<T> : Base<T>()` — generic base instantiated over the derived's OWN type param.**
+  A generic class whose base is a generic type constructed over its own type parameter (the
+  `SequenceBuilderIterator<T> : SequenceScope<T>()` shape) crashed at load/JIT with a "not fully instantiated" /
+  `InvalidProgramException`. Two sites emitted the OPEN base definition where the CONSTRUCTED base was required:
+  - **Base-ctor call (`EmitCtorBody`).** The local-base `: base(...)` branch called `SelectCtor(...)` — the
+    `Base<>` open `ConstructorBuilder` — yielding `call Base``1::.ctor` while the class `extends Base``1<!T>`. It now
+    anchors the open ctor onto the constructed parent (`ti.TB.BaseType`) via `TypeBuilder.GetConstructor` when the
+    base is a generic instantiation, mirroring `closureNew`.
+  - **Inherited generic-base member calls (`ResolveMethod`).** A `callInstance` to a member declared on the generic
+    base (`d.x` -> `Base<>::get_x`, both the `D<int>` non-self and the `D<T>` self case) fell through the
+    `TypeBuilder.GetMethod` `ArgumentException` catch to the OPEN `MethodBuilder`. New `AnchorInheritedOnBase` walks
+    the constructed receiver's base-CLASS chain for the instantiation whose generic def is the member's declaring
+    type and re-anchors via `TypeBuilder.GetMethod` (interface members, absent from the class chain, keep the prior
+    open fallback). Unblocks the cold-core `sequence{}` runtime. New gate sample `cases/il-genbase`.
+
 - **bir2cir (bundle-6 P5 Phase-A1b): cold-transform `yield`/`yieldAll` — generic-class ABSTRACT/OVERRIDE suspend
   members.** `SuspendColdLowering.IsMemberShapeEligible` previously deferred (a) suspending members of a GENERIC
   enclosing class and (b) abstract/open/override/virtual members. It now ADMITS them, closing the last capability gap

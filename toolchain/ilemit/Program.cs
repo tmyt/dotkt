@@ -960,8 +960,17 @@ sealed partial class Emitter
             // `: base(...)` -> the Kotlin-user base class's ctor whose param count matches (a base with
             // secondary ctors — e.g. ContinuationImpl(completion) vs (completion, _context) — must bind the
             // right overload, not always the primary; mirrors the ClrBase (arg-count) + thisArgs (SelectCtor) paths).
+            ConstructorInfo bctor = SelectCtor(_types[ti.BaseName], ba2.GetArrayLength());
+            // A generic base instantiated over THIS type's own type params (`class D<T> : Base<T>()`) has its
+            // parent set to the CONSTRUCTED base `Base<!T>` (ti.TB.BaseType); the base-ctor operand must be scoped
+            // to that constructed type, not the open definition `Base<>` — a bare `call Base``1::.ctor` is "not
+            // fully instantiated" (InvalidProgramException). Anchor the open ConstructorBuilder onto the constructed
+            // base via the static helper (mirrors closureNew's TypeBuilder.GetConstructor over MakeGenericType).
+            var baseType = ti.TB.BaseType;
+            if (baseType != null && baseType.IsGenericType && !baseType.IsGenericTypeDefinition)
+                bctor = TypeBuilder.GetConstructor(baseType, bctor);
             foreach (var a in ba2.EnumerateArray()) EmitExpr(a);
-            _il.Emit(OpCodes.Call, SelectCtor(_types[ti.BaseName], ba2.GetArrayLength()));
+            _il.Emit(OpCodes.Call, bctor);
         }
         else
         {
@@ -1420,16 +1429,37 @@ sealed partial class Emitter
             retType = mb.ReturnType;
             if (mb.IsGenericMethodDefinition) return mb;
             // TypeBuilder.GetMethod requires `mb` declared on `constructed`'s OWN generic def. An INHERITED self-call
-            // (mb on a base) throws — fall back to the open MethodBuilder there (the pre-existing behavior).
+            // (mb on a generic base, `class D<T> : Base<T>` — `this.show()`) throws; anchor it onto the CONSTRUCTED
+            // base instantiation (`Base<!T>`), not the open def (`Base``1::m` is "not fully instantiated").
             try { return TypeBuilder.GetMethod(constructed, mb); }
-            catch (ArgumentException) { return mb; }
+            catch (ArgumentException) { return AnchorInheritedOnBase(constructed, mb, out retType) ?? mb; }
         }
         retType = Subst(mb.ReturnType, constructed.GetGenericArguments());
         // An INHERITED method on a NON-self constructed generic (mb declared on a base/interface, not on `constructed`'s
-        // own generic def — e.g. AbstractMutableCollection<E> calling the inherited iterator()) throws the same
-        // "method must be declared on the generic type definition" as the self case -> fall back to the open MethodBuilder.
+        // own generic def — `D<int> : Base<int>`.get_x, or AbstractMutableCollection<E>'s inherited iterator()) throws the
+        // same "method must be declared on the generic type definition" as the self case -> anchor onto the constructed
+        // base instantiation (`Base<int>`); only fall back to the open MethodBuilder when no such base exists (interface).
         try { return TypeBuilder.GetMethod(constructed, mb); }
-        catch (ArgumentException) { return mb; }
+        catch (ArgumentException) { return AnchorInheritedOnBase(constructed, mb, out retType) ?? mb; }
+    }
+
+    // `mb` is INHERITED — declared on a generic BASE class, not on `constructed`'s own generic def. A call must
+    // reference it on the constructed base instantiation (`class D<T> : Base<T>()` -> `Base<!T>::m`, or `D<int>` ->
+    // `Base<int>::m`), NOT the open `Base<>` (a bare `Base``1::m` operand is "not fully instantiated" -> the JIT
+    // raises InvalidProgram / "not fully instantiated"). Walk the constructed receiver's base-CLASS chain for the
+    // instantiation whose generic def is mb's declaring type, then anchor via TypeBuilder.GetMethod. Returns null
+    // when the declaring type is an INTERFACE (not on the class chain) — the caller keeps the open MethodBuilder.
+    MethodInfo AnchorInheritedOnBase(Type constructed, MethodInfo mb, out Type retType)
+    {
+        retType = mb.ReturnType;
+        var targetDef = mb.DeclaringType;
+        for (var bt = constructed.BaseType; bt != null; bt = bt.BaseType)
+            if (bt.IsGenericType && !bt.IsGenericTypeDefinition && ReferenceEquals(bt.GetGenericTypeDefinition(), targetDef))
+            {
+                try { var anchored = TypeBuilder.GetMethod(bt, mb); retType = Subst(mb.ReturnType, bt.GetGenericArguments()); return anchored; }
+                catch (ArgumentException) { return null; }
+            }
+        return null;
     }
 
     // A property read/write on an EXTERNAL type must go through the public accessor (`get_`/`set_<name>`), NOT the
