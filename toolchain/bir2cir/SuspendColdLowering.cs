@@ -856,6 +856,13 @@ static class SuspendColdLowering
                 if (Str(o["k"]) == "smSelf") return new JsonObject { ["k"] = "this" };
                 if (Str(o["k"]) == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
                     return FieldOf(ln, FieldType(ln));
+                if (Str(o["k"]) == "local" && Str(o["name"]) == "__self" && CapturedSelfField() is JsonNode sf0)
+                    return sf0;
+                if (Str(o["k"]) == "setLocal" && Str(o["name"]) is string sln && _fields.Contains(sln))
+                    return SetField(sln, RewriteNoSpill(o["value"]));
+                if (Str(o["k"]) == "var" && Str(o["name"]) is string vln && _fields.Contains(vln))
+                    return SetField(vln, o["init"] == null
+                        ? NullConst(Str(o["type"]) ?? "kotlin.Any") : RewriteNoSpill(o["init"]));
                 if (_isMember && Str(o["k"]) == "this")
                     return FieldOf(ThisField, _ownerClass);
                 var copy = new JsonObject();
@@ -885,6 +892,17 @@ static class SuspendColdLowering
                 if (k == "smSelf") return new JsonObject { ["k"] = "this" };
                 if (k == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
                     return FieldOf(ln, FieldType(ln));
+                if (k == "local" && Str(o["name"]) == "__self" && CapturedSelfField() is JsonNode sf1)
+                    return sf1;
+                // A `setLocal`/`var` that assigns a SPILLED variable but sits INSIDE an expression subtree (e.g. the
+                // `index++` post-increment lowered to `valueBlock { var <unary> = index; index = index+1; <unary> }`)
+                // is reached via Rewrite, not the statement-level EmitStmt, so its field-assignment must be redirected
+                // here too — else a bare `setLocal index` to an SM FIELD reaches ilemit as `store unknown var index`.
+                if (k == "setLocal" && Str(o["name"]) is string sln && _fields.Contains(sln))
+                    return SetField(sln, Rewrite(o["value"], outp));
+                if (k == "var" && Str(o["name"]) is string vln && _fields.Contains(vln))
+                    return SetField(vln, o["init"] == null
+                        ? NullConst(Str(o["type"]) ?? "kotlin.Any") : Rewrite(o["init"], outp));
                 if (_isMember && k == "this")
                     return FieldOf(ThisField, _ownerClass);
                 if (IsSuspendIntrinsicBlock(o))
@@ -1234,6 +1252,16 @@ static class SuspendColdLowering
             foreach (var (n, t) in _fieldDecls) if (n == name) return t;
             return "kotlin.Any";
         }
+
+        // kotc names a suspend lambda's captured ENCLOSING extension receiver `__outer` (the `<this>` capture-field
+        // convention, BirEmitter.kt:2929) yet, INSIDE the lambda body, references that receiver as `local __self`
+        // (the enclosing static extension's receiver-param name, via selfSubst — BirEmitter.kt:1308). The two names
+        // are the SAME captured value, so a body `__self` read maps to the `__outer` capture FIELD (`this.__outer`).
+        // Guarded on `!__self` field: a NAMED-fun cold entry spills its real `__self` PARAM into a `__self` field,
+        // which the generic local->field rule already redirects — this alias is only for the lambda-capture mismatch.
+        JsonNode CapturedSelfField() =>
+            (!_fields.Contains("__self") && _fields.Contains("__outer"))
+                ? FieldOf("__outer", FieldType("__outer")) : null;
 
         // The cold call. Two shapes:
         //   callStatic  -> <method>$dotkt_suspend(<args>, cast(this -> Continuation<Any?>))   (owner preserved)

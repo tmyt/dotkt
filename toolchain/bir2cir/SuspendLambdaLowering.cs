@@ -76,7 +76,7 @@ static class SuspendLambdaLowering
                         if (to["ctors"] is JsonArray tcs)
                             foreach (var c in tcs)
                                 if (c is JsonObject co && co["body"] is JsonNode cb)
-                                    Walk(cb, owner + "_ctor", newTypes, counter, baseIsLocal);
+                                    Walk(cb, owner + "_ctor", newTypes, counter, baseIsLocal, HasSelfParam(co));
                         if (to["properties"] is JsonArray tps)
                             foreach (var p in tps)
                                 if (p is JsonObject po) WalkAccessors(po, owner, newTypes, counter, baseIsLocal);
@@ -91,10 +91,17 @@ static class SuspendLambdaLowering
         }
     }
 
+    // Does the enclosing method carry a `__self` param (a static extension fun — its receiver rode a leading
+    // `__self`)? Then a captured enclosing receiver (`__outer`) reads `local __self` at the construction site;
+    // an instance method (no `__self` param) reads `this`.
+    static bool HasSelfParam(JsonObject method) =>
+        method["params"] is JsonArray ps && ps.OfType<JsonObject>().Any(p => Str(p["name"]) == "__self");
+
     static void WalkMethod(JsonObject method, string prefix, List<JsonNode> newTypes, int[] counter, bool baseIsLocal)
     {
         var mn = Str(method["name"]) ?? "m";
-        if (method["body"] is JsonNode body) Walk(body, prefix + "_" + mn, newTypes, counter, baseIsLocal);
+        var outerSelf = HasSelfParam(method);
+        if (method["body"] is JsonNode body) Walk(body, prefix + "_" + mn, newTypes, counter, baseIsLocal, outerSelf);
     }
 
     static void WalkAccessors(JsonObject prop, string prefix, List<JsonNode> newTypes, int[] counter, bool baseIsLocal)
@@ -102,10 +109,10 @@ static class SuspendLambdaLowering
         var pn = Str(prop["name"]) ?? "p";
         foreach (var acc in new[] { "getter", "setter" })
             if (prop[acc] is JsonObject a && a["body"] is JsonNode b)
-                Walk(b, prefix + "_" + pn + "_" + acc, newTypes, counter, baseIsLocal);
+                Walk(b, prefix + "_" + pn + "_" + acc, newTypes, counter, baseIsLocal, HasSelfParam(a));
     }
 
-    static void Walk(JsonNode node, string ctx, List<JsonNode> newTypes, int[] counter, bool baseIsLocal)
+    static void Walk(JsonNode node, string ctx, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, bool outerSelf)
     {
         switch (node)
         {
@@ -114,9 +121,9 @@ static class SuspendLambdaLowering
                 {
                     var child = o[key];
                     if (child is JsonObject co && Str(co["k"]) == "suspendLambdaNew")
-                        o[key] = BuildLambda(co, ctx, newTypes, counter, baseIsLocal);
+                        o[key] = BuildLambda(co, ctx, newTypes, counter, baseIsLocal, outerSelf);
                     else if (child != null)
-                        Walk(child, ctx, newTypes, counter, baseIsLocal);
+                        Walk(child, ctx, newTypes, counter, baseIsLocal, outerSelf);
                 }
                 break;
             case JsonArray a:
@@ -124,20 +131,20 @@ static class SuspendLambdaLowering
                 {
                     var child = a[i];
                     if (child is JsonObject co && Str(co["k"]) == "suspendLambdaNew")
-                        a[i] = BuildLambda(co, ctx, newTypes, counter, baseIsLocal);
+                        a[i] = BuildLambda(co, ctx, newTypes, counter, baseIsLocal, outerSelf);
                     else if (child != null)
-                        Walk(child, ctx, newTypes, counter, baseIsLocal);
+                        Walk(child, ctx, newTypes, counter, baseIsLocal, outerSelf);
                 }
                 break;
         }
     }
 
-    static JsonNode BuildLambda(JsonObject node, string ctx, List<JsonNode> newTypes, int[] counter, bool baseIsLocal)
+    static JsonNode BuildLambda(JsonObject node, string ctx, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, bool outerSelf)
     {
         // Bottom-up: lower any nested suspend lambdas inside THIS lambda's body first (their SMs + `new`
         // replacements land before this lambda's SM is built over the already-lowered body).
         var body = node["body"] as JsonArray ?? new JsonArray();
-        Walk(body, ctx, newTypes, counter, baseIsLocal);
+        Walk(body, ctx, newTypes, counter, baseIsLocal, outerSelf);
 
         var arity = IntOf(node["arity"]);
         var captures = ReadNameTypes(node["captures"]);
@@ -169,11 +176,13 @@ static class SuspendLambdaLowering
         var argTypes = new JsonArray();
         foreach (var (n, t) in captures)
         {
-            // `__outer` is kotc's name for a captured enclosing `<this>`/extension-receiver — it has no local
-            // at the emit site; it reads as `this` (mirroring kotc's closureNew capValueExpr). Every other
-            // capture is a real local.
+            // `__outer` is kotc's name for a captured enclosing `<this>`/extension-receiver (BirEmitter.kt:2929).
+            // Its VALUE at the construction site is the enclosing method's receiver: an instance method reads
+            // `this`; a STATIC extension fun (its receiver rode a leading `__self` param) reads `local __self`
+            // (a static method has no `this`). `outerSelf` carries which. Every other capture is a real local.
             args.Add(n == "__outer"
-                ? new JsonObject { ["k"] = "this" }
+                ? (outerSelf ? new JsonObject { ["k"] = "local", ["name"] = "__self" }
+                             : new JsonObject { ["k"] = "this" })
                 : new JsonObject { ["k"] = "local", ["name"] = n });
             argTypes.Add(t);
         }
