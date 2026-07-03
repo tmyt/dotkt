@@ -360,6 +360,11 @@ static class SuspendColdLowering
         const string ThisField = "$this";
         // The Task-bridge root sink (a real emitted stdlib class, referenced cross-assembly like ContinuationImpl).
         const string RootContinuationFqn = "kotlin.coroutines.clr.internal.RootContinuation";
+        // bundle-6 P4 REVERSE bridge — the facadegen-injected Task.await marker + the BCL awaiter family.
+        const string AwaitMarkerOwner = "kotlin.clr.CoroutinesKt";
+        const string TaskFqn = "System.Threading.Tasks.Task";
+        const string TaskAwaiterFqn = "System.Runtime.CompilerServices.TaskAwaiter";
+        const string ActionFqn = "System.Action";
 
         readonly JsonObject _m;
         readonly string _name;
@@ -386,6 +391,9 @@ static class SuspendColdLowering
         readonly List<string> _typeParams;       // generic type-param names ([] when non-generic)
         readonly HashSet<string> _fields = new(StringComparer.Ordinal);
         readonly List<(string name, string type)> _fieldDecls = new();
+        // Synthesized SM methods for each `task.await()` suspension point (the OnCompleted Action callback
+        // that re-drives THIS SM via resumeWith). Populated during body emission; spliced into the SM type.
+        readonly List<JsonObject> _awaitResumeMethods = new();
 
         int _state;                              // resume-state counter (>=1)
         int _label;                              // label id allocator (above kotc's low ids)
@@ -718,6 +726,9 @@ static class SuspendColdLowering
                     return FieldOf(ThisField, _ownerClass);
                 if ((k == "callStatic" || k == "callInstance") && Bool(o["suspendCall"]))
                     return EmitSuspensionPoint(o, outp);
+                if ((k == "clrStatic" || k == "clrGenericStatic") && Bool(o["suspendCall"])
+                    && Str(o["type"]) == AwaitMarkerOwner && Str(o["method"]) == "await")
+                    return EmitAwaitPoint(o, outp);
                 if (k == "cond" && HasSuspension(o))
                     return EmitCondValue(o, outp);
                 var copy = new JsonObject();
@@ -795,6 +806,154 @@ static class SuspendColdLowering
                 top.inner.Add((state, resumeLabel));
                 _dispatch.Add((state, top.tryEntry));
             }
+        }
+
+        // A `task.await()` suspension point (bundle-6 P4 REVERSE bridge, design §4/§5) — the .NET-Task ⇒ Kotlin
+        // suspend boundary. The facadegen-injected marker (kotlin.clr.CoroutinesKt.await, suspendCall) becomes the
+        // cold-core awaiter dance, structurally IDENTICAL to EmitSuspensionPoint but obtaining the resume value from
+        // a TaskAwaiter instead of a cold `$dotkt_suspend` return:
+        //
+        //   this.<aw> = ((Task<T>)task).GetAwaiter()        // TaskAwaiter<T> (a struct) spilled into an SM field
+        //   if (this.<aw>.IsCompleted) goto L_state          // sync fast path — no suspension
+        //   this.label = state
+        //   this.<aw>.OnCompleted(<Action bound to this.$awaitOnDone$state>)   // flows ExecutionContext
+        //   return COROUTINE_SUSPENDED
+        //   L_state: <value> = this.<aw>.GetResult()          // throws on a faulted/canceled task
+        //
+        // The Action callback (a synthesized SM instance method) re-drives THIS SM: `this.resumeWith(Result(null))`.
+        // The resumed `result` is only a WAKE TOKEN (Codex-verified Option B): the real value / fault comes from
+        // GetResult() at L_state — a fault THROWS there, propagating up through invokeSuspend into
+        // BaseContinuationImpl.resumeWith's catch → the completion (exactly the JVM Task.await semantics). So NO
+        // throwOnFailure and NO try/catch in the callback are needed. TaskAwaiter is a readonly struct over a task
+        // reference, so the field spill/copy is safe (Codex-confirmed).
+        JsonNode EmitAwaitPoint(JsonObject awaitNode, List<JsonNode> outp)
+        {
+            var generic = Str(awaitNode["k"]) == "clrGenericStatic";
+            string resultTok = "kotlin.Unit", taskType, awaiterType;
+            if (generic)
+            {
+                resultTok = NonEmpty((awaitNode["typeArgs"] as JsonArray)?.FirstOrDefault() is JsonValue tv
+                    && tv.TryGetValue<string>(out var t0) ? t0 : null) ?? "kotlin.Any";
+                taskType = "clrg:" + TaskFqn + "[" + resultTok + "]";
+                awaiterType = "clrg:" + TaskAwaiterFqn + "[" + resultTok + "]";
+            }
+            else
+            {
+                taskType = "clr:" + TaskFqn;
+                awaiterType = "clr:" + TaskAwaiterFqn;
+            }
+
+            var task = Rewrite((awaitNode["args"] as JsonArray)?[0], outp);
+
+            var state = ++_state;
+            var afterLabel = NextLabel();
+            RegisterResume(state, afterLabel);
+
+            var awField = "__awaiter$" + state;
+            AddFieldTyped(awField, awaiterType);
+
+            // this.<aw> = ((Task<T>)task).GetAwaiter();
+            outp.Add(SetField(awField, new JsonObject
+            {
+                ["k"] = "clrInstance", ["type"] = taskType, ["method"] = "GetAwaiter",
+                ["recv"] = task, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                ["ret"] = awaiterType,
+            }));
+            // if (this.<aw>.IsCompleted) goto L_state;   (sync fast path — no suspension)
+            outp.Add(BrIf(new JsonObject
+            {
+                ["k"] = "clrPropGet", ["type"] = awaiterType, ["name"] = "IsCompleted",
+                ["static"] = false, ["recv"] = FieldOf(awField, awaiterType), ["retType"] = "kotlin.Boolean",
+            }, true, afterLabel));
+            // this.label = state; this.<aw>.OnCompleted(<callback Action>); return COROUTINE_SUSPENDED;
+            outp.Add(SetField("label", IntConst(state)));
+            var cbName = "$awaitOnDone$" + state;
+            _awaitResumeMethods.Add(AwaitResumeMethod(cbName));
+            outp.Add(new JsonObject
+            {
+                ["k"] = "exprStmt",
+                ["expr"] = new JsonObject
+                {
+                    ["k"] = "clrInstance", ["type"] = awaiterType, ["method"] = "OnCompleted",
+                    ["recv"] = FieldOf(awField, awaiterType),
+                    ["argTypes"] = new JsonArray { "clr:" + ActionFqn },
+                    ["args"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["k"] = "boundDelegateNew", ["funcType"] = "func:void:",
+                            ["ownerType"] = _smTypeInst, ["method"] = cbName, ["virtual"] = false,
+                            ["recv"] = new JsonObject { ["k"] = "this" },
+                        },
+                    },
+                    ["ret"] = "void",
+                },
+            });
+            outp.Add(Ret(Suspended()));
+            outp.Add(Label(afterLabel));
+
+            // L_state: <value> = this.<aw>.GetResult();   (throws on a faulted/canceled task)
+            var getResult = new JsonObject
+            {
+                ["k"] = "clrInstance", ["type"] = awaiterType, ["method"] = "GetResult",
+                ["recv"] = FieldOf(awField, awaiterType), ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                ["ret"] = generic ? resultTok : "void",
+            };
+            if (generic)
+            {
+                var valField = "__awval$" + state;
+                AddFieldTyped(valField, resultTok);
+                outp.Add(SetField(valField, getResult));
+                return FieldOf(valField, resultTok);
+            }
+            // Non-generic Task.await(): Unit — GetResult is `void` (side-effecting), the value is Unit.
+            outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = getResult });
+            return NullConst("kotlin.Unit");
+        }
+
+        // void $awaitOnDone$state() { this.resumeWith(Result(null)); } — the OnCompleted Action target that
+        // re-drives THIS SM (Option B WAKE TOKEN; the value/fault flows from GetResult at the resume label). The
+        // resumeWith call mirrors the rt-stdlib BaseContinuationImpl form (Continuation<object>.resumeWith,
+        // Result(object) construction); ContinuationErasure then normalizes both to the Result<object> slot.
+        JsonObject AwaitResumeMethod(string name)
+        {
+            var resumeCall = new JsonObject
+            {
+                ["k"] = "callInstance",
+                ["ownerType"] = ContinuationOfAny,
+                ["virtual"] = true,
+                ["recv"] = new JsonObject { ["k"] = "this" },
+                ["method"] = "resumeWith",
+                ["sig"] = "@kotlin.Result[kotlin.Any]",
+                ["retType"] = "void",
+                ["args"] = new JsonArray
+                {
+                    // Result.success(null): the PUBLIC static companion factory (the internal `Result(value)` ctor is
+                    // inaccessible cross-assembly, so an app SM cannot `new kotlin.Result`). typeArgs erased to Any by
+                    // ContinuationErasure to hit the Result<object> resumeWith slot.
+                    new JsonObject
+                    {
+                        ["k"] = "callStatic", ["owner"] = "kotlin.Result", ["method"] = "success",
+                        ["typeArgs"] = new JsonArray { "kotlin.Any" },
+                        ["args"] = new JsonArray { NullConst("kotlin.Any") },
+                        ["ret"] = "@kotlin.Result[kotlin.Any]",
+                    },
+                },
+            };
+            return new JsonObject
+            {
+                ["name"] = name,
+                ["static"] = false,
+                ["override"] = false,
+                ["virtual"] = false,
+                ["abstract"] = false,
+                ["objectOverride"] = false,
+                ["vis"] = "public",
+                ["params"] = new JsonArray(),
+                ["ret"] = "void",
+                ["body"] = new JsonArray { new JsonObject { ["k"] = "exprStmt", ["expr"] = resumeCall } },
+                ["attrs"] = new JsonArray(),
+            };
         }
 
         string FieldType(string name)
@@ -889,6 +1048,9 @@ static class SuspendColdLowering
             };
             if (!_baseIsLocal) invoke["clrOverride"] = BaseContinuationImplFqn;
 
+            var methods = new JsonArray { invoke };
+            foreach (var rm in _awaitResumeMethods) methods.Add(rm);
+
             var type = new JsonObject
             {
                 ["name"] = _smType,
@@ -914,7 +1076,7 @@ static class SuspendColdLowering
                         ["body"] = ctorBody,
                     },
                 },
-                ["methods"] = new JsonArray { invoke },
+                ["methods"] = methods,
                 ["properties"] = new JsonArray(),
                 ["attrs"] = new JsonArray(),
             };
@@ -965,6 +1127,7 @@ static class SuspendColdLowering
 
             var methods = new JsonArray { invoke };
             foreach (var cm in CreateMethods()) methods.Add(cm);
+            foreach (var rm in _awaitResumeMethods) methods.Add(rm);
 
             var type = new JsonObject
             {
