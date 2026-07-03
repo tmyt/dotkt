@@ -510,8 +510,11 @@ sealed class ReferenceMetadataIndex
             if (t.StartsWith(w, StringComparison.Ordinal)) return w + ParamKey(t[w.Length..]);
         foreach (var p in new[] { "clrg:", "clr:", "@" })
             if (t.StartsWith(p, StringComparison.Ordinal)) { t = t[p.Length..]; break; }
-        // `sfunc:` (suspend fn type, Part A) keys the same as `func:` — same overload bucket for now.
-        if (t.StartsWith("func:", StringComparison.Ordinal) || t.StartsWith("sfunc:", StringComparison.Ordinal)) return "func";
+        // `sfunc:` (suspend fn TYPE) erases to `object`: a suspend-lambda VALUE is a SuspendLambda state-machine
+        // OBJECT (a Continuation-based object), NOT a Func delegate — so it keys as `obj`, matching an intrinsic's
+        // object-erased suspend param/receiver. A plain `func:` still keys as the delegate bucket.
+        if (t.StartsWith("sfunc:", StringComparison.Ordinal)) return "obj";
+        if (t.StartsWith("func:", StringComparison.Ordinal)) return "func";
         var br = t.IndexOf('[');
         if (br >= 0) t = t[..br];
         if (t.StartsWith("gp:", StringComparison.Ordinal)) return "gp";
@@ -804,13 +807,12 @@ sealed class ReferenceMetadataIndex
     static string NormalizeType(string type)
     {
         var value = type.Trim();
-        // Part A (bundle-6 P3 wave-2b): `sfunc:` (the suspend-fn-type token) behaves identically to `func:`
-        // for matching — its suspend-ness is orthogonal to the delegate shape (consumed by the
-        // suspendLambdaNew SM builder, not here). Fold the prefix (top-level AND nested) up front so every
-        // func-type canonicalization below applies unchanged.
-        if (value.Contains("sfunc:", StringComparison.Ordinal))
-            value = value.Replace("sfunc:", "func:", StringComparison.Ordinal);
         if (value.StartsWith("@", StringComparison.Ordinal)) return NormalizeType(value[1..]);
+        // bundle-6 P3 wave-2b (final): `sfunc:` (the suspend-fn-type token) erases to `System.Object`. A suspend-
+        // lambda VALUE is a SuspendLambda state-machine object (Continuation-based), NOT a Func delegate — so its
+        // matching identity is object. Nested `sfunc:` inside a `func:`/`clrg:` arg is reached by the structural
+        // recursion below (each recursive call re-checks this branch). ilemit never receives `sfunc:`.
+        if (value.StartsWith("sfunc:", StringComparison.Ordinal)) return "System.Object";
         if (value.StartsWith("clr:", StringComparison.Ordinal)) return NormalizeType(value["clr:".Length..]);
         if (value.StartsWith("byref:", StringComparison.Ordinal)) return "byref:" + NormalizeType(value["byref:".Length..]);
         if (value.StartsWith("array:", StringComparison.Ordinal)) return "array:" + NormalizeType(value["array:".Length..]);
@@ -1673,7 +1675,7 @@ sealed class TypeSiteAnalyzer
         if (normalized.StartsWith("clrg:", StringComparison.Ordinal)) return "already-clr";
         if (normalized.StartsWith("array:", StringComparison.Ordinal)) return "already-clr";
         if (normalized.StartsWith("func:", StringComparison.Ordinal)) return "already-clr";
-        if (normalized.StartsWith("sfunc:", StringComparison.Ordinal)) return "already-clr";   // suspend fn type (Part A)
+        if (normalized.StartsWith("sfunc:", StringComparison.Ordinal)) return "already-clr";   // suspend fn type -> object (wave-2b)
         if (normalized.StartsWith("gp:", StringComparison.Ordinal)) return "already-clr";
         return "kotlin-symbol";
     }
@@ -2155,6 +2157,8 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerSigValue(kv.Value, refBuild, here);   // sig = param types
                 else if (ReturnKeys.Contains(kv.Key))
                     copy[kv.Key] = LowerReturnValued(kv.Value, refBuild, here);   // Unit-in-return -> void (uniform)
+                else if (kv.Key == "funcType")
+                    copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
                 else if (TypeKeys.Contains(kv.Key))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here);
                 else
@@ -2190,6 +2194,22 @@ static class BirTypeLowering
             return JsonValue.Create(string.Join(",", SplitTopLevel(s).Select(p => LowerTypeString(p, refBuild, force))));
         return LowerNode(val, refBuild, force);
     }
+
+    // The `funcType` key names the DELEGATE type constructed by a closureNew/delegateNew/delegateInvoke. A suspend-fn
+    // delegate (`sfunc:`) here is a genuine CLR delegate — the pre-P3 sequence/iterator closure path (`iterator {}`
+    // yields a `closureNew` whose funcType is `sfunc:void:SequenceScope[..]`) — NOT an object-erased SM value slot.
+    // So fold `sfunc:`->`func:` for THIS key only (delegate shape preserved), then lower normally; every OTHER type
+    // slot (param/field/return/receiver) erases `sfunc:`->`object`. The APP suspend-lambda SM path never reaches
+    // here: its `suspendLambdaNew` is replaced by a `new <SM>` node (SuspendLambdaLowering) before type lowering.
+    static JsonNode LowerFuncTypeValued(JsonNode val, bool refBuild, bool force)
+    {
+        if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
+            return JsonValue.Create(LowerTypeString(FoldSFuncToFunc(s), refBuild, force));
+        return LowerTypeValued(val, refBuild, force);
+    }
+
+    static string FoldSFuncToFunc(string t) =>
+        t.Contains("sfunc:", StringComparison.Ordinal) ? t.Replace("sfunc:", "func:", StringComparison.Ordinal) : t;
 
     // A return-slot value: a bare top-level `kotlin.Unit` -> `void` (UNIFORM, both modes); otherwise the normal type
     // lowering (so a return like clrg:List[kotlin.Int] still lowers its inner Int).
@@ -2233,18 +2253,21 @@ static class BirTypeLowering
     // bare kotlin.* foundational token inside a generic lowers too.
     public static string LowerTypeString(string raw, bool refBuild, bool force = false)
     {
-        // Part A (bundle-6 P3 wave-2b): `sfunc:` (the suspend-fn-type token) mirrors `func:` for the delegate
-        // shape — its suspend-ness is consumed by the suspendLambdaNew SM builder, not this delegate path.
-        // Fold the prefix (top-level AND nested) BEFORE the guards so ALL existing func-type lowering applies
-        // and ilemit NEVER receives `sfunc:` — in EVERY build incl. ref (like a `func:` token, an sfunc token
-        // would otherwise pass the kotlin-contains guard verbatim, and ilemit has no `sfunc:` opcode).
-        if (raw.Contains("sfunc:", StringComparison.Ordinal))
-            raw = raw.Replace("sfunc:", "func:", StringComparison.Ordinal);
-        // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers
-        // unconditionally. A token with no "kotlin." substring can never contain a mappable token, so skip it.
-        if ((!force && refBuild) || !raw.Contains("kotlin.", StringComparison.Ordinal)) return raw;
-
+        // bundle-6 P3 wave-2b (final): `sfunc:` (the suspend-fn-type token) erases to `object` in EVERY build
+        // (ref/rt/app), consistently. A suspend-lambda VALUE is a SuspendLambda state machine — a Continuation-
+        // based OBJECT that extends BaseContinuationImpl — NOT a Func delegate; typing it as `object` lets the SM
+        // pass anywhere a `suspend () -> T` is expected and satisfy the intrinsics' `as? BaseContinuationImpl`.
+        // A TOP-LEVEL sfunc token is erased here before the refBuild/no-kotlin guards (an `sfunc:gp:T:` token has
+        // no "kotlin." substring and would otherwise slip through with `sfunc:` intact — ilemit has no opcode for
+        // it). A NESTED sfunc (a `func:`/generic arg) is reached by the structural recursion below, so the guard
+        // must also descend when any `sfunc:` is present. ilemit NEVER receives `sfunc:`.
         var t = raw.Trim();
+        if (t.StartsWith("sfunc:", StringComparison.Ordinal)) return "object";
+        // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers
+        // unconditionally. A token with neither "kotlin." nor a nested "sfunc:" carries nothing to rewrite.
+        if (!raw.Contains("sfunc:", StringComparison.Ordinal)
+            && ((!force && refBuild) || !raw.Contains("kotlin.", StringComparison.Ordinal))) return raw;
+
         if (t.Length == 0) return raw;
 
         foreach (var p in ModifierPrefixes)

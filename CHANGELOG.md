@@ -5,6 +5,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir: erase the `sfunc:` suspend-fn TYPE token to `object`, not `Func` — a suspend-lambda VALUE flows as its
+  SuspendLambda state machine (bundle-6 P3 wave-2b FINAL).** The Part-A fold `sfunc:`→`func:` made a
+  `suspend () -> T` param/receiver a CLR `Func<T>` delegate — but a suspend-lambda VALUE is a SuspendLambda SM
+  (a `BaseContinuationImpl`-derived OBJECT), and a `Func` is not a `BaseContinuationImpl`, so the coroutine
+  intrinsics' `this as? BaseContinuationImpl` returned null and threw "not a state machine". Now `sfunc:` erases to
+  `object` (System.Object) consistently in EVERY build (stdlib ref/rt AND app): the SM passes anywhere a
+  `suspend () -> T` is expected and satisfies `as? BaseContinuationImpl`; the stdlib intrinsics
+  (`createCoroutineUnintercepted`/`startCoroutine`/`blockOn`) already cast their object-typed suspend value, so no
+  stdlib change was needed. The change touches the SAME spots the fold did — `LowerTypeString`, `NormalizeType`,
+  `ParamKey` (→`obj`), the `StatusFor` note — with ONE exception: the `funcType` node key (closureNew/delegateNew/
+  delegateInvoke) keeps `sfunc:`→`func:` because it names a real CLR DELEGATE to construct (the pre-P3
+  `iterator{}`/`sequence{}` closure path), never an SM value slot. `blockOn { 42 }` now drives the SM as `object`
+  all the way through `blockOn(object)` → `startCoroutine(object)` → `createCoroutineUnintercepted(object)` →
+  `create()` → the SM ctor (the prior `create()` return-type blocker is gone); it is now blocked ONLY by a
+  DOWNSTREAM stdlib emit bug — `EmptyCoroutineContext.get` has its `E?` return retNullable-erased to `object` while
+  the `CoroutineContext.get` interface declaration stays `gp:E` (a kotc `retNullable` asymmetry between the
+  abstract decl and the concrete override), so the method-override link mismatches → `TypeLoadException` when the
+  SM ctor reads `completion.context`. `cases/il-lam1`/`il-lam2` stay XFAIL pending that separate follow-up. Gate
+  neutral (145 run-pass / 7 run-fail, all XFAIL-listed). `toolchain/bir2cir/Program.cs`.
+
 - **kotc: emit `sfunc:` + `suspendLambdaNew` — ACTIVATE the SuspendLambda pipeline (bundle-6 P3 wave-2b STEP 2).**
   The producer half of STEP 1's dormant bir2cir consumer. **Part 1:** a `suspend (P..) -> R` function TYPE now
   emits the `sfunc:<ret>:<args>` token (split out of the shared `func:` erasure) at the two folded positions —

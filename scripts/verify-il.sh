@@ -35,8 +35,8 @@ declare -A XFAIL_RUN=(
 	[collops2]="coroutine/SequenceScope-deferred (bundle 6)"
 	[seq]="coroutine/SequenceScope-deferred (bundle 6)"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
-	[lam1]="bundle-6 P3 wave-2b: kotc emits suspendLambdaNew (STEP 2 landed) + bir2cir builds the SuspendLambda SM, but the generated SM create() returns Continuation<object> while base BaseContinuationImpl.create returns Continuation<Unit> -> TypeLoadException; pending bir2cir CreateMethod ret fix"
-	[lam2]="bundle-6 P3 wave-2b: same as lam1 (SuspendLambda SM create() return-type mismatch) + capture/suspend-call path; pending the bir2cir CreateMethod ret fix"
+	[lam1]="bundle-6 P3 wave-2b: the SuspendLambda SM now flows as `object` through blockOn/startCoroutine/createCoroutineUnintercepted/create() (sfunc->object erasure landed); NEXT blocker is a stdlib emit bug — EmptyCoroutineContext.get is retNullable-erased to `object` while the CoroutineContext.get interface decl stays `gp:E` (kotc retNullable asymmetry) -> method-impl signature mismatch -> TypeLoadException at completion.context"
+	[lam2]="bundle-6 P3 wave-2b: same as lam1 (SM flows as object; blocked on the EmptyCoroutineContext.get retNullable interface/impl asymmetry) + capture/suspend-call path"
 )
 declare -A XFAIL_ILVERIFY=(
 	[chunk]="ilverify formal finding (sample also run-XFAIL: coroutine-deferred)"
@@ -45,8 +45,8 @@ declare -A XFAIL_ILVERIFY=(
 	[gen3]="ilverify formal-only finding (sample runs correct)"
 	[iter]="ilverify formal-only finding (sample runs correct)"
 	[iterable]="ilverify formal-only finding (sample runs correct)"
-	[lam1]="ilverify formal finding (sample also run-XFAIL: SuspendLambda SM create() return-type mismatch, pending bir2cir CreateMethod ret fix)"
-	[lam2]="ilverify formal finding (sample also run-XFAIL: SuspendLambda SM create() return-type mismatch, pending bir2cir CreateMethod ret fix)"
+	[lam1]="ilverify formal finding (sample also run-XFAIL: SM flows as object; blocked on EmptyCoroutineContext.get retNullable interface/impl asymmetry)"
+	[lam2]="ilverify formal finding (sample also run-XFAIL: SM flows as object; blocked on EmptyCoroutineContext.get retNullable interface/impl asymmetry)"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
