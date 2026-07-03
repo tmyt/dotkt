@@ -264,8 +264,64 @@ static class SuspendColdLowering
                 var ts = (e.Root["types"] as JsonArray) ?? EnsureArray(e.Root, "types");
                 foreach (var nt in newTypes) ts.Add(nt);
             }
+
+            // A synthesized instance-member SM is a SEPARATE top-level class, so its `$this.<member>` accesses to
+            // the enclosing class's PRIVATE members (e.g. SequenceBuilderIterator.yield's SM writing the private
+            // `set_nextValue`/`set_state`) fail CLR visibility (MethodAccessException) — on the JVM the SM is a
+            // nested class with private access; on CLR our SM is top-level. Widen exactly the private members the
+            // SM touches on `$this` to `internal` (assembly-visible) so the same-assembly SM can reach them. The
+            // enclosing class is itself internal machinery (SequenceBuilderIterator is a `private class`), so this
+            // leaks nothing to the public surface.
+            if (e.TypeNode != null) WidenPrivatesAccessedBySm(e.TypeNode, newTypes);
         }
         return calleeRet;
+    }
+
+    // Collect every member name a synthesized SM reads/writes through its `$this` field, then relax any matching
+    // PRIVATE member on the enclosing type to `internal` so the separate SM class can access it.
+    static void WidenPrivatesAccessedBySm(JsonObject typeNode, List<JsonNode> smTypes)
+    {
+        var accessed = new HashSet<string>(StringComparer.Ordinal);
+        void Collect(JsonNode n)
+        {
+            if (n is JsonObject o)
+            {
+                // A node whose receiver is the SM's `$this` field: a callInstance's `method`, or a field read's `name`.
+                if (o["recv"] is JsonObject r && Str(r["k"]) == "field" && Str(r["name"]) == "$this")
+                {
+                    if (Str(o["method"]) is string mn) accessed.Add(mn);
+                    if (Str(o["k"]) is "field" or "setField" && Str(o["name"]) is string fn) accessed.Add(fn);
+                }
+                foreach (var kv in o) if (kv.Value != null) Collect(kv.Value);
+            }
+            else if (n is JsonArray a) foreach (var it in a) if (it != null) Collect(it);
+        }
+        foreach (var t in smTypes) Collect(t);
+        if (accessed.Count == 0) return;
+
+        void Relax(JsonObject member)
+        {
+            if (member != null && Str(member["vis"]) == "private") member["vis"] = "internal";
+        }
+        if (typeNode["methods"] is JsonArray ms)
+            foreach (var m in ms)
+                if (m is JsonObject mo && Str(mo["name"]) is string n && accessed.Contains(n)) Relax(mo);
+        if (typeNode["fields"] is JsonArray fs)
+            foreach (var f in fs)
+                if (f is JsonObject fo && Str(fo["name"]) is string n && accessed.Contains(n)) Relax(fo);
+        if (typeNode["properties"] is JsonArray ps)
+            foreach (var p in ps)
+                if (p is JsonObject po)
+                {
+                    // The SM calls property accessors by their get_/set_ method name; relax the accessor whose
+                    // synthesized method name was accessed (and the property itself if it is directly named).
+                    if (Str(po["name"]) is string pn)
+                    {
+                        if (accessed.Contains(pn)) Relax(po);
+                        if (accessed.Contains("get_" + pn)) Relax(po["getter"] as JsonObject);
+                        if (accessed.Contains("set_" + pn)) Relax(po["setter"] as JsonObject);
+                    }
+                }
     }
 
     static JsonArray EnsureArray(JsonObject o, string key)
