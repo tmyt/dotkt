@@ -21,6 +21,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   stdlib `mapOf(pair)`. (2) `ClrBackendPhase` wraps `emitFile` per file in a `try/catch` that reports a compile **ERROR**
   (loud, names the file) and continues, so a future single-file bug can never again catastrophically nuke the type set behind a
   green build. Ref+rt now emit clean (type count back to **745**, all 14 named builtins present); `verify-il` GREEN, `verify-ktproj` 9/9.
+- **kotc (bundle-6 FIX 1): collection/Map Kotlin-style `toString` now routes in EVERY stringify context, not just `println(x)`.**
+  A prior fix routed a `List`/`Set`/`Collection`/`Map`-typed operand of `println(x)` through the stdlib stringifier
+  (`clrCollToString` → `[a, b]` / `clrMapToString` → `{a=1, b=2}`) so it prints Kotlin-style instead of the raw .NET
+  `System.Collections.Generic.Dictionary`2[...]` / `List`1[...]` type name — but a collection/Map inside a STRING TEMPLATE
+  (`"$m"`), an explicit `.toString()`, or a string `+` concat (`"" + l`) was UNROUTED and printed the garbage type name. The
+  same static-type-driven routing (a runtime `is Map<*,*>` is unreliable for `@ClrTypeAlias`-lowered BCL collections) is now
+  shared across all four contexts via a single `BirEmitter.collToStringRoute` helper (`IrStringConcatenation` parts, the
+  `Any.toString` fake-override call, the `kotlin.String.plus` concat operands, and the existing println path). The `.toString()`
+  site sees THROUGH the `IMPLICIT_CAST` to `kotlin.Any` that the `Any.toString` dispatch inserts, so it recovers the collection
+  static type. So `val m = mapOf("a" to 1); println("m=$m")` now prints `m={a=1}` and `println("" + listOf(1,2))` prints `[1, 2]`.
+  New sample `il-colstr` (List + Map across template / `+` / `.toString()`) runs correct + ilverify-clean. (A `Set` — `setOf` →
+  concrete `HashSet` — routes identically at runtime but is left out of the sample: the `HashSet<T>`→`Set<T>` interface-arg
+  widening trips ilverify, a pre-existing ilemit formal-only gap shared by `println(setOf(...))`, orthogonal to this fix.)
+
+- **kotc (bundle-6 latent ⑤): the `.NET-member generic` call branch now carries the `"suspendCall":true` tag.**
+  A `suspend` callee lowered through the generic .NET-member branch (`clrGenericStatic`/`clrGenericInstance`) dropped its
+  suspend tag, so bir2cir would not lower it as a suspension. The branch now appends `suspendCallTag(callee)`, mirroring the
+  non-generic call paths + the top-level generic-static path. Latent (needs a generic .NET-member suspend call to trigger); the
+  tag emission is now consistent across all call branches.
 
 - **facadegen (bundle-6 ② async interop): generic STATIC methods now surface — Kotlin can BUILD a `Task<T>`.**
   A public static method whose reflection reported `IsGenericMethod` (`Task.FromResult<TResult>`, `Task.Run<TResult>`) was silently
