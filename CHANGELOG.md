@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 P5 Phase-A capability 1): lower the inline `suspendCoroutineUninterceptedOrReturn { c -> … }`
+  intrinsic to a real cold suspension point.** kotc's IR inliner leaves the `@InlineOnly` intrinsic as a `valueBlock`
+  whose result is the fake `throw NotImplementedError("Implementation of suspendCoroutineUninterceptedOrReturn is
+  intrinsic")`, with its `{ c -> … }` block materialized as a separate closure class (captured into a dead
+  `var __inlN`). `SuspendColdLowering` now recognizes that marker (the NotImplementedError message — the only stable
+  discriminator, since the frontend never invokes `block` so no `suspendCall` tag exists), resolves the closure
+  class's `invoke` body, and INLINES it into the state machine: the closure's captures rewrite to `$this`, the block's
+  `c`/continuation param binds to the SM itself (a new `smSelf` node that survives the `this`->`$this` member rewrite —
+  the SM IS a `Continuation`), and the block's tail value becomes the suspension result (`COROUTINE_SUSPENDED` ->
+  return SUSPENDED with a synchronous-value fast path). This is kotc's live `emitSuspendIntrinsic`/`coSelfCont`
+  (BirEmitter.kt:1669-1688) re-expressed over the cold SM. Verified on a fixture: a `yield`-shaped body
+  (`suspendCoroutineUninterceptedOrReturn { c -> nextStep = c; COROUTINE_SUSPENDED }`) lowers to
+  `$this.nextStep = this; label = 1; return COROUTINE_SUSPENDED`. Capability only — dormant until kotc stops routing
+  `sequence{}` through its CPS engine.
+
 - **bir2cir/diagnosis (bundle-6 P4 genuine-async): root-caused `il-cobuild` printing `0` instead of `25` to a
   compiler bug OUTSIDE bir2cir — boxed Kotlin `enum` entries lose reference identity, breaking the
   `COROUTINE_SUSPENDED` sentinel.** The bir2cir cold-core transform is verified correct: dumping cobuild's CIR shows
