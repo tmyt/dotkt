@@ -5,6 +5,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Coroutine bundle-6 P2: `SuspendColdLowering` v1 (bir2cir) — the cold-core suspend → state-machine
+  transform.** New pass `toolchain/bir2cir/SuspendColdLowering.cs`, wired after `MemberCallSubstitution` and
+  before `BirTypeLowering` (app + rt-stdlib builds; skipped in the ref build). It lowers a straight-line
+  top-level `suspend fun f(args): R` into the cold Continuation shape per
+  `docs/design-coroutine-cold-core-task-bridge.md §11`: a plain-CIR state-machine class
+  `<FileClass>_f$sm : kotlin.coroutines.clr.internal.ContinuationImpl` whose `invokeSuspend(result): Any?`
+  does the label dispatch (`label`/`brIf`/`goto`) + segmented body, a cold entry
+  `f$dotkt_suspend(args, completion): Any?`, and (for `suspend fun main`) a synthesized plain draining
+  `fun main()`. Suspend calls are segmented at each `COROUTINE_SUSPENDED` check; locals crossing a
+  suspension + sub-expression spill temps become SM fields (the kotc `collectCpsVars`/`spillExpr` algorithm,
+  re-implemented over BIR JSON). `COROUTINE_SUSPENDED` is referenced as the real stdlib getter
+  `IntrinsicsKt.get_COROUTINE_SUSPENDED()` (the stale ilemit `coSuspendedSentinel` field node is bypassed).
+  Rungs verified end-to-end (`dotkt.sh --run`): `suspend fun f()=42` drained via a suspend `main` prints 42;
+  params+locals (`add`), sequential awaits (`two`), and sub-expression spill (`f()+g()`) all correct. v1 scope
+  is straight-line, non-generic, static top-level funs whose suspend calls target local transformable funs;
+  every other shape is LEFT UNTOUCHED (keeps `"suspend":true` for the existing ilemit throw-stub path — zero
+  regression, and a verified no-op in the rt-stdlib build). No ilemit/stdlib changes. Control flow / try /
+  suspend lambdas / generics / `Task.await` / the public Task bridge / async-resume exception propagation are
+  P3-P4.
 - **Gate hardening (pre-coroutine batch C1-C3): machine-readable XFAIL baselines + abort-proof harnesses.**
   *C1 (verify-il)* — the known-fail baseline moved from prose/flat name lists to `XFAIL_RUN` / `XFAIL_ILVERIFY`
   associative arrays (fail name → reason) diffed by the new shared `lib.sh xfail_diff`: exit 0 iff every actual

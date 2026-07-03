@@ -83,6 +83,16 @@ sealed class Pipeline
                 foreach (var m in ms)
                     if (m is JsonObject mo && (mo["name"] as JsonValue)?.GetValue<string>() is string mn)
                         localTopLevelFns.Add(mn);
+        // The type FQNs DECLARED in this compilation (every input file's own `types`). SuspendColdLowering
+        // uses it to decide whether the cold-core base (kotlin.coroutines.clr.internal.ContinuationImpl) is
+        // a LOCAL type (rt-stdlib self-build -> bare base + local slot override) or a REFERENCED one
+        // (app build -> clr: base + clrOverride linkage).
+        var localTypeFqns = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var b in birFiles)
+            if (b.Root is JsonObject ro && ro["types"] is JsonArray ts)
+                foreach (var t in ts)
+                    if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
+                        localTypeFqns.Add(tn);
         // Attribute referenced top-level stdlib funs to their file-class owner only in an APP build: the stdlib self-
         // build (DOTKT_STDLIB_COMPILE set) defines them locally, so owner=null is correct there. The reference build
         // never runs MemberCallSubstitution at all (see the RefBuild gate below).
@@ -174,6 +184,13 @@ sealed class Pipeline
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
                 substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns);
             if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted);
+            // SUSPEND COLD LOWERING (bundle-6 P2): rewrite straight-line top-level `suspend fun`s into the cold
+            // Continuation state-machine shape (SM class + `f$dotkt_suspend` cold entry + suspend-main drain).
+            // Runs after call substitution (its synthesized calls are already-final sibling/BCL shapes) and
+            // before type lowering (its kotlin.* type tokens flow through BirTypeLowering). Non-v1 suspend funs
+            // are left untouched (they keep `"suspend":true` for the existing ilemit throw-stub path). Skipped in
+            // the ref build; a verified no-op in the rt-stdlib build (no stdlib suspend fun matches the v1 gate).
+            if (!_options.RefBuild) SuspendColdLowering.Apply(substituted, refs, localTypeFqns);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
