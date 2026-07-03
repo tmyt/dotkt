@@ -1117,7 +1117,17 @@ static class FacadeGen
             // resolution), so no ambiguity, and they route cross-module via the round-trip path (else the jar's body is
             // a local callStatic -> "static method not found"). @Clr / concretely-typed tlfuns (uppercase->String) kept.
             var isExt = ps.Length > 0 && ps[0].Name == "__self";
-            if (!isExt && System.Text.RegularExpressions.Regex.IsMatch(ret, @"^generic:(List|MutableList|Set|MutableSet|Map|MutableMap|Collection|MutableCollection|Iterable|MutableIterable|Pair|Triple|HashMap|LinkedHashMap|HashSet|LinkedHashSet|ArrayList|Sequence)\[")) continue;
+            // Bug ④: this ambiguity-with-the-jar guard is SPECIFIC to the kotlin-stdlib.jar's own factory functions
+            // (listOf/mapOf/setOf...), which live in a `kotlin.*` package. Restricting it there stops it from SILENTLY
+            // discarding a legitimate USER top-level function that merely returns a collection (`fun makeList(): List<Int>`
+            // in a user library) — that has no jar counterpart to collide with. Any actual drop is now logged (no silent
+            // truncation).
+            if (!isExt && (t.Namespace ?? "").StartsWith("kotlin")
+                && System.Text.RegularExpressions.Regex.IsMatch(ret, @"^generic:(List|MutableList|Set|MutableSet|Map|MutableMap|Collection|MutableCollection|Iterable|MutableIterable|Pair|Triple|HashMap|LinkedHashMap|HashSet|LinkedHashSet|ArrayList|Sequence)\["))
+            {
+                Console.Error.WriteLine($"note: dropped stdlib collection factory tlfun {(string.IsNullOrEmpty(t.Namespace) ? "" : t.Namespace + ".")}{m.Name} (its {ret.Substring(0, ret.IndexOf('['))} return is ambiguous with the kotlin-stdlib.jar's same-signature factory)");
+                continue;
+            }
             // An EXTENSION whose RECEIVER maps to Any? (an unresolvable type, e.g. CharSequence) is a CATCH-ALL: it
             // matches every receiver and mis-wins overload resolution against the specific Iterable<T> overload (so
             // `list.count{}`/`.filter{}` resolve to the _StringsKt Any? overload, not _CollectionsKt). Skip it; the jar
