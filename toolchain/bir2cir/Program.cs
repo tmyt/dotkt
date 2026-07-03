@@ -201,8 +201,9 @@ sealed class Pipeline
         // build (no stdlib suspend fun matches the v1 gate). APP-BUILD gate (attributeTopLevelOwner ==
         // DOTKT_STDLIB_COMPILE unset): the stdlib self-build must NOT cold-transform its own suspend funs
         // (await/delay interop) — that belongs to the P4 Task-bridge path — so the pass is an explicit no-op there.
+        IReadOnlyDictionary<string, string> suspendCalleeRet = null;
         if (!_options.RefBuild && attributeTopLevelOwner)
-            SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns);
+            suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, DORMANT): replace each `suspendLambdaNew`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
@@ -211,12 +212,19 @@ sealed class Pipeline
         // the newly-added SM types too) and before type lowering. kotc emits NO suspendLambdaNew yet, so this is
         // a verified no-op against current input; same app-build gate as the cold lowering.
         if (!_options.RefBuild && attributeTopLevelOwner)
-            SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns);
+            SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet);
 
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
         foreach (var (substituted, outputName) in staged)
         {
+            // §11 CONTINUATION-ERASURE (bundle-6 bug #5 ROOT): make the coroutine ABI monomorphic on
+            // kotlin.coroutines.Continuation<object>. Every Continuation[X] type token -> Continuation[kotlin.Any]
+            // (all positions), and the resumeWith(Result<X>) protocol boundary -> Result<object> (Option A: the
+            // resumeWith method + its Result-construction call args). ALL builds (ref/rt agree), BEFORE type lowering
+            // (kotlin.Any then lowers to object in rt/app, verbatim in ref). Un-blocks BlockOnSink/startCoroutine/
+            // resumeWith dispatch (CLR interface variance does not lift value types; uniform erasure is the fix).
+            ContinuationErasure.Apply(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
