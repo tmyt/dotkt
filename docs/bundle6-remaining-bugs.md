@@ -8,7 +8,7 @@ Authoritative worklist after a full review. Status keys updated as fixes land.
 | try/finally across a suspension → finally runs EARLY + TWICE (use{}/withLock broken) | bir2cir SuspendColdLowering.cs:966 (EmitTry) | HIGH · repro |
 | cross-module suspend consume → InvalidCast (blockOn{crossFn()} → Task<Int>→Int) | bir2cir cross-asm + facadegen | HIGH · repro |
 | suspend LEFT operand reordered after the suspension (sideEffect()+g() eval-order) | bir2cir SuspendColdLowering.cs:1063 (Rewrite) | HIGH-MED · repro |
-| value-type-nullable sequence chain → InvalidProgram (List<Int?> map/filterNotNull) | kotc BirEmitter.kt:4307-4312 (marker gap) + bir2cir | MED · repro · IN-FLIGHT (2 agents) |
+| value-type-nullable sequence: FIELD erasure FIXED (nextItem:T?->object, kotc marker + bir2cir consumer) — map/toList/first now WORK; only FilteringSequence(.filter{}) still InvalidPrograms in calcNext/predicate | bir2cir/ilemit value-type FilteringSequence | MED · NARROWED · Wave-2 |
 | unresolved suspendCoroutine closure → permanent suspend (silent hang) | bir2cir SuspendColdLowering.cs:1177 | MED |
 | suspend fun main async drain uses null completion (NRE / lost result) | bir2cir SuspendColdLowering.cs:1848 (DrainMain) | LOW-MED |
 | F1: SafeContinuation UNDECIDED/RESUMED boxed-enum identity (time bomb, fires when F2 lands) | stdlib SafeContinuationClr.kt:33/46/52 | MED · latent |
