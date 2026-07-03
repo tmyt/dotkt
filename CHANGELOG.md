@@ -30,6 +30,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   gets `RestrictedSuspendLambda`; a plain-typed receiver keeps `SuspendLambda`. Dormant until kotc emits
   `suspendLambdaNew`.
 
+- **bir2cir (bundle-6 P5 Phase-A capability 3): run the suspend cold transform in the rt-stdlib build.**
+  `SuspendColdLowering`/`SuspendLambdaLowering` were app-build-only (gated off in the rt-stdlib self-build). They now
+  run in the rt build too (still skipped in the REFERENCE build — metadata-only), so genuine cold coroutine bodies in
+  the stdlib can cold-transform. The rt-stdlib's CLR-interop suspend fns (`kotlin.clr.await`/`delay`, file-class
+  `kotlin.clr.CoroutinesKt`) are NOT cold bodies — `await` is a facadegen call-site marker whose DEFINITION stays a
+  plain suspend declaration for ref/rt signature symmetry — so they are excluded from the transform inside
+  `ApplyAll` (Codex-confirmed rt-gate decision). `SequenceBuilderIterator.yield`/`yieldAll` remain correctly deferred
+  by the v1 shape gate (generic enclosing class + virtual/override cold-entry lockstep) — making them actually
+  cold-transform is a follow-on shape-gate expansion, NOT this gate change. Verified: rt-stdlib rebuilds clean;
+  await/delay/yield/yieldAll definitions unchanged.
+
 - **bir2cir/diagnosis (bundle-6 P4 genuine-async): root-caused `il-cobuild` printing `0` instead of `25` to a
   compiler bug OUTSIDE bir2cir — boxed Kotlin `enum` entries lose reference identity, breaking the
   `COROUTINE_SUSPENDED` sentinel.** The bir2cir cold-core transform is verified correct: dumping cobuild's CIR shows

@@ -197,12 +197,16 @@ sealed class Pipeline
         // keeps `owner:null`, so the transformability fixpoint must span every input file). After call substitution
         // (its synthesized calls are already-final sibling/BCL shapes) and before type lowering (its kotlin.* type
         // tokens flow through BirTypeLowering). Non-v1 suspend funs are left untouched (they keep `"suspend":true`
-        // for the existing ilemit throw-stub path). Skipped in the ref build; a verified no-op in the rt-stdlib
-        // build (no stdlib suspend fun matches the v1 gate). APP-BUILD gate (attributeTopLevelOwner ==
-        // DOTKT_STDLIB_COMPILE unset): the stdlib self-build must NOT cold-transform its own suspend funs
-        // (await/delay interop) — that belongs to the P4 Task-bridge path — so the pass is an explicit no-op there.
+        // for the existing ilemit throw-stub path).
+        //
+        // GATE (bundle-6 P5, Codex-confirmed): runs in BOTH the app build AND the rt-stdlib build — the real
+        // SequenceBuilder cold coroutine code is stdlib code that must be cold-transformed in the rt build (else its
+        // suspend members stay `suspend:true` -> ilemit throw-stub). Skipped ONLY in the REFERENCE build (metadata-
+        // only; its bodies are body-squashed). The rt-stdlib's CLR-interop suspend fns (kotlin.clr.await/delay) are
+        // NOT genuine cold bodies and are excluded INSIDE ApplyAll (InteropBridgeFileClass), so this does not corrupt
+        // their ABI. (yield/yieldAll are generic-class override members, still correctly deferred by the v1 shape gate.)
         IReadOnlyDictionary<string, string> suspendCalleeRet = null;
-        if (!_options.RefBuild && attributeTopLevelOwner)
+        if (!_options.RefBuild)
             suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, DORMANT): replace each `suspendLambdaNew`
@@ -210,8 +214,8 @@ sealed class Pipeline
         // (SuspendColdLowering.BuildLambdaSm, the shared FunGen machinery). Runs after the cold lowering (so a
         // suspend-lambda relocated into a synthesized SM invokeSuspend body is still caught — this pass walks
         // the newly-added SM types too) and before type lowering. kotc emits NO suspendLambdaNew yet, so this is
-        // a verified no-op against current input; same app-build gate as the cold lowering.
-        if (!_options.RefBuild && attributeTopLevelOwner)
+        // a verified no-op against current input; same (non-ref) gate as the cold lowering.
+        if (!_options.RefBuild)
             SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
 
         // PHASE 2 — per-file type lowering onwards.

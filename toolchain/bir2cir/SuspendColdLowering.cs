@@ -65,6 +65,12 @@ static class SuspendColdLowering
     // NOT Continuation<Any>. The returned SM value converts by Continuation's `in T` contravariance.
     const string ContinuationOfUnit = "kotlin.coroutines.Continuation[kotlin.Unit]";
     const string IntrinsicsKtFqn = "kotlin.coroutines.intrinsics.IntrinsicsKt";
+    // The CLR-interop coroutine bridge file-class (kotlin.clr.await / delay). Its suspend fns are NOT genuine cold
+    // coroutine bodies: `await` is a facadegen call-site MARKER (lowered by EmitAwaitPoint at CALL sites, its
+    // DEFINITION a plain suspend declaration kept for ref/rt signature symmetry); `delay` is built on it. When the
+    // cold transform runs in the rt-stdlib build (bundle-6 P5), these must be EXCLUDED — transforming their
+    // definitions into cold entries / Task bridges would manufacture the wrong ABI (Codex-confirmed rt-gate decision).
+    const string InteropBridgeFileClass = "kotlin.clr.CoroutinesKt";
     // Top-level `throwOnFailure(result)` helper (ContinuationImpl.kt, package kotlin.coroutines.clr.internal).
     const string ThrowOnFailureOwner = "kotlin.coroutines.clr.internal.ContinuationImplKt";
 
@@ -142,7 +148,11 @@ static class SuspendColdLowering
         {
             if (r is not JsonObject file) continue;
             var fileClass = Str(file["fileClass"]) ?? "Kt";
-            if (file["methods"] is JsonArray methods)
+            // Skip the CLR-interop bridge (kotlin.clr.await/delay): its suspend fns are call-site markers /
+            // interop declarations, not cold coroutine bodies (see InteropBridgeFileClass). Relevant only in the
+            // rt-stdlib build, where this file-class is present; a no-op in app builds.
+            var isInteropBridge = fileClass == InteropBridgeFileClass;
+            if (file["methods"] is JsonArray methods && !isInteropBridge)
                 foreach (var m in methods)
                     if (m is JsonObject mo && Str(mo["name"]) is string name && IsShapeEligible(mo))
                         entries[new FunKey(null, name)] = new Entry(mo, file, null, null, fileClass);
