@@ -4303,7 +4303,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						// fun's `__self` receiver shape is included — else ilemit's by-shape overload pick finds 0 params.
 						val shapeParams = (if (extRecv != null) listOf(callee.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }) else emptyList()) + regularParams(callee)
 						val shapes = shapeParams.joinToString(",") { str(clrMethodShape(it.type)) }
-						return """{"k":"clrGenericStatic","type":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapes":[$shapes],"args":[${a.joinToString(",") { expr(it) }}]}"""
+						return """{"k":"clrGenericStatic","type":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapes":[$shapes],"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
 					}
 				}
 				// PLAIN Kotlin return type; a `suspend` callee is flagged by `suspendCallTag` (Task/await lowering deferred).
