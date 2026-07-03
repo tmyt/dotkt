@@ -57,6 +57,10 @@ static class SuspendColdLowering
     const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
     const string BaseContinuationImplFqn = "kotlin.coroutines.clr.internal.BaseContinuationImpl";
     const string ContinuationOfAny = "kotlin.coroutines.Continuation[kotlin.Any]";
+    // BaseContinuationImpl.create returns Continuation<Unit> (ContinuationImpl.kt:82/87); a CLR virtual
+    // override needs an EXACT return-type match (no covariance), so the SM's create() must return this,
+    // NOT Continuation<Any>. The returned SM value converts by Continuation's `in T` contravariance.
+    const string ContinuationOfUnit = "kotlin.coroutines.Continuation[kotlin.Unit]";
     const string IntrinsicsKtFqn = "kotlin.coroutines.intrinsics.IntrinsicsKt";
     // Top-level `throwOnFailure(result)` helper (ContinuationImpl.kt, package kotlin.coroutines.clr.internal).
     const string ThrowOnFailureOwner = "kotlin.coroutines.clr.internal.ContinuationImplKt";
@@ -1037,7 +1041,7 @@ static class SuspendColdLowering
                 ["objectOverride"] = false,
                 ["vis"] = "public",
                 ["params"] = createParams,
-                ["ret"] = ContinuationOfAny,
+                ["ret"] = ContinuationOfUnit,
                 ["body"] = body,
                 ["attrs"] = new JsonArray(),
             };
