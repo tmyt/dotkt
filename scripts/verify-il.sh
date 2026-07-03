@@ -35,6 +35,8 @@ declare -A XFAIL_RUN=(
 	[collops2]="coroutine/SequenceScope-deferred (bundle 6)"
 	[seq]="coroutine/SequenceScope-deferred (bundle 6)"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
+	[lam1]="bundle-6 P3 wave-2b: kotc emits suspendLambdaNew (STEP 2 landed) + bir2cir builds the SuspendLambda SM, but the generated SM create() returns Continuation<object> while base BaseContinuationImpl.create returns Continuation<Unit> -> TypeLoadException; pending bir2cir CreateMethod ret fix"
+	[lam2]="bundle-6 P3 wave-2b: same as lam1 (SuspendLambda SM create() return-type mismatch) + capture/suspend-call path; pending the bir2cir CreateMethod ret fix"
 )
 declare -A XFAIL_ILVERIFY=(
 	[chunk]="ilverify formal finding (sample also run-XFAIL: coroutine-deferred)"
@@ -43,6 +45,8 @@ declare -A XFAIL_ILVERIFY=(
 	[gen3]="ilverify formal-only finding (sample runs correct)"
 	[iter]="ilverify formal-only finding (sample runs correct)"
 	[iterable]="ilverify formal-only finding (sample runs correct)"
+	[lam1]="ilverify formal finding (sample also run-XFAIL: SuspendLambda SM create() return-type mismatch, pending bir2cir CreateMethod ret fix)"
+	[lam2]="ilverify formal finding (sample also run-XFAIL: SuspendLambda SM create() return-type mismatch, pending bir2cir CreateMethod ret fix)"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
@@ -361,6 +365,13 @@ il_check_inject stackalloc Sa "$ROOT/cases/il-stackalloc" "$(printf '16\n30\n-1\
 il_check fmt Fmt "$ROOT/cases/il-fmt" "$(printf '42 items, 87.5%% (ok)\n00007-ff\n[a   ]\n[bb  ]')"
 il_check_inject mref Mr "$ROOT/cases/il-mref" "$(printf 'hello world\n0')" MrRt
 il_check cobuild Cob "$ROOT/cases/il-cobuild" "25"
+# lam1/lam2: bundle-6 P3 wave-2b — the suspend-LAMBDA payoff. kotc emits `suspendLambdaNew` (STEP 2,
+# landed) and bir2cir builds the SuspendLambda SM, but the generated SM `create()` returns
+# Continuation<object> while the stdlib base BaseContinuationImpl.create returns Continuation<Unit> ->
+# TypeLoadException at class load. Fix is a bir2cir one-liner (SuspendColdLowering.cs CreateMethod ret);
+# XFAIL until it lands, then these flip to PASS (42 / 15) and the entries get pruned.
+il_check lam1 Lam1Kt "$ROOT/cases/il-lam1" "42"
+il_check lam2 Lam2Kt "$ROOT/cases/il-lam2" "15"
 il_check dsl Dsl "$ROOT/cases/il-dsl" "a[Pb]c"
 il_check object TObj "$ROOT/cases/il-object" "3"
 il_check gfac TGfac "$ROOT/cases/il-gfac" "$(printf '42\nhi')"
@@ -434,7 +445,7 @@ ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
 REFDIR="$(dirname "$(find /usr/share/dotnet/shared/Microsoft.NETCore.App -name System.Private.CoreLib.dll 2>/dev/null | sort | tail -1)")"
 if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 	echo "--- ilverify ---"
-	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [refcell]=RefCell [annot]=Annot [props]=Props [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob [dsl]=Dsl [object]=TObj [gfac]=TGfac [xprop]=Xprop [arrops]=Arro [langtail]=LangTail [enumbody]=EnumBody [fieldvis]=FieldVis [bytearg]=ByteArg [iterable]=Iterable [customexc]=CustomExc [comparator]=Comparator [use]=Use [comparable]=Comparable [charseq]=CS [charseqx]=CSX [charseqs]=CSStr [substr]=Substr [injbase]=InjBase [injfqn]=InjFqn [injstatic]=InjStatic [mfclosure]=MfClosure [mflambda]=MFL [injuint]=InjUint [exprbody]=EB [overload]=OV [collrealkt]=CollRealKt [mutcoll]=MutColl [mapfilter]=MapF [nan]=Nan [nestedtry]=NestedTry [trynullable]=TryNullable [setlocalbox]=SetLocalBox [nancmp]=NanCmp [mapgen]=MapGen [taskfam]=Tf [whensubj]=WhenSubj [safecallnv]=SafeCallNv [rangein]=RangeIn [duration]=Duration [coldcf]=ColdCf [coldgen]=ColdGen [coldinst]=ColdInst )
+	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [refcell]=RefCell [annot]=Annot [props]=Props [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob [dsl]=Dsl [object]=TObj [gfac]=TGfac [xprop]=Xprop [arrops]=Arro [langtail]=LangTail [enumbody]=EnumBody [fieldvis]=FieldVis [bytearg]=ByteArg [iterable]=Iterable [customexc]=CustomExc [comparator]=Comparator [use]=Use [comparable]=Comparable [charseq]=CS [charseqx]=CSX [charseqs]=CSStr [substr]=Substr [injbase]=InjBase [injfqn]=InjFqn [injstatic]=InjStatic [mfclosure]=MfClosure [mflambda]=MFL [injuint]=InjUint [exprbody]=EB [overload]=OV [collrealkt]=CollRealKt [mutcoll]=MutColl [mapfilter]=MapF [nan]=Nan [nestedtry]=NestedTry [trynullable]=TryNullable [setlocalbox]=SetLocalBox [nancmp]=NanCmp [mapgen]=MapGen [taskfam]=Tf [whensubj]=WhenSubj [safecallnv]=SafeCallNv [rangein]=RangeIn [duration]=Duration [coldcf]=ColdCf [coldgen]=ColdGen [coldinst]=ColdInst [lam1]=Lam1Kt [lam2]=Lam2Kt )
 	for n in $(printf '%s\n' "${!ASMS[@]}" | sort); do
 		dll="$ROOT/build/il-$n/${ASMS[$n]}.dll"
 		[[ -f "$dll" ]] || continue

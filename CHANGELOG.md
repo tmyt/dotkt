@@ -5,6 +5,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: emit `sfunc:` + `suspendLambdaNew` — ACTIVATE the SuspendLambda pipeline (bundle-6 P3 wave-2b STEP 2).**
+  The producer half of STEP 1's dormant bir2cir consumer. **Part 1:** a `suspend (P..) -> R` function TYPE now
+  emits the `sfunc:<ret>:<args>` token (split out of the shared `func:` erasure) at the two folded positions —
+  `funcTypeOf` (lambda/delegate funcType) and `birType`'s function-type-value form — carrying the suspend FACT the
+  lambda node needs. Detection is by the `kotlin.coroutines.SuspendFunction*` classifier; `clrMethodShape`'s shape
+  token is left `func:` (bir2cir does not fold the `shapes` array, and a .NET generic method never takes a
+  suspend-fn param). bir2cir folds `sfunc:`→`func:` in every build (type keys + the `sig` path), so ilemit never
+  sees `sfunc:` and every existing delegate/lambda sample is unchanged. **Part 2:** a `suspend { }` /
+  `suspend (..) -> R` lambda LITERAL now emits a `suspendLambdaNew` node (instead of delegateNew/closureNew),
+  reusing the existing closure machinery (`capturedVars(includeThis=true)` / `captureFieldName` /
+  `captureFieldType` for captures, `lambdaParamsJson` for own params, the statements-with-`suspendCall`-tags body,
+  bare enclosing type-param names for `typeArgs`); the body is emitted WITHOUT `captureSubst` so bir2cir's FunGen
+  spills captured-var reads into SM fields. v1 exclusions fall through to the plain closure path (arity ≥ 2;
+  `@RestrictsSuspension` receiver-scope builders like `sequence{}`). Verified: `blockOn { 42 }` / capture +
+  suspend-call / nested arity-1 all emit the correct node and bir2cir builds the SuspendLambda SM. The end-to-end
+  run is blocked ONLY by a bir2cir SM `create()` return-type bug (returns `Continuation<object>`; the stdlib base
+  `BaseContinuationImpl.create` returns `Continuation<Unit>` → `TypeLoadException` at class load) — `cases/il-lam1`
+  / `il-lam2` are XFAIL pending that bir2cir follow-up. `toolchain/kotc/src/main/kotlin/kotc/backend/BirEmitter.kt`.
 - **bir2cir: `sfunc:` suspend-fn-type token + `suspendLambdaNew` → SuspendLambda state-machine builder (bundle-6
   P3 wave-2b STEP 1, DORMANT consumer).** Lands the bir2cir *consumer* BEFORE kotc emits either (a deliberate
   dormant-first ordering — an unrecognized `sfunc:` prefix or unknown node would otherwise break ilemit), so both
