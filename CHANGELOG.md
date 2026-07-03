@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: `override val`/`override var` accessors now fill the base CLASS abstract vtable slot (bundle-6 P3, general
+  override-property fix).** An `override` property whose accessor overrides a base **class** (or per-entry enum)
+  accessor was emitted as `override:false, virtual:true` — a fresh `NewSlot` — instead of reusing the base's virtual
+  slot. Consequence: a concrete subclass that does NOT re-override the property left the base's abstract `get_<X>`
+  slot unfilled and the type failed to load (`TypeLoadException: 'get_X' … does not have an implementation`). This
+  mismatched the METHOD path, which already correctly stamps a class override with `override:true` (reuse slot,
+  no `NewSlot`). Fix in `toolchain/kotc/src/main/kotlin/kotc/backend/BirEmitter.kt` `accessorMethod()`: compute
+  `isOverrideClass` from the accessor's own `overriddenSymbols` (mirroring `method()`'s `isOverride`) and emit
+  `override: clrIface || isOverrideClass`. Interface-member accessors are unchanged (they bind via ilemit's
+  `DefineMethodOverride` pass, so a `NewSlot` is correct there); a setter that merely ADDS to a base `val` still
+  gets a fresh slot (its own `overriddenSymbols` is empty). This was the root cause of the cold-core
+  `ContinuationImpl.get_context` / `RestrictedContinuationImpl.get_context` mis-emission that bundle-6 P2 worked
+  around by re-overriding `get_context` in every synthesized state-machine class; the workaround is now redundant.
+  New E2E sample `cases/il-overrideprop` (interface `val` + abstract-class override + non-re-overriding concrete
+  subclass) added to `verify-il.sh` — TypeLoad-fails before the fix, runs after.
 - **kotlinx purged — BREAKING (bundle-6 P1b, user-directed deliberate break).** The historical `kotlinx.coroutines`
   intermixing (a pre-stdlib coroutine stopgap) is removed from the repo: no `kotlinx` names remain outside Track-2
   design notes, `docs/archive/`, and this changelog's history. The cold-core coroutine surface
