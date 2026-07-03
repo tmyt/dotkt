@@ -3785,7 +3785,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Kotlin Any-methods on a builtin receiver -> System.Object virtuals (used by data-class hashCode/equals).
 		if (isBuiltin && dispatchReceiver(call) != null) when (name) {
 			"hashCode" -> return """{"k":"objMethod","method":"GetHashCode","recv":${expr(dispatchReceiver(call)!!)}}"""
-			"toString" -> if (regularArgs(call).isEmpty()) return """{"k":"objMethod","method":"ToString","recv":${expr(dispatchReceiver(call)!!)}}"""
+			"toString" -> if (regularArgs(call).isEmpty()) {
+				// An explicit `list.toString()`/`map.toString()` prints Kotlin-style (`[a, b]` / `{a=1, b=2}`), mirroring
+				// the println path — route via the stdlib helper rather than the raw .NET type-name ToString.
+				collToStringRoute(dispatchReceiver(call)!!)?.let { return it }
+				return """{"k":"objMethod","method":"ToString","recv":${expr(dispatchReceiver(call)!!)}}"""
+			}
 			"equals" -> return """{"k":"objMethod","method":"Equals","recv":${expr(dispatchReceiver(call)!!)},"arg":${expr(regularArgs(call).first())}}"""
 		}
 		// `n.toString(radix)` (Int/Long, a kotlin.text extension) -> System.Convert.ToString(value, base 2/8/10/16).
@@ -3807,7 +3812,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val operands = call.arguments.filterNotNull()
 			// `String + x` is concatenation, not numeric add.
 			if (name == "plus" && declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.String" && operands.size == 2)
-				return """{"k":"concat","parts":[${expr(operands[0])},${expr(operands[1])}]}"""
+				// A collection/Map operand of a String `+` concat prints Kotlin-style (route via the stdlib helper),
+				// mirroring the println / string-template paths — else `"" + list` yields the raw .NET type name.
+				return """{"k":"concat","parts":[${collToStringRoute(operands[0]) ?: expr(operands[0])},${collToStringRoute(operands[1]) ?: expr(operands[1])}]}"""
 			// `==` (EQEQ): structural — `ceq` for primitives, null-safe `Object.Equals` for String/reference types.
 			// `===` (EQEQEQ): always identity (`ceq`).
 			if (name == "EQEQ" && operands.size == 2) {
@@ -3874,21 +3881,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// from the stdlib @ClrIntrinsic (runtime/stdlib/clr/kotlin/io/ConsoleClr.kt). The old hardcoded `{"k":"console"}`
 				// CLR node (kotc + the ilemit `case "console"`) is RETIRED — that CLR knowledge now lives in the stdlib
 				// binding + bir2cir's MemberCallSubstitution. (2026-07-02, bundle 1.)
-				val argJson = operands.joinToString(",") { op ->
-					val rfq = op.type.classFqName?.asString()
-					// A Map operand prints Kotlin-style `{a=1, b=2}`, not .NET's `System.Collections.Generic.Dictionary`2[...]`
-					// -> route via clrMapToString (the map mirror of clrCollToString). Static-type routing (as the List path
-					// below): a runtime `is Map<*,*>` test is unreliable for @ClrTypeAlias-lowered BCL dictionaries. (Map is
-					// NOT a Collection, so it needs its own branch.)
-					if (rfq != null && rfq.startsWith("kotlin.collections.") && rfq.contains("Map")) {
-						val ta = (op.type as? IrSimpleType)?.arguments
-						fun arg(i: Int) = ta?.getOrNull(i)?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
-						"""{"k":"callStatic","owner":"kotlin.collections.ClrMapDefaultsKt","method":"clrMapToString","args":[${expr(op)}],"typeArgs":[${str(arg(0))},${str(arg(1))}]}"""
-					} else if (rfq != null && rfq.startsWith("kotlin.collections.") && (rfq.contains("List") || rfq.contains("Set") || rfq.endsWith("Collection"))) {
-						val elem = (op.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
-						"""{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollToString","args":[${expr(op)}],"typeArgs":[${str(elem)}]}"""
-					} else expr(op)
-				}
+				val argJson = operands.joinToString(",") { op -> collToStringRoute(op) ?: expr(op) }
 				return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)},"args":[$argJson]}"""
 			}
 			// `readLine()` is NOT lowered: the CLR stdlib exposes readln()/readlnOrNull() (readlnOrNull is @ClrIntrinsic-bound
@@ -4345,6 +4338,34 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 	}
 
+
+	// Kotlin-style toString routing for a collection/Map operand. A `List`/`Set`/`Collection`/`Map`-typed value
+	// prints via the stdlib helper (`clrCollToString` -> `[a, b]` / `clrMapToString` -> `{a=1, b=2}`) instead of the
+	// raw .NET `System.Collections.Generic.Dictionary`2[...]` / `List`1[...]` type-name ToString. Static-type-driven
+	// (NOT a runtime `is Map<*,*>` test — unreliable for @ClrTypeAlias-lowered BCL collections). Returns the routed
+	// callStatic JSON, or null when `op` is not a collection/Map static type (the caller emits `op` as-is). Shared by
+	// the println/print path AND the string-template / explicit-`toString()` / string-`plus`-concat paths so a
+	// `"$map"` / `"" + list` prints Kotlin-style, mirroring `println(map)`.
+	internal fun collToStringRoute(op0: IrExpression): String? {
+		// `list.toString()` resolves to the `kotlin.Any.toString` fake override, so the receiver arrives wrapped in an
+		// IMPLICIT_CAST to `kotlin.Any` — look THROUGH it to recover the collection/Map static type, then emit the value
+		// off the UNWRAPPED node (`expr(op)`), dropping the redundant Any cast. Templates/`plus` operands are un-wrapped.
+		var op = op0
+		while (op is IrTypeOperatorCall && op.operator == IrTypeOperator.IMPLICIT_CAST) op = op.argument
+		val rfq = op.type.classFqName?.asString() ?: return null
+		if (!rfq.startsWith("kotlin.collections.")) return null
+		// Map is NOT a Collection, so it needs its own branch (two type args).
+		if (rfq.contains("Map")) {
+			val ta = (op.type as? IrSimpleType)?.arguments
+			fun arg(i: Int) = ta?.getOrNull(i)?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+			return """{"k":"callStatic","owner":"kotlin.collections.ClrMapDefaultsKt","method":"clrMapToString","args":[${expr(op)}],"typeArgs":[${str(arg(0))},${str(arg(1))}]}"""
+		}
+		if (rfq.contains("List") || rfq.contains("Set") || rfq.endsWith("Collection")) {
+			val elem = (op.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+			return """{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollToString","args":[${expr(op)}],"typeArgs":[${str(elem)}]}"""
+		}
+		return null
+	}
 
 	internal fun birType(t: IrType): String {
 		// A type parameter `T` is a real generic parameter -> `gp:<name>` (resolved in IL context). On the CLR,

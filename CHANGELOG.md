@@ -5,6 +5,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc (bundle-6 FIX 1): collection/Map Kotlin-style `toString` now routes in EVERY stringify context, not just `println(x)`.**
+  A prior fix routed a `List`/`Set`/`Collection`/`Map`-typed operand of `println(x)` through the stdlib stringifier
+  (`clrCollToString` → `[a, b]` / `clrMapToString` → `{a=1, b=2}`) so it prints Kotlin-style instead of the raw .NET
+  `System.Collections.Generic.Dictionary`2[...]` / `List`1[...]` type name — but a collection/Map inside a STRING TEMPLATE
+  (`"$m"`), an explicit `.toString()`, or a string `+` concat (`"" + l`) was UNROUTED and printed the garbage type name. The
+  same static-type-driven routing (a runtime `is Map<*,*>` is unreliable for `@ClrTypeAlias`-lowered BCL collections) is now
+  shared across all four contexts via a single `BirEmitter.collToStringRoute` helper (`IrStringConcatenation` parts, the
+  `Any.toString` fake-override call, the `kotlin.String.plus` concat operands, and the existing println path). The `.toString()`
+  site sees THROUGH the `IMPLICIT_CAST` to `kotlin.Any` that the `Any.toString` dispatch inserts, so it recovers the collection
+  static type. So `val m = mapOf("a" to 1); println("m=$m")` now prints `m={a=1}` and `println("" + listOf(1,2))` prints `[1, 2]`.
+  New sample `il-colstr` (List + Map across template / `+` / `.toString()`) runs correct + ilverify-clean. (A `Set` — `setOf` →
+  concrete `HashSet` — routes identically at runtime but is left out of the sample: the `HashSet<T>`→`Set<T>` interface-arg
+  widening trips ilverify, a pre-existing ilemit formal-only gap shared by `println(setOf(...))`, orthogonal to this fix.)
+
 - **facadegen (bundle-6 ② async interop): generic STATIC methods now surface — Kotlin can BUILD a `Task<T>`.**
   A public static method whose reflection reported `IsGenericMethod` (`Task.FromResult<TResult>`, `Task.Run<TResult>`) was silently
   DROPPED at `Program.cs:557`, so Kotlin had no way to construct a `Task<T>` from a .NET generic factory. The static-member loop now
