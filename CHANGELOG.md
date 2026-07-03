@@ -5,6 +5,39 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 P5 Phase-A1b): cold-transform `yield`/`yieldAll` — generic-class ABSTRACT/OVERRIDE suspend
+  members.** `SuspendColdLowering.IsMemberShapeEligible` previously deferred (a) suspending members of a GENERIC
+  enclosing class and (b) abstract/open/override/virtual members. It now ADMITS them, closing the last capability gap
+  before kotc ignites the cold-core sequence path. Three pieces:
+  - **Generic-class instance-member SM.** The SM is now generic over the enclosing class's type params (plus the
+    member's own): `$this` is typed as the CONSTRUCTED self (`SequenceBuilderIterator[gp:T]`), the SM's fields/label
+    are typed in `T`, and the cold entry constructs `new <SM>[gp:T](this, …)`. `_smAllTps` (owner ++ method params)
+    drives both the SM's declared type-params and every `_smTypeInst` reference; `_selfType` is the constructed self.
+  - **Virtual/abstract/override cold-entry lockstep.** An ABSTRACT member (`SequenceScope.yield`) emits an ABSTRACT
+    cold entry `yield$dotkt_suspend` (Virtual|Abstract, no SM). An OVERRIDE (`SequenceBuilderIterator.yield`) emits
+    `yield$dotkt_suspend` marked `override:true` (Virtual, reuses the base slot by name+sig — no explicit
+    `DefineMethodOverride`, Codex-confirmed) + its SM. So a virtual `scope.yield(x)` cold call dispatches to the
+    iterator's override at runtime. The public Task bridge is suppressed for these internal members.
+  - **Overload disambiguation.** `FunKey` gains a param-signature component (`SigOf`) so `SequenceScope`'s THREE
+    `yieldAll` overloads (Iterator/Iterable/Sequence, all arity-1) each register + get a UNIQUE SM class name
+    (`SequenceScope_yieldAll_Iterable$sm` / `_Sequence$sm`, from the param simple-names); the cold-entry NAME stays
+    `yieldAll$dotkt_suspend` (IL overloads resolved by param type). `IsResolvable` matches suspend calls by
+    (owner, name) since the call site carries no resolved overload signature.
+  - **Additive in the rt-STDLIB build.** kotc's pre-ignition `@RestrictsSuspension` builder path (`sequence{}` /
+    `iterator{}`, e.g. `SlidingWindow.windowedIterator`, BirEmitter.kt:2169-2173) still calls the Task-shaped
+    `SequenceScope.yield`/`yieldAll` BY NAME. So in the rt-stdlib build (`baseIsLocal`) the original suspend method is
+    RETAINED alongside the added cold entry (removing it would break the stdlib build); an APP build keeps the
+    replace-with-bridge behavior. The public Task bridge is also skipped in the stdlib build (its RootContinuation/TCS
+    sinks are the coroutine primitives being DEFINED there, not external refs). ref/rt stay symmetric on the Task
+    `yield`; rt additionally carries the cold entry a consumer resolves via the ref.dll Suspend flag. The kotc-ignition
+    handoff (delete BirEmitter.kt `:3329` sequence special-case + `isYield`/`isYieldAll` `:1640-1657`) retires the old
+    path; the retained Task originals then go dead and a follow-up drops them. Still DEFERRED (reported): a member that
+    is BOTH generically own-parameterized AND on a generic class (`DeepRecursiveScope<T,R>`'s
+    `<U,S> DeepRecursiveFunction<U,S>.callRecursive`) — an untested type-param-union combination not needed for the
+    sequence path. Verified: `make stdlib-ref stdlib-rt` clean, `yield`/`yieldAll` emit abstract + override cold
+    entries + generic SMs; gate GREEN (existing suspend samples unchanged; `chunk`/`seq`/`collops2` stay XFAIL — kotc
+    not yet ignited).
+
 - **bir2cir (bundle-6 P5 Phase-A capability 1): lower the inline `suspendCoroutineUninterceptedOrReturn { c -> … }`
   intrinsic to a real cold suspension point.** kotc's IR inliner leaves the `@InlineOnly` intrinsic as a `valueBlock`
   whose result is the fake `throw NotImplementedError("Implementation of suspendCoroutineUninterceptedOrReturn is

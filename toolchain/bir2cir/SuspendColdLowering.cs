@@ -121,8 +121,15 @@ static class SuspendColdLowering
         return null;
     }
 
-    // A suspend fun's identity: Owner=null for a top-level file-class static, else the enclosing class FQN.
-    readonly record struct FunKey(string Owner, string Name);
+    // A suspend fun's identity: Owner=null for a top-level file-class static, else the enclosing class FQN. Sig
+    // is the joined param-type list — it discriminates OVERLOADS that share (Owner, Name) (e.g. SequenceScope
+    // has three `yieldAll` overloads differing only by param type: Iterator/Iterable/Sequence). Without it the
+    // registry would collapse the overloads to one, dropping the others (see SigOf).
+    readonly record struct FunKey(string Owner, string Name, string Sig);
+
+    // The param-type signature discriminating overloaded suspend members (see FunKey.Sig).
+    static string SigOf(JsonObject m) =>
+        m["params"] is JsonArray ps ? string.Join(",", ps.OfType<JsonObject>().Select(p => Str(p["type"]) ?? "")) : "";
 
     // A shape-eligible suspend fun + where it lives (for cold-entry/SM splicing).
     sealed record Entry(JsonObject Method, JsonObject Root, JsonObject TypeNode, string Owner, string FileClass);
@@ -155,13 +162,13 @@ static class SuspendColdLowering
             if (file["methods"] is JsonArray methods && !isInteropBridge)
                 foreach (var m in methods)
                     if (m is JsonObject mo && Str(mo["name"]) is string name && IsShapeEligible(mo))
-                        entries[new FunKey(null, name)] = new Entry(mo, file, null, null, fileClass);
+                        entries[new FunKey(null, name, SigOf(mo))] = new Entry(mo, file, null, null, fileClass);
             if (file["types"] is JsonArray types)
                 foreach (var t in types)
                     if (t is JsonObject to && Str(to["name"]) is string owner && to["methods"] is JsonArray tms)
                         foreach (var m in tms)
                             if (m is JsonObject mo && Str(mo["name"]) is string name && IsMemberShapeEligible(mo, to))
-                                entries[new FunKey(owner, name)] = new Entry(mo, file, to, owner, fileClass);
+                                entries[new FunKey(owner, name, SigOf(mo))] = new Entry(mo, file, to, owner, fileClass);
         }
         // callee-return-type fallback for await-temp field typing when a call node carries no instantiated
         // ret (a bare `one()` has `sig:""`): the callee's declared resultType, keyed by cold-entry name.
@@ -201,20 +208,37 @@ static class SuspendColdLowering
         var tcsBcl = refs.TryResolveClrOwner("kotlin.clr.TaskCompletionSource", out var tb, out _) ? tb : null;
         var taskBcl = refs.TryResolveClrOwner("kotlin.clr.Task", out var kb, out _) ? kb : null;
 
+        // SM-type-name disambiguation for OVERLOADED members (same Owner+Name, differing only by param type):
+        // each overload needs a UNIQUE SM class name (the cold-entry NAME stays `<name>$dotkt_suspend` — they are
+        // IL overloads resolved by param type). A group of one keeps the bare `<owner>_<name>$sm` name (existing
+        // output unchanged); a group of >1 appends a suffix from the param types' simple names
+        // (`_Iterator`/`_Iterable`/`_Sequence`), falling back to a positional index on a residual collision.
+        var smSuffix = new Dictionary<FunKey, string>();
+        foreach (var g in entries.Keys.GroupBy(k => (k.Owner, k.Name)))
+        {
+            var members = g.ToList();
+            if (members.Count == 1) { smSuffix[members[0]] = ""; continue; }
+            var cands = members.Select(k => ParamSimpleNames(entries[k].Method)).ToList();
+            var unique = cands.All(c => c.Length > 0) && cands.Distinct(StringComparer.Ordinal).Count() == cands.Count;
+            for (var i = 0; i < members.Count; i++)
+                smSuffix[members[i]] = "_" + (unique ? cands[i] : "ov" + i);
+        }
+
         // 3. Transform each transformable fun, splicing the cold entry (into its declaring container) and the
         //    SM type (into its file's top-level types).
         foreach (var key in transformable)
         {
             var e = entries[key];
-            // The ENCLOSING class's type-param names (for an instance member on a generic class): the bridge's self
-            // cold-call must target the CONSTRUCTED self `Box[gp:T]`, not the open `Box`, or `this` (Box<T>) mismatches
-            // the callee's declaring type at verification (StackUnexpected).
+            // The ENCLOSING class's type-param names (for an instance member on a generic class): the SM is made
+            // generic over them, `$this` is typed as the CONSTRUCTED self `Box[gp:T]`, and the bridge's self
+            // cold-call targets that constructed self (not the open `Box`), or `this` (Box<T>) mismatches the
+            // callee's declaring type at verification (StackUnexpected).
             var ownerTps = new List<string>();
             if (e.TypeNode?["typeParams"] is JsonArray otps)
                 foreach (var t in otps)
                     if (t is JsonValue tv2 && tv2.TryGetValue<string>(out var s2)) ownerTps.Add(s2);
                     else if (t is JsonObject to2 && Str(to2["name"]) is string n2) ownerTps.Add(n2);
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures);
+            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key]);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -222,8 +246,17 @@ static class SuspendColdLowering
             var container = e.TypeNode != null
                 ? (e.TypeNode["methods"] as JsonArray) ?? EnsureArray(e.TypeNode, "methods")
                 : (e.Root["methods"] as JsonArray) ?? EnsureArray(e.Root, "methods");
-            for (var i = container.Count - 1; i >= 0; i--)
-                if (ReferenceEquals(container[i], e.Method)) container.RemoveAt(i);
+            // In an APP build the original suspend method is REPLACED (public Task bridge + cold entry + SM). In the
+            // rt-STDLIB build (baseIsLocal) it is RETAINED alongside the cold entry: kotc's pre-ignition
+            // @RestrictsSuspension builder path (`sequence{}`/`iterator{}`, e.g. SlidingWindow.windowedIterator)
+            // still calls the Task-shaped SequenceScope.yield/yieldAll BY NAME (BirEmitter.kt:2169-2173 routes those
+            // restricted builders through the old closure path) — removing the original would break the stdlib
+            // build. The kotc-ignition handoff (delete BirEmitter.kt :3329 + isYield/isYieldAll :1640-1657) retires
+            // that path; the original then goes dead and a follow-up drops it. ref/rt stay symmetric (both keep the
+            // Task `yield`); rt ADDITIONALLY carries the cold entry an app resolves via the ref.dll Suspend flag.
+            if (!baseIsLocal)
+                for (var i = container.Count - 1; i >= 0; i--)
+                    if (ReferenceEquals(container[i], e.Method)) container.RemoveAt(i);
             foreach (var nm in newMethods) container.Add(nm);
 
             if (newTypes.Count > 0)
@@ -240,6 +273,23 @@ static class SuspendColdLowering
         var a = new JsonArray();
         o[key] = a;
         return a;
+    }
+
+    // The concatenated simple names of a member's param types (`Iterator<T>` -> "Iterator"), used to build a
+    // stable, readable SM-name suffix that disambiguates overloaded suspend members.
+    static string ParamSimpleNames(JsonObject m)
+    {
+        if (m["params"] is not JsonArray ps) return "";
+        var parts = new List<string>();
+        foreach (var p in ps.OfType<JsonObject>())
+        {
+            var t = Str(p["type"]) ?? "";
+            var br = t.IndexOf('['); if (br >= 0) t = t.Substring(0, br);         // strip generic args
+            var dot = t.LastIndexOf('.'); if (dot >= 0) t = t.Substring(dot + 1); // simple name
+            t = new string(t.Where(char.IsLetterOrDigit).ToArray());             // sanitize to an identifier
+            if (t.Length > 0) parts.Add(t);
+        }
+        return string.Join("", parts);
     }
 
     // Part B entry: build a suspend-LAMBDA state-machine TYPE from a suspendLambdaNew node's parts (used by
@@ -267,14 +317,16 @@ static class SuspendColdLowering
     // `<name>$dotkt_suspend` convention names the cold entry.
     static bool IsResolvable(CallRef call, HashSet<FunKey> transformable, ReferenceMetadataIndex refs)
     {
+        // Match by (owner, name) — the call site carries no resolved overload signature, so a same-assembly
+        // callee is resolvable if ANY overload with that owner+name is transformable (its cold entry gets
+        // synthesized). Cross-assembly: the ref.dll Suspend flag + the `<name>$dotkt_suspend` convention.
+        bool LocalMatch(string owner) => transformable.Any(k => k.Owner == owner && k.Name == call.Name);
         if (call.Instance)
-            return transformable.Contains(new FunKey(call.Owner, call.Name))
-                || refs.HasSuspendMember(call.Owner, call.Name);
-        // callStatic: owner==null -> same-assembly top-level (possibly cross-file, keyed by name only);
+            return LocalMatch(call.Owner) || refs.HasSuspendMember(call.Owner, call.Name);
+        // callStatic: owner==null -> same-assembly top-level (possibly cross-file, keyed by name);
         // owner set -> a cross-assembly file-class static (ref.dll flag).
-        if (call.Owner == null) return transformable.Contains(new FunKey(null, call.Name));
-        return transformable.Contains(new FunKey(call.Owner, call.Name))
-            || refs.HasSuspendMember(call.Owner, call.Name);
+        if (call.Owner == null) return LocalMatch(null);
+        return LocalMatch(call.Owner) || refs.HasSuspendMember(call.Owner, call.Name);
     }
 
     // --- shape gate ------------------------------------------------------------------------------------
@@ -290,22 +342,28 @@ static class SuspendColdLowering
     }
 
     // An INSTANCE suspend member (static==false, lives inside a class). Same structural gate as a top-level
-    // fun, minus the static requirement. A suspending member of a GENERIC class is deferred (its SM would need
-    // the enclosing class type params threaded through `$this` + generic instantiation) — left untouched.
+    // fun, minus the static requirement. Now ADMITS (bundle-6 P5 A1b): generic-class members (the SM is threaded
+    // the enclosing class type params — `$this` typed as the constructed self, the SM generic over them), and
+    // abstract / open / override / virtual members (the cold entry is emitted abstract / virtual / override in
+    // lockstep with the original so a virtual `x.g()` resolves to the right override at runtime).
     static bool IsMemberShapeEligible(JsonObject m, JsonObject typeNode)
     {
         if (!Bool(m["suspend"])) return false;
         if (Bool(m["static"])) return false;                        // a static member fun -> deferred
-        if (Bool(m["inline"]) || Bool(m["abstract"])) return false;
-        // An OPEN/overridden suspend member is deferred: an instance cold entry must be virtual/override in
-        // lockstep with the original (a per-override SM), else a virtual `x.g()` call resolves the cold entry
-        // statically to the wrong implementation. v1 handles only final (non-virtual, non-override) members.
-        if (Bool(m["virtual"]) || Bool(m["override"])) return false;
+        if (Bool(m["inline"])) return false;
         if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;
+        // A member that is BOTH generic on its own (its own type params) AND on a generic class is deferred v1:
+        // the SM would need to thread the union of both param lists (e.g. DeepRecursiveScope<T,R>'s
+        // `<U,S> ...callRecursive`), an untested combination not needed for the sequence path. yield/yieldAll
+        // (no own type params, only the class's) transform. Kept for abstract members too so a deferred
+        // abstract slot and its (equally deferred) overrides stay consistent.
+        var ownGeneric = m["typeParams"] is JsonArray mtp && mtp.Count > 0;
+        var genericClass = typeNode["typeParams"] is JsonArray tps && tps.Count > 0;
+        if (ownGeneric && genericClass) return false;
+        // An ABSTRACT suspend member (no body) -> an abstract cold entry `<name>$dotkt_suspend` (Virtual|Abstract,
+        // no SM); its concrete overrides fill the slot. Admitted here (no body to structurally validate).
+        if (Bool(m["abstract"])) return true;
         if (m["body"] is not JsonArray body) return false;
-        // A generic enclosing class is deferred ONLY when the member actually suspends (a direct/no-suspension
-        // member cold entry is a plain instance method that inherits the class type params unchanged).
-        if (typeNode["typeParams"] is JsonArray tps && tps.Count > 0 && HasSuspension(body)) return false;
         return SuspensionsSupported(body, inHandler: false, tryDepth: 0);
     }
 
@@ -434,6 +492,11 @@ static class SuspendColdLowering
         readonly string _tcsBcl;
         readonly string _taskBcl;
         readonly List<string> _ownerTypeParams;   // enclosing class type-param names (instance member on a generic class)
+        readonly List<string> _smAllTps;           // owner + method type-param names (the SM's own generic params)
+        readonly string _selfType;                 // constructed self `Box[gp:T]` (instance member), else _ownerClass/null
+        readonly bool _memberAbstract;             // source member is `abstract` -> abstract cold entry, no SM
+        readonly bool _memberOverride;             // source member is `override` -> override cold entry (fills base slot)
+        readonly bool _memberVirtual;              // source member is `open` -> virtual cold entry (new vtable slot)
         // Closure-class registry (name -> type node) for the suspendCoroutine intrinsic inliner. Empty in lambda mode.
         readonly IReadOnlyDictionary<string, JsonObject> _closures;
         // Lambda mode (bundle-6 P3 wave-2b Part B): a suspend LAMBDA SM (extends SuspendLambda, no cold
@@ -463,7 +526,8 @@ static class SuspendColdLowering
 
         public FunGen(JsonObject m, string name, string fileClass, string ownerClass,
             Dictionary<string, string> calleeRet, bool baseIsLocal, string tcsBcl = null, string taskBcl = null,
-            List<string> ownerTypeParams = null, IReadOnlyDictionary<string, JsonObject> closures = null)
+            List<string> ownerTypeParams = null, IReadOnlyDictionary<string, JsonObject> closures = null,
+            string smNameSuffix = "")
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
             _isMember = ownerClass != null;
@@ -471,14 +535,25 @@ static class SuspendColdLowering
             _tcsBcl = tcsBcl; _taskBcl = taskBcl;
             _closures = closures ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _ownerTypeParams = ownerTypeParams ?? new List<string>();
-            _smType = (ownerClass ?? fileClass) + "_" + name + "$sm";
+            // Virtuality of the source member (kept in lockstep on the cold entry): an abstract member -> an abstract
+            // cold entry (no SM); an override/open member -> an override/virtual cold entry (fills/opens the slot).
+            _memberAbstract = _isMember && Bool(m["abstract"]);
+            _memberOverride = _isMember && Bool(m["override"]);
+            _memberVirtual = _isMember && Bool(m["virtual"]);
+            _smType = (ownerClass ?? fileClass) + "_" + name + smNameSuffix + "$sm";
             _coldName = name + "$dotkt_suspend";
             _resultType = Str(m["resultType"]) ?? "void";
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
             _typeParams = ReadTypeParamNames(m["typeParams"]);
-            _smTypeInst = _typeParams.Count == 0
+            // The SM is generic over the ENCLOSING class's type params (an instance member on a generic class) PLUS
+            // the member's own — its fields / `$this` / label reference them. `_selfType` is the constructed self.
+            _smAllTps = new List<string>(_ownerTypeParams);
+            foreach (var t in _typeParams) if (!_smAllTps.Contains(t)) _smAllTps.Add(t);
+            _selfType = _ownerTypeParams.Count == 0 ? _ownerClass
+                : _ownerClass + "[" + string.Join(",", _ownerTypeParams.Select(t => "gp:" + t)) + "]";
+            _smTypeInst = _smAllTps.Count == 0
                 ? _smType
-                : _smType + "[" + string.Join(",", _typeParams.Select(t => "gp:" + t)) + "]";
+                : _smType + "[" + string.Join(",", _smAllTps.Select(t => "gp:" + t)) + "]";
         }
 
         // Lambda-mode ctor (Part B). Builds a `<smName> : SuspendLambda` SM from a suspendLambdaNew node's
@@ -506,6 +581,7 @@ static class SuspendColdLowering
             _resultType = string.IsNullOrEmpty(resultType) ? "void" : resultType;
             _params = lambdaParams ?? new List<JsonObject>();
             _typeParams = typeParams ?? new List<string>();
+            _smAllTps = _typeParams;   // a lambda SM has no enclosing-class type params
             _smTypeInst = _typeParams.Count == 0
                 ? _smType
                 : _smType + "[" + string.Join(",", _typeParams.Select(t => "gp:" + t)) + "]";
@@ -525,6 +601,14 @@ static class SuspendColdLowering
 
         public void Build(List<JsonNode> newMethods, List<JsonNode> newTypes)
         {
+            if (_memberAbstract)
+            {
+                // An abstract suspend member -> just the abstract cold-entry DECLARATION (no SM, no bridge, no
+                // drain). Concrete overrides fill the slot; a Kotlin virtual `scope.yield(x)` dispatches through it.
+                newMethods.Add(ColdEntryAbstract());
+                return;
+            }
+
             var body = _isLambda ? _lambdaBody : ((_m["body"] as JsonArray) ?? new JsonArray());
             var hasSuspension = HasSuspension(body);
 
@@ -543,7 +627,7 @@ static class SuspendColdLowering
             _label = MaxLabelId(body) + 1000;
 
             AddField("label", "kotlin.Int");
-            if (_isMember) AddField(ThisField, _ownerClass);        // holds the enclosing instance
+            if (_isMember) AddField(ThisField, _selfType);          // holds the enclosing (constructed) instance
             if (_isLambda)
                 foreach (var (n, t) in _captures) AddField(n, t);   // captured vars -> ctor-set fields
             foreach (var p in _params)
@@ -574,7 +658,15 @@ static class SuspendColdLowering
 
         // A named (non-lambda), non-`main` suspend fun whose Task-family aliases resolved gets a public Task<R>
         // bridge. `main` is excluded (it is the entry point, drained by the synthesized plain `main`).
-        bool WantsBridge => !_isLambda && _name != "main" && _tcsBcl != null && _taskBcl != null;
+        // EXCLUDED too:
+        //  - `_baseIsLocal` (the rt-STDLIB build): the bridge's RootContinuation/TCS/Task sinks are the coroutine
+        //    primitives being DEFINED here, not external .NET refs — a bridge would `clrNew` a local type as if it
+        //    were referenced (NotSupported). The stdlib's own suspend members (yield/yieldAll/callRecursive) are
+        //    internal machinery, not C#-facing Task APIs; the bridge is an APP-build concern (consumers of the dll).
+        //  - a virtual/abstract/override member: only the cold entry (+ SM) is wanted (a public Task bridge in
+        //    vtable lockstep with the override is a separate, unneeded feature v1).
+        bool WantsBridge => !_isLambda && _name != "main" && _tcsBcl != null && _taskBcl != null
+            && !_baseIsLocal && !(_memberAbstract || _memberOverride || _memberVirtual);
 
         static int MaxLabelId(JsonNode node)
         {
@@ -1202,7 +1294,7 @@ static class SuspendColdLowering
             var ctorBody = new JsonArray();
             if (_isMember)
             {
-                ctorParams.Add(new JsonObject { ["name"] = ThisField, ["type"] = _ownerClass });
+                ctorParams.Add(new JsonObject { ["name"] = ThisField, ["type"] = _selfType });
                 ctorBody.Add(SetField(ThisField, new JsonObject { ["k"] = "local", ["name"] = ThisField }));
             }
             foreach (var p in _params)
@@ -1261,10 +1353,12 @@ static class SuspendColdLowering
                 ["properties"] = new JsonArray(),
                 ["attrs"] = new JsonArray(),
             };
-            if (_typeParams.Count > 0)
+            // The SM is generic over the owner's type params (instance member on a generic class) PLUS the
+            // member's own — `$this`/fields/label reference them (see _smAllTps / _smTypeInst).
+            if (_smAllTps.Count > 0)
             {
                 var tp = new JsonArray();
-                foreach (var n in _typeParams) tp.Add(n);
+                foreach (var n in _smAllTps) tp.Add(n);
                 type["typeParams"] = tp;
             }
             return type;
@@ -1445,7 +1539,7 @@ static class SuspendColdLowering
             foreach (var p in _params) ctorArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
             ctorArgs.Add(new JsonObject { ["k"] = "local", ["name"] = "completion" });
             var argTypes = new JsonArray();
-            if (_isMember) argTypes.Add(_ownerClass);
+            if (_isMember) argTypes.Add(_selfType);
             foreach (var p in _params) argTypes.Add(Str(p["type"]));
             argTypes.Add(ContinuationOfAny);
 
@@ -1489,14 +1583,47 @@ static class SuspendColdLowering
             {
                 ["name"] = _coldName,
                 ["static"] = !_isMember,
-                ["override"] = false,
-                ["virtual"] = false,
+                // Lockstep virtuality: an override cold entry fills the base slot (Virtual, no NewSlot); an `open`
+                // member's cold entry opens a new virtual slot; a final member stays non-virtual (unchanged).
+                ["override"] = _memberOverride,
+                ["virtual"] = _memberVirtual,
                 ["abstract"] = false,
                 ["objectOverride"] = false,
                 ["vis"] = "public",
                 ["params"] = ps,
                 ["ret"] = "kotlin.Any",
                 ["body"] = body,
+                ["attrs"] = new JsonArray(),
+            };
+            if (_typeParams.Count > 0)
+            {
+                var tp = new JsonArray();
+                foreach (var n in _typeParams) tp.Add(n);
+                method["typeParams"] = tp;
+            }
+            return method;
+        }
+
+        // An abstract member's cold entry: `<name>$dotkt_suspend(params..., completion): Any?`, Virtual|Abstract,
+        // no body/SM. Concrete overrides emit an `override:true` ColdMethod filling this slot. On a generic class
+        // the params keep the class type params verbatim (the cold entry is an instance method of that class).
+        JsonObject ColdEntryAbstract()
+        {
+            var ps = new JsonArray();
+            foreach (var p in _params) ps.Add(p.DeepClone());
+            ps.Add(new JsonObject { ["name"] = "completion", ["type"] = ContinuationOfAny });
+            var method = new JsonObject
+            {
+                ["name"] = _coldName,
+                ["static"] = false,
+                ["override"] = _memberOverride,
+                ["virtual"] = true,
+                ["abstract"] = true,
+                ["objectOverride"] = false,
+                ["vis"] = "public",
+                ["params"] = ps,
+                ["ret"] = "kotlin.Any",
+                ["body"] = new JsonArray(),
                 ["attrs"] = new JsonArray(),
             };
             if (_typeParams.Count > 0)
