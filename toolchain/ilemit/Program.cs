@@ -948,9 +948,11 @@ sealed partial class Emitter
         }
         else if (ti.BaseName != null && _types.ContainsKey(ti.BaseName) && c.TryGetProperty("baseArgs", out var ba2) && ba2.ValueKind == JsonValueKind.Array)
         {
-            // `: base(...)` -> the Kotlin-user base class's primary ctor.
+            // `: base(...)` -> the Kotlin-user base class's ctor whose param count matches (a base with
+            // secondary ctors — e.g. ContinuationImpl(completion) vs (completion, _context) — must bind the
+            // right overload, not always the primary; mirrors the ClrBase (arg-count) + thisArgs (SelectCtor) paths).
             foreach (var a in ba2.EnumerateArray()) EmitExpr(a);
-            _il.Emit(OpCodes.Call, _types[ti.BaseName].Ctor);
+            _il.Emit(OpCodes.Call, SelectCtor(_types[ti.BaseName], ba2.GetArrayLength()));
         }
         else
         {
