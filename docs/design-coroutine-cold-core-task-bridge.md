@@ -444,3 +444,45 @@ public suspend fun delay(ms: Long)             // Task.Delay(ms).await()
   `Emitter.Coroutines.cs` in P6. The hot-Task PUBLIC ABI (`coroutine-abi.md` §1) is unchanged.
 - `coroutine-stdlib-port-plan.md`'s TypedCont/Builders port is DEAD (the class-form bridge types are
   never ported; the TCS RootContinuation replaces them).
+
+## 12. Status + refinements (P0-P2 landed, 2026-07-03)
+
+### Landed
+- **P0** design-lock (§11). **P1** stdlib cold-core (`kotlin.coroutines.clr.internal` bases + RootContinuation
+  + `kotlin.clr` await/blockOn/delay + Task/TCS aliases) — Task-facing files isolated in the jar-EXCLUDED
+  `libraries/stdlib/clr/taskinterop/` source set (K2JVMCompiler can't resolve CLR names; §5). **P1b** kotlinx
+  PURGED (breaking). **P2** bir2cir `SuspendColdLowering` v1: straight-line non-generic static top-level
+  `suspend fun` → cold-entry `f$dotkt_suspend` + plain-CIR SM class (`ContinuationImpl` subclass) + synthesized
+  draining `fun main`. Gate GREEN. Every other suspend shape is LEFT UNTOUCHED (keeps `"suspend":true` for the
+  existing ilemit throw-stub → zero regression, rt-stdlib no-op via the app-build gate).
+
+### The public Task bridge moved to P4 (P2 scope call, accepted)
+P2 delivered the cold entry + SM + main-drain but NOT the public `Task<T>` bridge (deliverables c/d): the rungs
+don't need it (suspend `main` drains; Kotlin→Kotlin suspend calls hit the cold entry directly), and the bridge
+needs the TCS/Task CIR shapes that pair naturally with P4's `Task.await` interop + the real `blockOn` drain. So
+the bridge + the ilemit `suspendBridge` stamp land in **P4**, alongside await.
+
+### P4 symbol-surfacing mechanism (user, 2026-07-03) — kotc cares about ZERO coroutine symbols
+Do NOT hand-care kotlin.clr coroutine symbols in kotc. Split by whether the SIGNATURE is CLR-free:
+- **blockOn / delay → `expect`/`actual`.** CLR-free signatures → `expect` in `libraries/stdlib/common/src`
+  (jar-INCLUDED → the frontend resolves `import kotlin.clr.blockOn` from the classpath, kotc untouched). Two
+  actuals across the two builds (jar and ref/rt are separate K2 compilations; the jar already runs
+  `-Xmulti-platform -Xcommon-sources -Xexpect-actual-classes`): a staged **jar-side stub actual**
+  (`= throw UnsupportedOperationException()`; the jar is a never-executed frontend classpath — EXACT precedent =
+  the `JvmNameActual.kt`/`JvmInlineActual.kt` staging for the `@OptionalExpectation` JvmName/JvmInline expects),
+  and the **real CLR actual** in `taskinterop/` (Monitor drain / `Task.Delay().await()`), ref/rt only.
+- **await → facadegen injection** (this section §5). `suspend fun Task<T>.await(): T` names Task → not an
+  expect/actual candidate. facadegen, surfacing `System.Threading.Tasks.Task<T>`, also injects the `.await()`
+  extension; bir2cir lowers the call site. Unifies on the one facadegen-surfaced Task (removes the "two Tasks").
+- Result: the "kotc kotlin.clr coroutine injection seam" is never built. Impl check: confirm K2 accepts the
+  two-actuals-across-two-builds arrangement (it is exactly the JvmName staging in build-stdlib-jar.sh).
+
+### P2 → P3 handoff bugs (verified, must fix in P3)
+1. **kotc `override val context` getter not marked override.** The cold-core `ContinuationImpl.get_context`
+   (and `RestrictedContinuationImpl`) emit as `virtual:true` NewSlot rather than filling
+   `BaseContinuationImpl`'s abstract `get_context` slot → a concrete SM subclass would TypeLoad-fail. P2 worked
+   around it by re-overriding `get_context` in each synthesized SM; the ROOT cause is kotc not stamping the
+   `override` getter as an override. Fix in kotc (P3), then drop the SM-side workaround.
+2. **ilemit `coSuspendedSentinel` dead node** (`Emitter.Expressions.cs:72-73`) references a non-existent
+   `IntrinsicsKt.COROUTINE_SUSPENDED` *field* — the real symbol is the property getter
+   `get_COROUTINE_SUSPENDED()` (P2 references the getter directly, bypassing the node). Delete in P6.
