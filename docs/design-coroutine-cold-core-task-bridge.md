@@ -487,18 +487,33 @@ Do NOT hand-care kotlin.clr coroutine symbols in kotc. Split by whether the SIGN
    `IntrinsicsKt.COROUTINE_SUSPENDED` *field* — the real symbol is the property getter
    `get_COROUTINE_SUSPENDED()` (P2 references the getter directly, bypassing the node). Delete in P6.
 
-## 13. `delay` is DROPPED from kotlin.clr (user, 2026-07-03) — it belongs to Track 2
+## 13. `blockOn` AND `delay` are DROPPED from kotlin.clr — re-implemented in the TEST HARNESS (user, 2026-07-03)
 
-`delay` is NOT a stdlib primitive: in upstream Kotlin it lives in `kotlinx.coroutines` (structured
-concurrency / the dispatcher-scheduler world), NOT `kotlin-stdlib`. It was pushed into `kotlin.clr` only
-as a test crutch to have "something to suspend on" after the kotlinx purge — a category error. So:
-- **`delay` is REMOVED** from `kotlin.clr` (the expect in `common/src/kotlin/clr/CoroutinesH.kt`, the jar
-  stub actual staged in `build-stdlib-jar.sh`, and the real actual in `taskinterop/Coroutines.kt`). A
-  proper `delay` (with cancellation + dispatcher semantics) is a future **Track 2** (kotlinx port) member.
-- **`blockOn` STAYS** — it is the `runBlocking` analog, a STRUCTURAL sync→coroutine bridge (the Kotlin form
-  of `.GetAwaiter().GetResult()`), genuine infra, not a library convenience.
-- **`await` STAYS** — the CLR async boundary itself (facadegen-injected, P4).
-- Tests that need a real suspension use HONEST primitives instead of the crutch: `suspendCoroutine { cont ->
-  cont.resume(v) }` (pure stdlib — exercises the real suspend/resume machinery) or
-  `System.Threading.Tasks.Task.Delay(ms).await()` (real .NET async over the `await` boundary — the form CLR
-  users actually write). `cobuild` + the roundtrip suspend sections are rewritten off `delay` accordingly.
+Neither is a stdlib primitive: in upstream Kotlin `delay`/`runBlocking` live in `kotlinx.coroutines`
+(structured concurrency / dispatcher), NOT `kotlin-stdlib`. They were pushed into `kotlin.clr` only as a
+test crutch after the kotlinx purge — a category error. The compiler NEVER needs to emit either: every
+compiler-emitted coroutine driver — the synthesized `suspend fun main` drain, the public `Task<T>` bridge,
+and Kotlin→Kotlin direct cold calls — uses the low-level machinery (SM / TCS / RootContinuation / sync-or-
+`async Task Main` drain), not `blockOn`. The user-facing "run a coroutine from a sync .NET context" case is
+served natively by the `Task<T>` bridge + `.GetAwaiter().GetResult()` (.NET's own blocking).
+
+**Decision:**
+- **`blockOn` and `delay` are REMOVED from `kotlin.clr`** (the `expect` in `common/src/kotlin/clr/CoroutinesH.kt`,
+  the jar stub actual staged in `build-stdlib-jar.sh`, and the real actuals in `taskinterop/Coroutines.kt`).
+- **The core `kotlin.clr` coroutine surface is now JUST `await`** — the genuine CLR async boundary (facadegen-
+  injected, P4; kotc never sees it). Proper `blockOn`/`delay`/`launch`/`async` (with cancellation + dispatcher)
+  are a future **Track 2** (kotlinx port).
+- **`blockOn`/`delay` are re-implemented IN THE TEST HARNESS, in pure Kotlin, over the PUBLIC stdlib primitives**
+  (`startCoroutine`/`Continuation` for blockOn's drain; `Task.Delay(ms).await()` for delay). The coroutine test
+  samples import the harness helpers instead of a stdlib symbol.
+
+**Why this is the validation, not just a test convenience:** the cold-core thesis is "sequence/Flow/kotlinx
+builders are ordinary library code over the shared cold core — the compiler needs NO builder knowledge." A
+test harness that implements the kotlinx primitives `blockOn`/`delay` in pure Kotlin over our stdlib
+primitives, with ZERO compiler special-casing, is a LIVING PROOF of exactly that claim. If the harness can't
+express them, that surfaces a real primitive gap — the best possible test. The harness IS a mini-Track-2.
+
+Harness location: a shared `cases/support/`-style Kotlin file compiled with the coroutine samples (+ the
+roundtrip heredocs get their own inline copy). `cobuild`/roundtrip/the LAM rungs import it. Sequencing:
+harness `blockOn` needs only `startCoroutine` (available after wave-2b lambda SMs); harness `delay` needs
+`await` (P4) — so `delay`-using tests wait on P4, `blockOn`-using tests land right after wave-2b.
