@@ -2137,8 +2137,54 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return out
 	}
 
+	/**
+	 * A `suspend` lambda literal -> the `suspendLambdaNew` BIR node (the dormant bir2cir SuspendLambdaLowering consumer).
+	 * Emits ONLY pure Kotlin facts — captures, own params, result type, enclosing type-param names, and the body EXACTLY
+	 * as a suspend-fun body (its suspend calls already carry `"suspendCall":true`). bir2cir builds the `ContinuationImpl`
+	 * state machine (create/invokeSuspend/resume) from these; kotc bakes no coroutine ABI. Returns null (-> plain closure
+	 * path) for the v1-unexpressible shapes bir2cir refuses:
+	 *   - arity >= 2 (own value params): bir2cir's SuspendLambda create() protocol handles only 0/1.
+	 *   - a restricted-suspension builder lambda (`@RestrictsSuspension` on the extension-receiver scope, e.g.
+	 *     `sequence { }`'s `SequenceScope`): these are pulled at the call() level (sequenceNew) — a defensive exclusion
+	 *     so a stray one never becomes a suspendLambdaNew.
+	 * Captures/params reuse the SAME machinery as the closure path (`capturedVars(includeThis=true)` / `captureFieldName`
+	 * / `captureFieldType`). NOTE: unlike closureNew, the body is emitted WITHOUT installing `captureSubst` — bir2cir's
+	 * SM builder rewrites captured-var reads (plain `{"k":"local"}`) into SM field reads itself. typeArgs are the BARE
+	 * enclosing type-param names (bir2cir prepends `gp:` when it instantiates the open SM), NOT the `gp:`-prefixed form
+	 * closureNew emits for ilemit.
+	 */
+	private fun suspendLambda(node: IrFunctionExpression): String? {
+		val fn = node.function
+		// Own params in delegate order (extension receiver first, then regular) — matches lambdaParamsJson + bir2cir's
+		// arity-1 `create(value)` view (a single receiver OR value param). arity = the count of these.
+		val ownParams = orderedLambdaParams(fn)
+		if (ownParams.size >= 2) return null   // v1: bir2cir refuses arity >= 2 -> keep the plain closure path.
+		// Restricted-suspension builder (sequence{}'s SequenceScope.() -> Unit): excluded (handled by sequenceNew).
+		val extScope = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+			?.type?.classifierOrNull?.owner as? IrClass
+		if (extScope?.annotations?.any { (it as? IrConstructorCall)?.type?.classFqName?.asString() == "kotlin.coroutines.RestrictsSuspension" } == true)
+			return null
+		val captures = capturedVars(fn, includeThis = true)
+		val capturesJson = captures.joinToString(",") { d ->
+			"""{"name":${str(captureFieldName(d))},"type":${str(captureFieldType(d))}}"""
+		}
+		val paramsJson = lambdaParamsJson(ownParams)
+		val resultType = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		// Enclosing generic type params referenced by the SM (captures/params/return/body operands) -> open SM
+		// instantiation. BARE names: bir2cir prepends `gp:`.
+		val freeTps = freeTypeParams(captures.map { it.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
+		val typeArgsJson = freeTps.joinToString(",") { str(it.name.asString()) }
+		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		return """{"k":"suspendLambdaNew","arity":${ownParams.size},"captures":[$capturesJson],"params":[$paramsJson],"resultType":${str(resultType)},"typeArgs":[$typeArgsJson],"body":[$body],"funcType":${str(funcTypeOf(fn))}}"""
+	}
+
 	internal fun lambda(node: IrFunctionExpression): String {
 		val fn = node.function
+		// A `suspend` lambda LITERAL -> a `suspendLambdaNew` node: bir2cir turns it into a SuspendLambda state machine
+		// (app-build only; the SM's create/resume protocol makes `blockOn { ... }` run). kotc emits only the pure FACTS
+		// (captures/params/body-with-suspendCall-tags); the SM lowering is downstream. Non-v1 shapes (arity>=2,
+		// restricted-suspension builders like sequence{}'s SequenceScope) fall through to the plain closure path below.
+		if (fn.isSuspend) suspendLambda(node)?.let { return it }
 		// kotc does NO coroutine lowering: a `suspend () -> T` lambda emits as a PLAIN lambda (its suspend calls carry
 		// `"suspendCall":true`); the Task-ABI / state-machine lowering is a deferred downstream layer. So the declared
 		// return / delegate type stay the plain Kotlin shapes here.
@@ -2911,11 +2957,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		fn.parameters.filter { it.kind == IrParameterKind.ExtensionReceiver } +
 			fn.parameters.filter { it.kind == IrParameterKind.Regular }
 
-	/** The BIR function-type string `func:<ret>:<arg1>,<arg2>,...` for a lambda's signature (receiver first). */
+	/** The BIR function-type string `func:<ret>:<arg1>,<arg2>,...` for a lambda's signature (receiver first).
+	 *  A `suspend` lambda emits the `sfunc:` variant — same delegate shape, carrying the suspend FACT for the
+	 *  suspendLambdaNew SM builder. bir2cir folds `sfunc:`→`func:` (all builds), so this stays behavior-preserving. */
 	internal fun funcTypeOf(fn: IrSimpleFunction): String {
 		val ps = orderedLambdaParams(fn).joinToString(",") { birTypeDeleg(it.type) }
 		val ret = funcRetTypeOf(fn.returnType)
-		return "func:$ret:$ps"
+		val prefix = if (fn.isSuspend) "sfunc" else "func"
+		return "$prefix:$ret:$ps"
 	}
 
 	/**
@@ -4585,14 +4634,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// kotlin.CharSequence -> a synthetic interface (no faithful .NET equivalent). See charSeqIface.
 		charSeqIface(t)?.let { return "@$it" }
 		// A function type as a value (e.g. a `(P)->R` parameter): `kotlin.FunctionN` -> a plain Func/Action. A
-		// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) is emitted as the PLAIN function type too —
-		// kotc bakes no coroutine ABI (no Func<..,Task<R>>); the suspend-delegate lowering is a deferred downstream layer.
+		// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) emits the `sfunc:` variant — the SAME
+		// delegate shape, carrying only the suspend FACT (which the suspendLambdaNew SM builder needs). bir2cir folds
+		// `sfunc:`→`func:` in EVERY build (incl. ref), so kotc bakes no coroutine ABI here — behavior-preserving.
 		if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.Function"))) {
 			val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
 			if (args.isNotEmpty()) {
 				val ret = args.last(); val ps = args.dropLast(1)
 				val retEnc = funcRetTypeOf(ret)
-				return "func:$retEnc:${ps.joinToString(",") { birTypeDeleg(it) }}"
+				val prefix = if (fqp.startsWith("kotlin.coroutines.SuspendFunction")) "sfunc" else "func"
+				return "$prefix:$retEnc:${ps.joinToString(",") { birTypeDeleg(it) }}"
 			}
 		}
 		// `by lazy` delegate: kotlin.Lazy<T> -> System.Lazy<T>. NOT in the runtime (substitute) build: kotlin.Lazy is an
