@@ -1636,25 +1636,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun isSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
 		e is IrCall && e.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn"
 
-	/** `SequenceScope.yield(value)` inside a `sequence { … }` builder — a multi-shot (restricted) suspension. */
-	internal fun isYield(call: IrCall): Boolean =
-		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yield"
-
-	/** `SequenceScope.yieldAll(elements)` — yield every element of an Iterable/Sequence (lowered as an inner
-	 *  enumerator loop in the sequence state machine). */
-	internal fun isYieldAll(call: IrCall): Boolean =
-		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yieldAll"
-
 	/** A suspension point: start the awaitable; if incomplete, save state and return; on resume read the result. */
 	internal fun emitSuspend(call: IrCall, assignTo: String?, steps: MutableList<String>) {
 		if (isSuspendIntrinsic(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = false, selfKind = "coSelfCont"); return }
-		if (isYield(call)) { val k = ++coState; steps.add("""{"k":"coYield","state":$k,"value":${expr(regularArgs(call).first())}}"""); return }
-		if (isYieldAll(call)) {
-			val k = ++coState
-			val arg = regularArgs(call).first()   // Iterable<T>/Sequence<T> -> IEnumerable<T>
-			steps.add("""{"k":"coYieldAll","state":$k,"iterable":${expr(arg)},"iterType":${str(birType(arg.type))}}""")
-			return
-		}
 		val k = ++coState
 		steps.add("""{"k":"coSuspend","state":$k,"awaitable":${coAwaitable(call)},"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(birType(call.type))}}""")
 	}
