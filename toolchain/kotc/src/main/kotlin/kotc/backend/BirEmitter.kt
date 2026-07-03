@@ -2135,9 +2135,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * state machine (create/invokeSuspend/resume) from these; kotc bakes no coroutine ABI. Returns null (-> plain closure
 	 * path) for the v1-unexpressible shapes bir2cir refuses:
 	 *   - arity >= 2 (own value params): bir2cir's SuspendLambda create() protocol handles only 0/1.
-	 *   - a restricted-suspension builder lambda (`@RestrictsSuspension` on the extension-receiver scope, e.g.
-	 *     `sequence { }`'s `SequenceScope`): these are pulled at the call() level (sequenceNew) — a defensive exclusion
-	 *     so a stray one never becomes a suspendLambdaNew.
+	 * Restricted-suspension builder lambdas (`@RestrictsSuspension` on the extension-receiver scope, e.g.
+	 * `sequence { }`/`iterator { }`'s `SequenceScope`) flow through THIS path too — bir2cir picks the
+	 * `RestrictedSuspendLambda` base from the scope's annotation. kotc has no `sequence`/`yield` knowledge.
 	 * Captures/params reuse the SAME machinery as the closure path (`capturedVars(includeThis=true)` / `captureFieldName`
 	 * / `captureFieldType`). NOTE: unlike closureNew, the body is emitted WITHOUT installing `captureSubst` — bir2cir's
 	 * SM builder rewrites captured-var reads (plain `{"k":"local"}`) into SM field reads itself. typeArgs are the BARE
@@ -2150,11 +2150,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// arity-1 `create(value)` view (a single receiver OR value param). arity = the count of these.
 		val ownParams = orderedLambdaParams(fn)
 		if (ownParams.size >= 2) return null   // v1: bir2cir refuses arity >= 2 -> keep the plain closure path.
-		// Restricted-suspension builder (sequence{}'s SequenceScope.() -> Unit): excluded (handled by sequenceNew).
-		val extScope = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-			?.type?.classifierOrNull?.owner as? IrClass
-		if (extScope?.annotations?.any { (it as? IrConstructorCall)?.type?.classFqName?.asString() == "kotlin.coroutines.RestrictsSuspension" } == true)
-			return null
+		// Restricted-suspension builders (`sequence { }`/`iterator { }`'s @RestrictsSuspension SequenceScope receiver)
+		// now flow through this SAME suspend-lambda path: bir2cir gives the lambda the `RestrictedSuspendLambda` base
+		// (not the plain SuspendLambda), so the cold-core builder runs. No exclusion here — kotc emits the pure suspend
+		// facts and bir2cir picks the restricted base from the receiver scope's @RestrictsSuspension annotation.
 		val captures = capturedVars(fn, includeThis = true)
 		val capturesJson = captures.joinToString(",") { d ->
 			"""{"name":${str(captureFieldName(d))},"type":${str(captureFieldType(d))}}"""
@@ -2173,8 +2172,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val fn = node.function
 		// A `suspend` lambda LITERAL -> a `suspendLambdaNew` node: bir2cir turns it into a SuspendLambda state machine
 		// (app-build only; the SM's create/resume protocol makes `blockOn { ... }` run). kotc emits only the pure FACTS
-		// (captures/params/body-with-suspendCall-tags); the SM lowering is downstream. Non-v1 shapes (arity>=2,
-		// restricted-suspension builders like sequence{}'s SequenceScope) fall through to the plain closure path below.
+		// (captures/params/body-with-suspendCall-tags); the SM lowering is downstream. Non-v1 shapes (arity>=2) fall
+		// through to the plain closure path below; restricted-suspension builders (sequence{}/iterator{}) go through
+		// suspendLambda too — bir2cir gives them the RestrictedSuspendLambda base.
 		if (fn.isSuspend) suspendLambda(node)?.let { return it }
 		// kotc does NO coroutine lowering: a `suspend () -> T` lambda emits as a PLAIN lambda (its suspend calls carry
 		// `"suspendCall":true`); the Task-ABI / state-machine lowering is a deferred downstream layer. So the declared
