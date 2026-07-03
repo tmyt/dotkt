@@ -52,9 +52,15 @@ public suspend inline fun <T> suspendCoroutineUninterceptedOrReturn(crossinline 
  * storing this value in other properties, returning it from other functions, etc)
  * can lead to unspecified behavior of the code.
  */
-// It is implemented as property with getter to avoid ProGuard <clinit> problem with multifile IntrinsicsKt class
+// CLR: the getter returns a STORED, boxed-exactly-ONCE cache. The coroutine protocol compares the
+// resume outcome with `=== COROUTINE_SUSPENDED` (reference identity); boxing the value-type enum on
+// every read would make each box a distinct object, so the `===` check would always be false —
+// mis-detecting a genuine suspension as completion. Caching the box in a stored val keeps the getter
+// (consumers/`get_COROUTINE_SUSPENDED()` unchanged) while giving a stable reference. (The original
+// re-boxing getter existed for a JVM ProGuard <clinit> concern that does not apply here.)
+private val COROUTINE_SUSPENDED_BOX: Any = CoroutineSingletons.COROUTINE_SUSPENDED
 @SinceKotlin("1.3")
-public val COROUTINE_SUSPENDED: Any get() = CoroutineSingletons.COROUTINE_SUSPENDED
+public val COROUTINE_SUSPENDED: Any get() = COROUTINE_SUSPENDED_BOX
 
 // Using enum here ensures two important properties:
 //  1. It makes SafeContinuation serializable with all kinds of serialization frameworks (since all of them natively support enums)
