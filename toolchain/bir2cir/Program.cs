@@ -3736,6 +3736,21 @@ static class MemberCallSubstitution
             typeTok = "clrg:" + bcl + "[" + ownerToken[(br + 1)..^1] + "]";
 
         var args = node["args"] as JsonArray ?? new JsonArray();
+
+        // JVM (initialCapacity: Int, loadFactor: Float) collection ctor -> the capacity-only (int) BCL ctor. .NET's
+        // HashSet/Dictionary have NO (int, float) constructor (loadFactor is a JVM hashtable concept), so a
+        // `HashSet<Int>(16, 0.75f)` call would mis-resolve to the `(IEnumerable, IEqualityComparer)` overload and throw
+        // at run. Drop the trailing loadFactor arg (and its declared argType) so the overload key becomes a bare (int).
+        // Gated on a @ClrTypeAlias owner whose declared 2nd ctor param is a Float — the loadFactor idiom is unique to
+        // the stdlib collection aliases (no BCL type reaching here has a genuine (int, float) ctor).
+        if (args.Count == 2 && refs.Aliases.ContainsKey(ReferenceMetadataIndex.BareOwnerFqn(ownerToken))
+            && node["argTypes"] is JsonArray dat && dat.Count == 2
+            && (dat[1] as JsonValue)?.GetValue<string>() is string p1 && (p1 == "kotlin.Float" || p1 == "float"))
+        {
+            args = new JsonArray { args[0].DeepClone() };
+            node["argTypes"] = new JsonArray { dat[0].DeepClone() };
+        }
+
         return new JsonObject
         {
             ["k"] = "clrNew",
