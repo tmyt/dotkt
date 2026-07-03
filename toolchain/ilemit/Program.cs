@@ -1553,13 +1553,30 @@ sealed partial class Emitter
     // method with the call's own type args). No-op for non-generic owners and non-builder methods.
     MethodInfo AnchorOpenGenericOwnerStatic(MethodInfo m)
     {
-        if (m is not MethodBuilder mb || !mb.IsStatic) return m;
-        if (mb.DeclaringType is not TypeBuilder tb || !tb.IsGenericTypeDefinition) return m;
-        var constructed = tb.MakeGenericType(tb.GetGenericArguments().Select(_ => (Type)typeof(object)).ToArray());
-        var anchored = TypeBuilder.GetMethod(constructed, mb);
-        // Keep the param-type record visible through the anchored identity (call-site boxing decisions).
-        if (_mparams.TryGetValue(mb, out var ps)) _mparams[anchored] = ps;
-        return anchored;
+        if (m == null || !m.IsStatic) return m;
+        // LOCAL emitted generic owner: anchor the open MethodBuilder onto the `object`-instantiation.
+        if (m is MethodBuilder mb)
+        {
+            if (mb.DeclaringType is not TypeBuilder tb || !tb.IsGenericTypeDefinition) return m;
+            var constructed = tb.MakeGenericType(tb.GetGenericArguments().Select(_ => (Type)typeof(object)).ToArray());
+            var anchored = TypeBuilder.GetMethod(constructed, mb);
+            // Keep the param-type record visible through the anchored identity (call-site boxing decisions).
+            if (_mparams.TryGetValue(mb, out var ps)) _mparams[anchored] = ps;
+            return anchored;
+        }
+        // EXTERNAL (referenced .NET / rt-stdlib) reflection static on a generic type DEFINITION — the SAME problem for
+        // any cross-assembly call to a static on a generic type (`kotlin.Result`1::success`/`failure`, …): FindMethod
+        // resolves the member on the open `C`1` typedef, and emitting a call scoped to that open typedef is an invalid
+        // memberref (runtime `TypeLoadException: Could not load type 'C`1' from assembly '<app>'`). Anchor onto the
+        // `object`-instantiation exactly like the local path — a Kotlin companion static cannot reference the enclosing
+        // class's type params, so every instantiation is signature-identical and `object` is canonical (this mirrors
+        // the stdlib's OWN emitted IL: `call C`1<object>::success<…>(…)`). Match the constructed owner's member by
+        // (module, metadata token): a method on a constructed RuntimeType instantiation shares its definition's token.
+        // ApplyTypeArgs then MakeGenericMethod's the anchored method with the call's own type args.
+        if (m.DeclaringType is not { IsGenericTypeDefinition: true } odt) return m;
+        var con = odt.MakeGenericType(odt.GetGenericArguments().Select(_ => (Type)typeof(object)).ToArray());
+        return con.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                  .Single(x => x.Module == m.Module && x.MetadataToken == m.MetadataToken);
     }
 
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
@@ -1649,7 +1666,18 @@ sealed partial class Emitter
             }
             retType = sub.TryGetValue(m.ReturnType, out var r) ? r : m.ReturnType;
             paramTypes = ps?.Select(x => sub.TryGetValue(x, out var s) ? s : x).ToArray();
-            return m.MakeGenericMethod(targs);
+            var inst = m.MakeGenericMethod(targs);
+            // A pure-reflection generic method (an EXTERNAL rt-stdlib static, e.g. `Result`1<object>::success<T>`
+            // anchored by AnchorOpenGenericOwnerStatic) carries no `_mparams`/`_methodTypeParams` record, so `sub` is
+            // empty and `ps` is null — read the concrete signature straight off the instantiation instead, so the
+            // return type and value-arg boxing decisions are correct. Gated to reflection instantiations whose owner is
+            // NOT a TypeBuilder instantiation (those go through the branches above / can't be reflected pre-bake).
+            if (ps == null && inst is not MethodBuilder && inst.DeclaringType is { IsGenericType: true } idt && !IsTbInstantiation(idt))
+            {
+                retType = inst.ReturnType;
+                paramTypes = inst.GetParameters().Select(p => p.ParameterType).ToArray();
+            }
+            return inst;
         }
         retType = m.ReturnType;
         paramTypes = ps;
