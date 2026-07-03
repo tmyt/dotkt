@@ -5,6 +5,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc (CRITICAL: ref/rt stdlib build un-broken): a `mapOf(this[0])` NPE was silently dropping ~120 stdlib type-defs.**
+  `make stdlib-ref` was crashing downstream with `NotSupportedException: cannot resolve .NET type kotlin.sequences.Sequence`
+  because kotc was emitting only **460** type-defs (vs the cached **777**): `kotlin.sequences.Sequence`, the 8 primitive
+  iterators (`ByteIterator`/`CharIterator`/…), `kotlin.coroutines.Continuation`, `kotlin.text.MatchResult`/`MatchNamedGroupCollection`,
+  `kotlin.reflect.KClassifier`, `kotlin.time.TimeSource.WithComparableMarks`, and every other type declared in a file iterated
+  **after** `collections/Maps.kt` were missing. Root cause: the `mapOf(…)` factory intercept in `BirEmitter` assumed every
+  element was a decomposable `k to v` infix literal and did `extensionReceiver(p)!!` — but the since-1.9 single-pair overload
+  is called inside the stdlib with a general **Pair-valued** argument (`mapOf(this[0])`, `mapOf(iterator().next())`), whose
+  element is an ordinary `get`/`next` call with **no** extension receiver → NPE. Because `ClrBackendPhase` walked
+  `moduleFragment.files` with **no per-file guard**, that single throw aborted the whole loop, silently dropping every
+  subsequent file — yet the build still reported "success" (earlier files had already written BIR). Two fixes: (1) the `mapOf`
+  intercept now only lowers to `mapNew` when **every** element is a statically-decomposable `kotlin.to` literal (empty
+  `mapOf()`/`emptyMap()` still lower to an empty map); a general single-Pair argument falls through to a normal call to the real
+  stdlib `mapOf(pair)`. (2) `ClrBackendPhase` wraps `emitFile` per file in a `try/catch` that reports a compile **ERROR**
+  (loud, names the file) and continues, so a future single-file bug can never again catastrophically nuke the type set behind a
+  green build. Ref+rt now emit clean (type count back to **745**, all 14 named builtins present); `verify-il` GREEN, `verify-ktproj` 9/9.
+
 - **facadegen (bundle-6 ② async interop): generic STATIC methods now surface — Kotlin can BUILD a `Task<T>`.**
   A public static method whose reflection reported `IsGenericMethod` (`Task.FromResult<TResult>`, `Task.Run<TResult>`) was silently
   DROPPED at `Program.cs:557`, so Kotlin had no way to construct a `Task<T>` from a .NET generic factory. The static-member loop now

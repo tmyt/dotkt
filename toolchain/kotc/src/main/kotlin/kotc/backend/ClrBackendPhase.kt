@@ -39,16 +39,31 @@ object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArti
 		// different dirs (3x Collections.kt: src/kotlin, src/kotlin/collections, clr/builtins). Disambiguate with a
 		// per-basename counter so they don't OVERWRITE each other (clr/builtins/Collections.kt's interface defs were lost).
 		val usedNames = HashMap<String, Int>()
+		// Per-FILE resilience: an unexpected exception while emitting ONE file must NOT abort the whole loop. The loop
+		// walks `moduleFragment.files` in order, so a raw throw (e.g. a mis-shaped-call NPE) silently dropped EVERY file
+		// after the offender — the stdlib build lost ~120 type-defs (Sequence/PrimitiveIterators/Continuation/… all live
+		// after Maps.kt) yet still reported "success" because the earlier files had already written BIR. Catch, report the
+		// crash as a compile ERROR (so the build fails loudly + names the file), and continue so the remaining files still
+		// emit and the failure is a single clear diagnostic instead of a catastrophic cascade.
+		var crashed = false
 		for (irFile in moduleFragment.files) {
 			var baseName = File(irFile.fileEntry.name).name.removeSuffix(".kt")
 			val seen = usedNames.merge(baseName, 1) { a, b -> a + b }!!
 			if (seen > 1) baseName = "${baseName}__$seen"
-			val birJson = bir.emitFile(irFile)
+			val birJson = try {
+				bir.emitFile(irFile)
+			} catch (e: Throwable) {
+				crashed = true
+				messageCollector?.report(
+					org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity.ERROR,
+					"BIR emit crashed for ${irFile.fileEntry.name}: ${e.javaClass.simpleName}: ${e.message}")
+				""
+			}
 			if (birJson.isNotBlank()) File(outputDir, "$baseName.bir.json").writeText(birJson)
 		}
 
-		// An unsupported construct was reported (with source location) -> fail the compile here, so the build stops
-		// with a clear diagnostic instead of producing BIR that crashes ilemit downstream.
-		return ClrBackendArtifact(if (bir.hadError) ExitCode.COMPILATION_ERROR else ExitCode.OK)
+		// An unsupported construct was reported (with source location), or a file crashed -> fail the compile here, so the
+		// build stops with a clear diagnostic instead of producing BIR that crashes ilemit downstream.
+		return ClrBackendArtifact(if (bir.hadError || crashed) ExitCode.COMPILATION_ERROR else ExitCode.OK)
 	}
 }

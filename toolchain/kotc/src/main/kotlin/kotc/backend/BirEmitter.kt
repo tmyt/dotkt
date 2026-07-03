@@ -3253,12 +3253,29 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `mapOf(k to v, …)` -> a Dictionary<K,V> (each element is a `to` call: key=ext recv, value=arg).
 		if (calleeFq in MAP_FACTORIES) {
 			val (kt, vt) = mapKV(call.type)
-			// vararg overload (`mapOf(a to 1, b to 2)`) OR the single-pair overload (`mapOf(a to 1)`, since-1.9 —
-			// NOT a vararg; the Pair rides as a regular arg). Mirror the listOf/setOf single-element fallback above.
-			val pairs = (call.arguments.firstOrNull() as? IrVararg)?.elements?.filterIsInstance<IrCall>()
-				?: regularArgs(call).filterIsInstance<IrCall>()
-			val entries = pairs.joinToString(",") { p -> """{"key":${expr(extensionReceiver(p)!!)},"val":${expr(regularArgs(p).first())}}""" }
-			return """{"k":"mapNew","keyType":${str(kt)},"valType":${str(vt)},"entries":[$entries]}"""
+			// The factory intercept applies ONLY to the statically-decomposable literal forms: `mapOf()` (empty)
+			// and `mapOf(a to 1, b to 2, …)` / the since-1.9 single-pair `mapOf(a to 1)` (NOT a vararg — the Pair
+			// rides as a regular arg), where EVERY element is a `to` infix literal we can split into key/value.
+			// A single-pair overload called with a general Pair-VALUED argument (`mapOf(this[0])`,
+			// `mapOf(iterator().next())`, `mapOf(pair)`) is NOT decomposable here — those elements are ordinary
+			// calls (a `get` operator, etc.) with no `to` shape, so we must NOT force-split them (the old
+			// `extensionReceiver(p)!!` NPE'd on `mapOf(this[0])`, aborting the whole file). Fall through to a normal
+			// call to the real stdlib `mapOf(pair)` instead.
+			val elems = (call.arguments.firstOrNull() as? IrVararg)?.elements?.filterIsInstance<IrExpression>()
+				?: regularArgs(call)
+			fun toPairKV(e: IrExpression): Pair<IrExpression, IrExpression>? {
+				val c = e as? IrCall ?: return null
+				if (c.symbol.owner.fqNameWhenAvailable?.asString() != "kotlin.to") return null
+				val k = extensionReceiver(c) ?: return null
+				val v = regularArgs(c).getOrNull(0) ?: return null
+				return k to v
+			}
+			val kvs = elems.map { toPairKV(it) }
+			if (kvs.all { it != null }) {
+				val entries = kvs.filterNotNull().joinToString(",") { (k, v) -> """{"key":${expr(k)},"val":${expr(v)}}""" }
+				return """{"k":"mapNew","keyType":${str(kt)},"valType":${str(vt)},"entries":[$entries]}"""
+			}
+			// else: not a statically-decomposable pair literal -> fall through to normal call emission.
 		}
 
 		// `arrayOfNulls<T>(size)` -> a sized `new T[size]` (the reified builtin's actual is a TODO stub; lower it here
