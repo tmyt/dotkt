@@ -28,6 +28,12 @@ static class SuspendLambdaLowering
 {
     const string ContinuationOfAny = "kotlin.coroutines.Continuation[kotlin.Any]";
     const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
+    const string RestrictedSuspendLambdaFqn = "kotlin.coroutines.clr.internal.RestrictedSuspendLambda";
+
+    // The ref.dll index — consulted to check whether a suspend lambda's RECEIVER is a @RestrictsSuspension scope
+    // (e.g. SequenceScope), which selects the RestrictedSuspendLambda SM base. Static, single-threaded per run.
+    static ReferenceMetadataIndex _refs;
+    static bool _restrictedBaseIsLocal;
 
     // The callee-return-type map (cold-entry name -> Kotlin resultType) produced by SuspendColdLowering.
     // Consulted when building a lambda SM so an awaited suspend-call value gets its real type (+ unbox) —
@@ -37,12 +43,15 @@ static class SuspendLambdaLowering
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, IReadOnlySet<string> localTypeFqns,
-        IReadOnlyDictionary<string, string> calleeRet = null)
+        IReadOnlyDictionary<string, string> calleeRet = null, ReferenceMetadataIndex refs = null)
     {
         _calleeRet = calleeRet;
-        // In the app build SuspendLambda is a REFERENCED type (clr: base + clrOverride linkage); in a self-build
-        // that declares it, a LOCAL type (bare base + local slot override). This pass is app-only in practice.
+        _refs = refs;
+        // In the app build the SuspendLambda base is a REFERENCED type (clr: base + clrOverride linkage); in a
+        // self-build that declares it, a LOCAL type (bare base + local slot override). Computed per-base because a
+        // @RestrictsSuspension lambda uses RestrictedSuspendLambda, which may have a different locality.
         var baseIsLocal = localTypeFqns.Contains(SuspendLambdaFqn);
+        _restrictedBaseIsLocal = localTypeFqns.Contains(RestrictedSuspendLambdaFqn);
 
         foreach (var r in roots)
         {
@@ -137,8 +146,15 @@ static class SuspendLambdaLowering
         var typeArgs = ReadStrings(node["typeArgs"]);
         var smName = ctx + "_lambda" + (++counter[0]) + "$sm";
 
+        // A suspend lambda whose RECEIVER (its create()-bound param) is a @RestrictsSuspension scope (SequenceScope)
+        // gets the RestrictedSuspendLambda SM base. kotc conveys the receiver as a lambda param, so any param whose
+        // type is a @RestrictsSuspension owner (per the ref.dll) triggers it. A safe discriminator: only genuinely
+        // restricted scopes carry the annotation, so a plain value param never matches.
+        var restricted = _refs != null && lambdaParams.Any(p => _refs.HasRestrictsSuspension(Str(p["type"])));
+        var effBaseIsLocal = restricted ? _restrictedBaseIsLocal : baseIsLocal;
+
         var sm = SuspendColdLowering.BuildLambdaSm(
-            smName, arity, captures, lambdaParams, body, resultType, typeArgs, baseIsLocal, _calleeRet);
+            smName, arity, captures, lambdaParams, body, resultType, typeArgs, effBaseIsLocal, _calleeRet, restricted);
         if (sm == null) return node;   // arity >= 2 -> not expressible v1; keep the node (surfaces as a report)
 
         newTypes.Add(sm);

@@ -212,7 +212,7 @@ sealed class Pipeline
         // the newly-added SM types too) and before type lowering. kotc emits NO suspendLambdaNew yet, so this is
         // a verified no-op against current input; same app-build gate as the cold lowering.
         if (!_options.RefBuild && attributeTopLevelOwner)
-            SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet);
+            SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
 
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
@@ -348,6 +348,7 @@ sealed class ReferenceMetadataIndex
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string JvmInlineAttr = "kotlin.jvm.JvmInline";
+    const string RestrictsSuspensionAttr = "kotlin.coroutines.RestrictsSuspension";
     // [KotlinFunction(flags)] flag word (mirrors ilemit Program.cs pass 4 / facadegen): Infix=1, Operator=2, Suspend=4.
     const int KotlinFunctionSuspendFlag = 4;
 
@@ -359,6 +360,7 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, int> _ownerArity = new(StringComparer.Ordinal);      // Kotlin FQN -> generic arity
     readonly Dictionary<string, string[]> _ownerTypeParams = new(StringComparer.Ordinal); // Kotlin FQN -> generic param names
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "<>dotkt_ClrH_*"
+    readonly HashSet<string> _restrictsSuspension = new(StringComparer.Ordinal);     // @RestrictsSuspension owners
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
     readonly Dictionary<string, string> _topLevelIntrinsicsBySig = new(StringComparer.Ordinal); // "name|paramKeys" -> FQ static (overload-disambiguated)
@@ -390,6 +392,7 @@ sealed class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
             foreach (var h in asm.DotKt.HelperTypes) _helperTypes.Add(h);
+            foreach (var s in asm.DotKt.RestrictsSuspensionTypes) _restrictsSuspension.Add(s);
             foreach (var m in asm.DotKt.MemberBindings)
             {
                 if (!_membersByOwner.TryGetValue(m.Owner, out var list))
@@ -425,6 +428,11 @@ sealed class ReferenceMetadataIndex
     public bool HasSuspendMember(string owner, string name) =>
         owner != null && _membersByOwner.TryGetValue(owner, out var list)
         && list.Any(m => m.Suspend && string.Equals(m.Name, name, StringComparison.Ordinal));
+
+    // Does this owner type carry @kotlin.coroutines.RestrictsSuspension (a restricted-suspension scope, e.g.
+    // SequenceScope)? A suspend lambda with such a receiver gets the RestrictedSuspendLambda SM base (bundle-6 P5).
+    public bool HasRestrictsSuspension(string ownerToken) =>
+        ownerToken != null && _restrictsSuspension.Contains(BareOwnerFqn(ownerToken));
 
     public int Count => _assemblies.Count;
     public IReadOnlyList<ReferenceAssembly> Assemblies => _assemblies;
@@ -1069,6 +1077,7 @@ sealed class ReferenceMetadataIndex
                     var classAlias = ClrAliasOf(type.GetCustomAttributesData());
                     if (classAlias != null) metadata.Aliases[ownerFqn] = classAlias;
                     if (ownerFqn.StartsWith("<>dotkt_ClrH_", StringComparison.Ordinal)) metadata.HelperTypes.Add(ownerFqn);
+                    if (HasAttribute(type.GetCustomAttributesData(), RestrictsSuspensionAttr)) metadata.RestrictsSuspensionTypes.Add(ownerFqn);
                     var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
 
                     // @JvmInline value class: its single instance backing field IS the erased value. Record the field
@@ -1417,6 +1426,9 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "<>dotkt_ClrH_*" rule-3 helpers
+    // Types carrying @kotlin.coroutines.RestrictsSuspension (BINARY-retained, so present on the ref.dll). A suspend
+    // lambda whose RECEIVER is such a scope (e.g. SequenceScope) gets the RestrictedSuspendLambda SM base (bundle-6 P5).
+    public readonly HashSet<string> RestrictsSuspensionTypes = new(StringComparer.Ordinal);
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.

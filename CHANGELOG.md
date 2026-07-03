@@ -20,6 +20,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `$this.nextStep = this; label = 1; return COROUTINE_SUSPENDED`. Capability only — dormant until kotc stops routing
   `sequence{}` through its CPS engine.
 
+- **bir2cir (bundle-6 P5 Phase-A capability 2): target `RestrictedSuspendLambda` for `@RestrictsSuspension`
+  blocks.** `SuspendLambdaLowering` previously hardcoded the SM base to `SuspendLambda`. It now reads
+  `@kotlin.coroutines.RestrictsSuspension` off the ref.dll (a new `ReferenceMetadataIndex.HasRestrictsSuspension`,
+  scanning the BINARY-retained attribute) and, when a suspend lambda's RECEIVER (its create()-bound param) is such a
+  scope — `sequence{}`'s `SequenceScope` — emits the SM base as `RestrictedSuspendLambda`
+  (`ContinuationImpl.kt:131`) instead. Both bases share the 2-arg `(arity, completion)` ctor + `create()` protocol;
+  the restricted base pins `EmptyCoroutineContext`. Verified on a fixture: a lambda with a `SequenceScope` receiver
+  gets `RestrictedSuspendLambda`; a plain-typed receiver keeps `SuspendLambda`. Dormant until kotc emits
+  `suspendLambdaNew`.
+
 - **bir2cir/diagnosis (bundle-6 P4 genuine-async): root-caused `il-cobuild` printing `0` instead of `25` to a
   compiler bug OUTSIDE bir2cir — boxed Kotlin `enum` entries lose reference identity, breaking the
   `COROUTINE_SUSPENDED` sentinel.** The bir2cir cold-core transform is verified correct: dumping cobuild's CIR shows

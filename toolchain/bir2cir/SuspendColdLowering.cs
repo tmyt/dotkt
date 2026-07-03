@@ -55,6 +55,9 @@ static class SuspendColdLowering
 {
     const string ContinuationImplFqn = "kotlin.coroutines.clr.internal.ContinuationImpl";
     const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
+    // A @RestrictsSuspension-scope (e.g. SequenceScope) suspend lambda's SM base. Same 2-arg (arity, completion)
+    // ctor + create() protocol as SuspendLambda; RestrictedContinuationImpl pins EmptyCoroutineContext.
+    const string RestrictedSuspendLambdaFqn = "kotlin.coroutines.clr.internal.RestrictedSuspendLambda";
     const string BaseContinuationImplFqn = "kotlin.coroutines.clr.internal.BaseContinuationImpl";
     const string ContinuationOfAny = "kotlin.coroutines.Continuation[kotlin.Any]";
     // BaseContinuationImpl.create returns Continuation<Unit> (ContinuationImpl.kt:82/87); a CLR virtual
@@ -235,7 +238,7 @@ static class SuspendColdLowering
     public static JsonObject BuildLambdaSm(string smName, int arity,
         List<(string name, string type)> captures, List<JsonObject> lambdaParams, JsonArray body,
         string resultType, List<string> typeParams, bool baseIsLocal,
-        IReadOnlyDictionary<string, string> calleeRet = null)
+        IReadOnlyDictionary<string, string> calleeRet = null, bool restricted = false)
     {
         if (arity is < 0 or > 1) return null;
         var gen = new FunGen(smName, arity, captures ?? new List<(string, string)>(), lambdaParams, body,
@@ -243,7 +246,7 @@ static class SuspendColdLowering
             calleeRet as Dictionary<string, string> ??
                 (calleeRet != null ? new Dictionary<string, string>(calleeRet, StringComparer.Ordinal)
                                    : new Dictionary<string, string>(StringComparer.Ordinal)),
-            baseIsLocal);
+            baseIsLocal, restricted);
         var types = new List<JsonNode>();
         gen.Build(new List<JsonNode>(), types);
         return types.Count > 0 ? (JsonObject)types[0] : null;
@@ -426,6 +429,7 @@ static class SuspendColdLowering
         // Lambda mode (bundle-6 P3 wave-2b Part B): a suspend LAMBDA SM (extends SuspendLambda, no cold
         // entry/main-drain, adds the create() override protocol). Left at defaults for the named-fun path.
         readonly bool _isLambda;
+        readonly bool _restrictedBase;           // lambda mode: receiver is @RestrictsSuspension -> RestrictedSuspendLambda base
         readonly int _arity;                     // the lambda's own param count (v1: 0 or 1)
         readonly List<(string name, string type)> _captures;   // captured vars -> ctor params + fields
         readonly JsonArray _lambdaBody;          // the lambda's structured body (no `_m` in lambda mode)
@@ -471,9 +475,10 @@ static class SuspendColdLowering
         // parts. Captures become ctor params + fields; the lambda's own params become fields set by create().
         public FunGen(string smName, int arity, List<(string name, string type)> captures,
             List<JsonObject> lambdaParams, JsonArray body, string resultType, List<string> typeParams,
-            Dictionary<string, string> calleeRet, bool baseIsLocal)
+            Dictionary<string, string> calleeRet, bool baseIsLocal, bool restricted = false)
         {
             _isLambda = true;
+            _restrictedBase = restricted;
             _ownerTypeParams = new List<string>();
             _closures = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _m = null;
@@ -1262,6 +1267,7 @@ static class SuspendColdLowering
         // lambda's own params are fields set by create() on the fresh instance, not by the ctor.
         JsonObject SmTypeLambda(JsonArray invokeBody)
         {
+            var lambdaBaseFqn = _restrictedBase ? RestrictedSuspendLambdaFqn : SuspendLambdaFqn;
             var fields = new JsonArray();
             foreach (var (n, t) in _fieldDecls)
                 fields.Add(new JsonObject { ["name"] = n, ["type"] = t, ["vis"] = "internal" });
@@ -1302,7 +1308,7 @@ static class SuspendColdLowering
                 ["abstract"] = false,
                 ["vis"] = "public",
                 ["isSealed"] = false,
-                ["base"] = _baseIsLocal ? SuspendLambdaFqn : "clr:" + SuspendLambdaFqn,
+                ["base"] = _baseIsLocal ? lambdaBaseFqn : "clr:" + lambdaBaseFqn,
                 ["interfaces"] = new JsonArray(),
                 ["fields"] = fields,
                 ["ctors"] = new JsonArray
@@ -1310,7 +1316,7 @@ static class SuspendColdLowering
                     new JsonObject
                     {
                         ["params"] = ctorParams,
-                        // SuspendLambda(arity: Int, completion: Continuation<Any?>?) — the 2-arg base ctor.
+                        // (Restricted)SuspendLambda(arity: Int, completion: Continuation<Any?>?) — the 2-arg base ctor.
                         ["baseArgs"] = new JsonArray
                         {
                             IntConst(_arity),
