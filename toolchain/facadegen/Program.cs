@@ -358,9 +358,16 @@ static class FacadeGen
                     if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
                     var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                     var ps = m.GetParameters();
-                    if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
+                    // DotKt round-trip (bug ③): an INTERFACE member carries the same no-.NET-analog Kotlin flags a class
+                    // member does — restore infix/operator/suspend + nullability, else the member can't be called as
+                    // `suspend` (nor its `?` seen). A `suspend` member is emitted returning `Task<T>`; gate + map on the
+                    // Kotlin RESULT type, and read the ? from the inner result level (SuspendRetSuffix), not the Task.
+                    var k = KotlinFun(m);
+                    var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
+                    if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
                     if (!iseen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-                    var toks = new List<string> { "fun", m.Name, MapRet(m.ReturnType, t), "abstract" };
+                    var iret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + (k.suspend ? SuspendRetSuffix(m) : RetSuffix(m));
+                    var toks = new List<string> { "fun", m.Name, iret, FunModifier("abstract", k) };
                     var mclr = ClrAttrName(m);   // ref/runtime split: member substitution for a method (get -> get_Item)
                     if (mclr != null) toks.Add("clr:" + mclr);
                     toks.AddRange(gp);
