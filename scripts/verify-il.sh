@@ -34,7 +34,6 @@ declare -A XFAIL_RUN=(
 	[collops2]="bundle-6 P5: cross-module default-argument drop — windowed(3) is emitted with 2 args against the 4-param windowed(iterable,size,step,partialWindows) sig (step=1/partialWindows=false defaults lost by the frontend jar) -> InvalidProgramException (StackUnexpected: List<int32> where Int32 expected). KNOWN BUG cross-module-default-args-not-preserved"
 	[seq]="bundle-6 P5: lifted anon-object MethodAccessException FIXED (CrossClassPrivateWidening + GenericSelfInstantiation); reference-typed sequences construct+iterate, but the VALUE-typed chain (map{it*it}) crashes on the kotc T?->T nullability drop — <>dotkt_obj*.next()'s nextItem:T? field is emitted as value-T (ldnull into a !0 slot / value-T cast as objref)"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
-	[seqyieldall]="bundle-6 P5 BUG Y: bir2cir now emits the disambiguating cold-call \`sig\` (SequenceScope.yieldAll has 3 same-named \$dotkt_suspend overloads) — VERIFIED to run [a,b,c] once ilemit consumes it. PENDING the ilemit companion (out of bir2cir territory): ResolveMethod's pure-reflection-constructed-generic branch (Program.cs:~1342) must try FindReflectedMethodBySig(constructed,name,sig) before the arity-only FindReflectedMethod, and SigTokenMatchesOpen must match a \`clrg:\` token by its generic-type-definition owner (not just IsGenericType) so an open \`gp:T\` arg still distinguishes IEnumerable from Iterator. Without it FindReflectedMethod picks an arbitrary overload -> BadImageFormatException"
 )
 declare -A XFAIL_ILVERIFY=(
 	[collops2]="ilverify formal finding (sample also run-XFAIL: cross-module default-arg drop, windowed(3))"
@@ -45,7 +44,6 @@ declare -A XFAIL_ILVERIFY=(
 	[taskawait]="ilverify formal-only finding (sample runs correct): CallVirtOnValueType — the TaskAwaiter STRUCT's OnCompleted (an interface-impl method) is emitted callvirt without a constrained. prefix by ilemit; benign at runtime (JIT resolves it), the verifiable form is an ilemit constrained.-prefix improvement"
 	[genasync]="ilverify formal-only finding (sample RUNS CORRECT -> 7, genuine .NET-async): same CallVirtOnValueType on the TaskAwaiter struct as taskawait"
 	[cobuild]="ilverify formal-only finding (sample RUNS CORRECT -> 25, genuine .NET-async E2E): same CallVirtOnValueType on the TaskAwaiter struct as taskawait (run-XFAIL pruned: the boxed-enum COROUTINE_SUSPENDED identity was fixed stdlib-side, Intrinsics.kt caches the sentinel box)"
-	[seqyieldall]="ilverify finding paired with run:seqyieldall (BUG Y): until ilemit consumes the cold-call \`sig\` on the external-generic path, the yieldAll\$dotkt_suspend call binds an arbitrary same-arity overload -> the arg/param type mismatch is also an ilverify stack finding. Clears with the same ilemit companion"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on

@@ -1337,9 +1337,15 @@ sealed partial class Emitter
         if (constructed != null && !_types.ContainsKey(open) && !IsTbInstantiation(constructed))
         {
             var argc = sig == null ? -1 : (sig.Length == 0 ? 0 : SplitTopLevel(sig).Count);
+            // Prefer a SIG-DRIVEN pick: a referenced constructed-generic owner can carry same-name/same-arity overloads
+            // that differ only in a PARAM's generic-type owner (SequenceScope<T>.yieldAll$dotkt_suspend over
+            // Iterator<T> vs IEnumerable<T> vs Sequence<T>) — arity alone binds an arbitrary one -> BadImageFormat.
+            // FindReflectedMethodBySig maps the declared-callee `sig` tokens (structurally for open `gp:T` args) to
+            // disambiguate; fall back to the arity pick when no sig is carried (or it can't uniquely resolve).
             // A miss must be a LEGIBLE error (and lets callInstance's dynRet fallback catch it) — an unchecked
             // deref here was an opaque NRE.
-            var rrm = FindReflectedMethod(constructed, name, argc)
+            var rrm = FindReflectedMethodBySig(constructed, name, sig)
+                ?? FindReflectedMethod(constructed, name, argc)
                 ?? throw new NotSupportedException($"method {name} not found on referenced type {constructed}");
             retType = rrm.ReturnType;
             return rrm;
@@ -1905,7 +1911,23 @@ sealed partial class Emitter
         if (tok.StartsWith("nullable:", StringComparison.Ordinal))
             return SigTokenMatchesOpen(tok.Substring(9), p.IsGenericType && p.GetGenericTypeDefinition() == typeof(Nullable<>) ? p.GetGenericArguments()[0] : p);
         if (tok.StartsWith("gp:", StringComparison.Ordinal)) return p.IsGenericParameter;
-        if (tok.StartsWith("clrg:", StringComparison.Ordinal) || tok.StartsWith("func:", StringComparison.Ordinal))
+        if (tok.StartsWith("clrg:", StringComparison.Ordinal))
+        {
+            // Match on the generic-type-DEFINITION owner, not just "is a constructed generic": several same-arity
+            // overloads (SequenceScope.yieldAll over Iterator<T> / IEnumerable<T> / Sequence<T>) all satisfy
+            // IsGenericType, so the loose test binds an arbitrary one. The token's arg (`gp:T`) stays open, but its
+            // OWNER (`System.Collections.Generic.IEnumerable`) still distinguishes IEnumerable<T> from Iterator<T>.
+            if (!p.IsGenericType) return false;
+            var body = tok.Substring(5);
+            var br = body.IndexOf('[');
+            var openName = br < 0 ? body : body.Substring(0, br);
+            var arity = br < 0 ? 0 : SplitTopLevel(body.Substring(br + 1, body.Length - br - 2)).Count;
+            var def = TryResolveType(openName + "`" + arity);
+            // Owner unresolvable (a Kotlin-only alias not in any referenced .NET assembly, e.g. `clrg:Collection[..]`
+            // as a bare name) -> keep the OLD loose shape match rather than falsely reject (strictly additive).
+            return def == null || ReferenceEquals(p.GetGenericTypeDefinition(), def);
+        }
+        if (tok.StartsWith("func:", StringComparison.Ordinal))
             return p.IsGenericType;
         return false;
     }

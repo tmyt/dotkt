@@ -5,6 +5,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit (bundle-6 BUG Y): external constructed-generic method resolution now consumes the cold-call `sig` — unblocks `yieldAll`.**
+  `sequence { yield("a"); yieldAll(listOf("b","c")) }.toList()` BadImageFormatException'd: `SequenceScope<T>` carries three same-name,
+  same-arity `yieldAll$dotkt_suspend` overloads (over `Iterator<T>` / `IEnumerable<T>` / `Sequence<T>`), and `ResolveMethod`'s
+  pure-reflection constructed-generic branch (Program.cs:~1342) bound one by ARITY alone → the wrong overload. It now prefers
+  `FindReflectedMethodBySig(constructed, name, sig)` (falling back to the arity pick), and `SigTokenMatchesOpen`'s `clrg:` branch matches on
+  the generic-type-DEFINITION owner (not merely `IsGenericType`) so an open `gp:T` arg still distinguishes `IEnumerable<T>` from `Iterator<T>`.
+  bir2cir already synthesizes the disambiguating `sig`; ilemit now consumes it. `seqyieldall` runs `a,b,c` + ilverify-clean → pruned from XFAIL.
+
 - **facadegen (bundle-6 ②): async/generic .NET interop — 5 symbol-surface fixes for consuming/building `Task<T>` and generic .NET from Kotlin.**
   All are symbol-face restorations (facadegen reads a CLR dll → FIR-injection metadata); no downstream binding. Gates: verify-il GREEN
   (no NEW-FAIL — c1net/netbase/netgen*/event/taskfam unchanged), verify-ktproj 9/9, verify-roundtrip GREEN (RT_XFAIL suspend baseline unchanged).
