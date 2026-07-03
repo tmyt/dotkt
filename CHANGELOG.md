@@ -5,6 +5,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 ①): coroutine state-machine correctness — try/finally across a suspension ran the finally EARLY + TWICE.**
+  A suspension inside a `try` (the `use{}`/`withLock{}` desugaring) returns `COROUTINE_SUSPENDED` from inside the protected region, so
+  the CLR ran the `finally` on that `leave` (early, before the resume) AND again on the post-resume exit → resources closed before the
+  awaited value was used, `close()` twice. `SuspendColdLowering.EmitTry` now gates a suspending-try's finally on a per-SM `$suspending`
+  flag (set true just before each SUSPENDED return, reset at each `invokeSuspend` entry): the finally is SKIPPED on the suspend-return
+  unwind and runs EXACTLY ONCE at the real normal/exception exit — the C#/JVM state-gated-finally shape. Unblocks `use{}`/`withLock{}`
+  over a suspension. New gate sample `il-cofinally`.
 - **facadegen (bundle-6 ②): async/generic .NET interop — 5 symbol-surface fixes for consuming/building `Task<T>` and generic .NET from Kotlin.**
   All are symbol-face restorations (facadegen reads a CLR dll → FIR-injection metadata); no downstream binding. Gates: verify-il GREEN
   (no NEW-FAIL — c1net/netbase/netgen*/event/taskfam unchanged), verify-ktproj 9/9, verify-roundtrip GREEN (RT_XFAIL suspend baseline unchanged).

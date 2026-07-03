@@ -524,11 +524,39 @@ static class SuspendColdLowering
         }
     }
 
+    // BUG 1: does the subtree contain a `try` whose finally is non-empty AND whose body spans a suspension?
+    // Such a finally needs the $suspending gate (it would otherwise run on the suspend-return leave and again at
+    // exit). SuspensionsSupported guarantees at most one such level (nested suspending try is left untransformed).
+    static bool HasSuspendingFinally(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                if (Str(o["k"]) == "try" && o["finally"] is JsonArray fin && fin.Count > 0
+                    && o["body"] != null && HasSuspension(o["body"]))
+                    return true;
+                foreach (var kv in o) if (kv.Value != null && HasSuspendingFinally(kv.Value)) return true;
+                return false;
+            case JsonArray a:
+                foreach (var it in a) if (it != null && HasSuspendingFinally(it)) return true;
+                return false;
+            default:
+                return false;
+        }
+    }
+
     // --- per-fun code generation -----------------------------------------------------------------------
 
     sealed class FunGen
     {
         const string ThisField = "$this";
+        // BUG 1 (try/finally across a suspension): a boolean SM field gating a suspending-try's finally. Set true
+        // right before every `return COROUTINE_SUSPENDED`, reset false at the top of each invokeSuspend; the
+        // finally runs its real body only when it is false — so it is SKIPPED on the suspend-return unwind (when
+        // the CLR runs the finally on the `leave`) and RUNS EXACTLY ONCE on the post-resume normal/exception exit.
+        // This mirrors the C#/JVM state-gated finally (a per-label finally-route table collapsed to one flag,
+        // valid because SuspensionsSupported admits only a SINGLE level of suspending try).
+        const string SuspendingField = "$suspending";
         // The Task-bridge root sink (a real emitted stdlib class, referenced cross-assembly like ContinuationImpl).
         const string RootContinuationFqn = "kotlin.coroutines.clr.internal.RootContinuation";
         // bundle-6 P4 REVERSE bridge — the facadegen-injected Task.await marker + the BCL awaiter family.
@@ -577,6 +605,7 @@ static class SuspendColdLowering
         int _state;                              // resume-state counter (>=1)
         int _label;                              // label id allocator (above kotc's low ids)
         int _condCounter;
+        bool _needSuspendGuard;                  // fun has a suspending try/finally -> emit the $suspending gate (BUG 1)
         readonly List<(int state, int label)> _dispatch = new();
         readonly Stack<(List<(int state, int label)> inner, int tryEntry)> _tryStack = new();
 
@@ -671,6 +700,9 @@ static class SuspendColdLowering
             // when there is no type clash; a renamed CLONE otherwise (never mutates the shared/retained body).
             body = DisambiguateShadowedVars(body);
             var hasSuspension = HasSuspension(body);
+            // BUG 1: does the body contain a try whose finally spans a suspension? If so, the finally must be
+            // gated (see SuspendingField) so it does not run on the suspend-return unwind and re-run at exit.
+            _needSuspendGuard = hasSuspension && HasSuspendingFinally(body);
 
             if (!_isLambda && !hasSuspension)
             {
@@ -687,6 +719,7 @@ static class SuspendColdLowering
             _label = MaxLabelId(body) + 1000;
 
             AddField("label", "kotlin.Int");
+            if (_needSuspendGuard) AddField(SuspendingField, "kotlin.Boolean");   // BUG 1: the finally gate flag
             if (_isMember) AddField(ThisField, _selfType);          // holds the enclosing (constructed) instance
             if (_isLambda)
                 foreach (var (n, t) in _captures) AddField(n, t);   // captured vars -> ctor-set fields
@@ -700,6 +733,10 @@ static class SuspendColdLowering
                 bodyOut.Add(Ret(NullConst("kotlin.Any")));
 
             var invoke = new JsonArray();
+            // BUG 1: reset the finally gate at every entry (first call + each resume) BEFORE the label dispatch,
+            // so a finally reached on the normal/exception path runs its real body; the suspend-return path sets
+            // it true just before returning SUSPENDED (see the EmitSuspensionPoint/EmitAwaitPoint sites).
+            if (_needSuspendGuard) invoke.Add(SetField(SuspendingField, BoolConst(false)));
             foreach (var (state, label) in _dispatch)
                 invoke.Add(BrIf(BinEq(FieldOf("label", "kotlin.Int"), IntConst(state)), true, label));
             foreach (var st in bodyOut) invoke.Add(st);
@@ -1014,7 +1051,18 @@ static class SuspendColdLowering
                 var finOut = new List<JsonNode>();
                 foreach (var s in fin) EmitStmt(s, finOut);
                 var finArr = new JsonArray();
-                foreach (var st in finOut) finArr.Add(st);
+                // BUG 1: this try body spans a suspension (bodyHasSusp is true here), so its finally would be run
+                // by the CLR on the suspend-return `leave` AND again on the post-resume exit. Gate it on the
+                // $suspending flag: `if ($suspending) goto skip; <finally>; skip:` — skipped on the suspend-return
+                // unwind, run exactly once on the real normal/exception exit.
+                if (_needSuspendGuard)
+                {
+                    var skipL = NextLabel();
+                    finArr.Add(BrIf(FieldOf(SuspendingField, "kotlin.Boolean"), true, skipL));
+                    foreach (var st in finOut) finArr.Add(st);
+                    finArr.Add(Label(skipL));
+                }
+                else foreach (var st in finOut) finArr.Add(st);
                 tryNode["finally"] = finArr;
             }
             outp.Add(tryNode);
@@ -1149,6 +1197,7 @@ static class SuspendColdLowering
                 ["l"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
                 ["r"] = Suspended(),
             }, false, resumeLabel));
+            if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));   // BUG 1: mark the suspend-return
             outp.Add(Ret(Suspended()));
             outp.Add(Label(resumeLabel));
             outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ThrowOnFailure() });
@@ -1231,6 +1280,7 @@ static class SuspendColdLowering
                 ["l"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
                 ["r"] = Suspended(),
             }, false, resumeLabel));
+            if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));   // BUG 1: mark the suspend-return
             outp.Add(Ret(Suspended()));
             outp.Add(Label(resumeLabel));
             outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ThrowOnFailure() });
@@ -1359,6 +1409,7 @@ static class SuspendColdLowering
                     ["ret"] = "void",
                 },
             });
+            if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));   // BUG 1: mark the suspend-return
             outp.Add(Ret(Suspended()));
             outp.Add(Label(afterLabel));
 
@@ -2096,6 +2147,7 @@ static class SuspendColdLowering
 
         static JsonObject Ret(JsonNode value) => new() { ["k"] = "return", ["value"] = value };
         static JsonObject IntConst(int v) => new() { ["k"] = "const", ["type"] = "kotlin.Int", ["value"] = v };
+        static JsonObject BoolConst(bool v) => new() { ["k"] = "const", ["type"] = "kotlin.Boolean", ["value"] = v };
         static JsonObject NullConst(string type) => new() { ["k"] = "const", ["type"] = type, ["value"] = null };
         static JsonObject Label(int id) => new() { ["k"] = "label", ["id"] = id };
         static JsonObject Goto(int id) => new() { ["k"] = "goto", ["id"] = id };

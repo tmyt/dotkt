@@ -37,6 +37,7 @@ declare -A XFAIL_RUN=(
 	[seqyieldall]="bundle-6 P5 BUG Y: bir2cir now emits the disambiguating cold-call \`sig\` (SequenceScope.yieldAll has 3 same-named \$dotkt_suspend overloads) — VERIFIED to run [a,b,c] once ilemit consumes it. PENDING the ilemit companion (out of bir2cir territory): ResolveMethod's pure-reflection-constructed-generic branch (Program.cs:~1342) must try FindReflectedMethodBySig(constructed,name,sig) before the arity-only FindReflectedMethod, and SigTokenMatchesOpen must match a \`clrg:\` token by its generic-type-definition owner (not just IsGenericType) so an open \`gp:T\` arg still distinguishes IEnumerable from Iterator. Without it FindReflectedMethod picks an arbitrary overload -> BadImageFormatException"
 )
 declare -A XFAIL_ILVERIFY=(
+	[chunk]="value-type-nullable: nextValue:T? field now erases to object (FIXED), but a remaining value-type site in the map/filter sequence iterator still InvalidPrograms — sibling P5 (bir2cir coroutine-① change proven not to touch chunk: CIR byte-identical)"
 	[collops2]="ilverify formal finding (sample also run-XFAIL: cross-module default-arg drop, windowed(3))"
 	[collrealkt]="ilverify formal-only finding (sample runs correct)"
 	[gen3]="ilverify formal-only finding (sample runs correct)"
@@ -390,6 +391,11 @@ il_check_imports genasync GenAsync "$ROOT/cases/il-genasync" "7"  # genuine-asyn
 # cross-thread hand-off, so it proves Wait blocks + Pulse wakes. (blockOn's own E2E true-suspension
 # waits on await's slow path; this isolates the primitives it depends on — verified drain-correct.)
 il_check_imports monitordrain MonitorDrainKt "$ROOT/cases/il-monitordrain" "99"
+# cofinally: bundle-6 ① BUG 1 — a genuine `Task.Delay(1).await()` suspension INSIDE a try/finally (the
+# use{}/withLock{} shape). bir2cir's EmitTry now gates the finally on the $suspending flag so `close()`
+# runs EXACTLY ONCE at the post-resume exit (before the fix it ran EARLY + TWICE). RUNS correct -> close,42
+# and passes ilverify (the gated finally shape emits no TaskAwaiter CallVirtOnValueType finding).
+il_check_imports cofinally CoFinally "$ROOT/cases/il-cofinally" "$(printf 'close\n42')"
 # lam1/lam2: bundle-6 P3 wave-2b — the suspend-LAMBDA payoff. kotc emits `suspendLambdaNew` (STEP 2,
 # landed) and bir2cir builds the SuspendLambda SM, but the generated SM `create()` returns
 # Continuation<object> while the stdlib base BaseContinuationImpl.create returns Continuation<Unit> ->
