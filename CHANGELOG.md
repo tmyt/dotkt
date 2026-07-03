@@ -12,6 +12,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   flag (set true just before each SUSPENDED return, reset at each `invokeSuspend` entry): the finally is SKIPPED on the suspend-return
   unwind and runs EXACTLY ONCE at the real normal/exception exit — the C#/JVM state-gated-finally shape. Unblocks `use{}`/`withLock{}`
   over a suspension. New gate sample `il-cofinally`.
+- **bir2cir (bundle-6 ①): coroutine state-machine correctness — a suspend call as the RIGHT operand reordered the LEFT past the suspension.**
+  In `side() + g()` (g suspend) the side-effecting left operand was left inline in the returned expression and evaluated AFTER g()'s
+  suspension segment, violating Kotlin's strict left-to-right order. `SuspendColdLowering.Rewrite` now evaluates ordered operands
+  (`bin` l/r, call/`new` recv+args, and a suspend call's own args) left-to-right and SPILLS any impure operand preceding a suspension
+  into a temp SM field first (typed via a global method-return index). Pure reads (const/local/field) stay inline (output byte-identical
+  for the common `acc + one()` case). New gate sample `il-coevalorder`.
 - **facadegen (bundle-6 ②): async/generic .NET interop — 5 symbol-surface fixes for consuming/building `Task<T>` and generic .NET from Kotlin.**
   All are symbol-face restorations (facadegen reads a CLR dll → FIR-injection metadata); no downstream binding. Gates: verify-il GREEN
   (no NEW-FAIL — c1net/netbase/netgen*/event/taskfam unchanged), verify-ktproj 9/9, verify-roundtrip GREEN (RT_XFAIL suspend baseline unchanged).

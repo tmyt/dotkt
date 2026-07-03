@@ -396,6 +396,10 @@ il_check_imports monitordrain MonitorDrainKt "$ROOT/cases/il-monitordrain" "99"
 # runs EXACTLY ONCE at the post-resume exit (before the fix it ran EARLY + TWICE). RUNS correct -> close,42
 # and passes ilverify (the gated finally shape emits no TaskAwaiter CallVirtOnValueType finding).
 il_check_imports cofinally CoFinally "$ROOT/cases/il-cofinally" "$(printf 'close\n42')"
+# coevalorder: bundle-6 ① BUG 2 — strict left-to-right eval across a suspension. In `side() + g()` (g
+# suspend), bir2cir now spills the impure LEFT operand into an SM field BEFORE g()'s suspension segments
+# so its side effect (println "L") happens before g()'s ("G"). Before the fix: G,L; after: L,G,3.
+il_check coevalorder CoEvalOrder "$ROOT/cases/il-coevalorder" "$(printf 'L\nG\n3')"
 # lam1/lam2: bundle-6 P3 wave-2b — the suspend-LAMBDA payoff. kotc emits `suspendLambdaNew` (STEP 2,
 # landed) and bir2cir builds the SuspendLambda SM, but the generated SM `create()` returns
 # Continuation<object> while the stdlib base BaseContinuationImpl.create returns Continuation<Unit> ->
