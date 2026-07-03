@@ -630,7 +630,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `attrs`: ride the @Clr/[Kotlin*] metadata so the ref assembly carries the BCL binding hint (for app-emit
 			// substitution). For a PROPERTY accessor the binding is on the property (size @ClrIntrinsic("Count")), so read from there.
 			val memberAttrs = attrsJson((prop ?: fn).annotations)
-			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}$retNull,"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
+			// A `suspend fun` interface member carries the SAME neutral `"suspend":true`+`resultType` FACT the concrete
+			// `method()` path emits (BirEmitter.kt:1413). Without it bir2cir has nothing to key off for an INTERFACE
+			// suspend member — it can't synthesize the Task-bridge signature / cold-entry — so a cross-assembly
+			// `interface Fetcher { suspend fun fetch(): Int }` round-trip breaks (the abstract-CLASS path already tags it).
+			val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${str(if (fn.returnType.isUnit()) "void" else birType(fn.returnType))}""" else ""
+			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}$retNull$suspendField,"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 			.filterNot { it.signatureMentionsJava() }

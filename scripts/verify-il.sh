@@ -262,6 +262,11 @@ il_check coldabstract ColdAbstract "$ROOT/cases/il-coldabstract" "42"
 # entry + an abstract Task<Int> bridge ([KotlinFunction(Suspend)]); Impl overrides both in lockstep; `b.poll()`
 # (b: Base) dispatches virtually through the cold entry. Runs sync -> 42 (no await, so ilverify-clean).
 il_check coldabstract ColdAbstract "$ROOT/cases/il-coldabstract" "42"
+# ifacesuspend: bundle-6 ③ — the INTERFACE half of the abstract/interface suspend round-trip. kotc now tags an
+# interface `suspend fun` member with the neutral `"suspend":true`+`resultType` FACT (mirroring the abstract-CLASS
+# path), so bir2cir can synthesize the interface cold entry / Task<Int> bridge; Fetcher42 overrides both; `f.fetch()`
+# (f: Fetcher) dispatches virtually through the interface cold entry. Runs sync -> 42.
+il_check ifacesuspend IfaceSuspend "$ROOT/cases/il-ifacesuspend" "42"
 # seqyieldall: yieldAll E2E over the cold core — bir2cir cold-call `sig` disambiguates SequenceScope.yieldAll's
 # three same-named `$dotkt_suspend` overloads + ilemit sig-driven external-generic resolution (both landed).
 il_check seqyieldall SeqYieldAll "$ROOT/cases/il-seqyieldall" "$(printf 'a,b,c')"

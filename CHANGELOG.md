@@ -5,6 +5,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc (bundle-6 ③): an INTERFACE `suspend fun` member now carries the `suspend`/`resultType` FACT in the BIR.**
+  For `interface Fetcher { suspend fun fetch(): Int }`, kotc's interface-member emission (`ifaceMethod`,
+  `BirEmitter.kt`) dropped the neutral `"suspend":true`+`resultType` fact that the concrete/abstract-class
+  method path already emits (`BirEmitter.kt:1413`) — so the member serialized as a plain abstract slot
+  (`{name:fetch, virtual:true, ret:kotlin.Int}`, no `suspend`). bir2cir therefore had nothing to key off and
+  could not synthesize the interface cold-entry / `Task<Int>` bridge, leaving the interface half of the
+  abstract/interface suspend round-trip broken (the abstract-CLASS half already worked, `il-coldabstract`).
+  Fix: `ifaceMethod` now appends the same `if (fn.isSuspend) ""","suspend":true,"resultType":…"""` fragment.
+  Interface member BIR before → after: `…"ret":"kotlin.Int","body":[]…` → `…"ret":"kotlin.Int","suspend":true,"resultType":"kotlin.Int","body":[]…`.
+  E2E: new `cases/il-ifacesuspend` (`blockOn { f.fetch() }` through an interface, virtual dispatch to the
+  override) runs → `42` with the bir2cir sibling's cold-core lowering; no additional bir2cir work was needed.
+  `verify-il` GREEN, `verify-ktproj` 9/9.
 - **kotc (CRITICAL: ref/rt stdlib build un-broken): a `mapOf(this[0])` NPE was silently dropping ~120 stdlib type-defs.**
   `make stdlib-ref` was crashing downstream with `NotSupportedException: cannot resolve .NET type kotlin.sequences.Sequence`
   because kotc was emitting only **460** type-defs (vs the cached **777**): `kotlin.sequences.Sequence`, the 8 primitive
