@@ -5,6 +5,36 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 BUG-1): value-type `asSequence().filter{}` (and any nullable-gp sentinel property) no longer
+  `InvalidProgram`s.** A generic iterator's `var nextItem: T? = null` backing field already erased to `System.Object`
+  (it must, to hold a real null for a value-type `T`), but its ACCESSOR methods (`get_nextItem`/`set_nextItem`) and the
+  reader local (`var result = nextItem` before `return result as T`) stayed `gp:T` — so `set_nextItem(null)` pushed
+  `ldnull` into a value-type `gp:T` param slot and `calcNext`'s `set_nextItem(item)` pushed an unboxed `!T` into the
+  (partly-erased) `object` param, both invalid IL. `NullableGenericReturnErasure` now drags a nullable-gp property's
+  get_/set_ accessors to `object`, retypes the getter-reader local to `object`, and wraps each erased-setter arg in a
+  `cast`->`object` (forcing the value->object box even where ilemit can't read the re-anchored generic self-call's param
+  types). Value-type Sequence chains (`filter`/`filterNot`/`map`/`take`/`first`/`count`) now run; new `cases/il-seqfilter`
+  prints `3,4,5,6 / 20,40,60 / 4 / 3,4,5,6 / 3`. `run:seq` narrowed from an InvalidProgram to a lone `single{}`
+  value-type-nullable-LOCAL NRE (the local twin, pending a kotc local-nullable marker) — XFAIL reason updated.
+- **bir2cir (bundle-6 BUG-4): `CharSequence.subSequence(start, end)` evaluates `start` exactly once.** The rewrite to
+  `String.Substring(start, end - start)` reused the `start` expression BOTH as Substring's first arg and inside the
+  length `end - start`, so a side-effecting start index ran twice. It now spills the receiver and `start` to `valueBlock`
+  temps (evaluated once, in Kotlin order: receiver, start, end). New `cases/il-subseq` (`subSequence(start(), 4)`) prints
+  `ell / 1` (start() ran once).
+- **bir2cir (bundle-6 BUG-3, latent): the CharSequence->String coercion snapshot is null-safe.** `CoerceOrNull` emitted a
+  bare `objMethod ToString` (`callvirt object::ToString`) which NREs on a null receiver; it now routes through the
+  null-safe `Any?.toString()` stdlib extension (`kotlin.LibraryKt.toString` == `this?.toString() ?: "null"`), preserving
+  the virtual StringBuilder/Any dispatch. `nullable.toString()` -> `"null"` is verified end-to-end by new
+  `cases/il-nulltostr` (`null / abc / null / v=null`). (A separate `Int?.toString()` `InvalidProgram` — an ilemit
+  gap: `EmitCallArgs` does not box a value-type-nullable arg into a REFERENCED method's `object` param on the `pt==null`
+  path — is reported for the codegen layer.)
+- **bir2cir (bundle-6 BUG-2, latent hardening): the member-call substitution context (`SubstCtx`) now records a
+  method/lambda's own local `var` decls, so a local that SHADOWS a same-named param wins.** Previously only params entered
+  `VarTypes`, so a shadowing local was skipped and a call whose receiver was that local kept the param's (possibly `gp:`)
+  type — mis-routing `Constrainify` to a constrained dispatch. `Extend` now walks a param-bearing decl's body once
+  (stopping at nested param-bearing decls) and records local var name->type after params. Gate-neutral (no reachable
+  regression in the collection hot path).
+
 - **kotc (bundle-6 ③): an INTERFACE `suspend fun` member now carries the `suspend`/`resultType` FACT in the BIR.**
   For `interface Fetcher { suspend fun fetch(): Int }`, kotc's interface-member emission (`ifaceMethod`,
   `BirEmitter.kt`) dropped the neutral `"suspend":true`+`resultType` fact that the concrete/abstract-class

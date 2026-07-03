@@ -33,7 +33,7 @@ declare -A XFAIL_RUN=(
 	[iscoll]="star-projection is-test: `x is Collection<*>` lowering to non-generic ICollection (Fix #6) made the is-test true for value-type collections but the smart-cast member access (this.size) still castclasses the reified IReadOnlyCollection<object> -> InvalidCast, regressing map/filter; reverted, needs full star-cast+member-access lowering"
 	[chunk]="bundle-6 P5: cold-core sequences RUN (chunk output correct); the tail filterNotNull() on List<Int?> NREs on the value-type-nullable T?->T drop. kotc NOW emits the nullable:gp:T type-arg marker on Iterable<T?> (filterNotNullTo receiver); PENDS the bir2cir consumer that erases the marked arg -> object (sibling P5). Until then forEachInline unboxes a null Nullable<Int> to Int"
 	[collops2]="bundle-6 P5: cross-module default-argument drop — windowed(3) is emitted with 2 args against the 4-param windowed(iterable,size,step,partialWindows) sig (step=1/partialWindows=false defaults lost by the frontend jar) -> InvalidProgramException (StackUnexpected: List<int32> where Int32 expected). KNOWN BUG cross-module-default-args-not-preserved"
-	[seq]="bundle-6 P5: lifted anon-object MethodAccessException FIXED (CrossClassPrivateWidening + GenericSelfInstantiation); reference-typed sequences construct+iterate, but the VALUE-typed chain (map{it*it}) crashes on the kotc T?->T nullability drop — <>dotkt_obj*.next()'s nextItem:T? field is emitted as value-T (ldnull into a !0 slot / value-T cast as objref)"
+	[seq]="bundle-6: value-type Sequence chains (map/filter/take/takeWhile/dropWhile/first/count/sum) now RUN — the FilteringSequence value-type crash is FIXED (bir2cir nullable-gp PROPERTY accessor+reader erasure + setter-arg box). Remaining fail is the LAST line only: the inline single{} terminal's value-type-nullable LOCAL 'var single: T? = null' has NO kotc nullable-marker on the local (dropped T?->gp:T), so it stays gp:T and 'single as T' NREs. This is the LOCAL twin of the landed field/property erasure and PENDS a kotc local-nullable marker + bir2cir consumer (out of the FilteringSequence fix's scope)"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
 )
 declare -A XFAIL_ILVERIFY=(
@@ -325,6 +325,9 @@ il_check charseq CS "$ROOT/cases/il-charseq" "$(printf '5\ne\n3\ne\n5')"
 il_check charseqx CSX "$ROOT/cases/il-charseqx" "$(printf 'False\nFalse')"
 il_check charseqs CSStr "$ROOT/cases/il-charseqs" "$(printf '5\ne\nllo\n5\n3\n3\nTrue\nTrue')"
 il_check substr Substr "$ROOT/cases/il-substr" "$(printf 'ell\nworld\nhello\nworld')"
+il_check subseq SubSeq "$ROOT/cases/il-subseq" "$(printf 'ell\n1\nhel\nllo')"
+il_check seqfilter SeqFilter "$ROOT/cases/il-seqfilter" "$(printf '3,4,5,6\n20,40,60\n4\n3,4,5,6\n3')"
+il_check nulltostr NullToStr "$ROOT/cases/il-nulltostr" "$(printf 'null\nabc\nnull\nv=null')"
 il_check result Result "$ROOT/cases/il-result" "$(printf 'True\n10\n10\nTrue\n\n-99\nneg -1\n\nfb')"
 il_check genstatic GenStatic "$ROOT/cases/il-genstatic" "$(printf '42\nTrue\nTrue\nboom\nhi')"
 il_check bmore BMore "$ROOT/cases/il-bmore" "$(printf '5 items\nx = 42\n3.14\n00007\nff\n100%% ok: yes\n0:a,1:b,2:c\n0,20,60')"

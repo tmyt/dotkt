@@ -2679,6 +2679,8 @@ static class DefaultArgSplice
 static class CharSeqStringLowering
 {
     const string CharSeq = "<>dotkt_CharSequence";
+    // Monotonic counter for unique subSequence receiver/start spill-temp names (BUG-4 single-eval rewrite).
+    static int _subSeqTmp;
     static readonly HashSet<string> StringTokens = new(StringComparer.Ordinal)
         { "kotlin.String", "System.String", "string" };
 
@@ -2875,15 +2877,31 @@ static class CharSeqStringLowering
                 };
             case "subSequence":
                 if (args == null || args.Count < 2) return null;
+                // `cs.subSequence(a, b)` -> `cs.Substring(a, b - a)`. `a` (start) is needed BOTH as Substring's
+                // start arg AND inside the length `b - a`, so a naive rewrite evaluates `a` twice — a side-effecting
+                // start index runs twice (bundle-6 BUG-4). Spill the receiver and start to temps (a `valueBlock`) so
+                // each subexpression evaluates exactly once, in Kotlin order (receiver, then start, then end).
+                var id = System.Threading.Interlocked.Increment(ref _subSeqTmp);
+                var recvTmp = "$subSeqRecv$" + id;
+                var startTmp = "$subSeqStart$" + id;
                 return new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = "System.String", ["method"] = "Substring",
-                    ["argTypes"] = new JsonArray { "System.Int32", "System.Int32" }, ["ret"] = "System.String",
-                    ["recv"] = recv?.DeepClone(),
-                    ["args"] = new JsonArray
+                    ["k"] = "valueBlock",
+                    ["stmts"] = new JsonArray
                     {
-                        args[0].DeepClone(),
-                        new JsonObject { ["k"] = "bin", ["op"] = "-", ["l"] = args[1].DeepClone(), ["r"] = args[0].DeepClone() },
+                        new JsonObject { ["k"] = "var", ["name"] = recvTmp, ["type"] = "System.String", ["init"] = recv?.DeepClone() },
+                        new JsonObject { ["k"] = "var", ["name"] = startTmp, ["type"] = "System.Int32", ["init"] = args[0].DeepClone() },
+                    },
+                    ["result"] = new JsonObject
+                    {
+                        ["k"] = "clrInstance", ["type"] = "System.String", ["method"] = "Substring",
+                        ["argTypes"] = new JsonArray { "System.Int32", "System.Int32" }, ["ret"] = "System.String",
+                        ["recv"] = new JsonObject { ["k"] = "local", ["name"] = recvTmp },
+                        ["args"] = new JsonArray
+                        {
+                            new JsonObject { ["k"] = "local", ["name"] = startTmp },
+                            new JsonObject { ["k"] = "bin", ["op"] = "-", ["l"] = args[1].DeepClone(), ["r"] = new JsonObject { ["k"] = "local", ["name"] = startTmp } },
+                        },
                     },
                 };
             default:
@@ -2892,12 +2910,22 @@ static class CharSeqStringLowering
     }
 
     // A value flowing into a now-`string` slot: a provably-String value needs NO coercion (return null); anything else
-    // (a StringBuilder, an Any) is snapshot via a virtual `.toString()` (objMethod ToString — the returned wrapper is a
-    // fresh, detached node). Callers assign the wrapper only when non-null, avoiding a JsonNode reparenting error.
+    // (a StringBuilder, an Any) is snapshot via `.toString()` (the returned wrapper is a fresh, detached node). Callers
+    // assign the wrapper only when non-null, avoiding a JsonNode reparenting error.
+    //
+    // NULL-SAFE (bundle-6 BUG-3): a bare `objMethod ToString` (callvirt object::ToString) NREs when `value` is null —
+    // Kotlin's `x.toString()` on a null yields "null". Route through the `Any?.toString()` stdlib extension
+    // (`kotlin.LibraryKt.toString` == `this?.toString() ?: "null"`), which is null-safe AND preserves the virtual
+    // dispatch for a StringBuilder/Any (its `this?.toString()` calls the member override). `value` here is always a
+    // CharSequence/StringBuilder/Any REFERENCE (it flows into a string slot), so no value->object boxing is needed.
     static JsonNode CoerceOrNull(JsonNode value, Env env)
     {
         if (IsStaticString(value, env)) return null;
-        return new JsonObject { ["k"] = "objMethod", ["method"] = "ToString", ["recv"] = value.DeepClone() };
+        return new JsonObject
+        {
+            ["k"] = "callStatic", ["owner"] = "kotlin.LibraryKt", ["method"] = "toString",
+            ["sig"] = "object", ["args"] = new JsonArray { value.DeepClone() },
+        };
     }
 
     // POSITIVE static-String detection (mirrors StringCharSequenceBridge.IsStaticString, extended with dynRet and the
@@ -3308,11 +3336,108 @@ static class NullableGenericReturnErasure
         // the `?`, so a value-type instantiation stores default(T)=0 instead of a real null). Rewrite the `type` to
         // `object` so the slot becomes a reference slot holding a genuine null; ilemit boxes the value store and the
         // read boundary re-narrows (unbox.any / castclass), mirroring the return-erasure boundary handling.
+        //
+        // ACCESSOR + READER consistency (bundle-6 BUG-1: value-type `asSequence().filter{}` InvalidProgram). The
+        // erased-to-`object` property must ALSO drag its ACCESSOR methods to `object` — otherwise `get_nextItem():gp:T`
+        // reads the object field and returns an unboxed gp:T (invalid), and `set_nextItem(null)` pushes ldnull into a
+        // value-type gp:T param slot (invalid). ilemit boxes a value arg into an object param and unbox.any's an
+        // `as T` cast, but it does NOT unbox object->gp:T on a bare store/return. So we (a) retype the getter return
+        // and setter param to `object`, and (b) retype any local `var` initialized from that getter to `object`, so
+        // the trailing `result as T` (already present: `return result as T`) performs the single unbox.any. The
+        // property METADATA row was already erased to object above, keeping row/getter/setter coherent (ilverify-clean).
+        var getters = new HashSet<string>(StringComparer.Ordinal);
+        var setters = new HashSet<string>(StringComparer.Ordinal);
+        CollectNullableAccessors(o["properties"], getters, setters);
         EraseNullableGpDecls(o["fields"]);
         EraseNullableGpDecls(o["properties"]);
+        if ((getters.Count > 0 || setters.Count > 0) && o["methods"] is JsonArray ms2)
+        {
+            foreach (var m in ms2)
+                if (m is JsonObject mo && (mo["name"] as JsonValue)?.GetValue<string>() is string nm)
+                {
+                    if (getters.Contains(nm)) mo["ret"] = "object";
+                    if (setters.Contains(nm) && mo["params"] is JsonArray ps)
+                        foreach (var p in ps)
+                            if (p is JsonObject po && (po["type"] as JsonValue)?.GetValue<string>() is string pt
+                                && pt.StartsWith("gp:", StringComparison.Ordinal))
+                                po["type"] = "object";
+                }
+            if (getters.Count > 0)
+                foreach (var m in ms2)
+                    if (m is JsonObject mo) RetypeGetterReaderVars(mo["body"], getters);
+            // Force the value->object box at each CALL to an erased setter. ilemit cannot read the param types off a
+            // TypeBuilder-re-anchored generic self-call (`set_nextItem` on `<>dotkt_obj146[gp:T]`), so its arg-coercion
+            // silently skips the box: a `gp:T` value arg lands on the stack unboxed where the now-`object` param wants a
+            // reference -> InvalidProgram in calcNext. Wrapping the arg in an explicit `cast`->object boxes it from the
+            // SOURCE type (ilemit's cast emitter boxes a value/generic-param source), independent of param-type lookup.
+            if (setters.Count > 0)
+                foreach (var m in ms2)
+                    if (m is JsonObject mo) WrapErasedSetterArgs(mo["body"], setters);
+        }
         // Nested types (a generic class' member methods / fields) carry their own declaration lists.
         if (o["types"] is JsonArray types)
             foreach (var t in types) if (t is JsonObject to) ApplyRec(to);
+    }
+
+    // Wrap each argument of a `callInstance` to an erased setter (`set_X` in `setters`) in a `cast`->`object`, so ilemit
+    // boxes a value/generic-param arg into the erased `object` param even when it can't resolve the re-anchored generic
+    // method's param types. A `null`/already-reference arg becomes a redundant `castclass object` (valid, no box).
+    static void WrapErasedSetterArgs(JsonNode node, HashSet<string> setters)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "callInstance"
+                    && (obj["method"] as JsonValue)?.TryGetValue<string>(out var mn) == true && setters.Contains(mn)
+                    && obj["args"] is JsonArray a)
+                    for (var i = 0; i < a.Count; i++)
+                        if (a[i] is JsonObject arg && (arg["k"] as JsonValue)?.GetValue<string>() != "cast")
+                            a[i] = new JsonObject { ["k"] = "cast", ["type"] = "object", ["e"] = arg.DeepClone() };
+                foreach (var kv in obj) WrapErasedSetterArgs(kv.Value, setters);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) WrapErasedSetterArgs(it, setters);
+                break;
+        }
+    }
+
+    // Record the get_/set_ accessor names of every nullable generic-parameter PROPERTY (`type:"gp:T"` + `nullable:true`)
+    // — captured BEFORE EraseNullableGpDecls rewrites the property type to `object` (the `gp:` test would then miss).
+    static void CollectNullableAccessors(JsonNode arr, HashSet<string> getters, HashSet<string> setters)
+    {
+        if (arr is not JsonArray a) return;
+        foreach (var d in a)
+            if (d is JsonObject po
+                && (po["nullable"] as JsonValue)?.TryGetValue<bool>(out var nb) == true && nb
+                && (po["type"] as JsonValue)?.TryGetValue<string>(out var pt) == true
+                && pt.StartsWith("gp:", StringComparison.Ordinal))
+            {
+                if ((po["get"] as JsonValue)?.TryGetValue<string>(out var g) == true && g != null) getters.Add(g);
+                if ((po["set"] as JsonValue)?.TryGetValue<string>(out var s) == true && s != null) setters.Add(s);
+            }
+    }
+
+    // Retype a local `var x: gp:T = <call to an erased getter>()` slot to `object`, so the object value read from the
+    // now-`object` getter is held in a reference local until an explicit `as T` re-narrows it. Only the direct
+    // reader-local pattern (init is a callInstance to a getter in `getters`); other uses re-narrow via their own cast.
+    static void RetypeGetterReaderVars(JsonNode node, HashSet<string> getters)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "var"
+                    && (obj["type"] as JsonValue)?.TryGetValue<string>(out var vt) == true
+                    && vt.StartsWith("gp:", StringComparison.Ordinal)
+                    && obj["init"] is JsonObject init
+                    && (init["k"] as JsonValue)?.TryGetValue<string>(out var ik) == true && ik == "callInstance"
+                    && (init["method"] as JsonValue)?.TryGetValue<string>(out var im) == true && getters.Contains(im))
+                    obj["type"] = "object";
+                foreach (var kv in obj) RetypeGetterReaderVars(kv.Value, getters);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) RetypeGetterReaderVars(it, getters);
+                break;
+        }
     }
 
     // A field/property whose slot is a nullable generic parameter (`type:"gp:T"` + sibling `nullable:true`) -> the
@@ -3737,6 +3862,14 @@ static class MemberCallSubstitution
         }
         // A child scope extended with this declaration's params + generic-parameter constraints. Returns `this`
         // unchanged when the node introduces no bindings (so plain nodes don't allocate a scope).
+        //
+        // SHADOWED-LOCAL disambiguation (bundle-6 BUG-2): a method/lambda's own local `var` decls must ALSO enter
+        // VarTypes, so a `var x` that SHADOWS a same-named param `x` of a different type wins (its own type is what a
+        // receiver read resolves to). Without this, a shadowing local was skipped and a call whose receiver is the
+        // local kept the PARAM's (possibly `gp:`) type — mis-routing Constrainify to a constrained dispatch on a
+        // concrete-typed local. Recorded AFTER params so the local shadows; scoped to this decl's own body (the walk
+        // stops at a nested param-bearing decl, so an inner lambda's locals don't leak up). Mirrors the SM's
+        // DisambiguateShadowedVars intent (a same-name local of a different type is a distinct binding).
         public SubstCtx Extend(JsonObject decl)
         {
             var ps = decl["params"] as JsonArray;
@@ -3754,7 +3887,29 @@ static class MemberCallSubstitution
                         && to["constraints"] is JsonArray cs)
                         child.TpConstraints[tn] = cs.Select(c => (c as JsonValue)?.GetValue<string>())
                                                     .Where(c => c != null).ToList();
+            // Only a param-bearing decl can have a local shadow a param; walk its body once to record local vars.
+            if (ps != null && ps.Count > 0 && decl["body"] is JsonNode body) RecordLocalVars(body, child.VarTypes);
             return child;
+        }
+
+        // Record the `var name/type` of every local declaration in this decl's own body, so a local shadows a
+        // same-named param. Stops at a nested param-bearing declaration (an inner lambda/fun scopes its own locals).
+        static void RecordLocalVars(JsonNode node, Dictionary<string, string> vars)
+        {
+            switch (node)
+            {
+                case JsonObject o:
+                    if ((o["k"] as JsonValue)?.GetValue<string>() == "var"
+                        && (o["name"] as JsonValue)?.GetValue<string>() is string vn
+                        && (o["type"] as JsonValue)?.GetValue<string>() is string vt)
+                        vars[vn] = vt;
+                    if (o["params"] is JsonArray ip && ip.Count > 0) return;   // nested decl: its locals are its own
+                    foreach (var kv in o) if (kv.Value != null) RecordLocalVars(kv.Value, vars);
+                    break;
+                case JsonArray a:
+                    foreach (var it in a) if (it != null) RecordLocalVars(it, vars);
+                    break;
+            }
         }
     }
 
