@@ -169,7 +169,12 @@ static class SuspendLambdaLowering
         var argTypes = new JsonArray();
         foreach (var (n, t) in captures)
         {
-            args.Add(new JsonObject { ["k"] = "local", ["name"] = n });
+            // `__outer` is kotc's name for a captured enclosing `<this>`/extension-receiver — it has no local
+            // at the emit site; it reads as `this` (mirroring kotc's closureNew capValueExpr). Every other
+            // capture is a real local.
+            args.Add(n == "__outer"
+                ? new JsonObject { ["k"] = "this" }
+                : new JsonObject { ["k"] = "local", ["name"] = n });
             argTypes.Add(t);
         }
         args.Add(new JsonObject { ["k"] = "const", ["type"] = ContinuationOfAny, ["value"] = null });
