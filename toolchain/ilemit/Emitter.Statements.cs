@@ -17,17 +17,6 @@ sealed partial class Emitter
             {
                 var vname = s.GetProperty("name").GetString();
                 var declared = MapType(s.GetProperty("type").GetString());
-                // In a coroutine, a `var` declaring a cpsField is a STORE into the SM field (no IL local).
-                if (_coFields != null && _coFields.TryGetValue(vname, out var cf))
-                {
-                    if (s.TryGetProperty("init", out var cinit) && cinit.ValueKind != JsonValueKind.Null)
-                    {
-                        _il.Emit(OpCodes.Ldarg_0);
-                        EmitStoreCoerced(cinit, cf.FieldType);
-                        _il.Emit(OpCodes.Stfld, cf);
-                    }
-                    break;
-                }
                 var local = _il.DeclareLocal(declared);
                 _locals[vname] = local;
                 if (s.TryGetProperty("init", out var init) && init.ValueKind != JsonValueKind.Null)
@@ -42,13 +31,6 @@ sealed partial class Emitter
             case "setLocal":
             {
                 var sname = s.GetProperty("name").GetString();
-                if (_coFields != null && _coFields.TryGetValue(sname, out var sf))
-                {
-                    _il.Emit(OpCodes.Ldarg_0);
-                    EmitStoreCoerced(s.GetProperty("value"), sf.FieldType);
-                    _il.Emit(OpCodes.Stfld, sf);
-                    break;
-                }
                 if (_locals.TryGetValue(sname, out var slb)) { EmitStoreCoerced(s.GetProperty("value"), slb.LocalType); _il.Emit(OpCodes.Stloc, slb); }
                 else if (_args.TryGetValue(sname, out var sa)) { EmitStoreCoerced(s.GetProperty("value"), _argTypes[sname]); _il.Emit(OpCodes.Starg, sa); }
                 else throw new NotSupportedException("store unknown var " + sname);

@@ -5,6 +5,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit (bundle-6 P5 Phase-B): delete the dead coroutine/sequence CODEGEN — ilemit is now coroutine-free.**
+  After the A2 ignition + the kotc CPS-engine deletion, NOTHING produces the old CPS/sequence CIR any more (the
+  cold-core lowering in bir2cir synthesizes the state machine as ordinary `ContinuationImpl` CIR classes + a public
+  `Task<T>` bridge carrying `suspendBridge`). ilemit's old state-machine codegen was therefore unreachable dead code.
+  Removed `Emitter.Coroutines.cs` in full (~782 lines: `EmitCoroutine`/`steps`, `EmitCoroutineClass`/`coClass`,
+  `EmitSequenceSm`/`sequenceNew`, `EmitCoSuspend`/`EmitCoSuspendClass`/`EmitCoSuspendIntrinsicClass`/`EmitCoTryEnd`
+  and the `SmField`/`SmCtor`/`GenM`/`CtorOf` helpers) — relocating the still-live `DefineParamNames` to
+  `Emitter.Metadata.cs`. In `Program.cs`: deleted the `Co*` type consts (Continuation/Context/Intrinsics/TypedCont/
+  Builders/CancellableCont/ISeqStep/Seq), the `suspend fun -> Task<T>` KICKOFF signature rewrite (the bridge now
+  arrives from bir2cir already `Task<T>`-typed), the `coClass`/`steps`/`sequenceNew` body-emit dispatch, and the
+  now-orphaned SM-context fields (`_coFields`/`_coThis`/`_seqCounter`/`_smCounter`/`_coTryDepth`/`_coExit`) with
+  their always-null read guards in the `this`/`local`/`var`/`setLocal` cases. In `Emitter.Expressions.cs`: deleted
+  the `coSuspendedSentinel`/`sequenceNew`/`coSelfCont`/`coContext`/`coSelfCancellable` expression cases. KEPT: the
+  `[KotlinFunction(Suspend)]` flag stamp (triggered by `suspendBridge` AND by ref-build `"suspend":true` decls;
+  round-trip restore needs it) and the suspend THROW-STUB (a leftover `"suspend":true` method — the ref build, or an
+  app/rt shape the cold lowering left untouched — emits a throwing stub). Pure dead-code deletion: stdlib
+  jar/ref/rt all emit clean (ref suspend fns still stub), IL gate byte-identical GREEN (zero sample changes),
+  verify-ktproj 9/9. Completes the design's "ilemit becomes coroutine-free" column
+  (`docs/design-coroutine-cold-core-task-bridge.md` §8, §11 supersession).
+
 - **kotc (bundle-6 P5 Phase-B): delete the dead CPS coroutine engine — kotc withdraws ALL coroutine lowering.**
   After the A2 ignition removed the `kotlin.sequences.sequence` special-case (its only caller), the entire
   `emitCoroutineBody` CPS state-machine family in `BirEmitter.kt` was unreachable dead code. Removed

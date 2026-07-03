@@ -67,45 +67,12 @@ sealed partial class Emitter
             case "const": return EmitConst(e);
             case "clr.const": return EmitConst(e);
             case "this":
-                if (_coThis != null) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, _coThis); return _coThis.FieldType; }   // instance coroutine: captured receiver
                 _il.Emit(OpCodes.Ldarg_0); return typeof(object);
-            case "coSuspendedSentinel":   // kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
-                { var f = ResolveType(CoIntrinsics).GetField("COROUTINE_SUSPENDED"); _il.Emit(OpCodes.Ldsfld, f); return typeof(object); }
-            case "sequenceNew": return EmitSequenceSm(e);
-            case "coSelfCont":   // the coroutine's own continuation (the SM), as a typed Continuation<T>: new TypedCont<T>(this)
-                {
-                    var tk = MapType(e.GetProperty("resultType").GetString());
-                    if (tk == typeof(void)) tk = typeof(object);   // Unit-returning suspend -> Continuation<object>
-                    var typed = ResolveType(CoTypedCont).MakeGenericType(tk);
-                    var contObj = ResolveType(CoContinuation).MakeGenericType(typeof(object));
-                    _il.Emit(OpCodes.Ldarg_0);   // the SM (Continuation<object>)
-                    _il.Emit(OpCodes.Newobj, CtorOf(typed));
-                    return typed;
-                }
-            case "coContext":   // kotlin.coroutines.coroutineContext -> the SM's own Context (the SM is Continuation<object>)
-                {
-                    var contObj = ResolveType(CoContinuation).MakeGenericType(typeof(object));
-                    _il.Emit(OpCodes.Ldarg_0);
-                    _il.Emit(OpCodes.Callvirt, contObj.GetMethod("get_Context"));
-                    return ResolveType(CoContext);
-                }
-            case "coSelfCancellable":   // the SM as a CancellableContinuation<T>: new CancellableCont<T>(new TypedCont<T>(this))
-                {
-                    var tk = MapType(e.GetProperty("resultType").GetString());
-                    var typed = ResolveType(CoTypedCont).MakeGenericType(tk);
-                    var cancel = ResolveType(CoCancellableCont).MakeGenericType(tk);
-                    _il.Emit(OpCodes.Ldarg_0);
-                    _il.Emit(OpCodes.Newobj, CtorOf(typed));
-                    _il.Emit(OpCodes.Newobj, CtorOf(cancel));
-                    return cancel;
-                }
             case "local":
             {
                 var name = e.GetProperty("name").GetString();
                 // Inside a cross-module inline splice, a callee param reference emits the bound arg/value instead.
                 if (_inlineSubst.TryGetValue(name, out var sub)) return EmitExpr(sub);
-                // In a coroutine, a param/live-local reference is a load of the SM struct field.
-                if (_coFields != null && _coFields.TryGetValue(name, out var cf)) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, cf); return cf.FieldType; }
                 if (_locals.TryGetValue(name, out var l)) { _il.Emit(OpCodes.Ldloc, l); return l.LocalType; }
                 if (_args.TryGetValue(name, out var a)) { _il.Emit(OpCodes.Ldarg, a); return _argTypes[name]; }
                 throw new NotSupportedException("load unknown var " + name);

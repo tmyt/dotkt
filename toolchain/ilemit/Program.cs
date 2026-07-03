@@ -133,22 +133,6 @@ sealed partial class Emitter
     // so EmitMethodBody/EmitCtorBody prescans the whole body. id -> IL Label. See docs/design-il-cfg.md.
     Dictionary<int, Label> _cfgLabels;
     Type _methodRetType = typeof(void);
-
-    // The coroutine-ABI types the suspend emitter binds against. These were HARDCODED to the DotKt.Runtime
-    // `DotKt.Coroutines.*` assembly — now ABANDONED: the stdlib IS the runtime and must not depend on it. They name
-    // the canonical kotlin.coroutines.* types the stdlib provides. The suspend->Task bridge helpers (TypedCont/
-    // Builders) and the kotlinx CancellableCont have no kotlin.* home yet — they are placeholders the coroutine
-    // PORT (refactor-stdlib-types-out-of-coroutines) will move into the stdlib and finalize. Centralized so the port
-    // repoints ONE place; suspend emission may break until the bridge is ported (accepted).
-    const string CoContinuation = "kotlin.coroutines.Continuation`1";
-    const string CoContext = "kotlin.coroutines.CoroutineContext";
-    const string CoEmptyContext = "kotlin.coroutines.EmptyCoroutineContext";
-    const string CoIntrinsics = "kotlin.coroutines.intrinsics.IntrinsicsKt";   // holder of COROUTINE_SUSPENDED
-    const string CoTypedCont = "kotlin.coroutines.TypedCont`1";                 // bridge — coroutine port provides
-    const string CoBuilders = "kotlin.coroutines.Builders";                     // bridge — coroutine port provides
-    const string CoCancellableCont = "kotlinx.coroutines.CancellableCont`1";    // dotktx — port provides
-    const string CoSeqStep = "kotlin.sequences.ISeqStep`1";                      // sequence{} bridge — port provides
-    const string CoSeq = "kotlin.sequences.Seq";                                 // sequence{} bridge — port provides
     // The generic context for emitting a type's members = the type's OWN params PLUS every enclosing (`nestedIn`) type's
     // params — a .NET nested type references its outer generic type's parameters by the outer's builder (a Kotlin `inner
     // class IteratorImpl` inside `AbstractList<E>` whose `next(): E` must resolve `gp:E` to AbstractList's `E`).
@@ -167,19 +151,6 @@ sealed partial class Emitter
     // Generic context for resolving `gp:T` type references: method params shadow the enclosing type's.
     Dictionary<string, GenericTypeParameterBuilder> _curTypeParams;
     Dictionary<string, GenericTypeParameterBuilder> _curMethodParams;
-    // Coroutine context: inside a state-machine MoveNext, a reference to a param/live-local (a "cpsField") is a
-    // field of the SM struct, not an IL local/arg. Non-null only while emitting MoveNext. See EmitCoroutine.
-    Dictionary<string, FieldInfo> _coFields;   // FieldInfo (not FieldBuilder) so a generic SM's self-instantiated fields fit
-    // Coroutine `this` capture: for an INSTANCE suspend method/lambda (e.g. a capturing suspend lambda's closure
-    // `invoke`), the original receiver is stored in an SM field so MoveNext can still reach it after a resume.
-    // Non-null only while emitting such a MoveNext; `this` then loads this field instead of ldarg.0 (the SM).
-    FieldInfo _coThis;
-    int _seqCounter;   // unique suffix for emitted sequence{} state-machine types
-    int _smCounter;    // unique suffix for coroutine state-machine types (nested-in-owner to reach protected members)
-    // try-around-await: inside a try region of a MoveNext, `ret` is illegal — suspension/return `leave` to the
-    // single method exit instead. Depth > 0 while emitting steps between coTryBegin and coTryEnd.
-    int _coTryDepth;
-    Label _coExit;
 
     public Emitter(string outDir, string asmName) { _outDir = outDir; _asmName = asmName; }
 
@@ -832,44 +803,11 @@ sealed partial class Emitter
         // An `abstract fun` (no body) -> a CLR abstract method: Virtual|Abstract, no IL body (subclasses override).
         if (m.TryGetProperty("abstract", out var amb) && amb.GetBoolean()) attrs |= MethodAttributes.Abstract | MethodAttributes.Virtual;
 
-        // A `suspend fun f(args): T` -> a kickoff `Task<T> f(args)` (Unit -> Task). The state machine that drives
-        // it is synthesized in EmitCoroutine when the body is emitted. ABI: suspend <=> Task<T> (coroutine-abi).
-        if (m.TryGetProperty("suspend", out var su) && su.GetBoolean())
-        {
-            var rs = m.GetProperty("resultType").GetString();
-            var sTps = m.TryGetProperty("typeParams", out var stp) && stp.GetArrayLength() > 0 ? (JsonElement?)stp : null;
-            MethodBuilder smb;
-            if (sTps != null)
-            {
-                // Generic `suspend fun <T>`: define the kickoff's type params first so `Task<T>`/param types resolve;
-                // EmitCoroutineClass then builds a generic state-machine TYPE mirroring them. (Generic suspend funs
-                // always take the class form — see BirEmitter.suspendMethod.)
-                var gn = TpNames(sTps.Value);
-                smb = ti.TB.DefineMethod(name, attrs);
-                var gps = smb.DefineGenericParameters(gn);
-                var map = new Dictionary<string, GenericTypeParameterBuilder>();
-                for (int gi = 0; gi < gn.Length; gi++) map[gn[gi]] = gps[gi];
-                _methodTypeParams[smb] = map;
-                _curMethodParams = map;
-                ApplyConstraints(sTps.Value, map, false);
-                var sps2 = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
-                smb.SetParameters(sps2);
-                smb.SetReturnType(rs == "void" ? typeof(System.Threading.Tasks.Task) : typeof(System.Threading.Tasks.Task<>).MakeGenericType(MapType(rs)));
-                _curMethodParams = null;
-                ti.Methods[name] = smb; ti.MethodsBySig[SigKey(name, m)] = smb;
-                _mparams[smb] = sps2;
-                DefineParamNames(smb, m);
-                return;
-            }
-            var taskRet = rs == "void" ? typeof(System.Threading.Tasks.Task)
-                : typeof(System.Threading.Tasks.Task<>).MakeGenericType(MapType(rs));
-            var sps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
-            smb = ti.TB.DefineMethod(name, attrs, taskRet, sps);
-            ti.Methods[name] = smb; ti.MethodsBySig[SigKey(name, m)] = smb;
-            _mparams[smb] = sps;
-            DefineParamNames(smb, m);
-            return;
-        }
+        // NOTE: ilemit no longer rewrites a `suspend fun`'s signature to `Task<T>`. The cold-core coroutine lowering
+        // (bir2cir, bundle-6) already arrives here as ordinary CIR: the public `Task<T>` bridge is its OWN method
+        // carrying `suspendBridge:true` (stamped `[KotlinFunction(Suspend)]` below), and the cold entry / state-machine
+        // class are plain methods/types. A leftover `"suspend":true` method (the ref build, or an app/rt shape the cold
+        // lowering left untouched) falls through to the normal signature path and emits a throwing stub at body time.
 
         MethodBuilder mb;
         Type[] ps;
@@ -1011,25 +949,13 @@ sealed partial class Emitter
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
         if (m.TryGetProperty("suspend", out var su) && su.GetBoolean())
         {
-            // DOTKT_STDLIB_COMPILE: the CLR coroutine BRIDGE (TypedCont / Builders / COROUTINE_SUSPENDED, etc.) is not
-            // yet ported into the stdlib — the port is planned (docs/coroutine-stdlib-port-plan.md) but PENDING. So a
-            // suspend fun is emitted as a throwing-stub IL: it depends only on the stdlib and throws when called. This
-            // keeps the stdlib assembly emitting so the (non-coroutine) load problems can be worked on. Replace with the
-            // real state machine at port time (the seam is the `Co*` consts + EmitCoroutine).
-            if (StdlibStub) { EmitThrowStub(mb, "suspend (coroutine port pending)"); return; }
-            if (m.TryGetProperty("coClass", out var cc) && cc.GetBoolean()) { EmitCoroutineClass(ti, mb, m); return; }
-            // The retained `sequence { }` restricted-suspension builder still emits `steps` -> the CPS state machine.
-            if (m.TryGetProperty("steps", out _)) { EmitCoroutine(ti, mb, m); return; }
-            // A plain suspend FUNCTION (post #5(a) kotc-pure): kotc emits `"suspend":true` + a body of still-un-lowered
-            // coroutine nodes (delay/await/runBlocking) and NO CPS `steps` — the suspend->state-machine lowering moved to
-            // a DEFERRED downstream layer (coroutine-lowering-layer-deferred) that is not built yet. Emit a THROWING STUB
-            // (not the raw body, whose coroutine nodes EmitStmt can't lower) so ilemit does not crash; the method throws
-            // at call time until the downstream layer lands. Coroutine samples fail GRACEFULLY, they don't abort ilemit.
-            EmitThrowStub(mb, "suspend (coroutine lowering deferred)"); return;
+            // A leftover `"suspend":true` method reaching ilemit is either a REF-build suspend declaration (the ref build
+            // SKIPS the bir2cir cold lowering, so its bodies are meant to be stubbed — this IS the reference assembly), or
+            // an app/rt suspend shape the cold lowering left untouched (a disqualified form). Both emit a throwing stub:
+            // the real coroutine state machine (cold entry + `ContinuationImpl` SM class + public `Task<T>` bridge) is
+            // synthesized upstream by bir2cir as ordinary CIR; ilemit itself is coroutine-codegen-free.
+            EmitThrowStub(mb, StdlibStub ? "suspend (reference stub)" : "suspend (unsupported shape)"); return;
         }
-        // A non-suspend method that builds a `sequence { }` (`sequenceNew` -> the restricted-suspension SM binding
-        // Seq/ISeqStep, also part of the pending coroutine port) -> the same throwing stub under stdlib-compile.
-        if (StdlibStub && m.GetRawText().Contains("sequenceNew")) { EmitThrowStub(mb, "sequence builder (coroutine port pending)"); return; }
         BeginMethod(mb.GetILGenerator(), m, isStatic: mb.IsStatic);
         PrescanCfgLabels(m.GetProperty("body"));
         foreach (var s in m.GetProperty("body").EnumerateArray()) EmitStmt(s);
@@ -1790,8 +1716,7 @@ sealed partial class Emitter
             }
             case "this":
                 if (_inlineThis.Count > 0) { _il.Emit(OpCodes.Ldloc, _inlineThis.Peek()); return; }   // spliced extension receiver
-                if (_coThis != null) { _il.Emit(OpCodes.Ldarg_0); _il.Emit(OpCodes.Ldfld, _coThis); }   // instance coroutine: captured receiver
-                else _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldarg_0);
                 return;
             case "field":
                 EmitExpr(e.GetProperty("recv"));

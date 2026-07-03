@@ -124,4 +124,48 @@ sealed partial class Emitter
             default: return null;
         }
     }
+
+    // Emit parameter NAMES into the metadata (DefineParameter is 1-based; 0 = return). ilemit otherwise defines
+    // methods by type only, so the names are lost — and facadegen falls back to arg0/arg1, which blocks named-argument
+    // calls across an assembly boundary. The names come straight from the BIR params.
+    void DefineParamNames(MethodBuilder mb, JsonElement m) => DefineParamNames(mb.DefineParameter, m);
+    void DefineParamNames(ConstructorBuilder cb, JsonElement m) => DefineParamNames(cb.DefineParameter, m);
+    void DefineParamNames(Func<int, ParameterAttributes, string, ParameterBuilder> defineParam, JsonElement m)
+    {
+        if (!m.TryGetProperty("params", out var ps)) return;
+        int i = 1;
+        foreach (var p in ps.EnumerateArray())
+        {
+            var name = (p.TryGetProperty("name", out var nn) ? nn.GetString() : null) ?? "";
+            bool vararg = p.TryGetProperty("vararg", out var vv) && vv.GetBoolean();
+            bool hasDefault = p.TryGetProperty("default", out var dflt);
+            // A nullable reference parameter needs a [Nullable(2)] override against the type's non-null default, so the
+            // parameter builder must exist even if it otherwise carries no name/vararg/default. (A value-type `X?` is the
+            // structural Nullable<X> instead; the [Nullable] on it is simply ignored by readers — harmless.)
+            bool nullable = p.TryGetProperty("nullable", out var pn) && pn.GetBoolean();
+            // PARAMETER-level custom attributes (e.g. [ClrRefArgument], which bir2cir reads from the ref.dll to pass the
+            // arg by reference). Stripped in the runtime build (kotc emits none), so this rides only the ref.dll.
+            JsonElement pattrs = default;
+            bool hasAttrs = !_stripMetadata && p.TryGetProperty("attrs", out pattrs) && pattrs.GetArrayLength() > 0;
+            if (name.Length == 0 && !vararg && !hasDefault && !nullable && !hasAttrs) { i++; continue; }
+            // A constant default -> [Optional] + DefaultParameterValue, so a cross-module caller can omit the arg.
+            var attrs = hasDefault ? ParameterAttributes.Optional | ParameterAttributes.HasDefault : ParameterAttributes.None;
+            var pb = defineParam(i, attrs, name.Length > 0 ? name : null);
+            // `vararg xs: T` -> [ParamArray] so the .NET signature is a params array (a C# OR Kotlin consumer can spread).
+            if (vararg) pb.SetCustomAttribute(new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+            if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
+            if (nullable) ApplyNullable(pb);
+            // Apply each param attribute whose type this assembly can encode (in-assembly emitted type or a clr:-imported
+            // one); an attr referencing a type not in `_types` is skipped (BuildCab would KeyNotFound) — the same "the CLR
+            // layer decides what is encodable" policy the method-level attr path uses.
+            if (hasAttrs)
+                foreach (var a in pattrs.EnumerateArray())
+                {
+                    var an = a.GetProperty("attr").GetString();
+                    if (!an.StartsWith("clr:", StringComparison.Ordinal) && !_types.ContainsKey(an)) continue;
+                    var cab = BuildCab(a); if (cab != null) pb.SetCustomAttribute(cab);
+                }
+            i++;
+        }
+    }
 }
