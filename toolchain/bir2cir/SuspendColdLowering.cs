@@ -89,7 +89,10 @@ static class SuspendColdLowering
     // A suspend CALL site descriptor (for the resolvability fixpoint).
     readonly record struct CallRef(bool Instance, string Owner, string Name);
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns)
+    // Returns the callee-return-type map (cold-entry name -> Kotlin resultType), so the SEPARATE
+    // SuspendLambdaLowering phase can type a suspend-lambda's awaited value the SAME way (else a
+    // lambda's `h()` await falls back to kotlin.Any and the value is never unboxed -> `object + int`).
+    public static IReadOnlyDictionary<string, string> ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns)
     {
         // 1. Global registry of shape-eligible suspend funs across every input file.
         var entries = new Dictionary<FunKey, Entry>();
@@ -108,7 +111,14 @@ static class SuspendColdLowering
                             if (m is JsonObject mo && Str(mo["name"]) is string name && IsMemberShapeEligible(mo, to))
                                 entries[new FunKey(owner, name)] = new Entry(mo, file, to, owner, fileClass);
         }
-        if (entries.Count == 0) return;
+        // callee-return-type fallback for await-temp field typing when a call node carries no instantiated
+        // ret (a bare `one()` has `sig:""`): the callee's declared resultType, keyed by cold-entry name.
+        // Built here (before the early returns) so it is ALWAYS returned for the lambda phase's use.
+        var calleeRet = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (k, e) in entries)
+            calleeRet[k.Name] = Str(e.Method["resultType"]) ?? "kotlin.Any";
+
+        if (entries.Count == 0) return calleeRet;
 
         // 2. Fixpoint: a fun stays transformable only if EVERY suspend call it makes is RESOLVABLE — a
         //    same-assembly transformable callee (its cold entry will be synthesized) OR a cross-assembly
@@ -127,13 +137,7 @@ static class SuspendColdLowering
                         break;
                     }
         }
-        if (transformable.Count == 0) return;
-
-        // callee-return-type fallback for await-temp field typing when a call node carries no instantiated
-        // ret (a bare `one()` has `sig:""`): the callee's declared resultType, keyed by cold-entry name.
-        var calleeRet = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (k, e) in entries)
-            calleeRet[k.Name] = Str(e.Method["resultType"]) ?? "kotlin.Any";
+        if (transformable.Count == 0) return calleeRet;
 
         var baseIsLocal = localTypeFqns.Contains(ContinuationImplFqn);
 
@@ -160,6 +164,7 @@ static class SuspendColdLowering
                 foreach (var nt in newTypes) ts.Add(nt);
             }
         }
+        return calleeRet;
     }
 
     static JsonArray EnsureArray(JsonObject o, string key)
@@ -174,11 +179,16 @@ static class SuspendColdLowering
     // only (JVM parity), so a wider lambda is not expressible v1 and the caller keeps the node (reports it).
     public static JsonObject BuildLambdaSm(string smName, int arity,
         List<(string name, string type)> captures, List<JsonObject> lambdaParams, JsonArray body,
-        string resultType, List<string> typeParams, bool baseIsLocal)
+        string resultType, List<string> typeParams, bool baseIsLocal,
+        IReadOnlyDictionary<string, string> calleeRet = null)
     {
         if (arity is < 0 or > 1) return null;
         var gen = new FunGen(smName, arity, captures ?? new List<(string, string)>(), lambdaParams, body,
-            resultType, typeParams, new Dictionary<string, string>(StringComparer.Ordinal), baseIsLocal);
+            resultType, typeParams,
+            calleeRet as Dictionary<string, string> ??
+                (calleeRet != null ? new Dictionary<string, string>(calleeRet, StringComparer.Ordinal)
+                                   : new Dictionary<string, string>(StringComparer.Ordinal)),
+            baseIsLocal);
         var types = new List<JsonNode>();
         gen.Build(new List<JsonNode>(), types);
         return types.Count > 0 ? (JsonObject)types[0] : null;

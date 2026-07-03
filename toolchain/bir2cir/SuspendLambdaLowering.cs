@@ -29,10 +29,17 @@ static class SuspendLambdaLowering
     const string ContinuationOfAny = "kotlin.coroutines.Continuation[kotlin.Any]";
     const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
 
+    // The callee-return-type map (cold-entry name -> Kotlin resultType) produced by SuspendColdLowering.
+    // Consulted when building a lambda SM so an awaited suspend-call value gets its real type (+ unbox) —
+    // NOT kotlin.Any. Single-threaded per bir2cir run, so a static binding is sufficient.
+    static IReadOnlyDictionary<string, string> _calleeRet;
+
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, IReadOnlySet<string> localTypeFqns)
+    public static void ApplyAll(IReadOnlyList<JsonNode> roots, IReadOnlySet<string> localTypeFqns,
+        IReadOnlyDictionary<string, string> calleeRet = null)
     {
+        _calleeRet = calleeRet;
         // In the app build SuspendLambda is a REFERENCED type (clr: base + clrOverride linkage); in a self-build
         // that declares it, a LOCAL type (bare base + local slot override). This pass is app-only in practice.
         var baseIsLocal = localTypeFqns.Contains(SuspendLambdaFqn);
@@ -131,7 +138,7 @@ static class SuspendLambdaLowering
         var smName = ctx + "_lambda" + (++counter[0]) + "$sm";
 
         var sm = SuspendColdLowering.BuildLambdaSm(
-            smName, arity, captures, lambdaParams, body, resultType, typeArgs, baseIsLocal);
+            smName, arity, captures, lambdaParams, body, resultType, typeArgs, baseIsLocal, _calleeRet);
         if (sm == null) return node;   // arity >= 2 -> not expressible v1; keep the node (surfaces as a report)
 
         newTypes.Add(sm);
