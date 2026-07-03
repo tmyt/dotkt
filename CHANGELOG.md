@@ -19,6 +19,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   concrete `HashSet` — routes identically at runtime but is left out of the sample: the `HashSet<T>`→`Set<T>` interface-arg
   widening trips ilverify, a pre-existing ilemit formal-only gap shared by `println(setOf(...))`, orthogonal to this fix.)
 
+- **kotc (bundle-6 latent ⑤): the `.NET-member generic` call branch now carries the `"suspendCall":true` tag.**
+  A `suspend` callee lowered through the generic .NET-member branch (`clrGenericStatic`/`clrGenericInstance`) dropped its
+  suspend tag, so bir2cir would not lower it as a suspension. The branch now appends `suspendCallTag(callee)`, mirroring the
+  non-generic call paths + the top-level generic-static path. Latent (needs a generic .NET-member suspend call to trigger); the
+  tag emission is now consistent across all call branches.
+
 - **facadegen (bundle-6 ② async interop): generic STATIC methods now surface — Kotlin can BUILD a `Task<T>`.**
   A public static method whose reflection reported `IsGenericMethod` (`Task.FromResult<TResult>`, `Task.Run<TResult>`) was silently
   DROPPED at `Program.cs:557`, so Kotlin had no way to construct a `Task<T>` from a .NET generic factory. The static-member loop now

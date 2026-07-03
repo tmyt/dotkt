@@ -3539,10 +3539,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					val shapeParams = (if (gExt != null) listOf(gExt.type) else emptyList()) + regularParams(callee).map { it.type }
 					val shapes = shapeParams.joinToString(",") { str(clrMethodShape(it)) }
 					val argsJson = (listOfNotNull(gExt) + regularArgs(call)).joinToString(",") { expr(it) }
+					// A `suspend` generic .NET-member callee carries the `"suspendCall":true` FACT for bir2cir's deferred
+					// Task/await lowering, exactly like the non-generic call paths (suspendCallTag) — otherwise a generic
+					// .NET-member suspend call would silently drop out of the suspension lowering. (latent ⑤.)
 					return if (isStatic)
-						"""{"k":"clrGenericStatic","type":${str(clrType)},"method":${str(member)},"typeArgs":[$taJson],"shapes":[$shapes],"args":[$argsJson]}"""
+						"""{"k":"clrGenericStatic","type":${str(clrType)},"method":${str(member)},"typeArgs":[$taJson],"shapes":[$shapes],"args":[$argsJson]${suspendCallTag(callee)}}"""
 					else
-						"""{"k":"clrGenericInstance","type":${str(memberType)},"method":${str(member)},"typeArgs":[$taJson],"shapes":[$shapes],"recv":${expr(recv!!)},"args":[$argsJson]}"""
+						"""{"k":"clrGenericInstance","type":${str(memberType)},"method":${str(member)},"typeArgs":[$taJson],"shapes":[$shapes],"recv":${expr(recv!!)},"args":[$argsJson]${suspendCallTag(callee)}}"""
 				}
 			}
 			val prop = callee.correspondingPropertySymbol?.owner
