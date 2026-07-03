@@ -5,6 +5,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit (bundle-6 ⑤, two latent codegen hardenings): value-type-receiver property/field SET now runs on the struct's
+  ADDRESS, and EmitDynamicCall boxes a generic-parameter argument.** (1) `EmitClrPropSet` emitted the receiver of a
+  value-type (struct) property/field set with `EmitExpr` (load by VALUE) in all three branches (property setter, DotKt
+  `set_<name>` accessor method, and the field-store fallback) — so `s.V = x` / `s.F = x` on a struct local produced
+  `ldloc` + `call instance set_V` / `stfld`, which is **invalid IL** (a value-type instance member needs the receiver as a
+  managed pointer) and segfaults at run while also losing the mutation to a spilled copy. All three now mirror the getter
+  path: `type.IsValueType ? EmitAddr(recv) : EmitExpr(recv)` → `ldloca`, so the setter mutates the real struct. Repro
+  `cases/il-vtprop` (a .NET struct with a mutable auto-property + a public field, mutated from Kotlin): pre-fix segfault,
+  post-fix prints `10 / 20 / 30`. (2) `EmitDynamicCall` (the `@ClrIntrinsicAsDynamic` reflective-dispatch path,
+  `recv.GetType().GetMethod(name).Invoke(recv, object[] args)`) boxed the receiver and each arg with a bare `IsValueType`
+  test, so a `gp:T` (generic-parameter-typed) receiver/argument — a value type at instantiation but `IsValueType == false`
+  for the open parameter — was stored into the `object[]`/passed to `Invoke` **without** a `box`, giving unverifiable IL.
+  Both now use the canonical `NeedsBoxToRef` predicate (`IsValueType || IsGenericParameter`), matching every other
+  arg-packing / array-store site (`box !!T` is a runtime no-op for a reference-type instantiation, so no ref-type
+  regression). BUG-2 is latent — the `dyn:true` node is emitted only from a stdlib `@ClrIntrinsicAsDynamic` binding
+  forwarding a generic-parameter arg — so the fix is a consistency hardening with the sibling paths; trigger conditions
+  documented. `verify-il` GREEN, `verify-ktproj` 9/9.
 - **kotc (CRITICAL: ref/rt stdlib build un-broken): a `mapOf(this[0])` NPE was silently dropping ~120 stdlib type-defs.**
   `make stdlib-ref` was crashing downstream with `NotSupportedException: cannot resolve .NET type kotlin.sequences.Sequence`
   because kotc was emitting only **460** type-defs (vs the cached **777**): `kotlin.sequences.Sequence`, the 8 primitive
