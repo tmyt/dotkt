@@ -190,7 +190,11 @@ sealed class Pipeline
             // before type lowering (its kotlin.* type tokens flow through BirTypeLowering). Non-v1 suspend funs
             // are left untouched (they keep `"suspend":true` for the existing ilemit throw-stub path). Skipped in
             // the ref build; a verified no-op in the rt-stdlib build (no stdlib suspend fun matches the v1 gate).
-            if (!_options.RefBuild) SuspendColdLowering.Apply(substituted, refs, localTypeFqns);
+            // APP-BUILD gate (attributeTopLevelOwner == DOTKT_STDLIB_COMPILE unset): the stdlib self-build must NOT
+            // cold-transform its own suspend funs (await/delay interop) — that belongs to the P4 Task-bridge path,
+            // and a P2 cold rewrite would rename e.g. `Task0.await` to `await$dotkt_suspend` in rt.dll only,
+            // diverging from the ref.dll signature. So the pass is an explicit no-op in the ref AND rt-stdlib builds.
+            if (!_options.RefBuild && attributeTopLevelOwner) SuspendColdLowering.Apply(substituted, refs, localTypeFqns);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
