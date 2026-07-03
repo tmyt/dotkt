@@ -3253,7 +3253,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `mapOf(k to v, …)` -> a Dictionary<K,V> (each element is a `to` call: key=ext recv, value=arg).
 		if (calleeFq in MAP_FACTORIES) {
 			val (kt, vt) = mapKV(call.type)
-			val pairs = (call.arguments.firstOrNull() as? IrVararg)?.elements?.filterIsInstance<IrCall>().orEmpty()
+			// vararg overload (`mapOf(a to 1, b to 2)`) OR the single-pair overload (`mapOf(a to 1)`, since-1.9 —
+			// NOT a vararg; the Pair rides as a regular arg). Mirror the listOf/setOf single-element fallback above.
+			val pairs = (call.arguments.firstOrNull() as? IrVararg)?.elements?.filterIsInstance<IrCall>()
+				?: regularArgs(call).filterIsInstance<IrCall>()
 			val entries = pairs.joinToString(",") { p -> """{"key":${expr(extensionReceiver(p)!!)},"val":${expr(regularArgs(p).first())}}""" }
 			return """{"k":"mapNew","keyType":${str(kt)},"valType":${str(vt)},"entries":[$entries]}"""
 		}
