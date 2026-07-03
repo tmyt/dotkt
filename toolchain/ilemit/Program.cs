@@ -510,8 +510,13 @@ sealed partial class Emitter
                             var ifaceBuilder = iface.MethodsBySig.TryGetValue(SigKey(imName, imDef), out var ib) ? ib
                                              : (iface.Methods.TryGetValue(imName, out var ib2) ? ib2 : null);
                             if (ifaceBuilder == null) continue;
+                            // Substitute the iface type args THROUGH each param's (possibly nested) type — a bare `gp:T`
+                            // AND a nested `@kotlin.Result[gp:T]` (a value class over the type param, e.g.
+                            // Continuation.resumeWith(Result<T>)) both lower to the class's `object` instantiation. A
+                            // whole-string dict lookup only catches the bare case; use SubstSig (same as the ret wiring
+                            // below) so the nested arg is replaced and the body-overload sig matches -> the MethodImpl binds.
                             var subSig = imName + "(" + string.Join(",", imDef.GetProperty("params").EnumerateArray()
-                                .Select(p => { var t = p.GetProperty("type").GetString(); return ifSubst.TryGetValue(t, out var s) ? s : t; })) + ")";
+                                .Select(p => SubstSig(p.GetProperty("type").GetString(), ifSubst))) + ")";
                             // Only wire an EXACT signature match. A miss means the class doesn't override this exact
                             // overload (e.g. it lacks the JVM remove(K,V):Boolean default) -> SKIP rather than mis-wire a
                             // different overload; for a Kotlin interface the same-name+sig method resolves implicitly anyway.

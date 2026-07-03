@@ -5,6 +5,33 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit: substitute interface type-args THROUGH nested (value-class) method-param types when matching the override
+  body, so a generic-interface method with a value-class-generic param binds its `.override` at a CONCRETE
+  instantiation (bundle-6 coroutine, general bug #5 — the ilemit half).** The `_types` interface-wiring loop
+  (`Program.cs`, the `iface.Def` methods pass) built the body-lookup signature with a WHOLE-STRING dictionary lookup
+  (`ifSubst.TryGetValue(paramType)`), which only substitutes a BARE `gp:T` param — a NESTED param like
+  `@kotlin.Result[gp:T]` (a value class over the type param, e.g. `Continuation.resumeWith(Result<T>)`) never matched
+  a key, so for an implementer of `Continuation[object]` (`BaseContinuationImpl`/`BlockOnSink`) the substituted sig
+  stayed `resumeWith(@kotlin.Result[gp:T])` and missed the body's `resumeWith(@kotlin.Result[object])` → the
+  `DefineMethodOverride` was silently skipped (only the trivial `gp:T`→`gp:T` self-generic case bound). Now uses
+  `SubstSig` (nested string replace, exactly like the sibling covariant-return wiring one line below), so
+  `Continuation`1<object>`/`<Unit>`/`<R>`::resumeWith` now emit proper MethodImpls. General fix (any emitted generic
+  interface method with a value-class-generic param + concrete-instantiation override), not coroutine-specific. Gate
+  neutral (145 run-pass / 7 run-fail, all XFAIL-listed; ilverify clean). NOTE: this is NOT the `blockOn { 42 }`
+  runtime blocker — see below. `toolchain/ilemit/Program.cs`.
+  - **The remaining `blockOn { 42 }` blocker is UPSTREAM, not ilemit: `Continuation<in T>` loses its CLR
+    contravariance.** With the override now wired, `cases/il-lam1`/`il-lam2` STILL fail identically
+    (`EntryPointNotFoundException` at `Continuation`1.resumeWith` during `resume<Int>`). Root cause: `blockOn<T=Int>`
+    passes a `Continuation<Any?>` sink (`BlockOnSink : Continuation<object>`) to `startCoroutine<Int>`/`resume<Int>`,
+    which `callvirt`s `Continuation`1<int>::resumeWith`; but the emitted `Continuation`1<T>` interface is INVARIANT
+    (`<T>`, no `-T`), so `Continuation<object>` is not a `Continuation<Int>` and the interface dispatch resolves to
+    no slot. kotc drops `in`/contravariant declaration-site variance from BIR entirely (0× `"variance":"in"` vs 56×
+    `"out"`), so `interface Continuation<in T>` emits invariant. AND naively emitting `in` would not suffice: with
+    `Result<T>` an INVARIANT reference class, `resumeWith(Result<T>)` makes a contravariant `T` invalid → the CLR
+    loader would throw `TypeLoadException` (confirmed). This is a kotc/bir2cir/stdlib coroutine-ABI DESIGN issue
+    (erase the Continuation boundary to `Continuation<object>` / `Result<object>`, matching JVM erasure — or lower
+    the contravariant assignment via an explicit adapter), OUT of ilemit's scope. `il-lam1`/`il-lam2` stay XFAIL.
+
 - **kotc: emit `retNullable:true` on ABSTRACT/interface methods with a nullable type-parameter return, matching the
   concrete-impl path (bundle-6 coroutine, general bug #4).** `BirEmitter.ifaceMethod()` (the interface-member emission
   path) never emitted `retNullable`, while the concrete `method()` path did — so an interface `fun <E> get(key): E?`
