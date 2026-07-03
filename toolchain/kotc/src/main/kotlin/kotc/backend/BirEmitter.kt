@@ -1700,7 +1700,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// (forEachInline). This runs only after the frontend has resolved an iterator operation from source/stdlib
 		// declarations; the FIR injector no longer synthesizes Kotlin's iterator protocol for .NET types.
 		// Element type = the source's first type arg (e.g. Collection<Int> -> Int), else the loop var's type.
-		if (source != null && source.type.classFqName?.asString() != "kotlin.ranges.IntRange" && source.type.classFqName?.asString() !in INT_PROGRESSION_FQ && ((source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null || isSubstIterable(source.type))) {
+		// `kotlin.sequences.Sequence` is an enumerable BY KOTLIN SEMANTICS (@ClrTypeAlias(IEnumerable), which bir2cir
+		// expands) — recognize it here by FQN so a CONCRETE-element `for (x in seq)` takes forEachInline (GetEnumerator)
+		// like Iterable, NOT the monomorphized synthetic KIterator the rt SequenceBuilderIterator doesn't implement
+		// (EntryPointNotFound). This is Kotlin-layer knowledge ("this type is for-in enumerable"), independent of the
+		// substitute-mode gating on clrName/isSubstIterable (both OFF in app builds). `.toList()` already uses the
+		// generic-T CLR-native IEnumerator path; this covers the concrete-element for-in.
+		val forInEnumerable = source != null && ((source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null
+			|| isSubstIterable(source.type) || source.type.classFqName?.asString() == "kotlin.sequences.Sequence")
+		if (source != null && source.type.classFqName?.asString() != "kotlin.ranges.IntRange" && source.type.classFqName?.asString() !in INT_PROGRESSION_FQ && forInEnumerable) {
 			val elem = (source.type as? IrSimpleType)?.arguments?.firstOrNull()
 				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
 			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
@@ -4101,7 +4109,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (!(stdlibCompile && stdlibSubstitute)) return false
 		val collFqs = setOf("kotlin.collections.Iterable", "kotlin.collections.MutableIterable", "kotlin.collections.Collection",
 			"kotlin.collections.MutableCollection", "kotlin.collections.List", "kotlin.collections.MutableList",
-			"kotlin.collections.Set", "kotlin.collections.MutableSet")
+			"kotlin.collections.Set", "kotlin.collections.MutableSet",
+			// Sequence is @ClrTypeAlias(IEnumerable) — an Iterable peer; a `for (x in seq)` must take the SAME forEachInline
+			// (GetEnumerator) path, else a synthesized monomorphized iterator iface the rt SequenceBuilderIterator doesn't
+			// implement -> runtime EntryPointNotFound.
+			"kotlin.sequences.Sequence")
 		val seen = HashSet<String>()
 		fun walk(c: IrClass): Boolean {
 			val fq = c.fqNameWhenAvailable?.asString() ?: return false
@@ -4120,6 +4132,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"kotlin.collections.Map" -> "System.Collections.Generic.IReadOnlyDictionary"
 		"kotlin.collections.MutableMap" -> "System.Collections.Generic.IDictionary"
 		"kotlin.collections.Iterable", "kotlin.collections.MutableIterable" -> "System.Collections.Generic.IEnumerable"
+		// Sequence is @ClrTypeAlias(IEnumerable) — a for-in over it lowers through the SAME GetEnumerator path as Iterable.
+		"kotlin.sequences.Sequence" -> "System.Collections.Generic.IEnumerable"
 		else -> null
 	}
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = true)
