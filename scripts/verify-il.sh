@@ -293,6 +293,7 @@ il_check colstr Cstr "$ROOT/cases/il-colstr" "$(printf 'm={a=1, b=2}\nl=[1, 2, 3
 il_check math  MathT "$ROOT/cases/il-math"    "$(printf '9\n7\n3\n4')"
 il_check str   Str   "$ROOT/cases/il-str"     "$(printf 'HELLO\nhello\nhi\nello\nTrue\nTrue')"
 il_check strnum StrNum "$ROOT/cases/il-strnum" "$(printf '42\n-7\n100\nnfe\niae\n3.14\n2.5\ncomma\nnfd')"
+il_check ntostr NToStr "$ROOT/cases/il-ntostr" "$(printf '5\nnull\n7\n5\nnull')"   # value-type-nullable/value arg BOXED into a REFERENCED method's object param (EmitCallArgs pt==null path)
 il_check cp    Cp    "$ROOT/cases/il-cp"      "$(printf '50\n3.5\nTrue\nTrue\nX')"
 il_check ext   Ext   "$ROOT/cases/il-ext"     "$(printf '21\nHI')"
 il_check arr   Arr   "$ROOT/cases/il-arr"     "$(printf '10\n30\n99\n3\n139\n139')"

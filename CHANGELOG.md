@@ -17,6 +17,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `NullableGenericReturnErasure` grows a GENERAL marked-local erasure — today `EraseNullableGpDecls` covers only
   fields/properties and `RetypeGetterReaderVars` only getter-reader locals, so the CIR keeps `type:gp:T` for `single`/
   `element` (bir2cir follow-up).
+- **ilemit (bundle-6): a value-type / value-type-nullable / generic-param argument passed to a REFERENCED method's
+  `object` (or wider reference) parameter is now BOXED.** `EmitCallArgs` only boxed value args when it could read the
+  callee's declared param types from `_mparams` (in-assembly methods). For a REFERENCED method (a resolved stdlib/BCL
+  `MethodInfo`) it hit the `pt==null` branch and emitted each arg raw via `EmitExpr` — no `box` — so
+  `val n: Int? = 5; n.toString()` (a `toString(object)` on the rt stdlib) pushed a bare `Nullable<int>` into the
+  `object` slot -> `InvalidProgramException`. The `pt==null` branch now reads the resolved method's real
+  `ParameterInfo` (`mb.GetParameters()`, already reflected there to fill trailing defaults) and routes each arg through
+  `EmitArg(a, param.ParameterType)` — the same coercion the in-assembly and typeArgs paths use — so the box is precise
+  (emitted iff the target param is a reference type; `box Nullable<int>` yields the boxed underlying value, or a real
+  null when empty). Closes the value/value-nullable-arg -> referenced-reference-param boxing gap (a general codegen
+  correctness win, not just `toString`). New `cases/il-ntostr` prints `5 / null / 7 / 5 / null`.
 - **bir2cir (bundle-6 BUG-1): value-type `asSequence().filter{}` (and any nullable-gp sentinel property) no longer
   `InvalidProgram`s.** A generic iterator's `var nextItem: T? = null` backing field already erased to `System.Object`
   (it must, to hold a real null for a value-type `T`), but its ACCESSOR methods (`get_nextItem`/`set_nextItem`) and the
