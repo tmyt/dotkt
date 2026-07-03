@@ -574,7 +574,7 @@ static class FacadeGen
                 // `fun <Name> <ret> <prot-?open|final|abstract>[,infix][,operator][,suspend] [<TypeParam>...] [<param>:<type>]*`
                 // — the modifier stays a single whitespace-free token; bare trailing tokens (no `:`) are type params.
                 var virt = m.IsVirtual && !m.IsFinal;
-                var retTok = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + RetSuffix(m);
+                var retTok = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + (k.suspend ? SuspendRetSuffix(m) : RetSuffix(m));
                 // A MEMBER extension function (`class C { fun T.f() }`) -> first param `__self`; `,ext` so the injector
                 // restores the extension receiver. A C#-origin `[Extension]` static method is ALSO an extension (its first
                 // param — any name — is the receiver). `,inline` carries the spliceable body (composes with suspend/generic).
@@ -973,14 +973,18 @@ static class FacadeGen
 
     // .NET nullable-reference metadata (NRT): the C# compiler stamps [Nullable(b)] per element (1=not-null, 2=nullable,
     // 0=oblivious; a byte[] for nested generics, top level is [0]) and [NullableContext(b)] as a method/type default.
-    static byte NrtByteOf(IList<CustomAttributeData> attrs)
+    static byte NrtByteOf(IList<CustomAttributeData> attrs) => NrtByteAt(attrs, 0);
+    // The NRT flag byte at a given position of the flattened (preorder) [Nullable] byte array — index 0 is the outer
+    // type, index 1 its first type argument, and so on. The SCALAR form ([Nullable(b)]) collapses a uniform flag for
+    // EVERY position, so it answers any index. 255 = no [Nullable] on this element.
+    static byte NrtByteAt(IList<CustomAttributeData> attrs, int index)
     {
         foreach (var c in attrs)
             if (c.AttributeType.FullName == "System.Runtime.CompilerServices.NullableAttribute" && c.ConstructorArguments.Count == 1)
             {
                 var a = c.ConstructorArguments[0];
-                if (a.Value is byte b) return b;
-                if (a.Value is IReadOnlyList<CustomAttributeTypedArgument> arr && arr.Count > 0 && arr[0].Value is byte b0) return b0;
+                if (a.Value is byte b) return b;   // scalar: uniform flag for all positions
+                if (a.Value is IReadOnlyList<CustomAttributeTypedArgument> arr && index < arr.Count && arr[index].Value is byte bn) return bn;
             }
         return 255; // no [Nullable] on this element
     }
@@ -1033,6 +1037,21 @@ static class FacadeGen
     static bool IsTask1(Type t) => t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Threading.Tasks.Task`1";
     static bool SuspendRetSupported(Type ret) => IsTask1(ret) ? Supported(ret.GetGenericArguments()[0]) : ret.FullName == "System.Threading.Tasks.Task";
     static string SuspendRetToken(Type ret, Type self) => IsTask1(ret) ? MapRet(ret.GetGenericArguments()[0], self) : "Unit";
+    // The Kotlin nullability of a `suspend fun` rides its RESULT type (the INNER T of the emitted `Task<T>`), NOT the
+    // always-non-null `Task` wrapper. So read the inner NRT position (index 1 of the return's flattened [Nullable] byte
+    // array — index 0 is the Task itself), robust to both the scalar [Nullable(2)] and the array [Nullable({1,2})]
+    // encodings. Bug ②: the old code fed the whole `Task<T>` return through RetSuffix, which read index 0 and so lost
+    // (array form) or mis-attributed the `?`. A value-type result (`Task<Int>`) carries no NRT slot -> no suffix, and a
+    // non-generic `Task` (suspend -> Unit) has no result type.
+    static string SuspendRetSuffix(MethodInfo m)
+    {
+        if (!IsTask1(m.ReturnType)) return "";
+        if (m.ReturnType.GetGenericArguments()[0].IsValueType) return "";
+        var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
+        byte b = NrtByteAt(attrs, 1);
+        if (b == 255) b = NrtContextOf(m);
+        return b == 2 ? "?" : b == 0 ? "!" : "";
+    }
 
     // Build the `fun`/`tlfun`/`sfun` modifier token, folding in the no-.NET-analog Kotlin flags as comma-suffixes
     // (`final,infix`, `open,suspend`, ...) — kept a SINGLE whitespace-free token so the meta parser's type-param
@@ -1079,7 +1098,7 @@ static class FacadeGen
             var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
             if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
             if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-            var ret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + RetSuffix(m);
+            var ret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + (k.suspend ? SuspendRetSuffix(m) : RetSuffix(m));
             // `,inline` tells the injector to mark the fn `inline` (so a non-local return through the lambda is accepted);
             // the body itself stays in the assembly's [KotlinInline] and is read by the consumer's ilemit at splice time.
             // An extension fun's receiver is emitted as the first param `__self` (DotKt convention) -> mark `,ext` so the
