@@ -25,6 +25,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   common in generated/inlined stdlib code; exposed by the windowed sequence path. `chunk`/`collops2` remain
   XFAIL on SEPARATE pre-existing blockers — the SequenceBuilder cold-resume "Iterator has failed" machinery and
   an earlier `collops2` op — not the shadowed var.)
+- **kotc (bundle-6 P5): object expressions / anonymous objects that CAPTURE an enclosing generic type parameter.**
+  An `object : Box<T> { … }` (or an inlined object whose supertype/captures resolve to the enclosing `T`) is
+  flattened to a top-level synthetic class; on the CLR generics are reified, so that class must itself be GENERIC
+  over the captured `T` and be instantiated with the enclosing arg at the `new` site — exactly as the closure/SAM
+  paths (`closureNew`/`samNew`) already do. Previously kotc threw `unsupported("an object expression that captures
+  an enclosing generic type parameter")`, so the real stdlib `sequence()`/`asSequence()`/`asIterable()`/…
+  (`Sequence { iterator(block) }` = a generic-capturing anon object after SAM lowering) emitted throw-stubs.
+  Fix: `typeDef` now derives a lifted class's captured type params from the `gp:` tokens `birType` actually
+  rendered into its members (interfaces/fields/ctors/methods) minus the class's own params — a single-render,
+  substitution-robust detection: an inline param monomorphized to a concrete type leaves no `gp:` token (so it is
+  dropped, e.g. `inline fun <T> Iterable(...)` inlined into `ByteArray.asIterable`), while one remapped to another
+  `gp:X` yields `X`. The object-literal construction site (`blockExpr`) brackets those tokens onto the constructed
+  type. Non-generic object expressions and closure/SAM are unchanged. Repro: `cases/il-objgen`.
 - **bir2cir (bundle-6 P5 Phase-A3): `sequence{}` cold path drive-to-green — captured extension receiver + nested field-assignment.**
   Three fixes that unblock the rt-stdlib build from EMITTING the real `SequenceBuilderIterator` cold code
   (it was aborting at `ilemit`):
