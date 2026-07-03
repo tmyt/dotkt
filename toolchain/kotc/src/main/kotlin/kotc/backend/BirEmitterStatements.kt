@@ -90,7 +90,11 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		// Evaluate the initializer FIRST so an object-expr init registers its synthetic name before the var's
 		// type is read (`val x = object {}` whose type IS that anonymous class).
 		val init = node.initializer?.let { expr(it) } ?: "null"
-		"""{"k":"var","name":${str(node.name.asString())},"type":${str(birType(node.type))},"init":$init}"""
+		// A `T?` (nullable type-parameter) LOCAL whose CLR rep is a bare `gp:T` carries no nullability in IL, so a
+		// value-type instantiation (`Int`) would fault on a real null (`var single: T? = null; ...; single as T`).
+		// Emit the sibling `"nullable":true` — the SAME marker the field/property path uses — so bir2cir's
+		// NullableGenericReturnErasure erases the local's `type` -> `object`. Inert until bir2cir consumes it.
+		"""{"k":"var","name":${str(node.name.asString())},"type":${str(birType(node.type))}${nullableGpFieldFlag(node.type)},"init":$init}"""
 	}
 	// `val x by <delegate>` declared INSIDE a function (IrLocalDelegatedProperty): emit the delegate as a
 	// local var; its getter/setter calls (`<get-x>`) are rewritten to delegate access in call() (localDelegates).

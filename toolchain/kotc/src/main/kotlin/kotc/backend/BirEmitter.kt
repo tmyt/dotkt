@@ -1112,8 +1112,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  rep is a bare `gp:T` carries no nullability in IL, so a value-type instantiation (`Int`) would fault on a
 	 *  real null (SequenceBuilderIterator.nextValue: T?). Emit the sibling `"nullable":true` so bir2cir's extended
 	 *  NullableGenericReturnErasure erases the slot's `type` -> `object` (the SAME `T?`->object model the method-return
-	 *  path uses, just extended from returns to fields/props). Inert until bir2cir consumes it. */
-	private fun nullableGpFieldFlag(t: IrType): String =
+	 *  path uses, just extended from returns to fields/props). Inert until bir2cir consumes it.
+	 *  `internal` so the LOCAL-var / PARAM emission (BirEmitterStatements.kt) can reuse the same marker. */
+	internal fun nullableGpFieldFlag(t: IrType): String =
 		if (t.isMarkedNullable() && birType(t).startsWith("gp:")) ""","nullable":true""" else ""
 
 	internal fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false, liftedAnon: Boolean = false): String {

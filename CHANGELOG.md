@@ -5,6 +5,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc (bundle-6 value-type-nullable): the `"nullable":true` marker now rides nullable-generic LOCAL vars too.** A
+  `T?` (nullable type-parameter) local whose CLR rep is a bare `gp:T` — e.g. `Sequence.single{}`'s `var single: T? = null`
+  and `filterNotNullTo`'s `var element: T? = iterator.next()` — carried no nullability into IL, so a value-type
+  instantiation (`Int`) faulted on a real null (`single as T` NRE, `filterNotNull` element unbox). `BirEmitterStatements`
+  now stamps the same sibling `"nullable":true` the field/property/type-arg paths use (reusing `nullableGpFieldFlag`,
+  promoted to `internal`) on a marked-nullable `gp:` local. This completes the kotc half of the value-type-nullable
+  generic story (field/property/type-arg/receiver/local/param all marked). The BIR-before was
+  `{"k":"var","name":"single","type":"gp:T","init":…null}`; after it is
+  `{…,"type":"gp:T","nullable":true,"init":…}`. `run:seq`/`run:chunk` stay XFAIL: the marker is inert until bir2cir's
+  `NullableGenericReturnErasure` grows a GENERAL marked-local erasure — today `EraseNullableGpDecls` covers only
+  fields/properties and `RetypeGetterReaderVars` only getter-reader locals, so the CIR keeps `type:gp:T` for `single`/
+  `element` (bir2cir follow-up).
 - **bir2cir (bundle-6 BUG-1): value-type `asSequence().filter{}` (and any nullable-gp sentinel property) no longer
   `InvalidProgram`s.** A generic iterator's `var nextItem: T? = null` backing field already erased to `System.Object`
   (it must, to hold a real null for a value-type `T`), but its ACCESSOR methods (`get_nextItem`/`set_nextItem`) and the
