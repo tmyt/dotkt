@@ -666,6 +666,10 @@ static class SuspendColdLowering
             }
 
             var body = _isLambda ? _lambdaBody : ((_m["body"] as JsonArray) ?? new JsonArray());
+            // Pre-pass: alpha-rename shadowed same-name locals of DIFFERENT types (see DisambiguateShadowedVars)
+            // so each distinct declaration gets its OWN correctly-typed SM field. Returns the input unchanged
+            // when there is no type clash; a renamed CLONE otherwise (never mutates the shared/retained body).
+            body = DisambiguateShadowedVars(body);
             var hasSuspension = HasSuspension(body);
 
             if (!_isLambda && !hasSuspension)
@@ -751,6 +755,125 @@ static class SuspendColdLowering
         void AddFieldTyped(string name, string type)
         {
             if (_fields.Add(name)) _fieldDecls.Add((name, type));
+        }
+
+        // Make SM-field allocation SCOPE-AWARE for shadowed same-name locals of DIFFERENT types. A coroutine
+        // body may declare the same `var` name in DISJOINT scopes with DIFFERENT types (e.g.
+        // SlidingWindow.windowedIterator's `var buffer = ArrayList<T>()` in one if-branch vs
+        // `var buffer = RingBuffer<T>(...)` in the other). CollectVarFields keys SM fields by NAME, so it would
+        // collapse the two to a single field of ONE type -> the other branch's `buffer.expanded()/isFull()` then
+        // can't resolve on the wrong-typed field (ilverify StackUnexpected / runtime "Iterator has failed").
+        //
+        // We alpha-rename the shadowing declarations (`buffer` / `buffer$2`) so each distinct-typed declaration
+        // gets its OWN correctly-typed SM field, binding every `local`/`setLocal` reference to the declaration
+        // lexically IN SCOPE (a scope-frame stack, resolved innermost-first, one frame per block/valueBlock/try
+        // body/catch/finally). This is the general "shadowed same-name locals of different types" fix, common in
+        // generated/inlined stdlib code. Only names whose declarations DISAGREE on type are renamed (the common
+        // case — including same-type disjoint reuse that harmlessly shares one field — is left byte-identical),
+        // and we return the INPUT array untouched when there is no clash. On a clash we operate on a DeepClone,
+        // so the shared/retained original body node (kept in the rt-stdlib build) is never mutated.
+        static JsonArray DisambiguateShadowedVars(JsonArray body)
+        {
+            // 1. Which `var` names are declared with more than one distinct type? (Skip nested lambda/closure and
+            //    the suspendCoroutine intrinsic subtrees — they own their own scope, handled separately.)
+            var declTypes = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            void Scan(JsonNode n)
+            {
+                if (n is JsonObject o)
+                {
+                    var k = Str(o["k"]);
+                    if (IsSuspendIntrinsicBlock(o)) return;
+                    if (k != null && LambdaKinds.Contains(k)) return;
+                    if (k == "var" && Str(o["name"]) is string vn)
+                    {
+                        if (!declTypes.TryGetValue(vn, out var set))
+                            declTypes[vn] = set = new HashSet<string>(StringComparer.Ordinal);
+                        set.Add(Str(o["type"]) ?? "kotlin.Any");
+                    }
+                    foreach (var kv in o) if (kv.Value != null) Scan(kv.Value);
+                }
+                else if (n is JsonArray a) foreach (var it in a) if (it != null) Scan(it);
+            }
+            Scan(body);
+            var conflicts = new HashSet<string>(
+                declTypes.Where(kv => kv.Value.Count > 1).Select(kv => kv.Key), StringComparer.Ordinal);
+            if (conflicts.Count == 0) return body;
+
+            // 2. Rename the conflicting declarations + their in-scope references on a private clone.
+            var clone = (JsonArray)body.DeepClone();
+            // Per conflicting name: type -> assigned emitted name. First type keeps the bare name; each further
+            // type gets a `$N` suffix. A same (name,type) reused across disjoint scopes maps to the SAME field.
+            var assigned = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+            string Assign(string name, string type)
+            {
+                if (!assigned.TryGetValue(name, out var byType))
+                    assigned[name] = byType = new Dictionary<string, string>(StringComparer.Ordinal);
+                if (byType.TryGetValue(type, out var nn)) return nn;
+                var newName = byType.Count == 0 ? name : name + "$" + (byType.Count + 1);
+                byType[type] = newName;
+                return newName;
+            }
+
+            var scopes = new List<Dictionary<string, string>>();
+            string Resolve(string name)
+            {
+                for (var i = scopes.Count - 1; i >= 0; i--)
+                    if (scopes[i].TryGetValue(name, out var r)) return r;
+                return null;
+            }
+            void PushList(JsonArray stmts)
+            {
+                scopes.Add(new Dictionary<string, string>(StringComparer.Ordinal));
+                foreach (var s in stmts) if (s != null) Visit(s);
+                scopes.RemoveAt(scopes.Count - 1);
+            }
+            void Visit(JsonNode n)
+            {
+                if (n is JsonArray a) { foreach (var it in a) if (it != null) Visit(it); return; }
+                if (n is not JsonObject o) return;
+                var k = Str(o["k"]);
+                if (IsSuspendIntrinsicBlock(o)) return;             // nested suspension owns its own scope
+                if (k != null && LambdaKinds.Contains(k)) return;   // nested lambda/closure -> separate SM
+                switch (k)
+                {
+                    case "var":
+                        if (o["init"] != null) Visit(o["init"]);    // init binds in the OUTER scope (before decl)
+                        if (Str(o["name"]) is string vn && conflicts.Contains(vn))
+                        {
+                            var nn = Assign(vn, Str(o["type"]) ?? "kotlin.Any");
+                            o["name"] = nn;
+                            scopes[^1][vn] = nn;
+                        }
+                        return;
+                    case "local":
+                        if (Str(o["name"]) is string ln && Resolve(ln) is string lr) o["name"] = lr;
+                        return;
+                    case "setLocal":
+                        if (o["value"] != null) Visit(o["value"]);
+                        if (Str(o["name"]) is string sn && Resolve(sn) is string sr) o["name"] = sr;
+                        return;
+                    case "block":
+                    case "valueBlock":
+                        scopes.Add(new Dictionary<string, string>(StringComparer.Ordinal));
+                        if (o["body"] is JsonArray bb) foreach (var s in bb) if (s != null) Visit(s);
+                        if (o["stmts"] is JsonArray ss) foreach (var s in ss) if (s != null) Visit(s);
+                        if (o["result"] != null) Visit(o["result"]);   // evaluated in the block's scope
+                        scopes.RemoveAt(scopes.Count - 1);
+                        return;
+                    case "try":
+                        if (o["body"] is JsonArray tb) PushList(tb);
+                        if (o["catches"] is JsonArray cs)
+                            foreach (var c in cs)
+                                if (c is JsonObject co && co["body"] is JsonArray cb) PushList(cb);
+                        if (o["finally"] is JsonArray fb) PushList(fb);
+                        return;
+                    default:
+                        foreach (var kv in o) if (kv.Value != null) Visit(kv.Value);
+                        return;
+                }
+            }
+            PushList(clone);
+            return clone;
         }
 
         void CollectVarFields(JsonNode node, bool inHandler)

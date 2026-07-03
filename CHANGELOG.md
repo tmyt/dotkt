@@ -5,6 +5,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 P5): scope-aware SM-field spill for shadowed same-name locals of DIFFERENT types.**
+  A coroutine body may declare the same `var` name in DISJOINT scopes with DIFFERENT types — e.g.
+  `SlidingWindow.windowedIterator`'s `var buffer = ArrayList<T>()` in the `gap >= 0` branch vs
+  `var buffer = RingBuffer<T>(...)` in the `else` branch. `SuspendColdLowering.CollectVarFields` keyed the
+  state-machine field by NAME, so it collapsed the two declarations to a SINGLE field of ONE type; the other
+  branch's members (`buffer.expanded()/isFull()/removeFirst()`) then resolved against the wrong-typed field
+  (`ilverify` `StackUnexpected: found RingBuffer<T0> expected List<T0>` and its inverse; runtime
+  "Iterator has failed" on the windowed path). A new `DisambiguateShadowedVars` pre-pass (runs in `FunGen.Build`
+  before field collection) alpha-renames the shadowing declarations (`buffer` / `buffer$2`) so each
+  distinct-typed declaration gets its OWN correctly-typed SM field, binding every `local`/`setLocal` reference to
+  the declaration lexically IN SCOPE via a scope-frame stack (one frame per `block`/`valueBlock`/`try`
+  body/catch/finally, resolved innermost-first; a `var` `init` is bound in the outer scope; nested
+  lambda/closure and `suspendCoroutine`-intrinsic subtrees are skipped as they own their own scope). Only names
+  whose declarations disagree on type are touched (the common case is byte-identical), and the pass returns the
+  input untouched — operating on a `DeepClone` only on an actual clash — so the retained rt-stdlib original body
+  is never mutated. The `windowedIterator` SM now emits `buffer : List<T>` + `buffer$2 : RingBuffer<T>`; the three
+  RingBuffer↔List `StackUnexpected` findings are eliminated. (General shadowed-same-name-locals correctness fix,
+  common in generated/inlined stdlib code; exposed by the windowed sequence path. `chunk`/`collops2` remain
+  XFAIL on SEPARATE pre-existing blockers — the SequenceBuilder cold-resume "Iterator has failed" machinery and
+  an earlier `collops2` op — not the shadowed var.)
 - **bir2cir (bundle-6 P5 Phase-A3): `sequence{}` cold path drive-to-green — captured extension receiver + nested field-assignment.**
   Three fixes that unblock the rt-stdlib build from EMITTING the real `SequenceBuilderIterator` cold code
   (it was aborting at `ilemit`):
