@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit: emit a cross-assembly call to a STATIC method on an EXTERNAL generic type against the correct constructed
+  instantiation (bundle-6 P4 blocker (1); general codegen fix).** `AnchorOpenGenericOwnerStatic` previously anchored
+  only LOCAL `MethodBuilder` statics (onto the `object`-instantiation); an EXTERNAL reflection static resolved on the
+  open generic type DEFINITION (`kotlin.Result\`1::success`, from the referenced `DotKt.Stdlib.dll`) was emitted with
+  its parent scoped to that open typedef — an invalid memberref that JIT-loaded as
+  `TypeLoadException: Could not load type 'kotlin.Result\`1' from assembly '<app>'` at runtime. It now mirrors the
+  local path for a reflection static whose declaring type is a generic type definition: construct
+  `C\`1<object>` (a Kotlin companion static cannot reference the enclosing class's type params, so every
+  instantiation is signature-identical and `object` is canonical — matching the stdlib's OWN emitted
+  `call C\`1<object>::success<…>(…)`) and re-anchor the member by `(module, metadata token)`; `ApplyTypeArgs` then
+  `MakeGenericMethod`s it with the call's own type args (reading the concrete return/param signature straight off the
+  reflection instantiation so value-arg boxing stays correct). Any cross-assembly `Result.success`/`failure` (and any
+  static on a generic stdlib type) now emits verifiably. Verified by **`cases/il-genstatic`** (new): `Result.success`/
+  `Result.failure` called from the app → `42`/`True`/`True`/`boom`/`hi`, `ilverify`-clean. Unblocks
+  `il-cobuild`'s genuine-async resume callback (`Result.success` wake token no longer TypeLoad-crashes; cobuild now
+  runs to value `0`, its remaining run-XFAIL being the stdlib `blockOn` drain, blocker (2)).
 - **bir2cir: lower `Task.await()` to the cold-core awaiter suspension point — the `.NET Task ⇒ Kotlin suspend`
   REVERSE bridge (bundle-6 P4; design §4/§5). Completes bidirectional coroutine interop.** `SuspendColdLowering`
   now consumes the facadegen-injected await marker (`k == clrStatic`/`clrGenericStatic`, `suspendCall`,
