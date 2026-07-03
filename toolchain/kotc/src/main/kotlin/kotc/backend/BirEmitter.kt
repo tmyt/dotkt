@@ -1108,7 +1108,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}.joinToString(",")
 	}
 
-	internal fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false): String {
+	internal fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false, liftedAnon: Boolean = false): String {
 		val baseType = klass.superTypes
 			.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
 		val base = baseType?.classifierOrNull?.owner as? IrClass
@@ -1252,18 +1252,50 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Round-trip: a Kotlin `sealed` class lowers to a CLR abstract class (loses the sealed modality) — carry the fact
 		// so a re-consuming Kotlin module restores `sealed` (ilemit stamps [KotlinSealed]).
 		val sealedFlag = ""","isSealed":${klass.modality == Modality.SEALED}"""
-		// A lifted anonymous-object / local class that CAPTURES enclosing generic type parameters (reified CLR generics —
+		// A lifted anonymous-object class that CAPTURES enclosing generic type parameters (reified CLR generics —
 		// `object : Box<T>`, or an inlined `object` whose supertype/captures resolve to the enclosing `T`) must be GENERIC
-		// over them itself: the members already reference `gp:T` (birType put it there, honoring any inline `typeArgSubst`),
-		// so the class must DECLARE `T` and the construction site instantiates it with the enclosing arg. Detect exactly the
-		// captured params from the `gp:` tokens birType rendered into the members MINUS the class's own params — this is
-		// robust to inline substitution (a monomorphized param leaves no `gp:` token; one remapped to `gp:X` yields `X`),
-		// and single-render (the member strings are already built above; no side-effecting re-emit). Mirrors closureNew/samNew.
+		// over them itself: on the CLR a `gp:T` referenced by its members is unresolved unless the flattened class DECLARES
+		// `T` and the construction site instantiates it with the enclosing arg (mirrors closureNew/samNew). This runs ONLY
+		// for the lifted object-literal path (`liftedAnon`) — a normal named declaration owns all of its params — and derives
+		// the captured set STRUCTURALLY from the class's real type positions (supertypes, own type-param bounds, captured-var
+		// field types, ctor/member parameter + return + body-operand types), rendered through birType (so an inline
+		// `typeArgSubst` remap is honored). It deliberately does NOT scan a member's CALL nodes: a `gp:T` inside a call's
+		// `sig` metadata is the CALLEE's own param (e.g. `clrCollAddAll<T>`), NOT an enclosing capture — scanning rendered
+		// member JSON for it over-captured, giving a normal `ArrayList<E>` a spurious `T` (arity-2, broke the rt build).
 		val ownTps = innerEnclosingTypeParams(klass) + klass.typeParameters
 		val ownNames = ownTps.map { it.name.asString() }.toHashSet()
 		val capturedTpNames = LinkedHashSet<String>()
-		Regex("gp:([A-Za-z0-9_]+)").findAll("$baseJson$ifaces$fields$ctors$methods$propsList").forEach {
-			val n = it.groupValues[1]; if (n !in ownNames) capturedTpNames.add(n)
+		if (liftedAnon) {
+			val gpRe = Regex("gp:([A-Za-z0-9_]+)")
+			// Render a type position via birType and collect its enclosing `gp:` tokens (own/member-own params excluded).
+			fun scan(t: IrType, excluded: Set<String>) = gpRe.findAll(birType(t)).forEach {
+				val n = it.groupValues[1]; if (n !in excluded) capturedTpNames.add(n)
+			}
+			// Supertypes, own type-param bounds, and captured-var field types can only reference ENCLOSING params.
+			klass.superTypes.forEach { scan(it, ownNames) }
+			klass.typeParameters.forEach { tp -> tp.superTypes.forEach { scan(it, ownNames) } }
+			captures.forEach { scan(it.first.type, ownNames) }
+			klass.declarations.forEach { d ->
+				when (d) {
+					// A member/ctor may ALSO reference an enclosing param in its signature or a reified body operand (`is R`);
+					// exclude that member's OWN type params (a generic method's `<U>` is not a class capture).
+					is IrSimpleFunction -> {
+						val excl = ownNames + d.typeParameters.map { it.name.asString() }
+						d.parameters.forEach { scan(it.type, excl) }
+						scan(d.returnType, excl)
+						bodyTypeOperands(d).forEach { scan(it, excl) }
+					}
+					is IrConstructor -> {
+						d.parameters.forEach { scan(it.type, ownNames) }
+						bodyTypeOperands(d).forEach { scan(it, ownNames) }
+					}
+					is IrProperty -> {
+						d.backingField?.let { scan(it.type, ownNames) }
+						d.getter?.let { scan(it.returnType, ownNames) }
+					}
+					else -> {}
+				}
+			}
 		}
 		liftedTypeArgNames[klass] = capturedTpNames.toList()
 		val ownTpsJson = typeParamsJson(ownTps).removePrefix(""","typeParams":[""").removeSuffix("]")
@@ -3226,13 +3258,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// site must then INSTANTIATE it with the enclosing args — bracket those `gp:` tokens onto the constructed type
 				// (they resolve at THIS site, i.e. the enclosing method/type scope). Mirrors closureNew/samNew's `typeArgs`.
 				val capPairs = captured.map { it to captureFieldName(it) }
+				// Save any PRIOR binding for each captured decl: when this object literal is nested inside a capturing
+				// closure/object that captures the SAME outer var (`element`), the enclosing frame already bound it to
+				// its OWN field. Blindly `remove`ing after typeDef would clobber that, so the capture VALUE below would
+				// mis-render as a bare `local element` (the enclosing `this.element` is out of scope at the `new` site ->
+				// ilemit "load unknown var"). Restore the prior binding instead — mirrors the closure path (lambda()).
+				val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
 				capPairs.forEach { (decl, fname) ->
 					captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 				}
-				liftedTypes.add(typeDef(anon, capPairs))
-				capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
+				liftedTypes.add(typeDef(anon, capPairs, liftedAnon = true))
+				capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 				val tpNames = liftedTypeArgNames[anon].orEmpty()
-				// Capture values are evaluated in the OUTER context (captureSubst now cleared).
+				// Capture values are evaluated in the OUTER context (this frame's captureSubst restored above).
 				val capArgs = captured.joinToString(",") { capValueExpr(it) }
 				val newType = if (tpNames.isEmpty()) cname else "$cname[${tpNames.joinToString(",") { "gp:$it" }}]"
 				return """{"k":"new","type":${str(newType)},"args":[$capArgs]}"""

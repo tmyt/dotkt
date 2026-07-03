@@ -5,6 +5,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc (bundle-6 P5): fix the object-expression generic-capture OVER-capture regression that broke the rt-stdlib build.**
+  The `object : Box<T>` generic-capture support (`typeDef` capture-augmentation) computed a lifted class's captured
+  enclosing type params by REGEX-scanning the rendered member JSON for `gp:` tokens, for EVERY class. Two defects:
+  (1) it ran for normal named declarations too, and (2) a `gp:T` that appears only inside a call node's `sig`
+  metadata (e.g. `ArrayList<E>.addAll` calling the inline helper `clrCollAddAll<T>`) was mis-read as an enclosing
+  capture. Result: `kotlin.collections.ArrayList`/`HashSet`/`LinkedHashSet`/`AbstractCollection`/`AbstractMap`/
+  `ArrayDeque`/`ClrMapSnapshotSet` emitted a spurious extra type param (arity 2) → bir2cir lowered `ArrayList<E>` to
+  `List<E,T>` → ilemit `cannot resolve System.Collections.Generic.List\`2` → rt-stdlib build failed. The detection is
+  now gated to the lifted object-literal path only (`typeDef(..., liftedAnon = true)`) and computed STRUCTURALLY from
+  the class's real type positions (supertypes, own type-param bounds, captured-var field types, ctor/member parameter +
+  return + `is`/`as` body-operand types) rendered through `birType` — never from call-node metadata; a member's own
+  generic params are excluded. `ArrayList` etc. are back to arity-1 and the rt build emits clean.
+- **kotc (bundle-6 P5): save/restore `captureSubst` in the object-literal lift so a nested capture of the same outer
+  var is not clobbered.** When a generic-capturing `object { ... }` is nested inside a capturing closure that captures
+  the SAME outer variable (e.g. `element` in the `Sequence`/`asSequence` builders), `blockExpr` blindly `remove`d the
+  captured decl's substitution after lifting the object, dropping the enclosing closure's `this.element` binding — so
+  the capture VALUE at the `new` site mis-rendered as a bare `local element` (ilemit `load unknown var element`). It
+  now saves the prior binding and restores it, mirroring the closure path. This unblocked the rt stdlib
+  `Sequences`/`SequencesKt` emit.
 - **bir2cir (bundle-6 P5): scope-aware SM-field spill for shadowed same-name locals of DIFFERENT types.**
   A coroutine body may declare the same `var` name in DISJOINT scopes with DIFFERENT types — e.g.
   `SlidingWindow.windowedIterator`'s `var buffer = ArrayList<T>()` in the `gap >= 0` branch vs
