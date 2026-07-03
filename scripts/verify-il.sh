@@ -31,7 +31,7 @@ done
 # findings, not run failures.
 declare -A XFAIL_RUN=(
 	[chunk]="coroutine/SequenceScope-deferred (bundle 6)"
-	[cobuild]="coroutine-deferred (kotlinx delay legacy removed; Task lowering = bundle 6)"
+	[cobuild]="cold-core P4 pending: kotlin.clr.blockOn/delay frontend injection (bundle 6)"
 	[collops2]="coroutine/SequenceScope-deferred (bundle 6)"
 	[seq]="coroutine/SequenceScope-deferred (bundle 6)"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
@@ -48,9 +48,8 @@ declare -A XFAIL_ILVERIFY=(
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
 # -classpath, REPLACING the JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). This preserves
 # full Kotlin semantics and is the BINDING invariant: kotlin.* comes from the JAR, never from facadegen
-# --scan-asm. kotlinx.coroutines stays a separate jar (the 3 cases that use kotlinx.*).
-CORO="$(find "$HOME/.gradle/caches" -name 'kotlinx-coroutines-core-jvm-1.8.0.jar' | head -1)"
-CP="$FE_JAR:$CORO"
+# --scan-asm. (legacy coroutines jar dropped 2026-07-03: the cold-core surface is kotlin.clr.blockOn/delay/await.)
+CP="$FE_JAR"
 
 # Build the compiler launcher ONCE (a plain Java app). Per-sample invokes then cost ~2s of JVM startup
 # instead of ~9s for `gradlew --no-daemon :kotc:run`.

@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotlinx purged — BREAKING (bundle-6 P1b, user-directed deliberate break).** The historical `kotlinx.coroutines`
+  intermixing (a pre-stdlib coroutine stopgap) is removed from the repo: no `kotlinx` names remain outside Track-2
+  design notes, `docs/archive/`, and this changelog's history. The cold-core coroutine surface
+  `kotlin.clr.blockOn` / `kotlin.clr.delay` / `Task.await()` replaces `kotlinx.coroutines.runBlocking` / `.delay`.
+  Concretely: the `il-cobuild` sample and the three suspend-consuming `verify-roundtrip` sections were rewritten
+  `kotlinx.coroutines.{runBlocking,delay}` → `kotlin.clr.{blockOn,delay}`; the `kotlinx-coroutines-core-jvm` jar was
+  dropped from `verify-il.sh` / `verify-roundtrip.sh` (clr side) and `verify-differential.sh` / `dotkt.sh`; kotc lost
+  its `kotlinx.coroutines.runBlocking` trivial-block passthrough recognizer and its
+  `kotlinx.coroutines.suspendCancellableCoroutine` (`isSuspendCancellable`) intrinsic branch (cleanly detachable —
+  `sequence{}`'s CPS engine relies on `yield`/`yieldAll`, not this). `kotlin.clr.blockOn`/`delay` are not yet
+  frontend-resolvable (they live in the jar-excluded taskinterop source set; their FIR injection is cold-core P4), so
+  `cobuild` and the roundtrip suspend sections stay XFAIL at the frontend stage with updated reason strings. The
+  ilemit `CoCancellableCont` constant is intentionally left for P6 cleanup.
 - **Coroutine bundle-6 P2: `SuspendColdLowering` v1 (bir2cir) — the cold-core suspend → state-machine
   transform.** New pass `toolchain/bir2cir/SuspendColdLowering.cs`, wired after `MemberCallSubstitution` and
   before `BirTypeLowering` (app + rt-stdlib builds; skipped in the ref build). It lowers a straight-line
