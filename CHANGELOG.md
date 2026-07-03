@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **facadegen (bundle-6 ② async interop): generic STATIC methods now surface — Kotlin can BUILD a `Task<T>`.**
+  A public static method whose reflection reported `IsGenericMethod` (`Task.FromResult<TResult>`, `Task.Run<TResult>`) was silently
+  DROPPED at `Program.cs:557`, so Kotlin had no way to construct a `Task<T>` from a .NET generic factory. The static-member loop now
+  keeps a generic METHOD DEFINITION (only a CONSTRUCTED instantiation is skipped) and emits it as
+  `sfun <Name> <ret> [<TypeParam>...] [<param>:<type>]*` — bare (colon-free) type-param tokens between the return type and the params,
+  with the return/params mapped against those type params (`Map` returns the generic-parameter name), mirroring the existing `fun`/`tlfun`
+  generic-method emission; method type-param bounds ride the same `EmitTypeParamMeta` (`mbound …`) lines. So `System.Threading.Tasks.Task`
+  now yields `sfun FromResult generic:Task1[TResult] TResult result:TResult` and `sfun Run generic:Task1[TResult] TResult function:func:[TResult]`,
+  and kotc's generic-static companion builder resolves `Task.FromResult(42)` → `FromResult<Int>(42): Task<Int>` (→ `clrGenericStatic`, which
+  bir2cir/ilemit already lower). Non-generic statics and generic INSTANCE methods are byte-for-byte unchanged (additive — verified by diffing
+  the emitted `Task` meta: only new generic-static + `mbound` lines appear). Completes the facadegen→kotc→bir2cir→ilemit "build Task<T>" chain;
+  `il-taskgen` (`Task.FromResult(42)` → `42`) now runs and is pruned from XFAIL. (Gate hygiene: `verify-il.sh` had two
+  `declare -A XFAIL_ILVERIFY=(…)` blocks — the second silently WIPED the first per bash reassignment semantics, so
+  `seqyieldall`/`chunk` ilverify XFAILs were dead; merged into one block, which surfaced `seqyieldall` as already-FIXED and pruned it too.)
+
 - **ilemit (bundle-6 BUG Y): external constructed-generic method resolution now consumes the cold-call `sig` — unblocks `yieldAll`.**
   `sequence { yield("a"); yieldAll(listOf("b","c")) }.toList()` BadImageFormatException'd: `SequenceScope<T>` carries three same-name,
   same-arity `yieldAll$dotkt_suspend` overloads (over `Iterator<T>` / `IEnumerable<T>` / `Sequence<T>`), and `ResolveMethod`'s
