@@ -5,6 +5,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir/diagnosis (bundle-6 P4 genuine-async): root-caused `il-cobuild` printing `0` instead of `25` to a
+  compiler bug OUTSIDE bir2cir — boxed Kotlin `enum` entries lose reference identity, breaking the
+  `COROUTINE_SUSPENDED` sentinel.** The bir2cir cold-core transform is verified correct: dumping cobuild's CIR shows
+  `compute$sm`/`total$sm`/the `blockOn` lambda SM each return the right boxed value (9, 16 → 25), the `Task.await()`
+  awaiter dance (GetAwaiter/IsCompleted/OnCompleted/GetResult) is well-formed, and the suspend-call chain wires up
+  correctly. The failure is that `kotlin.coroutines.intrinsics.CoroutineSingletons` is emitted as a **.NET value-type
+  `enum`** and `get_COROUTINE_SUSPENDED()` returns `System.Object`, so it **re-boxes a fresh instance every call**.
+  The stdlib's own `outcome === COROUTINE_SUSPENDED` reference-equality checks (`BaseContinuationImpl.resumeWith`,
+  `SafeContinuation`, `RootContinuation`) are therefore **always false** once a body genuinely suspends: the suspended
+  coroutine is mistaken for completed, the boxed marker (ordinal `0`) is propagated to the `blockOn` sink, and
+  `sink.value as Int` unboxes it to `0` (blockOn returns immediately; the async resume never runs — hence
+  `f()`'s post-await code never executes). The fast path (already-completed task, `il-taskawait`) passes because it
+  never returns `SUSPENDED`. Proven minimally: `E.A === E.A` through `Any` is `False` in our compiler while an
+  `object` singleton is `True`; a throwaway stdlib patch caching the boxed sentinel (a stored `val`) makes
+  cobuild/f7/f7d print `25`/`7`/`7` with `il-taskawait` unregressed. **Fix belongs in ilemit** (preserve reference
+  identity for boxed Kotlin enum entries — the general Kotlin-enum `===` correctness fix) **or narrowly in the stdlib**
+  (cache the `COROUTINE_SUSPENDED` box / make `CoroutineSingletons` a reference singleton); `il-cobuild` stays
+  run-XFAIL until that lands. `scripts/verify-il.sh` `XFAIL_RUN[cobuild]` reason updated to this root cause (the prior
+  "blockOn drain returns immediately" note was a symptom, not the cause — the Monitor drain is correct).
+
 - **ilemit: emit a cross-assembly call to a STATIC method on an EXTERNAL generic type against the correct constructed
   instantiation (bundle-6 P4 blocker (1); general codegen fix).** `AnchorOpenGenericOwnerStatic` previously anchored
   only LOCAL `MethodBuilder` statics (onto the `object`-instantiation); an EXTERNAL reflection static resolved on the

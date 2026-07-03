@@ -31,8 +31,7 @@ done
 # findings, not run failures.
 declare -A XFAIL_RUN=(
 	[chunk]="coroutine/SequenceScope-deferred (bundle 6)"
-	[cobuild]="bundle-6 P4: bir2cir Task.await() lowering is DONE (awaiter dance + fast path verified green by il-taskawait), but the genuine-ASYNC resume needs two CROSS-LAYER fixes outside bir2cir: (1) ilemit cannot emit a cross-assembly call to kotlin.Result.success (a public static on the generic Result-arity-1 type): FindMethod/AnchorOpenGenericOwnerStatic only anchor LOCAL MethodBuilders, so the external static-on-generic emits a bad-scoped memberref -> runtime TypeLoadException loading kotlin.Result from the app assembly; (2) the await SLOW PATH does not yet drive a genuine suspension: Task.Delay(1).await() completes SYNCHRONOUSLY during startCoroutine (bir2cir suspend counter = 0 await; instrumented blockOn finds sink.done==true before it can Wait), so blockOn faithfully returns the default 0 -- this is NOT a blockOn drain defect (the Monitor Wait/Pulse drain is VERIFIED correct: CIR substitutes to System.Threading.Monitor.Enter/Wait/Exit/Pulse on the same sink monitor, and il-monitordrain proves the mechanism blocks + wakes cross-thread). Fast path (already-completed task) works E2E."
-	[cobuild]="bundle-6 P4: bir2cir Task.await() lowering is DONE (awaiter dance + fast path verified green by il-taskawait). Blocker (1) [ilemit cross-assembly call to kotlin.Result.success on the generic Result-arity-1 type] is now FIXED (AnchorOpenGenericOwnerStatic anchors the EXTERNAL static-on-generic onto Result-of-object; covered by il-genstatic) — cobuild no longer TypeLoad-crashes and runs to value 0. It stays run-XFAIL on the REMAINING blocker (2): stdlib blockOn Monitor Wait/Pulse drain returns immediately (value 0) instead of waiting for a truly-suspending coroutine (proven with a no-op resume callback; lam1/lam2/coldcf never exercised true async). Fast path (already-completed task) works E2E."
+	[cobuild]="bundle-6 P4: bir2cir Task.await() lowering + the whole cold-core SM chain (compute/total/lambda) are VERIFIED CORRECT (dumped CIR returns the right boxed values; il-taskawait green for the fast path). ROOT CAUSE of the genuine-ASYNC 0 is OUTSIDE bir2cir: COROUTINE_SUSPENDED loses REFERENCE IDENTITY when boxed. The stdlib emits kotlin.coroutines.intrinsics.CoroutineSingletons as a .NET VALUE-TYPE enum and get_COROUTINE_SUSPENDED() returns System.Object, RE-BOXING a fresh instance per call — so the stdlib's own 'outcome === COROUTINE_SUSPENDED' checks (BaseContinuationImpl.resumeWith / SafeContinuation / RootContinuation), which are reference equality, are ALWAYS FALSE once a body genuinely returns SUSPENDED. The suspended coroutine is then mistaken for COMPLETED, the boxed marker propagates to the blockOn sink, and 'sink.value as Int' unboxes the enum (ordinal 0) -> 0 (blockOn returns immediately; the resume never runs). The fast path (already-completed task) never returns SUSPENDED, hence taskawait passes. PROVEN: 'E.A === E.A' through Any is False in our compiler (an object singleton is True); a throwaway stdlib patch caching the boxed sentinel (stored val) makes cobuild/f7/f7d print 25/7/7 with taskawait unregressed. FIX (not bir2cir): ilemit must preserve reference identity for boxed Kotlin enum entries (the general Kotlin-enum === correctness fix), OR narrowly the stdlib caches the COROUTINE_SUSPENDED box (stored val) / makes CoroutineSingletons a reference singleton."
 	[collops2]="coroutine/SequenceScope-deferred (bundle 6)"
 	[seq]="coroutine/SequenceScope-deferred (bundle 6)"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
@@ -45,7 +44,7 @@ declare -A XFAIL_ILVERIFY=(
 	[iter]="ilverify formal-only finding (sample runs correct)"
 	[iterable]="ilverify formal-only finding (sample runs correct)"
 	[taskawait]="ilverify formal-only finding (sample runs correct): CallVirtOnValueType — the TaskAwaiter STRUCT's OnCompleted (an interface-impl method) is emitted callvirt without a constrained. prefix by ilemit; benign at runtime (JIT resolves it), the verifiable form is an ilemit constrained.-prefix improvement"
-	[cobuild]="ilverify formal finding (sample also run-XFAIL: bundle-6 P4 async blockers): same CallVirtOnValueType on the TaskAwaiter struct as taskawait"
+	[cobuild]="ilverify formal finding (sample also run-XFAIL: boxed-enum COROUTINE_SUSPENDED identity, outside bir2cir): same CallVirtOnValueType on the TaskAwaiter struct as taskawait"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
@@ -369,8 +368,9 @@ il_check_inject stackalloc Sa "$ROOT/cases/il-stackalloc" "$(printf '16\n30\n-1\
 il_check fmt Fmt "$ROOT/cases/il-fmt" "$(printf '42 items, 87.5%% (ok)\n00007-ff\n[a   ]\n[bb  ]')"
 il_check_inject mref Mr "$ROOT/cases/il-mref" "$(printf 'hello world\n0')" MrRt
 # cobuild: the GENUINE .NET-async E2E — `Task.Delay(1).await()` truly suspends (imports System.*, so
-# il_check_IMPORTS runs facadegen for the await marker). bir2cir's P4 await lowering is applied; the
-# remaining fails are two CROSS-LAYER gaps outside bir2cir (see XFAIL_RUN[cobuild]).
+# il_check_IMPORTS runs facadegen for the await marker). bir2cir's P4 await lowering + the whole cold-core
+# SM chain are verified correct; the remaining fail is ONE root cause OUTSIDE bir2cir — boxed-enum
+# COROUTINE_SUSPENDED loses reference identity (see XFAIL_RUN[cobuild]).
 il_check_imports cobuild Cob "$ROOT/cases/il-cobuild" "25"
 # monitordrain: locks the System.Threading.Monitor Wait/Pulse cross-thread DRAIN mechanism that
 # kotlin.clr.blockOn's BlockOnSink is built on (waiter Enter/`while(!done) Wait`/Exit; completer
