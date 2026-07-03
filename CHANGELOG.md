@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc (bundle-6 P5 Phase-A2 IGNITION): `sequence{}`/`iterator{}`/`yield` are now ORDINARY library code.**
+  Deleted every trace of the `sequence`/`yield` builder from the frontend: (1) the
+  `kotlin.sequences.sequence` special-case in `BirEmitter.call()` (which pulled the block, rejected
+  captures, ran the CPS engine, and emitted a `sequenceNew` CLR-sink node); (2) `isYield`/`isYieldAll`
+  and their `emitSuspend` `coYield`/`coYieldAll` branches; (3) the `@RestrictsSuspension` exclusion in
+  `suspendLambda()`. `sequence(block)` now resolves as a normal stdlib call over the real cold core
+  (`SequenceBuilderIterator`); `{ yield(...) }` emits `suspendLambdaNew` and flows through bir2cir's
+  `RestrictedSuspendLambda` state machine; `yield`/`yieldAll` become ordinary virtual suspend member
+  calls. kotc holds ZERO knowledge of the `sequence`/`yield`/`yieldAll` symbols (the only residual FQN
+  reference is in the now-unreferenced CPS engine, deferred to Phase-B). Downstream follow-up: bir2cir
+  `SuspendLambdaLowering` must supply `{"k":"this"}` (not `{"k":"local","name":"__outer"}`) for the
+  enclosing-`this`/extension-receiver capture at SM construction — the rt-stdlib build's internal
+  capturing `sequence{}`s (`ifEmpty`/`shuffled`/`runningFold`/…) block on it.
 - **ilemit (bundle-6 P5): `class D<T> : Base<T>()` — generic base instantiated over the derived's OWN type param.**
   A generic class whose base is a generic type constructed over its own type parameter (the
   `SequenceBuilderIterator<T> : SequenceScope<T>()` shape) crashed at load/JIT with a "not fully instantiated" /
