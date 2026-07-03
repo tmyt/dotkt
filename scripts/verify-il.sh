@@ -31,7 +31,7 @@ done
 # findings, not run failures.
 declare -A XFAIL_RUN=(
 	[chunk]="coroutine/SequenceScope-deferred (bundle 6)"
-	[cobuild]="cold-core P4 pending: kotlin.clr.blockOn/delay frontend injection (bundle 6)"
+	[cobuild]="cold-core P4/wave2b pending: blockOn/delay now RESOLVE (expect/actual) + bir2cir lowers the 2 suspend funs, but ilemit fails 'static method not found: total' — the blockOn suspend-LAMBDA isn't a real SM and the suspend-fun cold-entry/Task-bridge call target isn't emitted yet (bundle 6)"
 	[collops2]="coroutine/SequenceScope-deferred (bundle 6)"
 	[seq]="coroutine/SequenceScope-deferred (bundle 6)"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"

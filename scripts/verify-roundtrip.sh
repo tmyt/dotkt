@@ -25,13 +25,15 @@ while (( $# )); do
 done
 
 # The XFAIL baseline — MACHINE-READABLE (name -> reason). The three suspend-consuming sections drive the
-# suspend funs via the cold-core surface `kotlin.clr.blockOn`, which is not resolvable until its frontend
-# injection is wired (cold-core P4) and the coroutine lowering lands. This gate is the coroutine bundle's
-# E2E check: when suspend works end-to-end these flip to FIXED lines below — remove them in the same change.
+# suspend funs via the cold-core surface `kotlin.clr.blockOn`, which now RESOLVES at the frontend (P4
+# expect/actual surfacing landed); they still fail at ilemit (SIGABRT) because the blockOn suspend-LAMBDA
+# isn't a real SM and the suspend-fun cold-entry/Task-bridge isn't emitted (coroutine lowering, wave-2b).
+# This gate is the coroutine bundle's E2E check: when suspend works end-to-end these flip to FIXED lines
+# below — remove them in the same change.
 declare -A RT_XFAIL=(
-	[roundtrip]="cold-core P4 pending: kotlin.clr.blockOn frontend injection + coroutine lowering (bundle 6)"
-	[roundtrip-generic]="cold-core P4 pending: kotlin.clr.blockOn frontend injection + coroutine lowering (bundle 6)"
-	[roundtrip-memext2]="cold-core P4 pending: kotlin.clr.blockOn frontend injection + coroutine lowering (bundle 6)"
+	[roundtrip]="cold-core wave2b pending: blockOn/delay RESOLVE (expect/actual) but ilemit lacks the suspend-lambda SM + suspend-fun cold-entry/Task-bridge (bundle 6)"
+	[roundtrip-generic]="cold-core wave2b pending: blockOn/delay RESOLVE (expect/actual) but ilemit lacks the suspend-lambda SM + suspend-fun cold-entry/Task-bridge (bundle 6)"
+	[roundtrip-memext2]="cold-core wave2b pending: blockOn/delay RESOLVE (expect/actual) but ilemit lacks the suspend-lambda SM + suspend-fun cold-entry/Task-bridge (bundle 6)"
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
