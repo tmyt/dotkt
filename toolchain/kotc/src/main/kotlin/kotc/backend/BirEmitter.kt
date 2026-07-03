@@ -1636,25 +1636,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun isSuspendIntrinsic(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
 		e is IrCall && e.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn"
 
-	/** `SequenceScope.yield(value)` inside a `sequence { … }` builder — a multi-shot (restricted) suspension. */
-	internal fun isYield(call: IrCall): Boolean =
-		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yield"
-
-	/** `SequenceScope.yieldAll(elements)` — yield every element of an Iterable/Sequence (lowered as an inner
-	 *  enumerator loop in the sequence state machine). */
-	internal fun isYieldAll(call: IrCall): Boolean =
-		call.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.sequences.SequenceScope.yieldAll"
-
 	/** A suspension point: start the awaitable; if incomplete, save state and return; on resume read the result. */
 	internal fun emitSuspend(call: IrCall, assignTo: String?, steps: MutableList<String>) {
 		if (isSuspendIntrinsic(call)) { emitSuspendIntrinsic(call, assignTo, steps, alwaysSuspend = false, selfKind = "coSelfCont"); return }
-		if (isYield(call)) { val k = ++coState; steps.add("""{"k":"coYield","state":$k,"value":${expr(regularArgs(call).first())}}"""); return }
-		if (isYieldAll(call)) {
-			val k = ++coState
-			val arg = regularArgs(call).first()   // Iterable<T>/Sequence<T> -> IEnumerable<T>
-			steps.add("""{"k":"coYieldAll","state":$k,"iterable":${expr(arg)},"iterType":${str(birType(arg.type))}}""")
-			return
-		}
 		val k = ++coState
 		steps.add("""{"k":"coSuspend","state":$k,"awaitable":${coAwaitable(call)},"assignTo":${assignTo?.let { str(it) } ?: "null"},"resultType":${str(birType(call.type))}}""")
 	}
@@ -2151,9 +2135,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * state machine (create/invokeSuspend/resume) from these; kotc bakes no coroutine ABI. Returns null (-> plain closure
 	 * path) for the v1-unexpressible shapes bir2cir refuses:
 	 *   - arity >= 2 (own value params): bir2cir's SuspendLambda create() protocol handles only 0/1.
-	 *   - a restricted-suspension builder lambda (`@RestrictsSuspension` on the extension-receiver scope, e.g.
-	 *     `sequence { }`'s `SequenceScope`): these are pulled at the call() level (sequenceNew) — a defensive exclusion
-	 *     so a stray one never becomes a suspendLambdaNew.
+	 * Restricted-suspension builder lambdas (`@RestrictsSuspension` on the extension-receiver scope, e.g.
+	 * `sequence { }`/`iterator { }`'s `SequenceScope`) flow through THIS path too — bir2cir picks the
+	 * `RestrictedSuspendLambda` base from the scope's annotation. kotc has no `sequence`/`yield` knowledge.
 	 * Captures/params reuse the SAME machinery as the closure path (`capturedVars(includeThis=true)` / `captureFieldName`
 	 * / `captureFieldType`). NOTE: unlike closureNew, the body is emitted WITHOUT installing `captureSubst` — bir2cir's
 	 * SM builder rewrites captured-var reads (plain `{"k":"local"}`) into SM field reads itself. typeArgs are the BARE
@@ -2166,11 +2150,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// arity-1 `create(value)` view (a single receiver OR value param). arity = the count of these.
 		val ownParams = orderedLambdaParams(fn)
 		if (ownParams.size >= 2) return null   // v1: bir2cir refuses arity >= 2 -> keep the plain closure path.
-		// Restricted-suspension builder (sequence{}'s SequenceScope.() -> Unit): excluded (handled by sequenceNew).
-		val extScope = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-			?.type?.classifierOrNull?.owner as? IrClass
-		if (extScope?.annotations?.any { (it as? IrConstructorCall)?.type?.classFqName?.asString() == "kotlin.coroutines.RestrictsSuspension" } == true)
-			return null
+		// Restricted-suspension builders (`sequence { }`/`iterator { }`'s @RestrictsSuspension SequenceScope receiver)
+		// now flow through this SAME suspend-lambda path: bir2cir gives the lambda the `RestrictedSuspendLambda` base
+		// (not the plain SuspendLambda), so the cold-core builder runs. No exclusion here — kotc emits the pure suspend
+		// facts and bir2cir picks the restricted base from the receiver scope's @RestrictsSuspension annotation.
 		val captures = capturedVars(fn, includeThis = true)
 		val capturesJson = captures.joinToString(",") { d ->
 			"""{"name":${str(captureFieldName(d))},"type":${str(captureFieldType(d))}}"""
@@ -2189,8 +2172,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val fn = node.function
 		// A `suspend` lambda LITERAL -> a `suspendLambdaNew` node: bir2cir turns it into a SuspendLambda state machine
 		// (app-build only; the SM's create/resume protocol makes `blockOn { ... }` run). kotc emits only the pure FACTS
-		// (captures/params/body-with-suspendCall-tags); the SM lowering is downstream. Non-v1 shapes (arity>=2,
-		// restricted-suspension builders like sequence{}'s SequenceScope) fall through to the plain closure path below.
+		// (captures/params/body-with-suspendCall-tags); the SM lowering is downstream. Non-v1 shapes (arity>=2) fall
+		// through to the plain closure path below; restricted-suspension builders (sequence{}/iterator{}) go through
+		// suspendLambda too — bir2cir gives them the RestrictedSuspendLambda base.
 		if (fn.isSuspend) suspendLambda(node)?.let { return it }
 		// kotc does NO coroutine lowering: a `suspend () -> T` lambda emits as a PLAIN lambda (its suspend calls carry
 		// `"suspendCall":true`); the Task-ABI / state-machine lowering is a deferred downstream layer. So the declared
@@ -3310,7 +3294,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	internal fun call(call: IrCall): String {
 		val callee = call.symbol.owner
-		val calleeFqEarly = callee.fqNameWhenAvailable?.asString()
 		// NOTE: kotlin.text.MatchResult.value is a REAL interface property (realized by ClrMatchResult) — it must route
 		// through the ordinary member-call path, NOT a hardcoded System...Match.Value lowering (that leftover forced the
 		// broken MatchResult->Match aliasing above and mis-typed the call).
@@ -3323,19 +3306,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
 			}
 		}
-		// `kotlin.sequences.sequence { yield(…) }` -> a lazy IEnumerable<T> backed by a yield state machine that
-		// implements ISeqStep<T>, wrapped by DotKt.Sequences.Seq.Of. The block's yields CPS-linearize to coYield
-		// steps (multi-shot). See docs §13h. v1: the block must not capture outer state (loud error otherwise).
-		if (calleeFqEarly == "kotlin.sequences.sequence") {
-			val block = regularArgs(call).firstOrNull() as? IrFunctionExpression
-				?: return unsupported(call, "this sequence{} block", "expected a literal lambda")
-			if (capturedVars(block.function, includeThis = true).isNotEmpty())
-				return unsupported(call, "a capturing sequence{} block", "v1 supports only non-capturing sequence builders")
-			val elem = ((call.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)?.type?.let { birType(it) } ?: "object"
-			val co = emitCoroutineBody(block.function)   // yields -> coYield steps; live locals -> cpsFields
-			val smName = "<>dotkt_${synthScope}_Seq${closureCounter++}"
-			return """{"k":"sequenceNew","sm":${str(smName)},"elem":${str(elem)},"cpsFields":[${co.cpsFields}],"steps":[${co.steps}]}"""
-		}
+		// `kotlin.sequences.sequence { yield(…) }` is now ORDINARY library code: it resolves to the real stdlib
+		// `sequence(block)` function over the cold core (SequenceBuilderIterator), with `{ yield(...) }` flowing through
+		// the ordinary suspend-lambda path (suspendLambdaNew -> bir2cir's RestrictedSuspendLambda SM). kotc has NO
+		// knowledge of the `sequence`/`yield`/`yieldAll` symbols — the compiler no longer knows the builder exists.
 		// `stackBuffer(n) { … }` intrinsic -> scoped stack allocation (splice the block into the caller's frame).
 		// Matched by FULL name (`kotlin.clr.stackBuffer`, its CLR-intrinsic home) so a user function happening to be
 		// named `stackBuffer` is not mistaken for the intrinsic.
