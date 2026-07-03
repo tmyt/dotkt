@@ -86,6 +86,30 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   (Kotlin-layer knowledge) and lowers its for-in through the same `forEachInline` (GetEnumerator) path as `Iterable`,
   independent of substitute-mode; `kotlin.sequences.Sequence` is also added to `appColl`/`isSubstIterable` for the
   rt-internal path. New `cases/il-seqforin` (`for (x in sequence { yield("a"); yield("b") })` → `a`/`b`) in the gate.
+- **bir2cir (bundle-6 P5, BUG Y): synthesize the disambiguating `sig` on a cold suspend call.**
+  `SuspendColdLowering.ColdCall` rewrites a suspend call to `<method>$dotkt_suspend(<args>, this-as-completion)`
+  but emitted NO `sig`. `SequenceScope.yieldAll` has three suspend overloads whose cold-entry names are all
+  `yieldAll$dotkt_suspend` (IL overloads resolved by parameter type), so with no `sig` ilemit's overload lookup
+  fell to an arbitrary same-named method → wrong overload → `BadImageFormatException` (`yield` works only because
+  it has ONE overload). `ColdCall` now sets `["sig"]` = the original call's param signature (`callNode["sig"]`)
+  with the appended completion param type (`kotlin.coroutines.Continuation[kotlin.Any]`, the exact slot the cold
+  entry gets) concatenated. It runs in PHASE 1.5, before type lowering, so its `kotlin.*` tokens lower together
+  with the rest and string-match the cold entry's lowered `params[].type`. Verified: `sequence { yield("a");
+  yieldAll(listOf("b","c")) }.toList()` → `a,b,c` (`cases/il-seqyieldall`). NOTE: greening the case end-to-end
+  also requires an ilemit companion (external-generic receiver resolution — see `XFAIL_RUN[seqyieldall]` in
+  `scripts/verify-il.sh`), tracked for the coordinator.
+
+- **bir2cir (bundle-6 P5, FIX 1): extend the value-type-nullable erasure to fields / properties / nested
+  type-args.** `NullableGenericReturnErasure` erased only a `retNullable`+`gp:` method RETURN to `object` (the
+  only CLR rep of a generic `T?` that carries a real null for a value instantiation). It now also consumes the
+  sibling kotc marker on (a) a field/property carrying `"nullable":true` next to `"type":"gp:T"` → rewrite the
+  `type` to `object`, and (b) the inline `nullable:gp:T` token nested in a `clrg:Owner[...]` arg list (or
+  standalone) → erase that arg to `object`, everywhere a type token appears (params, returns, fields, `sig`).
+  ilemit never sees `nullable:gp:` (fully consumed, like `func:nullable:` func-returns), the difference being
+  this pass deliberately LEAVES `func:`/`sfunc:`-prefixed occurrences for `NullableFuncReturnErasure` (whose
+  StructuralSweep detects them via the `func:nullable:` prefix). Inert against current output (all 121 stdlib
+  `nullable:gp:` tokens are func-preceded; kotc emits no `nullable` field boolean yet) — it activates with the
+  sibling kotc marker, greening value-type `sequence { }` + `filterNotNull`.
 
 - **ilemit (bundle-6 P5 Phase-B): delete the dead coroutine/sequence CODEGEN — ilemit is now coroutine-free.**
   After the A2 ignition + the kotc CPS-engine deletion, NOTHING produces the old CPS/sequence CIR any more (the

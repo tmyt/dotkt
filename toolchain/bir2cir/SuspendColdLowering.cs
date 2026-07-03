@@ -1486,6 +1486,16 @@ static class SuspendColdLowering
                 };
             }
             if (callNode["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
+            // BUG Y — overload disambiguation. `<method>$dotkt_suspend` may be one of several same-named IL
+            // overloads (SequenceScope.yieldAll has 3: Iterator/Iterable/Sequence), which ilemit resolves via
+            // MethodsBySig on the param-type signature. Synthesize the call `sig` = the ORIGINAL call's param
+            // types + the appended completion param type (ContinuationOfAny — the exact `completion` slot type
+            // ColdMethod/ColdEntryAbstract give the cold entry). This runs in PHASE 1.5, BEFORE type lowering,
+            // so the sig's kotlin.* tokens are lowered together with the rest and string-match the def's lowered
+            // `params[].type`. Without it, FindMethod falls to an ARBITRARY `ti.Methods[name]` -> wrong overload
+            // -> arg/param mismatch -> BadImageFormatException. (yield works today only because it has ONE overload.)
+            var origSig = NonEmpty(Str(callNode["sig"]));
+            call["sig"] = origSig == null ? ContinuationOfAny : origSig + "," + ContinuationOfAny;
             return call;
         }
 
