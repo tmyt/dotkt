@@ -244,8 +244,8 @@ il_check coldgen ColdGen "$ROOT/cases/il-coldgen" "$(printf '7\nyo\n8\nhi')"
 # (Svc.chain -> this.helper()) + INSTGEN (generic Box<T>.get) + MCALL1 (topUse -> c.bump()) + MCALL2
 # (crossFileVal, a suspend fun in a second source file). Sync-completion drain via `main`.
 il_check coldinst ColdInst "$ROOT/cases/il-coldinst" "$(printf '11\n12\n10\n42\nhi\n101\n7')"
-# seqyieldall: bir2cir SuspendColdLowering BUG Y — the cold-call `sig` disambiguates SequenceScope.yieldAll's
-# three same-named `$dotkt_suspend` overloads (see XFAIL_RUN[seqyieldall] for the pending ilemit companion).
+# seqyieldall: yieldAll E2E over the cold core — bir2cir cold-call `sig` disambiguates SequenceScope.yieldAll's
+# three same-named `$dotkt_suspend` overloads + ilemit sig-driven external-generic resolution (both landed).
 il_check seqyieldall SeqYieldAll "$ROOT/cases/il-seqyieldall" "$(printf 'a,b,c')"
 il_check for   ForT  "$ROOT/cases/il-for"     "$(printf 'sum 1..5 = 15\ncountdown 5 = 54321')"
 il_check exc   Exc   "$ROOT/cases/il-exc"     "$(printf 'safeDiv(10,2) = 5\nsafeDiv(1,0) = -1')"
