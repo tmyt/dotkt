@@ -5,6 +5,31 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **facadegen (bundle-6 ②): async/generic .NET interop — 5 symbol-surface fixes for consuming/building `Task<T>` and generic .NET from Kotlin.**
+  All are symbol-face restorations (facadegen reads a CLR dll → FIR-injection metadata); no downstream binding. Gates: verify-il GREEN
+  (no NEW-FAIL — c1net/netbase/netgen*/event/taskfam unchanged), verify-ktproj 9/9, verify-roundtrip GREEN (RT_XFAIL suspend baseline unchanged).
+  - **② suspend-fun nullable return reads the INNER result, not the outer Task.** A `suspend fun f(): String?` is emitted returning `Task<T>`;
+    the Kotlin `?` rides the RESULT type T (the inner type arg), NOT the always-non-null Task. facadegen fed the whole `Task<T>` return through
+    `RetSuffix` (NRT index 0 = the Task) and lost/mis-placed the `?`. New `SuspendRetSuffix` reads the inner NRT position (index 1), robust to
+    both the scalar `[Nullable(2)]` and array `[Nullable({1,2})]` encodings; value-type results carry no slot → no suffix. (E2E round-trip of a
+    nullable suspend result additionally needs bir2cir/ilemit to CARRY the inner nullability onto the Task bridge return — see below.)
+  - **③ interface members now restore suspend/nullable/operator/infix.** The interface loop emitted `fun … abstract` with no `KotlinFun` read and
+    no nullability suffix. Mirrors the class-member path now; e.g. `IFormattable.ToString → String?`, `Type.GetField → FieldInfo?`.
+  - **④ the collection-return denylist is `kotlin.*`-package-only.** The "ambiguous with the stdlib jar's factory" guard fired on ANY package,
+    silently dropping a legitimate USER tlfun returning a collection (`fun makePair(): Pair<Int,Int>`). Restricted to `kotlin.*`; drops are logged.
+  - **⑤ operators on GENERIC .NET types surface.** The member-operator guard `ps[0].FullName != t.FullName` was ALWAYS true for an open generic
+    (`Vector<T>`: definition FullName non-null, self-operand FullName null) → every generic-type operator was dropped. Compares open definitions now
+    (e.g. `System.Numerics.Vector<T>` surfaces plus/minus/times/div).
+  - **⑥ backfill `System.Private.CoreLib` in the resolver.** An un-retargeted DotKt assembly (e.g. `DotKt.Stdlib.dll`) references
+    `System.Private.CoreLib` (the ref-pack's `System.Runtime` forwards to it); if absent from the resolver path, reflecting any stdlib-typed member
+    threw `FileNotFoundException` and the whole owning type was SKIPPED — so a user-library function with a stdlib-typed signature silently vanished.
+    `LoadRefs` now backfills the running runtime's `System.Private.CoreLib` (core stays the ref-pack `System.Runtime`; types compared by FullName).
+  - **NOT done here (routed):** the generic-STATIC `Task.FromResult<T>`/`Run<T>` surfacing (bundle-6 ① HIGH) needs kotc — the injector's `sfun`
+    parser (ClrTypeInjection.kt:208) discards type-param tokens and the companion static builder has no type-param support; emitting them from
+    facadegen alone is inert/harmful. ②'s E2E round-trip of a nullable suspend result needs bir2cir (SuspendColdLowering `BuildBridge` doesn't carry
+    the inner nullability) + ilemit (only stamps a scalar position-0 `[Nullable]`, no nested array). ③'s suspend flag on an *abstract* interface member
+    needs bir2cir to mark it (interface suspend members currently emit with no Suspend marker); facadegen restores it automatically once present.
+
 - **Gate XFAIL audit (bundle-6): restore verify-roundtrip + verify-differential baselines to accurate "Expected" state.**
   The coroutine machinery landed but two gate scripts still carried stale XFAIL reasons and one had a broken oracle.
   - **verify-differential — JVM-oracle startup crash (whole gate was red).** `kotlin-compiler-embeddable` 2.2.0 has an

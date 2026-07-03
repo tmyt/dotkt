@@ -61,12 +61,28 @@ static class FacadeGen
     static void LoadRefs(string[] paths)
     {
         if (paths.Length == 0) return;
-        // The core assembly (System.Private.CoreLib / System.Runtime) must be in the path set.
+        // The core assembly (System.Private.CoreLib / System.Runtime) must be in the path set. Chosen from the CALLER's
+        // paths (before the CoreLib backfill below), so the ref-pack's System.Runtime stays the core when present.
         var core = new[] { "System.Private.CoreLib", "System.Runtime", "mscorlib", "netstandard" }
             .FirstOrDefault(n => paths.Any(p => Path.GetFileNameWithoutExtension(p).Equals(n, StringComparison.OrdinalIgnoreCase)))
             ?? "System.Runtime";
-        Mlc = new System.Reflection.MetadataLoadContext(new System.Reflection.PathAssemblyResolver(paths), core);
-        foreach (var p in paths)
+        // Bug ⑥ (wiring): a DotKt assembly emitted against the runtime (e.g. an un-retargeted DotKt.Stdlib.dll) references
+        // System.Private.CoreLib — and the ref-pack's System.Runtime carries TYPE FORWARDERS to it. If that CoreLib is
+        // absent from the resolver's path set, reflecting ANY member whose signature touches a stdlib type throws
+        // FileNotFoundException, and EmitMeta's per-type guard then SKIPS the whole owning type — so a user-library
+        // function with a stdlib-typed signature (e.g. `fun makePair(): Pair<Int,Int>`) SILENTLY vanishes from the meta.
+        // Backfill the running runtime's System.Private.CoreLib so those refs (and the forwarders to them) resolve.
+        // Types are compared by FullName throughout facadegen (not identity), so a ref-pack System.Object and this
+        // runtime System.Object coexisting is already the anticipated case (see Map's I2 note). Harmless when the caller
+        // already retargeted everything to System.Runtime (the path is just unused).
+        var pathList = paths.ToList();
+        if (!pathList.Any(p => Path.GetFileNameWithoutExtension(p).Equals("System.Private.CoreLib", StringComparison.OrdinalIgnoreCase)))
+        {
+            var coreLib = typeof(object).Assembly.Location;
+            if (!string.IsNullOrEmpty(coreLib) && File.Exists(coreLib)) pathList.Add(coreLib);
+        }
+        Mlc = new System.Reflection.MetadataLoadContext(new System.Reflection.PathAssemblyResolver(pathList), core);
+        foreach (var p in pathList)
             try { Mlc.LoadFromAssemblyPath(p); } catch { /* skip unloadable */ }
     }
 
@@ -358,9 +374,16 @@ static class FacadeGen
                     if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
                     var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                     var ps = m.GetParameters();
-                    if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
+                    // DotKt round-trip (bug ③): an INTERFACE member carries the same no-.NET-analog Kotlin flags a class
+                    // member does — restore infix/operator/suspend + nullability, else the member can't be called as
+                    // `suspend` (nor its `?` seen). A `suspend` member is emitted returning `Task<T>`; gate + map on the
+                    // Kotlin RESULT type, and read the ? from the inner result level (SuspendRetSuffix), not the Task.
+                    var k = KotlinFun(m);
+                    var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
+                    if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
                     if (!iseen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-                    var toks = new List<string> { "fun", m.Name, MapRet(m.ReturnType, t), "abstract" };
+                    var iret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + (k.suspend ? SuspendRetSuffix(m) : RetSuffix(m));
+                    var toks = new List<string> { "fun", m.Name, iret, FunModifier("abstract", k) };
                     var mclr = ClrAttrName(m);   // ref/runtime split: member substitution for a method (get -> get_Item)
                     if (mclr != null) toks.Add("clr:" + mclr);
                     toks.AddRange(gp);
@@ -574,7 +597,7 @@ static class FacadeGen
                 // `fun <Name> <ret> <prot-?open|final|abstract>[,infix][,operator][,suspend] [<TypeParam>...] [<param>:<type>]*`
                 // — the modifier stays a single whitespace-free token; bare trailing tokens (no `:`) are type params.
                 var virt = m.IsVirtual && !m.IsFinal;
-                var retTok = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + RetSuffix(m);
+                var retTok = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + (k.suspend ? SuspendRetSuffix(m) : RetSuffix(m));
                 // A MEMBER extension function (`class C { fun T.f() }`) -> first param `__self`; `,ext` so the injector
                 // restores the extension receiver. A C#-origin `[Extension]` static method is ALSO an extension (its first
                 // param — any name — is the receiver). `,inline` carries the spliceable body (composes with suspend/generic).
@@ -598,7 +621,13 @@ static class FacadeGen
                     if (!m.IsSpecialName || !OPERATOR_NAMES.TryGetValue(m.Name, out var kop)) continue;
                     var unary = UNARY_OPERATORS.Contains(kop);
                     var ps = m.GetParameters();
-                    if (ps.Length != (unary ? 1 : 2) || ps[0].ParameterType.FullName != t.FullName) continue;
+                    // The LEFT operand must be the declaring type itself (so the operator becomes a member on `t`). Bug ⑤:
+                    // an OPEN generic type (`Vector<T>`) has a non-null definition FullName, but the operand `Vector<T>`
+                    // (referencing the type's own param) has a NULL FullName -> the old `FullName != FullName` guard was
+                    // ALWAYS true and dropped every generic-type operator. Compare the operand's OPEN definition against `t`.
+                    var p0 = ps.Length > 0 ? ps[0].ParameterType : null;
+                    var p0def = p0 != null && p0.IsGenericType ? p0.GetGenericTypeDefinition() : p0;
+                    if (ps.Length != (unary ? 1 : 2) || p0def == null || (p0def != t && p0def.FullName != t.FullName)) continue;
                     if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
                     var vps = unary ? Array.Empty<ParameterInfo>() : ps.Skip(1).ToArray();
                     if (!seen.Add("op:" + kop + "(" + Sig(vps, t) + ")")) continue;
@@ -973,14 +1002,18 @@ static class FacadeGen
 
     // .NET nullable-reference metadata (NRT): the C# compiler stamps [Nullable(b)] per element (1=not-null, 2=nullable,
     // 0=oblivious; a byte[] for nested generics, top level is [0]) and [NullableContext(b)] as a method/type default.
-    static byte NrtByteOf(IList<CustomAttributeData> attrs)
+    static byte NrtByteOf(IList<CustomAttributeData> attrs) => NrtByteAt(attrs, 0);
+    // The NRT flag byte at a given position of the flattened (preorder) [Nullable] byte array — index 0 is the outer
+    // type, index 1 its first type argument, and so on. The SCALAR form ([Nullable(b)]) collapses a uniform flag for
+    // EVERY position, so it answers any index. 255 = no [Nullable] on this element.
+    static byte NrtByteAt(IList<CustomAttributeData> attrs, int index)
     {
         foreach (var c in attrs)
             if (c.AttributeType.FullName == "System.Runtime.CompilerServices.NullableAttribute" && c.ConstructorArguments.Count == 1)
             {
                 var a = c.ConstructorArguments[0];
-                if (a.Value is byte b) return b;
-                if (a.Value is IReadOnlyList<CustomAttributeTypedArgument> arr && arr.Count > 0 && arr[0].Value is byte b0) return b0;
+                if (a.Value is byte b) return b;   // scalar: uniform flag for all positions
+                if (a.Value is IReadOnlyList<CustomAttributeTypedArgument> arr && index < arr.Count && arr[index].Value is byte bn) return bn;
             }
         return 255; // no [Nullable] on this element
     }
@@ -1033,6 +1066,21 @@ static class FacadeGen
     static bool IsTask1(Type t) => t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Threading.Tasks.Task`1";
     static bool SuspendRetSupported(Type ret) => IsTask1(ret) ? Supported(ret.GetGenericArguments()[0]) : ret.FullName == "System.Threading.Tasks.Task";
     static string SuspendRetToken(Type ret, Type self) => IsTask1(ret) ? MapRet(ret.GetGenericArguments()[0], self) : "Unit";
+    // The Kotlin nullability of a `suspend fun` rides its RESULT type (the INNER T of the emitted `Task<T>`), NOT the
+    // always-non-null `Task` wrapper. So read the inner NRT position (index 1 of the return's flattened [Nullable] byte
+    // array — index 0 is the Task itself), robust to both the scalar [Nullable(2)] and the array [Nullable({1,2})]
+    // encodings. Bug ②: the old code fed the whole `Task<T>` return through RetSuffix, which read index 0 and so lost
+    // (array form) or mis-attributed the `?`. A value-type result (`Task<Int>`) carries no NRT slot -> no suffix, and a
+    // non-generic `Task` (suspend -> Unit) has no result type.
+    static string SuspendRetSuffix(MethodInfo m)
+    {
+        if (!IsTask1(m.ReturnType)) return "";
+        if (m.ReturnType.GetGenericArguments()[0].IsValueType) return "";
+        var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
+        byte b = NrtByteAt(attrs, 1);
+        if (b == 255) b = NrtContextOf(m);
+        return b == 2 ? "?" : b == 0 ? "!" : "";
+    }
 
     // Build the `fun`/`tlfun`/`sfun` modifier token, folding in the no-.NET-analog Kotlin flags as comma-suffixes
     // (`final,infix`, `open,suspend`, ...) — kept a SINGLE whitespace-free token so the meta parser's type-param
@@ -1079,7 +1127,7 @@ static class FacadeGen
             var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
             if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
             if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-            var ret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + RetSuffix(m);
+            var ret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + (k.suspend ? SuspendRetSuffix(m) : RetSuffix(m));
             // `,inline` tells the injector to mark the fn `inline` (so a non-local return through the lambda is accepted);
             // the body itself stays in the assembly's [KotlinInline] and is read by the consumer's ilemit at splice time.
             // An extension fun's receiver is emitted as the first param `__self` (DotKt convention) -> mark `,ext` so the
@@ -1091,7 +1139,17 @@ static class FacadeGen
             // resolution), so no ambiguity, and they route cross-module via the round-trip path (else the jar's body is
             // a local callStatic -> "static method not found"). @Clr / concretely-typed tlfuns (uppercase->String) kept.
             var isExt = ps.Length > 0 && ps[0].Name == "__self";
-            if (!isExt && System.Text.RegularExpressions.Regex.IsMatch(ret, @"^generic:(List|MutableList|Set|MutableSet|Map|MutableMap|Collection|MutableCollection|Iterable|MutableIterable|Pair|Triple|HashMap|LinkedHashMap|HashSet|LinkedHashSet|ArrayList|Sequence)\[")) continue;
+            // Bug ④: this ambiguity-with-the-jar guard is SPECIFIC to the kotlin-stdlib.jar's own factory functions
+            // (listOf/mapOf/setOf...), which live in a `kotlin.*` package. Restricting it there stops it from SILENTLY
+            // discarding a legitimate USER top-level function that merely returns a collection (`fun makeList(): List<Int>`
+            // in a user library) — that has no jar counterpart to collide with. Any actual drop is now logged (no silent
+            // truncation).
+            if (!isExt && (t.Namespace ?? "").StartsWith("kotlin")
+                && System.Text.RegularExpressions.Regex.IsMatch(ret, @"^generic:(List|MutableList|Set|MutableSet|Map|MutableMap|Collection|MutableCollection|Iterable|MutableIterable|Pair|Triple|HashMap|LinkedHashMap|HashSet|LinkedHashSet|ArrayList|Sequence)\["))
+            {
+                Console.Error.WriteLine($"note: dropped stdlib collection factory tlfun {(string.IsNullOrEmpty(t.Namespace) ? "" : t.Namespace + ".")}{m.Name} (its {ret.Substring(0, ret.IndexOf('['))} return is ambiguous with the kotlin-stdlib.jar's same-signature factory)");
+                continue;
+            }
             // An EXTENSION whose RECEIVER maps to Any? (an unresolvable type, e.g. CharSequence) is a CATCH-ALL: it
             // matches every receiver and mis-wins overload resolution against the specific Iterable<T> overload (so
             // `list.count{}`/`.filter{}` resolve to the _StringsKt Any? overload, not _CollectionsKt). Skip it; the jar
