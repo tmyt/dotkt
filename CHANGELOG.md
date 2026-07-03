@@ -5,6 +5,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 P5 Phase-A3): `sequence{}` cold path drive-to-green — captured extension receiver + nested field-assignment.**
+  Three fixes that unblock the rt-stdlib build from EMITTING the real `SequenceBuilderIterator` cold code
+  (it was aborting at `ilemit`):
+  - **Captured extension receiver (`__self`/`__outer`).** A `sequence{}` inside an extension fun
+    (`fun <T> Sequence<T>.ifEmpty(...) = sequence{…}`) captures the enclosing receiver. kotc names the capture
+    `__outer` (its `<this>` capture-field convention) yet, in the lambda body, reads that receiver as `local __self`
+    (the enclosing static extension's receiver-param name). `SuspendLambdaLowering` now (a) at the SM-construction
+    site sources the `__outer` capture value from the enclosing method's `__self` param when it is a static
+    extension (an instance method still uses `this`), and (b) `SuspendColdLowering` rewrites a body `local __self`
+    with no `__self` field to the `__outer` capture FIELD read — reconciling the two names to one captured value
+    (was: `load unknown var __self` at ilemit).
+  - **Nested field-assignment redirect.** A `setLocal`/`var` that assigns a SPILLED SM variable but sits INSIDE an
+    expression subtree (e.g. the `index++` post-increment lowered to `valueBlock { var <unary> = index; index =
+    index+1; <unary> }`) is reached via `Rewrite`, not the statement-level `EmitStmt`, so its field-assignment was
+    left as a bare `setLocal` to an SM field (was: `store unknown var index` at ilemit). `Rewrite`/`RewriteNoSpill`
+    now redirect a nested `setLocal`/`var` of a spilled name to `setField`.
+  - **`resumeWith` Result accessor erasure.** The `Continuation<object>` ABI erasure retypes
+    `resumeWith(result: Result<Unit>)` to `Result<object>`, but the body's `result.getOrThrow()` stayed
+    `getOrThrow<Unit>` — an invariant `Result<Unit>` receiver mismatching the `Result<object>` we pass
+    (InvalidProgramException). `ContinuationErasure` now re-instantiates a Result-accessor whose extension
+    receiver is the erased `result` local at `object`, and promotes a stale `void`/Unit retType so the discarded
+    `getOrThrow` result is popped.
 - **kotc (bundle-6 P5 Phase-A2 IGNITION): `sequence{}`/`iterator{}`/`yield` are now ORDINARY library code.**
   Deleted every trace of the `sequence`/`yield` builder from the frontend: (1) the
   `kotlin.sequences.sequence` special-case in `BirEmitter.call()` (which pulled the block, rejected

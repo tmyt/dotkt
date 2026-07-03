@@ -44,6 +44,14 @@ static class ContinuationErasure
             {
                 var here = inResumeWith || IsResumeWithMethod(obj);
                 var isCall = IsResumeWithCall(obj);
+                // Inside the erased resumeWith boundary, the `result` local is now Result<object> (invariant
+                // reference class). A generic Result-accessor whose EXTENSION RECEIVER (first arg) is that erased
+                // `result` — e.g. `getOrThrow<Unit>(result)` from the source `result.getOrThrow()` — is instantiated
+                // at the SOURCE element type (Unit), so it expects a Result<Unit> receiver and mismatches the
+                // Result<object> we pass (invalid IL / InvalidProgramException). Re-instantiate its receiver-dependent
+                // T as object so `getOrThrow<object>(result: Result<object>)` type-checks. The Unit prologue value is
+                // discarded (exprStmt), so no unbox/cast at the use site is needed.
+                if (here) EraseResultReceiverTypeArgs(obj);
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var val = obj[key];
@@ -96,6 +104,39 @@ static class ContinuationErasure
     static bool IsResumeWithMethod(JsonObject obj) =>
         obj["k"] == null &&
         (obj["name"] as JsonValue)?.TryGetValue<string>(out var n) == true && n == "resumeWith";
+
+    // A generic call (getOrThrow/getOrNull/exceptionOrNull/…) whose extension receiver — the first `args` entry —
+    // is the erased `result` local. Its type argument parametrizes the receiver's Result<T>, so with the receiver
+    // now Result<object> the call must be instantiated at object. Rewrites every `typeArgs` element to kotlin.Any.
+    static void EraseResultReceiverTypeArgs(JsonObject obj)
+    {
+        var k = (obj["k"] as JsonValue)?.TryGetValue<string>(out var kk) == true ? kk : null;
+        if (k != "callStatic" && k != "callInstance") return;
+        if (obj["typeArgs"] is not JsonArray ta || ta.Count == 0) return;
+        if (obj["args"] is not JsonArray args || args.Count == 0) return;
+        if (args[0] is not JsonObject a0
+            || (a0["k"] as JsonValue)?.TryGetValue<string>(out var ak) != true || ak != "local"
+            || (a0["name"] as JsonValue)?.TryGetValue<string>(out var an) != true || an != "result")
+            return;
+        var repl = new JsonArray();
+        foreach (var _ in ta) repl.Add(JsonValue.Create("kotlin.Any"));
+        obj["typeArgs"] = repl;
+
+        // A T-returning accessor (getOrThrow/getOrNull/getOrDefault/getOrElse) instantiated at the erased element
+        // type now returns `object`, but kotc left its retType at the SOURCE element (`void`/Unit for `Result<Unit>`).
+        // ilemit decides whether to POP a discarded exprStmt from this retType hint (Emitter.Statements exprStmt:
+        // `if (t != void) Pop`), so a stale `void` leaks the pushed value onto the stack -> ReturnVoid / invalid IL.
+        // Promote the hint to kotlin.Any so the discarded getOrThrow is popped. (exceptionOrNull returns Throwable
+        // regardless of T, so it is excluded — its retType is already correct.)
+        var method = (obj["method"] as JsonValue)?.TryGetValue<string>(out var me) == true ? me : null;
+        if (method is "getOrThrow" or "getOrNull" or "getOrDefault" or "getOrElse")
+        {
+            var rk = obj.ContainsKey("retType") ? "retType" : (obj.ContainsKey("ret") ? "ret" : null);
+            if (rk != null && (obj[rk] as JsonValue)?.TryGetValue<string>(out var rt) == true
+                && rt is "void" or "kotlin.Unit")
+                obj[rk] = JsonValue.Create("kotlin.Any");
+        }
+    }
 
     static bool IsResumeWithCall(JsonObject obj) =>
         (obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true &&
