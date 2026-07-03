@@ -501,7 +501,8 @@ sealed class ReferenceMetadataIndex
             if (t.StartsWith(w, StringComparison.Ordinal)) return w + ParamKey(t[w.Length..]);
         foreach (var p in new[] { "clrg:", "clr:", "@" })
             if (t.StartsWith(p, StringComparison.Ordinal)) { t = t[p.Length..]; break; }
-        if (t.StartsWith("func:", StringComparison.Ordinal)) return "func";
+        // `sfunc:` (suspend fn type, Part A) keys the same as `func:` — same overload bucket for now.
+        if (t.StartsWith("func:", StringComparison.Ordinal) || t.StartsWith("sfunc:", StringComparison.Ordinal)) return "func";
         var br = t.IndexOf('[');
         if (br >= 0) t = t[..br];
         if (t.StartsWith("gp:", StringComparison.Ordinal)) return "gp";
@@ -794,6 +795,12 @@ sealed class ReferenceMetadataIndex
     static string NormalizeType(string type)
     {
         var value = type.Trim();
+        // Part A (bundle-6 P3 wave-2b): `sfunc:` (the suspend-fn-type token) behaves identically to `func:`
+        // for matching — its suspend-ness is orthogonal to the delegate shape (consumed by the
+        // suspendLambdaNew SM builder, not here). Fold the prefix (top-level AND nested) up front so every
+        // func-type canonicalization below applies unchanged.
+        if (value.Contains("sfunc:", StringComparison.Ordinal))
+            value = value.Replace("sfunc:", "func:", StringComparison.Ordinal);
         if (value.StartsWith("@", StringComparison.Ordinal)) return NormalizeType(value[1..]);
         if (value.StartsWith("clr:", StringComparison.Ordinal)) return NormalizeType(value["clr:".Length..]);
         if (value.StartsWith("byref:", StringComparison.Ordinal)) return "byref:" + NormalizeType(value["byref:".Length..]);
@@ -879,7 +886,7 @@ sealed class ReferenceMetadataIndex
 
     static int PrefixLength(string value)
     {
-        foreach (var prefix in new[] { "clrg:", "clr:", "array:", "nullable:", "func:", "gp:", "byref:" })
+        foreach (var prefix in new[] { "clrg:", "clr:", "array:", "nullable:", "sfunc:", "func:", "gp:", "byref:" })
             if (value.StartsWith(prefix, StringComparison.Ordinal))
                 return prefix.Length;
         return 0;
@@ -1657,6 +1664,7 @@ sealed class TypeSiteAnalyzer
         if (normalized.StartsWith("clrg:", StringComparison.Ordinal)) return "already-clr";
         if (normalized.StartsWith("array:", StringComparison.Ordinal)) return "already-clr";
         if (normalized.StartsWith("func:", StringComparison.Ordinal)) return "already-clr";
+        if (normalized.StartsWith("sfunc:", StringComparison.Ordinal)) return "already-clr";   // suspend fn type (Part A)
         if (normalized.StartsWith("gp:", StringComparison.Ordinal)) return "already-clr";
         return "kotlin-symbol";
     }
@@ -2216,6 +2224,13 @@ static class BirTypeLowering
     // bare kotlin.* foundational token inside a generic lowers too.
     public static string LowerTypeString(string raw, bool refBuild, bool force = false)
     {
+        // Part A (bundle-6 P3 wave-2b): `sfunc:` (the suspend-fn-type token) mirrors `func:` for the delegate
+        // shape — its suspend-ness is consumed by the suspendLambdaNew SM builder, not this delegate path.
+        // Fold the prefix (top-level AND nested) BEFORE the guards so ALL existing func-type lowering applies
+        // and ilemit NEVER receives `sfunc:` — in EVERY build incl. ref (like a `func:` token, an sfunc token
+        // would otherwise pass the kotlin-contains guard verbatim, and ilemit has no `sfunc:` opcode).
+        if (raw.Contains("sfunc:", StringComparison.Ordinal))
+            raw = raw.Replace("sfunc:", "func:", StringComparison.Ordinal);
         // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers
         // unconditionally. A token with no "kotlin." substring can never contain a mappable token, so skip it.
         if ((!force && refBuild) || !raw.Contains("kotlin.", StringComparison.Ordinal)) return raw;
@@ -2300,7 +2315,7 @@ static class BirTypeLowering
 
     static int PrefixLength(string value)
     {
-        foreach (var prefix in new[] { "clrg:", "clr:", "array:", "nullable:", "func:", "gp:", "byref:" })
+        foreach (var prefix in new[] { "clrg:", "clr:", "array:", "nullable:", "sfunc:", "func:", "gp:", "byref:" })
             if (value.StartsWith(prefix, StringComparison.Ordinal))
                 return prefix.Length;
         return 0;
