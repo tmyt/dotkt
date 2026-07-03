@@ -3873,7 +3873,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// binding + bir2cir's MemberCallSubstitution. (2026-07-02, bundle 1.)
 				val argJson = operands.joinToString(",") { op ->
 					val rfq = op.type.classFqName?.asString()
-					if (rfq != null && rfq.startsWith("kotlin.collections.") && (rfq.contains("List") || rfq.contains("Set") || rfq.endsWith("Collection"))) {
+					// A Map operand prints Kotlin-style `{a=1, b=2}`, not .NET's `System.Collections.Generic.Dictionary`2[...]`
+					// -> route via clrMapToString (the map mirror of clrCollToString). Static-type routing (as the List path
+					// below): a runtime `is Map<*,*>` test is unreliable for @ClrTypeAlias-lowered BCL dictionaries. (Map is
+					// NOT a Collection, so it needs its own branch.)
+					if (rfq != null && rfq.startsWith("kotlin.collections.") && rfq.contains("Map")) {
+						val ta = (op.type as? IrSimpleType)?.arguments
+						fun arg(i: Int) = ta?.getOrNull(i)?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+						"""{"k":"callStatic","owner":"kotlin.collections.ClrMapDefaultsKt","method":"clrMapToString","args":[${expr(op)}],"typeArgs":[${str(arg(0))},${str(arg(1))}]}"""
+					} else if (rfq != null && rfq.startsWith("kotlin.collections.") && (rfq.contains("List") || rfq.contains("Set") || rfq.endsWith("Collection"))) {
 						val elem = (op.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
 						"""{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollToString","args":[${expr(op)}],"typeArgs":[${str(elem)}]}"""
 					} else expr(op)
