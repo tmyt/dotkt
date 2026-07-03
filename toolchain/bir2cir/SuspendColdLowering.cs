@@ -141,12 +141,28 @@ static class SuspendColdLowering
 
         var baseIsLocal = localTypeFqns.Contains(ContinuationImplFqn);
 
+        // The public Task<R> bridge (bundle-6 P4, design §11): resolve the Task-family BCL owners from the ref.dll
+        // @ClrTypeAlias index (the SAME ref.dll-sourced substitution the member-call pass reads). `TaskCompletionSource`
+        // is the sink the RootContinuation completes; `Task` is the hot public return. When either alias is absent from
+        // the ref.dll (a build whose stdlib predates the taskinterop set), the bridge is skipped — the cold entry still
+        // emits (Kotlin->Kotlin suspend calls are unaffected), only the cross-language Task ABI is dropped.
+        var tcsBcl = refs.TryResolveClrOwner("kotlin.clr.TaskCompletionSource", out var tb, out _) ? tb : null;
+        var taskBcl = refs.TryResolveClrOwner("kotlin.clr.Task", out var kb, out _) ? kb : null;
+
         // 3. Transform each transformable fun, splicing the cold entry (into its declaring container) and the
         //    SM type (into its file's top-level types).
         foreach (var key in transformable)
         {
             var e = entries[key];
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal);
+            // The ENCLOSING class's type-param names (for an instance member on a generic class): the bridge's self
+            // cold-call must target the CONSTRUCTED self `Box[gp:T]`, not the open `Box`, or `this` (Box<T>) mismatches
+            // the callee's declaring type at verification (StackUnexpected).
+            var ownerTps = new List<string>();
+            if (e.TypeNode?["typeParams"] is JsonArray otps)
+                foreach (var t in otps)
+                    if (t is JsonValue tv2 && tv2.TryGetValue<string>(out var s2)) ownerTps.Add(s2);
+                    else if (t is JsonObject to2 && Str(to2["name"]) is string n2) ownerTps.Add(n2);
+            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -342,6 +358,8 @@ static class SuspendColdLowering
     sealed class FunGen
     {
         const string ThisField = "$this";
+        // The Task-bridge root sink (a real emitted stdlib class, referenced cross-assembly like ContinuationImpl).
+        const string RootContinuationFqn = "kotlin.coroutines.clr.internal.RootContinuation";
 
         readonly JsonObject _m;
         readonly string _name;
@@ -350,6 +368,10 @@ static class SuspendColdLowering
         readonly bool _isMember;
         readonly Dictionary<string, string> _calleeRet;
         readonly bool _baseIsLocal;
+        // The public Task<R> bridge BCL owners (from the ref.dll @ClrTypeAlias index); null -> no bridge (see ApplyAll).
+        readonly string _tcsBcl;
+        readonly string _taskBcl;
+        readonly List<string> _ownerTypeParams;   // enclosing class type-param names (instance member on a generic class)
         // Lambda mode (bundle-6 P3 wave-2b Part B): a suspend LAMBDA SM (extends SuspendLambda, no cold
         // entry/main-drain, adds the create() override protocol). Left at defaults for the named-fun path.
         readonly bool _isLambda;
@@ -372,11 +394,14 @@ static class SuspendColdLowering
         readonly Stack<(List<(int state, int label)> inner, int tryEntry)> _tryStack = new();
 
         public FunGen(JsonObject m, string name, string fileClass, string ownerClass,
-            Dictionary<string, string> calleeRet, bool baseIsLocal)
+            Dictionary<string, string> calleeRet, bool baseIsLocal, string tcsBcl = null, string taskBcl = null,
+            List<string> ownerTypeParams = null)
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
             _isMember = ownerClass != null;
             _calleeRet = calleeRet; _baseIsLocal = baseIsLocal;
+            _tcsBcl = tcsBcl; _taskBcl = taskBcl;
+            _ownerTypeParams = ownerTypeParams ?? new List<string>();
             _smType = (ownerClass ?? fileClass) + "_" + name + "$sm";
             _coldName = name + "$dotkt_suspend";
             _resultType = Str(m["resultType"]) ?? "void";
@@ -394,6 +419,7 @@ static class SuspendColdLowering
             Dictionary<string, string> calleeRet, bool baseIsLocal)
         {
             _isLambda = true;
+            _ownerTypeParams = new List<string>();
             _m = null;
             _arity = arity;
             _captures = captures;
@@ -439,6 +465,7 @@ static class SuspendColdLowering
                 // (A suspend LAMBDA always becomes an SM even without suspension — its VALUE is the SM instance.)
                 newMethods.Add(ColdEntryDirect(body));
                 if (_name == "main" && !_isMember) newMethods.Add(DrainMain());
+                if (WantsBridge) newMethods.Add(BuildBridge());
                 return;
             }
 
@@ -471,7 +498,12 @@ static class SuspendColdLowering
             newTypes.Add(SmType(invoke));
             newMethods.Add(ColdEntrySm());
             if (_name == "main" && !_isMember) newMethods.Add(DrainMain());
+            if (WantsBridge) newMethods.Add(BuildBridge());
         }
+
+        // A named (non-lambda), non-`main` suspend fun whose Task-family aliases resolved gets a public Task<R>
+        // bridge. `main` is excluded (it is the entry point, drained by the synthesized plain `main`).
+        bool WantsBridge => !_isLambda && _name != "main" && _tcsBcl != null && _taskBcl != null;
 
         static int MaxLabelId(JsonNode node)
         {
@@ -1169,6 +1201,171 @@ static class SuspendColdLowering
                 ["attrs"] = new JsonArray(),
             };
         }
+
+        // ---- the public Task<R> bridge (bundle-6 P4, design §11) ----
+        //
+        //   public Task<R> f(args...) {
+        //     var __tcs  = new TaskCompletionSource<R>();
+        //     var __root = new RootContinuation<R>(__tcs);   // : Continuation<Any> (post ContinuationErasure)
+        //     var __r    = COROUTINE_SUSPENDED;               // object
+        //     try { __r = f$dotkt_suspend(args..., (Continuation<Any>)__root); }
+        //     catch (e: Throwable) { __tcs.TrySetException(e); __r = COROUTINE_SUSPENDED; }
+        //     if (__r !== COROUTINE_SUSPENDED) __tcs.TrySetResult((R)__r);   // sync-completion fast path
+        //     return __tcs.Task;
+        //   }
+        //
+        // Sync/async completions are mutually exclusive by the coroutine contract: a non-SUSPENDED cold return means the
+        // body completed inline (complete the TCS here); a SUSPENDED return means the eventual resume lands in
+        // RootContinuation.resumeWith, which completes the TCS. A synchronous throw is caught and faults the TCS.
+        // R = Unit/void is treated uniformly as kotlin.Unit (the cold entry returns null for a Unit body; `(Unit)null`
+        // is null, matching what RootContinuation.resumeWith stores for the async Unit path — the two agree). The bridge
+        // carries `suspendBridge:true` so ilemit stamps [KotlinFunction(Suspend)] (a re-consuming Kotlin sees `suspend fun`).
+        JsonObject BuildBridge()
+        {
+            var rKotlin = _resultType is "void" or "kotlin.Unit" ? "kotlin.Unit" : _resultType;
+            var tcsType = "clrg:" + _tcsBcl + "[" + rKotlin + "]";
+            var taskType = "clrg:" + _taskBcl + "[" + rKotlin + "]";
+            var rootType = "clrg:" + RootContinuationFqn + "[" + rKotlin + "]";
+
+            var body = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["k"] = "var", ["name"] = "__tcs", ["type"] = tcsType,
+                    ["init"] = new JsonObject { ["k"] = "clrNew", ["type"] = tcsType, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray() },
+                },
+                new JsonObject
+                {
+                    ["k"] = "var", ["name"] = "__root", ["type"] = rootType,
+                    ["init"] = new JsonObject
+                    {
+                        ["k"] = "clrNew", ["type"] = rootType,
+                        ["argTypes"] = new JsonArray { tcsType },
+                        ["args"] = new JsonArray { Local("__tcs") },
+                    },
+                },
+                new JsonObject { ["k"] = "var", ["name"] = "__r", ["type"] = "kotlin.Any", ["init"] = Suspended() },
+                new JsonObject
+                {
+                    ["k"] = "try",
+                    ["type"] = "void",
+                    ["body"] = new JsonArray
+                    {
+                        new JsonObject { ["k"] = "setLocal", ["name"] = "__r", ["value"] = BridgeColdCall() },
+                    },
+                    ["catches"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["excType"] = "kotlin.Throwable",
+                            ["var"] = "__e",
+                            ["body"] = new JsonArray
+                            {
+                                new JsonObject { ["k"] = "exprStmt", ["expr"] = TcsCall(tcsType, "TrySetException", "kotlin.Throwable", Local("__e")) },
+                                new JsonObject { ["k"] = "setLocal", ["name"] = "__r", ["value"] = Suspended() },
+                            },
+                        },
+                    },
+                },
+            };
+
+            var skipL = NextLabel();
+            body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["l"] = Local("__r"), ["r"] = Suspended() }, true, skipL));
+            JsonNode resultVal = rKotlin == "kotlin.Any"
+                ? Local("__r")
+                : new JsonObject { ["k"] = "cast", ["type"] = rKotlin, ["e"] = Local("__r") };
+            body.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = TcsCall(tcsType, "TrySetResult", rKotlin, resultVal) });
+            body.Add(Label(skipL));
+            body.Add(Ret(new JsonObject
+            {
+                ["k"] = "clrPropGet", ["type"] = tcsType, ["name"] = "Task", ["static"] = false,
+                ["recv"] = Local("__tcs"), ["retType"] = taskType,
+            }));
+
+            var ps = new JsonArray();
+            foreach (var p in _params) ps.Add(p.DeepClone());
+            var method = new JsonObject
+            {
+                ["name"] = _name,
+                ["static"] = !_isMember,
+                ["override"] = false,
+                ["virtual"] = false,
+                ["abstract"] = false,
+                ["objectOverride"] = false,
+                ["suspendBridge"] = true,
+                ["vis"] = "public",
+                ["params"] = ps,
+                ["ret"] = taskType,
+                ["body"] = body,
+                ["attrs"] = new JsonArray(),
+            };
+            if (_typeParams.Count > 0)
+            {
+                var tp = new JsonArray();
+                foreach (var n in _typeParams) tp.Add(n);
+                method["typeParams"] = tp;
+            }
+            return method;
+        }
+
+        // The bridge's cold-entry call: forward the bridge params + the RootContinuation (cast to the erased
+        // Continuation<Any> completion). typeArgs thread the bridge's own generic params to the generic cold entry.
+        JsonObject BridgeColdCall()
+        {
+            var args = new JsonArray();
+            foreach (var p in _params) args.Add(Local(Str(p["name"])));
+            args.Add(new JsonObject { ["k"] = "cast", ["type"] = ContinuationOfAny, ["e"] = Local("__root") });
+
+            // On a GENERIC enclosing class the callee's declaring type is the CONSTRUCTED self `Box[gp:T]` (matching
+            // `this`), never the open `Box` — else verification rejects the recv type.
+            var selfOwner = _ownerTypeParams.Count == 0
+                ? _ownerClass
+                : _ownerClass + "[" + string.Join(",", _ownerTypeParams.Select(t => "gp:" + t)) + "]";
+
+            JsonObject call;
+            if (_isMember)
+                call = new JsonObject
+                {
+                    ["k"] = "callInstance",
+                    ["ownerType"] = selfOwner,
+                    ["virtual"] = false,
+                    ["recv"] = new JsonObject { ["k"] = "this" },
+                    ["method"] = _coldName,
+                    ["args"] = args,
+                    ["retType"] = "kotlin.Any",
+                };
+            else
+                call = new JsonObject
+                {
+                    ["k"] = "callStatic",
+                    ["owner"] = null,
+                    ["method"] = _coldName,
+                    ["args"] = args,
+                    ["ret"] = "kotlin.Any",
+                };
+            if (_typeParams.Count > 0)
+            {
+                var ta = new JsonArray();
+                foreach (var n in _typeParams) ta.Add("gp:" + n);
+                call["typeArgs"] = ta;
+            }
+            return call;
+        }
+
+        // A substituted @ClrIntrinsic instance call on the TaskCompletionSource<R> sink (TrySetResult/TrySetException).
+        // Emitted post-MemberCallSubstitution, so already in the BCL-owner clrInstance form (result discarded via exprStmt).
+        JsonObject TcsCall(string tcsType, string method, string argType, JsonNode arg) => new()
+        {
+            ["k"] = "clrInstance",
+            ["type"] = tcsType,
+            ["method"] = method,
+            ["recv"] = Local("__tcs"),
+            ["argTypes"] = new JsonArray { argType },
+            ["args"] = new JsonArray { arg },
+            ["ret"] = "kotlin.Boolean",
+        };
+
+        static JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
 
         // ---- small node builders ----
 

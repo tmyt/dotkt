@@ -665,6 +665,10 @@ sealed partial class Emitter
                     if (m.TryGetProperty("infix", out var inf) && inf.GetBoolean()) kf |= 1;       // KotlinFunctionFlags.Infix
                     if (m.TryGetProperty("operator", out var op) && op.GetBoolean()) kf |= 2;       // .Operator
                     if (m.TryGetProperty("suspend", out var su) && su.GetBoolean()) kf |= 4;        // .Suspend
+                    // The bir2cir-synthesized public Task<R> bridge (bundle-6 P4): a plain `Task`-returning method that
+                    // IS the Kotlin `suspend fun`'s CLR ABI. Stamp it Suspend so a round-tripping consumer (kcc/facadegen)
+                    // restores `suspend fun f(...)` — its suspend CALLS then lower to the `f$dotkt_suspend` cold entry.
+                    if (m.TryGetProperty("suspendBridge", out var sb) && sb.GetBoolean()) kf |= 4;   // .Suspend
                     bool inl = m.TryGetProperty("inline", out var il) && il.GetBoolean();
                     // Nullability mask: bit 0 = return nullable, bit (i+1) = param i nullable.
                     uint nmask = 0;

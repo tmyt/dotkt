@@ -5,6 +5,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir + ilemit: synthesize the public `Task<R>` BRIDGE for exported suspend funs (bundle-6 P4 — the hot
+  CLR ABI; design §11).** `SuspendColdLowering` now emits, next to each transformable suspend fun's cold entry
+  `f$dotkt_suspend`, a public `Task<R> f(args)` bridge that C#/F# callers consume as a normal hot `Task`:
+  `tcs = new TaskCompletionSource<R>(); root = new RootContinuation<R>(tcs); try { r = f$dotkt_suspend(args, root);
+  if (r !== COROUTINE_SUSPENDED) tcs.TrySetResult((R)r); } catch (e) { tcs.TrySetException(e); } return tcs.Task;`.
+  Sync/async completions are mutually exclusive by the coroutine contract (a non-SUSPENDED cold return completes
+  the TCS here; a SUSPENDED one is completed later by `RootContinuation.resumeWith`); a synchronous throw faults
+  the TCS. The Task-family BCL owners are resolved from the **ref.dll `@ClrTypeAlias` index** (`kotlin.clr.Task`
+  → `System.Threading.Tasks.Task`, `kotlin.clr.TaskCompletionSource` → `…TaskCompletionSource`) — bridge skipped
+  (cold entry still emitted) when a build's stdlib predates the taskinterop set. `R = Unit`/`void` folds to
+  `kotlin.Unit` uniformly (`TaskCompletionSource<Unit>` / `Task<Unit>`; the cold entry returns null for a Unit
+  body and `(Unit)null` matches the async path). Generic funs get a generic bridge (`Task<T> f<T>()`, TCS/root
+  threaded with the method type param); instance members get an instance bridge on the owner. APP-BUILD ONLY
+  (rides SuspendColdLowering's `!RefBuild && attributeTopLevelOwner` gate — the stdlib's own suspend funs get no
+  bridge, keeping ref/rt symmetric). `main` is excluded (it is drained by the synthesized plain `main`). ilemit:
+  a 1-line clause treats the bridge's `suspendBridge:true` as the `[KotlinFunction(Suspend)]` trigger so a
+  round-tripping consumer restores `suspend fun f(…)` (its suspend CALLS then lower back to the cold entry). The
+  16 bridges across coldcf/coldgen/coldinst (Int/String/generic/instance/generic-class shapes) emit + run
+  unchanged. NOTE: the Task-drain E2E (a C# consumer awaiting the bridge) belongs to the ktproj-bidir harness —
+  a Kotlin caller can never reach the bridge (kotc forbids calling a suspend fun from a non-suspend context, and
+  a suspend caller hits the cold entry directly).
 - **bir2cir: erase the coroutine ABI to a MONOMORPHIC `Continuation<object>` (bundle-6 §11, bug #5 ROOT — the
   `blockOn { 42 }` payoff RUNS).** New pass `ContinuationErasure` (`toolchain/bir2cir/ContinuationErasure.cs`, run in
   ALL builds before `BirTypeLowering`) rewrites EVERY `kotlin.coroutines.Continuation[X]` type token —
