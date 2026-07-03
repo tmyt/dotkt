@@ -5,6 +5,31 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir: lower `Task.await()` to the cold-core awaiter suspension point — the `.NET Task ⇒ Kotlin suspend`
+  REVERSE bridge (bundle-6 P4; design §4/§5). Completes bidirectional coroutine interop.** `SuspendColdLowering`
+  now consumes the facadegen-injected await marker (`k == clrStatic`/`clrGenericStatic`, `suspendCall`,
+  `type == kotlin.clr.CoroutinesKt`, `method == await`) inside its state-machine segmentation and emits, in place
+  of the marker, the awaiter dance: `this.<aw> = ((Task<T>)task).GetAwaiter()` (a `TaskAwaiter[<T>]` /
+  non-generic `TaskAwaiter` STRUCT spilled into an SM field); `if (this.<aw>.IsCompleted) goto L_state` (sync fast
+  path — no suspension); else `this.label = state; this.<aw>.OnCompleted(<Action>); return COROUTINE_SUSPENDED`;
+  `L_state: <value> = this.<aw>.GetResult()` (generic → the value field; non-generic void → Unit). The `OnCompleted`
+  Action is a synthesized SM instance method (`$awaitOnDone$state`, bound via `boundDelegateNew`) that re-drives THIS
+  SM with `this.resumeWith(Result.success(null))` — a wake TOKEN (Codex-verified Option B: the resumed `result` is
+  discarded, the real value/fault comes from `GetResult()` at the resume label, a faulted task rethrowing there and
+  routing through `BaseContinuationImpl.resumeWith`'s catch to the completion — matching JVM `Task.await` semantics).
+  `OnCompleted` (not `UnsafeOnCompleted`) flows `ExecutionContext`. APP-BUILD ONLY (rides SuspendColdLowering's
+  `!RefBuild && attributeTopLevelOwner` gate — the stdlib's own `await` bodies stay TODO placeholders; ref/rt are a
+  symmetric no-op). Verified E2E by **`cases/il-taskawait`** (new): the SYNC FAST PATH — generic `Task<Int>.await()`
+  and non-generic `Task.await(): Unit` on already-completed tasks — prints `43` / `7`, exercising the marker
+  lowering, the TaskAwaiter struct calls (`GetAwaiter`/`IsCompleted`/`GetResult`), and the generic result read-back.
+  The genuine-ASYNC path (`OnCompleted` callback fires — confirmed at runtime) is BLOCKED on two cross-layer gaps
+  OUTSIDE bir2cir, tracked in `il-cobuild`'s `XFAIL_RUN` reason: (1) **ilemit** cannot emit a cross-assembly call to
+  `kotlin.Result.success` (a public static on the generic `Result\`1`) — `FindMethod`/`AnchorOpenGenericOwnerStatic`
+  only anchor LOCAL `MethodBuilder`s, so the external static-on-generic emits a bad-scoped memberref →
+  `TypeLoadException`; (2) **stdlib** `blockOn`'s Monitor drain returns immediately instead of waiting for a
+  truly-suspending coroutine (`lam1/lam2/coldcf` only ever exercised synchronous completion). `il-cobuild` is
+  rewritten to the honest `Task.Delay(1).await()` form (the retired `kotlin.clr.delay` crutch dropped) and stays
+  XFAIL until those two land.
 - **bir2cir + ilemit: synthesize the public `Task<R>` BRIDGE for exported suspend funs (bundle-6 P4 — the hot
   CLR ABI; design §11).** `SuspendColdLowering` now emits, next to each transformable suspend fun's cold entry
   `f$dotkt_suspend`, a public `Task<R> f(args)` bridge that C#/F# callers consume as a normal hot `Task`:
