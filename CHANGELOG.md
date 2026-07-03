@@ -5,6 +5,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Gate XFAIL audit (bundle-6): restore verify-roundtrip + verify-differential baselines to accurate "Expected" state.**
+  The coroutine machinery landed but two gate scripts still carried stale XFAIL reasons and one had a broken oracle.
+  - **verify-differential — JVM-oracle startup crash (whole gate was red).** `kotlin-compiler-embeddable` 2.2.0 has an
+    external runtime dep on `kotlinx-coroutines-core` (its IntelliJ `CoreApplicationEnvironment` references
+    `kotlinx.coroutines.CoroutineScope`, not shaded under `org.jetbrains.kotlin.*`). The hardcoded oracle classpath
+    omitted it, so `K2JVMCompiler` died at startup with `NoClassDefFoundError: kotlinx/coroutines/CoroutineScope`
+    BEFORE compiling any sample → every JVM oracle output was empty → the gate reddened wholesale. A latent classpath
+    gap, NOT a dangling kotlinx ref from the P1b purge (the samples are pure Kotlin). Fix: add the cached
+    `kotlinx-coroutines-core-jvm` jar to `CCP`. Oracle runs; gate GREEN, DIFF set = {il-seq, il-collops2, m-b6, m-b9,
+    m-b10}, all XFAIL-listed. Also re-attributed the stale `il-seq`/`il-collops2` reasons ("coroutine/SequenceScope-
+    deferred", now false) to the true blockers mirroring verify-il (value-typed sequence nullability drop; cross-module
+    default-arg drop on `windowed(3)`).
+  - **verify-roundtrip — wire the runtime stdlib into the suspend sections + re-attribute the 3 RT_XFAILs.** `emit_il`
+    fed ilemit no `--ref DotKt.Stdlib.dll`, so a suspend fun's CPS signature (`kotlin.coroutines.Continuation`, injected
+    by bir2cir's suspend lowering) could not resolve; and facadegen/retarget could not LOAD the now-coroutine-referencing
+    DotKt library to walk its type surface (empty meta → consumer unresolved). Fixed both (rt stdlib joins the ilemit
+    `--ref` set + `$REFS`, and is dropped beside the emitted assembly). With the emit crash cleared, the 3 suspend
+    sections surface their TRUE remaining cross-module gaps: `roundtrip`/`roundtrip-generic` = cross-module suspend
+    cold-entry returns a `Task<T>` neither the caller SM nor `blockOn` awaits (runtime `InvalidCastException Task<T>→T`);
+    `roundtrip-memext2` = ilemit `NotSupportedException` on a suspending call inside a `with` scope-function sub-expression.
+    Reasons re-attributed; gate stays GREEN.
+
 - **ilemit (bundle-6 P5 Phase-B): delete the dead coroutine/sequence CODEGEN — ilemit is now coroutine-free.**
   After the A2 ignition + the kotc CPS-engine deletion, NOTHING produces the old CPS/sequence CIR any more (the
   cold-core lowering in bir2cir synthesizes the state machine as ordinary `ContinuationImpl` CIR classes + a public
