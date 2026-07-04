@@ -30,3 +30,4 @@ build/nuget-feed/
 **/kotlin-bir/
 **/dotkt-bir/
 **/kotlin-facades/
+.claude/worktrees/
