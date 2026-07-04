@@ -133,3 +133,23 @@ runtime hang/throw. Audit the `?? cands[0]` / Rule-4 / suspend-stub sites and ma
   AutoCloseable got @ClrTypeAlias(IDisposable) + close@ClrIntrinsic(Dispose)). kotc no longer knows those BCL names.
 - **Throwable.message/cause MIGRATED (family 1):** @ClrProperty(Message/InnerException) + bir2cir Rule-2p-inherited
   (walks `overrides` to the @ClrProperty ancestor). kotc + ilemit stopped double-lowering Exception.Message.
+
+## Wave-2 progress (2026-07-04) — families landed + right-sized debt
+- **f1 Throwable.message/cause** MIGRATED (@ClrProperty + bir2cir Rule-2p-inherited).
+- **f2 Regex/Closeable** MIGRATED; **Lazy DEFERRED** (@ClrTypeAlias has no app-only gate; Kotlin-iface-impl vs sealed .NET class).
+- **f3 collection/StringBuilder member slots** — were ALL DEAD CODE (gated on an unused build mode); deleted.
+- **f4 A9 fun-interface @ClrTypeAlias read** — also DEAD (no stdlib fun-iface aliases BCL); deleted → invariant honored.
+      **coerce*/isBlank** → real pure-Kotlin stdlib bodies (better than @ClrIntrinsic AND more correct: float NaN, CharSequence).
+- **f5 STRING_OPS (trim/pad/replace)** → pure stdlib bodies (default-args KNOWN BUG was STALE/fixed — verified). Exposed +
+      FIXED a latent **ilemit char-default bug** (ConstArgValue had no char case → cross-module `Char='x'` default = InvalidProgram).
+- PATTERN: kotc "CLR debt" is mostly (a) DEAD code, (b) migratable to pure bodies, (c) blocked by a now-fixed bug, or
+  (d) legit .NET interop — the raw family count OVER-states the ACTIVE debt. Removing masking lowerings is also a BUG-FINDER.
+
+### Remaining (right-sized)
+- **DEEP bundle-8 (large, architectural):** A2 = the `clrName`/`ClrTypeRegistry` facadegen-interop resolution in the kotc
+  frontend (the keystone); A5 primitive shapes; A3 single-type `clr:`/`clrg:` arms; A7 `func:` delegate-shape; A8
+  monomorphized `<>dotkt_KIterator/CharSequence/RW-RO` synthetics. Best started in a fresh, light-context session.
+- **SMALL quick-wins:** coverage (exception-across-suspended-Task; `@RestrictsSuspension` cases = 0 today; wire `il-coldvirt`);
+  which-interface (EmptyMap → IReadOnlyDictionary; ClrMatchGroupCollection missing `contains`).
+- **LEGIT-STAYS:** numeric conv (`toInt`→conv is a primitive IL op); .NET event `add_/remove_` + injected indexer `get_Item`
+  (real facadegen interop, not a kotlin.* leak).
