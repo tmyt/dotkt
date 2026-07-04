@@ -60,17 +60,20 @@ FQN already **is** the .NET name.
 | type name | `BirEmitter` reads the IR **`ClassId`** directly (it already **is** `System.Text.StringBuilder`). Arity (`Task\`1`↔`Task`) is a mechanical strip/re-append ilemit already does. No map. |
 | member slot | `@ClrIntrinsic`/`@ClrProperty` on the member (read from the ref by bir2cir) — the stdlib mechanism, extended. |
 | top-level | kotc emits the call to the **resolved callee** (unique); the file-class comes from that callee's IR symbol (its container/origin), **not** a name lookup — so no collision, no receiver discriminator. |
-| event | kotc emits `plusAssign`/`minusAssign` **plus an "event" hint**; **bir2cir decides the CLR binding** (mechanism is bir2cir's to design at implementation — e.g. resolving the .NET `EventInfo` from metadata). kotc never spells `add_`/`remove_`. |
+| event | kotc emits `plusAssign`/`minusAssign` on a receiver **typed `ClrEvent<T>`** — the *type itself is the classification*, no out-of-band hint. **bir2cir recognizes `ClrEvent<T>` (by FQN, like any type) and decides the CLR binding** (mechanism is bir2cir's to design — e.g. resolving the .NET `EventInfo` from metadata). kotc never spells `add_`/`remove_`. |
 
 ### The event boundary (worked, since it is the sharpest)
 
 - **kotc** emits the pure Kotlin operator identity: `plusAssign(button.Click, handler)` — operator =
-  `plusAssign`/`minusAssign`, event name = `Click`, owner = button's type — **plus a hint that the member
-  is an event** (a Kotlin-level classification, not a CLR decision). kotc does **not** produce `add_Click`
-  and does **not** know the `plusAssign → add` convention.
-- **bir2cir** takes the hint and **designs how to bind it to the CLR** — reading `plusAssign → add` as the
-  .NET convention, resolving the actual accessor from the event's metadata. *How* bir2cir models this
-  (a `clrEventAdd` relation node, direct `EventInfo` resolution, …) is bir2cir's call, not prescribed here.
+  `plusAssign`/`minusAssign`, event name = the member name `Click`, owner = button's type. The receiver
+  `button.Click` is **typed `ClrEvent<EventHandler>`** — and *that type is the whole signal*: no separate
+  "event" hint is needed, because bir2cir reads types to decide bindings anyway (the type identity subsumes
+  the classification, exactly as a type's `ClassId` subsumes its .NET name). kotc does **not** produce
+  `add_Click` and does **not** know the `plusAssign → add` convention — it just types the member.
+- **bir2cir** recognizes the `ClrEvent<T>` receiver type (by FQN, like any recognized type) and **designs
+  how to bind it to the CLR** — reading `plusAssign → add` as the .NET convention, resolving the actual
+  accessor from the event's metadata. *How* bir2cir models this (a `clrEventAdd` relation node, direct
+  `EventInfo` resolution, …) is bir2cir's call, not prescribed here.
 - Result: the synthesized `add_<E>`/`remove_<E>` methods, the `add_`/`remove_` strings, and
   `ClrEventRegistry` all disappear; a .NET event is modelled as an ordinary Kotlin `plusAssign` operator
   (MEMORY `clr-not-jvm-discard-jvmisms` — model idiomatically on the CLR, don't reproduce accidental
