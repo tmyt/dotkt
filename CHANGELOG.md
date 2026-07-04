@@ -5,6 +5,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 value-type-nullable): consume the kotc marked-local marker — `Sequence.single{}` value-type
+  chains now run to completion (`il-seq` GREEN, pruned).** `NullableGenericReturnErasure` grew a GENERAL body-local
+  pass (`RetypeNullableGpVars`, in `ApplyRec`'s method walk): a `k:"var"` local carrying the sibling `"nullable":true`
+  on a `gp:T` slot AND initialized to the null literal is retyped `gp:T` → `object`, the SAME `T?`→object model the
+  field/property erasure uses (a genuine null survives in the reference slot; value stores box; the trailing `single as
+  T` re-narrows via unbox.any). CIR before/after for `_Sequences.single`: `{"name":"single","type":"gp:T","nullable":
+  true}` → `{"name":"single","type":"object","nullable":true}`. **Gated on a null-const init** (`var x: T? = null`)
+  deliberately: kotc stamps the marker on compiler-synthesized safe-call receiver temps too (`tmp0_safe_receiver` for
+  `transform(x)?.let{…}` in `mapNotNullTo`), which init from an object-returning call and are read implicitly (`?.`/
+  `.let`) with no explicit `as T` — erasing those corrupts the unbox (`mapNotNull` → garbage). Keying on the null-const
+  init selects exactly the accumulator idiom and leaves the temps untouched (`il-collmore` stays green). `il-chunk`
+  stays XFAIL: its `List<Int?>.filterNotNull()` fails on a DISTINCT/deeper axis — a value-type `Nullable<Int>`
+  collection is not covariantly an `IEnumerable<object>` (the collection dual-representation track), not the local-var
+  marker. Gate GREEN (no NEW-FAIL, `run:seq` FIXED); `verify-ktproj` 9/9.
 - **kotc (bundle-6 value-type-nullable): the `"nullable":true` marker now rides nullable-generic LOCAL vars too.** A
   `T?` (nullable type-parameter) local whose CLR rep is a bare `gp:T` — e.g. `Sequence.single{}`'s `var single: T? = null`
   and `filterNotNullTo`'s `var element: T? = iterator.next()` — carried no nullability into IL, so a value-type
