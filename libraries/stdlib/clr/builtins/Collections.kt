@@ -73,6 +73,7 @@ public actual interface MutableList<E> : List<E>, MutableCollection<E> {
     actual override fun iterator(): MutableIterator<E>
 }
 
+@kotlin.clr.ClrTypeAlias("System.Collections.Generic.IReadOnlyCollection")
 public actual interface Set<out E> : Collection<E> {
     actual override val size: Int
     actual override fun isEmpty(): Boolean
