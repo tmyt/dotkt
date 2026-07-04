@@ -183,3 +183,21 @@ runtime hang/throw. Audit the `?? cands[0]` / Rule-4 / suspend-stub sites and ma
      `ICollection.get_Count`. Independent of the ClrMatchGroupCollection fix.
 - **LEGIT-STAYS:** numeric conv (`toInt`→conv is a primitive IL op); .NET event `add_/remove_` + injected indexer `get_Item`
   (real facadegen interop, not a kotlin.* leak).
+
+## Open follow-ups (recorded 2026-07-05 — pick up next session; quota reset 7am Asia/Tokyo)
+Both have sample WORKAROUNDS (gate stays XFAIL-zero); neither is silently XFAIL'd:
+1. **bir2cir — suspension inside `for (x in array)` (forArray).** `SuspendColdLowering.EmitStmt` has no
+   `forArray` case → a suspend call in a `for`-over-array loop is hoisted out + the loop var isn't an SM
+   field ("load unknown var"). `for`-over-`List`/`Iterable` works (iterator desugaring; il-coldcf CF4).
+   Fix: add a `forArray` case mirroring the iterator-`for` SM segmentation (loop var + index as SM state).
+   Add `cases/il-coforarray`.
+2. **stdlib/bir2cir — `MatchResult.groupValues` → EntryPointNotFound `ICollection.get_Count`.** The
+   `(0 until g.count).map { … }` path builds an ArrayList whose `get_Count` dispatches on a mismatched
+   `ICollection<T>` token (the bymap/maxOrNull generic-collection-dispatch family). Fix at the root
+   (bir2cir dispatch realignment or the stdlib map/ArrayList binding). Add `cases/il-groupvalues`.
+
+## A2 keystone — implementation is DESIGNED, not started
+`docs/design-interop-no-registry.md` holds the full design (4 registries → kotc Kotlin-identity + bir2cir
+CLR-binding-from-metadata). Staged path: (1) type-name → IR ClassId direct-read spike; (2) member (mostly
+already dead); (3) top-level → resolved callee symbol; (4) event → `ClrEvent<T>` type + bir2cir binds.
+Best done in a fresh, light-context session — start with stage 1 (smallest verifiable slice).
