@@ -81,14 +81,9 @@ sealed partial class Emitter
             {
                 var fon = e.GetProperty("ownerType").GetString();
                 var fnm = e.GetProperty("name").GetString();
-                // `Throwable.message`/`.cause` (a Kotlin property accessed as a field) -> System.Exception property.
-                if (fon == "Throwable" && (fnm == "message" || fnm == "cause"))
-                {
-                    EmitExpr(e.GetProperty("recv"));
-                    var m = typeof(Exception).GetMethod(fnm == "message" ? "get_Message" : "get_InnerException");
-                    _il.Emit(OpCodes.Callvirt, m);
-                    return m.ReturnType;
-                }
+                // (No Throwable.message/cause -> System.Exception.Message/InnerException correction here: bir2cir now
+                // substitutes those reads to clrPropGet off the @ClrProperty binding on kotlin.Throwable, so ilemit only
+                // ever sees a genuine field/getter node and trusts the CIR — no Kotlin BCL-member knowledge in ilemit.)
                 // An EXTERNAL type's property read must go through the public getter (its backing field is private
                 // cross-assembly -> Ldfld would throw FieldAccessException). Falls back to the field when no getter.
                 if (ExternalPropAccessor(fon, "get_" + fnm) is { } getter)

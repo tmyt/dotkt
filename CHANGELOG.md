@@ -5,6 +5,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Layer purity: the `Throwable.message`/`.cause` -> `System.Exception.Message`/`.InnerException` DOUBLE lowering
+  is retired — bir2cir now owns it via the `@ClrTypeAlias`/`@ClrProperty` substitution.** kotc AND ilemit each
+  hardcoded the BCL member names (`get_Message`/`get_InnerException`), a layer violation: exception types are
+  already `@ClrTypeAlias("System.Exception")`, so their members belong in bir2cir's reference-metadata
+  substitution. `kotlin.Throwable`'s `message`/`cause` properties now carry
+  `@property:kotlin.clr.ClrProperty(READ, "Message")` / `(READ, "InnerException")`
+  (`libraries/stdlib/clr/builtins/Throwable.kt`); bir2cir emits the accessor binding onto the ref.dll
+  `get_message`/`get_cause` methods, and a new **Rule 2p-inherited** override-chain walk in
+  `MemberCallSubstitution.TransformCall` (`toolchain/bir2cir/Program.cs`) resolves a `.message`/`.cause` read that
+  dispatches through a subclass receiver — a user `class E : Exception` (owner not CLR-bound) or a non-redeclaring
+  `kotlin.Exception` (inherits the member) — up the `overrides` marker to the CLR-bound ancestor
+  (`kotlin.Throwable`) that declares the `@ClrProperty`, routing it to `clrPropGet System.Exception.Message`/
+  `.InnerException` (`cause`'s `InnerException` is `System.Exception`, which `@ClrTypeAlias`-maps back to
+  `Throwable`). Deleted: the kotc call/getter hardcode (`BirEmitter.kt` `call()`), the kotc `IrGetField` hardcode
+  (`BirEmitterExpressions.kt`) + the now-orphaned `isThrowableType` helper, and the ilemit `field`-case correction
+  (`Emitter.Expressions.cs`). kotc now emits a plain `callInstance get_message` (pure Kotlin FQN + `overrides`
+  chain) and ilemit trusts the CIR `clrPropGet` — neither knows `Exception.Message` any more. First of the
+  bundle-8 kotc-purity families (`docs/polish-review-layer-purity.md`). Exception samples
+  (`il-{customexc,exc,excmap,throwexpr}`) stay green + ilverify-clean; gate stays XFAIL-zero.
 - **Coroutine polish: `blockOn`/`delay` deleted from the stdlib and re-homed to the test harness (design
   contradiction removed).** Per `docs/design-coroutine-cold-core-task-bridge.md` §13, neither is a stdlib
   primitive — in upstream Kotlin `delay`/`runBlocking` live in `kotlinx.coroutines`, not `kotlin-stdlib` — so
