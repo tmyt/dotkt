@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 BUG-1, collection dual-rep): value-type `List<Int?>.filterNotNull()` now runs — the value-type
+  nullable collection is boxed into an object-enumerable at the call site + the `filterNotNullTo` loop-var is erased
+  (`il-chunk` GREEN, pruned).** A value-type `Nullable<Int>` collection is NOT covariantly an `IEnumerable<object>` on
+  the CLR (reified generics have no value-type covariance), so passing `vs: List<Int?>` to the (nullable-generic-erased)
+  `filterNotNull(IEnumerable<object>)` NRE'd inside `filterNotNullTo`. Two coordinated pieces: **(A)** a new
+  `ValueTypeNullableCollectionArg` pass wraps the receiver of a `kotlin.collections.*` nullable-generic collection
+  extension (`[nullable:gp:T]` receiver) whose element type arg is a VALUE type in `System.Linq.Enumerable.Cast<object>`
+  (every collection implements the non-generic `IEnumerable`; `Cast<object>` boxes each element, a `Nullable<V>` with no
+  value boxing to a real `null`); **(B)** `NullableGenericReturnErasure` grew `EraseForEachOverNullableGpSource`: a
+  `forEachInline` whose source is a `[nullable:gp:T]`-erased enumerable param and whose loop-var `elem` is `gp:T` has
+  the loop-var erased `gp:T`→`object` (the object enumerator yields boxed/null, so a null element survives instead of
+  `unbox.any`-ing to NRE), and each loop-var reference flowing into a call arg is re-narrowed via a `cast`→`gp:T`
+  (unbox.any at the value consumer). CIR before/after (call): `filterNotNull(vs)` →
+  `filterNotNull(Enumerable.Cast<object>(vs))`; (`filterNotNullTo` body): `forEachInline elem="gp:T"` →
+  `elem="object"` + `clrCollAdd(dest, cast<gp:T>(element))`. Reference `List<String?>` (covariance) already worked.
+  Gate GREEN (`run:chunk` + `ilverify:chunk` FIXED, pruned); `verify-ktproj` 9/9.
 - **bir2cir (bundle-6 value-type-nullable): consume the kotc marked-local marker — `Sequence.single{}` value-type
   chains now run to completion (`il-seq` GREEN, pruned).** `NullableGenericReturnErasure` grew a GENERAL body-local
   pass (`RetypeNullableGpVars`, in `ApplyRec`'s method walk): a `k:"var"` local carrying the sibling `"nullable":true`

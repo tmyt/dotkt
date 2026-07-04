@@ -115,6 +115,13 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
+            // VALUE-TYPE NULLABLE-COLLECTION receiver boxing (bundle-6 BUG-1 Part A): a value-type-element collection
+            // (`List<Int?>`) passed to a nullable-generic collection extension (`Iterable<T?>.filterNotNull()`) is NOT
+            // covariantly `IEnumerable<object>` on the CLR — wrap the receiver in `Enumerable.Cast<object>` so it boxes
+            // into a real object-enumerable. Runs FIRST, before NullableGenericReturnErasure sweeps the `nullable:gp:`
+            // receiver token to `object` (this pass keys on that token). Self-gates to concrete value instantiations
+            // (an open `gp:T` arg is not a value type) so it is a no-op in the rt-stdlib self-build.
+            if (!_options.RefBuild) ValueTypeNullableCollectionArg.Apply(bir.Root);
             // NULLABLE-GENERIC-RETURN erasure (ALL builds, so ref.dll + rt.dll signatures agree): a Kotlin method
             // declaring a nullable generic-parameter return (`fun <T> …(): T?`) has its nullability erased by kotc to
             // a bare `gp:T` return (Nullable<T> is inexpressible for an unconstrained T). That is CORRECT for a
@@ -3359,6 +3366,17 @@ static class NullableGenericReturnErasure
         if (o["methods"] is JsonArray msLocals)
             foreach (var m in msLocals)
                 if (m is JsonObject mo) RetypeNullableGpVars(mo["body"]);
+        // FOREACH-OVER-NULLABLE-GENERIC-SOURCE erasure (bundle-6 BUG-1, value-type filterNotNull). A stdlib method
+        // whose extension receiver is `Iterable<T?>` (kotc token `@kotlin.collections.Iterable[nullable:gp:T]`, erased
+        // by the EraseNullableGpAllStrings sweep below to `IEnumerable<object>`) iterates it with a `forEachInline`
+        // whose loop-var `elem` is the bare `gp:T`. When T is instantiated with a VALUE type, storing the object
+        // `Current` (the typed enumerator is unavailable — ilemit falls back to the non-generic enumerator + Unbox_Any
+        // for a `gp:T` elem) into the value slot unbox.any's a null element -> NRE (filterNotNullTo). Erase the loop-var
+        // to `object` (the object enumerator yields object; a null survives), and re-narrow the loop var where it flows
+        // into a value-typed call arg (clrCollAdd's `gp:T` param) via a `cast`->`gp:T` (unbox.any for value, castclass
+        // for ref). The RECEIVER-side boxing (a value-type collection is NOT covariantly IEnumerable<object> on the CLR)
+        // is the call-site's job (ValueTypeNullableCollectionArg). This is the loop-var twin of EraseNullableGpDecls.
+        EraseForEachOverNullableGpSource(o);
         if ((getters.Count > 0 || setters.Count > 0) && o["methods"] is JsonArray ms2)
         {
             foreach (var m in ms2)
@@ -3489,6 +3507,86 @@ static class NullableGenericReturnErasure
         init is JsonObject io
         && (io["k"] as JsonValue)?.TryGetValue<string>(out var ik) == true && ik == "const"
         && io.ContainsKey("value") && io["value"] is null;
+
+    // BUG-1 Part B: for each method, find a `forEachInline` whose SOURCE is a param typed as a nullable-generic
+    // collection (`...[nullable:gp:X]`) and whose loop-var `elem` is the bare `gp:X`; erase the loop-var to `object`
+    // (so the iteration yields boxed/null objects, not an unbox.any that NREs on a null value element) and re-narrow
+    // the loop var wherever it flows into a call arg back to the original `gp:X` (unbox.any at the value consumer).
+    static void EraseForEachOverNullableGpSource(JsonObject o)
+    {
+        if (o["methods"] is not JsonArray methods) return;
+        foreach (var m in methods)
+        {
+            if (m is not JsonObject mo || mo["params"] is not JsonArray ps) continue;
+            // param name -> the element type-param X of a `...[nullable:gp:X]` collection param.
+            var nullableSrc = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var p in ps)
+                if (p is JsonObject po
+                    && (po["name"] as JsonValue)?.TryGetValue<string>(out var pn) == true
+                    && (po["type"] as JsonValue)?.TryGetValue<string>(out var pt) == true
+                    && ExtractNullableGpElem(pt) is string tp)
+                    nullableSrc[pn] = tp;
+            if (nullableSrc.Count > 0) ErodeForEach(mo["body"], nullableSrc);
+        }
+    }
+
+    // The X in the first `nullable:gp:X` occurrence of a type token, else null.
+    static string ExtractNullableGpElem(string t)
+    {
+        const string marker = "nullable:gp:";
+        var idx = t.IndexOf(marker, StringComparison.Ordinal);
+        if (idx < 0) return null;
+        var start = idx + marker.Length;
+        var end = start;
+        while (end < t.Length && (char.IsLetterOrDigit(t[end]) || t[end] == '_')) end++;
+        return t.Substring(start, end - start);
+    }
+
+    static void ErodeForEach(JsonNode node, Dictionary<string, string> nullableSrc)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "forEachInline"
+                    && obj["src"] is JsonObject src
+                    && (src["k"] as JsonValue)?.TryGetValue<string>(out var sk) == true && sk == "local"
+                    && (src["name"] as JsonValue)?.TryGetValue<string>(out var sn) == true
+                    && nullableSrc.TryGetValue(sn, out var tp)
+                    && (obj["elem"] as JsonValue)?.TryGetValue<string>(out var el) == true && el == "gp:" + tp
+                    && (obj["var"] as JsonValue)?.TryGetValue<string>(out var lv) == true)
+                {
+                    obj["elem"] = "object";
+                    RenarrowLoopVarArgs(obj["body"], lv, el);
+                }
+                foreach (var kv in obj) ErodeForEach(kv.Value, nullableSrc);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) ErodeForEach(it, nullableSrc);
+                break;
+        }
+    }
+
+    // Wrap every reference to the (now-`object`) loop var `lv` that appears as a CALL argument in a `cast`->`origElem`
+    // (`gp:X`), so a value-type consumer unbox.any's the boxed element. The null-check use (`objEq(element, null)`) is
+    // NOT a call arg and is correctly left as `object`.
+    static void RenarrowLoopVarArgs(JsonNode node, string lv, string origElem)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if (obj["args"] is JsonArray a)
+                    for (var i = 0; i < a.Count; i++)
+                        if (a[i] is JsonObject ai
+                            && (ai["k"] as JsonValue)?.TryGetValue<string>(out var ak) == true && ak == "local"
+                            && (ai["name"] as JsonValue)?.TryGetValue<string>(out var an) == true && an == lv)
+                            a[i] = new JsonObject { ["k"] = "cast", ["type"] = origElem, ["e"] = ai.DeepClone() };
+                foreach (var kv in obj) RenarrowLoopVarArgs(kv.Value, lv, origElem);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) RenarrowLoopVarArgs(it, lv, origElem);
+                break;
+        }
+    }
 
     // A field/property whose slot is a nullable generic parameter (`type:"gp:T"` + sibling `nullable:true`) -> the
     // reference `object` slot. Only the boolean-marked `gp:` form; the inline `nullable:gp:T` form (should it appear

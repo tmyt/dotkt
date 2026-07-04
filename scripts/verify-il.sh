@@ -31,12 +31,10 @@ done
 # findings, not run failures.
 declare -A XFAIL_RUN=(
 	[iscoll]="star-projection is-test: `x is Collection<*>` lowering to non-generic ICollection (Fix #6) made the is-test true for value-type collections but the smart-cast member access (this.size) still castclasses the reified IReadOnlyCollection<object> -> InvalidCast, regressing map/filter; reverted, needs full star-cast+member-access lowering"
-	[chunk]="bundle-6: value-type Sequence LOCAL-nullable is FIXED (seq single{} green — bir2cir now erases the null-init nullable:gp local). chunk's REMAINING fail is a DISTINCT/deeper axis: the tail vs.filterNotNull() where vs:List<Int?> = IReadOnlyList<Nullable<Int32>>, but the (erased) filterNotNull param is IEnumerable<object> — a value-type Nullable<Int> collection is NOT covariantly an object-enumerable (GetEnumerator EntryPointNotFound at runtime; ilverify StackUnexpected). Needs a value-type-nullable COLLECTION receiver conversion at the call site (box each Nullable<Int>->object) + the filterNotNullTo forEachInline loop-var erasure — the collection dual-representation track (dual-representation-stdlib-types), NOT the local-var marker this change consumed. The reference List<String?> case (same file) already runs."
 	[collops2]="bundle-6 P5: cross-module default-argument drop — windowed(3) is emitted with 2 args against the 4-param windowed(iterable,size,step,partialWindows) sig (step=1/partialWindows=false defaults lost by the frontend jar) -> InvalidProgramException (StackUnexpected: List<int32> where Int32 expected). KNOWN BUG cross-module-default-args-not-preserved"
 	[bymap]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: rt clrMapGet -> EntryPointNotFound on IDictionary.ContainsKey; owned by the Map/MutableMap dual-rep sub-track"
 )
 declare -A XFAIL_ILVERIFY=(
-	[chunk]="ilverify counterpart of the run:chunk value-type-nullable-COLLECTION finding (StackUnexpected: IReadOnlyList<Nullable<int32>> where IEnumerable<object> expected — vs:List<Int?> passed to the erased filterNotNull(IEnumerable<object>); value-type Nullable<Int> collections are not object-enumerable covariant). Distinct from the local-var marker this change consumed (seq FIXED); pends the collection dual-representation receiver conversion."
 	[collops2]="ilverify formal finding (sample also run-XFAIL: cross-module default-arg drop, windowed(3))"
 	[collrealkt]="ilverify formal-only finding (sample runs correct)"
 	[gen3]="ilverify formal-only finding (sample runs correct)"
