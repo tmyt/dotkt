@@ -5,6 +5,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Layer purity: the kotc collection member-name slot maps (`size`->`Count`, `get`->`get_Item`, `set`->`set_Item`,
+  `iterator`->`GetEnumerator`, `add`->`Add`, `remove`->`Remove`, `contains`->`Contains`, `containsKey`->`ContainsKey`,
+  `clear`->`Clear`, `keys`->`Keys`, `values`->`Values`, `entries`->`Entries`) and the `appColl` type map are deleted
+  from `BirEmitter.clrName`.** Both were dead — gated on the same `!stdlibCompile && stdlibSubstitute` (substitute-only)
+  mode no build uses. The stdlib collection interfaces already carry those `@ClrIntrinsic` bindings
+  (`libraries/stdlib/clr/builtins/Collections.kt`), so a `coll.add(x)`/`list[i]`/`coll.size` emits a plain
+  `kotlin.collections` member call that bir2cir's `MemberCallSubstitution` rewrites off the ref.dll. kotc no longer
+  knows `get_Count`/`get_Item`/`GetEnumerator`/etc. `il-coll*`/`il-mutcoll`/`il-collmore`/`il-mapdes` stay green.
 - **Layer purity: the kotc `StringBuilder` member-name slot map (`append`->`Append`, `insert`->`Insert`,
   `toString`->`ToString`, `get`->`get_Chars`, `clear`->`Clear`) is deleted — bir2cir substitutes them off the
   stdlib `@ClrIntrinsic` bindings.** The map in `BirEmitter.clrName` was dead: it was gated on a

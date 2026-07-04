@@ -3479,7 +3479,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Kotlin subclass, so resolve through the fake override to find the real .NET declaring type.
 		// clrInteropName (NOT clrName): a `kotlin.*` stdlib owner carrying @ClrIntrinsic resolves to null here, so its
 		// member call FALLS THROUGH to the plain Kotlin member-call path below (bir2cir substitutes it from the ref.dll).
-		// Only a genuine .NET interop owner (facadegen-injected via ClrTypeRegistry / appColl) keeps a non-null clrType.
+		// Only a genuine .NET interop owner (facadegen-injected via ClrTypeRegistry) keeps a non-null clrType.
 		val clrType = declaringClass?.let { clrInteropName(it) }
 			?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrInteropName(it) }
 			// A synthesized companion of an injected .NET type holds its STATIC members (`App.Start`) -> a static call
@@ -3489,7 +3489,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A member of a facadegen-INJECTED external .NET type must route to the direct .NET member shapes below
 			// (clrStatic/clrInstance/clrPropGet/clrEventAdd/...), NEVER the Rule-3 helper hoist: an injected type
 			// (Kfc.App, Ext.Widget) has no Kotlin bodies and no synthesized `<>dotkt_ClrH_` helper — that hoist is
-			// only for @Clr classes whose Kotlin bodies were hoisted (the appColl collections / StringBuilder alias).
+			// only for @Clr classes whose Kotlin bodies were hoisted (the @ClrTypeAlias collections / StringBuilder alias).
 			// An injected member also naturally lacks the interop marker `clrInteropName` reads (it isn't a stdlib
 			// binding), so absent this gate a synthesized-COMPANION static (`App.Companion.start(cb)`, il-injstatic)
 			// or event accessor (`w.add_Changed { .. }`, ktproj-extlib) falls into the hoist and emits a callStatic
@@ -4149,11 +4149,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * backend, like the C# backend, must consult the registry so injected types resolve as real .NET types
 	 * (otherwise they leak in as user classes and their members mis-route as fields). See [[s5-fir-injection-seam]].
 	 */
-	/** APP-side collection mapping (app compiled with DOTKT_STDLIB_SUBSTITUTE, !stdlibCompile): the app's List/Map
-	 *  come from the JVM jar and lack the IReadOnly* supertype the stdlib build declares -> map them DIRECTLY to
-	 *  the BCL interfaces. Drives routing (clrName!=null -> clrInstance) + birType (clrg:). rt build excluded. */
-	// In the SUBSTITUTE STDLIB BUILD (rt: stdlibCompile && stdlibSubstitute), appColl/clrName stay off (the rt substitutes
-	// collections via the IReadOnly* supertype, not the app-side map), so a `for (e in coll)` falls to the Kotlin iterator
+	// In the SUBSTITUTE STDLIB BUILD (rt: stdlibCompile && stdlibSubstitute), collection member calls stay plain kotlin.*
+	// (bir2cir substitutes them via the IReadOnly*/@ClrIntrinsic supertype, not a kotc-side map), so a `for (e in coll)` falls to the Kotlin iterator
 	// protocol (coll.iterator()/Iterator.hasNext) -> EntryPointNotFound when an app calls the rt op. Detect a kotlin.collections
 	// iterable here so the for-loop emits forEachInline instead: ilemit's GetEnumerator resolves through the IEnumerable the
 	// IReadOnly* supertype carries. rt-build-only (app/ref unaffected).
@@ -4176,29 +4173,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return (t.classifierOrNull?.owner as? IrClass)?.let(::walk) ?: false
 	}
 
-	private fun appColl(fqn: String): String? = if (stdlibCompile || !stdlibSubstitute) null else when (fqn) {
-		"kotlin.collections.List" -> "System.Collections.Generic.IReadOnlyList"
-		"kotlin.collections.MutableList" -> "System.Collections.Generic.IList"
-		"kotlin.collections.Collection", "kotlin.collections.Set" -> "System.Collections.Generic.IReadOnlyCollection"
-		"kotlin.collections.MutableCollection", "kotlin.collections.MutableSet" -> "System.Collections.Generic.ICollection"
-		"kotlin.collections.Map" -> "System.Collections.Generic.IReadOnlyDictionary"
-		"kotlin.collections.MutableMap" -> "System.Collections.Generic.IDictionary"
-		"kotlin.collections.Iterable", "kotlin.collections.MutableIterable" -> "System.Collections.Generic.IEnumerable"
-		// Sequence is @ClrTypeAlias(IEnumerable) — a for-in over it lowers through the SAME GetEnumerator path as Iterable.
-		"kotlin.sequences.Sequence" -> "System.Collections.Generic.IEnumerable"
-		else -> null
-	}
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = true)
 
 	/** Member-CALL routing must NOT substitute from the stdlib's own `@ClrIntrinsic` annotation: that
 	 *  substitution (a `kotlin.*` member call -> a BCL member) is bir2cir's job, sourced from the ref.dll. kotc emits a
 	 *  PLAIN Kotlin member call. So the call-routing sites read [clrInteropName], which resolves ONLY the genuine .NET
-	 *  interop sources (the facadegen-injected [ClrTypeRegistry], `appColl`, the `java.util.*` aliases, the hardcoded
-	 *  collection/StringBuilder member maps) and DELIBERATELY ignores the `@ClrIntrinsic` annotation. Note the two
-	 *  sources are mutually exclusive per build: the stdlib build (`CLR_TYPES_METADATA=""`) has an EMPTY registry +
-	 *  `appColl`/collection-maps gated off (`!stdlibCompile`), so its only clrName source IS the annotation -> dropping
-	 *  it leaves a plain call for bir2cir; an app build resolves the stdlib from the jar, which drops `@ClrIntrinsic`, so
-	 *  the annotation source is already absent -> [clrInteropName] == [clrName] there. Type encoding ([netType]) still
+	 *  interop sources (the facadegen-injected [ClrTypeRegistry] + the `java.util.Comparator` alias) and DELIBERATELY
+	 *  ignores the `@ClrIntrinsic` annotation. The collection/StringBuilder member slot maps that used to live here are
+	 *  GONE — bir2cir substitutes those calls off the ref.dll @ClrIntrinsic (layer purity). Note the annotation source is
+	 *  already absent in every build: the stdlib build (`CLR_TYPES_METADATA=""`) has an EMPTY registry, and an app build
+	 *  resolves the stdlib from the jar, which drops `@ClrIntrinsic` -> [clrInteropName] == [clrName]. Type encoding ([netType]) still
 	 *  keeps `useAnnotation=true` — a separate concern. (The @ClrTypeAlias type-strip is gone: bir2cir drops alias types.) */
 	internal fun clrInteropName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = false)
 
@@ -4213,9 +4197,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Kotlin shapes (no C3, no clrg: BCL refs). docs/design-clr-stdlib-ref-runtime-split.md.
 		if (stdlibCompile && !stdlibSubstitute) return null   // ref build = gated; runtime (substitute) build = @Clr binds
 		// kotc reads NEITHER @ClrIntrinsic NOR @ClrTypeAlias (Task #5, DONE): the stdlib member binding is sourced from the
-		// ref.dll by bir2cir, so there is NO annotation read here. What remains is the app-interop FIR-injection registry
-		// (ClrTypeRegistry, populated by the .NET-type injection) plus the app-build collection/StringBuilder slot maps
-		// below. `useAnnotation` is now vestigial (its only consumer, the old annClr @ClrIntrinsic reader, is removed).
+		// ref.dll by bir2cir, so there is NO annotation read here. The ONLY source left is the app-interop FIR-injection
+		// registry (ClrTypeRegistry, populated by the .NET-type injection); the app-build collection/StringBuilder slot
+		// maps that used to sit below are GONE (bir2cir substitutes those off the ref.dll @ClrIntrinsic — layer purity).
+		// `useAnnotation` is now vestigial (its only consumer, the old annClr @ClrIntrinsic reader, is removed).
 		(decl as? IrProperty)?.let { prop ->
 			fun lookup(p: IrProperty): String? {
 				p.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.memberClrName(it) }?.let { return it }
@@ -4223,9 +4208,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return null
 			}
 			lookup(prop)?.let { return it }
-			if (!stdlibCompile && stdlibSubstitute && (sequenceOf(prop) + prop.overriddenSymbols.asSequence().map { it.owner }).any { (it.parent as? IrClass)?.fqNameWhenAvailable?.asString() in setOf("kotlin.collections.List","kotlin.collections.MutableList","kotlin.collections.Collection","kotlin.collections.MutableCollection","kotlin.collections.Set","kotlin.collections.MutableSet","kotlin.collections.Map","kotlin.collections.MutableMap","kotlin.collections.Iterable") }) when (prop.name.asString()) {
-				"size" -> return "Count"; "keys" -> return "Keys"; "values" -> return "Values"; "entries" -> return "Entries"
-			}
+			// The collection property slot map (size->Count, keys->Keys, values->Values, entries->Entries) is GONE: the
+			// stdlib collection interfaces carry those @ClrIntrinsic bindings (Collections.kt), so a `coll.size` etc. emits
+			// a plain kotlin.collections member call that bir2cir substitutes off the ref.dll (layer purity — no BCL name here).
 		}
 		(decl as? IrSimpleFunction)?.takeIf { it.correspondingPropertySymbol == null }?.let { fn ->
 			fun lookupFn(m: IrSimpleFunction): String? {
@@ -4234,16 +4219,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return null
 			}
 			lookupFn(fn)?.let { return it }
-			if (!stdlibCompile && stdlibSubstitute && (sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).any { (it.parent as? IrClass)?.fqNameWhenAvailable?.asString() in setOf("kotlin.collections.List","kotlin.collections.MutableList","kotlin.collections.Collection","kotlin.collections.MutableCollection","kotlin.collections.Set","kotlin.collections.MutableSet","kotlin.collections.Map","kotlin.collections.MutableMap","kotlin.collections.Iterable") }) when (fn.name.asString()) {
-				"get" -> return "get_Item"; "set" -> return "set_Item"; "iterator" -> return "GetEnumerator"; "add" -> return "Add"
-				"remove" -> return "Remove"; "contains" -> return "Contains"; "containsKey" -> return "ContainsKey"; "clear" -> return "Clear"
-			}
+			// The collection method slot map (get->get_Item, set->set_Item, iterator->GetEnumerator, add->Add,
+			// remove->Remove, contains->Contains, containsKey->ContainsKey, clear->Clear) is GONE: the stdlib collection
+			// interfaces carry the @ClrIntrinsic bindings (Collections.kt), so a `coll.add(x)`/`list[i]` emits a plain
+			// kotlin.collections member call that bir2cir substitutes off the ref.dll (layer purity — no BCL name here).
 			// kotlin.text.StringBuilder members (append/insert/toString/get/clear) are NOT slot-named here: the stdlib
 			// StringBuilder carries @ClrTypeAlias("System.Text.StringBuilder") with each member @ClrIntrinsic-bound
 			// (Append/Insert/ToString/get_Chars/Clear). kotc emits the plain kotlin.text.StringBuilder member call and
 			// bir2cir's MemberCallSubstitution rewrites it off the ref.dll (layer purity — no BCL member name in kotc).
 		}
-		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { appColl(it) ?: kotc.ClrTypeRegistry.dotNetName(it) }
+		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.dotNetName(it) }
 	}
 
 	/** The `byref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. Matched by FULL name
