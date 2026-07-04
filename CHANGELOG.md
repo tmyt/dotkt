@@ -5,22 +5,34 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- **ilemit (bundle-6 ④): diagnosed `Char.digitToIntOrNull()` InvalidProgram — root cause is in kotc, NOT ilemit;
-  added the `il-digittoint` repro (run-XFAIL) pointing at the exact BirEmitter site.** `'7'.digitToIntOrNull()`
-  aborts with `InvalidProgramException` inside `kotlin.text.CharKt.digitToIntOrNull` (the whole method body is
-  invalid, not a data path). ilverify pins it: `[PathStackUnexpected] digitToIntOrNull(char)][offset 0x1D][found
-  Int32][expected Nullobjref]` — the two conditional paths push incompatible stack types. `digitToIntOrNull()` is
-  `digitOf(this,10).takeIf { it >= 0 }`; `takeIf` inlines to `if (it >= 0) it else null`, whose Kotlin type is
-  `Int?`. But kotc's `BirEmitter.ternary()` (`BirEmitter.kt:3033-3044`) tags the `cond` node with
-  `birType(node.type)` = `kotlin.Int` — the IrWhen `.type` is the non-null `Int` (the `T?` nullability rides the
-  function return, which IS correctly `nullable:int`). So the CIR cond is `{type:int, then:int-local, else:const
-  object null}`: the `then` path leaves an `Int32`, the `else` path a null ref → verify failure. ilemit's existing
-  `EmitCond`/`EmitNullableCoerced`/`EmitReturnCoerced` already emit correct `Nullable<int>` IL **when** the cond is
-  tagged `nullable:int` (kotc does exactly that for `bir-kgenseq`/`bir-safecallnv`); no ilemit change is correct here.
-  Per the layer boundary (ilemit knows no Kotlin; Codex-confirmed) the join of a value type and a null literal must be
-  computed as nullable BEFORE CLR lowering — the fix belongs in kotc's `ternary()`: promote the cond result type to
-  `nullable:<elem>` when a branch result is a null literal. `il-digittoint` is run-XFAIL until that lands (asserts
-  `7/10/null/7`; the whole `digitToInt`/`digitToIntOrNull` family shares the codegen root). Gate GREEN (no NEW-FAIL).
+- **kotc (bundle-6 ④): FIXED the `ternary()` value-type + `null`-branch cond-type defect — `Char.digitToIntOrNull()`
+  no longer InvalidPrograms.** `digitToIntOrNull()` is `digitOf(this,10).takeIf { it >= 0 }`; `takeIf` inlines to
+  `if (p(this)) this else null`, a value-type-`or`-`null` join. `BirEmitter.ternary()` tagged the `cond` with the
+  non-nullable joined type (`kotlin.Int`), so the CIR cond was `{type:int, then:int-local, else:const object null}` —
+  the two paths pushed incompatible stack types (`[PathStackUnexpected][found Int32][expected Nullobjref]`), aborting
+  the whole method with `InvalidProgramException`. Fix (`BirEmitter.ternary`): when a `when`/`if` branch result emits
+  as a bare `null` const and the joined type resolves to a bare value primitive, tag the cond `nullable:<elem>` so
+  ilemit's existing `EmitCond`/`EmitNullableCoerced` join it as `Nullable<T>` (value branch wrapped, null branch
+  `HasValue=false`). Two shapes are handled: the FIR `.type` is the non-null `Int`, **and** `takeIf`'s generic `T?`
+  where `birType` substitutes `T -> kotlin.Int` and drops the `?` (the actual digitToInt case — keyed off the resolved
+  `birType`, not `node.type.classFqName`). The `null` may arrive IR-wrapped (IMPLICIT_CAST / inline block), so it's
+  detected on the emitted result. `digitToIntOrNull` now computes `7/10/7` and the `'z'` case computes `null` correctly.
+  Layer-pure: the value+null join is materialized as nullable BEFORE CLR lowering (ilemit stays Kotlin-blind). `il-digittoint`
+  stays run-XFAIL on a SEPARATE, general downstream divergence surfaced by the fix — `println(null)` prints an empty line
+  instead of `"null"` (reproduces with any `val a:Int?=null; println(a)` / `String?` null; `ConsoleClr.kt` binds
+  `println(Any?)` straight to `Console.WriteLine(object)`, empty for null vs Kotlin's `"null"`) — routed to the stdlib
+  binding / bir2cir, not kotc. Gate GREEN (no NEW-FAIL; digittoint's InvalidProgram root is gone).
+- **kotc (bundle-6 P5): confirmed cross-module default-argument drop (`windowed(3)` / `il-collops2`) is NOT a kotc
+  defect — kotc output is correct; routed the fix to ilemit.** kotc emits `callStatic windowed` with 2 args
+  (receiver + size) against the full 4-param sig + `typeArgs=[Int]`, correctly OMITTING the defaulted `step`/`partialWindows`
+  (the frontend jar strips default VALUES — Kotlin metadata stores only a HAS_DEFAULT flag, never the expression, so kotc
+  cannot know `1`/`false`, and reading them from the ref.dll would be a layer violation). The emitted stdlib `windowed`
+  carries `[Optional]`+`[DefaultParameterValue]`. ilemit's `EmitCallArgs` already fills omitted trailing optional args from
+  the referenced method's `[DefaultParameterValue]` (Emitter.Expressions.cs:3390), but the GENERIC branch of `callStatic`
+  (typeArgs present → `EmitArgsTyped`, Emitter.Expressions.cs:228 / Program.cs:1661) does NOT — so the 4-param method is
+  called with 2 args → `InvalidProgramException`. Fix (Codex-confirmed) belongs in ilemit: make the `typeArgs`/`EmitArgsTyped`
+  path fill omitted trailing defaults from `mb.GetParameters()` like `EmitCallArgs` (alt: bir2cir backfill from ref.dll
+  ParameterInfo). `il-collops2` stays run/ilverify-XFAIL until that lands.
 - **kotc (bundle-6 edge, diagnosed → routed to bir2cir): a value-position `try/catch(/finally)` used in an OPERAND
   slot (`1 + try{..}`, `"x" + try{..}`) throws `InvalidProgramException`.** Root cause confirmed to be DOWNSTREAM of
   kotc, not a kotc BIR defect: kotc's `tryExpr` already emits the correct value-form — a `valueBlock` = `[{k:var

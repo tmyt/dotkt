@@ -3033,15 +3033,31 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun ternary(node: IrWhen): String {
 		// Fold right-to-left into nested conditionals. The branches carry the when's result type, so a value-type
 		// nullable result (`Int?`) gets its `T`/`null` branches coerced to Nullable<T> at emit (see EmitCond).
-		val ty = str(birType(node.type))
+		// GOTCHA: an inlined `takeIf` etc. yields `if (c) x else null` whose joined type is a value primitive with
+		// a bare `null` branch — but the emitted cond type comes out non-nullable (`kotlin.Int`). Two shapes reach
+		// here: (1) the FIR `.type` is the non-null `Int` (the `T?` rides the fn return), or (2) `takeIf`'s generic
+		// `T?` result, where `birType` substitutes `T -> kotlin.Int` and DROPS the `?`. In both, tag the cond
+		// `nullable:<elem>` so ilemit joins the value branch (wrap to Nullable<T>) and the null branch (HasValue=false);
+		// leaving it `int` mismatches `then:int` vs `else:null-ref`. The `null` may arrive IR-wrapped (IMPLICIT_CAST /
+		// inline block — as from `takeIf`), so detect it on the EMITTED result (a bare `const … null`), emitting each
+		// branch result exactly once. A reference-typed join with a null branch keeps its type (null is a valid ref).
+		val branches = node.branches.map { b -> Triple((b.condition as? IrConst)?.value == true, b.condition, expr(b.result)) }
+		val nullBranch = branches.any { isEmittedNullConst(it.third) }
+		val bt = birType(node.type)
+		val elem = if (bt.startsWith("nullable:")) null else VALUE_PRIM_BIR[bt] ?: bt.takeIf { it in PRIMITIVE_SHORTHANDS }
+		val ty = str(if (nullBranch && elem != null) "nullable:$elem" else bt)
 		var acc = """{"k":"const","type":"void","value":null}"""
-		for (b in node.branches.asReversed()) {
-			val isElse = (b.condition as? IrConst)?.value == true
-			acc = if (isElse) expr(b.result)
-			else """{"k":"cond","type":$ty,"cond":${expr(b.condition)},"then":${expr(b.result)},"else":$acc}"""
+		for ((isElse, cond, result) in branches.asReversed()) {
+			acc = if (isElse) result
+			else """{"k":"cond","type":$ty,"cond":${expr(cond)},"then":$result,"else":$acc}"""
 		}
 		return acc
 	}
+
+	/** True if an EMITTED BIR expression is a bare `null` const — `{"k":"const",…,"value":null}` (a
+	 *  `void`/`kotlin.Nothing`-typed null). Used to spot a `when`/`if` branch that yields `null`. */
+	internal fun isEmittedNullConst(emitted: String): Boolean =
+		emitted.startsWith("""{"k":"const",""") && emitted.endsWith(""","value":null}""")
 
 	internal fun call(call: IrCall): String {
 		val callee = call.symbol.owner

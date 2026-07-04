@@ -129,6 +129,11 @@ internal val VALUE_PRIM_BIR = mapOf(
 	"kotlin.Double" to "double", "kotlin.Float" to "float", "kotlin.Boolean" to "bool", "kotlin.Char" to "char",
 )
 
+// The primitive-value BIR shorthands (VALUE_PRIM_BIR's range): a `birType` that already reads as one of these
+// (e.g. a substituted generic `T -> int`) is a bare value primitive, so a `when`/`if` join with a `null` branch
+// over it must be tagged `nullable:<shorthand>`.
+internal val PRIMITIVE_SHORTHANDS = VALUE_PRIM_BIR.values.toSet()
+
 // Kotlin types whose values ARE CLR primitives (the signed/bool/char primitives + the unsigned inline classes,
 // which lower to native CLR unsigned primitives; unsigned arithmetic is already frontend-lowered to plain ops).
 // ONLY these may have their operators lowered to raw CIL bin/un ops — any other kotlin.* owner (a VALUE CLASS
