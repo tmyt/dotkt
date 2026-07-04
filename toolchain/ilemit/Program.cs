@@ -879,7 +879,14 @@ sealed partial class Emitter
         {
             // `constructor(...) : this(...)` -> delegate to a sibling ctor (it runs field inits / base call).
             foreach (var a in ta.EnumerateArray()) EmitExpr(a);
-            _il.Emit(OpCodes.Call, SelectCtor(ti, ta.GetArrayLength()));
+            ConstructorInfo sibling = SelectCtor(ti, ta.GetArrayLength());
+            // Inside a GENERIC type, the sibling ctor must be referenced through the SELF-instantiation
+            // `C`1<!T>` (the type over its OWN generic params), NOT the open definition `C`1` — a bare
+            // `call C`1::.ctor` is "not fully instantiated" at JIT. Mirrors the base-ctor anchoring below
+            // (the `: base(...)` branches ~lines 918-920 / 894-898); do not "simplify" this away.
+            if (ti.TB is TypeBuilder stb && stb.IsGenericTypeDefinition)
+                sibling = TypeBuilder.GetConstructor(stb.MakeGenericType(stb.GetGenericArguments()), (ConstructorBuilder)sibling);
+            _il.Emit(OpCodes.Call, sibling);
         }
         else if (ti.ClrBase != null)
         {
