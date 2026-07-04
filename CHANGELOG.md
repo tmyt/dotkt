@@ -5,6 +5,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Layer purity (bundle-8, A9): kotc no longer reads `@ClrTypeAlias`/`@ClrIntrinsic` on a `fun interface` (SAM).**
+  Two `BirEmitter` sites read those annotations off a fun-interface classifier — the SAM-override param-erasure
+  (`erasesSam`) and the SAM-conversion `aliasTarget` — to decide whether to erase the SAM method to `object` params
+  and emit a `clr:System.Collections.IComparer` interface spec. Both violated the foundational invariant "kotc reads
+  NEITHER `@ClrTypeAlias` NOR `@ClrIntrinsic`", and both were already **dead**: the stdlib no longer aliases any fun
+  interface to a BCL interface (`Comparator` is a plain Kotlin fun interface since the `IComparer` erasure was
+  revealed to be a misdiagnosed `unbox.any` bug, fixed at the ilemit source — see `ComparatorClr.kt`). Removed; kotc
+  now emits the plain Kotlin fun-interface identity (`samNew` + `kotlin.Comparator`) and bir2cir derives any CLR type
+  off the ref.dll. New gated case `il-samcmp` (explicit `Comparator { a, b -> ... }` SAM conversion). Gate green.
+- **Layer purity (bundle-8): the kotc `coerceAtMost`/`coerceAtLeast`/`coerceIn` -> `System.Math.Min/Max/Clamp`
+  lowering is retired.** The BCL name `System.Math` was CLR knowledge in kotc (a layer violation). The stdlib
+  `_Ranges.kt` coerce functions are pure Kotlin with correct bodies (`if (this < min) min else this`), so kotc now
+  emits a plain call and the real stdlib body runs — no `@ClrIntrinsic` needed (the pure body IS the binding). This
+  is also **more correct** than `System.Math.Min`/`Max` for floats: Kotlin's coerce uses `<`/`>` semantics that
+  differ from `Math.Min`/`Max` on `NaN`. New gated case `il-coerce`. Gate green.
+- **Layer purity (bundle-8): the kotc `isBlank`/`isNotBlank` -> `System.String.IsNullOrWhiteSpace` lowering is
+  retired.** The BCL name was CLR knowledge in kotc AND wrong for a non-`String` `CharSequence` receiver
+  (`IsNullOrWhiteSpace` only takes `String`). The stdlib `CharSequence.isBlank()` body was rewritten from
+  `all { it.isWhitespace() }` to an index loop (`for (i in 0 until length) …`), which avoids the CharSequence
+  *iterator* path (`Iterator.hasNext` EntryPointNotFound) and runs pure-Kotlin for every `CharSequence` — no
+  compiler lowering, no `@ClrIntrinsic`. `isNotBlank` = `!isBlank()` (inline). New gated case `il-blank`. Gate green.
 - **kotc cleanup: the vestigial `useAnnotation` parameter on `BirEmitter.clrName` is removed.** With the
   collection/StringBuilder slot maps and `appColl` gone (above), nothing in the `clrName` body reads
   `@ClrIntrinsic`, so `clrName(decl, useAnnotation=true)` and `clrName(decl, useAnnotation=false)` returned

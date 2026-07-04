@@ -307,7 +307,15 @@ public inline fun CharSequence.isNotEmpty(): Boolean = length > 0
  *
  * @sample samples.text.Strings.stringIsBlank
  */
-public fun CharSequence.isBlank(): Boolean = all { it.isWhitespace() }
+public fun CharSequence.isBlank(): Boolean {
+    // Index loop (NOT `all { it.isWhitespace() }`): the CharSequence *iterator* protocol hits an EntryPointNotFound on
+    // the CLR (Iterator.hasNext), whereas indexed `this[i]` over `length` is the working CharSequence access path. This
+    // keeps isBlank a pure-Kotlin stdlib body — no compiler lowering, correct for every CharSequence (not just String).
+    for (i in 0 until length) {
+        if (!this[i].isWhitespace()) return false
+    }
+    return true
+}
 
 /**
  * Returns `true` if this char sequence is not empty and contains some characters except whitespace characters.
