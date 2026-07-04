@@ -200,13 +200,20 @@ sealed partial class Emitter
                 // The receiver must be a managed pointer; `constrained.` then dispatches for value/ref/generic T.
                 var recvType = MapType(e.GetProperty("recvType").GetString());
                 var iface = MapType(e.GetProperty("iface").GetString());
-                // IComparable`1<T> instantiated over a BUILDER type param (e.g. a SAM-shim's class type param): re-anchoring
-                // CompareTo via TypeBuilder.GetMethod yields a metadata token the JIT REJECTS for a value-type instantiation
-                // (InvalidProgramException) -- the same family as the generic-enumerator fallback. Use the NON-generic
-                // System.IComparable.CompareTo(object) + box the arg; `constrained.` still dispatches to T's own impl
-                // (value types implement both IComparable and IComparable<T>). Reference-type args worked before because
-                // they are already object-compatible; only value-type instantiations hit the bad token.
-                bool brokenGeneric = iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IComparable<>) && IsTbInstantiation(iface);
+                // IComparable`1<T> instantiated over an EMITTED value type (e.g. a SAM-shim's class type param bound to a
+                // Kotlin value class): re-anchoring CompareTo via TypeBuilder.GetMethod yields a metadata token the JIT
+                // REJECTS for that value-type instantiation (InvalidProgramException) -- the same family as the generic-
+                // enumerator fallback. Use the NON-generic System.IComparable.CompareTo(object) + box the arg; `constrained.`
+                // still dispatches to T's own impl (value types implement both IComparable and IComparable<T>).
+                //
+                // BUT when the receiver is a generic PARAMETER (`!!T` with `T : Comparable<T>` — gen3's maxOf2 / SortedPair),
+                // the instantiation `IComparable`1<!!T>` is over a type param, not an emitted value type: its token is a
+                // plain MethodSpec that is BOTH JIT-safe AND ilverify-clean (the exact `constrained. !!T; callvirt
+                // IComparable`1<!!T>::CompareTo(!0)` C# emits). The non-generic-IComparable workaround is UNVERIFIABLE there
+                // because the constraint only proves `IComparable<T>`, not the non-generic `IComparable` -> keep the generic
+                // path for a generic-parameter receiver; scope the workaround to genuinely-emitted value-type instantiations.
+                bool brokenGeneric = iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IComparable<>)
+                    && IsTbInstantiation(iface) && !recvType.IsGenericParameter;
                 var mi = brokenGeneric ? typeof(IComparable).GetMethod("CompareTo")! : InterfaceMethodOn(iface, e.GetProperty("method").GetString());
                 EmitAddr(e.GetProperty("recv"));
                 EmitExpr(e.GetProperty("arg"));
