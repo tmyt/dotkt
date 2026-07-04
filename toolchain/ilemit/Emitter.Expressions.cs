@@ -173,7 +173,7 @@ sealed partial class Emitter
                 catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _) && OwnerHasClrInterface(e.GetProperty("ownerType").GetString())) { return EmitDynamicCall(e); }
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
                 EmitExpr(e.GetProperty("recv"));
-                if (m == m0) EmitCallArgs(e.GetProperty("args"), m); else EmitArgsTyped(e.GetProperty("args"), mps);
+                if (m == m0) EmitCallArgs(e.GetProperty("args"), m); else EmitArgsTyped(e.GetProperty("args"), mps, m);
                 _il.Emit(e.GetProperty("virtual").GetBoolean() ? OpCodes.Callvirt : OpCodes.Call, m);
                 return CoerceReturn(e, m == m0 ? rt : mrt);
             }
@@ -232,7 +232,7 @@ sealed partial class Emitter
                 var mb = ApplyTypeArgs(AnchorOpenGenericOwnerStatic(
                     (e.TryGetProperty("owner", out var ow) && ow.ValueKind == JsonValueKind.String)
                         ? FindMethod(ow.GetString(), name, csig) : FindStatic(name, csig)), e, out var srt, out var sps);
-                if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps);
+                if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
                 _il.Emit(OpCodes.Call, mb);
                 return CoerceReturn(e, srt);

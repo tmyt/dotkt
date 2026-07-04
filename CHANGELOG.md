@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit (bundle-6 P5): backfill omitted trailing default args on the GENERIC (typeArgs) call path — `windowed(3)`
+  IL is now valid (`il-collops2` pruned from `XFAIL_ILVERIFY`).** A cross-module generic call may omit defaulted
+  trailing params (the frontend jar strips default VALUES; kotc correctly emits `callStatic windowed` with 2 args
+  against the full 4-param sig + `typeArgs=[Int]`), and the stdlib callee carries `[Optional]`/`[DefaultParameterValue]`
+  on `step`/`partialWindows`. `EmitCallArgs` (the non-generic path) already backfilled these, but the generic path
+  (`typeArgs` present → `EmitArgsTyped`) emitted only the 2 supplied args → the 4-param method was called short →
+  `InvalidProgram`. Fix (`Program.cs` `EmitArgsTyped`): after emitting the supplied args, backfill the remaining
+  params from the resolved `MethodInfo`'s own `ParameterInfo` (driven off `mb.GetParameters()`, NOT the `pt` array —
+  which is `null` for a generic METHOD on a NON-generic owner like `windowed<T>` on `_CollectionsKt`), skipping
+  un-baked `MethodBuilder`s (no default metadata). Both generic call sites (`callStatic`/`callInstance` typeArgs
+  branches) pass the resolved method. `windowed(3)` now emits `windowed<int>(list, 3, 1, false)` and the app IL is
+  ilverify-clean. `il-collops2` stays run-XFAIL on a SEPARATE, deeper bir2cir star-projection defect the fix unmasked
+  (windowed's coroutine-sequence `getOrThrow<T>` passes `Result<T>` to a `Result<object>`-param `throwOnFailure` with
+  no coercion → "not fully instantiated"; routed to bir2cir). Gate GREEN (no NEW-FAIL).
+
 - **kotc (bundle-6 ④): FIXED the `ternary()` value-type + `null`-branch cond-type defect — `Char.digitToIntOrNull()`
   no longer InvalidPrograms.** `digitToIntOrNull()` is `digitOf(this,10).takeIf { it >= 0 }`; `takeIf` inlines to
   `if (p(this)) this else null`, a value-type-`or`-`null` join. `BirEmitter.ternary()` tagged the `cond` with the

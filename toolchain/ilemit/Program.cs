@@ -1658,10 +1658,23 @@ sealed partial class Emitter
     }
 
     // Emit call args, boxing each value arg passed to a reference/object param (param types known explicitly).
-    void EmitArgsTyped(JsonElement args, Type[] pt)
+    // When `mb` is a REFERENCED (reflectable) method, backfill omitted trailing [Optional]/[DefaultParameterValue]
+    // args exactly like EmitCallArgs — a GENERIC (typeArgs) cross-module call may omit defaulted trailing params
+    // (the frontend jar strips default VALUES; kotc emits fewer args than the full sig, e.g. `windowed(3)` vs the
+    // 4-param `windowed(list, size, step=1, partialWindows=false)`), and the CLR caller must supply them or the
+    // stack is short -> InvalidProgram. In-assembly emitted methods (MethodBuilder / MethodBuilderInstantiation)
+    // can't be reflected pre-bake and carry no default metadata, so GetParameters() there is skipped (try/catch).
+    void EmitArgsTyped(JsonElement args, Type[] pt, MethodInfo mb = null)
     {
         int i = 0;
         foreach (var a in args.EnumerateArray()) { if (pt != null && i < pt.Length) EmitArg(a, pt[i]); else EmitExpr(a); i++; }
+        // Backfill omitted trailing defaults. Drive off the resolved method's own ParameterInfo (NOT `pt`, which is
+        // null for a generic METHOD on a NON-generic owner — `windowed<T>` on `_CollectionsKt` — where ApplyTypeArgs
+        // leaves paramTypes null).
+        if (mb == null) return;
+        ParameterInfo[] ps;
+        try { ps = mb.GetParameters(); } catch (NotSupportedException) { return; }  // un-baked builder: no defaults
+        for (; i < ps.Length; i++) EmitDefaultArg(ps[i]);
     }
 
     // Emit `new T(..)` ctor args honoring the node's declared ctor param types (`argTypes`): a value/generic-param
