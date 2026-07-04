@@ -5,6 +5,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Layer purity: the kotc `StringBuilder` member-name slot map (`append`->`Append`, `insert`->`Insert`,
+  `toString`->`ToString`, `get`->`get_Chars`, `clear`->`Clear`) is deleted — bir2cir substitutes them off the
+  stdlib `@ClrIntrinsic` bindings.** The map in `BirEmitter.clrName` was dead: it was gated on a
+  `!stdlibCompile && stdlibSubstitute` (substitute-only) build mode that no build uses (ref = compile-only, rt =
+  compile+substitute, app = neither), so a `sb.append(x)` already emits a plain `kotlin.text.StringBuilder.append`
+  member call that `MemberCallSubstitution` rewrites to `clrInstance System.Text.StringBuilder.Append` from the
+  ref.dll (`libraries/stdlib/clr/kotlin/text/StringBuilderClr.kt` carries `@ClrTypeAlias("System.Text.StringBuilder")`
+  + each member `@ClrIntrinsic`). kotc no longer knows the BCL member names. `il-charseqs`/`il-fmt`/`il-str` stay green.
 - **Layer purity: `kotlin.text.Regex` -> `System.Text.RegularExpressions.Regex` is no longer a kotc `birType`
   hardcode — bir2cir substitutes the TYPE token off the stdlib `@ClrTypeAlias`.** The Regex CALL lowering was
   already retired (bir2cir reads `@ClrTypeAlias`/`@ClrIntrinsic` from the ref.dll), leaving only the type token

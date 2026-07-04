@@ -4238,10 +4238,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				"get" -> return "get_Item"; "set" -> return "set_Item"; "iterator" -> return "GetEnumerator"; "add" -> return "Add"
 				"remove" -> return "Remove"; "contains" -> return "Contains"; "containsKey" -> return "ContainsKey"; "clear" -> return "Clear"
 			}
-			// java.lang.StringBuilder (the JVM alias of kotlin.text.StringBuilder) -> System.Text.StringBuilder members.
-			if (!stdlibCompile && stdlibSubstitute && (sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).any { (it.parent as? IrClass)?.fqNameWhenAvailable?.asString() in setOf("java.lang.StringBuilder", "java.lang.AbstractStringBuilder", "kotlin.text.StringBuilder") }) when (fn.name.asString()) {
-				"append" -> return "Append"; "insert" -> return "Insert"; "toString" -> return "ToString"; "get" -> return "get_Chars"; "clear" -> return "Clear"
-			}
+			// kotlin.text.StringBuilder members (append/insert/toString/get/clear) are NOT slot-named here: the stdlib
+			// StringBuilder carries @ClrTypeAlias("System.Text.StringBuilder") with each member @ClrIntrinsic-bound
+			// (Append/Insert/ToString/get_Chars/Clear). kotc emits the plain kotlin.text.StringBuilder member call and
+			// bir2cir's MemberCallSubstitution rewrites it off the ref.dll (layer purity — no BCL member name in kotc).
 		}
 		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { appColl(it) ?: kotc.ClrTypeRegistry.dotNetName(it) }
 	}
