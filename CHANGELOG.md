@@ -21,6 +21,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   such token is `<*>`; the smart-cast rewrite is additionally gated to all-`object` (erased) args to leave a genuine
   `as List<String>` unchecked cast alone. `il-iscoll` green (`True/True/True/True/False/False`); coll/coll2/coll3/bmore/
   funref/mapfilter/collmore unchanged. Gate GREEN.
+- **bir2cir (bundle-6 `tryexprop`): FIXED a value-producing `try` in an OPERAND slot (`1 + try{..}`, `"x" + try{..}`,
+  `f(try{..})`) → `InvalidProgramException`.** kotc already emits the correct value-form (a `valueBlock` = `[var
+  <>dotkt_tryvalN; try{setLocal …}catch{setLocal …}]` + `result: local(…)`), but ilemit runs the `valueBlock` INLINE —
+  and a CLR protected region must be entered with an EMPTY eval stack (`leave` clears it), so a pushed left operand is
+  wiped → invalid IL. The new `TryValueOperandHoist` pass (pure CLR eval-order normalization, so it lives in bir2cir)
+  HOISTS a try-bearing `valueBlock` out of a non-first operand slot to PRECEDING statements (its var + try become
+  statements of the enclosing statement; the slot becomes `local(<>dotkt_tryvalN)`), preserving left-to-right order — a
+  side-effecting operand evaluated before a hoisted try is itself spilled to a preceding temp. A try-`valueBlock` already
+  at an empty-stack position (`val x = try{..}` directly) is left inline. `il-tryexprop` green (`n=5/6/bad=-1/30`), run
+  + ilverify. Gate GREEN.
 - **kotc (bundle-6 ④): FIXED the `ternary()` value-type + `null`-branch cond-type defect — `Char.digitToIntOrNull()`
   no longer InvalidPrograms.** `digitToIntOrNull()` is `digitOf(this,10).takeIf { it >= 0 }`; `takeIf` inlines to
   `if (p(this)) this else null`, a value-type-`or`-`null` join. `BirEmitter.ternary()` tagged the `cond` with the

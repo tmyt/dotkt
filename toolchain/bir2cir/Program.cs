@@ -206,6 +206,12 @@ sealed class Pipeline
             // array -> IndexOutOfRangeException). Expand each such clause into two clauses covering BOTH so the Kotlin
             // "one catch handles any out-of-range access" semantics hold. Non-ref only (the ref surface stays pure Kotlin).
             if (!_options.RefBuild) CatchClauseWidening.Apply(substituted);
+            // TRY-VALUE OPERAND HOIST (bundle-6 `tryexprop`): a value-producing try/catch used in a non-first
+            // OPERAND slot (`1 + try{..}`, `"x" + try{..}`, `f(try{..})`) is hoisted out to a PRECEDING statement so
+            // the CLR protected region is entered with an empty eval stack (a `leave` clears the stack -> a pushed
+            // left operand would be lost -> InvalidProgram). kotc emits the correct value-form (a try-bearing
+            // valueBlock + result local); this is pure CLR eval-order normalization, so it lives in bir2cir.
+            if (!_options.RefBuild) TryValueOperandHoist.Apply(substituted);
             staged.Add((substituted, outputName));
         }
 
