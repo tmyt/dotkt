@@ -83,10 +83,6 @@ static class IlEmit
             draft.TryGetProperty("executableCir", out var executable))
             return JsonDocument.Parse(executable.GetRawText());
 
-        if (root.TryGetProperty("cirDraft", out draft) &&
-            draft.TryGetProperty("ilemitCompatBir", out var compat))
-            return JsonDocument.Parse(compat.GetRawText());
-
         throw new InvalidOperationException(
             $"ilemit: native CIR input '{path}' does not contain cirDraft.executableCir");
     }
@@ -814,8 +810,9 @@ sealed partial class Emitter
         // NOTE: ilemit no longer rewrites a `suspend fun`'s signature to `Task<T>`. The cold-core coroutine lowering
         // (bir2cir, bundle-6) already arrives here as ordinary CIR: the public `Task<T>` bridge is its OWN method
         // carrying `suspendBridge:true` (stamped `[KotlinFunction(Suspend)]` below), and the cold entry / state-machine
-        // class are plain methods/types. A leftover `"suspend":true` method (the ref build, or an app/rt shape the cold
-        // lowering left untouched) falls through to the normal signature path and emits a throwing stub at body time.
+        // class are plain methods/types. A leftover `"suspend":true` method falls through to the normal signature path;
+        // at body time it emits a throwing stub in a STDLIB build (expected — the coroutine primitives have no SM form)
+        // but is an emit-time ERROR in an app build (a bir2cir transform miss — see EmitMethodBody's suspend guard).
 
         MethodBuilder mb;
         Type[] ps;
@@ -964,12 +961,24 @@ sealed partial class Emitter
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
         if (m.TryGetProperty("suspend", out var su) && su.GetBoolean())
         {
-            // A leftover `"suspend":true` method reaching ilemit is either a REF-build suspend declaration (the ref build
-            // SKIPS the bir2cir cold lowering, so its bodies are meant to be stubbed — this IS the reference assembly), or
-            // an app/rt suspend shape the cold lowering left untouched (a disqualified form). Both emit a throwing stub:
-            // the real coroutine state machine (cold entry + `ContinuationImpl` SM class + public `Task<T>` bridge) is
-            // synthesized upstream by bir2cir as ordinary CIR; ilemit itself is coroutine-codegen-free.
-            EmitThrowStub(mb, StdlibStub ? "suspend (reference stub)" : "suspend (unsupported shape)"); return;
+            // A leftover `"suspend":true` method reaching ilemit means the real coroutine state machine (cold entry +
+            // `ContinuationImpl` SM class + public `Task<T>` bridge) was NOT synthesized — that lowering is bir2cir's
+            // (cold-core, bundle-6); ilemit itself is coroutine-codegen-free.
+            //
+            // In a STDLIB build (ref OR rt) this is EXPECTED: the coroutine PRIMITIVES — suspendCoroutine[Unintercepted
+            // OrReturn], yield/yieldAll, callRecursive, and the kotlin.clr.CoroutinesKt await/delay bridge — have no
+            // state-machine form; bir2cir deliberately leaves their DEFINITIONS un-lowered "for the ilemit throw-stub"
+            // (SuspendColdLowering.cs), transforming only their CALL SITES. Their bodies are effectively dead (no real
+            // caller survives), so a throwing stub is the correct emission. Keep it, unchanged.
+            if (StdlibStub) { EmitThrowStub(mb, "suspend (reference stub)"); return; }
+            // In an APP build there are no such primitives — every suspend fn is a real coroutine that bir2cir must
+            // lower. Reaching here is therefore a bir2cir transform MISS (a disqualified/un-lowered suspend shape). Fail
+            // LOUD at emit time — naming the method — instead of silently emitting a throwing stub that surfaces as a
+            // distant runtime throw. A NEW error here is a real bir2cir defect to fix upstream, NOT to re-silence.
+            throw new NotSupportedException(
+                $"ilemit: suspend method '{ti.TB?.Name}.{mname}' reached codegen un-lowered — bir2cir's cold-core suspend " +
+                $"lowering must transform it into a public Task bridge + plain state-machine methods before ilemit (which " +
+                $"is coroutine-codegen-free). This is a bir2cir transform MISS.");
         }
         BeginMethod(mb.GetILGenerator(), m, isStatic: mb.IsStatic);
         PrescanCfgLabels(m.GetProperty("body"));
@@ -2302,7 +2311,8 @@ sealed partial class Emitter
         }
     }
 
-    // Numeric conversion (`x.toLong()` etc.) -> a CIL conv opcode; returns the target CLR type.
+    // A CIR `conv` instruction -> the matching CIL conv opcode; returns the target CLR type. ilemit only selects the
+    // opcode for the requested target width — WHERE a Kotlin numeric conversion becomes a `conv` node is bir2cir's call.
     Type EmitConv(JsonElement e)
     {
         EmitExpr(e.GetProperty("e"));
