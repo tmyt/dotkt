@@ -5,6 +5,36 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Zero-XFAIL FINAL: the last three `verify-differential` XFAILs (`m-b6`/`m-b9`/`m-b10`, the 2026-07-02 stdlib
+  subtree-bump fallout) are FIXED — every gate is now XFAIL-empty.** These are the `maxOrNull`/`sumOf`/`groupBy`
+  collection samples; each matched the JVM oracle after four fixes across three layers (pruned from `XFAIL_DIFF`):
+  - **ilemit (`m-b6` maxOrNull + `m-b9` sumOf): overload resolution on a referenced generic method now discriminates by
+    a func's RETURN type and a constructed-generic's ARG concreteness.** `FindReflectedMethodBySig`'s structural matcher
+    (`SigTokenMatchesOpen`) treated every `func:` token as "any `Func<>`" and every `clrg:X[..]` as "owner-only", so the
+    five `sumOf` overloads (Int/Long/Double/UInt/ULong, differing only in the selector's return) all matched — the first
+    reflected (Double) won → `sumOf { }` returned 0; likewise `maxOrNull` bound to the Double-specialized
+    `Iterable<Double>.maxOrNull` instead of the generic `<T:Comparable<T>>` one → `<>dotkt_KIterable_kotlin_Double`
+    dispatch `EntryPointNotFound`. The matcher now recurses through a combined `SigTokenMatches` (resolvable token →
+    exact type; open token → shape), matching `func:int:gp:T` to `Func<T,int>` (not `Func<T,double>`) and
+    `IEnumerable[gp:T]` to the open `IEnumerable<T>` (not `IEnumerable<Double>`).
+  - **stdlib builtins (`m-b6`): `kotlin.collections.Set` was missing its `@ClrTypeAlias`** (every sibling —
+    Collection/List/Map/MutableSet — has one), so `setOf(..).size` dispatched `get_Count` on the emitted
+    `kotlin.collections.Set\`1` a `HashSet` never implements → `EntryPointNotFound`. Aliased to
+    `System.Collections.Generic.IReadOnlyCollection` (its parent Collection's alias, variance-correct for `out E`).
+  - **bir2cir (`m-b10` groupBy/associate\*): the `in`/`out`→`kotlin.Any` variance approximation on invariant
+    `@ClrTypeAlias` maps is now realigned in TWO more places.** `MapVarianceRealign` gained (a) inlined-temp var-type +
+    callInstance `ownerType` realignment driven by a receiver's type-param bound (`M : MutableMap<in K, MutableList<T>>`),
+    so `groupByTo`'s inlined `getOrPut` no longer emits `clrMapGet<object,..>` (→ `IDictionary<object,..>::ContainsKey`
+    `EntryPointNotFound`) nor an `IDictionary<object,..>`-typed local (→ `InvalidProgramException`); and `MemberCallSubstitution`'s
+    `MapDefaultCall` now recovers `[K,V]` from that bound (new `MapKvArgs`, the map twin of `CollElemArg`) when the Map
+    member owner is bare/over-approximated, so `associateWithTo`/`associateByTo`'s direct `destination.put` emits
+    `clrMapPut<K,V>` not `<object,object>`.
+  - **bir2cir (`m-b10` groupBy `.size`): `.size` on a collection-OF-collections routes to the variance-immune
+    non-generic `System.Collections.ICollection.Count`.** `groupBy`'s `Map<K, List<T>>` runtime is `Dictionary<K, IList<T>>`
+    (mutable value) while the app's static view is `IDictionary<K, IReadOnlyList<T>>`; `Count` via the INVARIANT
+    `ICollection<KVP<K,V>>` dispatched a slot the runtime dict lacks → `EntryPointNotFound`. New app-build pass
+    `NestedCollectionCountLowering` re-points such Count reads (the same non-generic escape hatch `StarProjectionLowering`
+    uses for `<*>` receivers).
 - **bir2cir + ilemit (bundle-6 `collops2` / `genseq`): a VALUE-typed cold sequence now runs — the LAST `XFAIL_RUN`
   is gone (`XFAIL_RUN` is empty).** `fun <T> wrap(x) = sequence { yield(x) }.toList()` (and `listOf(...).windowed(3)`,
   which drives the stdlib `windowedIterator` over the same iterator) crashed for a VALUE element type — a

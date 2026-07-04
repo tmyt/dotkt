@@ -48,13 +48,10 @@ build_tool ilemit; build_tool bir2cir
 need_fe_jar; need_stdlib_ref; need_stdlib_rt
 
 # The XFAIL baseline — MACHINE-READABLE (DIFFing sample -> reason), same mechanism as verify-il's
-# XFAIL_RUN. The coroutine names mirror verify-il's run-XFAILs; the m-b* names are the 2026-07-02
-# stdlib subtree bump (cde8afd) fallout, recorded loudly instead of silently reddening the gate —
-# they are owned stdlib-side (Map/MutableMap dual-rep sub-track + rt overload shape), NOT gate bugs.
+# XFAIL_RUN. The coroutine names mirror verify-il's run-XFAILs. (The m-b6/m-b9/m-b10 entries from the
+# 2026-07-02 stdlib subtree bump cde8afd are FIXED — maxOrNull overload-select, sumOf func-return-type
+# overload disambiguation, and the groupBy/associate* Map dual-rep variance realignment — and pruned.)
 declare -A XFAIL_DIFF=(
-	[m-b6]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: ilemit aborts on the rt's Double-specialized maxOrNull ('not a GenericMethodDefinition')"
-	[m-b9]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: sumOf { } returns 0 on CLR"
-	[m-b10]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: groupBy -> clrMapGet EntryPointNotFound (same Map dual-rep family as verify-il's bymap)"
 )
 
 # Pure-Kotlin samples only (no @Clr / injected .NET types — those can't run on the JVM).
