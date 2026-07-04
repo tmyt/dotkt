@@ -5,6 +5,37 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Coverage + which-interface (POLISH Wave-2 family 6): coroutine/regex/map coverage gaps closed, two root-cause
+  fixes.**
+  - **bir2cir SuspendColdLowering — a synchronous Unit-returning suspend member's DIRECT cold entry fell off the end
+    with no value on the stack** (ilverify `ReturnMissing` / a runtime `InvalidProgramException`). The SM (suspension)
+    branch appends the trailing `return Unit`; the no-suspension `ColdEntryDirect` branch did not. Now it appends the
+    same trailing `return kotlin.Any` for a void/Unit result (skipping it when the body already ends in a `return`).
+    Surfaced by a user-authored `@RestrictsSuspension` scope driven through the receiver-form
+    `startCoroutine(receiver, completion)` (`new il-corestrict`).
+  - **stdlib `ClrMatchGroupCollection` now implements `MatchNamedGroupCollection` DIRECTLY** instead of extending
+    `AbstractCollection<MatchGroup?>`. Reading `MatchResult.groups` for the first time failed to type-load
+    (`Could not load type kotlin.collections.AbstractCollection`1`), and the class had no direct `contains`, so a
+    `group in match.groups` check had no member to dispatch. The Collection members (`contains`/`containsAll`/
+    `isEmpty`) are spelled out; by-index/by-name access, iteration and `in` all work (`new il-regexgroups`).
+  - **Coverage added (no bug — the infra was already correct):** `il-coexc` — an exception thrown across a suspended
+    Task boundary propagates through the cold-core/Task bridge to the caller (throw-after-await, throw across a nested
+    suspend frame, and awaiting a genuinely-faulted .NET Task). `il-coldvirt` — the previously-unwired
+    generic-class instance-member suspend fixture is now registered.
+  - **`il-emptymap`** locks `emptyMap()`/`mapOf()` read-only-empty behavior green. The reviewer's request to surface
+    `emptyMap()` as `IReadOnlyDictionary` is **architecturally DEFERRED** (Codex-confirmed): `kotlin.collections.Map`
+    @ClrTypeAlias-es to the mutable `IDictionary` (a binding decision — no read-only/mutable split, else `MutableMap:Map`
+    subtyping breaks at the IL level), so `emptyMap(): Map<K,V>` must stay `IDictionary`-compatible; read-only-ness is
+    Kotlin-frontend-enforced.
+  - **KNOWN (bir2cir follow-up): a suspension inside a `for (x in array)` loop (a `forArray` BIR node, e.g. from a
+    vararg) is mis-lowered** — `SuspendColdLowering` EmitStmt has no `forArray` case, so the suspend call is hoisted
+    OUT of the loop and the loop variable is never declared as an SM field (ilemit "load unknown var"). Suspending
+    `for`-over-`List`/`Iterable` works (desugared to an iterator loop; `il-coldcf` CF4). `il-corestrict`'s `addAll`
+    therefore uses a `List` (not a vararg).
+  - **KNOWN (stdlib follow-up): `MatchResult.groupValues` throws** `EntryPointNotFound: ICollection.get_Count()` from
+    `clrCollAdd` — the `(0 until g.count).map { … }` `.map`-over-`IntRange` path inside the stdlib mis-resolves its
+    ArrayList's `ICollection.get_Count`. Independent of the `ClrMatchGroupCollection` fix; `il-regexgroups` uses
+    by-index access instead of `groupValues`.
 - **Layer purity (bundle-8): the kotc `STRING_OPS` map is fully DELETED — `trim`/`trimStart`/`trimEnd`/`padStart`/
   `padEnd`/`replace` no longer name-lower to `System.String` members.** The BCL member names (`Trim`/`PadLeft`/
   `PadRight`/`Replace`) were CLR knowledge in kotc (a layer violation) and masked real stdlib-body bugs. Each op now

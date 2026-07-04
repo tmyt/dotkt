@@ -304,12 +304,33 @@ internal class ClrMatchResult(private val nativeMatch: ClrMatch) : MatchResult {
     }
 }
 
-/** Kotlin `MatchNamedGroupCollection` over a System...GroupCollection. Real emitted class (not @ClrIntrinsic). */
+/** Kotlin `MatchNamedGroupCollection` over a System...GroupCollection. Real emitted class (not @ClrIntrinsic).
+ *
+ * Implements `MatchNamedGroupCollection` (: Collection<MatchGroup?>) DIRECTLY — the Collection members (contains/
+ * containsAll/isEmpty) are spelled out here rather than inherited from `AbstractCollection`. The abstract-generic
+ * base was fragile: constructing `AbstractCollection<MatchGroup?>` as ClrMatchGroupCollection's base failed to
+ * type-load at runtime (`Could not load type kotlin.collections.AbstractCollection`1`) when `.groups` was first
+ * read — and without `contains`, a `group in match.groups` check would have no member to dispatch. A direct
+ * implementation (like ClrMatchResult/ClrSubList) gets the same @Clr-collection reverse GetEnumerator bridge with
+ * no dependency on the abstract base. */
 internal class ClrMatchGroupCollection(
     private val nativeGroups: ClrGroupCollection
-) : MatchNamedGroupCollection, AbstractCollection<MatchGroup?>() {
+) : MatchNamedGroupCollection {
     override val size: Int get() = nativeGroups.count
-    override fun isEmpty(): Boolean = false
+    override fun isEmpty(): Boolean = nativeGroups.count == 0
+
+    // `group in match.groups` dispatches here. Linear scan (the collection is tiny — groupCount + 1).
+    override fun contains(element: MatchGroup?): Boolean {
+        val n = nativeGroups.count
+        var i = 0
+        while (i < n) { if (get(i) == element) return true; i++ }
+        return false
+    }
+
+    override fun containsAll(elements: Collection<MatchGroup?>): Boolean {
+        for (e in elements) if (!contains(e)) return false
+        return true
+    }
 
     override fun iterator(): Iterator<MatchGroup?> = object : Iterator<MatchGroup?> {
         private var i = 0
