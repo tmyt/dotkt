@@ -5,6 +5,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Layer purity: the kotc `clrIfaceMemberName` collection override-slot map (`size`->`get_Count`, `get`->`get_Item`,
+  `set`->`set_Item`, `iterator`->`GetEnumerator`, `add`->`Add`, `remove`->`Remove`, `contains`->`Contains`,
+  `containsKey`->`ContainsKey`, `clear`->`Clear`) is deleted.** It renamed a `class R : List<T>`/`MutableList<T>`
+  implementor's override to the BCL slot, but was dead (gated `stdlibCompile || !stdlibSubstitute`, so null in every
+  build — ref/rt = compile, app = !substitute). bir2cir's `DeclarationRename` already derives the slot from the
+  `overrides` marker + the ref.dll `@ClrIntrinsic` bindings on `Collections.kt` (this is how the stdlib's own
+  `AbstractList`/`AbstractMutableList` get their `get_Item`/`get_Count` slots in the rt build). kotc no longer knows
+  the collection BCL slot names; the `clrM` path now sources only the facadegen `ClrTypeRegistry`. Gate stays green.
 - **Layer purity: the kotc collection member-name slot maps (`size`->`Count`, `get`->`get_Item`, `set`->`set_Item`,
   `iterator`->`GetEnumerator`, `add`->`Add`, `remove`->`Remove`, `contains`->`Contains`, `containsKey`->`ContainsKey`,
   `clear`->`Clear`, `keys`->`Keys`, `values`->`Values`, `entries`->`Entries`) and the `appColl` type map are deleted

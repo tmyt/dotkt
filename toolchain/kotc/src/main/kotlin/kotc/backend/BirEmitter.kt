@@ -945,14 +945,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// iface member AND a direct call on an iface-typed value (e.g. `cs.length` where cs: CharSequence).
 	internal fun clrIfaceMemberName(fn: IrSimpleFunction): String? =
 		(sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).firstNotNullOfOrNull { owner ->
-			// A @Clr-annotated interface member -> its BCL name (C3a of the collection binding): a METHOD = its @Clr name
-			// (contains -> Contains); a PROPERTY accessor = get_/set_ + the property's @Clr name (Collection.size
-			// @ClrIntrinsic("Count") -> get_Count). So a Kotlin class implementing a CLR-bound interface binds its members to the BCL slots.
+			// A facadegen-injected .NET interface member -> its BCL slot from the [ClrTypeRegistry] (clrName reads the
+			// registry, NOT @ClrIntrinsic — kotc no longer reads it): a METHOD = its registered name; a PROPERTY accessor =
+			// get_/set_ + the registered property name. A Kotlin class implementing an injected .NET interface binds its
+			// members to those BCL slots. (Collection interfaces are @ClrTypeAlias/@ClrIntrinsic — bir2cir's DeclarationRename
+			// handles their override slots from the ref.dll, so they no longer route through here.)
 			val ovProp = owner.correspondingPropertySymbol?.owner
 			val clrM = if (ovProp != null) clrName(ovProp)?.let { (if (owner === ovProp.getter) "get_" else "set_") + it } else clrName(owner)
 			clrM ?: run {
 				val ifaceFq = (owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
-				val mn = owner.name.asString()
 				when (ifaceFq) {
 					// kotlin.AutoCloseable.close()->Dispose is NOT hardcoded here: the @ClrIntrinsic("Dispose") binding on the
 					// ref.dll drives it — kotc emits the plain `close` override name + its `overrides` marker, and bir2cir's
@@ -960,20 +961,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// CharSequence -> synthetic <>dotkt_CharSequence: the `length` property getter must be emitted (the
 					// override has a non-empty overriddenSymbols so isCustomAccessor is false). get/subSequence keep names.
 					"kotlin.CharSequence" -> if (owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
-					"kotlin.collections.List", "kotlin.collections.MutableList", "kotlin.collections.Collection",
-					"kotlin.collections.MutableCollection", "kotlin.collections.Set", "kotlin.collections.MutableSet",
-					"kotlin.collections.Map", "kotlin.collections.MutableMap" -> if (stdlibCompile || !stdlibSubstitute) null else when {
-						owner.correspondingPropertySymbol?.owner?.name?.asString() == "size" -> "get_Count"
-						mn == "get" -> "get_Item"
-						mn == "set" -> "set_Item"
-						mn == "iterator" -> "GetEnumerator"
-						mn == "add" -> "Add"
-						mn == "remove" -> "Remove"
-						mn == "contains" -> "Contains"
-						mn == "containsKey" -> "ContainsKey"
-						mn == "clear" -> "Clear"
-						else -> null
-					}
+					// The collection override-slot map (size->get_Count, get->get_Item, iterator->GetEnumerator, add->Add, ...)
+					// is GONE: a `class R : List<T>`/`MutableList<T>` emits the plain Kotlin override name + its `overrides`
+					// marker, and bir2cir's DeclarationRename renames the implementor slot from the ref.dll @ClrIntrinsic
+					// bindings on Collections.kt (layer purity — no BCL slot name in kotc).
 					else -> null
 				}
 			}
