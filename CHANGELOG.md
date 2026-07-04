@@ -33,6 +33,48 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   called with 2 args → `InvalidProgramException`. Fix (Codex-confirmed) belongs in ilemit: make the `typeArgs`/`EmitArgsTyped`
   path fill omitted trailing defaults from `mb.GetParameters()` like `EmitCallArgs` (alt: bir2cir backfill from ref.dll
   ParameterInfo). `il-collops2` stays run/ilverify-XFAIL until that lands.
+- **ilemit (zero-XFAIL push): made the value-type-receiver ilverify findings VERIFIABLE — pruned 6 `XFAIL_ILVERIFY`
+  entries (`taskawait`/`genasync`/`cobuild`/`comaindrain`/`gen3`/`collrealkt`).** Three ilemit codegen fixes, each the
+  exact C#-emitted pattern:
+  - **value-type-receiver virtual calls** (the cold-core await dance's `TaskAwaiter` struct): a bare `callvirt` on a
+    value-type receiver is `CallVirtOnValueType` (ilverify-rejected, JIT-tolerated). New `EmitInstanceCall` picks the
+    verifiable opcode in `EmitClrCall`/`EmitNativeClrCall`: a virtual FINAL impl declared on the value type (a struct's
+    interface-impl, e.g. `TaskAwaiter.OnCompleted` implementing `INotifyCompletion`) → direct `call` on the address; a
+    virtual NON-final method inherited by the value type (`object.ToString`) → `constrained. <VT>; callvirt`; reference
+    receiver → `callvirt`. `taskawait`/`genasync`/`cobuild`/`comaindrain` now Verified and still run 43·7 / 7 / 25 / start·42.
+  - **`compareTo` on a generic-parameter receiver** (`gen3`): the `constrainedCall` path used the non-generic
+    `IComparable::CompareTo(object)` workaround whenever `IComparable<T>` was a TypeBuilderInstantiation. For a generic
+    PARAMETER receiver (`!!T`, `T : Comparable<T>`) that is unverifiable — the constraint proves only `IComparable<T>`,
+    not the non-generic `IComparable` (StackUnexpected found `T` expected `System.IComparable`). Scoped the workaround to
+    genuinely-emitted value-type instantiations (`!recvType.IsGenericParameter`); a generic-param receiver now emits the
+    C# pattern `constrained. !!T; callvirt IComparable\`1<!!T>::CompareTo(!0)` (JIT-safe MethodSpec over a type param).
+    `gen3` Verified + runs 7/banana/10.
+  - **`object`→value-type/generic-param return coercion** (`collrealkt`): `EmitReturnCoerced` didn't cast a REFERENCE
+    return value (`object`, e.g. the erased generic stdlib return `clrMapGet<K,V>:object`) into a value-type/generic-param
+    return slot `V` (StackUnexpected found ref `object` expected value `V`). Added the universal cast `unbox.any <ret>`
+    (not `castclass` — that JIT-crashes value-type instantiations). `collrealkt` Verified + runs 10/30/500/b,a,c/two.
+  - **remaining `XFAIL_ILVERIFY` are non-ilemit**: `iter`/`iterable` are a **bir2cir/kotc dual-representation defect** —
+    the BIR carries TWO CLR identities for one Kotlin `Iterator<Int>` (the app-local monomorphized synthetic
+    `<>dotkt_KIterator_kotlin_Int` AND the rt-stdlib generic `clrg:kotlin.collections.Iterator[int]`); unifying them to a
+    single canonical CLR representation is a Kotlin↔CLR type-lowering decision (Codex-confirmed), not an ilemit cast.
+    `chunk`/`collops2`/`tryexprop` remain their previously-documented bir2cir dual-rep / cross-module-default / eval-order
+    findings. Both XFAIL reasons rewritten to name the exact upstream defect.
+- **ilemit (bundle-6 ④): diagnosed `Char.digitToIntOrNull()` InvalidProgram — root cause is in kotc, NOT ilemit;
+  added the `il-digittoint` repro (run-XFAIL) pointing at the exact BirEmitter site.** `'7'.digitToIntOrNull()`
+  aborts with `InvalidProgramException` inside `kotlin.text.CharKt.digitToIntOrNull` (the whole method body is
+  invalid, not a data path). ilverify pins it: `[PathStackUnexpected] digitToIntOrNull(char)][offset 0x1D][found
+  Int32][expected Nullobjref]` — the two conditional paths push incompatible stack types. `digitToIntOrNull()` is
+  `digitOf(this,10).takeIf { it >= 0 }`; `takeIf` inlines to `if (it >= 0) it else null`, whose Kotlin type is
+  `Int?`. But kotc's `BirEmitter.ternary()` (`BirEmitter.kt:3033-3044`) tags the `cond` node with
+  `birType(node.type)` = `kotlin.Int` — the IrWhen `.type` is the non-null `Int` (the `T?` nullability rides the
+  function return, which IS correctly `nullable:int`). So the CIR cond is `{type:int, then:int-local, else:const
+  object null}`: the `then` path leaves an `Int32`, the `else` path a null ref → verify failure. ilemit's existing
+  `EmitCond`/`EmitNullableCoerced`/`EmitReturnCoerced` already emit correct `Nullable<int>` IL **when** the cond is
+  tagged `nullable:int` (kotc does exactly that for `bir-kgenseq`/`bir-safecallnv`); no ilemit change is correct here.
+  Per the layer boundary (ilemit knows no Kotlin; Codex-confirmed) the join of a value type and a null literal must be
+  computed as nullable BEFORE CLR lowering — the fix belongs in kotc's `ternary()`: promote the cond result type to
+  `nullable:<elem>` when a branch result is a null literal. `il-digittoint` is run-XFAIL until that lands (asserts
+  `7/10/null/7`; the whole `digitToInt`/`digitToIntOrNull` family shares the codegen root). Gate GREEN (no NEW-FAIL).
 - **kotc (bundle-6 edge, diagnosed → routed to bir2cir): a value-position `try/catch(/finally)` used in an OPERAND
   slot (`1 + try{..}`, `"x" + try{..}`) throws `InvalidProgramException`.** Root cause confirmed to be DOWNSTREAM of
   kotc, not a kotc BIR defect: kotc's `tryExpr` already emits the correct value-form — a `valueBlock` = `[{k:var
