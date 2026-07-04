@@ -3380,6 +3380,14 @@ sealed partial class Emitter
             _il.Emit(OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
         else if (_methodRetType == typeof(object) && NeedsBoxToRef(got))
             _il.Emit(OpCodes.Box, got);
+        // A REFERENCE value (`object` — e.g. an erased generic stdlib return like `clrMapGet<K,V>:object`) returned where
+        // the method declares a VALUE type or a generic PARAMETER (`V`) needs the universal cast `unbox.any <ret>` (NOT
+        // castclass — `castclass !!V` JIT-crashes value-type instantiations). Without it the reference sits where a value
+        // is expected -> ilverify StackUnexpected (found ref 'object', expected value 'V'). Only when it isn't already
+        // the exact return type.
+        else if (got != _methodRetType && !got.IsValueType && !got.IsGenericParameter
+                 && (_methodRetType.IsValueType || _methodRetType.IsGenericParameter))
+            _il.Emit(OpCodes.Unbox_Any, _methodRetType);
     }
 
     // Args for a user method/ctor, boxing value types passed to reference (e.g. `object`/`Any`) params.
