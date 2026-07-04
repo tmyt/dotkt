@@ -35,8 +35,6 @@ declare -A XFAIL_RUN=(
 	[digittoint]="bundle-6 ④: the kotc cond-type defect is FIXED (BirEmitter.ternary now tags the value-type+null join nullable:<elem> — digitToIntOrNull no longer InvalidPrograms; '7'/'a'(16)/'7' now compute 7/10/7 correctly and the 'z' case computes null). REMAINING mismatch is a SEPARATE, general downstream divergence: println(null) prints an EMPTY line instead of 'null'. Reproduces with any null (val a:Int?=null; println(a) / val s:String?=null; println(s) BOTH print empty) — NOT digittoint-specific, was merely masked while the method InvalidProgram'd. ROOT: libraries/stdlib/clr/kotlin/io/ConsoleClr.kt binds println(Any?) directly @ClrIntrinsic(\"System.Console.WriteLine\") -> Console.WriteLine(object), which writes empty for a null object; Kotlin's println(Any?) renders null as the string 'null'. Fix belongs to the stdlib binding (render null->\"null\", e.g. print(message.toString())) or a bir2cir println-substitution null-coalesce — NOT kotc. Prune once that lands."
 )
 declare -A XFAIL_ILVERIFY=(
-	[iter]="ilverify formal-only finding (sample runs correct)"
-	[iterable]="ilverify formal-only finding (sample runs correct)"
 )
 
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on

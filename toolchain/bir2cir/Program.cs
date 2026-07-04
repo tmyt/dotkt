@@ -175,6 +175,12 @@ sealed class Pipeline
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
             if (attributeTopLevelOwner) IteratorConsumerNormalization.Apply(substituted);
+            // PRODUCER-side twin: a user `class C : Iterator<T>` / `object : Iterator<T>` implements kotc's
+            // monomorphized synthetic `<>dotkt_KIterator_<elem>`, but bir2cir lowers the matching TYPE tokens to the
+            // referenced generic `kotlin.collections.Iterator`1<elem>` — two CLR identities for one Kotlin iterator
+            // (ilverify StackUnexpected). Collapse the synthetic onto the generic (implementers, tokens, dispatch)
+            // and drop the synthetic defs. App build only; before type lowering. (bundle-6 iter/iterable.)
+            if (attributeTopLevelOwner) SyntheticIteratorUnification.Apply(substituted);
             // Cross-module default-argument splice: fill a call's OMITTED defaulted args from the callee's @KotlinDefault
             // BIR (ref.dll), for a non-null object/CharSequence default the metadata backfill can't carry. Runs before the
             // CharSequence bridge + type lowering so a spliced String default is coerced/lowered like an explicit arg.
@@ -2637,6 +2643,166 @@ static class IteratorConsumerNormalization
             if (vt.StartsWith(head, StringComparison.Ordinal) && vt.EndsWith("]", StringComparison.Ordinal))
                 return (head[1..^1], vt[head.Length..^1]);
         return null;
+    }
+}
+
+// PRODUCER-side unification of the monomorphized synthetic Iterator interface (bundle-6 iter/iterable).
+// kotc emits a Kotlin `class C : Iterator<T>` (or an `object : Iterator<T>`) by synthesizing a per-element
+// MONOMORPHIZED interface `<>dotkt_KIterator_<elem>` and having C implement THAT — the legacy "IL can't define a
+// generic interface" A8 workaround. But bir2cir's type lowering already lowers every `Iterator<T>` TYPE token (a
+// `C.iterator()` return, the desugared for-loop `<iterator>` var) to the REAL referenced generic
+// `kotlin.collections.Iterator`1<elem>` (the rt stdlib DOES define it). So a single Kotlin `Iterator<Int>` ends up
+// with TWO CLR identities: the app-local synthetic (what C implements + what hasNext/next dispatch on) and the rt
+// generic (what the var / return are typed) — ilverify flags the store/return as StackUnexpected (it runs correct
+// only because both are object-refs at runtime). This pass collapses the synthetic onto the generic, the ONE
+// canonical identity: every implementer's `interfaces` entry, every type/return/param/cast token, and the
+// synthetic-owner hasNext/next DISPATCH (retargeted to a `clrInstance` on the referenced generic, exactly as
+// IteratorConsumerNormalization does for the kotlin.*-receiver case) are re-pointed, and the now-unreferenced
+// synthetic interface DEFINITION is dropped. The element type is read straight off the synthetic definition's
+// `next()` return — no name-demangling. Producer classes then implement the referenced generic interface directly
+// (the proven `class C : Comparable<C>` -> IComparable`1<C> shape works for a leaf interface like Iterator).
+//
+// SCOPE — Iterator ONLY, never the `<>dotkt_KIterable_<elem>` synthetic. The rt `kotlin.collections.Iterable`1`
+// is @ClrTypeAlias-projected onto IEnumerable<T>, so retargeting a `class C : Iterable<T>` onto it would demand a
+// GetEnumerator implementation C does not carry (TypeLoadException). The KIterable synthetic stays app-local and
+// self-consistent (its producer emits the IEnumerable shape correctly at runtime); crucially, every ilverify
+// StackUnexpected in the iter/iterable samples is an ITERATOR-identity mismatch — the KIterator half — so unifying
+// only that is both sufficient and safe. (The KIterable interface's own `iterator()` return, an `@<>dotkt_KIterator`
+// token, IS rewritten to the generic here, keeping it consistent with its implementers' generic-returning override.)
+//
+// App build only (the rt stdlib emits Iterator itself); runs AFTER IteratorConsumerNormalization (which already
+// handled the kotlin.*-receiver consumer vars) and BEFORE type lowering (so the element token lowers with the rest).
+static class SyntheticIteratorUnification
+{
+    const string IterPrefix = "<>dotkt_KIterator_";
+
+    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+
+    public static void Apply(JsonNode root)
+    {
+        if (root is not JsonObject o || o["types"] is not JsonArray types) return;
+
+        // 1) Resolve the element type of each synthetic KIterator definition (its next() return type).
+        var iterElem = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var t in types)
+        {
+            if (t is not JsonObject to || Str(to["name"]) is not string nm) continue;
+            if (nm.StartsWith(IterPrefix, StringComparison.Ordinal) && MethodRet(to, "next") is string el)
+                iterElem[nm] = el;
+        }
+        if (iterElem.Count == 0) return;
+
+        // 2) The canonical referenced-generic replacement token for each synthetic name (element still in the
+        //    source vocabulary — kotlin.Int — so the subsequent BirTypeLowering lowers it to int uniformly).
+        var repl = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (nm, el) in iterElem)
+            repl[nm] = "kotlin.collections.Iterator[" + el + "]";
+
+        // 3) Drop the synthetic interface DEFINITIONS (nothing references them once step 4 completes).
+        var keep = new JsonArray();
+        foreach (var t in types.ToList())
+        {
+            if (t is JsonObject to && Str(to["name"]) is string nm && repl.ContainsKey(nm)) continue;
+            types.Remove(t);
+            keep.Add(t);
+        }
+        o["types"] = keep;
+
+        // 4) Re-point every remaining occurrence: synthetic-owner dispatch -> clrInstance on the generic; every
+        //    other synthetic type token (interfaces / ret / param / var-type / cast) -> the generic token string.
+        Walk(o, repl);
+    }
+
+    // The `ret` of the first method named `mname` on a type, or null.
+    static string MethodRet(JsonObject type, string mname)
+    {
+        if (type["methods"] is not JsonArray ms) return null;
+        foreach (var m in ms)
+            if (m is JsonObject mo && Str(mo["name"]) == mname)
+                return Str(mo["ret"]);
+        return null;
+    }
+
+    static void Walk(JsonNode node, Dictionary<string, string> repl)
+    {
+        if (node is JsonObject obj)
+        {
+            // A hasNext/next/iterator dispatch whose synthetic owner is being eliminated: retarget it to a
+            // `clrInstance` on the referenced generic interface (a callInstance on a clrg: owner KeyNotFounds in
+            // ilemit's emitted-`_types` lookup; the CLR-bound member path is clrInstance/EmitClrCall).
+            if (Str(obj["k"]) == "callInstance" && Str(obj["ownerType"]) is string owner &&
+                repl.TryGetValue(owner, out var genOwner) && Str(obj["method"]) is string method)
+            {
+                var el = ElemOf(genOwner);
+                obj["k"] = "clrInstance";
+                obj.Remove("ownerType");
+                obj.Remove("virtual");
+                obj["type"] = "clrg:" + genOwner;
+                obj["method"] = method;
+                obj["argTypes"] = new JsonArray();
+                obj["ret"] = method switch
+                {
+                    "next" => el,
+                    "hasNext" => "kotlin.Boolean",
+                    "iterator" => "clrg:kotlin.collections.Iterator[" + el + "]",
+                    _ => obj["ret"]?.DeepClone(),
+                };
+                if (obj["recv"] is JsonNode recv) Walk(recv, repl);
+                if (obj["args"] is JsonArray a) foreach (var x in a) if (x != null) Walk(x, repl);
+                return;
+            }
+            foreach (var key in obj.Select(kv => kv.Key).ToList())
+            {
+                var val = obj[key];
+                if (val is JsonValue jv && jv.TryGetValue<string>(out var s))
+                {
+                    var ns = ReplaceTokens(s, repl);
+                    if (!ReferenceEquals(ns, s)) obj[key] = ns;
+                }
+                else if (val != null) Walk(val, repl);
+            }
+        }
+        else if (node is JsonArray arr)
+        {
+            for (var i = 0; i < arr.Count; i++)
+            {
+                var val = arr[i];
+                if (val is JsonValue jv && jv.TryGetValue<string>(out var s))
+                {
+                    var ns = ReplaceTokens(s, repl);
+                    if (!ReferenceEquals(ns, s)) arr[i] = ns;
+                }
+                else if (val != null) Walk(val, repl);
+            }
+        }
+    }
+
+    // The element of a `kotlin.collections.Iter{ator,able}[<elem>]` replacement token.
+    static string ElemOf(string genToken)
+    {
+        var br = genToken.IndexOf('[');
+        return br >= 0 && genToken.EndsWith("]", StringComparison.Ordinal) ? genToken[(br + 1)..^1] : "kotlin.Any";
+    }
+
+    // Replace every occurrence of a synthetic name (longest first) with its generic token, but only when the char
+    // immediately following the match is NOT an identifier char — so `<>dotkt_KIterator_kotlin_Int` is not corrupted
+    // inside a longer `<>dotkt_KIterator_kotlin_IntArray`. Any leading `@` / `[` on the original token is preserved.
+    static string ReplaceTokens(string s, Dictionary<string, string> repl)
+    {
+        if (!s.Contains("<>dotkt_KIter", StringComparison.Ordinal)) return s;
+        foreach (var name in repl.Keys.OrderByDescending(k => k.Length))
+        {
+            var token = repl[name];
+            var idx = 0;
+            while ((idx = s.IndexOf(name, idx, StringComparison.Ordinal)) >= 0)
+            {
+                var after = idx + name.Length;
+                if (after < s.Length && (char.IsLetterOrDigit(s[after]) || s[after] == '_')) { idx = after; continue; }
+                s = s[..idx] + token + s[after..];
+                idx += token.Length;
+            }
+        }
+        return s;
     }
 }
 

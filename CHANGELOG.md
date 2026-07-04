@@ -5,6 +5,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 `iter`/`iterable`): unify the monomorphized synthetic `Iterator` interface onto the referenced
+  generic — both samples now ilverify-CLEAN (pruned from `XFAIL_ILVERIFY`).** A user `class C : Iterator<T>` (or an
+  `object : Iterator<T>`) is emitted by kotc implementing a per-element MONOMORPHIZED synthetic interface
+  `<>dotkt_KIterator_<elem>` (the legacy "IL can't define a generic interface" A8 workaround), yet bir2cir's type
+  lowering already lowers every `Iterator<T>` TYPE token (the `C.iterator()` return, the desugared for-loop
+  `<iterator>` var) to the REAL referenced generic `kotlin.collections.Iterator\`1<elem>` — so one Kotlin `Iterator<Int>`
+  carried TWO CLR identities and ilverify flagged the store/return as `StackUnexpected` (it ran correct only because
+  both are object-refs). New pass `SyntheticIteratorUnification` (`Program.cs`, app build only, after
+  `IteratorConsumerNormalization`, before type lowering) collapses the synthetic onto the generic: every implementer's
+  `interfaces` entry, every type/return/param/cast token and the synthetic-owner `hasNext`/`next` dispatch (retargeted
+  to a `clrInstance` on the referenced generic) are re-pointed and the synthetic definition dropped; the element type
+  is read straight off the synthetic def's `next()` return (no name-demangling). Scoped to `Iterator` ONLY — the
+  `<>dotkt_KIterable_<elem>` synthetic stays app-local (the rt `Iterable\`1` is IEnumerable-projected, so retargeting a
+  `class C : Iterable<T>` onto it would demand a `GetEnumerator` C lacks → `TypeLoadException`; and every ilverify
+  finding in both samples is an Iterator-identity mismatch, so unifying only that half is sufficient). Producers then
+  implement the referenced generic interface directly (the proven `class C : Comparable<C>` → `IComparable\`1<C>` shape).
+  Both samples RUN correct and ilverify clean; gate GREEN.
 - **bir2cir (bundle-6 coroutine): make `kotlin.Result` monomorphic on `Result<object>` in all builds (matches the
   `Continuation<object>` erasure).** `kotlin.Result` is emitted as an INVARIANT reference class whose payload is
   already `object` (`get_value : object`, ctor takes `object`) — the type parameter `T` is a phantom that only names
