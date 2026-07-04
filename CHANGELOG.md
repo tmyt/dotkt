@@ -20,6 +20,27 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   import `dotkt.support.blockOn` from a co-compiled `harness.kt`; the four synchronous cases moved to the
   `il_check_imports` path (facadegen injects the harness's `Monitor`); `verify-roundtrip`'s three suspend
   sections get the harness via `write_coharness` (+ `System.Threading.Monitor` added to their facadegen seeds).
+- **bir2cir POLISH (layer/failure-posture hygiene; behavior preserved, gate stays XFAIL-zero):**
+  - **Failure posture — silent routing/transform fallbacks made LOUD.** The `?? cands[0]` "pick an arbitrary
+    overload" fallback in the ref.dll member-resolution lookups (`TryMemberProperty` / `TryMemberIntrinsic` /
+    `MemberByrefPositions`, `toolchain/bir2cir/Program.cs`) now throws a compile-time `ambiguous @Clr* overload`
+    error when no exact-arity candidate exists AND the tied candidates DISAGREE on the bound target (property /
+    BCL member / byref positions) — a single candidate, or ties that agree, still resolve silently (unchanged).
+    The unresolved-`suspendCoroutineUninterceptedOrReturn`-closure path in `SuspendColdLowering.EmitIntrinsicSuspension`
+    no longer emits a bare unconditional `return COROUTINE_SUSPENDED` (a coroutine that suspends PERMANENTLY — a
+    silent runtime hang); it throws at transform time instead. No gate sample relies on either fallback (full
+    clean-rebuild gate stays green).
+  - **Unit public suspend bridge ABI fix.** `SuspendColdLowering.BuildBridge` now emits a NON-generic
+    `System.Threading.Tasks.Task` for a `suspend fun f(): Unit` (per `coroutine-abi.md` §1: `T=Unit → Task`,
+    the C#-idiomatic async-void shape), instead of the off-ABI `Task<Unit>`. The internal drive stays generic
+    over Unit (`TaskCompletionSource<Unit>` / `RootContinuation<Unit>`); the returned `TCS<Unit>.Task` upcasts
+    to the non-generic `Task` on return (`Task<T> : Task`). New gate case `cases/il-counit` covers the emit.
+  - **suspendCoroutine recognizer hardened + centralized.** `IsSuspendIntrinsicBlock` (the single recognizer)
+    now prefers a stable `suspendIntrinsic:true` valueBlock flag (kotc SHOULD emit it — noted in-code) and falls
+    back to the fragile NotImplementedError message-string sniff only until kotc does.
+  - **Dead-code / stale-comment cleanup.** Removed the deleted `sequenceNew` kotc node from the SuspendColdLowering
+    disqualifier set; corrected the `SuspendLambdaLowering` "DORMANT/NO-OP" header and the Program.cs Phase-1.6
+    comment to reality (the pass is LIVE — kotc emits `suspendLambdaNew`, exercised by `il-lam1`/`il-lam2`).
 - **Zero-XFAIL FINAL: the last three `verify-differential` XFAILs (`m-b6`/`m-b9`/`m-b10`, the 2026-07-02 stdlib
   subtree-bump fallout) are FIXED — every gate is now XFAIL-empty.** These are the `maxOrNull`/`sumOf`/`groupBy`
   collection samples; each matched the JVM oracle after four fixes across three layers (pruned from `XFAIL_DIFF`):

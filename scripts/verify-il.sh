@@ -439,6 +439,11 @@ il_check_imports comaindrain ComainDrain "$ROOT/cases/il-comaindrain" "$(printf 
 # BLOCKS on tcs.Task until the threadpool resume completes (the old null completion NRE'd on resume). RUNS
 # correct -> start,42; carries the same TaskAwaiter CallVirtOnValueType ilverify formal-only finding as genasync.
 il_check_imports comaindrain ComainDrain "$ROOT/cases/il-comaindrain" "$(printf 'start\n42')"
+# counit: a PUBLIC Unit-returning suspend fun -> a NON-generic public `Task` bridge (coroutine-abi.md §1:
+# T=Unit -> Task, not Task<Unit>). bir2cir's BuildBridge emits `Task greet()` and upcasts the
+# TaskCompletionSource<Unit>.Task on return; `greet` suspends on step() (sync) so the SM + Unit bridge emit is
+# exercised and ilverify-checked. main drives greet via its cold entry.
+il_check counit CoUnit "$ROOT/cases/il-counit" "$(printf 'hello 42\ndone')"
 # monitordrain: locks the System.Threading.Monitor Wait/Pulse cross-thread DRAIN mechanism that
 # the harness blockOn's BlockOnSink is built on (waiter Enter/`while(!done) Wait`/Exit; completer
 # Enter/set/`done=true`/Pulse/Exit on the same monitor). `99` is only observable after a genuine

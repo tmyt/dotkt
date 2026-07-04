@@ -253,12 +253,12 @@ sealed class Pipeline
         if (!_options.RefBuild)
             suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns);
 
-        // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, DORMANT): replace each `suspendLambdaNew`
+        // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `suspendLambdaNew`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
         // (SuspendColdLowering.BuildLambdaSm, the shared FunGen machinery). Runs after the cold lowering (so a
         // suspend-lambda relocated into a synthesized SM invokeSuspend body is still caught — this pass walks
-        // the newly-added SM types too) and before type lowering. kotc emits NO suspendLambdaNew yet, so this is
-        // a verified no-op against current input; same (non-ref) gate as the cold lowering.
+        // the newly-added SM types too) and before type lowering. kotc emits `suspendLambdaNew` for every
+        // `suspend` lambda literal (exercised by cases/il-lam1, il-lam2); same (non-ref) gate as the cold lowering.
         if (!_options.RefBuild)
             SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
 
@@ -548,7 +548,18 @@ sealed class ReferenceMetadataIndex
         if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return false;
         var cands = list.Where(m => m.Name == memberName && m.PropertyName != null).ToList();
         if (cands.Count == 0) return false;
-        var pick = cands.FirstOrDefault(m => m.ParamCount == argCount) ?? cands[0];
+        var pick = cands.FirstOrDefault(m => m.ParamCount == argCount);
+        if (pick == null)
+        {
+            // Failure posture (LOUD): no exact-arity match. A single candidate is unambiguous (use it); MULTIPLE
+            // candidates that DISAGREE on the bound property are a genuine routing ambiguity — refuse rather than
+            // pick an arbitrary overload (which would bind the wrong .NET property).
+            if (cands.Select(c => (c.PropertyAccess, c.PropertyName)).Distinct().Count() > 1)
+                throw new InvalidOperationException(
+                    $"ambiguous @ClrProperty overload for {ownerFqn}.{memberName} (argCount={argCount}): candidate arities " +
+                    $"[{string.Join(",", cands.Select(c => c.ParamCount))}] bind different properties — no exact-arity match");
+            pick = cands[0];
+        }
         access = pick.PropertyAccess; name = pick.PropertyName;
         return true;
     }
@@ -560,7 +571,18 @@ sealed class ReferenceMetadataIndex
         if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return false;
         var cands = list.Where(m => m.Name == memberName && m.Intrinsic != null).ToList();
         if (cands.Count == 0) return false;
-        intrinsic = (cands.FirstOrDefault(m => m.ParamCount == argCount) ?? cands[0]).Intrinsic;
+        var pick = cands.FirstOrDefault(m => m.ParamCount == argCount);
+        if (pick == null)
+        {
+            // Failure posture (LOUD): no exact-arity match. A single candidate is unambiguous; MULTIPLE candidates
+            // binding DIFFERENT BCL members are a genuine ambiguity — refuse rather than pick an arbitrary overload.
+            if (cands.Select(c => c.Intrinsic).Distinct(StringComparer.Ordinal).Count() > 1)
+                throw new InvalidOperationException(
+                    $"ambiguous @ClrIntrinsic overload for {ownerFqn}.{memberName} (argCount={argCount}): candidate arities " +
+                    $"[{string.Join(",", cands.Select(c => c.ParamCount))}] bind different BCL members — no exact-arity match");
+            pick = cands[0];
+        }
+        intrinsic = pick.Intrinsic;
         return true;
     }
 
@@ -671,7 +693,18 @@ sealed class ReferenceMetadataIndex
         if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return Array.Empty<int>();
         var cands = list.Where(m => m.Name == memberName && m.ByrefPositions != null && m.ByrefPositions.Length > 0).ToList();
         if (cands.Count == 0) return Array.Empty<int>();
-        return (cands.FirstOrDefault(m => m.ParamCount == argCount) ?? cands[0]).ByrefPositions;
+        var pick = cands.FirstOrDefault(m => m.ParamCount == argCount);
+        if (pick == null)
+        {
+            // Failure posture (LOUD): no exact-arity match. A single candidate is unambiguous; MULTIPLE candidates
+            // with DIFFERENT byref positions are a genuine ambiguity — refuse rather than pick an arbitrary overload.
+            if (cands.Select(c => string.Join(",", c.ByrefPositions)).Distinct(StringComparer.Ordinal).Count() > 1)
+                throw new InvalidOperationException(
+                    $"ambiguous @ClrRefArgument byref overload for {ownerFqn}.{memberName} (argCount={argCount}): candidate " +
+                    $"arities [{string.Join(",", cands.Select(c => c.ParamCount))}] disagree on byref positions — no exact-arity match");
+            pick = cands[0];
+        }
+        return pick.ByrefPositions;
     }
 
     // A NON-intrinsic top-level fun (real Kotlin body) resolved to the file-class it lives in, so an APP's
