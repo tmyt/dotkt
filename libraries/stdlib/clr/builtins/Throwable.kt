@@ -17,7 +17,14 @@ package kotlin
  * @param cause the cause of this throwable.
  */
 @kotlin.clr.ClrTypeAlias("System.Exception")
-public actual open class Throwable actual constructor(public open actual val message: String?, public open actual val cause: Throwable?) {
+public actual open class Throwable actual constructor(
+    // The CLR-property member bindings for the @ClrTypeAlias("System.Exception") owner: bir2cir reads @ClrProperty from
+    // the ref.dll get_message/get_cause accessors and substitutes the read to clrPropGet on System.Exception — replacing
+    // the retired kotc/ilemit Throwable.message/cause -> Message/InnerException double-lowering (layer purity). `cause`
+    // binds to InnerException (System.Exception, which @ClrTypeAlias-maps back to Throwable). READ-only (both are `val`).
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Message") public open actual val message: String?,
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "InnerException") public open actual val cause: Throwable?
+) {
     public actual constructor(message: String?) : this(message, null)
 
     public actual constructor(cause: Throwable?) : this(cause?.toString(), cause)
