@@ -191,9 +191,10 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		}
 		}
 	}
-	// A string template (`"$x"`). A collection/Map interpolation entry prints Kotlin-style (`[a, b]` / `{a=1, b=2}`)
-	// via the stdlib helper, mirroring the println path — else `"$map"` yields the raw .NET type name. Static-type-driven.
-	is IrStringConcatenation -> """{"k":"concat","parts":[${node.arguments.joinToString(",") { collToStringRoute(it) ?: expr(it) }}]}"""
+	// A string template (`"$x"`). Each operand goes through concatOperand: a collection/Map entry prints Kotlin-style
+	// (`[a, b]` / `{a=1, b=2}`) via the stdlib helper (else `"$map"` yields the raw .NET type name), and a NULLABLE
+	// entry renders "null" when null (else a null ref appends empty, unlike Kotlin). Static-type-driven.
+	is IrStringConcatenation -> """{"k":"concat","parts":[${node.arguments.joinToString(",") { concatOperand(it) }}]}"""
 	is IrTypeOperatorCall -> when (node.operator) {
 		// `x is T` (exhaustive when matching) -> isinst + not-null check.
 		IrTypeOperator.INSTANCEOF -> """{"k":"isinst","type":${str(birType(node.typeOperand))},"e":${expr(node.argument)}}"""
