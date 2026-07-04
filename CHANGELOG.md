@@ -5,6 +5,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc (bundle-6 edge, diagnosed → routed to bir2cir): a value-position `try/catch(/finally)` used in an OPERAND
+  slot (`1 + try{..}`, `"x" + try{..}`) throws `InvalidProgramException`.** Root cause confirmed to be DOWNSTREAM of
+  kotc, not a kotc BIR defect: kotc's `tryExpr` already emits the correct value-form — a `valueBlock` = `[{k:var
+  <>dotkt_tryvalN}, {k:try, body:[setLocal <>dotkt_tryvalN=…], catches:[…setLocal <>dotkt_tryvalN=…]}]` with
+  `result: local(<>dotkt_tryvalN)` (each arm spills its result to the temp so the region's `leave` empties the stack).
+  This is layer-pure (pure Kotlin, no CLR-stack knowledge) and PROVEN correct: the manually-hoisted equivalent
+  `val t = try{..}; a + t` (try in var-init, empty stack) compiles and RUNS correct (`n=5` / `6`). The failure is
+  purely that the try-bearing `valueBlock` still sits INSIDE an operand slot: ilemit's `valueBlock` runs the `try`
+  INLINE, but the left operand (`1`) was already pushed, and a CLR protected region must be entered with an EMPTY
+  evaluation stack (`leave` clears it) → the `1` is wiped → invalid IL. **Fix belongs to bir2cir** (CLR eval-order
+  normalization): hoist a try-bearing `valueBlock` out of an operand position into a preceding temp, preserving
+  left-to-right eval order, leaving only a pure `local` read in the operand slot — the same shape as the working
+  var-init form. Not kotc (no CLR-stack knowledge), not ilemit (no Kotlin-aware expression rescheduling; it should at
+  most assert an empty-stack region entry). Repro added as `cases/il-tryexprop` (XFAIL_RUN + XFAIL_ILVERIFY `tryexprop`
+  until the bir2cir hoist lands; expected `n=5` / `6` / `bad=-1` / `30`). The existing `il-tryexpr` (try in
+  var-init / expr-body / lambda-body — all empty-stack positions) is unaffected and stays green.
+
 - **bir2cir (bundle-6 value-type-nullable): consume the kotc marked-local marker — `Sequence.single{}` value-type
   chains now run to completion (`il-seq` GREEN, pruned).** `NullableGenericReturnErasure` grew a GENERAL body-local
   pass (`RetypeNullableGpVars`, in `ApplyRec`'s method walk): a `k:"var"` local carrying the sibling `"nullable":true`
