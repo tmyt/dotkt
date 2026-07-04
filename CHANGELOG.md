@@ -22,6 +22,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   instead of `"null"` (reproduces with any `val a:Int?=null; println(a)` / `String?` null; `ConsoleClr.kt` binds
   `println(Any?)` straight to `Console.WriteLine(object)`, empty for null vs Kotlin's `"null"`) — routed to the stdlib
   binding / bir2cir, not kotc. Gate GREEN (no NEW-FAIL; digittoint's InvalidProgram root is gone).
+- **kotc (bundle-6 P5): confirmed cross-module default-argument drop (`windowed(3)` / `il-collops2`) is NOT a kotc
+  defect — kotc output is correct; routed the fix to ilemit.** kotc emits `callStatic windowed` with 2 args
+  (receiver + size) against the full 4-param sig + `typeArgs=[Int]`, correctly OMITTING the defaulted `step`/`partialWindows`
+  (the frontend jar strips default VALUES — Kotlin metadata stores only a HAS_DEFAULT flag, never the expression, so kotc
+  cannot know `1`/`false`, and reading them from the ref.dll would be a layer violation). The emitted stdlib `windowed`
+  carries `[Optional]`+`[DefaultParameterValue]`. ilemit's `EmitCallArgs` already fills omitted trailing optional args from
+  the referenced method's `[DefaultParameterValue]` (Emitter.Expressions.cs:3390), but the GENERIC branch of `callStatic`
+  (typeArgs present → `EmitArgsTyped`, Emitter.Expressions.cs:228 / Program.cs:1661) does NOT — so the 4-param method is
+  called with 2 args → `InvalidProgramException`. Fix (Codex-confirmed) belongs in ilemit: make the `typeArgs`/`EmitArgsTyped`
+  path fill omitted trailing defaults from `mb.GetParameters()` like `EmitCallArgs` (alt: bir2cir backfill from ref.dll
+  ParameterInfo). `il-collops2` stays run/ilverify-XFAIL until that lands.
 - **kotc (bundle-6 edge, diagnosed → routed to bir2cir): a value-position `try/catch(/finally)` used in an OPERAND
   slot (`1 + try{..}`, `"x" + try{..}`) throws `InvalidProgramException`.** Root cause confirmed to be DOWNSTREAM of
   kotc, not a kotc BIR defect: kotc's `tryExpr` already emits the correct value-form — a `valueBlock` = `[{k:var
