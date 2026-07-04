@@ -17,11 +17,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   where `birType` substitutes `T -> kotlin.Int` and drops the `?` (the actual digitToInt case — keyed off the resolved
   `birType`, not `node.type.classFqName`). The `null` may arrive IR-wrapped (IMPLICIT_CAST / inline block), so it's
   detected on the emitted result. `digitToIntOrNull` now computes `7/10/7` and the `'z'` case computes `null` correctly.
-  Layer-pure: the value+null join is materialized as nullable BEFORE CLR lowering (ilemit stays Kotlin-blind). `il-digittoint`
-  stays run-XFAIL on a SEPARATE, general downstream divergence surfaced by the fix — `println(null)` prints an empty line
-  instead of `"null"` (reproduces with any `val a:Int?=null; println(a)` / `String?` null; `ConsoleClr.kt` binds
-  `println(Any?)` straight to `Console.WriteLine(object)`, empty for null vs Kotlin's `"null"`) — routed to the stdlib
-  binding / bir2cir, not kotc. Gate GREEN (no NEW-FAIL; digittoint's InvalidProgram root is gone).
+  Layer-pure: the value+null join is materialized as nullable BEFORE CLR lowering (ilemit stays Kotlin-blind). The
+  SEPARATE downstream `println(null)` divergence surfaced by this fix is now also resolved (see the ConsoleClr entry
+  below), so `il-digittoint` RUNS + matches and is pruned from `XFAIL_RUN`.
+- **stdlib (ConsoleClr): FIXED `println(null)` / `print(null)` printing an EMPTY line instead of the string `"null"`.**
+  `libraries/stdlib/clr/kotlin/io/ConsoleClr.kt` bound `print(Any?)` / `println(Any?)` directly to
+  `@ClrIntrinsic("System.Console.Write"/"WriteLine")`, so bir2cir substituted the call site to `Console.Write(object)` /
+  `Console.WriteLine(object)`; the BCL renders a **null object as the empty string**, diverging from Kotlin (which prints
+  the literal `"null"`). This was a general correctness bug reproducing with ANY null (`val a: Int? = null; println(a)`,
+  a null `String?`, etc.), merely masked before while `digitToIntOrNull` still InvalidProgram'd. Fix (stdlib-side, cardinal
+  rule — no compiler special-casing): the `Any?` overloads now render `message?.toString() ?: "null"` (safe-call the
+  member `toString`, never invoked on a null ref; null coalesces to the literal `"null"`) and forward the non-null
+  `String` to two new STRING-typed private intrinsic siblings `clrWrite`/`clrWriteLine` bound to
+  `System.Console.Write(String)` / `WriteLine(String)`. `println()` (no-arg) still emits an empty line. Non-null values are
+  unaffected (`println(5)` → `5`, `println("x")` → `x`). New repro `cases/il-printlnnull`; `il-digittoint` un-XFAILed.
+  Three existing samples' expected outputs were written against the OLD empty-line bug and are corrected to the
+  now-Kotlin-matching `null`: `il-result` (value/ref `Result` failure `getOrNull()` → `null`), `il-regex`
+  (`find("nodigits")?.value` → `null`), `il-safecallnv` (`gn()?.code` / `sn()?.length` → `null`).
 - **kotc (bundle-6 P5): confirmed cross-module default-argument drop (`windowed(3)` / `il-collops2`) is NOT a kotc
   defect — kotc output is correct; routed the fix to ilemit.** kotc emits `callStatic windowed` with 2 args
   (receiver + size) against the full 4-param sig + `typeArgs=[Int]`, correctly OMITTING the defaulted `step`/`partialWindows`

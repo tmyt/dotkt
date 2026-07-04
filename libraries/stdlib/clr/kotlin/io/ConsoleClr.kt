@@ -5,20 +5,28 @@
 
 package kotlin.io
 
-// @ClrIntrinsic-bound to the BCL console (System.Console.Write/WriteLine). NOT inline: a BCL call replaces the body, and
-// the BCL internals are native — there is nothing to inline. The TODO body never runs (the call-site substitution wins).
-// Overloads match: print(Any?)->Write(Object), println(Any?)->WriteLine(Object), println()->WriteLine().
+// The Any? overloads MUST render null as the string "null" (Kotlin semantics), so they render the message with
+// `message?.toString() ?: "null"` (safe-call the member toString, never invoked on a null ref; null coalesces to the
+// literal "null") and forward the resulting NON-NULL String to the STRING-typed Console intrinsics below. Binding
+// print(Any?) directly to Console.Write(Object) would print an EMPTY line for null (the BCL renders a null object as
+// ""), diverging from Kotlin — hence the Rule-3 body over an intrinsic sibling.
 /** Prints the given [message] to the standard output stream. */
-@kotlin.clr.ClrIntrinsic("System.Console.Write")
-public actual fun print(message: Any?) { TODO("@ClrIntrinsic System.Console.Write") }
+public actual fun print(message: Any?) { clrWrite(message?.toString() ?: "null") }
 
 /** Prints the given [message] and the line separator to the standard output stream. */
-@kotlin.clr.ClrIntrinsic("System.Console.WriteLine")
-public actual fun println(message: Any?) { TODO("@ClrIntrinsic System.Console.WriteLine") }
+public actual fun println(message: Any?) { clrWriteLine(message?.toString() ?: "null") }
 
 /** Prints the line separator to the standard output stream. */
 @kotlin.clr.ClrIntrinsic("System.Console.WriteLine")
 public actual fun println() { TODO("@ClrIntrinsic System.Console.WriteLine") }
+
+// STRING-typed console intrinsics. NOT inline: a BCL call replaces the body, the BCL internals are native — nothing to
+// inline. The TODO bodies never run (the call-site substitution to System.Console.Write/WriteLine(String) wins).
+@kotlin.clr.ClrIntrinsic("System.Console.Write")
+private fun clrWrite(message: String): Unit { TODO("@ClrIntrinsic System.Console.Write") }
+
+@kotlin.clr.ClrIntrinsic("System.Console.WriteLine")
+private fun clrWriteLine(message: String): Unit { TODO("@ClrIntrinsic System.Console.WriteLine") }
 
 /**
  * Reads a line of input from the standard input stream and returns it,
