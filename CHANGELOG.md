@@ -5,6 +5,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir + ilemit (bundle-6 `collops2` / `genseq`): a VALUE-typed cold sequence now runs — the LAST `XFAIL_RUN`
+  is gone (`XFAIL_RUN` is empty).** `fun <T> wrap(x) = sequence { yield(x) }.toList()` (and `listOf(...).windowed(3)`,
+  which drives the stdlib `windowedIterator` over the same iterator) crashed for a VALUE element type — a
+  `NullReferenceException` at `SequenceBuilderIterator.next()`. TWO stacked bugs, both fixed here:
+  - **BUG #1 (bir2cir, the primary): the `T?`-property `nextValue as T` read compiled to a DOUBLE `unbox.any !T`.**
+    `NullableGenericReturnErasure` lowers a nullable generic-parameter property/field (`var nextValue: T? = null`) to a
+    `System.Object` slot and drags its accessors to an `object` return — but it left the READER's CALL-NODE `retType`
+    at the stale `gp:T` kotc stamped on it. ilemit then coerced the getter's `object` result to `T` (unbox.any) AND the
+    source `as T` cast unboxed AGAIN → the second `unbox.any` NRE'd on the bare value. New `RetypeErasedGetterCalls`
+    (the reader twin of the `mo["ret"]="object"` accessor erasure) re-narrows every erased-getter call `retType` to
+    `object`, leaving exactly one narrow (the `as T`). A REFERENCE element (`String`/`List`) never showed the bug (its
+    single narrow is a `castclass`, null-tolerant). Minimal repro: a plain `class Box<T> { var v: T? = null; fun get():
+    T = v as T }` — no coroutines needed.
+  - **BUG #2 (bir2cir threads + ilemit instantiates): a generic `@ClrIntrinsic` BCL method emitted an OPEN MethodSpec.**
+    `windowed(3)`'s `step<size` path uses `RingBuffer<T>.removeFirst` → `Array<T>.fill` → `nativeFill`
+    (`@ClrIntrinsic("System.Array.Fill")`, `System.Array.Fill<T>(T[],T,int,int)` is generic). `ClrCallNode` dropped the
+    call's generic `typeArgs`, so ilemit emitted `call System.Array::Fill(...)` on the open generic DEFINITION →
+    `InvalidOperationException "method/type not fully instantiated"` (captured by the SM's `resumeWith` and re-thrown at
+    `ResultKt.throwOnFailure`, which masked the true site). Fix: bir2cir now THREADS `node["typeArgs"]` onto the
+    substituted `clrStatic`/`clrInstance` node, and ilemit's `EmitClrCall` `MakeGenericMethod`s the resolved method
+    when it is a generic DEFINITION and the node carries `typeArgs` (a no-op for a non-generic target such as
+    `Array.Clone`). New regression gate `cases/il-genseq` (value + reference element).
 - **bir2cir (bundle-6 `bymap`): variance→invariance type-argument REALIGNMENT for invariant `@ClrTypeAlias` collection
   generics — property delegation over a `Map` now RUNS (pruned from `XFAIL_RUN`).** `val name: String by data`
   (`data: Map<String, Any?>`) crashed `EntryPointNotFound` at `IDictionary\`2::ContainsKey`. Root: kotc's frontend
@@ -23,8 +45,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   hand-patch the ilemit agent proved greens the sample with unmodified ilemit). Changed ONLY when the arg pins a
   DIFFERENT concrete type (a genuine `<Any>` call is a no-op) and covariant `IReadOnly*<out T>` positions are untouched
   — same bug class as the mutable-map for-in reroute (`mapforin`) and `HashSet(cap, loadFactor)` (`hashset2`). Only
-  `MapAccessors.cir.json` changed across the whole rt CIR; gate GREEN, no Map-sample regression. Leaves `collops2`
-  (generic cold-sequence SM) as the sole `XFAIL_RUN`.
+  `MapAccessors.cir.json` changed across the whole rt CIR; gate GREEN, no Map-sample regression. (`collops2`, then
+  the sole remaining `XFAIL_RUN`, was closed by the value-typed cold-sequence fix above — `XFAIL_RUN` is now empty.)
 - **bir2cir (bundle-6 `iter`/`iterable`): unify the monomorphized synthetic `Iterator` interface onto the referenced
   generic — both samples now ilverify-CLEAN (pruned from `XFAIL_ILVERIFY`).** A user `class C : Iterator<T>` (or an
   `object : Iterator<T>`) is emitted by kotc implementing a per-element MONOMORPHIZED synthetic interface
