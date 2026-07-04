@@ -5,6 +5,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: FIXED string-interpolation / concat of a `null` value rendering EMPTY instead of `"null"`.** `val x: Any? = null;
+  println("[$x]")` printed `[]` (should be `[null]`), yet `x.toString()` correctly gave `"null"` — the null-rendering was
+  INCONSISTENT across paths. A bare CLR `String.Concat` / `StringBuilder.Append` of a null reference yields `""`, but Kotlin
+  renders a null interpolated/concatenated value as the string `"null"` (JVM: `StringBuilder.append(Any?)` / `String.valueOf`).
+  The `IrStringConcatenation` lowering (and the `String.plus` concat path) appended each operand's value verbatim, so a null
+  operand vanished. Fix (`BirEmitter.concatOperand`, used by `BirEmitterExpressions.kt` `IrStringConcatenation` and
+  `BirEmitter.kt` `String.plus`): a NULLABLE operand is routed through the stdlib null-safe stringifier `Any?.toString()`
+  (`kotlin.LibraryKt.toString` = `this?.toString() ?: "null"`) BEFORE concatenation — null → `"null"`, non-null → its
+  `toString`. A non-null operand and a literal string part stay as-is; a collection/Map operand keeps its existing
+  Kotlin-style `clrCollToString`/`clrMapToString` routing (checked first). `"$x"` (null) now gives `"null"`, consistent with
+  `x.toString()` and `println(x)`. Layer-pure: a Kotlin-language rendering rule expressed as a pure-Kotlin-FQN symbol call
+  (no CLR knowledge). New repro `cases/il-interpnull`; gate GREEN (no NEW-FAIL, colstr/nulltostr unchanged).
 - **kotc (bundle-6 ④): FIXED the `ternary()` value-type + `null`-branch cond-type defect — `Char.digitToIntOrNull()`
   no longer InvalidPrograms.** `digitToIntOrNull()` is `digitOf(this,10).takeIf { it >= 0 }`; `takeIf` inlines to
   `if (p(this)) this else null`, a value-type-`or`-`null` join. `BirEmitter.ternary()` tagged the `cond` with the

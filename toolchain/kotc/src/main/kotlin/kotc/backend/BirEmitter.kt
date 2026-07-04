@@ -3855,8 +3855,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `String + x` is concatenation, not numeric add.
 			if (name == "plus" && declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.String" && operands.size == 2)
 				// A collection/Map operand of a String `+` concat prints Kotlin-style (route via the stdlib helper),
-				// mirroring the println / string-template paths — else `"" + list` yields the raw .NET type name.
-				return """{"k":"concat","parts":[${collToStringRoute(operands[0]) ?: expr(operands[0])},${collToStringRoute(operands[1]) ?: expr(operands[1])}]}"""
+				// mirroring the println / string-template paths — else `"" + list` yields the raw .NET type name. A
+				// NULL operand renders "null" (not an empty append) via the same null-safe stringifier — see concatOperand.
+				return """{"k":"concat","parts":[${concatOperand(operands[0])},${concatOperand(operands[1])}]}"""
 			// `==` (EQEQ): structural — `ceq` for primitives, null-safe `Object.Equals` for String/reference types.
 			// `===` (EQEQEQ): always identity (`ceq`).
 			if (name == "EQEQ" && operands.size == 2) {
@@ -4407,6 +4408,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollToString","args":[${expr(op)}],"typeArgs":[${str(elem)}]}"""
 		}
 		return null
+	}
+
+	// Kotlin null-rendering for a string-template / concat operand. Kotlin renders a NULL interpolated value as the
+	// string "null" (JVM: StringBuilder.append(Any?)/String.valueOf -> "null"), but a bare CLR String.Concat /
+	// StringBuilder.Append of a null reference yields "" — so `"$x"` for a null `Any?` would print empty, inconsistent
+	// with `x.toString()` (which is already null-safe). A NULLABLE operand is therefore routed through the stdlib
+	// null-safe stringifier `Any?.toString()` (kotlin.LibraryKt.toString = `this?.toString() ?: "null"`) BEFORE it is
+	// concatenated: null -> "null", non-null -> its toString. A collection/Map operand keeps its Kotlin-style
+	// clrCollToString/clrMapToString routing (checked first); a non-null operand and a literal string part are emitted
+	// as-is (ilemit's concat calls ToString on a non-null value). This is a Kotlin-language rendering rule (pure Kotlin
+	// FQN symbol, no CLR knowledge) shared by the template, explicit `+`, and String.plus concat paths.
+	internal fun concatOperand(op: IrExpression): String {
+		collToStringRoute(op)?.let { return it }
+		if (op.type.isMarkedNullable())
+			return """{"k":"callStatic","owner":"kotlin.LibraryKt","method":"toString","args":[${expr(op)}]}"""
+		return expr(op)
 	}
 
 	internal fun birType(t: IrType): String {

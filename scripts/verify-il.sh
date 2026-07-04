@@ -284,6 +284,9 @@ il_check mapof1 Mo1 "$ROOT/cases/il-mapof1" "$(printf '1
 # string `+` concat `"" + l`, and explicit `.toString()` — not just println(x). Same static-type routing to
 # clrCollToString/clrMapToString as the println path (bundle-6 FIX 1).
 il_check colstr Cstr "$ROOT/cases/il-colstr" "$(printf 'm={a=1, b=2}\nl=[1, 2, 3]\nx={a=1, b=2}\n[1, 2, 3]\n[1, 2, 3]\n{a=1, b=2}')"
+# interpnull: a NULL interpolated/concatenated operand renders "null", not an empty append (Kotlin/JVM parity) —
+# `"$x"`/`"" + x` route a nullable operand through the stdlib null-safe Any?.toString(); non-null + Map unchanged.
+il_check interpnull InterpNull "$ROOT/cases/il-interpnull" "$(printf '[null]\nn=null\nnull\ns=null end\na=5\nnn=7\nm={k=1}')"
 il_check math  MathT "$ROOT/cases/il-math"    "$(printf '9\n7\n3\n4')"
 il_check str   Str   "$ROOT/cases/il-str"     "$(printf 'HELLO\nhello\nhi\nello\nTrue\nTrue')"
 il_check strnum StrNum "$ROOT/cases/il-strnum" "$(printf '42\n-7\n100\nnfe\niae\n3.14\n2.5\ncomma\nnfd')"
