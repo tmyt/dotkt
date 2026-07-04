@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit (bundle-6 ④): diagnosed `Char.digitToIntOrNull()` InvalidProgram — root cause is in kotc, NOT ilemit;
+  added the `il-digittoint` repro (run-XFAIL) pointing at the exact BirEmitter site.** `'7'.digitToIntOrNull()`
+  aborts with `InvalidProgramException` inside `kotlin.text.CharKt.digitToIntOrNull` (the whole method body is
+  invalid, not a data path). ilverify pins it: `[PathStackUnexpected] digitToIntOrNull(char)][offset 0x1D][found
+  Int32][expected Nullobjref]` — the two conditional paths push incompatible stack types. `digitToIntOrNull()` is
+  `digitOf(this,10).takeIf { it >= 0 }`; `takeIf` inlines to `if (it >= 0) it else null`, whose Kotlin type is
+  `Int?`. But kotc's `BirEmitter.ternary()` (`BirEmitter.kt:3033-3044`) tags the `cond` node with
+  `birType(node.type)` = `kotlin.Int` — the IrWhen `.type` is the non-null `Int` (the `T?` nullability rides the
+  function return, which IS correctly `nullable:int`). So the CIR cond is `{type:int, then:int-local, else:const
+  object null}`: the `then` path leaves an `Int32`, the `else` path a null ref → verify failure. ilemit's existing
+  `EmitCond`/`EmitNullableCoerced`/`EmitReturnCoerced` already emit correct `Nullable<int>` IL **when** the cond is
+  tagged `nullable:int` (kotc does exactly that for `bir-kgenseq`/`bir-safecallnv`); no ilemit change is correct here.
+  Per the layer boundary (ilemit knows no Kotlin; Codex-confirmed) the join of a value type and a null literal must be
+  computed as nullable BEFORE CLR lowering — the fix belongs in kotc's `ternary()`: promote the cond result type to
+  `nullable:<elem>` when a branch result is a null literal. `il-digittoint` is run-XFAIL until that lands (asserts
+  `7/10/null/7`; the whole `digitToInt`/`digitToIntOrNull` family shares the codegen root). Gate GREEN (no NEW-FAIL).
 - **bir2cir (bundle-6 value-type-nullable): consume the kotc marked-local marker — `Sequence.single{}` value-type
   chains now run to completion (`il-seq` GREEN, pruned).** `NullableGenericReturnErasure` grew a GENERAL body-local
   pass (`RetypeNullableGpVars`, in `ApplyRec`'s method walk): a `k:"var"` local carrying the sibling `"nullable":true`
