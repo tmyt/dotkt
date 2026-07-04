@@ -1646,6 +1646,13 @@ sealed partial class Emitter
             }
             retType = sub.TryGetValue(m.ReturnType, out var r) ? r : m.ReturnType;
             paramTypes = ps?.Select(x => sub.TryGetValue(x, out var s) ? s : x).ToArray();
+            // A specialized NON-generic overload can still carry the generic call's typeArgs: Kotlin specializes
+            // `maxOrNull`/`sum`/`min` for Double/Float as a non-generic `Iterable<Double>.maxOrNull(): Double?`, but the
+            // call site keeps `typeArgs=[Double]` from the generic `<T>` form. MakeGenericMethod throws on a non-generic
+            // method ("not a GenericMethodDefinition"). When the resolved REFERENCED method is not a generic definition,
+            // FindMethod already picked the right specialization — use it as-is. (A MethodBuilder reports
+            // IsGenericMethodDefinition unreliably pre-bake, so this guards only reflected referenced methods.)
+            if (m is not MethodBuilder && !m.IsGenericMethodDefinition) { retType = m.ReturnType; paramTypes = ps; return m; }
             var inst = m.MakeGenericMethod(targs);
             // A pure-reflection generic method (an EXTERNAL rt-stdlib static, e.g. `Result`1<object>::success<T>`
             // anchored by AnchorOpenGenericOwnerStatic) carries no `_mparams`/`_methodTypeParams` record, so `sub` is
