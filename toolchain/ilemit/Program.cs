@@ -1933,19 +1933,23 @@ sealed partial class Emitter
     }
 
 
+    // Whether the current FindReflectedMethodBySig owner is a CONSTRUCTED generic type — set per-lookup, read by the
+    // `gp:` structural case (a `gp:T` token matches a concrete arg when the owner instantiation already bound it).
+    bool _sigConstructedOwner;
+
     // STRUCTURAL match for a sig token MapType could not resolve (an open generic-parameter token from the declared
     // callee's sig, e.g. `gp:T` / `array:gp:T` / `clrg:Collection[gp:T]`, unbound at a cross-module call site):
     // the token's SHAPE must agree with the candidate parameter's (generic param / array-of / constructed-generic).
     // Concrete tokens never reach here (MapType resolves them), so this cannot loosen an exact-type comparison.
-    static bool SigTokenMatchesOpen(string tok, Type p)
+    bool SigTokenMatchesOpen(string tok, Type p)
     {
         if (tok.StartsWith("byref:", StringComparison.Ordinal))
-            return p.IsByRef && SigTokenMatchesOpen(tok.Substring(6), p.GetElementType());
+            return p.IsByRef && SigTokenMatches(tok.Substring(6), p.GetElementType());
         if (tok.StartsWith("array:", StringComparison.Ordinal))
-            return p.IsArray && SigTokenMatchesOpen(tok.Substring(6), p.GetElementType());
+            return p.IsArray && SigTokenMatches(tok.Substring(6), p.GetElementType());
         if (tok.StartsWith("nullable:", StringComparison.Ordinal))
-            return SigTokenMatchesOpen(tok.Substring(9), p.IsGenericType && p.GetGenericTypeDefinition() == typeof(Nullable<>) ? p.GetGenericArguments()[0] : p);
-        if (tok.StartsWith("gp:", StringComparison.Ordinal)) return p.IsGenericParameter;
+            return SigTokenMatches(tok.Substring(9), p.IsGenericType && p.GetGenericTypeDefinition() == typeof(Nullable<>) ? p.GetGenericArguments()[0] : p);
+        if (tok.StartsWith("gp:", StringComparison.Ordinal)) return p.IsGenericParameter || _sigConstructedOwner;
         if (tok.StartsWith("clrg:", StringComparison.Ordinal))
         {
             // Match on the generic-type-DEFINITION owner, not just "is a constructed generic": several same-arity
@@ -1956,15 +1960,65 @@ sealed partial class Emitter
             var body = tok.Substring(5);
             var br = body.IndexOf('[');
             var openName = br < 0 ? body : body.Substring(0, br);
-            var arity = br < 0 ? 0 : SplitTopLevel(body.Substring(br + 1, body.Length - br - 2)).Count;
-            var def = TryResolveType(openName + "`" + arity);
+            var argToks = br < 0 ? new List<string>() : SplitTopLevel(body.Substring(br + 1, body.Length - br - 2)).ToList();
+            var def = TryResolveType(openName + "`" + argToks.Count);
             // Owner unresolvable (a Kotlin-only alias not in any referenced .NET assembly, e.g. `clrg:Collection[..]`
             // as a bare name) -> keep the OLD loose shape match rather than falsely reject (strictly additive).
-            return def == null || ReferenceEquals(p.GetGenericTypeDefinition(), def);
+            if (def == null) return true;
+            if (!ReferenceEquals(p.GetGenericTypeDefinition(), def)) return false;
+            // Recurse into the constructed generic's TYPE-ARGUMENTS. An open token arg (`gp:T`) must line up with a
+            // generic-parameter position, so `IEnumerable[gp:T]` selects the GENERIC overload `maxOrNull<T>(IEnumerable<T>)`
+            // and rejects the Double-specialized `maxOrNull(IEnumerable<Double>)` (whose arg is the concrete Double). A
+            // concrete sub-token likewise requires the candidate's actual type-argument to equal it (via SigTokenMatches).
+            var actualArgs = p.GetGenericArguments();
+            for (var i = 0; i < argToks.Count && i < actualArgs.Length; i++)
+                if (!SigTokenMatches(argToks[i], actualArgs[i])) return false;
+            return true;
         }
         if (tok.StartsWith("func:", StringComparison.Ordinal))
-            return p.IsGenericType;
+        {
+            // `func:<ret>:<arg1>,<arg2>,...` -> Func<arg1,...,argN,ret> (or Action<...> when ret==void). Match the
+            // return type AND each parameter type structurally so overloads that differ ONLY by the selector's return
+            // type stay distinguishable — e.g. `sumOf`'s Int/Long/Double/UInt/ULong family, where the loose "any Func"
+            // test used to collapse them all onto the first-reflected (Double) overload -> wrong body / 0 result.
+            if (!p.IsGenericType) return false;
+            var rest = tok.Substring(5);
+            var colon = FuncRetEnd(rest);
+            var retTok = rest.Substring(0, colon);
+            var argsPart = colon < rest.Length ? rest.Substring(colon + 1) : "";
+            var argToks = argsPart.Length == 0 ? new List<string>() : SplitTopLevel(argsPart).ToList();
+            var gargs = p.GetGenericArguments();
+            if (retTok == "void")
+            {
+                if (gargs.Length != argToks.Count) return true;   // shape mismatch (Func vs Action) -> keep loose accept
+                for (var i = 0; i < argToks.Count; i++)
+                    if (!SigTokenMatches(argToks[i], gargs[i])) return false;
+                return true;
+            }
+            if (gargs.Length != argToks.Count + 1) return true;   // shape mismatch -> keep loose accept
+            for (var i = 0; i < argToks.Count; i++)
+                if (!SigTokenMatches(argToks[i], gargs[i])) return false;
+            return SigTokenMatches(retTok, gargs[gargs.Length - 1]);
+        }
         return false;
+    }
+
+    // Combined sig-token match: a token MapType can fully resolve here (no unbound `gp:`) must EQUAL the candidate's
+    // type exactly; an unresolvable token falls to the structural open-token shape match. Used to recurse into a
+    // constructed-generic type-argument or a func's return/param slot, so a concrete inner token (a func's Int-vs-Double
+    // return, `IEnumerable[Double]` vs `[gp:T]`) is still discriminating instead of collapsing onto the loose shape.
+    bool SigTokenMatches(string tok, Type p)
+    {
+        // A token mentioning an unbound `gp:` is inherently OPEN — compare by SHAPE. (MapType would either throw or,
+        // for a bare `gp:T`, resolve it to a placeholder Type that never ReferenceEquals the candidate's actual generic
+        // parameter, wrongly rejecting the right overload -> arity fallback picks the wrong one. e.g. yieldAll's
+        // IEnumerable<T> overload lost to the first-reflected Iterator<T>.) Only a fully-concrete token uses MapType.
+        if (!tok.Contains("gp:", StringComparison.Ordinal))
+        {
+            Type want; try { want = MapType(tok); } catch { want = null; }
+            if (want != null) return want == p;
+        }
+        return SigTokenMatchesOpen(tok, p);
     }
 
     // Sig-aware overload pick on a REFERENCED file-class: several methods can share name+arity but differ in PARAM
@@ -1977,6 +2031,12 @@ sealed partial class Emitter
         if (sig == null) return null;
         var toks = sig.Length == 0 ? new List<string>() : SplitTopLevel(sig).ToList();
         var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+        // When `ext` is a CONSTRUCTED generic (SequenceScope<String>), its methods' params reflect the instantiation
+        // (IEnumerable<String>, not IEnumerable<T>) — so a `gp:T` token, which is the caller's OWN open param bound by
+        // that same instantiation, must match the concrete arg. When `ext` is OPEN/non-generic (the static _CollectionsKt),
+        // a `gp:T` token discriminates the method-generic overload (`maxOrNull<T>(IEnumerable<T>)`) from a concrete
+        // sibling (`maxOrNull(IEnumerable<Double>)`), so it must require a genuine generic-parameter arg.
+        _sigConstructedOwner = ext.IsConstructedGenericType;
         MethodInfo match = null;
         foreach (var m in ext.GetMethods(bf))
         {
