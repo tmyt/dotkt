@@ -119,3 +119,17 @@ runtime hang/throw. Audit the `?? cands[0]` / Rule-4 / suspend-stub sites and ma
 - TaskAwaiter `constrained.` prefix (~2 lines, kills taskawait/genasync/comaindrain ilverify XFAILs) = IN FLIGHT
   (ilemit zero-XFAIL agent).
 - build-cache-masks-stdlib-regressions = documented (MEMORY build-cache-masks-stdlib-regressions).
+
+---
+## Layer-migration findings (as families land)
+- **Lazy DEFERRED (family 2, 2026-07-04):** `kotlin.Lazy` can't use @ClrTypeAlias(System.Lazy) — @ClrTypeAlias
+  substitutes in BOTH rt + app builds, but `kotlin.Lazy` is a Kotlin INTERFACE with Kotlin impls
+  (`UnsafeLazyImpl : Lazy`) and `System.Lazy` is a SEALED .NET class → aliasing breaks the rt self-build
+  (`UnsafeLazyImpl : System.Lazy`, illegal). REVEALS A GENERAL @ClrTypeAlias LIMITATION: it has no app-only
+  vs rt-both discriminator. To migrate Lazy: (a) add a bir2cir APP-ONLY type-lowering gate (like the primitive
+  substitute's `!RefBuild` but app-vs-rt), or (b) route app `by lazy{}` through the pure-Kotlin `lazy()`/
+  `UnsafeLazyImpl` path (no System.Lazy). Left in kotc (BirEmitter.kt ~3184/~3080/~3737/~4470). il-lazy green.
+- **Regex + Closeable/AutoCloseable MIGRATED (family 2):** clean @ClrTypeAlias moves (Regex already aliased;
+  AutoCloseable got @ClrTypeAlias(IDisposable) + close@ClrIntrinsic(Dispose)). kotc no longer knows those BCL names.
+- **Throwable.message/cause MIGRATED (family 1):** @ClrProperty(Message/InnerException) + bir2cir Rule-2p-inherited
+  (walks `overrides` to the @ClrProperty ancestor). kotc + ilemit stopped double-lowering Exception.Message.
