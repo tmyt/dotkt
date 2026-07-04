@@ -52,8 +52,6 @@ need_fe_jar; need_stdlib_ref; need_stdlib_rt
 # stdlib subtree bump (cde8afd) fallout, recorded loudly instead of silently reddening the gate —
 # they are owned stdlib-side (Map/MutableMap dual-rep sub-track + rt overload shape), NOT gate bugs.
 declare -A XFAIL_DIFF=(
-	[il-seq]="VALUE-typed sequence chain crashes on the kotc T?->T nullability drop (the map{it*it} <>dotkt_obj*.next()'s nextItem:T? field is emitted as value-T) — reference-typed sequences run; = verify-il run-XFAIL seq"
-	[il-collops2]="cross-module default-arg drop: windowed(3) is emitted with 2 args against the 4-param windowed(iterable,size,step,partialWindows) sig (step/partialWindows defaults lost by the frontend jar) -> InvalidProgramException; = verify-il run-XFAIL collops2. KNOWN BUG cross-module-default-args-not-preserved"
 	[m-b6]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: ilemit aborts on the rt's Double-specialized maxOrNull ('not a GenericMethodDefinition')"
 	[m-b9]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: sumOf { } returns 0 on CLR"
 	[m-b10]="REGRESSION 2026-07-02, stdlib subtree bump cde8afd: groupBy -> clrMapGet EntryPointNotFound (same Map dual-rep family as verify-il's bymap)"
