@@ -238,6 +238,10 @@ il_check coldgen ColdGen "$ROOT/cases/il-coldgen" "$(printf '7\nyo\n8\nhi')"
 # (Svc.chain -> this.helper()) + INSTGEN (generic Box<T>.get) + MCALL1 (topUse -> c.bump()) + MCALL2
 # (crossFileVal, a suspend fun in a second source file). Sync-completion drain via `main`.
 il_check coldinst ColdInst "$ROOT/cases/il-coldinst" "$(printf '11\n12\n10\n42\nhi\n101\n7')"
+# coldvirt: bir2cir P5 A1b — a suspending instance member of a GENERIC class (Box<T>) over the cold core: the SM
+# `Box_getTwice$sm[T]` is generic over the enclosing T, its `$this` field is the constructed self, and the awaited
+# value crosses the suspension typed in T. Drained by the synthesized plain `main` (sync completion). Runs -> 42,hi.
+il_check coldvirt ColdVirt "$ROOT/cases/il-coldvirt" "$(printf '42\nhi')"
 # coldabstract: bundle-6 ① BUG 3 — an abstract-CLASS suspend member's full vtable. Base emits an abstract cold
 # entry + an abstract Task<Int> bridge ([KotlinFunction(Suspend)]); Impl overrides both in lockstep; `b.poll()`
 # (b: Base) dispatches virtually through the cold entry. Runs sync -> 42 (no await, so ilverify-clean).
@@ -271,6 +275,10 @@ il_check mapof1 Mo1 "$ROOT/cases/il-mapof1" "$(printf '1
 1
 2
 1')"
+# emptymap: emptyMap()/mapOf() read-only-empty behavior (POLISH family-6 coverage). Map @ClrTypeAlias-es to the
+# mutable IDictionary (no read-only split — binding decision), so emptyMap() stays IDictionary-compatible and
+# read-only-ness is frontend-enforced; locks that green (the IReadOnlyDictionary request is architecturally deferred).
+il_check emptymap EmptyMap "$ROOT/cases/il-emptymap" "$(printf '0\nTrue\nnull\nFalse\n0\n2\n1\nFalse\n0\nTrue')"
 # colstr: a collection/Map operand prints Kotlin-style in EVERY stringify context — string template `"$m"`,
 # string `+` concat `"" + l`, and explicit `.toString()` — not just println(x). Same static-type routing to
 # clrCollToString/clrMapToString as the println path (bundle-6 FIX 1).
@@ -306,6 +314,10 @@ il_check mapdes MapDes "$ROOT/cases/il-mapdes" "$(printf '10\n60\n13\nx=1\ny=2\n
 il_check mapgen MapGen "$ROOT/cases/il-mapgen" "$(printf '1\n1\n-1\n3\n9\n2\n7\nempty\n20\n50\n5\n6\n6')"
 il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000000\n18000000000000000000\n60000\n250')"
 il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_c\nTrue\nFalse\n42\nnull')"
+# regexgroups: MatchResult.groups (ClrMatchGroupCollection) — by-index/by-name access, iteration, and `group in
+# match.groups` (POLISH family-6 coverage). il-regex never touches .groups; this pinned + fixed a TypeLoad on the
+# AbstractCollection base + a missing `contains` (ClrMatchGroupCollection now implements the collection directly).
+il_check regexgroups RegexGroups "$ROOT/cases/il-regexgroups" "$(printf '3\n12-34\n12\n34\n12-34,12,34,\nTrue\nFalse\nTrue\n2026')"
 il_check langtail LangTail "$ROOT/cases/il-langtail" "$(printf '6\nhi\nint:42\nstr:3\nbig:5\nsmall\n700\n9')"
 il_check enumbody EnumBody "$ROOT/cases/il-enumbody" "$(printf '+: 8\n-: 4\n*: 12\nPLUS\n9')"
 il_check bytearg ByteArg "$ROOT/cases/il-bytearg" "$(printf '5\n3\n7\n9\n4\n100\n-2')"
@@ -459,6 +471,16 @@ il_check_imports monitordrain MonitorDrainKt "$ROOT/cases/il-monitordrain" "99"
 # runs EXACTLY ONCE at the post-resume exit (before the fix it ran EARLY + TWICE). RUNS correct -> close,42
 # and passes ilverify (the gated finally shape emits no TaskAwaiter CallVirtOnValueType finding).
 il_check_imports cofinally CoFinally "$ROOT/cases/il-cofinally" "$(printf 'close\n42')"
+# coexc: exception propagation ACROSS a suspended Task boundary (POLISH family-6 coverage). (a) a throw AFTER a
+# genuine Task.Delay().await() crosses the resume boundary -> blockOn rethrows into the caller's try/catch;
+# (b) a throw across a NESTED suspend frame propagates up the resumeWithException chain; (c) awaiting a FAULTED
+# .NET Task rethrows its fault at await's GetResult. All three -> caught. (imports System.* -> facadegen.)
+il_check_imports coexc CoExc "$ROOT/cases/il-coexc" "$(printf 'caught: boom\ncaught2: nested\ncaught3: faulted\ndone')"
+# corestrict: a USER-DEFINED @RestrictsSuspension receiver (POLISH family-6 coverage) driven by the receiver-form
+# startCoroutine. Confirms the restriction (a frontend concern) doesn't perturb the cold lowering. Pinned + fixed a
+# bir2cir bug: a synchronous Unit-returning scope member's DIRECT cold entry fell off with no return value
+# (ColdEntryDirect now appends the trailing `return Unit`, mirroring the SM branch). Runs -> 1,2,3,4,5 / 5 / a-b.
+il_check corestrict CoRestrict "$ROOT/cases/il-corestrict" "$(printf '1,2,3,4,5\n5\na-b')"
 # coevalorder: bundle-6 ① BUG 2 — strict left-to-right eval across a suspension. In `side() + g()` (g
 # suspend), bir2cir now spills the impure LEFT operand into an SM field BEFORE g()'s suspension segments
 # so its side effect (println "L") happens before g()'s ("G"). Before the fix: G,L; after: L,G,3.
@@ -548,7 +570,7 @@ ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
 REFDIR="$(dirname "$(find /usr/share/dotnet/shared/Microsoft.NETCore.App -name System.Private.CoreLib.dll 2>/dev/null | sort | tail -1)")"
 if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 	echo "--- ilverify ---"
-	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [seqforin]=SeqForin [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [genseq]=GenSeq [refcell]=RefCell [annot]=Annot [props]=Props [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [genctor]=GenCtor [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob [dsl]=Dsl [object]=TObj [gfac]=TGfac [xprop]=Xprop [arrops]=Arro [langtail]=LangTail [enumbody]=EnumBody [fieldvis]=FieldVis [bytearg]=ByteArg [iterable]=Iterable [customexc]=CustomExc [comparator]=Comparator [use]=Use [comparable]=Comparable [charseq]=CS [charseqx]=CSX [charseqs]=CSStr [substr]=Substr [injbase]=InjBase [injfqn]=InjFqn [injstatic]=InjStatic [mfclosure]=MfClosure [mflambda]=MFL [injuint]=InjUint [exprbody]=EB [overload]=OV [collrealkt]=CollRealKt [mutcoll]=MutColl [mapfilter]=MapF [nan]=Nan [nestedtry]=NestedTry [trynullable]=TryNullable [setlocalbox]=SetLocalBox [nancmp]=NanCmp [mapgen]=MapGen [taskfam]=Tf [whensubj]=WhenSubj [safecallnv]=SafeCallNv [rangein]=RangeIn [duration]=Duration [coldcf]=ColdCf [coldgen]=ColdGen [coldinst]=ColdInst [lam1]=Lam1Kt [lam2]=Lam2Kt [taskawait]=TaskAwait [monitordrain]=MonitorDrainKt [genstatic]=GenStatic [genasync]=GenAsync [genbase]=GenBaseKt [strnum]=StrNum [mapof1]=Mo1 [seqyieldall]=SeqYieldAll [charminus]=Cm [digittoint]=Dti [printlnnull]=PrintlnNull [maptostr]=Mts [comaindrain]=ComainDrain [colstr]=Cstr [cmpord]=CmpOrd [mutset]=MutSet [hashset2]=HashSet2 [iscoll]=IsColl [excmap]=ExcMap [tryexprop]=TryExprOp [mapforin]=MapForin )
+	declare -A ASMS=( [m0]=M0Kt [mc1]=MC1 [iface]=Iface [enum]=Enum [m2]=M2 [mi1]=MI1 [for]=ForT [exc]=Exc [ops]=Ops [math]=MathT [str]=Str [cp]=Cp [ext]=Ext [arr]=Arr [lam]=Lam [clo]=Clo [scope]=Sc [coll]=Coll [coll2]=Coll2 [coll3]=Coll3 [seq]=Seq [seqforin]=SeqForin [char]=Char [sort]=Sort [funref]=Funref [getcls]=GetClass [forin]=Forin [ldeleg]=LocalDeleg [langf]=LangFeat [mapdes]=MapDes [valcls]=ValCls [ctorref]=CtorRef [unsgn]=Unsigned [regex]=Regex [regexgroups]=RegexGroups [result]=Result [bmore]=BMore [chunk]=Chunk  [collmore]=CollMore  [tryexpr]=TryExpr  [localclass]=LocalClass [collops2]=CollOps2 [genseq]=GenSeq [refcell]=RefCell [annot]=Annot [props]=Props [pair]=Pair [null]=Null [nullv]=MS1 [op]=OpT [dataq]=Dq [inline]=InlF [ctor]=CtorT [objex]=Oe [nest]=Nst [scast]=Sc2 [vis]=VisT [throwx]=Tx [enumr]=Er [reqnn]=Rn [reif]=Rf [iter]=Iter [inner]=Inner [lazy]=Lazy [deleg]=Deleg [rwp]=Rwp [bymap]=Bm [del2]=D2 [gen]=Gen [genctor]=GenCtor [gen2]=Gen2 [gen3]=Gen3 [gen4]=Gen4 [gen5]=Gen5 [gen6]=Gen6 [netbase]=Nb [netbase2]=Nb2 [netgen]=Ng [netgen2]=Ng2 [event]=Ev [netgen3]=Ng3 [loopjump]=LjT [inline2]=Inl2  [c1net]=C1Net [firgap]=FirGap [fmt]=Fmt [cobuild]=Cob [dsl]=Dsl [object]=TObj [gfac]=TGfac [xprop]=Xprop [arrops]=Arro [langtail]=LangTail [enumbody]=EnumBody [fieldvis]=FieldVis [bytearg]=ByteArg [iterable]=Iterable [customexc]=CustomExc [comparator]=Comparator [use]=Use [comparable]=Comparable [charseq]=CS [charseqx]=CSX [charseqs]=CSStr [substr]=Substr [injbase]=InjBase [injfqn]=InjFqn [injstatic]=InjStatic [mfclosure]=MfClosure [mflambda]=MFL [injuint]=InjUint [exprbody]=EB [overload]=OV [collrealkt]=CollRealKt [mutcoll]=MutColl [mapfilter]=MapF [nan]=Nan [nestedtry]=NestedTry [trynullable]=TryNullable [setlocalbox]=SetLocalBox [nancmp]=NanCmp [mapgen]=MapGen [taskfam]=Tf [whensubj]=WhenSubj [safecallnv]=SafeCallNv [rangein]=RangeIn [duration]=Duration [coldcf]=ColdCf [coldgen]=ColdGen [coldinst]=ColdInst [coldvirt]=ColdVirt [coexc]=CoExc [corestrict]=CoRestrict [lam1]=Lam1Kt [lam2]=Lam2Kt [taskawait]=TaskAwait [monitordrain]=MonitorDrainKt [genstatic]=GenStatic [genasync]=GenAsync [genbase]=GenBaseKt [strnum]=StrNum [mapof1]=Mo1 [emptymap]=EmptyMap [seqyieldall]=SeqYieldAll [charminus]=Cm [digittoint]=Dti [printlnnull]=PrintlnNull [maptostr]=Mts [comaindrain]=ComainDrain [colstr]=Cstr [cmpord]=CmpOrd [mutset]=MutSet [hashset2]=HashSet2 [iscoll]=IsColl [excmap]=ExcMap [tryexprop]=TryExprOp [mapforin]=MapForin )
 	for n in $(printf '%s\n' "${!ASMS[@]}" | sort); do
 		dll="$ROOT/build/il-$n/${ASMS[$n]}.dll"
 		[[ -f "$dll" ]] || continue

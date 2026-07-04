@@ -149,7 +149,37 @@ runtime hang/throw. Audit the `?? cands[0]` / Rule-4 / suspend-stub sites and ma
 - **DEEP bundle-8 (large, architectural):** A2 = the `clrName`/`ClrTypeRegistry` facadegen-interop resolution in the kotc
   frontend (the keystone); A5 primitive shapes; A3 single-type `clr:`/`clrg:` arms; A7 `func:` delegate-shape; A8
   monomorphized `<>dotkt_KIterator/CharSequence/RW-RO` synthetics. Best started in a fresh, light-context session.
-- **SMALL quick-wins:** coverage (exception-across-suspended-Task; `@RestrictsSuspension` cases = 0 today; wire `il-coldvirt`);
-  which-interface (EmptyMap → IReadOnlyDictionary; ClrMatchGroupCollection missing `contains`).
+- ~~**SMALL quick-wins:** coverage (exception-across-suspended-Task; `@RestrictsSuspension`; wire `il-coldvirt`);
+  which-interface (EmptyMap → IReadOnlyDictionary; ClrMatchGroupCollection missing `contains`).~~ **DONE (family 6) — see below.**
+
+## Family-6 progress (2026-07-05) — coverage + which-interface quick-wins
+- **Coverage `il-coexc`** — exception across a suspended Task boundary (throw-after-await; throw across a nested suspend
+  frame; awaiting a genuinely-faulted .NET Task). No bug: the cold-core/Task bridge (TCS.SetException /
+  resumeWithException / await GetResult rethrow) already propagates correctly. Added as a green regression lock.
+- **Coverage `il-corestrict`** — a USER-DEFINED `@RestrictsSuspension` receiver, driven by the receiver-form
+  `startCoroutine(receiver, completion)`. **FIXED a real bir2cir bug:** a synchronous Unit-returning scope member's
+  DIRECT cold entry (`SuspendColdLowering.ColdEntryDirect`) fell off the end with no return value (ilverify
+  ReturnMissing / runtime InvalidProgramException) — the SM branch appended the trailing `return Unit`, the direct
+  branch did not. `@RestrictsSuspension` itself was proven neutral to the cold lowering (identical crash without it).
+- **Wired `il-coldvirt`** — the previously-DEAD generic-class instance-member suspend fixture; registered + green.
+- **`il-regexgroups` (which-interface, ClrMatchGroupCollection)** — `MatchResult.groups` was untested (il-regex never
+  touches it) and BROKEN: `ClrMatchGroupCollection : AbstractCollection<MatchGroup?>` failed to type-load
+  (`Could not load type kotlin.collections.AbstractCollection`1`) on first `.groups` read, and had no direct
+  `contains`. **FIXED stdlib-side:** it now implements `MatchNamedGroupCollection` DIRECTLY (spelling out
+  `contains`/`containsAll`/`isEmpty`), like ClrMatchResult/ClrSubList — no abstract-generic base. `.groups`, by-index/
+  by-name access, iteration and `group in match.groups` all work.
+- **`il-emptymap` (which-interface, EmptyMap) — DEFERRED, not fixable cleanly.** EmptyMap → IReadOnlyDictionary is
+  **architecturally blocked** (Codex-confirmed): `Map` @ClrTypeAlias-es to the MUTABLE `IDictionary` (a binding
+  decision — a read-only/mutable split breaks `MutableMap:Map` subtyping at the IL level, since BCL `IDictionary`
+  does not extend `IReadOnlyDictionary`), so `emptyMap(): Map<K,V>` must stay `IDictionary`-compatible; read-only-ness
+  is Kotlin-frontend-enforced (same limitation class as the family-2 Lazy deferral). `il-emptymap` locks the correct
+  read-only-empty behavior green.
+- **Two deeper bugs FLAGGED (not silently XFAIL'd), out of family-6 quick-win scope:**
+  1. **bir2cir:** a suspension inside a `for (x in array)` loop (`forArray` BIR node, e.g. from a vararg) is
+     mis-lowered — EmitStmt has no `forArray` case, so the suspend call is hoisted OUT of the loop and the loop var is
+     never an SM field (ilemit "load unknown var"). Suspending `for`-over-`List` works (iterator desugaring; il-coldcf CF4).
+  2. **stdlib:** `MatchResult.groupValues` throws `EntryPointNotFound: ICollection.get_Count()` from `clrCollAdd` —
+     the `(0 until g.count).map { … }` `.map`-over-`IntRange` path inside the stdlib mis-resolves its ArrayList's
+     `ICollection.get_Count`. Independent of the ClrMatchGroupCollection fix.
 - **LEGIT-STAYS:** numeric conv (`toInt`→conv is a primitive IL op); .NET event `add_/remove_` + injected indexer `get_Item`
   (real facadegen interop, not a kotlin.* leak).

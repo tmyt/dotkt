@@ -2086,7 +2086,17 @@ static class SuspendColdLowering
         {
             // For an instance member the cold entry stays an instance method — `this` in the cloned body remains
             // valid. For a top-level fun the body has no `this`. Either way no rewrite is needed (no suspension).
-            return ColdMethod((JsonArray)body.DeepClone());
+            var cloned = (JsonArray)body.DeepClone();
+            // The cold entry returns kotlin.Any (so a value return boxes). A void/Unit-returning suspend fn body
+            // may fall off the end with no explicit `return` (e.g. `{ items.add(v) }`) — the SM (suspension) branch
+            // appends the trailing `return Unit` at Build() (bodyOut); the direct (no-suspension) branch must do the
+            // SAME, else the cold entry falls through with no value on the stack (ilverify ReturnMissing / a runtime
+            // InvalidProgramException — surfaced by a user-authored createCoroutineUnintercepted/startCoroutine driver
+            // over a restricted-scope suspend member, e.g. cases/il-corestrict).
+            if (_resultType is "void" or "kotlin.Unit"
+                && !(cloned.Count > 0 && cloned[^1] is JsonObject last && Str(last["k"]) == "return"))
+                cloned.Add(Ret(NullConst("kotlin.Any")));
+            return ColdMethod(cloned);
         }
 
         JsonObject ColdMethod(JsonArray body)
