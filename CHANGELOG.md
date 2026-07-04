@@ -5,6 +5,32 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit (zero-XFAIL push): made the value-type-receiver ilverify findings VERIFIABLE — pruned 6 `XFAIL_ILVERIFY`
+  entries (`taskawait`/`genasync`/`cobuild`/`comaindrain`/`gen3`/`collrealkt`).** Three ilemit codegen fixes, each the
+  exact C#-emitted pattern:
+  - **value-type-receiver virtual calls** (the cold-core await dance's `TaskAwaiter` struct): a bare `callvirt` on a
+    value-type receiver is `CallVirtOnValueType` (ilverify-rejected, JIT-tolerated). New `EmitInstanceCall` picks the
+    verifiable opcode in `EmitClrCall`/`EmitNativeClrCall`: a virtual FINAL impl declared on the value type (a struct's
+    interface-impl, e.g. `TaskAwaiter.OnCompleted` implementing `INotifyCompletion`) → direct `call` on the address; a
+    virtual NON-final method inherited by the value type (`object.ToString`) → `constrained. <VT>; callvirt`; reference
+    receiver → `callvirt`. `taskawait`/`genasync`/`cobuild`/`comaindrain` now Verified and still run 43·7 / 7 / 25 / start·42.
+  - **`compareTo` on a generic-parameter receiver** (`gen3`): the `constrainedCall` path used the non-generic
+    `IComparable::CompareTo(object)` workaround whenever `IComparable<T>` was a TypeBuilderInstantiation. For a generic
+    PARAMETER receiver (`!!T`, `T : Comparable<T>`) that is unverifiable — the constraint proves only `IComparable<T>`,
+    not the non-generic `IComparable` (StackUnexpected found `T` expected `System.IComparable`). Scoped the workaround to
+    genuinely-emitted value-type instantiations (`!recvType.IsGenericParameter`); a generic-param receiver now emits the
+    C# pattern `constrained. !!T; callvirt IComparable\`1<!!T>::CompareTo(!0)` (JIT-safe MethodSpec over a type param).
+    `gen3` Verified + runs 7/banana/10.
+  - **`object`→value-type/generic-param return coercion** (`collrealkt`): `EmitReturnCoerced` didn't cast a REFERENCE
+    return value (`object`, e.g. the erased generic stdlib return `clrMapGet<K,V>:object`) into a value-type/generic-param
+    return slot `V` (StackUnexpected found ref `object` expected value `V`). Added the universal cast `unbox.any <ret>`
+    (not `castclass` — that JIT-crashes value-type instantiations). `collrealkt` Verified + runs 10/30/500/b,a,c/two.
+  - **remaining `XFAIL_ILVERIFY` are non-ilemit**: `iter`/`iterable` are a **bir2cir/kotc dual-representation defect** —
+    the BIR carries TWO CLR identities for one Kotlin `Iterator<Int>` (the app-local monomorphized synthetic
+    `<>dotkt_KIterator_kotlin_Int` AND the rt-stdlib generic `clrg:kotlin.collections.Iterator[int]`); unifying them to a
+    single canonical CLR representation is a Kotlin↔CLR type-lowering decision (Codex-confirmed), not an ilemit cast.
+    `chunk`/`collops2`/`tryexprop` remain their previously-documented bir2cir dual-rep / cross-module-default / eval-order
+    findings. Both XFAIL reasons rewritten to name the exact upstream defect.
 - **ilemit (bundle-6 ④): diagnosed `Char.digitToIntOrNull()` InvalidProgram — root cause is in kotc, NOT ilemit;
   added the `il-digittoint` repro (run-XFAIL) pointing at the exact BirEmitter site.** `'7'.digitToIntOrNull()`
   aborts with `InvalidProgramException` inside `kotlin.text.CharKt.digitToIntOrNull` (the whole method body is
