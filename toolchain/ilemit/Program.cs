@@ -2779,6 +2779,24 @@ sealed partial class Emitter
         return param == arg;
     }
 
+    // Emit the actual call opcode for an instance/static .NET method whose receiver (if any) is already on the stack
+    // (by ADDRESS when `recvType` is a value type — see EmitAddr at the call sites). Chooses the verifiable opcode:
+    //   - static or non-virtual method                          -> `call`
+    //   - virtual method, REFERENCE receiver                     -> `callvirt`
+    //   - virtual FINAL method whose impl is on the value type   -> `call` (value types are sealed; e.g. the TaskAwaiter
+    //       struct's INotifyCompletion.OnCompleted, marked virtual-final in metadata — C# emits a direct `call` on the &)
+    //   - virtual NON-final method inherited by the value type   -> `constrained. <VT>; callvirt` (e.g. object.ToString
+    //       on a struct that doesn't override it — the prefix lets the JIT box/dispatch)
+    // A bare `callvirt` on a value-type receiver is CallVirtOnValueType (ilverify-rejected though JIT-tolerated).
+    void EmitInstanceCall(MethodInfo mi, bool instance, Type recvType)
+    {
+        if (!(instance && mi.IsVirtual)) { _il.Emit(OpCodes.Call, mi); return; }
+        if (!recvType.IsValueType) { _il.Emit(OpCodes.Callvirt, mi); return; }
+        if (mi.IsFinal) { _il.Emit(OpCodes.Call, mi); return; }   // value type's own sealed impl -> direct call on the address
+        _il.Emit(OpCodes.Constrained, recvType);
+        _il.Emit(OpCodes.Callvirt, mi);
+    }
+
     Type EmitClrCall(JsonElement e, bool instance, bool deref = true)
     {
         // `ClrRef` (not `ResolveType`) so a method on a constructed generic .NET type (`Collection<int>`) resolves.
@@ -2878,7 +2896,7 @@ sealed partial class Emitter
             else { EmitExpr(e.GetProperty("recv")); if (arrayCloneFallback && !typeof(System.Array).IsAssignableFrom(type)) _il.Emit(OpCodes.Castclass, typeof(System.Array)); }
         }
         EmitArgs(e.GetProperty("args"), mi.GetParameters());
-        _il.Emit(instance && mi.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, mi);
+        EmitInstanceCall(mi, instance, type);
         // A `ref T`-returning method used as a value -> dereference the managed pointer (value copy). The live-ref
         // form (`byrefOf(m())`, behind `var x by byref(m())`) passes deref:false to keep the pointer.
         if (mi.ReturnType.IsByRef)
@@ -2943,7 +2961,7 @@ sealed partial class Emitter
             else EmitExpr(e.GetProperty("recv"));
         }
         EmitArgs(e.GetProperty("args"), mi.GetParameters());
-        _il.Emit(instance && mi.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, mi);
+        EmitInstanceCall(mi, instance, type);
         if (mi.ReturnType.IsByRef)
         {
             var elem = mi.ReturnType.GetElementType();
