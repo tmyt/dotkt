@@ -2510,8 +2510,50 @@ static class IteratorConsumerNormalization
                 (initOwner.StartsWith("kotlin.", StringComparison.Ordinal)
                     || initOwner.StartsWith("<>dotkt_ClrH_kotlin_", StringComparison.Ordinal)))
             {
-                map[vn2] = elem2;
-                obj["type"] = "clrg:" + head + "[" + elem2 + "]";
+                // MUTABLE-MAP for-in REROUTE (bundle-6 BUG-2): `for ((k,v) in mm)` desugars to
+                // `MutableMap.iterator(): MutableIterator<MutableEntry>`, which lowers to the SAME signature
+                // `MapsKt.iterator(IDictionary<K,V>)` as the immutable `Map.iterator(): Iterator<Map.Entry>` — a genuine
+                // COLLISION. ilemit binds the app's `iterator` call by name to the IMMUTABLE overload (the mutable one
+                // is emitted as `iterator$dup2`), whose runtime iterator is `Iterator<Map.Entry>` — so hasNext/next
+                // (typed MutableEntry from kotc) dispatch on a generic instantiation the object doesn't implement ->
+                // EntryPointNotFound. Sidestep the collision: reroute the init to the SAME entries-based iterator that
+                // `for (e in mm.entries)` already uses successfully — `iteratorOverEnumerable(clrMapMutableEntries(mm))`
+                // — which yields a genuine `Iterator<MutableEntry>` (KotlinIteratorOverEnumerator over the live
+                // ClrMutableMapEntry snapshot). Everything then stays consistently typed on MutableEntry (ilverify-clean),
+                // and the read Iterator matches the wrapper's implemented interface. Only the MUTABLE entry element is
+                // rerouted; the immutable `Map.iterator()` path already works and is left untouched.
+                const string MutEntry = "@kotlin.collections.MutableMap$MutableEntry[";
+                if (elem2.StartsWith(MutEntry, StringComparison.Ordinal)
+                    && Str(init2["owner"]) == "kotlin.collections.MapsKt" && Str(init2["method"]) == "iterator"
+                    && init2["args"] is JsonArray iargs && iargs.Count == 1 && iargs[0] is JsonNode recv0)
+                {
+                    var (ek, ev) = EntryKvArgs(elem2);
+                    obj["init"] = new JsonObject
+                    {
+                        ["k"] = "callStatic",
+                        ["owner"] = Bridge,
+                        ["method"] = "iteratorOverEnumerable",
+                        ["args"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["k"] = "callStatic",
+                                ["owner"] = "kotlin.collections.ClrMapDefaultsKt",
+                                ["method"] = "clrMapMutableEntries",
+                                ["args"] = new JsonArray { recv0.DeepClone() },
+                                ["typeArgs"] = new JsonArray { ek, ev },
+                            },
+                        },
+                        ["typeArgs"] = new JsonArray { elem2 },
+                    };
+                    map[vn2] = elem2;
+                    obj["type"] = "clrg:kotlin.collections.Iterator[" + elem2 + "]";
+                }
+                else
+                {
+                    map[vn2] = elem2;
+                    obj["type"] = "clrg:" + head + "[" + elem2 + "]";
+                }
             }
             // `iterator()` dispatched through the monomorphized `<>dotkt_KIterable_<elem>` synthetic on a value that
             // came FROM THE RT STDLIB (`for ((i,v) in xs.withIndex())`: withIndex returns an rt IndexingIterable,
@@ -2560,6 +2602,29 @@ static class IteratorConsumerNormalization
         }
         else if (node is JsonArray arr)
             foreach (var it in arr) if (it != null) Process(it, map);
+    }
+
+    // The (K, V) type args of a Map.Entry / MutableEntry element token (`@kotlin.collections.MutableMap$MutableEntry[
+    // string,int]` -> ("string","int")); ("object","object") when erased/unparseable. Used to instantiate the
+    // clrMapMutableEntries<K,V> reroute target.
+    static (string, string) EntryKvArgs(string elem)
+    {
+        var br = elem.IndexOf('[');
+        if (br < 0 || !elem.EndsWith("]", StringComparison.Ordinal)) return ("object", "object");
+        var inner = elem[(br + 1)..^1];
+        // top-level comma split (the K/V args may themselves be constructed generics with nested commas).
+        var depth = 0; var comma = -1;
+        for (var i = 0; i < inner.Length; i++)
+        {
+            var c = inner[i];
+            if (c == '[') depth++;
+            else if (c == ']') depth--;
+            else if (c == ',' && depth == 0) { comma = i; break; }
+        }
+        if (comma < 0) return (inner.Length > 0 ? inner : "object", "object");
+        var k = inner[..comma];
+        var v = inner[(comma + 1)..];
+        return (k.Length > 0 ? k : "object", v.Length > 0 ? v : "object");
     }
 
     // `@kotlin.collections.Iterator[<elem>]` / `@kotlin.collections.MutableIterator[<elem>]` -> (bare head, elem);
