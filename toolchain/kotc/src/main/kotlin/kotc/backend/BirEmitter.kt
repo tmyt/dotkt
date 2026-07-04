@@ -4427,8 +4427,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		nullableElem(t)?.let { return "nullable:$it" }
 		if (isArrayType(t)) return "array:" + arrayElemType(t)
 		val fqp = t.classFqName?.asString()
-		// kotlin.text.Regex -> System.Text.RegularExpressions.Regex.
-		if (fqp == "kotlin.text.Regex") return "clr:System.Text.RegularExpressions.Regex"
+		// kotlin.text.Regex stays its bare `kotlin.*` FQN here (falls through to the user-class `@kotlin.text.Regex`
+		// path below); bir2cir substitutes it to System.Text.RegularExpressions.Regex off the stdlib's @ClrTypeAlias
+		// on the Regex class (the retired birType hardcode's job, now metadata-driven — layer purity, no CLR name in kotc).
 		// NOTE: kotlin.text.MatchResult is a REAL emitted Kotlin interface (runtime/stdlib/.../MatchResult.kt) with a real
 		// CLR realization (ClrMatchResult over a System...Match); it must NOT be aliased to System...Match here — doing so
 		// made `ClrMatchResult : MatchResult` try to implement a CLASS as an interface (TypeLoadException). A MatchResult

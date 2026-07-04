@@ -5,6 +5,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Layer purity: `kotlin.text.Regex` -> `System.Text.RegularExpressions.Regex` is no longer a kotc `birType`
+  hardcode — bir2cir substitutes the TYPE token off the stdlib `@ClrTypeAlias`.** The Regex CALL lowering was
+  already retired (bir2cir reads `@ClrTypeAlias`/`@ClrIntrinsic` from the ref.dll), leaving only the type token
+  in kotc — an inconsistency. `kotlin.text.Regex` already carries `@kotlin.clr.ClrTypeAlias("System.Text.
+  RegularExpressions.Regex")` (`libraries/stdlib/clr/kotlin/text/regex/RegexClr.kt`), so deleting the kotc
+  `birType` special-case (`toolchain/kotc/.../BirEmitter.kt`) lets it fall through to the plain
+  `@kotlin.text.Regex` FQN, which `BirTypeLowering` rewrites to `clr:System.Text.RegularExpressions.Regex` from
+  the alias index (kotc no longer knows the BCL type name). `il-regex` stays green + ilverify-clean.
 - **Layer purity: the `Throwable.message`/`.cause` -> `System.Exception.Message`/`.InnerException` DOUBLE lowering
   is retired — bir2cir now owns it via the `@ClrTypeAlias`/`@ClrProperty` substitution.** kotc AND ilemit each
   hardcoded the BCL member names (`get_Message`/`get_InnerException`), a layer violation: exception types are
