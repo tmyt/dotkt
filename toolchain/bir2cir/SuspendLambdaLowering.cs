@@ -1,11 +1,12 @@
-// bir2cir — SuspendLambdaLowering (bundle-6 P3 wave-2b STEP 1, Part B): the DORMANT consumer of the
+// bir2cir — SuspendLambdaLowering (bundle-6 P3 wave-2b, Part B): the LIVE consumer of the
 // `suspendLambdaNew` BIR node. Replaces each such node with `new <mangled>_lambdaN$sm(captures..., null)`
 // and synthesizes the SuspendLambda state machine (via SuspendColdLowering's FunGen lambda mode — the SAME
 // invokeSuspend/label/spill/field machinery the named-fun cold lowering uses).
 //
-// kotc does NOT emit `suspendLambdaNew` yet (Part B lands the consumer FIRST, before the producer, so an
-// unrecognized node can never reach ilemit as an unknown-node break). Against every current input this pass
-// is a verified NO-OP (no node matches). It is exercised by a hand-crafted fixture — see the report.
+// kotc emits `suspendLambdaNew` for every `suspend` lambda literal (BirEmitter.kt, ~:1912); this pass is the
+// producer's counterpart and is exercised by the gate (cases/il-lam1, il-lam2 — a capturing suspend lambda
+// with a real suspend call). The consumer landed BEFORE the producer during the rollout, so an unrecognized
+// node could never reach ilemit as an unknown-node break.
 //
 // The `suspendLambdaNew` contract (v1; the spec kotc step 2 emits to):
 //   { "k":"suspendLambdaNew",

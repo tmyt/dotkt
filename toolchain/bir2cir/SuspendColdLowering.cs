@@ -75,10 +75,10 @@ static class SuspendColdLowering
     const string ThrowOnFailureOwner = "kotlin.coroutines.clr.internal.ContinuationImplKt";
 
     // Node kinds whose PRESENCE around a suspension disqualifies the fun (leave untouched for the ilemit
-    // throw-stub): suspend lambdas / closures / the old kotc CPS/sequence nodes.
+    // throw-stub): suspend lambdas / closures / the old kotc inline-collection nodes.
     static readonly HashSet<string> LambdaKinds = new(StringComparer.Ordinal)
     {
-        "closureNew", "delegateNew", "lambda", "sequenceNew", "forEachInline", "repeatInline",
+        "closureNew", "delegateNew", "lambda", "forEachInline", "repeatInline",
         "steps", "coClass",
         // Part B: a suspend-lambda VALUE inside a suspend fun disqualifies the enclosing fun from cold
         // transform (its own SM is built separately by SuspendLambdaLowering, which runs after).
@@ -93,21 +93,31 @@ static class SuspendColdLowering
     // already run when this reaches bir2cir: the `@InlineOnly inline` intrinsic's fake body (a bare
     // `throw NotImplementedError("Implementation of suspendCoroutineUninterceptedOrReturn is intrinsic")`)
     // survives as the `valueBlock` RESULT, and its `{ c -> … }` block is materialized as a separate closure
-    // class captured into a dead `var __inlN` in the block's stmts. That message string is the ONLY reliable,
-    // stable marker (the frontend never invokes `block`, so no `suspendCall` tag exists). We recognize it here
-    // and lower it to a real cold suspension point — inlining the closure's invoke body, binding `c` to the SM.
-    // This is kotc's live emitSuspendIntrinsic/coSelfCont (BirEmitter.kt:1669-1688) re-expressed over the cold SM.
+    // class captured into a dead `var __inlN` in the block's stmts. We recognize such a block here and lower it
+    // to a real cold suspension point — inlining the closure's invoke body, binding `c` to the SM. This is kotc's
+    // live emitSuspendIntrinsic/coSelfCont (BirEmitter.kt:1669-1688) re-expressed over the cold SM.
+    //
+    // DETECTION (see IsSuspendIntrinsicBlock — the SINGLE recognizer; every call routes through it):
+    //  (1) PREFERRED — a stable `suspendIntrinsic:true` flag on the valueBlock. kotc does NOT emit this tag today;
+    //      it SHOULD (a one-line marker on the lowered intrinsic block would retire the fragile string sniff). The
+    //      recognizer already reads it, so the day kotc stamps it the string path below becomes dead weight.
+    //  (2) FALLBACK — the intrinsic's fake `throw NotImplementedError(<SuspendIntrinsicMarker>)` result string.
+    //      Fragile (couples to a stdlib message), but the ONLY marker available until kotc emits (1): the frontend
+    //      never invokes `block`, so no `suspendCall` tag exists on the intrinsic call itself.
     const string SuspendIntrinsicMarker = "suspendCoroutineUninterceptedOrReturn is intrinsic";
+    const string SuspendIntrinsicFlag = "suspendIntrinsic";
 
-    // Is this a `valueBlock` whose result is the intrinsic's fake `throw NotImplementedError(<marker>)`? Such a
-    // block IS a suspension point (its embedded closure is the suspension body), NOT an ordinary lambda value.
+    // Is this a `valueBlock` that is the lowered `suspendCoroutineUninterceptedOrReturn` intrinsic? Such a block
+    // IS a suspension point (its embedded closure is the suspension body), NOT an ordinary lambda value. The
+    // SINGLE, centralized recognizer — prefers the stable flag (1), falls back to the message string (2).
     static bool IsSuspendIntrinsicBlock(JsonNode node)
     {
         if (node is not JsonObject o || Str(o["k"]) != "valueBlock") return false;
+        if (Bool(o[SuspendIntrinsicFlag])) return true;                                 // (1) stable tag
         if (o["result"] is not JsonObject res || Str(res["k"]) != "throwExpr") return false;
         if (res["value"] is not JsonObject nw || Str(nw["k"]) != "new") return false;
         if (Str(nw["type"]) != "kotlin.NotImplementedError") return false;
-        return nw["args"] is JsonArray a && a.Count >= 1 && a[0] is JsonObject c0
+        return nw["args"] is JsonArray a && a.Count >= 1 && a[0] is JsonObject c0     // (2) message-string fallback
             && Str(c0["k"]) == "const" && (Str(c0["value"])?.Contains(SuspendIntrinsicMarker) ?? false);
     }
 
@@ -1407,13 +1417,16 @@ static class SuspendColdLowering
             var closureType = Str(closureNew?["closureType"]);
             if (closureType == null || !_closures.TryGetValue(closureType, out var closureCls))
             {
-                // No resolvable closure body: emit a bare suspension (store `this` as the continuation is impossible
-                // without the body). Return SUSPENDED unconditionally — never a genuine input, but keeps the SM valid.
-                var s0 = ++_state; var l0 = NextLabel(); RegisterResume(s0, l0);
-                outp.Add(SetField("label", IntConst(s0)));
-                outp.Add(Ret(Suspended()));
-                outp.Add(Label(l0));
-                return NullConst("kotlin.Any");
+                // Failure posture (LOUD): the suspendCoroutineUninterceptedOrReturn body is UNRESOLVABLE — its
+                // `{ c -> … }` closure class was not found in the compilation. Emitting a bare unconditional
+                // `return COROUTINE_SUSPENDED` here would compile to a coroutine that suspends PERMANENTLY (a silent
+                // runtime hang), turning a routing miss into a distant symptom. Fail at TRANSFORM time instead so the
+                // mis-routing is visible: either the closure class was dropped upstream, or the recognizer matched a
+                // non-intrinsic block. (A genuinely valid intrinsic always carries a resolvable closure class.)
+                throw new InvalidOperationException(
+                    $"unresolved suspendCoroutineUninterceptedOrReturn closure in '{(_ownerClass ?? _fileClass)}.{_name}' " +
+                    $"(closureType={closureType ?? "<none>"}): the intrinsic's `{{ c -> … }}` closure class is not in the " +
+                    "compilation — refusing to emit a permanently-suspending coroutine");
             }
 
             var invoke = (closureCls["methods"] as JsonArray)?.OfType<JsonObject>()
@@ -2266,8 +2279,14 @@ static class SuspendColdLowering
         // carries `suspendBridge:true` so ilemit stamps [KotlinFunction(Suspend)] (a re-consuming Kotlin sees `suspend fun`).
         JsonObject BuildBridge()
         {
-            var rKotlin = _resultType is "void" or "kotlin.Unit" ? "kotlin.Unit" : _resultType;
-            var taskType = "clrg:" + _taskBcl + "[" + rKotlin + "]";
+            var isUnit = _resultType is "void" or "kotlin.Unit";
+            var rKotlin = isUnit ? "kotlin.Unit" : _resultType;
+            // coroutine-abi.md §1: `suspend fun f(): Unit` -> a NON-generic public `Task` (the C#-idiomatic
+            // async-void-returning-Task shape); `suspend fun f(): R` -> `Task<R>`. The internal drive stays generic
+            // over Unit (TaskCompletionSource<Unit> / RootContinuation<Unit>); the returned `__tcs.Task` (a Task<Unit>)
+            // upcasts to the non-generic Task on return (Task<T> : Task). So ONLY the PUBLIC return type differs for Unit.
+            var taskType = "clrg:" + _taskBcl + "[" + rKotlin + "]";    // TaskCompletionSource<R>.Task runtime type
+            var taskRetType = isUnit ? "clr:" + _taskBcl : taskType;   // the public bridge return type
 
             // BUG 3: an ABSTRACT interface/member suspend fun -> an abstract Task<T> bridge SIGNATURE (no body, no
             // TCS drive). It carries the [KotlinFunction(Suspend)] trigger for round-trip; concrete overrides supply the
@@ -2287,7 +2306,7 @@ static class SuspendColdLowering
                     ["suspendBridge"] = true,
                     ["vis"] = "public",
                     ["params"] = aps,
-                    ["ret"] = taskType,
+                    ["ret"] = taskRetType,
                     ["body"] = new JsonArray(),
                     ["attrs"] = new JsonArray(),
                 };
@@ -2353,11 +2372,14 @@ static class SuspendColdLowering
                 : new JsonObject { ["k"] = "cast", ["type"] = rKotlin, ["e"] = Local("__r") };
             body.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = TcsCall(tcsType, "TrySetResult", rKotlin, resultVal) });
             body.Add(Label(skipL));
-            body.Add(Ret(new JsonObject
+            JsonNode tcsTask = new JsonObject
             {
                 ["k"] = "clrPropGet", ["type"] = tcsType, ["name"] = "Task", ["static"] = false,
                 ["recv"] = Local("__tcs"), ["retType"] = taskType,
-            }));
+            };
+            // Unit: upcast the Task<Unit> (TCS<Unit>.Task) to the non-generic public `Task` return (Task<T> : Task).
+            if (isUnit) tcsTask = new JsonObject { ["k"] = "cast", ["type"] = taskRetType, ["e"] = tcsTask };
+            body.Add(Ret(tcsTask));
 
             var ps = new JsonArray();
             foreach (var p in _params) ps.Add(p.DeepClone());
@@ -2375,7 +2397,7 @@ static class SuspendColdLowering
                 ["suspendBridge"] = true,
                 ["vis"] = "public",
                 ["params"] = ps,
-                ["ret"] = taskType,
+                ["ret"] = taskRetType,
                 ["body"] = body,
                 ["attrs"] = new JsonArray(),
             };
