@@ -4,7 +4,7 @@
 // an abstract-CLASS suspend member (il-coldabstract). Fetcher declares `suspend fun fetch()`; Fetcher42
 // overrides it; the suspend call `f.fetch()` (f typed as Fetcher) dispatches virtually through the interface
 // cold entry to the override. Drained synchronously by blockOn.
-import kotlin.clr.blockOn
+import dotkt.support.blockOn
 
 interface Fetcher { suspend fun fetch(): Int }
 class Fetcher42(val n: Int) : Fetcher { override suspend fun fetch(): Int = n + 1 }

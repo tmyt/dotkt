@@ -8,7 +8,7 @@
 // (The INTERFACE half — `interface Fetcher { suspend fun fetch() }` — remains blocked on a kotc gap: the
 // interface member is emitted without the `suspend`/`abstract`/`override` flags, so bir2cir cannot recognize
 // it; the fix is kotc-side [BirEmitter.kt:3524 ".NET-member generic branch missing suspend tag"].)
-import kotlin.clr.blockOn
+import dotkt.support.blockOn
 
 abstract class Base { abstract suspend fun poll(): Int }
 class Impl(val n: Int) : Base() { override suspend fun poll(): Int = n + 1 }

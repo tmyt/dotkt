@@ -37,7 +37,8 @@ declare -A XFAIL_ILVERIFY=(
 # The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
 # -classpath, REPLACING the JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). This preserves
 # full Kotlin semantics and is the BINDING invariant: kotlin.* comes from the JAR, never from facadegen
-# --scan-asm. (legacy coroutines jar dropped 2026-07-03: the cold-core surface is kotlin.clr.blockOn/delay/await.)
+# --scan-asm. (legacy coroutines jar dropped 2026-07-03: the stdlib cold-core surface is kotlin.clr.await ONLY;
+# blockOn/delay were dropped from the stdlib and re-homed to the test harness — cases/*/harness.kt = dotkt.support.)
 CP="$FE_JAR"
 
 # Build the compiler launcher ONCE (a plain Java app). Per-sample invokes then cost ~2s of JVM startup
@@ -240,16 +241,13 @@ il_check coldinst ColdInst "$ROOT/cases/il-coldinst" "$(printf '11\n12\n10\n42\n
 # coldabstract: bundle-6 ① BUG 3 — an abstract-CLASS suspend member's full vtable. Base emits an abstract cold
 # entry + an abstract Task<Int> bridge ([KotlinFunction(Suspend)]); Impl overrides both in lockstep; `b.poll()`
 # (b: Base) dispatches virtually through the cold entry. Runs sync -> 42 (no await, so ilverify-clean).
-il_check coldabstract ColdAbstract "$ROOT/cases/il-coldabstract" "42"
-# coldabstract: bundle-6 ① BUG 3 — an abstract-CLASS suspend member's full vtable. Base emits an abstract cold
-# entry + an abstract Task<Int> bridge ([KotlinFunction(Suspend)]); Impl overrides both in lockstep; `b.poll()`
-# (b: Base) dispatches virtually through the cold entry. Runs sync -> 42 (no await, so ilverify-clean).
-il_check coldabstract ColdAbstract "$ROOT/cases/il-coldabstract" "42"
+# (il_check_IMPORTS: the co-compiled dotkt.support blockOn harness imports System.Threading.Monitor -> facadegen.)
+il_check_imports coldabstract ColdAbstract "$ROOT/cases/il-coldabstract" "42"
 # ifacesuspend: bundle-6 ③ — the INTERFACE half of the abstract/interface suspend round-trip. kotc now tags an
 # interface `suspend fun` member with the neutral `"suspend":true`+`resultType` FACT (mirroring the abstract-CLASS
 # path), so bir2cir can synthesize the interface cold entry / Task<Int> bridge; Fetcher42 overrides both; `f.fetch()`
 # (f: Fetcher) dispatches virtually through the interface cold entry. Runs sync -> 42.
-il_check ifacesuspend IfaceSuspend "$ROOT/cases/il-ifacesuspend" "42"
+il_check_imports ifacesuspend IfaceSuspend "$ROOT/cases/il-ifacesuspend" "42"
 # seqyieldall: yieldAll E2E over the cold core — bir2cir cold-call `sig` disambiguates SequenceScope.yieldAll's
 # three same-named `$dotkt_suspend` overloads + ilemit sig-driven external-generic resolution (both landed).
 il_check seqyieldall SeqYieldAll "$ROOT/cases/il-seqyieldall" "$(printf 'a,b,c')"
@@ -442,7 +440,7 @@ il_check_imports comaindrain ComainDrain "$ROOT/cases/il-comaindrain" "$(printf 
 # correct -> start,42; carries the same TaskAwaiter CallVirtOnValueType ilverify formal-only finding as genasync.
 il_check_imports comaindrain ComainDrain "$ROOT/cases/il-comaindrain" "$(printf 'start\n42')"
 # monitordrain: locks the System.Threading.Monitor Wait/Pulse cross-thread DRAIN mechanism that
-# kotlin.clr.blockOn's BlockOnSink is built on (waiter Enter/`while(!done) Wait`/Exit; completer
+# the harness blockOn's BlockOnSink is built on (waiter Enter/`while(!done) Wait`/Exit; completer
 # Enter/set/`done=true`/Pulse/Exit on the same monitor). `99` is only observable after a genuine
 # cross-thread hand-off, so it proves Wait blocks + Pulse wakes. (blockOn's own E2E true-suspension
 # waits on await's slow path; this isolates the primitives it depends on — verified drain-correct.)
@@ -456,13 +454,11 @@ il_check_imports cofinally CoFinally "$ROOT/cases/il-cofinally" "$(printf 'close
 # suspend), bir2cir now spills the impure LEFT operand into an SM field BEFORE g()'s suspension segments
 # so its side effect (println "L") happens before g()'s ("G"). Before the fix: G,L; after: L,G,3.
 il_check coevalorder CoEvalOrder "$ROOT/cases/il-coevalorder" "$(printf 'L\nG\n3')"
-# lam1/lam2: bundle-6 P3 wave-2b — the suspend-LAMBDA payoff. kotc emits `suspendLambdaNew` (STEP 2,
-# landed) and bir2cir builds the SuspendLambda SM, but the generated SM `create()` returns
-# Continuation<object> while the stdlib base BaseContinuationImpl.create returns Continuation<Unit> ->
-# TypeLoadException at class load. Fix is a bir2cir one-liner (SuspendColdLowering.cs CreateMethod ret);
-# XFAIL until it lands, then these flip to PASS (42 / 15) and the entries get pruned.
-il_check lam1 Lam1Kt "$ROOT/cases/il-lam1" "42"
-il_check lam2 Lam2Kt "$ROOT/cases/il-lam2" "15"
+# lam1/lam2: bundle-6 P3 wave-2b — the suspend-LAMBDA payoff. kotc emits `suspendLambdaNew`, bir2cir builds
+# the SuspendLambda SM, and the dotkt.support blockOn harness drives it to completion on the cold core.
+# (il_check_IMPORTS: the co-compiled harness imports System.Threading.Monitor -> facadegen injects it.)
+il_check_imports lam1 Lam1Kt "$ROOT/cases/il-lam1" "42"
+il_check_imports lam2 Lam2Kt "$ROOT/cases/il-lam2" "15"
 il_check dsl Dsl "$ROOT/cases/il-dsl" "a[Pb]c"
 il_check object TObj "$ROOT/cases/il-object" "3"
 il_check gfac TGfac "$ROOT/cases/il-gfac" "$(printf '42\nhi')"

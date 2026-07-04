@@ -2,7 +2,7 @@
 // CAPTURES the outer local `n` (a SuspendLambda ctor param + field) and makes a suspend call to `h()`
 // (same-assembly cold entry). kotc emits `suspendLambdaNew` with captures=[n] and a suspendCall-tagged
 // body; bir2cir builds the SM (ctor takes n, invokeSuspend calls h's cold entry, resumes with the sum).
-import kotlin.clr.blockOn
+import dotkt.support.blockOn
 
 suspend fun h(): Int = 5
 

@@ -58,31 +58,23 @@ package kotlin.jvm
 @MustBeDocumented
 public actual annotation class JvmInline
 KT
-# 3c. kotlin.clr.blockOn / kotlin.clr.delay STUB ACTUALs — the common `expect`s
-#     (libraries/stdlib/common/src/kotlin/clr/CoroutinesH.kt) have CLR-free signatures but their REAL actuals
-#     (clr/taskinterop/kotlin/clr/Coroutines.kt) name Task, so taskinterop is jar-EXCLUDED. The jar is a
-#     never-executed frontend classpath, so a throwing stub actual satisfies expect/actual resolution and lets
-#     consumers `import kotlin.clr.blockOn`/`delay`. EXACT precedent = the JvmName/JvmInline stub actuals above
-#     (docs/design-coroutine-cold-core-task-bridge.md §12). The REAL bodies ride only ref.dll/rt.dll.
-cat > "$STAGE3/BlockOnStubActual.kt" <<'KT'
-package kotlin.clr
-public actual fun <T> blockOn(block: suspend () -> T): T = throw UnsupportedOperationException("frontend stub")
-public actual suspend fun delay(ms: Long) { throw UnsupportedOperationException("frontend stub") }
-KT
+# 3c. (removed) kotlin.clr.blockOn / delay were DROPPED from the stdlib — they are kotlinx/Track-2 primitives
+#     re-implemented in the TEST HARNESS over public primitives (docs/design-coroutine-cold-core-task-bridge.md
+#     §13). No common `expect` / jar stub actual remains; the core kotlin.clr coroutine surface is `await` ONLY.
 
 mapfile -t COMMON   < <(find libraries/stdlib/common/src -name '*.kt')
 mapfile -t SRC      < <(find libraries/stdlib/src -name '*.kt')
 mapfile -t UNSIGNED < <(find libraries/stdlib/unsigned/src -name '*.kt')
 mapfile -t BUILTINS < <(find "$STAGE" -name '*.kt')
 # CONVENTION: libraries/stdlib/clr/taskinterop/ is the jar-EXCLUDED, CLR-build-ONLY source set — the
-# Task-facing kotlin.clr surface (Task/Task0/TaskCompletionSource aliases, await/blockOn/delay,
-# RootContinuation). The frontend jar must stay the PURE Kotlin stdlib surface and not carry
-# System.Threading.Tasks-bound symbols (docs/design-coroutine-cold-core-task-bridge.md §5); frontend
-# resolution for await/blockOn/delay consumers rides kotc's kotlin.clr injection seam
-# (ClrTypeInjection.kt — bundle-6 P2), NOT this jar. build-stdlib-{ref,rt}.sh DO compile taskinterop/
-# (lib.sh collect_stdlib_sources finds all of clr/), so the declarations + bodies live in ref.dll/rt.dll.
+# Task-facing kotlin.clr surface (Task/Task0/TaskCompletionSource aliases, await, RootContinuation). The
+# frontend jar must stay the PURE Kotlin stdlib surface and not carry System.Threading.Tasks-bound symbols
+# (docs/design-coroutine-cold-core-task-bridge.md §5); frontend resolution for await consumers rides kotc's
+# kotlin.clr injection seam (ClrTypeInjection.kt — bundle-6 P2), NOT this jar. build-stdlib-{ref,rt}.sh DO
+# compile taskinterop/ (lib.sh collect_stdlib_sources finds all of clr/), so the declarations + bodies live
+# in ref.dll/rt.dll.
 mapfile -t CLR_PLAT < <(find libraries/stdlib/clr -name '*.kt' ! -path 'libraries/stdlib/clr/builtins/*' ! -path 'libraries/stdlib/clr/taskinterop/*' ! -name '_ArraysClr.kt')
-CLR_PLAT+=("$STAGE2/_ArraysClr.kt" "$STAGE3/JvmNameActual.kt" "$STAGE3/JvmInlineActual.kt" "$STAGE3/BlockOnStubActual.kt")
+CLR_PLAT+=("$STAGE2/_ArraysClr.kt" "$STAGE3/JvmNameActual.kt" "$STAGE3/JvmInlineActual.kt")
 COMMON_SOURCES=("${COMMON[@]}" "${SRC[@]}" "${UNSIGNED[@]}"); COMMON_CSV="$(IFS=,; echo "${COMMON_SOURCES[*]}")"
 # NOTE: the CLR stdlib no longer references the kotc-injected `ClrRef<T>`/`byref` intrinsics — its implicit-byref
 # bindings (atomics Interlocked, tryParseInt32, mathDivRemInt) now use plain-typed params marked @kotlin.clr.ClrRefArgument

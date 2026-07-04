@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Coroutine polish: `blockOn`/`delay` deleted from the stdlib and re-homed to the test harness (design
+  contradiction removed).** Per `docs/design-coroutine-cold-core-task-bridge.md` §13, neither is a stdlib
+  primitive — in upstream Kotlin `delay`/`runBlocking` live in `kotlinx.coroutines`, not `kotlin-stdlib` — so
+  the residual code that still shipped them contradicted the locked design. Deleted: the common `expect`
+  (`libraries/stdlib/common/src/kotlin/clr/CoroutinesH.kt`, whole file), the frontend-jar stub `actual`
+  (`scripts/build-stdlib-jar.sh` step 3c), and the real `actual`s + the Monitor-drain `BlockOnSink` impl in
+  `libraries/stdlib/clr/taskinterop/kotlin/clr/Coroutines.kt`. The stdlib `kotlin.clr` core coroutine surface
+  is now **`await` ONLY** (the genuine CLR async bridge); the `Task`/`Task0`/`TaskCompletionSource` aliases and
+  the `RootContinuation`/TCS bridge helper are untouched. `blockOn` is re-implemented in a pure-Kotlin **test
+  harness** over the public primitives (`startCoroutine`/`Continuation` + `System.Threading.Monitor`) with zero
+  compiler special-casing — a living proof that `runBlocking` is ordinary library code over the shared cold
+  core. The coroutine samples (`cases/il-{lam1,lam2,ifacesuspend,coldabstract,cobuild,genasync,cofinally,taskawait}`)
+  import `dotkt.support.blockOn` from a co-compiled `harness.kt`; the four synchronous cases moved to the
+  `il_check_imports` path (facadegen injects the harness's `Monitor`); `verify-roundtrip`'s three suspend
+  sections get the harness via `write_coharness` (+ `System.Threading.Monitor` added to their facadegen seeds).
 - **Zero-XFAIL FINAL: the last three `verify-differential` XFAILs (`m-b6`/`m-b9`/`m-b10`, the 2026-07-02 stdlib
   subtree-bump fallout) are FIXED — every gate is now XFAIL-empty.** These are the `maxOrNull`/`sumOf`/`groupBy`
   collection samples; each matched the JVM oracle after four fixes across three layers (pruned from `XFAIL_DIFF`):

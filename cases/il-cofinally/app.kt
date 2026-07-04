@@ -7,7 +7,7 @@
 // return, so it would not reproduce). Driven by blockOn.
 import System.Threading.Tasks.Task
 import kotlin.clr.await
-import kotlin.clr.blockOn
+import dotkt.support.blockOn
 
 class Res {
     fun close() { println("close") }

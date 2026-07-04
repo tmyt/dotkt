@@ -4,7 +4,7 @@
 // `blockOn { total() }` drives the cold Continuation core to completion and drains the root sink.
 import System.Threading.Tasks.Task
 import kotlin.clr.await
-import kotlin.clr.blockOn
+import dotkt.support.blockOn
 
 suspend fun compute(n: Int): Int {
     Task.Delay(1).await()   // real .NET async suspension over the P4 await lowering

@@ -25,7 +25,8 @@ while (( $# )); do
 done
 
 # The XFAIL baseline — MACHINE-READABLE (name -> reason). The three suspend-consuming sections drive the
-# library's suspend funs via the cold-core surface `kotlin.clr.blockOn`. The suspend machinery now emits
+# library's suspend funs via the test-harness `dotkt.support.blockOn` (write_coharness; blockOn was dropped
+# from the stdlib per design §13 and re-homed to the harness over public primitives). The suspend machinery now emits
 # (P2/P3/P4 done: in-module async runs — cf. verify-il genasync/cobuild), so these no longer abort on a
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
@@ -77,7 +78,7 @@ run_app() {
 
 # kotc resolves the stdlib (kotlin.*) from the CLR FRONTEND JAR (scripts/build-stdlib-jar.sh), REPLACING the
 # JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). (legacy coroutines jar dropped 2026-07-03: the
-# consumer drives suspend funs via the cold-core surface kotlin.clr.blockOn.)
+# consumer drives suspend funs via the test-harness dotkt.support.blockOn — see write_coharness.)
 CP="$FE_JAR"
 
 # Build the toolchain once (UNCONDITIONALLY — the gate tests the current sources).
@@ -116,6 +117,45 @@ emit_il() {
 	dotnet "$BIR2CIR_DLL" "$cir" "${refarg[@]}" "${birs[@]}" >/dev/null 2>&1 || true
 	dotnet "$ILEMIT_DLL" "$out" "$asm" "${refs[@]}" "$cir"/*.cir.json >/dev/null 2>&1 || true
 	[[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$out/" 2>/dev/null || true
+}
+
+# write_coharness <appDir> — drop the coroutine TEST HARNESS (dotkt.support.blockOn) beside a suspend-consuming
+# app so it co-compiles. `blockOn` was DROPPED from kotlin.clr (docs/design-coroutine-cold-core-task-bridge.md §13);
+# it is a kotlinx/Track-2 primitive, re-implemented HERE in pure Kotlin over the PUBLIC stdlib primitives
+# (startCoroutine/Continuation) + System.Threading.Monitor (facadegen-seeded), with ZERO compiler special-casing.
+write_coharness() {
+	cat > "$1/harness.kt" <<'EOF'
+@file:Suppress("UNCHECKED_CAST")
+package dotkt.support
+import System.Threading.Monitor
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+
+// Runs [block] on the cold core and BLOCKS until it completes — the runBlocking analog for tests.
+public fun <T> blockOn(block: suspend () -> T): T {
+    val sink = BlockOnSink()
+    block.startCoroutine(sink)
+    Monitor.Enter(sink)
+    try { while (!sink.done) Monitor.Wait(sink) } finally { Monitor.Exit(sink) }
+    sink.exception?.let { throw it }
+    return sink.value as T
+}
+private class BlockOnSink : Continuation<Any?> {
+    var done: Boolean = false
+    var value: Any? = null
+    var exception: Throwable? = null
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override fun resumeWith(result: Result<Any?>) {
+        Monitor.Enter(this)
+        try {
+            value = result.getOrNull(); exception = result.exceptionOrNull(); done = true
+            Monitor.Pulse(this)
+        } finally { Monitor.Exit(this) }
+    }
+}
+EOF
 }
 
 # ----- MARKER round-trip: Kotlin class-nature facts with no faithful .NET analog survive re-consumption -----
@@ -190,7 +230,7 @@ EOF
 
 # The Kotlin CONSUMER: uses every restored modifier with idiomatic Kotlin syntax.
 cat > "$R/app/app.kt" <<'EOF'
-import kotlin.clr.blockOn
+import dotkt.support.blockOn
 fun main() {
     val a = Vec(1, 2)
     val b = Vec(3, 4)
@@ -207,7 +247,8 @@ CLR_TYPES_METADATA="" "$LAUNCHER" "$R/lib" -no-stdlib -classpath "$CP" -d "$R/li
 emit_il "$R/libil" KLib "$R/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$R/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
 # 2. facadegen --meta reads the attributes back into the injection metadata.
-dotnet "$FACADEGEN_DLL" --meta "$R/k.meta" --refs "$REFS$R/libil/KLib.dll" Vec LibKt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$R/k.meta" --refs "$REFS$R/libil/KLib.dll" Vec LibKt System.Threading.Monitor >/dev/null 2>&1 || true
+write_coharness "$R/app"
 # 3. compile the consumer WITH the metadata (the injector restores infix/operator/suspend/top-level on FIR).
 CLR_TYPES_METADATA="$R/k.meta" "$LAUNCHER" "$R/app" -no-stdlib -classpath "$CP" -d "$R/appbir" >/dev/null 2>&1 || true
 emit_il "$R/appil" KApp --ref "$R/libil/KLib.dll" "$R/appbir"/*.bir.json
@@ -318,7 +359,7 @@ fun <T> orDefault(x: T?, label: String = "none"): String =         // generic + 
 fun <T> countAll(vararg xs: T): Int = xs.size                      // generic + VARARG
 EOF
 cat > "$GG/app/app.kt" <<'EOF'
-import kotlin.clr.blockOn
+import dotkt.support.blockOn
 fun main() {
     val a = Box(3); val b = Box(4)
     println((a + b).first)                    // 3    generic operator +
@@ -339,7 +380,8 @@ EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$GG/lib" -no-stdlib -classpath "$CP" -d "$GG/libbir" >/dev/null 2>&1 || true
 emit_il "$GG/libil" KLib "$GG/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$GG/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$GG/k.meta" --refs "$REFS$GG/libil/KLib.dll" Box Pair2 Holder LibKt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$GG/k.meta" --refs "$REFS$GG/libil/KLib.dll" Box Pair2 Holder LibKt System.Threading.Monitor >/dev/null 2>&1 || true
+write_coharness "$GG/app"
 CLR_TYPES_METADATA="$GG/k.meta" "$LAUNCHER" "$GG/app" -no-stdlib -classpath "$CP" -d "$GG/appbir" >/dev/null 2>&1 || true
 emit_il "$GG/appil" KApp --ref "$GG/libil/KLib.dll" "$GG/appbir"/*.bir.json
 cp "$GG/libil/KLib.dll" "$GG/appil/" 2>/dev/null || true
@@ -447,7 +489,7 @@ open class Lib(val k: Int) {
 }
 EOF
 cat > "$MP/app/app.kt" <<'EOF'
-import kotlin.clr.blockOn
+import dotkt.support.blockOn
 suspend fun doFetch(lib: Lib, b: Box<Int>): Int = with(lib) { b.fetch() }   // suspend member ext via with() (scope-fn CPS)
 suspend fun doHidden(lib: Lib, b: Box<Int>): Int = lib.useHidden(b)
 fun main() {
@@ -466,7 +508,8 @@ EOF
 CLR_TYPES_METADATA="" "$LAUNCHER" "$MP/lib" -no-stdlib -classpath "$CP" -d "$MP/libbir" >/dev/null 2>&1 || true
 emit_il "$MP/libil" KLib "$MP/libbir"/*.bir.json
 dotnet "$RETARGET_DLL" "$MP/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
-dotnet "$FACADEGEN_DLL" --meta "$MP/k.meta" --refs "$REFS$MP/libil/KLib.dll" Box Lib >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$MP/k.meta" --refs "$REFS$MP/libil/KLib.dll" Box Lib System.Threading.Monitor >/dev/null 2>&1 || true
+write_coharness "$MP/app"
 CLR_TYPES_METADATA="$MP/k.meta" "$LAUNCHER" "$MP/app" -no-stdlib -classpath "$CP" -d "$MP/appbir" >/dev/null 2>&1 || true
 emit_il "$MP/appil" KApp --ref "$MP/libil/KLib.dll" "$MP/appbir"/*.bir.json
 cp "$MP/libil/KLib.dll" "$MP/appil/" 2>/dev/null || true

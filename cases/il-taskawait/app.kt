@@ -14,7 +14,7 @@ import System.Threading.Tasks.Task
 import System.Threading.Tasks.Task1
 import System.Threading.Tasks.TaskCompletionSource1
 import kotlin.clr.await
-import kotlin.clr.blockOn
+import dotkt.support.blockOn
 
 suspend fun genAwait(): Int {
     val tcs = TaskCompletionSource1<Int>()
