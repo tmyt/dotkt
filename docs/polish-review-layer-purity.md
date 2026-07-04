@@ -78,3 +78,44 @@ Address AFTER the XFAIL set is zero (user-directed ordering). Theme: kotc still 
 The dominant theme is **layer-purity migration**: move BCL-name/type-specialization knowledge out of kotc into
 bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution (kotc emits semantic FQN/metadata; bir2cir derives the CLR form).
 Group by mechanism: (1) exception/Regex/Lazy/Closeable TYPE aliases -> @ClrTypeAlias read by bir2cir (delete kotc birType specializations + the ilemit Throwable double-lowering); (2) BCL member/accessor slot names (get_Count/get_Item/GetEnumerator/Dispose/Count/Append/get_Chars) -> bir2cir member substitution; (3) indexer/event -> semantic BIR nodes (clrIndexerGet/Set, clrEventAdd/Remove) + metadata; (4) numeric conversion -> "numeric conversion fact" in kotc, conv in bir2cir; (5) the clrName/clrInteropName hotspot -> split/retire; (6) coroutine: delete delay/blockOn residue, Unit bridge ABI decision, suspend-function-type position attribute (kotc fact -> bir2cir type-slot + ilemit attribute), replace the error-string suspendCoroutine marker with a stable tag, drop stale guards.
+
+---
+
+## Second-perspective review (user, 2026-07-04) — additional themes
+
+### Validation (not a task) — the coroutine bundle landed on the 4-layer design correctly
+kotc holds ZERO coroutine lowering (facts only, CPS engine deleted with no orphans); ilemit is
+coroutine-free (Emitter.Coroutines.cs gone, A1-A4 hardening intact); all lowering in bir2cir (cold-core
+SM structurally sound, Task<R> bridge correct for all return shapes, ContinuationErasure idempotent,
+reverse await bridge sound); B2 suspend channel wired (HasSuspendMember is a real consumer, cross-asm
+fixpoint); COROUTINE_SUSPENDED box cache is a sound fix for the value-type-enum re-box JVM difference.
+
+### [NEW THEME — High-value] Failure posture: make silent fallbacks LOUD
+Silent fallbacks turn routing mistakes into distant runtime symptoms ("gate green but broken"):
+- **bir2cir**: `?? cands[0]` (picks an ARBITRARY overload), Rule-4 silent dynamic dispatch, an
+  unresolved `suspendCoroutine` closure -> PERMANENT suspend (silent hang) — should be a COMPILE-TIME throw.
+- **ilemit**: the suspend throw-stub turns a bir2cir transform-MISS into a runtime throw instead of a
+  loud EMIT-TIME error (boundary-correct but diagnostic-poor in app/rt builds).
+Principle: a routing/transform miss should fail LOUD at compile/emit time, not silently degrade to a
+runtime hang/throw. Audit the `?? cands[0]` / Rule-4 / suspend-stub sites and make the app/rt path error.
+
+### [Dead code / staleness]
+- ilemit `ilemitCompatBir` envelope branch — ZERO producers, dead枝, delete.
+- CPS-deletion orphans (LambdaKinds/steps/coClass guards) — harmless, tidy.
+- Stale comments: `SuspendLambdaLowering.cs` "dormant/NO-OP" header (it is LIVE now), kotc deleted-engine
+  reference comments, bir2cir "no consumer yet".
+- **XFAIL_ILVERIFY `[chunk]=` has 4 DUPLICATES** (bash last-wins → the first 3 diagnostic notes are dead) — dedup.
+
+### [Coverage — add test cases; no case = green slips through]
+- exception propagation across a SUSPENDED Task (no case).
+- `@RestrictsSuspension` (commits exist, ZERO test cases).
+- `il-coldvirt` un-wired DEAD fixture — wire it.
+- (try/finally over suspension IS now covered = il-cofinally; digitToIntOrNull / try-expr-operand cases now added.)
+
+### Overlaps with review 1 / already in-flight
+- Layer-boundary debt (kotc coerceAt*/require/check/KClass/Throwable.message-cause/Closeable/Lazy/compareTo/
+  StringBuilder slot-maps; ilemit Throwable.message/kotlin.Unit/Array.Clone/ReverseBridge name-lists) = the
+  bundle-8 layer-purity work above.
+- TaskAwaiter `constrained.` prefix (~2 lines, kills taskawait/genasync/comaindrain ilverify XFAILs) = IN FLIGHT
+  (ilemit zero-XFAIL agent).
+- build-cache-masks-stdlib-regressions = documented (MEMORY build-cache-masks-stdlib-regressions).
