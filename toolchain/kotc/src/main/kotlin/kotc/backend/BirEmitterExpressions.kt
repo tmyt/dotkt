@@ -123,17 +123,11 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		val clr = ownerClass?.let { clrName(it) }
 		val recvJson = node.receiver?.let { expr(it) } ?: """{"k":"this"}"""
 		val fldName = node.symbol.owner.name.asString()
-		val ownerFq = ownerClass?.fqNameWhenAvailable?.asString()
-		val recvFq = node.receiver?.type?.classFqName?.asString()
-		val isThrowableProp = (fldName == "message" || fldName == "cause") &&
-			(ownerFq == "kotlin.Throwable" || ownerClass?.name?.asString() == "Throwable" || recvFq == "kotlin.Throwable"
-				|| isThrowableType(node.receiver?.type))
-		// `Throwable.message`/`.cause` -> System.Exception.Message/.InnerException. A .NET member (e.g. inherited
-		// `Exception.Message`) is modeled as a field by the FIR injector but is really a property getter call.
-		if (isThrowableProp) {
-			val (prop, rt) = if (fldName == "message") "Message" to "System.String" else "InnerException" to "System.Exception"
-			"""{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":$recvJson}"""
-		} else if (clr != null)
+		// `Throwable.message`/`.cause` are PLAIN Kotlin properties: an app read is an IrCall(get_message) routed by
+		// bir2cir to clrPropGet System.Exception.Message off the @ClrProperty binding (layer purity — no BCL member name
+		// in kotc). A direct backing-FIELD read reaching here is only kotlin.Throwable's own generated getter body in the
+		// stdlib ref build, where `message` is a real field — the plain `field` path below serves it.
+		if (clr != null)
 			"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"retType":${str(birType(node.type))},"static":false,"recv":$recvJson}"""
 		// A `lateinit var` backing-field read -> throw if still uninitialized (null) — proper lateinit semantics.
 		else if (node.symbol.owner.correspondingPropertySymbol?.owner?.isLateinit == true)

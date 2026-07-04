@@ -941,20 +941,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		p.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrField" }
 
 	/** Emit a custom property accessor as a `get_<prop>`/`set_<prop>` method (the `field` identifier -> the backing field). */
-	/** True if [t]'s class transitively extends kotlin.Throwable (so `.message`/`.cause` on a user exception subclass
-	 *  route to System.Exception.Message/.InnerException). Every stdlib exception (Exception/RuntimeException/… and the
-	 *  IllegalArgument/Arithmetic/… set) extends kotlin.Throwable, so the single root check covers them via the walk. */
-	internal fun isThrowableType(t: IrType?): Boolean {
-		val start = t?.classifierOrNull?.owner as? IrClass ?: return false
-		val seen = HashSet<IrClass>()
-		fun walk(c: IrClass): Boolean {
-			if (!seen.add(c)) return false
-			if (c.fqNameWhenAvailable?.asString() == "kotlin.Throwable") return true
-			return c.superTypes.any { (it.classifierOrNull?.owner as? IrClass)?.let(::walk) == true }
-		}
-		return walk(start)
-	}
-
 	// Considers the function itself AND any member it overrides — so it maps both a user override of a .NET-mapped
 	// iface member AND a direct call on an iface-typed value (e.g. `cs.length` where cs: CharSequence).
 	internal fun clrIfaceMemberName(fn: IrSimpleFunction): String? =
@@ -3064,15 +3050,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// NOTE: kotlin.text.MatchResult.value is a REAL interface property (realized by ClrMatchResult) — it must route
 		// through the ordinary member-call path, NOT a hardcoded System...Match.Value lowering (that leftover forced the
 		// broken MatchResult->Match aliasing above and mis-typed the call).
-		// `.message`/`.cause` on a Throwable subclass (incl. a user `class E : Exception`) -> System.Exception
-		// .Message/.InnerException. Handled early because for a user subclass the getter resolves to a fake-override
-		// whose owner is the user class, so the generic property->field path would emit a bare (missing) field.
-		callee.correspondingPropertySymbol?.owner?.name?.asString()?.let { pn ->
-			if ((pn == "message" || pn == "cause") && isThrowableType(dispatchReceiver(call)?.type)) {
-				val (prop, rt) = if (pn == "message") "Message" to "System.String" else "InnerException" to "System.Exception"
-				return """{"k":"clrPropGet","type":"System.Exception","name":${str(prop)},"retType":${str(rt)},"static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
-			}
-		}
+		// `.message`/`.cause` on a Throwable subclass is a PLAIN Kotlin property read: kotc emits the ordinary
+		// `callInstance get_message`/`get_cause` (with its `overrides` chain to kotlin.Throwable) below, and bir2cir
+		// substitutes it to `clrPropGet System.Exception.Message`/`.InnerException` off the @ClrProperty binding on the
+		// ref.dll (kotlin.Throwable is @ClrTypeAlias("System.Exception")). No BCL member name lives in kotc (layer purity).
 		// `kotlin.sequences.sequence { yield(…) }` is now ORDINARY library code: it resolves to the real stdlib
 		// `sequence(block)` function over the cold core (SequenceBuilderIterator), with `{ yield(...) }` flowing through
 		// the ordinary suspend-lambda path (suspendLambdaNew -> bir2cir's RestrictedSuspendLambda SM). kotc has NO
@@ -4464,7 +4445,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Kotlin throwables stay their bare `kotlin.*` FQN here (emitted as `@kotlin.IllegalArgumentException`, etc. via
 		// the user-class fall-through below); bir2cir lowers them to the BCL base off the stdlib's @ClrTypeAlias on each
 		// exception class (the retired NET_EXCEPTIONS map's job, now metadata-driven). A custom `class E : Exception(msg)`
-		// supertype rides the same path, and `.message`->.Message routing is gated by isThrowableType, not this map.
+		// supertype rides the same path; `.message`/`.cause` are plain property reads that bir2cir substitutes to
+		// clrPropGet System.Exception.Message/.InnerException off the @ClrProperty binding (no kotc BCL-name knowledge).
 		if (fqp == "kotlin.AutoCloseable" || fqp == "kotlin.io.Closeable")
 			return "clr:System.IDisposable"
 		// kotlin.CharSequence -> a synthetic interface (no faithful .NET equivalent). See charSeqIface.
