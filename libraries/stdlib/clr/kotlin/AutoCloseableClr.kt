@@ -5,8 +5,15 @@
 
 package kotlin
 
+// @ClrTypeAlias binds kotlin.AutoCloseable (and its jar typealias kotlin.io.Closeable, which expands to it) to
+// System.IDisposable; bir2cir reads it from the ref.dll and (a) lowers an AutoCloseable type token to System.IDisposable,
+// (b) renames a `class R : AutoCloseable`'s `close()` override to the `Dispose` slot (DeclarationRename), and (c)
+// substitutes a `close()` call to System.IDisposable.Dispose. This retires the kotc birType/clrIfaceMemberName/use{}
+// hardcodes (layer purity — the CLR type/member names live in the stdlib metadata, not kotc).
 @SinceKotlin("2.0")
+@kotlin.clr.ClrTypeAlias("System.IDisposable")
 public actual interface AutoCloseable {
+    @kotlin.clr.ClrIntrinsic("Dispose")
     public actual fun close(): Unit
 }
 

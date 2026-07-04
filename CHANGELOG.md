@@ -13,6 +13,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `birType` special-case (`toolchain/kotc/.../BirEmitter.kt`) lets it fall through to the plain
   `@kotlin.text.Regex` FQN, which `BirTypeLowering` rewrites to `clr:System.Text.RegularExpressions.Regex` from
   the alias index (kotc no longer knows the BCL type name). `il-regex` stays green + ilverify-clean.
+- **Layer purity: `kotlin.AutoCloseable`/`Closeable` -> `System.IDisposable` and `close()` -> `Dispose` moved out
+  of kotc into the stdlib `@ClrTypeAlias`/`@ClrIntrinsic` binding read by bir2cir.** kotc hardcoded the type name
+  (`birType`), the implementor override slot (`clrIfaceMemberName`: `close` -> `Dispose`), AND the `use{}` finally
+  call (`inlineUse` emitted a literal `clrInstance System.IDisposable Dispose`) — three separate BCL-name leaks.
+  `kotlin.AutoCloseable` now carries `@kotlin.clr.ClrTypeAlias("System.IDisposable")` with `close()`
+  `@kotlin.clr.ClrIntrinsic("Dispose")` (`libraries/stdlib/clr/kotlin/AutoCloseableClr.kt`); bir2cir then (a)
+  lowers an AutoCloseable type/supertype token to `System.IDisposable` (`BirTypeLowering`), (b) renames a
+  `class R : AutoCloseable`'s `close()` override to the `Dispose` slot (`DeclarationRename`, via the `overrides`
+  marker), and (c) substitutes the plain `close()` call the `use{}` lowering now emits to
+  `clrInstance System.IDisposable.Dispose` (`MemberCallSubstitution` Rule 2). The `use{}` try/finally structure
+  stays in kotc (a language lowering); only its `close()` call became a plain Kotlin member call. Deleted the
+  three kotc hardcodes (`toolchain/kotc/.../BirEmitter.kt`). `il-use` stays green + ilverify-clean.
+- **Layer purity (Regex/Closeable/Lazy family) — Lazy NOT migrated (reported, not forced).** `kotlin.Lazy<T>` ->
+  `System.Lazy<T>` (`by lazy{}` -> `new System.Lazy<T>(Func<T>)`, `.value` -> `.Value`) stays a kotc `birType`/
+  delegate lowering: it CANNOT become a clean `@ClrTypeAlias` move. `kotlin.Lazy` is a Kotlin INTERFACE with
+  Kotlin implementors (`UnsafeLazyImpl`/`InitializedLazyImpl : Lazy`), while `System.Lazy` is a .NET CLASS — and
+  bir2cir's `@ClrTypeAlias` type substitution fires UNCONDITIONALLY in BOTH the runtime-stdlib build and app
+  builds (it only exempts the pure reference build), so aliasing `kotlin.Lazy` would rewrite `UnsafeLazyImpl : Lazy`
+  to `: System.Lazy` in the rt build (a Kotlin class implementing a sealed .NET class — invalid). The kotc
+  `!stdlibSubstitute` gate encodes an APP-ONLY substitution that `@ClrTypeAlias` has no way to express; migrating
+  Lazy needs either a new bir2cir app-vs-rt type-lowering gate or switching app builds to the pure-Kotlin
+  `lazy()`/`UnsafeLazyImpl` path (a larger change risking `il-lazy`). Left in kotc; `il-lazy` stays green.
 - **Layer purity: the `Throwable.message`/`.cause` -> `System.Exception.Message`/`.InnerException` DOUBLE lowering
   is retired — bir2cir now owns it via the `@ClrTypeAlias`/`@ClrProperty` substitution.** kotc AND ilemit each
   hardcoded the BCL member names (`get_Message`/`get_InnerException`), a layer violation: exception types are

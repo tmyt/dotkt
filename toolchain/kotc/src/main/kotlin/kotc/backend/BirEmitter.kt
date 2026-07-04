@@ -954,8 +954,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val ifaceFq = (owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
 				val mn = owner.name.asString()
 				when (ifaceFq) {
-					// Comparable/Comparator are emitted by stdlib itself; keep their Kotlin ABI names.
-					"kotlin.AutoCloseable", "kotlin.io.Closeable" -> if (mn == "close") "Dispose" else null
+					// kotlin.AutoCloseable.close()->Dispose is NOT hardcoded here: the @ClrIntrinsic("Dispose") binding on the
+					// ref.dll drives it — kotc emits the plain `close` override name + its `overrides` marker, and bir2cir's
+					// DeclarationRename renames the implementor slot to `Dispose` (layer purity — no BCL slot name in kotc).
 					// CharSequence -> synthetic <>dotkt_CharSequence: the `length` property getter must be emitted (the
 					// override has a non-empty overriddenSymbols so isCustomAccessor is false). get/subSequence keep names.
 					"kotlin.CharSequence" -> if (owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
@@ -2170,8 +2171,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			else -> last?.let { tryBody.add(stmt(it)) }
 		}
 		itParam?.let { valSubst.remove(it.name.asString()) }
-		// close() -> IDisposable.Dispose() (Kotlin (Auto)Closeable maps to IDisposable; callvirt works for any impl).
-		val dispose = """{"k":"exprStmt","expr":{"k":"clrInstance","type":"System.IDisposable","method":"Dispose","argTypes":[],"ret":"System.Void","virtual":true,"recv":{"k":"local","name":${str(uname)}},"args":[]}}"""
+		// The `use{}` try/finally structure is a language lowering that stays in kotc, but the `close()` call in the finally
+		// is a PLAIN Kotlin member call on the kotlin.AutoCloseable receiver — bir2cir substitutes it to
+		// System.IDisposable.Dispose() off the @ClrTypeAlias/@ClrIntrinsic("Dispose") binding (layer purity — no BCL name
+		// in kotc). `use`'s signature (`T : AutoCloseable?`) guarantees the owner is kotlin.AutoCloseable.
+		val dispose = """{"k":"exprStmt","expr":{"k":"callInstance","ownerType":"kotlin.AutoCloseable","method":"close","virtual":true,"recv":{"k":"local","name":${str(uname)}},"args":[]}}"""
 		val tryNode = """{"k":"try","type":"void","body":[${tryBody.joinToString(",")}],"catches":[],"finally":[$dispose]}"""
 		val init = ArrayList<String>()
 		init.add("""{"k":"var","name":${str(uname)},"type":${str(birType(recvExpr.type))},"init":$recvInit}""")
@@ -4448,8 +4452,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// exception class (the retired NET_EXCEPTIONS map's job, now metadata-driven). A custom `class E : Exception(msg)`
 		// supertype rides the same path; `.message`/`.cause` are plain property reads that bir2cir substitutes to
 		// clrPropGet System.Exception.Message/.InnerException off the @ClrProperty binding (no kotc BCL-name knowledge).
-		if (fqp == "kotlin.AutoCloseable" || fqp == "kotlin.io.Closeable")
-			return "clr:System.IDisposable"
+		// kotlin.AutoCloseable (and its jar typealias kotlin.io.Closeable) stays its bare `kotlin.*` FQN here (falls
+		// through to the user-class `@kotlin.AutoCloseable` path below); bir2cir substitutes it to System.IDisposable off
+		// the stdlib's @ClrTypeAlias binding (layer purity — no CLR type name in kotc). The `close()->Dispose` member
+		// rename + the `use{}` finally call are likewise metadata-driven (@ClrIntrinsic("Dispose")).
 		// kotlin.CharSequence -> a synthetic interface (no faithful .NET equivalent). See charSeqIface.
 		charSeqIface(t)?.let { return "@$it" }
 		// A function type as a value (e.g. a `(P)->R` parameter): `kotlin.FunctionN` -> a plain Func/Action. A
