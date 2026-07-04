@@ -106,19 +106,25 @@ sealed partial class Emitter
     {
         // Annotation arguments are always compile-time constants (const nodes).
         if (!e.TryGetProperty("value", out var v)) return null;
+        var ty = e.TryGetProperty("type", out var tEl) ? tEl.GetString() : null;
         switch (v.ValueKind)
         {
-            case JsonValueKind.String: return v.GetString();
+            // A `char` default may arrive as its single-char STRING form (`' '` -> "  ") — SetConstant needs a real
+            // `char`, not a string, or a cross-module caller stamps `ldstr " "` for a char param (InvalidProgram).
+            case JsonValueKind.String:
+                var sv = v.GetString();
+                return (ty == "char" && sv.Length > 0) ? (object)sv[0] : sv;
             case JsonValueKind.True: return true;
             case JsonValueKind.False: return false;
             case JsonValueKind.Number:
-                return e.GetProperty("type").GetString() switch
+                return ty switch
                 {
                     "long" => (object)v.GetInt64(),
                     "double" => v.GetDouble(),
                     "float" => (float)v.GetDouble(),
                     "short" => (short)v.GetInt32(),
                     "byte" => (sbyte)v.GetInt32(),
+                    "char" => (char)v.GetInt32(),   // a char default given as its numeric code point
                     _ => v.GetInt32(),
                 };
             default: return null;
