@@ -201,3 +201,14 @@ Both have sample WORKAROUNDS (gate stays XFAIL-zero); neither is silently XFAIL'
 CLR-binding-from-metadata). Staged path: (1) type-name → IR ClassId direct-read spike; (2) member (mostly
 already dead); (3) top-level → resolved callee symbol; (4) event → `ClrEvent<T>` type + bir2cir binds.
 Best done in a fresh, light-context session — start with stage 1 (smallest verifiable slice).
+
+## RESOLVED (2026-07-05, inline — not deferred after all)
+- **groupValues + destructured — FIXED (commit 2ab129c).** family-6's 'groupValues' label was imprecise; it was
+  a 2-LAYER bug (destructured DIM InvalidProgram + groupValues `.map`→clrCollAdd→open `ICollection<!!T>.get_Count`),
+  and the earlier 'it works' reading was a stale-stdlib-cache false pass. Fixed: explicit `destructured` override +
+  `Array(n){}.asList()` for groupValues. il-groupvalues added.
+- **forArray suspension — FALSE ALARM (commit follows).** Empirically works (Array/vararg/IntArray, sync + genuine
+  await mid-loop); locked with il-coforarray.
+- STILL OPEN: the GENERAL `clrCollAdd` generic-collection dispatch (`c.size` → open `ICollection<!!T>.get_Count`;
+  the bymap/maxOrNull family) — groupValues now sidesteps it, but a non-inlined generic `.map`/`.add` still hits it;
+  a real bir2cir/ilemit follow-up. And A2 (designed, docs/design-interop-no-registry.md) + Lazy/EmptyMap (architectural).
