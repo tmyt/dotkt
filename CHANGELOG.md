@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 coroutine): make `kotlin.Result` monomorphic on `Result<object>` in all builds (matches the
+  `Continuation<object>` erasure).** `kotlin.Result` is emitted as an INVARIANT reference class whose payload is
+  already `object` (`get_value : object`, ctor takes `object`) — the type parameter `T` is a phantom that only names
+  the `get_value` cast at the use site. The generic accessor family (`getOrThrow<T>` et al.) is declared on `Result<T>`
+  but calls the NON-generic `throwOnFailure(Result<*>)` (star-projected to `Result<object>`); passing the accessor's
+  `Result<!!T>` receiver into that `Result<object>` param is an invariant-reference mismatch. `ContinuationErasure`
+  now erases EVERY `kotlin.Result[X]` type token to `Result[object]` and every `Result.success/failure<X>` type-arg to
+  `object`, globally (was scoped to the resumeWith protocol). `getOrThrow`'s `T` survives only on the RETURN
+  (`gp:T` + the `cast gp:T` on the object payload), so `getOrThrow<int>(Result<object>) : int` still returns int, but
+  the previously-open `Result<gp:T>` `get_value` token is now a CLOSED `Result\`1[System.Object]::get_value` (verified
+  via MetadataReader — the pre-fix token RESOLVEFAILed for "lack of generic context"). `il-result` still passes; gate
+  GREEN (no NEW-FAIL). NOTE: this does NOT green `il-collops2` — its `windowed` crash has a deeper, separate root (a
+  GENERIC function driving a cold sequence SM; see `XFAIL_RUN[collops2]`), which the Result ABI fix does not reach.
 - **ilemit (bundle-6 P5): backfill omitted trailing default args on the GENERIC (typeArgs) call path — `windowed(3)`
   IL is now valid (`il-collops2` pruned from `XFAIL_ILVERIFY`).** A cross-module generic call may omit defaulted
   trailing params (the frontend jar strips default VALUES; kotc correctly emits `callStatic windowed` with 2 args
