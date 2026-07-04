@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir — generic-collection `.add`/`.map`/`.size` dispatch: recover `clrCollAdd`'s element type from the
+  receiver (the bymap/maxOrNull variance family's collection analog).** A non-inlined `.map`/`filterTo` whose
+  `destination.add(...)` routes to the `clrCollAdd` helper carried the frontend's `MutableCollection<in R>.add`
+  variance over-approximation — the helper's type argument was `object`, so `clrCollAdd<object>` dispatched
+  `ICollection<object>::get_Count` on a runtime `List<string>` (an INVARIANT interface with no such slot) →
+  `System.EntryPointNotFoundException`. Two coupled fixes: (1) `CollElemArg` now recovers the element type from a
+  CONCRETE generic-collection receiver's own first type-arg (`ArrayList<String>` → `String`) when the call's owner
+  token is bare, mirroring `MapKvArgs`' bare-owner recovery; (2) `SubstCtx.Extend` records a param-LESS
+  method/accessor declaration's local `var` types (a getter like `MatchResult.groupValues` previously left
+  `VarTypes` empty, so the receiver's concrete type was invisible). This is the general fix for the family the
+  `groupValues` workaround (commit `2ab129c`) sidestepped: `RegexClr.groupValues` reverts from
+  `Array(n){}.asList()` back to `(0 until g.count).map { }`. New `cases/il-gencolladd` locks generic and
+  non-generic `.map`/`.add`/`.size` result-building.
 - **Coverage + which-interface (POLISH Wave-2 family 6): coroutine/regex/map coverage gaps closed, two root-cause
   fixes.**
   - **bir2cir SuspendColdLowering — a synchronous Unit-returning suspend member's DIRECT cold entry fell off the end

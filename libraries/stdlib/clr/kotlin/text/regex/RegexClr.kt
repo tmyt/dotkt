@@ -294,11 +294,7 @@ internal class ClrMatchResult(private val nativeMatch: ClrMatch) : MatchResult {
         get() {
             val g = nativeMatch.groups
             // .NET reports an unmatched optional group as Value == "" (Success == false), matching Kotlin's empty-string slot.
-            // Build via Array(n){} + asList, NOT `(0 until g.count).map { }`: `.map`'s result-building goes through
-            // `clrCollAdd`, which reads `c.size` on a generic `MutableCollection<T>` → an OPEN `ICollection<!!T>.get_Count`
-            // that runtime-fails (EntryPointNotFound) in a non-inlined generic context (the bymap/maxOrNull dispatch
-            // family). An array constructor + asList never touches clrCollAdd.
-            return Array(g.count) { g[it].value }.asList()
+            return (0 until g.count).map { g[it].value }
         }
 
     // Override the default-interface getter explicitly: the inherited `MatchResult.destructured` default getter

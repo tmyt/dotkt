@@ -320,6 +320,10 @@ il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_
 # AbstractCollection base + a missing `contains` (ClrMatchGroupCollection now implements the collection directly).
 il_check regexgroups RegexGroups "$ROOT/cases/il-regexgroups" "$(printf '3\n12-34\n12\n34\n12-34,12,34,\nTrue\nFalse\nTrue\n2026')"
 il_check groupvalues GroupValues "$ROOT/cases/il-groupvalues" "$(printf 'abc,a,b,c\n12 34')"
+# gencolladd: non-inlined GENERIC collection building via `.map`/`.add`/`.size` — the stdlib `clrCollAdd<T>`
+# reads `c.size` (ICollection<!!T>.get_Count) on an OPEN method type-param. Locks the bymap/maxOrNull dispatch
+# family's collection analog (an open-generic ICollection member call must bind at runtime, no EntryPointNotFound).
+il_check gencolladd GenCollAdd "$ROOT/cases/il-gencolladd" "$(printf 'a,b,c\n3\n4\nv0,v1,v2\n3')"
 il_check langtail LangTail "$ROOT/cases/il-langtail" "$(printf '6\nhi\nint:42\nstr:3\nbig:5\nsmall\n700\n9')"
 il_check enumbody EnumBody "$ROOT/cases/il-enumbody" "$(printf '+: 8\n-: 4\n*: 12\nPLUS\n9')"
 il_check bytearg ByteArg "$ROOT/cases/il-bytearg" "$(printf '5\n3\n7\n9\n4\n100\n-2')"

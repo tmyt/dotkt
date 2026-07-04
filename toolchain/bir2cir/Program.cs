@@ -4428,7 +4428,12 @@ static class MemberCallSubstitution
         {
             var ps = decl["params"] as JsonArray;
             var tps = decl["typeParams"] as JsonArray;
-            if ((ps == null || ps.Count == 0) && (tps == null || tps.Count == 0)) return this;
+            // A method/accessor DECLARATION (a `params`+`body` node with no expression `k`) needs its local `var` types
+            // recorded even when it has ZERO params — a param-less getter (get_groupValues) otherwise left VarTypes empty,
+            // so a receiver read of a materialized local (mapTo's concrete `destination: ArrayList<String>`) could not
+            // recover its element type and CollElemArg fell back to the `object` variance-approximation.
+            var isDecl = ps != null && decl["body"] != null && decl["k"] == null;
+            if ((ps == null || ps.Count == 0) && (tps == null || tps.Count == 0) && !isDecl) return this;
             var child = new SubstCtx(this);
             if (ps != null)
                 foreach (var p in ps)
@@ -4441,8 +4446,9 @@ static class MemberCallSubstitution
                         && to["constraints"] is JsonArray cs)
                         child.TpConstraints[tn] = cs.Select(c => (c as JsonValue)?.GetValue<string>())
                                                     .Where(c => c != null).ToList();
-            // Only a param-bearing decl can have a local shadow a param; walk its body once to record local vars.
-            if (ps != null && ps.Count > 0 && decl["body"] is JsonNode body) RecordLocalVars(body, child.VarTypes);
+            // Walk a DECLARATION's body once to record its local vars (a local shadows a same-name param; and a
+            // materialized collection local is the receiver whose element type CollElemArg/Constrainify recover).
+            if (isDecl && decl["body"] is JsonNode body) RecordLocalVars(body, child.VarTypes);
             return child;
         }
 
@@ -4896,20 +4902,37 @@ static class MemberCallSubstitution
     {
         var own = OwnerElemArg(ownerToken);
         if (own != "object" || ownerToken.Contains('[')) return own;
+        // The owner is BARE (`kotlin.collections.MutableCollection`, no type args): the frontend dropped the element
+        // when inlining `mapTo`/`filterTo`'s `destination.add(...)`. Recover it from the RECEIVER's declared type.
         if (ctx != null && node["recv"] is JsonObject recv && (recv["k"] as JsonValue)?.GetValue<string>() == "local"
             && (recv["name"] as JsonValue)?.GetValue<string>() is string vn
-            && ctx.VarTypes.TryGetValue(vn, out var vt) && vt.StartsWith("gp:", StringComparison.Ordinal)
-            && ctx.TpConstraints.TryGetValue(vt.Substring(3), out var cons))
+            && ctx.VarTypes.TryGetValue(vn, out var vt))
         {
-            foreach (var c in cons)
+            // (a) The receiver is a type-PARAMETER (`destination: C where C : MutableCollection<R>`): its element comes
+            // from the collection-interface constraint's arg (the same recovery Constrainify performs).
+            if (vt.StartsWith("gp:", StringComparison.Ordinal))
             {
-                if (!refs.TryResolveClrOwner(c, out _, out var ck) || ck != "interface") continue;
-                var b = c.IndexOf('[');
-                if (b >= 0 && c.EndsWith("]", StringComparison.Ordinal))
-                {
-                    var inner = SplitTopLevel(c.Substring(b + 1, c.Length - b - 2));
-                    if (inner.Count >= 1 && !string.IsNullOrEmpty(inner[0])) return inner[0];
-                }
+                if (ctx.TpConstraints.TryGetValue(vt.Substring(3), out var cons))
+                    foreach (var c in cons)
+                    {
+                        if (!refs.TryResolveClrOwner(c, out _, out var ck) || ck != "interface") continue;
+                        var b = c.IndexOf('[');
+                        if (b >= 0 && c.EndsWith("]", StringComparison.Ordinal))
+                        {
+                            var inner = SplitTopLevel(c.Substring(b + 1, c.Length - b - 2));
+                            if (inner.Count >= 1 && !string.IsNullOrEmpty(inner[0])) return inner[0];
+                        }
+                    }
+            }
+            // (b) The receiver is a CONCRETE generic collection local (`__inlN : ArrayList[kotlin.String]`, mapTo's
+            // materialized destination): its OWN first type-arg is the element. Without this the helper's typeArg stays
+            // the frontend's `object` over-approximation (the `MutableCollection<in R>.add` variance projection), so
+            // clrCollAdd<object> dispatches `ICollection<object>::get_Count` on a runtime `List<string>` — an invariant
+            // interface with no such slot -> EntryPointNotFoundException. Mirrors MapKvArgs' bare-owner recovery.
+            else
+            {
+                var elem = OwnerElemArg(vt);
+                if (elem is not ("object" or "kotlin.Any")) return elem;
             }
         }
         return "object";
