@@ -18,14 +18,25 @@ using System.Text.Json.Nodes;
 // The resumeWith(Result<T>) boundary (Codex-verified Option A): resumeWith stays `resumeWith(Result<object>)`
 // uniformly (the stdlib cold-core bases already hand-declare Result<Any?>; the Continuation interface
 // slot with T=object is Result<object>). kotlin.Result is emitted as an INVARIANT reference class, so
-// Result<int>/Result<Unit>/Result<object> are mutually incompatible — thus every Result value flowing
-// into resumeWith must be Result<object>. Two coordinated Result rewrites, SCOPED to the coroutine
-// protocol (user Result<X> in runCatching/`result` is untouched):
-//   (a) the WHOLE resumeWith method (interface decl + every override + their bodies): erase every
-//       `kotlin.Result[X]` / `@kotlin.Result[X]` token -> `[kotlin.Any]` (the param, and the body's
-//       result.get_value / result.exceptionOrNull ownerTypes on the now-Result<object> `result` local);
-//   (b) every resumeWith CALL argument: the inlined `Result.success/failure` construction (typeArgs) and
-//       any `new kotlin.Result[X]` -> Result<object>, plus the call's `sig`.
+// Result<int>/Result<Unit>/Result<object> are mutually incompatible.
+//
+// RESULT MONOMORPHIZATION (bundle-6 collops2 / windowed): the same invariance that forces the resumeWith
+// boundary to Result<object> forces kotlin.Result to be MONOMORPHIC on Result<object> EVERYWHERE — exactly
+// like Continuation<object>. kotlin.Result's payload is already `object` (get_value : object, the ctor takes
+// object), so the reference class `Result`1<T>` is a phantom-generic wrapper: T only names the get_value cast
+// at the use site, never the storage. The generic accessor family `getOrThrow<T>/getOrNull<T>/…` is declared
+// on `Result<T>`, but its body calls the NON-generic `throwOnFailure(Result<*>)` — star-projected to
+// `Result<object>`. Passing the accessor's `Result<!!T>` receiver into that `Result<object>` param is an
+// invariant-reference mismatch: the generic accessor method never fully resolves ("the method itself or the
+// containing type is not fully instantiated") when driven through a nested generic (windowedIterator →
+// SequenceBuilderIterator.resumeWith → getOrThrow<T> → throwOnFailure). The fix is to erase EVERY
+// `kotlin.Result[X]` / `@kotlin.Result[X]` TYPE token to Result<object> and every `Result.success/failure`
+// construction's type-arg to object, in ALL positions and ALL builds. The accessor's own type-parameter T
+// survives ONLY on the RETURN (`gp:T` + the `cast gp:T` on the object payload), so `getOrThrow<int>(Result<object>)
+// : int` still returns int — but there is no longer any cross-instantiation Result value, so throwOnFailure
+// always receives the exact `Result<object>` it declares. (getOrThrow's typeArgs at call sites stay source-typed
+// so the return type is right; only the resumeWith-DISCARDED receiver's typeArgs/retType are promoted to Any so
+// the popped value's hint is non-void — EraseResultReceiverTypeArgs, still scoped to the protocol.)
 //
 // Runs in ALL builds (ref/rt/app) so ref.dll + rt.dll signatures agree, BEFORE BirTypeLowering (it
 // emits kotlin.* tokens that then lower: kotlin.Any -> object in rt/app, kept verbatim in ref).
@@ -43,7 +54,6 @@ static class ContinuationErasure
             case JsonObject obj:
             {
                 var here = inResumeWith || IsResumeWithMethod(obj);
-                var isCall = IsResumeWithCall(obj);
                 // Inside the erased resumeWith boundary, the `result` local is now Result<object> (invariant
                 // reference class). A generic Result-accessor whose EXTENSION RECEIVER (first arg) is that erased
                 // `result` — e.g. `getOrThrow<Unit>(result)` from the source `result.getOrThrow()` — is instantiated
@@ -52,6 +62,9 @@ static class ContinuationErasure
                 // T as object so `getOrThrow<object>(result: Result<object>)` type-checks. The Unit prologue value is
                 // discarded (exprStmt), so no unbox/cast at the use site is needed.
                 if (here) EraseResultReceiverTypeArgs(obj);
+                // Result is monomorphic Result<object> globally — every `Result.success/failure<X>` construction
+                // must yield Result<object>, so its type-arg is erased at EVERY call site (not just resumeWith args).
+                EraseResultFactoryTypeArgs(obj);
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var val = obj[key];
@@ -63,7 +76,7 @@ static class ContinuationErasure
                         // type-reference key (type/ownerType/ret/base/interfaces/sig/funcType/typeArgs/…) is rewritten.
                         if (key == "name" || key == "owner") continue;
                         var ns = EraseContinuation(s);
-                        if (here || isCall) ns = EraseResult(ns);   // scope Result to the protocol
+                        ns = EraseResult(ns);   // Result<X> -> Result<object> everywhere (invariant ref, payload=object)
                         if (!ReferenceEquals(ns, s)) obj[key] = ns;
                     }
                     else if (val != null)
@@ -71,11 +84,6 @@ static class ContinuationErasure
                         Walk(val, here);
                     }
                 }
-                // A resumeWith call's Result argument construction (Result.success/failure typeArgs,
-                // new kotlin.Result) must yield Result<object> to match the Result<object> slot.
-                if (isCall && obj["args"] is JsonArray callArgs)
-                    foreach (var a in callArgs)
-                        if (a != null) EraseResultConstructions(a);
                 break;
             }
             case JsonArray arr:
@@ -86,7 +94,7 @@ static class ContinuationErasure
                     if (val is JsonValue jv && jv.TryGetValue<string>(out var s))
                     {
                         var ns = EraseContinuation(s);
-                        if (inResumeWith) ns = EraseResult(ns);
+                        ns = EraseResult(ns);
                         if (!ReferenceEquals(ns, s)) arr[i] = ns;
                     }
                     else if (val != null)
@@ -138,60 +146,20 @@ static class ContinuationErasure
         }
     }
 
-    static bool IsResumeWithCall(JsonObject obj) =>
-        (obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true &&
-        (k == "callInstance" || k == "callStatic") &&
-        (obj["method"] as JsonValue)?.TryGetValue<string>(out var m) == true && m == "resumeWith";
-
-    // Walk a resumeWith-argument subtree: reset every kotlin.Result.success/failure construction's
-    // type-arg to object (so it constructs Result<object>), and erase any Result type token.
-    static void EraseResultConstructions(JsonNode node)
+    // Reset a `kotlin.Result.success/failure<X>` construction's type-arg to kotlin.Any so it yields
+    // Result<object> (monomorphic). The value/exception arg keeps its own `sig` (gp:T / System.Exception);
+    // only the Result type-parameter is erased. A `new kotlin.Result[X]` is handled by the global type-token
+    // erasure (its `type` key). No-op on any other node.
+    static void EraseResultFactoryTypeArgs(JsonObject obj)
     {
-        switch (node)
+        var owner = (obj["owner"] as JsonValue)?.TryGetValue<string>(out var ow) == true ? ow : null;
+        var method = (obj["method"] as JsonValue)?.TryGetValue<string>(out var me) == true ? me : null;
+        if (owner == ResultFqn && (method == "success" || method == "failure") &&
+            obj["typeArgs"] is JsonArray ta)
         {
-            case JsonObject obj:
-            {
-                var owner = (obj["owner"] as JsonValue)?.TryGetValue<string>(out var ow) == true ? ow : null;
-                var method = (obj["method"] as JsonValue)?.TryGetValue<string>(out var me) == true ? me : null;
-                if (owner == ResultFqn && (method == "success" || method == "failure") &&
-                    obj["typeArgs"] is JsonArray ta)
-                {
-                    var repl = new JsonArray();
-                    foreach (var _ in ta) repl.Add(JsonValue.Create("kotlin.Any"));
-                    obj["typeArgs"] = repl;
-                }
-                foreach (var key in obj.Select(kv => kv.Key).ToList())
-                {
-                    var val = obj[key];
-                    if (val is JsonValue jv && jv.TryGetValue<string>(out var s))
-                    {
-                        var ns = EraseResult(s);
-                        if (!ReferenceEquals(ns, s)) obj[key] = ns;
-                    }
-                    else if (val != null)
-                    {
-                        EraseResultConstructions(val);
-                    }
-                }
-                break;
-            }
-            case JsonArray arr:
-            {
-                for (var i = 0; i < arr.Count; i++)
-                {
-                    var val = arr[i];
-                    if (val is JsonValue jv && jv.TryGetValue<string>(out var s))
-                    {
-                        var ns = EraseResult(s);
-                        if (!ReferenceEquals(ns, s)) arr[i] = ns;
-                    }
-                    else if (val != null)
-                    {
-                        EraseResultConstructions(val);
-                    }
-                }
-                break;
-            }
+            var repl = new JsonArray();
+            foreach (var _ in ta) repl.Add(JsonValue.Create("kotlin.Any"));
+            obj["typeArgs"] = repl;
         }
     }
 
