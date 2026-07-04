@@ -4667,6 +4667,30 @@ static class MemberCallSubstitution
             }
             return null;
         }
+
+        // Rule 2p-inherited (property-accessor override chain): a `.message`/`.cause` read dispatches through a subclass
+        // receiver whose STATIC owner is either a USER class (`AppErr : Exception`) — not CLR-bound at all — or a
+        // non-redeclaring @ClrTypeAlias subclass (`kotlin.Exception` inherits `message` from `kotlin.Throwable`) — so
+        // neither carries the @ClrProperty binding on its OWN members. The binding lives on the CLR-bound ANCESTOR that
+        // DECLARES the property (`kotlin.Throwable.message` -> @ClrProperty "Message"). Walk the `overrides` marker (kotc
+        // stamps it on every accessor call) to that ancestor and route the read to clrPropGet/clrPropSet on ITS BCL
+        // owner. Mirrors Rule 3-inherited (printStackTrace). The DIRECT-owner @ClrProperty (a self-declared member such
+        // as StringBuilder.capacity()) takes priority — handled by Rule 2p below — so this fires only when the direct
+        // owner has no binding of its own. Runs BEFORE the CLR-owner gate so a NON-CLR-bound direct owner still resolves.
+        {
+            var pmember = (node["method"] as JsonValue)?.GetValue<string>();
+            var pargs = node["args"] as JsonArray ?? new JsonArray();
+            var directHasProp = instance && !string.IsNullOrEmpty(pmember)
+                && refs.TryResolveClrOwner(ownerToken, out _, out _)
+                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(ownerToken), pmember, pargs.Count, out _, out _);
+            if (instance && !directHasProp && !string.IsNullOrEmpty(pmember) && node["overrides"] is JsonArray povChain)
+                foreach (var o in povChain)
+                    if (o is JsonObject oo && (oo["owner"] as JsonValue)?.GetValue<string>() is string ovOwner
+                        && refs.TryResolveClrOwner(ovOwner, out var ovBcl, out _)
+                        && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(ovOwner), pmember, pargs.Count, out var povAccess, out var povName))
+                        return ClrPropNode(node, ClrOwnerType(refs, ovOwner) ?? ovBcl, povName, povAccess, pmember, pargs);
+        }
+
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
 
         var member = (node["method"] as JsonValue)?.GetValue<string>();
