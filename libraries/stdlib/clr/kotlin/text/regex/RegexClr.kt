@@ -294,8 +294,17 @@ internal class ClrMatchResult(private val nativeMatch: ClrMatch) : MatchResult {
         get() {
             val g = nativeMatch.groups
             // .NET reports an unmatched optional group as Value == "" (Success == false), matching Kotlin's empty-string slot.
-            return (0 until g.count).map { g[it].value }
+            // Build via Array(n){} + asList, NOT `(0 until g.count).map { }`: `.map`'s result-building goes through
+            // `clrCollAdd`, which reads `c.size` on a generic `MutableCollection<T>` → an OPEN `ICollection<!!T>.get_Count`
+            // that runtime-fails (EntryPointNotFound) in a non-inlined generic context (the bymap/maxOrNull dispatch
+            // family). An array constructor + asList never touches clrCollAdd.
+            return Array(g.count) { g[it].value }.asList()
         }
+
+    // Override the default-interface getter explicitly: the inherited `MatchResult.destructured` default getter
+    // (`get() = Destructured(this)`) InvalidProgram's when dispatched on the concrete adapter. A plain override on the
+    // concrete class emits a normal method and constructs the same Destructured wrapper correctly.
+    override val destructured: MatchResult.Destructured get() = MatchResult.Destructured(this)
 
     override fun next(): MatchResult? {
         // System...Match.NextMatch() advances to the next match (stepping past zero-width matches), so no manual index math.
