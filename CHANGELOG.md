@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 `iscoll`): FIXED the star-projection `is`/smart-cast on a value-type collection (the reverted
+  Fix #6 done completely).** `listOf(1,2,3) is Collection<*>` was silently false — the alias type-map lowers
+  `Collection<*>` to a REIFIED `IReadOnlyCollection<object>`, and .NET generics have no value-type covariance, so
+  `List<int>` is not `IReadOnlyCollection<object>`. Fix #6 lowered the `isinst` to the non-generic `ICollection` (true
+  for a value collection), but the guarded SMART-CAST member access (`(this as Collection<*>).size` in
+  `collectionSizeOrDefault`) still castclassed the reified interface → InvalidCast, regressing map/filter. The complete
+  fix (`StarProjectionLowering`) routes the WHOLE chain to the non-generic BCL interface — the `isinst`, the smart-cast
+  `cast`, AND the member access on that star-cast (`.size` → `ICollection.Count`, `.iterator()` →
+  `IEnumerable.GetEnumerator`, `[i]` → `IList.get_Item`, `.contains` → `IList.Contains`, `.isEmpty()` → `Count == 0`).
+  Runs before `MemberCallSubstitution` (sees the raw `callInstance` on the `kotlin.collections.*` alias) and is gated on
+  the APP build (`attributeTopLevelOwner`): the ref/rt stdlib self-build keeps the reified form, so
+  `collectionSizeOrDefault`'s is-test stays false (the harmless capacity-hint default) — which is precisely why this does
+  NOT reintroduce the Fix #6 map/filter regression. A concrete-arg generic `is`-check is a Kotlin compile error, so every
+  such token is `<*>`; the smart-cast rewrite is additionally gated to all-`object` (erased) args to leave a genuine
+  `as List<String>` unchecked cast alone. `il-iscoll` green (`True/True/True/True/False/False`); coll/coll2/coll3/bmore/
+  funref/mapfilter/collmore unchanged. Gate GREEN.
 - **kotc (bundle-6 ④): FIXED the `ternary()` value-type + `null`-branch cond-type defect — `Char.digitToIntOrNull()`
   no longer InvalidPrograms.** `digitToIntOrNull()` is `digitOf(this,10).takeIf { it >= 0 }`; `takeIf` inlines to
   `if (p(this)) this else null`, a value-type-`or`-`null` join. `BirEmitter.ternary()` tagged the `cond` with the

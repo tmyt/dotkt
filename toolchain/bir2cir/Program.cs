@@ -163,6 +163,13 @@ sealed class Pipeline
             // IDEMPOTENT (reproduces the name annClr already set) -> CIR byte-identical. Never in ref (there annClr is null
             // and members keep their plain Kotlin names — renaming would corrupt the pure-Kotlin ref shapes).
             if (!_options.RefBuild) DeclarationRename.Apply(hoisted, refs);
+            // STAR-PROJECTION LOWERING (bundle-6 `iscoll`): `x is Collection<*>` + the guarded smart-cast member access
+            // (`.size`/`.iterator()`/`[i]`/…) -> the non-generic BCL interface (ICollection/IList/IEnumerable/IDictionary),
+            // which a value-type collection implements regardless of element type (reified generics have no value-type
+            // covariance). App build only — the ref/rt stdlib keeps the reified form, so collectionSizeOrDefault's harmless
+            // capacity-hint default is preserved and map/filter do not regress. Runs before MemberCallSubstitution so it
+            // sees the raw `callInstance` on the kotlin.collections.* alias.
+            if (attributeTopLevelOwner) StarProjectionLowering.Apply(hoisted);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
@@ -199,17 +206,6 @@ sealed class Pipeline
             // array -> IndexOutOfRangeException). Expand each such clause into two clauses covering BOTH so the Kotlin
             // "one catch handles any out-of-range access" semantics hold. Non-ref only (the ref surface stays pure Kotlin).
             if (!_options.RefBuild) CatchClauseWidening.Apply(substituted);
-            // STAR-PROJECTION IS-TEST (bundle-6 ④): `is Collection<*>`/`is Map<*,*>` -> the non-generic BCL interface,
-            // so the check holds for value-type collections (reified generic isinst has no value-type covariance).
-            // Fix #6 (StarProjectionIsTest) REVERTED 2026-07-04: lowering `is Collection<*>` to the non-generic
-            // ICollection made the is-test TRUE for a value-type-element collection, but the subsequent SMART-CAST
-            // member access (`(this as Collection<*>).size` in collectionSizeOrDefault) still cast to the reified
-            // IReadOnlyCollection<object> -> InvalidCast (List<int> !-> IReadOnlyCollection<object>), regressing
-            // map/filter (coll/coll2/coll3/bmore/funref/mapfilter). Full star-projection lowering must also route
-            // the smart-cast + member access to the non-generic interface (hard: `Collection[object]` star vs real
-            // Any are ambiguous). Deferred — iscoll stays XFAIL. Pre-#6 behavior (is-test false for value collections
-            // -> safe default) is correct enough; restore it.
-            // if (!_options.RefBuild) StarProjectionIsTest.Apply(substituted);
             staged.Add((substituted, outputName));
         }
 
@@ -3798,32 +3794,118 @@ static class NullableGenericReturnErasure
 // type token is rewritten (a Collection-typed VARIABLE keeps its generic form for member access). Runs before type
 // lowering; emits `clr:` tokens that pass through unchanged. Non-ref only. (Set/MutableSet are intentionally absent:
 // .NET HashSet<T> implements no non-generic collection interface beyond IEnumerable, so no faithful single token exists.)
-static class StarProjectionIsTest
+// The COMPLETE star-projection lowering (bundle-6 `iscoll`). Lowering the isinst alone (Fix #6) made the is-test true
+// for a value-type collection, but the guarded SMART-CAST member access (`(x as Collection<*>).size` in
+// collectionSizeOrDefault) still castclassed the REIFIED `IReadOnlyCollection<object>` -> InvalidCast, regressing
+// map/filter. The fix routes the WHOLE chain to the non-generic BCL interface: the `isinst`, the smart-cast `cast`,
+// AND the member access on that star-cast (`.size` -> ICollection.Count, `.iterator()` -> IEnumerable.GetEnumerator,
+// `[i]` -> IList.get_Item, `.contains` -> IList.Contains, `.isEmpty()` -> Count == 0). Runs BEFORE MemberCallSubstitution
+// (so it sees the raw `callInstance get_size` on the kotlin.collections.* alias, not the already-substituted reified
+// clrPropGet) and is gated on the APP build (attributeTopLevelOwner) — the ref/rt stdlib self-build keeps the reified
+// form (its collectionSizeOrDefault is-test stays false -> the harmless capacity-hint default), which is exactly why
+// this does NOT reintroduce the Fix #6 map/filter regression. A concrete-arg generic `is`-check is a Kotlin compile
+// error, so every `is Collection<...>` is necessarily `<*>`; keying on the alias FQN is sufficient for the isinst,
+// and the smart-cast + member rewrite is gated to all-`object` (star / erased) type args to leave a genuine
+// `as List<String>` unchecked cast alone. Emits final CLR/`clr:` tokens that pass through type-lowering unchanged.
+static class StarProjectionLowering
 {
+    // Kotlin generic collection alias -> the non-generic BCL interface a `List<int>`/`Dictionary<int,int>` implements
+    // regardless of element type. (Set/MutableSet map to ICollection for the Count/is-test path; HashSet<T> implements
+    // the non-generic ICollection.)
     static readonly Dictionary<string, string> NonGenericIface = new(StringComparer.Ordinal)
     {
-        ["kotlin.collections.Collection"] = "clr:System.Collections.ICollection",
-        ["kotlin.collections.MutableCollection"] = "clr:System.Collections.ICollection",
-        ["kotlin.collections.List"] = "clr:System.Collections.IList",
-        ["kotlin.collections.MutableList"] = "clr:System.Collections.IList",
-        ["kotlin.collections.Iterable"] = "clr:System.Collections.IEnumerable",
-        ["kotlin.collections.MutableIterable"] = "clr:System.Collections.IEnumerable",
-        ["kotlin.collections.Map"] = "clr:System.Collections.IDictionary",
-        ["kotlin.collections.MutableMap"] = "clr:System.Collections.IDictionary",
+        ["kotlin.collections.Collection"] = "System.Collections.ICollection",
+        ["kotlin.collections.MutableCollection"] = "System.Collections.ICollection",
+        ["kotlin.collections.List"] = "System.Collections.IList",
+        ["kotlin.collections.MutableList"] = "System.Collections.IList",
+        ["kotlin.collections.Set"] = "System.Collections.ICollection",
+        ["kotlin.collections.MutableSet"] = "System.Collections.ICollection",
+        ["kotlin.collections.Iterable"] = "System.Collections.IEnumerable",
+        ["kotlin.collections.MutableIterable"] = "System.Collections.IEnumerable",
+        ["kotlin.collections.Map"] = "System.Collections.IDictionary",
+        ["kotlin.collections.MutableMap"] = "System.Collections.IDictionary",
     };
+
+    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+
+    // True for a star-projected (or `object`-erased) generic collection token: bare owner is a known collection alias
+    // and every type arg is `object` (Kotlin allows only `<*>` in an is/as of these, so the args are always erased).
+    static bool IsStarCollection(string token, out string iface)
+    {
+        iface = null;
+        if (token == null) return false;
+        if (!NonGenericIface.TryGetValue(ReferenceMetadataIndex.BareOwnerFqn(token), out iface)) return false;
+        var lb = token.IndexOf('[');
+        if (lb < 0) return true;                                    // raw / bare collection alias
+        var argstr = token[(lb + 1)..token.LastIndexOf(']')];
+        return argstr.Split(',').All(a => a.Trim() == "object");    // all args erased to object
+    }
 
     public static void Apply(JsonNode node)
     {
         if (node is JsonObject obj)
         {
-            if ((obj["k"] as JsonValue)?.GetValue<string>() == "isinst"
-                && (obj["type"] as JsonValue)?.GetValue<string>() is string t
-                && NonGenericIface.TryGetValue(ReferenceMetadataIndex.BareOwnerFqn(t), out var ng))
-                obj["type"] = ng;
+            // Smart-cast member access: `callInstance` on a star-collection alias whose receiver is a `cast` to that
+            // same star-collection -> a non-generic BCL member. Rewrite in place so the cast recv is lowered too.
+            if (Str(obj["k"]) == "callInstance"
+                && IsStarCollection(Str(obj["ownerType"]), out _)
+                && obj["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
+                && IsStarCollection(Str(recv["type"]), out var recvIface)
+                && LowerMember(obj, recv, recvIface) is JsonObject rewritten)
+            {
+                foreach (var kv in rewritten) obj[kv.Key] = kv.Value?.DeepClone();
+                foreach (var stale in obj.Select(kv => kv.Key).Where(k => !rewritten.ContainsKey(k)).ToList())
+                    obj.Remove(stale);
+                // The rewritten node's recv/args are already final; recurse only into them (not the stale members).
+                if (obj["recv"] != null) Apply(obj["recv"]);
+                if (obj["args"] is JsonArray ra) foreach (var a in ra) if (a != null) Apply(a);
+                return;
+            }
+            // Standalone star-projection `is`-test -> the non-generic interface (always safe: a boolean shape test).
+            if (Str(obj["k"]) == "isinst" && IsStarCollection(Str(obj["type"]), out var ng))
+                obj["type"] = "clr:" + ng;
             foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value);
         }
         else if (node is JsonArray arr)
             foreach (var it in arr) if (it != null) Apply(it);
+    }
+
+    // Build the non-generic replacement for a star-cast member call. `iface` is the non-generic interface the receiver
+    // is cast to. Returns null for an unmapped member (leave it reified — the guarding isinst stays whatever it is).
+    static JsonObject LowerMember(JsonObject call, JsonObject cast, string iface)
+    {
+        var recvInner = cast["e"];
+        JsonObject CastTo(string toIface) => new() { ["k"] = "cast", ["type"] = "clr:" + toIface, ["e"] = recvInner.DeepClone() };
+        var args = call["args"] as JsonArray;
+        switch (Str(call["method"]))
+        {
+            case "get_size":
+            case "size":
+                // `.size` -> ICollection/IList/IDictionary.Count.
+                return new JsonObject { ["k"] = "clrPropGet", ["type"] = iface, ["name"] = "Count", ["retType"] = "System.Int32", ["static"] = false, ["recv"] = CastTo(iface) };
+            case "isEmpty":
+                // `.isEmpty()` -> Count == 0 (non-generic interfaces expose no IsEmpty).
+                return new JsonObject
+                {
+                    ["k"] = "bin", ["op"] = "==", ["type"] = "System.Boolean",
+                    ["l"] = new JsonObject { ["k"] = "clrPropGet", ["type"] = iface, ["name"] = "Count", ["retType"] = "System.Int32", ["static"] = false, ["recv"] = CastTo(iface) },
+                    ["r"] = new JsonObject { ["k"] = "const", ["type"] = "System.Int32", ["value"] = 0 },
+                };
+            case "iterator":
+                // `.iterator()` -> IEnumerable.GetEnumerator (non-generic IEnumerator; Current is object == Any).
+                return new JsonObject { ["k"] = "clrInstance", ["type"] = "System.Collections.IEnumerable", ["method"] = "GetEnumerator", ["argTypes"] = new JsonArray(), ["ret"] = "System.Collections.IEnumerator", ["recv"] = CastTo("System.Collections.IEnumerable") };
+            case "get":
+            case "get_Item":
+                // `list[i]` -> IList.get_Item(int) (returns object == Any).
+                if (args == null || args.Count < 1) return null;
+                return new JsonObject { ["k"] = "clrInstance", ["type"] = "System.Collections.IList", ["method"] = "get_Item", ["argTypes"] = new JsonArray { "System.Int32" }, ["ret"] = "System.Object", ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
+            case "contains":
+                // `list.contains(e)` -> IList.Contains(object) (only IList carries a non-generic Contains).
+                if (args == null || args.Count < 1 || iface != "System.Collections.IList") return null;
+                return new JsonObject { ["k"] = "clrInstance", ["type"] = "System.Collections.IList", ["method"] = "Contains", ["argTypes"] = new JsonArray { "System.Object" }, ["ret"] = "System.Boolean", ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
+            default:
+                return null;
+        }
     }
 }
 
