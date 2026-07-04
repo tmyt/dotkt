@@ -294,6 +294,13 @@ sealed class Pipeline
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
             // hardcoded primitives) wherever it appears as a type token.
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases);
+            // `.size` on a collection-OF-collections (groupBy's `Map<K, List<T>>`, whose runtime value is the MUTABLE
+            // `IList<T>` while its STATIC value is `IReadOnlyList<T>`): Count comes via the INVARIANT `ICollection<KVP<K,V>>`,
+            // so the reified generic slot the app dispatches (`...<KVP<int,IReadOnlyList<int>>>`) is absent on the runtime
+            // `Dictionary<int,IList<int>>` -> EntryPointNotFound. Re-point such Count reads at the VARIANCE-IMMUNE
+            // non-generic `System.Collections.ICollection.Count` (every BCL-backed map/list implements it). App build only;
+            // runs AFTER BirTypeLowering so the collection tokens are already the `clrg:System.Collections.*` CLR forms.
+            if (attributeTopLevelOwner) NestedCollectionCountLowering.Apply(lowered);
             // Non-generic `System.IComparable` bridge (non-ref builds): a Kotlin `class C : Comparable<C>` lowers to
             // `C : System.IComparable<C>` ONLY, but the CLR dispatch spine for natural ordering goes through the
             // NON-generic `System.IComparable` (compareValues' `as IComparable` + ilemit's constrained-compareTo
@@ -4738,7 +4745,7 @@ static class MemberCallSubstitution
                 _ => null,
             };
             if (helper != null)
-                return MapDefaultCall(node, helper, ownerToken, args);
+                return MapDefaultCall(node, helper, ownerToken, args, refs, ctx);
             if (mutable && args.Count == 0 && member is "get_keys" or "get_values")
                 return ClrPropNode(node, clrOwner, member == "get_keys" ? "Keys" : "Values", ClrPropRead, member, args);
             // else fall through to Rule 4: an already-BCL member name on the aliased IDictionary owner.
@@ -4851,6 +4858,37 @@ static class MemberCallSubstitution
         return "object";
     }
 
+    // The (K, V) type args for a map-defaults helper call — the two-arg twin of CollElemArg. The owner token's own args
+    // (`Map[gp:K,gp:V]`) when present and concrete; otherwise — when the owner is BARE or an OVER-APPROXIMATED position
+    // (`MutableMap` bare / `MutableMap[kotlin.Any,V]`, because the receiver is a `gp:M` whose `in K` projection erased the
+    // key to Any) — the receiver type-parameter's INVARIANT map-interface constraint (`M : MutableMap[gp:K,gp:V]`). This
+    // undoes the variance approximation so `associateWith`/`associateBy`'s `destination.put(..)` emits clrMapPut<K,V>, not
+    // <object,object> whose `IDictionary<object,..>::ContainsKey` finds no slot on the runtime dict -> EntryPointNotFound.
+    static (string, string) MapKvArgs(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx, string ownerToken)
+    {
+        var (k, v) = OwnerKvArgs(ownerToken);
+        var over = k is "object" or "kotlin.Any" || v is "object" or "kotlin.Any";
+        if (!over) return (k, v);
+        if (ctx != null && refs != null && node["recv"] is JsonObject recv && (recv["k"] as JsonValue)?.GetValue<string>() == "local"
+            && (recv["name"] as JsonValue)?.GetValue<string>() is string vn && ctx.VarTypes.TryGetValue(vn, out var vt) && vt.StartsWith("gp:", StringComparison.Ordinal)
+            && ctx.TpConstraints.TryGetValue(vt.Substring(3), out var cons))
+        {
+            foreach (var c in cons)
+            {
+                if (!refs.TryResolveClrOwner(c, out _, out var ck) || ck != "interface") continue;
+                var b = c.IndexOf('[');
+                if (b < 0 || !c.EndsWith("]", StringComparison.Ordinal)) continue;
+                var inner = SplitTopLevel(c.Substring(b + 1, c.Length - b - 2));
+                if (inner.Count < 2) continue;
+                // Only OVERRIDE an over-approximated (object/kotlin.Any) position; a genuinely-concrete owner arg wins.
+                if (k is "object" or "kotlin.Any" && !string.IsNullOrEmpty(inner[0])) k = inner[0];
+                if (v is "object" or "kotlin.Any" && !string.IsNullOrEmpty(inner[1])) v = inner[1];
+                break;
+            }
+        }
+        return (k, v);
+    }
+
     // Kotlin collection-interface member -> the rt ClrCollectionDefaults static (recv-first, generic over elem).
     // iterator() and listIterator() are handled separately (different owner / default index).
     static readonly Dictionary<string, string> CollectionDefaults = new(StringComparer.Ordinal)
@@ -4882,12 +4920,12 @@ static class MemberCallSubstitution
 
     // The 2-type-arg map mirror of CollDefaultCall: `callStatic ClrMapDefaultsKt.<helper>(recv, args...)` typed over
     // the map owner token's [K,V] instantiation args.
-    static JsonNode MapDefaultCall(JsonObject node, string helperMethod, string ownerToken, JsonArray args)
+    static JsonNode MapDefaultCall(JsonObject node, string helperMethod, string ownerToken, JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx)
     {
         var hargs = new JsonArray();
         if (node["recv"] != null) hargs.Add(node["recv"].DeepClone());
         foreach (var a in args) hargs.Add(a?.DeepClone());
-        var (k, v) = OwnerKvArgs(ownerToken);
+        var (k, v) = MapKvArgs(node, refs, ctx, ownerToken);
         var call = new JsonObject
         {
             ["k"] = "callStatic",
