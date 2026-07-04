@@ -2311,7 +2311,8 @@ sealed partial class Emitter
         }
     }
 
-    // Numeric conversion (`x.toLong()` etc.) -> a CIL conv opcode; returns the target CLR type.
+    // A CIR `conv` instruction -> the matching CIL conv opcode; returns the target CLR type. ilemit only selects the
+    // opcode for the requested target width — WHERE a Kotlin numeric conversion becomes a `conv` node is bir2cir's call.
     Type EmitConv(JsonElement e)
     {
         EmitExpr(e.GetProperty("e"));

@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit POLISH (dead-code + failure-posture + contract hygiene; gate stays XFAIL-zero from a clean rebuild):**
+  - **Deleted the dead `ilemitCompatBir` envelope branch** in `LoadInputDocument` (Program.cs). It had ZERO
+    producers since the `--compat-bir`/`--native-cir` dual-track was removed (2026-06-30) — bir2cir emits only
+    `cirDraft.executableCir`. Also pruned a stale comment referencing the deleted `Emitter.Coroutines.cs` (the
+    CPS-orphan `LambdaKinds`/`steps`/`coClass` guards were already removed in the coroutine-codegen deletion).
+  - **Suspend throw-stub now fails LOUD in an APP build.** A leftover `"suspend":true` method reaching ilemit
+    means bir2cir's cold-core lowering did not transform it. In a STDLIB build (ref OR rt) that is EXPECTED — the
+    coroutine PRIMITIVES (`suspendCoroutine[UninterceptedOrReturn]`, `yield`/`yieldAll`, `callRecursive`, the
+    `kotlin.clr` `await`/`delay` bridge) have no state-machine form and are deliberately left un-lowered "for the
+    ilemit throw-stub"; their bodies are dead (call sites are lowered away), so the throwing stub stays unchanged.
+    In an APP build there are no such primitives, so an un-lowered suspend fn is a genuine bir2cir transform MISS —
+    ilemit now throws an emit-time error naming the method instead of silently emitting a distant runtime throw.
+    (Gate-neutral: every app coroutine sample is fully lowered, so none reach the new error.)
+  - **Scoped the `EmitConv` contract comment** to "a CIR `conv` instruction" (dropping the `x.toLong()` Kotlin
+    framing) — WHERE a Kotlin numeric conversion becomes a `conv` node is bir2cir's decision, not ilemit's.
 - **Zero-XFAIL FINAL: the last three `verify-differential` XFAILs (`m-b6`/`m-b9`/`m-b10`, the 2026-07-02 stdlib
   subtree-bump fallout) are FIXED — every gate is now XFAIL-empty.** These are the `maxOrNull`/`sumOf`/`groupBy`
   collection samples; each matched the JVM oracle after four fixes across three layers (pruned from `XFAIL_DIFF`):
