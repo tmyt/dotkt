@@ -5,16 +5,22 @@
 
 package kotlin.io
 
-// @ClrIntrinsic-bound to the BCL console (System.Console.Write/WriteLine). NOT inline: a BCL call replaces the body, and
-// the BCL internals are native — there is nothing to inline. The TODO body never runs (the call-site substitution wins).
-// Overloads match: print(Any?)->Write(Object), println(Any?)->WriteLine(Object), println()->WriteLine().
-/** Prints the given [message] to the standard output stream. */
+// The BCL console. Console.Write/WriteLine(object) renders a NON-null value via its own ToString, but a null
+// object writes an EMPTY line — Kotlin's print/println(Any?) render null as the string "null". So the public
+// functions coalesce the argument to "null" with a plain elvis (NO forced toString — the BCL call handles a
+// non-null value) and delegate to a private @ClrIntrinsic helper (a BCL call replaces the helper's body). The
+// null-rendering is thus ordinary Kotlin stdlib code, not a per-method compiler injection; a consumer references
+// the stdlib to resolve print/println, exactly as for any other stdlib function.
 @kotlin.clr.ClrIntrinsic("System.Console.Write")
-public actual fun print(message: Any?) { TODO("@ClrIntrinsic System.Console.Write") }
+internal fun clrConsoleWrite(value: Any): Unit = TODO("@ClrIntrinsic System.Console.Write")
+@kotlin.clr.ClrIntrinsic("System.Console.WriteLine")
+internal fun clrConsoleWriteLine(value: Any): Unit = TODO("@ClrIntrinsic System.Console.WriteLine")
+
+/** Prints the given [message] to the standard output stream. */
+public actual fun print(message: Any?) { clrConsoleWrite(message ?: "null") }
 
 /** Prints the given [message] and the line separator to the standard output stream. */
-@kotlin.clr.ClrIntrinsic("System.Console.WriteLine")
-public actual fun println(message: Any?) { TODO("@ClrIntrinsic System.Console.WriteLine") }
+public actual fun println(message: Any?) { clrConsoleWriteLine(message ?: "null") }
 
 /** Prints the line separator to the standard output stream. */
 @kotlin.clr.ClrIntrinsic("System.Console.WriteLine")

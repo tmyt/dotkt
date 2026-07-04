@@ -32,8 +32,6 @@ done
 declare -A XFAIL_RUN=(
 	[collops2]="bundle-6 P5: cross-module default-argument drop — windowed(3). kotc OUTPUT IS CORRECT (verified): it emits callStatic windowed with 2 args (receiver+size) against the full 4-param sig + typeArgs=[Int], OMITTING step/partialWindows (the frontend jar strips default VALUES — Kotlin metadata only stores a HAS_DEFAULT flag, never the expression, so kotc cannot know 1/false; reading them from the ref.dll would be a layer violation). The emitted stdlib windowed carries [Optional]+[DefaultParameterValue(1)]/[DefaultParameterValue(false)]. ROOT CAUSE is DOWNSTREAM in ilemit: EmitCallArgs already fills omitted trailing optional args from the referenced method's [DefaultParameterValue] (Emitter.Expressions.cs:3390), BUT the GENERIC branch of callStatic (typeArgs present -> EmitArgsTyped, Emitter.Expressions.cs:228 / Program.cs:1661) does NOT fill them -> the 4-param method is called with 2 args -> InvalidProgram. FIX (ilemit, Codex-confirmed): make the typeArgs/EmitArgsTyped path fill omitted trailing defaults from mb.GetParameters() like EmitCallArgs. NOT kotc (CLR-blind, output correct); alt = bir2cir backfill from ref.dll ParameterInfo. KNOWN BUG cross-module-default-args-not-preserved"
 	[bymap]="Map dual-rep sub-track (bundle-6 BUG-2 sibling, DISTINCT from the FIXED for-in path — see il-mapforin): the property-delegation getValue chain (MapAccessorsKt.getValue -> getOrImplicitDefault -> clrMapGet -> m.containsKey) dispatches IDictionary<!!K,!!V>.ContainsKey on the OPEN generic-param interface instantiation -> EntryPointNotFound. A DIRECT mm.containsKey(k) (concrete IDictionary<string,int>) works; only the generic-param clrMapGet path fails. Generic-IDictionary member dispatch, owned by ilemit/stdlib, not the for-in iterator collision this change fixed."
-	[digittoint]="bundle-6 ④: the kotc cond-type defect is FIXED (BirEmitter.ternary now tags the value-type+null join nullable:<elem> — digitToIntOrNull no longer InvalidPrograms; '7'/'a'(16)/'7' now compute 7/10/7 correctly and the 'z' case computes null). REMAINING mismatch is a SEPARATE, general downstream divergence: println(null) prints an EMPTY line instead of 'null'. Reproduces with any null (val a:Int?=null; println(a) / val s:String?=null; println(s) BOTH print empty) — NOT digittoint-specific, was merely masked while the method InvalidProgram'd. ROOT: libraries/stdlib/clr/kotlin/io/ConsoleClr.kt binds println(Any?) directly @ClrIntrinsic(\"System.Console.WriteLine\") -> Console.WriteLine(object), which writes empty for a null object; Kotlin's println(Any?) renders null as the string 'null'. Fix belongs to the stdlib binding (render null->\"null\", e.g. print(message.toString())) or a bir2cir println-substitution null-coalesce — NOT kotc. Prune once that lands."
-	[printlnnull]="println/print(null) render EMPTY not \"null\" — the stdlib real-method approach broke -no-stdlib interop (reverted); pending bir2cir INLINE null-coalesce."
 )
 declare -A XFAIL_ILVERIFY=(
 	[iter]="ilverify formal-only finding (sample runs correct)"
@@ -142,9 +140,9 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			reason="compile error"; exit 0; fi
-		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$refdll"; then
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$refdll" --ref "$STDLIB_RT_DLL"; then
 			reason="ilemit error"; exit 0; fi
-		cp "$refdll" "$ildir/"
+		cp "$refdll" "$ildir/"; cp "$STDLIB_RT_DLL" "$ildir/"
 		if ! actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"; then
 			reason="run crash"; detail="$(printf -- '--- expected ---\n%s\n--- actual (before crash) ---\n%s' "$expected" "$actual")"; exit 0; fi
 		if [[ "$actual" == "$expected" ]]; then ok=1; else mismatch "$expected" "$actual"; fi
