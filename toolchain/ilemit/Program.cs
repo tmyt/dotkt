@@ -83,10 +83,6 @@ static class IlEmit
             draft.TryGetProperty("executableCir", out var executable))
             return JsonDocument.Parse(executable.GetRawText());
 
-        if (root.TryGetProperty("cirDraft", out draft) &&
-            draft.TryGetProperty("ilemitCompatBir", out var compat))
-            return JsonDocument.Parse(compat.GetRawText());
-
         throw new InvalidOperationException(
             $"ilemit: native CIR input '{path}' does not contain cirDraft.executableCir");
     }

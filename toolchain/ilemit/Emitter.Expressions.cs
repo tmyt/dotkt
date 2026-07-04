@@ -437,7 +437,7 @@ sealed partial class Emitter
                 // read side is `a[i] as T` -> unbox.any. (Reference values and value-element arrays need no box.)
                 // A GENERIC-PARAM element (`T[]`, stelem !T) must NOT box: `box T` yields object, and for a value-type
                 // instantiation stelem !T then stores the reference bits as the value (garbage). Same guard as the
-                // local/field/coroutine box sites (Emitter.Statements 27/38, Emitter.Coroutines 187).
+                // local/field box sites (Emitter.Statements 27/38).
                 if (!selem.IsValueType && !selem.IsGenericParameter && svt != null && NeedsBoxToRef(svt)) _il.Emit(OpCodes.Box, svt);
                 _il.Emit(OpCodes.Stelem, selem); return typeof(void);
             }
