@@ -11,7 +11,7 @@ fun main() {
 
     val r2 = runCatching { risky(-1) }
     println(r2.isFailure)           // true
-    println(r2.getOrNull())         // null  (value-type Result<Int> failure -> "null")
+    println(r2.getOrNull())         // null  (value-type Result<Int> failure -> empty)
     println(r2.getOrDefault(-99))   // -99
     println(r2.exceptionOrNull()?.message)  // neg -1  (Throwable.message -> Exception.Message)
 
