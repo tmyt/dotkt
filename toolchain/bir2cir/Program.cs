@@ -3350,6 +3350,15 @@ static class NullableGenericReturnErasure
         CollectNullableAccessors(o["properties"], getters, setters);
         EraseNullableGpDecls(o["fields"]);
         EraseNullableGpDecls(o["properties"]);
+        // GENERAL body-local nullable-generic erasure (bundle-6 value-type-nullable LOCAL, the twin of the field/property
+        // pass above). kotc marks a `var single: T? = null` value-type-nullable accumulator LOCAL with a sibling
+        // `"nullable":true` next to `"type":"gp:T"`. Left as-is, the value-type `T` slot holds a null → the trailing
+        // `single as T` unbox.any NREs (Sequence.single{}'s terminal). RetypeNullableGpVars erases the slot to `object`
+        // (a real null survives; value stores box; the `as T` read re-narrows) — see there for why it gates on a
+        // null-const init (to skip kotc's synthetic safe-call temps, whose implicit reads would corrupt).
+        if (o["methods"] is JsonArray msLocals)
+            foreach (var m in msLocals)
+                if (m is JsonObject mo) RetypeNullableGpVars(mo["body"]);
         if ((getters.Count > 0 || setters.Count > 0) && o["methods"] is JsonArray ms2)
         {
             foreach (var m in ms2)
@@ -3439,6 +3448,47 @@ static class NullableGenericReturnErasure
                 break;
         }
     }
+
+    // GENERAL body-local twin of EraseNullableGpDecls: retype a NULL-INITIALIZED `k=="var"` local marked `type:"gp:T"`
+    // + sibling `nullable:true` to `object`. The local counterpart of the field/property erasure — a value-type-nullable
+    // accumulator local (`var single: T? = null` in Sequence.single{}) must hold a genuine null in a reference slot,
+    // with value stores boxing and the read boundary (`single as T`) re-narrowing (unbox.any/castclass).
+    //
+    // WHY GATE ON A NULL-CONST INIT (not the bare marker). kotc stamps `nullable:true` on EVERY value-type-nullable `gp:`
+    // local, INCLUDING compiler-synthesized safe-call receiver temps (`tmp0_safe_receiver` for `transform(x)?.let{…}` in
+    // mapNotNullTo). Those temps init from an object-returning call and are read IMPLICITLY (`?.`/`.let`) with no explicit
+    // `as T`, so erasing them to `object` corrupts the unbox (mapNotNull -> garbage; collmore NEW-FAIL). The `var x: T? =
+    // null` accumulator idiom — the case that genuinely needs a surviving null — always inits to a null const and is read
+    // through an explicit `as T`; keying on the null-const init selects exactly that idiom and excludes the synthetic
+    // temps. (The `forEachInline` loop var over a nullable-generic SOURCE — filterNotNullTo's `for (element in
+    // this: Iterable<T?>)` — is a DISTINCT axis needing a value-type-nullable COLLECTION receiver conversion the call
+    // sites lack; broad erasure there corrupts hashCode/collectionToArray iterations. Left to the collection
+    // dual-representation track — NOT erased here.)
+    static void RetypeNullableGpVars(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "var"
+                    && (obj["nullable"] as JsonValue)?.TryGetValue<bool>(out var nb) == true && nb
+                    && (obj["type"] as JsonValue)?.TryGetValue<string>(out var vt) == true
+                    && vt.StartsWith("gp:", StringComparison.Ordinal)
+                    && IsNullConstInit(obj["init"]))
+                    obj["type"] = "object";
+                foreach (var kv in obj) RetypeNullableGpVars(kv.Value);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) RetypeNullableGpVars(it);
+                break;
+        }
+    }
+
+    // True when a var initializer is the null literal (`{k:"const", value:null}`) — the `T? = null` accumulator idiom.
+    // A JSON null property surfaces as a C# null JsonNode, so a `const` whose `value` node is null IS the null literal.
+    static bool IsNullConstInit(JsonNode init) =>
+        init is JsonObject io
+        && (io["k"] as JsonValue)?.TryGetValue<string>(out var ik) == true && ik == "const"
+        && io.ContainsKey("value") && io["value"] is null;
 
     // A field/property whose slot is a nullable generic parameter (`type:"gp:T"` + sibling `nullable:true`) -> the
     // reference `object` slot. Only the boolean-marked `gp:` form; the inline `nullable:gp:T` form (should it appear
