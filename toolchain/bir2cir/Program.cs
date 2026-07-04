@@ -108,6 +108,11 @@ sealed class Pipeline
         // supertype, so this synthetic-retention is a technical necessity, not a preference. (docs/design-charsequence-clr-string.md)
         var hasUserCharSeqImpl = birFiles.Any(f => DeclaresCharSeqImplementer(f.Root));
 
+        // The callee generic-param ORDER index (funName|arity -> ordered type-param names), aggregated across ALL input
+        // BIR files: a same-assembly cross-file `callStatic owner=null` may target a fun defined in another input, and
+        // MapVarianceRealign needs the callee's declared type-param order to map a sig's `gp:NAME` to its typeArg index.
+        var calleeTypeParams = MapVarianceRealign.CollectCalleeTypeParams(birFiles.Select(f => f.Root));
+
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the transformability fixpoint spans all files).
@@ -140,6 +145,14 @@ sealed class Pipeline
             // object, and repairs the local dataflow (see the class). MUST consume every `nullable:`-marked func ret:
             // ilemit's FuncRetEnd parses a single leading prefix and would misparse a stacked `nullable:gp:R`.
             NullableFuncReturnErasure.Apply(bir.Root);
+            // VARIANCE -> INVARIANCE type-arg REALIGNMENT (il-bymap): kotc approximates a use-site `in`/`out` variance
+            // projection to `kotlin.Any` (JVM-erased, harmless), so a call into an INVARIANT @ClrTypeAlias collection
+            // generic (`getOrImplicitDefault<K,V>` on a `Map<String,V>` receiver) carries a `K = Any` typeArg while the
+            // actual arg pins `K = String`. On the CLR `IDictionary<,>` is invariant, so the mismatch -> EntryPointNotFound
+            // at `ContainsKey`. Realign each such typeArg to the actual argument's concrete type-argument. BIR-space,
+            // before MemberCallSubstitution + type lowering; non-ref only. A no-op when the arg already agrees (genuine
+            // `<Any>` calls) or the callee isn't a local input (an app never re-lowers a referenced stdlib body).
+            if (!_options.RefBuild) MapVarianceRealign.Apply(bir.Root, calleeTypeParams);
             // CALL substitution (substitute/app builds only): a member call / construction whose OWNER is a CLR-bound
             // type in the ref.dll (@ClrTypeAlias, or the legacy class-level @ClrIntrinsic) is rewritten to a plain BCL
             // call/new. This is the bir2cir home of what kotc's clrName() member routing used to do — sourced from the

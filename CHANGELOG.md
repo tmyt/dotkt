@@ -5,6 +5,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir (bundle-6 `bymap`): variance→invariance type-argument REALIGNMENT for invariant `@ClrTypeAlias` collection
+  generics — property delegation over a `Map` now RUNS (pruned from `XFAIL_RUN`).** `val name: String by data`
+  (`data: Map<String, Any?>`) crashed `EntryPointNotFound` at `IDictionary\`2::ContainsKey`. Root: kotc's frontend
+  approximates the use-site `in`/`out` variance of the delegate receiver to `kotlin.Any` (JVM-erased, harmless), so the
+  desugared `getOrImplicitDefault<K,V>(this)` call carries `K = kotlin.Any` while the ACTUAL receiver is `Map<String,V>`.
+  On the CLR `IDictionary<,>` is INVARIANT, so an `IDictionary<string,V>` argument cannot flow into an
+  `IDictionary<object,V>` param (and `IDictionary<object,object>::ContainsKey` finds no slot on a runtime
+  `Dictionary<string,object>`) → EntryPointNotFound. New pass `MapVarianceRealign` (`MapVarianceRealign.cs`, BIR-space,
+  before `MemberCallSubstitution` + type lowering, every non-ref build) realigns each such `typeArg` to the actual
+  argument's concrete type-argument: for a callee `sig` param that is an invariant BCL collection generic
+  (`Map`/`MutableMap`/`HashMap`/`LinkedHashMap`/`Set`/`MutableSet`/`HashSet`/`LinkedHashSet`), it matches the sig's
+  `gp:P` positions against the actual arg's declared generic args and overrides the frontend approximation. `typeArgs`
+  are positional to the callee's declared type params, so a callee generic-param ORDER index (aggregated across all
+  input BIR files by `name|arity`) maps `gp:K` → its `typeArg` index. CIR before/after
+  (`MapAccessors.getValue` → `getOrImplicitDefault`): `typeArgs ["object","gp:V"]` → `["string","gp:V"]` (the exact
+  hand-patch the ilemit agent proved greens the sample with unmodified ilemit). Changed ONLY when the arg pins a
+  DIFFERENT concrete type (a genuine `<Any>` call is a no-op) and covariant `IReadOnly*<out T>` positions are untouched
+  — same bug class as the mutable-map for-in reroute (`mapforin`) and `HashSet(cap, loadFactor)` (`hashset2`). Only
+  `MapAccessors.cir.json` changed across the whole rt CIR; gate GREEN, no Map-sample regression. Leaves `collops2`
+  (generic cold-sequence SM) as the sole `XFAIL_RUN`.
 - **bir2cir (bundle-6 `iter`/`iterable`): unify the monomorphized synthetic `Iterator` interface onto the referenced
   generic — both samples now ilverify-CLEAN (pruned from `XFAIL_ILVERIFY`).** A user `class C : Iterator<T>` (or an
   `object : Iterator<T>`) is emitted by kotc implementing a per-element MONOMORPHIZED synthetic interface
