@@ -4164,20 +4164,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return (t.classifierOrNull?.owner as? IrClass)?.let(::walk) ?: false
 	}
 
-	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = true)
-
 	/** Member-CALL routing must NOT substitute from the stdlib's own `@ClrIntrinsic` annotation: that
 	 *  substitution (a `kotlin.*` member call -> a BCL member) is bir2cir's job, sourced from the ref.dll. kotc emits a
 	 *  PLAIN Kotlin member call. So the call-routing sites read [clrInteropName], which resolves ONLY the genuine .NET
 	 *  interop sources (the facadegen-injected [ClrTypeRegistry] + the `java.util.Comparator` alias) and DELIBERATELY
 	 *  ignores the `@ClrIntrinsic` annotation. The collection/StringBuilder member slot maps that used to live here are
-	 *  GONE — bir2cir substitutes those calls off the ref.dll @ClrIntrinsic (layer purity). Note the annotation source is
+	 *  GONE — bir2cir substitutes those calls off the ref.dll @ClrIntrinsic (layer purity). The annotation source is
 	 *  already absent in every build: the stdlib build (`CLR_TYPES_METADATA=""`) has an EMPTY registry, and an app build
-	 *  resolves the stdlib from the jar, which drops `@ClrIntrinsic` -> [clrInteropName] == [clrName]. Type encoding ([netType]) still
-	 *  keeps `useAnnotation=true` — a separate concern. (The @ClrTypeAlias type-strip is gone: bir2cir drops alias types.) */
-	internal fun clrInteropName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl, useAnnotation = false)
+	 *  resolves the stdlib from the jar, which drops `@ClrIntrinsic`. So [clrInteropName] is now IDENTICAL to [clrName]
+	 *  (the old `useAnnotation` discriminator is gone — nothing here reads `@ClrIntrinsic`); it survives as a distinct
+	 *  name only to mark a call-routing site. (The @ClrTypeAlias type-strip is gone: bir2cir drops alias types.) */
+	internal fun clrInteropName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl)
 
-	private fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer, useAnnotation: Boolean): String? {
+	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
 		// The JVM kotlin-stdlib aliases `Comparator = java.util.Comparator`; an app compiled against that jar sees the
 		// java.util name. Treat it as OUR rt `kotlin.Comparator` (a real CLR interface in the rt), so birType, the
 		// member-call dispatch (-> clrInstance), and the supertype all resolve it via the .NET-type (clrg:) path from the
@@ -4191,7 +4190,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// ref.dll by bir2cir, so there is NO annotation read here. The ONLY source left is the app-interop FIR-injection
 		// registry (ClrTypeRegistry, populated by the .NET-type injection); the app-build collection/StringBuilder slot
 		// maps that used to sit below are GONE (bir2cir substitutes those off the ref.dll @ClrIntrinsic — layer purity).
-		// `useAnnotation` is now vestigial (its only consumer, the old annClr @ClrIntrinsic reader, is removed).
 		(decl as? IrProperty)?.let { prop ->
 			fun lookup(p: IrProperty): String? {
 				p.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.memberClrName(it) }?.let { return it }

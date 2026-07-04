@@ -5,6 +5,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc cleanup: the vestigial `useAnnotation` parameter on `BirEmitter.clrName` is removed.** With the
+  collection/StringBuilder slot maps and `appColl` gone (above), nothing in the `clrName` body reads
+  `@ClrIntrinsic`, so `clrName(decl, useAnnotation=true)` and `clrName(decl, useAnnotation=false)` returned
+  identical values — `clrInteropName` is now a plain alias of `clrName` (kept only to mark a call-routing site).
+  Inert refactor (no emitted-output change); full stdlib rebuild + gate green.
 - **Layer purity: the kotc `clrIfaceMemberName` collection override-slot map (`size`->`get_Count`, `get`->`get_Item`,
   `set`->`set_Item`, `iterator`->`GetEnumerator`, `add`->`Add`, `remove`->`Remove`, `contains`->`Contains`,
   `containsKey`->`ContainsKey`, `clear`->`Clear`) is deleted.** It renamed a `class R : List<T>`/`MutableList<T>`
