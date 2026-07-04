@@ -3638,6 +3638,18 @@ static class NullableGenericReturnErasure
             if (getters.Count > 0)
                 foreach (var m in ms2)
                     if (m is JsonObject mo) RetypeGetterReaderVars(mo["body"], getters);
+            // Re-narrow the CALL-NODE `retType` of every read of an erased getter to `object`. kotc stamped the
+            // call node with the property's declared (nullable-generic) return `gp:T`; the getter now RETURNS
+            // `object`, so a stale `gp:T` retType makes ilemit insert a coercion unbox.any right after the call —
+            // and when the read is ALSO wrapped in an explicit `as T` cast (`nextValue as T`, the common
+            // `T?`-property reader), the cast unbox.any's AGAIN → a DOUBLE `unbox.any !T` that NREs on the
+            // second (the first already produced a bare value, not a boxed reference). This is the reader twin of
+            // the `mo["ret"]="object"` accessor erasure above: the call node's retType must agree with the
+            // callee's (now-object) return so exactly ONE narrow (the source `as T`) survives. (SequenceBuilder
+            // `next()`'s `nextValue as T` on a VALUE element was the symptom — a cold-sequence NRE.)
+            if (getters.Count > 0)
+                foreach (var m in ms2)
+                    if (m is JsonObject mo) RetypeErasedGetterCalls(mo["body"], getters);
             // Force the value->object box at each CALL to an erased setter. ilemit cannot read the param types off a
             // TypeBuilder-re-anchored generic self-call (`set_nextItem` on `<>dotkt_obj146[gp:T]`), so its arg-coercion
             // silently skips the box: a `gp:T` value arg lands on the stack unboxed where the now-`object` param wants a
@@ -3709,6 +3721,28 @@ static class NullableGenericReturnErasure
                 break;
             case JsonArray arr:
                 foreach (var it in arr) RetypeGetterReaderVars(it, getters);
+                break;
+        }
+    }
+
+    // Retype the `retType` of every `callInstance` reading an erased getter (`get_X` in `getters`) to `object`, so
+    // the CIR call node agrees with the getter's now-`object` return. Without this, a stale `retType:"gp:T"` makes
+    // ilemit coerce (unbox.any) the object result to the value type at the call — and a wrapping `as T` cast then
+    // unbox.any's the already-unboxed value AGAIN, NREing. Retyping to `object` leaves a single narrow (the `as T`).
+    static void RetypeErasedGetterCalls(JsonNode node, HashSet<string> getters)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "callInstance"
+                    && (obj["method"] as JsonValue)?.TryGetValue<string>(out var mn) == true && getters.Contains(mn)
+                    && (obj["retType"] as JsonValue)?.TryGetValue<string>(out var rt) == true
+                    && (rt.StartsWith("gp:", StringComparison.Ordinal) || rt.StartsWith("nullable:gp:", StringComparison.Ordinal)))
+                    obj["retType"] = "object";
+                foreach (var kv in obj) RetypeErasedGetterCalls(kv.Value, getters);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) RetypeErasedGetterCalls(it, getters);
                 break;
         }
     }
@@ -5029,6 +5063,15 @@ static class MemberCallSubstitution
         if (ret != null) call["ret"] = ret;
         if (instance) call["recv"] = node["recv"]?.DeepClone();
         call["args"] = args.DeepClone();
+        // Thread the source call's generic type arguments onto the substituted clr call. A generic Kotlin
+        // @ClrIntrinsic method (`fun <T> Array<T>.nativeFill(...)`) binds to a generic BCL method
+        // (`System.Array.Fill<T>(T[],T,int,int)`); ilemit needs the type args to MakeGenericMethod the resolved
+        // definition (else it emits an OPEN generic MethodSpec -> "method/type not fully instantiated" at run,
+        // the windowed/RingBuffer.removeFirst -> _ArraysKt.fill -> Array.Fill NRE). ilemit instantiates ONLY when
+        // the resolved BCL method is itself a generic DEFINITION, so threading these onto a call whose target is
+        // non-generic (nativeClone -> Array.Clone) is a harmless no-op there.
+        if (node["typeArgs"] is JsonArray callTypeArgs && callTypeArgs.Count > 0)
+            call["typeArgs"] = callTypeArgs.DeepClone();
         return call;
     }
 
