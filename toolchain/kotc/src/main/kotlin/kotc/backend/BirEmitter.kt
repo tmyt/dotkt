@@ -3955,7 +3955,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// an extension instance for Double.pow); bir2cir's MemberCallSubstitution reads MathClr.kt's @ClrIntrinsic
 			// bindings off the ref.dll and substitutes System.Math.* / System.MathF.* — the CLR relation lives there, not
 			// in kotc. (Retired 2026-07-02: pilot of the "retire a kotc hardcoded CLR lowering" pattern.)
-			// `kotlin.text` String ops: the CLEAN ones RETIRED (2026-07-02, bundle 4-B — see BirMappings.STRING_OPS
+			// `kotlin.text` String ops are RETIRED from kotc name-lowering (bundle 4-B + bundle-8, STRING_OPS map fully deleted; the
 			// comment). kotc emits a plain call; bir2cir attributes it to StringsKt and the StringCharSequenceBridge (now
 			// run on the RT stdlib build too) coerces the String receiver/args into the `<>dotkt_CharSequence` adapter so
 			// the CharSequence-extension body runs: `contains`/`indexOf`/`startsWith`/`endsWith`/`split`/`substring(2-arg)`/
@@ -3969,17 +3969,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				if (name == "reversed") (extensionReceiver(call) ?: dispatchReceiver(call))?.takeIf { it.type.classFqName?.asString() == "kotlin.String" }?.let { recv ->
 					return """{"k":"strReversed","s":${expr(recv)}}"""
 				}
-				// String ops kept lowered (trim/trimStart/trimEnd/padStart/padEnd/replace) -> `System.String` instance
-				// methods (clrInstance; ilemit resolves the overload). See BirMappings.STRING_OPS for the per-op blocker.
-				STRING_OPS[name]?.let { m ->
-					val recv = extensionReceiver(call) ?: dispatchReceiver(call)
-					// Guard: a Char receiver falls through to its real stdlib body (trim/replace name Char funs too).
-					if (recv != null && birType(recv.type) != "kotlin.Char") {
-						val args = regularArgs(call)
-						return """{"k":"clrInstance","type":"System.String","method":${str(m)},"argTypes":[${args.joinToString(",") { str(birType(it.type)) }}],"ret":${str(birType(callee.returnType))},"recv":${expr(recv)},"args":[${args.joinToString(",") { expr(it) }}]}"""
-					}
-				}
-				// isBlank/isNotBlank are NO LONGER lowered here (2026-07-04, bundle-8 layer purity): the BCL name
+				// String ops (trim/trimStart/trimEnd/padStart/padEnd/replace) are NO LONGER name-lowered to System.String
+				// members here (2026-07-04, bundle-8 layer purity — the STRING_OPS map is GONE): the BCL member names were
+				// CLR knowledge in kotc (a layer violation). kotc emits a plain call; the real pure-Kotlin stdlib body runs
+				// (bir2cir attributes it to StringsKt; the StringCharSequenceBridge coerces the String receiver/args into the
+				// `<>dotkt_CharSequence` adapter for the CharSequence-extension bodies). The stdlib `CharSequence.trim*()`
+				// bodies were changed from a `Char::isWhitespace` method-ref to a lambda `{ it.isWhitespace() }` (no
+				// callable-ref lowering needed); padStart/padEnd (`StringBuilder(capacity)` + `append(CharSequence)`) and
+				// replace(String,String) (`StringBuilder.append(seq,start,end)` via subSequence+toString) bind correctly now.
+				// isBlank/isNotBlank were retired the same way (2026-07-04 earlier): the BCL name
 				// System.String.IsNullOrWhiteSpace was CLR knowledge in kotc, a layer violation, AND it was WRONG for a
 				// non-String CharSequence receiver (IsNullOrWhiteSpace only takes String). The stdlib `CharSequence.isBlank()`
 				// body was rewritten to an index loop (`for (i in 0 until length) …`) instead of `all { it.isWhitespace() }`

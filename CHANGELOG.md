@@ -5,6 +5,33 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Layer purity (bundle-8): the kotc `STRING_OPS` map is fully DELETED — `trim`/`trimStart`/`trimEnd`/`padStart`/
+  `padEnd`/`replace` no longer name-lower to `System.String` members.** The BCL member names (`Trim`/`PadLeft`/
+  `PadRight`/`Replace`) were CLR knowledge in kotc (a layer violation) and masked real stdlib-body bugs. Each op now
+  runs its PURE-KOTLIN stdlib body (kotc emits a plain call; bir2cir attributes it to `StringsKt`):
+  - `CharSequence.trim/trimStart/trimEnd()` rewritten from a `Char::isWhitespace` **method reference** (a callable ref
+    to an `@ClrIntrinsic` Char method that "is not lowered" → runtime throw) to a lambda `{ it.isWhitespace() }`.
+  - `String.trim/trimStart/trimEnd(vararg chars)` and `String.padStart/padEnd` given DIRECT String bodies (index
+    loop / `StringBuilder`) instead of `(this as CharSequence).…().toString()`. That cast, when compiled into a
+    non-inline stdlib method, has no CLR `<>dotkt_CharSequence` adapter to land on (the bridge only wraps at app call
+    sites) → `InvalidCast`/`InvalidProgram`. The direct bodies operate on `this` as a `String`, no cast.
+  - `String.replace(oldValue, newValue)` (StringsClr.kt) rewritten to append via `substring` + `append(String)`
+    instead of the 3-arg `StringBuilder.append(CharSequence?, start, end)`, which on the CLR mis-resolves to the BCL
+    `Append(char[], startIndex, count)` (end != count) → `ArgumentOutOfRange`.
+  - `String.padStart`/`padEnd` SPLIT into a no-default `(length, padChar)` + an explicit-`' '` `(length)` overload
+    instead of a `padChar: Char = ' '` default. A cross-module **char default is un-representable on the CLR** —
+    ilemit's constant stamping (`ConstArgValue`) has no `char` case, so a `= ' '` default is stamped as a `null`
+    (ref.dll) / a `string " "` (rt.dll) and a defaulted call throws `InvalidProgramException` (`ldstr " "` where a
+    char is expected). **This is a latent ilemit codegen bug (see below) that STRING_OPS was masking; the overload
+    sidesteps the default-arg mechanism entirely, keeping the fix pure and stdlib-side.**
+  New gated case `il-strops` (trim(vararg)/padStart/padEnd defaulted+explicit/replace(String,String)/replace(Char,Char));
+  the pre-existing `il-str` `.trim()` coverage now runs the pure body too. Gate green.
+- **KNOWN (ilemit follow-up): a cross-module `char` default arg is un-stampable.** `Emitter.Metadata.cs` `ConstArgValue`
+  has cases for string/bool/number but NONE for `char`, so `SetConstant` on a defaulted `Char` param stamps the wrong
+  constant and `EmitDefaultArg` emits `ldstr` where a char is expected → `InvalidProgramException`. Any cross-module
+  `fun f(c: Char = 'x')` omitting `c` hits this. Worked around stdlib-side for `padStart`/`padEnd` (overloads); the
+  1-line ilemit fix (`case JsonValueKind.String when type=="char": return v.GetString()[0]`) would let the plain
+  default-arg path work.
 - **Layer purity (bundle-8, A9): kotc no longer reads `@ClrTypeAlias`/`@ClrIntrinsic` on a `fun interface` (SAM).**
   Two `BirEmitter` sites read those annotations off a fun-interface classifier — the SAM-override param-erasure
   (`erasesSam`) and the SAM-conversion `aliasTarget` — to decide whether to erase the SAM method to `object` params

@@ -17,30 +17,19 @@ internal val UNARY = mapOf("unaryMinus" to "-", "unaryPlus" to "+", "not" to "!"
 // violation). kotc now emits a plain call to the stdlib math fun; bir2cir substitutes it from MathClr.kt's
 // @ClrIntrinsic bindings on the ref.dll (System.Math.* for Double/Int/Long, System.MathF.* for Float).
 
-// (PARTIALLY RETIRED 2026-07-02, bundle 4-B) Bundle 4-A canonicalized the `<>dotkt_CharSequence` synthetic and added
-// bir2cir's StringCharSequenceBridge; extending that bridge to the RT stdlib self-build (materializing the stdlib's own
-// internal String->CharSequence coercions) let these RETIRE cleanly to their real stdlib bodies: `contains`, `indexOf`,
-// `startsWith`, `endsWith`, `split`, `substring(2-arg)`, `isEmpty`/`isNotEmpty` (plus the earlier uppercase/lowercase/
-// substring(1-arg)/NUMBER_PARSE). kotc emits a plain call; bir2cir attributes it to StringsKt and the bridge coerces the
-// String receiver/args -> the CharSequence-extension body runs.
-//
-// The ops BELOW STAY compiler-lowered — retiring them routes to a stdlib body that hits a DISTINCT, deeper bug (each a
-// stdlib-body-fix follow-up, NOT a dual-rep issue any more):
-//   trim/trimStart/trimEnd  — `CharSequence.trim()` is `trim(Char::isWhitespace)`; a method reference to a .NET
-//                             (@ClrIntrinsic Char) method is "not lowered" -> throws at run. The vararg form also hits
-//                             an un-wrapped inlined `(this as CharSequence)` cast.
-//   reversed                — `CharSequence.reversed()` = `StringBuilder(this).reverse()`; `new StringBuilder(CharSequence)`
-//                             has no matching .NET ctor -> InvalidProgram.
-//   padStart/padEnd         — `CharSequence.padStart` uses StringBuilder append/capacity that mis-binds -> ArgumentException.
-//   replace(String,String)  — its body's `StringBuilder.append(seq, start, END)` maps to .NET Append(str, start, COUNT)
-//                             (end != count) -> ArgumentOutOfRange. (replace(Char,Char) alone would retire, but the map
-//                             covers both via System.String.Replace, which is correct for both, so it stays here.)
-// isBlank/isNotBlank stay too (`isBlank()` = `all { it.isWhitespace() }` -> CharSequence iteration: Iterator.hasNext
-// EntryPointNotFound), lowered inline below (IsNullOrWhiteSpace), NOT in this map.
-internal val STRING_OPS = mapOf(
-	"trim" to "Trim", "trimStart" to "TrimStart", "trimEnd" to "TrimEnd",
-	"replace" to "Replace", "padStart" to "PadLeft", "padEnd" to "PadRight",
-)
+// (FULLY RETIRED 2026-07-04, bundle-8) The `kotlin.text` String-op -> System.String member-name map (STRING_OPS) is
+// GONE. Bundle 4-A/4-B retired the CharSequence-bridge-clean ops (contains/indexOf/startsWith/endsWith/split/
+// substring/isEmpty/isNotEmpty/uppercase/lowercase/NUMBER_PARSE/isBlank); bundle-8 retired the last six — trim/
+// trimStart/trimEnd/padStart/padEnd/replace — by FIXING their stdlib bodies so the pure-Kotlin path runs (no BCL
+// member name in kotc):
+//   trim/trimStart/trimEnd  — `CharSequence.trim()` was `trim(Char::isWhitespace)`; a callable ref to a .NET
+//                             (@ClrIntrinsic Char) method is "not lowered". Rewritten to a lambda `{ it.isWhitespace() }`.
+//   padStart/padEnd         — `StringBuilder(capacity)` + `append(CharSequence)` bind correctly (the StringBuilder
+//                             actuals were already fixed: append(CharSequence?,start,end) delegates via subSequence+toString).
+//   replace(String,String)  — its `StringBuilder.append(seq,start,end)` routes through the same fixed subSequence+toString
+//                             delegation (end-exclusive, correct); replace(Char,Char) runs its pure body too.
+// Only `reversed` STAYS kotc-lowered (strReversed) pending a `StringBuilder(CharSequence)`-ctor stdlib fix (a separate node,
+// never in this map).
 
 // (RETIRED 2026-07-02) The Char-ops map (isDigit/isLetter/uppercaseChar/… -> System.Char statics) lived here. It was
 // CLR knowledge in kotc (a layer violation). kotc now emits a plain call to the stdlib Char fun; bir2cir substitutes it

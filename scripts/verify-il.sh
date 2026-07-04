@@ -280,6 +280,7 @@ il_check colstr Cstr "$ROOT/cases/il-colstr" "$(printf 'm={a=1, b=2}\nl=[1, 2, 3
 il_check interpnull InterpNull "$ROOT/cases/il-interpnull" "$(printf '[null]\nn=null\nnull\ns=null end\na=5\nnn=7\nm={k=1}')"
 il_check math  MathT "$ROOT/cases/il-math"    "$(printf '9\n7\n3\n4')"
 il_check str   Str   "$ROOT/cases/il-str"     "$(printf 'HELLO\nhello\nhi\nello\nTrue\nTrue')"
+il_check strops StrOps "$ROOT/cases/il-strops" "$(printf 'hello\nhi\nhi\n  5\n005\n500\n>5  <\nheLLo\nbbbbbb\naXaX\nheLLo')"  # trim(vararg)/padStart/padEnd/replace -> pure-Kotlin stdlib bodies (no kotc STRING_OPS System.String lowering)
 il_check coerce Coerce "$ROOT/cases/il-coerce" "$(printf '7\n5\n5\n2\n1\n5\n7')"       # coerceAtMost/AtLeast/In -> pure-Kotlin stdlib bodies (no kotc System.Math lowering)
 il_check blank Blank  "$ROOT/cases/il-blank"   "$(printf 'True\nTrue\nFalse\nTrue\nTrue')"  # isBlank/isNotBlank -> pure-Kotlin index-loop body (no kotc IsNullOrWhiteSpace lowering)
 il_check samcmp SamCmp "$ROOT/cases/il-samcmp" "$(printf '1,1,2,3,4,5,6,9\n9,6,5,4,3,2,1,1')"  # explicit Comparator{} SAM conversion (plain fun interface; no kotc @ClrTypeAlias read)
