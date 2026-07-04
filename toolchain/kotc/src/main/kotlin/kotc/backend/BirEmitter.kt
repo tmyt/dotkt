@@ -1347,24 +1347,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// body references to the receiver resolve to `__self` (via valSubst).
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
-		// An override of a fun-interface SAM whose interface is @ClrIntrinsic-aliased to a NON-generic BCL interface
-		// (e.g. NaturalOrderComparator : Comparator, aliased to System.Collections.IComparer): the override must be erased
-		// to `object` params (matching IComparer.Compare(object,object)) and cast each back to its declared type, else the
-		// class fails to load ("does not implement Compare(object,object)"). Same bridge the SAM-shim applies.
-		val erasesSam = fn.overriddenSymbols.any { s -> (s.owner.parent as? IrClass)?.let { ic ->
-			ic.isFun && ic.annotations.any { a -> (a as? IrConstructorCall)?.type?.classFqName?.asString() in setOf("kotlin.clr.ClrIntrinsic", "kotlin.clr.ClrTypeAlias") } } == true }
-		val erasedParams = if (erasesSam) fn.parameters.filter { it.kind == IrParameterKind.Regular } else emptyList()
-		erasedParams.forEachIndexed { i, p -> captureSubst[p] = """{"k":"cast","type":${str(birType(p.type))},"e":{"k":"local","name":"__sam$i"}}""" }
+		// (No fun-interface SAM param-erasure here: kotc reads NEITHER @ClrTypeAlias NOR @ClrIntrinsic — foundational
+		// invariant.) A fun interface aliased to a NON-generic BCL interface would be derived in bir2cir off the ref.dll;
+		// but the stdlib no longer aliases any `fun interface` to a BCL interface — Comparator is a plain Kotlin fun
+		// interface (see ComparatorClr.kt: the old @ClrIntrinsic("System.Collections.IComparer") erasure was a misdiagnosis,
+		// fixed at the ilemit `unbox.any` source), so no object-erasure bridge is needed on the Kotlin side.
 		// Promote captured-mutated `var`s to ref-cells; accumulate (a nested closure inherits the enclosing set).
 		val savedRefCells = refCellVars
 		refCellVars = refCellVars + computeRefCells(fn)
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		refCellVars = savedRefCells
-		erasedParams.forEach { captureSubst.remove(it) }
 		if (extRecv != null) selfSubst.remove(extRecv)
 		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
-		val ps = if (erasesSam) (listOfNotNull(selfParam) + erasedParams.mapIndexed { i, _ -> """{"name":"__sam$i","type":"object"}""" }).joinToString(",")
-			else (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
+		val ps = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
 		// `override fun toString()/equals()/hashCode()` -> System.Object.ToString/Equals/GetHashCode so that
 		// CLR virtual dispatch (Console.WriteLine, structural `==`) finds the override.
 		val objName = objectMethodName(fn)
@@ -1966,28 +1961,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val captures = capturedVars(fn, includeThis = true)
 		val cname = "<>dotkt_${synthScope}_Sam${closureCounter++}"
 		val capPairs = captures.map { it to captureFieldName(it) }
-		// A fun interface aliased to a NON-generic BCL interface (Comparator -> @ClrTypeAlias("System.Collections.IComparer"))
-		// erases its SAM method to `object` params, so there is no generic interface-method ref (which PersistedAssemblyBuilder
-		// mis-encodes for value-type type-parameter instantiations -> InvalidProgram). The shim casts each object arg back to
-		// the lambda's declared param type (the bridge) via captureSubst, so the body still sees typed values.
-		val aliasTarget = ifaceClass.annotations.firstNotNullOfOrNull {
-			val a = it as? IrConstructorCall
-			if (a != null && a.type?.classFqName?.asString() in setOf("kotlin.clr.ClrIntrinsic", "kotlin.clr.ClrTypeAlias")) (a.arguments.firstOrNull() as? IrConst)?.value as? String else null
-		}
+		// (kotc reads NEITHER @ClrTypeAlias NOR @ClrIntrinsic — foundational invariant.) The stdlib no longer aliases any
+		// `fun interface` to a NON-generic BCL interface (Comparator is a plain Kotlin fun interface), so there is no
+		// object-param erasure / SAM-arg cast bridge to apply here; the SAM shim implements the Kotlin fun-interface
+		// identity directly and bir2cir derives any CLR type off the ref.dll.
 		val savedSubst = java.util.IdentityHashMap<IrValueDeclaration, String?>()
 		capPairs.forEach { (decl, fname) -> savedSubst[decl] = captureSubst[decl]; captureSubst[decl] = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)}}""" }
-		val samParams = if (aliasTarget != null) fn.parameters.mapIndexed { i, p ->
-			val pn = "__sam$i"
-			savedSubst[p] = captureSubst[p]
-			captureSubst[p] = """{"k":"cast","type":${str(birType(p.type))},"e":{"k":"local","name":${str(pn)}}}"""
-			"""{"name":${str(pn)},"type":"object"}"""
-		}.joinToString(",") else lambdaParamsJson(fn.parameters)
+		val samParams = lambdaParamsJson(fn.parameters)
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		val samMethod = """{"name":${str(samName)},"static":false,"override":true,"virtual":true,"params":[$samParams],"ret":${str(ret)},"body":[$body]}"""
 		savedSubst.forEach { (decl, prev) -> if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 		val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
-		val ifaceSpec = if (aliasTarget != null) "clr:$aliasTarget" else (ownerSpec(ifaceClass, funIface) ?: birType(funIface))   // clr: = non-generic BCL interface (IComparer)
+		val ifaceSpec = ownerSpec(ifaceClass, funIface) ?: birType(funIface)
 		val freeTps = freeTypeParams(listOf(funIface) + capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 		liftedTypes.add("""{"name":${str(cname)},"kind":"class"${typeParamsJson(freeTps)},"base":null,"interfaces":[${str(ifaceSpec)}],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$samMethod]}""")
 		val capExprs = captures.joinToString(",") { capValueExpr(it) }
@@ -3947,33 +3933,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${str(birType(arg.type))},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"un","op":"!","e":{"k":"objEq","l":$nvLoc,"r":{"k":"const","type":"void","value":null}}},"then":$nvLoc,"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
 				}
 			}
-			// coerceAtMost/atLeast/In -> System.Math.Min/Max/Clamp (receiver is the first arg).
-			if (calleeFq == "kotlin.ranges.coerceAtMost" || calleeFq == "kotlin.ranges.coerceAtLeast" || calleeFq == "kotlin.ranges.coerceIn") {
-				if (calleeFq == "kotlin.ranges.coerceIn" && regularArgs(call).size == 1) {
-					val recv = extensionReceiver(call)!!
-					val range = regularArgs(call).first()
-					val rfq = range.type.classFqName?.asString()
-					// ONLY the progression ranges (IntRange/LongRange/CharRange/U*) have `first`/`last` backing fields.
-					// A ClosedFloatingPointRange/ClosedRange has `start`/`endInclusive` (interface properties), so DON'T
-					// intrinsify those — fall through to the ordinary call so the real stdlib coerceIn(range) runs.
-					if (rfq in setOf("kotlin.ranges.IntRange", "kotlin.ranges.LongRange", "kotlin.ranges.CharRange",
-							"kotlin.ranges.UIntRange", "kotlin.ranges.ULongRange")) {
-						val tmp = "__rng${scopeCounter++}"
-						val rangeType = birType(range.type)
-						val owner = rangeType.removePrefix("@").substringBefore("[")
-						val loc = """{"k":"local","name":${str(tmp)}}"""
-						val first = """{"k":"field","ownerType":${str(owner)},"recv":$loc,"name":"first"}"""
-						val last = """{"k":"field","ownerType":${str(owner)},"recv":$loc,"name":"last"}"""
-						return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tmp)},"type":${str(rangeType)},"init":${expr(range)}}],"result":{"k":"clrStatic","type":"System.Math","method":"Clamp","argTypes":[${str(birType(recv.type))},${str(birType(recv.type))},${str(birType(recv.type))}],"ret":${str(birType(callee.returnType))},"args":[${expr(recv)},$first,$last]}}"""
-					}
-					// non-progression range (ClosedFloatingPointRange/ClosedRange): not an intrinsic, emit the real call.
-				} else {
-					// value form: coerceAtMost(v) / coerceAtLeast(v) / coerceIn(min, max) -> Math.Min/Max/Clamp.
-					val m = when (calleeFq) { "kotlin.ranges.coerceAtMost" -> "Min"; "kotlin.ranges.coerceAtLeast" -> "Max"; else -> "Clamp" }
-					val all = listOf(extensionReceiver(call)!!) + regularArgs(call)
-					return """{"k":"clrStatic","type":"System.Math","method":${str(m)},"argTypes":[${all.joinToString(",") { str(birType(it.type)) }}],"ret":${str(birType(callee.returnType))},"args":[${all.joinToString(",") { expr(it) }}]}"""
-				}
-			}
+			// `coerceAtMost`/`coerceAtLeast`/`coerceIn` are NO LONGER lowered here (2026-07-04, bundle-8 layer purity).
+			// They were hardcoded to System.Math.Min/Max/Clamp — a BCL name in kotc, a layer violation. The stdlib
+			// `_Ranges.kt` funcs are pure Kotlin with correct bodies (`if (this < min) min else this`), so kotc now emits a
+			// plain call and the real stdlib body runs. This is also MORE correct than Math.Min for floats: Kotlin's coerce
+			// uses `<`/`>` (total-ordering / NaN-propagating) semantics that differ from System.Math.Min/Max on NaN.
+			// (No @ClrIntrinsic needed: the pure body IS the binding — the top-preferred "emit the real body" outcome.)
 			// repeat(n) { i -> body } -> an inline counter loop (no closure; body uses enclosing locals).
 			if (calleeFq == "kotlin.repeat") {
 				val n = regularArgs(call).getOrNull(0); val lam = regularArgs(call).getOrNull(1) as? IrFunctionExpression
@@ -4014,14 +3979,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						return """{"k":"clrInstance","type":"System.String","method":${str(m)},"argTypes":[${args.joinToString(",") { str(birType(it.type)) }}],"ret":${str(birType(callee.returnType))},"recv":${expr(recv)},"args":[${args.joinToString(",") { expr(it) }}]}"""
 					}
 				}
-				// String predicates kept lowered: isBlank/isNotBlank -> IsNullOrWhiteSpace (stdlib `all{isWhitespace}` needs
-				// CharSequence iteration). isEmpty/isNotEmpty RETIRED (route to the stdlib `length == 0` CharSequence body).
-				if (name == "isBlank" || name == "isNotBlank") {
-					(extensionReceiver(call) ?: dispatchReceiver(call))?.takeIf { it.type.classFqName?.asString() == "kotlin.String" }?.let { recv ->
-						val blank = """{"k":"clrStatic","type":"System.String","method":"IsNullOrWhiteSpace","argTypes":["System.String"],"ret":"System.Boolean","args":[${expr(recv)}]}"""
-						return if (name == "isBlank") blank else """{"k":"un","op":"!","e":$blank}"""
-					}
-				}
+				// isBlank/isNotBlank are NO LONGER lowered here (2026-07-04, bundle-8 layer purity): the BCL name
+				// System.String.IsNullOrWhiteSpace was CLR knowledge in kotc, a layer violation, AND it was WRONG for a
+				// non-String CharSequence receiver (IsNullOrWhiteSpace only takes String). The stdlib `CharSequence.isBlank()`
+				// body was rewritten to an index loop (`for (i in 0 until length) …`) instead of `all { it.isWhitespace() }`
+				// so it avoids the CharSequence-iterator path (Iterator.hasNext EntryPointNotFound) and runs pure-Kotlin for
+				// ALL CharSequences. kotc emits a plain call; the real stdlib body runs. (isNotBlank = `!isBlank()`, inline.)
 			}
 		}
 
