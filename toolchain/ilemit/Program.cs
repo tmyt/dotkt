@@ -2909,6 +2909,13 @@ sealed partial class Emitter
         // MutableCollection.removeAll/addAll on ICollection -- no BCL equivalent by that name) -> dynamic dispatch.
         if (mi == null && instance && e.TryGetProperty("recv", out _)) return EmitDynamicCall(e);
         if (mi == null) throw new NotSupportedException($"clrInstance method not resolved: {type}.{name}/{argSpecs.Count}");
+        // A generic BCL method (`System.Array.Fill<T>(T[],T,int,int)`) resolved as its open DEFINITION must be
+        // instantiated with the call's type args (threaded by bir2cir from the @ClrIntrinsic generic Kotlin callee),
+        // or the emitted MethodSpec stays open -> "method/type not fully instantiated" at run. Non-generic targets
+        // (Array.Clone) leave IsGenericMethodDefinition false, so this is a no-op there.
+        if (mi.IsGenericMethodDefinition
+            && e.TryGetProperty("typeArgs", out var clrTa) && clrTa.ValueKind == JsonValueKind.Array && clrTa.GetArrayLength() > 0)
+            mi = mi.MakeGenericMethod(clrTa.EnumerateArray().Select(a => MapType(a.GetString())).ToArray());
         // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
         if (instance)
         {
