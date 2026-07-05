@@ -5707,9 +5707,16 @@ static class AliasHelperHoist
         {
             if (m is not JsonObject mo) continue;
             if ((mo["name"] as JsonValue)?.GetValue<string>() is not string mn) continue;
-            if (mn.StartsWith("get_", StringComparison.Ordinal) || mn.StartsWith("set_", StringComparison.Ordinal)) continue;
             if ((mo["static"] as JsonValue)?.GetValue<bool>() == true) continue;   // a top-level/companion static, not a member
-            if (mo["body"] is not JsonArray) continue;                              // abstract / no body
+            if (mo["body"] is not JsonArray mbody) continue;                        // abstract / no body
+            // A property accessor (`get_`/`set_`) is normally a `clrPropGet`/`clrPropSet` on the BCL type, NOT a hoisted
+            // helper — so blanket-skip it. EXCEPTION: a rule-3 accessor whose body binds to a BCL *method* (e.g. Regex's
+            // `val pattern get() = toString()` — the BCL Regex has no `Pattern` property, only `ToString()`). Such an
+            // accessor MUST be hoisted so `re.pattern` routes to `<>dotkt_ClrH_Regex.get_pattern(recv)`. But hoist it ONLY
+            // when the body reads NO backing field: a rule-3 accessor that reads `{"k":"field"}` (another alias's real
+            // backing field) would NRE ilemit's ResolveField (no such field on the BCL type) — those stay clrPropGet/Set.
+            if ((mn.StartsWith("get_", StringComparison.Ordinal) || mn.StartsWith("set_", StringComparison.Ordinal))
+                && BodyReadsBackingField(mbody)) continue;
             if (isInlineValue && (mo["objectOverride"] as JsonValue)?.GetValue<bool>() == true) continue;  // see note above
             if (!refs.IsRule3Member(fqn, mn)) continue;   // ref.dll: concrete + intrinsic-less (matches the rule-3 call routing)
             methods.Add(HoistMethod(mo, aliasToken, classTps));
@@ -5760,6 +5767,26 @@ static class AliasHelperHoist
         outM["ret"] = m["ret"]?.DeepClone();
         outM["body"] = RewriteThis(m["body"]);
         return outM;
+    }
+
+    // True if the accessor body reads (or writes) a raw backing field — a `{"k":"field"}` / `{"k":"setFieldExpr"}` node.
+    // Such an accessor cannot be hoisted onto the BCL alias type (ilemit's ResolveField NREs — the BCL type has no such
+    // field), so it stays a clrPropGet/Set. A rule-3 accessor with NO field node (e.g. `get() = toString()`) is safe.
+    static bool BodyReadsBackingField(JsonNode n)
+    {
+        if (n is JsonObject o)
+        {
+            if ((o["k"] as JsonValue)?.GetValue<string>() is string k
+                && (k == "field" || k == "setFieldExpr" || k == "staticField" || k == "staticFieldSet")) return true;
+            foreach (var kv in o) if (kv.Value != null && BodyReadsBackingField(kv.Value)) return true;
+            return false;
+        }
+        if (n is JsonArray a)
+        {
+            foreach (var i in a) if (i != null && BodyReadsBackingField(i)) return true;
+            return false;
+        }
+        return false;
     }
 
     static JsonArray MergeTypeParams(JsonArray a, JsonArray b)

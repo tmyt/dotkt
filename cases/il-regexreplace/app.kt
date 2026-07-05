@@ -12,4 +12,8 @@ fun main() {
     println(a.replaceFirst(cs, "X"))            // bXnana  (was: AccessViolationException)
     println("[0-9]+".toRegex().replaceFirst("a12b34", "#"))  // a#b34
     println(Regex("a(\\d+)b").toString())       // a(\d+)b  (pattern-string source; method binding)
+    // final-review N2: `re.pattern` (a rule-3 property accessor `get() = toString()`) MUST hoist into
+    // the ClrH helper — AliasHelperHoist previously blanket-skipped get_/set_ so get_pattern was never
+    // emitted -> ilemit crash. The getter reads NO backing field, so it now hoists.
+    println(Regex("c(\\w+)d").pattern)          // c(\w+)d  (rule-3 accessor hoist)
 }

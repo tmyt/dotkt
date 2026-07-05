@@ -324,8 +324,9 @@ il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_
 # regexreplace: Regex.replaceFirst / replace(String,String) marshaling (final-review N1). replaceFirst mis-bound the
 # 3-arg System...Regex.Replace(string,string,int) — returned the input unchanged + AccessViolationException on a
 # CharSequence-typed input; the fix materializes the CharSequence to a String at the call site. Also pins toString()
-# (the pattern-string method binding).
-il_check regexreplace RegexReplace "$ROOT/cases/il-regexreplace" "$(printf 'bXnana\nbXnXnX\nbXnana\na#b34\na(\\d+)b')"
+# (the pattern-string method binding) AND `re.pattern` (final-review N2 — a rule-3 property accessor `get()=toString()`
+# that AliasHelperHoist now hoists into the ClrH helper; it was blanket-skipped as a get_ accessor -> ilemit crash).
+il_check regexreplace RegexReplace "$ROOT/cases/il-regexreplace" "$(printf 'bXnana\nbXnXnX\nbXnana\na#b34\na(\\d+)b\nc(\\w+)d')"
 # regexgroups: MatchResult.groups (ClrMatchGroupCollection) — by-index/by-name access, iteration, and `group in
 # match.groups` (POLISH family-6 coverage). il-regex never touches .groups; this pinned + fixed a TypeLoad on the
 # AbstractCollection base + a missing `contains` (ClrMatchGroupCollection now implements the collection directly).
