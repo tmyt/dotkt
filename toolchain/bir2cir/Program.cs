@@ -44,6 +44,11 @@ sealed class Pipeline
 
         var birFiles = LoadBirFiles(_options.Inputs);
         var refs = ReferenceMetadataIndex.Build(_options.References);
+        // Fail-loud: a ref.dll scan swallows load/type failures into Diagnostics (so ONE malformed type never aborts the
+        // whole scan). Surface them here — a silent ref-scan miss otherwise surfaces as a distant EntryPointNotFound/NRE
+        // with no "ref scan failed" signal. An empty Diagnostics stays silent (the happy path prints nothing).
+        var diagnostics = refs.Diagnostics.ToList();
+        foreach (var d in diagnostics) Console.Error.WriteLine($"bir2cir: WARNING ref-scan diagnostic: {d}");
         var cirFiles = TransformFiles(birFiles, refs);
         WriteCirFiles(cirFiles);
 
@@ -515,6 +520,11 @@ sealed class ReferenceMetadataIndex
 
     public int Count => _assemblies.Count;
     public IReadOnlyList<ReferenceAssembly> Assemblies => _assemblies;
+
+    // Every ref.dll scan diagnostic (a swallowed MetadataLoadContext load failure / partial-type-load / per-type skip).
+    // Surfaced to stderr in the driver so a silent ref-scan miss (which becomes a DISTANT EntryPointNotFound/NRE at
+    // ilemit or run time) is visible at the layer that produced it. See the driver's `Run` for the fail-loud print.
+    public IEnumerable<string> Diagnostics => _assemblies.SelectMany(a => a.DotKt.Diagnostics);
 
     // The ref.dll @ClrTypeAlias index (Kotlin FQN -> BCL), the SINGLE source of truth shared by both the member-call
     // substitution (owner identity) and the TYPE-TOKEN lowering (supertypes/interfaces/type-args/fields). Keyed on the

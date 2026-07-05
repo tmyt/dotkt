@@ -5,6 +5,31 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir: a rule-3 property accessor now hoists into the `<>dotkt_ClrH_<owner>` helper (fixes `Regex.pattern` —
+  final-review N2).** `AliasHelperHoist` blanket-skipped every `get_`/`set_` method, so a property whose getter carries
+  a rule-3 body (no `@ClrIntrinsic`/`@ClrProperty`) — e.g. `Regex.pattern`'s `get() = toString()`, because BCL
+  `System...Regex` has no `Pattern` property, only `ToString()` — was never emitted, and `re.pattern` aborted ilemit
+  with `unresolved method: <>dotkt_ClrH_kotlin_text_Regex.get_pattern`. The skip is now conditional: a `get_`/`set_`
+  accessor is hoisted when its body reads NO backing field (`{"k":"field"}` / `setFieldExpr` / `staticField`), and
+  stays a `clrPropGet`/`clrPropSet` when it does (a blanket hoist would NRE ilemit's `ResolveField` on another
+  accessor's backing-field-reading rule-3 body). `cases/il-regexreplace` now also reads `re.pattern` → the pattern
+  string; runs correct + ilverify-clean.
+- **Nested collection/map stringification renders Kotlin-style, not raw .NET type names (final-review N7).**
+  `mapOf("k" to listOf(1,2))` printed `{k=System.Collections.Generic.List`1[System.Int32]}` and `listOf(listOf(1,2))`
+  printed the raw inner name: only the TOP-LEVEL operand was routed to `clrCollToString`/`clrMapToString`, and a nested
+  element (arriving as erased `Any?`) hit .NET's `Object.ToString()`. The stdlib helpers now route every rendered
+  element through a new `clrElemToString` (`libraries/stdlib/clr/kotlin/collections/ClrNestedToString.kt`), which
+  detects a nested collection/map at runtime and recurses. Detection + iteration go through explicit **non-generic**
+  BCL facades (`System.Collections.ICollection`/`IEnumerable`/`IEnumerator`/`IDictionary`/`IDictionaryEnumerator`),
+  because a re-dispatch to the generic `clrCollToString<Any?>` would infer `IReadOnlyCollection<object>` — which a
+  runtime `List<Int>` is NOT assignable to (no value-type covariance on the CLR) — and because `StarProjectionLowering`
+  (which would lower `is Collection<*>` to the non-generic interface) runs only in app builds, not the stdlib
+  self-build. Now `{k=[1, 2]}` / `[[1, 2]]` / `{a={x=1}}`. New `cases/il-nestedstr`; runs correct + ilverify-clean.
+- **bir2cir fail-loud: ref.dll scan diagnostics now reach stderr.** A `MetadataLoadContext` load / partial-type-load /
+  per-type-skip failure during the ref.dll substitution scan was swallowed into `metadata.Diagnostics` and never
+  surfaced — a silent ref-scan miss became a distant `EntryPointNotFound`/NRE at ilemit or run time. The driver now
+  prints each diagnostic as `bir2cir: WARNING ref-scan diagnostic: …`. An empty Diagnostics stays silent (the happy
+  path prints nothing).
 - **`SynchronizedLazyImpl` restored to lock-free double-checked-locking (DCL) reads** — the follow-on to the real
   `@Volatile` above. The thread-safe `lazy { }` implementation (`libraries/stdlib/clr/kotlin/util/LazyClr.kt`) no
   longer takes the `System.Threading.Monitor` lock on *every* `value` read: the getter now does a lock-free
