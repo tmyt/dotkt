@@ -322,7 +322,14 @@ static class SuspendColdLowering
             if (e.Root["methods"] is JsonArray flm)
                 foreach (var lm in flm)
                     if (lm is JsonObject lmo && Str(lmo["name"]) is string lmn) fileLambdas[lmn] = lmo;
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], methodRets, fieldTypes, fileLambdas);
+            // An interface member (kotc emits interface `suspend fun`s with `virtual:true` but WITHOUT the
+            // `abstract` flag — unlike an abstract-CLASS member) with no body is abstract by definition (an
+            // interface method with no default). Treat it exactly like the abstract-class case so its cold entry
+            // AND Task bridge are emitted ABSTRACT (no body), rather than a concrete bridge whose non-virtual
+            // `call` to the (interface-abstract) cold entry is unverifiable (ilverify CallAbstract). Concrete
+            // implementations in classes fill both slots — ilemit's interface-impl pass binds them by name/sig.
+            var ownerIsInterface = e.TypeNode != null && Str(e.TypeNode["kind"]) == "interface";
+            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], methodRets, fieldTypes, fileLambdas, ownerIsInterface);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -712,7 +719,8 @@ static class SuspendColdLowering
             List<string> ownerTypeParams = null, IReadOnlyDictionary<string, JsonObject> closures = null,
             string smNameSuffix = "", Dictionary<string, string> methodRets = null,
             Dictionary<string, string> fieldTypes = null,
-            IReadOnlyDictionary<string, JsonObject> lambdaMethods = null)
+            IReadOnlyDictionary<string, JsonObject> lambdaMethods = null,
+            bool ownerIsInterface = false)
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
             _isMember = ownerClass != null;
@@ -725,7 +733,11 @@ static class SuspendColdLowering
             _ownerTypeParams = ownerTypeParams ?? new List<string>();
             // Virtuality of the source member (kept in lockstep on the cold entry): an abstract member -> an abstract
             // cold entry (no SM); an override/open member -> an override/virtual cold entry (fills/opens the slot).
-            _memberAbstract = _isMember && Bool(m["abstract"]);
+            // An interface member with no body is abstract (see the ownerIsInterface note at the call site): its
+            // cold entry + Task bridge are emitted abstract, mirroring an abstract-class member.
+            var interfaceAbstract = ownerIsInterface
+                && (m["body"] is not JsonArray ib || ib.Count == 0);
+            _memberAbstract = _isMember && (Bool(m["abstract"]) || interfaceAbstract);
             _memberOverride = _isMember && Bool(m["override"]);
             _memberVirtual = _isMember && Bool(m["virtual"]);
             _smType = (ownerClass ?? fileClass) + "_" + name + smNameSuffix + "$sm";

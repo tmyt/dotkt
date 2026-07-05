@@ -5,9 +5,10 @@
 // lockstep (override cold entry + override bridge). The suspend call `b.poll()` (b typed as Base) dispatches
 // VIRTUALLY through the abstract cold entry to Impl's override. Drained synchronously by blockOn.
 //
-// (The INTERFACE half — `interface Fetcher { suspend fun fetch() }` — remains blocked on a kotc gap: the
-// interface member is emitted without the `suspend`/`abstract`/`override` flags, so bir2cir cannot recognize
-// it; the fix is kotc-side [BirEmitter.kt:3524 ".NET-member generic branch missing suspend tag"].)
+// (The INTERFACE half — `interface Fetcher { suspend fun fetch() }` — is exercised by cases/il-ifacesuspend.
+// kotc emits an interface `suspend fun` with `virtual:true` but NO `abstract` flag and an empty body; bir2cir
+// DERIVES the abstract fact from the enclosing type being an interface, so its cold entry + Task bridge are
+// emitted abstract (mirroring this abstract-class shape) — ilverify-clean.)
 import dotkt.support.blockOn
 
 abstract class Base { abstract suspend fun poll(): Int }

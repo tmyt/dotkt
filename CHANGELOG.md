@@ -44,6 +44,11 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   state-machine field before the suspension; a `try`/`finally` across a suspension runs its `finally`
   exactly once (not early + twice); shadowed same-name locals of different types get distinct SM fields;
   exceptions propagate across a suspended `Task` boundary.
+- **Interface `suspend fun` bridge is verifiable IL.** An interface member `suspend fun` (kotc emits it
+  `virtual` but without an `abstract` flag, unlike an abstract-class member) is now recognized by bir2cir
+  as abstract — its cold entry AND `Task<R>` bridge are emitted abstract (no body), mirroring the
+  abstract-class shape — so the synthesized bridge no longer does an unverifiable non-virtual `call` on
+  the abstract cold entry (`ilverify CallAbstract`). `cases/il-ifacesuspend` is now ilverify-gated.
 
 ### Language & correctness
 
