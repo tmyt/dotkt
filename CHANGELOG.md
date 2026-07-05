@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Fixed a coroutine miscompile (N4): a raw field read left of a mutating suspend call was reordered ACROSS the
+  suspension.** In `this.x + suspendCallThatMutatesX()`, Kotlin's strict left-to-right evaluation requires reading
+  `this.x` BEFORE the suspend call runs. bir2cir's `SuspendColdLowering` eval-order pass classed a raw member/static
+  backing-field read (`field`/`staticField`/`lateinitGet`) as **pure**, so it was left inline and re-evaluated AFTER the
+  suspension resumed — observing the **post-mutation** value (`10 + 5` computed as `100 + 5`). (A source-level *property*
+  read went through a getter = `callInstance`, already impure and correctly spilled; only the direct backing-field /
+  `@ClrField` read slipped through.) These field-read kinds are now impure w.r.t. a later suspension: an occurrence LEFT
+  of a suspension point is spilled into a state-machine temp field before the suspension, like any other impure operand.
+  The temp is typed from a new global field-type index (owner#field → declared type), since a raw field read carries no
+  return-type token (kotc emits only owner+name) and would otherwise box a value-type field as `kotlin.Any` and break the
+  enclosing `bin`. Position still gates it — a field read with no suspension to its right stays inline (no over-spill);
+  captured locals are `local` in pre-lowering BIR and are unaffected. New `cases/il-cofieldorder` (`@ClrField var x`;
+  `x + bump()` where `bump()` mutates `x`) asserts the pre-call value is used (`15`, not `105`). (`SuspendColdLowering.cs`
+  `ImpureKinds` / `TypeOfExpr` / the eval-order spill.)
+
 - **`@kotlin.concurrent.Volatile` is now a REAL CLR volatile field (was a silent no-op).** `@Volatile` on a `var`'s
   backing field lowers to the exact encoding the C# `volatile` keyword emits: the field is declared with a required
   custom modifier `modreq(System.Runtime.CompilerServices.IsVolatile)` (which makes the JIT treat every access as
