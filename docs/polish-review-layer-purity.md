@@ -222,3 +222,10 @@ Best done in a fresh, light-context session — start with stage 1 (smallest ver
 - WAS OPEN (now the clrCollAdd fix above): the GENERAL `clrCollAdd` generic-collection dispatch (`c.size` → open `ICollection<!!T>.get_Count`;
   the bymap/maxOrNull family) — groupValues now sidesteps it, but a non-inlined generic `.map`/`.add` still hits it;
   a real bir2cir/ilemit follow-up. And A2 (designed, docs/design-interop-no-registry.md) + Lazy/EmptyMap (architectural).
+
+## Latent finding (2026-07-05): @kotlin.concurrent.Volatile is a no-op on CLR
+`VolatileClr.kt` is an empty `annotation class` with NO `@ClrIntrinsic` binding — it does NOT lower to a
+volatile field. So any code relying on `@Volatile` for cross-thread memory visibility is subtly wrong on CLR.
+SynchronizedLazyImpl worked around it (always-lock, no lock-free DCL read). FOLLOW-UP: either bind `@Volatile`
+to emit a `volatile.` IL prefix / `System.Threading.Volatile.Read/Write`, or document it as unsupported. Low
+priority (single-threaded gate can't catch it; most stdlib avoids volatile).
