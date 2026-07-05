@@ -71,6 +71,10 @@ private class ClrMethod(val name: String, val returnType: String, val open: Bool
 }
 // A restored top-level Kotlin function: its package, the .NET file-facade class to call, and the function itself.
 private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
+// N5: one file-class candidate for a top-level CallableId (`.NET file class` + the value-param arity range it covers).
+// Several candidates under one CallableId = same-name same-package overloads across DIFFERENT source files; the backend
+// disambiguates by the resolved callee's arity. See `clrInjectedTopLevelFileClass`.
+internal class TopLevelSig(val fileClass: String, val minArity: Int, val maxArity: Int)
 private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: String, val mutable: Boolean, val receiver: String)
 private class ClrProperty(val name: String, val type: String, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean, val clrName: String? = null)
 // A MEMBER extension property (`class C { val T.p }`): restored as a member property of C with an extension receiver.
@@ -143,7 +147,23 @@ internal fun clrInjectedMemberName(callableId: CallableId): String? = ClrMetadat
  * resolved callee (`isSuspend`) via `suspendCallTag`, so re-carrying it would re-introduce the resolved-fact-by-name
  * anti-pattern this stage removes.
  */
-internal fun clrInjectedTopLevelFileClass(callableId: CallableId): String? = ClrMetadataHolder.fileClassByTopLevelCallableId[callableId]
+//
+// N5 fix (overload-aware): the CallableId is `(package, name)` ONLY, so two same-name same-package top-level overloads
+// living in DIFFERENT source files (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) collided on the key alone — the
+// flat `Map<CallableId,String>` collapsed to LAST-PUT-WINS and mis-routed one of them to the wrong file class (a hard
+// ilemit "method not found"). This was a regression the A2 registry-removal introduced (the deleted receiver-
+// discriminator arbitrary-picked first; the flat map arbitrary-picked last). Fixed by carrying ALL file-class
+// candidates for a CallableId and disambiguating by the RESOLVED callee's value-param `arity` (the metadata `tlfun`
+// param count). A single (non-colliding) candidate is returned directly, so A2's byte-identical routing is preserved.
+internal fun clrInjectedTopLevelFileClass(callableId: CallableId, arity: Int): String? {
+	val sigs = ClrMetadataHolder.topLevelSigByCallableId[callableId] ?: return null
+	// A2 byte-identical: a UNIQUE restored overload for this (package,name) -> its file class directly (the common
+	// case; a single `tlfun` spans an arity RANGE across its default-arg variants, but there is one file class either way).
+	if (sigs.size == 1) return sigs[0].fileClass
+	// N5: multiple file classes share this CallableId -> pick by the resolved callee's value-param arity. FIR already
+	// resolved the call to a UNIQUE overload, so its arity lands in exactly one candidate's range -> 1:1 routing.
+	return (sigs.firstOrNull { arity in it.minArity..it.maxArity } ?: sigs.first()).fileClass
+}
 
 /**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL EXTENSION PROPERTY's .NET
@@ -345,10 +365,18 @@ private object ClrMetadataHolder {
 	// a single fileClass per CallableId — no receiver discriminator, no "last-registered wins". The `Clr`-file-class strip
 	// (`<Common>ClrKt` -> `<Common>Kt`, an rt-vs-jar fact) is applied here (mirrors BirEmitter.fileClassName). Suspend is
 	// NOT carried: the backend derives it from the resolved callee (`isSuspend`), so it stays a resolved fact, not a name map.
-	val fileClassByTopLevelCallableId: Map<CallableId, String> by lazy {
-		buildMap {
-			for (tl in module?.topLevel.orEmpty())
-				put(CallableId(tl.pkg, Name.identifier(tl.fn.name)), stripClrFileClass(tl.fileClassDotNet))
+	// N5: a restored top-level fun's file-class candidate = (fileClass, the value-param arity RANGE it covers). A single
+	// `tlfun` with default args injects several arities (`(vps-trailingOpt)..vps`), so a candidate spans a range; the
+	// accessor picks the candidate whose range contains the resolved callee's arity. `ext` funs carry a leading `__self`
+	// receiver param that is NOT a value param at the call site — drop it so the arity matches the backend's regularParams.
+	val topLevelSigByCallableId: Map<CallableId, List<TopLevelSig>> by lazy {
+		buildMap<CallableId, MutableList<TopLevelSig>> {
+			for (tl in module?.topLevel.orEmpty()) {
+				val vps = if (tl.fn.ext && tl.fn.params.isNotEmpty()) tl.fn.params.drop(1) else tl.fn.params
+				val trailingOpt = vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
+				getOrPut(CallableId(tl.pkg, Name.identifier(tl.fn.name))) { ArrayList() }
+					.add(TopLevelSig(stripClrFileClass(tl.fileClassDotNet), vps.size - trailingOpt, vps.size))
+			}
 		}
 	}
 	// A2 keystone (interop-no-registry stage 3): a restored DotKt top-level EXTENSION PROPERTY's .NET file-facade class

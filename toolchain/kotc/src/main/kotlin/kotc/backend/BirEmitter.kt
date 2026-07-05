@@ -4045,7 +4045,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// because `reversed`/`toList` collided across file classes under one FQN) is GONE. `suspend` is read straight
 			// off the resolved callee by `suspendCallTag(callee)` below (it was never consumed from the registry).
 			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name)) }?.let { fileClass ->
+				?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name), regularParams(callee).size) }?.let { fileClass ->
 				// A cross-module `inline fun` taking a lambda (body==null here = injected stub) -> splice its carried
 				// [KotlinInline] body at this call site (the only way a non-local `return` through the lambda works).
 				// Splice ONLY a non-extension inline-with-lambda (the receiver-less scope/util fns); an EXTENSION inline

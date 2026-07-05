@@ -5,6 +5,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: same-name top-level overloads across different DotKt file facades no longer mis-route (N5, an A2 regression).**
+  The interop-no-registry (A2) rewrite keyed the restored top-level function's `.NET` file-facade class by
+  `CallableId = (package, name)` **only**, so two overloads with the same name in the same package but in **different**
+  source files (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) collided → the flat map collapsed to *last-put-wins*
+  and one call routed to the wrong file class (a hard ilemit "method not found"). The projection now carries **all**
+  file-class candidates for a `CallableId` and the backend disambiguates by the resolved callee's value-param **arity**;
+  a single (non-colliding) candidate is returned directly, so A2's byte-identical routing is preserved. New gate case
+  `cases/il-tloverload`.
+
 - **`SynchronizedLazyImpl` restored to lock-free double-checked-locking (DCL) reads** — the follow-on to the real
   `@Volatile` above. The thread-safe `lazy { }` implementation (`libraries/stdlib/clr/kotlin/util/LazyClr.kt`) no
   longer takes the `System.Threading.Monitor` lock on *every* `value` read: the getter now does a lock-free

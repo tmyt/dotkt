@@ -283,7 +283,7 @@ runtime.
 |---|---|
 | `infix` / `operator` | `[KotlinFunction(Infix\|Operator)]` |
 | `suspend` | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
-| top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions |
+| top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions. Same-name overloads that live in **different** source files of the same package (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) each route back to their **own** file-facade class — resolved by the call's arity, so no cross-file mis-routing. |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
 | **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
 | `final`/`open`/`abstract`, visibility | **none** — ride .NET virtual-ness / accessibility |
