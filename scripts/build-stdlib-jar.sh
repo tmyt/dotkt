@@ -76,10 +76,10 @@ mapfile -t BUILTINS < <(find "$STAGE" -name '*.kt')
 mapfile -t CLR_PLAT < <(find libraries/stdlib/clr -name '*.kt' ! -path 'libraries/stdlib/clr/builtins/*' ! -path 'libraries/stdlib/clr/taskinterop/*' ! -name '_ArraysClr.kt')
 CLR_PLAT+=("$STAGE2/_ArraysClr.kt" "$STAGE3/JvmNameActual.kt" "$STAGE3/JvmInlineActual.kt")
 COMMON_SOURCES=("${COMMON[@]}" "${SRC[@]}" "${UNSIGNED[@]}"); COMMON_CSV="$(IFS=,; echo "${COMMON_SOURCES[*]}")"
-# NOTE: the CLR stdlib no longer references the kotc-injected `ClrRef<T>`/`byref` intrinsics — its implicit-byref
-# bindings (atomics Interlocked, tryParseInt32, mathDivRemInt) now use plain-typed params marked @kotlin.clr.ClrRefArgument
-# (a normal stdlib annotation, resolvable under stock K2JVMCompiler). So the old `clr-intrinsics-stub.jar` (which defined
-# ClrRef/byref just so this stock-compiler jar build could resolve them) is GONE — the stdlib ABI now matches the jar's.
+# NOTE: the CLR stdlib does not reference the kotc-injected `ClrRef<T>`/`byref` intrinsics — its implicit-byref
+# bindings (atomics Interlocked, tryParseInt32, mathDivRemInt) use plain-typed params marked @kotlin.clr.ClrRefArgument
+# (a normal stdlib annotation, resolvable under stock K2JVMCompiler). So no `clr-intrinsics-stub.jar` is needed here —
+# the stdlib ABI matches the jar's.
 
 # 4. compile -- -Xoutput-builtins-metadata makes K2 WRITE the .kotlin_builtins FROM OUR sources (no JVM injection).
 #    It used to crash ("builtins must span ALL builtin pkgs") only because kotlin.coroutines had no builtin package

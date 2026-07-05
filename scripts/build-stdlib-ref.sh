@@ -7,7 +7,7 @@
 # (build-stdlib-rt.sh). The 'Private' name marks it as an internal reference face, not an external
 # artifact. Inputs: libraries/stdlib sources + kotc + the bir2cir/ilemit/retarget dlls. Outputs:
 # build/clr-stdlib/{bir,cir,dll} + *.err logs. NOTE: the pure-Kotlin stdlib is SELF-CONTAINED — it must
-# NOT reference DotKt.Runtime (retired), so the kotc step takes no --ref on purpose.
+# NOT reference any runtime assembly, so the kotc step takes no --ref on purpose.
 source "$(dirname "$0")/lib.sh"
 
 usage() {

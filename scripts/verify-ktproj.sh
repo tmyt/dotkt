@@ -66,9 +66,7 @@ kt ktproj-avalonia "cases/ktproj-avalonia/app.ktproj" \
 	"$(printf 'MyApp.Initialize: Kotlin override of Avalonia.Application\nsubclassed Avalonia.Application from Kotlin via PackageReference')"
 
 # KOTLIN -> KOTLIN ProjectReference round-trip: app.ktproj consumes lib.ktproj AS KOTLIN (top-level generic/plain
-# functions + a top-level extension infix + classes). The round-trip path through MSBuild; it regressed because ilemit
-# wasn't passed --ref DotKt.Runtime, so it silently skipped stamping [KotlinFileClass]/[KotlinFunction] and the consumer's
-# `import mylib.boxed` resolved to nothing.
+# functions + a top-level extension infix + classes). The round-trip path through MSBuild.
 kt ktproj-roundtrip "cases/ktproj-roundtrip/app/App.ktproj" \
 	"$(printf '7\n5\nhi\n3\n40')"
 

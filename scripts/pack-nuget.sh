@@ -5,7 +5,7 @@
 #                     stdlib jar + the COMPILE-TIME stdlib reference assembly (tools/stdlib/DotKt.Private.Stdlib.dll)
 #   DotKt.Stdlib    — the RUNTIME stdlib assembly (lib/net10.0/DotKt.Stdlib.dll, copy-local)
 #   DotKt.Templates — `dotnet new` templates
-# (DotKt.Runtime is RETIRED — no such package exists or is referenced.) Version is single-sourced in
+# (There is no separate runtime package.) Version is single-sourced in
 # packaging/DotKt.Versions.props (imported by every pack .csproj). Orchestrated by `make pack` (which
 # builds the prerequisites first); standalone it builds what's missing. Output: build/nuget-feed (wiped).
 source "$(dirname "$0")/lib.sh"

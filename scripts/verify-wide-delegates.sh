@@ -3,9 +3,8 @@
 # value parameters plus TResult (Func`17); Kotlin function values can be wider, so ilemit synthesizes
 # module-local delegate types DotKt.Runtime.CompilerServices.KFunc`N / KAction`N when needed. Drives
 # cases/il-widedeleg/wide.kt (17-arg function values) through the REAL pipeline — kotc -> bir2cir ->
-# ilemit, the same single path every other gate uses; the old hand-written .bir.json fixture that was
-# fed STRAIGHT to ilemit (bypassing kotc + bir2cir, with a hand-maintained expr vocabulary that rotted
-# twice) is gone. Runs the app, checks the synthesized delegate types exist in the dll, and that
+# ilemit, the same single path every other gate uses. Runs the app, checks the synthesized delegate types
+# exist in the dll, and that
 # facadegen restores the wide type as a Kotlin function type. Exits nonzero on any failure.
 source "$(dirname "$0")/lib.sh"
 
