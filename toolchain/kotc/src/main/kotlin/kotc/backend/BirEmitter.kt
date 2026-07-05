@@ -1689,6 +1689,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// loop reference identity (so `break@outer` resolves), then emitted as `goto` the right label.
 	internal val cfgLoopStack = ArrayList<Triple<org.jetbrains.kotlin.ir.expressions.IrLoop, Int, Int>>()
 
+	/** Wrap a statement-position control transfer ([xfer] = a `goto`/`break`/`continue` node) so it can sit in an
+	 *  EXPRESSION slot (a `break`/`continue` used as an `if`/`when` branch value). The transfer runs first and jumps
+	 *  away; the `throw null` result is unreachable dead code that gives the valueBlock a well-formed result which
+	 *  never falls through to the surrounding merge — so the merge keeps only the live branch's type. */
+	internal fun breakContinueExpr(xfer: String): String =
+		"""{"k":"valueBlock","stmts":[$xfer],"result":{"k":"throwExpr","value":{"k":"const","type":"kotlin.Unit","value":null}}}"""
+
 	/** `while(c){B}` -> CFG block: `START: if(!c) goto END; B; goto START; END:`. continue->START, break->END. */
 	internal fun cfgWhile(node: IrWhileLoop): String {
 		val start = cfgFresh(); val end = cfgFresh()
@@ -2381,7 +2388,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		subKeys.forEach { tp -> if (hadOldTypeArg.contains(tp)) typeArgSubst[tp] = oldTypeArgs[tp]!! else typeArgSubst.remove(tp) }
 		if (boundExt) selfSubst.remove(extParam)
 		if (boundDispatch) selfSubst.remove(dispatchParam)
-		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
+		// The `suspendCoroutineUninterceptedOrReturn { c -> … }` intrinsic: after inlining, its fake body
+		// (`throw NotImplementedError("… is intrinsic")`) survives as this valueBlock's result, and the crossinline
+		// `block` is materialized as a closure captured into a dead __inlN. bir2cir recognizes such a block as a cold
+		// suspension point. Stamp a STABLE `suspendIntrinsic:true` marker so bir2cir need not sniff the fake body's
+		// thrown-message string (SuspendColdLowering.IsSuspendIntrinsicBlock prefers this flag; the string path is
+		// legacy fallback). kotc emits the flag, NOT any CLR knowledge — it's a Kotlin-language intrinsic identity.
+		val suspendIntrinsic = if (callee.fqNameWhenAvailable?.asString() ==
+			"kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn") ""","suspendIntrinsic":true""" else ""
+		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result$suspendIntrinsic}"""
 	}
 
 	internal fun <T> withTypeArgScope(scope: TypeArgScope?, block: () -> T): T {
@@ -3807,11 +3822,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
-		// `s.length` on a String -> System.String.Length (CLR property).
-		(callee.correspondingPropertySymbol?.owner)?.let { p ->
-			if (p.name.asString() == "length" && dispatchReceiver(call)?.type?.classFqName?.asString() == "kotlin.String")
-				return """{"k":"clrPropGet","type":"System.String","name":"Length","retType":"System.Int32","static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
-		}
+		// `s.length` on a String is NOT intercepted here: it's a real `kotlin.String.length` property read — fall
+		// through to the ordinary property-get path so it emits as a `kotlin.String` `get_length` member call. The
+		// CLR binding (String.length -> System.String.Length) is stdlib `@ClrIntrinsic("Length")` metadata, applied
+		// by bir2cir's MemberCallSubstitution (the sibling `String.get`->`get_Chars` was cleaned the same way). kotc
+		// carries NO CLR knowledge here (layer boundary — CLAUDE.md §"kotc reads NEITHER @ClrIntrinsic…").
 		// Pair/Triple `.first`/`.second`/`.third` -> stdlib class fields.
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
 			val pfq = (callee.parent as? IrClass)?.fqNameWhenAvailable?.asString()

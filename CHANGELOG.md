@@ -67,6 +67,16 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   valid reference) but an `InvalidProgramException` for a value element; delegateInvoke now coerces each arg
   to the delegate's declared param type (`unbox.any` — unbox a value param, castclass a reference one).
   `generateSequence(1){ it*2 }.take(3).toList()` == `[1, 2, 4]`. (`cases/il-genseq2`.)
+- **`break`/`continue` in expression position now lowers (C13b).** A `break`/`continue` used as an
+  `if`/`when` branch VALUE (`val end = if (…) x else break`) — Kotlin-typed `Nothing` — previously hit
+  `the .NET backend does not support this expression yet: IrBreakImpl`. kotc now emits the same control
+  transfer inside a `valueBlock` with an unreachable `throw` result, so it never falls through to the
+  surrounding merge (mirrors the existing `throwExpr`/`returnExpr`-in-expression handling). Unblocks
+  `CharSequence.windowed(size)` (`"abcd".windowed(2)` → `[ab, bc, cd]`), whose stdlib body uses the
+  construct. New PURE case `il-cwindowed`.
+- **`Grouping.eachCount()` (regression guard, C13c).** `listOf("a","ab","b").groupingBy { it.first() }
+  .eachCount()` → `{a=2, b=1}`. Its body reads a value-type-nullable smart-cast (`Int?`) in arithmetic
+  (`count + 1`) — already correct via the C1 value-slot-unwrap; locked with new PURE case `il-eachcount`.
 - **Default arguments now fill positionally — an omitted middle default no longer shifts a later
   argument's slot (C3).** The kcc-review C3 family is fixed in kotc + bir2cir:
   - `list.joinToString("-") { "x$it" }` prints `x1-x2-x3` (was `System.Func…1-2-3`: the transform lambda
@@ -271,6 +281,14 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   (bir2cir derives `System.Type.Name`/`.FullName`), and plain member calls (bir2cir renames the BCL slot).
   The `clrName`/`annClr` side-tables and the `System.Math`/`System.Console`/exception/collection/
   StringBuilder/Regex/Closeable hardcodes are gone.
+- **Deleted the `kotlin.String.length` → `System.String.Length` hardcode in kotc (M2).** It was redundant
+  CLR knowledge: the stdlib's `@ClrIntrinsic("Length")` binding + bir2cir's `MemberCallSubstitution` already
+  rewrite the plain `kotlin.String.length` member read (the sibling `String.get` → `get_Chars` was cleaned the
+  same way). `"abc".length` stays `3`.
+- **kotc stamps a stable `suspendIntrinsic:true` marker on the lowered `suspendCoroutineUninterceptedOrReturn`
+  block (L1).** bir2cir's cold-suspension recognizer already prefers this flag over sniffing the intrinsic's
+  fake `throw` message string, so the fragile string-match path becomes dead weight (its removal is a bir2cir
+  follow-up). suspend samples unchanged.
 - **The primitive/`Comparable` `compareTo` lowering moved to bir2cir** — the last kotc CLR-knowledge leak
   of its class. kotc emits a plain `callInstance` (`kotlin.Int.compareTo` / `kotlin.Comparable.compareTo`);
   bir2cir derives a primitive `System.<Prim>.CompareTo` and a `constrained. System.IComparable<T>::CompareTo`

@@ -371,6 +371,11 @@ il_check result Result "$ROOT/cases/il-result" "$(printf 'True\n10\n10\nTrue\nnu
 il_check genstatic GenStatic "$ROOT/cases/il-genstatic" "$(printf '42\nTrue\nTrue\nboom\nhi')"
 il_check bmore BMore "$ROOT/cases/il-bmore" "$(printf '5 items\nx = 42\n3.14\n00007\nff\n100%% ok: yes\n0:a,1:b,2:c\n0,20,60')"
 il_check chunk Chunk "$ROOT/cases/il-chunk" "$(printf '3,7,5\n3\n1-2-3 4-5\na,b,c\n3\n1,3,5\n9')"
+# cwindowed: CharSequence.windowed exercises a `break` in EXPRESSION position (its `coercedEnd` init); kotc lowers
+# it to a valueBlock(goto/break + unreachable throw). eachcount: Grouping.eachCount reads a value-nullable smart-cast
+# (`Int?`) in arithmetic (`count + 1`) — the C1 value-slot-unwrap class, locked here as a regression guard.
+il_check cwindowed CWindowed "$ROOT/cases/il-cwindowed" "$(printf '[ab, bc, cd]\n[ab, cd]\n[abc, bcd, cde, de, e]\n[ab, de]\n[ab, bc, cd]')"
+il_check eachcount EachCount "$ROOT/cases/il-eachcount" "$(printf '{a=2, b=1}\n{M=1, i=4, s=4, p=2}\n{1=2, 2=2, 0=2}')"
 il_check collmore CollMore "$ROOT/cases/il-collmore" "$(printf '20,40\n1,10,2,20,3,30,4,40,5,50\n1,2,3,4,5\n15\n14\n-1\n3\n3')"
 # nestedstr: nested collection/map stringification (final-review N7). A nested collection element used to render .NET's
 # raw `System.Collections.Generic.List`1[...]`; the stdlib `clrElemToString` now recurses via non-generic BCL facades.

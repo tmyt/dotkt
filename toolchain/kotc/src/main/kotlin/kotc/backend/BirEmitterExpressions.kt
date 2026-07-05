@@ -236,6 +236,17 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	// `return` used in expression position (`val x = if (c) a else return`; `x ?: return -1`). Like throwExpr,
 	// it transfers control so no value reaches the surrounding merge.
 	is IrReturn -> if (node.value.type.isUnit()) """{"k":"returnExpr"}""" else """{"k":"returnExpr","value":${expr(node.value)}}"""
+	// `break`/`continue` used in expression position (`val end = if (c) x else break`, stdlib CharSequence.windowed's
+	// coercedEnd). Kotlin types them `Nothing`: they transfer control, so no value reaches the surrounding merge. We
+	// have no bare control-transfer EXPRESSION node (goto/break are statements), so emit the SAME control transfer as
+	// stmt() inside a valueBlock, then an unreachable `throw null` result — after the goto/break jumps away the throw
+	// is dead code, but it gives the valueBlock a well-formed result that never falls through to the cond merge point
+	// (so the merge keeps only the live branch's type, exactly like a throwExpr/returnExpr branch). Reuses existing
+	// ilemit nodes only (goto/break/throwExpr) — no new backend vocabulary.
+	is IrBreak -> breakContinueExpr(cfgLoopStack.lastOrNull { it.first === node.loop }
+		?.let { """{"k":"goto","id":${it.third}}""" } ?: """{"k":"break","label":${labelJson(node.label)}}""")
+	is IrContinue -> breakContinueExpr(cfgLoopStack.lastOrNull { it.first === node.loop }
+		?.let { """{"k":"goto","id":${it.second}}""" } ?: """{"k":"continue","label":${labelJson(node.label)}}""")
 	is IrCall -> call(node)
 	// A property reference passed to a delegate's getValue/setValue -> a `new KPropertyImpl("<name>")`.
 	is IrPropertyReference -> {
