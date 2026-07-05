@@ -3748,12 +3748,18 @@ sealed partial class Emitter
         return tb;
     }
 
-    // Index of the ':' separating RET from ARGS in a `func:` body. Skips a leading type prefix (clrg:/clr:/...)
-    // so its colon isn't mistaken for the separator, and respects [] nesting (clrg:Task[int]).
+    // Index of the ':' separating RET from ARGS in a `func:` BODY (the leading "func:" already stripped by the caller).
+    // When the RET is itself a NESTED func — `(Int)->(()->Int)` encodes as body `func:kotlin.Int::kotlin.Int` — the
+    // inner func's OWN ret/args colon sits at depth 0 and the old "skip one prefix, grab first ':'" split mis-parsed it
+    // (ret=`func:kotlin.Int`, args=`:kotlin.Int`, leaving `:kotlin.Int` unresolvable). Recursively skip the whole inner
+    // func in that case. Every OTHER ret shape (leaf / clrg:/array:/nullable: with its own bracket-protected or single
+    // leading colon) keeps the prior single-prefix scan — scoped narrowly so only the genuine nested-func-ret changes.
     static int FuncRetEnd(string s)
     {
+        if (s.StartsWith("func:", StringComparison.Ordinal) || s.StartsWith("sfunc:", StringComparison.Ordinal))
+            return SkipTypeToken(s, 0);
         int start = 0;
-        foreach (var pre in new[] { "clrg:", "clr:", "array:", "nullable:", "func:", "gp:" })
+        foreach (var pre in new[] { "clrg:", "clr:", "array:", "nullable:", "gp:", "byref:" })
             if (s.StartsWith(pre)) { start = pre.Length; break; }
         int depth = 0;
         for (int i = start; i < s.Length; i++)
@@ -3763,6 +3769,39 @@ sealed partial class Emitter
             else if (s[i] == ':' && depth == 0) return i;
         }
         return s.Length;
+    }
+
+    // Advance past exactly ONE type token at `i`; return the index just after it (a top-level ':' / ',' / ']' / end).
+    // A `func:` token recurses through its ret + its comma-list args (args present iff the next char begins a type);
+    // a modifier prefix (array:/nullable:/byref:) recurses into its element; a clrg:/clr:/gp:/leaf token scans to the
+    // next top-level delimiter with [] nesting protecting inner ':'/','. Pure structural parse — no type resolution.
+    static int SkipTypeToken(string s, int i)
+    {
+        static bool At(string s, int i, string pre) => i + pre.Length <= s.Length && s.AsSpan(i, pre.Length).SequenceEqual(pre);
+        foreach (var pre in new[] { "array:", "nullable:", "byref:" })
+            if (At(s, i, pre)) return SkipTypeToken(s, i + pre.Length);
+        if (At(s, i, "func:"))
+        {
+            i = SkipTypeToken(s, i + 5);                                    // ret
+            if (i < s.Length && s[i] == ':') i++;                          // ret/args separator
+            if (i < s.Length && s[i] != ':' && s[i] != ',' && s[i] != ']') // non-empty args -> comma-list
+            {
+                i = SkipTypeToken(s, i);
+                while (i < s.Length && s[i] == ',') i = SkipTypeToken(s, i + 1);
+            }
+            return i;
+        }
+        foreach (var pre in new[] { "clrg:", "clr:", "gp:" })
+            if (At(s, i, pre)) { i += pre.Length; break; }
+        int depth = 0;
+        for (; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '[') depth++;
+            else if (c == ']') { if (depth == 0) break; depth--; }
+            else if (depth == 0 && (c == ':' || c == ',')) break;
+        }
+        return i;
     }
 
     // BIR `clrg:<openName>[<arg1>,<arg2>,...]` -> a constructed generic .NET type. Args split at bracket-depth 0
