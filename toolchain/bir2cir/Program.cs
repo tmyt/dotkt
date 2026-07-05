@@ -196,6 +196,13 @@ sealed class Pipeline
             // the clrPropGet receiver is consumed here, not emitted. Runs BEFORE MemberCallSubstitution so the operator
             // call — which has no ref.dll owner — is bound here. A no-op for the ref/rt stdlib self-build (no .NET events).
             hoisted = ClrEventOperatorBinding.Apply(hoisted);
+            // KCLASS MEMBER BINDING: kotc emits `T::class.simpleName`/`.qualifiedName` as the PLAIN Kotlin property read
+            // `callInstance(kotlin.reflect.KClass.get_simpleName/get_qualifiedName, recv = <a System.Type value>)` (the
+            // `::class` receiver is already a System.Type token). A KClass is @ClrTypeAlias-ed onto System.Type, so this
+            // pass derives the CLR resolution — a `clrPropGet` of `System.Type.Name`/`.FullName`. The `System.Type` /
+            // BCL-member knowledge lives HERE (the Kotlin<->CLR layer), never in the kotc frontend (layer purity, mirrors
+            // the exception-map / annotation-base migrations). Non-ref only: the ref stdlib keeps KClass pure Kotlin.
+            if (!_options.RefBuild) hoisted = KClassMemberBinding.Apply(hoisted);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
@@ -4445,6 +4452,60 @@ static class ClrEventOperatorBinding
             ["static"] = isStatic,
             ["recv"] = isStatic ? null : propGet["recv"]?.DeepClone(),
             ["handler"] = args[0]?.DeepClone(),
+        };
+    }
+}
+
+// A `kotlin.reflect.KClass` member read (`T::class.simpleName` / `.qualifiedName`) -> its System.Type BCL member.
+// kotc emits the pure-Kotlin property read `callInstance(kotlin.reflect.KClass[..].get_simpleName, recv = <::class>)`;
+// the `::class` receiver is already a System.Type token (a `getType`/`classRef` node), and KClass is @ClrTypeAlias-ed
+// onto System.Type, so the member binds to Type.Name / Type.FullName. This is the Kotlin<->CLR relation, so the
+// System.Type / BCL-member knowledge lives here (not in kotc). Mirrors ClrEventOperatorBinding's bottom-up rewrite.
+static class KClassMemberBinding
+{
+    public static JsonNode Apply(JsonNode root) => Walk(root);
+
+    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+
+    static JsonNode Walk(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            var copy = new JsonObject();
+            foreach (var kv in obj) copy[kv.Key] = kv.Value == null ? null : Walk(kv.Value);   // children first (bottom-up)
+            return Transform(copy) ?? copy;
+        }
+        if (node is JsonArray arr)
+        {
+            var copy = new JsonArray();
+            foreach (var item in arr) copy.Add(item == null ? null : Walk(item));
+            return copy;
+        }
+        return node.DeepClone();
+    }
+
+    static JsonNode Transform(JsonObject node)
+    {
+        if (Str(node["k"]) != "callInstance") return null;
+        // ownerType is `kotlin.reflect.KClass` optionally with a `[..]` type-arg suffix (e.g. `kotlin.reflect.KClass[kotlin.Any]`).
+        var owner = Str(node["ownerType"]);
+        if (owner == null || !(owner == "kotlin.reflect.KClass" || owner.StartsWith("kotlin.reflect.KClass["))) return null;
+        var bcl = Str(node["method"]) switch
+        {
+            "get_simpleName" => "Name",
+            "get_qualifiedName" => "FullName",
+            _ => null,
+        };
+        if (bcl == null) return null;
+        if (node["recv"] is not JsonObject recv) return null;   // the ::class receiver (a System.Type value)
+        return new JsonObject
+        {
+            ["k"] = "clrPropGet",
+            ["type"] = "System.Type",
+            ["name"] = bcl,
+            ["retType"] = "System.String",
+            ["static"] = false,
+            ["recv"] = recv.DeepClone(),
         };
     }
 }

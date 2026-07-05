@@ -21,6 +21,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   shape. The preferred stable-flag path (`suspendIntrinsic:true`) is unchanged; kotc does not yet emit that flag
   (the block is the inliner's residue of the intrinsic's fake body — see `libraries/stdlib/src/kotlin/coroutines/`
   `intrinsics/Intrinsics.kt:43`), so the hardened string fallback remains the live path. seq/yield samples stay green.
+- **kotc: interface .NET events surface as `+=`/`-=` on an interface-typed receiver (review N6, interface half).**
+  facadegen now emits a public INSTANCE event of a .NET INTERFACE (`INotifyPropertyChanged.PropertyChanged`) as a
+  `ClrEvent<T>` member, and kotc surfaces it (non-abstract, even on an interface — an abstract event member would
+  impose an unsatisfiable obligation on a Kotlin class subclassing a .NET class that implements the interface). The
+  prior deferral cause — a `class MyApp : Avalonia.Application` gaining a fake-override getter returning the
+  un-emittable `kotlin.clr.ClrEvent<T>` — is fixed at the source: kotc's new `isClrEventProperty` ELIDES a
+  ClrEvent-typed fake-override from every member-emit site (a .NET event is never a real inherited property). New
+  gate case `il-ifaceevent` (subscribe on an `INotifyPropertyChanged`-typed receiver); `ktproj-avalonia` stays green.
+- **kotc→bir2cir: `KClass.simpleName`/`.qualifiedName` lowering migrated out of the frontend (layer purity, review
+  §0).** kotc no longer emits a `System.Type.get_Name`/`get_FullName` `clrInstance` for `T::class.simpleName`; it
+  emits the PLAIN Kotlin property read on `kotlin.reflect.KClass`, and bir2cir's new `KClassMemberBinding` derives the
+  CLR resolution (a `clrPropGet` of `System.Type.Name`/`.FullName`). The `System.Type`/BCL-member knowledge now lives
+  in the Kotlin↔CLR layer, mirroring the exception-map / annotation-base migrations. `getclass` stays byte-behavior
+  identical.
+- **kotc: two review-N8 diagnostics/fixes.** (a) `@Volatile` now also matches the deprecated `kotlin.jvm.Volatile`
+  alias (was `kotlin.concurrent.Volatile` only), so a common/stdlib `@kotlin.jvm.Volatile var` gets the volatile
+  field flag. (b) A `ClrEvent<T>` read OUTSIDE a `+=`/`-=` subscription (`val e = w.Changed`) — which used to emit a
+  `clrPropGet` no bir2cir rule strips, failing distantly with no diagnostic — is now a kotc COMPILE-TIME error at the
+  source (a .NET event is not a first-class value).
 - **ilemit: removed the last Kotlin-collection-name knowledge leak (ReverseBridge `KotlinEnumerableIfaces`).** The
   reverse `GetEnumerator` bridge previously carried a hardcoded set of Kotlin FQNs
   (`kotlin.collections.{Set,MutableSet,MutableCollection,MutableList,MutableIterable}`) to recognize collection

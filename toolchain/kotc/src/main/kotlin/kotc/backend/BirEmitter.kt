@@ -134,6 +134,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"unsupportedExpr","of":${str("$what — $detail")}}"""
 	}
 
+	// A `kotlin.clr.ClrEvent<T>` value is a compile-time-only fiction (the surfaced form of a .NET event); it may
+	// appear ONLY as the receiver of a `+=`/`-=` subscription, never be materialized as a real value. This flag is
+	// set true ONLY while emitting the event member-access that is the receiver of a ClrEvent `plusAssign`/`minusAssign`;
+	// a ClrEvent-typed property read seen with it FALSE is a misuse (`val e = w.Changed`) and is a compile error.
+	private var clrEventReceiverOk = false
+	private inline fun <R> asClrEventReceiver(body: () -> R): R {
+		val prev = clrEventReceiverOk; clrEventReceiverOk = true
+		try { return body() } finally { clrEventReceiverOk = prev }
+	}
+
 	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
 	internal val valSubst = HashMap<String, String>()
 	// While splicing an inline fun / inlined-lambda body: the SPLICED target's own `return`s must NOT emit as raw
@@ -948,8 +958,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  ilemit lowers it to a CLR volatile field (`modreq(IsVolatile)` + `volatile.` prefix — the C# `volatile` shape).
 	 *  Matched by the field's OR the property's annotations (the FIELD-targeted annotation can land on either IR node). */
 	internal fun isVolatile(p: IrProperty): Boolean {
+		// `kotlin.jvm.Volatile` is a deprecated typealias for `kotlin.concurrent.Volatile`; a `@kotlin.jvm.Volatile var`
+		// carries the same field-level volatile fact, so match either fully-qualified name.
 		fun hasVol(anns: List<IrConstructorCall>) =
-			anns.any { it.type.classFqName?.asString() == "kotlin.concurrent.Volatile" }
+			anns.any { it.type.classFqName?.asString().let { fq -> fq == "kotlin.concurrent.Volatile" || fq == "kotlin.jvm.Volatile" } }
 		return hasVol(p.annotations) || (p.backingField?.let { hasVol(it.annotations) } ?: false)
 	}
 
@@ -1116,6 +1128,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun nullableGpFieldFlag(t: IrType): String =
 		if (t.isMarkedNullable() && birType(t).startsWith("gp:")) ""","nullable":true""" else ""
 
+	/** A property whose type is `kotlin.clr.ClrEvent<T>` — the compile-time-only fiction surfacing a .NET event.
+	 *  A .NET event is subscribed via `+=`/`-=` and is NEVER a first-class value or a real inherited property, so
+	 *  such a property must never be emitted as a member. This matters for a FAKE-OVERRIDE: when a Kotlin class
+	 *  subclasses a .NET type whose interface carries an event (`class MyApp : Avalonia.Application`, whose bases
+	 *  implement an event-bearing interface), fir2ir synthesizes a fake-override getter returning `ClrEvent<T>`;
+	 *  declaring it would emit an accessor/property over the un-emittable `kotlin.clr.ClrEvent` type — skip it. */
+	internal fun isClrEventProperty(p: IrProperty): Boolean =
+		p.getter?.returnType?.classFqName?.asString() == "kotlin.clr.ClrEvent"
+
 	internal fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false, liftedAnon: Boolean = false): String {
 		val baseType = klass.superTypes
 			.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
@@ -1173,7 +1194,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					p.setter?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
 			}.orEmpty()
 		// Property accessors that override a .NET base virtual property -> emitted as get_/set_ override methods.
+		// A `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited via a base's interface) is NOT a real
+		// property — skip it (see isClrEventProperty), else we emit an accessor over the un-emittable ClrEvent type.
 		val clrAccessors = klass.declarations.filterIsInstance<IrProperty>()
+			.filterNot { isClrEventProperty(it) }
 			.flatMap { p -> listOfNotNull(clrAccessorMethod(p, p.getter), clrAccessorMethod(p, p.setter)) }
 		// User custom accessors (`get() = …`/`set(v){…}`) -> get_/set_ methods (the access site routes through them).
 		// A property optimizes to a plain field; but one implementing a KOTLIN INTERFACE property must emit a get_/set_
@@ -1187,8 +1211,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// re-declare the unimplemented interface slot.
 		fun classInherited(a: IrSimpleFunction?) = (a?.resolveFakeOverride()?.parent as? IrClass)?.kind == ClassKind.CLASS
 		fun dropFake(p: IrProperty) = p.isFakeOverride && classInherited(p.getter)
-		fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p)
-		fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p)
+		// `!isClrEventProperty`: a `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited through a base's
+		// interface) is not a real property and must not surface an accessor/property member.
+		fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p)
+		fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p)
 		val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 			listOfNotNull(
 				p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
@@ -3078,7 +3104,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if ((callee.name.asString() == "plusAssign" || callee.name.asString() == "minusAssign")
 			&& (callee.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.clr.ClrEvent") {
 			val recv = dispatchReceiver(call)!!
-			return """{"k":"callInstance","ownerType":"kotlin.clr.ClrEvent","virtual":false,"recv":${expr(recv)},"method":${str(callee.name.asString())},"args":[${expr(regularArgs(call).first())}]}"""
+			// The receiver here is the ONLY legitimate ClrEvent-value position (the event member-access `w.Changed`);
+			// emit it with the OK flag so its clrPropGet is allowed. Every other ClrEvent read stays a compile error.
+			val recvJson = asClrEventReceiver { expr(recv) }
+			return """{"k":"callInstance","ownerType":"kotlin.clr.ClrEvent","virtual":false,"recv":$recvJson,"method":${str(callee.name.asString())},"args":[${expr(regularArgs(call).first())}]}"""
 		}
 		// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 		((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }
@@ -3236,15 +3265,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// like any other generic-method body. (On the JVM `reified` exists ONLY to drive call-site inlining around
 		// erasure; that whole machine is absent here.) See [[clr-not-jvm-discard-jvmisms]].
 
-		// `T::class.simpleName`/`.qualifiedName` (KClass over a System.Type) -> Type.Name/FullName.
-		if (declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.reflect.KClass") {
-			val recv = dispatchReceiver(call)
-			val m = when (callee.correspondingPropertySymbol?.owner?.name?.asString()) {
-				"simpleName" -> "get_Name"; "qualifiedName" -> "get_FullName"; else -> null
-			}
-			if (recv != null && m != null)
-				return """{"k":"clrInstance","type":"System.Type","method":${str(m)},"argTypes":[],"ret":"System.String","recv":${expr(recv)},"args":[]}"""
-		}
+		// `T::class.simpleName`/`.qualifiedName` is NOT intercepted here (layer purity): kotc emits the PLAIN Kotlin
+		// property read `kotlin.reflect.KClass::get_simpleName`/`get_qualifiedName` (via the ordinary member-property
+		// path below), and bir2cir's KClassMemberBinding derives the CLR resolution — a `clrPropGet` on `System.Type`
+		// (`Name`/`FullName`). The `System.Type` knowledge (which BCL member a KClass member maps to) is a Kotlin<->CLR
+		// relation and lives in bir2cir, not in this frontend.
 
 		// Scope functions (let/run/with/apply/also) -> inline to a value-block (no delegate; mirrors the C# IIFE).
 		if (calleeFq in SCOPE_FUNCTIONS) {
@@ -3582,6 +3607,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			val prop = callee.correspondingPropertySymbol?.owner
 			if (prop != null) {
+				// A `kotlin.clr.ClrEvent<T>` property read is legal ONLY as the receiver of a `+=`/`-=` subscription
+				// (`w.Changed += h`), where clrEventReceiverOk is set. A bare read (`val e = w.Changed`) would emit a
+				// `clrPropGet get_<Event>` that no bir2cir rule strips -> a distant, diagnostic-free downstream failure.
+				// A .NET event is not a first-class value, so reject it here at the source with a kotc compile error.
+				if (!clrEventReceiverOk && callee === prop.getter
+					&& callee.returnType.classFqName?.asString() == "kotlin.clr.ClrEvent") {
+					hadError = true
+					messageCollector?.report(CompilerMessageSeverity.ERROR,
+						"a .NET event ('${prop.name.asString()}') is not a first-class value: it may only appear as the " +
+							"left-hand side of a '+=' / '-=' subscription (e.g. `x.${prop.name.asString()} += handler`), not be read/assigned",
+						locationOf(call))
+					return """{"k":"unsupportedExpr","of":"clr-event-read-outside-subscription: ${prop.name.asString()}"}"""
+				}
 				val pn = clrInteropName(prop) ?: prop.name.asString()
 				val recvJson = if (isStatic) "null" else expr(recv!!)
 				// A restored MEMBER extension property (`class C { val T.p }`): no .NET property exists — it's a
