@@ -4,22 +4,19 @@ package kotc
  * S5 bridge between the FIR type-injection frontend extension and the backend codegen.
  *
  * The frontend extension synthesizes .NET types into FIR *without* annotations (synthesizing FIR
- * annotations that survive Fir2Ir is the brittle part). Instead it records `Kotlin FQN -> .NET type`
- * here, and the backend's `clrName` consults this map. Net effect: a synthesized `clrgen.Math` maps
- * to `System.Math` (façade-free, no hand-written `.kt` file). Single JVM process, so a static registry
- * is the simplest correct channel between the two compiler phases.
+ * annotations that survive Fir2Ir is the brittle part), passing per-symbol CLR facts to the backend.
+ *
+ * A2 keystone — interop-no-registry, stage 1 (2026-07-05): the TYPE-name channel is REMOVED. The
+ * backend's `clrName` reads an injected type's .NET name straight off its IR `ClassId` (via
+ * `ClrMetadataHolder.dotNetNameByClassId` — a structural, resolved identity, not a name-keyed
+ * injector-populated side-table). Only the per-MEMBER slot map survives here, and is stage 2's target
+ * (fold into the ref.dll @ClrIntrinsic/@ClrProperty substitution bir2cir already owns).
  */
 object ClrTypeRegistry {
-	private val typeNames = HashMap<String, String>()
 	// Per-MEMBER BCL name (ref/runtime split, app-emit member substitution): key = the member's Kotlin fqn
 	// (`kotlin.collections.Collection.size`) -> its BCL member name (`Count`). Populated from the binding attribute carried
 	// in the injection meta when an app references the ref stdlib; the backend's clrName consults it for an injected member.
 	private val memberNames = HashMap<String, String>()
-
-	fun register(kotlinFqn: String, dotNetName: String) { typeNames[kotlinFqn] = dotNetName }
-
-	/** The .NET type name for a synthesized Kotlin class FQN, or null if not injected. */
-	fun dotNetName(kotlinFqn: String): String? = typeNames[kotlinFqn]
 
 	fun registerMember(memberFqn: String, bclName: String) { memberNames[memberFqn] = bclName }
 

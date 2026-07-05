@@ -119,10 +119,20 @@ private fun parseFunMods(tok: String?): FunMods {
 }
 
 /**
+ * A2 keystone (interop-no-registry, stage 1): the backend reads an injected .NET type's name off its IR `ClassId`
+ * through this accessor — facadegen's metadata keyed by the resolved ClassId, with the generic-arity backtick stripped
+ * (`System.Threading.Tasks.Task\`1` -> `Task`; ilemit re-appends `\`N` from the arg count). Replaces the deleted
+ * name-keyed `ClrTypeRegistry.typeNames`. Null for a non-injected class (user Kotlin type / stdlib). File-top-level so
+ * it can reach the file-private [ClrMetadataHolder] while exposing only public types across the module boundary.
+ */
+internal fun clrInjectedDotNetName(classId: ClassId): String? = ClrMetadataHolder.dotNetNameByClassId[classId]
+
+/**
  * Loads the .NET type metadata to inject, once per process. The path comes from `CLR_TYPES_METADATA`
  * (set by the build / MSBuild / verify harness). Absent or empty => inject nothing, so compilations
- * that don't opt in are completely unaffected. Each injected type is also recorded in [ClrTypeRegistry]
- * so the backend maps it to its .NET name.
+ * that don't opt in are completely unaffected. The backend reads each injected type's .NET name off its
+ * IR `ClassId` via [clrInjectedDotNetName] (this metadata, keyed structurally); per-member/event facts
+ * still ride the [ClrTypeRegistry]/[ClrEventRegistry] side-channels (interop-no-registry stages 2-4).
  */
 private object ClrMetadataHolder {
 	val module: ClrModule? by lazy { System.getenv("CLR_TYPES_METADATA")?.let { load(File(it)) } }
@@ -256,17 +266,14 @@ private object ClrMetadataHolder {
 			ClrTopLevelRegistry.registerProp(fqn, tp.fileClassDotNet)
 		}
 		for (t in types) {
-			// Register at the real .NET-namespace fqn (e.g. System.Text.StringBuilder), so the backend's clrName
-			// resolves the .NET type for `import System.Text.StringBuilder`. Namespace-less types fall back to bare name.
-			// A generic definition's Kotlin fqn uses its ARITY-QUALIFIED Kotlin name (facadegen: Task`1 -> Task1 when
-			// the name family clashes) — that matches the injected FIR ClassId, which is what the backend looks up.
+			// The .NET-namespace fqn (e.g. System.Text.StringBuilder) = the injected FIR ClassId. Namespace-less types
+			// fall back to bare name. A generic definition's Kotlin fqn uses its ARITY-QUALIFIED Kotlin name (facadegen:
+			// Task`1 -> Task1 when the name family clashes) — that matches the injected FIR ClassId, which is what the
+			// backend looks up. A2 stage 1: the TYPE-name channel (`ClrTypeRegistry.typeNames`) is GONE — the backend's
+			// clrName now reads the injected type's .NET name off its IR ClassId via `ClrMetadataHolder.dotNetNameByClassId`
+			// (structural, no injector-populated name map). Only the per-member and event side-channels remain (stages 2-4).
 			val ns = namespaceOf(t.dotNetName)   // the .NET namespace IS the Kotlin package
 			val fqn = if (ns.isNotEmpty()) "$ns.${t.kotlinName}" else t.kotlinName
-			// ref/runtime split: register the BCL BINDING (clrBinding) if present, else the type's own .NET name.
-			// The meta's .NET-name token carries the TRUE CLR arity (`System.Threading.Tasks.Task`1`); the BACKEND
-			// contract is the arity-LESS open name (BirEmitter emits `clrg:<open>[args]`, ilemit re-appends the arity
-			// from the constructed arg count — Program.cs GenericType) — so strip the backtick suffix here.
-			ClrTypeRegistry.register(fqn, t.clrBinding ?: t.dotNetName.substringBefore('`'))
 			// per-member BCL name (size -> Count): key = the member's Kotlin fqn so clrName(prop) can resolve it.
 			for (p in t.properties) p.clrName?.let { ClrTypeRegistry.registerMember("$fqn.${p.name}", it) }
 			for (m in t.methods) m.clrName?.let { ClrTypeRegistry.registerMember("$fqn.${m.name}", it) }
@@ -296,6 +303,17 @@ private object ClrMetadataHolder {
 		module?.types?.filter { it.clrBinding == null && !it.dotNetName.startsWith("kotlin.") }?.associateBy { ClassId(FqName(namespaceOf(it.dotNetName)), Name.identifier(it.kotlinName)) }.orEmpty()
 	}
 	val classIdByName: Map<String, ClassId> by lazy { byClassId.entries.associate { (id, t) -> t.kotlinName to id } }
+	// A2 keystone (interop-no-registry stage 1): the backend's clrName reads the injected type's .NET name straight off
+	// its IR `ClassId` (a structural, resolved identity — no name-keyed injector-populated side-channel). This map is
+	// facadegen's own metadata keyed by that same ClassId; the value is the type's TRUE .NET name with its generic-arity
+	// backtick stripped (`System.Threading.Tasks.Task\`1` -> `Task`), matching the backend contract (BirEmitter emits the
+	// arity-LESS open name in `clrg:<open>[args]`; ilemit re-appends `\`N` from the constructed arg count). This is a pure
+	// projection of `byClassId`, which already excludes @Clr-bound stdlib types (clrBinding != null) and `kotlin.*` — a
+	// facadegen-injected stdlib type never happens (kotlin.* comes from the JAR), so the old `clrBinding` fallback of the
+	// deleted `ClrTypeRegistry.typeNames` was dead and is dropped. NOTE: the .NET name of an arity-QUALIFIED Kotlin name
+	// (`Task\`1` -> Kotlin `Task1`) genuinely diverges from the ClassId simple name, so it must be carried (facadegen's
+	// fact), not re-derived from the ClassId string — hence this metadata read rather than `classId.asString()` alone.
+	val dotNetNameByClassId: Map<ClassId, String> by lazy { byClassId.mapValues { it.value.dotNetName.substringBefore('`') } }
 	// Generic and non-generic types share a simple name across NAMESPACES (`IEnumerable<T>` in .Generic vs the legacy
 	// `IEnumerable`) — resolve by (name, arity) so `generic:IEnumerable[Item]` picks the generic one and a bare
 	// `IEnumerable` picks the non-generic one. SAME-namespace families (Task/Task`1) no longer collide at all:
@@ -318,8 +336,8 @@ private object ClrMetadataHolder {
  * `@Clr` façade `.kt`. The metadata is produced by `facadegen --meta` reflecting over real .NET
  * assemblies — the same reflection that used to emit `.kt`, now feeding the compiler in-memory.
  *
- * Synthesized FIR carries no annotations; [ClrTypeRegistry] (populated at metadata load) tells the
- * backend each type's .NET name. Supported now: `object` (static) + `class` (constructors + instance
+ * Synthesized FIR carries no annotations; the backend recovers each type's .NET name from its IR
+ * `ClassId` (via [clrInjectedDotNetName]). Supported now: `object` (static) + `class` (constructors + instance
  * methods); members with primitive/String/Unit/self/other-injected-type signatures. Properties and
  * generics are the next slice (see docs/research-roadmap.md §S5).
  */

@@ -57,6 +57,7 @@ import org.jetbrains.kotlin.ir.types.IrTypeProjection
 import org.jetbrains.kotlin.ir.expressions.IrWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
+import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
@@ -3477,7 +3478,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// the event accessor's declaring class is the injected type itself.
 			val injectedOwner = declaringClass?.let { dc ->
 				val host = (if (dc.isCompanion) dc.parent as? IrClass else null) ?: dc
-				host.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.dotNetName(it) }
+				host.classId?.let { kotc.frontend.clrInjectedDotNetName(it) }
 			}
 			// Rule 3 (CLR binding): a non-@Clr member WITH A BODY of a @Clr class -> its hoisted static helper
 			// (<>dotkt_ClrH_<Class>.m(__self, args)), NOT a BCL member by name. Abstract/@Clr members fall through.
@@ -4178,7 +4179,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// (Append/Insert/ToString/get_Chars/Clear). kotc emits the plain kotlin.text.StringBuilder member call and
 			// bir2cir's MemberCallSubstitution rewrites it off the ref.dll (layer purity — no BCL member name in kotc).
 		}
-		return (decl as? IrClass)?.fqNameWhenAvailable?.asString()?.let { kotc.ClrTypeRegistry.dotNetName(it) }
+		// A2 stage 1: the injected .NET type's .NET name is read straight off its IR `ClassId` (structural resolved
+		// identity) against facadegen's metadata — no name-keyed injector-populated `ClrTypeRegistry.typeNames` side-map.
+		return (decl as? IrClass)?.classId?.let { kotc.frontend.clrInjectedDotNetName(it) }
 	}
 
 	/** The `byref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. Matched by FULL name

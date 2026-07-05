@@ -5,6 +5,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc — interop-no-registry, stage 1 (A2 keystone): the injected-.NET-type NAME lookup no longer rides a
+  process-global name-keyed side-table.** `BirEmitter.clrName` recovered a facadegen-injected .NET type's name
+  from `ClrTypeRegistry.typeNames` (a `HashMap<String,String>` the FIR injector populated by Kotlin FQN string).
+  It now reads the type's .NET name straight off the IR `ClassId` (a resolved, structural identity) via the new
+  `kotc.frontend.clrInjectedDotNetName(classId)` — a pure projection of facadegen's metadata keyed by that same
+  ClassId (generic-arity backtick stripped: `System.Threading.Tasks.Task`1` → `Task`; ilemit re-appends `` `N ``
+  from the constructed arg count). `ClrTypeRegistry.typeNames` / `register` / `dotNetName` are DELETED; the dead
+  `clrBinding` fallback (a facadegen-injected stdlib type never happens — `kotlin.*` comes from the JAR) is dropped
+  with them. Pure refactor: BIR is byte-identical for every .NET-interop sample (verified on
+  netbase/netgen/netgen3/event and the arity-family `taskfam`). The per-member and event side-channels
+  (`memberNames`, `ClrEventRegistry`) are untouched — stages 2-4 of `docs/design-interop-no-registry.md`.
+
 - **bir2cir — generic-collection `.add`/`.map`/`.size` dispatch: recover `clrCollAdd`'s element type from the
   receiver (the bymap/maxOrNull variance family's collection analog).** A non-inlined `.map`/`filterTo` whose
   `destination.add(...)` routes to the `clrCollAdd` helper carried the frontend's `MutableCollection<in R>.add`
