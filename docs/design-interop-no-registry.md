@@ -102,7 +102,16 @@ FQN already **is** the .NET name.
   bir2cir off the resolved symbol; confirm they survive Fir2Ir on the injected declaration.
 
 ---
-## ClrEvent<T> idiomatic redesign — implementation plan (2026-07-05, user-approved)
+## ClrEvent<T> idiomatic redesign — implementation plan (2026-07-05, user-approved) — ✅ IMPLEMENTED 2026-07-05
+
+> **Landed.** `kotlin.clr.ClrEvent<T>` + its `plusAssign`/`minusAssign` member operators are injected by
+> `ClrTypeInjector` (kotc), a .NET event surfaces as a `ClrEvent<HandlerFn>` property, and bir2cir's
+> **`ClrEventOperatorBinding`** pass binds the plain `plusAssign`/`minusAssign` operator call to the existing
+> `clrEventAdd`/`clrEventRemove` node (ilemit unchanged). The `add_<E>`/`remove_<E>` synthesis + `ClrEventRegistry`/
+> `eventOpByCallableId` side-table + the kotc `add_X`→`clrEventAdd` rewrite are all deleted. Emitted add/remove
+> accessor IL is identical; `cases/il-event` + `cases/ktproj-extlib` use the `+=`/`-=` form. Gates: verify-il 201/0 ·
+> 159/0, ktproj 9/9, differential ALL MATCH.
+
 
 Completes the INTENDED `w.Changed += handler` design that `cases/il-event/app.kt`'s own comment names but
 that was never wired — the `add_<E>`/`remove_<E>` synthesized-method model shipped as the stopgap (a relic,

@@ -5,6 +5,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **.NET events — idiomatic `w.Changed += handler` / `-= handler` (the `ClrEvent<T>` redesign; facadegen + kotc +
+  bir2cir).** A .NET event is no longer subscribed via the injector-synthesized `add_<E>`/`remove_<E>` accessor-method
+  stopgap — it now uses the idiomatic Kotlin `+=`/`-=` operators. facadegen/kotc surfaces a .NET event `Changed` as a
+  read-only member property `Changed: ClrEvent<HandlerFn>` (T = the handler's Kotlin function type) and injects the
+  compile-time-only fiction `kotlin.clr.ClrEvent<T>` carrying `operator fun plusAssign(handler: T)` /
+  `minusAssign(handler: T)` (no body — never executed; a .NET event is not a first-class value, so `w.Changed` never
+  materializes). `w.Changed += h` resolves through normal Kotlin operator resolution to `w.Changed.plusAssign(h)`,
+  which kotc emits as a **plain** `callInstance(kotlin.clr.ClrEvent.plusAssign, recv = w.Changed, [h])` — no `add_`/
+  `remove_` naming and no `clrEventAdd` in kotc. bir2cir's new **ClrEventOperatorBinding** pass binds that operator
+  call to the .NET add/remove accessor (the existing `clrEventAdd`/`clrEventRemove` node), reading the owner .NET type
+  + event name straight off the `clrPropGet` member-access. The emitted add/remove accessor IL is **identical** to the
+  old model — only the user-facing Kotlin syntax changed (`c.add_CollectionChanged { }` → `c.CollectionChanged += { }`;
+  `c.remove_CollectionChanged(h)` → `c.CollectionChanged -= h`). The `add_`/`remove_` method synthesis, its
+  `eventOpByCallableId`/`clrInjectedEventOp` side-table, and the kotc BirEmitter `add_X` → `clrEventAdd` rewrite are all
+  **DELETED** (the Kotlin↔CLR event relation now lives entirely in bir2cir — layer purity). `cases/il-event` and
+  `cases/ktproj-extlib` rewritten to the operator form. Gates unchanged: verify-il 201/0 · 159/0, ktproj 9/9,
+  differential ALL MATCH.
 - **kotc — layer purity: `Lazy` / `by lazy` migrated OFF the `System.Lazy` CLR hardcode to the pure-Kotlin stdlib
   body (family-2 Lazy deferral CLEARED via the coerce/isBlank pure-body approach).** kotc hardcoded three pieces of
   CLR knowledge: `birType` mapped `kotlin.Lazy<T>` → `clrg:System.Lazy[T]`; a `by lazy { }` delegate was built as

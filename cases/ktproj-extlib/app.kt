@@ -10,7 +10,7 @@ fun main() {
 	println("name: $name (len ${name.length})")
 	w.Enabled = true                                 // assign a plain Boolean to a .NET `bool?` property (Nullable<bool>)
 	println("enabled: ${w.Enabled}")
-	w.add_Changed { n -> println("changed: $n") }   // .NET event += Kotlin handler
+	w.Changed += { n -> println("changed: $n") }     // .NET event `+=` a Kotlin handler (ClrEvent<T> operator)
 	w.Fire(5)
 	w.Fire(9)
 }

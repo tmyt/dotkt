@@ -31,6 +31,7 @@ reproduce it.* (Memory `clr-not-jvm-discard-jvmisms`.)
 | [8](#8-reverse--cross-assembly-interop) | Reverse / cross-assembly interop |
 | [8b](#8b-dual-representation-import-systemtextstringbuilder-vs-kotlintextstringbuilder--two-typed-views-of-one-clr-type) | Dual view: imported .NET type vs. its stdlib alias |
 | [8c](#8c-injected-net-static-members-implicit-typemember-works-companion-optional) | Injected .NET statics: implicit `Type.member` works |
+| [8d](#8d-net-events-subscribe-with-the-idiomatic---operators) | .NET events subscribe with `+=` / `-=` |
 | [9](#9-reference-type-nullability--net-nrt-un-annotated-net-types-are-platform-types) | Nullability ⇔ .NET NRT; platform types `T!` |
 | [10](#10-round-trip-fidelity-audit--what-re-consuming-a-dotkt-assembly-as-kotlin-loses) | Round-trip fidelity audit (incl. pinned-2.2.0 limitations) |
 
@@ -378,6 +379,29 @@ the wire format itself is collision-free.
 **Nested generic types are not injected** (`List<T>.Enumerator` — no CLR-addressable open name in the meta
 grammar); members referencing them degrade to `Any?`. Iteration is unaffected (`for (x in list)` rides the
 injected `IEnumerable<T>` iterator marker, and the backend enumerates via `GetEnumerator/MoveNext/Current`).
+
+## 8d. .NET events subscribe with the idiomatic `+=` / `-=` operators
+
+A .NET **event** (`ObservableCollection.CollectionChanged`, a WinForms/WPF `Button.Click`, a custom library
+`Widget.Changed`) is subscribed and unsubscribed with the idiomatic Kotlin operators — **not** a method call:
+
+```kotlin
+val c = ObservableCollection<Int>()
+c.CollectionChanged += { sender, e -> println("changed") }   // subscribe (the event's add accessor)
+val h: (Any?, Any?) -> Unit = { s, e -> println("h fired") }
+c.CollectionChanged += h                                     // subscribe a stored handler
+c.CollectionChanged -= h                                     // unsubscribe (delegate equality — removes exactly h)
+```
+
+- The event surfaces as a **read-only property** `CollectionChanged: ClrEvent<HandlerFn>`, where `HandlerFn` is
+  the handler's **Kotlin function type** (`(Any?, Any?) -> Unit`) — so a lambda `{ s, e -> … }` binds directly.
+  `ClrEvent<T>` (`kotlin.clr.ClrEvent`) is a **compile-time-only handle**: a .NET event is not a first-class value
+  (you can only add/remove/raise it), so `c.CollectionChanged` never materializes an object — it exists only to make
+  `+=`/`-=` resolve. The compiler binds the operator to the event's underlying **add/remove accessor**; the handler
+  lambda is wrapped as the event's own delegate type (not `Action`/`Func`).
+- `-=` removes by **delegate equality**, so removal works only with a **stored** handler reference (as in the JVM
+  idiom for listeners) — a fresh lambda literal at the `-=` site is a different delegate and removes nothing.
+- This replaces the earlier `add_<Event>` / `remove_<Event>` accessor-method spelling, which no longer exists.
 
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
