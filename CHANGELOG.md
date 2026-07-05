@@ -146,6 +146,17 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   (bir2cir derives `System.Type.Name`/`.FullName`), and plain member calls (bir2cir renames the BCL slot).
   The `clrName`/`annClr` side-tables and the `System.Math`/`System.Console`/exception/collection/
   StringBuilder/Regex/Closeable hardcodes are gone.
+- **The primitive/`Comparable` `compareTo` lowering moved to bir2cir** — the last kotc CLR-knowledge leak
+  of its class. kotc emits a plain `callInstance` (`kotlin.Int.compareTo` / `kotlin.Comparable.compareTo`);
+  bir2cir derives a primitive `System.<Prim>.CompareTo` and a `constrained. System.IComparable<T>::CompareTo`
+  (its `Constrainify` pass now recovers the receiver static type from a `callInstance` return / `arrayGet`
+  element and builds `IComparable<recvType>` directly, so a `Comparator.compare` override — whose `T` lives on
+  an outer scope — still constrains). The runtime stdlib emits byte-behavior-identical constrained IL.
+- **Removed the dead `Assembly.LoadFrom` ref-scan in bir2cir** — it always threw `TypeLoadException` on the
+  metadata-only reference stdlib (surfacing a spurious `metadata scan failed: … 'kotlin.String'` warning once
+  ref-scan diagnostics started reaching stderr) and its `Members`/`Types`/`Functions` output fed only
+  callerless resolution helpers. The live `@ClrTypeAlias`/`@ClrIntrinsic`/rule-3 substitution reads solely from
+  the `MetadataLoadContext` scan (loads per-type cleanly); genuine ref-scan failures still surface loud.
 - **Single type-lowering path.** The `CompatBir` verbatim-copy mode and the `--compat-bir`/`--native-cir`
   flags are removed — one env-gated bir2cir pass rewrites the Kotlin type vocabulary into the CLR-codegen
   vocabulary ilemit consumes.
