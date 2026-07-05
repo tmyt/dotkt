@@ -161,6 +161,15 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 - **frontend stdlib jar** (`kotlin-stdlib-clr-frontend.jar`) replaces the JVM `kotlin-stdlib.jar` as kotc's
   `-classpath`, killing the `java.util.*` typealias leak; its `.kotlin_builtins` are generated from our own
   sources.
+- **Gate-hygiene fixes (final-review 2026-07-05):** closed the `verify-differential` `empty==empty`
+  false-MATCH hole (a MATCH now requires BOTH the jvm oracle and the clr side to have produced real,
+  non-empty output — two compile/run failures no longer silently pass as a MATCH); removed a stale
+  `verify-il` comment referencing the retired `XFAIL_RUN[cobuild]` and a duplicate `comaindrain`
+  invocation; and **wired 44 run-only cases into the `verify-il` ilverify pass** (they were run-checked
+  but had no formal-verification coverage). Three cases are documented-excluded: `stackalloc`
+  (`localloc` is unverifiable by ECMA-335), plus `ifacesuspend` and `strops` which run correctly but
+  emit genuinely-unverifiable IL (a `CallAbstract` in the interface-suspend bridge, and char/int32
+  `StackUnexpected` in the string-op lowering) — surfaced as real latent findings, not XFAIL-hidden.
 
 ## 0.9.3 — 2026-06-24
 
