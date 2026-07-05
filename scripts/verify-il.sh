@@ -630,9 +630,15 @@ if [[ -n "$ILV" && -d "$REFDIR" ]]; then
 	#     bridge `Fetcher::fetch()` (a `call` on an abstract member). Harmless at runtime (dispatch goes through
 	#     the Fetcher42 override, so the bridge method is never executed) but the IL is genuinely unverifiable.
 	#     REAL latent finding in the bir2cir/ilemit interface-suspend bridge — tracked, NOT XFAIL-hidden here.
-	#   • strops — RUNS green but ilverify flags 3x StackUnexpected [found Char] in main (a Char left where the
-	#     verifier wants int32, in the trim/pad/replace lowering). Harmless under the JIT (char is int32 on the
-	#     stack) but ilverify-dirty. REAL latent finding in the stdlib string-op call lowering — tracked.
+	#   • strops — RUNS green but ilverify flags 3x StackUnexpected [found Char] in main. Root cause DIAGNOSED
+	#     (2026-07-05): NOT a stdlib body — it is the `trim(vararg chars: Char)` call site building a `char[]`,
+	#     where ilemit emits the GENERIC TOKEN opcode `stelem <System.Char>` instead of the specialized
+	#     `stelem.i2`. ECMA-335 requires the specialized stelem/ldelem opcode for a PRIMITIVE element type; the
+	#     token form is unverifiable for primitives (empirically: `stelem <char>`->[found Char], `ldelem <char>`
+	#     ->[found Short]; `stelem.i2`/`ldelem.u2` Verified). Harmless under the JIT but ilverify-dirty. The fix
+	#     is an ILEMIT codegen change (specialized primitive stelem/ldelem opcode selection), out of the stdlib
+	#     layer — ROUTED to ilemit, NOT wired into ASMS until it lands. Token sites: Program.cs:2495 (EmitNewArray),
+	#     Emitter.Expressions.cs:375/428/443, Emitter.Statements.cs:244.
 	for n in $(printf '%s\n' "${!ASMS[@]}" | sort); do
 		dll="$ROOT/build/il-$n/${ASMS[$n]}.dll"
 		[[ -f "$dll" ]] || continue

@@ -175,6 +175,16 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   (`localloc` is unverifiable by ECMA-335), plus `ifacesuspend` and `strops` which run correctly but
   emit genuinely-unverifiable IL (a `CallAbstract` in the interface-suspend bridge, and char/int32
   `StackUnexpected` in the string-op lowering) — surfaced as real latent findings, not XFAIL-hidden.
+- **`il-strops` ilverify finding diagnosed + routed (2026-07-05).** The 3× `[StackUnexpected][found
+  Char]` in `main` is NOT a stdlib body: it is the `String.trim(vararg chars: Char)` call site building
+  a `char[]`, where `ilemit` emits the generic token opcode `stelem <System.Char>` instead of the
+  specialized `stelem.i2`. ECMA-335 requires the specialized `stelem`/`ldelem` opcode for a PRIMITIVE
+  element type; the token form is unverifiable for primitives (confirmed empirically: `stelem <char>`
+  → `[found Char]`, `ldelem <char>` → `[found Short]`; `stelem.i2`/`ldelem.u2` verify clean). The fix
+  is an ilemit codegen change (primitive-element `stelem`/`ldelem` opcode selection) at the token
+  sites `Program.cs:2495` (`EmitNewArray`), `Emitter.Expressions.cs:375/428/443`,
+  `Emitter.Statements.cs:244` — routed to the ilemit layer; `il-strops` stays a documented ilverify
+  exclusion until it lands. Runs correct on the gate (`hello`/`hi`/… output unchanged).
 
 ## 0.9.3 — 2026-06-24
 
