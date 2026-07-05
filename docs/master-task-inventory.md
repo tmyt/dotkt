@@ -242,7 +242,14 @@ Sources: `ship-tasks.md #4`, `archive/future-work-interop.md #4`, `archive/dotkt
   facadegen stderr, so the warning TEXT doesn't reach the build log (the frontend error still does).
 - ~~**(6)/future#4/roadmap-I1 transitive / on-demand type injection**~~ — ✅ DONE (verified 2026-07-02):
   `EmitMeta` BFS-injects the full reachable closure of the imported seeds (member signatures + supertypes), capped
-  at 5000 types, NO_INJECT/kotlin.* excluded, dedupe + fail-soft per type. 2-hop chain (un-imported
+  at 5000 types, NO_INJECT excluded, dedupe + fail-soft per type. **`kotlin.*` exclusion (M3, 2026-07-06):** the
+  BINDING invariant ("kotlin.* comes from the JAR, never from facadegen") is now enforced IN-LAYER — a `kotlin.*`
+  symbol is short-circuited in BOTH the seed resolution AND `ShouldInject` (helper `IsKotlinStdlibSymbol`), with the
+  deliberate `kotlin.clr.await` bridge whitelisted (surfaced textually by `EmitTaskAwait`, never through the closure).
+  Previously the exclusion lived only downstream (`ClrTypeInjection.kt:330`, injected classes/interfaces — NOT
+  top-level functions) plus the "don't `--scan-asm` the stdlib" operating discipline; M3 moves the guarantee into the
+  owning layer (defense-in-depth, output-neutral — the closure never reached a `kotlin.*` type under the discipline).
+  2-hop chain (un-imported
   `Gadget`→`Sprocket`) verified by `cases/il-transinj`. Design: full closure + cap, NOT depth-limited — no
   "hop N+1 collapses to Any?" cliff; measured closures stay small (~265 types for Console+Exception).
 - ~~**generic-type FIR direct injection (roadmap I1, L)** — `List<T>`/`Dictionary<K,V>` façade-free (last hole in the

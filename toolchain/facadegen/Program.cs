@@ -100,7 +100,9 @@ static class FacadeGen
         return null;
     }
 
-    // Compact line-based metadata for the FIR injector (package fixed to `clrgen`):
+    // Compact line-based metadata for the FIR injector. Each injected type keeps its real .NET namespace (the second
+    // token is the .NET FullName, from which the injector derives the Kotlin ClassId) — there is NO fixed `clrgen`
+    // package (that was an early-prototype convention; the meta grammar carries the true namespace now). Line shapes:
     //   object <SimpleName> <DotNetFullName>      | class <SimpleName> <DotNetFullName>
     //   fun <Name> <RetKotlinType> [pName:pType]* | ctor [pName:pType]*
     // Kotlin member names = .NET names verbatim (no per-member mapping needed in the backend).
@@ -215,6 +217,11 @@ static class FacadeGen
                 fam = ResolveFamily(prefix);
             }
             if (fam.Count == 0) { Console.Error.WriteLine($"warning: .NET import resolved to no type (injected nothing): {typeName}"); continue; }
+            // BINDING INVARIANT: a resolved seed that lands in `kotlin.*` is dropped — the stdlib comes from the
+            // frontend JAR, never facadegen (see IsKotlinStdlibSymbol). The `kotlin.clr.await` bridge is exempt: it
+            // resolves to no type here and is surfaced textually by EmitTaskAwait. Defense-in-depth / output-neutral.
+            fam.RemoveAll(s => IsKotlinStdlibSymbol(s));
+            if (fam.Count == 0) { Console.Error.WriteLine($"warning: .NET import is a kotlin.* stdlib symbol (owned by the JAR, not facadegen; injected nothing): {typeName}"); continue; }
             seeds++; foreach (var seed in fam) Enqueue(seed);
         }
         while (queue.Count > 0)
@@ -277,6 +284,11 @@ static class FacadeGen
     // A `[ClrIntrinsic]`/`[ClrTypeAlias]` binding on a ref-assembly type/member (when facadegen reflects a DotKt
     // library) registers the Kotlin type's dotNet name AS THE BCL TARGET, so the app binds it
     // (kotlin.collections.List -> System.Collections.Generic.IReadOnlyList). docs/design-clr-stdlib-ref-runtime-split.md.
+    // NOTE (M3): in the PRODUCTION import-scan path (`--meta ... --import-list`, no DotKt ref.dll scanned) this always
+    // returns null — no injected .NET type carries these stdlib-binding attributes. It is kept because the ref/runtime-
+    // split round-trip design (reflecting a DotKt library's ref.dll) depends on it and its removal is bir2cir-owner
+    // territory; do NOT delete without confirming that consumer. Its only live effect today is via GenuineNet's
+    // `ClrAttrName(t) == null` guard, which is a no-op given the always-null result.
     static string ClrAttrName(MemberInfo m)
     {
         var a = m.GetCustomAttributesData().FirstOrDefault(x => (x.AttributeType.Name == "ClrIntrinsic" || x.AttributeType.Name == "ClrTypeAlias") && x.ConstructorArguments.Count == 1);
@@ -291,8 +303,7 @@ static class FacadeGen
     // only emitted for @Clr STDLIB classes with real Kotlin bodies; a facadegen-injected member has no body). A
     // `kotlin.*`/@Clr type is EXCLUDED: those carry their substitution via @ClrIntrinsic (mclr) and their bodied members
     // are legitimate rule-3 hoist candidates — stamping identity bindings on them would suppress that hoist.
-    static bool GenuineNet(Type t) =>
-        ClrAttrName(t) == null && !((t.FullName ?? t.Namespace ?? "").StartsWith("kotlin.")) && (t.Namespace ?? "") != "kotlin";
+    static bool GenuineNet(Type t) => ClrAttrName(t) == null && !IsKotlinStdlibSymbol(t);
 
     // .NET operator method (`op_Addition`, `op_UnaryNegation`, …) -> the Kotlin `operator fun` name. Binary ops take the
     // LEFT operand as the receiver (drop param[0]); unary ops take the sole operand as the receiver (no value params).
@@ -780,11 +791,31 @@ static class FacadeGen
     // Kotlin-builtin scalars (mapped directly by Map) + intrinsics surfaced specially (Span) + the special CLR base
     // types (Delegate/MulticastDelegate/ValueType/Enum/Array) that can't be injected as ordinary classes nor used as
     // supertypes — synthesizing a subclass ctor chaining to e.g. System.Delegate (no parameterless ctor) crashes
-    // codegen. Members referencing them degrade to Any?, exactly as if never reached.
+    // codegen. Members referencing them degrade to Any?, exactly as if never reached. `System.Nullable`1` joins them:
+    // a value-type `X?` is projected to Kotlin's `X?` by Map (never the literal `Nullable<X>` generic), so injecting
+    // the open `Nullable`1` definition is pointless AND surfaces a stray non-Kotlin generic (mirrors `Span`1`).
     static readonly HashSet<string> NO_INJECT = new()
     { "System.Void", "System.Object", "System.String", "System.Int32", "System.Int64", "System.Int16",
       "System.Byte", "System.Boolean", "System.Double", "System.Single", "System.Char", "System.Span`1",
+      "System.Nullable`1",
       "System.Delegate", "System.MulticastDelegate", "System.ValueType", "System.Enum", "System.Array" };
+
+    // BINDING INVARIANT (CLAUDE.md §"kotlin.* comes from the JAR, never from facadegen"; docs/ship-tasks.md §0):
+    // kotc resolves the ENTIRE Kotlin stdlib (`kotlin.*`) from the frontend JAR on -classpath, which preserves full
+    // Kotlin semantics (the Companion-object call sites the stdlib is premised on). facadegen owns the .NET space ONLY
+    // and must NEVER inject a `kotlin.*` symbol — a facadegen-reconstructed `kotlin.*` is semantically degraded AND
+    // DUPLICATES the jar's, which then conflict (overload-resolution ambiguity). Today the operating discipline ("never
+    // --scan-asm the stdlib") already keeps `kotlin.*` out of every seed/closure; this predicate makes the guarantee
+    // live IN the owning layer (defense-in-depth, output-neutral) rather than relying only on that discipline plus the
+    // downstream `ClrTypeInjection.kt` filter (which covers injected classes/interfaces but NOT top-level functions).
+    // WHITELIST: the deliberate `kotlin.clr.await` CLR-async bridge is surfaced textually by EmitTaskAwait (keyed off
+    // the BCL Task family), never through this type-injection path (`import kotlin.clr.await` resolves to no type here),
+    // so it is naturally exempt — this predicate only gates types that flow through Enqueue/ShouldInject/seed-resolve.
+    static bool IsKotlinStdlibSymbol(Type t)
+    {
+        var fqn = t.FullName ?? t.Namespace ?? "";
+        return fqn.StartsWith("kotlin.") || (t.Namespace ?? "") == "kotlin";
+    }
 
     // Inject only real, named, resolvable types — including generic DEFINITIONS (List`1, IList`1) so a
     // `generic:List:Foo` member type resolves to a real `class List<T>` (P1-2). Constructed generics are unwrapped
@@ -793,6 +824,10 @@ static class FacadeGen
     {
         if (t == null || t.IsGenericParameter || t.IsPointer || t.IsByRef) return false;
         if (string.IsNullOrEmpty(t.Namespace) || t.FullName == null) return false;
+        // BINDING INVARIANT: never inject a `kotlin.*` stdlib symbol — it comes from the frontend JAR (see
+        // IsKotlinStdlibSymbol). Defense-in-depth: the closure never reaches one under the "don't --scan-asm the
+        // stdlib" discipline, so this is output-neutral; it just moves the guarantee into the owning layer.
+        if (IsKotlinStdlibSymbol(t)) return false;
         // A NESTED generic type (`List`1+Enumerator` — it inherits the enclosing type's params, so IsGenericType is
         // true even without own params) has no CLR-addressable open name in the meta grammar; excluded, and CrossType
         // degrades references to it to Any?. Non-generic nested types (Environment+SpecialFolder) stay injectable.
@@ -1305,7 +1340,7 @@ static class FacadeGen
             var inner = Map(t.GetGenericArguments()[0], self);
             return inner == "Any?" ? "Any?" : inner + "?";
         }
-        // (4) A .NET delegate type -> a Kotlin function type `func:<ret>:<arg>,<arg>` (meta/injection path only).
+        // (4) A .NET delegate type -> a Kotlin function type `func:[<ret>,<arg>,<arg>]` (meta/injection path only).
         // A lambda then binds to the delegate parameter and overloads disambiguate by arity; the backend builds the
         // SPECIFIC delegate from the parameter type resolved at the call site (so the delegate name isn't needed in
         // the metadata). Args/ret may themselves be compound (`generic:Box[V]`) — the bracketed grammar nests them.
@@ -1354,6 +1389,19 @@ static class FacadeGen
         };
     }
 
+    // Diagnostic: a member's signature type could not be projected to a real Kotlin/.NET type and degraded to `Any?`.
+    // Left silent, this SILENTLY WEAKENS the injected member's overload (an `Any?` param/return matches too much). Emit
+    // a `note:` to stderr (the build-log wrapper surfaces it) so the degradation is visible, not invisible. Deduped by
+    // the dropped type's identity — one note per distinct type, not per reference — to keep a large closure quiet.
+    static readonly HashSet<string> s_degradeNoted = new(StringComparer.Ordinal);
+    static string DegradeToAny(Type t, string reason)
+    {
+        var id = t?.FullName ?? t?.Name ?? "<null>";
+        if (s_degradeNoted.Add(id))
+            Console.Error.WriteLine($"note: signature type degraded to Any? ({reason}): {id}");
+        return "Any?";
+    }
+
     // A reference to another .NET type -> emit its SIMPLE name. The FIR injector resolves it to that type IF it is
     // also injected (imported); otherwise it falls back to Any?. Generics/arrays/byref/global types stay Any? here.
     static string CrossType(Type t)
@@ -1371,16 +1419,17 @@ static class FacadeGen
             // A NESTED generic definition (`List`1+Enumerator`) is NOT injected (ShouldInject rejects it: the meta
             // grammar has no CLR-addressable open name for it, and the old rendering produced the nonexistent FQN
             // `System.Collections.Generic.Enumerator`). Degrade the reference to Any? — consistent with the injected set.
-            if (open.IsNested) return "Any?";
+            if (open.IsNested) return DegradeToAny(t, "nested generic definition — no CLR-addressable open name");
             var openName = KotlinName(open);   // arity-suffixed iff the name family clashes (Task`1 -> Task1)
             // A root-namespace open def (`open.Namespace` null) is a legitimately injectable user type (`Box<T>`), not a
             // global/compiler type — only reject the explicitly non-injectable ones and names that aren't a simple ident.
             if (NO_INJECT.Contains(open.FullName ?? "")
-                || !openName.All(c => char.IsLetterOrDigit(c) || c == '_')) return "Any?";
+                || !openName.All(c => char.IsLetterOrDigit(c) || c == '_'))
+                return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
             var args = t.GetGenericArguments().Select(a => Map(a, t)).ToList();
             // `generic:Open[arg,arg]` — bracketed so a compound arg (`generic:Inner[X]`, `func:[...]`) nests; the
             // injector splits at bracket-depth 0. Only an unresolved arg (`Any?`) sinks the whole type.
-            if (args.Any(a => a == "Any?")) return "Any?";
+            if (args.Any(a => a == "Any?")) return DegradeToAny(t, "a generic type argument was unresolvable");
             return "generic:" + openName + "[" + string.Join(",", args) + "]";
         }
         // Emit the FULLY-QUALIFIED name so the injector resolves the EXACT type, not whichever same-simple-name type
@@ -1390,7 +1439,7 @@ static class FacadeGen
         var fqn = t.FullName;
         if (fqn != null && fqn.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.')) return fqn;
         var n = t.Name;
-        return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? n : "Any?";
+        return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? n : DegradeToAny(t, "name is not a resolvable identifier");
     }
 
     // Round-trip gap ①: restore the generic CONSTRAINTS + declaration-site VARIANCE that ilemit wrote into the assembly
