@@ -68,6 +68,36 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   surfaced — a silent ref-scan miss became a distant `EntryPointNotFound`/NRE at ilemit or run time. The driver now
   prints each diagnostic as `bir2cir: WARNING ref-scan diagnostic: …`. An empty Diagnostics stays silent (the happy
   path prints nothing).
+- **kotc: `Task.WhenAll(vararg Task<T>)` (and any generic .NET method with a `vararg` param) now resolves and runs
+  (N3-deep, the twin of the facadegen `Map` fix).** The frontend's GENERIC .NET-method value-parameter builders (the
+  generic-static-companion path and the generic-member path in `ClrTypeInjection.kt`) did **not** strip the `vararg:`
+  prefix, unlike the non-generic paths. So `WhenAll<T>(params Task<T>[])`'s param arrived as `vararg:generic:Task1[T]`,
+  fell through `coneOf`'s else branch to `Any?`, and the vararg overload surfaced as `WhenAll(tasks: Any?)`; overload
+  resolution bound it, `clrMethodShape(Any?) = "Object"`, and ilemit's `ResolveGenericMethod` matched no
+  `params Task<T>[]` overload ("Sequence contains no elements"). Both generic paths now strip `vararg:` and rebuild the
+  param as an `array:` vararg (shape "array"), matching the real `params Task<T>[]` overload. `cases/il-taskwhen` now
+  EXECUTES `Task.WhenAll(...)` end-to-end (previously WhenAny-only).
+
+- **facadegen/kotc: static .NET events now subscribe with `+=`/`-=` (N6).** `facadegen` emitted event metadata only
+  for **instance** events of **non-static** classes (`GetEvents(Public|Instance)` inside the non-static branch), so a
+  **static** event (`TaskScheduler.UnobservedTaskException`, `System.Console.CancelKeyPress`) had no member to resolve.
+  facadegen now emits a static event of a normal class as a companion `sevent` (`GetEvents(Public|Static)`) and a static
+  event of a `static class`/`object` as an object-member `event`; kotc surfaces the companion one as a `ClrEvent<T>`
+  companion property. bir2cir's `ClrEventOperatorBinding` reads `static` and ilemit's `EmitClrEvent` emits a static
+  `Call`, both already built. New gate case `cases/il-eventext` covers both via `+=`/`-=`; docs/dotkt-semantics.md §8d.
+  **Interface events** (`INotifyPropertyChanged.PropertyChanged`) are deferred: modelling them as a `ClrEvent<T>`
+  interface member is correct for an interface-typed receiver, but a Kotlin class subclassing a .NET class that
+  implements such an interface (`MyApp : Avalonia.Application`) then fake-overrides a getter returning the `ClrEvent<T>`
+  fiction, which ilemit cannot declare — it awaits a downstream ClrEvent-fake-override elision (kotc BirEmitter/ilemit).
+
+- **kotc: same-name top-level overloads across different DotKt file facades no longer mis-route (N5, an A2 regression).**
+  The interop-no-registry (A2) rewrite keyed the restored top-level function's `.NET` file-facade class by
+  `CallableId = (package, name)` **only**, so two overloads with the same name in the same package but in **different**
+  source files (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) collided → the flat map collapsed to *last-put-wins*
+  and one call routed to the wrong file class (a hard ilemit "method not found"). The projection now carries **all**
+  file-class candidates for a `CallableId` and the backend disambiguates by the resolved callee's value-param **arity**;
+  a single (non-colliding) candidate is returned directly, so A2's byte-identical routing is preserved. New gate case
+  `cases/il-tloverload`.
 - **`SynchronizedLazyImpl` restored to lock-free double-checked-locking (DCL) reads** — the follow-on to the real
   `@Volatile` above. The thread-safe `lazy { }` implementation (`libraries/stdlib/clr/kotlin/util/LazyClr.kt`) no
   longer takes the `System.Threading.Monitor` lock on *every* `value` read: the getter now does a lock-free

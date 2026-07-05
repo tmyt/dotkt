@@ -8,9 +8,12 @@
 // resolves. With the pre-fix facadegen this file FAILS to compile: the inner `.Result` is unresolved
 // because the raw inner `Task1` carries no type argument.
 //
-// (The sibling `WhenAll<T>(IEnumerable<Task<T>>): Task<T[]>` — the `IEnumerable[Task1[T]]` param /
-// `Task1[array:T]` return — now surfaces correctly too, but its E2E is blocked downstream on a kotc/bir2cir
-// generic-static instantiation gap, tracked separately; only the surface belongs to facadegen.)
+// (N3-deep) The sibling `WhenAll<T>(params Task<T>[]): Task<T[]>` now EXECUTES too. Its `vararg` param was reaching
+// the frontend as `vararg:generic:Task1[TResult]`; the GENERIC .NET-method value-parameter builder did not strip the
+// `vararg:` prefix (unlike the non-generic paths), so the param fell to `coneOf`'s else -> `Any?`. The vararg overload
+// then surfaced as `WhenAll(tasks: Any?)`, whose `clrMethodShape` is "Object", so ilemit's `ResolveGenericMethod`
+// matched no real `params Task<T>[]` overload ("Sequence contains no elements"). Stripping `vararg:` -> a real
+// `vararg tasks: Task1<TResult>` (shape "array") binds the `params Task<TResult>[]` overload.
 import System.Threading.Tasks.Task
 
 fun main() {
@@ -20,4 +23,10 @@ fun main() {
     val any = Task.WhenAny(a, b)
     any.Wait()
     println(any.Result.Result)        // 10
+
+    // WhenAll over a vararg of Task<Int> -> Task<Int[]>; unwrap the array and sum it.
+    val all = Task.WhenAll(Task.FromResult(1), Task.FromResult(2), Task.FromResult(3))
+    all.Wait()
+    val r = all.Result                // Int[]
+    println(r[0] + r[1] + r[2])       // 6
 }

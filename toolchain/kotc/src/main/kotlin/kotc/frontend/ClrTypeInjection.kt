@@ -71,6 +71,10 @@ private class ClrMethod(val name: String, val returnType: String, val open: Bool
 }
 // A restored top-level Kotlin function: its package, the .NET file-facade class to call, and the function itself.
 private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
+// N5: one file-class candidate for a top-level CallableId (`.NET file class` + the value-param arity range it covers).
+// Several candidates under one CallableId = same-name same-package overloads across DIFFERENT source files; the backend
+// disambiguates by the resolved callee's arity. See `clrInjectedTopLevelFileClass`.
+internal class TopLevelSig(val fileClass: String, val minArity: Int, val maxArity: Int)
 private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: String, val mutable: Boolean, val receiver: String)
 private class ClrProperty(val name: String, val type: String, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean, val clrName: String? = null)
 // A MEMBER extension property (`class C { val T.p }`): restored as a member property of C with an extension receiver.
@@ -95,6 +99,7 @@ private class ClrType(
 	val baseNoArgCtor: Boolean,        // false ("basector none"): base lacks a no-arg ctor -> don't synthesize `: super()`
 	val staticMethods: List<ClrMethod>,// public static methods of a NORMAL class -> companion-object members (App.Start)
 	val staticProps: List<ClrProperty>,// public static props/fields of a NORMAL class -> companion-object members
+	val staticEvents: List<ClrEvent> = emptyList(),  // (N6) public STATIC events of a NORMAL class -> companion `ClrEvent<T>` props
 	val memberExtProps: List<ClrMemberExtProp> = emptyList(),  // `class C { val T.p }` member extension properties
 	val clrBinding: String? = null,    // ref/runtime split: the BCL type this Kotlin type binds to (`List` -> IReadOnlyList)
 	val typeParamVariance: Map<String, String> = emptyMap(),   // gap ①: declaration-site variance (`out`/`in`) per type param (interfaces)
@@ -104,6 +109,11 @@ private class ClrType(
 	val iteratorElem: String? = null,      // IEnumerable<T> element -> a frontend-only `operator fun iterator(): Iterator<T>` (for-in resolves; backend uses GetEnumerator)
 )
 private class ClrModule(val types: List<ClrType>, val topLevel: List<ClrTopLevel> = emptyList(), val topLevelProps: List<ClrTopLevelProp> = emptyList())
+
+// (N6) A normal .NET class gets a synthesized companion object iff it has public statics — methods, props/fields, OR
+// events (`TaskScheduler.UnobservedTaskException`). All companion-gating sites funnel through this so a class whose
+// ONLY statics are events still materializes its companion (and its `ClrEvent<T>` static-event properties).
+private val ClrType.hasStatics: Boolean get() = staticMethods.isNotEmpty() || staticProps.isNotEmpty() || staticEvents.isNotEmpty()
 
 // Parse a `fun`/`tlfun` modifier token: `[prot-]<open|final|abstract>[,infix][,operator][,suspend]` — a single
 // whitespace-free token (so the meta parser's type-param split is unaffected), the flags as comma-suffixes.
@@ -143,7 +153,23 @@ internal fun clrInjectedMemberName(callableId: CallableId): String? = ClrMetadat
  * resolved callee (`isSuspend`) via `suspendCallTag`, so re-carrying it would re-introduce the resolved-fact-by-name
  * anti-pattern this stage removes.
  */
-internal fun clrInjectedTopLevelFileClass(callableId: CallableId): String? = ClrMetadataHolder.fileClassByTopLevelCallableId[callableId]
+//
+// N5 fix (overload-aware): the CallableId is `(package, name)` ONLY, so two same-name same-package top-level overloads
+// living in DIFFERENT source files (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) collided on the key alone — the
+// flat `Map<CallableId,String>` collapsed to LAST-PUT-WINS and mis-routed one of them to the wrong file class (a hard
+// ilemit "method not found"). This was a regression the A2 registry-removal introduced (the deleted receiver-
+// discriminator arbitrary-picked first; the flat map arbitrary-picked last). Fixed by carrying ALL file-class
+// candidates for a CallableId and disambiguating by the RESOLVED callee's value-param `arity` (the metadata `tlfun`
+// param count). A single (non-colliding) candidate is returned directly, so A2's byte-identical routing is preserved.
+internal fun clrInjectedTopLevelFileClass(callableId: CallableId, arity: Int): String? {
+	val sigs = ClrMetadataHolder.topLevelSigByCallableId[callableId] ?: return null
+	// A2 byte-identical: a UNIQUE restored overload for this (package,name) -> its file class directly (the common
+	// case; a single `tlfun` spans an arity RANGE across its default-arg variants, but there is one file class either way).
+	if (sigs.size == 1) return sigs[0].fileClass
+	// N5: multiple file classes share this CallableId -> pick by the resolved callee's value-param arity. FIR already
+	// resolved the call to a UNIQUE overload, so its arity lands in exactly one candidate's range -> 1:1 routing.
+	return (sigs.firstOrNull { arity in it.minArity..it.maxArity } ?: sigs.first()).fileClass
+}
 
 /**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL EXTENSION PROPERTY's .NET
@@ -178,13 +204,13 @@ private object ClrMetadataHolder {
 		var indexer: ClrIndexer? = null
 		var iteratorElem: String? = null
 		var baseNoArgCtor = true
-		val staticMethods = ArrayList<ClrMethod>(); val staticProps = ArrayList<ClrProperty>()
+		val staticMethods = ArrayList<ClrMethod>(); val staticProps = ArrayList<ClrProperty>(); val staticEvents = ArrayList<ClrEvent>()
 		val memberExtProps = ArrayList<ClrMemberExtProp>()
 		val topLevel = ArrayList<ClrTopLevel>(); val topLevelProps = ArrayList<ClrTopLevelProp>(); var filePkg: FqName? = null; var fileClass = ""   // current [KotlinFile] section
 			// gap ①: per-type-param variance/bounds accumulators for the CURRENT type (from `tvariance`/`tbound` lines);
 			// `lastMethod` is the most-recently-parsed fun/tlfun, the target of any following `mbound` (method-level) line.
 			val tpVariance = HashMap<String, String>(); val tpBounds = HashMap<String, MutableList<String>>(); var lastMethod: ClrMethod? = null
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(memberExtProps), clrBind, HashMap(tpVariance), tpBounds.mapValues { it.value.toList() }, isFunIface, isSealedTy, iteratorElem)); clrBind = null }
+		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(staticEvents), ArrayList(memberExtProps), clrBind, HashMap(tpVariance), tpBounds.mapValues { it.value.toList() }, isFunIface, isSealedTy, iteratorElem)); clrBind = null }
 		for (raw in file.readLines()) {
 			val line = raw.trim()
 			if (line.isEmpty()) continue
@@ -192,7 +218,7 @@ private object ClrMetadataHolder {
 			when (tok[0]) {
 				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
 				"object", "class", "interface" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); staticEvents.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
 					// ref/runtime split: `token[2] = KotlinFqn=BclName` -> LEFT = Kotlin identity (drives namespace/ClassId),
 					// RIGHT (if any) = the BCL binding for clrName. Most injected types have no `=`.
 					val dn = tok[2]; val eq = dn.indexOf('='); dotNet = if (eq >= 0) dn.substring(0, eq) else dn; clrBind = if (eq >= 0) dn.substring(eq + 1) else null
@@ -205,7 +231,7 @@ private object ClrMetadataHolder {
 				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
 				// trailing params (from its longest ctor) become the single annotation constructor.
 				"annotation" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
+					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); staticEvents.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
 					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
 					ctors.add(parseParams(tok.drop(3)))
 				}
@@ -250,6 +276,9 @@ private object ClrMetadataHolder {
 					staticMethods.add(ClrMethod(tok[1], tok[2], false, false, false, parseParams(rest), rest.filterNot { it.contains(':') })) }
 				// sprop <Name> <type> <ro|rw> — a public STATIC prop/field of a normal class (-> companion).
 				"sprop" -> staticProps.add(ClrProperty(tok[1], tok[2], tok.getOrNull(3) == "rw", false, false, false))
+				// (N6) sevent <Name> <handlerRet> <handlerParams...> — a public STATIC event of a normal class (-> a companion
+				// `ClrEvent<T>` property, subscribed via `Type.Event += h`; the backend emits a STATIC add/remove accessor).
+				"sevent" -> staticEvents.add(ClrEvent(tok[1], tok[2], parseParams(tok.drop(3))))
 				// prop <Name> <type> <ro|rw> <prot-?open|final|abstract>
 				"prop" -> {
 					val mod = tok.getOrNull(4) ?: "final"; val prot = mod.startsWith("prot-"); val bare = mod.removePrefix("prot-")
@@ -345,10 +374,18 @@ private object ClrMetadataHolder {
 	// a single fileClass per CallableId — no receiver discriminator, no "last-registered wins". The `Clr`-file-class strip
 	// (`<Common>ClrKt` -> `<Common>Kt`, an rt-vs-jar fact) is applied here (mirrors BirEmitter.fileClassName). Suspend is
 	// NOT carried: the backend derives it from the resolved callee (`isSuspend`), so it stays a resolved fact, not a name map.
-	val fileClassByTopLevelCallableId: Map<CallableId, String> by lazy {
-		buildMap {
-			for (tl in module?.topLevel.orEmpty())
-				put(CallableId(tl.pkg, Name.identifier(tl.fn.name)), stripClrFileClass(tl.fileClassDotNet))
+	// N5: a restored top-level fun's file-class candidate = (fileClass, the value-param arity RANGE it covers). A single
+	// `tlfun` with default args injects several arities (`(vps-trailingOpt)..vps`), so a candidate spans a range; the
+	// accessor picks the candidate whose range contains the resolved callee's arity. `ext` funs carry a leading `__self`
+	// receiver param that is NOT a value param at the call site — drop it so the arity matches the backend's regularParams.
+	val topLevelSigByCallableId: Map<CallableId, List<TopLevelSig>> by lazy {
+		buildMap<CallableId, MutableList<TopLevelSig>> {
+			for (tl in module?.topLevel.orEmpty()) {
+				val vps = if (tl.fn.ext && tl.fn.params.isNotEmpty()) tl.fn.params.drop(1) else tl.fn.params
+				val trailingOpt = vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
+				getOrPut(CallableId(tl.pkg, Name.identifier(tl.fn.name))) { ArrayList() }
+					.add(TopLevelSig(stripClrFileClass(tl.fileClassDotNet), vps.size - trailingOpt, vps.size))
+			}
 		}
 	}
 	// A2 keystone (interop-no-registry stage 3): a restored DotKt top-level EXTENSION PROPERTY's .NET file-facade class
@@ -517,7 +554,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// the :255 `ownerGenerator` assignment), and generated-origin member lookup dies on `ownerGenerator!!`
 		// (FirGeneratedScopes.kt:290) — so we set that attribute ourselves via [FirInternals]. The instance is cached:
 		// generateNestedClassLikeDeclaration must return THIS companion (one symbol per ClassId, never a second one).
-		if (type.staticMethods.isNotEmpty() || type.staticProps.isNotEmpty()) {
+		if (type.hasStatics) {
 			val companion = createCompanionObject(klass.symbol, ClrGeneratedKey)
 			FirInternals.setOwnerGenerator(companion, this)
 			eagerCompanions[companion.symbol.classId] = companion
@@ -529,14 +566,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	/** The owner ClrType of a companion symbol (its static members live here), or null if not a companion-with-statics. */
 	private fun companionOwnerType(classId: ClassId): ClrType? =
 		if (classId.shortClassName == SpecialNames.DEFAULT_NAME_FOR_COMPANION_OBJECT)
-			classId.outerClassId?.let { byClassId[it] }?.takeIf { it.staticMethods.isNotEmpty() || it.staticProps.isNotEmpty() }
+			classId.outerClassId?.let { byClassId[it] }?.takeIf { it.hasStatics }
 		else null
 
 	// A normal class with public STATIC members gets a synthesized companion object holding them, so `App.Start(..)`/
 	// `App.Current` resolve (Kotlin has no bare statics). The backend emits .NET static calls for these.
 	override fun getNestedClassifiersNames(classSymbol: FirClassSymbol<*>, context: NestedClassGenerationContext): Set<Name> {
 		val type = byClassId[classSymbol.classId] ?: return emptySet()
-		return if (type.staticMethods.isNotEmpty() || type.staticProps.isNotEmpty())
+		return if (type.hasStatics)
 			setOf(SpecialNames.DEFAULT_NAME_FOR_COMPANION_OBJECT) else emptySet()
 	}
 
@@ -547,7 +584,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// the linked companionObjectSymbol — FirGeneratedScopes.kt:245-248 — didn't already answer the lookup.)
 		eagerCompanions[owner.classId.createNestedClassId(name)]?.let { return it.symbol }
 		val type = byClassId[owner.classId] ?: return null
-		if (type.staticMethods.isEmpty() && type.staticProps.isEmpty()) return null
+		if (!type.hasStatics) return null
 		return createCompanionObject(owner, ClrGeneratedKey).symbol
 	}
 
@@ -565,6 +602,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			val n = HashSet<Name>()
 			ct.staticMethods.forEach { n.add(Name.identifier(it.name)) }
 			ct.staticProps.forEach { n.add(Name.identifier(it.name)) }
+			ct.staticEvents.forEach { n.add(Name.identifier(it.name)) }   // (N6) static .NET event -> companion ClrEvent<T> property
 			return n
 		}
 		val type = byClassId[classSymbol.classId] ?: return emptySet()
@@ -594,6 +632,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.intType.coneType, true, false).symbol)
 		// A companion object holds the owner class's STATIC props/fields (App.Current). Backend emits .NET static get.
 		companionOwnerType(owner.classId)?.let { ct ->
+			// (N6) A STATIC .NET event surfaced as a companion read-only `ClrEvent<HandlerFn>` property: `Type.Event += h`
+			// reads it (recv = the companion -> clrPropGet static=true), which bir2cir binds to the STATIC add/remove accessor.
+			ct.staticEvents.firstOrNull { it.name == callableId.callableName.asString() }?.let { ev ->
+				val handler = coneFunctionType(ev.handlerParams.map { coneOf(it.type, owner) }, coneOf(ev.handlerReturn, owner))
+				return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, clrEventOf(handler), true, false).symbol)
+			}
 			val sp = ct.staticProps.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
 			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, coneOf(sp.type, owner), !sp.mutable, false).symbol)
 		}
@@ -612,6 +656,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// ClrEvent type arg is the handler's Kotlin FUNCTION type, so a lambda `{ s, e -> }` binds straight to `plusAssign(T)`.
 		type.events.firstOrNull { it.name == callableId.callableName.asString() }?.let { ev ->
 			val handler = coneFunctionType(ev.handlerParams.map { coneOf(it.type, owner) }, coneOf(ev.handlerReturn, owner))
+			// A .NET event surfaces as a generated `ClrEvent<T>` handle property (never a real .NET property/field: the
+			// read emits a clrPropGet the ClrEventOperatorBinding consumes). Class instance events (facadegen `event`)
+			// reach here; interface events are not surfaced today (see facadegen's interface-branch note), so no abstract
+			// interface-member obligation is created. `w.Changed += h` resolves off this plain member.
 			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, clrEventOf(handler), true, false).symbol)
 		}
 		val prop = type.properties.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
@@ -753,7 +801,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName,
 						{ tps -> coneOfMethod(m.returnType, owner, m.typeParams, tps) }) {
 						for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
-						for (p in m.params) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
+						// N3-deep: a GENERIC static's `vararg` param (`Task.WhenAll<T>(params Task<T>[])`) must strip the
+						// `vararg:` prefix and rebuild as an `array:` vararg — mirroring the non-generic (:794) and top-level
+						// (:687) paths. Without this the param falls through coneOf's else -> Any?, the vararg overload surfaces
+						// as `WhenAll(tasks: Any?)`, and ilemit's ResolveGenericMethod finds no `params Task<T>[]` overload of
+						// shape "Object" ("Sequence contains no elements"). (The facadegen N3 fix is the sibling half.)
+						for (p in m.params)
+							if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod("array:" + p.type.removePrefix("vararg:"), owner, m.typeParams, tps) }, isVararg = true)
+							else valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
 					}.symbol
 			}
 		}
@@ -840,7 +895,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 							bound { tps -> boundConeOf(b, m.typeParams, tps) ?: session.builtinTypes.nullableAnyType.coneType }
 					}
 					if (extRecv != null) extensionReceiverType { tps -> coneOfMethod(extRecv.type, owner, m.typeParams, tps) }
-					for (p in vps) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) }, hasDefaultValue = realDefaults(vps) && p.type.startsWith("opt:"))
+					// N3-deep: a GENERIC member method's `vararg` param must strip `vararg:` and rebuild as an `array:`
+					// vararg, mirroring the non-generic member path (:822) — else it falls to coneOf's else -> Any? and the
+					// vararg overload mis-resolves (see the generic-static path above).
+					for (p in vps)
+						if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod("array:" + p.type.removePrefix("vararg:"), owner, m.typeParams, tps) }, isVararg = true)
+						else valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) }, hasDefaultValue = realDefaults(vps) && p.type.startsWith("opt:"))
 				}.also { if (realDefaults(vps)) applyDefaults(it, vps) }.symbol
 			)
 		}

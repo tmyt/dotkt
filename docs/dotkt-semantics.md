@@ -283,7 +283,7 @@ runtime.
 |---|---|
 | `infix` / `operator` | `[KotlinFunction(Infix\|Operator)]` |
 | `suspend` | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
-| top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions |
+| top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions. Same-name overloads that live in **different** source files of the same package (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) each route back to their **own** file-facade class — resolved by the call's arity, so no cross-file mis-routing. |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
 | **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
 | `final`/`open`/`abstract`, visibility | **none** — ride .NET virtual-ness / accessibility |
@@ -424,6 +424,16 @@ c.CollectionChanged -= h                                     // unsubscribe (del
 - `-=` removes by **delegate equality**, so removal works only with a **stored** handler reference (as in the JVM
   idiom for listeners) — a fresh lambda literal at the `-=` site is a different delegate and removes nothing.
 - This replaces the earlier `add_<Event>` / `remove_<Event>` accessor-method spelling, which no longer exists.
+- **Static events** subscribe the same way. A **static** event on a normal class is reached through the companion
+  (`TaskScheduler.UnobservedTaskException += h`); a static event on a `static class`/`object`
+  (`System.Console.CancelKeyPress += h`) is a member of that object. Either binds to the event's **static** add/remove
+  accessor (a plain `Call`). (facadegen originally emitted only *instance* events of *non-static classes*.)
+- **Interface events** (`INotifyPropertyChanged.PropertyChanged`) are **not yet surfaced.** Modelling them as a
+  `ClrEvent<T>` interface member is correct for an interface-typed receiver, but when a Kotlin class **subclasses** a
+  .NET class that implements such an interface (`class MyApp : Avalonia.Application`), fir2ir synthesizes a
+  fake-override getter returning the `ClrEvent<T>` compile-time fiction, which the emitter cannot declare. Surfacing
+  them awaits a downstream change that **elides a `ClrEvent`-typed fake-override member** (a .NET event is never a real
+  inherited property). Subscribe via the concrete class event in the meantime.
 
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
