@@ -9,6 +9,14 @@ package kotlin
 
 
 /**
+ * Renders one component of a [Pair]/[Triple] the Kotlin way. A component's static type is the erased generic
+ * parameter (`A`/`B`/`C`), so a nested runtime collection/map would otherwise stringify via .NET's raw
+ * `System.Collections.Generic.List`1[...]` `Object.ToString()`. The CLR actual routes through the runtime
+ * collection-aware stringifier (`clrElemToString`), matching `println(list)`; other platforms just call `toString()`.
+ */
+internal expect fun clrRenderTupleElement(value: Any?): String
+
+/**
  * Represents a generic pair of two values.
  *
  * There is no meaning attached to values in this class, it can be used for any purpose.
@@ -31,7 +39,7 @@ public data class Pair<out A, out B>(
     /**
      * Returns string representation of the [Pair] including its [first] and [second] values.
      */
-    public override fun toString(): String = "($first, $second)"
+    public override fun toString(): String = "(${clrRenderTupleElement(first)}, ${clrRenderTupleElement(second)})"
 }
 
 /**
@@ -72,7 +80,7 @@ public data class Triple<out A, out B, out C>(
     /**
      * Returns string representation of the [Triple] including its [first], [second] and [third] values.
      */
-    public override fun toString(): String = "($first, $second, $third)"
+    public override fun toString(): String = "(${clrRenderTupleElement(first)}, ${clrRenderTupleElement(second)}, ${clrRenderTupleElement(third)})"
 }
 
 /**

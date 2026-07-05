@@ -1,8 +1,7 @@
 // C5/C11 gate regression guard: gating the universal-method intercept keeps collection toString routing
 // Kotlin-style (`[a, b]`), tuple/data-class toString correct, and (C5) `String.hashCode()` deterministic
-// + reproducible (the polynomial body, not .NET's randomized GetHashCode). NOTE: a nested collection
-// INSIDE Pair/Triple.toString still renders the raw .NET type name — a stdlib/bir2cir gap (generic-value
-// stringification is not collection-aware), NOT a kotc fix.
+// + reproducible (the polynomial body, not .NET's randomized GetHashCode). A nested collection INSIDE
+// Pair/Triple.toString is now collection-aware too (C11, fixed) — see il-pairnest for that regression.
 data class Rec(val name: String, val n: Int)
 fun main() {
     println(listOf(1, 2, 3).toString())
