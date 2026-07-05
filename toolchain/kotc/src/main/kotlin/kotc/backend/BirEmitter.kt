@@ -126,7 +126,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (System.getenv("DOTKT_STDLIB_COMPILE") != null) {
 			messageCollector?.report(CompilerMessageSeverity.WARNING,
 				"[DOTKT-STDLIB] stubbed (not migrated, keep its lowering): $what — $detail", locationOf(node))
-			return """{"k":"throwExpr","value":{"k":"clrNew","type":"System.NotSupportedException","argTypes":["System.String"],"args":[{"k":"const","type":"string","value":${str("[DOTKT-STDLIB] not lowered: $what")}}]}}"""
+			return throwExpr(newExc("kotlin.UnsupportedOperationException", str("[DOTKT-STDLIB] not lowered: $what")))
 		}
 		hadError = true
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
@@ -306,14 +306,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					"""$old,${setVal("""{"k":"local","name":"newValue"}""")},{"k":"exprStmt","expr":$invoke}"""
 				else // vetoable: only store if the callback approves
 					"""$old,{"k":"if","branches":[{"cond":$invoke,"body":[${setVal("""{"k":"local","name":"newValue"}""")}]}]}"""
-				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${str(v)}}],"ret":"void","body":[$body]}"""
+				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${str(v)}}],"ret":"kotlin.Unit","body":[$body]}"""
 				listOf(flds, cps, cb, st)
 			}
 			else -> { // notNull: throws until first set (lateinit-style); flag tracks whether assigned
 				val flag = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":"__set"}"""
 				val flds = """{"name":"value","type":${str(v)}},{"name":"__set","type":"bool"}"""
-				val getBody = """{"k":"if","branches":[{"cond":{"k":"un","op":"!","e":$flag},"body":[{"k":"exprStmt","expr":{"k":"throwExpr","value":{"k":"clrNew","type":"System.InvalidOperationException","argTypes":["System.String"],"args":[{"k":"const","type":"string","value":"Property has not been initialized"}]}}}]}]},{"k":"return","value":$fieldVal}"""
-				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${str(v)}}],"ret":"void","body":[${setVal("""{"k":"local","name":"newValue"}""")},{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":"__set","value":{"k":"const","type":"bool","value":true}}]}"""
+				val getBody = """{"k":"if","branches":[{"cond":{"k":"un","op":"!","e":$flag},"body":[{"k":"exprStmt","expr":${throwExpr(newExc("kotlin.IllegalStateException", str("Property has not been initialized")))}}]}]},{"k":"return","value":$fieldVal}"""
+				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${str(v)}}],"ret":"kotlin.Unit","body":[${setVal("""{"k":"local","name":"newValue"}""")},{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":"__set","value":{"k":"const","type":"bool","value":true}}]}"""
 				// override getter body for notNull (throws if unset)
 				return@getOrPut cname.also {
 					synthDelegateDefs.add("""{"name":${str(cname)},"kind":"class","vis":"public","base":null,"interfaces":[${str(iface)}],"fields":[$flds],"ctors":[{"params":[],"baseArgs":null,"thisArgs":null,"vis":"public","body":[]}],"methods":[{"name":"getValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp],"ret":${str(v)},"body":[$getBody]},$st]}""")
@@ -820,7 +820,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val voBranches = entries.joinToString(",") { ent ->
 			"""{"cond":{"k":"objEq","l":{"k":"local","name":"name"},"r":{"k":"const","type":"string","value":${str(ent.name.asString())}}},"body":[{"k":"return","value":${sf(ent)}}]}"""
 		}
-		val voThrow = throwExpr(newExc("System.ArgumentException", str("No enum constant $name")))
+		// Kotlin's `Enum.valueOf` throws IllegalArgumentException on an unknown name (@ClrTypeAlias System.ArgumentException).
+		val voThrow = throwExpr(newExc("kotlin.IllegalArgumentException", str("No enum constant $name")))
 		val voBody = """{"k":"if","branches":[$voBranches,{"else":true,"body":[{"k":"exprStmt","expr":$voThrow}]}]}"""
 		val valueOfM = """{"name":"valueOf","static":true,"override":false,"virtual":false,"vis":"public","params":[{"name":"name","type":"string"}],"ret":${str("@$name")},"body":[$voBody]}"""
 		val methods = (userMethods + propAccessors + listOf(toStr, valuesM, valueOfM)).joinToString(",")
@@ -2583,17 +2584,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** A lambda argument's return BIR type (for inferring LINQ result element types). */
 	internal fun lambdaRet(arg: IrExpression?): String {
 		val fn = (arg as? IrFunctionExpression)?.function
-		return if (fn == null || fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		return if (fn == null) "kotlin.Unit" else birType(fn.returnType)
 	}
 
 	/**
 	 * Build a generic static call node. `shapes` names the EXACT intended overload's parameter shapes
 	 * (ienum/func:N/string/gp/int/…) so ilemit picks it deterministically — no heuristic overload guessing.
 	 */
-	/** A `new <ExceptionType>(msg?)` node (msgJson is an already-quoted JSON string, or null for the no-arg ctor). */
+	/** A `throw`-able exception construction node: a plain `new <KotlinExceptionFQN>(msg?)` on the PURE-KOTLIN
+	 *  exception class (`kotlin.IllegalArgumentException` / `kotlin.IllegalStateException` / …). kotc names NO
+	 *  `System.*` CLR exception type — it emits the Kotlin FQN identity exactly like a user `throw
+	 *  IllegalArgumentException(msg)`, and bir2cir's MemberCallSubstitution.TransformNew resolves the @ClrTypeAlias
+	 *  owner off the ref.dll to the BCL exception (`kotlin.IllegalArgumentException` -> `System.ArgumentException`).
+	 *  This is the same code path a user throw already takes, so the emitted IL is identical. (exception-map-to-
+	 *  clrtypealias, USER 2026-07-01; kotc's `BirMappings.NET_EXCEPTIONS` type-map was already retired — these
+	 *  synthetic throw-sites were the residual `System.*` naming.) `msgJson` is an already-quoted JSON string, or
+	 *  null for the no-arg ctor. */
 	internal fun newExc(type: String, msgJson: String?): String =
-		if (msgJson != null) """{"k":"clrNew","type":${str(type)},"argTypes":["System.String"],"args":[{"k":"const","type":"string","value":$msgJson}]}"""
-		else """{"k":"clrNew","type":${str(type)},"argTypes":[],"args":[]}"""
+		if (msgJson != null) """{"k":"new","type":${str(type)},"argTypes":["kotlin.String"],"args":[{"k":"const","type":"kotlin.String","value":$msgJson}]}"""
+		else """{"k":"new","type":${str(type)},"argTypes":[],"args":[]}"""
 
 	internal fun throwExpr(exc: String): String = """{"k":"throwExpr","value":$exc}"""
 
@@ -3935,16 +3944,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `String.Companion.format(String, vararg Any?)` @ClrIntrinsic("System.String.Format")), NOT a kotc lowering.
 			// (Retired 2026-07-02: String family, bundle 1.)
 			// Exhaustive-when synthetic else / uninitialized property -> throw (the branch is unreachable).
+			// kotc names ONLY the KOTLIN exception FQN (a pure Kotlin fact); bir2cir substitutes it to the BCL type via
+			// the ref.dll @ClrTypeAlias (IllegalArgumentException -> System.ArgumentException, IllegalStateException ->
+			// System.InvalidOperationException). exhaustive-when synthetic-else / uninitialized-property -> IllegalState.
 			if (name == "noWhenBranchMatchedException" || name == "throwUninitializedPropertyAccessException")
-				return throwExpr(newExc("System.InvalidOperationException", str(name)))
-			// Precondition / error helpers (top-level kotlin.* functions).
-			if (calleeFq == "kotlin.TODO") return throwExpr(newExc("System.NotImplementedException", null))
+				return throwExpr(newExc("kotlin.IllegalStateException", str(name)))
+			// Precondition / error helpers (top-level kotlin.* functions). TODO() throws NotImplementedError (a real
+			// emitted Kotlin exception, NOT CLR-aliased — see Standard.kt), constructed with its standard default
+			// message (the 1-arg ctor, so no cross-module default-value gap); error()/check() throw IllegalStateException.
+			if (calleeFq == "kotlin.TODO") return throwExpr(newExc("kotlin.NotImplementedError", str("An operation is not implemented.")))
 			if (calleeFq == "kotlin.error")
-				return throwExpr("""{"k":"clrNew","type":"System.InvalidOperationException","argTypes":["System.String"],"args":[${regularArgs(call).firstOrNull()?.let { expr(it) } ?: """{"k":"const","type":"string","value":"error"}"""}]}""")
+				return throwExpr("""{"k":"new","type":"kotlin.IllegalStateException","argTypes":["kotlin.String"],"args":[${regularArgs(call).firstOrNull()?.let { expr(it) } ?: """{"k":"const","type":"kotlin.String","value":"error"}"""}]}""")
 			if (calleeFq == "kotlin.require")
-				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":"void","value":null},"else":${throwExpr(newExc("System.ArgumentException", "\"Failed requirement\""))}}"""
+				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":"kotlin.Unit","value":null},"else":${throwExpr(newExc("kotlin.IllegalArgumentException", "\"Failed requirement\""))}}"""
 			if (calleeFq == "kotlin.check")
-				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":"void","value":null},"else":${throwExpr(newExc("System.InvalidOperationException", "\"Check failed\""))}}"""
+				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":"kotlin.Unit","value":null},"else":${throwExpr(newExc("kotlin.IllegalStateException", "\"Check failed\""))}}"""
 			if (name == "ieee754equals" && regularArgs(call).size == 2) {
 				val a = regularArgs(call)
 				return """{"k":"bin","op":"==","l":${expr(a[0])},"r":${expr(a[1])}}"""
@@ -3953,14 +3967,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (calleeFq == "kotlin.requireNotNull" || calleeFq == "kotlin.checkNotNull") {
 				val arg = regularArgs(call).first()
 				val nv = "__rn${scopeCounter++}"
-				val excType = if (calleeFq == "kotlin.requireNotNull") "System.ArgumentNullException" else "System.NullReferenceException"
+				// Kotlin: requireNotNull throws IllegalArgumentException, checkNotNull throws IllegalStateException.
+				val excType = if (calleeFq == "kotlin.requireNotNull") "kotlin.IllegalArgumentException" else "kotlin.IllegalStateException"
 				val velem = nullableElem(arg.type)
 				val nvLoc = """{"k":"local","name":${str(nv)}}"""
 				return if (velem != null) {
 					// value-nullable T?: HasValue ? Value : throw.
 					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${str("nullable:$velem")},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(velem)},"e":$nvLoc},"then":{"k":"nullableValue","elem":${str(velem)},"e":$nvLoc},"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
 				} else {
-					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${str(birType(arg.type))},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"un","op":"!","e":{"k":"objEq","l":$nvLoc,"r":{"k":"const","type":"void","value":null}}},"then":$nvLoc,"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
+					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${str(birType(arg.type))},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"un","op":"!","e":{"k":"objEq","l":$nvLoc,"r":{"k":"const","type":"kotlin.Unit","value":null}}},"then":$nvLoc,"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
 				}
 			}
 			// `coerceAtMost`/`coerceAtLeast`/`coerceIn` are NO LONGER lowered here (2026-07-04, bundle-8 layer purity).

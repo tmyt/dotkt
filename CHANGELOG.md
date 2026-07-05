@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Layer purity — kotc's synthetic exception throws now name the KOTLIN exception FQN, not `System.*` (bir2cir
+  substitutes).** The residual hardcoded `System.*Exception` names in kotc's compiler-synthesized throws — enum
+  `valueOf` "no constant", `require`/`check`/`error`, `requireNotNull`/`checkNotNull`, the exhaustive-`when` else,
+  the lateinit "not initialized" throw, `TODO()`, and the stdlib-compile "not lowered" filler — are gone. kotc now
+  emits a plain `new <kotlin.*Exception>(...)` on the pure-Kotlin exception class (e.g. `kotlin.IllegalArgumentException`),
+  exactly like a user `throw IllegalArgumentException(...)`, and bir2cir's `MemberCallSubstitution` resolves the
+  `@ClrTypeAlias` owner off the ref.dll to the BCL exception (`IllegalArgumentException` → `System.ArgumentException`,
+  `IllegalStateException` → `System.InvalidOperationException`, …). `require`/enum stay byte-identical
+  (`System.ArgumentException`); `requireNotNull`/`checkNotNull` become Kotlin-accurate (`IllegalArgumentException` /
+  `IllegalStateException`, replacing the ad-hoc `Argument/NullReference` mistranslations); `TODO()` throws the real
+  Kotlin `NotImplementedError` (deliberately NOT `@ClrTypeAlias`-bound — bir2cir's cold-suspend lowering keys the
+  `suspendCoroutineUninterceptedOrReturn` intrinsic marker on a literal `new kotlin.NotImplementedError` node, so
+  aliasing it would break every `sequence{}`/`yield`). kotc no longer names any `System.*Exception`.
+  (exception-map-to-clrtypealias, USER 2026-07-01.)
+
 - **Layer purity — annotation `: System.Attribute` base is now DERIVED in bir2cir (kotc emits a Kotlin flag).** A user
   `annotation class Ann(...)` no longer has its CLR base named by kotc: `BirEmitter.annotationDef` emits a plain BIR
   class carrying the pure-Kotlin fact `"annotation":true` (base `null`), and bir2cir's `BirTypeLowering` DERIVES
