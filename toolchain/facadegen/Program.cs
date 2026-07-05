@@ -1286,7 +1286,11 @@ static class FacadeGen
             }
             return "Any?";
         }
-        if (t.FullName == self.FullName) return KotlinName(self);
+        // Only short-circuit to the enclosing type's name when the FullName MATCH is real. Bug N3 (twin of ⑤ at :643):
+        // an OPEN constructed generic (`Task<T>`, `IEnumerable<Task<T>>`) referencing a type param has a NULL FullName,
+        // so `null == null` matched here and returned KotlinName(self) — the ENCLOSING type — instead of recursing into
+        // the arg. `WhenAll<T>(IEnumerable<Task<T>>)` then surfaced as `IEnumerable[IEnumerable]`. Require non-null.
+        if (t.FullName != null && t.FullName == self.FullName) return KotlinName(self);
         return t.FullName switch
         {
             "System.Int32" => "Int",

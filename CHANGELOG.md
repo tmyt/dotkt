@@ -16,6 +16,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `initializer`/`lock` do not. The previous always-lock shape was a stopgap chosen only because `@Volatile` was a
   no-op. `cases/il-lazy` runs correct (single init, `isInitialized()` false→true, all modes) and stays ilverify-clean.
   Retires the note in docs/dotkt-semantics.md §4b.
+- **facadegen: double-nested generic args no longer corrupt (`Task.WhenAll`/`WhenAny`, and every
+  `IEnumerable<Task<T>>` / `Task<T[]>`-shaped signature).** `Map` short-circuited on
+  `if (t.FullName == self.FullName) return KotlinName(self)` — but an OPEN constructed generic that
+  references a type parameter (`Task<T>` nested inside `IEnumerable<Task<T>>`) has a **null** `FullName`,
+  so `null == null` matched and the arg was replaced by the ENCLOSING type's name instead of recursing:
+  `WhenAll<T>(IEnumerable<Task<T>>): Task<T[]>` surfaced as `IEnumerable[IEnumerable]` / `Task1[Task1]`,
+  `WhenAny<T>` as `Task1[Task1]`. Guarding the compare with `t.FullName != null` (mirroring the already-fixed
+  twin at `Program.cs:643`) lets the null case fall through to the recursive arg-rendering — now
+  `IEnumerable[Task1[TResult]]` / `Task1[array:TResult]` / `Task1[Task1[TResult]]`. New `cases/il-taskwhen`
+  (`Task.WhenAny(a,b): Task<Task<Int>>` runs; `Task.WhenAll(IEnumerable<Task<Int>>)` exercised at compile/emit).
+  (This is the last of the three HIGH un-gated crashes from the 2026-07-05 final review, item N3.)
 
 - **`@kotlin.concurrent.Volatile` is now a REAL CLR volatile field (was a silent no-op).** `@Volatile` on a `var`'s
   backing field lowers to the exact encoding the C# `volatile` keyword emits: the field is declared with a required
