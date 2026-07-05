@@ -31,11 +31,10 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
-	# [roundtrip] + [roundtrip-generic] FIXED 2026-07-04 (bundle-6 ① BUG 1): a cross-assembly suspend call is
-	# emitted by kotc in the clr* vocabulary (clrStatic/clrInstance/clrGeneric*), which bir2cir's cold lowering
-	# now recognizes as a suspension point and routes to the callee's `$dotkt_suspend` cold entry (instead of
-	# leaving the plain BCL call that resolved to the Task<T> bridge -> InvalidCast).
-	[roundtrip-memext2]="ilemit NotSupportedException: a suspending call inside a \`with\` scope function used as a sub-expression is unsupported (doFetch = with(lib){ b.fetch() }) — needs scope-function CPS lowering (bir2cir/ilemit coroutine bundle)"
+	# EMPTY — the coroutine round-trip is fully green. (#11 FIXED 2026-07-05: a suspend call inside an INLINE
+	# scope function used as a sub-expression — `doFetch = with(lib){ b.fetch() }` — no longer refuses in kotc;
+	# kotc emits the inlined valueBlock verbatim and bir2cir's SuspendColdLowering flattens it, segmenting the
+	# suspend call as an ordinary suspension point.)
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
