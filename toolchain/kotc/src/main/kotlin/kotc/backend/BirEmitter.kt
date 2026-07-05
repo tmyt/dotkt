@@ -3251,15 +3251,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// like any other generic-method body. (On the JVM `reified` exists ONLY to drive call-site inlining around
 		// erasure; that whole machine is absent here.) See [[clr-not-jvm-discard-jvmisms]].
 
-		// `T::class.simpleName`/`.qualifiedName` (KClass over a System.Type) -> Type.Name/FullName.
-		if (declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.reflect.KClass") {
-			val recv = dispatchReceiver(call)
-			val m = when (callee.correspondingPropertySymbol?.owner?.name?.asString()) {
-				"simpleName" -> "get_Name"; "qualifiedName" -> "get_FullName"; else -> null
-			}
-			if (recv != null && m != null)
-				return """{"k":"clrInstance","type":"System.Type","method":${str(m)},"argTypes":[],"ret":"System.String","recv":${expr(recv)},"args":[]}"""
-		}
+		// `T::class.simpleName`/`.qualifiedName` is NOT intercepted here (layer purity): kotc emits the PLAIN Kotlin
+		// property read `kotlin.reflect.KClass::get_simpleName`/`get_qualifiedName` (via the ordinary member-property
+		// path below), and bir2cir's KClassMemberBinding derives the CLR resolution — a `clrPropGet` on `System.Type`
+		// (`Name`/`FullName`). The `System.Type` knowledge (which BCL member a KClass member maps to) is a Kotlin<->CLR
+		// relation and lives in bir2cir, not in this frontend.
 
 		// Scope functions (let/run/with/apply/also) -> inline to a value-block (no delegate; mirrors the C# IIFE).
 		if (calleeFq in SCOPE_FUNCTIONS) {

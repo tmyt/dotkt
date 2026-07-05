@@ -5,6 +5,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc→bir2cir: `KClass.simpleName`/`.qualifiedName` lowering migrated out of the frontend (layer purity, review
+  §0).** kotc no longer emits a `System.Type.get_Name`/`get_FullName` `clrInstance` for `T::class.simpleName`; it
+  emits the PLAIN Kotlin property read on `kotlin.reflect.KClass`, and bir2cir's new `KClassMemberBinding` derives the
+  CLR resolution (a `clrPropGet` of `System.Type.Name`/`.FullName`). The `System.Type`/BCL-member knowledge now lives
+  in the Kotlin↔CLR layer, mirroring the exception-map / annotation-base migrations. `getclass` stays byte-behavior
+  identical.
 - **kotc: two review-N8 diagnostics/fixes.** (a) `@Volatile` now also matches the deprecated `kotlin.jvm.Volatile`
   alias (was `kotlin.concurrent.Volatile` only), so a common/stdlib `@kotlin.jvm.Volatile var` gets the volatile
   field flag. (b) A `ClrEvent<T>` read OUTSIDE a `+=`/`-=` subscription (`val e = w.Changed`) — which used to emit a
