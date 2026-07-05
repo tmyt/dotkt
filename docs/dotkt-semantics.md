@@ -131,18 +131,35 @@ map (stdlib `libraries/stdlib/clr/kotlin/util/LazyClr.kt`):
   runs) — by the same single-init locked impl; this is correct, only conservatively so.
 - **`NONE`** → `UnsafeLazyImpl` (no synchronization), as on JVM.
 
-**Locking discipline — always-lock, no lock-free fast path (deliberate).** `SynchronizedLazyImpl`
-takes the Monitor lock on *every* `value` read; it does **not** use the classic double-checked-locking
-lock-free fast path that Kotlin/JVM's `SynchronizedLazyImpl` uses. Reason: the JVM DCL fast path is
-memory-safe only because it reads the value field through a `@Volatile` access; on the CLR
-`@kotlin.concurrent.Volatile` is currently a **no-op annotation** (no binding to a volatile field
-access), so a DCL fast path would have a subtle publication bug on weak-memory architectures (ARM)
-that a single-threaded test can never surface. Correctness over speed: always-locking is
-unconditionally correct. The initializer runs inside the locked critical section, and the lock is
-released in a `finally` so a throwing initializer cannot leak the lock. (The value field is published
-by a single reference-typed write of the fully-constructed value — atomic on .NET — so no torn value
-is ever observed.) If a volatile field binding lands later, the DCL fast path can be restored for
-lock-free reads after initialization.
+**Locking discipline — always-lock, no lock-free fast path (currently).** `SynchronizedLazyImpl`
+takes the Monitor lock on *every* `value` read; it does **not** yet use the classic double-checked-locking
+lock-free fast path that Kotlin/JVM's `SynchronizedLazyImpl` uses. The JVM DCL fast path is
+memory-safe only because it reads the value field through a `@Volatile` access — and as of the
+`@kotlin.concurrent.Volatile` binding (§4c) that access is now real on the CLR — so restoring the DCL
+lock-free-read fast path is now unblocked (a follow-up; it was previously impossible while `@Volatile`
+was a no-op). Meanwhile always-locking is unconditionally correct. The initializer runs inside the
+locked critical section, and the lock is released in a `finally` so a throwing initializer cannot leak
+the lock. (The value field is published by a single reference-typed write of the fully-constructed
+value — atomic on .NET — so no torn value is ever observed.)
+
+## 4c. `@kotlin.concurrent.Volatile` = a real CLR volatile field (`modreq(IsVolatile)` + `volatile.`)
+
+`@Volatile` on a `var`'s backing field is **not** a no-op on DotKt: it lowers to a genuine CLR volatile
+field, using the **exact same encoding the C# `volatile` keyword emits**:
+
+- the field is declared with a **required custom modifier** `modreq([System.Runtime.CompilerServices.IsVolatile)`
+  on its type — this is what makes the JIT treat *every* access to the field as volatile (acquire on
+  load, release on store), and
+- every backing-field load/store additionally carries the **`volatile.` IL prefix** (`ldfld`/`stfld`,
+  `ldsfld`/`stsfld`), matching C# codegen belt-and-suspenders.
+
+kotc recognizes `@kotlin.concurrent.Volatile` as a plain Kotlin-language fact (like `suspend` /
+`@Synchronized` — it is a normal Kotlin annotation, **not** a `@Clr*` binding) and emits a
+`"volatile":true` field flag; ilemit applies the modreq + prefix. Matches Kotlin/JVM semantics: only
+**backing-field** operations are volatile — a property getter/setter doing several field operations is
+not atomic as a whole. (The single-threaded test gate proves functional correctness of reads/writes;
+the cross-thread memory-visibility guarantee rests on the modreq being precisely the C# `volatile`
+encoding, which the JIT honors and which a single-threaded run cannot itself observe.)
 
 ## 5. Primitive stringification is CLR-native (not Kotlin/JVM cosmetics)
 

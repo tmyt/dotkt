@@ -5,6 +5,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **`@kotlin.concurrent.Volatile` is now a REAL CLR volatile field (was a silent no-op).** `@Volatile` on a `var`'s
+  backing field lowers to the exact encoding the C# `volatile` keyword emits: the field is declared with a required
+  custom modifier `modreq(System.Runtime.CompilerServices.IsVolatile)` (which makes the JIT treat every access as
+  volatile), and every backing-field load/store carries the `volatile.` IL prefix (`ldfld`/`stfld`, `ldsfld`/`stsfld`).
+  kotc recognizes `@Volatile` as a plain Kotlin-language fact (like `suspend`/`@Synchronized` — a normal Kotlin
+  annotation, NOT a `@Clr*` binding) and emits a `"volatile":true` field flag (`BirEmitter.isVolatile`); bir2cir threads
+  it through; ilemit applies the modreq (`DefineVolatileField`) + the prefix (`MaybeVolatile`) at every field-access
+  site. Matches Kotlin/JVM: only backing-field operations are volatile. New `cases/il-volatile` (value-type + reference-
+  type instance fields + a top-level static field); ilverify-clean. This retires the "compiler annotation that silently
+  does nothing" and unblocks restoring `SynchronizedLazyImpl`'s lock-free double-checked-locking fast-read path.
+
 - **.NET events — idiomatic `w.Changed += handler` / `-= handler` (the `ClrEvent<T>` redesign; facadegen + kotc +
   bir2cir).** A .NET event is no longer subscribed via the injector-synthesized `add_<E>`/`remove_<E>` accessor-method
   stopgap — it now uses the idiomatic Kotlin `+=`/`-=` operators. facadegen/kotc surfaces a .NET event `Changed` as a
