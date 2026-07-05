@@ -177,6 +177,23 @@ encoding, which the JIT honors and which a single-threaded run cannot itself obs
   host-convention family as the stringification above. Both shapes are provided (`String.format(fmt, args...)`
   and `"fmt".format(args...)`), bound to `System.String.Format` (stdlib `@ClrIntrinsic`, no compiler lowering).
 
+## 5a. `Double`/`Float` boxed structural equality & `compareTo` follow .NET, not Kotlin's IEEE total order (KNOWN DEVIATION)
+
+Kotlin gives `Double`/`Float` a **total order** in the boxed / `compareTo` / structural-`equals` path (distinct from the
+primitive `==`/`<` operators, which stay IEEE): `-0.0 != 0.0` structurally, `(-0.0).compareTo(0.0) == -1`, and
+`NaN == NaN` structurally. On the CLR, `kotlin.Double` **IS** `System.Double` (no distinct Kotlin wrapper), so:
+
+- `(-0.0 as Any) == (0.0 as Any)` → **`true`** on DotKt (Kotlin/JVM: `false`) — the boxed value is a `System.Double`
+  box and structural `==` on `Any` dispatches to `System.Double.Equals`, which treats `-0.0 == 0.0`.
+- `(-0.0).compareTo(0.0)` → **`0`** on DotKt (Kotlin/JVM: `-1`) — `Double.compareTo` lowers to the IEEE IL compare.
+
+The primitive operators are correct: `-0.0 == 0.0` → `true` (IEEE, matches Kotlin), and NaN comparisons are `false`
+(see §NaN / `il-nancmp`). **This deviation is NOT fixable stdlib-side** (a pure-Kotlin `Double.equals`/`compareTo`
+body is never reached — the boxed object is a raw `System.Double` with no override hook, and the primitive `compareTo`
+is compiler-lowered). Matching Kotlin here requires a **compiler-layer** change: routing structural equality through a
+Kotlin `areEqual` helper that special-cases boxed `Double`/`Float`, and routing `Double`/`Float.compareTo` to a real
+total-order body (kotc/ilemit — final-review C14, tracked; LOW).
+
 ## 5b. `CharSequence` is `string` on the CLR — an immutable snapshot, not a live view
 
 `kotlin.CharSequence` is a JVM-shaped polymorphic char view with **no faithful .NET equivalent** (`System.String` is
