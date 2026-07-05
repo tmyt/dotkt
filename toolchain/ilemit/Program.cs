@@ -324,8 +324,15 @@ sealed partial class Emitter
                 // Top-level `val`/`var` -> static fields of the file class.
                 if (ti.Def.TryGetProperty("fields", out var ffs))
                     foreach (var f in ffs.EnumerateArray())
+                    {
+                        var tlType = MapType(f.GetProperty("type").GetString());
+                        var tlAttrs = FieldAttributes.Public | FieldAttributes.Static;
+                        // `@kotlin.concurrent.Volatile` on a top-level `var` -> a `modreq(IsVolatile)` static field.
                         ti.Fields[f.GetProperty("name").GetString()] =
-                            ti.TB.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), FieldAttributes.Public | FieldAttributes.Static);
+                            f.TryGetProperty("volatile", out var tlVol) && tlVol.GetBoolean()
+                                ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), tlType, tlAttrs)
+                                : ti.TB.DefineField(f.GetProperty("name").GetString(), tlType, tlAttrs);
+                    }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: true);
             }
             else
@@ -345,7 +352,11 @@ sealed partial class Emitter
                             _ => FieldAttributes.Public,
                         };
                         if (f.TryGetProperty("static", out var st) && st.GetBoolean()) fattrs |= FieldAttributes.Static;
-                        var fb = ti.TB.DefineField(f.GetProperty("name").GetString(), MapType(f.GetProperty("type").GetString()), fattrs);
+                        var ftype = MapType(f.GetProperty("type").GetString());
+                        // `@kotlin.concurrent.Volatile` -> a `modreq(IsVolatile)` field (the C# `volatile` encoding).
+                        var fb = f.TryGetProperty("volatile", out var vol) && vol.GetBoolean()
+                            ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), ftype, fattrs)
+                            : ti.TB.DefineField(f.GetProperty("name").GetString(), ftype, fattrs);
                         // A not-publicly-settable property's backing field -> [KotlinReadOnly] (consumer restores it as `val`).
                         if (f.TryGetProperty("readOnly", out var ro) && ro.GetBoolean()) ApplyKotlinReadOnly(fb);
                         ti.Fields[f.GetProperty("name").GetString()] = fb;
@@ -675,7 +686,7 @@ sealed partial class Emitter
             // Coerce the init value to the field's declared type (box a value-type/enum RHS stored into an
             // `object`/wider reference field) — the SAME shared store coercion the method-body sites use; without
             // it, `val X: Any = SomeEnum.ENTRY` stored the raw ordinal (int) into an object field as a null ref.
-            foreach (var f in inits) { var fb = ti.Fields[f.GetProperty("name").GetString()]; PrescanCfgLabels(f.GetProperty("init")); EmitStoreCoerced(f.GetProperty("init"), fb.FieldType); _il.Emit(OpCodes.Stsfld, fb); }
+            foreach (var f in inits) { var fb = ti.Fields[f.GetProperty("name").GetString()]; PrescanCfgLabels(f.GetProperty("init")); EmitStoreCoerced(f.GetProperty("init"), fb.FieldType); MaybeVolatile(fb); _il.Emit(OpCodes.Stsfld, fb); }
             _il.Emit(OpCodes.Ret);
         }
 

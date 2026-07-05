@@ -94,6 +94,7 @@ sealed partial class Emitter
                 }
                 EmitExpr(e.GetProperty("recv"));
                 var fb = ResolveField(fon, fnm, out var ft);
+                MaybeVolatile(fb);                       // `volatile.` prefix on a @Volatile field (pairs with modreq)
                 _il.Emit(OpCodes.Ldfld, fb);
                 return RetOr(e, ft);
             }
@@ -111,6 +112,7 @@ sealed partial class Emitter
                 var sfefld = ResolveField(son, snm, out var sfet);
                 EmitExpr(e.GetProperty("recv"));
                 EmitStoreCoerced(e.GetProperty("value"), sfet);
+                MaybeVolatile(sfefld);
                 _il.Emit(OpCodes.Stfld, sfefld);
                 return typeof(void);
             }
@@ -238,6 +240,7 @@ sealed partial class Emitter
                 // (an unchecked Ldsfld(null) was an opaque ArgumentNullException deep in ILGenerator).
                 var f = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString())
                     ?? throw new NotSupportedException($"static field {e.GetProperty("ownerType").GetString()}.{e.GetProperty("name").GetString()} not found");
+                MaybeVolatile(f);
                 _il.Emit(OpCodes.Ldsfld, f);
                 return f.FieldType;
             }
@@ -253,6 +256,7 @@ sealed partial class Emitter
                 var sfsf = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString())
                     ?? throw new NotSupportedException($"static field {e.GetProperty("ownerType").GetString()}.{e.GetProperty("name").GetString()} not found");
                 EmitStoreCoerced(e.GetProperty("value"), sfsf.FieldType);
+                MaybeVolatile(sfsf);
                 _il.Emit(OpCodes.Stsfld, sfsf);
                 return typeof(void);
             }

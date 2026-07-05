@@ -14,6 +14,25 @@ sealed partial class Emitter
     bool _kAttrsResolved;
     Type _kFuncAttr, _kFileAttr, _kInlineAttr, _kReadOnlyAttr, _kFunIfaceAttr, _kSealedAttr, _nullableAttr, _nullableCtxAttr;
 
+    // Fields carrying `@kotlin.concurrent.Volatile` (kotc emits `"volatile":true`). Emitted with a REQUIRED
+    // `modreq(System.Runtime.CompilerServices.IsVolatile)` custom modifier — EXACTLY how C# encodes a `volatile`
+    // field — so the JIT treats every access as volatile; the `volatile.` IL prefix is additionally emitted before
+    // ld/st on these fields (MaybeVolatile). Populated at DefineField (Program.cs pass3 field declaration).
+    readonly HashSet<FieldInfo> _volatileFields = new();
+
+    // DefineField with a `modreq(IsVolatile)` required custom modifier (the C# `volatile` shape); tracks the field so
+    // access sites can emit the matching `volatile.` prefix.
+    FieldBuilder DefineVolatileField(TypeBuilder tb, string name, Type type, FieldAttributes attrs)
+    {
+        var fb = tb.DefineField(name, type, new[] { typeof(System.Runtime.CompilerServices.IsVolatile) }, null, attrs);
+        _volatileFields.Add(fb);
+        return fb;
+    }
+
+    // Emit the `volatile.` prefix before a ld/st opcode when the field is volatile (no-op otherwise). Pairs with the
+    // `modreq(IsVolatile)` on the field itself — this is what the C# compiler emits for a `volatile` field access.
+    void MaybeVolatile(FieldInfo fld) { if (fld != null && _volatileFields.Contains(fld)) _il.Emit(OpCodes.Volatile); }
+
     // [KotlinReadOnly] — a public backing field whose Kotlin property isn't publicly settable (restore as `val`).
     void ApplyKotlinReadOnly(FieldBuilder fb)
     {

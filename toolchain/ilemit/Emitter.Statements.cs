@@ -52,6 +52,7 @@ sealed partial class Emitter
                 var sfld = ResolveField(fon, fnm, out var sft);
                 EmitExpr(s.GetProperty("recv"));
                 EmitStoreCoerced(s.GetProperty("value"), sft);
+                MaybeVolatile(sfld);
                 _il.Emit(OpCodes.Stfld, sfld);
                 break;
             }
