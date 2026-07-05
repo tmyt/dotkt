@@ -101,22 +101,28 @@ static class SuspendColdLowering
     //  (1) PREFERRED — a stable `suspendIntrinsic:true` flag on the valueBlock. kotc does NOT emit this tag today;
     //      it SHOULD (a one-line marker on the lowered intrinsic block would retire the fragile string sniff). The
     //      recognizer already reads it, so the day kotc stamps it the string path below becomes dead weight.
-    //  (2) FALLBACK — the intrinsic's fake `throw NotImplementedError(<SuspendIntrinsicMarker>)` result string.
-    //      Fragile (couples to a stdlib message), but the ONLY marker available until kotc emits (1): the frontend
-    //      never invokes `block`, so no `suspendCall` tag exists on the intrinsic call itself.
+    //  (2) FALLBACK — the intrinsic's fake `throw <exc>(<SuspendIntrinsicMarker>)` result string. Fragile (couples to
+    //      a stdlib message), but the ONLY marker available until kotc emits (1): the frontend never invokes `block`,
+    //      so no `suspendCall` tag exists on the intrinsic call itself. The fake body is the inliner's residue of
+    //      `libraries/stdlib/src/kotlin/coroutines/intrinsics/Intrinsics.kt:43`
+    //      (`throw NotImplementedError("Implementation of suspendCoroutineUninterceptedOrReturn is intrinsic")`).
+    //      HARDENED: we no longer couple to the exact thrown TYPE NAME (`kotlin.NotImplementedError`) — an earlier
+    //      exception-alias/substitution pass (kotc's exception map, or a future @ClrTypeAlias) could rewrite it to
+    //      `System.NotImplementedException` and silently break the match. The marker STRING is globally unique
+    //      (no user code throws it), so the `throwExpr`+`new`+marker-const shape alone is a safe discriminator.
     const string SuspendIntrinsicMarker = "suspendCoroutineUninterceptedOrReturn is intrinsic";
     const string SuspendIntrinsicFlag = "suspendIntrinsic";
 
     // Is this a `valueBlock` that is the lowered `suspendCoroutineUninterceptedOrReturn` intrinsic? Such a block
     // IS a suspension point (its embedded closure is the suspension body), NOT an ordinary lambda value. The
-    // SINGLE, centralized recognizer — prefers the stable flag (1), falls back to the message string (2).
+    // SINGLE, centralized recognizer — prefers the stable flag (1), falls back to the (type-name-independent)
+    // message string (2).
     static bool IsSuspendIntrinsicBlock(JsonNode node)
     {
         if (node is not JsonObject o || Str(o["k"]) != "valueBlock") return false;
         if (Bool(o[SuspendIntrinsicFlag])) return true;                                 // (1) stable tag
         if (o["result"] is not JsonObject res || Str(res["k"]) != "throwExpr") return false;
-        if (res["value"] is not JsonObject nw || Str(nw["k"]) != "new") return false;
-        if (Str(nw["type"]) != "kotlin.NotImplementedError") return false;
+        if (res["value"] is not JsonObject nw || Str(nw["k"]) != "new") return false;   // any exc type (alias-safe)
         return nw["args"] is JsonArray a && a.Count >= 1 && a[0] is JsonObject c0     // (2) message-string fallback
             && Str(c0["k"]) == "const" && (Str(c0["value"])?.Contains(SuspendIntrinsicMarker) ?? false);
     }
@@ -1358,11 +1364,19 @@ static class SuspendColdLowering
         // suspension, else the read happens after resume and observes the post-mutation value. Position still gates
         // it: RewriteEvalOrder only spills an operand LEFT of a suspension (`i < lastSusp`), so a field read with no
         // suspension to its right stays inline. (Captured locals are `local` in pre-Rewrite BIR, so unaffected.)
+        //
+        // N4-sibling: an ARRAY-ELEMENT read (`arrayGet`/`clr.ldelem`) has the SAME reorder hazard — the array is a
+        // shared reference the suspend callee can reach, so `arr[i] + mutatingSuspendCall()` must read the PRE-call
+        // element. It stayed scoped out over an element-type/over-spill worry, but the node carries its element type
+        // verbatim on `elem`, so the spill temp is typed precisely (no kotlin.Any box fallback — see TypeOfExpr). The
+        // position guard keeps a same-node `arr[i]` with no suspension to its right inline. (`arrayLen`/`clr.ldlen`
+        // stays pure: a .NET array's length is immutable, so a later suspension cannot change it.)
         static readonly HashSet<string> ImpureKinds = new(StringComparer.Ordinal)
         {
             "callStatic", "callInstance", "clrStatic", "clrInstance", "clrGenericStatic",
             "new", "clrNew", "setLocal", "setField", "throwExpr", "dynCall",
             "field", "staticField", "lateinitGet",
+            "arrayGet", "clr.ldelem",
         };
         static bool IsPureExpr(JsonNode n)
         {
@@ -1421,6 +1435,11 @@ static class SuspendColdLowering
                     if (_fieldTypes.TryGetValue("#" + fname, out var fft2)) return fft2;
                     break;
                 }
+                case "arrayGet": case "clr.ldelem":
+                    // N4-sibling eval-order spill: an array-element read carries its element type verbatim on `elem`,
+                    // so the temp SM field is typed precisely (avoids a kotlin.Any box of a value-type element).
+                    if (NonEmpty(Str(o["elem"])) is string et) return et;
+                    break;
                 case "bin":
                     return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" ? "kotlin.Boolean" : TypeOfExpr(o["l"]);
             }

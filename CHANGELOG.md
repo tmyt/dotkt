@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **bir2cir: array-element reads spill across a suspension (N4-sibling eval-order fix).** `SuspendColdLowering`'s
+  eval-order pass now classes an `arrayGet`/`clr.ldelem` element read as *impure*, mirroring the N4 field-read fix.
+  In `a[0] + bump()` where the suspend call `bump()` mutates `a[0]`, the left operand was left inline and evaluated
+  *after* the suspension resumed, observing the post-mutation value (a miscompile). It is now spilled into an SM temp
+  *before* the suspension. The spill temp is typed precisely from the node's `elem` (so a value-type element is not
+  boxed to `kotlin.Any`), and the position guard keeps a same-node `a[i]` with no suspension to its right inline.
+  `arrayLen`/`clr.ldlen` stays pure (a .NET array's length is immutable). New regression `cases/il-coarrayorder`
+  (`a` a plain local, to isolate the array read from the already-impure property-getter path) prints `15`.
+- **bir2cir: `IsSuspendIntrinsicBlock` marker hardened to be exception-type-alias-safe.** The same-module
+  `suspendCoroutineUninterceptedOrReturn` recognizer's string-fallback path no longer couples to the exact thrown
+  type name (`kotlin.NotImplementedError`) — an earlier exception-alias/substitution pass could rewrite it to
+  `System.NotImplementedException` and silently break the match. The globally-unique marker *message* string
+  (`"…suspendCoroutineUninterceptedOrReturn is intrinsic"`) is now the sole discriminator on the `throwExpr`+`new`
+  shape. The preferred stable-flag path (`suspendIntrinsic:true`) is unchanged; kotc does not yet emit that flag
+  (the block is the inliner's residue of the intrinsic's fake body — see `libraries/stdlib/src/kotlin/coroutines/`
+  `intrinsics/Intrinsics.kt:43`), so the hardened string fallback remains the live path. seq/yield samples stay green.
 - **ilemit: removed the last Kotlin-collection-name knowledge leak (ReverseBridge `KotlinEnumerableIfaces`).** The
   reverse `GetEnumerator` bridge previously carried a hardcoded set of Kotlin FQNs
   (`kotlin.collections.{Set,MutableSet,MutableCollection,MutableList,MutableIterable}`) to recognize collection
