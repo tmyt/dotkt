@@ -132,6 +132,16 @@ sealed class Pipeline
             // receiver token to `object` (this pass keys on that token). Self-gates to concrete value instantiations
             // (an open `gp:T` arg is not a value type) so it is a no-op in the rt-stdlib self-build.
             if (!_options.RefBuild) ValueTypeNullableCollectionArg.Apply(bir.Root);
+            // ARRAY-ELEMENT NULLABILITY realign (C2): kotc emits `arrayOfNulls<Int>(3)` as `newArraySized elem=kotlin.Int`
+            // (the non-null element) while the declaring var is `Array<Int?>` = `array:nullable:int` = `Nullable<int>[]`.
+            // The array-creation then builds an `int[]`, but element stores `stelem Nullable<int>` — a struct-size mismatch
+            // that corrupts memory. Realign the creation's `elem` to the declared array type's `nullable:` element so a
+            // real `Nullable<int>[]` is allocated. Runs BEFORE type lowering (elem tokens are still `kotlin.*`).
+            ArrayNullableElemRealign.Apply(bir.Root);
+            // GENERIC-ENUM member binding (C2): `e.name` on a `T : Enum<T>` receiver -> `System.Enum.ToString()`
+            // (kotc lowers a CONCRETE enum receiver directly, but a generic `gp:T` receiver falls through to a
+            // `callInstance kotlin.Enum.get_name` that TypeLoadExceptions — `kotlin.Enum` lives only in the stdlib).
+            if (!_options.RefBuild) EnumMemberBinding.Apply(bir.Root);
             // NULLABLE-GENERIC-RETURN erasure (ALL builds, so ref.dll + rt.dll signatures agree): a Kotlin method
             // declaring a nullable generic-parameter return (`fun <T> …(): T?`) has its nullability erased by kotc to
             // a bare `gp:T` return (Nullable<T> is inexpressible for an unconstrained T). That is CORRECT for a
@@ -1960,8 +1970,24 @@ static class BirTypeLowering
             // head is a genuine emitted type and keeps its `@`. ilemit builds the generic by arg count. The foundational
             // primitives never appear as a generic head, so KotlinToClr need not gate here.
             var bareHead = head.StartsWith("@", StringComparison.Ordinal) ? head[1..] : head;
+            // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (C2): a Kotlin `enum class` is emitted as a real CLR
+            // `System.Enum`-backed enum (ilemit `DefineEnum`), which does NOT extend the stdlib's generic `kotlin.Enum<E>`
+            // class. So a `fun <T : Enum<T>> …` self-referential bound (`@kotlin.Enum[gp:T]`) must lower to `System.Enum`
+            // (the CLR `where T : Enum` idiom) or a real enum type argument violates the constraint (VerificationException).
+            // Drop the self-referential type arg — System.Enum is non-generic.
+            if (bareHead == "kotlin.Enum") return "clr:System.Enum";
             if (!head.StartsWith("clr", StringComparison.Ordinal) && AliasBcl(bareHead) is string genericBcl)
+            {
+                // `Comparable<*>` / `Comparable<Any?>` (the star / Any-projected comparable — kotc token
+                // `kotlin.Comparable[object]`) -> the NON-generic `System.IComparable`, NOT `IComparable<object>` (C2).
+                // `System.IComparable<in T>` is contravariant, so no VALUE type is `IComparable<object>` (a boxed Int is
+                // `IComparable<int>` / non-generic `IComparable` only). The `compareBy`/`compareValuesBy` selector
+                // `(T) -> Comparable<*>?` and its boxed selector value must ride the non-generic dispatch spine
+                // (clrRawCompareTo's `as IComparable`); a reified `IComparable<object>` castclass fails on every primitive.
+                // A CONCRETE arg (`Comparable<C>` / `Comparable<gp:T>`) keeps the generic form (`sorted`'s element cast).
+                if (genericBcl == "System.IComparable" && args == "object") return "clr:System.IComparable";
                 return "clrg:" + genericBcl + "[" + args + "]";
+            }
             return head + "[" + args + "]";
         }
 
@@ -3356,7 +3382,7 @@ static class NullableGenericReturnErasure
                     && (obj["nullable"] as JsonValue)?.TryGetValue<bool>(out var nb) == true && nb
                     && (obj["type"] as JsonValue)?.TryGetValue<string>(out var vt) == true
                     && vt.StartsWith("gp:", StringComparison.Ordinal)
-                    && IsNullConstInit(obj["init"]))
+                    && (IsNullConstInit(obj["init"]) || IsNullableGenericMapGet(obj["init"])))
                     obj["type"] = "object";
                 foreach (var kv in obj) RetypeNullableGpVars(kv.Value);
                 break;
@@ -3364,6 +3390,29 @@ static class NullableGenericReturnErasure
                 foreach (var it in arr) RetypeNullableGpVars(it);
                 break;
         }
+    }
+
+    // True when a var initializer is a `Map`/`MutableMap` `.get(key)` call — its Kotlin result is `V?`, which
+    // MemberCallSubstitution rewrites to the erased nullable-generic `clrMapGet<K,V>: object` (a present value boxes,
+    // a missing key is a genuine `null`). A `var value: gp:V nullable:true = get(key)` slot (getOrPut's explicit
+    // `val value = get(key)`, unlike getOrElse's `?:`-synthesized `object` subject) must therefore be an `object`
+    // slot — else the object init is stored raw into a `!!V` slot and the `value == null` check never sees the null
+    // (getOrPut on `MutableMap<K,primitive>` silently returned 0 and never inserted). The read boundary re-narrows:
+    // `objEq(value, null)` reads it as `object`; the `else value` branch (cond typed `gp:V`) unbox.any's it back
+    // (EmitNullableCoerced). Gated on the `overrides` marker (owner Map/MutableMap, member `get`), so it never hits
+    // the safe-call receiver temps RetypeNullableGpVars deliberately excludes (those init from a `transform(x)` invoke).
+    static bool IsNullableGenericMapGet(JsonNode init)
+    {
+        if (init is not JsonObject io) return false;
+        if ((io["k"] as JsonValue)?.TryGetValue<string>(out var ik) != true || ik != "callInstance") return false;
+        if (io["overrides"] is not JsonArray ovs) return false;
+        foreach (var ov in ovs)
+            if (ov is JsonObject oo
+                && (oo["member"] as JsonValue)?.TryGetValue<string>(out var mem) == true && mem == "get"
+                && (oo["owner"] as JsonValue)?.TryGetValue<string>(out var own) == true
+                && (own == "kotlin.collections.Map" || own == "kotlin.collections.MutableMap"))
+                return true;
+        return false;
     }
 
     // True when a var initializer is the null literal (`{k:"const", value:null}`) — the `T? = null` accumulator idiom.
