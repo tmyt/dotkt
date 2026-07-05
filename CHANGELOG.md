@@ -75,6 +75,33 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
     `Enum<T>` bound lowers to the CLR `System.Enum` constraint, and `e.name` on a generic enum receiver
     binds to `System.Enum.ToString()`.
   - Covered by the JVM-oracle differential case `cases/il-boxgen`.
+- **`Int`/`Long`.`toString(radix)` renders sign + arbitrary base, not two's-complement (C4).** kotc's
+  legacy `System.Convert.ToString(value, base)` special-case (a BCL name in the frontend — a layer
+  violation) was both wrong and crash-prone: `(-255).toString(16)` gave `ffffff01` instead of `-ff`,
+  `Int.MIN_VALUE.toString(16)` dropped its sign, and any base outside `{2,8,10,16}` (`35.toString(36)`)
+  threw `ArgumentException: Invalid Base`. The special-case is deleted; kotc now emits the plain
+  `kotlin.text` extension call and bir2cir attributes it to the stdlib `StringNumberConversionsKt` body,
+  which produces `-ff` / `-80000000` / `z`. Covered by `cases/il-radix` (JVM-oracle differential).
+- **Deterministic `String`/`Double`/`Float` `hashCode()` (C5).** kotc's universal-method intercept
+  unconditionally rewrote every `.hashCode()`/`.toString()`/`.equals()` on a `kotlin.*` receiver to the
+  `System.Object` slot (`GetHashCode`/`ToString`/`Equals`), which shadowed the stdlib's declared
+  overrides — so `"Aa".hashCode()` returned .NET's per-process-randomized hash instead of Kotlin's
+  deterministic polynomial `2112`, `""`.hashCode() was non-zero, and `(-0.0).hashCode()` was not
+  `Int.MIN_VALUE`. The intercept is now GATED: it falls through to the real declared member when the
+  receiver TYPE declares its own override (String's polynomial hash, Double/Float's deterministic
+  bit-hash — routed to the stdlib body; String's `@ClrIntrinsic` toString/equals — to their BCL slot),
+  and keeps the `System.Object` slot only for a genuine universal call on a type with NO override (an
+  inherited `kotlin.Any` member) and for primitive value types' bodyless `toString`/`equals`
+  (`Int`/`Long`/`Char`/`Boolean` — the BCL slot is correct there). This also resolves the layer-review
+  M2-vs-C5 tension (the routing is kept exactly where it is still correct). Covered by `cases/il-strhash`
+  and `cases/il-pairtostr`.
+- **Cross-module top-level extension-property getters no longer crash (C7).** A `val List<T>.lastIndex`,
+  `val Int.absoluteValue`, `val CharSequence.lastIndex` (a top-level extension property with no
+  declaring class) fell to a current-file-class static-field read that dropped the receiver entirely —
+  `NotSupportedException: field <AppKt>.lastIndex not found` at emit. kotc now routes an extension
+  property to `callStatic owner=null get_<name>(receiver)` (mirroring the top-level extension-FUNCTION
+  path, so bir2cir attributes it to the ref.dll file class), carrying the resolved type args for a
+  GENERIC getter (`get_lastIndex[T]`) so ilemit instantiates it. Covered by `cases/il-extprop`.
 - **Value-type nullable smart-cast reads the value, not `HasValue` (C1).** An `Int?`/`Long?`/`Double?`
   (a CLR `Nullable<T>`) narrowed by `if (n != null)` and then read as its non-null `T` — an assignment
   (`val z: Int = n`), an arithmetic/comparison operand (`n + 1`, `n > 5`), a function argument, or a
