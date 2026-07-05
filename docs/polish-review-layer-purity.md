@@ -229,3 +229,14 @@ volatile field. So any code relying on `@Volatile` for cross-thread memory visib
 SynchronizedLazyImpl worked around it (always-lock, no lock-free DCL read). FOLLOW-UP: either bind `@Volatile`
 to emit a `volatile.` IL prefix / `System.Threading.Volatile.Read/Write`, or document it as unsupported. Low
 priority (single-threaded gate can't catch it; most stdlib avoids volatile).
+
+## EmptyMap → IReadOnlyDictionary: JUSTIFIED DEFERRAL (won't-fix), not a relic
+Unlike Lazy/registries/events (stopgap relics now migrated), EmptyMap's deferral is a genuine .NET
+type-hierarchy constraint, and it is FUNCTIONALLY CORRECT as-is:
+- Kotlin `MutableMap : Map` must map to .NET interfaces where mutable extends read-only. But .NET
+  `IDictionary<K,V>` does NOT extend `IReadOnlyDictionary<K,V>` (siblings; Dictionary implements both).
+  So `Map → IReadOnlyDictionary` + `MutableMap → IDictionary` breaks the `MutableMap : Map` subtyping at
+  the IL level. Hence `Map → IDictionary` (mutable) is forced, and emptyMap() stays IDictionary-typed.
+- BUT the EmptyMap object is immutable (its mutators throw) AND the Kotlin frontend enforces read-only via
+  the static `Map` type. So it is already read-only in practice; `IReadOnlyDictionary` would only refine the
+  RUNTIME interface — a nicety, not a correctness fix, and it's blocked by the .NET hierarchy. WON'T-FIX.
