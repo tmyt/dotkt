@@ -181,20 +181,24 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   non-empty output — two compile/run failures no longer silently pass as a MATCH); removed a stale
   `verify-il` comment referencing the retired `XFAIL_RUN[cobuild]` and a duplicate `comaindrain`
   invocation; and **wired 44 run-only cases into the `verify-il` ilverify pass** (they were run-checked
-  but had no formal-verification coverage). Three cases are documented-excluded: `stackalloc`
-  (`localloc` is unverifiable by ECMA-335), plus `ifacesuspend` and `strops` which run correctly but
-  emit genuinely-unverifiable IL (a `CallAbstract` in the interface-suspend bridge, and char/int32
-  `StackUnexpected` in the string-op lowering) — surfaced as real latent findings, not XFAIL-hidden.
-- **`il-strops` ilverify finding diagnosed + routed (2026-07-05).** The 3× `[StackUnexpected][found
-  Char]` in `main` is NOT a stdlib body: it is the `String.trim(vararg chars: Char)` call site building
-  a `char[]`, where `ilemit` emits the generic token opcode `stelem <System.Char>` instead of the
+  but had no formal-verification coverage). Two cases are documented-excluded: `stackalloc`
+  (`localloc` is unverifiable by ECMA-335), plus `ifacesuspend` which runs correctly but emits a
+  genuinely-unverifiable `CallAbstract` in the interface-suspend bridge — surfaced as a real latent
+  finding, not XFAIL-hidden. (`strops` was the third; its primitive-array `StackUnexpected` is now
+  fixed in ilemit and it is wired into the ilverify pass — see below.)
+- **`il-strops` ilverify finding FIXED (2026-07-05) — the last ilverify-dirty finding.** The 3×
+  `[StackUnexpected][found Char]` in `main` was the `String.trim(vararg chars: Char)` call site building
+  a `char[]`, where `ilemit` emitted the generic token opcode `stelem <System.Char>` instead of the
   specialized `stelem.i2`. ECMA-335 requires the specialized `stelem`/`ldelem` opcode for a PRIMITIVE
-  element type; the token form is unverifiable for primitives (confirmed empirically: `stelem <char>`
-  → `[found Char]`, `ldelem <char>` → `[found Short]`; `stelem.i2`/`ldelem.u2` verify clean). The fix
-  is an ilemit codegen change (primitive-element `stelem`/`ldelem` opcode selection) at the token
-  sites `Program.cs:2495` (`EmitNewArray`), `Emitter.Expressions.cs:375/428/443`,
-  `Emitter.Statements.cs:244` — routed to the ilemit layer; `il-strops` stays a documented ilverify
-  exclusion until it lands. Runs correct on the gate (`hello`/`hi`/… output unchanged).
+  element type; the token form is unverifiable for primitives (`stelem <char>` → `[found Char]`,
+  `ldelem <char>` → `[found Short]`; `stelem.i2`/`ldelem.u2` verify clean). Fixed with a shared
+  `EmitStelem`/`EmitLdelem` helper (`Program.cs`) that selects the specialized opcode for a BCL
+  primitive element (char→`stelem.i2`/`ldelem.u2`, int→`stelem.i4`, …), `stelem.ref`/`ldelem.ref` for a
+  reference element, and keeps the TOKEN form ONLY for a generic-parameter (`!T`/`!!T`) or non-primitive
+  struct element (specializing a generic-param element would be wrong for a value-type instantiation).
+  Wired into all five array store/load sites (`EmitNewArray`, `newArrayInit`, `arrayGet`/`arraySet`,
+  for-in-over-array). `il-strops` now RUNS correct and verifies clean, and is wired into the `verify-il`
+  ilverify pass — leaving `verify-il`/`differential`/`ktproj`/`roundtrip` + ilverify all XFAIL-zero.
 
 ## 0.9.3 — 2026-06-24
 

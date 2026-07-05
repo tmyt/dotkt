@@ -372,7 +372,7 @@ sealed partial class Emitter
                 if (!pType.IsValueType) _il.Emit(OpCodes.Box, typeof(int));
                 _il.Emit(OpCodes.Callvirt, invoke);                                              // init(i)
                 if (rType != elem) { if (elem.IsValueType || elem.IsGenericParameter) _il.Emit(OpCodes.Unbox_Any, elem); else _il.Emit(OpCodes.Castclass, elem); }
-                _il.Emit(OpCodes.Stelem, elem);                                                  // arr[i] = init(i)
+                EmitStelem(elem);                                                                // arr[i] = init(i)
                 _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, i);
                 _il.Emit(OpCodes.Br, top);
                 _il.MarkLabel(done);
@@ -425,7 +425,7 @@ sealed partial class Emitter
             {
                 EmitExpr(e.GetProperty("array")); EmitExpr(e.GetProperty("index"));
                 var elem = MapType(e.GetProperty("elem").GetString());
-                _il.Emit(OpCodes.Ldelem, elem); return elem;
+                EmitLdelem(elem); return elem;
             }
             case "arraySet":
             case "clr.stelem":
@@ -440,7 +440,7 @@ sealed partial class Emitter
                 // instantiation stelem !T then stores the reference bits as the value (garbage). Same guard as the
                 // local/field box sites (Emitter.Statements 27/38).
                 if (!selem.IsValueType && !selem.IsGenericParameter && svt != null && NeedsBoxToRef(svt)) _il.Emit(OpCodes.Box, svt);
-                _il.Emit(OpCodes.Stelem, selem); return typeof(void);
+                EmitStelem(selem); return typeof(void);
             }
             case "arrayLen":
             case "clr.ldlen":

@@ -241,7 +241,7 @@ sealed partial class Emitter
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldlen); _il.Emit(OpCodes.Conv_I4);
                 _il.Emit(OpCodes.Bge, end);
-                _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Ldelem, elem); _il.Emit(OpCodes.Stloc, lv);
+                _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, idx); EmitLdelem(elem); _il.Emit(OpCodes.Stloc, lv);
                 foreach (var b in s.GetProperty("body").EnumerateArray()) EmitStmt(b);
                 _il.MarkLabel(cont);
                 _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, idx);

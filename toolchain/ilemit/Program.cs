@@ -1332,6 +1332,45 @@ sealed partial class Emitter
     // unknown (could be a value type), and `box !!0` is legal/correct for both value and reference instantiations.
     static bool NeedsBoxToRef(Type t) => t != null && (t.IsValueType || t.IsGenericParameter);
 
+    // Array element STORE. ECMA-335 requires the SPECIALIZED opcode (stelem.i2/i4/…) for a BCL PRIMITIVE
+    // element type; the generic token form `stelem <T>` is UNVERIFIABLE for primitives (ilverify:
+    // `stelem <char>` -> [StackUnexpected][found Char]). Reference elements -> stelem.ref. A generic-param
+    // (`!T`/`!!T`) OR a non-primitive struct element MUST keep the token form -- a generic-param's runtime
+    // type is unknown (could be value), and specializing it would be wrong for a value instantiation.
+    void EmitStelem(Type elem)
+    {
+        if (elem.IsGenericParameter) { _il.Emit(OpCodes.Stelem, elem); return; }
+        if (!elem.IsValueType) { _il.Emit(OpCodes.Stelem_Ref); return; }
+        if (elem == typeof(bool) || elem == typeof(sbyte) || elem == typeof(byte)) _il.Emit(OpCodes.Stelem_I1);
+        else if (elem == typeof(char) || elem == typeof(short) || elem == typeof(ushort)) _il.Emit(OpCodes.Stelem_I2);
+        else if (elem == typeof(int) || elem == typeof(uint)) _il.Emit(OpCodes.Stelem_I4);
+        else if (elem == typeof(long) || elem == typeof(ulong)) _il.Emit(OpCodes.Stelem_I8);
+        else if (elem == typeof(float)) _il.Emit(OpCodes.Stelem_R4);
+        else if (elem == typeof(double)) _il.Emit(OpCodes.Stelem_R8);
+        else if (elem == typeof(IntPtr) || elem == typeof(UIntPtr)) _il.Emit(OpCodes.Stelem_I);
+        else _il.Emit(OpCodes.Stelem, elem); // user struct / enum / Nullable<> -> token form (verifiable)
+    }
+
+    // Array element LOAD -- specialized opcode for a BCL primitive, ldelem.ref for a reference, token form
+    // (`ldelem <T>`) for a generic-param / non-primitive struct. Mirror of EmitStelem; sign-extends per type
+    // (u1/u2 for unsigned+char+bool, i1/i2 for signed).
+    void EmitLdelem(Type elem)
+    {
+        if (elem.IsGenericParameter) { _il.Emit(OpCodes.Ldelem, elem); return; }
+        if (!elem.IsValueType) { _il.Emit(OpCodes.Ldelem_Ref); return; }
+        if (elem == typeof(bool) || elem == typeof(byte)) _il.Emit(OpCodes.Ldelem_U1);
+        else if (elem == typeof(sbyte)) _il.Emit(OpCodes.Ldelem_I1);
+        else if (elem == typeof(char) || elem == typeof(ushort)) _il.Emit(OpCodes.Ldelem_U2);
+        else if (elem == typeof(short)) _il.Emit(OpCodes.Ldelem_I2);
+        else if (elem == typeof(int)) _il.Emit(OpCodes.Ldelem_I4);
+        else if (elem == typeof(uint)) _il.Emit(OpCodes.Ldelem_U4);
+        else if (elem == typeof(long) || elem == typeof(ulong)) _il.Emit(OpCodes.Ldelem_I8);
+        else if (elem == typeof(float)) _il.Emit(OpCodes.Ldelem_R4);
+        else if (elem == typeof(double)) _il.Emit(OpCodes.Ldelem_R8);
+        else if (elem == typeof(IntPtr) || elem == typeof(UIntPtr)) _il.Emit(OpCodes.Ldelem_I);
+        else _il.Emit(OpCodes.Ldelem, elem); // user struct / enum / Nullable<> -> token form (verifiable)
+    }
+
     static Type Subst(Type t, Type[] typeArgs) =>
         t != null && t.IsGenericParameter && t.DeclaringMethod == null && t.GenericParameterPosition < typeArgs.Length
             ? typeArgs[t.GenericParameterPosition] : t;
@@ -2492,7 +2531,7 @@ sealed partial class Emitter
             var et = EmitExpr(elems[i]);
             // Box a value element stored into a reference array (e.g. ints into `object[]` for String.Format).
             if (et != null && NeedsBoxToRef(et) && !elem.IsValueType && !elem.IsGenericParameter) _il.Emit(OpCodes.Box, et);
-            _il.Emit(OpCodes.Stelem, elem);
+            EmitStelem(elem);
         }
         return elem.MakeArrayType();
     }
