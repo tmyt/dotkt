@@ -13,27 +13,18 @@ internal val BINARY = mapOf(
 )
 internal val UNARY = mapOf("unaryMinus" to "-", "unaryPlus" to "+", "not" to "!", "inv" to "~")
 
-// (RETIRED 2026-07-02) The kotlin.math.* -> System.Math.* map lived here. It was CLR knowledge in kotc (a layer
-// violation). kotc now emits a plain call to the stdlib math fun; bir2cir substitutes it from MathClr.kt's
-// @ClrIntrinsic bindings on the ref.dll (System.Math.* for Double/Int/Long, System.MathF.* for Float).
+// No kotlin.math.* -> System.Math.* map here: that CLR knowledge lives in bir2cir. kotc emits a plain call to the
+// stdlib math fun; bir2cir substitutes it from MathClr.kt's @ClrIntrinsic bindings on the ref.dll (System.Math.*
+// for Double/Int/Long, System.MathF.* for Float).
 
-// (FULLY RETIRED 2026-07-04, bundle-8) The `kotlin.text` String-op -> System.String member-name map (STRING_OPS) is
-// GONE. Bundle 4-A/4-B retired the CharSequence-bridge-clean ops (contains/indexOf/startsWith/endsWith/split/
-// substring/isEmpty/isNotEmpty/uppercase/lowercase/NUMBER_PARSE/isBlank); bundle-8 retired the last six — trim/
-// trimStart/trimEnd/padStart/padEnd/replace — by FIXING their stdlib bodies so the pure-Kotlin path runs (no BCL
-// member name in kotc):
-//   trim/trimStart/trimEnd  — `CharSequence.trim()` was `trim(Char::isWhitespace)`; a callable ref to a .NET
-//                             (@ClrIntrinsic Char) method is "not lowered". Rewritten to a lambda `{ it.isWhitespace() }`.
-//   padStart/padEnd         — `StringBuilder(capacity)` + `append(CharSequence)` bind correctly (the StringBuilder
-//                             actuals were already fixed: append(CharSequence?,start,end) delegates via subSequence+toString).
-//   replace(String,String)  — its `StringBuilder.append(seq,start,end)` routes through the same fixed subSequence+toString
-//                             delegation (end-exclusive, correct); replace(Char,Char) runs its pure body too.
+// No `kotlin.text` String-op -> System.String member-name map (STRING_OPS) here: those ops run as pure-Kotlin stdlib
+// bodies (or bir2cir substitution off the ref.dll) — no BCL member name in kotc.
 // Only `reversed` STAYS kotc-lowered (strReversed) pending a `StringBuilder(CharSequence)`-ctor stdlib fix (a separate node,
 // never in this map).
 
-// (RETIRED 2026-07-02) The Char-ops map (isDigit/isLetter/uppercaseChar/… -> System.Char statics) lived here. It was
-// CLR knowledge in kotc (a layer violation). kotc now emits a plain call to the stdlib Char fun; bir2cir substitutes it
-// from CharClr.kt's @ClrIntrinsic("System.Char.IsDigit"/"System.Char.ToUpperInvariant"/…) FQ bindings on the ref.dll.
+// No Char-ops map (isDigit/isLetter/uppercaseChar/… -> System.Char statics) here: that CLR knowledge lives in bir2cir.
+// kotc emits a plain call to the stdlib Char fun; bir2cir substitutes it from
+// CharClr.kt's @ClrIntrinsic("System.Char.IsDigit"/"System.Char.ToUpperInvariant"/…) FQ bindings on the ref.dll.
 
 internal val PRIMITIVE_ARRAY_ELEM = mapOf(
 	"kotlin.IntArray" to "int", "kotlin.LongArray" to "long", "kotlin.DoubleArray" to "double",
@@ -129,7 +120,7 @@ internal val PRIMITIVE_SHORTHANDS = VALUE_PRIM_BIR.values.toSet()
 // like kotlin.time.Duration) keeps its member operator as a real method call.
 internal val PRIMITIVE_OP_FQ = PRIMITIVE_EQ_FQ + setOf("kotlin.UInt", "kotlin.ULong", "kotlin.UByte", "kotlin.UShort")
 
-// The kotlin.* -> System.* exception map was RETIRED: it was CLR knowledge living in kotc (a layer violation). The
-// stdlib's exception classes now carry `@kotlin.clr.ClrTypeAlias("System.X")`, and bir2cir reads that off the ref.dll
+// No kotlin.* -> System.* exception map here: that CLR knowledge belongs in bir2cir. The
+// stdlib's exception classes carry `@kotlin.clr.ClrTypeAlias("System.X")`, and bir2cir reads that off the ref.dll
 // to lower throw/catch/supertype/construction (the same @ClrTypeAlias path that lowers the collections). kotc emits
 // the bare `kotlin.*Exception` FQN and nothing more. See MEMORY `exception-map-to-clrtypealias`.

@@ -128,8 +128,8 @@ private fun parseFunMods(tok: String?): FunMods {
 /**
  * A2 keystone (interop-no-registry, stage 1): the backend reads an injected .NET type's name off its IR `ClassId`
  * through this accessor — facadegen's metadata keyed by the resolved ClassId, with the generic-arity backtick stripped
- * (`System.Threading.Tasks.Task\`1` -> `Task`; ilemit re-appends `\`N` from the arg count). Replaces the deleted
- * name-keyed `ClrTypeRegistry.typeNames`. Null for a non-injected class (user Kotlin type / stdlib). File-top-level so
+ * (`System.Threading.Tasks.Task\`1` -> `Task`; ilemit re-appends `\`N` from the arg count).
+ * Null for a non-injected class (user Kotlin type / stdlib). File-top-level so
  * it can reach the file-private [ClrMetadataHolder] while exposing only public types across the module boundary.
  */
 internal fun clrInjectedDotNetName(classId: ClassId): String? = ClrMetadataHolder.dotNetNameByClassId[classId]
@@ -137,7 +137,7 @@ internal fun clrInjectedDotNetName(classId: ClassId): String? = ClrMetadataHolde
 /**
  * A2 keystone (interop-no-registry, stage 2): the backend reads an injected .NET MEMBER's slot name off its resolved IR
  * `CallableId` (declaring-class `ClassId` + member name) through this accessor — facadegen's metadata keyed by that same
- * structural identity. Replaces the deleted name-keyed `ClrTypeRegistry.memberNames`/`memberClrName`. Non-null only where
+ * structural identity. Non-null only where
  * the .NET slot name DIVERGES from the Kotlin member name (a .NET operator method: `plus` -> `op_Addition`); null for a
  * member whose Kotlin name already IS its .NET name, and for any non-injected (user Kotlin / stdlib) member.
  */
@@ -146,9 +146,8 @@ internal fun clrInjectedMemberName(callableId: CallableId): String? = ClrMetadat
 /**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL function's .NET file-facade
  * class (`LibKt`) off its resolved IR `CallableId` (`package` + name) through this accessor — facadegen's metadata keyed
- * by that same structural identity. Replaces the deleted name-keyed `ClrTopLevelRegistry` + its RECEIVER-DISCRIMINATOR
- * kludge: FIR/Fir2Ir already resolved the call to a UNIQUE callee, so there is nothing left to disambiguate — the resolved
- * callee's CallableId keys the fact directly (no candidate list, no "last-registered wins" receiver match). Null for a
+ * by that same structural identity. FIR/Fir2Ir already resolved the call to a UNIQUE callee, so the resolved
+ * callee's CallableId keys the fact directly (no candidate list to disambiguate). Null for a
  * non-restored (local / stdlib-from-jar) top-level fun. Suspend-ness is NOT carried here: the backend reads it off the
  * resolved callee (`isSuspend`) via `suspendCallTag`, so re-carrying it would re-introduce the resolved-fact-by-name
  * anti-pattern this stage removes.
@@ -174,7 +173,7 @@ internal fun clrInjectedTopLevelFileClass(callableId: CallableId, arity: Int): S
 /**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL EXTENSION PROPERTY's .NET
  * file-facade class (its `get_`/`set_<name>` statics live there) off its resolved IR `CallableId` (`package` + name) —
- * facadegen's metadata keyed structurally. Replaces the deleted `ClrTopLevelRegistry.lookupProp` name-FQN string lookup.
+ * facadegen's metadata keyed structurally.
  * Null for a non-restored top-level property.
  */
 internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? = ClrMetadataHolder.fileClassByTopLevelPropCallableId[callableId]
@@ -186,8 +185,7 @@ internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? =
  * IR `ClassId` via [clrInjectedDotNetName] and each injected member's .NET slot name off its IR `CallableId`
  * via [clrInjectedMemberName] — keyed structurally off the resolved IR identity. A .NET EVENT no longer needs any
  * side-channel at all: it is surfaced as a `ClrEvent<T>` property and subscribed via `+=`/`-=`, which bir2cir binds
- * to the add/remove accessor (the `add_`/`remove_` accessor synthesis + its event-op map are RETIRED, 2026-07-05).
- * A2 interop-no-registry is COMPLETE: all four name-keyed side-channel registries are eliminated.
+ * to the add/remove accessor. All interop facts are keyed off the resolved IR identity — no name-keyed side-channel.
  */
 private object ClrMetadataHolder {
 	val module: ClrModule? by lazy { System.getenv("CLR_TYPES_METADATA")?.let { load(File(it)) } }
@@ -310,9 +308,7 @@ private object ClrMetadataHolder {
 		// A2 stage 3 / event redesign: NOTHING is registered by name here anymore. A restored top-level function/extension-
 		// property's .NET file-facade class is read off the resolved IR `CallableId` (`fileClassByTopLevelCallableId` /
 		// `fileClassByTopLevelPropCallableId`); a .NET event carries NO side-channel at all — it is surfaced as a `ClrEvent<T>`
-		// property that bir2cir binds via the `+=`/`-=` operators. The old name-keyed side-tables (and the top-level
-		// receiver-discriminator disambiguation) are gone. This eliminated the last of the four interop registries
-		// (`ClrTypeRegistry` / `ClrTopLevelRegistry` / `ClrEventRegistry`).
+		// property that bir2cir binds via the `+=`/`-=` operators.
 		return module
 	}
 
@@ -340,20 +336,18 @@ private object ClrMetadataHolder {
 	// backtick stripped (`System.Threading.Tasks.Task\`1` -> `Task`), matching the backend contract (BirEmitter emits the
 	// arity-LESS open name in `clrg:<open>[args]`; ilemit re-appends `\`N` from the constructed arg count). This is a pure
 	// projection of `byClassId`, which already excludes @Clr-bound stdlib types (clrBinding != null) and `kotlin.*` — a
-	// facadegen-injected stdlib type never happens (kotlin.* comes from the JAR), so the old `clrBinding` fallback of the
-	// deleted `ClrTypeRegistry.typeNames` was dead and is dropped. NOTE: the .NET name of an arity-QUALIFIED Kotlin name
+	// facadegen-injected stdlib type never happens (kotlin.* comes from the JAR). NOTE: the .NET name of an arity-QUALIFIED Kotlin name
 	// (`Task\`1` -> Kotlin `Task1`) genuinely diverges from the ClassId simple name, so it must be carried (facadegen's
 	// fact), not re-derived from the ClassId string — hence this metadata read rather than `classId.asString()` alone.
 	val dotNetNameByClassId: Map<ClassId, String> by lazy { byClassId.mapValues { it.value.dotNetName.substringBefore('`') } }
 	// A2 keystone (interop-no-registry stage 2): the backend's clrName reads an injected MEMBER's .NET slot name off its
-	// resolved IR identity — its `CallableId` (declaring-class `ClassId` + member name) — instead of the deleted
-	// `ClrTypeRegistry.memberNames` name-keyed side-table. This is facadegen's own metadata keyed by that same structural
+	// resolved IR identity — its `CallableId` (declaring-class `ClassId` + member name). This is facadegen's own metadata keyed by that same structural
 	// CallableId; the value is the member's TRUE .NET slot name where it DIVERGES from the Kotlin name — the live case is a
 	// .NET operator method (`plus` -> `op_Addition`, `unaryMinus` -> `op_UnaryNegation`) and accessor-renamed members. The
 	// declaring-class ClassId is built exactly as `byClassId` builds a type's ClassId (`ns`/`kotlinName`), so it matches the
-	// injected FIR/IR member's `CallableId`. Keyed off ALL `module.types` (mirroring the old registerMember loop): a
+	// injected FIR/IR member's `CallableId`. Keyed off ALL `module.types`: a
 	// @Clr-bound stdlib type's member never actually reaches this lookup (kotlin.* comes from the JAR; the ref.meta is never
-	// fed as CLR_TYPES_METADATA to an app build), but including it keeps the projection byte-identical to the deleted map.
+	// fed as CLR_TYPES_METADATA to an app build), but including it is harmless.
 	val memberClrNameByCallableId: Map<CallableId, String> by lazy {
 		buildMap {
 			for (t in module?.types.orEmpty()) {
@@ -363,15 +357,10 @@ private object ClrMetadataHolder {
 			}
 		}
 	}
-	// (RETIRED 2026-07-05) The `eventOpByCallableId` side-table (a synthesized `add_<E>`/`remove_<E>` accessor's
-	// `(eventName, op)` fact) is GONE with the accessor-synthesis model: a .NET event is now surfaced as a `ClrEvent<T>`
-	// property, subscribed via the idiomatic `+=`/`-=` operators, which bir2cir's ClrEventOperatorBinding binds to the
-	// add/remove accessor from the plain operator call -- no name-keyed map, and no `add_`/`remove_` naming anywhere in kotc.
 	// A2 keystone (interop-no-registry stage 3): a restored DotKt top-level function's .NET file-facade class keyed by its
 	// resolved IR `CallableId` (`package`/name — exactly the CallableId the injector builds in `topLevelByCallable`, so it
-	// matches the resolved Fir2Ir callee). This REPLACES the deleted `ClrTopLevelRegistry.funs` name-FQN -> [(fileClass,
-	// recvDisc, suspend)] candidate list: because FIR already resolved every call to a UNIQUE callee, the list collapses to
-	// a single fileClass per CallableId — no receiver discriminator, no "last-registered wins". The `Clr`-file-class strip
+	// matches the resolved Fir2Ir callee). Because FIR already resolved every call to a UNIQUE callee, there is a single
+	// fileClass per CallableId (nothing left to disambiguate). The `Clr`-file-class strip
 	// (`<Common>ClrKt` -> `<Common>Kt`, an rt-vs-jar fact) is applied here (mirrors BirEmitter.fileClassName). Suspend is
 	// NOT carried: the backend derives it from the resolved callee (`isSuspend`), so it stays a resolved fact, not a name map.
 	// N5: a restored top-level fun's file-class candidate = (fileClass, the value-param arity RANGE it covers). A single
@@ -389,7 +378,7 @@ private object ClrMetadataHolder {
 		}
 	}
 	// A2 keystone (interop-no-registry stage 3): a restored DotKt top-level EXTENSION PROPERTY's .NET file-facade class
-	// (holding its `get_`/`set_<name>` statics) keyed by its resolved IR `CallableId`. Replaces `ClrTopLevelRegistry.props`.
+	// (holding its `get_`/`set_<name>` statics) keyed by its resolved IR `CallableId`.
 	val fileClassByTopLevelPropCallableId: Map<CallableId, String> by lazy {
 		buildMap {
 			for (tp in module?.topLevelProps.orEmpty())
@@ -424,7 +413,7 @@ private object ClrMetadataHolder {
  * Synthesizes the .NET types listed in the metadata file straight into FIR, so a user can
  * `import clrgen.Math; Math.Abs(-9)` / `Console.WriteLine(...)` with NO hand-written or generated
  * `@Clr` façade `.kt`. The metadata is produced by `facadegen --meta` reflecting over real .NET
- * assemblies — the same reflection that used to emit `.kt`, now feeding the compiler in-memory.
+ * assemblies, feeding the compiler in-memory.
  *
  * Synthesized FIR carries no annotations; the backend recovers each type's .NET name from its IR
  * `ClassId` (via [clrInjectedDotNetName]). Supported now: `object` (static) + `class` (constructors + instance
@@ -450,7 +439,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 
 	// `byref(x)`: an intrinsic marking a call arg as a .NET out/ref parameter. It returns `ClrRef<T>` (the surfaced type
 	// of any .NET byref param), so the signature is self-documenting. The backend reads the marker and passes the
-	// lvalue's address; `netType(ClrRef<T>)` is `byref:T`. byref/ClrRef live in the `kotlin.clr` namespace (the CLR-
+	// lvalue's address; a `ClrRef<T>` param maps to `byref:T`. byref/ClrRef live in the `kotlin.clr` namespace (the CLR-
 	// intrinsic home, alongside @kotlin.clr.ClrIntrinsic) so they're IMPORTABLE from a named package — unlike a root-
 	// package symbol, which Kotlin cannot import into a named package (that blocked the packaged stdlib from using them).
 	private val byrefName = "byref"
@@ -465,7 +454,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// from a named package — unlike a root-package symbol, which Kotlin cannot import into a named package.
 	private val stackBufferName = "stackBuffer"
 	private val stackBufferClassId = ClassId(clrPkg, Name.identifier("StackBuffer"))
-	// `Span<T>`: a `kotlin.clr` intrinsic that maps to the real `System.Span<T>` (netType/birType -> clrg:System.Span)
+	// `Span<T>`: a `kotlin.clr` intrinsic that maps to the real `System.Span<T>` (birType -> clrg:System.Span)
 	// — the surfaced form of a .NET Span parameter and the result of `StackBuffer.asSpan()`.
 	private val spanClassId = ClassId(clrPkg, Name.identifier("Span"))
 	// `ClrEvent<T>`: a compile-time-only fiction for the idiomatic `.NET event` subscription (`w.Changed += handler`).
@@ -715,7 +704,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				return listOf(fn.symbol)
 			}
 			// DotKt round-trip: top-level functions restored from a [KotlinFile] facade. infix/operator are member-only,
-			// so a top-level fun carries at most `suspend`; the backend (ClrTopLevelRegistry) emits the static call.
+			// so a top-level fun carries at most `suspend`; the backend emits the static call.
 			topLevelByCallable[callableId]?.let { tls ->
 				return tls.flatMap { tl ->
 					val m = tl.fn
@@ -817,10 +806,6 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		}
 		val type = byClassId[owner.classId] ?: return emptyList()
 		val callName = callableId.callableName.asString()
-
-		// (RETIRED 2026-07-05) The synthesized `add_<E>`/`remove_<E>` event-accessor methods are GONE: a .NET event is now
-		// surfaced as a `ClrEvent<T>` property (generateProperties) and subscribed via the idiomatic `w.<E> += handler` /
-		// `-= handler` operators (ClrEvent.plusAssign/minusAssign above). The `add_`/`remove_` naming no longer exists.
 
 		// Indexer `this[i]` -> `operator fun get(index): V` / `operator fun set(index, value): Unit`.
 		val ix = type.indexer
