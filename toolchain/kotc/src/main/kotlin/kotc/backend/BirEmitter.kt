@@ -2795,11 +2795,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** A parameter shape matching ilemit's `Shape()` (for resolving a generic .NET overload by name+arity+shapes). */
 	// Receiver discriminator matching ClrTypeInjection's (simple type name; kotlin.Array -> "array"). The registry keys
 	// a top-level fun's file class by this, so reversed/toList on Iterable resolves to _CollectionsKt (not _UArraysKt).
-	private fun discrimOfType(t: IrType): String? {
-		val fq = t.classFqName?.asString() ?: return null
-		return if (fq == "kotlin.Array") "array" else fq.substringAfterLast(".")
-	}
-
 	internal fun clrMethodShape(t: IrType): String {
 		if (t.classifierOrNull is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) return "gp"   // bare type param
 		if (isArrayType(t)) return "array"
@@ -3637,7 +3632,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// An INJECTED top-level EXTENSION property (`val T.p` from a DotKt assembly) -> its get_/set_<name>(__self)
 			// statics on the file class, with the extension receiver passed as `__self`. (body==null = injected stub.)
 			(callee.correspondingPropertySymbol?.owner)?.let { p ->
-				if (declaringClass == null) kotc.ClrTopLevelRegistry.lookupProp(p.fqNameWhenAvailable?.asString())?.let { fileClass ->
+				// A2 stage 3: read the restored top-level extension property's .NET file-facade class off its RESOLVED IR
+				// `CallableId` (`package` + name), NOT a name-FQN `ClrTopLevelRegistry.lookupProp` string lookup.
+				if (declaringClass == null) (p.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+					?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(CallableId(it.packageFqName, p.name)) }?.let { fileClass ->
 					val recv = extensionReceiver(call)
 					if (callee === p.setter) {
 						val args = listOfNotNull(recv) + regularArgs(call)
@@ -3996,10 +3994,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// from a same-named local top-level fun. (A suspend top-level fun awaits via the coroutine path, not here.)
 		if (callee.body == null && dispatchReceiver(call) == null) {
 			val extRecv = extensionReceiver(call)
-			// Discriminate by the callee's DECLARED extension-receiver type (Iterable<T>), NOT the call expression's type
-			// (List<Int>) -- the registry keys on the declared receiver (the meta __self).
-			val recvDisc = (callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver })?.type?.let { discrimOfType(it) }
-			kotc.ClrTopLevelRegistry.lookup(callee.fqNameWhenAvailable?.asString(), recvDisc)?.let { (fileClass, _) ->
+			// A2 stage 3: read the restored top-level function's .NET file-facade class off its RESOLVED IR `CallableId`
+			// (`package` + name). FIR/Fir2Ir already resolved this call to a UNIQUE callee, so there is nothing to
+			// disambiguate — the deleted receiver discriminator (which the old name-keyed `ClrTopLevelRegistry` needed
+			// because `reversed`/`toList` collided across file classes under one FQN) is GONE. `suspend` is read straight
+			// off the resolved callee by `suspendCallTag(callee)` below (it was never consumed from the registry).
+			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+				?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name)) }?.let { fileClass ->
 				// A cross-module `inline fun` taking a lambda (body==null here = injected stub) -> splice its carried
 				// [KotlinInline] body at this call site (the only way a non-local `return` through the lambda works).
 				// Splice ONLY a non-extension inline-with-lambda (the receiver-less scope/util fns); an EXTENSION inline

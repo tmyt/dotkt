@@ -7,7 +7,6 @@
 package kotc.frontend
 
 import kotc.ClrEventRegistry
-import kotc.ClrTopLevelRegistry
 import java.io.File
 import org.jetbrains.kotlin.GeneratedDeclarationKey
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
@@ -136,6 +135,26 @@ internal fun clrInjectedDotNetName(classId: ClassId): String? = ClrMetadataHolde
 internal fun clrInjectedMemberName(callableId: CallableId): String? = ClrMetadataHolder.memberClrNameByCallableId[callableId]
 
 /**
+ * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL function's .NET file-facade
+ * class (`LibKt`) off its resolved IR `CallableId` (`package` + name) through this accessor — facadegen's metadata keyed
+ * by that same structural identity. Replaces the deleted name-keyed `ClrTopLevelRegistry` + its RECEIVER-DISCRIMINATOR
+ * kludge: FIR/Fir2Ir already resolved the call to a UNIQUE callee, so there is nothing left to disambiguate — the resolved
+ * callee's CallableId keys the fact directly (no candidate list, no "last-registered wins" receiver match). Null for a
+ * non-restored (local / stdlib-from-jar) top-level fun. Suspend-ness is NOT carried here: the backend reads it off the
+ * resolved callee (`isSuspend`) via `suspendCallTag`, so re-carrying it would re-introduce the resolved-fact-by-name
+ * anti-pattern this stage removes.
+ */
+internal fun clrInjectedTopLevelFileClass(callableId: CallableId): String? = ClrMetadataHolder.fileClassByTopLevelCallableId[callableId]
+
+/**
+ * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL EXTENSION PROPERTY's .NET
+ * file-facade class (its `get_`/`set_<name>` statics live there) off its resolved IR `CallableId` (`package` + name) —
+ * facadegen's metadata keyed structurally. Replaces the deleted `ClrTopLevelRegistry.lookupProp` name-FQN string lookup.
+ * Null for a non-restored top-level property.
+ */
+internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? = ClrMetadataHolder.fileClassByTopLevelPropCallableId[callableId]
+
+/**
  * Loads the .NET type metadata to inject, once per process. The path comes from `CLR_TYPES_METADATA`
  * (set by the build / MSBuild / verify harness). Absent or empty => inject nothing, so compilations
  * that don't opt in are completely unaffected. The backend reads each injected type's .NET name off its
@@ -258,22 +277,11 @@ private object ClrMetadataHolder {
 		}
 		flush()
 		val module = ClrModule(types, topLevel, topLevelProps)
-		// Record each restored top-level function so the backend emits its call as a .NET static on the file class.
-		for (tl in topLevel) {
-			val fqn = if (tl.pkg.isRoot) tl.fn.name else "${tl.pkg.asString()}.${tl.fn.name}"
-			// Receiver discriminator (simple type name; arrays -> "array") so the backend picks the file class whose
-			// extension receiver matches the call's receiver (reversed lives in _CollectionsKt/_ArraysKt/_StringsKt...).
-			val recvDisc = if (tl.fn.ext && tl.fn.params.isNotEmpty()) {
-				val s = tl.fn.params[0].type.removePrefix("generic:")
-				if (s.startsWith("array:") || s.startsWith("vararg:")) "array" else s.substringBefore("[").substringAfterLast(".")
-			} else null
-			ClrTopLevelRegistry.register(fqn, tl.fileClassDotNet, recvDisc, tl.fn.suspend)
-		}
-		// Record each restored top-level extension property so the backend emits its get_/set_ as a .NET static call.
-		for (tp in topLevelProps) {
-			val fqn = if (tp.pkg.isRoot) tp.name else "${tp.pkg.asString()}.${tp.name}"
-			ClrTopLevelRegistry.registerProp(fqn, tp.fileClassDotNet)
-		}
+		// A2 stage 3: restored top-level functions/extension-properties are NO LONGER registered by name here. Their .NET
+		// file-facade class is read off the resolved IR `CallableId` (`ClrMetadataHolder.fileClassByTopLevelCallableId` /
+		// `fileClassByTopLevelPropCallableId`) — the injector already resolves each call to a UNIQUE callee, so the old
+		// receiver-discriminator disambiguation (and its "last-registered wins" fallback) is gone. Only the EVENT side-
+		// channel (`ClrEventRegistry`) remains name-keyed (interop-no-registry stage 4).
 		for (t in types) {
 			// The .NET-namespace fqn (e.g. System.Text.StringBuilder) = the injected FIR ClassId. Namespace-less types
 			// fall back to bare name. A generic definition's Kotlin fqn uses its ARITY-QUALIFIED Kotlin name (facadegen:
@@ -340,6 +348,35 @@ private object ClrMetadataHolder {
 				for (m in t.methods) m.clrName?.let { put(CallableId(classId, Name.identifier(m.name)), it) }
 			}
 		}
+	}
+	// A2 keystone (interop-no-registry stage 3): a restored DotKt top-level function's .NET file-facade class keyed by its
+	// resolved IR `CallableId` (`package`/name — exactly the CallableId the injector builds in `topLevelByCallable`, so it
+	// matches the resolved Fir2Ir callee). This REPLACES the deleted `ClrTopLevelRegistry.funs` name-FQN -> [(fileClass,
+	// recvDisc, suspend)] candidate list: because FIR already resolved every call to a UNIQUE callee, the list collapses to
+	// a single fileClass per CallableId — no receiver discriminator, no "last-registered wins". The `Clr`-file-class strip
+	// (`<Common>ClrKt` -> `<Common>Kt`, an rt-vs-jar fact) is applied here (mirrors BirEmitter.fileClassName). Suspend is
+	// NOT carried: the backend derives it from the resolved callee (`isSuspend`), so it stays a resolved fact, not a name map.
+	val fileClassByTopLevelCallableId: Map<CallableId, String> by lazy {
+		buildMap {
+			for (tl in module?.topLevel.orEmpty())
+				put(CallableId(tl.pkg, Name.identifier(tl.fn.name)), stripClrFileClass(tl.fileClassDotNet))
+		}
+	}
+	// A2 keystone (interop-no-registry stage 3): a restored DotKt top-level EXTENSION PROPERTY's .NET file-facade class
+	// (holding its `get_`/`set_<name>` statics) keyed by its resolved IR `CallableId`. Replaces `ClrTopLevelRegistry.props`.
+	val fileClassByTopLevelPropCallableId: Map<CallableId, String> by lazy {
+		buildMap {
+			for (tp in module?.topLevelProps.orEmpty())
+				put(CallableId(tp.pkg, Name.identifier(tp.name)), stripClrFileClass(tp.fileClassDotNet))
+		}
+	}
+	// Platform-actual files `<Common>Clr.kt` emit their actuals into the COMMON file class `<Common>Kt` -- ilemit/the rt
+	// strip the `Clr` suffix (BirEmitter.fileClassName). The metadata's fileClass comes from the K2 frontend jar, which
+	// does NOT strip, so a non-inline top-level call would reference `<Common>ClrKt` -- never emitted by the rt, giving
+	// `cannot resolve .NET type ...ClrKt`. Strip here to match the rt. Mirrors fileClassName's `stem.endsWith("Clr")`.
+	private fun stripClrFileClass(fc: String): String {
+		val dot = fc.lastIndexOf('.'); val simple = if (dot >= 0) fc.substring(dot + 1) else fc
+		return if (simple.endsWith("ClrKt")) (if (dot >= 0) fc.substring(0, dot + 1) else "") + simple.removeSuffix("ClrKt") + "Kt" else fc
 	}
 	// Generic and non-generic types share a simple name across NAMESPACES (`IEnumerable<T>` in .Generic vs the legacy
 	// `IEnumerable`) — resolve by (name, arity) so `generic:IEnumerable[Item]` picks the generic one and a bare

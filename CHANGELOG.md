@@ -5,6 +5,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc — interop-no-registry, stage 3 (A2 keystone): the restored-top-level-function file-class lookup no longer
+  rides a name-keyed candidate list + receiver-discriminator kludge.** `BirEmitter` resolved a DotKt round-trip
+  top-level call (`greet` → `LibKt.greet`) by re-keying it *by name* through `ClrTopLevelRegistry` — a
+  `HashMap<String, List<(fileClass, recvDisc, suspend)>>` the FIR injector populated by the fun's Kotlin FQN. Because a
+  plain FQN (`reversed`) collides across .NET file classes (`_CollectionsKt`/`_ArraysKt`/`_StringsKt`), it then
+  re-disambiguated with a **receiver discriminator** whose own comment admitted "last-registered wins". That threw away
+  FIR's resolution: by emit time Fir2Ir has already resolved every call to a **unique callee**. `BirEmitter` now reads
+  the file class straight off the resolved callee's `CallableId` (`package` + name) via the new
+  `kotc.frontend.clrInjectedTopLevelFileClass` / `clrInjectedTopLevelPropFileClass` — pure projections of facadegen's
+  metadata keyed by that same structural identity — so the candidate list collapses to one value and the **receiver
+  discriminator (`discrimOfType`, the `recvDisc` computation) is DELETED**. `suspend`-ness is no longer carried in the
+  table: it was already read off the resolved callee (`isSuspend`) by `suspendCallTag`. The `…ClrKt` → `…Kt` file-class
+  normalization (a real rt-vs-jar fact) moves into the projection. `ClrTopLevelRegistry` (and its `register` /
+  `registerProp` / `lookup` / `lookupProp`) is DELETED. Pure refactor: BIR is byte-identical for every round-trip
+  section (`verify-roundtrip` all sections diff-empty; the top-level extension operator `plus` — formerly
+  `recvDisc=Vec` — and the extension property `get_manhattan` both resolve 1:1 via `CallableId` with no receiver match).
+  Only the event side-channel (`ClrEventRegistry`) remains — stage 4 of `docs/design-interop-no-registry.md`.
+
 - **kotc — interop-no-registry, stage 2 (A2 keystone): the injected-.NET-MEMBER slot-name lookup no longer rides a
   process-global name-keyed side-table.** `BirEmitter.clrName` recovered a facadegen-injected .NET member's .NET slot
   name (the live case: a .NET operator method, `plus` → `op_Addition`, `unaryMinus` → `op_UnaryNegation`) from
