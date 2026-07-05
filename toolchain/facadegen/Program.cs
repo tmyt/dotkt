@@ -1,6 +1,6 @@
 // facadegen — reads .NET type metadata via reflection and emits FIR-injection metadata, so a kotlin/clr program can
 // call those .NET types FAÇADE-FREE (`import System.X` resolves directly; the compiler's FIR injector consumes the
-// metadata). The legacy mode that wrote hand-written `package clr` Kotlin façade files is GONE.
+// metadata).
 //
 //   facadegen --meta <outFile> [--refs a.dll;b.dll;...] <Type.Full.Name>... [--import-list <file>] [--scan-asm <dll>]
 using System.Reflection;
@@ -45,7 +45,6 @@ static class FacadeGen
             var imported = listAt < 0 || listAt + 1 >= rest.Count ? Enumerable.Empty<string>() : ReadImportList(rest[listAt + 1]);
             return EmitMeta(args[1], explicitTypes.Concat(imported).Concat(scanned).Distinct());
         }
-        // The legacy facade-FILE emission (a `package clr` Kotlin file per type, with a binding annotation) is GONE:
         // .NET interop is façade-free via `--meta` (the FIR injector consumes the metadata directly). There is no other mode.
         Console.Error.WriteLine("facadegen: only `--meta` mode is supported (façade-free .NET injection); see usage above.");
         return 1;
