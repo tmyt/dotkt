@@ -22,6 +22,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `isInitialized()` (false→true), single-evaluation memoization, and a local `by lazy` delegate. Gate (clean
   rebuild): verify-il XFAIL-zero (201/0, VERIFY 159/0, no NEW-FAIL), verify-differential ALL MATCH, verify-ktproj 9/9.
 
+- **stdlib — fidelity: the default `lazy { }` is thread-safe again on CLR (a `System.Threading.Monitor` lock),
+  restoring Kotlin/JVM + `System.Lazy` default semantics that the layer-purity migration had dropped.** After `Lazy`
+  moved off the `System.Lazy` kotc hardcode, the stdlib `lazy()` returned `UnsafeLazyImpl` for ALL modes ("thread
+  safety mode ignored, as on Kotlin/JS") — layer-pure but no longer thread-safe by default. Ported a pure-Kotlin
+  `SynchronizedLazyImpl<T>` (`libraries/stdlib/clr/kotlin/util/LazyClr.kt`) that memoizes under a Monitor lock via the
+  stdlib `@ClrIntrinsic` `monitorEnter`/`monitorExit` (`System.Threading.Monitor.Enter/Exit`) in a
+  `try { … } finally { monitorExit }`. **Always-lock, deliberately no lock-free DCL fast path:** the classic
+  double-checked-locking read is memory-safe only through a `volatile` field read, and `@kotlin.concurrent.Volatile`
+  is a no-op annotation on CLR (no binding to a volatile access), so a DCL fast path would carry a subtle publication
+  bug on weak-memory targets a single-threaded gate can never surface — correctness over speed. Mode wiring: default
+  `lazy` / `SYNCHRONIZED` / `PUBLICATION` / `lazy(lock, …)` → `SynchronizedLazyImpl`; only `NONE` → `UnsafeLazyImpl`.
+  The lock is entirely stdlib-side (`@ClrIntrinsic` Monitor) — NO kotc/compiler hardcode. The two monitor helpers moved
+  from `clr/builtins/Atomics.kt` to the non-builtin `clr/kotlin/concurrent/atomics/AtomicsClr.kt` so the frontend-jar
+  build (stock K2JVMCompiler) can codegen the `SynchronizedLazyImpl` body: a builtin no-bytecode function can't be
+  called from a normally-codegen'd body (the JVM backend aborts with "unhandled intrinsic"). `cases/il-lazy` extended
+  to exercise the `SYNCHRONIZED` / `PUBLICATION` / `NONE` / explicit-lock overloads (each still memoizes exactly once).
+  Note: the IL gate is single-threaded — it verifies functional memoization, not the locking; the thread-safety
+  correctness argument stands on the code (always-lock + finally). See `docs/dotkt-semantics.md` §4b.
+
 - **kotc — interop-no-registry, stage 4 (A2 keystone): the .NET-EVENT accessor lookup no longer rides a name-keyed
   side-table — this was the LAST of the four interop registries, so ALL FOUR are now gone.** A call to a
   facadegen-injected `add_<E>`/`remove_<E>` accessor (`c.add_CollectionChanged { .. }`) was rewritten to
