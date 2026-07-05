@@ -295,9 +295,12 @@ Deep dive: `docs/design-kotlin-metadata-attributes.md`.
 ## 7. Default arguments — a two-tier rule (native metadata, else a carried BIR expression)
 
 Kotlin's default arguments are semantically **callee-side** (the default expression is evaluated inside the function, in
-its scope) — Kotlin/JVM implements this with a synthetic `f$default(…, mask)` method. kotc emits only the arguments the
-caller **actually wrote** (correct); an OMITTED argument is filled by one of two mechanisms, chosen per-parameter by a
-single test — **can the parameter's own CLR type carry its default as a `[DefaultParameterValue]` constant?**
+its scope) — Kotlin/JVM implements this with a synthetic `f$default(…, mask)` method. DotKt has **no `$default` synthetic**;
+it fills an omitted argument **positionally at the call site**, by one of two mechanisms chosen per-parameter by a single
+test — **can the parameter's own CLR type carry its default as a `[DefaultParameterValue]` constant?** Filling is
+POSITIONAL: an omitted middle default keeps every later provided argument in its own parameter slot, so
+default-omission works **everywhere** — trailing, named-middle, reordered, and mixed with a trailing lambda
+(`list.joinToString("-") { … }`, `str.substringAfter("=")`, `p.copy(field = x)`), not only cross-module.
 
 - **Tier 1 — YES (native).** A primitive/char/bool const on its primitive param, a `String` const on a `String` param,
   or a `null` const on any reference/nullable param → the parameter is emitted `[Optional]` + `[DefaultParameterValue(const)]`.
@@ -306,16 +309,26 @@ single test — **can the parameter's own CLR type carry its default as a `[Defa
 - **Tier 2 — NO (a carried BIR expression).** The prime cases are a `String` const on a `CharSequence`/interface-typed
   param (a string constant cannot sit in a `[DefaultParameterValue]` on an interface type) and **any non-constant
   default**. Such a parameter is emitted **REQUIRED** (no `[Optional]`) and its default EXPRESSION is carried as embedded
-  BIR on a `@kotlin.clr.KotlinDefault(index, birJson)` attribute (ref.dll-only, mirroring `[KotlinInline]`). A **kcc**
-  consumer reads it from the ref.dll and **splices the expression** as the omitted argument in the callee's scope
-  (`bir2cir.DefaultArgSplice`, run before the CharSequence bridge + type-lowering, so a String default is coerced/lowered
-  exactly like an explicit arg — and a default that references earlier params evaluates in the callee scope, unlike the
-  old call-site inlining). A **C#** consumer sees a required parameter and passes it explicitly (accepted: a Tier-2
-  default is not natively omittable from C#). A function with ≥1 Tier-2 parameter carries `@KotlinDefault` on ALL its
-  defaulted parameters, so an omitted trailing run that interleaves Tier-1 and Tier-2 params splices contiguously from
-  one source. Example — `Iterable.joinToString`: `limit: Int = -1` is Tier 1; `separator`/`prefix`/`postfix`/`truncated`
-  (`CharSequence = "…"`) and `transform (…)? = null` are Tier 2, so `list.joinToString("-")` fills the omitted CharSequence
-  defaults by splice (kcc) or requires them (C#).
+  BIR on a `@kotlin.clr.KotlinDefault(index, birJson)` attribute (ref.dll-only, mirroring `[KotlinInline]`). For a
+  CROSS-MODULE call, kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted arg of such a callee (so a
+  later provided arg keeps its slot), and a **kcc** consumer's `bir2cir.DefaultArgSplice` replaces each placeholder in
+  place — by array index, matching the `@KotlinDefault` stamp index — with the carried default expression, run before the
+  CharSequence bridge + type-lowering so a String default is coerced/lowered exactly like an explicit arg. A default that
+  reads the RECEIVER (`missingDelimiterValue = this`) carries `{"k":"this"}`, which the splice rewrites to the call's
+  receiver. For a SAME-MODULE call kotc has the real default IR and inlines it directly (a receiver-referencing default —
+  a data-class `copy`'s `y = this.y` — is inlined with `this` rewritten to the call's receiver at the JSON level). A **C#**
+  consumer sees a required parameter and passes it explicitly (accepted: a Tier-2 default is not natively omittable from
+  C#). A function with ≥1 Tier-2 parameter carries `@KotlinDefault` on ALL its defaulted parameters, so a run of omitted
+  params that interleaves Tier-1 and Tier-2 fills contiguously from one source. Example — `Iterable.joinToString`:
+  `limit: Int = -1` is Tier 1; `separator`/`prefix`/`postfix`/`truncated` (`CharSequence = "…"`) and `transform (…)? = null`
+  are Tier 2, so `list.joinToString("-") { … }` fills the omitted CharSequence defaults by positional splice (kcc) —
+  keeping the trailing `transform` lambda in its own slot — or requires them (C#).
+
+**Known edge (single-eval):** the call-site receiver-rewrite duplicates the receiver EXPRESSION into the spliced default,
+so a receiver with side effects that is read by a `= this` default is evaluated more than once (a data-class `copy` or
+`substringAfter` on a plain variable/literal — the common case — is unaffected). The remaining unhandled case is a
+SAME-MODULE default that references another VALUE parameter (`b: Int = a * 10`): it still needs the callee's own scope and
+is rejected at the omitting call (a real `$default` synthetic would lift it — a documented follow-up).
 
 ## 8. Reverse / cross-assembly interop
 
@@ -493,9 +506,9 @@ type's subtypes are themselves injected into the consumer's session via their `s
 | **Declaration-site variance** (`class Box<out T>`, `interface Cmp<in T>`) | **NOW RESTORED for interfaces (gap ①, §10.1)** | `facadegen` now reads `GenericParameterAttributes` and emits `tvariance`, which `ClrTypeInjection` restores as `out`/`in`. **Class**-type-param variance still has no CLR form (stays invariant); **use-site** variance / **star projection** `Foo<*>`: no analog, lost. |
 | **`fun interface` (SAM)** | a plain interface | **The `fun interface` NATURE now round-trips (gap ③):** `ilemit` stamps `[KotlinFunInterface]`, `facadegen` emits a `funinterface` meta line, and `ClrTypeInjection` restores `status.isFun`. So a consumer sees it as a functional interface and can implement it (incl. via an anonymous `object : Handler { … }`). **What still degrades:** a bare **lambda** (SAM conversion) does NOT convert — blocked by the pinned Kotlin **2.2.0** FIR `FirSamResolver.computeSamCandidateNames`, which scans `FirRegularClass.declarations` **directly** for the single abstract method's name; a `FirDeclarationGenerationExtension`-injected interface serves its members lazily via scopes (empty `declarations`), so no SAM candidate is found. Same class of pinned-compiler limitation as `object`/companion (§10.4 #2) — not fixable from our side without materialising the SAM method into `declarations` (against the plugin contract) or a compiler bump. |
 | **`enum class`** | entry values | A *basic* enum → a real CLR `enum` → `facadegen` restores it as an **`object` of `val`s** (value access like `Color.GREEN` works); a *rich* enum (ctor args / methods / per-entry bodies, `isRichEnum`) → a singleton-field **class** → restored as a plain **`class`**. Either way it is **not** a Kotlin `enum class`: exhaustive `when`, `.entries`/`values()`/`valueOf`, `.ordinal`/`.name` identity degrade. **Not fixable via the injection path (gap ④):** a `FirDeclarationGenerationExtension` (2.2.0) cannot synthesize real `FirEnumEntry` declarations — the exhaustiveness checker (`FirWhenExhaustivenessTransformer`) enumerates `enumClass.declarations.filterIsInstance<FirEnumEntry>()`, and the plugin API exposes no `createEnumEntry`/entry hook (only `createTopLevelClass`/`createMemberProperty`/…). Generating `ClassKind.ENUM_CLASS` with enum-shaped `val`s would mislead FIR without giving exhaustiveness, so no `[KotlinEnum]` carrier is emitted. |
-| **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried (consumer sees an ordinary class); a `copy(...)` with **non-constant/self-referential defaults** (`x = this.x`) fails the call-site default rule (§7). |
+| **`data class`** | generated members (10.1) | The **`data` modifier itself** is not carried (consumer sees an ordinary class). A `copy(field = x)` with the generated **self-referential defaults** (`y = this.y`) **now works** — same-module and cross-module — via the positional receiver-rewrite fill (§7). |
 | **Annotations** | RUNTIME/BINARY-retained with CLR-legal args; `KClass`→`System.Type` | `ilemit` **skips** annotations whose ctor-arg shape the CLR encoder rejects (`BuildCab`/`TryCab` → diagnostic, e.g. a generic-instantiation parameter). **SOURCE**-retention annotations are gone. **Use-site targets** (`@get:`/`@field:`/`@param:`) are only as faithful as which CLR target they landed on — the Kotlin intent is ambiguous. Repeatable-annotation semantics differ. |
-| **Default arguments** | constants (§7) | non-constant defaults (reference callee params/receiver) are rejected at the omitting call, not restored. |
+| **Default arguments** | constants + receiver-referencing non-constant defaults (§7) | A non-constant default that references the RECEIVER (`= this`) round-trips (positional splice / receiver-rewrite). Only a default that reads another VALUE parameter (`b = a * 10`) is still rejected at the omitting call (needs a `$default` synthetic). |
 | **`internal` visibility** | hidden cross-assembly (correct for module≈assembly) | `kotc` lowers `internal`→ CLR `assembly`; `facadegen.Vis` skips assembly-visible members, so they don't inject — aligned with Kotlin's module boundary, but the **`internal` modifier is not itself restorable**, there is **no friend-module / `InternalsVisibleTo`** wiring, and no JVM-style name mangling. |
 
 ### 10.3 Lost (no carrier — not reconstructable from the current metadata)
@@ -537,15 +550,18 @@ type's subtypes are themselves injected into the consumer's session via their `s
 5. **`sealed` hierarchies** — **FIXED (gap ⑤, 2026-07-02).** `[KotlinSealed]` → `sealed` meta → `Modality.SEALED`
    restores the modality, cross-module inheritance enforcement, AND exhaustive `when` (the injected subtypes supply the
    closed inheritor set). See §10.1.
-6. **Non-constant default args / `data class copy` self-defaults** — rejected at the call (§7). **KNOWN / ACCEPTED
-   LIMITATION (2026-07-01): NOT a follow-up fix for now.** A default that references callee params/receiver has no
-   constant carrier; the omitting call is rejected rather than mis-restored (MEMORY `cross-module-default-args-not-preserved`).
+6. **Non-constant default args / `data class copy` self-defaults** — **MOSTLY FIXED (kcc review C3, 2026-07-06).** The
+   omitted middle default no longer shifts a later provided arg's slot: kotc fills positionally (a `{"k":"defaultArg"}`
+   placeholder for a @KotlinDefault-carrying cross-module callee, spliced by `bir2cir.DefaultArgSplice`; a same-module
+   default inlined directly). A RECEIVER-referencing default (`missingDelimiterValue = this`, a `copy`'s `y = this.y`)
+   round-trips via the `this`→call-receiver rewrite. **Residual:** a default that reads another VALUE parameter
+   (`b = a * 10`) still needs the callee scope and is rejected at the omitting call (a real `$default` synthetic would
+   lift it); and the receiver-rewrite is single-eval only for a trivial receiver (§7).
 
-Status: **#1 (variance/bounds), #5 (sealed) are FIXED; #3 (fun interface) is PARTIAL** (nature restored, SAM-lambda
-pinned-compiler-blocked). **#2 (object/companion), #4 (enum class), #6 (non-constant defaults) remain KNOWN / ACCEPTED
+Status: **#1 (variance/bounds), #5 (sealed), #6 (default args) are FIXED; #3 (fun interface) is PARTIAL** (nature
+restored, SAM-lambda pinned-compiler-blocked). **#2 (object/companion), #4 (enum class) remain KNOWN / ACCEPTED
 limitations** — each blocked by the pinned Kotlin 2.2.0 `FirDeclarationGenerationExtension` surface (no companion-
-implicit resolution, no `FirEnumEntry` synthesis) or the absence of a constant carrier, not by a missing `[Kotlin*]`
-attribute we could add.
+implicit resolution, no `FirEnumEntry` synthesis), not by a missing `[Kotlin*]` attribute we could add.
 
 ---
 

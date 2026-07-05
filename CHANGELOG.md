@@ -57,6 +57,24 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **Default arguments now fill positionally — an omitted middle default no longer shifts a later
+  argument's slot (C3).** The kcc-review C3 family is fixed in kotc + bir2cir:
+  - `list.joinToString("-") { "x$it" }` prints `x1-x2-x3` (was `System.Func…1-2-3`: the transform lambda
+    had leaked into the `prefix` slot because the four omitted middle defaults were dropped, sliding the
+    lambda up the argument list).
+  - `str.substringAfter("=")` / `substringBefore` (default `missingDelimiterValue = this`) return the
+    right value (was `InvalidProgramException`).
+  - `dataInstance.copy(field = x)` compiles and runs, same-module and cross-module (the generated
+    `copy`'s self-referential `y = this.y` default was previously refused with "omitting a non-constant
+    default argument").
+  - kotc `filledArgs` emits a positional `{"k":"defaultArg"}` placeholder for each omitted arg of a
+    `@KotlinDefault`-carrying cross-module callee, and inlines a same-module receiver-referencing default
+    with `this` rewritten to the call's receiver; bir2cir's `DefaultArgSplice` replaces each placeholder
+    in place (by array index, matching the `@KotlinDefault` stamp) and rewrites a `{"k":"this"}` default
+    to the call's receiver. See `docs/dotkt-semantics.md §7`/§10 (default omission now works everywhere —
+    trailing, named-middle, reordered, and mixed with a trailing lambda). A same-module default that
+    reads another VALUE parameter (`b = a * 10`) still needs a `$default` synthetic (documented follow-up).
+
 - **Boxed-primitive dual-representation through generics no longer crashes or loses data (C2).** A family
   of value-type-via-generic-`T`/`V` miscompiles is fixed in bir2cir + ilemit:
   - `MutableMap<K, primitive>.getOrPut(k){…}` no longer silently returns `0` and skips the insert. The
