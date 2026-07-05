@@ -5,6 +5,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: two review-N8 diagnostics/fixes.** (a) `@Volatile` now also matches the deprecated `kotlin.jvm.Volatile`
+  alias (was `kotlin.concurrent.Volatile` only), so a common/stdlib `@kotlin.jvm.Volatile var` gets the volatile
+  field flag. (b) A `ClrEvent<T>` read OUTSIDE a `+=`/`-=` subscription (`val e = w.Changed`) — which used to emit a
+  `clrPropGet` no bir2cir rule strips, failing distantly with no diagnostic — is now a kotc COMPILE-TIME error at the
+  source (a .NET event is not a first-class value).
 - **ilemit: removed the last Kotlin-collection-name knowledge leak (ReverseBridge `KotlinEnumerableIfaces`).** The
   reverse `GetEnumerator` bridge previously carried a hardcoded set of Kotlin FQNs
   (`kotlin.collections.{Set,MutableSet,MutableCollection,MutableList,MutableIterable}`) to recognize collection

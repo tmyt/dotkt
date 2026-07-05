@@ -134,6 +134,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"unsupportedExpr","of":${str("$what — $detail")}}"""
 	}
 
+	// A `kotlin.clr.ClrEvent<T>` value is a compile-time-only fiction (the surfaced form of a .NET event); it may
+	// appear ONLY as the receiver of a `+=`/`-=` subscription, never be materialized as a real value. This flag is
+	// set true ONLY while emitting the event member-access that is the receiver of a ClrEvent `plusAssign`/`minusAssign`;
+	// a ClrEvent-typed property read seen with it FALSE is a misuse (`val e = w.Changed`) and is a compile error.
+	private var clrEventReceiverOk = false
+	private inline fun <R> asClrEventReceiver(body: () -> R): R {
+		val prev = clrEventReceiverOk; clrEventReceiverOk = true
+		try { return body() } finally { clrEventReceiverOk = prev }
+	}
+
 	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
 	internal val valSubst = HashMap<String, String>()
 	// While splicing an inline fun / inlined-lambda body: the SPLICED target's own `return`s must NOT emit as raw
@@ -948,8 +958,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  ilemit lowers it to a CLR volatile field (`modreq(IsVolatile)` + `volatile.` prefix — the C# `volatile` shape).
 	 *  Matched by the field's OR the property's annotations (the FIELD-targeted annotation can land on either IR node). */
 	internal fun isVolatile(p: IrProperty): Boolean {
+		// `kotlin.jvm.Volatile` is a deprecated typealias for `kotlin.concurrent.Volatile`; a `@kotlin.jvm.Volatile var`
+		// carries the same field-level volatile fact, so match either fully-qualified name.
 		fun hasVol(anns: List<IrConstructorCall>) =
-			anns.any { it.type.classFqName?.asString() == "kotlin.concurrent.Volatile" }
+			anns.any { it.type.classFqName?.asString().let { fq -> fq == "kotlin.concurrent.Volatile" || fq == "kotlin.jvm.Volatile" } }
 		return hasVol(p.annotations) || (p.backingField?.let { hasVol(it.annotations) } ?: false)
 	}
 
@@ -3078,7 +3090,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if ((callee.name.asString() == "plusAssign" || callee.name.asString() == "minusAssign")
 			&& (callee.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.clr.ClrEvent") {
 			val recv = dispatchReceiver(call)!!
-			return """{"k":"callInstance","ownerType":"kotlin.clr.ClrEvent","virtual":false,"recv":${expr(recv)},"method":${str(callee.name.asString())},"args":[${expr(regularArgs(call).first())}]}"""
+			// The receiver here is the ONLY legitimate ClrEvent-value position (the event member-access `w.Changed`);
+			// emit it with the OK flag so its clrPropGet is allowed. Every other ClrEvent read stays a compile error.
+			val recvJson = asClrEventReceiver { expr(recv) }
+			return """{"k":"callInstance","ownerType":"kotlin.clr.ClrEvent","virtual":false,"recv":$recvJson,"method":${str(callee.name.asString())},"args":[${expr(regularArgs(call).first())}]}"""
 		}
 		// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 		((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }
@@ -3582,6 +3597,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			val prop = callee.correspondingPropertySymbol?.owner
 			if (prop != null) {
+				// A `kotlin.clr.ClrEvent<T>` property read is legal ONLY as the receiver of a `+=`/`-=` subscription
+				// (`w.Changed += h`), where clrEventReceiverOk is set. A bare read (`val e = w.Changed`) would emit a
+				// `clrPropGet get_<Event>` that no bir2cir rule strips -> a distant, diagnostic-free downstream failure.
+				// A .NET event is not a first-class value, so reject it here at the source with a kotc compile error.
+				if (!clrEventReceiverOk && callee === prop.getter
+					&& callee.returnType.classFqName?.asString() == "kotlin.clr.ClrEvent") {
+					hadError = true
+					messageCollector?.report(CompilerMessageSeverity.ERROR,
+						"a .NET event ('${prop.name.asString()}') is not a first-class value: it may only appear as the " +
+							"left-hand side of a '+=' / '-=' subscription (e.g. `x.${prop.name.asString()} += handler`), not be read/assigned",
+						locationOf(call))
+					return """{"k":"unsupportedExpr","of":"clr-event-read-outside-subscription: ${prop.name.asString()}"}"""
+				}
 				val pn = clrInteropName(prop) ?: prop.name.asString()
 				val recvJson = if (isStatic) "null" else expr(recv!!)
 				// A restored MEMBER extension property (`class C { val T.p }`): no .NET property exists — it's a
