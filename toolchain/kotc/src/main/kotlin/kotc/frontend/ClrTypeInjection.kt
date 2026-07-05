@@ -154,22 +154,14 @@ internal fun clrInjectedTopLevelFileClass(callableId: CallableId): String? = Clr
 internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? = ClrMetadataHolder.fileClassByTopLevelPropCallableId[callableId]
 
 /**
- * A2 keystone (interop-no-registry, stage 4 — the LAST registry): the backend reads a synthesized .NET EVENT accessor's
- * `(eventName, "+=" | "-=")` fact off its resolved IR `CallableId` (declaring-class `ClassId` + the `add_<E>`/`remove_<E>`
- * method name) through this accessor — facadegen's metadata keyed by that same structural identity. Replaces the deleted
- * name-keyed `ClrEventRegistry`. Non-null only for one of the injected `add_<E>`/`remove_<E>` methods; null for any other
- * (user Kotlin / non-event) member.
- */
-internal fun clrInjectedEventOp(callableId: CallableId): Pair<String, String>? = ClrMetadataHolder.eventOpByCallableId[callableId]
-
-/**
  * Loads the .NET type metadata to inject, once per process. The path comes from `CLR_TYPES_METADATA`
  * (set by the build / MSBuild / verify harness). Absent or empty => inject nothing, so compilations
  * that don't opt in are completely unaffected. The backend reads each injected type's .NET name off its
  * IR `ClassId` via [clrInjectedDotNetName] and each injected member's .NET slot name off its IR `CallableId`
- * via [clrInjectedMemberName], and an injected .NET event accessor's `(name, op)` off its IR `CallableId` via
- * [clrInjectedEventOp] — all keyed structurally off the resolved IR identity. A2 interop-no-registry is COMPLETE:
- * all four name-keyed side-channel registries are eliminated.
+ * via [clrInjectedMemberName] — keyed structurally off the resolved IR identity. A .NET EVENT no longer needs any
+ * side-channel at all: it is surfaced as a `ClrEvent<T>` property and subscribed via `+=`/`-=`, which bir2cir binds
+ * to the add/remove accessor (the `add_`/`remove_` accessor synthesis + its event-op map are RETIRED, 2026-07-05).
+ * A2 interop-no-registry is COMPLETE: all four name-keyed side-channel registries are eliminated.
  */
 private object ClrMetadataHolder {
 	val module: ClrModule? by lazy { System.getenv("CLR_TYPES_METADATA")?.let { load(File(it)) } }
@@ -286,12 +278,12 @@ private object ClrMetadataHolder {
 		}
 		flush()
 		val module = ClrModule(types, topLevel, topLevelProps)
-		// A2 stages 3-4: NOTHING is registered by name here anymore. Every injected CLR fact the backend needs — a restored
-		// top-level function/extension-property's .NET file-facade class, and a .NET event's (name, `+=`/`-=`) op — is read
-		// off the resolved IR `CallableId` (`fileClassByTopLevelCallableId` / `fileClassByTopLevelPropCallableId` /
-		// `eventOpByCallableId`). The injector already resolves each call to a UNIQUE callee, so the old name-keyed
-		// side-tables (and the top-level receiver-discriminator disambiguation) are gone. This was the LAST of the four
-		// interop registries (`ClrTypeRegistry` / `ClrTopLevelRegistry` / `ClrEventRegistry`) — all now eliminated.
+		// A2 stage 3 / event redesign: NOTHING is registered by name here anymore. A restored top-level function/extension-
+		// property's .NET file-facade class is read off the resolved IR `CallableId` (`fileClassByTopLevelCallableId` /
+		// `fileClassByTopLevelPropCallableId`); a .NET event carries NO side-channel at all — it is surfaced as a `ClrEvent<T>`
+		// property that bir2cir binds via the `+=`/`-=` operators. The old name-keyed side-tables (and the top-level
+		// receiver-discriminator disambiguation) are gone. This eliminated the last of the four interop registries
+		// (`ClrTypeRegistry` / `ClrTopLevelRegistry` / `ClrEventRegistry`).
 		return module
 	}
 
@@ -342,24 +334,10 @@ private object ClrMetadataHolder {
 			}
 		}
 	}
-	// A2 keystone (interop-no-registry stage 4 — the LAST registry): a synthesized .NET EVENT accessor's `(eventName, op)`
-	// fact keyed by its resolved IR `CallableId` (declaring-class `ClassId` + the `add_<E>`/`remove_<E>` method name),
-	// replacing the deleted name-keyed `ClrEventRegistry` (`"<ownerFqn>#add_<E>" -> (E, "+=")`). The FIR injector
-	// synthesizes an `add_<E>`/`remove_<E>` member per event (see `generateFunctions`); the backend rewrites a call to one
-	// into `recv.<E> += handler` / `-= handler`, so it needs (event name, op). The declaring-class ClassId is built exactly
-	// as `byClassId`/`memberClrNameByCallableId` build a type's ClassId (`ns`/`kotlinName`), so it matches the injected
-	// FIR/IR accessor's `CallableId` — no name-keyed side-table, no `add_`/`remove_` string re-derivation in kotc's backend.
-	val eventOpByCallableId: Map<CallableId, Pair<String, String>> by lazy {
-		buildMap {
-			for (t in module?.types.orEmpty()) {
-				val classId = ClassId(FqName(namespaceOf(t.dotNetName)), Name.identifier(t.kotlinName))
-				for (e in t.events) {
-					put(CallableId(classId, Name.identifier("add_${e.name}")), e.name to "+=")
-					put(CallableId(classId, Name.identifier("remove_${e.name}")), e.name to "-=")
-				}
-			}
-		}
-	}
+	// (RETIRED 2026-07-05) The `eventOpByCallableId` side-table (a synthesized `add_<E>`/`remove_<E>` accessor's
+	// `(eventName, op)` fact) is GONE with the accessor-synthesis model: a .NET event is now surfaced as a `ClrEvent<T>`
+	// property, subscribed via the idiomatic `+=`/`-=` operators, which bir2cir's ClrEventOperatorBinding binds to the
+	// add/remove accessor from the plain operator call -- no name-keyed map, and no `add_`/`remove_` naming anywhere in kotc.
 	// A2 keystone (interop-no-registry stage 3): a restored DotKt top-level function's .NET file-facade class keyed by its
 	// resolved IR `CallableId` (`package`/name — exactly the CallableId the injector builds in `topLevelByCallable`, so it
 	// matches the resolved Fir2Ir callee). This REPLACES the deleted `ClrTopLevelRegistry.funs` name-FQN -> [(fileClass,
@@ -453,6 +431,15 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	// `Span<T>`: a `kotlin.clr` intrinsic that maps to the real `System.Span<T>` (netType/birType -> clrg:System.Span)
 	// — the surfaced form of a .NET Span parameter and the result of `StackBuffer.asSpan()`.
 	private val spanClassId = ClassId(clrPkg, Name.identifier("Span"))
+	// `ClrEvent<T>`: a compile-time-only fiction for the idiomatic `.NET event` subscription (`w.Changed += handler`).
+	// A .NET event is NOT a first-class value (you can only add/remove/raise it), so `w.Changed` NEVER materializes a
+	// ClrEvent<T> at runtime -- it is a handle whose only purpose is to make the Kotlin `+=`/`-=` operators resolve. The
+	// event member is surfaced as a read-only property `Changed: ClrEvent<HandlerFn>` (T = the handler's Kotlin function
+	// type); ClrEvent<T> carries `operator fun plusAssign(handler: T)` / `minusAssign(handler: T)` (no body -- never
+	// executed). bir2cir's ClrEventOperatorBinding rewrites `w.Changed.plusAssign(h)` -> the .NET add-accessor node
+	// (clrEventAdd) before emit, so this type is a pure frontend-resolution fiction -- NOT a shipped stdlib type. Lives
+	// in `kotlin.clr` (the CLR-intrinsic home, alongside `ClrRef`/`Span`), and never reaches ilemit.
+	private val clrEventClassId = ClassId(clrPkg, Name.identifier("ClrEvent"))
 	// The intrinsics are CLR-context features -> available whenever .NET interop is active (metadata loaded).
 	private val clrActive = module != null
 
@@ -475,11 +462,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		else hashSetOf(CallableId(clrPkg, Name.identifier(byrefName)), CallableId(clrPkg, Name.identifier(stackBufferName))) + topLevelByCallable.keys + topLevelPropByCallable.keys
 
 	override fun getTopLevelClassIds(): Set<ClassId> =
-		if (!clrActive) hashSetOf(clrRefClassId) else byClassId.keys + clrRefClassId + stackBufferClassId + spanClassId
+		if (!clrActive) hashSetOf(clrRefClassId) else byClassId.keys + clrRefClassId + stackBufferClassId + spanClassId + clrEventClassId
 
 	override fun generateTopLevelClassLikeDeclaration(classId: ClassId): FirClassLikeSymbol<*>? {
-		// The intrinsic `ClrRef<T>` carries getValue/setValue (so a ref return is `by`-delegatable).
-		if (classId == clrRefClassId || classId == stackBufferClassId || classId == spanClassId) return createTopLevelClass(classId, ClrGeneratedKey, ClassKind.CLASS) {
+		// The intrinsic `ClrRef<T>` carries getValue/setValue (so a ref return is `by`-delegatable). `ClrEvent<T>`
+		// (the .NET-event handle) carries plusAssign/minusAssign; both are generic single-param `kotlin.clr` fictions.
+		if (classId == clrRefClassId || classId == stackBufferClassId || classId == spanClassId || classId == clrEventClassId) return createTopLevelClass(classId, ClrGeneratedKey, ClassKind.CLASS) {
 			typeParameter(Name.identifier("T"), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
 		}.symbol
 		val type = byClassId[classId] ?: return null
@@ -569,6 +557,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// `StackBuffer<T>`: size (val), get/set (operators), asSpan (-> Span<T> = the real System.Span<T>).
 		if (classSymbol.classId == stackBufferClassId)
 			return hashSetOf(Name.identifier("size"), Name.identifier("get"), Name.identifier("set"), Name.identifier("asSpan"))
+		// `ClrEvent<T>`: the `+=`/`-=` subscription operators (member operators — see Codex-verified resolution).
+		if (classSymbol.classId == clrEventClassId)
+			return hashSetOf(Name.identifier("plusAssign"), Name.identifier("minusAssign"))
 		// A companion object: its callables are the owner class's static methods/props.
 		companionOwnerType(classSymbol.classId)?.let { ct ->
 			val n = HashSet<Name>()
@@ -580,7 +571,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		val names = type.methods.mapTo(HashSet()) { Name.identifier(it.name) }
 		type.properties.forEach { names.add(Name.identifier(it.name)) }
 		type.memberExtProps.forEach { names.add(Name.identifier(it.name)) }
-		type.events.forEach { names.add(Name.identifier("add_${it.name}")); names.add(Name.identifier("remove_${it.name}")) }
+		// A .NET event is surfaced as a read-only member PROPERTY `Changed: ClrEvent<HandlerFn>` (the idiomatic
+		// `w.Changed += handler` subscription); the old `add_<E>`/`remove_<E>` accessor-method synthesis is retired.
+		type.events.forEach { names.add(Name.identifier(it.name)) }
 		type.indexer?.let { names.add(Name.identifier("get")); if (it.mutable) names.add(Name.identifier("set")) }
 		if (type.iteratorElem != null) names.add(Name.identifier("iterator"))
 		if (!type.isObject && !type.isInterface) names.add(SpecialNames.INIT)   // signals generateConstructors
@@ -612,6 +605,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				extensionReceiverType(coneOf(mp.receiver, owner))
 				if (mp.protected) visibility = Visibilities.Protected
 			}.symbol)
+		}
+		// A .NET event -> a read-only member property `Changed: ClrEvent<HandlerFn>` (the `+=`/`-=` subscription handle).
+		// No .NET property/field backs it: `w.Changed` is a compile-time handle whose read the backend emits as a plain
+		// clrPropGet(owner .NET type, event name) — consumed by bir2cir's ClrEventOperatorBinding, never materialized. The
+		// ClrEvent type arg is the handler's Kotlin FUNCTION type, so a lambda `{ s, e -> }` binds straight to `plusAssign(T)`.
+		type.events.firstOrNull { it.name == callableId.callableName.asString() }?.let { ev ->
+			val handler = coneFunctionType(ev.handlerParams.map { coneOf(it.type, owner) }, coneOf(ev.handlerReturn, owner))
+			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, clrEventOf(handler), true, false).symbol)
 		}
 		val prop = type.properties.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
 		// Property name == .NET name verbatim, so the backend emits `recv.<Name>` directly.
@@ -725,6 +726,17 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			}
 			return listOf(fn.symbol)
 		}
+		// `ClrEvent<T>` subscription operators: `operator fun plusAssign(handler: T): Unit` / `minusAssign(handler: T)`.
+		// No body (never executed) — bir2cir's ClrEventOperatorBinding rewrites `w.Changed.plusAssign(h)` to the .NET
+		// add/remove accessor node (clrEventAdd/clrEventRemove) before emit. `operator` is REQUIRED for `+=`/`-=` to resolve.
+		if (owner.classId == clrEventClassId) {
+			val tOf = owner.typeParameterSymbols.first().constructType(emptyArray(), false)
+			val fn = createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.unitType.coneType) {
+				status { isOperator = true }
+				valueParameter(Name.identifier("handler"), tOf)
+			}
+			return listOf(fn.symbol)
+		}
 		// A companion object holds the owner class's STATIC methods (App.Start(..)). The backend emits .NET static calls.
 		companionOwnerType(owner.classId)?.let { ct ->
 			val cn = callableId.callableName.asString()
@@ -748,17 +760,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		val type = byClassId[owner.classId] ?: return emptyList()
 		val callName = callableId.callableName.asString()
 
-		// Event subscribe/unsubscribe: `add_<E>`/`remove_<E>` take a handler lambda; the backend
-		// rewrites the call to `receiver.<E> += handler` / `-= handler`, reading the (name, op) off the
-		// synthesized accessor's resolved IR CallableId (`clrInjectedEventOp` / `eventOpByCallableId`).
-		val event = type.events.firstOrNull { "add_${it.name}" == callName || "remove_${it.name}" == callName }
-		if (event != null) {
-			val handler = coneFunctionType(event.handlerParams.map { coneOf(it.type, owner) }, coneOf(event.handlerReturn, owner))
-			val fn = createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, session.builtinTypes.unitType.coneType) {
-				valueParameter(Name.identifier("handler"), handler)
-			}
-			return listOf(fn.symbol)
-		}
+		// (RETIRED 2026-07-05) The synthesized `add_<E>`/`remove_<E>` event-accessor methods are GONE: a .NET event is now
+		// surfaced as a `ClrEvent<T>` property (generateProperties) and subscribed via the idiomatic `w.<E> += handler` /
+		// `-= handler` operators (ClrEvent.plusAssign/minusAssign above). The `add_`/`remove_` naming no longer exists.
 
 		// Indexer `this[i]` -> `operator fun get(index): V` / `operator fun set(index, value): Unit`.
 		val ix = type.indexer
@@ -958,6 +962,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	/** The intrinsic `Span<arg>` cone type (-> the real System.Span<arg>). */
 	private fun spanOf(arg: ConeKotlinType): ConeKotlinType =
 		session.symbolProvider.getClassLikeSymbolByClassId(spanClassId)?.constructType(arrayOf(arg), false)
+			?: session.builtinTypes.nullableAnyType.coneType
+
+	/** The intrinsic `ClrEvent<handler>` cone type (the surfaced form of a .NET event; `handler` = the handler's
+	 *  Kotlin function type, so a lambda binds to `plusAssign(handler: T)`). Never materialized — a compile-time handle. */
+	private fun clrEventOf(handler: ConeKotlinType): ConeKotlinType =
+		session.symbolProvider.getClassLikeSymbolByClassId(clrEventClassId)?.constructType(arrayOf(handler), false)
 			?: session.builtinTypes.nullableAnyType.coneType
 
 	/** Split a metadata type list (`generic:Box[V]` / `func:[ret,a,b]` children) on commas at bracket-depth 0, so a
