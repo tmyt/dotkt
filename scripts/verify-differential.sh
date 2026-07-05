@@ -86,7 +86,11 @@ for s in $PURE; do
 	  dotnet "$ILEMIT_DLL" "$cout" "$mainclass" --ref "$STDLIB_RT_DLL" "$ccir"/*.cir.json >/dev/null 2>&1 || true
 	  cp "$STDLIB_RT_DLL" "$cout/"
 	  clr="$(dotnet "$cout/$mainclass.dll" 2>/dev/null || true)"
-	  if [[ "$(norm <<<"$jvm")" == "$(norm <<<"$clr")" ]]; then echo "MATCH $s"; else
+	  # A MATCH requires BOTH the jvm oracle and the clr side to have produced REAL, non-empty output.
+	  # Every fallible command above carries `|| true`, so a sample that fails to compile/run yields an
+	  # EMPTY stdout; without this guard two empty outputs compare equal -> a FALSE "MATCH" that silently
+	  # passes a broken sample (the latent empty==empty hole). Empty on EITHER side is therefore a FAIL.
+	  if [[ -n "$jvm" && -n "$clr" && "$(norm <<<"$jvm")" == "$(norm <<<"$clr")" ]]; then echo "MATCH $s"; else
 		echo "DIFF  $s"; echo "--- jvm ---"; echo "$jvm"; echo "--- clr ---"; echo "$clr"; touch "/tmp/diff-fail-$s"; fi
 	} &
 done
