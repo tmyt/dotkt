@@ -397,8 +397,11 @@ public actual fun Float.roundToLong(): Long = round(this).toLong()
 
 @SinceKotlin("1.2")
 @InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.Abs")
-public actual fun abs(n: Int): Int = TODO("clr binding should be implemented")
+// Pure-Kotlin body (NOT @ClrIntrinsic System.Math.Abs): Kotlin's abs WRAPS at MIN_VALUE
+// (unchecked negation) — abs(Int.MIN_VALUE) == Int.MIN_VALUE — whereas System.Math.Abs's
+// checked overload throws OverflowException at MIN. The unary minus below emits a plain
+// `neg` IL op (unchecked), matching Kotlin semantics.
+public actual inline fun abs(n: Int): Int = if (n < 0) -n else n
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -418,8 +421,11 @@ public actual val Int.sign: Int get() = if (this < 0) -1 else if (this > 0) 1 el
 
 @SinceKotlin("1.2")
 @InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.Abs")
-public actual fun abs(n: Long): Long = TODO("clr binding should be implemented")
+// Pure-Kotlin body (NOT @ClrIntrinsic System.Math.Abs): Kotlin's abs WRAPS at MIN_VALUE
+// (unchecked negation) — abs(Long.MIN_VALUE) == Long.MIN_VALUE — whereas System.Math.Abs's
+// checked overload throws OverflowException at MIN. The unary minus below emits a plain
+// `neg` IL op (unchecked), matching Kotlin semantics.
+public actual inline fun abs(n: Long): Long = if (n < 0) -n else n
 
 @SinceKotlin("1.2")
 @InlineOnly

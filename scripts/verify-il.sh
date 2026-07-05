@@ -295,6 +295,7 @@ il_check colstr Cstr "$ROOT/cases/il-colstr" "$(printf 'm={a=1, b=2}\nl=[1, 2, 3
 # `"$x"`/`"" + x` route a nullable operand through the stdlib null-safe Any?.toString(); non-null + Map unchanged.
 il_check interpnull InterpNull "$ROOT/cases/il-interpnull" "$(printf '[null]\nn=null\nnull\ns=null end\na=5\nnn=7\nm={k=1}')"
 il_check math  MathT "$ROOT/cases/il-math"    "$(printf '9\n7\n3\n4')"
+il_check mathabs MathAbs "$ROOT/cases/il-mathabs" "$(printf -- '-2147483648\n-9223372036854775808\n5\n5\n0\n2147483647')"  # C9: kotlin.math.abs WRAPS at MIN_VALUE (unchecked neg), does NOT throw like System.Math.Abs
 il_check str   Str   "$ROOT/cases/il-str"     "$(printf 'HELLO\nhello\nhi\nello\nTrue\nTrue')"
 il_check strops StrOps "$ROOT/cases/il-strops" "$(printf 'hello\nhi\nhi\n  5\n005\n500\n>5  <\nheLLo\nbbbbbb\naXaX\nheLLo')"  # trim(vararg)/padStart/padEnd/replace -> pure-Kotlin stdlib bodies (no kotc STRING_OPS System.String lowering)
 il_check coerce Coerce "$ROOT/cases/il-coerce" "$(printf '7\n5\n5\n2\n1\n5\n7')"       # coerceAtMost/AtLeast/In -> pure-Kotlin stdlib bodies (no kotc System.Math lowering)

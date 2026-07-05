@@ -136,6 +136,11 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   intrinsic-string prefix sniff.
 - **`String.format`** binds to .NET `String.Format` — use .NET composite format (`"{0:F2}"`), NOT Java
   printf (`"%.2f"`) (BREAKING deviation, §5).
+- **`abs(Int)`/`abs(Long)` now WRAP at `MIN_VALUE`** (matching Kotlin's unchecked negation:
+  `abs(Int.MIN_VALUE) == Int.MIN_VALUE`) instead of throwing `OverflowException`. The `@ClrIntrinsic("System.Math.Abs")`
+  binding — whose checked overload throws at `MIN` — is dropped for the integer overloads in favor of the
+  pure-Kotlin body `if (n < 0) -n else n`; the `Float`/`Double` overloads keep their `System.Math.Abs`
+  binding. Verified against the JVM oracle (`cases/il-mathabs`, added to `verify-differential`).
 
 ### Compiler architecture (4-layer / layer purity)
 
