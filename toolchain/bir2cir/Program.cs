@@ -4607,6 +4607,7 @@ static class MemberCallSubstitution
                 ("putIfAbsent", 2, true) => "clrMapPutIfAbsent",
                 ("replace", 2, true) => "clrMapReplace",
                 ("replace", 3, true) => "clrMapReplaceKVV",
+                ("merge", 3, true) => "clrMapMerge",
                 _ => null,
             };
             if (helper != null)

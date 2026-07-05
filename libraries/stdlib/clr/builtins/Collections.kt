@@ -162,6 +162,19 @@ public actual interface MutableMap<K, V> : Map<K, V> {
     @SinceKotlin("1.1")
     public fun replace(key: K, oldValue: V, newValue: V): Boolean =
         if (containsKey(key) && get(key) == oldValue) { put(key, newValue); true } else false
+    // java.util.Map.merge leaks onto kotlin.collections.MutableMap as a member taking a `java.util.function.BiFunction`
+    // (C2). On the CLR that erased SAM materializes the Kotlin lambda as `Func<V,V,object>` then `castclass`es it to the
+    // `? super V`-erased `Func<object,object,object>` -> InvalidCastException. DECLARING merge here with a Kotlin
+    // function-type parameter makes the frontend bind to THIS overload (function-type beats SAM), so the lambda flows
+    // through with its precise `Func<V,V,object>` shape and no cast. DEFAULT body (DIM) so concrete CLR maps inherit it;
+    // a BCL-aliased receiver (mutableMapOf) routes to ClrMapDefaults.clrMapMerge via bir2cir Rule 5m.
+    @SinceKotlin("1.1")
+    public fun merge(key: K, value: V, remappingFunction: (V, V) -> V?): V? {
+        val oldValue = get(key)
+        val newValue = if (oldValue == null) value else remappingFunction(oldValue, value)
+        if (newValue == null) remove(key) else put(key, newValue)
+        return newValue
+    }
     // The MUTABLE views' slot types lower to the BCL (MutableSet -> ICollection<K>, MutableCollection ->
     // ICollection<V>), which IDictionary.Keys/.Values satisfy directly — bind them, unlike Map's pure-Set-typed reads.
     @kotlin.clr.ClrIntrinsic("Keys")

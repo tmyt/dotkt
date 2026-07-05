@@ -214,6 +214,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 - **`Map`/`MutableMap` → `IDictionary<K,V>`** (both — deliberately NOT a read-only/mutable split, §5c) with
   Kotlin-semantic members via `ClrMapDefaults`; core collection ops (`map`/`filter`/`fold`/`toList`/…) run
   on real Kotlin bodies over BCL collections.
+- **`MutableMap.merge(key, value) { old, new -> … }`** now works (C2). On Kotlin/JVM `merge` is the
+  `java.util.Map.merge` member (a `java.util.function.BiFunction` overload); on the CLR that erased SAM
+  materialized the Kotlin lambda as `Func<V,V,object>` and then `castclass`-ed it to the `? super V`-erased
+  `Func<object,object,object>` → `InvalidCastException`. `merge` is now declared on the `MutableMap` builtin
+  with a Kotlin function-type parameter (the frontend binds to THIS overload, so no cast), routed to
+  `ClrMapDefaults.clrMapMerge` for BCL-aliased receivers. Semantics mirror `java.util.Map.merge`
+  (absent → insert; present → remap; null result → remove).
+- **Nested collections/maps inside `Pair`/`Triple.toString()`** render Kotlin-style (C11):
+  `(listOf(1, 2) to listOf(3, 4)).toString()` is `([1, 2], [3, 4])`, not the raw
+  `(System.Collections.Generic.List\`1[System.Int32], …)`. A tuple component's erased generic static type
+  used to reach .NET's `Object.ToString()`; components now route through the runtime collection-aware
+  stringifier (`clrRenderTupleElement` → `clrElemToString`), matching `println(list)`.
 - **`@ClrProperty`** explicit accessor binding (READ/WRITE) replaces the fragile `get_`/`set_`
   intrinsic-string prefix sniff.
 - **`String.format`** binds to .NET `String.Format` — use .NET composite format (`"{0:F2}"`), NOT Java
