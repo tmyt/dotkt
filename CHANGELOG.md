@@ -233,6 +233,10 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   CLR knowledge: the stdlib's `@ClrIntrinsic("Length")` binding + bir2cir's `MemberCallSubstitution` already
   rewrite the plain `kotlin.String.length` member read (the sibling `String.get` → `get_Chars` was cleaned the
   same way). `"abc".length` stays `3`.
+- **kotc stamps a stable `suspendIntrinsic:true` marker on the lowered `suspendCoroutineUninterceptedOrReturn`
+  block (L1).** bir2cir's cold-suspension recognizer already prefers this flag over sniffing the intrinsic's
+  fake `throw` message string, so the fragile string-match path becomes dead weight (its removal is a bir2cir
+  follow-up). suspend samples unchanged.
 - **The primitive/`Comparable` `compareTo` lowering moved to bir2cir** — the last kotc CLR-knowledge leak
   of its class. kotc emits a plain `callInstance` (`kotlin.Int.compareTo` / `kotlin.Comparable.compareTo`);
   bir2cir derives a primitive `System.<Prim>.CompareTo` and a `constrained. System.IComparable<T>::CompareTo`

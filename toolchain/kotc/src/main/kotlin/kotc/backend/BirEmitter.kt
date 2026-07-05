@@ -2381,7 +2381,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		subKeys.forEach { tp -> if (hadOldTypeArg.contains(tp)) typeArgSubst[tp] = oldTypeArgs[tp]!! else typeArgSubst.remove(tp) }
 		if (boundExt) selfSubst.remove(extParam)
 		if (boundDispatch) selfSubst.remove(dispatchParam)
-		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result}"""
+		// The `suspendCoroutineUninterceptedOrReturn { c -> … }` intrinsic: after inlining, its fake body
+		// (`throw NotImplementedError("… is intrinsic")`) survives as this valueBlock's result, and the crossinline
+		// `block` is materialized as a closure captured into a dead __inlN. bir2cir recognizes such a block as a cold
+		// suspension point. Stamp a STABLE `suspendIntrinsic:true` marker so bir2cir need not sniff the fake body's
+		// thrown-message string (SuspendColdLowering.IsSuspendIntrinsicBlock prefers this flag; the string path is
+		// legacy fallback). kotc emits the flag, NOT any CLR knowledge — it's a Kotlin-language intrinsic identity.
+		val suspendIntrinsic = if (callee.fqNameWhenAvailable?.asString() ==
+			"kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn") ""","suspendIntrinsic":true""" else ""
+		return """{"k":"valueBlock","stmts":[${pre.joinToString(",")}],"result":$result$suspendIntrinsic}"""
 	}
 
 	internal fun <T> withTypeArgScope(scope: TypeArgScope?, block: () -> T): T {
