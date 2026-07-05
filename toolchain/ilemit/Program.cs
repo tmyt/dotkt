@@ -1885,6 +1885,44 @@ sealed partial class Emitter
         return cand;
     }
 
+    // Canonicalize the generic-parameter NAMES in a sig by their order of first appearance (`gp:E,gp:E` -> `gp:#0,gp:#0`;
+    // `gp:K,gp:V` -> `gp:#0,gp:#1`). A method DEF names its OWN type parameter (`addAll<E>` -> `...[gp:E]`), but a CALL
+    // from inside another generic names the same slot by the CALLER's parameter (`plus<T>` calling addAll -> `...[gp:T]`),
+    // so the verbatim SigKey strings differ and MethodsBySig misses even though the overload is the intended one. The sig
+    // SHAPE (which slot uses which type param, in which order) is identical across def and call — only the names differ —
+    // so first-appearance ordinals make them agree, distinguishing `addAll(List,coll)` from `addAll(List,int,coll)`.
+    static string NormalizeGpNames(string sig)
+    {
+        var map = new Dictionary<string, int>(StringComparer.Ordinal);
+        return System.Text.RegularExpressions.Regex.Replace(sig, @"gp:([A-Za-z_][A-Za-z0-9_]*)", m =>
+        {
+            var nm = m.Groups[1].Value;
+            if (!map.TryGetValue(nm, out var idx)) { idx = map.Count; map[nm] = idx; }
+            return "gp:#" + idx;
+        });
+    }
+
+    // The exact SigKey missed (a generic method whose sig mentions a `gp:` — def-side name != call-side name). Match by
+    // the NAME-CANONICALIZED sig instead (first-appearance ordinals), returning the UNIQUE overload of `name` whose
+    // normalized def-sig equals the normalized call-sig. Null on no/ambiguous match (keeps the existing fallbacks). Only
+    // consulted after the exact lookup, so it never overrides a precise match — it recovers the cross-generic-rename case.
+    MethodBuilder FindByNormalizedSig(TypeInfo ti, string name, string sig)
+    {
+        if (sig == null || !sig.Contains("gp:", StringComparison.Ordinal)) return null;
+        var want = NormalizeGpNames(sig);
+        var prefix = name + "(";
+        MethodBuilder cand = null;
+        foreach (var kv in ti.MethodsBySig)
+        {
+            if (!kv.Key.StartsWith(prefix, StringComparison.Ordinal) || !kv.Key.EndsWith(")", StringComparison.Ordinal)) continue;
+            var defSig = kv.Key.Substring(prefix.Length, kv.Key.Length - prefix.Length - 1);
+            if (NormalizeGpNames(defSig) != want) continue;
+            if (cand != null && !ReferenceEquals(cand, kv.Value)) return null;   // ambiguous
+            cand = kv.Value;
+        }
+        return cand;
+    }
+
     MethodInfo FindMethod(string typeName, string name, string sig = null)
     {
         var seenIfaces = new HashSet<string>();
@@ -1903,6 +1941,7 @@ sealed partial class Emitter
                 catch (NotSupportedException) { continue; }
                 if (!seenIfaces.Add(open) || !_types.TryGetValue(open, out var iti)) continue;
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
+                if (sig != null && FindByNormalizedSig(iti, name, sig) is { } insm) return insm;
                 if (sig != null && UniqueGenericOverload(iti, name) is { } igm) return igm;
                 if (iti.Methods.TryGetValue(name, out var m)) return m;
                 var inherited = FindInInterfaces(iti);
@@ -1948,6 +1987,7 @@ sealed partial class Emitter
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(BareTypeKey(ti.BaseName)) ? _types[BareTypeKey(ti.BaseName)] : null)
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
+            if (sig != null && FindByNormalizedSig(ti, name, sig) is { } nsm) return nsm;
             if (sig != null && UniqueGenericOverload(ti, name) is { } gm) return gm;
             if (ti.Methods.TryGetValue(name, out var m)) return m;
             var im = FindInInterfaces(ti);
@@ -2104,17 +2144,15 @@ sealed partial class Emitter
             if (ps.Length != toks.Count) continue;
             var ok = true;
             for (var i = 0; i < ps.Length; i++)
-            {
-                Type want; try { want = MapType(toks[i]); } catch { want = null; }
-                // An unresolvable token (an open `gp:T` from the DECLARED generic callee's sig, unbound in this caller's
-                // context) can't exact-match — compare STRUCTURALLY instead, so `copyOf(array:gp:T,int)` selects the
-                // generic `copyOf<T>(T[],int)` over its same-arity concrete siblings (`copyOf(sbyte[],int)`...), and
-                // `plus(array:gp:T,gp:T)` / `(array:gp:T,array:gp:T)` / `(array:gp:T,clrg:Collection[gp:T])` stay
-                // distinguishable. (The in-`_types` path gets this via MethodsBySig's verbatim sig keys; this is the
-                // referenced-assembly mirror. Additive-only: a resolvable token still requires the exact type.)
-                if (want == null) { if (!SigTokenMatchesOpen(toks[i], ps[i].ParameterType)) { ok = false; break; } }
-                else if (want != ps[i].ParameterType) { ok = false; break; }
-            }
+                // SigTokenMatches is the combined matcher: a fully-CONCRETE token (no `gp:`) requires an EXACT type
+                // (so a String-face overload isn't confused with a CharSequence-face one), while ANY token mentioning
+                // `gp:` is compared STRUCTURALLY — even when it happens to resolve here. That last point is essential:
+                // a call from INSIDE a generic method (`fun <T> mx(c) = c.maxOrNull()`) carries `sig=IEnumerable[gp:T]`
+                // where `gp:T` resolves to the CALLER's own T builder; an exact compare against the callee's OWN `T`
+                // never matches, dropping to the arity fallback which arbitrarily picks a specialized sibling
+                // (`maxOrNull(IEnumerable<Double>)`). The structural path selects the generic `maxOrNull<T>(IEnumerable<T>)`
+                // in both the generic-caller and the non-generic-caller case. (Mirrors the in-`_types` MethodsBySig keys.)
+                if (!SigTokenMatches(toks[i], ps[i].ParameterType)) { ok = false; break; }
             if (!ok) continue;
             if (match != null)
             {
@@ -2159,6 +2197,11 @@ sealed partial class Emitter
         if (sig != null)
             foreach (var ti in _types.Values)
                 if (ti.IsFileClass && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
+        // exact-sig miss on a generic method whose sig carries a `gp:` — the DEF names its own type param but the CALL
+        // names it by the caller's (a top-level static called from inside a generic): match by the name-canonicalized sig.
+        if (sig != null)
+            foreach (var ti in _types.Values)
+                if (ti.IsFileClass && FindByNormalizedSig(ti, name, sig) is { } nsm) return nsm;
         // exact-sig miss with a generic target -> the unique generic overload (its instantiated call sig won't match).
         if (sig != null)
             foreach (var ti in _types.Values)
@@ -2329,8 +2372,16 @@ sealed partial class Emitter
             case "+": _il.Emit(OpCodes.Add); return lt;
             case "-": _il.Emit(OpCodes.Sub); return lt;
             case "*": _il.Emit(OpCodes.Mul); return lt;
-            case "/": _il.Emit(isUns ? OpCodes.Div_Un : OpCodes.Div); return lt;
-            case "%": _il.Emit(isUns ? OpCodes.Rem_Un : OpCodes.Rem); return lt;
+            // Signed integer `/` and `%` by -1 overflow the raw CIL `div`/`rem` opcode at MinValue (the CLR throws
+            // OverflowException on `MinValue / -1`), but Kotlin's integer division WRAPS: `MIN / -1 == MIN`, `x % -1 == 0`.
+            // Guard the divisor==-1 case with identities that also cover MinValue: `x / -1 == -x` (CIL `neg` wraps
+            // MinValue, no overflow) and `x % -1 == 0` for every x. Unsigned/float never overflow here — raw opcode.
+            case "/":
+                if (!isUns && (lt == typeof(int) || lt == typeof(long))) { EmitDivRemGuarded(isRem: false, lt); return lt; }
+                _il.Emit(isUns ? OpCodes.Div_Un : OpCodes.Div); return lt;
+            case "%":
+                if (!isUns && (lt == typeof(int) || lt == typeof(long))) { EmitDivRemGuarded(isRem: true, lt); return lt; }
+                _il.Emit(isUns ? OpCodes.Rem_Un : OpCodes.Rem); return lt;
             case "&": _il.Emit(OpCodes.And); return lt;
             case "|": _il.Emit(OpCodes.Or); return lt;
             case "^": _il.Emit(OpCodes.Xor); return lt;
@@ -2345,6 +2396,30 @@ sealed partial class Emitter
             case ">=": _il.Emit(isFloat ? OpCodes.Clt_Un : OpCodes.Clt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
             default: throw new NotSupportedException("bin " + op);
         }
+    }
+
+    // Emit signed integer `/`/`%` with the divisor==-1 guard (stack on entry: [dividend, divisor]; leaves [result]).
+    // Kotlin's integer division wraps at MinValue; the raw CIL `div`/`rem` throws OverflowException on `MinValue / -1`.
+    // Since `x / -1 == -x` (CIL `neg` wraps MinValue) and `x % -1 == 0` for all x, we branch on divisor==-1 and use the
+    // wrapping identity, dodging the overflow entirely without a MinValue comparison. `t` is int or long.
+    void EmitDivRemGuarded(bool isRem, Type t)
+    {
+        var divisor = _il.DeclareLocal(t);
+        _il.Emit(OpCodes.Stloc, divisor);       // stack: [dividend]
+        var normal = _il.DefineLabel();
+        var done = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldloc, divisor);
+        _il.Emit(OpCodes.Ldc_I4_M1);
+        if (t == typeof(long)) _il.Emit(OpCodes.Conv_I8);
+        _il.Emit(OpCodes.Bne_Un, normal);       // divisor != -1 -> normal path (stack: [dividend])
+        // divisor == -1: result is -dividend (div) or 0 (rem)
+        if (isRem) { _il.Emit(OpCodes.Pop); _il.Emit(OpCodes.Ldc_I4_0); if (t == typeof(long)) _il.Emit(OpCodes.Conv_I8); }
+        else _il.Emit(OpCodes.Neg);
+        _il.Emit(OpCodes.Br, done);
+        _il.MarkLabel(normal);                  // stack: [dividend]
+        _il.Emit(OpCodes.Ldloc, divisor);
+        _il.Emit(isRem ? OpCodes.Rem : OpCodes.Div);
+        _il.MarkLabel(done);
     }
 
     Type EmitUn(JsonElement e)
@@ -3673,12 +3748,18 @@ sealed partial class Emitter
         return tb;
     }
 
-    // Index of the ':' separating RET from ARGS in a `func:` body. Skips a leading type prefix (clrg:/clr:/...)
-    // so its colon isn't mistaken for the separator, and respects [] nesting (clrg:Task[int]).
+    // Index of the ':' separating RET from ARGS in a `func:` BODY (the leading "func:" already stripped by the caller).
+    // When the RET is itself a NESTED func — `(Int)->(()->Int)` encodes as body `func:kotlin.Int::kotlin.Int` — the
+    // inner func's OWN ret/args colon sits at depth 0 and the old "skip one prefix, grab first ':'" split mis-parsed it
+    // (ret=`func:kotlin.Int`, args=`:kotlin.Int`, leaving `:kotlin.Int` unresolvable). Recursively skip the whole inner
+    // func in that case. Every OTHER ret shape (leaf / clrg:/array:/nullable: with its own bracket-protected or single
+    // leading colon) keeps the prior single-prefix scan — scoped narrowly so only the genuine nested-func-ret changes.
     static int FuncRetEnd(string s)
     {
+        if (s.StartsWith("func:", StringComparison.Ordinal) || s.StartsWith("sfunc:", StringComparison.Ordinal))
+            return SkipTypeToken(s, 0);
         int start = 0;
-        foreach (var pre in new[] { "clrg:", "clr:", "array:", "nullable:", "func:", "gp:" })
+        foreach (var pre in new[] { "clrg:", "clr:", "array:", "nullable:", "gp:", "byref:" })
             if (s.StartsWith(pre)) { start = pre.Length; break; }
         int depth = 0;
         for (int i = start; i < s.Length; i++)
@@ -3688,6 +3769,39 @@ sealed partial class Emitter
             else if (s[i] == ':' && depth == 0) return i;
         }
         return s.Length;
+    }
+
+    // Advance past exactly ONE type token at `i`; return the index just after it (a top-level ':' / ',' / ']' / end).
+    // A `func:` token recurses through its ret + its comma-list args (args present iff the next char begins a type);
+    // a modifier prefix (array:/nullable:/byref:) recurses into its element; a clrg:/clr:/gp:/leaf token scans to the
+    // next top-level delimiter with [] nesting protecting inner ':'/','. Pure structural parse — no type resolution.
+    static int SkipTypeToken(string s, int i)
+    {
+        static bool At(string s, int i, string pre) => i + pre.Length <= s.Length && s.AsSpan(i, pre.Length).SequenceEqual(pre);
+        foreach (var pre in new[] { "array:", "nullable:", "byref:" })
+            if (At(s, i, pre)) return SkipTypeToken(s, i + pre.Length);
+        if (At(s, i, "func:"))
+        {
+            i = SkipTypeToken(s, i + 5);                                    // ret
+            if (i < s.Length && s[i] == ':') i++;                          // ret/args separator
+            if (i < s.Length && s[i] != ':' && s[i] != ',' && s[i] != ']') // non-empty args -> comma-list
+            {
+                i = SkipTypeToken(s, i);
+                while (i < s.Length && s[i] == ',') i = SkipTypeToken(s, i + 1);
+            }
+            return i;
+        }
+        foreach (var pre in new[] { "clrg:", "clr:", "gp:" })
+            if (At(s, i, pre)) { i += pre.Length; break; }
+        int depth = 0;
+        for (; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '[') depth++;
+            else if (c == ']') { if (depth == 0) break; depth--; }
+            else if (depth == 0 && (c == ':' || c == ',')) break;
+        }
+        return i;
     }
 
     // BIR `clrg:<openName>[<arg1>,<arg2>,...]` -> a constructed generic .NET type. Args split at bracket-depth 0

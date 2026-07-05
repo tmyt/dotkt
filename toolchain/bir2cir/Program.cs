@@ -2026,9 +2026,15 @@ static class BirTypeLowering
         return t;
     }
 
-    // First top-level ':' after the leading type prefix; bracket depth aware. Mirrors the matcher's FuncRetEnd.
+    // Index of the ':' separating RET from ARGS in a `func:` BODY (leading "func:" already stripped). When the RET is a
+    // NESTED func — `(Int)->(()->Int)` = body `func:kotlin.Int::kotlin.Int` — its own depth-0 ret/args colon must NOT
+    // be taken as the outer separator (the old first-colon split produced the malformed `func:func:int:::kotlin.Int`,
+    // leaving `:kotlin.Int` un-lowered). Recursively skip the whole inner func in that case; every OTHER ret shape keeps
+    // the prior single-prefix scan (scoped narrowly so only the genuine nested-func-ret changes vs. the prior lowering).
     static int FuncRetEnd(string value)
     {
+        if (value.StartsWith("func:", StringComparison.Ordinal) || value.StartsWith("sfunc:", StringComparison.Ordinal))
+            return SkipTypeToken(value, 0);
         var start = PrefixLength(value);
         var depth = 0;
         for (var i = start; i < value.Length; i++)
@@ -2038,6 +2044,39 @@ static class BirTypeLowering
             else if (value[i] == ':' && depth == 0) return i;
         }
         return value.Length;
+    }
+
+    // Advance past exactly ONE type token at `i`; return the index just after it (a top-level ':' / ',' / ']' / end).
+    // A func:/sfunc: token recurses through its ret + comma-list args; a modifier prefix recurses into its element;
+    // a leaf/clrg:/clr:/gp: token scans to the next top-level delimiter with [] nesting protecting inner ':'/','.
+    static int SkipTypeToken(string value, int i)
+    {
+        static bool At(string s, int i, string pre) => i + pre.Length <= s.Length && s.AsSpan(i, pre.Length).SequenceEqual(pre);
+        foreach (var pre in new[] { "array:", "nullable:", "byref:" })
+            if (At(value, i, pre)) return SkipTypeToken(value, i + pre.Length);
+        foreach (var fp in new[] { "func:", "sfunc:" })
+            if (At(value, i, fp))
+            {
+                i = SkipTypeToken(value, i + fp.Length);                              // ret
+                if (i < value.Length && value[i] == ':') i++;                         // ret/args separator
+                if (i < value.Length && value[i] != ':' && value[i] != ',' && value[i] != ']')
+                {
+                    i = SkipTypeToken(value, i);
+                    while (i < value.Length && value[i] == ',') i = SkipTypeToken(value, i + 1);
+                }
+                return i;
+            }
+        foreach (var pre in new[] { "clrg:", "clr:", "gp:" })
+            if (At(value, i, pre)) { i += pre.Length; break; }
+        var depth = 0;
+        for (; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (c == '[') depth++;
+            else if (c == ']') { if (depth == 0) break; depth--; }
+            else if (depth == 0 && (c == ':' || c == ',')) break;
+        }
+        return i;
     }
 
     static int PrefixLength(string value)

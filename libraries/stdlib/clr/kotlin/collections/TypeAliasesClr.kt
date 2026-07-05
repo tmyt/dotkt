@@ -57,9 +57,14 @@ public actual class ArrayList<E> : MutableList<E>, RandomAccess {
     actual override fun add(element: E): Boolean = TODO("clr binding should be implemented")
     @kotlin.clr.ClrIntrinsic("Remove")
     actual override fun remove(element: E): Boolean = TODO("clr binding should be implemented")
+    // NOTE: `add` binds to the BCL `List<T>.Add`, which returns VOID (Kotlin's `MutableList.add` returns Boolean — always
+    // `true` for a list). So `add(element)` may only be used as a STATEMENT here (its result is absent on the CLR stack);
+    // consuming its return (`if (add(e)) …`) emits a `brfalse` over an empty stack -> InvalidProgram. Every element is
+    // always appended, so `modified` is simply whether the loop ran at all. (MutableSet.addAll below CAN consume the
+    // boolean — HashSet<T>.Add returns bool.)
     actual override fun addAll(elements: Collection<E>): Boolean {
         var modified = false
-        for (element in elements) { if (add(element)) modified = true }
+        for (element in elements) { add(element); modified = true }
         return modified
     }
     actual override fun addAll(index: Int, elements: Collection<E>): Boolean {
