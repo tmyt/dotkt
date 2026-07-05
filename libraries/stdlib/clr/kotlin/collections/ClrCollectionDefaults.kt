@@ -53,7 +53,7 @@ public fun <T> clrCollToString(c: Collection<T>): String {
     for (x in c) {
         if (!first) sb.append(", ")
         first = false
-        sb.append(x.toString())
+        sb.append(clrElemToString(x))   // recurse: a nested collection/map renders Kotlin-style, not .NET's raw name (N7)
     }
     sb.append("]")
     return sb.toString()
