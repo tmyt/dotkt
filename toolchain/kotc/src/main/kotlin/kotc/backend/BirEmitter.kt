@@ -1128,6 +1128,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun nullableGpFieldFlag(t: IrType): String =
 		if (t.isMarkedNullable() && birType(t).startsWith("gp:")) ""","nullable":true""" else ""
 
+	/** A property whose type is `kotlin.clr.ClrEvent<T>` — the compile-time-only fiction surfacing a .NET event.
+	 *  A .NET event is subscribed via `+=`/`-=` and is NEVER a first-class value or a real inherited property, so
+	 *  such a property must never be emitted as a member. This matters for a FAKE-OVERRIDE: when a Kotlin class
+	 *  subclasses a .NET type whose interface carries an event (`class MyApp : Avalonia.Application`, whose bases
+	 *  implement an event-bearing interface), fir2ir synthesizes a fake-override getter returning `ClrEvent<T>`;
+	 *  declaring it would emit an accessor/property over the un-emittable `kotlin.clr.ClrEvent` type — skip it. */
+	internal fun isClrEventProperty(p: IrProperty): Boolean =
+		p.getter?.returnType?.classFqName?.asString() == "kotlin.clr.ClrEvent"
+
 	internal fun typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false, liftedAnon: Boolean = false): String {
 		val baseType = klass.superTypes
 			.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
@@ -1185,7 +1194,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					p.setter?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
 			}.orEmpty()
 		// Property accessors that override a .NET base virtual property -> emitted as get_/set_ override methods.
+		// A `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited via a base's interface) is NOT a real
+		// property — skip it (see isClrEventProperty), else we emit an accessor over the un-emittable ClrEvent type.
 		val clrAccessors = klass.declarations.filterIsInstance<IrProperty>()
+			.filterNot { isClrEventProperty(it) }
 			.flatMap { p -> listOfNotNull(clrAccessorMethod(p, p.getter), clrAccessorMethod(p, p.setter)) }
 		// User custom accessors (`get() = …`/`set(v){…}`) -> get_/set_ methods (the access site routes through them).
 		// A property optimizes to a plain field; but one implementing a KOTLIN INTERFACE property must emit a get_/set_
@@ -1199,8 +1211,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// re-declare the unimplemented interface slot.
 		fun classInherited(a: IrSimpleFunction?) = (a?.resolveFakeOverride()?.parent as? IrClass)?.kind == ClassKind.CLASS
 		fun dropFake(p: IrProperty) = p.isFakeOverride && classInherited(p.getter)
-		fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p)
-		fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p)
+		// `!isClrEventProperty`: a `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited through a base's
+		// interface) is not a real property and must not surface an accessor/property member.
+		fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p)
+		fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p)
 		val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 			listOfNotNull(
 				p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },

@@ -5,6 +5,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: interface .NET events surface as `+=`/`-=` on an interface-typed receiver (review N6, interface half).**
+  facadegen now emits a public INSTANCE event of a .NET INTERFACE (`INotifyPropertyChanged.PropertyChanged`) as a
+  `ClrEvent<T>` member, and kotc surfaces it (non-abstract, even on an interface — an abstract event member would
+  impose an unsatisfiable obligation on a Kotlin class subclassing a .NET class that implements the interface). The
+  prior deferral cause — a `class MyApp : Avalonia.Application` gaining a fake-override getter returning the
+  un-emittable `kotlin.clr.ClrEvent<T>` — is fixed at the source: kotc's new `isClrEventProperty` ELIDES a
+  ClrEvent-typed fake-override from every member-emit site (a .NET event is never a real inherited property). New
+  gate case `il-ifaceevent` (subscribe on an `INotifyPropertyChanged`-typed receiver); `ktproj-avalonia` stays green.
 - **kotc→bir2cir: `KClass.simpleName`/`.qualifiedName` lowering migrated out of the frontend (layer purity, review
   §0).** kotc no longer emits a `System.Type.get_Name`/`get_FullName` `clrInstance` for `T::class.simpleName`; it
   emits the PLAIN Kotlin property read on `kotlin.reflect.KClass`, and bir2cir's new `KClassMemberBinding` derives the

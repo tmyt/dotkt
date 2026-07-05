@@ -399,14 +399,20 @@ static class FacadeGen
                     var pclr = p.GetMethod != null ? ClrAttrName(p.GetMethod) : null;   // member substitution: size -> Count
                     sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p)} {(p.CanWrite ? "rw" : "ro")} abstract{(pclr != null ? " clr:" + pclr : "")}\n");
                 }
-                // (N6) INTERFACE instance events are DEFERRED: surfacing them as `ClrEvent<T>` members is correct for an
-                // interface-typed receiver (`x.PropertyChanged += h`), but when a Kotlin class SUBCLASSES a .NET class
-                // that implements such an interface (`class MyApp : Avalonia.Application`), fir2ir synthesizes a
-                // fake-override GETTER that returns `kotlin.clr.ClrEvent<T>` — a compile-time fiction ilemit cannot
-                // declare ("cannot resolve .NET type kotlin.clr.ClrEvent`1"), aborting emit. The proper fix is downstream
-                // (kotc BirEmitter / ilemit must ELIDE a ClrEvent-typed fake-override member, since a .NET event is never a
-                // real inherited property); until that lands, interface events stay unsurfaced to keep framework
-                // subclassing (ktproj-avalonia) green. STATIC events (below) have no such fake-override path and ship now.
+                // (N6) INTERFACE instance events (`INotifyPropertyChanged.PropertyChanged`) -> a `ClrEvent<T>` abstract
+                // member, so `x.PropertyChanged += h` resolves on an interface-typed receiver. Mirrors the class-event
+                // `event` line. When a Kotlin class SUBCLASSES a .NET class that implements such an interface
+                // (`class MyApp : Avalonia.Application`), fir2ir synthesizes a fake-override getter returning
+                // `kotlin.clr.ClrEvent<T>`; kotc's isClrEventProperty now ELIDES that fake-override (a .NET event is never
+                // a real inherited property), so framework subclassing (ktproj-avalonia) stays green.
+                foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    var inv = ev.EventHandlerType?.GetMethod("Invoke");
+                    if (inv == null || !iseen.Add("event:" + ev.Name)) continue;
+                    var eps = inv.GetParameters();
+                    if (!eps.All(p => Supported(p.ParameterType)) || !Supported(inv.ReturnType)) continue;
+                    sb.Append($"event {ev.Name} {Map(inv.ReturnType, t)} {MetaParams(eps, t)}".TrimEnd() + "\n");
+                }
                 var iix = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .FirstOrDefault(p => p.GetIndexParameters().Length == 1
                         && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));

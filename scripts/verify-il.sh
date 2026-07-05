@@ -443,6 +443,10 @@ il_check_inject c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n10
 # surfaces both as `ClrEvent<T>` properties; bir2cir binds the operator to the event's STATIC add/remove accessor.
 # Regression guard: static events were absent (GetEvents was Public|Instance non-static only).
 il_check_inject eventext EventExt "$ROOT/cases/il-eventext" "$(printf 'ping: 3\nping: 7\nannounce: hi\nannounce: yo\nh: yo\nannounce: bye')" EvLib
+# N6 (interface events): a public INSTANCE event of a .NET INTERFACE (INotifyPropertyChanged.PropertyChanged) surfaces
+# as a `ClrEvent<T>` abstract member, subscribed via `+=`/`-=` on an INTERFACE-typed receiver. facadegen scans the .kt
+# imports (il_check_imports); kotc elides the ClrEvent fake-override a .NET-subclass would inherit (isClrEventProperty).
+il_check_imports ifaceevent AppKt "$ROOT/cases/il-ifaceevent" "$(printf 'count=3\nfired=True')"
 # N5: same-name same-package top-level overloads restored from DIFFERENT .NET file facades (UtilsKt.foo() /
 # HelpersKt.foo(Int)) share CallableId(N5,"foo"); the A2 flat map collapsed to last-put-wins. The overload-aware key
 # routes each to its own file class by the resolved callee's arity. (A2 regression guard.)

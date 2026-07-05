@@ -657,9 +657,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		type.events.firstOrNull { it.name == callableId.callableName.asString() }?.let { ev ->
 			val handler = coneFunctionType(ev.handlerParams.map { coneOf(it.type, owner) }, coneOf(ev.handlerReturn, owner))
 			// A .NET event surfaces as a generated `ClrEvent<T>` handle property (never a real .NET property/field: the
-			// read emits a clrPropGet the ClrEventOperatorBinding consumes). Class instance events (facadegen `event`)
-			// reach here; interface events are not surfaced today (see facadegen's interface-branch note), so no abstract
-			// interface-member obligation is created. `w.Changed += h` resolves off this plain member.
+			// read emits a clrPropGet the ClrEventOperatorBinding consumes). Both class instance events and INTERFACE
+			// events (facadegen `event`) reach here, and it is emitted NON-abstract even on an interface: an abstract
+			// event member would impose an unsatisfiable member obligation on a Kotlin class subclassing a .NET class
+			// that implements the interface (`class MyApp : Avalonia.Application` — the ClrEvent<T> is a fiction, not a
+			// real overridable property). Non-abstract keeps `x.PropertyChanged += h` resolving on an interface-typed
+			// receiver while leaving no obligation; the inherited ClrEvent fake-override is elided by isClrEventProperty.
 			return listOf(createMemberProperty(owner, ClrGeneratedKey, callableId.callableName, clrEventOf(handler), true, false).symbol)
 		}
 		val prop = type.properties.firstOrNull { it.name == callableId.callableName.asString() } ?: return emptyList()
