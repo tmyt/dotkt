@@ -101,22 +101,28 @@ static class SuspendColdLowering
     //  (1) PREFERRED — a stable `suspendIntrinsic:true` flag on the valueBlock. kotc does NOT emit this tag today;
     //      it SHOULD (a one-line marker on the lowered intrinsic block would retire the fragile string sniff). The
     //      recognizer already reads it, so the day kotc stamps it the string path below becomes dead weight.
-    //  (2) FALLBACK — the intrinsic's fake `throw NotImplementedError(<SuspendIntrinsicMarker>)` result string.
-    //      Fragile (couples to a stdlib message), but the ONLY marker available until kotc emits (1): the frontend
-    //      never invokes `block`, so no `suspendCall` tag exists on the intrinsic call itself.
+    //  (2) FALLBACK — the intrinsic's fake `throw <exc>(<SuspendIntrinsicMarker>)` result string. Fragile (couples to
+    //      a stdlib message), but the ONLY marker available until kotc emits (1): the frontend never invokes `block`,
+    //      so no `suspendCall` tag exists on the intrinsic call itself. The fake body is the inliner's residue of
+    //      `libraries/stdlib/src/kotlin/coroutines/intrinsics/Intrinsics.kt:43`
+    //      (`throw NotImplementedError("Implementation of suspendCoroutineUninterceptedOrReturn is intrinsic")`).
+    //      HARDENED: we no longer couple to the exact thrown TYPE NAME (`kotlin.NotImplementedError`) — an earlier
+    //      exception-alias/substitution pass (kotc's exception map, or a future @ClrTypeAlias) could rewrite it to
+    //      `System.NotImplementedException` and silently break the match. The marker STRING is globally unique
+    //      (no user code throws it), so the `throwExpr`+`new`+marker-const shape alone is a safe discriminator.
     const string SuspendIntrinsicMarker = "suspendCoroutineUninterceptedOrReturn is intrinsic";
     const string SuspendIntrinsicFlag = "suspendIntrinsic";
 
     // Is this a `valueBlock` that is the lowered `suspendCoroutineUninterceptedOrReturn` intrinsic? Such a block
     // IS a suspension point (its embedded closure is the suspension body), NOT an ordinary lambda value. The
-    // SINGLE, centralized recognizer — prefers the stable flag (1), falls back to the message string (2).
+    // SINGLE, centralized recognizer — prefers the stable flag (1), falls back to the (type-name-independent)
+    // message string (2).
     static bool IsSuspendIntrinsicBlock(JsonNode node)
     {
         if (node is not JsonObject o || Str(o["k"]) != "valueBlock") return false;
         if (Bool(o[SuspendIntrinsicFlag])) return true;                                 // (1) stable tag
         if (o["result"] is not JsonObject res || Str(res["k"]) != "throwExpr") return false;
-        if (res["value"] is not JsonObject nw || Str(nw["k"]) != "new") return false;
-        if (Str(nw["type"]) != "kotlin.NotImplementedError") return false;
+        if (res["value"] is not JsonObject nw || Str(nw["k"]) != "new") return false;   // any exc type (alias-safe)
         return nw["args"] is JsonArray a && a.Count >= 1 && a[0] is JsonObject c0     // (2) message-string fallback
             && Str(c0["k"]) == "const" && (Str(c0["value"])?.Contains(SuspendIntrinsicMarker) ?? false);
     }
