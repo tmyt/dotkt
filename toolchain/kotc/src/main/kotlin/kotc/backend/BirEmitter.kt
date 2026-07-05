@@ -1066,19 +1066,24 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"name":${str(mname)},"static":false,"override":${clrIface || isOverrideClass},"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 	}
 
-	/** A user `annotation class Ann(val v: Int, …)` -> a `class Ann : System.Attribute` (ctor params -> public fields). */
+	/** A user `annotation class Ann(val v: Int, …)` -> a plain BIR class carrying the pure-Kotlin `"annotation":true`
+	 *  FLAG (ctor params -> public fields). "This is an annotation" is a Kotlin-language fact; "annotations extend
+	 *  System.Attribute on the CLR" is the Kotlin<->CLR relation, so kotc emits ONLY the flag (base:null) and
+	 *  bir2cir DERIVES `base = System.Attribute` from it (annotation-base-lowering-to-bir2cir, USER 2026-07-02).
+	 *  kotc names NO CLR base type here. */
 	internal fun annotationDef(klass: IrClass): String {
 		val ctorParams = klass.declarations.filterIsInstance<IrConstructor>().firstOrNull { it.isPrimary }
 			?.parameters?.filter { it.kind == IrParameterKind.Regular }.orEmpty()
 		val fields = ctorParams.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 		val assigns = ctorParams.joinToString(",") { """{"k":"setField","ownerType":${str(typeName(klass))},"recv":{"k":"this"},"name":${str(it.name.asString())},"value":{"k":"local","name":${str(it.name.asString())}}}""" }
 		val ctor = """{"params":[$fields],"baseArgs":[],"thisArgs":null,"vis":"public","body":[$assigns]}"""
-		return """{"name":${str(typeName(klass))},"kind":"class","abstract":false,"vis":"public","base":"clr:System.Attribute","interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
+		return """{"name":${str(typeName(klass))},"kind":"class","annotation":true,"abstract":false,"vis":"public","base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
 	}
 
 	/** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. A Kotlin-authored
-	 *  annotation uses its synthesized `: System.Attribute` type (#46); an imported .NET attribute uses its real type
-	 *  via a `clr:` marker so ilemit binds the existing .NET constructor (#54).
+	 *  annotation is named by its plain Kotlin FQN (#46) — bir2cir derives its `: System.Attribute` base from the
+	 *  `"annotation":true` flag on the class def; an imported .NET attribute uses its real type via a `clr:` marker so
+	 *  ilemit binds the existing .NET constructor (#54).
 	 *
 	 *  kotc does NOT filter/select annotations: from kotc's view an annotation is just METADATA, so EVERY annotation is
 	 *  passed through to the BIR verbatim (incl. @ClrTypeAlias, @ClrIntrinsic, and every other `kotlin.*` annotation).

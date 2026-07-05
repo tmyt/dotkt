@@ -5,6 +5,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Layer purity — annotation `: System.Attribute` base is now DERIVED in bir2cir (kotc emits a Kotlin flag).** A user
+  `annotation class Ann(...)` no longer has its CLR base named by kotc: `BirEmitter.annotationDef` emits a plain BIR
+  class carrying the pure-Kotlin fact `"annotation":true` (base `null`), and bir2cir's `BirTypeLowering` DERIVES
+  `base = clr:System.Attribute` from that flag (dropping the flag before it reaches ilemit). "This is an annotation"
+  is a Kotlin-language fact; "annotations extend `System.Attribute` on the CLR" is the Kotlin↔CLR relation, so the
+  base name belongs below the kotc boundary (annotation-base-lowering-to-bir2cir, USER 2026-07-02). The emitted IL is
+  byte-identical (the class still `: System.Attribute`); `IsAttributeClass` recognizes the flag so the attribute
+  class's field/ctor types still force-lower to concrete CLR types. kotc no longer names `System.Attribute`.
+
 - **`@kotlin.concurrent.Volatile` is now a REAL CLR volatile field (was a silent no-op).** `@Volatile` on a `var`'s
   backing field lowers to the exact encoding the C# `volatile` keyword emits: the field is declared with a required
   custom modifier `modreq(System.Runtime.CompilerServices.IsVolatile)` (which makes the JIT treat every access as
