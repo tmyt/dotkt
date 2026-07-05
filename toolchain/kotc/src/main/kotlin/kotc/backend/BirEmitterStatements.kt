@@ -88,8 +88,10 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		"""{"k":"var","name":${str(node.name.asString())},"type":${str("@$rt")},"init":{"k":"new","type":${str(rt)},"args":[$init]}}"""
 	} else {
 		// Evaluate the initializer FIRST so an object-expr init registers its synthetic name before the var's
-		// type is read (`val x = object {}` whose type IS that anonymous class).
-		val init = node.initializer?.let { expr(it) } ?: "null"
+		// type is read (`val x = object {}` whose type IS that anonymous class). A value-type-nullable initializer
+		// (`Int?`) flowing into a non-null value slot (`val z: Int = n` after `if (n != null)`) is UNWRAPPED to
+		// `Nullable<T>.Value` by coerceValue — the JVM `Integer.intValue()` coercion has no IR cast node (C1).
+		val init = node.initializer?.let { coerceValue(it, node.type) } ?: "null"
 		// A `T?` (nullable type-parameter) LOCAL whose CLR rep is a bare `gp:T` carries no nullability in IL, so a
 		// value-type instantiation (`Int`) would fault on a real null (`var single: T? = null; ...; single as T`).
 		// Emit the sibling `"nullable":true` — the SAME marker the field/property path uses — so bir2cir's
@@ -134,7 +136,13 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		// `fun main() = winUiApp { … }` or `return doCleanup()`. It must be EVALUATED, then a bare return; emitting
 		// a bare `{"k":"return"}` (the old behavior) silently dropped the call. A plain Unit reference
 		// (`return` / `return Unit`, an IrGetObjectValue) has nothing to evaluate.
-		else if (!node.value.type.isUnit()) """{"k":"return","value":${expr(node.value)}}"""
+		// A value-type-nullable return value (`return n` where `n: Int?` is smart-cast, in a `: Int` function) must
+		// UNWRAP `Nullable<T>.Value` to match the return slot — the JVM `Integer.intValue()` coercion has no IR node (C1).
+		else if (!node.value.type.isUnit()) {
+			val retType = (node.returnTargetSymbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.returnType
+			val v = if (retType != null) coerceValue(node.value, retType) else expr(node.value)
+			"""{"k":"return","value":$v}"""
+		}
 		else if (node.value is IrGetObjectValue) """{"k":"return"}"""
 		else """{"k":"exprStmt","expr":${expr(node.value)}},{"k":"return"}"""
 	}

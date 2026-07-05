@@ -57,6 +57,15 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **Value-type nullable smart-cast reads the value, not `HasValue` (C1).** An `Int?`/`Long?`/`Double?`
+  (a CLR `Nullable<T>`) narrowed by `if (n != null)` and then read as its non-null `T` — an assignment
+  (`val z: Int = n`), an arithmetic/comparison operand (`n + 1`, `n > 5`), a function argument, or a
+  `return` — now UNWRAPS `Nullable<T>.Value` instead of loading the raw struct. Previously the raw
+  `Nullable<T>` slot flowed into an `int`/`long`/`double` context, giving garbage (`1` for `7`), an
+  `InvalidProgramException`, a SIGSEGV in arithmetic, or a wrong branch (`n > 5` taking the else). kotc
+  now emits the unwrap at each JVM-style coercion slot (the smart-cast carries no IR cast node, mirroring
+  the JVM's implicit `Integer.intValue()` coercion). Covered by `cases/il-nullableprim` in the JVM-oracle
+  differential.
 - **Value-type nullable generics (`T?`) round-trip correctly.** A generic `T?` erases to `System.Object`
   (the only CLR rep that carries a real null for a value `T`), so `listOf(10,20).firstOrNull()` returns
   `10`/`null` (not `0`), and value-type `sequence{}` / `asSequence().filter{}` / `List<Int?>.filterNotNull()`
