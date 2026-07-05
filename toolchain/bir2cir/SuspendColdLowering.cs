@@ -1358,11 +1358,19 @@ static class SuspendColdLowering
         // suspension, else the read happens after resume and observes the post-mutation value. Position still gates
         // it: RewriteEvalOrder only spills an operand LEFT of a suspension (`i < lastSusp`), so a field read with no
         // suspension to its right stays inline. (Captured locals are `local` in pre-Rewrite BIR, so unaffected.)
+        //
+        // N4-sibling: an ARRAY-ELEMENT read (`arrayGet`/`clr.ldelem`) has the SAME reorder hazard — the array is a
+        // shared reference the suspend callee can reach, so `arr[i] + mutatingSuspendCall()` must read the PRE-call
+        // element. It stayed scoped out over an element-type/over-spill worry, but the node carries its element type
+        // verbatim on `elem`, so the spill temp is typed precisely (no kotlin.Any box fallback — see TypeOfExpr). The
+        // position guard keeps a same-node `arr[i]` with no suspension to its right inline. (`arrayLen`/`clr.ldlen`
+        // stays pure: a .NET array's length is immutable, so a later suspension cannot change it.)
         static readonly HashSet<string> ImpureKinds = new(StringComparer.Ordinal)
         {
             "callStatic", "callInstance", "clrStatic", "clrInstance", "clrGenericStatic",
             "new", "clrNew", "setLocal", "setField", "throwExpr", "dynCall",
             "field", "staticField", "lateinitGet",
+            "arrayGet", "clr.ldelem",
         };
         static bool IsPureExpr(JsonNode n)
         {
@@ -1421,6 +1429,11 @@ static class SuspendColdLowering
                     if (_fieldTypes.TryGetValue("#" + fname, out var fft2)) return fft2;
                     break;
                 }
+                case "arrayGet": case "clr.ldelem":
+                    // N4-sibling eval-order spill: an array-element read carries its element type verbatim on `elem`,
+                    // so the temp SM field is typed precisely (avoids a kotlin.Any box of a value-type element).
+                    if (NonEmpty(Str(o["elem"])) is string et) return et;
+                    break;
                 case "bin":
                     return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" ? "kotlin.Boolean" : TypeOfExpr(o["l"]);
             }
