@@ -69,10 +69,11 @@ public actual class Regex {
     public actual constructor(pattern: String, options: Set<RegexOption>)
 
     /** The pattern string of this regular expression. */
-    // Annotation-bug fix: System...Regex has no `Pattern` property; Regex.ToString() returns the pattern string.
-    @kotlin.clr.ClrIntrinsic("ToString")
+    // System...Regex has no `Pattern` property; Regex.ToString() (a METHOD) returns the pattern string.
+    // Rule-3 body: route through the toString() method binding — an @ClrIntrinsic("ToString") ON the property
+    // mis-routes as a clrPropGet looking up a *property* named `ToString` (no such member) -> ilemit emit-crash.
     public actual val pattern: String
-        get() = TODO("clr binding should be implemented")
+        get() = toString()
 
     /** The set of options that were used to create this regular expression.  */
     // TODO(clr): decode Regex.Options (System...RegexOptions [Flags] enum) -> Set<RegexOption>; needs a BCL enum->Int binding.
@@ -162,12 +163,16 @@ public actual class Regex {
     }
 
     // Replaces the first occurrence only: Regex.Replace(input, replacement, count = 1).
+    // Materialize the CharSequence to a real String at the call site so the intrinsic's first parameter is a
+    // System.String — passing a statically-CharSequence value to the `Replace(string,string,int)` overload
+    // mis-resolves/mis-marshals (AccessViolationException inside the .NET regex engine).
     public actual fun replaceFirst(input: CharSequence, replacement: String): String =
-        nativeReplaceFirst(input, replacement, 1)
+        nativeReplaceFirst(input.toString(), replacement, 1)
 
     // Thin wrapper for the count-limited overload Regex.Replace(string input, string replacement, int count).
+    // The `input` param is String (not CharSequence) so the @ClrIntrinsic binds the exact 3-arg String overload.
     @kotlin.clr.ClrIntrinsic("Replace")
-    private fun nativeReplaceFirst(input: CharSequence, replacement: String, count: Int): String =
+    private fun nativeReplaceFirst(input: String, replacement: String, count: Int): String =
         TODO("@Clr System.Text.RegularExpressions.Regex.Replace(string,string,int)")
 
     // Instance match entry points: System.Text.RegularExpressions.Regex.Match(string) / Match(string, int).
