@@ -1618,14 +1618,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 	}
 
-	/** True if `fn` is a top-level / extension function (static-emitted, dispatch-receiver-less, non-suspend) with at
-	 *  least one Tier-2 default (not metadata-representable). Then ALL its defaulted params carry `@KotlinDefault` (a
-	 *  UNIFORM splice source for bir2cir — so an omitted trailing run of args, which interleaves Tier-1 and Tier-2 params,
-	 *  fills contiguously from ONE source). A function with only Tier-1 defaults carries no `@KotlinDefault` and keeps the
-	 *  pure native `[DefaultParameterValue]` path (unchanged) — no currently-working call changes path. */
+	/** True if `fn` is a top-level / extension function (static-emitted, dispatch-receiver-less, non-suspend) with ANY
+	 *  defaulted parameter. Then ALL its defaulted params carry `@KotlinDefault` — the UNIFORM per-parameter splice source
+	 *  bir2cir uses to fill an omitted arg POSITIONALLY (Tier-1 and Tier-2 alike). This MUST cover Tier-1 too: at a
+	 *  CROSS-MODULE call kotc sees the callee's default as an IrErrorExpression (the frontend jar drops the VALUE) and so
+	 *  cannot tell Tier-1 from Tier-2 — it emits a `defaultArg` placeholder for EVERY omitted default, which bir2cir can
+	 *  only fill if a `@KotlinDefault` exists for that slot. (Tier-1 params ALSO keep the native `[Optional]` +
+	 *  `[DefaultParameterValue]` metadata for a C#/VB/F# consumer — that path is unchanged; `@KotlinDefault` is the
+	 *  kcc-consumer splice source, ref.dll-only, stripped from the runtime build.) */
 	internal fun carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
 		!fn.isSuspend && fn.parameters.none { it.kind == IrParameterKind.DispatchReceiver } &&
-			fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null && !isMetadataRepresentableDefault(it) }
+			fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null }
 
 	internal fun paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>,
 			ownerFn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction? = null): List<String> {
