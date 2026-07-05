@@ -498,6 +498,11 @@ il_check corestrict CoRestrict "$ROOT/cases/il-corestrict" "$(printf '1,2,3,4,5\
 # suspend), bir2cir now spills the impure LEFT operand into an SM field BEFORE g()'s suspension segments
 # so its side effect (println "L") happens before g()'s ("G"). Before the fix: G,L; after: L,G,3.
 il_check coevalorder CoEvalOrder "$ROOT/cases/il-coevalorder" "$(printf 'L\nG\n3')"
+# cofieldorder: N4 (final-review) — the FIELD-read variant of the eval-order bug. In `x + bump()` where bump()
+# is a suspend call that MUTATES the member field x, a raw `field`/`@ClrField` read was mis-classed PURE, left
+# inline, and evaluated AFTER the suspension resumed -> observed the post-mutation value (105 not 15). bir2cir
+# now spills a field read left of a suspension into an SM temp before the suspension. Runs -> 15 (10+5), then 100.
+il_check cofieldorder CoFieldOrder "$ROOT/cases/il-cofieldorder" "$(printf '15\n100')"
 # lam1/lam2: bundle-6 P3 wave-2b — the suspend-LAMBDA payoff. kotc emits `suspendLambdaNew`, bir2cir builds
 # the SuspendLambda SM, and the dotkt.support blockOn harness drives it to completion on the cold core.
 # (il_check_IMPORTS: the co-compiled harness imports System.Threading.Monitor -> facadegen injects it.)

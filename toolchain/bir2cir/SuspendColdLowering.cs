@@ -192,6 +192,11 @@ static class SuspendColdLowering
         // operand whose own node carries no return type (a same-assembly `callStatic side()` has no `ret`).
         // Top-level -> "#name"; member -> "owner#name".
         var methodRets = new Dictionary<string, string>(StringComparer.Ordinal);
+        // A global (owner#name -> declared type) index of EVERY member/static FIELD. The eval-order spill (BUG 2 fix,
+        // N4) needs it to type the temp SM field that holds a raw `field`/`staticField`/`lateinitGet` read spilled to
+        // the LEFT of a suspension — a raw field read node carries no `retType` (kotc emits only ownerType+name), so
+        // without this the temp would fall back to kotlin.Any and box a value-type field, breaking the enclosing bin.
+        var fieldTypes = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var r in roots)
         {
             if (r is not JsonObject file) continue;
@@ -199,12 +204,23 @@ static class SuspendColdLowering
                 foreach (var m in fms)
                     if (m is JsonObject mo && Str(mo["name"]) is string mn)
                         methodRets["#" + mn] = Str(mo["resultType"]) ?? Str(mo["ret"]) ?? "kotlin.Any";
+            if (file["fields"] is JsonArray ffs)
+                foreach (var f in ffs)
+                    if (f is JsonObject fo && Str(fo["name"]) is string fn && Str(fo["type"]) is string ft0)
+                        fieldTypes["#" + fn] = ft0;
             if (file["types"] is JsonArray fts2)
                 foreach (var t in fts2)
-                    if (t is JsonObject to && Str(to["name"]) is string ow && to["methods"] is JsonArray tms)
-                        foreach (var m in tms)
-                            if (m is JsonObject mo && Str(mo["name"]) is string mn)
-                                methodRets[ow + "#" + mn] = Str(mo["resultType"]) ?? Str(mo["ret"]) ?? "kotlin.Any";
+                    if (t is JsonObject to && Str(to["name"]) is string ow)
+                    {
+                        if (to["methods"] is JsonArray tms)
+                            foreach (var m in tms)
+                                if (m is JsonObject mo && Str(mo["name"]) is string mn)
+                                    methodRets[ow + "#" + mn] = Str(mo["resultType"]) ?? Str(mo["ret"]) ?? "kotlin.Any";
+                        if (to["fields"] is JsonArray tfs)
+                            foreach (var f in tfs)
+                                if (f is JsonObject fo && Str(fo["name"]) is string fn && Str(fo["type"]) is string ft1)
+                                    fieldTypes[ow + "#" + fn] = ft1;
+                    }
         }
 
         if (entries.Count == 0) return calleeRet;
@@ -268,7 +284,7 @@ static class SuspendColdLowering
                 foreach (var t in otps)
                     if (t is JsonValue tv2 && tv2.TryGetValue<string>(out var s2)) ownerTps.Add(s2);
                     else if (t is JsonObject to2 && Str(to2["name"]) is string n2) ownerTps.Add(n2);
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], methodRets);
+            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], methodRets, fieldTypes);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -634,6 +650,7 @@ static class SuspendColdLowering
 
         // Global (owner#name -> resultType) index for typing eval-order spill fields (BUG 2). Empty in lambda mode.
         readonly Dictionary<string, string> _methodRets;
+        readonly Dictionary<string, string> _fieldTypes;   // (owner#field / #field) -> declared type, for eval-order spill typing (N4)
 
         int _state;                              // resume-state counter (>=1)
         int _label;                              // label id allocator (above kotc's low ids)
@@ -646,12 +663,14 @@ static class SuspendColdLowering
         public FunGen(JsonObject m, string name, string fileClass, string ownerClass,
             Dictionary<string, string> calleeRet, bool baseIsLocal, string tcsBcl = null, string taskBcl = null,
             List<string> ownerTypeParams = null, IReadOnlyDictionary<string, JsonObject> closures = null,
-            string smNameSuffix = "", Dictionary<string, string> methodRets = null)
+            string smNameSuffix = "", Dictionary<string, string> methodRets = null,
+            Dictionary<string, string> fieldTypes = null)
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
             _isMember = ownerClass != null;
             _calleeRet = calleeRet; _baseIsLocal = baseIsLocal;
             _methodRets = methodRets ?? new Dictionary<string, string>(StringComparer.Ordinal);
+            _fieldTypes = fieldTypes ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _tcsBcl = tcsBcl; _taskBcl = taskBcl;
             _closures = closures ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _ownerTypeParams = ownerTypeParams ?? new List<string>();
@@ -685,6 +704,7 @@ static class SuspendColdLowering
             _isLambda = true;
             _restrictedBase = restricted;
             _methodRets = new Dictionary<string, string>(StringComparer.Ordinal);
+            _fieldTypes = new Dictionary<string, string>(StringComparer.Ordinal);
             _ownerTypeParams = new List<string>();
             _closures = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _m = null;
@@ -1284,10 +1304,19 @@ static class SuspendColdLowering
         // an allocation, or an assignment has an observable effect). A subtree free of them is "pure" — stable to
         // read after the suspension resumes, so it stays inline. (A suspend fun's plain locals are its OWN private
         // SM fields, unreachable by the callee it suspends into, so a `local` read is stable — treated pure.)
+        //
+        // N4: a raw member/static FIELD read (`field`/`staticField`/`lateinitGet`) is NOT pure w.r.t. a later
+        // suspension — the suspend callee can reach and MUTATE that field (a source property read goes through a
+        // getter = `callInstance`/`clrInstance`, already impure; only the direct backing-field / `@ClrField` read
+        // slipped through). So `this.x + mutatingSuspendCall()` must SPILL `this.x` into an SM temp BEFORE the
+        // suspension, else the read happens after resume and observes the post-mutation value. Position still gates
+        // it: RewriteEvalOrder only spills an operand LEFT of a suspension (`i < lastSusp`), so a field read with no
+        // suspension to its right stays inline. (Captured locals are `local` in pre-Rewrite BIR, so unaffected.)
         static readonly HashSet<string> ImpureKinds = new(StringComparer.Ordinal)
         {
             "callStatic", "callInstance", "clrStatic", "clrInstance", "clrGenericStatic",
             "new", "clrNew", "setLocal", "setField", "throwExpr", "dynCall",
+            "field", "staticField", "lateinitGet",
         };
         static bool IsPureExpr(JsonNode n)
         {
@@ -1334,6 +1363,16 @@ static class SuspendColdLowering
                 {
                     var ot = BareOwner(Str(o["ownerType"]));
                     if (ot != null && _methodRets.TryGetValue(ot + "#" + Str(o["method"]), out var rt)) return rt;
+                    break;
+                }
+                case "field": case "staticField": case "lateinitGet":
+                {
+                    // N4 eval-order spill: type the temp SM field from the field's declared type (a raw field read
+                    // carries no `retType`). Owner-qualified first (`owner#name`), then top-level (`#name`).
+                    var fname = Str(o["name"]);
+                    var fowner = BareOwner(Str(o["ownerType"]));
+                    if (fowner != null && _fieldTypes.TryGetValue(fowner + "#" + fname, out var fft)) return fft;
+                    if (_fieldTypes.TryGetValue("#" + fname, out var fft2)) return fft2;
                     break;
                 }
                 case "bin":
