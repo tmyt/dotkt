@@ -2528,12 +2528,25 @@ sealed partial class Emitter
         {
             _il.Emit(OpCodes.Dup);
             _il.Emit(OpCodes.Ldc_I4, i);
-            var et = EmitExpr(elems[i]);
-            // Box a value element stored into a reference array (e.g. ints into `object[]` for String.Format).
-            if (et != null && NeedsBoxToRef(et) && !elem.IsValueType && !elem.IsGenericParameter) _il.Emit(OpCodes.Box, et);
+            EmitArrayElemCoerced(elems[i], elem);
             EmitStelem(elem);
         }
         return elem.MakeArrayType();
+    }
+
+    // Coerce an array-element value to the array's element type before `stelem` (C2: `Array<Int?>` = `Nullable<int>[]`).
+    // `arrayOf(1, null, 3)` / `arr[i] = 5` push a BARE `int` (or a null literal) into a `Nullable<int>` slot — without
+    // the `T -> Nullable<T>` wrap (or `default(Nullable<T>)` for null) `stelem Nullable<int>` stores raw int bits as a
+    // Nullable struct -> memory corruption / SIGSEGV. ONLY a genuine `Nullable<>` element takes the wrap path (the
+    // EmitNullableCoerced `T -> Nullable<T>` / null-default); every other element keeps the pre-existing box-only
+    // behavior (a value into a reference element `Array<Any?>` / `object[]`), so a `gp:T`-element array
+    // (AbstractCollection.toArray's `newarr !T`) is UNTOUCHED — routing it through the broad EmitNullableCoerced would
+    // spuriously unbox.any an object element into the `gp:T` slot (regressed the collection/map stdlib emit).
+    void EmitArrayElemCoerced(JsonElement value, Type elem)
+    {
+        if (elem.IsGenericType && elem.GetGenericTypeDefinition() == typeof(Nullable<>)) { EmitNullableCoerced(value, elem); return; }
+        var et = EmitExpr(value);
+        if (et != null && NeedsBoxToRef(et) && !elem.IsValueType && !elem.IsGenericParameter) _il.Emit(OpCodes.Box, et);
     }
 
     Type EmitConcat(JsonElement e)
@@ -2578,6 +2591,20 @@ sealed partial class Emitter
         return got;
     }
 
+    // A cond/when BRANCH coerced to the result type `want`: EmitNullableCoerced (T -> Nullable<T> / null-default /
+    // box-to-object) PLUS the REVERSE (C2) — a REFERENCE branch (`object`, the erased nullable-generic map read
+    // `clrMapGet<K,V>:object`) flowing into a VALUE-type / generic-param `want`. `Map.getOrElse`/`getOrPut` return a
+    // `cond` typed `gp:V` whose `else` branch is the object-typed `value`/`__subj` local; without the universal
+    // `unbox.any <want>` the reference sits where a value/`!!V` is expected -> a value reinterpreted from a reference
+    // -> garbage. Scoped to cond branches (not the shared EmitNullableCoerced) so ordinary object->gp stores are untouched.
+    Type EmitBranchCoerced(JsonElement node, Type want)
+    {
+        var got = EmitNullableCoerced(node, want);
+        if (want != null && got != null && !got.IsValueType && !got.IsGenericParameter && got != want
+            && (want.IsValueType || want.IsGenericParameter)) { _il.Emit(OpCodes.Unbox_Any, want); return want; }
+        return got;
+    }
+
     Type EmitCond(JsonElement e)
     {
         // A value-type-nullable if/when (`Int?`) tags its result type so each branch's `T`/`null` coerces to Nullable<T>.
@@ -2585,8 +2612,8 @@ sealed partial class Emitter
         if (e.TryGetProperty("type", out var tt)) { try { want = ClrRef(tt.GetString()); } catch { } }
         var elseL = _il.DefineLabel(); var end = _il.DefineLabel();
         EmitExpr(e.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, elseL);
-        var t = EmitNullableCoerced(e.GetProperty("then"), want); _il.Emit(OpCodes.Br, end);
-        _il.MarkLabel(elseL); EmitNullableCoerced(e.GetProperty("else"), want); _il.MarkLabel(end);
+        var t = EmitBranchCoerced(e.GetProperty("then"), want); _il.Emit(OpCodes.Br, end);
+        _il.MarkLabel(elseL); EmitBranchCoerced(e.GetProperty("else"), want); _il.MarkLabel(end);
         return want ?? t;
     }
 
@@ -3532,8 +3559,17 @@ sealed partial class Emitter
         if (_methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == typeof(Nullable<>)
             && _methodRetType.GetGenericArguments()[0] == got)
             _il.Emit(OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
-        else if (_methodRetType == typeof(object) && NeedsBoxToRef(got))
+        // A value type / `gp:T` returned where the method declares ANY reference type must BOX (C2: the
+        // `compareBy { it }` selector lambda returns `it: Int` declared `kotlin.Comparable[object]` = System.IComparable
+        // — the boxed Int IS an IComparable). `box` alone yields the tracked type `O`; when the return is a NON-object
+        // reference (an interface / concrete ref type) add `castclass <ret>` so the boxed value verifies as that slot
+        // (mirrors the `cast` emitter's box+castclass). Previously only `== object` boxed, so a value flowing into a
+        // non-object reference return (`IComparable`) landed unboxed -> a value reinterpreted as a reference -> NRE.
+        else if (NeedsBoxToRef(got) && !_methodRetType.IsValueType && !_methodRetType.IsGenericParameter)
+        {
             _il.Emit(OpCodes.Box, got);
+            if (_methodRetType != typeof(object)) _il.Emit(OpCodes.Castclass, _methodRetType);
+        }
         // A REFERENCE value (`object` — e.g. an erased generic stdlib return like `clrMapGet<K,V>:object`) returned where
         // the method declares a VALUE type or a generic PARAMETER (`V`) needs the universal cast `unbox.any <ret>` (NOT
         // castclass — `castclass !!V` JIT-crashes value-type instantiations). Without it the reference sits where a value

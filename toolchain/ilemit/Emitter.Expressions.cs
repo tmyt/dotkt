@@ -431,15 +431,13 @@ sealed partial class Emitter
             case "clr.stelem":
             {
                 EmitExpr(e.GetProperty("array")); EmitExpr(e.GetProperty("index"));
-                var svt = EmitExpr(e.GetProperty("value"));
                 var selem = MapType(e.GetProperty("elem").GetString());
-                // Storing a value-type/generic-param value into a REFERENCE-element array (`Array<Any?>[i] = aT`) needs a
-                // box -- `stelem object` with an unboxed value on the stack is invalid (garbage/NullRef). The matching
-                // read side is `a[i] as T` -> unbox.any. (Reference values and value-element arrays need no box.)
-                // A GENERIC-PARAM element (`T[]`, stelem !T) must NOT box: `box T` yields object, and for a value-type
-                // instantiation stelem !T then stores the reference bits as the value (garbage). Same guard as the
-                // local/field box sites (Emitter.Statements 27/38).
-                if (!selem.IsValueType && !selem.IsGenericParameter && svt != null && NeedsBoxToRef(svt)) _il.Emit(OpCodes.Box, svt);
+                // Coerce the value to the element type before stelem: a value-type/generic-param value into a
+                // REFERENCE-element array (`Array<Any?>[i] = aT`) boxes; a bare `T` / null into a `Nullable<T>` element
+                // (`Array<Int?>[i] = 5`) wraps to `Nullable<T>` / `default(Nullable<T>)` — else `stelem Nullable<int>`
+                // with a raw int on the stack corrupts the struct (SIGSEGV). A GENERIC-PARAM element (`T[]`, stelem !T)
+                // must NOT box. Shared with EmitNewArray via EmitArrayElemCoerced.
+                EmitArrayElemCoerced(e.GetProperty("value"), selem);
                 EmitStelem(selem); return typeof(void);
             }
             case "arrayLen":
