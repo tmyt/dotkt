@@ -30,4 +30,30 @@ fun main() {
     val local: Int by lazy { 7 * 6 }
     println(local)                // 42
     println(local)                // 42
+
+    // Explicit LazyThreadSafetyMode overloads: SYNCHRONIZED + PUBLICATION -> SynchronizedLazyImpl,
+    // NONE -> UnsafeLazyImpl. Each must still memoize (initializer runs exactly once).
+    var s = 0
+    val sync = lazy(LazyThreadSafetyMode.SYNCHRONIZED) { s++; "sync" }
+    println(sync.value)           // sync
+    println(sync.value)           // sync
+    println(s)                    // 1
+
+    var p = 0
+    val pub = lazy(LazyThreadSafetyMode.PUBLICATION) { p++; "pub" }
+    println(pub.value)            // pub
+    println(p)                    // 1
+
+    var n = 0
+    val none = lazy(LazyThreadSafetyMode.NONE) { n++; "none" }
+    println(none.value)           // none
+    println(n)                    // 1
+
+    // The explicit-lock overload -> SynchronizedLazyImpl(initializer, lock).
+    var k = 0
+    val guarded = lazy(Any()) { k++; "guarded" }
+    println(guarded.isInitialized())  // false
+    println(guarded.value)            // guarded
+    println(guarded.isInitialized())  // true
+    println(k)                        // 1
 }

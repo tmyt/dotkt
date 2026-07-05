@@ -117,6 +117,32 @@ This is a user-stated foundational deviation, not an implementation detail.
 - Deep dives: `docs/coroutine-abi.md` (the ABI contract), `docs/design-coroutines-clr.md` (design + Track-2 plan),
   `docs/coroutine-stdlib-port-plan.md` (the live implementation plan), memory `coroutine-abi-decision`.
 
+## 4b. The default `lazy { }` is thread-safe (a Monitor lock, matching Kotlin/JVM and `System.Lazy`)
+
+`lazy { }` on DotKt is thread-safe by default, exactly as on Kotlin/JVM (and matching .NET's own
+`System.Lazy<T>` default of `LazyThreadSafetyMode.ExecutionAndPublication`). The mode → implementation
+map (stdlib `libraries/stdlib/clr/kotlin/util/LazyClr.kt`):
+
+- **default `lazy(initializer)`**, **`SYNCHRONIZED`**, **`PUBLICATION`**, and **`lazy(lock, initializer)`**
+  → `SynchronizedLazyImpl` — memoization guarded by a `System.Threading.Monitor` lock (the stdlib
+  `@ClrIntrinsic` `monitorEnter`/`monitorExit` in `kotlin.concurrent.atomics`; no compiler lowering).
+  `PUBLICATION` is served — if more strictly than the spec requires (it permits multiple initializer
+  runs) — by the same single-init locked impl; this is correct, only conservatively so.
+- **`NONE`** → `UnsafeLazyImpl` (no synchronization), as on JVM.
+
+**Locking discipline — always-lock, no lock-free fast path (deliberate).** `SynchronizedLazyImpl`
+takes the Monitor lock on *every* `value` read; it does **not** use the classic double-checked-locking
+lock-free fast path that Kotlin/JVM's `SynchronizedLazyImpl` uses. Reason: the JVM DCL fast path is
+memory-safe only because it reads the value field through a `@Volatile` access; on the CLR
+`@kotlin.concurrent.Volatile` is currently a **no-op annotation** (no binding to a volatile field
+access), so a DCL fast path would have a subtle publication bug on weak-memory architectures (ARM)
+that a single-threaded test can never surface. Correctness over speed: always-locking is
+unconditionally correct. The initializer runs inside the locked critical section, and the lock is
+released in a `finally` so a throwing initializer cannot leak the lock. (The value field is published
+by a single reference-typed write of the fully-constructed value — atomic on .NET — so no torn value
+is ever observed.) If a volatile field binding lands later, the DCL fast path can be restored for
+lock-free reads after initialization.
+
 ## 5. Primitive stringification is CLR-native (not Kotlin/JVM cosmetics)
 
 - A DotKt program IS a .NET program, so it follows the **host's** conventions: `println(true)` → `True` (not `true`),

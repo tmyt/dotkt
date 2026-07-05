@@ -42,10 +42,11 @@ internal fun interlockedCompareExchangeLong(@ClrRefArgument location: Long, valu
 @kotlin.clr.ClrIntrinsic("System.Threading.Interlocked.Add")
 internal fun interlockedAddLong(@ClrRefArgument location: Long, value: Long): Long = TODO("clr binding should be implemented")
 
-@kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Enter")
-internal fun monitorEnter(lock: Any): Unit = TODO("clr binding should be implemented")
-@kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Exit")
-internal fun monitorExit(lock: Any): Unit = TODO("clr binding should be implemented")
+// monitorEnter/monitorExit (the System.Threading.Monitor lock helpers, @ClrIntrinsic-bound) used to
+// live here, but this file is staged as a builtin (no-bytecode) in the frontend-jar build, so a call
+// to them from any NORMALLY-codegen'd body (e.g. SynchronizedLazyImpl) aborts the JVM backend with
+// "unhandled intrinsic". They now live in the NON-builtin kotlin/concurrent/atomics/AtomicsClr.kt so
+// they carry real jar bytecode; same package, so the callers here still resolve them without an import.
 
 @SinceKotlin("2.1")
 @ExperimentalAtomicApi

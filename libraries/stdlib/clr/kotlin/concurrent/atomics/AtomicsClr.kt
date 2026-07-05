@@ -7,6 +7,16 @@ package kotlin.concurrent.atomics
 
 import kotlin.internal.InlineOnly
 
+// System.Threading.Monitor lock helpers (@ClrIntrinsic-bound). They take an OBJECT, so no byref is
+// needed. Declared HERE (a normal, non-builtin source file) rather than in builtins/Atomics.kt so
+// they carry real bytecode in the frontend jar: a NON-suppressed body (SynchronizedLazyImpl, in
+// kotlin/util/LazyClr.kt) calls them, and the JVM backend cannot codegen a call to a no-bytecode
+// builtin. Callers in builtins/Atomics.kt + builtins/AtomicArrays.kt are same-package (no import).
+@kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Enter")
+internal fun monitorEnter(lock: Any): Unit = TODO("clr binding should be implemented")
+@kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Exit")
+internal fun monitorExit(lock: Any): Unit = TODO("clr binding should be implemented")
+
 @SinceKotlin("2.2")
 @ExperimentalAtomicApi
 @InlineOnly
