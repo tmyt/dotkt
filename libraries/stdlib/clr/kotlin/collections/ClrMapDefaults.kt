@@ -45,9 +45,9 @@ public fun <K, V> clrMapToString(m: Map<K, V>): String {
     for (k in m.clrMapNativeKeys()) {
         if (!first) sb.append(", ")
         first = false
-        sb.append(k.toString())
+        sb.append(clrElemToString(k))                  // recurse: nested collection/map keys/values render Kotlin-style (N7)
         sb.append("=")
-        sb.append(m.clrMapItem(k).toString())
+        sb.append(clrElemToString(m.clrMapItem(k)))
     }
     sb.append("}")
     return sb.toString()
