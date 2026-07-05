@@ -118,14 +118,17 @@ CIR node (ilemit already emits it). Owner + event name come straight from the `w
 The `ClrEvent<T>` value is never emitted — same idea as a `ClrRef`/byref lvalue.
 
 ### Per-layer
-- **stdlib** (`kotlin.clr`): define `class ClrEvent<T>` (a marker handle type) + `operator fun <T>
-  ClrEvent<T>.plusAssign(handler: T)` / `minusAssign(handler: T)`. Bodies are unreachable (bir2cir rewrites
-  the call before emit) — a `TODO()`/throw stub, like other @Clr* markers. The type's only job is to be the
-  receiver type that makes `+=` resolve + signals "event subscription" to bir2cir (the TYPE is the signal —
-  no out-of-band hint, per the design above).
-- **facadegen**: surface a .NET event `Changed` as a MEMBER `Changed: ClrEvent<HandlerDelegate>` (a property
-  whose type is `ClrEvent<T>` with T = the event's handler delegate type), INSTEAD OF the `add_<E>`/`remove_<E>`
-  methods. Drop the synthesized add_/remove_ method injection.
+- **facadegen** (NOT stdlib — user-corrected 2026-07-05): INJECT `ClrEvent<T>` + `operator fun <T>
+  ClrEvent<T>.plusAssign(handler: T)` / `minusAssign(handler: T)` as SYNTHETIC FIR symbols, with NO body.
+  There is no runtime implementation — bir2cir rewrites `plusAssign(w.Changed, h)` to `clrEventAdd` before
+  emit, so the operator is compiler-consumed only and never executes. So `ClrEvent<T>` must NOT be a shipped
+  stdlib type (no stub in DotKt.Stdlib.dll) — it is a pure frontend-resolution fiction, exactly the kind of
+  synthetic symbol facadegen already injects (and facadegen can restore `operator` from Roundtrip attributes,
+  per CLAUDE.md). The type is only the receiver type that makes `+=` resolve; its FQN is the signal bir2cir
+  keys on. **stdlib is untouched.**
+- **facadegen**: (a) surface a .NET event `Changed` as a MEMBER `Changed: ClrEvent<HandlerDelegate>`; (b)
+  INJECT the `ClrEvent<T>` type + its `plusAssign`/`minusAssign` operators (synthetic, no body — see stdlib
+  note below); (c) DROP the synthesized `add_<E>`/`remove_<E>` method injection.
 - **kotc**: nothing special — `w.Changed += h` resolves through normal operator resolution to
   `plusAssign(w.Changed, h)`; kotc emits that plain call (the ClrEvent<T> member access + the operator). No
   `add_`/`remove_` names, no event registry (A2 already removed it).
