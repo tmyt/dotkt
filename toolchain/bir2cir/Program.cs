@@ -788,259 +788,6 @@ sealed class ReferenceMetadataIndex
     public static string HelperTypeName(string ownerFqn) =>
         "<>dotkt_ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
 
-    public IReadOnlyList<ResolutionCandidate> Resolve(CallSite site)
-    {
-        if (site.Status != "kotlin-symbol") return Array.Empty<ResolutionCandidate>();
-
-        var matches = new List<ResolutionCandidate>();
-        foreach (var asm in _assemblies)
-        {
-            foreach (var member in asm.DotKt.Members)
-            {
-                if (!MemberKindMatches(site.Kind, member.Kind)) continue;
-                if (site.Kind == "new")
-                {
-                    if (!OwnerMatches(site.TargetOwner, member.Owner)) continue;
-                }
-                else
-                {
-                    if (site.TargetName != member.Name) continue;
-                    if (site.TargetOwner.Length > 0 && !OwnerMatches(site.TargetOwner, member.Owner)) continue;
-                }
-                if (!ArityMatches(site, member)) continue;
-
-                matches.Add(new ResolutionCandidate(
-                    member.Kind,
-                    asm.Name,
-                    member.Owner,
-                    member.Name,
-                    member.IsStatic,
-                    member.IsFileClass,
-                    member.ParameterTypes,
-                    member.ReturnType));
-            }
-        }
-
-        return matches;
-    }
-
-    public IReadOnlyList<TypeResolutionCandidate> Resolve(TypeSite site)
-    {
-        if (site.Status != "kotlin-symbol") return Array.Empty<TypeResolutionCandidate>();
-
-        var matches = new List<TypeResolutionCandidate>();
-        foreach (var asm in _assemblies)
-        {
-            foreach (var type in asm.DotKt.Types)
-            {
-                if (!OwnerMatches(site.NormalizedType, type.Name)) continue;
-                matches.Add(new TypeResolutionCandidate(asm.Name, type.Name, type.Kind, type.IsFileClass));
-            }
-        }
-
-        return matches;
-    }
-
-    public IReadOnlyList<ResolutionCandidate> ResolveClrProperty(string owner, string name, bool setter, bool isStatic)
-    {
-        var matches = new List<ResolutionCandidate>();
-        var accessorName = (setter ? "set_" : "get_") + name;
-        foreach (var asm in _assemblies)
-        {
-            foreach (var member in asm.DotKt.Members)
-            {
-                if (!OwnerMatches(owner, member.Owner)) continue;
-                if (member.IsStatic != isStatic) continue;
-                if (member.Kind == "method" &&
-                    member.Name == accessorName &&
-                    member.ParameterTypes.Count == (setter ? 1 : 0))
-                {
-                    matches.Add(new ResolutionCandidate(
-                        member.Kind,
-                        asm.Name,
-                        member.Owner,
-                        member.Name,
-                        member.IsStatic,
-                        member.IsFileClass,
-                        member.ParameterTypes,
-                        member.ReturnType));
-                }
-            }
-        }
-        if (matches.Count > 0) return matches;
-
-        foreach (var asm in _assemblies)
-        {
-            foreach (var member in asm.DotKt.Members)
-            {
-                if (member.Kind != "field") continue;
-                if (!OwnerMatches(owner, member.Owner)) continue;
-                if (member.IsStatic != isStatic) continue;
-                if (member.Name != name) continue;
-                matches.Add(new ResolutionCandidate(
-                    member.Kind,
-                    asm.Name,
-                    member.Owner,
-                    member.Name,
-                    member.IsStatic,
-                    member.IsFileClass,
-                    member.ParameterTypes,
-                    member.ReturnType));
-            }
-        }
-
-        return matches;
-    }
-
-    static bool MemberKindMatches(string siteKind, string memberKind) => siteKind switch
-    {
-        "new" => memberKind == "constructor",
-        "field" or "staticField" or "setFieldExpr" or "staticFieldSet" => memberKind == "field",
-        _ => memberKind == "method",
-    };
-
-    static bool ArityMatches(CallSite site, DotKtMemberMetadata member)
-    {
-        if (member.Kind == "field") return true;
-        if (site.ArgCount >= 0 && member.ParameterTypes.Count != site.ArgCount) return false;
-        if (site.ArgTypes.Count == 0 || site.ArgTypes.Any(t => t.Length == 0)) return true;
-        if (member.ParameterTypes.Count != site.ArgTypes.Count) return false;
-
-        for (var i = 0; i < site.ArgTypes.Count; i++)
-            if (!TypeMatches(site.ArgTypes[i], member.ParameterTypes[i]))
-                return false;
-
-        return true;
-    }
-
-    static bool TypeMatches(string siteType, string memberType)
-    {
-        var normalizedMember = NormalizeType(memberType);
-        if (normalizedMember.StartsWith("gp:", StringComparison.Ordinal))
-            return true;
-        return NormalizeType(siteType) == normalizedMember;
-    }
-
-    static string NormalizeType(string type)
-    {
-        var value = type.Trim();
-        if (value.StartsWith("@", StringComparison.Ordinal)) return NormalizeType(value[1..]);
-        // bundle-6 P3 wave-2b (final): `sfunc:` (the suspend-fn-type token) erases to `System.Object`. A suspend-
-        // lambda VALUE is a SuspendLambda state-machine object (Continuation-based), NOT a Func delegate — so its
-        // matching identity is object. Nested `sfunc:` inside a `func:`/`clrg:` arg is reached by the structural
-        // recursion below (each recursive call re-checks this branch). ilemit never receives `sfunc:`.
-        if (value.StartsWith("sfunc:", StringComparison.Ordinal)) return "System.Object";
-        if (value.StartsWith("clr:", StringComparison.Ordinal)) return NormalizeType(value["clr:".Length..]);
-        if (value.StartsWith("byref:", StringComparison.Ordinal)) return "byref:" + NormalizeType(value["byref:".Length..]);
-        if (value.StartsWith("array:", StringComparison.Ordinal)) return "array:" + NormalizeType(value["array:".Length..]);
-        if (value.StartsWith("nullable:", StringComparison.Ordinal)) return "nullable:" + NormalizeType(value["nullable:".Length..]);
-        if (value.StartsWith("gp:", StringComparison.Ordinal)) return value;
-        if (value.StartsWith("func:", StringComparison.Ordinal))
-            return NormalizeFuncType(value["func:".Length..]);
-        if (value.StartsWith("clrg:", StringComparison.Ordinal))
-            return NormalizeGenericType(value["clrg:".Length..]);
-        return value switch
-        {
-            // CLR-codegen shorthand (bir2cir's OUTPUT vocabulary, also what kotc still emits today). KEEP these.
-            "bool" => "System.Boolean",
-            "byte" => "System.Byte",
-            "char" => "System.Char",
-            "double" => "System.Double",
-            "float" => "System.Single",
-            "int" => "System.Int32",
-            "long" => "System.Int64",
-            "object" => "System.Object",
-            "short" => "System.Int16",
-            "string" => "System.String",
-            "ubyte" => "System.Byte",
-            "uint" => "System.UInt32",
-            "ulong" => "System.UInt64",
-            "ushort" => "System.UInt16",
-            "void" => "System.Void",
-            // The pure-Kotlin INPUT vocabulary (the symbols kotc emits once switched, and the FullName of the
-            // emitted reference primitive classes — "kotlin.Int" etc.). Converge onto the same BCL token so
-            // TypeMatches sees ONE vocabulary regardless of whether a site speaks shorthand or kotlin.*.
-            "kotlin.Boolean" => "System.Boolean",
-            "kotlin.Byte" => "System.Byte",
-            "kotlin.Char" => "System.Char",
-            "kotlin.Double" => "System.Double",
-            "kotlin.Float" => "System.Single",
-            "kotlin.Int" => "System.Int32",
-            "kotlin.Long" => "System.Int64",
-            "kotlin.Any" => "System.Object",
-            "kotlin.Nothing" => "System.Object",
-            "kotlin.Short" => "System.Int16",
-            "kotlin.String" => "System.String",
-            "kotlin.UByte" => "System.Byte",
-            "kotlin.UInt" => "System.UInt32",
-            "kotlin.ULong" => "System.UInt64",
-            "kotlin.UShort" => "System.UInt16",
-            "kotlin.Unit" => "System.Void",
-            _ => StripGenericArity(value),
-        };
-    }
-
-    static string NormalizeGenericType(string spec)
-    {
-        var br = spec.IndexOf('[');
-        if (br < 0) return "clrg:" + StripGenericArity(spec);
-
-        var open = StripGenericArity(spec[..br]);
-        var inner = spec[(br + 1)..^1];
-        return "clrg:" + open + "[" + string.Join(",", SplitTopLevel(inner).Select(NormalizeType)) + "]";
-    }
-
-    static string NormalizeFuncType(string spec)
-    {
-        var colon = FuncRetEnd(spec);
-        var ret = spec[..colon];
-        var args = colon + 1 < spec.Length ? spec[(colon + 1)..] : "";
-        return "func:" + NormalizeType(ret) + ":" + string.Join(",", SplitTopLevel(args).Select(NormalizeType));
-    }
-
-    static int FuncRetEnd(string value)
-    {
-        var start = PrefixLength(value);
-        var depth = 0;
-        for (var i = start; i < value.Length; i++)
-        {
-            if (value[i] == '[') depth++;
-            else if (value[i] == ']') depth--;
-            else if (value[i] == ':' && depth == 0) return i;
-        }
-
-        return value.Length;
-    }
-
-    static int PrefixLength(string value)
-    {
-        foreach (var prefix in new[] { "clrg:", "clr:", "array:", "nullable:", "sfunc:", "func:", "gp:", "byref:" })
-            if (value.StartsWith(prefix, StringComparison.Ordinal))
-                return prefix.Length;
-        return 0;
-    }
-
-    static IReadOnlyList<string> SplitTopLevel(string value)
-    {
-        if (value.Length == 0) return Array.Empty<string>();
-
-        var result = new List<string>();
-        var depth = 0;
-        var start = 0;
-        for (var i = 0; i < value.Length; i++)
-        {
-            if (value[i] == '[') depth++;
-            else if (value[i] == ']') depth--;
-            else if (value[i] == ',' && depth == 0)
-            {
-                result.Add(value[start..i].Trim());
-                start = i + 1;
-            }
-        }
-
-        result.Add(value[start..].Trim());
-        return result;
-    }
 
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
     {
@@ -1064,81 +811,13 @@ sealed class ReferenceMetadataIndex
     static ReferenceDotKtMetadata ReadDotKtMetadata(string reference)
     {
         var metadata = new ReferenceDotKtMetadata();
-        try
-        {
-            var asm = Assembly.LoadFrom(reference);
-
-            foreach (var type in SafeTypes(asm, metadata))
-            {
-                if (HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr))
-                {
-                    metadata.FileClasses.Add(type.FullName ?? type.Name);
-                }
-
-                var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
-                metadata.Types.Add(new DotKtTypeMetadata(
-                    TypeName(type),
-                    TypeKind(type),
-                    isFileClass));
-
-                foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                {
-                    metadata.Members.Add(new DotKtMemberMetadata(
-                        "constructor",
-                        TypeName(type),
-                        ".ctor",
-                        false,
-                        isFileClass,
-                        ctor.GetParameters().Select(p => TypeName(p.ParameterType)).ToList(),
-                        TypeName(type)));
-                }
-
-                foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                {
-                    metadata.Members.Add(new DotKtMemberMetadata(
-                        "field",
-                        TypeName(type),
-                        field.Name,
-                        field.IsStatic,
-                        isFileClass,
-                        Array.Empty<string>(),
-                        TypeName(field.FieldType)));
-                }
-
-                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                {
-                    if (method.IsPublic)
-                        metadata.Members.Add(new DotKtMemberMetadata(
-                            "method",
-                            TypeName(type),
-                            method.Name,
-                            method.IsStatic,
-                            isFileClass,
-                            method.GetParameters().Select(p => TypeName(p.ParameterType)).ToList(),
-                            TypeName(method.ReturnType)));
-
-                    var attrs = method.GetCustomAttributesData();
-                    var flags = KotlinFunctionFlags(attrs);
-                    var hasInline = HasAttribute(attrs, KotlinInlineAttr);
-                    if (flags != 0 || hasInline)
-                        metadata.Functions.Add(new KotlinFunctionMetadata(
-                            TypeName(type),
-                            method.Name,
-                            flags,
-                            hasInline));
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            metadata.Diagnostics.Add($"{Path.GetFileName(reference)}: metadata scan failed: {ex.GetType().Name}: {ex.Message}");
-        }
-
-        // CALL-SUBSTITUTION index. Read via MetadataLoadContext (a metadata-only reflection read) — the runtime
-        // Assembly.LoadFrom above throws TypeLoadException on the metadata-only ref stdlib (throw-stub bodies +
-        // kotlin.* signatures) and aborts early, so the @ClrTypeAlias/@ClrIntrinsic labels never load through it.
+        // The substitution index via MetadataLoadContext (a metadata-only reflection read) is the SOLE scan. A former
+        // runtime `Assembly.LoadFrom` scan (populating Members/Types/Functions/FileClasses) was REMOVED: it always
+        // threw TypeLoadException on the metadata-only ref stdlib (throw-stub bodies + kotlin.* signatures) — logging a
+        // spurious "metadata scan failed: TypeLoadException Type: 'kotlin.String'" on every build — and aborted early,
+        // and its output fed ONLY dead resolution paths (the unreferenced Resolve(CallSite)/Resolve(TypeSite)/
+        // ResolveClrProperty). The live @ClrTypeAlias/@ClrIntrinsic/rule-3 substitution reads exclusively from here.
         ScanSubstitutionMetadata(reference, metadata);
-
         return metadata;
     }
 
@@ -1267,19 +946,6 @@ sealed class ReferenceMetadataIndex
         catch (Exception ex)
         {
             metadata.Diagnostics.Add($"{Path.GetFileName(reference)}: subst scan failed: {ex.GetType().Name}: {ex.Message}");
-        }
-    }
-
-    static IEnumerable<Type> SafeTypes(Assembly asm, ReferenceDotKtMetadata metadata)
-    {
-        try
-        {
-            return asm.GetTypes();
-        }
-        catch (ReflectionTypeLoadException ex)
-        {
-            metadata.Diagnostics.Add($"{asm.GetName().Name}: partial type load: {ex.LoaderExceptions.Length} loader exception(s)");
-            return ex.Types.Where(t => t != null).Cast<Type>();
         }
     }
 
@@ -1476,23 +1142,6 @@ sealed class ReferenceMetadataIndex
         return "class";
     }
 
-    static bool OwnerMatches(string requested, string candidate)
-    {
-        if (requested == candidate) return true;
-        var bareRequested = StripTypeArgs(requested).TrimStart('@');
-        var bareCandidate = StripTypeArgs(candidate);
-        return bareRequested == bareCandidate || bareCandidate.EndsWith("." + bareRequested, StringComparison.Ordinal);
-    }
-
-    static string StripTypeArgs(string value)
-    {
-        foreach (var prefix in new[] { "clrg:", "clr:" })
-            if (value.StartsWith(prefix, StringComparison.Ordinal))
-                value = value[prefix.Length..];
-        var idx = value.IndexOf('[');
-        return StripGenericArity(idx >= 0 ? value[..idx] : value);
-    }
-
     static string StripGenericArity(string value)
     {
         var idx = value.IndexOf('`');
@@ -1500,23 +1149,10 @@ sealed class ReferenceMetadataIndex
     }
 }
 
-sealed record ReferenceAssembly(string Path, string Name, string Version, ReferenceDotKtMetadata DotKt)
-{
-    public JsonObject ToJson() => new()
-    {
-        ["path"] = Path,
-        ["name"] = Name,
-        ["version"] = Version,
-        ["dotkt"] = DotKt.ToJson(),
-    };
-}
+sealed record ReferenceAssembly(string Path, string Name, string Version, ReferenceDotKtMetadata DotKt);
 
 sealed class ReferenceDotKtMetadata
 {
-    public readonly List<string> FileClasses = new();
-    public readonly List<DotKtTypeMetadata> Types = new();
-    public readonly List<DotKtMemberMetadata> Members = new();
-    public readonly List<KotlinFunctionMetadata> Functions = new();
     public readonly List<string> Diagnostics = new();
 
     // CALL-SUBSTITUTION metadata (sourced from the ref.dll, consumed by MemberCallSubstitution; NOT serialized).
@@ -1558,15 +1194,6 @@ sealed class ReferenceDotKtMetadata
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
     // is coerced exactly like an explicit arg). Rides the ref.dll only (param attrs stripped in the rt build).
     public readonly Dictionary<string, Dictionary<int, string>> KotlinDefaults = new(StringComparer.Ordinal);
-
-    public JsonObject ToJson() => new()
-    {
-        ["fileClasses"] = new JsonArray(FileClasses.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
-        ["types"] = new JsonArray(Types.Select(t => t.ToJson()).Cast<JsonNode>().ToArray()),
-        ["members"] = new JsonArray(Members.Select(m => m.ToJson()).Cast<JsonNode>().ToArray()),
-        ["functions"] = new JsonArray(Functions.Select(f => f.ToJson()).Cast<JsonNode>().ToArray()),
-        ["diagnostics"] = new JsonArray(Diagnostics.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
-    };
 }
 
 // A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the
@@ -1577,108 +1204,6 @@ sealed class ReferenceDotKtMetadata
 // a cross-module call site must know "is this referenced callee suspend?" (its CLR shape is the Task<T> kickoff).
 // NO consumer reads it yet — bundle 6 wires it.
 sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false);
-
-sealed record KotlinFunctionMetadata(string Owner, string Name, int Flags, bool HasInlineBody)
-{
-    public JsonObject ToJson() => new()
-    {
-        ["owner"] = Owner,
-        ["name"] = Name,
-        ["flags"] = Flags,
-        ["hasInlineBody"] = HasInlineBody,
-    };
-}
-
-sealed record DotKtTypeMetadata(string Name, string Kind, bool IsFileClass)
-{
-    public JsonObject ToJson() => new()
-    {
-        ["name"] = Name,
-        ["kind"] = Kind,
-        ["isFileClass"] = IsFileClass,
-    };
-}
-
-sealed record DotKtMemberMetadata(
-    string Kind,
-    string Owner,
-    string Name,
-    bool IsStatic,
-    bool IsFileClass,
-    IReadOnlyList<string> ParameterTypes,
-    string ReturnType)
-{
-    public JsonObject ToJson() => new()
-    {
-        ["kind"] = Kind,
-        ["owner"] = Owner,
-        ["name"] = Name,
-        ["isStatic"] = IsStatic,
-        ["isFileClass"] = IsFileClass,
-        ["parameterTypes"] = new JsonArray(ParameterTypes.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
-        ["returnType"] = ReturnType,
-    };
-}
-
-sealed record TypeResolutionCandidate(string Assembly, string Name, string Kind, bool IsFileClass)
-{
-    public JsonObject ToJson() => new()
-    {
-        ["assembly"] = Assembly,
-        ["name"] = Name,
-        ["kind"] = Kind,
-        ["isFileClass"] = IsFileClass,
-    };
-
-    public JsonObject ToTypeRefJson() => new()
-    {
-        ["k"] = "clr.typeRef",
-        ["assembly"] = Assembly,
-        ["name"] = Name,
-        ["kind"] = Kind,
-        ["isFileClass"] = IsFileClass,
-    };
-}
-
-sealed record ResolutionCandidate(
-    string Kind,
-    string Assembly,
-    string Owner,
-    string Name,
-    bool IsStatic,
-    bool IsFileClass,
-    IReadOnlyList<string> ParameterTypes,
-    string ReturnType)
-{
-    public JsonObject ToJson() => new()
-    {
-        ["kind"] = Kind,
-        ["assembly"] = Assembly,
-        ["owner"] = Owner,
-        ["name"] = Name,
-        ["isStatic"] = IsStatic,
-        ["isFileClass"] = IsFileClass,
-        ["parameterTypes"] = new JsonArray(ParameterTypes.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
-        ["returnType"] = ReturnType,
-    };
-
-    public JsonObject ToMemberRefJson() => new()
-    {
-        ["k"] = Kind switch
-        {
-            "constructor" => "clr.constructorRef",
-            "field" => "clr.fieldRef",
-            _ => "clr.methodRef",
-        },
-        ["assembly"] = Assembly,
-        ["owner"] = Owner,
-        ["name"] = Name,
-        ["isStatic"] = IsStatic,
-        ["isFileClass"] = IsFileClass,
-        ["parameterTypes"] = new JsonArray(ParameterTypes.Select(s => JsonValue.Create(s)).Cast<JsonNode>().ToArray()),
-        ["returnType"] = ReturnType,
-    };
-}
 
 sealed class TypeSiteAnalyzer
 {
