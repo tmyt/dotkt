@@ -60,6 +60,39 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   emitted. A blanket removal of the skip crashes the stdlib runtime emit (ilemit `ResolveField` NRE — another
   stdlib accessor's rule-3 body reads a backing field), so the hoist must be guarded (only accessors whose body has
   no backing-field read).
+- **Layer purity — kotc emits `kotlin.Unit` for "no value" positions; bir2cir DERIVES the CLR `void` shorthand.** kotc
+  stopped folding `Unit` → `void` (a CLR-resolution decision): a Unit-returning method / setter / accessor `ret`, a
+  suspend `resultType`, a func-type return, a `try`-expression value `type`, and the Unit-literal `const` type now
+  carry the pure Kotlin `kotlin.Unit` FQN. bir2cir derives `void`: return slots via the existing `ReturnKeys`/
+  `LowerReturnSlot` path, and the `const`/`try` value `type` via a new node-kind-scoped fold in `BirTypeLowering`.
+  The fold is deliberately NOT applied to a Unit as a genuine VALUE — a `var`/field/param type or a generic type-arg
+  (`Continuation[kotlin.Unit]`) stays `kotlin.Unit`, since a `void` field/param/arg is invalid metadata. Emitted IL
+  is byte-identical (every Unit-returning fun/setter/try is still `void`); kotc no longer emits the `void` CLR
+  shorthand. (USER 2026-07-05: "kotc folding Unit to Void should be done in bir2cir.")
+
+- **Layer purity — kotc's synthetic exception throws now name the KOTLIN exception FQN, not `System.*` (bir2cir
+  substitutes).** The residual hardcoded `System.*Exception` names in kotc's compiler-synthesized throws — enum
+  `valueOf` "no constant", `require`/`check`/`error`, `requireNotNull`/`checkNotNull`, the exhaustive-`when` else,
+  the lateinit "not initialized" throw, `TODO()`, and the stdlib-compile "not lowered" filler — are gone. kotc now
+  emits a plain `new <kotlin.*Exception>(...)` on the pure-Kotlin exception class (e.g. `kotlin.IllegalArgumentException`),
+  exactly like a user `throw IllegalArgumentException(...)`, and bir2cir's `MemberCallSubstitution` resolves the
+  `@ClrTypeAlias` owner off the ref.dll to the BCL exception (`IllegalArgumentException` → `System.ArgumentException`,
+  `IllegalStateException` → `System.InvalidOperationException`, …). `require`/enum stay byte-identical
+  (`System.ArgumentException`); `requireNotNull`/`checkNotNull` become Kotlin-accurate (`IllegalArgumentException` /
+  `IllegalStateException`, replacing the ad-hoc `Argument/NullReference` mistranslations); `TODO()` throws the real
+  Kotlin `NotImplementedError` (deliberately NOT `@ClrTypeAlias`-bound — bir2cir's cold-suspend lowering keys the
+  `suspendCoroutineUninterceptedOrReturn` intrinsic marker on a literal `new kotlin.NotImplementedError` node, so
+  aliasing it would break every `sequence{}`/`yield`). kotc no longer names any `System.*Exception`.
+  (exception-map-to-clrtypealias, USER 2026-07-01.)
+
+- **Layer purity — annotation `: System.Attribute` base is now DERIVED in bir2cir (kotc emits a Kotlin flag).** A user
+  `annotation class Ann(...)` no longer has its CLR base named by kotc: `BirEmitter.annotationDef` emits a plain BIR
+  class carrying the pure-Kotlin fact `"annotation":true` (base `null`), and bir2cir's `BirTypeLowering` DERIVES
+  `base = clr:System.Attribute` from that flag (dropping the flag before it reaches ilemit). "This is an annotation"
+  is a Kotlin-language fact; "annotations extend `System.Attribute` on the CLR" is the Kotlin↔CLR relation, so the
+  base name belongs below the kotc boundary (annotation-base-lowering-to-bir2cir, USER 2026-07-02). The emitted IL is
+  byte-identical (the class still `: System.Attribute`); `IsAttributeClass` recognizes the flag so the attribute
+  class's field/ctor types still force-lower to concrete CLR types. kotc no longer names `System.Attribute`.
 - **`@kotlin.concurrent.Volatile` is now a REAL CLR volatile field (was a silent no-op).** `@Volatile` on a `var`'s
   backing field lowers to the exact encoding the C# `volatile` keyword emits: the field is declared with a required
   custom modifier `modreq(System.Runtime.CompilerServices.IsVolatile)` (which makes the JIT treat every access as

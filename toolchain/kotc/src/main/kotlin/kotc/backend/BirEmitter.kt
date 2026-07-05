@@ -126,7 +126,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (System.getenv("DOTKT_STDLIB_COMPILE") != null) {
 			messageCollector?.report(CompilerMessageSeverity.WARNING,
 				"[DOTKT-STDLIB] stubbed (not migrated, keep its lowering): $what — $detail", locationOf(node))
-			return """{"k":"throwExpr","value":{"k":"clrNew","type":"System.NotSupportedException","argTypes":["System.String"],"args":[{"k":"const","type":"string","value":${str("[DOTKT-STDLIB] not lowered: $what")}}]}}"""
+			return throwExpr(newExc("kotlin.UnsupportedOperationException", str("[DOTKT-STDLIB] not lowered: $what")))
 		}
 		hadError = true
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
@@ -306,14 +306,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					"""$old,${setVal("""{"k":"local","name":"newValue"}""")},{"k":"exprStmt","expr":$invoke}"""
 				else // vetoable: only store if the callback approves
 					"""$old,{"k":"if","branches":[{"cond":$invoke,"body":[${setVal("""{"k":"local","name":"newValue"}""")}]}]}"""
-				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${str(v)}}],"ret":"void","body":[$body]}"""
+				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${str(v)}}],"ret":"kotlin.Unit","body":[$body]}"""
 				listOf(flds, cps, cb, st)
 			}
 			else -> { // notNull: throws until first set (lateinit-style); flag tracks whether assigned
 				val flag = """{"k":"field","ownerType":${str(cname)},"recv":{"k":"this"},"name":"__set"}"""
 				val flds = """{"name":"value","type":${str(v)}},{"name":"__set","type":"bool"}"""
-				val getBody = """{"k":"if","branches":[{"cond":{"k":"un","op":"!","e":$flag},"body":[{"k":"exprStmt","expr":{"k":"throwExpr","value":{"k":"clrNew","type":"System.InvalidOperationException","argTypes":["System.String"],"args":[{"k":"const","type":"string","value":"Property has not been initialized"}]}}}]}]},{"k":"return","value":$fieldVal}"""
-				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${str(v)}}],"ret":"void","body":[${setVal("""{"k":"local","name":"newValue"}""")},{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":"__set","value":{"k":"const","type":"bool","value":true}}]}"""
+				val getBody = """{"k":"if","branches":[{"cond":{"k":"un","op":"!","e":$flag},"body":[{"k":"exprStmt","expr":${throwExpr(newExc("kotlin.IllegalStateException", str("Property has not been initialized")))}}]}]},{"k":"return","value":$fieldVal}"""
+				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${str(v)}}],"ret":"kotlin.Unit","body":[${setVal("""{"k":"local","name":"newValue"}""")},{"k":"setField","ownerType":${str(cname)},"recv":{"k":"this"},"name":"__set","value":{"k":"const","type":"bool","value":true}}]}"""
 				// override getter body for notNull (throws if unset)
 				return@getOrPut cname.also {
 					synthDelegateDefs.add("""{"name":${str(cname)},"kind":"class","vis":"public","base":null,"interfaces":[${str(iface)}],"fields":[$flds],"ctors":[{"params":[],"baseArgs":null,"thisArgs":null,"vis":"public","body":[]}],"methods":[{"name":"getValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp],"ret":${str(v)},"body":[$getBody]},$st]}""")
@@ -418,7 +418,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		rwPropIfaces.forEach { (v, name) ->
 			val getV = m("getValue", "$thisRef,$kp", v)
-			val setV = m("setValue", "$thisRef,$kp,{\"name\":\"value\",\"type\":${str(v)}}", "void")
+			val setV = m("setValue", "$thisRef,$kp,{\"name\":\"value\",\"type\":${str(v)}}", "kotlin.Unit")
 			out.add("""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$getV,$setV]}""")
 		}
 		return out
@@ -615,7 +615,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// the BCL interface. clrIfaceMemberName is null in the ref build (pure Kotlin: get_size) and binds in substitute.
 			val name = clrIfaceMemberName(fn) ?: (prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString())
 			val isSetter = prop != null && fn == prop.setter
-			val ret = if (isSetter) "void" else birType(fn.returnType)
+			val ret = if (isSetter) "kotlin.Unit" else birType(fn.returnType)
 			// Return nullability (`fun <E> get(key): E?`) — same computation the concrete `method()` path applies. An abstract
 			// interface member whose return is a nullable type-parameter MUST carry `retNullable:true` so it stays symmetric
 			// with its concrete override; else bir2cir's NullableGenericReturnErasure erases only the override to `object`,
@@ -636,7 +636,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `method()` path emits (BirEmitter.kt:1413). Without it bir2cir has nothing to key off for an INTERFACE
 			// suspend member — it can't synthesize the Task-bridge signature / cold-entry — so a cross-assembly
 			// `interface Fetcher { suspend fun fetch(): Int }` round-trip breaks (the abstract-CLASS path already tags it).
-			val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${str(if (fn.returnType.isUnit()) "void" else birType(fn.returnType))}""" else ""
+			val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${str(birType(fn.returnType))}""" else ""
 			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}$retNull$suspendField,"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
@@ -820,7 +820,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val voBranches = entries.joinToString(",") { ent ->
 			"""{"cond":{"k":"objEq","l":{"k":"local","name":"name"},"r":{"k":"const","type":"string","value":${str(ent.name.asString())}}},"body":[{"k":"return","value":${sf(ent)}}]}"""
 		}
-		val voThrow = throwExpr(newExc("System.ArgumentException", str("No enum constant $name")))
+		// Kotlin's `Enum.valueOf` throws IllegalArgumentException on an unknown name (@ClrTypeAlias System.ArgumentException).
+		val voThrow = throwExpr(newExc("kotlin.IllegalArgumentException", str("No enum constant $name")))
 		val voBody = """{"k":"if","branches":[$voBranches,{"else":true,"body":[{"k":"exprStmt","expr":$voThrow}]}]}"""
 		val valueOfM = """{"name":"valueOf","static":true,"override":false,"virtual":false,"vis":"public","params":[{"name":"name","type":"string"}],"ret":${str("@$name")},"body":[$voBody]}"""
 		val methods = (userMethods + propAccessors + listOf(toStr, valuesM, valueOfM)).joinToString(",")
@@ -1026,7 +1027,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
 		val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
 		val name = (if (isGetter) "get_" else "set_") + propName
-		val ret = if (isGetter) birType(acc.returnType) else "void"
+		val ret = if (isGetter) birType(acc.returnType) else "kotlin.Unit"
 		return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public"${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)},"body":[$body]}"""
 	}
 
@@ -1042,7 +1043,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }).joinToString(",")
 		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		if (extRecv != null) selfSubst.remove(extRecv)
-		val ret = if (isGetter) birType(acc.returnType) else "void"
+		val ret = if (isGetter) birType(acc.returnType) else "kotlin.Unit"
 		val clrIface = clrIfaceMemberName(acc) != null
 		// An `override val/var` whose accessor overrides a base CLASS/ENUM_CLASS accessor must REUSE that base virtual
 		// slot (`override`, not a fresh NewSlot) — EXACTLY like an overriding method (see method()'s `isOverride`).
@@ -1066,19 +1067,24 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"name":${str(mname)},"static":false,"override":${clrIface || isOverrideClass},"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 	}
 
-	/** A user `annotation class Ann(val v: Int, …)` -> a `class Ann : System.Attribute` (ctor params -> public fields). */
+	/** A user `annotation class Ann(val v: Int, …)` -> a plain BIR class carrying the pure-Kotlin `"annotation":true`
+	 *  FLAG (ctor params -> public fields). "This is an annotation" is a Kotlin-language fact; "annotations extend
+	 *  System.Attribute on the CLR" is the Kotlin<->CLR relation, so kotc emits ONLY the flag (base:null) and
+	 *  bir2cir DERIVES `base = System.Attribute` from it (annotation-base-lowering-to-bir2cir, USER 2026-07-02).
+	 *  kotc names NO CLR base type here. */
 	internal fun annotationDef(klass: IrClass): String {
 		val ctorParams = klass.declarations.filterIsInstance<IrConstructor>().firstOrNull { it.isPrimary }
 			?.parameters?.filter { it.kind == IrParameterKind.Regular }.orEmpty()
 		val fields = ctorParams.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
 		val assigns = ctorParams.joinToString(",") { """{"k":"setField","ownerType":${str(typeName(klass))},"recv":{"k":"this"},"name":${str(it.name.asString())},"value":{"k":"local","name":${str(it.name.asString())}}}""" }
 		val ctor = """{"params":[$fields],"baseArgs":[],"thisArgs":null,"vis":"public","body":[$assigns]}"""
-		return """{"name":${str(typeName(klass))},"kind":"class","abstract":false,"vis":"public","base":"clr:System.Attribute","interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
+		return """{"name":${str(typeName(klass))},"kind":"class","annotation":true,"abstract":false,"vis":"public","base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
 	}
 
 	/** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. A Kotlin-authored
-	 *  annotation uses its synthesized `: System.Attribute` type (#46); an imported .NET attribute uses its real type
-	 *  via a `clr:` marker so ilemit binds the existing .NET constructor (#54).
+	 *  annotation is named by its plain Kotlin FQN (#46) — bir2cir derives its `: System.Attribute` base from the
+	 *  `"annotation":true` flag on the class def; an imported .NET attribute uses its real type via a `clr:` marker so
+	 *  ilemit binds the existing .NET constructor (#54).
 	 *
 	 *  kotc does NOT filter/select annotations: from kotc's view an annotation is just METADATA, so EVERY annotation is
 	 *  passed through to the BIR verbatim (incl. @ClrTypeAlias, @ClrIntrinsic, and every other `kotlin.*` annotation).
@@ -1404,7 +1410,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// the await/state-machine/Task-ABI lowering is a DEFERRED downstream layer. ilemit's own suspend handling reads
 		// `resultType` for the kickoff signature and (under stdlib-compile) emits a throwing stub. See MEMORY
 		// coroutine-lowering-layer-deferred.
-		val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${str(if (fn.returnType.isUnit()) "void" else birType(fn.returnType))}""" else ""
+		val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${str(birType(fn.returnType))}""" else ""
 		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull$suspendField,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}}"""
 	}
 
@@ -1563,7 +1569,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		val ps = acc.parameters.filter { it.kind == IrParameterKind.Regular }
 			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
-		val ret = if (isGetter) birType(acc.returnType) else "void"
+		val ret = if (isGetter) birType(acc.returnType) else "kotlin.Unit"
 		return """{"name":${str(emitName)},"static":false,"override":true,"virtual":true,"objectOverride":false,"clrOverride":${str(clrOwner)},"vis":"public","params":[$ps],"ret":${str(ret)},"body":[$body]}"""
 	}
 
@@ -1774,7 +1780,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"""{"excType":${str(birType(p.type))},"var":${str(p.name.asString())},"body":[${bodyStmtsAssign(c.result, tv)}]}"""
 		}
 		val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
-		val tryS = """{"k":"try","type":"void","body":[$tryBody],"catches":[$catches]$finally}"""
+		val tryS = """{"k":"try","type":"kotlin.Unit","body":[$tryBody],"catches":[$catches]$finally}"""
 		return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tv)},"type":${str(birType(node.type))}},$tryS],"result":{"k":"local","name":${str(tv)}}}"""
 	}
 
@@ -1891,7 +1897,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"""{"name":${str(captureFieldName(d))},"type":${str(captureFieldType(d))}}"""
 		}
 		val paramsJson = lambdaParamsJson(ownParams)
-		val resultType = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		val resultType = birType(fn.returnType)
 		// Enclosing generic type params referenced by the SM (captures/params/return/body operands) -> open SM
 		// instantiation. BARE names: bir2cir prepends `gp:`.
 		val freeTps = freeTypeParams(captures.map { it.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
@@ -1911,7 +1917,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// kotc does NO coroutine lowering: a `suspend () -> T` lambda emits as a PLAIN lambda (its suspend calls carry
 		// `"suspendCall":true`); the Task-ABI / state-machine lowering is a deferred downstream layer. So the declared
 		// return / delegate type stay the plain Kotlin shapes here.
-		val ret = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		val ret = birType(fn.returnType)
 		val ftype = funcTypeOf(fn)
 		// A lambda has no `this` of its own, so a referenced `<this>` is the enclosing instance -> capture it.
 		val captures = capturedVars(fn, includeThis = true)
@@ -1972,7 +1978,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val sam = ifaceClass.declarations.filterIsInstance<IrSimpleFunction>()
 			.singleOrNull { it.modality == org.jetbrains.kotlin.descriptors.Modality.ABSTRACT } ?: return expr(node.argument)
 		val samName = clrIfaceMemberName(sam) ?: sam.name.asString()
-		val ret = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		val ret = birType(fn.returnType)
 		val captures = capturedVars(fn, includeThis = true)
 		val cname = "<>dotkt_${synthScope}_Sam${closureCounter++}"
 		val capPairs = captures.map { it to captureFieldName(it) }
@@ -2061,7 +2067,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 			val callE = """{"k":"callInstance","ownerType":${str(typeName(ownerClass))},"virtual":$virtual,"recv":{"k":"local","name":"__self"},"method":${str(fn.name.asString())},"args":[$argsJson]}"""
 			val retVoid = fn.returnType.isUnit()
-			val retT = if (retVoid) "void" else birType(fn.returnType)
+			val retT = birType(fn.returnType)
 			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 			val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + ps.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
@@ -2085,7 +2091,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					regs.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }).joinToString(",")
 				val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 				val retVoid = fn.returnType.isUnit()
-				val retT = if (retVoid) "void" else birType(fn.returnType)
+				val retT = birType(fn.returnType)
 				// A lifted `Iterable::iterator` (e.g. `Sequence { this.iterator() }`) reaches here, NOT the call-site
 				// iterator() lowering — route it to the enumerator bridge too, else `__self.iterator()` calls a
 				// non-existent `iterator()` on the substituted BCL IEnumerable.
@@ -2136,7 +2142,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			result = when (val last = stmts.lastOrNull()) {
 				is IrReturn -> expr(last.value)
 				is IrExpression -> expr(last)
-				else -> { last?.let { init.add(stmt(it)) }; """{"k":"const","type":"void","value":null}""" }
+				else -> { last?.let { init.add(stmt(it)) }; """{"k":"const","type":"kotlin.Unit","value":null}""" }
 			}
 		}
 		recvParam?.let { valSubst.remove(it.name.asString()) }
@@ -2168,12 +2174,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// System.IDisposable.Dispose() off the @ClrTypeAlias/@ClrIntrinsic("Dispose") binding (layer purity — no BCL name
 		// in kotc). `use`'s signature (`T : AutoCloseable?`) guarantees the owner is kotlin.AutoCloseable.
 		val dispose = """{"k":"exprStmt","expr":{"k":"callInstance","ownerType":"kotlin.AutoCloseable","method":"close","virtual":true,"recv":{"k":"local","name":${str(uname)}},"args":[]}}"""
-		val tryNode = """{"k":"try","type":"void","body":[${tryBody.joinToString(",")}],"catches":[],"finally":[$dispose]}"""
+		val tryNode = """{"k":"try","type":"kotlin.Unit","body":[${tryBody.joinToString(",")}],"catches":[],"finally":[$dispose]}"""
 		val init = ArrayList<String>()
 		init.add("""{"k":"var","name":${str(uname)},"type":${str(birType(recvExpr.type))},"init":$recvInit}""")
 		if (!unit) init.add("""{"k":"var","name":${str(rname)},"type":${str(retType)}}""")
 		init.add(tryNode)
-		val result = if (unit) """{"k":"const","type":"void","value":null}""" else """{"k":"local","name":${str(rname)}}"""
+		val result = if (unit) """{"k":"const","type":"kotlin.Unit","value":null}""" else """{"k":"local","name":${str(rname)}}"""
 		return """{"k":"valueBlock","stmts":[${init.joinToString(",")}],"result":$result}"""
 	}
 
@@ -2482,18 +2488,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"""{"k":"local","name":${str(res)}}"""
 		} else {
 			pre.add("""{"k":"label","id":$end}""")
-			"""{"k":"const","type":"void","value":null}"""
+			"""{"k":"const","type":"kotlin.Unit","value":null}"""
 		}
 	}
 
 	/** Emit body statements into `pre`, returning the value expression (Unit -> void const; else the last expr). */
 	internal fun spliceBody(stmts: List<org.jetbrains.kotlin.ir.IrStatement>, unit: Boolean, pre: MutableList<String>): String {
-		if (unit) { stmts.forEach { pre.add(stmt(it)) }; return """{"k":"const","type":"void","value":null}""" }
+		if (unit) { stmts.forEach { pre.add(stmt(it)) }; return """{"k":"const","type":"kotlin.Unit","value":null}""" }
 		stmts.dropLast(1).forEach { pre.add(stmt(it)) }
 		return when (val last = stmts.lastOrNull()) {
 			is IrReturn -> expr(last.value)
 			is IrExpression -> expr(last)
-			else -> { last?.let { pre.add(stmt(it)) }; """{"k":"const","type":"void","value":null}""" }
+			else -> { last?.let { pre.add(stmt(it)) }; """{"k":"const","type":"kotlin.Unit","value":null}""" }
 		}
 	}
 
@@ -2518,7 +2524,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val ownParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { pj(it.name.asString(), it.type) }
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
-		val ret = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		val ret = birType(fn.returnType)
 		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
 	}
 
@@ -2578,17 +2584,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** A lambda argument's return BIR type (for inferring LINQ result element types). */
 	internal fun lambdaRet(arg: IrExpression?): String {
 		val fn = (arg as? IrFunctionExpression)?.function
-		return if (fn == null || fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		return if (fn == null) "kotlin.Unit" else birType(fn.returnType)
 	}
 
 	/**
 	 * Build a generic static call node. `shapes` names the EXACT intended overload's parameter shapes
 	 * (ienum/func:N/string/gp/int/…) so ilemit picks it deterministically — no heuristic overload guessing.
 	 */
-	/** A `new <ExceptionType>(msg?)` node (msgJson is an already-quoted JSON string, or null for the no-arg ctor). */
+	/** A `throw`-able exception construction node: a plain `new <KotlinExceptionFQN>(msg?)` on the PURE-KOTLIN
+	 *  exception class (`kotlin.IllegalArgumentException` / `kotlin.IllegalStateException` / …). kotc names NO
+	 *  `System.*` CLR exception type — it emits the Kotlin FQN identity exactly like a user `throw
+	 *  IllegalArgumentException(msg)`, and bir2cir's MemberCallSubstitution.TransformNew resolves the @ClrTypeAlias
+	 *  owner off the ref.dll to the BCL exception (`kotlin.IllegalArgumentException` -> `System.ArgumentException`).
+	 *  This is the same code path a user throw already takes, so the emitted IL is identical. (exception-map-to-
+	 *  clrtypealias, USER 2026-07-01; kotc's `BirMappings.NET_EXCEPTIONS` type-map was already retired — these
+	 *  synthetic throw-sites were the residual `System.*` naming.) `msgJson` is an already-quoted JSON string, or
+	 *  null for the no-arg ctor. */
 	internal fun newExc(type: String, msgJson: String?): String =
-		if (msgJson != null) """{"k":"clrNew","type":${str(type)},"argTypes":["System.String"],"args":[{"k":"const","type":"string","value":$msgJson}]}"""
-		else """{"k":"clrNew","type":${str(type)},"argTypes":[],"args":[]}"""
+		if (msgJson != null) """{"k":"new","type":${str(type)},"argTypes":["kotlin.String"],"args":[{"k":"const","type":"kotlin.String","value":$msgJson}]}"""
+		else """{"k":"new","type":${str(type)},"argTypes":[],"args":[]}"""
 
 	internal fun throwExpr(exc: String): String = """{"k":"throwExpr","value":$exc}"""
 
@@ -2693,7 +2707,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * reach ilemit (whose `FuncRetEnd` parses a single leading prefix).
 	 */
 	internal fun funcRetTypeOf(t: IrType): String {
-		if (t.isUnit()) return "void"
+		if (t.isUnit()) return "kotlin.Unit"
 		val enc = birTypeDeleg(t)
 		return if (t.isMarkedNullable() && enc.startsWith("gp:")) "nullable:$enc" else enc
 	}
@@ -3004,7 +3018,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val pre = block.statements.dropLast(1).joinToString(",") { stmt(it) }
 			return """{"k":"valueBlock","stmts":[$pre],"result":${expr(last)}}"""
 		}
-		return (last as? IrExpression)?.let { expr(it) } ?: """{"k":"const","type":"void","value":null}"""
+		return (last as? IrExpression)?.let { expr(it) } ?: """{"k":"const","type":"kotlin.Unit","value":null}"""
 	}
 
 	internal fun ternary(node: IrWhen): String {
@@ -3023,7 +3037,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val bt = birType(node.type)
 		val elem = if (bt.startsWith("nullable:")) null else VALUE_PRIM_BIR[bt] ?: bt.takeIf { it in PRIMITIVE_SHORTHANDS }
 		val ty = str(if (nullBranch && elem != null) "nullable:$elem" else bt)
-		var acc = """{"k":"const","type":"void","value":null}"""
+		var acc = """{"k":"const","type":"kotlin.Unit","value":null}"""
 		for ((isElse, cond, result) in branches.asReversed()) {
 			acc = if (isElse) result
 			else """{"k":"cond","type":$ty,"cond":${expr(cond)},"then":$result,"else":$acc}"""
@@ -3096,7 +3110,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (ownerName != null) {
 				needsKProperty = true
 				val kprop = """{"k":"new","type":"<>dotkt_KPropertyImpl","args":[{"k":"const","type":"string","value":${str(ldp.name.asString())}}]}"""
-				val nullRef = """{"k":"const","type":"void","value":null}"""
+				val nullRef = """{"k":"const","type":"kotlin.Unit","value":null}"""
 				return if (callee === ldp.setter)
 					"""{"k":"callInstance","ownerType":${str(ownerName)},"virtual":true,"recv":$dlocal,"method":"setValue","args":[$nullRef,$kprop,${expr(regularArgs(call).first())}]}"""
 				else """{"k":"callInstance","ownerType":${str(ownerName)},"virtual":true,"recv":$dlocal,"method":"getValue","args":[$nullRef,$kprop]}"""
@@ -3930,16 +3944,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `String.Companion.format(String, vararg Any?)` @ClrIntrinsic("System.String.Format")), NOT a kotc lowering.
 			// (Retired 2026-07-02: String family, bundle 1.)
 			// Exhaustive-when synthetic else / uninitialized property -> throw (the branch is unreachable).
+			// kotc names ONLY the KOTLIN exception FQN (a pure Kotlin fact); bir2cir substitutes it to the BCL type via
+			// the ref.dll @ClrTypeAlias (IllegalArgumentException -> System.ArgumentException, IllegalStateException ->
+			// System.InvalidOperationException). exhaustive-when synthetic-else / uninitialized-property -> IllegalState.
 			if (name == "noWhenBranchMatchedException" || name == "throwUninitializedPropertyAccessException")
-				return throwExpr(newExc("System.InvalidOperationException", str(name)))
-			// Precondition / error helpers (top-level kotlin.* functions).
-			if (calleeFq == "kotlin.TODO") return throwExpr(newExc("System.NotImplementedException", null))
+				return throwExpr(newExc("kotlin.IllegalStateException", str(name)))
+			// Precondition / error helpers (top-level kotlin.* functions). TODO() throws NotImplementedError (a real
+			// emitted Kotlin exception, NOT CLR-aliased — see Standard.kt), constructed with its standard default
+			// message (the 1-arg ctor, so no cross-module default-value gap); error()/check() throw IllegalStateException.
+			if (calleeFq == "kotlin.TODO") return throwExpr(newExc("kotlin.NotImplementedError", str("An operation is not implemented.")))
 			if (calleeFq == "kotlin.error")
-				return throwExpr("""{"k":"clrNew","type":"System.InvalidOperationException","argTypes":["System.String"],"args":[${regularArgs(call).firstOrNull()?.let { expr(it) } ?: """{"k":"const","type":"string","value":"error"}"""}]}""")
+				return throwExpr("""{"k":"new","type":"kotlin.IllegalStateException","argTypes":["kotlin.String"],"args":[${regularArgs(call).firstOrNull()?.let { expr(it) } ?: """{"k":"const","type":"kotlin.String","value":"error"}"""}]}""")
 			if (calleeFq == "kotlin.require")
-				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":"void","value":null},"else":${throwExpr(newExc("System.ArgumentException", "\"Failed requirement\""))}}"""
+				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":"kotlin.Unit","value":null},"else":${throwExpr(newExc("kotlin.IllegalArgumentException", "\"Failed requirement\""))}}"""
 			if (calleeFq == "kotlin.check")
-				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":"void","value":null},"else":${throwExpr(newExc("System.InvalidOperationException", "\"Check failed\""))}}"""
+				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":"kotlin.Unit","value":null},"else":${throwExpr(newExc("kotlin.IllegalStateException", "\"Check failed\""))}}"""
 			if (name == "ieee754equals" && regularArgs(call).size == 2) {
 				val a = regularArgs(call)
 				return """{"k":"bin","op":"==","l":${expr(a[0])},"r":${expr(a[1])}}"""
@@ -3948,14 +3967,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (calleeFq == "kotlin.requireNotNull" || calleeFq == "kotlin.checkNotNull") {
 				val arg = regularArgs(call).first()
 				val nv = "__rn${scopeCounter++}"
-				val excType = if (calleeFq == "kotlin.requireNotNull") "System.ArgumentNullException" else "System.NullReferenceException"
+				// Kotlin: requireNotNull throws IllegalArgumentException, checkNotNull throws IllegalStateException.
+				val excType = if (calleeFq == "kotlin.requireNotNull") "kotlin.IllegalArgumentException" else "kotlin.IllegalStateException"
 				val velem = nullableElem(arg.type)
 				val nvLoc = """{"k":"local","name":${str(nv)}}"""
 				return if (velem != null) {
 					// value-nullable T?: HasValue ? Value : throw.
 					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${str("nullable:$velem")},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(velem)},"e":$nvLoc},"then":{"k":"nullableValue","elem":${str(velem)},"e":$nvLoc},"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
 				} else {
-					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${str(birType(arg.type))},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"un","op":"!","e":{"k":"objEq","l":$nvLoc,"r":{"k":"const","type":"void","value":null}}},"then":$nvLoc,"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
+					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${str(birType(arg.type))},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"un","op":"!","e":{"k":"objEq","l":$nvLoc,"r":{"k":"const","type":"kotlin.Unit","value":null}}},"then":$nvLoc,"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
 				}
 			}
 			// `coerceAtMost`/`coerceAtLeast`/`coerceIn` are NO LONGER lowered here (2026-07-04, bundle-8 layer purity).
@@ -4464,7 +4484,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val tys = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
 			if (tys.isNotEmpty()) {
 				val retT = tys.last()
-				val ret = if (retT.isUnit()) "void" else (if (retT.isMarkedNullable() && birType(retT).startsWith("gp:")) "nullable:" + birType(retT) else birType(retT))
+				val ret = if (retT.isUnit()) "kotlin.Unit" else (if (retT.isMarkedNullable() && birType(retT).startsWith("gp:")) "nullable:" + birType(retT) else birType(retT))
 				return "func:$ret:${tys.dropLast(1).joinToString(",") { birType(it) }}"
 			}
 		}

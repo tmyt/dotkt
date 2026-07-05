@@ -2271,6 +2271,26 @@ static class BirTypeLowering
                 else
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, here);
             }
+            // ANNOTATION-BASE DERIVATION (annotation-base-lowering-to-bir2cir, USER 2026-07-02): kotc emits a user
+            // `annotation class` as a plain class carrying `"annotation":true` (base:null) — the Kotlin fact. bir2cir
+            // is the Kotlin<->CLR layer that DERIVES the CLR base: an annotation class extends System.Attribute. Set
+            // the base here (the `clr:` form ilemit resolves to the referenced .NET type) and drop the Kotlin-only
+            // flag so it never reaches the CIR/ilemit. The `here`/force path above already lowered its field/ctor
+            // types with the full map (IsAttributeClass recognizes the flag), so the attribute is emittable.
+            if (obj["annotation"] is JsonValue av && av.TryGetValue<bool>(out var annFlag) && annFlag)
+            {
+                copy["base"] = "clr:System.Attribute";
+                copy.Remove("annotation");
+            }
+            // UNIT -> void DERIVATION (unit-fold-in-bir2cir, USER 2026-07-05): kotc emits the pure Kotlin `kotlin.Unit`
+            // FQN identity for a "no value" position — the Unit-literal `const` type and a Unit-valued `try` expression
+            // `type` — instead of naming the CLR `void` shorthand. bir2cir DERIVES `void` HERE, node-kind-scoped, so
+            // ONLY these two value-slot positions fold. A Unit as a genuine VALUE elsewhere (a `var`/field/param type, a
+            // generic TYPE-ARG like `Continuation[kotlin.Unit]`) stays `kotlin.Unit` — a `void` field/param/arg is
+            // invalid metadata. (Return slots fold via the ReturnKeys/LowerReturnSlot path; this covers the rest.)
+            if (copy["k"] is JsonValue kv2 && kv2.TryGetValue<string>(out var kind2) && (kind2 == "const" || kind2 == "try")
+                && copy["type"] is JsonValue tv2 && tv2.TryGetValue<string>(out var ts2) && ts2 == "kotlin.Unit")
+                copy["type"] = "void";
             return copy;
         }
 
@@ -2285,12 +2305,15 @@ static class BirTypeLowering
         return node.DeepClone();
     }
 
-    // A type declaration is an attribute class iff it extends System.Attribute (kotc lowers every Kotlin
-    // `annotation class` to `: System.Attribute`). Its ctor params / fields / property accessors must carry
-    // concrete CLR types so the attribute is emittable — hence the force path.
+    // A type declaration is an attribute class iff kotc flagged it `"annotation":true` (the pure-Kotlin "this is an
+    // annotation" fact) — bir2cir DERIVES the `: System.Attribute` base from that flag (annotation-base-lowering-to-
+    // bir2cir, USER 2026-07-02; kotc no longer names the CLR base). Also true once the base has already been derived
+    // (an already-`System.Attribute`-based class, e.g. a .NET attribute surfaced with a real base). Its ctor params /
+    // fields / property accessors must carry concrete CLR types so the attribute is emittable — hence the force path.
     static bool IsAttributeClass(JsonObject obj) =>
-        obj["base"] is JsonValue b && b.TryGetValue<string>(out var s) && s != null &&
-        s.EndsWith("System.Attribute", StringComparison.Ordinal);
+        (obj["annotation"] is JsonValue a && a.TryGetValue<bool>(out var isAnn) && isAnn) ||
+        (obj["base"] is JsonValue b && b.TryGetValue<string>(out var s) && s != null &&
+         s.EndsWith("System.Attribute", StringComparison.Ordinal));
 
     // A `sig` value is a top-level comma-joined list of parameter type tokens (the overload key ilemit matches by
     // STRING EQUALITY against a method def's lowered `params[].type`). Lower each element so the call-side sig and
