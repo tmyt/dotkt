@@ -3041,6 +3041,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// named `stackBuffer` is not mistaken for the intrinsic.
 		if (callee.fqNameWhenAvailable?.asString() == "kotlin.clr.stackBuffer")
 			return emitStackBuffer(call)
+		// A .NET event subscription `w.Changed += h` / `-= h` resolves (normal Kotlin operator resolution) to the
+		// `plusAssign`/`minusAssign` member operator of the injected `kotlin.clr.ClrEvent<T>` fiction (the surfaced
+		// form of a .NET event member — see ClrTypeInjection). kotc emits the PLAIN Kotlin operator-call identity: a
+		// `callInstance` on `kotlin.clr.ClrEvent` whose receiver is the event member-access `w.Changed` (a clrPropGet
+		// carrying the .NET owner type + event name). NO `add_`/`remove_` naming, NO clrEventAdd here — bir2cir's
+		// ClrEventOperatorBinding recognizes this node and binds it to the .NET add/remove accessor (the Kotlin<->CLR
+		// event relation lives in bir2cir, not kotc). The ClrEvent<T> value is never materialized.
+		if ((callee.name.asString() == "plusAssign" || callee.name.asString() == "minusAssign")
+			&& (callee.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.clr.ClrEvent") {
+			val recv = dispatchReceiver(call)!!
+			return """{"k":"callInstance","ownerType":"kotlin.clr.ClrEvent","virtual":false,"recv":${expr(recv)},"method":${str(callee.name.asString())},"args":[${expr(regularArgs(call).first())}]}"""
+		}
 		// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 		((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }
 		// A `<get-x>`/`<set-x>` call for a LOCAL delegated property -> access on the delegate local (thisRef=null,
@@ -3512,19 +3524,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else -> (recvClass?.superTypes ?: (recv?.type?.classifierOrNull?.owner as? org.jetbrains.kotlin.ir.declarations.IrTypeParameter)?.superTypes)
 					?.firstOrNull { it.classifierOrNull?.owner == declClass }?.let { birType(it) } ?: clrType
 			}
-			// I4: an injected `add_<E>`/`remove_<E>` call is a .NET event subscription -> `recv.<E> += handler`.
-			// The real .NET declaring type owns the event. A2 stage 4 (the LAST registry): read the (eventName, op)
-			// fact off the synthesized accessor's RESOLVED IR `CallableId` (declaring-class `ClassId` + method name)
-			// via `kotc.frontend.clrInjectedEventOp` — facadegen's metadata keyed by that same structural identity,
-			// NOT the deleted name-keyed `ClrEventRegistry.lookup(declFq, name)`. The handler is a lambda -> delegate
-			// (the existing closureNew/delegateNew path); ilemit binds it to the event's own delegate type (not
-			// Func/Action). See clrEventAdd in ilemit.
-			declClass?.classId?.let { CallableId(it, callee.name) }?.let { kotc.frontend.clrInjectedEventOp(it) }?.let { (eventName, op) ->
-				val recvJson = if (isStatic) "null" else expr(recv!!)
-				val handler = expr(regularArgs(call).first())
-				val kind = if (op == "+=") "clrEventAdd" else "clrEventRemove"
-				return """{"k":${str(kind)},"type":${str(memberType)},"event":${str(eventName)},"static":$isStatic,"recv":$recvJson,"handler":$handler}"""
-			}
+			// (RETIRED 2026-07-05) The `add_<E>`/`remove_<E>` call -> clrEventAdd rewrite is GONE. A .NET event is now
+			// surfaced as a `kotlin.clr.ClrEvent<T>` property and subscribed via `w.<E> += handler` / `-= handler`; kotc
+			// emits the plain `plusAssign`/`minusAssign` operator call (handled at the top of this function), and bir2cir's
+			// ClrEventOperatorBinding binds it to the .NET add/remove accessor. No `add_`/`remove_` naming, no clrEventAdd
+			// in kotc — the Kotlin<->CLR event relation is bir2cir's (layer purity).
 			// A generic .NET method (`Unsafe.SizeOf<T>()`, `Activator.CreateInstance<T>()`) -> resolve the open
 			// generic-method definition by name + type-arity + parameter shapes, then MakeGenericMethod with the
 			// call's type args. The CLR has reified generics, so this is just an ordinary generic-method call (no
