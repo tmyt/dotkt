@@ -2329,8 +2329,16 @@ sealed partial class Emitter
             case "+": _il.Emit(OpCodes.Add); return lt;
             case "-": _il.Emit(OpCodes.Sub); return lt;
             case "*": _il.Emit(OpCodes.Mul); return lt;
-            case "/": _il.Emit(isUns ? OpCodes.Div_Un : OpCodes.Div); return lt;
-            case "%": _il.Emit(isUns ? OpCodes.Rem_Un : OpCodes.Rem); return lt;
+            // Signed integer `/` and `%` by -1 overflow the raw CIL `div`/`rem` opcode at MinValue (the CLR throws
+            // OverflowException on `MinValue / -1`), but Kotlin's integer division WRAPS: `MIN / -1 == MIN`, `x % -1 == 0`.
+            // Guard the divisor==-1 case with identities that also cover MinValue: `x / -1 == -x` (CIL `neg` wraps
+            // MinValue, no overflow) and `x % -1 == 0` for every x. Unsigned/float never overflow here — raw opcode.
+            case "/":
+                if (!isUns && (lt == typeof(int) || lt == typeof(long))) { EmitDivRemGuarded(isRem: false, lt); return lt; }
+                _il.Emit(isUns ? OpCodes.Div_Un : OpCodes.Div); return lt;
+            case "%":
+                if (!isUns && (lt == typeof(int) || lt == typeof(long))) { EmitDivRemGuarded(isRem: true, lt); return lt; }
+                _il.Emit(isUns ? OpCodes.Rem_Un : OpCodes.Rem); return lt;
             case "&": _il.Emit(OpCodes.And); return lt;
             case "|": _il.Emit(OpCodes.Or); return lt;
             case "^": _il.Emit(OpCodes.Xor); return lt;
@@ -2345,6 +2353,30 @@ sealed partial class Emitter
             case ">=": _il.Emit(isFloat ? OpCodes.Clt_Un : OpCodes.Clt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
             default: throw new NotSupportedException("bin " + op);
         }
+    }
+
+    // Emit signed integer `/`/`%` with the divisor==-1 guard (stack on entry: [dividend, divisor]; leaves [result]).
+    // Kotlin's integer division wraps at MinValue; the raw CIL `div`/`rem` throws OverflowException on `MinValue / -1`.
+    // Since `x / -1 == -x` (CIL `neg` wraps MinValue) and `x % -1 == 0` for all x, we branch on divisor==-1 and use the
+    // wrapping identity, dodging the overflow entirely without a MinValue comparison. `t` is int or long.
+    void EmitDivRemGuarded(bool isRem, Type t)
+    {
+        var divisor = _il.DeclareLocal(t);
+        _il.Emit(OpCodes.Stloc, divisor);       // stack: [dividend]
+        var normal = _il.DefineLabel();
+        var done = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldloc, divisor);
+        _il.Emit(OpCodes.Ldc_I4_M1);
+        if (t == typeof(long)) _il.Emit(OpCodes.Conv_I8);
+        _il.Emit(OpCodes.Bne_Un, normal);       // divisor != -1 -> normal path (stack: [dividend])
+        // divisor == -1: result is -dividend (div) or 0 (rem)
+        if (isRem) { _il.Emit(OpCodes.Pop); _il.Emit(OpCodes.Ldc_I4_0); if (t == typeof(long)) _il.Emit(OpCodes.Conv_I8); }
+        else _il.Emit(OpCodes.Neg);
+        _il.Emit(OpCodes.Br, done);
+        _il.MarkLabel(normal);                  // stack: [dividend]
+        _il.Emit(OpCodes.Ldloc, divisor);
+        _il.Emit(isRem ? OpCodes.Rem : OpCodes.Div);
+        _il.MarkLabel(done);
     }
 
     Type EmitUn(JsonElement e)
