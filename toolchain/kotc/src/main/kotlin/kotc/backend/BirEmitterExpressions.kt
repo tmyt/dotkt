@@ -248,7 +248,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 					when (e) {
 						is IrSpreadElement -> """{"spread":true,"e":${expr(e.expression)}}"""
 						is IrExpression -> """{"spread":false,"e":${expr(e)}}"""
-						else -> """{"spread":false,"e":{"k":"const","type":"void","value":null}}"""
+						else -> """{"spread":false,"e":{"k":"const","type":"kotlin.Unit","value":null}}"""
 					}
 				}
 				"""{"k":"spreadConcat","elem":${str(birType(node.varargElementType))},"parts":[$parts]}"""

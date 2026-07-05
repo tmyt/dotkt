@@ -418,7 +418,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		rwPropIfaces.forEach { (v, name) ->
 			val getV = m("getValue", "$thisRef,$kp", v)
-			val setV = m("setValue", "$thisRef,$kp,{\"name\":\"value\",\"type\":${str(v)}}", "void")
+			val setV = m("setValue", "$thisRef,$kp,{\"name\":\"value\",\"type\":${str(v)}}", "kotlin.Unit")
 			out.add("""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$getV,$setV]}""")
 		}
 		return out
@@ -615,7 +615,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// the BCL interface. clrIfaceMemberName is null in the ref build (pure Kotlin: get_size) and binds in substitute.
 			val name = clrIfaceMemberName(fn) ?: (prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString())
 			val isSetter = prop != null && fn == prop.setter
-			val ret = if (isSetter) "void" else birType(fn.returnType)
+			val ret = if (isSetter) "kotlin.Unit" else birType(fn.returnType)
 			// Return nullability (`fun <E> get(key): E?`) — same computation the concrete `method()` path applies. An abstract
 			// interface member whose return is a nullable type-parameter MUST carry `retNullable:true` so it stays symmetric
 			// with its concrete override; else bir2cir's NullableGenericReturnErasure erases only the override to `object`,
@@ -636,7 +636,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `method()` path emits (BirEmitter.kt:1413). Without it bir2cir has nothing to key off for an INTERFACE
 			// suspend member — it can't synthesize the Task-bridge signature / cold-entry — so a cross-assembly
 			// `interface Fetcher { suspend fun fetch(): Int }` round-trip breaks (the abstract-CLASS path already tags it).
-			val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${str(if (fn.returnType.isUnit()) "void" else birType(fn.returnType))}""" else ""
+			val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${str(birType(fn.returnType))}""" else ""
 			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}$retNull$suspendField,"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
@@ -1027,7 +1027,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
 		val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
 		val name = (if (isGetter) "get_" else "set_") + propName
-		val ret = if (isGetter) birType(acc.returnType) else "void"
+		val ret = if (isGetter) birType(acc.returnType) else "kotlin.Unit"
 		return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public"${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)},"body":[$body]}"""
 	}
 
@@ -1043,7 +1043,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }).joinToString(",")
 		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		if (extRecv != null) selfSubst.remove(extRecv)
-		val ret = if (isGetter) birType(acc.returnType) else "void"
+		val ret = if (isGetter) birType(acc.returnType) else "kotlin.Unit"
 		val clrIface = clrIfaceMemberName(acc) != null
 		// An `override val/var` whose accessor overrides a base CLASS/ENUM_CLASS accessor must REUSE that base virtual
 		// slot (`override`, not a fresh NewSlot) — EXACTLY like an overriding method (see method()'s `isOverride`).
@@ -1410,7 +1410,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// the await/state-machine/Task-ABI lowering is a DEFERRED downstream layer. ilemit's own suspend handling reads
 		// `resultType` for the kickoff signature and (under stdlib-compile) emits a throwing stub. See MEMORY
 		// coroutine-lowering-layer-deferred.
-		val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${str(if (fn.returnType.isUnit()) "void" else birType(fn.returnType))}""" else ""
+		val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${str(birType(fn.returnType))}""" else ""
 		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull$suspendField,"params":[$ps],"ret":${str(birType(fn.returnType))},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}}"""
 	}
 
@@ -1569,7 +1569,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		val ps = acc.parameters.filter { it.kind == IrParameterKind.Regular }
 			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }
-		val ret = if (isGetter) birType(acc.returnType) else "void"
+		val ret = if (isGetter) birType(acc.returnType) else "kotlin.Unit"
 		return """{"name":${str(emitName)},"static":false,"override":true,"virtual":true,"objectOverride":false,"clrOverride":${str(clrOwner)},"vis":"public","params":[$ps],"ret":${str(ret)},"body":[$body]}"""
 	}
 
@@ -1780,7 +1780,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"""{"excType":${str(birType(p.type))},"var":${str(p.name.asString())},"body":[${bodyStmtsAssign(c.result, tv)}]}"""
 		}
 		val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
-		val tryS = """{"k":"try","type":"void","body":[$tryBody],"catches":[$catches]$finally}"""
+		val tryS = """{"k":"try","type":"kotlin.Unit","body":[$tryBody],"catches":[$catches]$finally}"""
 		return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tv)},"type":${str(birType(node.type))}},$tryS],"result":{"k":"local","name":${str(tv)}}}"""
 	}
 
@@ -1897,7 +1897,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"""{"name":${str(captureFieldName(d))},"type":${str(captureFieldType(d))}}"""
 		}
 		val paramsJson = lambdaParamsJson(ownParams)
-		val resultType = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		val resultType = birType(fn.returnType)
 		// Enclosing generic type params referenced by the SM (captures/params/return/body operands) -> open SM
 		// instantiation. BARE names: bir2cir prepends `gp:`.
 		val freeTps = freeTypeParams(captures.map { it.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
@@ -1917,7 +1917,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// kotc does NO coroutine lowering: a `suspend () -> T` lambda emits as a PLAIN lambda (its suspend calls carry
 		// `"suspendCall":true`); the Task-ABI / state-machine lowering is a deferred downstream layer. So the declared
 		// return / delegate type stay the plain Kotlin shapes here.
-		val ret = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		val ret = birType(fn.returnType)
 		val ftype = funcTypeOf(fn)
 		// A lambda has no `this` of its own, so a referenced `<this>` is the enclosing instance -> capture it.
 		val captures = capturedVars(fn, includeThis = true)
@@ -1978,7 +1978,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val sam = ifaceClass.declarations.filterIsInstance<IrSimpleFunction>()
 			.singleOrNull { it.modality == org.jetbrains.kotlin.descriptors.Modality.ABSTRACT } ?: return expr(node.argument)
 		val samName = clrIfaceMemberName(sam) ?: sam.name.asString()
-		val ret = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		val ret = birType(fn.returnType)
 		val captures = capturedVars(fn, includeThis = true)
 		val cname = "<>dotkt_${synthScope}_Sam${closureCounter++}"
 		val capPairs = captures.map { it to captureFieldName(it) }
@@ -2067,7 +2067,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 			val callE = """{"k":"callInstance","ownerType":${str(typeName(ownerClass))},"virtual":$virtual,"recv":{"k":"local","name":"__self"},"method":${str(fn.name.asString())},"args":[$argsJson]}"""
 			val retVoid = fn.returnType.isUnit()
-			val retT = if (retVoid) "void" else birType(fn.returnType)
+			val retT = birType(fn.returnType)
 			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 			val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + ps.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
@@ -2091,7 +2091,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					regs.map { """{"name":${str(it.name.asString())},"type":${str(birType(it.type))}}""" }).joinToString(",")
 				val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 				val retVoid = fn.returnType.isUnit()
-				val retT = if (retVoid) "void" else birType(fn.returnType)
+				val retT = birType(fn.returnType)
 				// A lifted `Iterable::iterator` (e.g. `Sequence { this.iterator() }`) reaches here, NOT the call-site
 				// iterator() lowering — route it to the enumerator bridge too, else `__self.iterator()` calls a
 				// non-existent `iterator()` on the substituted BCL IEnumerable.
@@ -2142,7 +2142,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			result = when (val last = stmts.lastOrNull()) {
 				is IrReturn -> expr(last.value)
 				is IrExpression -> expr(last)
-				else -> { last?.let { init.add(stmt(it)) }; """{"k":"const","type":"void","value":null}""" }
+				else -> { last?.let { init.add(stmt(it)) }; """{"k":"const","type":"kotlin.Unit","value":null}""" }
 			}
 		}
 		recvParam?.let { valSubst.remove(it.name.asString()) }
@@ -2174,12 +2174,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// System.IDisposable.Dispose() off the @ClrTypeAlias/@ClrIntrinsic("Dispose") binding (layer purity — no BCL name
 		// in kotc). `use`'s signature (`T : AutoCloseable?`) guarantees the owner is kotlin.AutoCloseable.
 		val dispose = """{"k":"exprStmt","expr":{"k":"callInstance","ownerType":"kotlin.AutoCloseable","method":"close","virtual":true,"recv":{"k":"local","name":${str(uname)}},"args":[]}}"""
-		val tryNode = """{"k":"try","type":"void","body":[${tryBody.joinToString(",")}],"catches":[],"finally":[$dispose]}"""
+		val tryNode = """{"k":"try","type":"kotlin.Unit","body":[${tryBody.joinToString(",")}],"catches":[],"finally":[$dispose]}"""
 		val init = ArrayList<String>()
 		init.add("""{"k":"var","name":${str(uname)},"type":${str(birType(recvExpr.type))},"init":$recvInit}""")
 		if (!unit) init.add("""{"k":"var","name":${str(rname)},"type":${str(retType)}}""")
 		init.add(tryNode)
-		val result = if (unit) """{"k":"const","type":"void","value":null}""" else """{"k":"local","name":${str(rname)}}"""
+		val result = if (unit) """{"k":"const","type":"kotlin.Unit","value":null}""" else """{"k":"local","name":${str(rname)}}"""
 		return """{"k":"valueBlock","stmts":[${init.joinToString(",")}],"result":$result}"""
 	}
 
@@ -2488,18 +2488,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"""{"k":"local","name":${str(res)}}"""
 		} else {
 			pre.add("""{"k":"label","id":$end}""")
-			"""{"k":"const","type":"void","value":null}"""
+			"""{"k":"const","type":"kotlin.Unit","value":null}"""
 		}
 	}
 
 	/** Emit body statements into `pre`, returning the value expression (Unit -> void const; else the last expr). */
 	internal fun spliceBody(stmts: List<org.jetbrains.kotlin.ir.IrStatement>, unit: Boolean, pre: MutableList<String>): String {
-		if (unit) { stmts.forEach { pre.add(stmt(it)) }; return """{"k":"const","type":"void","value":null}""" }
+		if (unit) { stmts.forEach { pre.add(stmt(it)) }; return """{"k":"const","type":"kotlin.Unit","value":null}""" }
 		stmts.dropLast(1).forEach { pre.add(stmt(it)) }
 		return when (val last = stmts.lastOrNull()) {
 			is IrReturn -> expr(last.value)
 			is IrExpression -> expr(last)
-			else -> { last?.let { pre.add(stmt(it)) }; """{"k":"const","type":"void","value":null}""" }
+			else -> { last?.let { pre.add(stmt(it)) }; """{"k":"const","type":"kotlin.Unit","value":null}""" }
 		}
 	}
 
@@ -2524,7 +2524,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val ownParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { pj(it.name.asString(), it.type) }
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		capPairs.forEach { (decl, _) -> captureSubst.remove(decl) }
-		val ret = if (fn.returnType.isUnit()) "void" else birType(fn.returnType)
+		val ret = birType(fn.returnType)
 		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
 	}
 
@@ -2707,7 +2707,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * reach ilemit (whose `FuncRetEnd` parses a single leading prefix).
 	 */
 	internal fun funcRetTypeOf(t: IrType): String {
-		if (t.isUnit()) return "void"
+		if (t.isUnit()) return "kotlin.Unit"
 		val enc = birTypeDeleg(t)
 		return if (t.isMarkedNullable() && enc.startsWith("gp:")) "nullable:$enc" else enc
 	}
@@ -3018,7 +3018,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val pre = block.statements.dropLast(1).joinToString(",") { stmt(it) }
 			return """{"k":"valueBlock","stmts":[$pre],"result":${expr(last)}}"""
 		}
-		return (last as? IrExpression)?.let { expr(it) } ?: """{"k":"const","type":"void","value":null}"""
+		return (last as? IrExpression)?.let { expr(it) } ?: """{"k":"const","type":"kotlin.Unit","value":null}"""
 	}
 
 	internal fun ternary(node: IrWhen): String {
@@ -3037,7 +3037,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val bt = birType(node.type)
 		val elem = if (bt.startsWith("nullable:")) null else VALUE_PRIM_BIR[bt] ?: bt.takeIf { it in PRIMITIVE_SHORTHANDS }
 		val ty = str(if (nullBranch && elem != null) "nullable:$elem" else bt)
-		var acc = """{"k":"const","type":"void","value":null}"""
+		var acc = """{"k":"const","type":"kotlin.Unit","value":null}"""
 		for ((isElse, cond, result) in branches.asReversed()) {
 			acc = if (isElse) result
 			else """{"k":"cond","type":$ty,"cond":${expr(cond)},"then":$result,"else":$acc}"""
@@ -3110,7 +3110,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (ownerName != null) {
 				needsKProperty = true
 				val kprop = """{"k":"new","type":"<>dotkt_KPropertyImpl","args":[{"k":"const","type":"string","value":${str(ldp.name.asString())}}]}"""
-				val nullRef = """{"k":"const","type":"void","value":null}"""
+				val nullRef = """{"k":"const","type":"kotlin.Unit","value":null}"""
 				return if (callee === ldp.setter)
 					"""{"k":"callInstance","ownerType":${str(ownerName)},"virtual":true,"recv":$dlocal,"method":"setValue","args":[$nullRef,$kprop,${expr(regularArgs(call).first())}]}"""
 				else """{"k":"callInstance","ownerType":${str(ownerName)},"virtual":true,"recv":$dlocal,"method":"getValue","args":[$nullRef,$kprop]}"""
@@ -4484,7 +4484,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val tys = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
 			if (tys.isNotEmpty()) {
 				val retT = tys.last()
-				val ret = if (retT.isUnit()) "void" else (if (retT.isMarkedNullable() && birType(retT).startsWith("gp:")) "nullable:" + birType(retT) else birType(retT))
+				val ret = if (retT.isUnit()) "kotlin.Unit" else (if (retT.isMarkedNullable() && birType(retT).startsWith("gp:")) "nullable:" + birType(retT) else birType(retT))
 				return "func:$ret:${tys.dropLast(1).joinToString(",") { birType(it) }}"
 			}
 		}

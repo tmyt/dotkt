@@ -5,6 +5,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **Layer purity — kotc emits `kotlin.Unit` for "no value" positions; bir2cir DERIVES the CLR `void` shorthand.** kotc
+  stopped folding `Unit` → `void` (a CLR-resolution decision): a Unit-returning method / setter / accessor `ret`, a
+  suspend `resultType`, a func-type return, a `try`-expression value `type`, and the Unit-literal `const` type now
+  carry the pure Kotlin `kotlin.Unit` FQN. bir2cir derives `void`: return slots via the existing `ReturnKeys`/
+  `LowerReturnSlot` path, and the `const`/`try` value `type` via a new node-kind-scoped fold in `BirTypeLowering`.
+  The fold is deliberately NOT applied to a Unit as a genuine VALUE — a `var`/field/param type or a generic type-arg
+  (`Continuation[kotlin.Unit]`) stays `kotlin.Unit`, since a `void` field/param/arg is invalid metadata. Emitted IL
+  is byte-identical (every Unit-returning fun/setter/try is still `void`); kotc no longer emits the `void` CLR
+  shorthand. (USER 2026-07-05: "kotc folding Unit to Void should be done in bir2cir.")
+
 - **Layer purity — kotc's synthetic exception throws now name the KOTLIN exception FQN, not `System.*` (bir2cir
   substitutes).** The residual hardcoded `System.*Exception` names in kotc's compiler-synthesized throws — enum
   `valueOf` "no constant", `require`/`check`/`error`, `requireNotNull`/`checkNotNull`, the exhaustive-`when` else,
