@@ -27,6 +27,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the CLR ones (`"void"`, `"System.Void"`): bir2cir derives Unit→void upstream, so a Kotlin spelling reaching ilemit
   would be a bir2cir lowering defect, not something the backend should silently absorb. Confirmed no CIR emits the
   Kotlin spellings today.
+- **Cross-module `suspendCoroutine { … }` now lowers + runs (F2), with the SafeContinuation sync-resume identity
+  fix (F1).** Our compiler does not inline `@InlineOnly` cross-module, so an app-level `suspendCoroutine { it.resume(v) }`
+  reached bir2cir un-inlined — a plain `callStatic suspendCoroutine(<closure>) suspendCall:true` whose `delegateNew`/
+  `closureNew` block arg tripped `SuspendColdLowering`'s lambda refusal, so the enclosing suspend fun was rejected and
+  ilemit crashed ("suspend method reached codegen un-lowered"). bir2cir now recognizes that shape
+  (`IsSuspendCoroutineCall`) and RECONSTRUCTS the wrapper's body inside the caller's cold state machine
+  (`EmitSuspendCoroutineCall`): buffer a (possibly synchronous) resume through a `SafeContinuation`, run the block
+  against it, take `getOrThrow()` as the suspension result. Since `SafeContinuation`'s ctor/`getOrThrow` are `internal`,
+  the reconstruction routes through two new PUBLIC `kotlin.coroutines.clr.internal` bridges,
+  `newSafeContinuation`/`safeGetOrThrow`, keeping the internal type inside the stdlib. F1 (dormant until F2 landed):
+  `SafeContinuation` read the `UNDECIDED`/`RESUMED` `CoroutineSingletons` enum values UNCACHED — a CLR enum is a value
+  type whose `===` identity is unstable once boxed to `Any?`, so a sync resume's `cur === UNDECIDED` check misfired and
+  fell to `throw IllegalStateException("Already resumed")`. `SafeContinuationClr.kt` now caches the two boxes
+  (`UNDECIDED_BOX`/`RESUMED_BOX`, mirroring `COROUTINE_SUSPENDED_BOX`) and uses them for the ctor default, the `RESUMED`
+  write, and every `===` check. New gate case `cases/il-suspendco` (sync `resume(42)` → `42`; `resumeWithException` →
+  `getOrThrow` rethrows at the sync point → caught).
 - **`SynchronizedLazyImpl` restored to lock-free double-checked-locking (DCL) reads** — the follow-on to the real
   `@Volatile` above. The thread-safe `lazy { }` implementation (`libraries/stdlib/clr/kotlin/util/LazyClr.kt`) no
   longer takes the `System.Threading.Monitor` lock on *every* `value` read: the getter now does a lock-free

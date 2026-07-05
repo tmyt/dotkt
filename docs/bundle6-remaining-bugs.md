@@ -11,8 +11,8 @@ Authoritative worklist after a full review. Status keys updated as fixes land.
 | value-type-nullable sequence: FIELD erasure FIXED (nextItem:T?->object, kotc marker + bir2cir consumer) — map/toList/first now WORK; only FilteringSequence(.filter{}) still InvalidPrograms in calcNext/predicate | bir2cir/ilemit value-type FilteringSequence | MED · NARROWED · Wave-2 |
 | unresolved suspendCoroutine closure → permanent suspend (silent hang) | bir2cir SuspendColdLowering.cs:1177 | MED |
 | suspend fun main async drain uses null completion (NRE / lost result) | bir2cir SuspendColdLowering.cs:1848 (DrainMain) | LOW-MED |
-| F1: SafeContinuation UNDECIDED/RESUMED boxed-enum identity (time bomb, fires when F2 lands) | stdlib SafeContinuationClr.kt:33/46/52 | MED · latent |
-| F2: suspendCoroutine/createCoroutine doesn't lower E2E (missing feature, hides F1) | ilemit Program.cs:1992 / bir2cir | MED |
+| ~~F1: SafeContinuation UNDECIDED/RESUMED boxed-enum identity (time bomb, fires when F2 lands)~~ **FIXED 2026-07-05** — SafeContinuationClr.kt caches UNDECIDED_BOX/RESUMED_BOX (mirrors COROUTINE_SUSPENDED_BOX) + uses them for the ctor default, the RESUMED write, and every `===` check | stdlib SafeContinuationClr.kt | ✅ DONE |
+| ~~F2: suspendCoroutine doesn't lower E2E (missing feature, hides F1)~~ **FIXED 2026-07-05** — root: our compiler does NOT inline @InlineOnly cross-module, so an APP's `suspendCoroutine{…}` reaches bir2cir un-inlined (`callStatic suspendCoroutine(<closure>) suspendCall:true`, owner resolved to `kotlin.coroutines.ContinuationKt`) → the `delegateNew`/`closureNew` block arg tripped `LambdaKinds` → the fun was rejected (0 transformed → ilemit "un-lowered" crash). Fix: `SuspendColdLowering.IsSuspendCoroutineCall` recognizes the shape; `EmitSuspendCoroutineCall` reconstructs the wrapper's SafeContinuation body in the caller SM via the new public `clr.internal` bridges `newSafeContinuation`/`safeGetOrThrow`. Case `cases/il-suspendco` (sync resume → 42; resumeWithException → caught). | bir2cir SuspendColdLowering.cs + stdlib ContinuationImpl.kt | ✅ DONE |
 
 ## ② async interop (facadegen, exposed by coroutines)
 | symptom | site | sev |

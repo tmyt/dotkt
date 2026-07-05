@@ -433,8 +433,18 @@ public suspend fun delay(ms: Long)             // Task.Delay(ms).await()
 ### v1 limits (policy = call-time NotSupportedException, never an emit crash)
 
 - No suspension inside `catch`/`finally` blocks (try/catch AROUND suspension works).
-- No `suspendCancellableCoroutine` (kotlinx — purged). Plain `suspendCoroutine` works (stdlib source
-  over the real intrinsics + SafeContinuation).
+- No `suspendCancellableCoroutine` (kotlinx — purged). Plain `suspendCoroutine` works E2E, INCLUDING
+  cross-module (F2, 2026-07-05): our compiler does not inline `@InlineOnly` cross-module, so an APP's
+  `suspendCoroutine { … }` reaches bir2cir un-inlined (a plain `callStatic suspendCoroutine(<closure>)`,
+  its wrapper body NOT inlined at the call site). `SuspendColdLowering` recognizes that shape
+  (`IsSuspendCoroutineCall`) and RECONSTRUCTS the wrapper body inside the caller's cold SM — buffer a
+  (possibly synchronous) resume through a `SafeContinuation`, run the block against it, take
+  `getOrThrow()` as the suspension result. `SafeContinuation`'s ctor/`getOrThrow` are `internal`, so the
+  reconstruction routes through the PUBLIC `clr.internal` bridges `newSafeContinuation`/`safeGetOrThrow`
+  (which keep the internal type inside the stdlib). `SafeContinuation` caches its `UNDECIDED`/`RESUMED`
+  boxed enums (F1) so a sync resume's `cur === UNDECIDED` identity check holds on the CLR (a boxed value
+  type has unstable `===` identity otherwise). Same-module `suspendCoroutine*` still lowers via the
+  inlined `valueBlock` intrinsic (`EmitIntrinsicSuspension`). Case: `cases/il-suspendco`.
 - No CancellationToken/Job/interceptor dispatch (later layers); `intercepted()` = identity v1.
 
 ### Supersession notes
