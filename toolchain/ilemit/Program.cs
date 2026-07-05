@@ -2104,17 +2104,15 @@ sealed partial class Emitter
             if (ps.Length != toks.Count) continue;
             var ok = true;
             for (var i = 0; i < ps.Length; i++)
-            {
-                Type want; try { want = MapType(toks[i]); } catch { want = null; }
-                // An unresolvable token (an open `gp:T` from the DECLARED generic callee's sig, unbound in this caller's
-                // context) can't exact-match — compare STRUCTURALLY instead, so `copyOf(array:gp:T,int)` selects the
-                // generic `copyOf<T>(T[],int)` over its same-arity concrete siblings (`copyOf(sbyte[],int)`...), and
-                // `plus(array:gp:T,gp:T)` / `(array:gp:T,array:gp:T)` / `(array:gp:T,clrg:Collection[gp:T])` stay
-                // distinguishable. (The in-`_types` path gets this via MethodsBySig's verbatim sig keys; this is the
-                // referenced-assembly mirror. Additive-only: a resolvable token still requires the exact type.)
-                if (want == null) { if (!SigTokenMatchesOpen(toks[i], ps[i].ParameterType)) { ok = false; break; } }
-                else if (want != ps[i].ParameterType) { ok = false; break; }
-            }
+                // SigTokenMatches is the combined matcher: a fully-CONCRETE token (no `gp:`) requires an EXACT type
+                // (so a String-face overload isn't confused with a CharSequence-face one), while ANY token mentioning
+                // `gp:` is compared STRUCTURALLY — even when it happens to resolve here. That last point is essential:
+                // a call from INSIDE a generic method (`fun <T> mx(c) = c.maxOrNull()`) carries `sig=IEnumerable[gp:T]`
+                // where `gp:T` resolves to the CALLER's own T builder; an exact compare against the callee's OWN `T`
+                // never matches, dropping to the arity fallback which arbitrarily picks a specialized sibling
+                // (`maxOrNull(IEnumerable<Double>)`). The structural path selects the generic `maxOrNull<T>(IEnumerable<T>)`
+                // in both the generic-caller and the non-generic-caller case. (Mirrors the in-`_types` MethodsBySig keys.)
+                if (!SigTokenMatches(toks[i], ps[i].ParameterType)) { ok = false; break; }
             if (!ok) continue;
             if (match != null)
             {
