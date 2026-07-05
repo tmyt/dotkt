@@ -3136,8 +3136,14 @@ sealed partial class Emitter
         }
         // An unbound Kotlin member that became a clrInstance because its receiver type is @Clr-substituted (e.g.
         // MutableCollection.removeAll/addAll on ICollection -- no BCL equivalent by that name) -> dynamic dispatch.
-        if (mi == null && instance && e.TryGetProperty("recv", out _)) return EmitDynamicCall(e);
-        if (mi == null) throw new NotSupportedException($"clrInstance method not resolved: {type}.{name}/{argSpecs.Count}");
+        // GATED to an INTERFACE owner (the clrInstance analog of the callInstance path's `OwnerHasClrInterface` gate):
+        // the runtime value implements that BCL interface under a different concrete type, so `recv.GetType().GetMethod`
+        // resolves the real slot. A NON-interface owner (a concrete BCL class) that missed static resolution is a
+        // bir2cir Rule-4 ROUTING MISS -- reflection would silently return null -> opaque runtime NRE -- so it must throw
+        // at EMIT instead of falling to dynamic dispatch. (bir2cir now refuses lowercase members on non-interface CLR
+        // owners upstream; this is the defense-in-depth twin of that compile-time refusal.)
+        if (mi == null && instance && type.IsInterface && e.TryGetProperty("recv", out _)) return EmitDynamicCall(e);
+        if (mi == null) throw new NotSupportedException($"clrInstance method not resolved: {type}.{name}/{argSpecs.Count} (no BCL match; dynamic-dispatch fallback is gated to interface owners -- a routing MISS on a concrete BCL owner)");
         // A generic BCL method (`System.Array.Fill<T>(T[],T,int,int)`) resolved as its open DEFINITION must be
         // instantiated with the call's type args (threaded by bir2cir from the @ClrIntrinsic generic Kotlin callee),
         // or the emitted MethodSpec stays open -> "method/type not fully instantiated" at run. Non-generic targets

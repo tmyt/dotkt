@@ -4647,6 +4647,25 @@ static class MemberCallSubstitution
         // clrInstance on the BCL owner: ilemit resolves the BCL member when one matches, and falls to dynamic dispatch
         // (recv.GetType().GetMethod(name)) when none does. EITHER WAY this is correct AND it rescues the call from the
         // clrg:/shorthand owner that plain `callInstance` resolution (ilemit ParseOwner / ResolveMethod) cannot handle.
+        //
+        // MAKE-IT-LOUD gate (H1): the "falls to dynamic dispatch" escape is ONLY legitimate for an INTERFACE owner —
+        // the intended `MutableCollection.addAll/removeAll/retainAll` on `ICollection<T>`, where the runtime value
+        // implements the interface under a concrete type so reflection finds the slot. A lowercase-camelCase member on a
+        // CLR-bound NON-interface owner (a concrete BCL class) is an UNBOUND Kotlin member with no BCL equivalent by that
+        // name AND no @ClrIntrinsic/@ClrProperty/rule-3 binding: it is a genuine routing MISS. Left unrefused it would
+        // emit a clrInstance that ilemit can neither resolve statically nor (post-gate) dispatch dynamically → an opaque
+        // runtime NRE. Refuse it here, at compile time, naming `owner.member`. Allow only a BCL-shaped name (PascalCase
+        // or a get_/set_ accessor) or an interface owner (the legit dynamic-dispatch case). Instance-only: a static
+        // lowercase miss already throws loudly at ilemit (no dynamic-dispatch path is instance-gated there).
+        if (instance && kind != "interface" && !string.IsNullOrEmpty(member)
+            && !char.IsUpper(member[0])
+            && !member.StartsWith("get_", StringComparison.Ordinal)
+            && !member.StartsWith("set_", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"bir2cir: unresolved CLR member '{ownerFqn}.{member}' — a lowercase-camelCase member on the CLR-bound "
+                + $"{kind} owner '{clrOwner}' has no @ClrIntrinsic/@ClrProperty/rule-3 binding and is not a BCL member "
+                + "name (BCL members are PascalCase). This is a routing MISS: fix the stdlib binding or the owner alias, "
+                + "do not let it fall to a silent runtime dynamic-dispatch NRE.");
         return Constrainify(ClrCallNode(node, clrOwner, member, member, args, instance), node, refs, ctx, ownerToken);
     }
 

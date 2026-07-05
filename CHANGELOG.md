@@ -222,6 +222,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **Make-it-loud: an unresolved CLR member no longer silently degrades to a runtime NRE.** bir2cir Rule-4
+  used to emit a `clrInstance` for ANY member it could not resolve; ilemit's `clrInstance` fallback then
+  reflected (`recv.GetType().GetMethod(name)`, no signature match) → `null` → an opaque `NullReferenceException`.
+  Now: (1) bir2cir refuses, at compile time, a lowercase-camelCase member on a CLR-bound NON-interface owner
+  (naming `owner.member`) — a BCL member is PascalCase, so such a member is an unbound routing MISS; (2)
+  ilemit's `clrInstance`→dynamic-dispatch fallback is gated to INTERFACE owners (the clrInstance analog of the
+  `callInstance` path's `OwnerHasClrInterface` gate), so a miss on a concrete BCL owner throws at EMIT. The
+  intended dynamic dispatch (`MutableCollection.addAll/removeAll/retainAll` via `ICollection<T>`) is preserved.
+- **bir2cir emits a suspend-lowering diagnostic when it drops a fun from the cold-transform set** — a
+  shape-eligible suspend fun with an unresolvable suspend call (no same-assembly cold entry, no ref.dll
+  Suspend-flagged member) now names the fun and the offending call on stderr, instead of silently surviving
+  to trip the distant "suspend method reached codegen un-lowered" error at the ilemit boundary.
 - **kotc reads NEITHER `@ClrIntrinsic` NOR `@ClrTypeAlias` and emits pure Kotlin.** All Kotlin↔CLR
   substitution is bir2cir's, sourced from the reference stdlib dll: kotc emits `kotlin.Unit` (bir2cir
   derives `void`), the Kotlin exception FQN (bir2cir substitutes the `System.*` type), a plain
