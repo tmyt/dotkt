@@ -560,7 +560,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val bf = p.backingField ?: return@mapNotNull null
 			if (p.isConst) return@mapNotNull null
 			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
-			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))},"static":true,"init":$init}"""
+			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))},"static":true,"init":$init${volatileFieldFlag(p)}}"""
 		}
 		// Super-typed companions (`companion object X : Base()`) -> lifted concrete singletons `<Outer>.InstanceClass`
 		// (registered in anonNames so typeName resolves them consistently). Must run BEFORE any body emission so a
@@ -942,6 +942,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun isClrField(p: IrProperty): Boolean =
 		p.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrField" }
 
+	/** `@kotlin.concurrent.Volatile` on a `var`'s backing field: a pure Kotlin-language fact (like `suspend`/
+	 *  `@Synchronized`, NOT a `@Clr*` binding). Emit a `"volatile":true` FIELD flag; bir2cir threads it through and
+	 *  ilemit lowers it to a CLR volatile field (`modreq(IsVolatile)` + `volatile.` prefix — the C# `volatile` shape).
+	 *  Matched by the field's OR the property's annotations (the FIELD-targeted annotation can land on either IR node). */
+	internal fun isVolatile(p: IrProperty): Boolean {
+		fun hasVol(anns: List<IrConstructorCall>) =
+			anns.any { it.type.classFqName?.asString() == "kotlin.concurrent.Volatile" }
+		return hasVol(p.annotations) || (p.backingField?.let { hasVol(it.annotations) } ?: false)
+	}
+
+	/** `,"volatile":true` field-flag fragment (empty when not volatile). */
+	internal fun volatileFieldFlag(p: IrProperty): String = if (isVolatile(p)) ""","volatile":true""" else ""
+
 	/** Emit a custom property accessor as a `get_<prop>`/`set_<prop>` method (the `field` identifier -> the backing field). */
 	// Considers the function itself AND any member it overrides — so it maps both a user override of a .NET-mapped
 	// iface member AND a direct call on an iface-typed value (e.g. `cs.length` where cs: CharSequence).
@@ -1117,14 +1130,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A property that isn't publicly SETTABLE (`val`, or `var ... private/protected set`) -> mark the public
 			// backing field read-only so a consuming Kotlin module restores it as `val` (rejecting external writes).
 			val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public"))) ""","readOnly":true""" else ""
-			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))}$visJson$ro${nullableGpFieldFlag(bf.type)}}"""
+			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))}$visJson$ro${nullableGpFieldFlag(bf.type)}${volatileFieldFlag(p)}}"""
 		}
 		// Companion non-const `val`/`var` -> static fields (with initializer run in a static ctor); const is inlined.
 		val statFields = companion?.declarations?.filterIsInstance<IrProperty>()?.mapNotNull { p ->
 			val bf = p.backingField ?: return@mapNotNull null
 			if (p.isConst) return@mapNotNull null
 			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
-			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))},"static":true,"init":$init${nullableGpFieldFlag(bf.type)}}"""
+			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))},"static":true,"init":$init${nullableGpFieldFlag(bf.type)}${volatileFieldFlag(p)}}"""
 		}.orEmpty()
 		// A capturing object literal carries its captured outer values as extra instance fields.
 		val capFields = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
