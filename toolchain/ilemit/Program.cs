@@ -2260,6 +2260,16 @@ sealed partial class Emitter
         return ret == "void" ? typeof(void) : MapType(ret);
     }
 
+    // The delegate's PARAMETER type specs from a `func:<ret>:<arg,arg,...>` funcType token (the `<ret>` may itself be a
+    // bracketed/prefixed type whose own ':' is not the separator — split at the first depth-0 ':' after the ret prefix).
+    // Empty for a nullary function type. Used to coerce delegateInvoke args to the Invoke param the JIT expects.
+    List<string> FuncArgSpecs(string t)
+    {
+        var rest = t.Substring(5);
+        var argsPart = rest.Substring(FuncRetEnd(rest) + 1);
+        return argsPart.Length == 0 ? new List<string>() : SplitTopLevel(argsPart).ToList();
+    }
+
     Type EmitConst(JsonElement e)
     {
         var t = e.GetProperty("type").GetString();
@@ -3538,6 +3548,30 @@ sealed partial class Emitter
         return typeof(void);
     }
 
+    // Resolve a closureNew node's ctor + invoke, INSTANTIATING the closure generic when it is a generic definition.
+    // A capturing closure over an enclosing type param (`{ seed }` in `generateSequence<T>`) is a GENERIC class;
+    // left as its open definition the `newobj Closure`1::.ctor(!0)` operand is OPEN -> a TypeLoadException at run.
+    // Close it with the node's explicit `typeArgs`, else (C13a: kotc/bir2cir omitted them for the non-`this`-capturing
+    // form) with the enclosing params matched by NAME (the same resolution `MapType("gp:<name>")` uses). Shared by the
+    // main closureNew emit and the delegate-arg binding path so neither can diverge.
+    (ConstructorInfo Ctor, MethodInfo Invoke) ResolveClosure(JsonElement e)
+    {
+        var ct = _types[e.GetProperty("closureType").GetString()];
+        ConstructorInfo ctor = ct.Ctor;
+        MethodInfo invoke = ct.Methods[e.GetProperty("method").GetString()];
+        Type constructed = null;
+        if (e.TryGetProperty("typeArgs", out var taProp) && taProp.GetArrayLength() > 0)
+            constructed = ct.TB.MakeGenericType(taProp.EnumerateArray().Select(a => MapType(a.GetString())).ToArray());
+        else if (ct.TB.IsGenericTypeDefinition)
+            constructed = ct.TB.MakeGenericType(ct.TB.GetGenericArguments().Select(gp => MapType("gp:" + gp.Name)).ToArray());
+        if (constructed != null)
+        {
+            ctor = TypeBuilder.GetConstructor(constructed, ct.Ctor);
+            invoke = TypeBuilder.GetMethod(constructed, invoke);
+        }
+        return (ctor, invoke);
+    }
+
     // Bind a lambda handler (delegateNew = non-capturing, closureNew = capturing) into a SPECIFIC delegate type.
     // Mirrors the delegateNew/closureNew cases but uses `want` (the event's delegate type) for the ctor.
     void EmitHandlerAsDelegate(JsonElement h, Type want)
@@ -3551,10 +3585,10 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Newobj, ctor);
                 break;
             case "closureNew":
-                var ct = _types[h.GetProperty("closureType").GetString()];
+                var (cctor, cinvoke) = ResolveClosure(h);
                 foreach (var c in h.GetProperty("captures").EnumerateArray()) EmitExpr(c);
-                _il.Emit(OpCodes.Newobj, ct.Ctor);
-                _il.Emit(OpCodes.Ldftn, ct.Methods[h.GetProperty("method").GetString()]);
+                _il.Emit(OpCodes.Newobj, cctor);
+                _il.Emit(OpCodes.Ldftn, cinvoke);
                 _il.Emit(OpCodes.Newobj, ctor);
                 break;
             default:

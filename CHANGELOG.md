@@ -57,6 +57,16 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **`generateSequence(seed){ next }` now drives correctly for value AND reference elements (C13a).**
+  Two ilemit codegen bugs in the cold-sequence path are fixed: (1) a generic capturing closure passed as a
+  DELEGATE argument (the `{ seed }` closure into `GeneratorSequence`'s `Function0` ctor param) had its
+  `newobj` emitted with an OPEN generic operand (`Closure`1::.ctor(!0)`) — a `TypeLoadException` at run;
+  the delegate-arg binding path now instantiates the closure generic (shared with the main `closureNew`
+  emit via `ResolveClosure`). (2) The `GeneratorSequence` iterator's `delegateInvoke` passed a boxed `T?`
+  to a `Func<T,object>::Invoke(!0)` slot with no unbox — tolerated for a reference element (the object IS a
+  valid reference) but an `InvalidProgramException` for a value element; delegateInvoke now coerces each arg
+  to the delegate's declared param type (`unbox.any` — unbox a value param, castclass a reference one).
+  `generateSequence(1){ it*2 }.take(3).toList()` == `[1, 2, 4]`. (`cases/il-genseq2`.)
 - **Default arguments now fill positionally — an omitted middle default no longer shifts a later
   argument's slot (C3).** The kcc-review C3 family is fixed in kotc + bir2cir:
   - `list.joinToString("-") { "x$it" }` prints `x1-x2-x3` (was `System.Func…1-2-3`: the transform lambda

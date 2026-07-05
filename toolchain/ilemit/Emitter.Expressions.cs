@@ -1009,29 +1009,36 @@ sealed partial class Emitter
                     if (had) _inlineSubst[lam.lamParam] = prev; else _inlineSubst.Remove(lam.lamParam);
                     return typeof(void);
                 }
-                var ft = MapType(e.GetProperty("funcType").GetString());
+                var ftStr = e.GetProperty("funcType").GetString();
+                var ft = MapType(ftStr);
                 EmitExpr(e.GetProperty("recv"));
-                foreach (var a in e.GetProperty("args").EnumerateArray()) EmitExpr(a);
+                // Coerce each invoke arg to the delegate param type declared in the funcType. The delegate's Invoke
+                // param is the FUNCTION type parameter (`Func<T,R>::Invoke(!0)`), so at a VALUE-type instantiation
+                // (`Func<int,object>`) it expects the raw `int` on the stack — but a `T?`-erased arg (a `nextItem:
+                // object` field read passed as `nextItem!!`) pushes a BOXED object. A reference-type instantiation
+                // tolerates the object (it IS a valid reference), which is why only value-typed elements crashed
+                // (generateSequence(1){…} -> InvalidProgramException in the GeneratorSequence iterator's calcNext).
+                // `unbox.any <param>` is the universal fix: unbox a value-type param, castclass a reference one.
+                var invArgSpecs = FuncArgSpecs(ftStr);
+                var invArgs = e.GetProperty("args").EnumerateArray().ToArray();
+                for (int ia = 0; ia < invArgs.Length; ia++)
+                {
+                    var got = EmitExpr(invArgs[ia]);
+                    if (ia < invArgSpecs.Count && MapType(invArgSpecs[ia]) is { } want && got != null
+                        && (want.IsValueType || want.IsGenericParameter)
+                        && !got.IsValueType && !got.IsGenericParameter && got != want)
+                        _il.Emit(OpCodes.Unbox_Any, want);
+                }
                 _il.Emit(OpCodes.Callvirt, InvokeOf(ft));
-                return FuncRetType(e.GetProperty("funcType").GetString());
+                return FuncRetType(ftStr);
             }
             case "inlineSplice": return EmitInlineSplice(e);
             case "closureNew":
             {
                 // Capturing lambda: `new Closure(captures)` then bind its `invoke` instance method as a delegate.
-                var ct = _types[e.GetProperty("closureType").GetString()];
-                ConstructorInfo ctor = ct.Ctor;
-                MethodInfo invoke = ct.Methods[e.GetProperty("method").GetString()];
-                // A closure that captures an enclosing type parameter is a GENERIC class: construct it with the actual
-                // type arguments (the enclosing method/class type params, live here) and re-anchor its ctor/invoke onto
-                // the constructed type (TypeBuilder.GetX — a TypeBuilder instantiation can't resolve members directly).
-                if (e.TryGetProperty("typeArgs", out var taProp) && taProp.GetArrayLength() > 0)
-                {
-                    var typeArgs = taProp.EnumerateArray().Select(a => MapType(a.GetString())).ToArray();
-                    var constructed = ct.TB.MakeGenericType(typeArgs);
-                    ctor = TypeBuilder.GetConstructor(constructed, ct.Ctor);
-                    invoke = TypeBuilder.GetMethod(constructed, invoke);
-                }
+                // ResolveClosure instantiates the closure generic when it captures an enclosing type param (a generic
+                // closure left open -> a TypeLoadException at the newobj); shared with the delegate-arg binding path.
+                var (ctor, invoke) = ResolveClosure(e);
                 foreach (var c in e.GetProperty("captures").EnumerateArray()) EmitExpr(c);
                 _il.Emit(OpCodes.Newobj, ctor);              // closure instance is the delegate target
                 _il.Emit(OpCodes.Ldftn, invoke);
