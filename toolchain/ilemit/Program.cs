@@ -2464,25 +2464,6 @@ sealed partial class Emitter
         }
     }
 
-    Type EmitNativeClrIsInst(JsonElement e, bool resultIsBool)
-    {
-        EmitExpr(e.GetProperty("e"));
-        var t = NativeType(e.GetProperty("type").GetString());
-        _il.Emit(OpCodes.Isinst, t);
-        if (!resultIsBool) return typeof(object);
-        _il.Emit(OpCodes.Ldnull);
-        _il.Emit(OpCodes.Cgt_Un);
-        return typeof(bool);
-    }
-
-    Type EmitNativeClrCastClass(JsonElement e)
-    {
-        EmitExpr(e.GetProperty("e"));
-        var t = NativeType(e.GetProperty("type").GetString());
-        _il.Emit(t.IsValueType || t.IsGenericParameter ? OpCodes.Unbox_Any : OpCodes.Castclass, t);   // castclass is invalid for value-type/generic-param instantiations
-        return t;
-    }
-
     Type EmitNativeClrSafeCastValue(JsonElement e)
     {
         // `x as? T` for value T -> `T?`: isinst boxed-T, then unbox+wrap, else empty Nullable<T>.
@@ -2847,19 +2828,6 @@ sealed partial class Emitter
         try { return type.GetConstructor(argTypes); } catch { return null; }
     }
 
-    Type EmitNativeClrNewObj(JsonElement e)
-    {
-        var member = e.GetProperty("memberRef");
-        var type = ClrRef(NativeOwnerSpec(e, member));
-        var argTypes = NativeParameterTypes(member);
-        var args = e.GetProperty("args");
-        var ci = (argTypes.All(t => t != null) ? type.GetConstructor(argTypes) : null) ?? PickClrCtor(type, args);
-        if (ci == null) throw new NotSupportedException($"native CIR: no matching constructor for {type.FullName} with {args.GetArrayLength()} arg(s)");
-        EmitArgs(args, ci.GetParameters());
-        _il.Emit(OpCodes.Newobj, ci);
-        return type;
-    }
-
     // When exact GetConstructor fails, pick the UNIQUE same-arity ctor on a (constructed/reflected) type whose params
     // ACCEPT the KNOWN arg types by assignability — the @Clr collection ABI (a `Collection<T>` arg lowered to
     // IReadOnlyCollection<T> is assignable to List's `IEnumerable<T>` ctor param, but NOT to its `int` capacity ctor).
@@ -3189,140 +3157,6 @@ sealed partial class Emitter
             if (hinted != null) return hinted;
         }
         return mi.ReturnType;
-    }
-
-    Type EmitNativeClrCall(JsonElement e)
-    {
-        var member = e.GetProperty("memberRef");
-        var type = ClrRef(NativeOwnerSpec(e, member));
-        var name = member.GetProperty("name").GetString();
-        var dispatch = e.TryGetProperty("dispatch", out var disp) && disp.ValueKind == JsonValueKind.String
-            ? disp.GetString()
-            : (member.TryGetProperty("isStatic", out var st) && st.GetBoolean() ? "static" : "instance");
-        var instance = dispatch == "instance";
-        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
-        var argTypes = NativeParameterTypes(member);
-        var methodTypeArgs = e.TryGetProperty("typeArgs", out var ta) && ta.ValueKind == JsonValueKind.Array
-            ? ta.EnumerateArray().Select(a => NativeType(a.GetString())).ToArray()
-            : Array.Empty<Type>();
-        MethodInfo mi = null;
-        try
-        {
-            if (methodTypeArgs.Length > 0)
-            {
-                mi = ResolveNativeGenericMethod(type, name, flags, argTypes, methodTypeArgs);
-            }
-            else if (argTypes.All(x => x != null))
-            {
-                mi = type.GetMethod(name, flags, null, argTypes, null);
-            }
-            mi ??= type.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == argTypes.Length && !m.IsGenericMethodDefinition);
-        }
-        catch (NotSupportedException) { }
-        if (mi == null)
-        {
-            var named = type.GetMethods(flags).Where(m => m.Name == name).ToList();
-            if (named.Count == 1) mi = named[0];
-        }
-        if (mi == null)
-            throw new NotSupportedException($"native CIR: method {type.FullName}.{name}/{argTypes.Length} not found");
-
-        if (instance)
-        {
-            if (type.IsValueType) EmitAddr(e.GetProperty("recv"));
-            else EmitExpr(e.GetProperty("recv"));
-        }
-        EmitArgs(e.GetProperty("args"), mi.GetParameters());
-        EmitInstanceCall(mi, instance, type);
-        if (mi.ReturnType.IsByRef)
-        {
-            var elem = mi.ReturnType.GetElementType();
-            _il.Emit(OpCodes.Ldobj, elem);
-            return elem;
-        }
-        return mi.ReturnType;
-    }
-
-    MethodInfo ResolveNativeGenericMethod(Type type, string name, BindingFlags flags, Type[] argTypes, Type[] methodTypeArgs)
-    {
-        var candidates = type.GetMethods(flags)
-            .Where(m => m.Name == name &&
-                        m.IsGenericMethodDefinition &&
-                        m.GetGenericArguments().Length == methodTypeArgs.Length &&
-                        m.GetParameters().Length == argTypes.Length)
-            .ToList();
-        if (candidates.Count == 0) return null;
-
-        foreach (var candidate in candidates)
-        {
-            var ps = candidate.GetParameters();
-            var ok = true;
-            for (var i = 0; i < ps.Length; i++)
-            {
-                if (argTypes[i] == null) continue;
-                var expected = SubstituteMethodGenericParameter(ps[i].ParameterType, methodTypeArgs);
-                if (expected != argTypes[i])
-                {
-                    ok = false;
-                    break;
-                }
-            }
-            if (ok) return candidate.MakeGenericMethod(methodTypeArgs);
-        }
-
-        return candidates.Count == 1 ? candidates[0].MakeGenericMethod(methodTypeArgs) : null;
-    }
-
-    static Type SubstituteMethodGenericParameter(Type type, Type[] methodTypeArgs)
-    {
-        if (type.IsGenericParameter && type.DeclaringMethod != null)
-            return methodTypeArgs[type.GenericParameterPosition];
-        if (type.IsByRef)
-            return SubstituteMethodGenericParameter(type.GetElementType(), methodTypeArgs).MakeByRefType();
-        if (type.IsArray)
-            return SubstituteMethodGenericParameter(type.GetElementType(), methodTypeArgs).MakeArrayType();
-        if (type.IsGenericType && !type.IsGenericTypeDefinition)
-        {
-            var args = type.GetGenericArguments().Select(a => SubstituteMethodGenericParameter(a, methodTypeArgs)).ToArray();
-            return type.GetGenericTypeDefinition().MakeGenericType(args);
-        }
-        return type;
-    }
-
-    Type EmitNativeClrFieldGet(JsonElement e, bool isStatic)
-    {
-        var member = e.GetProperty("memberRef");
-        var type = ClrRef(NativeOwnerSpec(e, member));
-        var name = member.GetProperty("name").GetString();
-        var flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
-        var fld = type.GetField(name, flags)
-            ?? throw new NotSupportedException($"native CIR: field {type.FullName}.{name} not found");
-        if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), fld.FieldType);
-        if (!isStatic && !fld.IsStatic)
-        {
-            if (type.IsValueType) EmitAddr(e.GetProperty("recv"));
-            else EmitExpr(e.GetProperty("recv"));
-        }
-        _il.Emit(fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
-        return fld.FieldType;
-    }
-
-    Type EmitNativeClrFieldSet(JsonElement e, bool isStatic)
-    {
-        var member = e.GetProperty("memberRef");
-        var type = ClrRef(NativeOwnerSpec(e, member));
-        var name = member.GetProperty("name").GetString();
-        var flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
-        var fld = type.GetField(name, flags)
-            ?? throw new NotSupportedException($"native CIR: field {type.FullName}.{name} not found");
-        if (!isStatic && !fld.IsStatic)
-        {
-            if (type.IsValueType) EmitAddr(e.GetProperty("recv"));
-            else EmitExpr(e.GetProperty("recv"));
-        }
-        EmitNullableCoerced(e.GetProperty("value"), fld.FieldType);
-        _il.Emit(fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
-        return typeof(void);
     }
 
     Type[] NativeParameterTypes(JsonElement member) =>

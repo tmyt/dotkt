@@ -232,6 +232,14 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **ilemit dead-code sweep (M1).** Removed producer-zero legacy CIR handling now that bir2cir emits
+  the plain BCL-call / collection-factory vocabulary: the 21 unreachable retire-list `EmitExpr` cases
+  (`nullableOf`/`strRepeat`/`split`/`associateWith`/`associateBy`/`groupBy`/`linq*`/`listGet`/`listSet`/
+  `mapGet`/`mapSet`/`mapSize`/`tupleNew`/`tupleItem`), the standalone native-CIR `clr.*` handlers
+  (`clr.newobj`/`clr.call`/`clr.ldfld`/`clr.ldsfld`/`clr.stfld`/`clr.stsfld`/`clr.isinst`/`clr.isinst.ref`/
+  `clr.castclass`) and their 6 dead-only helpers (`EmitNativeClrNewObj`/`Call`/`FieldGet`/`FieldSet`/
+  `IsInst`/`CastClass`) plus 2 exclusive sub-helpers. The live computed-kind factories
+  (`listNew`/`setNew`/`mapNew`/`strReversed`) and the 11 shared `EmitNativeClr*` helpers stay.
 - **Make-it-loud: an unresolved CLR member no longer silently degrades to a runtime NRE.** bir2cir Rule-4
   used to emit a `clrInstance` for ANY member it could not resolve; ilemit's `clrInstance` fallback then
   reflected (`recv.GetType().GetMethod(name)`, no signature match) → `null` → an opaque `NullReferenceException`.
