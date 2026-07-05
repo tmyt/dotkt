@@ -229,6 +229,10 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   (bir2cir derives `System.Type.Name`/`.FullName`), and plain member calls (bir2cir renames the BCL slot).
   The `clrName`/`annClr` side-tables and the `System.Math`/`System.Console`/exception/collection/
   StringBuilder/Regex/Closeable hardcodes are gone.
+- **Deleted the `kotlin.String.length` → `System.String.Length` hardcode in kotc (M2).** It was redundant
+  CLR knowledge: the stdlib's `@ClrIntrinsic("Length")` binding + bir2cir's `MemberCallSubstitution` already
+  rewrite the plain `kotlin.String.length` member read (the sibling `String.get` → `get_Chars` was cleaned the
+  same way). `"abc".length` stays `3`.
 - **The primitive/`Comparable` `compareTo` lowering moved to bir2cir** — the last kotc CLR-knowledge leak
   of its class. kotc emits a plain `callInstance` (`kotlin.Int.compareTo` / `kotlin.Comparable.compareTo`);
   bir2cir derives a primitive `System.<Prim>.CompareTo` and a `constrained. System.IComparable<T>::CompareTo`

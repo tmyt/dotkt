@@ -3807,11 +3807,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
-		// `s.length` on a String -> System.String.Length (CLR property).
-		(callee.correspondingPropertySymbol?.owner)?.let { p ->
-			if (p.name.asString() == "length" && dispatchReceiver(call)?.type?.classFqName?.asString() == "kotlin.String")
-				return """{"k":"clrPropGet","type":"System.String","name":"Length","retType":"System.Int32","static":false,"recv":${expr(dispatchReceiver(call)!!)}}"""
-		}
+		// `s.length` on a String is NOT intercepted here: it's a real `kotlin.String.length` property read — fall
+		// through to the ordinary property-get path so it emits as a `kotlin.String` `get_length` member call. The
+		// CLR binding (String.length -> System.String.Length) is stdlib `@ClrIntrinsic("Length")` metadata, applied
+		// by bir2cir's MemberCallSubstitution (the sibling `String.get`->`get_Chars` was cleaned the same way). kotc
+		// carries NO CLR knowledge here (layer boundary — CLAUDE.md §"kotc reads NEITHER @ClrIntrinsic…").
 		// Pair/Triple `.first`/`.second`/`.third` -> stdlib class fields.
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
 			val pfq = (callee.parent as? IrClass)?.fqNameWhenAvailable?.asString()
