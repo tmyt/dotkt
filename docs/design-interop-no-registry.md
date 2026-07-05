@@ -100,3 +100,46 @@ FQN already **is** the .NET name.
   registries go, facadegen should surface the fact **into the BIR / onto the IR symbol**, not a static map.
 - The top-level DotKt round-trip (`[KotlinFile]`/suspend flags): the file-class + suspend-ness must reach
   bir2cir off the resolved symbol; confirm they survive Fir2Ir on the injected declaration.
+
+---
+## ClrEvent<T> idiomatic redesign — implementation plan (2026-07-05, user-approved)
+
+Completes the INTENDED `w.Changed += handler` design that `cases/il-event/app.kt`'s own comment names but
+that was never wired — the `add_<E>`/`remove_<E>` synthesized-method model shipped as the stopgap (a relic,
+like the Lazy→System.Lazy hardcode). Goal: a .NET event subscribes via the idiomatic Kotlin `+=`/`-=`
+operators; the `add_` naming disappears from user code.
+
+### The key trick: ClrEvent<T> is a compile-time lvalue fiction bir2cir sees through
+A .NET event is NOT a first-class value (you can only add/remove/raise it). So `w.Changed` does NOT
+materialize a `ClrEvent<T>` object at runtime — it is a compile-time handle. `w.Changed += h` desugars
+(normal Kotlin operator resolution) to `plusAssign(w.Changed, h)`; bir2cir PATTERN-MATCHES
+`plusAssign(<memberAccess w "Changed">, h)` and emits the existing `clrEventAdd(owner=w, event="Changed", h)`
+CIR node (ilemit already emits it). Owner + event name come straight from the `w.Changed` member-access node.
+The `ClrEvent<T>` value is never emitted — same idea as a `ClrRef`/byref lvalue.
+
+### Per-layer
+- **stdlib** (`kotlin.clr`): define `class ClrEvent<T>` (a marker handle type) + `operator fun <T>
+  ClrEvent<T>.plusAssign(handler: T)` / `minusAssign(handler: T)`. Bodies are unreachable (bir2cir rewrites
+  the call before emit) — a `TODO()`/throw stub, like other @Clr* markers. The type's only job is to be the
+  receiver type that makes `+=` resolve + signals "event subscription" to bir2cir (the TYPE is the signal —
+  no out-of-band hint, per the design above).
+- **facadegen**: surface a .NET event `Changed` as a MEMBER `Changed: ClrEvent<HandlerDelegate>` (a property
+  whose type is `ClrEvent<T>` with T = the event's handler delegate type), INSTEAD OF the `add_<E>`/`remove_<E>`
+  methods. Drop the synthesized add_/remove_ method injection.
+- **kotc**: nothing special — `w.Changed += h` resolves through normal operator resolution to
+  `plusAssign(w.Changed, h)`; kotc emits that plain call (the ClrEvent<T> member access + the operator). No
+  `add_`/`remove_` names, no event registry (A2 already removed it).
+- **bir2cir**: recognize `plusAssign`/`minusAssign` whose receiver is a `ClrEvent<T>` member-access → emit
+  `clrEventAdd`/`clrEventRemove` (owner + event name from the member-access node; the handler is the arg).
+  Reuses the existing ilemit `clrEventAdd`/`clrEventRemove` emission — no ilemit change.
+- **cases**: rewrite `il-event/app.kt` to `c.CollectionChanged += { … }` / `-= h`; ktproj-extlib similarly.
+
+### Verify: `il-event` + `ktproj-extlib` (real .NET event interop) run identically (same add/remove accessor
+calls at IL level), gate XFAIL-zero. The USER-FACING syntax changes (`add_X(h)` → `X += h`); the emitted IL
+is the same add/remove accessor call.
+
+### Caveats
+- `-=` needs delegate equality for removal (the stored-handler case) — the existing `remove_` path already
+  handles it; the `minusAssign` rewrite must preserve the same handler-identity semantics.
+- A handler that is a Kotlin lambda binds to the event's own delegate type (existing behavior) — the
+  `plusAssign(handler: T)` where T = the delegate type keeps that.
