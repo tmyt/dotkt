@@ -1689,6 +1689,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// loop reference identity (so `break@outer` resolves), then emitted as `goto` the right label.
 	internal val cfgLoopStack = ArrayList<Triple<org.jetbrains.kotlin.ir.expressions.IrLoop, Int, Int>>()
 
+	/** Wrap a statement-position control transfer ([xfer] = a `goto`/`break`/`continue` node) so it can sit in an
+	 *  EXPRESSION slot (a `break`/`continue` used as an `if`/`when` branch value). The transfer runs first and jumps
+	 *  away; the `throw null` result is unreachable dead code that gives the valueBlock a well-formed result which
+	 *  never falls through to the surrounding merge — so the merge keeps only the live branch's type. */
+	internal fun breakContinueExpr(xfer: String): String =
+		"""{"k":"valueBlock","stmts":[$xfer],"result":{"k":"throwExpr","value":{"k":"const","type":"kotlin.Unit","value":null}}}"""
+
 	/** `while(c){B}` -> CFG block: `START: if(!c) goto END; B; goto START; END:`. continue->START, break->END. */
 	internal fun cfgWhile(node: IrWhileLoop): String {
 		val start = cfgFresh(); val end = cfgFresh()

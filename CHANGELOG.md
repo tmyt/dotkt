@@ -57,6 +57,16 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **`break`/`continue` in expression position now lowers (C13b).** A `break`/`continue` used as an
+  `if`/`when` branch VALUE (`val end = if (…) x else break`) — Kotlin-typed `Nothing` — previously hit
+  `the .NET backend does not support this expression yet: IrBreakImpl`. kotc now emits the same control
+  transfer inside a `valueBlock` with an unreachable `throw` result, so it never falls through to the
+  surrounding merge (mirrors the existing `throwExpr`/`returnExpr`-in-expression handling). Unblocks
+  `CharSequence.windowed(size)` (`"abcd".windowed(2)` → `[ab, bc, cd]`), whose stdlib body uses the
+  construct. New PURE case `il-cwindowed`.
+- **`Grouping.eachCount()` (regression guard, C13c).** `listOf("a","ab","b").groupingBy { it.first() }
+  .eachCount()` → `{a=2, b=1}`. Its body reads a value-type-nullable smart-cast (`Int?`) in arithmetic
+  (`count + 1`) — already correct via the C1 value-slot-unwrap; locked with new PURE case `il-eachcount`.
 - **Default arguments now fill positionally — an omitted middle default no longer shifts a later
   argument's slot (C3).** The kcc-review C3 family is fixed in kotc + bir2cir:
   - `list.joinToString("-") { "x$it" }` prints `x1-x2-x3` (was `System.Func…1-2-3`: the transform lambda
