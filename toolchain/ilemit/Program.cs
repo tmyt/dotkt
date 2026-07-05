@@ -1885,6 +1885,44 @@ sealed partial class Emitter
         return cand;
     }
 
+    // Canonicalize the generic-parameter NAMES in a sig by their order of first appearance (`gp:E,gp:E` -> `gp:#0,gp:#0`;
+    // `gp:K,gp:V` -> `gp:#0,gp:#1`). A method DEF names its OWN type parameter (`addAll<E>` -> `...[gp:E]`), but a CALL
+    // from inside another generic names the same slot by the CALLER's parameter (`plus<T>` calling addAll -> `...[gp:T]`),
+    // so the verbatim SigKey strings differ and MethodsBySig misses even though the overload is the intended one. The sig
+    // SHAPE (which slot uses which type param, in which order) is identical across def and call — only the names differ —
+    // so first-appearance ordinals make them agree, distinguishing `addAll(List,coll)` from `addAll(List,int,coll)`.
+    static string NormalizeGpNames(string sig)
+    {
+        var map = new Dictionary<string, int>(StringComparer.Ordinal);
+        return System.Text.RegularExpressions.Regex.Replace(sig, @"gp:([A-Za-z_][A-Za-z0-9_]*)", m =>
+        {
+            var nm = m.Groups[1].Value;
+            if (!map.TryGetValue(nm, out var idx)) { idx = map.Count; map[nm] = idx; }
+            return "gp:#" + idx;
+        });
+    }
+
+    // The exact SigKey missed (a generic method whose sig mentions a `gp:` — def-side name != call-side name). Match by
+    // the NAME-CANONICALIZED sig instead (first-appearance ordinals), returning the UNIQUE overload of `name` whose
+    // normalized def-sig equals the normalized call-sig. Null on no/ambiguous match (keeps the existing fallbacks). Only
+    // consulted after the exact lookup, so it never overrides a precise match — it recovers the cross-generic-rename case.
+    MethodBuilder FindByNormalizedSig(TypeInfo ti, string name, string sig)
+    {
+        if (sig == null || !sig.Contains("gp:", StringComparison.Ordinal)) return null;
+        var want = NormalizeGpNames(sig);
+        var prefix = name + "(";
+        MethodBuilder cand = null;
+        foreach (var kv in ti.MethodsBySig)
+        {
+            if (!kv.Key.StartsWith(prefix, StringComparison.Ordinal) || !kv.Key.EndsWith(")", StringComparison.Ordinal)) continue;
+            var defSig = kv.Key.Substring(prefix.Length, kv.Key.Length - prefix.Length - 1);
+            if (NormalizeGpNames(defSig) != want) continue;
+            if (cand != null && !ReferenceEquals(cand, kv.Value)) return null;   // ambiguous
+            cand = kv.Value;
+        }
+        return cand;
+    }
+
     MethodInfo FindMethod(string typeName, string name, string sig = null)
     {
         var seenIfaces = new HashSet<string>();
@@ -1903,6 +1941,7 @@ sealed partial class Emitter
                 catch (NotSupportedException) { continue; }
                 if (!seenIfaces.Add(open) || !_types.TryGetValue(open, out var iti)) continue;
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
+                if (sig != null && FindByNormalizedSig(iti, name, sig) is { } insm) return insm;
                 if (sig != null && UniqueGenericOverload(iti, name) is { } igm) return igm;
                 if (iti.Methods.TryGetValue(name, out var m)) return m;
                 var inherited = FindInInterfaces(iti);
@@ -1948,6 +1987,7 @@ sealed partial class Emitter
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(BareTypeKey(ti.BaseName)) ? _types[BareTypeKey(ti.BaseName)] : null)
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
+            if (sig != null && FindByNormalizedSig(ti, name, sig) is { } nsm) return nsm;
             if (sig != null && UniqueGenericOverload(ti, name) is { } gm) return gm;
             if (ti.Methods.TryGetValue(name, out var m)) return m;
             var im = FindInInterfaces(ti);
@@ -2157,6 +2197,11 @@ sealed partial class Emitter
         if (sig != null)
             foreach (var ti in _types.Values)
                 if (ti.IsFileClass && ti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
+        // exact-sig miss on a generic method whose sig carries a `gp:` — the DEF names its own type param but the CALL
+        // names it by the caller's (a top-level static called from inside a generic): match by the name-canonicalized sig.
+        if (sig != null)
+            foreach (var ti in _types.Values)
+                if (ti.IsFileClass && FindByNormalizedSig(ti, name, sig) is { } nsm) return nsm;
         // exact-sig miss with a generic target -> the unique generic overload (its instantiated call sig won't match).
         if (sig != null)
             foreach (var ti in _types.Values)
