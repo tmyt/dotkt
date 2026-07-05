@@ -3054,8 +3054,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return if (callee === ldp.setter)
 					"""{"k":"byrefStore","local":${str(dvar.name.asString())},"elem":${str(elem)},"value":${expr(regularArgs(call).first())}}"""
 				else """{"k":"byrefLoad","local":${str(dvar.name.asString())},"elem":${str(elem)}}"""
-			if (dvar.type.classFqName?.asString() == "kotlin.Lazy" && callee === ldp.getter)
-				return """{"k":"clrPropGet","type":${str("clrg:System.Lazy[$elem]")},"name":"Value","retType":${str(elem)},"static":false,"recv":$dlocal}"""
+			// `by lazy` (local): the delegate is a real `kotlin.Lazy<T>` (the stdlib `UnsafeLazyImpl`). Its accessor is
+			// the InlineOnly `Lazy<T>.getValue(…) = value` operator, whose stdlib inline body is absent from our IR;
+			// inline it (a pure Kotlin-frontend fact) to a plain read of the Lazy interface's `value` getter. bir2cir/
+			// ilemit resolve the real emitted `kotlin.Lazy::get_value` — no CLR (System.Lazy) knowledge in kotc.
+			if (dvar.type.classFqName?.asString() == "kotlin.Lazy" && callee === ldp.getter) {
+				val owner = ownerSpec(dvar.type.classifierOrNull?.owner as? IrClass, dvar.type)
+				return """{"k":"callInstance","ownerType":${str(owner)},"virtual":true,"recv":$dlocal,"method":"get_value","args":[]${retHint('[' in owner, ldp.getter.returnType)}}"""
+			}
 			val delegateClass = dvar.type.classifierOrNull?.owner as? IrClass
 			val ownerName = when {
 				delegateClass != null && clrName(delegateClass) == null &&
@@ -3153,14 +3159,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val cname = synthDelegate(name, v)
 			return """{"k":"new","type":${str(cname)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
 		}
-		// `by lazy { … }` -> the delegate is `new System.Lazy<T>(Func<T>)` (initializer is the last arg in every
-		// `lazy` overload; any thread-safety mode is dropped — System.Lazy defaults to synchronized, as Kotlin does).
-		if (calleeFq == "kotlin.lazy") {
-			val elem = (call.type as? IrSimpleType)?.arguments?.firstOrNull()
-				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			val init = regularArgs(call).lastOrNull()?.let { expr(it) } ?: """{"k":"const","type":"void","value":null}"""
-			return """{"k":"clrNew","type":${str("clrg:System.Lazy[$elem]")},"argTypes":[${str("func:$elem:")}],"args":[$init]}"""
-		}
+		// `by lazy { … }` is NOT intercepted: the `kotlin.lazy(initializer)` call resolves to the real stdlib
+		// `lazy()` actual (returns `UnsafeLazyImpl(initializer)`, a pure-Kotlin `Lazy<T>`) and flows through the
+		// ordinary top-level-call path below. No System.Lazy construction here (that is CLR knowledge; layer purity).
 
 		if (name == "compareTo") {
 			val recv = dispatchReceiver(call)
@@ -3708,16 +3709,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
 			return """{"k":"callInstance","ownerType":"<>dotkt_KProperty","virtual":true,"recv":$recv,"method":"get_name","args":[]}"""
 		}
-		// Delegated property access. `by lazy`: `obj.x` -> `obj.x$delegate.Value` (System.Lazy<T>.Value),
-		// dropping thisRef/KProperty. Custom (duck-typed) delegate: route to its getValue/setValue, passing
-		// thisRef and a materialized `KProperty` (compiler-generated). Stdlib-interface delegates -> deferred.
+		// Delegated property access. `by lazy`: `obj.x` -> `obj.x$delegate.value` (a plain `kotlin.Lazy<T>::get_value`
+		// read; see the lazy case below), dropping thisRef/KProperty. Custom (duck-typed) delegate: route to its
+		// getValue/setValue, passing thisRef and a materialized `KProperty` (compiler-generated). Stdlib-interface
+		// delegates -> deferred.
 		if (property != null && property.isDelegated && declaringClass != null) {
 			val bf = property.backingField
 			val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
 			val delegate = bf?.let { """{"k":"field","ownerType":${str(typeName(declaringClass))},"recv":$recv,"name":${str(it.name.asString())}}""" }
+			// `by lazy` (member): the delegate is a real `kotlin.Lazy<T>` (the stdlib `UnsafeLazyImpl`). Its accessor is
+			// the InlineOnly `Lazy<T>.getValue(…) = value` operator, whose stdlib inline body is absent from our IR;
+			// inline it (a pure Kotlin-frontend fact) to a plain read of the Lazy interface's `value` getter. bir2cir/
+			// ilemit resolve the real emitted `kotlin.Lazy::get_value` — no CLR (System.Lazy) knowledge in kotc.
 			if (callee === property.getter && bf?.type?.classFqName?.asString() == "kotlin.Lazy") {
-				val elem = birType(callee.returnType)
-				return """{"k":"clrPropGet","type":${str("clrg:System.Lazy[$elem]")},"name":"Value","retType":${str(elem)},"static":false,"recv":$delegate}"""
+				val owner = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
+				return """{"k":"callInstance","ownerType":${str(owner)},"virtual":true,"recv":$delegate,"method":"get_value","args":[]${retHint('[' in owner, callee.returnType)}}"""
 			}
 			// `val x by map` is NOT intercepted: FIR routes it through the stdlib `Map.getValue`/`setValue` operator —
 			// fall through to the getValue/setValue delegate routing so it emits as real kotlin.* calls.
@@ -4423,12 +4429,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return "$prefix:$retEnc:${ps.joinToString(",") { birTypeDeleg(it) }}"
 			}
 		}
-		// `by lazy` delegate: kotlin.Lazy<T> -> System.Lazy<T>. NOT in the runtime (substitute) build: kotlin.Lazy is an
-		// INTERFACE with Kotlin implementors (UnsafeLazyImpl/...) — a Kotlin class can't implement System.Lazy (a CLASS).
-		if (fqp == "kotlin.Lazy" && !stdlibSubstitute) {
-			val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: "object"
-			return "clrg:System.Lazy[$elem]"
-		}
+		// `by lazy` delegate: kotlin.Lazy<T> is a REAL emitted stdlib interface (its impl `UnsafeLazyImpl` is pure
+		// Kotlin, produced by the stdlib `lazy()` function) — kotc emits the plain Kotlin type identity and falls
+		// through to the user-class/interface branch below (`@kotlin.Lazy[…]`). It is NOT aliased to System.Lazy:
+		// that CLR type is SEALED, so a Kotlin class could not implement it, and the alias was pure CLR knowledge
+		// that must not live in kotc (layer purity — cf. coerce/isBlank pure-body migration).
 		// kotlin.reflect.KProperty* (delegated-property metadata) -> the synthetic compiler-generated `KProperty`.
 		if (fqp != null && (fqp.startsWith("kotlin.reflect.KProperty") || fqp.startsWith("kotlin.reflect.KMutableProperty"))) {
 			needsKProperty = true; return "@<>dotkt_KProperty"

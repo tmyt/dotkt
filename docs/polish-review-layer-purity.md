@@ -20,8 +20,10 @@ Address AFTER the XFAIL set is zero (user-directed ordering). Theme: kotc still 
 ## kotc — CLR knowledge that belongs in bir2cir
 - **[High] Throwable.message/cause -> System.Exception.Message/InnerException** (BirEmitterExpressions.kt:128,
   BirEmitter.kt:3051) — exception types are @ClrTypeAlias (bir2cir reads it); kotc knowing BCL prop names is a layer violation. (ALSO in ilemit — double lowering, see below.)
-- **[High] kotlin.Lazy<T> -> System.Lazy<T> specialized in kotc** (BirEmitter.kt:3181/3731/4453) — `lazy{}`
-  creation, delegate access, type representation all decided by kotc. Move to stdlib impl or bir2cir CLR platform lowering.
+- ~~**[High] kotlin.Lazy<T> -> System.Lazy<T> specialized in kotc** (BirEmitter.kt:3181/3731/4453) — `lazy{}`
+  creation, delegate access, type representation all decided by kotc.~~ **DONE (2026-07-05):** all three System.Lazy
+  hardcodes deleted; routed through the pure-Kotlin stdlib `lazy()`/`UnsafeLazyImpl` body (option b). See the
+  migration-findings section below.
 - **[Medium] kotlin.text.Regex -> System.Text.RegularExpressions.Regex in birType** (BirEmitter.kt:4416) —
   call lowering says "Regex lowering retired, bir2cir reads @ClrTypeAlias"; only the TYPE alias lingers in kotc (inconsistent).
 - **[Medium] Closeable/AutoCloseable -> System.IDisposable in kotc** (BirEmitter.kt:4435/2188) — `use` lowering is
@@ -122,13 +124,17 @@ runtime hang/throw. Audit the `?? cands[0]` / Rule-4 / suspend-stub sites and ma
 
 ---
 ## Layer-migration findings (as families land)
-- **Lazy DEFERRED (family 2, 2026-07-04):** `kotlin.Lazy` can't use @ClrTypeAlias(System.Lazy) — @ClrTypeAlias
-  substitutes in BOTH rt + app builds, but `kotlin.Lazy` is a Kotlin INTERFACE with Kotlin impls
-  (`UnsafeLazyImpl : Lazy`) and `System.Lazy` is a SEALED .NET class → aliasing breaks the rt self-build
-  (`UnsafeLazyImpl : System.Lazy`, illegal). REVEALS A GENERAL @ClrTypeAlias LIMITATION: it has no app-only
-  vs rt-both discriminator. To migrate Lazy: (a) add a bir2cir APP-ONLY type-lowering gate (like the primitive
-  substitute's `!RefBuild` but app-vs-rt), or (b) route app `by lazy{}` through the pure-Kotlin `lazy()`/
-  `UnsafeLazyImpl` path (no System.Lazy). Left in kotc (BirEmitter.kt ~3184/~3080/~3737/~4470). il-lazy green.
+- **Lazy MIGRATED (family 2, 2026-07-05) via option (b) — the pure-Kotlin body, same winning approach as
+  coerce/isBlank.** `kotlin.Lazy` can't use @ClrTypeAlias(System.Lazy): @ClrTypeAlias substitutes in BOTH rt + app
+  builds, but `kotlin.Lazy` is a Kotlin INTERFACE with Kotlin impls (`UnsafeLazyImpl : Lazy`) and `System.Lazy` is a
+  SEALED .NET class → aliasing would break the rt self-build (`UnsafeLazyImpl : System.Lazy`, illegal). So option (a)
+  (a bir2cir app-only type-lowering gate) was NOT taken; instead option (b): DELETE the three kotc System.Lazy
+  hardcodes (birType `kotlin.Lazy → clrg:System.Lazy`; `by lazy{}` → `clrNew System.Lazy(Func)`; `.value` →
+  `clrPropGet System.Lazy.Value`, both member + local delegate). `kotlin.lazy{}` now resolves to the real stdlib
+  `lazy()` actual (`UnsafeLazyImpl`, pure Kotlin); a `by lazy` `.value` read inlines the trivial InlineOnly
+  `Lazy<T>.getValue(…) = value` to a plain `callInstance kotlin.Lazy::get_value`. kotc emits only pure Kotlin
+  identity; bir2cir/ilemit resolve `kotlin.Lazy` against the emitted stdlib. il-lazy extended (isInitialized,
+  single-eval, local delegate) + green; verify-il/differential/ktproj all clean from a clean rebuild.
 - **Regex + Closeable/AutoCloseable MIGRATED (family 2):** clean @ClrTypeAlias moves (Regex already aliased;
   AutoCloseable got @ClrTypeAlias(IDisposable) + close@ClrIntrinsic(Dispose)). kotc no longer knows those BCL names.
 - **Throwable.message/cause MIGRATED (family 1):** @ClrProperty(Message/InnerException) + bir2cir Rule-2p-inherited
@@ -136,7 +142,7 @@ runtime hang/throw. Audit the `?? cands[0]` / Rule-4 / suspend-stub sites and ma
 
 ## Wave-2 progress (2026-07-04) — families landed + right-sized debt
 - **f1 Throwable.message/cause** MIGRATED (@ClrProperty + bir2cir Rule-2p-inherited).
-- **f2 Regex/Closeable** MIGRATED; **Lazy DEFERRED** (@ClrTypeAlias has no app-only gate; Kotlin-iface-impl vs sealed .NET class).
+- **f2 Regex/Closeable** MIGRATED; **Lazy MIGRATED** (2026-07-05) via the pure-Kotlin `lazy()`/`UnsafeLazyImpl` body (option b) — @ClrTypeAlias has no app-only gate (Kotlin-iface-impl vs sealed .NET class), so the System.Lazy hardcodes were deleted, not aliased.
 - **f3 collection/StringBuilder member slots** — were ALL DEAD CODE (gated on an unused build mode); deleted.
 - **f4 A9 fun-interface @ClrTypeAlias read** — also DEAD (no stdlib fun-iface aliases BCL); deleted → invariant honored.
       **coerce*/isBlank** → real pure-Kotlin stdlib bodies (better than @ClrIntrinsic AND more correct: float NaN, CharSequence).

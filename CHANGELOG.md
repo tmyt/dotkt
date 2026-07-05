@@ -5,6 +5,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc — layer purity: `Lazy` / `by lazy` migrated OFF the `System.Lazy` CLR hardcode to the pure-Kotlin stdlib
+  body (family-2 Lazy deferral CLEARED via the coerce/isBlank pure-body approach).** kotc hardcoded three pieces of
+  CLR knowledge: `birType` mapped `kotlin.Lazy<T>` → `clrg:System.Lazy[T]`; a `by lazy { }` delegate was built as
+  `clrNew System.Lazy<T>(Func<T>)`; and both the member- and local-delegate `.value` reads were emitted as
+  `clrPropGet System.Lazy<T>.Value`. `System.Lazy` is a **SEALED** .NET class, so `@ClrTypeAlias` cannot bind it
+  (`kotlin.Lazy` is a Kotlin **interface** with Kotlin impls `UnsafeLazyImpl`/`InitializedLazyImpl` — a Kotlin class
+  can't extend a sealed .NET class, and the alias substitutes in the rt self-build too). All three hardcodes are
+  **DELETED**: `kotlin.lazy { }` now resolves to the real stdlib `lazy()` actual (`libraries/stdlib/clr/kotlin/util/
+  LazyClr.kt` → `UnsafeLazyImpl(initializer)`, a pure-Kotlin `Lazy<T>`), the delegate field is a plain
+  `@kotlin.Lazy[T]`, and a `by lazy` access inlines the trivial InlineOnly `Lazy<T>.getValue(…) = value` operator
+  (its stdlib inline body is absent from our IR) to a plain `callInstance kotlin.Lazy::get_value` — a pure Kotlin
+  identity that bir2cir/ilemit resolve against the emitted stdlib. No CLR (`System.Lazy`) knowledge remains in kotc.
+  BIR for `by lazy` before → `clrNew System.Lazy` + `clrPropGet System.Lazy.Value`; after → `callStatic lazy`
+  (returns `@kotlin.Lazy[…]`) + `callInstance kotlin.Lazy::get_value`. `cases/il-lazy` extended to cover
+  `isInitialized()` (false→true), single-evaluation memoization, and a local `by lazy` delegate. Gate (clean
+  rebuild): verify-il XFAIL-zero (201/0, VERIFY 159/0, no NEW-FAIL), verify-differential ALL MATCH, verify-ktproj 9/9.
+
 - **kotc — interop-no-registry, stage 4 (A2 keystone): the .NET-EVENT accessor lookup no longer rides a name-keyed
   side-table — this was the LAST of the four interop registries, so ALL FOUR are now gone.** A call to a
   facadegen-injected `add_<E>`/`remove_<E>` accessor (`c.add_CollectionChanged { .. }`) was rewritten to

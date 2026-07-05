@@ -15,4 +15,19 @@ fun main() {
     println(c.expensive)
     println(c.doubled)
     println(c.doubled)
+
+    // A directly-held Lazy<T>: isInitialized() flips false -> true across the first `.value`, and the
+    // initializer runs exactly once (memoization), proving the pure-Kotlin UnsafeLazyImpl semantics.
+    var count = 0
+    val lz = lazy { count++; "computed" }
+    println(lz.isInitialized())   // false
+    println(lz.value)             // computed
+    println(lz.value)             // computed (memoized, not recomputed)
+    println(lz.isInitialized())   // true
+    println(count)                // 1
+
+    // A LOCAL `by lazy` delegate (exercises the local-delegated-property path, distinct from the member one).
+    val local: Int by lazy { 7 * 6 }
+    println(local)                // 42
+    println(local)                // 42
 }
