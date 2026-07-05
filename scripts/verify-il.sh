@@ -229,8 +229,9 @@ il_check_imports taskgen Tg "$ROOT/cases/il-taskgen" "42"
 # are null for an OPEN constructed generic (`Task<T>` inside `IEnumerable<Task<T>>`), replacing the arg
 # with the ENCLOSING type's name -> `IEnumerable[IEnumerable]` / `Task1[Task1]`. Guarding the compare with
 # `FullName != null` recurses into the arg. `Task.WhenAny(a,b): Task<Task<Int>>` (double-nested RETURN)
-# runs for real; `Task.WhenAll(IEnumerable<Task<Int>>)` (double-nested PARAM) is exercised at compile/emit.
-il_check_imports taskwhen Tw "$ROOT/cases/il-taskwhen" "10"
+# runs for real. N3-deep: `Task.WhenAll(vararg Task<Int>): Task<Int[]>` now EXECUTES too — the generic .NET-method
+# value-param builder now strips the `vararg:` prefix (else the vararg param surfaced as Any? and mis-resolved).
+il_check_imports taskwhen Tw "$ROOT/cases/il-taskwhen" "$(printf '10\n6')"
 # coldcf/coldgen: bir2cir SuspendColdLowering P3 — the cold-core suspend state-machine transform lifted
 # from straight-line (P2) to control flow across suspension (if/when via cond-lowering, while/for already
 # flat), try/catch with the suspension in the try body (two-level dispatch), a suspend extension fun, and

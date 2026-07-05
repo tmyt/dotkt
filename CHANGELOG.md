@@ -5,6 +5,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc: `Task.WhenAll(vararg Task<T>)` (and any generic .NET method with a `vararg` param) now resolves and runs
+  (N3-deep, the twin of the facadegen `Map` fix).** The frontend's GENERIC .NET-method value-parameter builders (the
+  generic-static-companion path and the generic-member path in `ClrTypeInjection.kt`) did **not** strip the `vararg:`
+  prefix, unlike the non-generic paths. So `WhenAll<T>(params Task<T>[])`'s param arrived as `vararg:generic:Task1[T]`,
+  fell through `coneOf`'s else branch to `Any?`, and the vararg overload surfaced as `WhenAll(tasks: Any?)`; overload
+  resolution bound it, `clrMethodShape(Any?) = "Object"`, and ilemit's `ResolveGenericMethod` matched no
+  `params Task<T>[]` overload ("Sequence contains no elements"). Both generic paths now strip `vararg:` and rebuild the
+  param as an `array:` vararg (shape "array"), matching the real `params Task<T>[]` overload. `cases/il-taskwhen` now
+  EXECUTES `Task.WhenAll(...)` end-to-end (previously WhenAny-only).
+
 - **facadegen/kotc: static .NET events now subscribe with `+=`/`-=` (N6).** `facadegen` emitted event metadata only
   for **instance** events of **non-static** classes (`GetEvents(Public|Instance)` inside the non-static branch), so a
   **static** event (`TaskScheduler.UnobservedTaskException`, `System.Console.CancelKeyPress`) had no member to resolve.

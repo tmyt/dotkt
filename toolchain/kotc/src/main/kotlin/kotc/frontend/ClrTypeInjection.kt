@@ -801,7 +801,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName,
 						{ tps -> coneOfMethod(m.returnType, owner, m.typeParams, tps) }) {
 						for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
-						for (p in m.params) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
+						// N3-deep: a GENERIC static's `vararg` param (`Task.WhenAll<T>(params Task<T>[])`) must strip the
+						// `vararg:` prefix and rebuild as an `array:` vararg — mirroring the non-generic (:794) and top-level
+						// (:687) paths. Without this the param falls through coneOf's else -> Any?, the vararg overload surfaces
+						// as `WhenAll(tasks: Any?)`, and ilemit's ResolveGenericMethod finds no `params Task<T>[]` overload of
+						// shape "Object" ("Sequence contains no elements"). (The facadegen N3 fix is the sibling half.)
+						for (p in m.params)
+							if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod("array:" + p.type.removePrefix("vararg:"), owner, m.typeParams, tps) }, isVararg = true)
+							else valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
 					}.symbol
 			}
 		}
@@ -888,7 +895,12 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 							bound { tps -> boundConeOf(b, m.typeParams, tps) ?: session.builtinTypes.nullableAnyType.coneType }
 					}
 					if (extRecv != null) extensionReceiverType { tps -> coneOfMethod(extRecv.type, owner, m.typeParams, tps) }
-					for (p in vps) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) }, hasDefaultValue = realDefaults(vps) && p.type.startsWith("opt:"))
+					// N3-deep: a GENERIC member method's `vararg` param must strip `vararg:` and rebuild as an `array:`
+					// vararg, mirroring the non-generic member path (:822) — else it falls to coneOf's else -> Any? and the
+					// vararg overload mis-resolves (see the generic-static path above).
+					for (p in vps)
+						if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod("array:" + p.type.removePrefix("vararg:"), owner, m.typeParams, tps) }, isVararg = true)
+						else valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) }, hasDefaultValue = realDefaults(vps) && p.type.startsWith("opt:"))
 				}.also { if (realDefaults(vps)) applyDefaults(it, vps) }.symbol
 			)
 		}
