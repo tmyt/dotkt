@@ -408,9 +408,9 @@ sealed partial class Emitter
                 {
                     var spec = ifWork.Dequeue();
                     if (!ifSeen.Add(spec)) continue;
-                    // C3b transitive reverse bridge: a Kotlin collection interface (Set/MutableSet/... — extends Iterable
-                    // but isn't itself @Clr) still makes the class IEnumerable<E> via its @Clr Collection supertype.
-                    TryGenerateEnumeratorForKotlinIface(ti, spec);
+                    // The reverse GetEnumerator bridge fires below on a `clr:`/`clrg:` collection interface (the form
+                    // bir2cir lowers Kotlin Set/MutableCollection/List/... to in every runnable build). ilemit holds NO
+                    // Kotlin-collection-name knowledge — the Kotlin↔CLR identity was consumed upstream.
                     // A canonicalized shared synthetic (`<>dotkt_CharSequence`) this app REFERENCES from the rt stdlib
                     // dll — NOT re-emitted here, so absent from `_types` — is an EXTERNAL interface: bind the class's
                     // overrides to it by reflection, exactly like a `clr:` interface, so the interface slots are wired
@@ -3295,7 +3295,7 @@ sealed partial class Emitter
             if (gm != null)
             {
                 if (!isStatic && !gm.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
-                _il.Emit(gm.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, gm);
+                EmitInstanceCall(gm, !isStatic && !gm.IsStatic, type);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
                 return gm.ReturnType;
             }
             // A .NET FIELD surfaced as a Kotlin property (facadegen records static/const fields, public instance fields,
@@ -3332,7 +3332,7 @@ sealed partial class Emitter
         {
             if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv"));
         }
-        _il.Emit(getter.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, getter);
+        EmitInstanceCall(getter, !isStatic, type);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
         return getter.ReturnType;
     }
 
@@ -3354,7 +3354,7 @@ sealed partial class Emitter
                 // lands on the real struct (an addressable lvalue), not a spilled copy. Mirrors the getter path.
                 if (!isStatic && !sm.IsStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
                 EmitArgs2(new[] { e.GetProperty("value") }, sm.GetParameters());
-                _il.Emit(sm.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, sm);
+                EmitInstanceCall(sm, !isStatic && !sm.IsStatic, type);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
                 return typeof(void);
             }
             // A writable .NET FIELD surfaced as a Kotlin (mutable) property -> field store.
@@ -3369,7 +3369,7 @@ sealed partial class Emitter
         // A property setter on a VALUE type takes `this` by managed pointer -> load the receiver ADDRESS.
         if (!isStatic) { if (type.IsValueType) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitArgs2(new[] { e.GetProperty("value") }, setter.GetParameters());
-        _il.Emit(setter.IsVirtual ? OpCodes.Callvirt : OpCodes.Call, setter);
+        EmitInstanceCall(setter, !isStatic, type);   // routes `constrained.` for a virtual value-type accessor (else CallVirtOnValueType)
         return typeof(void);
     }
 

@@ -98,28 +98,13 @@ partial class Emitter
         _enumAdapterCtor = ctor;
     }
 
-    // Kotlin collection interfaces that extend Iterable (so transitively IEnumerable<E> via their @Clr Collection
-    // supertype) but are NOT themselves @Clr-bound — so a class implementing one (e.g. `EmptySet : Set<Nothing>`) emits
-    // the interface under its Kotlin name `kotlin.collections.Set[E]`, NOT a `clr:` spec, and the direct-interface bridge
-    // pass misses it. We still need to synthesize GetEnumerator. (List/Collection/Iterable ARE @Clr -> handled directly.)
-    static readonly HashSet<string> KotlinEnumerableIfaces = new()
-    {
-        "kotlin.collections.Set", "kotlin.collections.MutableSet", "kotlin.collections.MutableCollection",
-        "kotlin.collections.MutableList", "kotlin.collections.MutableIterable",
-    };
-
-    // If `spec` is a Kotlin enumerable interface (`kotlin.collections.Set[E]`), synthesize GetEnumerator over
-    // IEnumerable<E> (the class transitively satisfies it). No-op otherwise.
-    void TryGenerateEnumeratorForKotlinIface(TypeInfo ti, string spec)
-    {
-        if (_enumAdapterTB == null) return;
-        var br = spec.IndexOf('[');
-        if (br < 0) return;
-        if (!KotlinEnumerableIfaces.Contains(spec.Substring(0, br))) return;
-        var elemSpec = spec.Substring(br + 1, spec.Length - br - 2);   // the single element type inside [...]
-        Type elemT; try { elemT = MapType(elemSpec); } catch { return; }
-        GenerateGetEnumeratorIfNeeded(ti, typeof(System.Collections.Generic.IEnumerable<>).MakeGenericType(elemT));
-    }
+    // NOTE (2026-07-05): a former `KotlinEnumerableIfaces` hardcode (`kotlin.collections.{Set,MutableSet,
+    // MutableCollection,MutableList,MutableIterable}`) — the last Kotlin-language-knowledge leak in ilemit — was
+    // REMOVED. bir2cir lowers every such Kotlin collection interface to its `clrg:System.Collections...` alias in
+    // every runnable (rt/app) build, so the reverse GetEnumerator bridge fires purely on the `clr:`/`clrg:` spec via
+    // GenerateGetEnumeratorIfNeeded below (EnumerableDerived). The bare Kotlin-name spec only survives in the ref
+    // build (compile-time-only metadata where @Clr substitution is OFF), and there the class does NOT actually
+    // implement IEnumerable, so no bridge is wanted. ilemit therefore holds no Kotlin-collection identity at all.
 
     // The BCL collection interfaces that derive from IEnumerable<T> — a class implementing any of these needs a
     // GetEnumerator. (Mutable IList/ICollection added when MutableList binds; dictionaries handled separately.)

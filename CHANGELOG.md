@@ -5,6 +5,28 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **ilemit: removed the last Kotlin-collection-name knowledge leak (ReverseBridge `KotlinEnumerableIfaces`).** The
+  reverse `GetEnumerator` bridge previously carried a hardcoded set of Kotlin FQNs
+  (`kotlin.collections.{Set,MutableSet,MutableCollection,MutableList,MutableIterable}`) to recognize collection
+  interfaces the class transitively satisfies as `IEnumerable<E>`. That was Kotlin-language knowledge in the CIL
+  backend (violates "ilemit knows NO Kotlin"). It is now **deleted**: in every runnable (rt/app) build bir2cir already
+  lowers these interfaces to their `clrg:System.Collections.Generic.IReadOnlyCollection[E]` alias, so the bridge fires
+  purely on the `clr:`/`clrg:` spec via `GenerateGetEnumeratorIfNeeded` (the `EnumerableDerived` path). The bare
+  Kotlin-name spec only survived in the reference build (compile-time-only metadata, `@Clr` substitution OFF), where
+  the class does not actually implement `IEnumerable` and no bridge is wanted. Clean-rebuilt ref+rt stdlib both emit
+  fine; verify-il 205/0 XFAIL-zero, verify-ktproj 9/9, verify-differential ALL MATCH.
+- **ilemit: `EmitClrPropGet/Set` route property-accessor calls through `EmitInstanceCall`** (latent codegen
+  hardening, review N8). The four accessor/method call sites emitted `IsVirtual ? Callvirt : Call` directly on a
+  possibly value-type receiver address; a *virtual* value-type property accessor would have emitted a bare `callvirt`
+  on a struct (`CallVirtOnValueType`, an ilverify error). They now go through `EmitInstanceCall`, which already
+  selects `call` / `callvirt` / `constrained.<VT>; callvirt` correctly for ref/value/generic receivers. Non-virtual
+  value-type accessors (e.g. `KeyValuePair.Key`, `cases/il-vtprop`'s struct property set) still emit a direct `call`
+  — behavior unchanged; the fix only adds the missing `constrained.` for the (currently un-sampled) virtual case.
+- **ilemit: `EmitDynamicCall` void-return check no longer spells Kotlin `unit`/`kotlin.Unit`.** The
+  `@ClrIntrinsicAsDynamic` return-spec check dropped the Kotlin spellings (`"unit"`, `"kotlin.Unit"`) and keeps only
+  the CLR ones (`"void"`, `"System.Void"`): bir2cir derives Unit→void upstream, so a Kotlin spelling reaching ilemit
+  would be a bir2cir lowering defect, not something the backend should silently absorb. Confirmed no CIR emits the
+  Kotlin spellings today.
 - **`SynchronizedLazyImpl` restored to lock-free double-checked-locking (DCL) reads** — the follow-on to the real
   `@Volatile` above. The thread-safe `lazy { }` implementation (`libraries/stdlib/clr/kotlin/util/LazyClr.kt`) no
   longer takes the `System.Threading.Monitor` lock on *every* `value` read: the getter now does a lock-free

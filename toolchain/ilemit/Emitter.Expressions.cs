@@ -51,10 +51,12 @@ sealed partial class Emitter
             _il.Emit(OpCodes.Stelem_Ref);
         }
         _il.Emit(OpCodes.Callvirt, typeof(MethodInfo).GetMethod("Invoke", new[] { typeof(object), typeof(object[]) }));
-        // result: pop a dropped (void/Unit) return, else unbox/cast to the CIR-declared dynRet
+        // result: pop a dropped void return, else unbox/cast to the CIR-declared dynRet. The spec is a CLR spelling —
+        // bir2cir derives Unit->void upstream, so ilemit never sees a Kotlin `unit`/`kotlin.Unit` here (if it did, that
+        // would be a bir2cir lowering defect, not something ilemit should silently absorb).
         var retSpec = e.TryGetProperty("dynRet", out var rr) && rr.ValueKind == JsonValueKind.String ? rr.GetString()
                     : e.TryGetProperty("ret", out var rr2) && rr2.ValueKind == JsonValueKind.String ? rr2.GetString() : "void";
-        if (retSpec is "void" or "unit" or "kotlin.Unit" or "System.Void") { _il.Emit(OpCodes.Pop); return typeof(void); }
+        if (retSpec is "void" or "System.Void") { _il.Emit(OpCodes.Pop); return typeof(void); }
         var retT = MapType(retSpec);
         _il.Emit(OpCodes.Unbox_Any, retT);   // universal: unbox a value type, cast a ref type, resolve a generic param
         return retT;
