@@ -1,4 +1,21 @@
-# Bundle-6 remaining-bug inventory (user review, 2026-07-04)
+# Bundle-6 remaining-bug inventory
+
+> **RECONCILED 2026-07-05 — this worklist is now HISTORICAL. Every ①/②/④/⑤ + "Deferred follow-ups" item
+> below is FIXED/RESOLVED** (verified: all gates XFAIL-ZERO — verify-il 209/0, differential ALL MATCH,
+> ktproj 9/9 — plus spot-checks: FilteringSequence.filter, suspendCoroutine E2E, Task.FromResult<T>,
+> String.compareTo/toDouble culture, toInt/List[10] exception mapping, MutableList.set, nested-collection
+> toString, null->ToString, subSequence — all run correct). The per-section detail below is kept for history.
+>
+> **GENUINELY-OPEN (the only residuals), tracked in the session task list:**
+> - `roundtrip-memext2` — a suspend call inside a `with{}` sub-expression needs scope-function CPS lowering
+>   (the ONE remaining `verify-roundtrip` RT_XFAIL; verify-il/differential/ktproj are XFAIL-zero).
+> - Interface events (`INotifyPropertyChanged.PropertyChanged`) — deferred; needs kotc to not emit a
+>   `ClrEvent<T>` fake-override member (task #9). Static events already work.
+> - LOW hardening: `arrayGet` suspension-reorder (N4 sibling) + the same-module `IsSuspendIntrinsicBlock`
+>   `NotImplementedError` string-marker (task #8).
+
+---
+
 
 Authoritative worklist after a full review. Status keys updated as fixes land.
 

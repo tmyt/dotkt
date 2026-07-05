@@ -1,5 +1,8 @@
 # kotlin/clr — 残タスク計画書 ＝ Kotlin.NET 1.0 出荷チェックリスト
 
+> **RECONCILE 2026-07-05:** all gates are XFAIL-ZERO (verify-il 209/0, differential ALL MATCH, ktproj 9/9); coroutine bundle-6, the A2 interop-no-registry keystone (4 registries deleted), the Polish layer-purity, and the 2026-07-05 final-review findings (N1-N8, F1/F2) are all DONE. Any item below marked open/TODO that concerns those is STALE. Genuine residuals: roundtrip-memext2 (with{}-scope suspend), interface events, and the LOW hardening items in the session task list.
+
+
 > **状態 (2026-07-03 見直し)**: 広域 1.0 チェックリスト。完了済みトラック A/B/C/E は historical 集約（下記の各トラック先頭ポインタ）、live な残タスクは **D coroutine（= master-task-inventory 【6】）と F production ツーリング（= inventory 【7】）のみ**。現行アーキテクチャの正は [docs/ship-tasks.md](ship-tasks.md) §0、日次のタスク台帳は [docs/master-task-inventory.md](master-task-inventory.md)。
 >
 > **現行アーキテクチャ（4 層パイプライン）**: facadegen / kotc / bir2cir / ilemit（単一経路 — `--compat-bir`/`--native-cir` の二重化は 2026-06-30 撤去）。C# バックエンドは完全引退し `scripts/verify-all.sh` は削除済み（オラクル＝JVM 差分ハーネス）。`runtime/csharp/` ツリーと `clrgen` 合成パッケージは撤去（`import System.X` がそのまま解決）。リポジトリ再編済み（compiler/→toolchain/kotc、tools/→toolchain/、samples/→cases/）。`@Clr`/`clr.Clr` は `kotlin.clr.ClrIntrinsic` に改称。

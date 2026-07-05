@@ -1,5 +1,8 @@
 # kotlin/clr — 出荷タスクリスト（stdlib + パイプライン）
 
+> **RECONCILE 2026-07-05:** all gates are XFAIL-ZERO (verify-il 209/0, differential ALL MATCH, ktproj 9/9); coroutine bundle-6, the A2 interop-no-registry keystone (4 registries deleted), the Polish layer-purity, and the 2026-07-05 final-review findings (N1-N8, F1/F2) are all DONE. Any item below marked open/TODO that concerns those is STALE. Genuine residuals: roundtrip-memext2 (with{}-scope suspend), interface events, and the LOW hardening items in the session task list.
+
+
 最終更新: 2026-07-03。**§0（確定アーキテクチャ）は現在も binding**（CLAUDE.md が直接参照）。
 一方 §1 以降の 8 ゴールは **完了または `docs/master-task-inventory.md` に吸収済み**（下記クローズアウト参照）—
 現在のタスク台帳は master-task-inventory、広域 1.0 チェックリストは `docs/remaining-tasks.md`。
