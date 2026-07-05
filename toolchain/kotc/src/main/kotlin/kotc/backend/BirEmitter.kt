@@ -3714,16 +3714,36 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
 			if (declaringClass == null) {
-				val owner = fileClassOf(p)
-				if (p.backingField == null) {
-					val ext = extensionReceiver(call)
+				val ext = extensionReceiver(call)
+				// C7: a TOP-LEVEL EXTENSION property (`val List<T>.lastIndex`, `val Int.absoluteValue`, `val
+				// CharSequence.indices`) has NO real static field — its value is a get_/set_<name>(__self) static whose
+				// leading arg is the extension receiver. Route it EXACTLY like a top-level extension FUNCTION: owner=null,
+				// so bir2cir attributes it to the ref.dll file class in a cross-module app build (and a same-module sibling
+				// stays owner-less for ilemit's FindStatic). `sig` disambiguates a same-name overload by receiver type.
+				// A cross-module DESERIALIZED stub can spuriously report a backing field, so an extension property must
+				// NEVER fall to the static-field read below — that dropped the receiver and looked up `<CurrentFileKt>.
+				// <name>` as a field (the C7 `field AppKt.lastIndex not found` crash).
+				if (ext != null) {
+					// A GENERIC extension property (`val List<T>.lastIndex`/`.indices`) has a generic get_<name>[T] static —
+					// carry the resolved type args (+ a retType hint) so ilemit MakeGenericMethods it; without them the call
+					// hits the uninstantiated generic method ("type is not fully instantiated"). Mirrors the generic
+					// extension-FUNCTION path. A non-generic getter (Int.absoluteValue, CharSequence.lastIndex) emits no ta.
+					val ta = typeArgsJson(call)
 					return if (callee === p.setter) {
-						val args = listOfNotNull(ext) + regularArgs(call)
-						"""{"k":"callStatic","owner":${str(owner)},"method":${str("set_" + p.name.asString())},"args":[${args.joinToString(",") { expr(it) }}]}"""
-					} else {
-						"""{"k":"callStatic","owner":${str(owner)},"method":${str("get_" + p.name.asString())},"args":[${ext?.let { expr(it) } ?: ""}]${retHint(false, call.type)}}"""
-					}
+						val args = listOf(ext) + regularArgs(call)
+						"""{"k":"callStatic","owner":null,"method":${str("set_" + p.name.asString())}${overloadSigField(callee)}$ta,"args":[${args.joinToString(",") { expr(it) }}]}"""
+					} else
+						"""{"k":"callStatic","owner":null,"method":${str("get_" + p.name.asString())}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), birType(call.type))},"args":[${expr(ext)}]}"""
 				}
+				// A plain top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING
+				// file's class. Use the property's own file, NOT the file currently being emitted — else a cross-file
+				// reference looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
+				val owner = fileClassOf(p)
+				if (p.backingField == null)
+					return if (callee === p.setter)
+						"""{"k":"callStatic","owner":${str(owner)},"method":${str("set_" + p.name.asString())},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
+					else
+						"""{"k":"callStatic","owner":${str(owner)},"method":${str("get_" + p.name.asString())},"args":[]${retHint(false, call.type)}}"""
 				return if (callee === p.setter)
 					"""{"k":"staticFieldSet","ownerType":${str(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 				else """{"k":"staticField","ownerType":${str(owner)},"name":${str(p.name.asString())}}"""
@@ -3855,31 +3875,47 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			else """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())}${retHint('[' in ownerStr, call.type)}}"""
 		}
 
-		// Kotlin Any-methods on a builtin receiver -> System.Object virtuals (used by data-class hashCode/equals).
-		if (isBuiltin && dispatchReceiver(call) != null) when (name) {
-			"hashCode" -> return """{"k":"objMethod","method":"GetHashCode","recv":${expr(dispatchReceiver(call)!!)}}"""
-			"toString" -> if (regularArgs(call).isEmpty()) {
-				// An explicit `list.toString()`/`map.toString()` prints Kotlin-style (`[a, b]` / `{a=1, b=2}`), mirroring
-				// the println path — route via the stdlib helper rather than the raw .NET type-name ToString.
-				collToStringRoute(dispatchReceiver(call)!!)?.let { return it }
-				return """{"k":"objMethod","method":"ToString","recv":${expr(dispatchReceiver(call)!!)}}"""
+		// Kotlin universal methods (hashCode/toString/equals) on a builtin receiver. The System.Object slot is correct
+		// ONLY for a GENUINE universal call — one whose receiver TYPE does not declare its OWN routable override:
+		//  - the resolved callee is the inherited kotlin.Any member (a fake override): Int/Long/Char/Boolean.hashCode,
+		//    or a bare List/Set/Map.toString (routed Kotlin-style via collToStringRoute below), or Any/generic; and
+		//  - a PRIMITIVE value type's toString/equals — those are declared but bodyless (no Kotlin body to hoist, no
+		//    @ClrIntrinsic), so bir2cir has nothing to route to and the BCL value type's ToString/Equals IS correct.
+		// When the receiver TYPE declares its OWN routable override — String's polynomial hashCode / Double|Float's
+		// deterministic bit-hash (a real Kotlin body → C5), a Pair|Triple|data-class toString and String's
+		// @ClrIntrinsic toString/equals (→ C11) — the call must REACH that member, so FALL THROUGH to the ordinary
+		// member-call path (bir2cir routes it: a real body → rule-3 helper, an @ClrIntrinsic → its BCL slot). Routing a
+		// declared override to System.Object here shadows the correct Kotlin body — the C5/C11 miscompiles.
+		if (isBuiltin && dispatchReceiver(call) != null) {
+			// The receiver TYPE declares its OWN override iff the resolved callee is a real (non-fake-override) member of a
+			// type OTHER than kotlin.Any. A call resolved DIRECTLY to `kotlin.Any.hashCode/toString/equals` — e.g.
+			// `element.toString()` on a generic `T` with no more-derived override — is NOT a fake override yet IS the
+			// universal method, so it must keep the System.Object slot (falling through would emit a call to the
+			// non-existent `kotlin.Any.toString` and NRE). Hence the explicit kotlin.Any exclusion beside isFakeOverride.
+			val declaresOwn = !callee.isFakeOverride && declaringClass?.fqNameWhenAvailable?.asString() != "kotlin.Any"
+			val primitive = dispatchReceiver(call)!!.type.classFqName?.asString() in PRIMITIVE_OP_FQ
+			val fallThrough = when (name) {
+				"hashCode" -> declaresOwn                      // Int/Long/Char/Boolean inherit Any.hashCode → stays objMethod
+				"toString", "equals" -> declaresOwn && !primitive
+				else -> false
 			}
-			"equals" -> return """{"k":"objMethod","method":"Equals","recv":${expr(dispatchReceiver(call)!!)},"arg":${expr(regularArgs(call).first())}}"""
-		}
-		// `n.toString(radix)` (Int/Long, a kotlin.text extension) -> System.Convert.ToString(value, base 2/8/10/16).
-		// NOT RETIRED (2026-07-02): bir2cir correctly attributes a plain call to the stdlib StringNumberConversionsKt.
-		// toString(int,int) digit-loop body, but that emitted body MISCOMPILES cross-module — base-2 is correct ("1010")
-		// yet the letter-digit branch is not: 255.toString(16) -> "ffffffff", (-255).toString(16) -> "1". Retiring would
-		// ship a correctness regression, so the kotc Convert lowering STAYS until the stdlib body is fixed (blocked; a
-		// deep stdlib/emit bug, out of scope for the layer-purity retire). See docs/master-task-inventory.md bundle 1.
-		if (name == "toString" && regularArgs(call).size == 1) {
-			val recv = extensionReceiver(call) ?: dispatchReceiver(call)
-			val rfq = recv?.type?.classFqName?.asString()
-			if (recv != null && (rfq == "kotlin.Int" || rfq == "kotlin.Long")) {
-				val vt = if (rfq == "kotlin.Long") "System.Int64" else "System.Int32"
-				return """{"k":"clrStatic","type":"System.Convert","method":"ToString","argTypes":["$vt","System.Int32"],"ret":"System.String","args":[${expr(recv)},${expr(regularArgs(call).first())}]}"""
+			if (!fallThrough) when (name) {
+				"hashCode" -> return """{"k":"objMethod","method":"GetHashCode","recv":${expr(dispatchReceiver(call)!!)}}"""
+				"toString" -> if (regularArgs(call).isEmpty()) {
+					// An explicit `list.toString()`/`map.toString()` prints Kotlin-style (`[a, b]` / `{a=1, b=2}`), mirroring
+					// the println path — route via the stdlib helper rather than the raw .NET type-name ToString.
+					collToStringRoute(dispatchReceiver(call)!!)?.let { return it }
+					return """{"k":"objMethod","method":"ToString","recv":${expr(dispatchReceiver(call)!!)}}"""
+				}
+				"equals" -> return """{"k":"objMethod","method":"Equals","recv":${expr(dispatchReceiver(call)!!)},"arg":${expr(regularArgs(call).first())}}"""
 			}
 		}
+		// `n.toString(radix)` is NOT lowered in kotc (C4, 2026-07-06). The former `System.Convert.ToString(value, base)`
+		// special-case was BOTH a layer violation (a BCL name in kotc) AND wrong: Convert.ToString renders a negative in
+		// two's-complement (`(-255).toString(16)` -> "ffffff01", not "-ff") and THROWS for a base outside {2,8,10,16}
+		// (`35.toString(36)` -> ArgumentException "Invalid Base"). The stdlib actual (StringNumberConversionsClr.kt) has
+		// the correct sign-and-arbitrary-digit body; kotc now emits the plain `kotlin.text` Int/Long.toString(radix)
+		// extension call and bir2cir attributes it to StringNumberConversionsKt so the real body runs.
 
 		if (isBuiltin) {
 			val operands = call.arguments.filterNotNull()

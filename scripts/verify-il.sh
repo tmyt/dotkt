@@ -296,6 +296,10 @@ il_check colstr Cstr "$ROOT/cases/il-colstr" "$(printf 'm={a=1, b=2}\nl=[1, 2, 3
 il_check interpnull InterpNull "$ROOT/cases/il-interpnull" "$(printf '[null]\nn=null\nnull\ns=null end\na=5\nnn=7\nm={k=1}')"
 il_check math  MathT "$ROOT/cases/il-math"    "$(printf '9\n7\n3\n4')"
 il_check mathabs MathAbs "$ROOT/cases/il-mathabs" "$(printf -- '-2147483648\n-9223372036854775808\n5\n5\n0\n2147483647')"  # C9: kotlin.math.abs WRAPS at MIN_VALUE (unchecked neg), does NOT throw like System.Math.Abs
+il_check radix Radix "$ROOT/cases/il-radix" "$(printf -- '-ff\nff\n-80000000\nz\nff\n-ff\n1010')"  # C4: Int/Long.toString(radix) -> stdlib actual (sign + arbitrary base), NOT System.Convert.ToString (two's-complement / base-36 crash)
+il_check strhash StrHash "$ROOT/cases/il-strhash" "$(printf '2112\n0\n99162322\n-2147483648\n0\n-2147483648\n5\nTrue\n5\n-7\n2a')"  # C5: deterministic String/Double/Float hashCode() (gate the universal-method intercept); primitive Int toString/equals/hashCode stay correct
+il_check pairtostr PairToStr "$ROOT/cases/il-pairtostr" "$(printf '[1, 2, 3]\n[1, 2, 3]\n(1, 2)\n(1, 2, 3)\nRec(name=k, n=9)\nTrue\n2112')"  # C5/C11 gate regression guard: collection/tuple/data-class toString + reproducible String.hashCode
+il_check extprop ExtProp "$ROOT/cases/il-extprop" "$(printf '2\n1\n1\n3\n-1\n1\n0')"  # C7: cross-module top-level extension-property getter -> callStatic get_<name>(receiver) (generic List.lastIndex carries type args); NOT a dropped-receiver field read
 il_check str   Str   "$ROOT/cases/il-str"     "$(printf 'HELLO\nhello\nhi\nello\nTrue\nTrue')"
 il_check strops StrOps "$ROOT/cases/il-strops" "$(printf 'hello\nhi\nhi\n  5\n005\n500\n>5  <\nheLLo\nbbbbbb\naXaX\nheLLo')"  # trim(vararg)/padStart/padEnd/replace -> pure-Kotlin stdlib bodies (no kotc STRING_OPS System.String lowering)
 il_check coerce Coerce "$ROOT/cases/il-coerce" "$(printf '7\n5\n5\n2\n1\n5\n7')"       # coerceAtMost/AtLeast/In -> pure-Kotlin stdlib bodies (no kotc System.Math lowering)
