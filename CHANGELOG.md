@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc — interop-no-registry, stage 2 (A2 keystone): the injected-.NET-MEMBER slot-name lookup no longer rides a
+  process-global name-keyed side-table.** `BirEmitter.clrName` recovered a facadegen-injected .NET member's .NET slot
+  name (the live case: a .NET operator method, `plus` → `op_Addition`, `unaryMinus` → `op_UnaryNegation`) from
+  `ClrTypeRegistry.memberNames` (a `HashMap<String,String>` the FIR injector populated by member Kotlin FQN string).
+  It now reads that slot name straight off the resolved IR member's `CallableId` (declaring-class `ClassId` + member
+  name) via the new `kotc.frontend.clrInjectedMemberName(callableId)` — a pure projection of facadegen's metadata keyed
+  by that same structural identity. `ClrTypeRegistry.memberNames` / `registerMember` / `memberClrName` are DELETED, and
+  with the type-name channel already gone (stage 1) the whole `ClrTypeRegistry` object is removed (the top-level and
+  event registries in the same file are untouched — stages 3-4). Pure refactor: BIR is byte-identical for every
+  injected-member sample (verified on c1net/netbase/netgen/netgen3/injstatic/injbase/injfqn/vtprop/netinterop/alias —
+  `op_Addition`/`op_Subtraction`/`op_Multiply`/`op_Division`/`op_UnaryNegation` preserved). Only the event side-channel
+  (`ClrEventRegistry`) remains — stage 4 of `docs/design-interop-no-registry.md`.
+
 - **kotc — interop-no-registry, stage 1 (A2 keystone): the injected-.NET-type NAME lookup no longer rides a
   process-global name-keyed side-table.** `BirEmitter.clrName` recovered a facadegen-injected .NET type's name
   from `ClrTypeRegistry.typeNames` (a `HashMap<String,String>` the FIR injector populated by Kotlin FQN string).

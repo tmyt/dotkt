@@ -1,28 +1,17 @@
 package kotc
 
-/**
- * S5 bridge between the FIR type-injection frontend extension and the backend codegen.
+/*
+ * The FIR type-injection frontend extension (`ClrTypeInjector`) synthesizes .NET types into FIR *without*
+ * annotations (synthesizing FIR annotations that survive Fir2Ir is the brittle part), and the backend
+ * (`BirEmitter`) recovers each injected symbol's CLR facts from its RESOLVED IR identity.
  *
- * The frontend extension synthesizes .NET types into FIR *without* annotations (synthesizing FIR
- * annotations that survive Fir2Ir is the brittle part), passing per-symbol CLR facts to the backend.
- *
- * A2 keystone — interop-no-registry, stage 1 (2026-07-05): the TYPE-name channel is REMOVED. The
- * backend's `clrName` reads an injected type's .NET name straight off its IR `ClassId` (via
- * `ClrMetadataHolder.dotNetNameByClassId` — a structural, resolved identity, not a name-keyed
- * injector-populated side-table). Only the per-MEMBER slot map survives here, and is stage 2's target
- * (fold into the ref.dll @ClrIntrinsic/@ClrProperty substitution bir2cir already owns).
+ * A2 keystone — interop-no-registry (2026-07-05): the former `ClrTypeRegistry` name-keyed side-table is GONE.
+ * Its TYPE-name channel (stage 1) is read off the injected type's IR `ClassId`
+ * (`kotc.frontend.clrInjectedDotNetName`) and its per-MEMBER slot-name channel (stage 2) off the injected
+ * member's IR `CallableId` (`kotc.frontend.clrInjectedMemberName`) — both structural, resolved identities,
+ * projections of facadegen's metadata rather than an injector-populated mutable map. The top-level and event
+ * channels below are interop-no-registry stages 3-4 and are DELIBERATELY untouched here.
  */
-object ClrTypeRegistry {
-	// Per-MEMBER BCL name (ref/runtime split, app-emit member substitution): key = the member's Kotlin fqn
-	// (`kotlin.collections.Collection.size`) -> its BCL member name (`Count`). Populated from the binding attribute carried
-	// in the injection meta when an app references the ref stdlib; the backend's clrName consults it for an injected member.
-	private val memberNames = HashMap<String, String>()
-
-	fun registerMember(memberFqn: String, bclName: String) { memberNames[memberFqn] = bclName }
-
-	/** The BCL member name for an injected Kotlin member FQN (e.g. `...Collection.size` -> `Count`), or null. */
-	fun memberClrName(memberFqn: String): String? = memberNames[memberFqn]
-}
 
 /**
  * DotKt round-trip: a Kotlin top-level function compiles to a static method of a `<File>Kt` facade class. When
