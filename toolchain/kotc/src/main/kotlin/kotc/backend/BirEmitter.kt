@@ -3909,6 +3909,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// A boxed (Any) operand via an un-narrowed smart-cast (`x is Int && x > 10`) against a primitive:
 				// cast it to the other operand's type so the numeric/compare op sees the right value, not the box.
 				fun operand(o: IrExpression, other: IrExpression): String {
+					// A value-type-nullable operand (`Int?` smart-cast to `Int` -- `n + 1`/`n > 5` after `if (n != null)`)
+					// must surface `Nullable<T>.Value`; a raw `Nullable<T>` struct load into a numeric/compare op is
+					// invalid IL / reads garbage (the C1 miscompile). The smart-cast leaves `o.type` still `Int?`.
+					nullableElem(o.type)?.let { elem -> return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(o)}}""" }
 					val ot = birType(o.type); val tt = birType(other.type)
 					// A boxed Any operand renders as the Any token ("object" fallback, or "kotlin.Any" for an explicit Any/Nothing
 					// source type) — cast it to the other (concrete) operand's type so the op sees the value, not the box.
@@ -3931,10 +3935,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					else core
 			} }
 			// Same primitive gate for unary/inc/dec: `Duration.unaryMinus()` is a real member call, not a CIL neg.
-			UNARY[name]?.let { if (operands.size == 1 && primOperand(operands[0])) return """{"k":"un","op":${str(it)},"e":${expr(operands[0])}}""" }
+			UNARY[name]?.let { if (operands.size == 1 && primOperand(operands[0])) return """{"k":"un","op":${str(it)},"e":${valueOperand(operands[0])}}""" }
 			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) -> `(i + 1)`/`(i - 1)`.
-			if (name == "inc" && operands.size == 1 && primOperand(operands[0])) return """{"k":"bin","op":"+","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
-			if (name == "dec" && operands.size == 1 && primOperand(operands[0])) return """{"k":"bin","op":"-","l":${expr(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
+			if (name == "inc" && operands.size == 1 && primOperand(operands[0])) return """{"k":"bin","op":"+","l":${valueOperand(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
+			if (name == "dec" && operands.size == 1 && primOperand(operands[0])) return """{"k":"bin","op":"-","l":${valueOperand(operands[0])},"r":{"k":"const","type":"int","value":1}}"""
 			// Numeric conversion `x.toLong()`/`x.toInt()`/… (numeric receiver) -> a CIL conv.
 			NUMBER_CONV[name]?.let { to ->
 				val recv = dispatchReceiver(call)
@@ -4264,6 +4268,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return byrefBackingField(inner) ?: expr(inner)
 			}
 			else if (isClrRefArgument(param)) return byrefBackingField(arg) ?: expr(arg)
+			// A value-type-nullable arg (`Int?` smart-cast to `Int`) passed to a non-null value param must UNWRAP
+			// `Nullable<T>.Value` — the CLR twin of JVM's implicit `Integer.intValue()` arg coercion (no IR node). C1.
+			nullableValueUnwrapElem(arg.type, param.type)?.let { elem ->
+				return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(arg)}}"""
+			}
 		}
 		return expr(arg)
 	}
@@ -4330,6 +4339,31 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** Kotlin nullable VALUE type (`Int?`/`Double?`…) -> the BIR element type (int/double…), else null. */
 	internal fun nullableElem(t: IrType): String? =
 		if (t.isMarkedNullable()) VALUE_PRIM_BIR[t.classFqName?.asString()] else null
+
+	/** A value-type-nullable source (`Int?` = `Nullable<T>` on the CLR) narrowed/cast to its NON-null value
+	 *  (`Int`) must read `Nullable<T>.get_Value` — a bare load / `unbox.any` over a `Nullable<T>` STRUCT reads
+	 *  garbage or emits invalid IL (this was the C1 smart-cast miscompile: `if (n != null) { val z: Int = n }`
+	 *  loaded the whole `Nullable<int>` into an `int` slot). Given the SOURCE type and the required non-null
+	 *  USE/target type, returns the BIR element to wrap in a `nullableValue` unwrap, else null. */
+	internal fun nullableValueUnwrapElem(srcType: IrType, useType: IrType): String? {
+		val elem = nullableElem(srcType) ?: return null          // source is Int?/Long?/Double?…
+		if (useType.isMarkedNullable()) return null              // target is still nullable -> no unwrap
+		val tgt = VALUE_PRIM_BIR[useType.classFqName?.asString()] ?: return null
+		return if (tgt == elem) elem else null
+	}
+
+	/** Read `o` as its BARE CLR VALUE. A value-type-nullable operand (`Int?` = `Nullable<T>`) that a primitive
+	 *  operator / value slot consumes must surface `Nullable<T>.Value` — a raw `Nullable<T>` struct load is
+	 *  invalid IL / reads garbage (the C1 smart-cast miscompile: `n + 1`, `n > 5` after `if (n != null)`). A
+	 *  smart-cast leaves `o.type` still `Int?` (no IR cast node), so we key off the static value-nullable type. */
+	internal fun valueOperand(o: IrExpression): String =
+		nullableElem(o.type)?.let { elem -> """{"k":"nullableValue","elem":${str(elem)},"e":${expr(o)}}""" } ?: expr(o)
+
+	/** Emit `node` coerced into a slot of the EXPECTED type: unwrap a value-type-nullable (`Int?`) to its
+	 *  non-null value (`Int`) when the slot demands the bare value — the CLR twin of the JVM backend's implicit
+	 *  `Integer.intValue()` coercion at an assignment / argument / return, which has NO IR cast node. */
+	internal fun coerceValue(node: IrExpression, expected: IrType): String =
+		nullableValueUnwrapElem(node.type, expected)?.let { elem -> """{"k":"nullableValue","elem":${str(elem)},"e":${expr(node)}}""" } ?: expr(node)
 
 	/** Kotlin visibility -> BIR access keyword (public/private/internal/protected). */
 	internal fun visOf(d: IrDeclarationWithVisibility): String = when (d.visibility.delegate) {

@@ -93,8 +93,13 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				// declared type, so emit a cast (ilemit unboxes Any->Int / castclass for refs). Without it the
 				// value keeps its boxed/declared form and ops like `>` compare the wrong thing.
 				val ut = birType(node.type); val dt = birType(owner.type)
+				// A value-type-nullable (`Int?` = `Nullable<T>`) narrowed to its non-null value (`if (n != null) { …n… }`)
+				// must UNWRAP `Nullable<T>.Value` — a bare `local` load of a `Nullable<int>` into an `int` context is
+				// invalid IL / reads garbage (the C1 smart-cast miscompile). This is the twin of the IMPLICIT_CAST path.
+				val vElem = nullableValueUnwrapElem(owner.type, node.type)
 				// The declared type is the boxed Any token ("object" fallback, or "kotlin.Any" for an Any/Nothing source type).
-				if (ut != dt && (dt == "object" || dt == "kotlin.Any")) """{"k":"cast","type":${str(ut)},"e":{"k":"local","name":${str(name)}}}"""
+				if (vElem != null) """{"k":"nullableValue","elem":${str(vElem)},"e":{"k":"local","name":${str(name)}}}"""
+				else if (ut != dt && (dt == "object" || dt == "kotlin.Any")) """{"k":"cast","type":${str(ut)},"e":{"k":"local","name":${str(name)}}}"""
 				else """{"k":"local","name":${str(name)}}"""
 			}
 		}
@@ -194,8 +199,14 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		IrTypeOperator.INSTANCEOF -> """{"k":"isinst","type":${str(birType(node.typeOperand))},"e":${expr(node.argument)}}"""
 		IrTypeOperator.NOT_INSTANCEOF -> """{"k":"un","op":"!","e":{"k":"isinst","type":${str(birType(node.typeOperand))},"e":${expr(node.argument)}}}"""
 		// `x as T` / smart-cast downcast -> castclass (or unbox for value types). Throws on mismatch.
+		// A value-type-nullable source (`Int?` = `Nullable<T>`) cast to its non-null value (`Int`) must UNWRAP
+		// `Nullable<T>.Value` — `unbox.any int` over a `Nullable<int>` struct is invalid IL / garbage (the C1
+		// miscompile when FIR carries the smart-cast as an explicit IMPLICIT_CAST node instead of narrowing the
+		// IrGetValue directly). The twin of the IrGetValue narrowing path above.
 		IrTypeOperator.CAST, IrTypeOperator.IMPLICIT_CAST ->
-			"""{"k":"cast","type":${str(birType(node.typeOperand))},"e":${expr(node.argument)}}"""
+			nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
+				"""{"k":"nullableValue","elem":${str(elem)},"e":${expr(node.argument)}}"""
+			} ?: """{"k":"cast","type":${str(birType(node.typeOperand))},"e":${expr(node.argument)}}"""
 		// `x as? T` -> null on mismatch. Reference T: `isinst T` (null or ref). Value T: `T?` (Nullable<T>).
 		IrTypeOperator.SAFE_CAST -> {
 			val velem = VALUE_PRIM_BIR[node.typeOperand.classFqName?.asString()]
