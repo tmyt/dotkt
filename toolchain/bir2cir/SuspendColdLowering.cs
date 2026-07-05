@@ -268,6 +268,19 @@ static class SuspendColdLowering
                 foreach (var call in SuspendCalls(entries[key].Method))
                     if (!IsResolvable(call, transformable, refs))
                     {
+                        // L3 (make-it-loud): a shape-eligible suspend fun is dropped from the cold-transform set
+                        // because ONE of its suspend calls can't be resolved to a cold entry (no same-assembly
+                        // transformable callee AND no ref.dll Suspend-flagged member). Left silent, the fun stays
+                        // `suspend:true` and only trips the DISTANT "suspend method reached codegen un-lowered"
+                        // NotSupportedException at the ilemit boundary — pointing at the surviving method, not the
+                        // root call. Emit the ROOT here: which fun, which unresolvable call (kind/owner/name).
+                        var callKind = call.Instance ? "callInstance" : "callStatic";
+                        var callOwner = call.Owner ?? "<top-level>";
+                        var funDesc = (key.Owner ?? "<top-level>") + "." + key.Name + (string.IsNullOrEmpty(key.Sig) ? "" : "(" + key.Sig + ")");
+                        Console.Error.WriteLine(
+                            $"bir2cir: WARNING suspend-lowering: dropped '{funDesc}' from the cold-transform set — "
+                            + $"unresolvable suspend {callKind} '{callOwner}.{call.Name}' (no same-assembly cold entry "
+                            + "and no ref.dll Suspend-flagged member). This fun will reach ilemit un-lowered.");
                         transformable.Remove(key);
                         changed = true;
                         break;
