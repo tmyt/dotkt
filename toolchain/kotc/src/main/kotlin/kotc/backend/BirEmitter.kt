@@ -3236,23 +3236,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else """{"k":"enumOrdinal","e":${expr(e)}}"""
 				return """{"k":"bin","op":"-","l":${ord(recv)},"r":${ord(arg)}}"""
 			}
-			// PRIMITIVE compareTo: the boxed kotlin.<Prim> is NOT emitted in the runtime (substituted to the BCL value
-			// type), so route to System.<Prim>.CompareTo (IComparable<T>) instead of a member call on the omitted class.
-			val rfq = recv?.type?.classFqName?.asString()
-			val bcl = mapOf("kotlin.Int" to "System.Int32","kotlin.Long" to "System.Int64","kotlin.Byte" to "System.SByte","kotlin.Short" to "System.Int16","kotlin.Float" to "System.Single","kotlin.Double" to "System.Double","kotlin.Char" to "System.Char","kotlin.Boolean" to "System.Boolean")[rfq]
-			if (recv != null && arg != null && bcl != null)
-				return """{"k":"clrInstance","type":${str(bcl)},"method":"CompareTo","argTypes":[${str(bcl)}],"ret":"System.Int32","recv":${expr(recv)},"args":[${expr(arg)}]}"""
 		}
-
-		// `a.compareTo(b)` (the desugaring of `<`/`>`/`<=`/`>=` on a Comparable, incl. a bounded generic param
-		// `<T : Comparable<T>>`) -> a `constrained.` callvirt to `System.IComparable<T>::CompareTo`. The
-		// `constrained.` prefix dispatches uniformly whether the receiver is a value type, a reference type, or
-		// an open type parameter, so this one shape covers `Int`/`String`/`T`.
-		if (declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.Comparable" && name == "compareTo") {
-			val recv = dispatchReceiver(call)!!
-			val rt = birType(recv.type)
-			return """{"k":"constrainedCall","recvType":${str(rt)},"iface":${str("clrg:System.IComparable[$rt]")},"method":"CompareTo","recv":${expr(recv)},"arg":${expr(regularArgs(call).first())}}"""
-		}
+		// A PRIMITIVE `x.compareTo(y)` and a `kotlin.Comparable.compareTo` (the `<`/`>`/`<=`/`>=` desugaring on a
+		// bounded generic `<T : Comparable<T>>`) are NO LONGER intercepted here (layer purity): kotc emits the PLAIN
+		// member call (`callInstance kotlin.Int.compareTo` / `callInstance kotlin.Comparable.compareTo`, carrying the
+		// receiver's static type on the recv node's `retType`/`elem` and the type-param constraints). bir2cir derives the
+		// CLR form — a primitive owner -> `clrInstance System.<Prim>.CompareTo`; a @ClrTypeAlias("System.IComparable")
+		// owner -> a `constrained.` `System.IComparable<T>::CompareTo` (its ComparableConstrain pass, reusing the
+		// value-type/constrained-dispatch knowledge it already owns). The `System.IComparable`/`constrained.` decision
+		// is a Kotlin<->CLR relation and lives in bir2cir, not this frontend.
 
 		// NOTE: `reified` gets NO special handling here — it is deliberately never inspected. The CLR has reified
 		// generics, so `reified` is pure decoration: a generic function (reified or not) is just emitted as a .NET

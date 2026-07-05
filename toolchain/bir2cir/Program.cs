@@ -4403,6 +4403,21 @@ static class MemberCallSubstitution
             return listCall;
         }
 
+        // Rule 1c (PRIMITIVE compareTo): `x.compareTo(y)` on a boxed kotlin.<Prim> -> `System.<Prim>.CompareTo`
+        // (IComparable<T>). The boxed kotlin.* primitive is NOT emitted in the runtime (it is substituted to the BCL
+        // value type), so a member call on the omitted class must route to the BCL value type's CompareTo. This is the
+        // bir2cir home of the former kotc primitive-compareTo lowering (layer purity): kotc emits the plain
+        // `callInstance kotlin.Int.compareTo`; the primitive->BCL knowledge lives here. Placed BEFORE Rule 3 because a
+        // primitive that carries a rule-3 body (Char) would otherwise route to its `<>dotkt_ClrH_kotlin_Char` helper —
+        // WRONG (and self-recursive inside that helper's own body). The 8 signed/bool/char primitives only.
+        if (instance && member == "compareTo" && args.Count == 1 && PrimitiveCompareToBcl(ownerFqn) is string primBcl)
+            return new JsonObject
+            {
+                ["k"] = "clrInstance", ["type"] = primBcl, ["method"] = "CompareTo",
+                ["argTypes"] = new JsonArray { primBcl }, ["ret"] = "System.Int32",
+                ["recv"] = node["recv"]?.DeepClone(), ["args"] = args.DeepClone(),
+            };
+
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
             return Constrainify(ClrCallNode(node, clrOwner, intrinsic, member, args, instance, refs.MemberByrefPositions(ownerFqn, member, args.Count)), node, refs, ctx, ownerToken);
@@ -4516,24 +4531,43 @@ static class MemberCallSubstitution
     {
         if (ctx == null || built is not JsonObject call) return built;
         if ((call["k"] as JsonValue)?.GetValue<string>() != "clrInstance") return built;
-        if (node["recv"] is not JsonObject recv || (recv["k"] as JsonValue)?.GetValue<string>() != "local") return built;
-        var vn = (recv["name"] as JsonValue)?.GetValue<string>();
-        if (vn == null || !ctx.VarTypes.TryGetValue(vn, out var vt) || !vt.StartsWith("gp:", StringComparison.Ordinal))
-            return built;
-        if (!ctx.TpConstraints.TryGetValue(vt.Substring(3), out var cons)) return built;
+        if (node["recv"] is not JsonObject recv) return built;
+        // The receiver's STATIC type. A local/param -> VarTypes. For a CompareTo call ONLY (the constrained-compareTo
+        // case), also recover it from a callInstance receiver's declared return (`retType`/`ret`) or an arrayGet's
+        // `elem`: a `gp:X` receiver reached via a member call (`ClosedRange.start.compareTo`) or an array read
+        // (`a[i].compareTo`) still needs `constrained.` for value-type-safe dispatch. The collection.add path stays
+        // LOCAL-only (unchanged) so broadening the receiver shapes cannot re-route a non-compareTo interface call.
+        var isCompareTo = (call["method"] as JsonValue)?.GetValue<string>() == "CompareTo";
+        var vt = RecvStaticType(recv, ctx, isCompareTo);
+        if (vt == null || !vt.StartsWith("gp:", StringComparison.Ordinal)) return built;
         // The call's declaring owner must itself be a CLR-bound INTERFACE (concrete-class members dispatch fine already).
         if (!refs.TryResolveClrOwner(ownerToken, out var ownerBcl, out var ownerKind) || ownerKind != "interface")
             return built;
-        // The receiver type-parameter's element args come from its collection-interface constraint
-        // (`MutableCollection[gp:R]` -> "gp:R"). Instantiate the CALL's owner interface with them.
-        string cargs = null;
-        foreach (var c in cons)
+        string cargs;
+        if (isCompareTo)
         {
-            if (!refs.TryResolveClrOwner(c, out _, out var ck) || ck != "interface") continue;
-            var b = c.IndexOf('[');
-            if (b >= 0 && c.EndsWith("]", StringComparison.Ordinal)) { cargs = c.Substring(b + 1, c.Length - b - 2); break; }
+            // COMPARETO (System.IComparable): `T : Comparable<T>` means the interface is `IComparable<recvType>` — the
+            // arg IS the receiver's own static type. No type-param-constraint lookup (the constraints may live on an
+            // OUTER scope absent from THIS declaration's typeParams — e.g. a `Comparator.compare` override whose `T`
+            // is the class type param, so typeParams=null here; the old kotc lowering likewise built IComparable[recvType]
+            // straight from the receiver type without a constraint).
+            cargs = vt;
         }
-        if (cargs == null) return built;
+        else
+        {
+            // Collection-BUILD (mapTo/filterTo `destination.add`): the element args come from the receiver
+            // type-parameter's own collection-interface constraint (`MutableCollection[gp:R]` -> "gp:R"). Requires the
+            // constraint to be present on THIS declaration (a local/param receiver of a generic method); local-only.
+            if (!ctx.TpConstraints.TryGetValue(vt.Substring(3), out var cons)) return built;
+            cargs = null;
+            foreach (var c in cons)
+            {
+                if (!refs.TryResolveClrOwner(c, out _, out var ck) || ck != "interface") continue;
+                var b = c.IndexOf('[');
+                if (b >= 0 && c.EndsWith("]", StringComparison.Ordinal)) { cargs = c.Substring(b + 1, c.Length - b - 2); break; }
+            }
+            if (cargs == null) return built;
+        }
 
         var cc = new JsonObject
         {
@@ -4548,6 +4582,40 @@ static class MemberCallSubstitution
         if (call["ret"] is JsonValue rv) cc["ret"] = rv.DeepClone();
         return cc;
     }
+
+    // The receiver expression's static type token, for constrained-dispatch recovery. A local/param resolves via
+    // VarTypes; for the constrained-COMPARETO case a callInstance receiver's declared return (`retType`/`ret`) and an
+    // arrayGet's element (`elem`) also carry it (`ClosedRange.get_start(): T` -> compareTo; `a[i]: T` -> compareTo).
+    // null when the shape carries no recoverable static type.
+    static string RecvStaticType(JsonObject recv, SubstCtx ctx, bool allowExprShapes)
+    {
+        var rk = (recv["k"] as JsonValue)?.GetValue<string>();
+        if (rk == "local")
+            return (recv["name"] as JsonValue)?.GetValue<string>() is string vn
+                && ctx.VarTypes.TryGetValue(vn, out var vt) ? vt : null;
+        if (!allowExprShapes) return null;
+        if (rk == "callInstance")
+            return (recv["retType"] as JsonValue)?.GetValue<string>()
+                ?? (recv["ret"] as JsonValue)?.GetValue<string>();
+        if (rk == "arrayGet")
+            return (recv["elem"] as JsonValue)?.GetValue<string>();
+        return null;
+    }
+
+    // The BCL value type whose `CompareTo` a boxed kotlin.<Prim> primitive's `compareTo` routes to (mirrors the former
+    // kotc primitive-compareTo lowering). null for a non-primitive owner.
+    static string PrimitiveCompareToBcl(string ownerFqn) => ownerFqn switch
+    {
+        "kotlin.Int" => "System.Int32",
+        "kotlin.Long" => "System.Int64",
+        "kotlin.Byte" => "System.SByte",
+        "kotlin.Short" => "System.Int16",
+        "kotlin.Float" => "System.Single",
+        "kotlin.Double" => "System.Double",
+        "kotlin.Char" => "System.Char",
+        "kotlin.Boolean" => "System.Boolean",
+        _ => null,
+    };
 
     // The collection ELEMENT type arg for a defaults-helper call: the owner token's own arg
     // (`MutableCollection[gp:R]` -> gp:R), or — when the owner is BARE because the receiver is a generic
