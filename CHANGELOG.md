@@ -197,6 +197,22 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   genuinely-unverifiable `CallAbstract` in the interface-suspend bridge — surfaced as a real latent
   finding, not XFAIL-hidden. (`strops` was the third; its primitive-array `StackUnexpected` is now
   fixed in ilemit and it is wired into the ilverify pass — see below.)
+- **`verify-differential` coverage expanded to the JVM oracle (COV1, kcc review §2B) — the structural
+  fix.** The differential gate (the ONLY gate that checks against real Kotlin/JVM semantics) validated
+  only ~43 samples; the other ~120 pure-Kotlin `il-*` samples self-scored against DotKt-captured fixed
+  strings in `verify-il`, so a Kotlin-INCORRECT mapping could pass green forever. The JVM-runnable
+  pure-Kotlin `il-*` subset (string / collection / math / regex / unsigned / enum / data-class /
+  generics / delegates / lazy / …) is now promoted into the `PURE` list, so each runs on BOTH the
+  kotlin/jvm oracle and the shipping CLR backend and must match — **163 samples, ALL MATCH**.
+  CLR-specific-by-design samples are excluded with a per-sample reason: `il-bmore`/`il-fmt` (`.format`
+  uses .NET composite format strings, literal text on the JVM), `il-reified` (`Int::class.simpleName`
+  is the CLR name `Int32` vs the JVM's `Int`); the coroutine cold-core family and all interop
+  (`il_check_imports`/`il_check_inject`) samples stay out (not JVM-runnable). Two harness bugs found and
+  fixed along the way: a `package`-declared sample ran `java <Class>` without the FQN (empty JVM output →
+  false DIFF — now prefixes the package), and the parallel result echoes shared one redirected stdout
+  offset and clobbered each other under a warm cache (the same race `verify-il` already retired — now one
+  atomic result record per sample). This makes the C1–C11-class regressions the review found redden the
+  gate instead of passing green.
 - **`il-strops` ilverify finding FIXED (2026-07-05) — the last ilverify-dirty finding.** The 3×
   `[StackUnexpected][found Char]` in `main` was the `String.trim(vararg chars: Char)` call site building
   a `char[]`, where `ilemit` emitted the generic token opcode `stelem <System.Char>` instead of the
