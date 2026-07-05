@@ -57,6 +57,24 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **Boxed-primitive dual-representation through generics no longer crashes or loses data (C2).** A family
+  of value-type-via-generic-`T`/`V` miscompiles is fixed in bir2cir + ilemit:
+  - `MutableMap<K, primitive>.getOrPut(k){…}` no longer silently returns `0` and skips the insert. The
+    inlined `get()`'s erased-nullable (`object`) result was stored raw into the `gp:V` local, so
+    `value == null` never saw the `null`; the local is now object-typed and the `else` branch unbox.any's
+    back to `V`.
+  - `Map<K, primitive>.getOrElse(presentKey){…}` returns the real value instead of garbage (the `object`
+    `else`-branch of the result `cond` is now unbox.any'd to `V`).
+  - `compareBy`/`compareValuesBy`/`sortedBy` with a primitive selector no longer NREs: a `Comparable<*>`
+    selector return lowers to the NON-generic `System.IComparable` (a boxed `Int` is `IComparable`, never
+    the contravariant `IComparable<object>`), and a value returned where a reference is declared now boxes.
+  - `Array<Int?>` (= `Nullable<int>[]`) element access no longer SIGSEGVs: `arrayOf(1, null, 3)` /
+    `arrayOfNulls<Int>(3).also{ it[0]=5 }` wrap each element into `Nullable<int>` (or `default`) at
+    `stelem`, and the array creation allocates the correct `Nullable<int>[]`.
+  - `fun <T : Enum<T>> …(e.name)` no longer throws a VerificationException: the self-referential
+    `Enum<T>` bound lowers to the CLR `System.Enum` constraint, and `e.name` on a generic enum receiver
+    binds to `System.Enum.ToString()`.
+  - Covered by the JVM-oracle differential case `cases/il-boxgen`.
 - **Value-type nullable smart-cast reads the value, not `HasValue` (C1).** An `Int?`/`Long?`/`Double?`
   (a CLR `Nullable<T>`) narrowed by `if (n != null)` and then read as its non-null `T` — an assignment
   (`val z: Int = n`), an arithmetic/comparison operand (`n + 1`, `n > 5`), a function argument, or a
