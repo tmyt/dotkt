@@ -91,10 +91,14 @@ static class Retarget
         }
 
         // Fallback for types not found in the ref pack: System.Runtime (covers the object graph's core). We copy
-        // its identity from whatever contract the map produced, else synthesize the well-known ECMA identity.
+        // its identity from whatever contract the map produced, else synthesize the well-known ECMA identity —
+        // including the ECMA PublicKeyToken `b03f5f7f11d50a3a`. Without a PKT the synthesized reference is
+        // partial (PKT=null), so a C# project `<Reference>`-ing the retargeted dll fails to bind System.Runtime.
         AssemblyName fallbackRuntime =
             typeToContract.Values.FirstOrDefault(a => a.Name == "System.Runtime")
             ?? new AssemblyName("System.Runtime") { Version = new Version(coreRefs[0].Version.Major, 0, 0, 0) };
+        if (fallbackRuntime.GetPublicKeyToken() is not { Length: > 0 })
+            fallbackRuntime.SetPublicKeyToken(new byte[] { 0xb0, 0x3f, 0x5f, 0x7f, 0x11, 0xd5, 0x0a, 0x3a });
 
         int remapped = 0, missing = 0;
         var unresolved = new SortedSet<string>(StringComparer.Ordinal);
