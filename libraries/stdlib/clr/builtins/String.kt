@@ -64,6 +64,26 @@ public actual class String : Comparable<String>, CharSequence {
         return thisLength - otherLength
     }
 
+    // No @ClrIntrinsic: System.String.GetHashCode is RANDOMIZED per process (non-deterministic across runs),
+    // whereas Kotlin/JVM contracts a DETERMINISTIC polynomial hash `s[0]*31^(n-1) + ... + s[n-1]` (0 for the
+    // empty string). Rule-3 real body over the intrinsic siblings (length / get) + primitive Char/Int arithmetic;
+    // the `* 31` and `+` wrap on Int overflow (unchecked), matching JVM.
+    // NOTE (2026-07-06): this correct body is currently SHADOWED by kotc's universal-method intercept
+    // (BirEmitter.kt ~3853: `isBuiltin && name=="hashCode"` -> objMethod GetHashCode), which routes every
+    // `.hashCode()` on a builtin (kotlin.*) receiver straight to System.Object/String.GetHashCode BEFORE the
+    // call can reach this member. Until that intercept is gated (fall through when the receiver TYPE declares
+    // its own hashCode), C5 stays broken at the call site despite this binding being right.
+    public actual override fun hashCode(): Int {
+        var h = 0
+        val n = this.length
+        var i = 0
+        while (i < n) {
+            h = h * 31 + this[i].code
+            i++
+        }
+        return h
+    }
+
     /**
      * Indicates if [other] object is equal to this [String].
      */

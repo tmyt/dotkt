@@ -141,6 +141,12 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   binding — whose checked overload throws at `MIN` — is dropped for the integer overloads in favor of the
   pure-Kotlin body `if (n < 0) -n else n`; the `Float`/`Double` overloads keep their `System.Math.Abs`
   binding. Verified against the JVM oracle (`cases/il-mathabs`, added to `verify-differential`).
+- **Deterministic `String`/`Double`/`Float` `hashCode()` bodies added** (polynomial hash for `String`,
+  bit-based for `Double`/`Float`) replacing reliance on .NET's randomized/native `GetHashCode`. The
+  correct stdlib bodies now ship, but they are still SHADOWED at the call site by kotc's universal-method
+  intercept (`BirEmitter.kt` `isBuiltin && name=="hashCode"` → `objMethod GetHashCode`), so `"Aa".hashCode()`
+  remains non-deterministic until that intercept is gated to fall through when the receiver type declares its
+  own `hashCode` — a compiler-layer follow-up, not a stdlib change.
 
 ### Compiler architecture (4-layer / layer purity)
 
