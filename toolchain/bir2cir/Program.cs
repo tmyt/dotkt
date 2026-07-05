@@ -2489,20 +2489,64 @@ static class DefaultArgSplice
         if (k != "callStatic" && k != "callInstance") return;
         if (node["args"] is not JsonArray args || Str(node["sig"]) is not string sig) return;
         var sigCount = SplitTopLevel(sig).Count;
-        if (args.Count >= sigCount) return;                              // no omitted arg
+        var hasPlaceholder = false;
+        for (var j = 0; j < args.Count; j++) if (IsPlaceholder(args[j])) { hasPlaceholder = true; break; }
+        if (!hasPlaceholder && args.Count >= sigCount) return;           // no omitted arg to fill
         var owner = Str(node["owner"]) ?? Str(node["ownerType"]);
         var method = Str(node["method"]);
         if (owner == null || method == null) return;
         var defaults = refs.KotlinDefaultsFor(owner, method, sigCount);
         if (defaults == null) return;
-        var spliced = new List<JsonNode>();
+        // An extension receiver rides args[0] (the `__self` first arg of an emitted extension fun). A `= this` default
+        // (substringAfter's missingDelimiterValue, a data-class copy) references it — bind the callee's `this` to it.
+        var receiver = args.Count > 0 ? args[0] : null;
+        // 1) Replace POSITIONAL `defaultArg` placeholders in place (kotc keeps a later provided arg's slot). Fill by array
+        //    index — which equals the @KotlinDefault index (extension receiver counted first, matching kotc's stamp).
+        for (var j = 0; j < args.Count; j++)
+        {
+            if (!IsPlaceholder(args[j])) continue;
+            if (!defaults.TryGetValue(j, out var bir)) continue;         // no @KotlinDefault at this slot -> leave it (loud downstream)
+            if (SpliceOne(bir, receiver) is JsonNode fill) args[j] = fill;
+        }
+        // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail).
         for (var pos = args.Count; pos < sigCount; pos++)
         {
             if (!defaults.TryGetValue(pos, out var bir)) return;         // gap -> bail (leave the call unchanged)
-            JsonNode parsed; try { parsed = JsonNode.Parse(bir); } catch { return; }
-            spliced.Add(parsed);
+            if (SpliceOne(bir, receiver) is JsonNode fill) args.Add(fill); else return;
         }
-        foreach (var n in spliced) args.Add(n);
+    }
+
+    static bool IsPlaceholder(JsonNode n) => n is JsonObject o && Str(o["k"]) == "defaultArg";
+
+    // Parse a @KotlinDefault BIR-json string and bind the callee's `this` (an extension receiver in the default
+    // expression) to the CALL's receiver — a fresh deep clone per occurrence, so the value is a self-contained subtree.
+    static JsonNode SpliceOne(string bir, JsonNode receiver)
+    {
+        JsonNode parsed; try { parsed = JsonNode.Parse(bir); } catch { return null; }
+        return receiver == null ? parsed : SubstituteThis(parsed, receiver);
+    }
+
+    // Rebuild `node`, replacing every `{"k":"this"}` with a deep clone of `receiver` (each `this` in the callee's default
+    // denotes the callee's receiver → this call's receiver). Rebuilds fresh so no node is attached to two parents.
+    static JsonNode SubstituteThis(JsonNode node, JsonNode receiver)
+    {
+        switch (node)
+        {
+            case JsonObject obj when Str(obj["k"]) == "this": return receiver.DeepClone();
+            case JsonObject obj:
+            {
+                var res = new JsonObject();
+                foreach (var kv in obj) res[kv.Key] = kv.Value == null ? null : SubstituteThis(kv.Value, receiver);
+                return res;
+            }
+            case JsonArray arr:
+            {
+                var res = new JsonArray();
+                foreach (var it in arr) res.Add(it == null ? null : SubstituteThis(it, receiver));
+                return res;
+            }
+            default: return node.DeepClone();
+        }
     }
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
