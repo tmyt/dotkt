@@ -27,7 +27,9 @@ package kotlin.coroutines.clr.internal
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.SafeContinuation
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import kotlin.coroutines.intrinsics.intercepted
 
 /**
  * The root of every compiled suspend body: holds the [completion] chain link and drives the resume loop.
@@ -174,6 +176,21 @@ public fun <R, P, T> startSuspendUninterceptedOrReturn(fn: Any?, receiver: R, pa
         "create() covers arities 0/1 only"
     )
 }
+
+// --- F2: cross-module suspendCoroutine app-drive bridges ---------------------------------------------
+//
+// Our compiler does NOT inline @InlineOnly cross-module, so an APP calling `suspendCoroutine { … }`
+// emits a plain call to the (un-inlined) wrapper — its body (Continuation.kt:144-147) is never inlined at
+// the call site. bir2cir instead RECONSTRUCTS that body inside the caller's generated state machine. The
+// wrapper buffers a synchronous resume through a SafeContinuation, whose 1-arg ctor + getOrThrow are
+// `internal` (assembly-only) and thus unreachable from an app SM. These PUBLIC bridges keep the
+// SafeContinuation type INSIDE the stdlib while exposing exactly the two operations the reconstructed SM
+// needs; the SM passes ITSELF (it is a Continuation) as the delegate, mirroring `SafeContinuation(c.intercepted())`.
+public fun newSafeContinuation(delegate: Continuation<Any?>): Continuation<Any?> =
+    SafeContinuation(delegate.intercepted())
+
+public fun safeGetOrThrow(safe: Continuation<Any?>): Any? =
+    (safe as SafeContinuation<Any?>).getOrThrow()
 
 internal fun notAStateMachine(who: String): Nothing =
     throw NotImplementedError(
