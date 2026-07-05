@@ -133,6 +133,31 @@ public fun <K, V> clrMapReplaceKVV(m: MutableMap<K, V>, key: K, oldValue: V, new
     if (m.containsKey(key) && m.clrMapItem(key) == oldValue) { m.clrMapSetItem(key, newValue); true } else false
 
 /**
+ * `MutableMap.merge(key, value, remappingFunction)` (C2 — the java.util.Map.merge equivalent): absent key -> insert
+ * [value]; present -> [remappingFunction](old, value); a null result removes the entry. Structured like clrMapPutIfAbsent
+ * so null only ever flows DIRECTLY into the (object-erased) return — never into a `gp:V` local (see the V?-return NOTE).
+ */
+public fun <K, V> clrMapMerge(m: MutableMap<K, V>, key: K, value: V, remappingFunction: (V, V) -> V?): V? {
+    if (!m.containsKey(key)) {
+        m.clrMapSetItem(key, value)
+        return value
+    }
+    val computed = remappingFunction(m.clrMapItem(key), value)
+    if (computed == null) {
+        m.clrMapRemoveKey(key)
+        return null
+    }
+    // `computed` is smart-cast to V, but its CIR slot is the object-erased func return (`nullable:gp:V`). A plain store
+    // to clrMapSetItem's `V` param leaves an `object` on the stack where a value `V` is expected (ilverify StackUnexpected /
+    // runtime InvalidProgram) — the smart-cast emits no IL. The explicit `as V` forces the `unbox.any` narrowing ilemit
+    // needs (mirrors the `x as T` -> unbox.any path). `(computed as Any?)` defeats the smart-cast so the cast is not elided.
+    @Suppress("UNCHECKED_CAST")
+    val narrowed = (computed as Any?) as V
+    m.clrMapSetItem(key, narrowed)
+    return narrowed
+}
+
+/**
  * `MutableMap.entries: MutableSet<MutableEntry<K,V>>` — the slot lowers to ICollection<MutableEntry>, which the
  * snapshot ArrayList's BCL List satisfies at runtime (the `as` is a lowered castclass onto ICollection). Entries are
  * LIVE (value reads and setValue go through the backing map); the set itself is a snapshot.
