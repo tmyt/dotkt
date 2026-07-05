@@ -21,7 +21,7 @@ package kotlin.sequences
 // A Kotlin `Sequence<T>` is a lazily-evaluated pull stream — on the CLR its faithful equivalent IS
 // `System.Collections.Generic.IEnumerable<T>` (both yield an element-at-a-time iterator). Bind it as the ONE legit
 // stdlib type-alias case so bir2cir resolves a `Sequence<T>` type token (in argTypes/ret/param/local slots emitted by
-// birType) to `IEnumerable<T>` uniformly from the ref.dll — retiring the hard-coded netType Sequence branch in kotc.
+// birType) to `IEnumerable<T>` uniformly from the ref.dll.
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IEnumerable")
 public interface Sequence<out T> {
     /**
