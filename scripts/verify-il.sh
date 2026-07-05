@@ -433,6 +433,11 @@ il_check_inject injuint InjUint "$ROOT/cases/il-injuint" "$(printf '65542\n42')"
 # c1net consumes types from its OWN runtime.cs (Probe assembly) via `import Probe.X` -> il_check_inject (build the
 # runtime, scan the imports through facadegen, --ref it). The old no-import-scan @Clr-facade path is gone.
 il_check_inject c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21\n41\n117\n20\n5\nyo!')" Probe
+# N6: STATIC events subscribe via `+=`/`-=` — on a `static class`/`object` (an object member, the Console.CancelKeyPress
+# shape) and on a normal class (a companion property, the TaskScheduler.UnobservedTaskException shape). facadegen
+# surfaces both as `ClrEvent<T>` properties; bir2cir binds the operator to the event's STATIC add/remove accessor.
+# Regression guard: static events were absent (GetEvents was Public|Instance non-static only).
+il_check_inject eventext EventExt "$ROOT/cases/il-eventext" "$(printf 'ping: 3\nping: 7\nannounce: hi\nannounce: yo\nh: yo\nannounce: bye')" EvLib
 # N5: same-name same-package top-level overloads restored from DIFFERENT .NET file facades (UtilsKt.foo() /
 # HelpersKt.foo(Int)) share CallableId(N5,"foo"); the A2 flat map collapsed to last-put-wins. The overload-aware key
 # routes each to its own file class by the resolved callee's arity. (A2 regression guard.)

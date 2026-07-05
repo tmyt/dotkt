@@ -424,6 +424,16 @@ c.CollectionChanged -= h                                     // unsubscribe (del
 - `-=` removes by **delegate equality**, so removal works only with a **stored** handler reference (as in the JVM
   idiom for listeners) — a fresh lambda literal at the `-=` site is a different delegate and removes nothing.
 - This replaces the earlier `add_<Event>` / `remove_<Event>` accessor-method spelling, which no longer exists.
+- **Static events** subscribe the same way. A **static** event on a normal class is reached through the companion
+  (`TaskScheduler.UnobservedTaskException += h`); a static event on a `static class`/`object`
+  (`System.Console.CancelKeyPress += h`) is a member of that object. Either binds to the event's **static** add/remove
+  accessor (a plain `Call`). (facadegen originally emitted only *instance* events of *non-static classes*.)
+- **Interface events** (`INotifyPropertyChanged.PropertyChanged`) are **not yet surfaced.** Modelling them as a
+  `ClrEvent<T>` interface member is correct for an interface-typed receiver, but when a Kotlin class **subclasses** a
+  .NET class that implements such an interface (`class MyApp : Avalonia.Application`), fir2ir synthesizes a
+  fake-override getter returning the `ClrEvent<T>` compile-time fiction, which the emitter cannot declare. Surfacing
+  them awaits a downstream change that **elides a `ClrEvent`-typed fake-override member** (a .NET event is never a real
+  inherited property). Subscribe via the concrete class event in the meantime.
 
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 

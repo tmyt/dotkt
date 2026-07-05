@@ -5,6 +5,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **facadegen/kotc: static .NET events now subscribe with `+=`/`-=` (N6).** `facadegen` emitted event metadata only
+  for **instance** events of **non-static** classes (`GetEvents(Public|Instance)` inside the non-static branch), so a
+  **static** event (`TaskScheduler.UnobservedTaskException`, `System.Console.CancelKeyPress`) had no member to resolve.
+  facadegen now emits a static event of a normal class as a companion `sevent` (`GetEvents(Public|Static)`) and a static
+  event of a `static class`/`object` as an object-member `event`; kotc surfaces the companion one as a `ClrEvent<T>`
+  companion property. bir2cir's `ClrEventOperatorBinding` reads `static` and ilemit's `EmitClrEvent` emits a static
+  `Call`, both already built. New gate case `cases/il-eventext` covers both via `+=`/`-=`; docs/dotkt-semantics.md §8d.
+  **Interface events** (`INotifyPropertyChanged.PropertyChanged`) are deferred: modelling them as a `ClrEvent<T>`
+  interface member is correct for an interface-typed receiver, but a Kotlin class subclassing a .NET class that
+  implements such an interface (`MyApp : Avalonia.Application`) then fake-overrides a getter returning the `ClrEvent<T>`
+  fiction, which ilemit cannot declare — it awaits a downstream ClrEvent-fake-override elision (kotc BirEmitter/ilemit).
+
 - **kotc: same-name top-level overloads across different DotKt file facades no longer mis-route (N5, an A2 regression).**
   The interop-no-registry (A2) rewrite keyed the restored top-level function's `.NET` file-facade class by
   `CallableId = (package, name)` **only**, so two overloads with the same name in the same package but in **different**

@@ -399,6 +399,14 @@ static class FacadeGen
                     var pclr = p.GetMethod != null ? ClrAttrName(p.GetMethod) : null;   // member substitution: size -> Count
                     sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p)} {(p.CanWrite ? "rw" : "ro")} abstract{(pclr != null ? " clr:" + pclr : "")}\n");
                 }
+                // (N6) INTERFACE instance events are DEFERRED: surfacing them as `ClrEvent<T>` members is correct for an
+                // interface-typed receiver (`x.PropertyChanged += h`), but when a Kotlin class SUBCLASSES a .NET class
+                // that implements such an interface (`class MyApp : Avalonia.Application`), fir2ir synthesizes a
+                // fake-override GETTER that returns `kotlin.clr.ClrEvent<T>` — a compile-time fiction ilemit cannot
+                // declare ("cannot resolve .NET type kotlin.clr.ClrEvent`1"), aborting emit. The proper fix is downstream
+                // (kotc BirEmitter / ilemit must ELIDE a ClrEvent-typed fake-override member, since a .NET event is never a
+                // real inherited property); until that lands, interface events stay unsurfaced to keep framework
+                // subclassing (ktproj-avalonia) green. STATIC events (below) have no such fake-override path and ship now.
                 var iix = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .FirstOrDefault(p => p.GetIndexParameters().Length == 1
                         && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));
@@ -573,6 +581,18 @@ static class FacadeGen
                     sb.Append(string.Join(" ", stoks) + "\n");
                     if (m.IsGenericMethodDefinition) EmitTypeParamMeta(m.GetGenericArguments(), t, sb, isInterface: false, typeLevel: false);  // gap ①: method type-param bounds
                 }
+                // (N6) Public STATIC events of a NORMAL class (`TaskScheduler.UnobservedTaskException`) -> a companion
+                // `ClrEvent<T>` property, subscribed via `Type.Event += h` / `-= h`. `sevent` mirrors `sfun`/`sprop`; the
+                // injector puts it on the synthesized companion and the backend emits a STATIC add/remove accessor (the
+                // companion receiver -> clrPropGet static=true -> bir2cir ClrEventOperatorBinding -> Call, not Callvirt).
+                foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Static))
+                {
+                    var inv = ev.EventHandlerType?.GetMethod("Invoke");
+                    if (inv == null || !seen.Add("sevent:" + ev.Name)) continue;
+                    var eps = inv.GetParameters();
+                    if (!eps.All(p => Supported(p.ParameterType)) || !Supported(inv.ReturnType)) continue;
+                    sb.Append($"sevent {ev.Name} {Map(inv.ReturnType, t)} {MetaParams(eps, t)}".TrimEnd() + "\n");
+                }
             }
             else
             {
@@ -586,6 +606,18 @@ static class FacadeGen
                 {
                     if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType) || !p.CanRead || !seen.Add("sprop:" + p.Name)) continue;
                     sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p)} {(p.CanWrite ? "rw" : "ro")} final\n");
+                }
+                // (N6) Public STATIC events of a STATIC class (`Console.CancelKeyPress`) -> a `ClrEvent<T>` member of the
+                // object; `Console.CancelKeyPress += h` reads the object member (recv = the object value -> clrPropGet
+                // static=true -> a STATIC add/remove accessor). An `object`'s members ARE its statics, so this is `event`
+                // (not `sevent` — there is no separate companion).
+                foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Static))
+                {
+                    var inv = ev.EventHandlerType?.GetMethod("Invoke");
+                    if (inv == null || !seen.Add("event:" + ev.Name)) continue;
+                    var eps = inv.GetParameters();
+                    if (!eps.All(p => Supported(p.ParameterType)) || !Supported(inv.ReturnType)) continue;
+                    sb.Append($"event {ev.Name} {Map(inv.ReturnType, t)} {MetaParams(eps, t)}".TrimEnd() + "\n");
                 }
             }
             var flags = BindingFlags.Public | BindingFlags.NonPublic | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
