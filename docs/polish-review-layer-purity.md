@@ -209,6 +209,10 @@ Best done in a fresh, light-context session — start with stage 1 (smallest ver
   `Array(n){}.asList()` for groupValues. il-groupvalues added.
 - **forArray suspension — FALSE ALARM (commit follows).** Empirically works (Array/vararg/IntArray, sync + genuine
   await mid-loop); locked with il-coforarray.
-- STILL OPEN: the GENERAL `clrCollAdd` generic-collection dispatch (`c.size` → open `ICollection<!!T>.get_Count`;
+- **clrCollAdd — FIXED (commit a8fab5b, root):** bir2cir CollElemArg recovered `object` for `.map`/filterTo's
+  inlined `destination.add` (MutableCollection<in R> variance over-approx) -> `clrCollAdd<object>` -> invariant
+  `ICollection<object>.get_Count` mismatch. Fixed CollElemArg (recover element from a concrete collection receiver)
+  + SubstCtx.Extend (record param-less accessor local var types). groupValues reverted to `.map`; il-gencolladd added.
+- WAS OPEN (now the clrCollAdd fix above): the GENERAL `clrCollAdd` generic-collection dispatch (`c.size` → open `ICollection<!!T>.get_Count`;
   the bymap/maxOrNull family) — groupValues now sidesteps it, but a non-inlined generic `.map`/`.add` still hits it;
   a real bir2cir/ilemit follow-up. And A2 (designed, docs/design-interop-no-registry.md) + Lazy/EmptyMap (architectural).
