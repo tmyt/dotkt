@@ -321,6 +321,11 @@ il_check mapdes MapDes "$ROOT/cases/il-mapdes" "$(printf '10\n60\n13\nx=1\ny=2\n
 il_check mapgen MapGen "$ROOT/cases/il-mapgen" "$(printf '1\n1\n-1\n3\n9\n2\n7\nempty\n20\n50\n5\n6\n6')"
 il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000000\n18000000000000000000\n60000\n250')"
 il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_c\nTrue\nFalse\n42\nnull')"
+# regexreplace: Regex.replaceFirst / replace(String,String) marshaling (final-review N1). replaceFirst mis-bound the
+# 3-arg System...Regex.Replace(string,string,int) — returned the input unchanged + AccessViolationException on a
+# CharSequence-typed input; the fix materializes the CharSequence to a String at the call site. Also pins toString()
+# (the pattern-string method binding).
+il_check regexreplace RegexReplace "$ROOT/cases/il-regexreplace" "$(printf 'bXnana\nbXnXnX\nbXnana\na#b34\na(\\d+)b')"
 # regexgroups: MatchResult.groups (ClrMatchGroupCollection) — by-index/by-name access, iteration, and `group in
 # match.groups` (POLISH family-6 coverage). il-regex never touches .groups; this pinned + fixed a TypeLoad on the
 # AbstractCollection base + a missing `contains` (ClrMatchGroupCollection now implements the collection directly).
