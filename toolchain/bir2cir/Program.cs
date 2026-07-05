@@ -183,6 +183,14 @@ sealed class Pipeline
             // capacity-hint default is preserved and map/filter do not regress. Runs before MemberCallSubstitution so it
             // sees the raw `callInstance` on the kotlin.collections.* alias.
             if (attributeTopLevelOwner) StarProjectionLowering.Apply(hoisted);
+            // .NET EVENT `+=`/`-=` BINDING: kotc surfaces a .NET event as a `kotlin.clr.ClrEvent<T>` property and emits
+            // the idiomatic `w.Changed += h` as the PLAIN operator call `callInstance(kotlin.clr.ClrEvent.plusAssign,
+            // recv = <clrPropGet w Changed>, [h])`. This pass BINDS that to the .NET add/remove accessor — the existing
+            // clrEventAdd/clrEventRemove node (ilemit unchanged), reading owner .NET type + event name straight off the
+            // clrPropGet member-access. The ClrEvent<T> value is never materialized (a .NET event isn't first-class);
+            // the clrPropGet receiver is consumed here, not emitted. Runs BEFORE MemberCallSubstitution so the operator
+            // call — which has no ref.dll owner — is bound here. A no-op for the ref/rt stdlib self-build (no .NET events).
+            hoisted = ClrEventOperatorBinding.Apply(hoisted);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
@@ -867,33 +875,8 @@ sealed class ReferenceMetadataIndex
         return matches;
     }
 
-    public IReadOnlyList<ResolutionCandidate> ResolveClrEvent(string owner, string name, bool add, bool isStatic)
-    {
-        var accessorName = (add ? "add_" : "remove_") + name;
-        var matches = new List<ResolutionCandidate>();
-        foreach (var asm in _assemblies)
-        {
-            foreach (var member in asm.DotKt.Members)
-            {
-                if (member.Kind != "method") continue;
-                if (!OwnerMatches(owner, member.Owner)) continue;
-                if (member.IsStatic != isStatic) continue;
-                if (member.Name != accessorName) continue;
-                if (member.ParameterTypes.Count != 1) continue;
-                matches.Add(new ResolutionCandidate(
-                    member.Kind,
-                    asm.Name,
-                    member.Owner,
-                    member.Name,
-                    member.IsStatic,
-                    member.IsFileClass,
-                    member.ParameterTypes,
-                    member.ReturnType));
-            }
-        }
-
-        return matches;
-    }
+    // (RETIRED 2026-07-05) `ResolveClrEvent` (which resolved a DotKt `add_<E>`/`remove_<E>` accessor member) is GONE
+    // with the event-accessor model: a .NET event is now bound via ClrEventOperatorBinding off the `+=`/`-=` operator.
 
     static bool MemberKindMatches(string siteKind, string memberKind) => siteKind switch
     {
@@ -4374,6 +4357,62 @@ static class NullableFuncReturnErasure
         }
         sb.Append(s, pos, s.Length - pos);
         return sb.ToString();
+    }
+}
+
+// .NET EVENT `+=`/`-=` binding (the idiomatic ClrEvent<T> redesign). A .NET event is surfaced by facadegen/kotc as a
+// read-only `kotlin.clr.ClrEvent<T>` property (a compile-time fiction — a .NET event is NOT a first-class value), and
+// `w.Changed += handler` resolves through NORMAL Kotlin operator resolution to `w.Changed.plusAssign(handler)`. kotc
+// emits that as the PLAIN operator call `callInstance(ownerType = kotlin.clr.ClrEvent, method = plusAssign/minusAssign,
+// recv = <clrPropGet w Changed>, args = [handler])` — no `add_`/`remove_` naming, no CLR binding. This pass BINDS it:
+// it reads the owner .NET type + event name straight off the clrPropGet member-access node and emits the EXISTING
+// clrEventAdd/clrEventRemove node (ilemit's EmitClrEvent, unchanged) — so the emitted add/remove accessor IL is
+// identical to the old `add_<E>`/`remove_<E>` model. The ClrEvent<T> value + the clrPropGet are consumed here, never
+// emitted (a .NET event isn't materializable). This is the Kotlin<->CLR event relation, which is bir2cir's to own.
+static class ClrEventOperatorBinding
+{
+    public static JsonNode Apply(JsonNode root) => Walk(root);
+
+    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+
+    static JsonNode Walk(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            var copy = new JsonObject();
+            foreach (var kv in obj) copy[kv.Key] = kv.Value == null ? null : Walk(kv.Value);   // children first (bottom-up)
+            return Transform(copy) ?? copy;
+        }
+        if (node is JsonArray arr)
+        {
+            var copy = new JsonArray();
+            foreach (var item in arr) copy.Add(item == null ? null : Walk(item));
+            return copy;
+        }
+        return node.DeepClone();
+    }
+
+    // A `callInstance` on kotlin.clr.ClrEvent whose method is plusAssign/minusAssign -> the add/remove accessor node.
+    static JsonNode Transform(JsonObject node)
+    {
+        if (Str(node["k"]) != "callInstance") return null;
+        if (Str(node["ownerType"]) != "kotlin.clr.ClrEvent") return null;
+        var method = Str(node["method"]);
+        if (method != "plusAssign" && method != "minusAssign") return null;
+        // The receiver is the event member-access `w.Changed`, emitted as a clrPropGet carrying the .NET owner type
+        // (`type`), the event name (`name`), and the actual owner value (`recv`). Anything else is not an event op.
+        if (node["recv"] is not JsonObject propGet || Str(propGet["k"]) != "clrPropGet") return null;
+        if (node["args"] is not JsonArray args || args.Count != 1) return null;
+        var isStatic = (propGet["static"] as JsonValue)?.GetValue<bool>() ?? false;
+        return new JsonObject
+        {
+            ["k"] = method == "plusAssign" ? "clrEventAdd" : "clrEventRemove",
+            ["type"] = propGet["type"]?.DeepClone(),
+            ["event"] = propGet["name"]?.DeepClone(),
+            ["static"] = isStatic,
+            ["recv"] = isStatic ? null : propGet["recv"]?.DeepClone(),
+            ["handler"] = args[0]?.DeepClone(),
+        };
     }
 }
 
