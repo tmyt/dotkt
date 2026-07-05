@@ -141,6 +141,11 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   vocabulary ilemit consumes.
 - **Namespace projection removed** (`[DotKtNamespaceProjection]` and the associated flag/meta/MSBuild item)
   — a DotKt assembly's types are seen 1:1 at their .NET namespace as the Kotlin package.
+- **Pruned stale tombstone comments** across kotc / bir2cir / ilemit / facadegen / stdlib / scripts —
+  dead-symbol references (`ClrTypeRegistry`/`ClrTopLevelRegistry`/`ClrEventRegistry`, `netType`,
+  `NET_EXCEPTIONS`, `--compat-bir`/`--native-cir`, the retired `add_`/`remove_` event model) and
+  `(RETIRED)`/`is GONE` archaeology left by the migration deletions are trimmed to present-tense layer
+  guards or removed; genuine "why" rationale is preserved. Comment-only, no behavior change.
 
 ### Tooling, build & gates
 
