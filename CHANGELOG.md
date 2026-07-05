@@ -250,6 +250,22 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   `NET_EXCEPTIONS`, `--compat-bir`/`--native-cir`, the retired `add_`/`remove_` event model) and
   `(RETIRED)`/`is GONE` archaeology left by the migration deletions are trimmed to present-tense layer
   guards or removed; genuine "why" rationale is preserved. Comment-only, no behavior change.
+- **facadegen enforces the `kotlin.*` BINDING invariant in-layer (M3, defense-in-depth).** The rule
+  "`kotlin.*` comes from the frontend JAR, never from facadegen" is now guaranteed by the owning layer:
+  a `kotlin.*` symbol is short-circuited in BOTH the seed resolution AND `ShouldInject` (new
+  `IsKotlinStdlibSymbol` predicate), so facadegen can never inject a stdlib symbol (which would be
+  semantically degraded and would collide with the JAR's). The deliberate `kotlin.clr.await` CLR-async
+  bridge is whitelisted — it is surfaced textually by `EmitTaskAwait`, never through the injection
+  closure. Output-neutral (the closure never reached a `kotlin.*` type under the existing "don't
+  `--scan-asm` the stdlib" discipline); the guarantee previously lived only downstream
+  (`ClrTypeInjection.kt`, injected classes/interfaces — not top-level functions) plus that discipline.
+  Same sweep: `System.Nullable\`1` added to `NO_INJECT` (a value-type `X?` is projected to Kotlin `X?`
+  by `Map`, never the literal `Nullable<X>` — its open-definition injection was a stray dead type,
+  mirroring `Span\`1`); a member signature type that degrades to `Any?` now emits a deduped `note:` to
+  stderr (a silent `Any?` weakens the injected overload); the retarget `System.Runtime` fallback ref
+  now carries the well-known ECMA PublicKeyToken `b03f5f7f11d50a3a` (a PKT-less ref failed a C#
+  `<Reference>` bind); and two stale facadegen comments (`clrgen` package, `func:<ret>:<arg>` grammar)
+  are corrected. No metadata-output change beyond dropping the dead `Nullable\`1` injection.
 
 ### Tooling, build & gates
 
