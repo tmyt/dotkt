@@ -3512,11 +3512,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					?.firstOrNull { it.classifierOrNull?.owner == declClass }?.let { birType(it) } ?: clrType
 			}
 			// I4: an injected `add_<E>`/`remove_<E>` call is a .NET event subscription -> `recv.<E> += handler`.
-			// The real .NET declaring type owns the event; the FIR injector recorded (eventName, op) for the
-			// synthesized accessor. The handler is a lambda -> delegate (the existing closureNew/delegateNew path);
-			// ilemit binds it to the event's own delegate type (not Func/Action). See clrEventAdd in ilemit.
-			val declFq = declClass?.fqNameWhenAvailable?.asString()
-			kotc.ClrEventRegistry.lookup(declFq, name)?.let { (eventName, op) ->
+			// The real .NET declaring type owns the event. A2 stage 4 (the LAST registry): read the (eventName, op)
+			// fact off the synthesized accessor's RESOLVED IR `CallableId` (declaring-class `ClassId` + method name)
+			// via `kotc.frontend.clrInjectedEventOp` — facadegen's metadata keyed by that same structural identity,
+			// NOT the deleted name-keyed `ClrEventRegistry.lookup(declFq, name)`. The handler is a lambda -> delegate
+			// (the existing closureNew/delegateNew path); ilemit binds it to the event's own delegate type (not
+			// Func/Action). See clrEventAdd in ilemit.
+			declClass?.classId?.let { CallableId(it, callee.name) }?.let { kotc.frontend.clrInjectedEventOp(it) }?.let { (eventName, op) ->
 				val recvJson = if (isStatic) "null" else expr(recv!!)
 				val handler = expr(regularArgs(call).first())
 				val kind = if (op == "+=") "clrEventAdd" else "clrEventRemove"

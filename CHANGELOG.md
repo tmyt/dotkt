@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **kotc — interop-no-registry, stage 4 (A2 keystone): the .NET-EVENT accessor lookup no longer rides a name-keyed
+  side-table — this was the LAST of the four interop registries, so ALL FOUR are now gone.** A call to a
+  facadegen-injected `add_<E>`/`remove_<E>` accessor (`c.add_CollectionChanged { .. }`) was rewritten to
+  `clrEventAdd`/`clrEventRemove` by re-keying it *by name* through `ClrEventRegistry` — a
+  `HashMap<String, Pair<String,String>>` (`"<ownerFqn>#add_<E>"` → (event name, `+=`/`-=`)) the FIR injector populated
+  per event. `BirEmitter` now reads that `(eventName, op)` fact straight off the resolved accessor's `CallableId`
+  (declaring-class `ClassId` + method name) via the new `kotc.frontend.clrInjectedEventOp(callableId)` — a pure
+  projection of facadegen's event metadata keyed by that same structural identity (mirroring stage 2's
+  `memberClrNameByCallableId` / stage 3's `fileClassByTopLevelCallableId`). `object ClrEventRegistry` (its `register` /
+  `lookup` and the two `register` calls in `ClrTypeInjection`) is DELETED; with all four registries gone the whole
+  `toolchain/kotc/src/main/kotlin/kotc/ClrTypeRegistry.kt` file is REMOVED. Pure refactor: BIR is byte-identical for
+  `il-event` (`clrEventAdd`×2 / `clrEventRemove`×1 / `"event":"CollectionChanged"`×3 — `diff` empty). Gate: verify-il
+  (XFAIL-zero, no NEW-FAIL — `il:event`), verify-differential ALL MATCH, verify-ktproj 9/9 (`ktproj-extlib` is the real
+  .NET-event interop, `w.add_Changed { }`). A2 keystone registry-elimination COMPLETE; the idiomatic `ClrEvent<T>`
+  operator redesign in `docs/design-interop-no-registry.md` remains a separate documented follow-up.
+
 - **kotc — interop-no-registry, stage 3 (A2 keystone): the restored-top-level-function file-class lookup no longer
   rides a name-keyed candidate list + receiver-discriminator kludge.** `BirEmitter` resolved a DotKt round-trip
   top-level call (`greet` → `LibKt.greet`) by re-keying it *by name* through `ClrTopLevelRegistry` — a

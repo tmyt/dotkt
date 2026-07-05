@@ -6,7 +6,6 @@
 
 package kotc.frontend
 
-import kotc.ClrEventRegistry
 import java.io.File
 import org.jetbrains.kotlin.GeneratedDeclarationKey
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
@@ -155,12 +154,22 @@ internal fun clrInjectedTopLevelFileClass(callableId: CallableId): String? = Clr
 internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? = ClrMetadataHolder.fileClassByTopLevelPropCallableId[callableId]
 
 /**
+ * A2 keystone (interop-no-registry, stage 4 — the LAST registry): the backend reads a synthesized .NET EVENT accessor's
+ * `(eventName, "+=" | "-=")` fact off its resolved IR `CallableId` (declaring-class `ClassId` + the `add_<E>`/`remove_<E>`
+ * method name) through this accessor — facadegen's metadata keyed by that same structural identity. Replaces the deleted
+ * name-keyed `ClrEventRegistry`. Non-null only for one of the injected `add_<E>`/`remove_<E>` methods; null for any other
+ * (user Kotlin / non-event) member.
+ */
+internal fun clrInjectedEventOp(callableId: CallableId): Pair<String, String>? = ClrMetadataHolder.eventOpByCallableId[callableId]
+
+/**
  * Loads the .NET type metadata to inject, once per process. The path comes from `CLR_TYPES_METADATA`
  * (set by the build / MSBuild / verify harness). Absent or empty => inject nothing, so compilations
  * that don't opt in are completely unaffected. The backend reads each injected type's .NET name off its
  * IR `ClassId` via [clrInjectedDotNetName] and each injected member's .NET slot name off its IR `CallableId`
- * via [clrInjectedMemberName] (this metadata, keyed structurally); only the EVENT facts still ride a
- * name-keyed [ClrEventRegistry] side-channel (interop-no-registry stage 4).
+ * via [clrInjectedMemberName], and an injected .NET event accessor's `(name, op)` off its IR `CallableId` via
+ * [clrInjectedEventOp] — all keyed structurally off the resolved IR identity. A2 interop-no-registry is COMPLETE:
+ * all four name-keyed side-channel registries are eliminated.
  */
 private object ClrMetadataHolder {
 	val module: ClrModule? by lazy { System.getenv("CLR_TYPES_METADATA")?.let { load(File(it)) } }
@@ -277,28 +286,12 @@ private object ClrMetadataHolder {
 		}
 		flush()
 		val module = ClrModule(types, topLevel, topLevelProps)
-		// A2 stage 3: restored top-level functions/extension-properties are NO LONGER registered by name here. Their .NET
-		// file-facade class is read off the resolved IR `CallableId` (`ClrMetadataHolder.fileClassByTopLevelCallableId` /
-		// `fileClassByTopLevelPropCallableId`) — the injector already resolves each call to a UNIQUE callee, so the old
-		// receiver-discriminator disambiguation (and its "last-registered wins" fallback) is gone. Only the EVENT side-
-		// channel (`ClrEventRegistry`) remains name-keyed (interop-no-registry stage 4).
-		for (t in types) {
-			// The .NET-namespace fqn (e.g. System.Text.StringBuilder) = the injected FIR ClassId. Namespace-less types
-			// fall back to bare name. A generic definition's Kotlin fqn uses its ARITY-QUALIFIED Kotlin name (facadegen:
-			// Task`1 -> Task1 when the name family clashes) — that matches the injected FIR ClassId, which is what the
-			// backend looks up. A2 stages 1-2: the TYPE-name and MEMBER-slot channels (`ClrTypeRegistry`) are GONE — the
-			// backend's clrName reads the injected type's .NET name off its IR ClassId (`dotNetNameByClassId`) and a member's
-			// .NET slot name off its IR CallableId (`memberClrNameByCallableId`). Only the event side-channel remains (stage 4).
-			val ns = namespaceOf(t.dotNetName)   // the .NET namespace IS the Kotlin package
-			val fqn = if (ns.isNotEmpty()) "$ns.${t.kotlinName}" else t.kotlinName
-			// A2 stage 2: the per-member .NET slot name (`plus` -> `op_Addition`) is no longer registered here — the backend's
-			// clrName reads it off the resolved IR member's `CallableId` via `ClrMetadataHolder.memberClrNameByCallableId`
-			// (structural, no injector-populated name map). Only the event side-channel remains (interop-no-registry stage 4).
-			for (e in t.events) {
-				ClrEventRegistry.register(fqn, "add_${e.name}", e.name, "+=")
-				ClrEventRegistry.register(fqn, "remove_${e.name}", e.name, "-=")
-			}
-		}
+		// A2 stages 3-4: NOTHING is registered by name here anymore. Every injected CLR fact the backend needs — a restored
+		// top-level function/extension-property's .NET file-facade class, and a .NET event's (name, `+=`/`-=`) op — is read
+		// off the resolved IR `CallableId` (`fileClassByTopLevelCallableId` / `fileClassByTopLevelPropCallableId` /
+		// `eventOpByCallableId`). The injector already resolves each call to a UNIQUE callee, so the old name-keyed
+		// side-tables (and the top-level receiver-discriminator disambiguation) are gone. This was the LAST of the four
+		// interop registries (`ClrTypeRegistry` / `ClrTopLevelRegistry` / `ClrEventRegistry`) — all now eliminated.
 		return module
 	}
 
@@ -346,6 +339,24 @@ private object ClrMetadataHolder {
 				val classId = ClassId(FqName(namespaceOf(t.dotNetName)), Name.identifier(t.kotlinName))
 				for (p in t.properties) p.clrName?.let { put(CallableId(classId, Name.identifier(p.name)), it) }
 				for (m in t.methods) m.clrName?.let { put(CallableId(classId, Name.identifier(m.name)), it) }
+			}
+		}
+	}
+	// A2 keystone (interop-no-registry stage 4 — the LAST registry): a synthesized .NET EVENT accessor's `(eventName, op)`
+	// fact keyed by its resolved IR `CallableId` (declaring-class `ClassId` + the `add_<E>`/`remove_<E>` method name),
+	// replacing the deleted name-keyed `ClrEventRegistry` (`"<ownerFqn>#add_<E>" -> (E, "+=")`). The FIR injector
+	// synthesizes an `add_<E>`/`remove_<E>` member per event (see `generateFunctions`); the backend rewrites a call to one
+	// into `recv.<E> += handler` / `-= handler`, so it needs (event name, op). The declaring-class ClassId is built exactly
+	// as `byClassId`/`memberClrNameByCallableId` build a type's ClassId (`ns`/`kotlinName`), so it matches the injected
+	// FIR/IR accessor's `CallableId` — no name-keyed side-table, no `add_`/`remove_` string re-derivation in kotc's backend.
+	val eventOpByCallableId: Map<CallableId, Pair<String, String>> by lazy {
+		buildMap {
+			for (t in module?.types.orEmpty()) {
+				val classId = ClassId(FqName(namespaceOf(t.dotNetName)), Name.identifier(t.kotlinName))
+				for (e in t.events) {
+					put(CallableId(classId, Name.identifier("add_${e.name}")), e.name to "+=")
+					put(CallableId(classId, Name.identifier("remove_${e.name}")), e.name to "-=")
+				}
 			}
 		}
 	}
@@ -738,7 +749,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		val callName = callableId.callableName.asString()
 
 		// Event subscribe/unsubscribe: `add_<E>`/`remove_<E>` take a handler lambda; the backend
-		// rewrites the call to `receiver.<E> += handler` / `-= handler` (see ClrEventRegistry).
+		// rewrites the call to `receiver.<E> += handler` / `-= handler`, reading the (name, op) off the
+		// synthesized accessor's resolved IR CallableId (`clrInjectedEventOp` / `eventOpByCallableId`).
 		val event = type.events.firstOrNull { "add_${it.name}" == callName || "remove_${it.name}" == callName }
 		if (event != null) {
 			val handler = coneFunctionType(event.handlerParams.map { coneOf(it.type, owner) }, coneOf(event.handlerReturn, owner))
