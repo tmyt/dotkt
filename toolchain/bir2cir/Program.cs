@@ -392,7 +392,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IRe
     // The lowering mode is a property of the BUILD, not a CLI flag. The pure-Kotlin REFERENCE stdlib surface
     // (DOTKT_STDLIB_COMPILE set AND DOTKT_STDLIB_SUBSTITUTE unset) keeps kotlin.* type tokens verbatim; EVERY
     // other invocation — the runtime stdlib build and all app builds — lowers kotlin.* to the CLR vocabulary.
-    // The build scripts export these env vars. There is no --compat-bir/--native-cir output selection any more.
+    // The build scripts export these env vars.
     public bool RefBuild =>
         Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") != null &&
         Environment.GetEnvironmentVariable("DOTKT_STDLIB_SUBSTITUTE") == null;
@@ -891,9 +891,6 @@ sealed class ReferenceMetadataIndex
 
         return matches;
     }
-
-    // (RETIRED 2026-07-05) `ResolveClrEvent` (which resolved a DotKt `add_<E>`/`remove_<E>` accessor member) is GONE
-    // with the event-accessor model: a .NET event is now bound via ClrEventOperatorBinding off the `+=`/`-=` operator.
 
     static bool MemberKindMatches(string siteKind, string memberKind) => siteKind switch
     {
@@ -5279,7 +5276,7 @@ static class MemberCallSubstitution
     // clrPropSet on the bare intrinsic; otherwise a plain method call. A standalone accessor FUN bound to a property is
     // routed EXPLICITLY by @ClrProperty (Rule 2p) BEFORE this node is built, so there is no intrinsic-prefix sniff here.
     // Prefix `byref:` onto the argTypes at each @ClrRefArgument position (idempotent), so ilemit resolves the `ref`/`out`
-    // BCL overload and emits the address-load for that arg (the byref shape the removed `ClrRef<T>` param used to carry).
+    // BCL overload and emits the address-load for that arg (the byref shape a `ref`/`out` parameter needs).
     static void WrapByref(JsonArray argTypes, int[] byrefPositions)
     {
         if (byrefPositions == null) return;
@@ -5540,7 +5537,7 @@ static class RefBodySquash
 // emit stays byte-identical; once annClr is removed (Step 3) this becomes the sole source of the slot name. Mutates the
 // method nodes in place; the `overrides` marker is stripped later by BirTypeLowering. (Object-method names like ToString
 // and the hardcoded close->Dispose map are NOT @ClrIntrinsic, so TryMemberIntrinsic returns false and the kotc-supplied
-// name is left untouched — those stay kotc's concern, a separate netType-layer cleanup.)
+// name is left untouched — those stay kotc's concern.)
 static class DeclarationRename
 {
     // Recursively rename to the BCL slot every node carrying an `overrides` marker: a method/accessor DECLARATION (its
@@ -5720,7 +5717,7 @@ static class MemberStrip
 // original alias type def — it must NEVER reach ilemit as a real CLR type (its equals(Any?)/toString()/length members
 // would clash with System.String/System.Object). The rule-3 CALL routing in MemberCallSubstitution already targets
 // `<>dotkt_ClrH_<owner>.<member>(recv, ..)` by name, so emitting the helper here closes the loop. This is the SOLE home
-// of rule-3 helper synthesis (kotc's clrHelperClassJson is deleted). Runs only in substitute/app builds (never ref).
+// of rule-3 helper synthesis. Runs only in substitute/app builds (never ref).
 static class AliasHelperHoist
 {
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs)
