@@ -928,8 +928,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * only caught at full-type-load batch validation). The Kotlin->CLR lowering is to RE-DECLARE the enclosing params on the
 	 * inner class (own generic context) and reference it WITH those args — `IteratorImpl[gp:E]` — at every use site (the
 	 * enclosing params are in scope wherever an inner class is referenced, since it captures the enclosing instance). This is
-	 * a relationship-layer lowering (eventual home: bir2cir native-cir); it lives here while the substitute build runs
-	 * bir2cir in compat-passthrough, alongside the other lowerings (Unit->void, star-projection->object).
+	 * a relationship-layer lowering (eventual home: bir2cir); it lives here for now alongside the other kotc-side
+	 * lowerings (Unit->void, star-projection->object).
 	 */
 	internal fun innerEnclosingTypeParams(klass: IrClass): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
 		if (!klass.isInner) return emptyList()

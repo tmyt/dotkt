@@ -17,7 +17,10 @@ partial class Emitter
     ConstructorBuilder _enumAdapterCtor; // its ctor(Iterator<T>) on the open def
 
     // Emit the generic adapter type ONCE (after the Kotlin Iterator interface's methods are declared). No-op if the
-    // assembly has no kotlin.collections.Iterator (nothing to bridge).
+    // assembly has no kotlin.collections.Iterator (nothing to bridge). NOTE: the "kotlin.collections.Iterator" +
+    // "iterator"/"hasNext"/"next" names here (and at GenerateGetEnumeratorIfNeeded) are the LAST Kotlin-name
+    // hardcode left in ilemit — contained to this reverse bridge; the eventual ideal is to drive it off a
+    // semantic marker rather than the Kotlin FQN / member names.
     void EmitEnumeratorAdapter()
     {
         if (_enumAdapterTB != null) return;

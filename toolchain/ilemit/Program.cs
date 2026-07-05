@@ -1125,7 +1125,7 @@ sealed partial class Emitter
     }
 
     // Emit `value` COERCED to the store target's type — the ONE shared RHS coercion for every store site
-    // (var init, setLocal into a local/arg/cps-field, setField/setFieldExpr via setter or field, staticFieldSet):
+    // (var init, setLocal into a local/arg, setField/setFieldExpr via setter or field, staticFieldSet):
     //  - `T`/null-const stored into a `Nullable<T>` slot -> wrap / default(Nullable<T>) (EmitNullableCoerced);
     //  - a value-type / generic-param RHS stored into a REFERENCE slot -> box (the var-init rule; the other store
     //    sites used to emit the raw RHS, so `var a: Any = "x"; a = 42` stored a raw int32 into an object local ->

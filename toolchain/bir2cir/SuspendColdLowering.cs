@@ -65,21 +65,22 @@ static class SuspendColdLowering
     // NOT Continuation<Any>. The returned SM value converts by Continuation's `in T` contravariance.
     const string ContinuationOfUnit = "kotlin.coroutines.Continuation[kotlin.Unit]";
     const string IntrinsicsKtFqn = "kotlin.coroutines.intrinsics.IntrinsicsKt";
-    // The CLR-interop coroutine bridge file-class (kotlin.clr.await / delay). Its suspend fns are NOT genuine cold
-    // coroutine bodies: `await` is a facadegen call-site MARKER (lowered by EmitAwaitPoint at CALL sites, its
-    // DEFINITION a plain suspend declaration kept for ref/rt signature symmetry); `delay` is built on it. When the
-    // cold transform runs in the rt-stdlib build (bundle-6 P5), these must be EXCLUDED — transforming their
-    // definitions into cold entries / Task bridges would manufacture the wrong ABI (Codex-confirmed rt-gate decision).
+    // The CLR-interop coroutine bridge file-class (kotlin.clr.await). Its suspend fn is NOT a genuine cold
+    // coroutine body: `await` is a facadegen call-site MARKER (lowered by EmitAwaitPoint at CALL sites, its
+    // DEFINITION a plain suspend declaration kept for ref/rt signature symmetry). When the cold transform runs in
+    // the rt-stdlib build (bundle-6 P5), it must be EXCLUDED — transforming its definition into a cold entry / Task
+    // bridge would manufacture the wrong ABI (Codex-confirmed rt-gate decision). NOTE: this skips the whole
+    // file-class coarsely; the ideal is to narrow to the `await` marker. (`delay`/`blockOn` were DROPPED from
+    // the stdlib — the old `delay` here is gone.)
     const string InteropBridgeFileClass = "kotlin.clr.CoroutinesKt";
     // Top-level `throwOnFailure(result)` helper (ContinuationImpl.kt, package kotlin.coroutines.clr.internal).
     const string ThrowOnFailureOwner = "kotlin.coroutines.clr.internal.ContinuationImplKt";
 
     // Node kinds whose PRESENCE around a suspension disqualifies the fun (leave untouched for the ilemit
-    // throw-stub): suspend lambdas / closures / the old kotc inline-collection nodes.
+    // throw-stub): suspend lambdas / closures / inline collection loops.
     static readonly HashSet<string> LambdaKinds = new(StringComparer.Ordinal)
     {
         "closureNew", "delegateNew", "lambda", "forEachInline", "repeatInline",
-        "steps", "coClass",
         // Part B: a suspend-lambda VALUE inside a suspend fun disqualifies the enclosing fun from cold
         // transform (its own SM is built separately by SuspendLambdaLowering, which runs after).
         "suspendLambdaNew",

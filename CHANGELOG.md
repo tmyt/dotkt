@@ -385,6 +385,16 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   Wired into all five array store/load sites (`EmitNewArray`, `newArrayInit`, `arrayGet`/`arraySet`,
   for-in-over-array). `il-strops` now RUNS correct and verifies clean, and is wired into the `verify-il`
   ilverify pass — leaving `verify-il`/`differential`/`ktproj`/`roundtrip` + ilverify all XFAIL-zero.
+- **Repo hygiene (kcc review §X1/§L2, 2026-07-06):** untracked the 90 compiled DLLs (+87
+  `runtimeconfig.json`, ~3.1M) under `dotkt-out/` — the `dotkt.sh`/`dotkt-keep.sh` default output dir,
+  pure build artifacts, never fixtures — and added `dotkt-out/` to `.gitignore` (it no longer dirties
+  every build, pollutes diffs, or masks stdlib regressions). Pruned a cluster of stale
+  comments/dead references that were pure archaeology: the dead `steps`/`coClass` node-kind entries in
+  bir2cir `SuspendColdLowering` `LambdaKinds` (the `sequenceNew` producer is gone; the surviving
+  `steps`/`coClass` method-property guards are a separate mechanism, kept), the retired `delay`/`blockOn`
+  reference in the `InteropBridgeFileClass` comment, ilemit's `cps-field` store-target comment (CPS is
+  gone), and kotc's `native-cir`/`compat-passthrough` comment (the dual-track was removed 2026-06-30).
+  Behavior-neutral: every gate stays XFAIL-zero.
 
 ## 0.9.3 — 2026-06-24
 
