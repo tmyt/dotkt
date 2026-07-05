@@ -5,6 +5,25 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **`Regex.replaceFirst` memory-corruption fix (final-review N1).** `Regex.replaceFirst("banana", "X")` returned
+  `banana` unchanged, and with a `CharSequence`-typed input it hard-crashed the .NET regex engine with a
+  `System.AccessViolationException`. Root: the private `nativeReplaceFirst`'s first parameter was typed
+  `CharSequence`, so the `@kotlin.clr.ClrIntrinsic("Replace")` mis-resolved / mis-marshaled the 3-arg
+  `System.Text.RegularExpressions.Regex.Replace(string, string, int)` overload. Fix (stdlib-side,
+  `libraries/stdlib/clr/kotlin/text/regex/RegexClr.kt`): materialize the `CharSequence` to a real `String` at the
+  call site and type `nativeReplaceFirst`'s `input` as `String` so the intrinsic binds the exact 3-arg overload.
+  `replaceFirst("banana","X")` → `bXnana`; a `CharSequence` input no longer crashes. New gate case
+  `cases/il-regexreplace` (`replaceFirst` / `replace(String,String)` / `toString()`).
+- **`Regex.pattern` no longer carries the wrong `@ClrIntrinsic("ToString")` (final-review N2, partial).**
+  `ToString` is a *method*, so `@kotlin.clr.ClrIntrinsic("ToString")` on the `pattern` **property** routed as a
+  `clrPropGet` looking up a non-existent property named `ToString` → ilemit emit-crash on any `re.pattern` read.
+  Replaced with the correct rule-3 body `get() = toString()` (the `toString()` method binding works — verified
+  `Regex("a(\\d+)b").toString()` → `a(\d+)b`). NOTE: `re.pattern` still emit-crashes until bir2cir gains a
+  *guarded* rule-3 property-accessor hoist — bir2cir routes the getter to `<>dotkt_ClrH_kotlin_text_Regex.get_pattern`,
+  but `AliasHelperHoist` (`toolchain/bir2cir/Program.cs`) skips `get_`/`set_` methods, so that helper is never
+  emitted. A blanket removal of the skip crashes the stdlib runtime emit (ilemit `ResolveField` NRE — another
+  stdlib accessor's rule-3 body reads a backing field), so the hoist must be guarded (only accessors whose body has
+  no backing-field read).
 - **`@kotlin.concurrent.Volatile` is now a REAL CLR volatile field (was a silent no-op).** `@Volatile` on a `var`'s
   backing field lowers to the exact encoding the C# `volatile` keyword emits: the field is declared with a required
   custom modifier `modreq(System.Runtime.CompilerServices.IsVolatile)` (which makes the JIT treat every access as
