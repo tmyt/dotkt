@@ -146,6 +146,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	// Inline substitutions for synthetic temporaries (e.g. a `when` subject) in expression position.
 	internal val valSubst = HashMap<String, String>()
+	// Subset of `valSubst` keys whose substitution ALREADY yields the bare non-null VALUE of a value-type-nullable
+	// (`Int?`) — e.g. a `SAFE_CALL` receiver bound to `Nullable<T>.Value`. The value-nullable unwrap helpers
+	// (valueOperand / coerceValue / argExpr) must NOT re-wrap such a read, else the `.Value` is unwrapped twice
+	// (`n?.plus(1)` gave 1 instead of 8). Registered/cleared alongside the corresponding valSubst entry.
+	internal val valSubstUnwrapped = HashSet<String>()
 	// While splicing an inline fun / inlined-lambda body: the SPLICED target's own `return`s must NOT emit as raw
 	// method returns (the splice is a valueBlock INSIDE the caller). Maps the return target -> (result local or
 	// null-for-unit, end label id); stmt(IrReturn) rewrites to `res = v; goto end`. See spliceBodyWithReturns.
@@ -2989,7 +2994,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val origin = block.origin?.toString()
 			// Save/restore (not remove) the key: a nested same-named subject must not clobber the outer splice.
 			val saved = valSubst[key]
-			fun restore() { if (saved != null) valSubst[key] = saved else valSubst.remove(key) }
+			fun restore() { if (saved != null) valSubst[key] = saved else valSubst.remove(key); valSubstUnwrapped.remove(key) }
 			// `a?.member` where member is a value type -> Nullable<T>: bind `a` once, then null-gate. A nullable
 			// VALUE-type receiver (`Char?`) is gated by HasValue and the member sees the UNWRAPPED .Value (the
 			// ELVIS shape below) — splicing the raw Nullable<T> where the element is required emitted invalid IL
@@ -3000,6 +3005,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val core: String
 				if (recvElem != null) {
 					valSubst[key] = """{"k":"nullableValue","elem":${str(recvElem)},"e":$subj}"""
+					valSubstUnwrapped.add(key)   // receiver already reads .Value -> the value-nullable unwrap helpers must not re-wrap
 					val member = expr(whenExpr.branches.last().result)
 					core = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(recvElem)},"e":$subj},"then":{"k":"nullableWrap","elem":${str(elem)},"e":$member},"else":{"k":"nullableNull","elem":${str(elem)}}}"""
 				} else {
@@ -3912,7 +3918,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// A value-type-nullable operand (`Int?` smart-cast to `Int` -- `n + 1`/`n > 5` after `if (n != null)`)
 					// must surface `Nullable<T>.Value`; a raw `Nullable<T>` struct load into a numeric/compare op is
 					// invalid IL / reads garbage (the C1 miscompile). The smart-cast leaves `o.type` still `Int?`.
-					nullableElem(o.type)?.let { elem -> return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(o)}}""" }
+					if (!isPreUnwrappedRead(o)) nullableElem(o.type)?.let { elem -> return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(o)}}""" }
 					val ot = birType(o.type); val tt = birType(other.type)
 					// A boxed Any operand renders as the Any token ("object" fallback, or "kotlin.Any" for an explicit Any/Nothing
 					// source type) — cast it to the other (concrete) operand's type so the op sees the value, not the box.
@@ -4270,7 +4276,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			else if (isClrRefArgument(param)) return byrefBackingField(arg) ?: expr(arg)
 			// A value-type-nullable arg (`Int?` smart-cast to `Int`) passed to a non-null value param must UNWRAP
 			// `Nullable<T>.Value` — the CLR twin of JVM's implicit `Integer.intValue()` arg coercion (no IR node). C1.
-			nullableValueUnwrapElem(arg.type, param.type)?.let { elem ->
+			if (!isPreUnwrappedRead(arg)) nullableValueUnwrapElem(arg.type, param.type)?.let { elem ->
 				return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(arg)}}"""
 			}
 		}
@@ -4357,13 +4363,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  invalid IL / reads garbage (the C1 smart-cast miscompile: `n + 1`, `n > 5` after `if (n != null)`). A
 	 *  smart-cast leaves `o.type` still `Int?` (no IR cast node), so we key off the static value-nullable type. */
 	internal fun valueOperand(o: IrExpression): String =
-		nullableElem(o.type)?.let { elem -> """{"k":"nullableValue","elem":${str(elem)},"e":${expr(o)}}""" } ?: expr(o)
+		if (isPreUnwrappedRead(o)) expr(o)
+		else nullableElem(o.type)?.let { elem -> """{"k":"nullableValue","elem":${str(elem)},"e":${expr(o)}}""" } ?: expr(o)
 
 	/** Emit `node` coerced into a slot of the EXPECTED type: unwrap a value-type-nullable (`Int?`) to its
 	 *  non-null value (`Int`) when the slot demands the bare value — the CLR twin of the JVM backend's implicit
 	 *  `Integer.intValue()` coercion at an assignment / argument / return, which has NO IR cast node. */
 	internal fun coerceValue(node: IrExpression, expected: IrType): String =
-		nullableValueUnwrapElem(node.type, expected)?.let { elem -> """{"k":"nullableValue","elem":${str(elem)},"e":${expr(node)}}""" } ?: expr(node)
+		if (isPreUnwrappedRead(node)) expr(node)
+		else nullableValueUnwrapElem(node.type, expected)?.let { elem -> """{"k":"nullableValue","elem":${str(elem)},"e":${expr(node)}}""" } ?: expr(node)
+
+	/** True if reading `o` already yields the bare non-null VALUE of a value-type-nullable — an IrGetValue whose
+	 *  `valSubst` substitution was pre-unwrapped to `Nullable<T>.Value` (a `SAFE_CALL` receiver). The unwrap helpers
+	 *  must then NOT wrap again, or the `.Value` is read twice (`n?.plus(1)` -> 1 instead of 8). */
+	internal fun isPreUnwrappedRead(o: IrExpression): Boolean =
+		o is IrGetValue && o.symbol.owner.name.asString() in valSubstUnwrapped
 
 	/** Kotlin visibility -> BIR access keyword (public/private/internal/protected). */
 	internal fun visOf(d: IrDeclarationWithVisibility): String = when (d.visibility.delegate) {
