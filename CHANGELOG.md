@@ -44,6 +44,11 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   state-machine field before the suspension; a `try`/`finally` across a suspension runs its `finally`
   exactly once (not early + twice); shadowed same-name locals of different types get distinct SM fields;
   exceptions propagate across a suspended `Task` boundary.
+- **A suspend call inside an INLINE scope function used as a sub-expression lowers.** An expression body
+  `suspend fun doFetch(lib, b) = with(lib){ b.fetch() }` (or `c.apply{ s() }.x`) no longer refuses at
+  compile time: kotc inlines the scope function to a `valueBlock` verbatim (holding NO coroutine
+  knowledge), and bir2cir's `SuspendColdLowering` flattens the value-block — emitting its stmts as
+  ordinary statements and segmenting the suspend call in its result as a normal suspension point.
 - **Interface `suspend fun` bridge is verifiable IL.** An interface member `suspend fun` (kotc emits it
   `virtual` but without an `abstract` flag, unlike an abstract-class member) is now recognized by bir2cir
   as abstract — its cold entry AND `Task<R>` bridge are emitted abstract (no body), mirroring the

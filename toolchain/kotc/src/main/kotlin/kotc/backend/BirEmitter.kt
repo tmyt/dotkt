@@ -2140,12 +2140,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 */
 	internal fun inlineScope(fq: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
 		val fn = lambda.function
-		// A suspending call inside a scope-function lambda used as a SUB-EXPRESSION (e.g. `c.apply{ s() }.x`) inlines to
-		// a value-block the downstream coroutine lowering can't open. Reject cleanly (rare). Workaround: bind it to a
-		// `val` first (a statement-position scope call emits plainly, with its suspend calls carrying `"suspendCall"`).
-		if (fn.body?.let { containsSuspend(it) } == true)
-			return unsupported(lambda, "a suspending call inside a `${fq.substringAfterLast('.')}` scope function used as a sub-expression",
-				"bind the scope-function result to a `val` first, or extract the body into its own `suspend fun`")
+		// A suspending call inside an INLINE scope-function lambda used as a sub-expression (e.g. an expression body
+		// `= with(lib){ b.fetch() }`, or `c.apply{ s() }.x`) inlines to a value-block whose stmts/result span a
+		// suspension. kotc emits that value-block VERBATIM (the suspend call keeps its `"suspendCall"` tag); the
+		// downstream coroutine lowering (bir2cir SuspendColdLowering) flattens the value-block and segments the
+		// suspension as an ordinary suspension point. kotc holds NO coroutine knowledge here (#11).
 		val vname = "__scope${scopeCounter++}"
 		val recvInit = expr(recvExpr)   // emit the receiver expression before binding `it`/`this`
 		val recvParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }

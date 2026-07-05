@@ -1260,6 +1260,20 @@ static class SuspendColdLowering
                     return EmitIntrinsicSuspension(o, outp);
                 if (IsSuspendCoroutineCall(o))
                     return EmitSuspendCoroutineCall(o, outp);
+                // #11 — a `valueBlock` whose stmts/result span a suspension (e.g. an INLINE scope function
+                // `with(lib){ b.fetch() }` used as an expression body: kotc inlines it to
+                // `valueBlock { stmts:[var __scope0=lib], result: __scope0.fetch(b) }`, its result a suspend call).
+                // A valueBlock's stmts run IN PLACE, so flatten it here: emit the stmts to `outp` as ordinary
+                // statements (their `var`s were collected as SM fields, so they survive the suspension), then
+                // rewrite the result expression — a suspend call in the result becomes a normal suspension point
+                // owned by this pass. A suspension-FREE valueBlock (e.g. an `index++` post-increment) is left
+                // intact (the default copy below) for ilemit's inline emission — output stays byte-identical.
+                if (k == "valueBlock" && HasSuspension(o))
+                {
+                    if (o["stmts"] is JsonArray vbStmts) foreach (var s in vbStmts) EmitStmt(s, outp);
+                    if (o["body"] is JsonArray vbBody) foreach (var s in vbBody) EmitStmt(s, outp);
+                    return o["result"] != null ? Rewrite(o["result"], outp) : NullConst(Str(o["type"]) ?? "kotlin.Any");
+                }
                 if ((k == "callStatic" || k == "callInstance") && Bool(o["suspendCall"]))
                     return EmitSuspensionPoint(o, outp);
                 if ((k == "clrStatic" || k == "clrGenericStatic") && Bool(o["suspendCall"])
