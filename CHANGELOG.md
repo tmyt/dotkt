@@ -5,6 +5,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- **`SynchronizedLazyImpl` restored to lock-free double-checked-locking (DCL) reads** — the follow-on to the real
+  `@Volatile` above. The thread-safe `lazy { }` implementation (`libraries/stdlib/clr/kotlin/util/LazyClr.kt`) no
+  longer takes the `System.Threading.Monitor` lock on *every* `value` read: the getter now does a lock-free
+  `@Volatile` fast-path read of the backing field and takes the lock only on the still-uninitialized slow path
+  (re-checking the field before running the initializer once). A fully-initialized `lazy` costs one volatile field
+  load — matching Kotlin/JVM's `SynchronizedLazyImpl` and .NET's `System.Lazy` fidelity, without the always-lock cost.
+  The fast path is memory-safe because the value field is `@kotlin.concurrent.Volatile`, which now emits a genuine CLR
+  volatile field: disasm confirms `SynchronizedLazyImpl._value` carries `modreq(IsVolatile)` (acquire/release), while
+  `initializer`/`lock` do not. The previous always-lock shape was a stopgap chosen only because `@Volatile` was a
+  no-op. `cases/il-lazy` runs correct (single init, `isInitialized()` false→true, all modes) and stays ilverify-clean.
+  Retires the note in docs/dotkt-semantics.md §4b.
+
 - **`@kotlin.concurrent.Volatile` is now a REAL CLR volatile field (was a silent no-op).** `@Volatile` on a `var`'s
   backing field lowers to the exact encoding the C# `volatile` keyword emits: the field is declared with a required
   custom modifier `modreq(System.Runtime.CompilerServices.IsVolatile)` (which makes the JIT treat every access as

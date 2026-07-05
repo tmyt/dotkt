@@ -131,16 +131,21 @@ map (stdlib `libraries/stdlib/clr/kotlin/util/LazyClr.kt`):
   runs) — by the same single-init locked impl; this is correct, only conservatively so.
 - **`NONE`** → `UnsafeLazyImpl` (no synchronization), as on JVM.
 
-**Locking discipline — always-lock, no lock-free fast path (currently).** `SynchronizedLazyImpl`
-takes the Monitor lock on *every* `value` read; it does **not** yet use the classic double-checked-locking
-lock-free fast path that Kotlin/JVM's `SynchronizedLazyImpl` uses. The JVM DCL fast path is
-memory-safe only because it reads the value field through a `@Volatile` access — and as of the
-`@kotlin.concurrent.Volatile` binding (§4c) that access is now real on the CLR — so restoring the DCL
-lock-free-read fast path is now unblocked (a follow-up; it was previously impossible while `@Volatile`
-was a no-op). Meanwhile always-locking is unconditionally correct. The initializer runs inside the
-locked critical section, and the lock is released in a `finally` so a throwing initializer cannot leak
-the lock. (The value field is published by a single reference-typed write of the fully-constructed
-value — atomic on .NET — so no torn value is ever observed.)
+**Locking discipline — double-checked locking (DCL) with a lock-free fast-path read.**
+`SynchronizedLazyImpl` uses the classic DCL shape, exactly like Kotlin/JVM's `SynchronizedLazyImpl`:
+the `value` getter first does a **lock-free `@Volatile` read** of the backing field, and takes the
+Monitor lock only on the still-uninitialized slow path, where it re-checks the field (the second
+"check") before running the initializer exactly once. So a fully-initialized `lazy` costs a single
+volatile field load — no lock. The DCL fast path is memory-safe **because the value field is
+`@kotlin.concurrent.Volatile`**, which on the CLR is a real volatile field (`modreq(IsVolatile)` +
+`volatile.` prefix — §4c), giving the fast-path read acquire semantics and the publishing write
+release semantics on weak-memory architectures (ARM). (This was an always-lock stopgap until
+`@Volatile` became real — the DCL fast path was memory-unsafe while `@Volatile` was a no-op.) The
+initializer runs inside the locked critical section, and the lock is released in a `finally` so a
+throwing initializer cannot leak the lock. (The value field is published by a single reference-typed
+write of the fully-constructed value — atomic on .NET — so no torn value is ever observed; a
+single-threaded gate cannot itself observe the cross-thread visibility, which rests on the `@Volatile`
+modreq being the exact C# `volatile` encoding the JIT honors.)
 
 ## 4c. `@kotlin.concurrent.Volatile` = a real CLR volatile field (`modreq(IsVolatile)` + `volatile.`)
 
