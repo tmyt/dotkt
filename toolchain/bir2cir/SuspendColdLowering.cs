@@ -166,7 +166,7 @@ static class SuspendColdLowering
     {
         if (Str(o["k"]) != "callStatic" || !Bool(o["suspendCall"])) return false;
         if (Str(o["method"]) is not string m || !SuspendCoroutineIntrinsicOwners.TryGetValue(m, out var expectOwner)) return false;
-        var owner = Str(o["owner"]);
+        var owner = TypeJson.OwnerName(o["owner"]);
         if (owner != null && owner != expectOwner) return false;
         return (o["args"] as JsonArray)?.FirstOrDefault() is JsonObject a
             && Str(a["k"]) is "closureNew" or "delegateNew";
@@ -183,7 +183,7 @@ static class SuspendColdLowering
     const string StartSuspendOwner = "kotlin.coroutines.clr.internal.ContinuationImplKt";
     static bool IsSuspendValueCall(JsonObject o) =>
         Str(o["k"]) == "callInstance" && Bool(o["suspendCall"]) && Str(o["method"]) == "invoke"
-        && (BareOwner(Str(o["ownerType"]))?.StartsWith(SuspendFunctionPrefix, StringComparison.Ordinal) ?? false);
+        && (BareOwner(TypeJson.OwnerName(o["ownerType"]))?.StartsWith(SuspendFunctionPrefix, StringComparison.Ordinal) ?? false);
 
     // The `closureNew` (the `{ c -> … }` block) buried in an intrinsic block's stmts (a `var __inlN` init).
     static JsonObject IntrinsicClosureNew(JsonObject block)
@@ -637,9 +637,9 @@ static class SuspendColdLowering
                 {
                     var k = Str(o["k"]);
                     if (k == "callInstance")
-                        seen.Add(new CallRef(true, BareOwner(Str(o["ownerType"])), mn));
+                        seen.Add(new CallRef(true, BareOwner(TypeJson.OwnerName(o["ownerType"])), mn));
                     else if (k == "callStatic")
-                        seen.Add(new CallRef(false, BareOwner(Str(o["owner"])), mn));
+                        seen.Add(new CallRef(false, BareOwner(TypeJson.OwnerName(o["owner"])), mn));
                 }
                 foreach (var kv in o) if (kv.Value != null) Walk(kv.Value);
             }
@@ -1212,7 +1212,7 @@ static class SuspendColdLowering
                         foreach (var st in cbody) cbodyArr.Add(st);
                         catches.Add(new JsonObject
                         {
-                            ["excType"] = Str(co["excType"]),
+                            ["excType"] = co["excType"]?.DeepClone(),
                             ["var"] = Str(co["var"]),
                             ["body"] = cbodyArr,
                         });
@@ -1507,7 +1507,7 @@ static class SuspendColdLowering
                 case "callStatic":
                 {
                     var name = Str(o["method"]);
-                    var owner = Str(o["owner"]);
+                    var owner = TypeJson.OwnerName(o["owner"]);
                     var key = (owner == null ? "#" : BareOwner(owner) + "#") + name;
                     if (_methodRets.TryGetValue(key, out var rt)) return rt;
                     if (_methodRets.TryGetValue("#" + name, out var rt2)) return rt2;
@@ -1515,7 +1515,7 @@ static class SuspendColdLowering
                 }
                 case "callInstance":
                 {
-                    var ot = BareOwner(Str(o["ownerType"]));
+                    var ot = BareOwner(TypeJson.OwnerName(o["ownerType"]));
                     if (ot != null && _methodRets.TryGetValue(ot + "#" + Str(o["method"]), out var rt)) return rt;
                     break;
                 }
@@ -1524,7 +1524,7 @@ static class SuspendColdLowering
                     // N4 eval-order spill: type the temp SM field from the field's declared type (a raw field read
                     // carries no `retType`). Owner-qualified first (`owner#name`), then top-level (`#name`).
                     var fname = Str(o["name"]);
-                    var fowner = BareOwner(Str(o["ownerType"]));
+                    var fowner = BareOwner(TypeJson.OwnerName(o["ownerType"]));
                     if (fowner != null && _fieldTypes.TryGetValue(fowner + "#" + fname, out var fft)) return fft;
                     if (_fieldTypes.TryGetValue("#" + fname, out var fft2)) return fft2;
                     break;
@@ -1611,7 +1611,7 @@ static class SuspendColdLowering
         JsonNode EmitIntrinsicSuspension(JsonObject block, List<JsonNode> outp)
         {
             var closureNew = IntrinsicClosureNew(block);
-            var closureType = Str(closureNew?["closureType"]);
+            var closureType = closureNew == null ? null : TypeJson.OwnerName(closureNew["closureType"]);
             if (closureType == null || !_closures.TryGetValue(closureType, out var closureCls))
             {
                 // Failure posture (LOUD): the suspendCoroutineUninterceptedOrReturn body is UNRESOLVABLE — its
@@ -1780,7 +1780,7 @@ static class SuspendColdLowering
             string closureType = null;
             if (arg != null && Str(arg["k"]) == "closureNew")
             {
-                closureType = Str(arg["closureType"]);
+                closureType = TypeJson.OwnerName(arg["closureType"]);
                 if (closureType == null || !_closures.TryGetValue(closureType, out var cls))
                     return (null, null, null, null);
                 invoke = (cls["methods"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(m => Str(m["name"]) == "invoke");
@@ -1807,7 +1807,7 @@ static class SuspendColdLowering
             if (node is JsonObject o)
             {
                 var k = Str(o["k"]);
-                if (k == "field" && closureType != null && Str(o["ownerType"]) == closureType && Str(o["name"]) is string fn
+                if (k == "field" && closureType != null && TypeJson.OwnerName(o["ownerType"]) == closureType && Str(o["name"]) is string fn
                     && capMap.TryGetValue(fn, out var cap))
                     return cap.DeepClone();
                 if (k == "local" && cParam != null && Str(o["name"]) == cParam)
@@ -1844,7 +1844,7 @@ static class SuspendColdLowering
             if (node is JsonObject o)
             {
                 var k = Str(o["k"]);
-                if (k == "field" && Str(o["ownerType"]) == closureType && Str(o["name"]) is string fn
+                if (k == "field" && TypeJson.OwnerName(o["ownerType"]) == closureType && Str(o["name"]) is string fn
                     && capMap.TryGetValue(fn, out var cap))
                     return cap.DeepClone();
                 if (k == "local" && cParam != null && Str(o["name"]) == cParam)
@@ -2160,7 +2160,7 @@ static class SuspendColdLowering
                 call = new JsonObject
                 {
                     ["k"] = "callInstance",
-                    ["ownerType"] = Str(callNode["ownerType"]),
+                    ["ownerType"] = callNode["ownerType"]?.DeepClone(),
                     ["virtual"] = Bool(callNode["virtual"]),
                     ["recv"] = recvRw,
                     ["method"] = method,
