@@ -63,6 +63,24 @@ reproduce it.* (Memory `clr-not-jvm-discard-jvmisms`.)
   - There is **no `@Metadata`/reified attribute** to round-trip.
 - Deep dive: §3 (inline), `docs/design-il-generics.md`, memory `function-inlining-spike`.
 
+## 2b. `tailrec` is NOT tail-call optimized — deep tail recursion overflows the stack (KNOWN DEVIATION)
+
+- **JVM:** `tailrec fun` is rewritten by the Kotlin frontend into a **loop**, so a self-tail-recursive function
+  runs in **constant stack** — `tailrec fun sumTo(n, acc) = if (n==0) acc else sumTo(n-1, acc+n)` handles
+  `sumTo(1_000_000, 0)` fine.
+- **DotKt (today):** the `tailrec` modifier is currently **decoration only** — no tail-call lowering is emitted,
+  so the function stays ordinary recursion. Shallow depths (e.g. `fact(5, 1)`, as in `cases/il-langfeat`) work,
+  but **deep** tail recursion **overflows the CLR stack**: `sumTo(1_000_000, 0)` dies with
+  `Stack overflow. Repeated … times: at AppKt.sumTo` instead of returning `500000500000`. This is a genuine
+  divergence from Kotlin/JVM, not a cosmetic one.
+- **Scope of impact:** only recursion depths that exceed the CLR stack (~10⁵ frames for a small frame). Idiomatic
+  Kotlin that leans on `tailrec` for unbounded iteration will overflow where the JVM would loop.
+- **Routed fix (not yet implemented):** a tail-call lowering in **kotc/bir2cir** — rewrite a self-tail-call
+  `tailrec` function into a loop (the frontend's own transform), or emit the CIL `.tail.` prefix on the recursive
+  call. Until then this stays a documented deviation.
+- Reproducer (intentionally NOT gated, so the gates stay XFAIL-zero): `cases/il-tailrec/` —
+  `./scripts/dotkt.sh --run cases/il-tailrec/app.kt`.
+
 ## 3. `inline` happens at EMIT time, and is decoration unless a lambda literal is passed
 
 This is the single most surprising deviation, so it gets the most detail.
@@ -590,6 +608,7 @@ implicit resolution, no `FirEnumEntry` synthesis), not by a missing `[Kotlin*]` 
 
 - `inline`/`reified` written but no lambda passed → **ignored** (plain/generic method). §2, §3.
 - `reified` lets you pass a non-reified type param on the CLR (JVM forbids it). §2.
+- `tailrec` is **not** tail-call optimized — deep tail recursion (~10⁵+ frames) overflows the CLR stack where the JVM loops. §2b.
 - Inlining is done by the backend at emit, not the frontend. §3.
 - A non-local `return` into a cross-module inline lambda → works (body is carried in `[KotlinInline]`). §3.
 - `println(true)` prints `True`, `println(4.0)` prints `4`. §5.

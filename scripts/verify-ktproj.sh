@@ -39,6 +39,12 @@ kt() {
 kt ktproj "cases/ktproj/hello.ktproj" \
 	"$(printf 'Hello, Visual Studio, from a .ktproj!\nsum 1..5 = 15')"
 
+# The README-advertised pure-IL starter project (README:139 points users at cases/ktproj-il/): a two-file
+# .ktproj (App.kt with `fun main` + a Greeter class) built entirely on the IL backend via ../KotlinClr.targets.
+# Wired here (COV6, 2026-07-06) so the user-facing sample can't rot unverified — it previously had NO gate.
+kt ktproj-il "cases/ktproj-il/hello-il.ktproj" \
+	"$(printf 'Hello, ktproj, from IL!\nsum 1..5 = 15')"
+
 # A stdlib op MIGRATED off the COLLECTION_OPS lowering (getOrElse): the targets auto-reference DotKt.Stdlib, so the
 # call routes to its real Kotlin body. End-to-end proof that the lowering-retirement pipeline works through MSBuild.
 kt ktproj-stdlib "cases/ktproj-stdlib/app.ktproj" \
@@ -47,6 +53,12 @@ kt ktproj-stdlib "cases/ktproj-stdlib/app.ktproj" \
 # Façade-FREE FIR injection via import scan (the C-2 single path for taking in .NET types).
 kt ktproj-inject "cases/ktproj-inject/inject.ktproj" \
 	"no-facade via import scan; abs(-5)=5"
+
+# Import-driven .NET resolution: plain `import System.Text.StringBuilder` / `import System.Math`, no <KotlinClrFacade>,
+# no facade — the facadegen --meta import scan injects the types. Fluent StringBuilder.Append chaining + Math.Max.
+# Wired here (COV6, 2026-07-06): was UNWIRED (previously no gate covered the bare-import ktproj path).
+kt ktproj-import "cases/ktproj-import/import.ktproj" \
+	"dotkt imports just work: 40"
 
 # FORWARD ProjectReference + AssemblyResolver + .NET event subscription from a referenced C# project.
 # Also: assign a plain Boolean to the C# `bool?` (Nullable<bool>) property Enabled — facadegen maps Nullable<X> -> X?.
@@ -85,11 +97,28 @@ kt ktproj-applib "cases/ktproj-applib/app/App.ktproj" \
 kt ktproj-coll "cases/ktproj-coll/app.ktproj" \
 	"$(printf '5\n30\n10\n20\n-1\nTrue\n3\n5\nFalse\n2\n150\nAPPLE\npear\n5\n4\n3')"
 
+# The <KotlinClrRefRt>true</KotlinClrRefRt> MSBuild property: build against the stdlib REFERENCE assembly and run
+# against the RUNTIME assembly (the ref->rt handoff, exactly as verify-il/dotkt do it). A single self-contained
+# .ktproj consuming the real CLR stdlib (listOf/size/indexing/uppercase/for). Wired here (COV6, 2026-07-06): was
+# UNWIRED — the only gate coverage of the <KotlinClrRefRt> app property.
+kt ktproj-refrt "cases/ktproj-refrt/app.ktproj" \
+	"$(printf '3\nAPPLE\n12')"
+
+# <KotlinClrRefRt> + a Kotlin->Kotlin <ProjectReference>: App.ktproj consumes Lib.ktproj (Library) AS KOTLIN
+# (top-level `greeting`/`sumTo` from package mylib) with the ref->rt stdlib flow on BOTH projects. Wired here
+# (COV6, 2026-07-06): was UNWIRED — covers the refrt property across a project-reference graph.
+kt ktproj-refrt-pr "cases/ktproj-refrt-pr/app/App.ktproj" \
+	"$(printf 'Hello, WORLD!\n55\n3\nHello, Z!')"
+
 # Clean each sample's build output.
 rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
+       "$ROOT"/cases/ktproj-il/bin "$ROOT"/cases/ktproj-il/obj \
        "$ROOT"/cases/ktproj-roundtrip/*/bin "$ROOT"/cases/ktproj-roundtrip/*/obj \
        "$ROOT"/cases/ktproj-applib/*/bin "$ROOT"/cases/ktproj-applib/*/obj \
        "$ROOT"/cases/ktproj-inject/bin "$ROOT"/cases/ktproj-inject/obj \
+       "$ROOT"/cases/ktproj-import/bin "$ROOT"/cases/ktproj-import/obj \
+       "$ROOT"/cases/ktproj-refrt/bin "$ROOT"/cases/ktproj-refrt/obj \
+       "$ROOT"/cases/ktproj-refrt-pr/*/bin "$ROOT"/cases/ktproj-refrt-pr/*/obj \
        "$ROOT"/cases/ktproj-extlib/bin "$ROOT"/cases/ktproj-extlib/obj \
        "$ROOT"/cases/ktproj-extlib/extlib/bin "$ROOT"/cases/ktproj-extlib/extlib/obj \
        "$ROOT"/cases/ktproj-bidir/*/bin "$ROOT"/cases/ktproj-bidir/*/obj \
