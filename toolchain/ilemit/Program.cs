@@ -3068,12 +3068,20 @@ sealed partial class Emitter
                     && typeof(System.Delegate).IsAssignableFrom(p) && a.TryGetProperty("funcType", out var ft))
                 {
                     var invoke = p.GetMethod("Invoke");
-                    if (invoke != null && invoke.GetParameters().Length == FuncArity(ft.GetString())) score += 2;
+                    if (invoke != null && invoke.GetParameters().Length == FuncArityOf(ft)) score += 2;
                 }
             }
             return score;
         }).First();
     }
+
+    // Delegate arity of a `funcType` slot — a structured `{t:"fn",params:[...]}` node (post type-flip) or a legacy
+    // `func:`/`sfunc:` string. Matches how FuncType builds the CLR delegate (from `fn.Params`), so the score compares
+    // against the same arity the emitted delegate's Invoke carries.
+    static int FuncArityOf(JsonElement ft) =>
+        ft.ValueKind == JsonValueKind.String ? FuncArity(ft.GetString())
+        : ft.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(ft) is DotKt.Bir.TypeNode.Fn fn ? fn.Params.Length
+        : 0;
 
     /** Arity of a `func:<ret>:<p1,p2,...>` encoding (`func:void:` -> 0, `func:void:object` -> 1). */
     static int FuncArity(string funcType)
