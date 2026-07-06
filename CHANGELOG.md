@@ -301,6 +301,14 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   already route. This also makes `mapValues`' transitive `mapCapacity(this.size)` pre-size covariance-safe, so
   `listOf(1,2,3,4).groupBy { it % 2 }.mapValues { it.value.size }` no longer throws `EntryPointNotFound`. Normal
   `mapOf`/`mutableMapOf` `size`/`containsKey` stay correct. Verified against the JVM oracle (`cases/il-mapvalues`).
+- **A value-element collection's `.indices`/`.lastIndex` are covariance-safe (#30).** `Collection<*>.indices` used a
+  star projection whose receiver lowered to the reified `IReadOnlyCollection<object>`; a value-element runtime list
+  (`ArrayList<int> : IReadOnlyCollection<int>`) does not implement it — CLR generic covariance excludes value-type
+  args — so reading `size` (`get_Count`) threw `EntryPointNotFound`. Genericized to `Collection<T>.indices` (a
+  source-compatible generalization) so the receiver stays `IReadOnlyCollection<T>` and the size read is covariance-safe
+  for value elements — the same shape as the already-working `List<T>.lastIndex`. `listOf(1,2,3).indices` and
+  `.lastIndex` now work for `Int`/`Double` elements; reference-element collections stay green. Verified against the
+  JVM oracle (`cases/il-indicesv`).
 - **Nested collections/maps inside `Pair`/`Triple.toString()`** render Kotlin-style (C11):
   `(listOf(1, 2) to listOf(3, 4)).toString()` is `([1, 2], [3, 4])`, not the raw
   `(System.Collections.Generic.List\`1[System.Int32], …)`. A tuple component's erased generic static type
