@@ -3838,6 +3838,19 @@ static class NullableGenericReturnErasure
                 {
                     var child = obj[key];
                     if (child == null) continue;
+                    // A call's `sig` is a LEGACY m3 STRING token (`clrg:System.Collections.Generic.IEnumerable[nullable:gp:T]`),
+                    // not a structured TypeNode — TypeJson.Read misses it, so the structured EraseNullableTv above never
+                    // touches it, and the CALL keeps `nullable:gp:T` while the callee DEF's `Iterable<T?>` param erases to
+                    // `IEnumerable<object>`. That DEF/CALL sig mismatch drops ilemit off the exact-sig overload (two
+                    // `filterNotNull`/`filterNotNullTo` overloads share a name) onto the ARRAY overload — an IEnumerable where
+                    // `T[]` is expected -> segfault/empty result (il-chunk / il-collmore). Erase the `nullable:gp:X` tokens
+                    // inside the sig string too so DEF and CALL agree, mirroring EraseNullableTv's structured rewrite.
+                    if (key == "sig" && child is JsonValue sv && sv.TryGetValue<string>(out var sigStr)
+                        && sigStr.Contains("nullable:gp:", StringComparison.Ordinal))
+                    {
+                        obj[key] = EraseNullableGpSigString(sigStr);
+                        continue;
+                    }
                     if (TypeJson.Read(child) is TypeNode tn) obj[key] = TypeJson.Write(EraseNullableTv(tn));
                     else EraseNullableGpAllStrings(child);
                 }
@@ -3852,6 +3865,30 @@ static class NullableGenericReturnErasure
                 }
                 break;
         }
+    }
+
+    // Replace every `nullable:gp:<ident>` token inside a legacy sig STRING with `object` (the boxed/erased nullable
+    // rep that carries a real null), preserving all bracket/comma structure — the string twin of EraseNullableTv.
+    // A token nested in a `clrg:Owner[...]` arg list (`IEnumerable[nullable:gp:T]` -> `IEnumerable[object]`), an
+    // `array:nullable:gp:T` (-> `array:object`), a `func:` return/param, or a standalone comma-separated token all
+    // collapse to `object`, so the erased CALL sig agrees with the callee DEF param (erased structurally to `object`).
+    static string EraseNullableGpSigString(string sig)
+    {
+        const string probe = "nullable:gp:";
+        var sb = new System.Text.StringBuilder(sig.Length);
+        var i = 0;
+        while (i < sig.Length)
+        {
+            var at = sig.IndexOf(probe, i, StringComparison.Ordinal);
+            if (at < 0) { sb.Append(sig, i, sig.Length - i); break; }
+            sb.Append(sig, i, at - i);
+            sb.Append("object");
+            // Skip PAST the `nullable:gp:` prefix and its type-param identifier (ends at `]`, `,`, or EOS).
+            var j = at + probe.Length;
+            while (j < sig.Length && (char.IsLetterOrDigit(sig[j]) || sig[j] == '_')) j++;
+            i = j;
+        }
+        return sb.ToString();
     }
 
     // Replace every `Nullable(Tv)` (a value-type-nullable type variable) with `object`, recursively. LEAVES a func
