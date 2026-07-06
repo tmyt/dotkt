@@ -1759,7 +1759,16 @@ sealed partial class Emitter
             // empty and `ps` is null — read the concrete signature straight off the instantiation instead, so the
             // return type and value-arg boxing decisions are correct. Gated to reflection instantiations whose owner is
             // NOT a TypeBuilder instantiation (those go through the branches above / can't be reflected pre-bake).
-            if (ps == null && inst is not MethodBuilder && inst.DeclaringType is { IsGenericType: true } idt && !IsTbInstantiation(idt))
+            // ps==null => a REFERENCED method (an emitted MethodBuilder records its params in _mparams). Read the
+            // concrete signature straight off the instantiation so paramTypes isn't left NULL — a null paramTypes makes
+            // EmitArgsTyped emit each arg RAW (no target), so a lambda arg to a stdlib method whose param is the
+            // synthetic `KFunc` delegate (a Kotlin function type over a stdlib TypeBuilder, e.g. MapsKt.mapValues's
+            // `(Map.Entry)->R`) is built as `System.Func` and never rewrapped -> ilverify StackUnexpected [found
+            // System.Func][expected KFunc]. Covers a generic static on a NON-generic file class (MapsKt) too — the
+            // prior `DeclaringType.IsGenericType` guard only caught external-generic owners (Result`1). Excludes a
+            // MethodBuilderInstantiation owner (GetParameters throws pre-bake), which never reaches here (ps!=null).
+            if (ps == null && inst is not MethodBuilder
+                && (inst.DeclaringType is not { IsGenericType: true } idt || !IsTbInstantiation(idt)))
             {
                 retType = inst.ReturnType;
                 paramTypes = inst.GetParameters().Select(p => p.ParameterType).ToArray();
