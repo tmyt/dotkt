@@ -1328,6 +1328,9 @@ sealed partial class Emitter
 
     (string open, Type constructed) ParseOwner(string spec)
     {
+        // A legacy clr:/clrg: marker (kotc's not-yet-retired exception map) — strip it so the bare FQN resolves.
+        if (spec.StartsWith("clr:", StringComparison.Ordinal)) spec = spec.Substring(4);
+        else if (spec.StartsWith("clrg:", StringComparison.Ordinal)) spec = spec.Substring(5);
         var br = spec.IndexOf('[');
         if (br < 0) return (spec, null);
         var open = spec.Substring(0, br);
@@ -1990,7 +1993,7 @@ sealed partial class Emitter
             {
                 if (ReadFqn(i) is not DotKt.Bir.TypeNode.Fqn iF) continue;
                 var open = iF.Name;   // only the OPEN name matters here (avoid mapping a `[gp:T]` inner-generic arg)
-                if (!_types.ContainsKey(open)) continue;   // a REFERENCED interface is not walked here
+                if (!_types.ContainsKey(open)) continue;   // referenced interfaces reflected at the FindMethod loop level
                 if (!seenIfaces.Add(open) || !_types.TryGetValue(open, out var iti)) continue;
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
                 if (sig != null && FindByNormalizedSig(iti, name, sig) is { } insm) return insm;
@@ -2044,6 +2047,24 @@ sealed partial class Emitter
             if (ti.Methods.TryGetValue(name, out var m)) return m;
             var im = FindInInterfaces(ti);
             if (im != null) return im;
+            // A REFERENCED (.NET) interface the emitted type implements (MutableList -> System...IList): reflect the
+            // member on it — its get_Item/Add/… are real BCL slots the type binds but that live in no emitted `_types`.
+            if (ti.Def.ValueKind == JsonValueKind.Object && ti.Def.TryGetProperty("interfaces", out var refIfs))
+                foreach (var i in refIfs.EnumerateArray())
+                    if (ReadFqn(i) is DotKt.Bir.TypeNode.Fqn rif && !_types.ContainsKey(rif.Name))
+                    {
+                        Type refIf = null; try { refIf = MapType(rif); } catch { }
+                        if (refIf == null) continue;
+                        // A constructed generic over an EMITTED param arg (IList<!0>) can't GetMethods() — reflect the
+                        // OPEN definition's method, re-anchor it onto the constructed interface.
+                        try { if (FindReflectedMethod(refIf, name) is { } rrm) return rrm; }
+                        catch (NotSupportedException)
+                        {
+                            if (refIf.IsConstructedGenericType
+                                && FindReflectedMethod(refIf.GetGenericTypeDefinition(), name) is { } om)
+                                return TypeBuilder.GetMethod(refIf, om);
+                        }
+                    }
             // Base is an EXTERNAL (non-emitted) type -> inherited member must come from reflection on it. `ti.ClrBase`
             // is set when the base parsed to a `clr:`/`clrg:` type; otherwise resolve the base name on demand.
             if (ti.BaseName != null && !_types.ContainsKey(BareTypeKey(ti.BaseName)))
@@ -3454,7 +3475,7 @@ sealed partial class Emitter
     // main closureNew emit and the delegate-arg binding path so neither can diverge.
     (ConstructorInfo Ctor, MethodInfo Invoke) ResolveClosure(JsonElement e)
     {
-        var ct = _types[e.GetProperty("closureType").GetString()];
+        var ct = _types[SlotName(e.GetProperty("closureType"))];
         ConstructorInfo ctor = ct.Ctor;
         MethodInfo invoke = ct.Methods[e.GetProperty("method").GetString()];
         Type constructed = null;

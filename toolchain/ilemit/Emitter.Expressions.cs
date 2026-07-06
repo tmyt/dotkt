@@ -750,7 +750,7 @@ sealed partial class Emitter
             {
                 // SAM conversion `Comparator { … }` -> `new <Sam>(captures)` -- a synthetic class IMPLEMENTING the fun
                 // interface (no delegate). The instance IS the interface value (implicit upcast at the use site).
-                var ct = _types[e.GetProperty("samType").GetString()];
+                var ct = _types[SlotName(e.GetProperty("samType"))];
                 ConstructorInfo ctor = ct.Ctor;
                 Type result = ct.TB;
                 if (e.TryGetProperty("typeArgs", out var staProp) && staProp.GetArrayLength() > 0)

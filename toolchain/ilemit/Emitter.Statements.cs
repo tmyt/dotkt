@@ -99,7 +99,7 @@ sealed partial class Emitter
                 foreach (var b in bodyArr.EnumerateArray()) EmitStmt(b);
                 foreach (var c in catchesArr.EnumerateArray())
                 {
-                    var ct = MapType(c.GetProperty("excType").GetString());
+                    var ct = MapType(c.GetProperty("excType"));
                     _il.BeginCatchBlock(ct);
                     // Bind the caught exception to the catch variable (a local); referenced by the handler body.
                     if (c.TryGetProperty("var", out var cv) && cv.ValueKind == JsonValueKind.String)
