@@ -690,6 +690,29 @@ sealed class ReferenceMetadataIndex
         };
     }
 
+    // ParamKey over a STRUCTURED Type node (a birType-emitted param slot) — walks the TypeNode natively (never
+    // re-renders a legacy token), matching the string ParamKey's top-level-identity canonicalization exactly:
+    // byref/array/nullable unwrap-with-marker, a fn -> obj (suspend) / func, a type-var -> gp, an Fqn leaf folded via
+    // the shared primitive switch (delegating to ParamKey(f.Name) — a bare FQN the switch already handles).
+    public static string ParamKey(TypeNode t) => t switch
+    {
+        TypeNode.ByRef b => "byref:" + ParamKey(b.Of),
+        TypeNode.Array a => "array:" + ParamKey(a.Elem),
+        TypeNode.Nullable n => "nullable:" + ParamKey(n.Of),
+        TypeNode.Fn fn => fn.Suspend ? "obj" : "func",
+        TypeNode.Tv => "gp",
+        TypeNode.Fqn f => ParamKey(f.Name),
+        _ => "obj",
+    };
+
+    // ParamKey off a JSON type slot: a structured `{t:…}` node walks natively; a legacy string slot (sig-side token)
+    // keeps the string path.
+    public static string ParamKey(JsonNode typeSlot)
+    {
+        if (TypeJson.Read(typeSlot) is TypeNode tn) return ParamKey(tn);
+        if (typeSlot is JsonValue v && v.TryGetValue<string>(out var s)) return ParamKey(s);
+        return ParamKey("");
+    }
 
     // A top-level fun (file-class static, called as `callStatic owner=null`) bound by @ClrIntrinsic to a
     // fully-qualified BCL static (e.g. clrTimestamp -> "System.Diagnostics.Stopwatch.GetTimestamp").
@@ -1436,7 +1459,7 @@ sealed class CallSiteAnalyzer
     static string EscapePathSegment(string segment) =>
         segment.Replace("~", "~0", StringComparison.Ordinal).Replace(".", "~1", StringComparison.Ordinal);
 
-    static string StringProp(JsonObject obj, string name) => obj[name]?.GetValue<string>();
+    static string StringProp(JsonObject obj, string name) => (obj[name] as JsonValue)?.GetValue<string>();
 }
 
 sealed record CallSiteAnalysis(IReadOnlyList<CallSite> Sites)
@@ -1514,7 +1537,7 @@ sealed record CallSite(
         return "kotlin-symbol";
     }
 
-    static string StringProp(JsonObject obj, string name) => obj[name]?.GetValue<string>();
+    static string StringProp(JsonObject obj, string name) => (obj[name] as JsonValue)?.GetValue<string>();
 
     static IReadOnlyList<string> ArgumentTypes(JsonObject node, string signature)
     {
@@ -1630,8 +1653,8 @@ sealed class SuspendShapeAnalyzer
         return 0;
     }
 
-    static string StringProp(JsonObject obj, string name) => obj[name]?.GetValue<string>();
-    static bool BoolProp(JsonObject obj, string name) => obj[name]?.GetValue<bool>() == true;
+    static string StringProp(JsonObject obj, string name) => (obj[name] as JsonValue)?.GetValue<string>();
+    static bool BoolProp(JsonObject obj, string name) => (obj[name] as JsonValue)?.GetValue<bool>() == true;
 }
 
 sealed record SuspendShapeAnalysis(IReadOnlyList<SuspendFunctionShape> Functions)
@@ -5657,7 +5680,7 @@ static class MemberStrip
             if (methods[i] is not JsonObject mo) continue;
             if ((mo["name"] as JsonValue)?.GetValue<string>() is not string name) continue;
             var keys = (mo["params"] as JsonArray ?? new JsonArray())
-                .Select(p => ReferenceMetadataIndex.ParamKey((p as JsonObject)?["type"]?.GetValue<string>() ?? "")).ToList();
+                .Select(p => ReferenceMetadataIndex.ParamKey((p as JsonObject)?["type"])).ToList();
             // An alias-class member that overrides a @ClrIntrinsic ancestor is normally a bound stub (its call
             // substitutes to the BCL), so it is dropped. But a GENUINE rule-3 member — concrete + intrinsic-less in
             // the ref.dll (String.compareTo's ordinal body overriding the culture-sensitive Comparable.compareTo@ClrIntrinsic)
