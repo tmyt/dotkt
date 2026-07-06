@@ -1193,6 +1193,12 @@ sealed partial class Emitter
         // the box/nullable paths above; a same-type or widening store needs nothing).
         else if (got == typeof(object) && target != typeof(object) && !target.IsValueType && !target.IsGenericParameter)
             _il.Emit(OpCodes.Castclass, target);
+        // The value-type / generic-param twin: an erased `object` stored into a VALUE (Int32) or generic-param (`T`)
+        // slot needs the universal `unbox.any` (a coroutine SM `.ctor(object value, …)` capturing a value/`T` field —
+        // ilverify [found object][expected Int32]/[expected value 'T']). unbox.any unboxes a value type and resolves a
+        // generic param; castclass would JIT-crash a value instantiation.
+        else if (got == typeof(object) && (target.IsValueType || target.IsGenericParameter))
+            _il.Emit(OpCodes.Unbox_Any, target);
     }
 
     // The value-parameter type of a property setter, when retrievable: a TypeBuilder-anchored accessor
