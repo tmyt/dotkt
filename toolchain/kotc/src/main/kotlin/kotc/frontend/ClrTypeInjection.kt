@@ -996,6 +996,21 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		return sym.constructType(args, false)
 	}
 
+	/** H2: a Kotlin SUSPEND function type `suspend (P...) -> R` = `kotlin.coroutines.SuspendFunctionN<P..., R>`. The
+	 *  built-in function-kind symbol provider synthesizes these classIds (like `kotlin.FunctionN`), and the
+	 *  FunctionTypeKindExtractor recognizes the `kotlin.coroutines` + `SuspendFunction` prefix as the SuspendFunction
+	 *  kind — so a param restored with this type makes a passed lambda a SUSPEND lambda (overload resolution and
+	 *  inference treat it as suspend, not plain `Func`). facadegen emits the `sfunc:[ret,args]` meta from the DotKt
+	 *  assembly's KotlinSuspendFunctionType attribute, restoring what bir2cir erased to `object` in the CLR signature.
+	 *  Falls back to a plain function type if the synthetic symbol can't be resolved (never a crash). */
+	private fun coneSuspendFunctionType(params: List<ConeKotlinType>, ret: ConeKotlinType): ConeKotlinType {
+		val cid = ClassId(FqName("kotlin.coroutines"), Name.identifier("SuspendFunction${params.size}"))
+		val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return coneFunctionType(params, ret)
+		@Suppress("UNCHECKED_CAST")
+		val args = (params + ret).toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
+		return sym.constructType(args, false)
+	}
+
 	/** Map a metadata type name to a ConeKotlinType: primitives, the owner itself, another injected type, else Any?. */
 	/** The intrinsic `ClrRef<arg>` cone type (the surfaced form of a .NET out/ref param or ref return). */
 	private fun clrRefOf(arg: ConeKotlinType): ConeKotlinType =
@@ -1107,6 +1122,15 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			val parts = splitTopLevel(typeName.removePrefix("func:").removeSurrounding("[", "]"))
 			val ret = parts.firstOrNull() ?: "Unit"; val args = parts.drop(1)
 			return coneFunctionType(args.map { coneOf(it, owner, tv) }, coneOf(ret, owner, tv))
+		}
+		// H2: A `suspend (…) -> T` function TYPE in a position (`sfunc:[ret,arg,arg]`) -> `SuspendFunctionN`. Same
+		// bracketed grammar as `func:`, but builds the SUSPEND function type so a passed lambda is a suspend lambda.
+		// facadegen emits this from the DotKt assembly's KotlinSuspendFunctionType attribute (bir2cir erased the CLR
+		// signature slot to `object`); restoring it here is the consumer half of the suspend-fn-type round-trip.
+		if (typeName.startsWith("sfunc:")) {
+			val parts = splitTopLevel(typeName.removePrefix("sfunc:").removeSurrounding("[", "]"))
+			val ret = parts.firstOrNull() ?: "Unit"; val args = parts.drop(1)
+			return coneSuspendFunctionType(args.map { coneOf(it, owner, tv) }, coneOf(ret, owner, tv))
 		}
 		// (3) A constructed generic (`generic:IList[ResourceDictionary]`, or `generic:Box[T]` of a generic fn) -> the
 		// injected open type applied to the (recursively resolved) args, so chained members / type inference work.
