@@ -1177,6 +1177,13 @@ sealed partial class Emitter
         var got = EmitNullableCoerced(value, target);
         if (got != null && NeedsBoxToRef(got) && !target.IsValueType && !target.IsGenericParameter)
             _il.Emit(OpCodes.Box, got);
+        // A reference `object` (an ERASED value — e.g. a coroutine SM `create(object value, …)`'s receiver stored into
+        // its concrete `SequenceScope<T>`/captured-field slot) stored into a NARROWER reference target needs a downcast;
+        // a raw stfld of `object` into a typed field is unverifiable (ilverify StackUnexpected [found object][expected
+        // ref 'T']). Scoped to a genuinely-erased `object` source and a concrete reference target (value/gp targets took
+        // the box/nullable paths above; a same-type or widening store needs nothing).
+        else if (got == typeof(object) && target != typeof(object) && !target.IsValueType && !target.IsGenericParameter)
+            _il.Emit(OpCodes.Castclass, target);
     }
 
     // The value-parameter type of a property setter, when retrievable: a TypeBuilder-anchored accessor
