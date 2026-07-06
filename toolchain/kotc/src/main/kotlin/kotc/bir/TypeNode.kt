@@ -16,8 +16,13 @@ sealed class TypeNode {
     /** `fqn`: a named type — a PURE Kotlin/CLR FQN identity; [args] = generic application. */
     data class Fqn(val name: String, val args: List<TypeNode>? = null) : TypeNode()
 
-    /** `tv`: a type variable, POSITIONAL index into the owning generic decl's type-parameter list. */
-    data class Tv(val i: Int) : TypeNode()
+    /**
+     * `tv`: a type variable. [scope] ∈ {"type","method"} selects the CLR generic-parameter space
+     * (type → `!i` GenericTypeParameter, method → `!!i` GenericMethodParameter). [i] is owner-local:
+     * for "method" the index in the method's own generic params; for "type" the FLATTENED index over
+     * the enclosing-type nesting chain. The scope disambiguates the two distinct spaces.
+     */
+    data class Tv(val scope: String, val i: Int) : TypeNode()
 
     /** `fn`: a function type; [suspend] is a flag, [recv] is the extension receiver (subsumes func:/sfunc:). */
     data class Fn(
@@ -52,7 +57,7 @@ sealed class TypeNode {
                 }
                 sb.append('}')
             }
-            is Tv -> sb.append("{\"t\":\"tv\",\"i\":").append(i).append('}')
+            is Tv -> sb.append("{\"t\":\"tv\",\"scope\":").append(esc(scope)).append(",\"i\":").append(i).append('}')
             is Fn -> {
                 sb.append("{\"t\":\"fn\",\"suspend\":").append(if (suspend) "true" else "false")
                 sb.append(",\"ret\":"); ret.write(sb)
@@ -108,7 +113,10 @@ sealed class TypeNode {
                     o["name"] as? String ?: throw IllegalArgumentException("fqn missing name"),
                     (o["args"] as? List<Any?>)?.map { fromValue(it) },
                 )
-                "tv" -> Tv((o["i"] as Number).toInt())
+                "tv" -> Tv(
+                    o["scope"] as? String ?: throw IllegalArgumentException("tv missing scope"),
+                    (o["i"] as Number).toInt(),
+                )
                 "fn" -> Fn(
                     o["suspend"] as Boolean,
                     fromValue(o["ret"]),

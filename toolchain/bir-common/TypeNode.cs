@@ -33,8 +33,13 @@ public abstract record TypeNode
         public override int GetHashCode() => System.HashCode.Combine(Name, Args?.Length ?? -1);
     }
 
-    /// <summary>`tv`: a type variable, POSITIONAL index into the owning generic decl's type-parameter list.</summary>
-    public sealed record Tv(int I) : TypeNode;
+    /// <summary>
+    /// `tv`: a type variable. <c>Scope</c> ∈ {"type","method"} selects the CLR generic-parameter space
+    /// (type → <c>!i</c> GenericTypeParameter, method → <c>!!i</c> GenericMethodParameter). <c>I</c> is
+    /// owner-local: for "method" the index in the method's own generic params; for "type" the FLATTENED
+    /// index over the enclosing-type nesting chain. The scope disambiguates the two distinct spaces.
+    /// </summary>
+    public sealed record Tv(string Scope, int I) : TypeNode;
 
     /// <summary>`fn`: a function type; <c>Suspend</c> is a flag, <c>Recv</c> is the extension receiver (subsumes func:/sfunc:).</summary>
     public sealed record Fn(bool Suspend, TypeNode Ret, TypeNode[] Params, TypeNode? Recv = null) : TypeNode
@@ -76,7 +81,9 @@ public abstract record TypeNode
                     e.GetProperty("name").GetString() ?? throw new FormatException("fqn missing name"),
                     e.TryGetProperty("args", out var args) ? ReadArray(args) : null);
             case "tv":
-                return new Tv(e.GetProperty("i").GetInt32());
+                return new Tv(
+                    e.GetProperty("scope").GetString() ?? throw new FormatException("tv missing scope"),
+                    e.GetProperty("i").GetInt32());
             case "fn":
                 return new Fn(
                     e.GetProperty("suspend").GetBoolean(),
@@ -115,7 +122,7 @@ public abstract record TypeNode
                 return o;
             }
             case Tv v:
-                return new JsonObject { ["t"] = "tv", ["i"] = v.I };
+                return new JsonObject { ["t"] = "tv", ["scope"] = v.Scope, ["i"] = v.I };
             case Fn fn:
             {
                 var o = new JsonObject
@@ -215,10 +222,10 @@ public static class TypeNodeSelfTest
                 "{\"t\":\"fn\",\"suspend\":false,\"ret\":{\"t\":\"fqn\",\"name\":\"kotlin.String\"},\"params\":[{\"t\":\"fqn\",\"name\":\"kotlin.Int\"}]}"),
             // suspend Foo<T>.()->T?
             (new TypeNode.Fn(true,
-                    new TypeNode.Nullable(new TypeNode.Tv(0)),
+                    new TypeNode.Nullable(new TypeNode.Tv("type", 0)),
                     System.Array.Empty<TypeNode>(),
-                    new TypeNode.Fqn("Foo", new TypeNode[] { new TypeNode.Tv(0) })),
-                "{\"t\":\"fn\",\"suspend\":true,\"ret\":{\"t\":\"nullable\",\"of\":{\"t\":\"tv\",\"i\":0}},\"params\":[],\"recv\":{\"t\":\"fqn\",\"name\":\"Foo\",\"args\":[{\"t\":\"tv\",\"i\":0}]}}"),
+                    new TypeNode.Fqn("Foo", new TypeNode[] { new TypeNode.Tv("type", 0) })),
+                "{\"t\":\"fn\",\"suspend\":true,\"ret\":{\"t\":\"nullable\",\"of\":{\"t\":\"tv\",\"scope\":\"type\",\"i\":0}},\"params\":[],\"recv\":{\"t\":\"fqn\",\"name\":\"Foo\",\"args\":[{\"t\":\"tv\",\"scope\":\"type\",\"i\":0}]}}"),
             // array + byref (cover the remaining variants)
             (new TypeNode.Array(new TypeNode.ByRef(new TypeNode.Fqn("kotlin.Long"))),
                 "{\"t\":\"array\",\"elem\":{\"t\":\"byRef\",\"of\":{\"t\":\"fqn\",\"name\":\"kotlin.Long\"}}}"),
