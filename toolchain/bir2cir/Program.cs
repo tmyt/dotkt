@@ -2307,27 +2307,30 @@ static class IteratorConsumerNormalization
     const string Bridge = "kotlin.collections.ClrIteratorBridgeKt";
     const string SynthPrefix = "<>dotkt_KIterator_";
 
-    public static void Apply(JsonNode root) => Process(root, new Dictionary<string, string>(StringComparer.Ordinal));
+    public static void Apply(JsonNode root) => Process(root, new Dictionary<string, TypeNode>(StringComparer.Ordinal));
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+
+    // The referenced-generic Iterator<elem> type node (the canonical CLR consumer target).
+    static JsonNode IterType(TypeNode elem) => TypeJson.Write(new TypeNode.Fqn("kotlin.collections.Iterator", new[] { elem }));
 
     // A SINGLE document-order walk: a `var <name>` initialized by the bridge records name->elem (and retypes the var)
     // BEFORE its for-loop body is reached, so a hasNext/next on that local is rewritten with the elem current at that
     // point. This is order-sensitive on purpose: sibling/nested for-loops reuse the synthetic `<iterator>` name with
     // DIFFERENT element types, and each loop's body sits AFTER its own var-decl and BEFORE the next one — so the
     // forward walk always rewrites a call with its own loop's element (a two-pass collect-then-rewrite conflated them).
-    static void Process(JsonNode node, Dictionary<string, string> map)
+    static void Process(JsonNode node, Dictionary<string, TypeNode> map)
     {
         if (node is JsonObject obj)
         {
             var k = Str(obj["k"]);
             if (k == "var" && Str(obj["name"]) is string vn && obj["init"] is JsonObject init &&
-                Str(init["k"]) == "callStatic" && Str(init["owner"]) == Bridge &&
+                Str(init["k"]) == "callStatic" && TypeJson.OwnerName(init["owner"]) == Bridge &&
                 Str(init["method"]) == "iteratorOverEnumerable" &&
-                init["typeArgs"] is JsonArray ta && ta.Count == 1 && Str(ta[0]) is string elem)
+                init["typeArgs"] is JsonArray ta && ta.Count == 1 && TypeJson.Read(ta[0]) is TypeNode elem)
             {
                 map[vn] = elem;
-                obj["type"] = "clrg:kotlin.collections.Iterator[" + elem + "]";
+                obj["type"] = IterType(elem);
             }
             // An `Iterator[elem]`-typed var initialized by a call INTO THE RT STDLIB (a `kotlin.*` owner — an unaliased
             // kotlin.collections interface like Set.iterator(), or an attributed top-level like MapsKt.iterator(map)
@@ -2340,8 +2343,8 @@ static class IteratorConsumerNormalization
             // `object : Iterator<Int>` that implements the synthetic) is deliberately NOT registered — app-internal
             // producer/consumer stay consistent on the synthetic.
             else if (k == "var" && Str(obj["name"]) is string vn2 && obj["init"] is JsonObject init2 &&
-                Str(obj["type"]) is string vt && IteratorVarElem(vt) is (string head, string elem2) &&
-                (Str(init2["owner"]) ?? Str(init2["ownerType"]) ?? "") is string initOwner &&
+                IteratorVarElem(TypeJson.Read(obj["type"])) is (string head, TypeNode elem2) &&
+                (TypeJson.OwnerName(init2["owner"]) ?? TypeJson.OwnerName(init2["ownerType"]) ?? "") is string initOwner &&
                 (initOwner.StartsWith("kotlin.", StringComparison.Ordinal)
                     || initOwner.StartsWith("<>dotkt_ClrH_kotlin_", StringComparison.Ordinal)))
             {
@@ -2357,37 +2360,36 @@ static class IteratorConsumerNormalization
                 // ClrMutableMapEntry snapshot). Everything then stays consistently typed on MutableEntry (ilverify-clean),
                 // and the read Iterator matches the wrapper's implemented interface. Only the MUTABLE entry element is
                 // rerouted; the immutable `Map.iterator()` path already works and is left untouched.
-                const string MutEntry = "@kotlin.collections.MutableMap$MutableEntry[";
-                if (elem2.StartsWith(MutEntry, StringComparison.Ordinal)
-                    && Str(init2["owner"]) == "kotlin.collections.MapsKt" && Str(init2["method"]) == "iterator"
+                if (elem2 is TypeNode.Fqn { Name: "kotlin.collections.MutableMap$MutableEntry", Args: { } } mutEntry
+                    && TypeJson.OwnerName(init2["owner"]) == "kotlin.collections.MapsKt" && Str(init2["method"]) == "iterator"
                     && init2["args"] is JsonArray iargs && iargs.Count == 1 && iargs[0] is JsonNode recv0)
                 {
-                    var (ek, ev) = EntryKvArgs(elem2);
+                    var (ek, ev) = EntryKvArgs(mutEntry);
                     obj["init"] = new JsonObject
                     {
                         ["k"] = "callStatic",
-                        ["owner"] = Bridge,
+                        ["owner"] = TypeJson.Fqn(Bridge),
                         ["method"] = "iteratorOverEnumerable",
                         ["args"] = new JsonArray
                         {
                             new JsonObject
                             {
                                 ["k"] = "callStatic",
-                                ["owner"] = "kotlin.collections.ClrMapDefaultsKt",
+                                ["owner"] = TypeJson.Fqn("kotlin.collections.ClrMapDefaultsKt"),
                                 ["method"] = "clrMapMutableEntries",
                                 ["args"] = new JsonArray { recv0.DeepClone() },
-                                ["typeArgs"] = new JsonArray { ek, ev },
+                                ["typeArgs"] = new JsonArray { TypeJson.Write(ek), TypeJson.Write(ev) },
                             },
                         },
-                        ["typeArgs"] = new JsonArray { elem2 },
+                        ["typeArgs"] = new JsonArray { TypeJson.Write(elem2) },
                     };
                     map[vn2] = elem2;
-                    obj["type"] = "clrg:kotlin.collections.Iterator[" + elem2 + "]";
+                    obj["type"] = IterType(elem2);
                 }
                 else
                 {
                     map[vn2] = elem2;
-                    obj["type"] = "clrg:" + head + "[" + elem2 + "]";
+                    obj["type"] = TypeJson.Write(new TypeNode.Fqn(head, new[] { elem2 }));
                 }
             }
             // `iterator()` dispatched through the monomorphized `<>dotkt_KIterable_<elem>` synthetic on a value that
@@ -2397,22 +2399,22 @@ static class IteratorConsumerNormalization
             // receiver path uses) and register the var. Receiver-gated: an APP-emitted `class R : Iterable<Int>`
             // (implements the synthetic; il-iterable) has a non-kotlin.* receiver owner and is left untouched.
             else if (k == "var" && Str(obj["name"]) is string vn3 && obj["init"] is JsonObject init3 &&
-                Str(obj["type"]) is string vt3 && IteratorVarElem(vt3) is (string, string elem3) &&
+                IteratorVarElem(TypeJson.Read(obj["type"])) is (string, TypeNode elem3) &&
                 Str(init3["k"]) == "callInstance" && Str(init3["method"]) == "iterator" &&
-                (Str(init3["ownerType"]) ?? "").StartsWith("<>dotkt_KIterable_", StringComparison.Ordinal) &&
+                (TypeJson.OwnerName(init3["ownerType"]) ?? "").StartsWith("<>dotkt_KIterable_", StringComparison.Ordinal) &&
                 init3["recv"] is JsonObject krecv &&
-                (Str(krecv["owner"]) ?? Str(krecv["ownerType"]) ?? "").StartsWith("kotlin.", StringComparison.Ordinal))
+                (TypeJson.OwnerName(krecv["owner"]) ?? TypeJson.OwnerName(krecv["ownerType"]) ?? "").StartsWith("kotlin.", StringComparison.Ordinal))
             {
                 obj["init"] = new JsonObject
                 {
                     ["k"] = "callStatic",
-                    ["owner"] = Bridge,
+                    ["owner"] = TypeJson.Fqn(Bridge),
                     ["method"] = "iteratorOverEnumerable",
                     ["args"] = new JsonArray { krecv.DeepClone() },
-                    ["typeArgs"] = new JsonArray { elem3 },
+                    ["typeArgs"] = new JsonArray { TypeJson.Write(elem3) },
                 };
                 map[vn3] = elem3;
-                obj["type"] = "clrg:kotlin.collections.Iterator[" + elem3 + "]";
+                obj["type"] = IterType(elem3);
             }
             // A hasNext/next `callInstance` whose synthetic owner addresses one of those iterator locals -> a
             // `clrInstance` on the real referenced generic interface. callInstance routes through ResolveMethod/
@@ -2420,7 +2422,7 @@ static class IteratorConsumerNormalization
             // is `clrInstance` (EmitClrCall), exactly how the substituted IReadOnlyList's get_Item/get_Count resolve.
             // next() returns the element, hasNext() returns Boolean; argTypes are empty. `type`/`ret` stay in the source
             // vocabulary — the later type-lowering pass lowers them.
-            else if (k == "callInstance" && Str(obj["ownerType"]) is string owner &&
+            else if (k == "callInstance" && TypeJson.OwnerName(obj["ownerType"]) is string owner &&
                 owner.StartsWith(SynthPrefix, StringComparison.Ordinal) && obj["recv"] is JsonObject recv &&
                 Str(recv["k"]) == "local" && Str(recv["name"]) is string rn && map.TryGetValue(rn, out var e))
             {
@@ -2428,10 +2430,10 @@ static class IteratorConsumerNormalization
                 obj["k"] = "clrInstance";
                 obj.Remove("ownerType");
                 obj.Remove("virtual");
-                obj["type"] = "clrg:kotlin.collections.Iterator[" + e + "]";
+                obj["type"] = IterType(e);
                 obj["method"] = method;
                 obj["argTypes"] = new JsonArray();
-                obj["ret"] = method == "next" ? e : "kotlin.Boolean";
+                obj["ret"] = method == "next" ? TypeJson.Write(e) : TypeJson.Fqn("kotlin.Boolean");
             }
             foreach (var kv in obj) if (kv.Value != null) Process(kv.Value, map);
         }
@@ -2442,33 +2444,21 @@ static class IteratorConsumerNormalization
     // The (K, V) type args of a Map.Entry / MutableEntry element token (`@kotlin.collections.MutableMap$MutableEntry[
     // string,int]` -> ("string","int")); ("object","object") when erased/unparseable. Used to instantiate the
     // clrMapMutableEntries<K,V> reroute target.
-    static (string, string) EntryKvArgs(string elem)
+    static readonly TypeNode ObjT = new TypeNode.Fqn("object");
+    static (TypeNode, TypeNode) EntryKvArgs(TypeNode.Fqn elem)
     {
-        var br = elem.IndexOf('[');
-        if (br < 0 || !elem.EndsWith("]", StringComparison.Ordinal)) return ("object", "object");
-        var inner = elem[(br + 1)..^1];
-        // top-level comma split (the K/V args may themselves be constructed generics with nested commas).
-        var depth = 0; var comma = -1;
-        for (var i = 0; i < inner.Length; i++)
-        {
-            var c = inner[i];
-            if (c == '[') depth++;
-            else if (c == ']') depth--;
-            else if (c == ',' && depth == 0) { comma = i; break; }
-        }
-        if (comma < 0) return (inner.Length > 0 ? inner : "object", "object");
-        var k = inner[..comma];
-        var v = inner[(comma + 1)..];
-        return (k.Length > 0 ? k : "object", v.Length > 0 ? v : "object");
+        var a = elem.Args;
+        return (a is { Length: >= 1 } && a[0] != null ? a[0] : ObjT,
+                a is { Length: >= 2 } && a[1] != null ? a[1] : ObjT);
     }
 
-    // `@kotlin.collections.Iterator[<elem>]` / `@kotlin.collections.MutableIterator[<elem>]` -> (bare head, elem);
-    // null otherwise. The elem may itself be a constructed token (`@kotlin.collections.Map$Entry[string,int]`).
-    static (string, string)? IteratorVarElem(string vt)
+    // `kotlin.collections.Iterator<elem>` / `kotlin.collections.MutableIterator<elem>` -> (head name, elem); null
+    // otherwise. The elem may itself be a constructed type (`kotlin.collections.Map$Entry<K,V>`).
+    static (string, TypeNode)? IteratorVarElem(TypeNode vt)
     {
-        foreach (var head in new[] { "@kotlin.collections.Iterator[", "@kotlin.collections.MutableIterator[" })
-            if (vt.StartsWith(head, StringComparison.Ordinal) && vt.EndsWith("]", StringComparison.Ordinal))
-                return (head[1..^1], vt[head.Length..^1]);
+        if (vt is TypeNode.Fqn { Args: { Length: 1 } args } f
+            && f.Name is "kotlin.collections.Iterator" or "kotlin.collections.MutableIterator")
+            return (f.Name, args[0]);
         return null;
     }
 }
@@ -2510,20 +2500,20 @@ static class SyntheticIteratorUnification
         if (root is not JsonObject o || o["types"] is not JsonArray types) return;
 
         // 1) Resolve the element type of each synthetic KIterator definition (its next() return type).
-        var iterElem = new Dictionary<string, string>(StringComparer.Ordinal);
+        var iterElem = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         foreach (var t in types)
         {
             if (t is not JsonObject to || Str(to["name"]) is not string nm) continue;
-            if (nm.StartsWith(IterPrefix, StringComparison.Ordinal) && MethodRet(to, "next") is string el)
+            if (nm.StartsWith(IterPrefix, StringComparison.Ordinal) && MethodRet(to, "next") is TypeNode el)
                 iterElem[nm] = el;
         }
         if (iterElem.Count == 0) return;
 
-        // 2) The canonical referenced-generic replacement token for each synthetic name (element still in the
-        //    source vocabulary — kotlin.Int — so the subsequent BirTypeLowering lowers it to int uniformly).
-        var repl = new Dictionary<string, string>(StringComparer.Ordinal);
+        // 2) The canonical referenced-generic replacement type for each synthetic name (element still in the source
+        //    vocabulary — kotlin.Int — so the subsequent BirTypeLowering lowers it uniformly).
+        var repl = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         foreach (var (nm, el) in iterElem)
-            repl[nm] = "kotlin.collections.Iterator[" + el + "]";
+            repl[nm] = new TypeNode.Fqn("kotlin.collections.Iterator", new[] { el });
 
         // 3) Drop the synthetic interface DEFINITIONS (nothing references them once step 4 completes).
         var keep = new JsonArray();
@@ -2536,42 +2526,42 @@ static class SyntheticIteratorUnification
         o["types"] = keep;
 
         // 4) Re-point every remaining occurrence: synthetic-owner dispatch -> clrInstance on the generic; every
-        //    other synthetic type token (interfaces / ret / param / var-type / cast) -> the generic token string.
+        //    other synthetic type token (interfaces / ret / param / var-type / cast) -> the generic type node.
         Walk(o, repl);
     }
 
-    // The `ret` of the first method named `mname` on a type, or null.
-    static string MethodRet(JsonObject type, string mname)
+    // The `ret` type of the first method named `mname` on a type, or null.
+    static TypeNode MethodRet(JsonObject type, string mname)
     {
         if (type["methods"] is not JsonArray ms) return null;
         foreach (var m in ms)
             if (m is JsonObject mo && Str(mo["name"]) == mname)
-                return Str(mo["ret"]);
+                return TypeJson.Read(mo["ret"]);
         return null;
     }
 
-    static void Walk(JsonNode node, Dictionary<string, string> repl)
+    static void Walk(JsonNode node, Dictionary<string, TypeNode> repl)
     {
         if (node is JsonObject obj)
         {
             // A hasNext/next/iterator dispatch whose synthetic owner is being eliminated: retarget it to a
-            // `clrInstance` on the referenced generic interface (a callInstance on a clrg: owner KeyNotFounds in
+            // `clrInstance` on the referenced generic interface (a callInstance on a synthetic owner KeyNotFounds in
             // ilemit's emitted-`_types` lookup; the CLR-bound member path is clrInstance/EmitClrCall).
-            if (Str(obj["k"]) == "callInstance" && Str(obj["ownerType"]) is string owner &&
+            if (Str(obj["k"]) == "callInstance" && TypeJson.OwnerName(obj["ownerType"]) is string owner &&
                 repl.TryGetValue(owner, out var genOwner) && Str(obj["method"]) is string method)
             {
-                var el = ElemOf(genOwner);
+                var el = ((TypeNode.Fqn)genOwner).Args[0];
                 obj["k"] = "clrInstance";
                 obj.Remove("ownerType");
                 obj.Remove("virtual");
-                obj["type"] = "clrg:" + genOwner;
+                obj["type"] = TypeJson.Write(genOwner);
                 obj["method"] = method;
                 obj["argTypes"] = new JsonArray();
                 obj["ret"] = method switch
                 {
-                    "next" => el,
-                    "hasNext" => "kotlin.Boolean",
-                    "iterator" => "clrg:kotlin.collections.Iterator[" + el + "]",
+                    "next" => TypeJson.Write(el),
+                    "hasNext" => TypeJson.Fqn("kotlin.Boolean"),
+                    "iterator" => TypeJson.Write(genOwner),
                     _ => obj["ret"]?.DeepClone(),
                 };
                 if (obj["recv"] is JsonNode recv) Walk(recv, repl);
@@ -2581,56 +2571,34 @@ static class SyntheticIteratorUnification
             foreach (var key in obj.Select(kv => kv.Key).ToList())
             {
                 var val = obj[key];
-                if (val is JsonValue jv && jv.TryGetValue<string>(out var s))
-                {
-                    var ns = ReplaceTokens(s, repl);
-                    if (!ReferenceEquals(ns, s)) obj[key] = ns;
-                }
-                else if (val != null) Walk(val, repl);
+                if (val == null) continue;
+                if (TypeJson.Read(val) is TypeNode tn) obj[key] = TypeJson.Write(ReplaceSynthetic(tn, repl));
+                else Walk(val, repl);
             }
         }
         else if (node is JsonArray arr)
-        {
             for (var i = 0; i < arr.Count; i++)
             {
                 var val = arr[i];
-                if (val is JsonValue jv && jv.TryGetValue<string>(out var s))
-                {
-                    var ns = ReplaceTokens(s, repl);
-                    if (!ReferenceEquals(ns, s)) arr[i] = ns;
-                }
-                else if (val != null) Walk(val, repl);
+                if (val == null) continue;
+                if (TypeJson.Read(val) is TypeNode tn) arr[i] = TypeJson.Write(ReplaceSynthetic(tn, repl));
+                else Walk(val, repl);
             }
-        }
     }
 
-    // The element of a `kotlin.collections.Iter{ator,able}[<elem>]` replacement token.
-    static string ElemOf(string genToken)
+    // Replace a synthetic-KIterator-named Fqn with its referenced-generic replacement, recursively through args.
+    static TypeNode ReplaceSynthetic(TypeNode t, Dictionary<string, TypeNode> repl) => t switch
     {
-        var br = genToken.IndexOf('[');
-        return br >= 0 && genToken.EndsWith("]", StringComparison.Ordinal) ? genToken[(br + 1)..^1] : "kotlin.Any";
-    }
-
-    // Replace every occurrence of a synthetic name (longest first) with its generic token, but only when the char
-    // immediately following the match is NOT an identifier char — so `<>dotkt_KIterator_kotlin_Int` is not corrupted
-    // inside a longer `<>dotkt_KIterator_kotlin_IntArray`. Any leading `@` / `[` on the original token is preserved.
-    static string ReplaceTokens(string s, Dictionary<string, string> repl)
-    {
-        if (!s.Contains("<>dotkt_KIter", StringComparison.Ordinal)) return s;
-        foreach (var name in repl.Keys.OrderByDescending(k => k.Length))
-        {
-            var token = repl[name];
-            var idx = 0;
-            while ((idx = s.IndexOf(name, idx, StringComparison.Ordinal)) >= 0)
-            {
-                var after = idx + name.Length;
-                if (after < s.Length && (char.IsLetterOrDigit(s[after]) || s[after] == '_')) { idx = after; continue; }
-                s = s[..idx] + token + s[after..];
-                idx += token.Length;
-            }
-        }
-        return s;
-    }
+        TypeNode.Fqn f when repl.TryGetValue(f.Name, out var gen) => gen,
+        TypeNode.Fqn { Args: null } f => f,
+        TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(a => ReplaceSynthetic(a, repl)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(ReplaceSynthetic(n.Of, repl)),
+        TypeNode.Array a => new TypeNode.Array(ReplaceSynthetic(a.Elem, repl)),
+        TypeNode.ByRef b => new TypeNode.ByRef(ReplaceSynthetic(b.Of, repl)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, ReplaceSynthetic(fn.Ret, repl),
+            fn.Params.Select(p => ReplaceSynthetic(p, repl)).ToArray(), fn.Recv == null ? null : ReplaceSynthetic(fn.Recv, repl)),
+        _ => t,
+    };
 }
 
 // STRING -> CharSequence adapter bridge. `kotlin.String` is @ClrTypeAlias("System.String") — a SEALED BCL type whose
