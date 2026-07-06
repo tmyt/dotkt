@@ -107,7 +107,14 @@ sealed partial class Emitter
             return null;
         }
         var ti = _types[attr];
-        var ctor = ti.Ctors.Count > 0 ? ti.Ctors[0] : ti.TB.DefineDefaultConstructor(MethodAttributes.Public);
+        // Ensure the attribute type's ctors are defined even if this stamp runs before pass 3 reaches that type
+        // (a `@KotlinDefault` on an earlier type's parameter), then pick the ctor whose parameter count matches the
+        // applied argument count (an annotation may have >1 ctor). Only a genuinely ctor-less type mints a default one.
+        EnsureCtorsDefined(ti);
+        ConstructorInfo ctor = null;
+        for (int i = 0; i < ti.Ctors.Count; i++)
+            if (ti.CtorDefs[i].GetProperty("params").GetArrayLength() == args.Length) { ctor = ti.Ctors[i]; break; }
+        ctor ??= ti.Ctors.Count > 0 ? ti.Ctors[0] : ti.TB.DefineDefaultConstructor(MethodAttributes.Public);
         return TryCab(ctor, args, attr);
     }
 

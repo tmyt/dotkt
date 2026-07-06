@@ -267,6 +267,21 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **ilemit: `@kotlin.clr.KotlinDefault` custom attributes now encode (#23b).** The ref-stdlib emit was
+  skipping ~172 `@KotlinDefault(index, bir)` applications with `ArgumentException: Parameter count does not
+  match`. Root: `BuildCab` stamps a param/method attribute during pass-3 member declaration, but a
+  `@KotlinDefault` on an EARLIER type's parameter reached `BuildCab` before `kotlin.clr.KotlinDefault`'s own
+  `(int, string)` ctor was defined (pass 3 declares types one at a time) — the old
+  `ti.Ctors[0] ?? DefineDefaultConstructor()` then minted a bogus parameterless ctor per application and every
+  stamp failed the arity check. Fix: `EnsureCtorsDefined(ti)` defines a type's ctors from its CIR on demand
+  (idempotent, guarded), pulled early by `BuildCab`, which now also picks the ctor whose parameter count
+  matches the applied argument count. bir2cir reads these attributes from the reference assembly to splice a
+  callee's omitted non-constant (`CharSequence`/object) default at a cross-module call — so a Tier-2
+  default-omitted call (`listOf(1,2,3).joinToString()`, `separator`/`prefix`/`postfix` `CharSequence`
+  defaults) now fills correctly instead of crashing. (Pre-existing `@Deprecated`/`@OptIn`/`@WasExperimental`
+  skips — Kotlin optional-param / `KClass`-arg annotations `CustomAttributeBuilder` can't encode — are
+  unchanged and out of scope.)
+
 - **ilemit dead-code sweep (M1).** Removed producer-zero legacy CIR handling now that bir2cir emits
   the plain BCL-call / collection-factory vocabulary: the 21 unreachable retire-list `EmitExpr` cases
   (`nullableOf`/`strRepeat`/`split`/`associateWith`/`associateBy`/`groupBy`/`linq*`/`listGet`/`listSet`/

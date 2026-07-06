@@ -24,6 +24,7 @@ sealed class TypeInfo
     public JsonElement CtorDef;
     public readonly List<ConstructorBuilder> Ctors = new();   // all ctors (primary + secondary)
     public readonly List<JsonElement> CtorDefs = new();
+    public bool CtorsDefined;              // guards EnsureCtorsDefined (may run early from BuildCab, then again in pass 3)
     public bool IsInterface;
     public bool IsEnum;
     public EnumBuilder EB;                 // set for enums (EnumBuilder is not a TypeBuilder)

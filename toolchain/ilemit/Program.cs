@@ -372,17 +372,7 @@ sealed partial class Emitter
                         if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(g.GetString(), out var gm)) pb.SetGetMethod(gm);
                         if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(s.GetString(), out var sm)) pb.SetSetMethod(sm);
                     }
-                var ctors = ti.Def.GetProperty("ctors");
-                if (!ti.IsInterface)
-                    foreach (var c in ctors.EnumerateArray())
-                    {
-                        var ps = c.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
-                        var cb = ti.TB.DefineConstructor(AccessOf(c), CallingConventions.Standard, ps);
-                        DefineParamNames(cb, c);   // ctor param NAMES + [Optional]/DefaultParameterValue (named-arg ctor calls)
-                        ti.Ctors.Add(cb);
-                        ti.CtorDefs.Add(c);
-                    }
-                if (ti.Ctors.Count > 0) { ti.Ctor = ti.Ctors[0]; ti.CtorDef = ti.CtorDefs[0]; }
+                EnsureCtorsDefined(ti);
             }
         }
 
@@ -950,6 +940,32 @@ sealed partial class Emitter
         for (int i = 0; i < ti.Ctors.Count; i++)
             if (ti.CtorDefs[i].GetProperty("params").GetArrayLength() == argCount) return ti.Ctors[i];
         return ti.Ctor;
+    }
+
+    // Define a type's constructors from its CIR (idempotent). Normally runs in pass 3, but BuildCab pulls it EARLY when
+    // stamping a param/method attribute whose attribute type is emitted in THIS assembly (e.g. `@kotlin.clr.KotlinDefault
+    // (index, bir)` on a defaulted stdlib parameter): pass 3 declares members type-by-type, so a `@KotlinDefault`
+    // application on an EARLIER type's method would otherwise reach BuildCab before KotlinDefault's own `(int,string)`
+    // ctor was defined — the old `ti.Ctors[0] ?? DefineDefaultConstructor()` then minted a bogus parameterless ctor per
+    // application and every stamp failed "Parameter count does not match". Defining ctors on demand (guarded) makes the
+    // real ctor available whenever it is first needed. Interfaces/enums/file classes have no CIR ctors.
+    void EnsureCtorsDefined(TypeInfo ti)
+    {
+        if (ti.CtorsDefined) return;
+        ti.CtorsDefined = true;
+        if (ti.IsInterface || ti.IsEnum || ti.IsFileClass || !ti.Def.TryGetProperty("ctors", out var ctors)) return;
+        var saved = _curTypeParams;
+        _curTypeParams = EffectiveTps(ti);   // so a `gp:T` ctor param resolves when pulled early out of pass-3 order
+        foreach (var c in ctors.EnumerateArray())
+        {
+            var ps = c.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
+            var cb = ti.TB.DefineConstructor(AccessOf(c), CallingConventions.Standard, ps);
+            DefineParamNames(cb, c);   // ctor param NAMES + [Optional]/DefaultParameterValue (named-arg ctor calls)
+            ti.Ctors.Add(cb);
+            ti.CtorDefs.Add(c);
+        }
+        if (ti.Ctors.Count > 0) { ti.Ctor = ti.Ctors[0]; ti.CtorDef = ti.CtorDefs[0]; }
+        _curTypeParams = saved;
     }
 
     void EmitMethodBody(TypeInfo ti, JsonElement m)
