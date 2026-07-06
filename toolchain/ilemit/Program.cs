@@ -1964,8 +1964,16 @@ sealed partial class Emitter
     // matches a CALL-side `sig` comma-string (kotc renders the call sig with the same legacyToken grammar; both are
     // bir2cir-lowered to the same vocabulary, so `int` == `int` / `gp:T` == `gp:T`).
     static string SigKey(string name, JsonElement methodDef) =>
-        name + "(" + string.Join(",", methodDef.GetProperty("params").EnumerateArray().Select(p => SigTokenOf(p.GetProperty("type")))) + ")";
-    static string SigKey(string name, string sig) => name + "(" + sig + ")";
+        StripSigPrefixes(name + "(" + string.Join(",", methodDef.GetProperty("params").EnumerateArray().Select(p => SigTokenOf(p.GetProperty("type")))) + ")");
+    static string SigKey(string name, string sig) => StripSigPrefixes(name + "(" + sig + ")");
+
+    // The `clr:`/`clrg:` RESOLUTION-PREFIX vocabulary is a CALL-side spelling (bir2cir's legacy sig-token string) that
+    // the structured `SigTokenOf` (DEF side, post type-flip) no longer emits — a bare FQN Fqn node produces
+    // `System...IDictionary[gp:T,gp:T]`, not `clrg:System...IDictionary[...]`. That asymmetry made the exact SigKey
+    // lookup miss (e.g. `map += pair`'s `plusAssign` on `IDictionary<K,V>`), so FindStatic fell through to an arbitrary
+    // name-only overload (Atomics.plusAssign) -> type-mismatched IL -> InvalidProgramException. Strip the prefixes on
+    // BOTH sides so def-key and call-sig agree. (`clr:` is not a substring of `clrg:`, so replacement order is moot.)
+    static string StripSigPrefixes(string sig) => sig.Replace("clrg:", "").Replace("clr:", "");
 
     // The m3 legacy sig-token spelling of a type SLOT (structured Type node -> token; a legacy string passes verbatim).
     // Mirrors kotc.bir.TypeNode.legacyToken (a type var collapses to `gp:T`), so def-side and call-side sigs agree.
