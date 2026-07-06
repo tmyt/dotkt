@@ -1773,6 +1773,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// resolves `_types[accessOwner].Methods[firstM]` generically, with no hardcoded kotlin.ranges knowledge). The
 			// Kotlin-specific facts live here in the CIR-lowering layer (the frontend may know Kotlin; the IL backend not).
 			return """{"k":"forRange","label":$lbl,"var":${str(loopVar.name.asString())},"elem":"int","range":${expr(source)},"accessOwner":"kotlin.ranges.IntProgression","firstM":"get_first","lastM":"get_last","stepM":"get_step","body":[$body]}"""
+		// `for (i in <IntRange VALUE>)` in an APP build (`for (i in list.indices)`, `"hi".indices`, a stored IntRange var).
+		// The stdlib-build forRange above resolves the accessors off ilemit's `_types` (IntProgression is emitted only
+		// there); an app merely REFERENCES it, so instead emit a plain counter loop reading the range's first/last as
+		// ordinary cross-module property getters (verified to resolve). An IntRange is always step 1 ascending, so `<=`/1 is
+		// exact (an empty range has first > last -> the loop body never runs). Spill the range ONCE — `list.indices` is a
+		// side-effecting call, and first/last must read the SAME value. Without this, the for falls to the iterator protocol
+		// and hits `IntIterator.hasNext` (unresolved -> emit-time NotSupported).
+		if (!stdlibCompile && source != null && source.type.classFqName?.asString() == "kotlin.ranges.IntRange") {
+			val rng = "__rng${scopeCounter++}"
+			fun acc(m: String) = """{"k":"callInstance","ownerType":"kotlin.ranges.IntProgression","virtual":true,"recv":{"k":"local","name":${str(rng)}},"method":${str(m)},"args":[]}"""
+			return """{"k":"block","body":[{"k":"var","name":${str(rng)},"type":${str(birType(source.type))},"init":${expr(source)}},{"k":"for","label":$lbl,"var":${str(loopVar.name.asString())},"from":${acc("get_first")},"to":${acc("get_last")},"cmp":"<=","step":1,"body":[$body]}]}"""
+		}
 		// `for (i in 1..5)` constant-folds to a `new IntRange(first,last)` (a CONSTRUCTOR, not a rangeTo call) -> emit a
 		// plain counter loop straight from its args, so NO IntRange object reaches ilemit (it stays Kotlin-agnostic; this
 		// is the user-app form of the §1897 forRange, without the IntProgression accessors). Inclusive -> cmp "<=", step 1.
