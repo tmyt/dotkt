@@ -5417,7 +5417,7 @@ static class RefBodySquash
             ["value"] = new JsonObject
             {
                 ["k"] = "clrNew",
-                ["type"] = "System.NotImplementedException",
+                ["type"] = TypeJson.Fqn("System.NotImplementedException"),
                 ["argTypes"] = new JsonArray(),
                 ["args"] = new JsonArray(),
             },
@@ -5710,10 +5710,12 @@ static class AliasHelperHoist
         // arity). A bare `kotlin.collections.ArrayList` token would lower to a non-generic `clr:System...List` that
         // ilemit cannot resolve. The class type params (bare-string entries like "E") become the `gp:` args; they are
         // declared on the method via MergeTypeParams below, so `gp:E` is in scope. (Mirrors kotc's old birType(__self).)
-        var selfType = aliasToken;
-        if (classTps is { Count: > 0 })
-            selfType = aliasToken + "[" + string.Join(",", classTps.Select(tp => "gp:" + (tp as JsonValue)?.GetValue<string>())) + "]";
-        var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = selfType } };
+        // The class type params are declared on the static helper as its OWN (method-scope) params AHEAD of the
+        // method's own (MergeTypeParams), so `__self`'s generic args are METHOD-scope tv by flattened position.
+        TypeNode selfType = classTps is { Count: > 0 }
+            ? new TypeNode.Fqn(aliasToken, Enumerable.Range(0, classTps.Count).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray())
+            : new TypeNode.Fqn(aliasToken);
+        var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = TypeJson.Write(selfType) } };
         foreach (var p in m["params"] as JsonArray ?? new JsonArray()) ps.Add(p?.DeepClone());
         var outM = new JsonObject
         {
