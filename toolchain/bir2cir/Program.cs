@@ -4203,7 +4203,12 @@ static class NullableFuncReturnErasure
                 var k = (obj["k"] as JsonValue)?.TryGetValue<string>(out var ks) == true ? ks : null;
                 if (k == "delegateNew" && HasErasedRet(obj) && (obj["method"] as JsonValue)?.GetValue<string>() is string dm)
                     delegateMethods.Add(dm);
-                else if (k == "closureNew" && HasErasedRet(obj) && (obj["closureType"] as JsonValue)?.GetValue<string>() is string ct)
+                // `closureType` is a STRUCTURED TypeNode (`{t:fqn,name:…}`) since the #37 type flip — read the fqn
+                // NAME, not a bare string (the old `as JsonValue` silently missed EVERY closure, so a capturing
+                // closure whose funcType erased its `(…)->R?` return to `Func<object>` kept an `invoke` returning the
+                // value-type `!T` → `newobj Func<object>(ldftn !T ::invoke)` read the value as an object ref → NRE,
+                // the genseq2 `generateSequence(1){…}` `{ seed }` closure).
+                else if (k == "closureNew" && HasErasedRet(obj) && TypeJson.Read(obj["closureType"]) is TypeNode.Fqn { Name: { } ct })
                     closureTypes.Add(ct);
                 else if (k == "var" && TypeJson.Read(obj["type"]) is TypeNode vt && obj["init"] is JsonObject init)
                 {
@@ -4877,8 +4882,12 @@ static class MemberCallSubstitution
         // routes to the rt's ClrCollectionDefaults / ClrIteratorBridge helpers — the SAME targets kotc's collDefault
         // path uses (its `clrName(declaringClass) != null` gate is now null for the @ClrTypeAlias collection interfaces,
         // so it no longer fires; this is the bir2cir home of that Kotlin<->CLR relation). The element type is the
-        // owner token's first type arg; the helper is generic over it.
-        else if (instance && kind == "interface" && ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal))
+        // owner token's first type arg; the helper is generic over it. `kotlin.sequences.Sequence` is ALSO
+        // @ClrTypeAlias-ed to IEnumerable (same face) and its sole member `iterator()` vanishes on the BCL interface
+        // exactly like the collection interfaces — so route `Sequence.iterator()` through the SAME bridge (the
+        // `yieldAll(sequence: Sequence<T>): Unit = yieldAll(sequence.iterator())` self-call in SequenceBuilder).
+        else if (instance && kind == "interface"
+            && (ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal) || ownerFqn == "kotlin.sequences.Sequence"))
         {
             var elem = OwnerElemArg(ownerFqnNode);
             if (member == "iterator" && args.Count == 0)
