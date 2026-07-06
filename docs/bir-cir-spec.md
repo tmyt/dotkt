@@ -21,7 +21,7 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `t` | fields | Kotlin meaning | replaces (old string token) |
 |-----|--------|----------------|-----------------------------|
 | `fqn` | `name:string`, `args?:[T…]` | a named type `kotlin.collections.List<…>` — a PURE Kotlin/CLR FQN identity, generic args optional | plain FQN, `clr:`, `clrg:Name[..]`, `@Name`/`@Name[..]`, primitive shorthand (`int`/`string`/`void`/`object`/…) |
-| `tv` | `i:int` | a type variable, **positional** (declaration order on the owning generic decl) | `gp:X` (name-keyed) |
+| `tv` | `scope:"type"\|"method"`, `i:int` | a type variable — `scope` is the CLR generic-param SPACE, `i` the owner-local positional index | `gp:X` (name-keyed, space-blind) |
 | `fn` | `suspend:bool`, `ret:T`, `params:[T…]`, `recv?:T` | a function type; `suspend` is a flag, `recv` = extension receiver | `func:ret:args`, `sfunc:ret:args` |
 | `nullable` | `of:T` | `T?` | `nullable:X` |
 | `array` | `elem:T` | `Array<T>` (this-assembly array) | `array:X` |
@@ -31,16 +31,20 @@ Notes:
 - **No CLR-resolution marker in kotc output.** kotc emits `{t:"fqn",name:"kotlin.Int"}` — the *identity*
   only. bir2cir DERIVES the CLR form (primitive opcode, generic construction, referenced-type resolution).
   `clr:`/`clrg:`/`@`/shorthand are DELETED; the resolution decision lives below the kotc boundary.
-- **`tv.i` is positional**, killing the `gp:`-name remap (`CanonSig`/`FindReflectedMethodBySigLoose` deleted).
-  The index is into the owning declaration's type-parameter list; nested generics repeat the enclosing
-  params by index (the CLR nested-generic encoding is bir2cir's job, derived from the indices).
+- **`tv` is scope-tagged + positional**, killing the `gp:`-name remap (`CanonSig`/`FindReflectedMethodBySigLoose`
+  deleted). `scope:"method"` → the method's own generic params (CLR `!!i`, `GenericMethodParameter`);
+  `scope:"type"` → the enclosing TYPE's generic params (CLR `!i`, `GenericTypeParameter`), where `i` is
+  FLATTENED over the nesting chain (a nested generic type repeats its enclosing types' params — kotc computes
+  the flattened type-index, as it already does). The two spaces are DISTINCT on the CLR; a single flat index
+  conflating type+method is a Reflection.Emit bug (Codex-confirmed), so `scope` is MANDATORY. bir2cir/ilemit
+  map `scope`+`i` straight to `!i` / `!!i`.
 - `fn` subsumes both plain and suspend function types; the H2 position metadata is just an `fn` with
   `suspend:true` in a param/return/field slot — no separate `sfunc:` token, no `BirTokenToMeta`.
 - Examples:
   - `kotlin.Int` → `{"t":"fqn","name":"kotlin.Int"}`
   - `List<Int>` → `{"t":"fqn","name":"kotlin.collections.List","args":[{"t":"fqn","name":"kotlin.Int"}]}`
   - `(Int)->String` → `{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"kotlin.String"},"params":[{"t":"fqn","name":"kotlin.Int"}]}`
-  - `suspend Foo<T>.()->T?` → `{"t":"fn","suspend":true,"recv":{"t":"fqn","name":"Foo","args":[{"t":"tv","i":0}]},"ret":{"t":"nullable","of":{"t":"tv","i":0}},"params":[]}`
+  - `suspend Foo<T>.()->T?` → `{"t":"fn","suspend":true,"recv":{"t":"fqn","name":"Foo","args":[{"t":"tv","scope":"type","i":0}]},"ret":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}},"params":[]}`
 
 ## 2. Node kinds — the `{"k":…}` expression/statement/decl vocabulary
 
@@ -207,7 +211,7 @@ is a list of structured declaration nodes:
       "typeParams":[…], "params":[ {"name":"x","type":{"t":"fqn","name":"kotlin.Int"}} ] },
     { "k":"prop", "name":"greeting",  "type":{"t":"fqn","name":"kotlin.String"}, "mods":{}, "vis":"public" },
     { "k":"prop", "name":"lastIndex", "type":{"t":"fqn","name":"kotlin.Int"}, "mods":{"ext":true},
-      "recv":{"t":"fqn","name":"kotlin.collections.List","args":[{"t":"tv","i":0}]} }
+      "recv":{"t":"fqn","name":"kotlin.collections.List","args":[{"t":"tv","scope":"type","i":0}]} }
   ] }
 ```
 - `tlfun` → `{k:"fun", …, "top":true}` (a top-level fun). `tlextprop` → a `prop` with a `recv` Type.
