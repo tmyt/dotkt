@@ -105,12 +105,14 @@ public actual interface MutableSet<E> : Set<E>, MutableCollection<E> {
 // entries VIEWS, putAll/getOrDefault/...) route through kotlin.collections.ClrMapDefaults (bir2cir Rule 5).
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IDictionary")
 public actual interface Map<K, out V> {
-    // IDictionary<K,V>.Count is INHERITED from ICollection<KeyValuePair<K,V>> — a 2->1-arity constructed-arg base
-    // interface; ilemit's PropAccessor/ResolveInheritedIfaceMethod substitute such chains (SubstituteIfaceArgs).
-    @kotlin.clr.ClrIntrinsic("Count")
+    // size / containsKey are NOT bound to @ClrIntrinsic("Count") / @ClrIntrinsic("ContainsKey"): a DIRECT bind reads
+    // through the INVARIANT generic IDictionary<K,V>, which throws EntryPointNotFound on a value-type-mismatched map
+    // (a groupBy result: runtime Dictionary<K,IList<V>> read as IDictionary<K,IReadOnlyList<V>>). Instead bir2cir Rule 5m
+    // routes `get_size`/`containsKey` on a Map/MutableMap owner to the COVARIANCE-SAFE ClrMapDefaults.clrMapSize /
+    // clrMapContainsKey (non-generic ICollection.Count / IDictionary.Contains). This also makes `mapValues`' transitive
+    // `mapCapacity(this.size)` covariance-safe. (isEmpty is already routed to clrMapIsEmpty via Rule 5m.)
     public actual val size: Int
     public actual fun isEmpty(): Boolean
-    @kotlin.clr.ClrIntrinsic("ContainsKey")
     public actual fun containsKey(key: K): Boolean
     public actual fun containsValue(value: @UnsafeVariance V): Boolean
     // Kotlin `get` returns null on a missing key; IDictionary's get_Item THROWS. NOT bound — routed to

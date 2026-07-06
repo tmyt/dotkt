@@ -4683,6 +4683,12 @@ static class MemberCallSubstitution
             var helper = (member, args.Count, mutable) switch
             {
                 ("get", 1, _) => "clrMapGet",
+                // size / containsKey are UNBOUND (no @ClrIntrinsic) — a direct Count/ContainsKey reads through the
+                // INVARIANT generic IDictionary<K,V> and throws EntryPointNotFound on a value-type-mismatched map (a
+                // groupBy result). Route to the covariance-safe non-generic helpers (ICollection.Count / IDictionary
+                // .Contains). This also makes mapValues' transitive `mapCapacity(this.size)` covariance-safe.
+                ("get_size", 0, _) => "clrMapSize",
+                ("containsKey", 1, _) => "clrMapContainsKey",
                 ("isEmpty", 0, _) => "clrMapIsEmpty",
                 ("containsValue", 1, _) => "clrMapContainsValue",
                 ("getOrDefault", 2, _) => "clrMapGetOrDefault",
