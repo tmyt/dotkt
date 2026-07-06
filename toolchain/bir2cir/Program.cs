@@ -320,6 +320,14 @@ sealed class Pipeline
             // (kotlin.Any then lowers to object in rt/app, verbatim in ref). Un-blocks BlockOnSink/startCoroutine/
             // resumeWith dispatch (CLR interface variance does not lift value types; uniform erasure is the fix).
             ContinuationErasure.Apply(substituted);
+            // SEQUENCE for-in dispatch (#37 m1 wave-2, cases/il-seqforin): a `for (x in seq)` over a Kotlin Sequence
+            // lowers to `forEachInline` with a typed `IEnumerable<elem>::GetEnumerator` dispatch, but the anon Sequence
+            // `sequence { .. }` returns is erased to `IEnumerable<object>` at runtime (its lifted class carries no type
+            // param yet declares `IEnumerable<T>` over the enclosing method's T) -> the typed slot is absent
+            // (EntryPointNotFound). Re-point such a forEachInline onto the variance-immune non-generic
+            // `System.Collections.IEnumerable`/`IEnumerator` + an element cast. Non-ref; before type lowering (the src's
+            // `kotlin.sequences.Sequence` FQN is still in the source vocabulary).
+            if (!_options.RefBuild) SequenceForEachLowering.Apply(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
