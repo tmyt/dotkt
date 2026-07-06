@@ -231,6 +231,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   with a Kotlin function-type parameter (the frontend binds to THIS overload, so no cast), routed to
   `ClrMapDefaults.clrMapMerge` for BCL-aliased receivers. Semantics mirror `java.util.Map.merge`
   (absent → insert; present → remap; null result → remove).
+- **`groupBy {}` read surface is covariance-safe (C2).** `listOf(1,2,3,4).groupBy { it % 2 }` returns a
+  `Map<K, List<V>>` (`IDictionary<K, IReadOnlyList<V>>`) but the runtime object is the `Dictionary<K, MutableList<V>>`
+  (`IDictionary<K, IList<V>>`) that `groupByTo` built and mutated — and CLR `IDictionary<,>` is INVARIANT in the value,
+  so the runtime map is not assignable to the read interface: reading it (`toString`/`m[k]`/`for ((k,v) in m)`/`.entries`/
+  `.keys`/`.values`) threw `EntryPointNotFound`/`InvalidCastException` through the mismatched generic slot. The
+  `ClrMapDefaults` READ helpers now route through the NON-GENERIC `System.Collections.IDictionary` (implemented by every
+  `Dictionary<K,V>` regardless of V) via `IDictionaryEnumerator` + `get_Item(object)` — the read-side mirror of bir2cir's
+  write-side `MapVarianceRealign`. Regular `mapOf`/`mutableMapOf` read/iterate/`toString` are unaffected. Verified against
+  the JVM oracle (`cases/il-groupby2`, added to `verify-differential`). (A direct `m.size`/`m.containsKey` — and thus
+  `mapValues`' `mapCapacity(size)` pre-size — on a mismatched map still hit the Rule-2 `@ClrIntrinsic("Count")`/
+  `("ContainsKey")` on the invariant generic interface; making those covariance-safe needs a bir2cir Rule 5m route to the
+  new `clrMapSize`/`clrMapContainsKey` helpers, exactly as `get`/`get_keys`/`get_values` already route.)
 - **Nested collections/maps inside `Pair`/`Triple.toString()`** render Kotlin-style (C11):
   `(listOf(1, 2) to listOf(3, 4)).toString()` is `([1, 2], [3, 4])`, not the raw
   `(System.Collections.Generic.List\`1[System.Int32], …)`. A tuple component's erased generic static type

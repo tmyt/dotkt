@@ -20,9 +20,12 @@
 
 package kotlin.collections
 
-/** Non-generic `System.Collections.ICollection` — the detection facade for "is this an erased collection?". */
+/** Non-generic `System.Collections.ICollection` — the detection facade for "is this an erased collection?".
+ *  `Count` is the non-generic size accessor (IDictionary : ICollection), read covariance-safely (value-type-independent). */
 @kotlin.clr.ClrTypeAlias("System.Collections.ICollection")
-internal interface ClrRawCollection
+internal interface ClrRawCollection {
+    @kotlin.clr.ClrProperty(kotlin.clr.READ, "Count") fun count(): Int
+}
 
 /** Non-generic `System.Collections.IEnumerable` — its `GetEnumerator()` yields the erased (`Current: Any?`) enumerator. */
 @kotlin.clr.ClrTypeAlias("System.Collections.IEnumerable")
@@ -37,10 +40,15 @@ internal interface ClrRawEnumerator {
     @kotlin.clr.ClrProperty(kotlin.clr.READ, "Current") fun current(): Any?
 }
 
-/** Non-generic `System.Collections.IDictionary` — detection facade + its `IDictionaryEnumerator` (Key/Value: Any?). */
+/** Non-generic `System.Collections.IDictionary` — detection facade + its `IDictionaryEnumerator` (Key/Value: Any?).
+ *  `Contains(object)` / `get_Item(object): object` are the covariance-safe key-test / value-read (every `Dictionary<K,V>`
+ *  implements this base interface regardless of V, so they never hit the generic value-type invariance of IDictionary<K,V>). */
 @kotlin.clr.ClrTypeAlias("System.Collections.IDictionary")
 internal interface ClrRawDictionary {
     fun GetEnumerator(): ClrRawDictionaryEnumerator
+    fun Contains(key: Any?): Boolean
+    @kotlin.clr.ClrIntrinsic("get_Item") fun rawGet(key: Any?): Any?
+    @kotlin.clr.ClrIntrinsic("set_Item") fun rawSet(key: Any?, value: Any?): Unit
 }
 
 /** Non-generic `System.Collections.IDictionaryEnumerator` — `Key`/`Value` are `object` (erased entry access). */
