@@ -1,4 +1,6 @@
+using System.Linq;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // `.size` (the `Count` intrinsic) on a NESTED collection generic — a collection whose own element/value type-arg is
 // itself a BCL collection generic — must dispatch through the VARIANCE-IMMUNE non-generic `System.Collections.ICollection`.
@@ -22,10 +24,10 @@ static class NestedCollectionCountLowering
         if (node is JsonObject o)
         {
             if (Str(o["k"]) == "clrPropGet" && Str(o["name"]) == "Count"
-                && o["recv"] is JsonNode recv && Str(o["type"]) is string type && HasNestedCollectionArg(type))
+                && o["recv"] is JsonNode recv && HasNestedCollectionArg(TypeJson.Read(o["type"])))
             {
-                o["type"] = "System.Collections.ICollection";
-                o["recv"] = new JsonObject { ["k"] = "cast", ["type"] = "clr:System.Collections.ICollection", ["e"] = recv.DeepClone() };
+                o["type"] = TypeJson.Fqn("System.Collections.ICollection");
+                o["recv"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Collections.ICollection"), ["e"] = recv.DeepClone() };
             }
             foreach (var kv in o) if (kv.Value != null) Apply(kv.Value);
         }
@@ -33,33 +35,16 @@ static class NestedCollectionCountLowering
             foreach (var it in a) if (it != null) Apply(it);
     }
 
-    // True when `token` is a constructed BCL collection generic (`clrg:System.Collections.Generic.X[..]`) at least one of
-    // whose top-level type-args is ITSELF a constructed BCL collection generic (`clrg:System.Collections.*[..]`).
-    static bool HasNestedCollectionArg(string token)
-    {
-        if (token is null || !token.StartsWith("clrg:System.Collections.", System.StringComparison.Ordinal)) return false;
-        var lb = token.IndexOf('[');
-        if (lb < 0 || !token.EndsWith("]", System.StringComparison.Ordinal)) return false;
-        foreach (var arg in SplitTop(token[(lb + 1)..^1]))
-            if (arg.StartsWith("clrg:System.Collections.", System.StringComparison.Ordinal) && arg.Contains('['))
-                return true;
-        return false;
-    }
+    // True when the LOWERED type is a constructed BCL collection generic (`System.Collections.*<…>`) at least one of
+    // whose top-level type-args is ITSELF a constructed BCL collection generic — the mutable/read-only reification
+    // mismatch that must dispatch Count through the non-generic ICollection. (Runs post-lowering, so tokens are the
+    // resolved System.Collections Fqn nodes, not the source `clrg:` strings.)
+    static bool HasNestedCollectionArg(TypeNode t) =>
+        t is TypeNode.Fqn f && f.Args is { Length: > 0 } && IsBclCollection(f)
+        && f.Args.Any(a => a is TypeNode.Fqn af && af.Args is { Length: > 0 } && IsBclCollection(af));
+
+    static bool IsBclCollection(TypeNode.Fqn f) =>
+        f.Name.StartsWith("System.Collections.", System.StringComparison.Ordinal);
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
-
-    // Top-level comma split respecting `[...]` nesting.
-    static System.Collections.Generic.List<string> SplitTop(string value)
-    {
-        var result = new System.Collections.Generic.List<string>();
-        var depth = 0; var start = 0;
-        for (var i = 0; i < value.Length; i++)
-        {
-            if (value[i] == '[') depth++;
-            else if (value[i] == ']') depth--;
-            else if (value[i] == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
-        }
-        if (value.Length > 0) result.Add(value[start..].Trim());
-        return result;
-    }
 }

@@ -34,11 +34,8 @@ static class EnumMemberBinding
     static void Rebind(JsonObject obj)
     {
         if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) != true || k != "callInstance") return;
-        if ((obj["ownerType"] as JsonValue)?.TryGetValue<string>(out var owner) != true) return;
-        var bare = owner.StartsWith("@") ? owner[1..] : owner;
-        var br = bare.IndexOf('[');
-        if (br >= 0) bare = bare[..br];
-        if (bare != "kotlin.Enum") return;
+        // The owner FQN identity (a structured Fqn's Name, args dropped) — pre-lowering it is still `kotlin.Enum`.
+        if (TypeJson.OwnerName(obj["ownerType"]) != "kotlin.Enum") return;
         if ((obj["method"] as JsonValue)?.TryGetValue<string>(out var method) != true) return;
         if (obj["recv"] is not JsonNode recv) return;
         // `name` (get_name) / `toString` -> System.Enum.ToString() = the declared constant name. objMethod boxes the

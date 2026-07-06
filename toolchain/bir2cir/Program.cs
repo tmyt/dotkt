@@ -1875,19 +1875,6 @@ static class BirTypeLowering
         return TypeNode.Write(LowerType(tn, refBuild, force, typeArg));
     }
 
-    // The legacy `sfunc:`-token spelling of a suspend function type (H2 metadata stamping), reconstructed from a
-    // structured Fn so the suspendFnType/retSuspendFnType attribute string stays byte-shape-identical to before.
-    static string LegacyToken(TypeNode t) => t switch
-    {
-        TypeNode.Fqn f => f.Args == null ? f.Name : f.Name + "[" + string.Join(",", f.Args.Select(LegacyToken)) + "]",
-        TypeNode.Tv => "gp:T",
-        TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + LegacyToken(fn.Ret) + ":" + string.Join(",", fn.Params.Select(LegacyToken)),
-        TypeNode.Nullable n => "nullable:" + LegacyToken(n.Of),
-        TypeNode.Array a => "array:" + LegacyToken(a.Elem),
-        TypeNode.ByRef b => "byref:" + LegacyToken(b.Of),
-        _ => "object",
-    };
-
     // True iff a JSON value is a structured Type node (has a `t` discriminator) rather than a legacy type STRING
     // or a k-tagged sub-node.
     static bool IsTypeObject(JsonNode n) =>
@@ -1938,8 +1925,8 @@ static class BirTypeLowering
             // carries the SHAPE STRING (not a bare flag): the erased CLR type is `object`, from which the arg/return
             // types are otherwise unrecoverable. Additive — ilemit reads it only on param/return/field/property builders;
             // harmless on any other node that happens to carry an sfunc-typed `type`/`ret`.
-            if (SuspendFnSlot(obj["type"]) is string h2traw) copy["suspendFnType"] = h2traw;
-            if (SuspendFnSlot(obj["ret"]) is string h2rraw) copy["retSuspendFnType"] = h2rraw;
+            if (SuspendFnSlot(obj["type"]) is JsonNode h2t) copy["suspendFnType"] = h2t;
+            if (SuspendFnSlot(obj["ret"]) is JsonNode h2r) copy["retSuspendFnType"] = h2r;
             // ANNOTATION-BASE DERIVATION (annotation-base-lowering-to-bir2cir, USER 2026-07-02): kotc emits a user
             // `annotation class` as a plain class carrying `"annotation":true` (base:null) — the Kotlin fact. bir2cir
             // is the Kotlin<->CLR layer that DERIVES the CLR base: an annotation class extends System.Attribute. Set
@@ -1986,13 +1973,15 @@ static class BirTypeLowering
          b["name"] is JsonValue bn && bn.TryGetValue<string>(out var s) && s != null &&
          s.EndsWith("System.Attribute", StringComparison.Ordinal));
 
-    // If a `type`/`ret` slot holds a suspend function type (Fn{suspend:true}), return its legacy `sfunc:` token for
-    // the H2 suspendFnType/retSuspendFnType stamping (the type itself is erased to `object` by LowerType); else null.
-    static string SuspendFnSlot(JsonNode slot)
+    // If a `type`/`ret` slot holds a suspend function type (Fn{suspend:true}), return the STRUCTURED fn node for the
+    // H2 suspendFnType/retSuspendFnType metadata stamping (the slot's type itself is erased to `object` by LowerType,
+    // so its arg/return SHAPE would otherwise be unrecoverable). Spec §0/§1: the metadata IS the structured Type node
+    // (the old `sfunc:` string folds into it) — ilemit/facadegen consume the Fn directly, never a re-rendered string.
+    static JsonNode SuspendFnSlot(JsonNode slot)
     {
         if (slot is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s == "fn"
             && o["suspend"] is JsonValue sv && sv.TryGetValue<bool>(out var susp) && susp)
-            return LegacyToken(TypeNode.Parse(o.ToJsonString()));
+            return o.DeepClone();
         return null;
     }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // BUG-1 Part A (bundle-6 value-type dual-representation): the CALL-SITE receiver conversion for a value-type-element
 // collection passed to a nullable-generic collection extension (`Iterable<T?>.filterNotNull()` / `requireNoNulls()`).
@@ -55,7 +56,7 @@ static class ValueTypeNullableCollectionArg
             || !sig.Contains("[nullable:gp:", StringComparison.Ordinal)
             || sig.Contains("array:", StringComparison.Ordinal)) return;
         if (call["typeArgs"] is not JsonArray ta || ta.Count == 0) return;
-        if ((ta[0] as JsonValue)?.TryGetValue<string>(out var elem) != true || !ValueTypeTokens.Contains(elem)) return;
+        if (!IsValueTypeArg(ta[0])) return;
         if (call["args"] is not JsonArray args || args.Count == 0) return;
         // Idempotence: never re-wrap an already-cast receiver.
         if (args[0] is JsonObject ro && (ro["k"] as JsonValue)?.GetValue<string>() == "clrGenericStatic"
@@ -69,5 +70,14 @@ static class ValueTypeNullableCollectionArg
             ["shapes"] = new JsonArray { "IEnumerable" },
             ["args"] = new JsonArray { args[0].DeepClone() },
         };
+    }
+
+    // A `typeArgs[0]` value-type test on the pre-lowering structured Type node (a bare-primitive Fqn), with a legacy
+    // string fallback. ValueTypeTokens carries both the kotlin.* and the CLR-shorthand spellings.
+    static bool IsValueTypeArg(JsonNode n)
+    {
+        if (TypeJson.Read(n) is TypeNode.Fqn { Args: null } f) return ValueTypeTokens.Contains(f.Name);
+        if (n is JsonValue v && v.TryGetValue<string>(out var s)) return ValueTypeTokens.Contains(s);
+        return false;
     }
 }

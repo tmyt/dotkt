@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // bir2cir — GenericSelfInstantiation (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object / closure class
 // (`<>dotkt_obj*<T>`) emits its SELF instance accesses with the BARE type name as `ownerType`
@@ -43,12 +44,16 @@ static class GenericSelfInstantiation
                     {
                         var tps = TypeParamNames(to["typeParams"]);
                         if (tps.Count == 0) continue;
-                        var inst = self + "[" + string.Join(",", tps.Select(p => "gp:" + p)) + "]";
+                        // The constructed self: `Self<!0,…,!n-1>` — the type-scope generic params by FLATTENED position
+                        // (a lifted anon-object is extracted flat, so its own params are indices 0..n-1). bir2cir derives
+                        // this CLR instantiation from the FQN identity kotc emitted.
+                        var inst = new TypeNode.Fqn(self,
+                            Enumerable.Range(0, tps.Count).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
                         Walk(to, self, inst);
                     }
     }
 
-    static void Walk(JsonNode n, string self, string inst)
+    static void Walk(JsonNode n, string self, TypeNode.Fqn inst)
     {
         if (n is JsonObject o)
         {
@@ -57,7 +62,9 @@ static class GenericSelfInstantiation
                 case "callInstance":
                 case "field":
                 case "setField":
-                    if (Str(o["ownerType"]) == self) o["ownerType"] = inst;
+                    // Only the BARE open self owner (`Self`, no args) — a call already carrying args stays put.
+                    if (TypeJson.Read(o["ownerType"]) is TypeNode.Fqn { Args: null } f && f.Name == self)
+                        o["ownerType"] = TypeJson.Write(inst);
                     break;
             }
             foreach (var kv in o) if (kv.Value != null) Walk(kv.Value, self, inst);

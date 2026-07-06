@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // ARRAY-ELEMENT NULLABILITY realignment (C2 boxed-primitive dual-representation).
 //
@@ -38,12 +39,13 @@ static class ArrayNullableElemRealign
     static void Realign(JsonObject obj)
     {
         if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) != true || (k != "var" && k != "field")) return;
-        if ((obj["type"] as JsonValue)?.TryGetValue<string>(out var t) != true) return;
-        if (!t.StartsWith("array:nullable:", StringComparison.Ordinal)) return;
+        // The declared slot must be an `Array<E?>` — a TypeNode.Array whose element is a Nullable.
+        if (TypeJson.Read(obj["type"]) is not TypeNode.Array { Elem: TypeNode.Nullable }) return;
         if (obj["init"] is not JsonObject init) return;
         if ((init["k"] as JsonValue)?.TryGetValue<string>(out var ik) != true || Array.IndexOf(ArrayCreationKinds, ik) < 0) return;
-        if ((init["elem"] as JsonValue)?.TryGetValue<string>(out var elem) != true) return;
-        if (elem.StartsWith("nullable:", StringComparison.Ordinal) || elem.StartsWith("array:", StringComparison.Ordinal)) return;
-        init["elem"] = "nullable:" + elem;
+        // The creation's own element token dropped the `?` (non-null E) — re-wrap it in Nullable so a genuine
+        // `Nullable<E>[]` is allocated (elem stelem/ldelem then agree). Skip an already-nullable / nested-array elem.
+        if (TypeJson.Read(init["elem"]) is not TypeNode elem || elem is TypeNode.Nullable or TypeNode.Array) return;
+        init["elem"] = TypeJson.Write(new TypeNode.Nullable(elem));
     }
 }

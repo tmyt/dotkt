@@ -70,18 +70,20 @@ static class CrossClassPrivateWidening
             {
                 switch (Str(o["k"]))
                 {
+                    // Owner slots are structured Type nodes now — read the Fqn identity directly (BareOwner is then a
+                    // no-op on the already-bare name, kept only as a defensive strip for a legacy string owner).
                     case "callInstance":
-                        if (BareOwner(Str(o["ownerType"])) is string ci && ci != selfType)
-                            Record(Str(o["ownerType"]), Str(o["method"]));
+                        if (BareOwner(TypeJson.OwnerName(o["ownerType"])) is string ci && ci != selfType)
+                            Record(TypeJson.OwnerName(o["ownerType"]), Str(o["method"]));
                         break;
                     case "callStatic":
-                        if (BareOwner(Str(o["owner"])) is string cs && cs != selfType)
-                            Record(Str(o["owner"]), Str(o["method"]));
+                        if (BareOwner(TypeJson.OwnerName(o["owner"])) is string cs && cs != selfType)
+                            Record(TypeJson.OwnerName(o["owner"]), Str(o["method"]));
                         break;
                     case "field":
                     case "setField":
-                        if (BareOwner(Str(o["ownerType"])) is string fo && fo != selfType)
-                            Record(Str(o["ownerType"]), Str(o["name"]));
+                        if (BareOwner(TypeJson.OwnerName(o["ownerType"])) is string fo && fo != selfType)
+                            Record(TypeJson.OwnerName(o["ownerType"]), Str(o["name"]));
                         break;
                 }
                 foreach (var kv in o) if (kv.Value != null) Walk(kv.Value, selfType);
