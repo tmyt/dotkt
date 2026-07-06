@@ -38,7 +38,7 @@ sealed partial class Emitter
             }
             case "setField":
             {
-                var fon = s.GetProperty("ownerType").GetString();
+                var fon = SlotName(s.GetProperty("ownerType"));
                 var fnm = s.GetProperty("name").GetString();
                 // An EXTERNAL type's property write goes through the public setter (its backing field is private
                 // cross-assembly -> Stfld would throw FieldAccessException). Falls back to the field when no setter.

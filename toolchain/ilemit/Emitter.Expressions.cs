@@ -81,7 +81,7 @@ sealed partial class Emitter
             }
             case "field":
             {
-                var fon = e.GetProperty("ownerType").GetString();
+                var fon = SlotName(e.GetProperty("ownerType"));
                 var fnm = e.GetProperty("name").GetString();
                 // (No Throwable.message/cause -> System.Exception.Message/InnerException correction here: bir2cir now
                 // substitutes those reads to clrPropGet off the @ClrProperty binding on kotlin.Throwable, so ilemit only
@@ -102,7 +102,7 @@ sealed partial class Emitter
             }
             case "setFieldExpr":
             {
-                var son = e.GetProperty("ownerType").GetString();
+                var son = SlotName(e.GetProperty("ownerType"));
                 var snm = e.GetProperty("name").GetString();
                 if (ExternalPropAccessor(son, "set_" + snm) is { } setter)
                 {
@@ -122,7 +122,7 @@ sealed partial class Emitter
             {
                 // `lateinit var` read: load the field; if still null (uninitialized), throw.
                 EmitExpr(e.GetProperty("recv"));
-                var fld = ResolveField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString(), out _);
+                var fld = ResolveField(SlotName(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _);
                 _il.Emit(OpCodes.Ldfld, fld);
                 _il.Emit(OpCodes.Dup);
                 var ok = _il.DefineLabel();
@@ -168,8 +168,8 @@ sealed partial class Emitter
                 // A @Clr-bound member whose STATIC resolution fails -- it lives on a BCL clrg: interface that FindMethod
                 // skips (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) -- falls back to dynamic
                 // dispatch. Gated to nodes carrying "dynRet" (the @Clr member calls), so a genuine miss elsewhere throws.
-                try { m0 = ResolveMethod(e.GetProperty("ownerType").GetString(), e.GetProperty("method").GetString(), out rt, cisig); }
-                catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _) && OwnerHasClrInterface(e.GetProperty("ownerType").GetString())) { return EmitDynamicCall(e); }
+                try { m0 = ResolveMethod(SlotName(e.GetProperty("ownerType")), e.GetProperty("method").GetString(), out rt, cisig); }
+                catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _) && OwnerHasClrInterface(SlotName(e.GetProperty("ownerType")))) { return EmitDynamicCall(e); }
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
                 EmitExpr(e.GetProperty("recv"));
                 if (m == m0) EmitCallArgs(e.GetProperty("args"), m); else EmitArgsTyped(e.GetProperty("args"), mps, m);
@@ -229,8 +229,8 @@ sealed partial class Emitter
                 // A static on a GENERIC emitted class (a generic class's companion fun) must be anchored onto a
                 // constructed owner — an open-typedef parent token is invalid IL at a foreign call site.
                 var mb = ApplyTypeArgs(AnchorOpenGenericOwnerStatic(
-                    (e.TryGetProperty("owner", out var ow) && ow.ValueKind == JsonValueKind.String)
-                        ? FindMethod(ow.GetString(), name, csig) : FindStatic(name, csig)), e, out var srt, out var sps);
+                    (e.TryGetProperty("owner", out var ow) && ow.ValueKind != JsonValueKind.Null && SlotName(ow) is string ownm)
+                        ? FindMethod(ownm, name, csig) : FindStatic(name, csig)), e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
                 _il.Emit(OpCodes.Call, mb);
@@ -240,8 +240,8 @@ sealed partial class Emitter
             {
                 // A miss on an EXTERNAL owner returns null from FindField — surface it as a legible error
                 // (an unchecked Ldsfld(null) was an opaque ArgumentNullException deep in ILGenerator).
-                var f = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString())
-                    ?? throw new NotSupportedException($"static field {e.GetProperty("ownerType").GetString()}.{e.GetProperty("name").GetString()} not found");
+                var f = FindField(SlotName(e.GetProperty("ownerType")), e.GetProperty("name").GetString())
+                    ?? throw new NotSupportedException($"static field {SlotName(e.GetProperty("ownerType"))}.{e.GetProperty("name").GetString()} not found");
                 MaybeVolatile(f);
                 _il.Emit(OpCodes.Ldsfld, f);
                 return f.FieldType;
@@ -255,8 +255,8 @@ sealed partial class Emitter
             }
             case "staticFieldSet":
             {
-                var sfsf = FindField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString())
-                    ?? throw new NotSupportedException($"static field {e.GetProperty("ownerType").GetString()}.{e.GetProperty("name").GetString()} not found");
+                var sfsf = FindField(SlotName(e.GetProperty("ownerType")), e.GetProperty("name").GetString())
+                    ?? throw new NotSupportedException($"static field {SlotName(e.GetProperty("ownerType"))}.{e.GetProperty("name").GetString()} not found");
                 EmitStoreCoerced(e.GetProperty("value"), sfsf.FieldType);
                 MaybeVolatile(sfsf);
                 _il.Emit(OpCodes.Stsfld, sfsf);
@@ -654,7 +654,7 @@ sealed partial class Emitter
             case "delegateNew":
             {
                 // Non-capturing lambda: bind the lifted static method into a Func/Action delegate.
-                var ft = MapType(e.GetProperty("funcType").GetString());
+                var ft = MapType(e.GetProperty("funcType"));
                 var mb = FindStatic(e.GetProperty("method").GetString());
                 // A GENERIC lifted lambda (e.g. the comparator inside a generic `sort<T>`) MUST be instantiated with its
                 // typeArgs before Ldftn -- loading the open generic-method-DEFINITION's ftn throws "the method itself or
@@ -671,8 +671,8 @@ sealed partial class Emitter
             {
                 // `obj::method` -> a delegate bound to the receiver. ldvirtftn needs the object twice (dup); a
                 // final method uses ldftn (the target stays on the stack as the delegate's first ctor arg).
-                var ft = MapType(e.GetProperty("funcType").GetString());
-                var mb = FindMethod(e.GetProperty("ownerType").GetString(), e.GetProperty("method").GetString());
+                var ft = MapType(e.GetProperty("funcType"));
+                var mb = FindMethod(SlotName(e.GetProperty("ownerType")), e.GetProperty("method").GetString());
                 EmitExpr(e.GetProperty("recv"));
                 if (e.GetProperty("virtual").GetBoolean()) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mb); }
                 else _il.Emit(OpCodes.Ldftn, mb);
@@ -682,7 +682,7 @@ sealed partial class Emitter
             case "boundClrDelegateNew":
             {
                 // `netObj::method` -> a delegate bound to a .NET instance method (resolved by reflection).
-                var ft = MapType(e.GetProperty("funcType").GetString());
+                var ft = MapType(e.GetProperty("funcType"));
                 var type = ClrRef(e.GetProperty("clrType").GetString());
                 var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => ClrRef(a)).ToArray();
                 var mi = type.GetMethod(e.GetProperty("method").GetString(),
@@ -742,7 +742,7 @@ sealed partial class Emitter
                 foreach (var c in e.GetProperty("captures").EnumerateArray()) EmitExpr(c);
                 _il.Emit(OpCodes.Newobj, ctor);              // closure instance is the delegate target
                 _il.Emit(OpCodes.Ldftn, invoke);
-                var ft = MapType(e.GetProperty("funcType").GetString());
+                var ft = MapType(e.GetProperty("funcType"));
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
                 return ft;
             }

@@ -304,7 +304,7 @@ sealed partial class Emitter
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
                 foreach (var i in ifs.EnumerateArray())
                 {
-                    if (DotKt.Bir.TypeNode.Read(i) is not DotKt.Bir.TypeNode.Fqn iFqn) continue;
+                    if (ReadFqn(i) is not DotKt.Bir.TypeNode.Fqn iFqn) continue;
                     // A REFERENCED interface (not in `_types` — a .NET Continuation<int>) is resolved by reflection; an
                     // emitted Kotlin interface (`Container<int>`) comes from `_types` (constructed via ParseOwnerT).
                     Type itype;
@@ -404,7 +404,7 @@ sealed partial class Emitter
                 var ifWork = new Queue<DotKt.Bir.TypeNode.Fqn>();
                 var ifSeen = new HashSet<string>();
                 foreach (var i in ifs.EnumerateArray())
-                    if (DotKt.Bir.TypeNode.Read(i) is DotKt.Bir.TypeNode.Fqn iff) ifWork.Enqueue(iff);
+                    if (ReadFqn(i) is DotKt.Bir.TypeNode.Fqn iff) ifWork.Enqueue(iff);
                 while (ifWork.Count > 0)
                 {
                     var specFqn = ifWork.Dequeue();
@@ -478,7 +478,7 @@ sealed partial class Emitter
                     // chain (e.g. WithComparableMarks : TimeSource, or List<object> : Collection<object>).
                     if (iface.Def.ValueKind == JsonValueKind.Object && iface.Def.TryGetProperty("interfaces", out var baseIfs))
                         foreach (var bi in baseIfs.EnumerateArray())
-                            if (SubstTv(DotKt.Bir.TypeNode.Read(bi), specArgs) is DotKt.Bir.TypeNode.Fqn biF) ifWork.Enqueue(biF);
+                            if (ReadFqn(bi) is DotKt.Bir.TypeNode.Fqn bi0 && SubstTv(bi0, specArgs) is DotKt.Bir.TypeNode.Fqn biF) ifWork.Enqueue(biF);
                     // Iterate the interface's method DEFS (not the name-keyed iface.Methods) so OVERLOADED interface
                     // methods (e.g. MutableMap.remove(K):V vs the JVM remove(K,V):Boolean) each resolve to their own
                     // builder by signature, and to the matching body overload by TYPE-ARG-SUBSTITUTED signature. A miss
@@ -551,9 +551,8 @@ sealed partial class Emitter
             if (bodied.Count == 0) continue;
             foreach (var ib in extIbs.EnumerateArray())
             {
-                var spec = ib.GetString();
-                if (!spec.StartsWith("clr:") && !spec.StartsWith("clrg:")) continue;
-                var itype = MapType(spec);
+                if (ReadFqn(ib) is not DotKt.Bir.TypeNode.Fqn ibF || _types.ContainsKey(ibF.Name)) continue;   // only REFERENCED (.NET) bases
+                var itype = MapType(ibF);
                 // A generic instantiation over an EMITTED TypeBuilder arg can't GetMethods() — enumerate the OPEN
                 // definition and re-anchor each slot onto the instantiation (same pattern as the class wiring).
                 MethodInfo[] ifaceMs; bool reanchor;
@@ -753,9 +752,7 @@ sealed partial class Emitter
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
                 foreach (var i in ifs.EnumerateArray())
                 {
-                    var spec = i.GetString();
-                    if (spec.StartsWith("clr:") || spec.StartsWith("clrg:")) continue;  // .NET iface — not a user-type dep
-                    if (_types.TryGetValue(OwnerOpen(spec), out var inf)) Visit(inf);
+                    if (ReadFqn(i) is DotKt.Bir.TypeNode.Fqn iF && _types.TryGetValue(iF.Name, out var inf)) Visit(inf);
                 }
             // A nested type must be CreateType()'d BEFORE its enclosing type (Reflection.Emit bakes children into the
             // parent). `done` already holds `ti` (added at entry), so a child whose base IS `ti` won't recurse forever.
@@ -1193,18 +1190,19 @@ sealed partial class Emitter
     // Apply generic constraints (`<T : Comparable<T>>` -> `T : IComparable<T>`) to already-defined params. The
     // constraint context map (type or method params) must be current so a `gp:T` inside a bound resolves.
     // True if the type string mentions the type param `gp:<pname>` (token-exact, so `gp:E` doesn't match `gp:E2`).
-    static bool MentionsParam(string typeStr, string pname)
+    // Does a structured type SLOT mention the type-scope type param at position `pos` (variance-conflict check)?
+    static bool MentionsTv(JsonElement e, int pos) =>
+        DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode t && MentionsTv(t, pos);
+    static bool MentionsTv(DotKt.Bir.TypeNode t, int pos) => t switch
     {
-        if (typeStr == null) return false;
-        var tok = "gp:" + pname; int i = 0;
-        while ((i = typeStr.IndexOf(tok, i, StringComparison.Ordinal)) >= 0)
-        {
-            int end = i + tok.Length;
-            if (end >= typeStr.Length || !(char.IsLetterOrDigit(typeStr[end]) || typeStr[end] == '_')) return true;
-            i = end;
-        }
-        return false;
-    }
+        DotKt.Bir.TypeNode.Tv tv => tv.Scope == "type" && tv.I == pos,
+        DotKt.Bir.TypeNode.Fqn { Args: { } a } => a.Any(x => MentionsTv(x, pos)),
+        DotKt.Bir.TypeNode.Nullable n => MentionsTv(n.Of, pos),
+        DotKt.Bir.TypeNode.Array ar => MentionsTv(ar.Elem, pos),
+        DotKt.Bir.TypeNode.ByRef b => MentionsTv(b.Of, pos),
+        DotKt.Bir.TypeNode.Fn fn => MentionsTv(fn.Ret, pos) || fn.Params.Any(p => MentionsTv(p, pos)),
+        _ => false,
+    };
 
     void ApplyConstraints(JsonElement tps, Dictionary<string, GenericTypeParameterBuilder> map, bool isInterface, JsonElement? typeDef = null)
     {
@@ -1227,8 +1225,8 @@ sealed partial class Emitter
                     {
                         if (vs == "out" && m.TryGetProperty("params", out var ps))
                             foreach (var p in ps.EnumerateArray())
-                                if (p.TryGetProperty("type", out var pt) && MentionsParam(pt.GetString(), pname)) { conflict = true; break; }
-                        if (vs == "in" && m.TryGetProperty("ret", out var rt) && MentionsParam(rt.GetString(), pname)) conflict = true;
+                                if (p.TryGetProperty("type", out var pt) && MentionsTv(pt, gp.GenericParameterPosition)) { conflict = true; break; }
+                        if (vs == "in" && m.TryGetProperty("ret", out var rt) && MentionsTv(rt, gp.GenericParameterPosition)) conflict = true;
                         if (conflict) break;
                     }
                 var attr = conflict ? GenericParameterAttributes.None
@@ -1284,7 +1282,7 @@ sealed partial class Emitter
         if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var dirIfs)) return;
         foreach (var di in dirIfs.EnumerateArray())
         {
-            if (DotKt.Bir.TypeNode.Read(di) is not DotKt.Bir.TypeNode.Fqn diF) continue;
+            if (ReadFqn(di) is not DotKt.Bir.TypeNode.Fqn diF) continue;
             var (dopen, _) = ParseOwnerT(diF);
             if (!_types.TryGetValue(dopen, out var diTi) || !diTi.MethodsBySig.TryGetValue(subSig, out var dim)) continue;
             if (dim.Attributes.HasFlag(MethodAttributes.Abstract)) continue;   // need an actual DEFAULT (bodied) method
@@ -1314,6 +1312,14 @@ sealed partial class Emitter
         if (_types.TryGetValue(f.Name, out var ti)) return (f.Name, ti.TB.MakeGenericType(args));
         return (f.Name, ResolveType(f.Name + "`" + args.Length).MakeGenericType(args));
     }
+
+    // Read an interface/base entry as a Fqn: a structured node, or a legacy STRING (a canonical synthetic like
+    // `<>dotkt_CharSequence`, or a clr:/@-prefixed spec) wrapped as a bare Fqn (whose name routes through the string
+    // resolvers). null for a non-Fqn structured node.
+    static DotKt.Bir.TypeNode.Fqn ReadFqn(JsonElement e) =>
+        e.ValueKind == JsonValueKind.String ? new DotKt.Bir.TypeNode.Fqn(e.GetString())
+        : e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f ? f
+        : null;
 
     // An owner slot (structured Fqn or legacy string) -> (open name, constructed type).
     (string open, Type constructed) ParseOwnerSlot(JsonElement e) =>
@@ -1648,7 +1654,7 @@ sealed partial class Emitter
         if (m == null)
         {
             var mn = e.TryGetProperty("method", out var mnEl) && mnEl.ValueKind == JsonValueKind.String ? mnEl.GetString() : "?";
-            var on = e.TryGetProperty("owner", out var onEl) && onEl.ValueKind == JsonValueKind.String ? onEl.GetString() : null;
+            var on = e.TryGetProperty("owner", out var onEl) && onEl.ValueKind != JsonValueKind.Null ? SlotName(onEl) : null;
             throw new NotSupportedException($"unresolved method: {(on != null ? on + "." : "")}{mn}");
         }
         var ps = _mparams.TryGetValue(m, out var p) ? p : null;
@@ -1838,7 +1844,7 @@ sealed partial class Emitter
                 return;
             case "field":
                 EmitExpr(e.GetProperty("recv"));
-                _il.Emit(OpCodes.Ldflda, ResolveField(e.GetProperty("ownerType").GetString(), e.GetProperty("name").GetString(), out _));
+                _il.Emit(OpCodes.Ldflda, ResolveField(SlotName(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
         }
         var t = EmitExpr(e);
@@ -1982,14 +1988,9 @@ sealed partial class Emitter
             if (ti == null || !ti.Def.TryGetProperty("interfaces", out var ifs)) return null;
             foreach (var i in ifs.EnumerateArray())
             {
-                var spec = i.GetString();
-                if (spec.StartsWith("clr:") || spec.StartsWith("clrg:")) continue;
-                // Best-effort probe: only the OPEN name matters here, but ParseOwner eagerly maps the `[args]`
-                // (a `[gp:T]` of an inner generic class is unresolvable in an enclosing ctor context — skip the
-                // interface rather than abort; the base-chain walk continues past it).
-                string open;
-                try { (open, _) = ParseOwner(spec); }
-                catch (NotSupportedException) { continue; }
+                if (ReadFqn(i) is not DotKt.Bir.TypeNode.Fqn iF) continue;
+                var open = iF.Name;   // only the OPEN name matters here (avoid mapping a `[gp:T]` inner-generic arg)
+                if (!_types.ContainsKey(open)) continue;   // a REFERENCED interface is not walked here
                 if (!seenIfaces.Add(open) || !_types.TryGetValue(open, out var iti)) continue;
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, sig), out var ms)) return ms;
                 if (sig != null && FindByNormalizedSig(iti, name, sig) is { } insm) return insm;
@@ -2511,13 +2512,13 @@ sealed partial class Emitter
         EmitExpr(e.GetProperty("e"));
         switch (SlotName(e.GetProperty("to")))
         {
-            case "int": _il.Emit(OpCodes.Conv_I4); return typeof(int);
-            case "long": _il.Emit(OpCodes.Conv_I8); return typeof(long);
-            case "double": _il.Emit(OpCodes.Conv_R8); return typeof(double);
-            case "float": _il.Emit(OpCodes.Conv_R4); return typeof(float);
-            case "short": _il.Emit(OpCodes.Conv_I2); return typeof(short);
-            case "byte": _il.Emit(OpCodes.Conv_I1); return typeof(sbyte);
-            case "char": _il.Emit(OpCodes.Conv_U2); return typeof(char);
+            case "int" or "kotlin.Int": _il.Emit(OpCodes.Conv_I4); return typeof(int);
+            case "long" or "kotlin.Long": _il.Emit(OpCodes.Conv_I8); return typeof(long);
+            case "double" or "kotlin.Double": _il.Emit(OpCodes.Conv_R8); return typeof(double);
+            case "float" or "kotlin.Float": _il.Emit(OpCodes.Conv_R4); return typeof(float);
+            case "short" or "kotlin.Short": _il.Emit(OpCodes.Conv_I2); return typeof(short);
+            case "byte" or "kotlin.Byte": _il.Emit(OpCodes.Conv_I1); return typeof(sbyte);
+            case "char" or "kotlin.Char": _il.Emit(OpCodes.Conv_U2); return typeof(char);
             default: throw new NotSupportedException("conv " + SlotName(e.GetProperty("to")));
         }
     }
@@ -3259,9 +3260,9 @@ sealed partial class Emitter
             : "clr:" + owner;
 
     static string NativeOwnerSpec(JsonElement node, JsonElement member) =>
-        node.TryGetProperty("ownerType", out var ownerType) && ownerType.ValueKind == JsonValueKind.String
-            ? ownerType.GetString()
-            : ClrOwnerSpec(member.GetProperty("owner").GetString());
+        node.TryGetProperty("ownerType", out var ownerType) && ownerType.ValueKind != JsonValueKind.Null
+            ? SlotName(ownerType)
+            : ClrOwnerSpec(SlotName(member.GetProperty("owner")));
 
     // ClrRef (generic-aware type resolution) that returns null instead of throwing.
     Type TryResolveClr(string spec) { try { return ClrRef(spec); } catch { return null; } }
@@ -3869,7 +3870,18 @@ sealed partial class Emitter
         if (pool != null)
             foreach (var g in pool.Values)
                 if (g.GenericParameterPosition == tv.I) return g;
-        throw new NotSupportedException($"unresolved type variable {tv.Scope}!{tv.I} (no generic param at that position in scope)");
+        // Fall back to the OTHER scope's pool by position (kotc's scope tag can disagree with the CLR's split for a
+        // param that flattens across type+method — mirrors the old name-lookup which checked both pools).
+        var other = tv.Scope == "method" ? _curTypeParams : _curMethodParams;
+        if (other != null)
+            foreach (var g in other.Values)
+                if (g.GenericParameterPosition == tv.I) return g;
+        // A type-scope tv with no generic param in scope: a FLAT lifted anon-object (`<>dotkt_objN`) implementing a
+        // generic interface `Iterator<T>` where T rode the enclosing (lost) generic context — kotc emits it flat, so
+        // the CLR view is the monomorphic ERASURE `Iterator<object>` (the same object erasure bir2cir applies to a
+        // nullable-generic / Continuation). Falling to object keeps the metadata emittable; the object is used
+        // monomorphically at runtime.
+        return typeof(object);
     }
 
     // Structured function type -> the CLR delegate (Action/Func or a synthetic for arity > 16).
