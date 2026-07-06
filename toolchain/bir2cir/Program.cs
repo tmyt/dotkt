@@ -3421,8 +3421,6 @@ static class StringCharSequenceBridge
 // to X and forwards to the generic CompareTo. Non-ref builds only (the ref surface stays pure Kotlin).
 static class ComparableBridgeSynthesis
 {
-    const string GenericIface = "clrg:System.IComparable[";
-
     public static void Apply(JsonNode root)
     {
         if (root is not JsonObject o || o["types"] is not JsonArray types) return;
@@ -3431,21 +3429,21 @@ static class ComparableBridgeSynthesis
             if (t is not JsonObject to) continue;
             if ((to["kind"] as JsonValue)?.GetValue<string>() != "class") continue;   // interfaces carry no bodies
             if (to["interfaces"] is not JsonArray ifaces) continue;
-            string selfArg = null; var hasNonGeneric = false;
+            // Post-lowering the interfaces are structured Fqn: `System.IComparable` (non-generic) / `System.IComparable<X>`.
+            TypeNode selfArg = null; var hasNonGeneric = false;
             foreach (var i in ifaces)
             {
-                if (i is not JsonValue v || !v.TryGetValue<string>(out var s)) continue;
-                if (s is "clr:System.IComparable" or "System.IComparable") hasNonGeneric = true;
-                else if (s.StartsWith(GenericIface, StringComparison.Ordinal) && s.EndsWith("]", StringComparison.Ordinal))
-                    selfArg = s[GenericIface.Length..^1];
+                if (TypeJson.Read(i) is not TypeNode.Fqn f || f.Name != "System.IComparable") continue;
+                if (f.Args == null) hasNonGeneric = true;
+                else if (f.Args.Length == 1) selfArg = f.Args[0];
             }
-            if (selfArg == null || hasNonGeneric || selfArg.Contains(',')) continue;   // 1-arg IComparable<X> only
+            if (selfArg == null || hasNonGeneric) continue;   // 1-arg IComparable<X> only
             if (to["methods"] is not JsonArray methods) { methods = new JsonArray(); to["methods"] = methods; }
             // Idempotence: skip when a 1-arg CompareTo(object) is already declared (user-written or a prior pass).
             var exists = methods.OfType<JsonObject>().Any(m =>
                 (m["name"] as JsonValue)?.GetValue<string>() == "CompareTo"
                 && m["params"] is JsonArray ps && ps.Count == 1
-                && ((ps[0] as JsonObject)?["type"] as JsonValue)?.GetValue<string>() is "object" or "kotlin.Any");
+                && TypeJson.Read((ps[0] as JsonObject)?["type"]) is TypeNode.Fqn { Args: null, Name: "object" or "kotlin.Any" });
             if (exists) continue;
             var owner = (to["name"] as JsonValue)?.GetValue<string>();
             if (string.IsNullOrEmpty(owner)) continue;
@@ -3455,7 +3453,7 @@ static class ComparableBridgeSynthesis
                 (m["name"] as JsonValue)?.GetValue<string>() is "CompareTo" or "compareTo"
                 && m["params"] is JsonArray ps1 && ps1.Count == 1);
             var targetName = target != null ? (target["name"] as JsonValue)?.GetValue<string>() : "CompareTo";
-            ifaces.Add("clr:System.IComparable");
+            ifaces.Add(TypeJson.Fqn("System.IComparable"));
             methods.Add(new JsonObject
             {
                 ["name"] = "CompareTo",
@@ -3465,23 +3463,23 @@ static class ComparableBridgeSynthesis
                 ["abstract"] = false,
                 ["objectOverride"] = false,
                 ["vis"] = "public",
-                ["params"] = new JsonArray(new JsonObject { ["name"] = "obj", ["type"] = "object" }),
-                ["ret"] = "int",
+                ["params"] = new JsonArray(new JsonObject { ["name"] = "obj", ["type"] = TypeJson.Fqn("object") }),
+                ["ret"] = TypeJson.Fqn("int"),
                 ["body"] = new JsonArray(new JsonObject
                 {
                     ["k"] = "return",
                     ["value"] = new JsonObject
                     {
                         ["k"] = "callInstance",
-                        ["ownerType"] = owner,
+                        ["ownerType"] = TypeJson.Fqn(owner),
                         ["virtual"] = true,
                         ["recv"] = new JsonObject { ["k"] = "this" },
                         ["method"] = targetName,
-                        ["sig"] = selfArg,
+                        ["sig"] = MemberCallSubstitution.SigToken(selfArg),
                         ["args"] = new JsonArray(new JsonObject
                         {
                             ["k"] = "cast",
-                            ["type"] = selfArg,
+                            ["type"] = TypeJson.Write(selfArg),
                             ["e"] = new JsonObject { ["k"] = "local", ["name"] = "obj" },
                         }),
                     },
@@ -3562,12 +3560,11 @@ static class NullableGenericReturnErasure
             foreach (var m in ms2)
                 if (m is JsonObject mo && (mo["name"] as JsonValue)?.GetValue<string>() is string nm)
                 {
-                    if (getters.Contains(nm)) mo["ret"] = "object";
+                    if (getters.Contains(nm)) mo["ret"] = TypeJson.Fqn("object");
                     if (setters.Contains(nm) && mo["params"] is JsonArray ps)
                         foreach (var p in ps)
-                            if (p is JsonObject po && (po["type"] as JsonValue)?.GetValue<string>() is string pt
-                                && pt.StartsWith("gp:", StringComparison.Ordinal))
-                                po["type"] = "object";
+                            if (p is JsonObject po && TypeJson.Read(po["type"]) is TypeNode.Tv)
+                                po["type"] = TypeJson.Fqn("object");
                 }
             if (getters.Count > 0)
                 foreach (var m in ms2)
@@ -3611,7 +3608,7 @@ static class NullableGenericReturnErasure
                     && obj["args"] is JsonArray a)
                     for (var i = 0; i < a.Count; i++)
                         if (a[i] is JsonObject arg && (arg["k"] as JsonValue)?.GetValue<string>() != "cast")
-                            a[i] = new JsonObject { ["k"] = "cast", ["type"] = "object", ["e"] = arg.DeepClone() };
+                            a[i] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn("object"), ["e"] = arg.DeepClone() };
                 foreach (var kv in obj) WrapErasedSetterArgs(kv.Value, setters);
                 break;
             case JsonArray arr:
@@ -3628,8 +3625,7 @@ static class NullableGenericReturnErasure
         foreach (var d in a)
             if (d is JsonObject po
                 && (po["nullable"] as JsonValue)?.TryGetValue<bool>(out var nb) == true && nb
-                && (po["type"] as JsonValue)?.TryGetValue<string>(out var pt) == true
-                && pt.StartsWith("gp:", StringComparison.Ordinal))
+                && TypeJson.Read(po["type"]) is TypeNode.Tv)
             {
                 if ((po["get"] as JsonValue)?.TryGetValue<string>(out var g) == true && g != null) getters.Add(g);
                 if ((po["set"] as JsonValue)?.TryGetValue<string>(out var s) == true && s != null) setters.Add(s);
@@ -3645,12 +3641,11 @@ static class NullableGenericReturnErasure
         {
             case JsonObject obj:
                 if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "var"
-                    && (obj["type"] as JsonValue)?.TryGetValue<string>(out var vt) == true
-                    && vt.StartsWith("gp:", StringComparison.Ordinal)
+                    && TypeJson.Read(obj["type"]) is TypeNode.Tv
                     && obj["init"] is JsonObject init
                     && (init["k"] as JsonValue)?.TryGetValue<string>(out var ik) == true && ik == "callInstance"
                     && (init["method"] as JsonValue)?.TryGetValue<string>(out var im) == true && getters.Contains(im))
-                    obj["type"] = "object";
+                    obj["type"] = TypeJson.Fqn("object");
                 foreach (var kv in obj) RetypeGetterReaderVars(kv.Value, getters);
                 break;
             case JsonArray arr:
@@ -3670,9 +3665,8 @@ static class NullableGenericReturnErasure
             case JsonObject obj:
                 if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "callInstance"
                     && (obj["method"] as JsonValue)?.TryGetValue<string>(out var mn) == true && getters.Contains(mn)
-                    && (obj["retType"] as JsonValue)?.TryGetValue<string>(out var rt) == true
-                    && (rt.StartsWith("gp:", StringComparison.Ordinal) || rt.StartsWith("nullable:gp:", StringComparison.Ordinal)))
-                    obj["retType"] = "object";
+                    && TypeJson.Read(obj["retType"]) is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })
+                    obj["retType"] = TypeJson.Fqn("object");
                 foreach (var kv in obj) RetypeErasedGetterCalls(kv.Value, getters);
                 break;
             case JsonArray arr:
@@ -3703,10 +3697,9 @@ static class NullableGenericReturnErasure
             case JsonObject obj:
                 if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "var"
                     && (obj["nullable"] as JsonValue)?.TryGetValue<bool>(out var nb) == true && nb
-                    && (obj["type"] as JsonValue)?.TryGetValue<string>(out var vt) == true
-                    && vt.StartsWith("gp:", StringComparison.Ordinal)
+                    && TypeJson.Read(obj["type"]) is TypeNode.Tv
                     && (IsNullConstInit(obj["init"]) || IsNullableGenericMapGet(obj["init"])))
-                    obj["type"] = "object";
+                    obj["type"] = TypeJson.Fqn("object");
                 foreach (var kv in obj) RetypeNullableGpVars(kv.Value);
                 break;
             case JsonArray arr:
@@ -3732,7 +3725,7 @@ static class NullableGenericReturnErasure
         foreach (var ov in ovs)
             if (ov is JsonObject oo
                 && (oo["member"] as JsonValue)?.TryGetValue<string>(out var mem) == true && mem == "get"
-                && (oo["owner"] as JsonValue)?.TryGetValue<string>(out var own) == true
+                && TypeJson.OwnerName(oo["owner"]) is string own
                 && (own == "kotlin.collections.Map" || own == "kotlin.collections.MutableMap"))
                 return true;
         return false;
@@ -3755,31 +3748,18 @@ static class NullableGenericReturnErasure
         foreach (var m in methods)
         {
             if (m is not JsonObject mo || mo["params"] is not JsonArray ps) continue;
-            // param name -> the element type-param X of a `...[nullable:gp:X]` collection param.
-            var nullableSrc = new Dictionary<string, string>(StringComparer.Ordinal);
+            // param name -> the element type-var Tv of a `…<T?>` (Nullable(Tv)) collection param.
+            var nullableSrc = new Dictionary<string, TypeNode.Tv>(StringComparer.Ordinal);
             foreach (var p in ps)
                 if (p is JsonObject po
                     && (po["name"] as JsonValue)?.TryGetValue<string>(out var pn) == true
-                    && (po["type"] as JsonValue)?.TryGetValue<string>(out var pt) == true
-                    && ExtractNullableGpElem(pt) is string tp)
+                    && TypeJson.Read(po["type"]) is TypeNode pt && ExtractNullableTv(pt) is TypeNode.Tv tp)
                     nullableSrc[pn] = tp;
             if (nullableSrc.Count > 0) ErodeForEach(mo["body"], nullableSrc);
         }
     }
 
-    // The X in the first `nullable:gp:X` occurrence of a type token, else null.
-    static string ExtractNullableGpElem(string t)
-    {
-        const string marker = "nullable:gp:";
-        var idx = t.IndexOf(marker, StringComparison.Ordinal);
-        if (idx < 0) return null;
-        var start = idx + marker.Length;
-        var end = start;
-        while (end < t.Length && (char.IsLetterOrDigit(t[end]) || t[end] == '_')) end++;
-        return t.Substring(start, end - start);
-    }
-
-    static void ErodeForEach(JsonNode node, Dictionary<string, string> nullableSrc)
+    static void ErodeForEach(JsonNode node, Dictionary<string, TypeNode.Tv> nullableSrc)
     {
         switch (node)
         {
@@ -3789,10 +3769,10 @@ static class NullableGenericReturnErasure
                     && (src["k"] as JsonValue)?.TryGetValue<string>(out var sk) == true && sk == "local"
                     && (src["name"] as JsonValue)?.TryGetValue<string>(out var sn) == true
                     && nullableSrc.TryGetValue(sn, out var tp)
-                    && (obj["elem"] as JsonValue)?.TryGetValue<string>(out var el) == true && el == "gp:" + tp
+                    && TypeJson.Read(obj["elem"]) is TypeNode.Tv el && el == tp
                     && (obj["var"] as JsonValue)?.TryGetValue<string>(out var lv) == true)
                 {
-                    obj["elem"] = "object";
+                    obj["elem"] = TypeJson.Fqn("object");
                     RenarrowLoopVarArgs(obj["body"], lv, el);
                 }
                 foreach (var kv in obj) ErodeForEach(kv.Value, nullableSrc);
@@ -3804,9 +3784,9 @@ static class NullableGenericReturnErasure
     }
 
     // Wrap every reference to the (now-`object`) loop var `lv` that appears as a CALL argument in a `cast`->`origElem`
-    // (`gp:X`), so a value-type consumer unbox.any's the boxed element. The null-check use (`objEq(element, null)`) is
+    // (the Tv), so a value-type consumer unbox.any's the boxed element. The null-check use (`objEq(element, null)`) is
     // NOT a call arg and is correctly left as `object`.
-    static void RenarrowLoopVarArgs(JsonNode node, string lv, string origElem)
+    static void RenarrowLoopVarArgs(JsonNode node, string lv, TypeNode.Tv origElem)
     {
         switch (node)
         {
@@ -3816,7 +3796,7 @@ static class NullableGenericReturnErasure
                         if (a[i] is JsonObject ai
                             && (ai["k"] as JsonValue)?.TryGetValue<string>(out var ak) == true && ak == "local"
                             && (ai["name"] as JsonValue)?.TryGetValue<string>(out var an) == true && an == lv)
-                            a[i] = new JsonObject { ["k"] = "cast", ["type"] = origElem, ["e"] = ai.DeepClone() };
+                            a[i] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(origElem), ["e"] = ai.DeepClone() };
                 foreach (var kv in obj) RenarrowLoopVarArgs(kv.Value, lv, origElem);
                 break;
             case JsonArray arr:
@@ -3834,14 +3814,13 @@ static class NullableGenericReturnErasure
         foreach (var d in a)
             if (d is JsonObject fo
                 && (fo["nullable"] as JsonValue)?.TryGetValue<bool>(out var nb) == true && nb
-                && (fo["type"] as JsonValue)?.TryGetValue<string>(out var ft) == true
-                && ft.StartsWith("gp:", StringComparison.Ordinal))
-                fo["type"] = "object";
+                && TypeJson.Read(fo["type"]) is TypeNode.Tv)
+                fo["type"] = TypeJson.Fqn("object");
     }
 
-    // Blanket string sweep applying EraseNullableGpToken to every string value in the tree — a string only changes
-    // if it contains the `nullable:gp:` type token, so const/name strings are untouched in practice. Mirrors
-    // NullableFuncReturnErasure.RewriteAllStrings.
+    // Blanket type-slot sweep applying EraseNullableTv to every structured Type in the tree — a `Nullable(Tv)` (a
+    // value-type-nullable type variable `T?`) erases to `object` wherever it sits (a clrg-nested type-arg / field /
+    // standalone-param), the same value-type-null fault as the return case. Mirrors NullableFuncReturnErasure.
     static void EraseNullableGpAllStrings(JsonNode node)
     {
         switch (node)
@@ -3850,11 +3829,8 @@ static class NullableGenericReturnErasure
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
-                    if (child is JsonValue jv && jv.TryGetValue<string>(out var s))
-                    {
-                        var rewritten = EraseNullableGpToken(s);
-                        if (rewritten != s) obj[key] = rewritten;
-                    }
+                    if (child == null) continue;
+                    if (TypeJson.Read(child) is TypeNode tn) obj[key] = TypeJson.Write(EraseNullableTv(tn));
                     else EraseNullableGpAllStrings(child);
                 }
                 break;
@@ -3862,62 +3838,54 @@ static class NullableGenericReturnErasure
                 for (var i = 0; i < arr.Count; i++)
                 {
                     var child = arr[i];
-                    if (child is JsonValue jv && jv.TryGetValue<string>(out var s))
-                    {
-                        var rewritten = EraseNullableGpToken(s);
-                        if (rewritten != s) arr[i] = rewritten;
-                    }
+                    if (child == null) continue;
+                    if (TypeJson.Read(child) is TypeNode tn) arr[i] = TypeJson.Write(EraseNullableTv(tn));
                     else EraseNullableGpAllStrings(child);
                 }
                 break;
         }
     }
 
-    // Replace every `nullable:gp:<ident>` occurrence in a (possibly composite: sig lists, nested `clrg:` generics)
-    // token string with `object`. Skips an occurrence that is the RETURN segment of a func type (`func:`/`sfunc:`
-    // immediately before it, e.g. `func:nullable:gp:R:args`): those belong to NullableFuncReturnErasure, whose
-    // StructuralSweep detects them via the `func:nullable:` prefix — erasing them here would blind that detection.
-    // (A func ARG position — not preceded by `func:` — does not gate that detection and is safe to erase; kotc's
-    // marker contract only emits `nullable:gp:` in clrg-nested type-arg / field / standalone-param positions.)
-    internal static string EraseNullableGpToken(string s)
+    // Replace every `Nullable(Tv)` (a value-type-nullable type variable) with `object`, recursively. LEAVES a func
+    // RETURN nullable-tv (`Fn.Ret`) for NullableFuncReturnErasure (erasing it here would blind that pass); a func
+    // param/receiver nullable-tv is erased.
+    internal static TypeNode EraseNullableTv(TypeNode t) => t switch
     {
-        const string marker = "nullable:gp:";
-        var idx = s.IndexOf(marker, StringComparison.Ordinal);
-        if (idx < 0) return s;
-        var sb = new System.Text.StringBuilder(s.Length);
-        var pos = 0;
-        while (idx >= 0)
-        {
-            if (idx >= 5 && string.CompareOrdinal(s, idx - 5, "func:", 0, 5) == 0)
-            {
-                idx = s.IndexOf(marker, idx + marker.Length, StringComparison.Ordinal);
-                continue;
-            }
-            var end = idx + marker.Length;
-            while (end < s.Length && (char.IsLetterOrDigit(s[end]) || s[end] == '_')) end++;
-            sb.Append(s, pos, idx - pos);
-            sb.Append("object");
-            pos = end;
-            idx = s.IndexOf(marker, pos, StringComparison.Ordinal);
-        }
-        sb.Append(s, pos, s.Length - pos);
-        return sb.ToString();
-    }
+        TypeNode.Nullable { Of: TypeNode.Tv } => new TypeNode.Fqn("object"),
+        TypeNode.Nullable n => new TypeNode.Nullable(EraseNullableTv(n.Of)),
+        TypeNode.Fqn { Args: null } f => f,
+        TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(EraseNullableTv).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(EraseNullableTv(a.Elem)),
+        TypeNode.ByRef b => new TypeNode.ByRef(EraseNullableTv(b.Of)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, fn.Ret, fn.Params.Select(EraseNullableTv).ToArray(),
+            fn.Recv == null ? null : EraseNullableTv(fn.Recv)),
+        _ => t,
+    };
+
+    // The Tv of a Nullable(Tv) somewhere in a type (a nullable-generic collection element `…<T?>`), else null.
+    static TypeNode.Tv ExtractNullableTv(TypeNode t) => t switch
+    {
+        TypeNode.Nullable { Of: TypeNode.Tv tv } => tv,
+        TypeNode.Nullable n => ExtractNullableTv(n.Of),
+        TypeNode.Fqn { Args: { } args } => args.Select(ExtractNullableTv).FirstOrDefault(x => x != null),
+        TypeNode.Array a => ExtractNullableTv(a.Elem),
+        TypeNode.ByRef b => ExtractNullableTv(b.Of),
+        _ => null,
+    };
 
     static void ApplyToMethod(JsonNode m)
     {
         if (m is not JsonObject mo) return;
-        var ret = (mo["ret"] as JsonValue)?.TryGetValue<string>(out var rs) == true ? rs : null;
-        if (ret == null || !ret.StartsWith("gp:", StringComparison.Ordinal)) return;
+        if (TypeJson.Read(mo["ret"]) is not TypeNode.Tv gp) return;
         if ((mo["retNullable"] as JsonValue)?.TryGetValue<bool>(out var rn) != true || !rn) return;
-        mo["ret"] = "object";
+        mo["ret"] = TypeJson.Fqn("object");
         // A return-value expression whose STATIC type is the (now-erased) `gp:X` must also flow as object so its
         // null/value coercion targets object: a `return (cond typed gp:X)` (if-empty-null-else-elem) and a
         // `return (delegating call retType=gp:X)` (find -> firstOrNull) both become object end-to-end.
-        RetypeReturns(mo["body"], ret);
+        RetypeReturns(mo["body"], gp);
     }
 
-    static void RetypeReturns(JsonNode node, string gp)
+    static void RetypeReturns(JsonNode node, TypeNode.Tv gp)
     {
         switch (node)
         {
@@ -3925,8 +3893,8 @@ static class NullableGenericReturnErasure
                 if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "return"
                     && obj["value"] is JsonObject v)
                 {
-                    if ((v["type"] as JsonValue)?.TryGetValue<string>(out var vt) == true && vt == gp) v["type"] = "object";
-                    if ((v["retType"] as JsonValue)?.TryGetValue<string>(out var vr) == true && vr == gp) v["retType"] = "object";
+                    if (TypeJson.Read(v["type"]) is TypeNode.Tv vt && vt == gp) v["type"] = TypeJson.Fqn("object");
+                    if (TypeJson.Read(v["retType"]) is TypeNode.Tv vr && vr == gp) v["retType"] = TypeJson.Fqn("object");
                 }
                 foreach (var kv in obj) RetypeReturns(kv.Value, gp);
                 break;
@@ -5367,7 +5335,7 @@ static class MemberCallSubstitution
 
     // The legacy sig-token spelling of a SOURCE-vocabulary type, used ONLY to build the m3 `sig` comma-string (the one
     // documented legacy-string exception). Mirrors kotc.bir.TypeNode.legacyToken (a type var collapses to `gp:T`).
-    static string SigToken(TypeNode t) => t switch
+    internal static string SigToken(TypeNode t) => t switch
     {
         TypeNode.Fqn f => f.Args == null ? f.Name : f.Name + "[" + string.Join(",", f.Args.Select(SigToken)) + "]",
         TypeNode.Tv => "gp:T",
@@ -5604,7 +5572,7 @@ static class DeclarationRename
         foreach (var o in ovs)
         {
             if (o is not JsonObject oo) continue;
-            if ((oo["owner"] as JsonValue)?.GetValue<string>() is not string owner) continue;
+            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             if (refs.TryMemberIntrinsicExact(owner, "get_" + member, 0, out var intr)) return intr;
         }
@@ -5619,7 +5587,7 @@ static class DeclarationRename
         foreach (var o in ovs)
         {
             if (o is not JsonObject oo) continue;
-            if ((oo["owner"] as JsonValue)?.GetValue<string>() is not string owner) continue;
+            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
             var arity = (oo["arity"] as JsonValue)?.GetValue<int>() ?? 0;
