@@ -278,6 +278,17 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   `Dictionary<String,Widget>`), transitive (reachable-closure) injection, aliased imports (`import … as
   SB`), operators on generic .NET types, C#-origin `[Extension]` methods, generic constraints +
   declaration-site variance round-trip, and same-name arity families (`Task` vs `Task<T>`).
+- **facadegen surfaces a library's top-level `val`/`var` (#34b, facadegen side).** A top-level Kotlin
+  `val greeting = "hi"` compiles to a plain `Public|Static` FIELD on the file class (no `get_`/`set_`
+  accessor — only backing-field-LESS props, i.e. extension/computed props, get accessors), so a second
+  module consuming the DotKt `.dll` could not `import somelib.greeting`. facadegen now emits a
+  `tlprop <name> <type> <ro|rw>` meta token per such field (`EmitKotlinFileClass`), mirroring the
+  `tlfun`/`tlextprop` top-level path; the .NET file-class FQN rides the enclosing `file` line, and `val`
+  vs `var` is read from `[KotlinReadOnly]`/`InitOnly`. The consuming-side restore (kotc `ClrTypeInjection`
+  parsing `tlprop` + `BirEmitter` routing the read/write to `staticField`/`staticFieldSet` on the
+  referenced file class, plus a `readOnly` flag on top-level `val` fields for the val/var distinction) is
+  routed to kotc; the round-trip case `roundtrip-toplevel-val` (reads a library top-level property
+  DIRECTLY, no function workaround) is `RT_XFAIL` until that lands, then flips to FIXED.
 - **Round-trip carriers:** re-consuming a DotKt `.dll` as Kotlin now restores `sealed` (modality +
   cross-module inheritance enforcement + exhaustive `when` with no `else`) and `fun interface` nature.
   (Deviations, `docs/dotkt-semantics.md` §10: a `fun interface` restores the nature but a bare lambda

@@ -1373,6 +1373,20 @@ static class FacadeGen
             sb.Append(string.Join(" ", toks) + "\n");
             if (m.IsGenericMethodDefinition) EmitTypeParamMeta(m.GetGenericArguments(), t, sb, isInterface: false, typeLevel: false);  // gap ①: method type-param bounds
         }
+        // #34b: a top-level `val`/`var` (with a backing field) compiles to a plain Public|Static FIELD on the file class
+        // (no get_/set_ accessor — only backing-field-LESS props, i.e. extension/computed props, get accessors). Surface
+        // each such field as `tlprop <name> <type> <ro|rw>` so the injector restores a Kotlin top-level property whose
+        // read/write the backend routes to the referenced file class's static field (mirrors the `tlfun`/`tlextprop`
+        // top-level path; the .NET file-class FQN rides the enclosing `file` line, as for tlfun/tlextprop). `val` vs
+        // `var` is read from [KotlinReadOnly] / InitOnly (kotc stamps the round-trip read-only flag on the field).
+        foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
+        {
+            // Skip compiler-synthetic backing fields (`<...>`/`$...`) — only genuine top-level `val`/`var`s surface.
+            if (f.Name.Length == 0 || f.Name[0] == '<' || f.Name[0] == '$') continue;
+            if (!Supported(f.FieldType) || !seen.Add("tlprop:" + f.Name)) continue;
+            var rw = (f.IsInitOnly || IsKotlinReadOnly(f)) ? "ro" : "rw";
+            sb.Append($"tlprop {f.Name} {FieldType(f, t)} {rw}\n");
+        }
         Console.WriteLine($"meta: {t.FullName} (kotlin file -> top-level)");
     }
 

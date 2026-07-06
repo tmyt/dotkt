@@ -31,10 +31,21 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
-	# EMPTY — the coroutine round-trip is fully green. (#11 FIXED 2026-07-05: a suspend call inside an INLINE
-	# scope function used as a sub-expression — `doFetch = with(lib){ b.fetch() }` — no longer refuses in kotc;
-	# kotc emits the inlined valueBlock verbatim and bir2cir's SuspendColdLowering flattens it, segmenting the
-	# suspend call as an ordinary suspension point.)
+	# (#11 FIXED 2026-07-05: a suspend call inside an INLINE scope function used as a sub-expression —
+	# `doFetch = with(lib){ b.fetch() }` — no longer refuses in kotc; kotc emits the inlined valueBlock verbatim
+	# and bir2cir's SuspendColdLowering flattens it, segmenting the suspend call as an ordinary suspension point.)
+	#
+	# #34b (facadegen side DONE, kotc side PENDING): facadegen now surfaces a top-level `val`/`var` as a `tlprop`
+	# meta token (toolchain/facadegen/Program.cs EmitKotlinFileClass), but kotc does NOT yet CONSUME it — so
+	# `import tlval.greeting` is still `unresolved reference`. Routed to kotc: (1) ClrTypeInjection must parse a
+	# `tlprop <name> <type> <ro|rw>` line and restore a NON-extension top-level property (createTopLevelProperty,
+	# no extensionReceiverType), registering its .NET file class by CallableId (like tlfun/tlextprop); (2) BirEmitter
+	# must route the injected prop READ/WRITE to `staticField`/`staticFieldSet` on that referenced file class (the
+	# current `fileClassOf(p)` fallback + backingField==null->get_/set_ path is wrong for an injected field-backed
+	# prop); (3) kotc should stamp the round-trip readOnly flag on top-level `val` fields (BirEmitter statFields,
+	# ~L575-579 — the member path already emits `readOnly` at ~L1165) so facadegen restores `val` vs `var` (today a
+	# top-level val surfaces as `rw`). When those land, this flips to FIXED — prune it.
+	[roundtrip-toplevel-val]="kotc does not yet consume the facadegen tlprop token (ClrTypeInjection restore + BirEmitter staticField routing pending) — routed to kotc; facadegen side (tlprop emission) is DONE"
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
@@ -661,6 +672,44 @@ cp "$SR/libil/Hof2Lib.dll" "$SR/appil/" 2>/dev/null || true
 srexpected="$(printf '42\n30\n107')"
 run_app sractual "$SR/appil/Hof2App.dll"
 check_output roundtrip-suspendfn-ret "$srexpected" "$sractual" "a suspend (…) -> T VALUE round-trips in RETURN + PROPERTY + FIELD position: bir2cir lowers a value-position suspendLambdaNew to a SuspendLambda SM, the consumer drives it"
+
+# ----- TOP-LEVEL VAL/VAR round-trip (#34b): read a library's top-level property DIRECTLY, no fn workaround ----
+# A top-level `val greeting = "hi"` compiles (kotc) to a plain Public|Static FIELD on the file class (`tlval.LibKt`),
+# with NO get_/set_ accessor (only backing-field-LESS props — extension/computed — get accessors). facadegen now
+# surfaces each such field as a `tlprop <name> <type> <ro|rw>` meta token (Program.cs EmitKotlinFileClass), mirroring
+# the `tlfun`/`tlextprop` top-level path; the .NET file-class FQN rides the enclosing `file` line. This section proves
+# a consumer reads the library's top-level `val`/`var` DIRECTLY (`import tlval.greeting`), NOT via a function that
+# re-exposes the value (the H2 workaround the roundtrip-suspendfn-ret section had to use). Cases: a `val: String`, a
+# `var: Int` (read + write `+=`), and a `val` of a USER type (`Point`).
+SV="$ROOT/build/roundtrip-toplevel-val"; rm -rf "$SV"; mkdir -p "$SV/lib" "$SV/app" "$SV/libbir" "$SV/libil" "$SV/appbir" "$SV/appil"
+cat > "$SV/lib/lib.kt" <<'EOF'
+package tlval
+class Point(val x: Int, val y: Int) { override fun toString(): String = "($x, $y)" }
+val greeting: String = "hi"       // top-level val -> static field, read cross-module directly
+var counter: Int = 40             // top-level var -> read + write cross-module
+val origin: Point = Point(1, 2)   // top-level val of a USER type
+EOF
+cat > "$SV/app/app.kt" <<'EOF'
+import tlval.greeting
+import tlval.counter
+import tlval.origin
+fun main() {
+    println(greeting)   // hi
+    counter += 2
+    println(counter)    // 42
+    println(origin)     // (1, 2)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$SV/lib" -no-stdlib -classpath "$CP" -d "$SV/libbir" >/dev/null 2>&1 || true
+emit_il "$SV/libil" TlvalLib "$SV/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$SV/libil/TlvalLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$SV/k.meta" --refs "$REFS$SV/libil/TlvalLib.dll" tlval.LibKt tlval.Point >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$SV/k.meta" "$LAUNCHER" "$SV/app" -no-stdlib -classpath "$CP" -d "$SV/appbir" >/dev/null 2>&1 || true
+emit_il "$SV/appil" TlvalApp --ref "$SV/libil/TlvalLib.dll" "$SV/appbir"/*.bir.json
+cp "$SV/libil/TlvalLib.dll" "$SV/appil/" 2>/dev/null || true
+svexpected="$(printf 'hi\n42\n(1, 2)')"
+run_app svactual "$SV/appil/TlvalApp.dll"
+check_output roundtrip-toplevel-val "$svexpected" "$svactual" "a top-level val/var round-trips: the consumer reads the library's top-level property DIRECTLY (no fn workaround) via the facadegen tlprop meta token"
 
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
