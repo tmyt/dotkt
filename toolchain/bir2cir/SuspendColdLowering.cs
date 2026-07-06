@@ -1144,7 +1144,7 @@ static class SuspendColdLowering
                     var init = o["init"];
                     var val = init == null ? NullConst(TypeJson.Read(o["type"]) ?? AnyTn) : Rewrite(init, outp);
                     if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
-                    else outp.Add(new JsonObject { ["k"] = "var", ["name"] = nm, ["type"] = Str(o["type"]), ["init"] = val });
+                    else outp.Add(new JsonObject { ["k"] = "var", ["name"] = nm, ["type"] = o["type"]?.DeepClone(), ["init"] = val });
                     break;
                 }
                 case "setLocal":
@@ -1231,7 +1231,7 @@ static class SuspendColdLowering
             var tryNode = new JsonObject
             {
                 ["k"] = "try",
-                ["type"] = Str(o["type"]),
+                ["type"] = o["type"]?.DeepClone(),
                 ["body"] = body2,
                 ["catches"] = catches,
             };
@@ -2027,7 +2027,7 @@ static class SuspendColdLowering
                 ["objectOverride"] = false,
                 ["vis"] = "public",
                 ["params"] = new JsonArray(),
-                ["ret"] = "void",
+                ["ret"] = Tw(VoidTn),
                 ["body"] = new JsonArray { new JsonObject { ["k"] = "exprStmt", ["expr"] = resumeCall } },
                 ["attrs"] = new JsonArray(),
             };
@@ -2140,7 +2140,7 @@ static class SuspendColdLowering
                     ["type"] = callNode["type"]?.DeepClone(),
                     ["method"] = method,
                     ["args"] = args,
-                    ["ret"] = "kotlin.Any",
+                    ["ret"] = Tw(AnyTn),
                 };
                 if (isInstance) clr["recv"] = recvRw;
                 if (isGeneric)
@@ -2175,7 +2175,7 @@ static class SuspendColdLowering
                     ["recv"] = recvRw,
                     ["method"] = method,
                     ["args"] = args,
-                    ["retType"] = "kotlin.Any",
+                    ["retType"] = Tw(AnyTn),
                 };
             }
             else
@@ -2186,7 +2186,7 @@ static class SuspendColdLowering
                     ["owner"] = callNode["owner"]?.DeepClone(),
                     ["method"] = method,
                     ["args"] = args,
-                    ["ret"] = "kotlin.Any",
+                    ["ret"] = Tw(AnyTn),
                 };
             }
             if (callNode["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
@@ -2236,8 +2236,8 @@ static class SuspendColdLowering
             var args = new JsonArray { recvRw };
             foreach (var a in invokeArgs) args.Add(a);
             args.Add(completion);
-            var typeArgs = new JsonArray { "kotlin.Any" };            // T (result) — erased
-            if (invokeArgs.Count == 1) typeArgs.Add("kotlin.Any");    // R (receiver) — erased
+            var typeArgs = new JsonArray { Tw(AnyTn) };            // T (result) — erased
+            if (invokeArgs.Count == 1) typeArgs.Add(Tw(AnyTn));    // R (receiver) — erased
             // sig discriminates the fixed-arity overloads (2/3 params): fn:Any, [receiver:Any], completion:Continuation.
             var sigParts = new List<string> { "kotlin.Any" };
             for (var i = 0; i < invokeArgs.Count; i++) sigParts.Add("kotlin.Any");
@@ -2251,7 +2251,7 @@ static class SuspendColdLowering
                 ["typeArgs"] = typeArgs,
                 ["sig"] = string.Join(",", sigParts),
                 ["args"] = args,
-                ["ret"] = "kotlin.Any",
+                ["ret"] = Tw(AnyTn),
             };
         }
 
@@ -2273,7 +2273,7 @@ static class SuspendColdLowering
             foreach (var p in _params)
             {
                 var pn = Str(p["name"]);
-                ctorParams.Add(new JsonObject { ["name"] = pn, ["type"] = Str(p["type"]) });
+                ctorParams.Add(new JsonObject { ["name"] = pn, ["type"] = p["type"]?.DeepClone() });
                 ctorBody.Add(SetField(pn, new JsonObject { ["k"] = "local", ["name"] = pn }));
             }
             ctorParams.Add(new JsonObject { ["name"] = "completion", ["type"] = ContAny() });
@@ -2287,8 +2287,8 @@ static class SuspendColdLowering
                 ["abstract"] = false,
                 ["objectOverride"] = false,
                 ["vis"] = "public",
-                ["params"] = new JsonArray { new JsonObject { ["name"] = "result", ["type"] = "kotlin.Any" } },
-                ["ret"] = "kotlin.Any",
+                ["params"] = new JsonArray { new JsonObject { ["name"] = "result", ["type"] = Tw(AnyTn) } },
+                ["ret"] = Tw(AnyTn),
                 ["body"] = invokeBody,
                 ["attrs"] = new JsonArray(),
             };
@@ -2367,8 +2367,8 @@ static class SuspendColdLowering
                 ["abstract"] = false,
                 ["objectOverride"] = false,
                 ["vis"] = "public",
-                ["params"] = new JsonArray { new JsonObject { ["name"] = "result", ["type"] = "kotlin.Any" } },
-                ["ret"] = "kotlin.Any",
+                ["params"] = new JsonArray { new JsonObject { ["name"] = "result", ["type"] = Tw(AnyTn) } },
+                ["ret"] = Tw(AnyTn),
                 ["body"] = invokeBody,
                 ["attrs"] = new JsonArray(),
             };
@@ -2439,14 +2439,14 @@ static class SuspendColdLowering
                 // needs an explicit unbox/castclass (ilemit's setField does not auto-coerce object -> value) —
                 // the same `cast` wrap FunGen uses for await fields. A kotlin.Any field takes the value verbatim.
                 var paramName = Str(_params[0]["name"]);
-                var paramType = Str(_params[0]["type"]) ?? "kotlin.Any";
-                JsonNode storedValue = paramType == "kotlin.Any"
+                var paramType = TypeJson.Read(_params[0]["type"]) ?? AnyTn;
+                JsonNode storedValue = IsAnyTn(paramType)
                     ? new JsonObject { ["k"] = "local", ["name"] = "value" }
-                    : new JsonObject { ["k"] = "cast", ["type"] = paramType, ["e"] = new JsonObject { ["k"] = "local", ["name"] = "value" } };
+                    : new JsonObject { ["k"] = "cast", ["type"] = Tw(paramType), ["e"] = new JsonObject { ["k"] = "local", ["name"] = "value" } };
                 yield return CreateMethod(
                     new JsonArray
                     {
-                        new JsonObject { ["name"] = "value", ["type"] = "kotlin.Any" },
+                        new JsonObject { ["name"] = "value", ["type"] = Tw(AnyTn) },
                         new JsonObject { ["name"] = "completion", ["type"] = ContAny() },
                     },
                     new JsonArray
@@ -2512,8 +2512,8 @@ static class SuspendColdLowering
             foreach (var p in _params) ctorArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
             ctorArgs.Add(new JsonObject { ["k"] = "local", ["name"] = "completion" });
             var argTypes = new JsonArray();
-            if (_isMember) argTypes.Add(_selfType);
-            foreach (var p in _params) argTypes.Add(Str(p["type"]));
+            if (_isMember) argTypes.Add(Tw(_selfType));
+            foreach (var p in _params) argTypes.Add(p["type"]?.DeepClone());
             argTypes.Add(ContAny());
 
             var body = new JsonArray
@@ -2534,7 +2534,7 @@ static class SuspendColdLowering
                     ["method"] = "invokeSuspend",
                     ["sig"] = "kotlin.Any",
                     ["args"] = new JsonArray { NullConst(AnyTn) },
-                    ["retType"] = "kotlin.Any",
+                    ["retType"] = Tw(AnyTn),
                 }),
             };
             return ColdMethod(body);
@@ -2574,7 +2574,7 @@ static class SuspendColdLowering
                 ["objectOverride"] = false,
                 ["vis"] = "public",
                 ["params"] = ps,
-                ["ret"] = "kotlin.Any",
+                ["ret"] = Tw(AnyTn),
                 ["body"] = body,
                 ["attrs"] = new JsonArray(),
             };
@@ -2605,7 +2605,7 @@ static class SuspendColdLowering
                 ["objectOverride"] = false,
                 ["vis"] = "public",
                 ["params"] = ps,
-                ["ret"] = "kotlin.Any",
+                ["ret"] = Tw(AnyTn),
                 ["body"] = new JsonArray(),
                 ["attrs"] = new JsonArray(),
             };
@@ -2648,7 +2648,7 @@ static class SuspendColdLowering
                         ["expr"] = new JsonObject
                         {
                             ["k"] = "callStatic", ["owner"] = null, ["method"] = _coldName,
-                            ["args"] = fwd, ["ret"] = "kotlin.Any",
+                            ["args"] = fwd, ["ret"] = Tw(AnyTn),
                         },
                     },
                 };
@@ -2683,11 +2683,11 @@ static class SuspendColdLowering
                     // r = main$dotkt_suspend(args..., (Continuation)root)   — a synchronous throw propagates RAW.
                     new JsonObject
                     {
-                        ["k"] = "var", ["name"] = "__r", ["type"] = "kotlin.Any",
+                        ["k"] = "var", ["name"] = "__r", ["type"] = Tw(AnyTn),
                         ["init"] = new JsonObject
                         {
                             ["k"] = "callStatic", ["owner"] = null, ["method"] = _coldName,
-                            ["args"] = coldArgs, ["ret"] = "kotlin.Any",
+                            ["args"] = coldArgs, ["ret"] = Tw(AnyTn),
                         },
                     },
                 };
@@ -2705,7 +2705,7 @@ static class SuspendColdLowering
                             ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
                             ["recv"] = Local("__tcs"), ["retType"] = Tw(taskType),
                         },
-                        ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = "void",
+                        ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = Tw(VoidTn),
                     },
                 });
                 body.Add(Label(skipL));
@@ -2721,7 +2721,7 @@ static class SuspendColdLowering
                 ["objectOverride"] = false,
                 ["vis"] = "public",
                 ["params"] = ps,
-                ["ret"] = "kotlin.Unit",
+                ["ret"] = Tw(UnitTn),
                 ["body"] = body,
                 ["attrs"] = new JsonArray(),
             };
@@ -2808,11 +2808,11 @@ static class SuspendColdLowering
                         ["args"] = new JsonArray { Local("__tcs") },
                     },
                 },
-                new JsonObject { ["k"] = "var", ["name"] = "__r", ["type"] = "kotlin.Any", ["init"] = Suspended() },
+                new JsonObject { ["k"] = "var", ["name"] = "__r", ["type"] = Tw(AnyTn), ["init"] = Suspended() },
                 new JsonObject
                 {
                     ["k"] = "try",
-                    ["type"] = "void",
+                    ["type"] = Tw(VoidTn),
                     ["body"] = new JsonArray
                     {
                         new JsonObject { ["k"] = "setLocal", ["name"] = "__r", ["value"] = BridgeColdCall() },
@@ -2821,7 +2821,7 @@ static class SuspendColdLowering
                     {
                         new JsonObject
                         {
-                            ["excType"] = "kotlin.Throwable",
+                            ["excType"] = Tn("kotlin.Throwable"),
                             ["var"] = "__e",
                             ["body"] = new JsonArray
                             {
@@ -2930,23 +2930,21 @@ static class SuspendColdLowering
             foreach (var p in _params) args.Add(Local(Str(p["name"])));
             args.Add(new JsonObject { ["k"] = "cast", ["type"] = ContAny(), ["e"] = Local("__root") });
 
-            // On a GENERIC enclosing class the callee's declaring type is the CONSTRUCTED self `Box[gp:T]` (matching
-            // `this`), never the open `Box` — else verification rejects the recv type.
-            var selfOwner = _ownerTypeParams.Count == 0
-                ? _ownerClass
-                : _ownerClass + "[" + string.Join(",", _ownerTypeParams.Select(t => "gp:" + t)) + "]";
+            // On a GENERIC enclosing class the callee's declaring type is the CONSTRUCTED self `Box[!0..]` (matching
+            // `this`), never the open `Box` — else verification rejects the recv type. `_selfType` is exactly that
+            // constructed owner (Fqn(owner, Tv{type,i}...)); it is non-null in the member branch (member <=> owner != null).
 
             JsonObject call;
             if (_isMember)
                 call = new JsonObject
                 {
                     ["k"] = "callInstance",
-                    ["ownerType"] = selfOwner,
+                    ["ownerType"] = Tw(_selfType),
                     ["virtual"] = false,
                     ["recv"] = new JsonObject { ["k"] = "this" },
                     ["method"] = _coldName,
                     ["args"] = args,
-                    ["retType"] = "kotlin.Any",
+                    ["retType"] = Tw(AnyTn),
                 };
             else
                 call = new JsonObject
@@ -2955,12 +2953,14 @@ static class SuspendColdLowering
                     ["owner"] = null,
                     ["method"] = _coldName,
                     ["args"] = args,
-                    ["ret"] = "kotlin.Any",
+                    ["ret"] = Tw(AnyTn),
                 };
             if (_typeParams.Count > 0)
             {
+                // Thread the bridge method's OWN method type-params (scope:"method" -> ilemit !!i) to the generic
+                // cold entry, which declares the same method type-params in the same order.
                 var ta = new JsonArray();
-                foreach (var n in _typeParams) ta.Add("gp:" + n);
+                for (var i = 0; i < _typeParams.Count; i++) ta.Add(Tw(new TypeNode.Tv("method", i)));
                 call["typeArgs"] = ta;
             }
             return call;
@@ -3007,7 +3007,7 @@ static class SuspendColdLowering
             ["owner"] = IntrinsicsKtFqn,
             ["method"] = "get_COROUTINE_SUSPENDED",
             ["args"] = new JsonArray(),
-            ["ret"] = "kotlin.Any",
+            ["ret"] = Tw(AnyTn),
         };
 
         static JsonObject ThrowOnFailure() => new()
@@ -3016,7 +3016,7 @@ static class SuspendColdLowering
             ["owner"] = ThrowOnFailureOwner,
             ["method"] = "throwOnFailure",
             ["args"] = new JsonArray { new JsonObject { ["k"] = "local", ["name"] = "result" } },
-            ["ret"] = "void",
+            ["ret"] = Tw(VoidTn),
         };
 
         static JsonObject Ret(JsonNode value) => new() { ["k"] = "return", ["value"] = value };
