@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // bundle-6 bug #5 ROOT — the §11 "Continuation<object> uniformly" ABI erasure.
 //
@@ -68,21 +69,16 @@ static class ContinuationErasure
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var val = obj[key];
-                    if (val is JsonValue jv && jv.TryGetValue<string>(out var s))
-                    {
-                        // `name` is a declaration identity (the Continuation INTERFACE's own FQN) and `owner` is a
-                        // callStatic's method container (resolved as a plain type / file-class, not a generic
-                        // instantiation) — a bare Continuation there must NOT gain a [kotlin.Any] arg. Every actual
-                        // type-reference key (type/ownerType/ret/base/interfaces/sig/funcType/typeArgs/…) is rewritten.
-                        if (key == "name" || key == "owner") continue;
-                        var ns = EraseContinuation(s);
-                        ns = EraseResult(ns);   // Result<X> -> Result<object> everywhere (invariant ref, payload=object)
-                        if (!ReferenceEquals(ns, s)) obj[key] = ns;
-                    }
-                    else if (val != null)
-                    {
+                    if (val == null) continue;
+                    // `name` is a declaration identity (the Continuation INTERFACE's own FQN) and `owner` is a
+                    // callStatic's method container (a file-class, not a generic instantiation) — a bare Continuation
+                    // there must NOT gain a [kotlin.Any] arg. Every actual type-reference slot (type/ownerType/ret/base/
+                    // interfaces/funcType/typeArgs/…) is rewritten.
+                    if (key == "name" || key == "owner") continue;
+                    if (TypeJson.Read(val) is TypeNode tn)
+                        obj[key] = TypeJson.Write(EraseType(tn));
+                    else
                         Walk(val, here);
-                    }
                 }
                 break;
             }
@@ -91,16 +87,11 @@ static class ContinuationErasure
                 for (var i = 0; i < arr.Count; i++)
                 {
                     var val = arr[i];
-                    if (val is JsonValue jv && jv.TryGetValue<string>(out var s))
-                    {
-                        var ns = EraseContinuation(s);
-                        ns = EraseResult(ns);
-                        if (!ReferenceEquals(ns, s)) arr[i] = ns;
-                    }
-                    else if (val != null)
-                    {
+                    if (val == null) continue;
+                    if (TypeJson.Read(val) is TypeNode tn)
+                        arr[i] = TypeJson.Write(EraseType(tn));
+                    else
                         Walk(val, inResumeWith);
-                    }
                 }
                 break;
             }
@@ -127,7 +118,7 @@ static class ContinuationErasure
             || (a0["name"] as JsonValue)?.TryGetValue<string>(out var an) != true || an != "result")
             return;
         var repl = new JsonArray();
-        foreach (var _ in ta) repl.Add(JsonValue.Create("kotlin.Any"));
+        foreach (var _ in ta) repl.Add(TypeJson.Fqn("kotlin.Any"));
         obj["typeArgs"] = repl;
 
         // A T-returning accessor (getOrThrow/getOrNull/getOrDefault/getOrElse) instantiated at the erased element
@@ -140,9 +131,11 @@ static class ContinuationErasure
         if (method is "getOrThrow" or "getOrNull" or "getOrDefault" or "getOrElse")
         {
             var rk = obj.ContainsKey("retType") ? "retType" : (obj.ContainsKey("ret") ? "ret" : null);
-            if (rk != null && (obj[rk] as JsonValue)?.TryGetValue<string>(out var rt) == true
-                && rt is "void" or "kotlin.Unit")
-                obj[rk] = JsonValue.Create("kotlin.Any");
+            // Pre-lowering the hint is still the source `kotlin.Unit` (void folds later) — promote a void/Unit hint to
+            // kotlin.Any so ilemit pops the discarded getOrThrow value.
+            if (rk != null && TypeJson.Read(obj[rk]) is TypeNode.Fqn { Args: null } rf
+                && rf.Name is "void" or "kotlin.Unit")
+                obj[rk] = TypeJson.Fqn("kotlin.Any");
         }
     }
 
@@ -152,66 +145,39 @@ static class ContinuationErasure
     // erasure (its `type` key). No-op on any other node.
     static void EraseResultFactoryTypeArgs(JsonObject obj)
     {
-        var owner = (obj["owner"] as JsonValue)?.TryGetValue<string>(out var ow) == true ? ow : null;
+        var owner = TypeJson.OwnerName(obj["owner"]);
         var method = (obj["method"] as JsonValue)?.TryGetValue<string>(out var me) == true ? me : null;
         if (owner == ResultFqn && (method == "success" || method == "failure") &&
             obj["typeArgs"] is JsonArray ta)
         {
             var repl = new JsonArray();
-            foreach (var _ in ta) repl.Add(JsonValue.Create("kotlin.Any"));
+            foreach (var _ in ta) repl.Add(TypeJson.Fqn("kotlin.Any"));
             obj["typeArgs"] = repl;
         }
     }
 
-    // kotlin.coroutines.Continuation[X] -> Continuation[kotlin.Any] (and a BARE Continuation, the
-    // star-projection `Continuation<*>` token, -> Continuation[kotlin.Any]), everywhere a type token
-    // may sit. A leading-substring false match (ContinuationImpl / ContinuationInterceptor /
-    // ContinuationKt / SafeContinuation) is rejected by the boundary check in ReplaceArg.
-    static string EraseContinuation(string s) =>
-        s.Contains(Cont, StringComparison.Ordinal) ? ReplaceArg(s, Cont, appendIfBare: true) : s;
+    // Erase Continuation + constructed Result to their monomorphic `<kotlin.Any>` form, recursively through a
+    // structured Type. `kotlin.coroutines.Continuation[X]` AND a bare `Continuation` (the star-projection) ->
+    // Continuation[kotlin.Any]; a CONSTRUCTED `kotlin.Result[X]` -> Result[kotlin.Any] (a BARE Result — a raw-type
+    // value — is left untouched). A leading-substring false match (ContinuationImpl / SafeContinuation / ResultKt) is
+    // impossible on a structured Fqn (the Name is an exact FQN, not a substring). Nested args/nullable/array/byRef/fn
+    // are recursed so a Continuation/Result buried in a generic arg or delegate signature erases too.
+    static readonly TypeNode[] AnyArg = { new TypeNode.Fqn("kotlin.Any") };
 
-    // @?kotlin.Result[X] -> @?kotlin.Result[kotlin.Any]; a bare `kotlin.Result` (a raw-type value / the
-    // success/failure call `owner`) is left untouched (appendIfBare:false) — only the protocol's
-    // constructed Result<X> instances erase.
-    static string EraseResult(string s) =>
-        s.Contains(ResultFqn + "[", StringComparison.Ordinal) ? ReplaceArg(s, ResultFqn, appendIfBare: false) : s;
-
-    // Replace the single type-argument of every `fqn[...]` occurrence with `kotlin.Any` (balanced
-    // brackets), and — when appendIfBare — turn a bare `fqn` (no bracket) into `fqn[kotlin.Any]`. An
-    // occurrence immediately followed by an identifier char is a longer name (…Impl/…Kt) and is skipped.
-    static string ReplaceArg(string s, string fqn, bool appendIfBare)
+    static TypeNode EraseType(TypeNode t)
     {
-        var sb = new StringBuilder(s.Length + 16);
-        var i = 0;
-        while (i < s.Length)
+        switch (t)
         {
-            var idx = s.IndexOf(fqn, i, StringComparison.Ordinal);
-            if (idx < 0) { sb.Append(s, i, s.Length - i); break; }
-            sb.Append(s, i, idx - i);
-            sb.Append(fqn);
-            var after = idx + fqn.Length;
-            if (after < s.Length && s[after] == '[')
-            {
-                var depth = 0;
-                var j = after;
-                for (; j < s.Length; j++)
-                {
-                    if (s[j] == '[') depth++;
-                    else if (s[j] == ']') { depth--; if (depth == 0) { j++; break; } }
-                }
-                sb.Append("[kotlin.Any]");
-                i = j;   // skip the original [...]
-            }
-            else if (after < s.Length && (char.IsLetterOrDigit(s[after]) || s[after] == '_'))
-            {
-                i = after;   // ContinuationImpl / ResultKt / … — not this type
-            }
-            else
-            {
-                if (appendIfBare) sb.Append("[kotlin.Any]");
-                i = after;
-            }
+            case TypeNode.Fqn f:
+                if (f.Name == Cont) return new TypeNode.Fqn(Cont, AnyArg);              // bare or Continuation[X] -> [Any]
+                if (f.Name == ResultFqn && f.Args != null) return new TypeNode.Fqn(ResultFqn, AnyArg);
+                return f.Args == null ? f : new TypeNode.Fqn(f.Name, f.Args.Select(EraseType).ToArray());
+            case TypeNode.Nullable n: return new TypeNode.Nullable(EraseType(n.Of));
+            case TypeNode.Array a: return new TypeNode.Array(EraseType(a.Elem));
+            case TypeNode.ByRef b: return new TypeNode.ByRef(EraseType(b.Of));
+            case TypeNode.Fn fn: return new TypeNode.Fn(fn.Suspend, EraseType(fn.Ret),
+                fn.Params.Select(EraseType).ToArray(), fn.Recv == null ? null : EraseType(fn.Recv));
+            default: return t;
         }
-        return sb.ToString();
     }
 }
