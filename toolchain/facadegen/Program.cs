@@ -1150,9 +1150,10 @@ static class FacadeGen
     // H2: the [KotlinSuspendFunctionType(shape)] attribute stamped by ilemit on a `suspend (…) -> T` function-type
     // POSITION (param / return / field / property). bir2cir erases the CLR signature slot to `object` (a suspend-lambda
     // VALUE is a Continuation state-machine object, not a Func), so the suspend ORIGIN + arg/return SHAPE would be lost
-    // on re-consumption. The attribute carries the RAW pre-erasure BIR token `sfunc:<ret>:<arg,arg>` (kotc's emit
-    // vocabulary). SuspendFnMeta translates it into the injector's META grammar `sfunc:[ret,arg,arg]` (bracketed) that
-    // ClrTypeInjection.coneOf restores to `kotlin.coroutines.SuspendFunctionN` — the consumer half of the round-trip.
+    // on re-consumption. The attribute carries the pre-erasure type as a STRUCTURED TypeNode JSON — an `fn` node with
+    // `suspend:true` (the #37 type-flip: every emitted type token is now a `{t:…}` object, NOT the old `sfunc:<ret>:…`
+    // BIR string). SuspendFnMeta reads it via the shared TypeNode contract and re-serializes it into the injector's META
+    // grammar `sfunc:[ret,arg,arg]` (bracketed) that ClrTypeInjection.coneOf restores to `kotlin.coroutines.SuspendFunctionN`.
     const string KSuspendFnAttr = "DotKt.Runtime.CompilerServices.KotlinSuspendFunctionTypeAttribute";
     static string SuspendFnMeta(IList<CustomAttributeData> attrs)
     {
@@ -1164,102 +1165,57 @@ static class FacadeGen
                 { shape = cad.ConstructorArguments[0].Value as string; break; }
         }
         catch { }
-        if (shape == null || !shape.StartsWith("sfunc:", StringComparison.Ordinal)) return null;
-        var body = shape.Substring("sfunc:".Length);
-        // Split RET from ARGS by skipping exactly one full BIR token (so a stacked-prefix ret like `nullable:gp:R` isn't
-        // truncated) — the ret/args separator is the `:` immediately after it; the rest is a bracket-aware comma list.
-        int end = BirSkipTypeToken(body, 0);
-        var retTok = body.Substring(0, end);
-        var argsPart = end < body.Length && body[end] == ':' ? body.Substring(end + 1) : "";
-        var metaRet = BirTokenToMeta(retTok);
-        if (metaRet == null) return null;   // unconvertible shape -> caller keeps the plain erased type (suspend lost, safe)
+        if (string.IsNullOrEmpty(shape)) return null;
+        DotKt.Bir.TypeNode node;
+        try { node = DotKt.Bir.TypeNode.Parse(shape); }
+        catch { return null; }   // malformed/legacy payload -> caller keeps the plain erased type (suspend lost, safe)
+        // Only a suspend function type carries an sfunc: shape; an extension-receiver form (recv) has no meta counterpart
+        // (coneSuspendFunctionType takes params+ret only) -> degrade rather than drop the receiver silently.
+        if (node is not DotKt.Bir.TypeNode.Fn { Suspend: true, Recv: null } fn) return null;
+        var metaRet = TypeNodeToMeta(fn.Ret);
+        if (metaRet == null) return null;   // unconvertible shape -> keep the plain erased type (suspend lost, safe)
         var metaArgs = new List<string>();
-        foreach (var a in BirSplitTopLevel(argsPart))
+        foreach (var p in fn.Params)
         {
-            if (a.Length == 0) continue;
-            var m = BirTokenToMeta(a);
+            var m = TypeNodeToMeta(p);
             if (m == null) return null;
             metaArgs.Add(m);
         }
         return "sfunc:[" + string.Join(",", new[] { metaRet }.Concat(metaArgs)) + "]";
     }
 
-    // Advance past exactly ONE BIR type token at `i`; return the index just after it (a top-level ':' / ',' / ']' / end).
-    // Ported from ilemit's SkipTypeToken — the canonical structural parse of kotc's BIR type grammar (no resolution).
-    static int BirSkipTypeToken(string s, int i)
+    // Translate a structured TypeNode (a KotlinSuspendFunctionType child) into a facadegen META token (the vocabulary
+    // ClrTypeInjection.coneOf consumes). Returns null when not confidently translatable (constructed generics / user /
+    // referenced types / type variables / arrays / nested fn) — the whole suspend-fn-type shape then degrades to the
+    // plain erased slot (suspend lost, but safe). Mirrors the coverage of the retired BIR-string BirTokenToMeta.
+    static string TypeNodeToMeta(DotKt.Bir.TypeNode t)
     {
-        static bool At(string s, int i, string pre) => i + pre.Length <= s.Length && s.AsSpan(i, pre.Length).SequenceEqual(pre);
-        foreach (var pre in new[] { "array:", "nullable:", "byref:" })
-            if (At(s, i, pre)) return BirSkipTypeToken(s, i + pre.Length);
-        if (At(s, i, "func:") || At(s, i, "sfunc:"))
+        switch (t)
         {
-            i = BirSkipTypeToken(s, i + (At(s, i, "sfunc:") ? 6 : 5));      // ret
-            if (i < s.Length && s[i] == ':') i++;                          // ret/args separator
-            if (i < s.Length && s[i] != ':' && s[i] != ',' && s[i] != ']') // non-empty args -> comma-list
+            case DotKt.Bir.TypeNode.Nullable n:
             {
-                i = BirSkipTypeToken(s, i);
-                while (i < s.Length && s[i] == ',') i = BirSkipTypeToken(s, i + 1);
+                var inner = TypeNodeToMeta(n.Of);
+                return inner == null ? null : inner + "?";
             }
-            return i;
+            case DotKt.Bir.TypeNode.Fqn { Args: null } f:
+                return f.Name switch
+                {
+                    "kotlin.Int" => "Int",
+                    "kotlin.Long" => "Long",
+                    "kotlin.Short" => "Short",
+                    "kotlin.Byte" => "Byte",
+                    "kotlin.Boolean" => "Boolean",
+                    "kotlin.Char" => "Char",
+                    "kotlin.Double" => "Double",
+                    "kotlin.Float" => "Float",
+                    "kotlin.String" => "String",
+                    "kotlin.Unit" => "Unit",
+                    "kotlin.Any" => "Any?",
+                    _ => null,
+                };
+            default:
+                return null;
         }
-        foreach (var pre in new[] { "clrg:", "clr:", "gp:" })
-            if (At(s, i, pre)) { i += pre.Length; break; }
-        int depth = 0;
-        for (; i < s.Length; i++)
-        {
-            char c = s[i];
-            if (c == '[') depth++;
-            else if (c == ']') { if (depth == 0) break; depth--; }
-            else if (depth == 0 && (c == ':' || c == ',')) break;
-        }
-        return i;
-    }
-
-    // Split a BIR comma-list at bracket-depth 0 (a compound arg keeps its own `[...]` intact).
-    static IEnumerable<string> BirSplitTopLevel(string s)
-    {
-        if (string.IsNullOrEmpty(s)) yield break;
-        int depth = 0, start = 0;
-        for (int i = 0; i < s.Length; i++)
-        {
-            if (s[i] == '[') depth++;
-            else if (s[i] == ']') depth--;
-            else if (s[i] == ',' && depth == 0) { yield return s.Substring(start, i - start); start = i + 1; }
-        }
-        yield return s.Substring(start);
-    }
-
-    // Translate a single BIR type token (kotc's emit vocabulary) into a facadegen META token (the vocabulary
-    // ClrTypeInjection.coneOf consumes). Returns null when not confidently translatable (brackets/generics/user/
-    // referenced types) — the whole suspend-fn-type shape then degrades to the plain erased slot (suspend lost, safe).
-    static string BirTokenToMeta(string tok)
-    {
-        if (string.IsNullOrEmpty(tok)) return null;
-        if (tok.StartsWith("nullable:", StringComparison.Ordinal))
-        {
-            var inner = BirTokenToMeta(tok.Substring("nullable:".Length));
-            return inner == null ? null : inner + "?";
-        }
-        if (tok.StartsWith("gp:", StringComparison.Ordinal))
-        {
-            var name = tok.Substring(3);                       // a type-variable name -> the bare meta name coneOf binds
-            return IsIdent(name) ? name : null;
-        }
-        return tok switch
-        {
-            "kotlin.Int" or "int" => "Int",
-            "kotlin.Long" or "long" => "Long",
-            "kotlin.Short" or "short" => "Short",
-            "kotlin.Byte" or "sbyte" => "Byte",
-            "kotlin.Boolean" or "bool" => "Boolean",
-            "kotlin.Char" or "char" => "Char",
-            "kotlin.Double" or "double" => "Double",
-            "kotlin.Float" or "float" => "Float",
-            "kotlin.String" or "string" => "String",
-            "kotlin.Unit" or "void" => "Unit",
-            "kotlin.Any" or "object" => "Any?",
-            _ => null,
-        };
     }
 
     // H2: a FIELD typed `suspend (…) -> T` -> restore the suspend function type from [KotlinSuspendFunctionType],
