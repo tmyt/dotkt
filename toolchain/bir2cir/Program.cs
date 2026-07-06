@@ -3087,7 +3087,7 @@ static class CharSeqStringLowering
         if (IsStaticString(value, env)) return null;
         return new JsonObject
         {
-            ["k"] = "callStatic", ["owner"] = "kotlin.LibraryKt", ["method"] = "toString",
+            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"), ["method"] = "toString",
             ["sig"] = "object", ["args"] = new JsonArray { value.DeepClone() },
         };
     }
@@ -4516,9 +4516,9 @@ static class MemberCallSubstitution
     static JsonNode TransformStaticField(JsonObject node, ReferenceMetadataIndex refs)
     {
         if ((node["name"] as JsonValue)?.GetValue<string>() != "INSTANCE") return null;
-        var owner = (node["ownerType"] as JsonValue)?.GetValue<string>();
+        var owner = TypeJson.OwnerName(node["ownerType"]);
         if (string.IsNullOrEmpty(owner) || !refs.TryResolveClrOwner(owner, out _, out _)) return null;
-        return new JsonObject { ["k"] = "const", ["type"] = "object", ["value"] = null };
+        return new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("object"), ["value"] = null };
     }
 
     // `new T(..)` on a CLR-bound REFERENCE owner -> clrNew. A value-type (struct) owner is left untouched: a value
@@ -4526,28 +4526,25 @@ static class MemberCallSubstitution
     // by type lowering + kotc, not a member-call substitution).
     static JsonNode TransformNew(JsonObject node, ReferenceMetadataIndex refs)
     {
-        if (node["type"] is not JsonValue tv || !tv.TryGetValue<string>(out var ownerToken)) return null;
-        if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
+        if (TypeJson.Read(node["type"]) is not TypeNode.Fqn ownerFqn) return null;
+        if (!refs.TryResolveClrOwner(ownerFqn.Name, out var bcl, out var kind)) return null;
 
         // Inline-class CONSTRUCTION erasure (the BOX, mirror of the `.data` unbox collapse): an @JvmInline value class
         // erases to its single backing field's primitive CLR form, so `new UByte(arg)` IS `arg` (no System.Byte(byte)
         // ctor exists). Collapse to the lone arg UNCHANGED — never a conv: the int32 stack bits are already the value,
         // and a signed conv (Conv_I1) would sign-extend and corrupt an unsigned high bit (UByte 200 -> -56). Width is
         // truncated/masked at the byte-typed store/use sites. (Codex-confirmed: identity, not conv.)
-        if (refs.IsInlineValueClass(ReferenceMetadataIndex.BareOwnerFqn(ownerToken)) &&
+        if (refs.IsInlineValueClass(ownerFqn.Name) &&
             node["args"] is JsonArray ctorArgs && ctorArgs.Count == 1)
             return ctorArgs[0].DeepClone();
 
         if (kind is "struct" or "enum") return null;
 
-        // A GENERIC @ClrTypeAlias owner (`new HashSet<E>()` -> token `kotlin.collections.HashSet[gp:E]`) must carry
-        // its element args so ilemit reconstructs the instantiation: emit clrg:<bcl>[<args>] (the SAME generic-alias
-        // form BirTypeLowering produces for type positions). The args stay in the source vocabulary — the subsequent
-        // type-lowering pass lowers them (the clrNew `type` is a TypeKey). A non-generic owner stays a bare BCL type.
-        var typeTok = bcl;
-        var br = ownerToken.IndexOf('[');
-        if (br >= 0 && ownerToken.EndsWith("]", StringComparison.Ordinal))
-            typeTok = "clrg:" + bcl + "[" + ownerToken[(br + 1)..^1] + "]";
+        // A GENERIC @ClrTypeAlias owner (`new HashSet<E>()`) must carry its element args so ilemit reconstructs the
+        // instantiation: the structured `Fqn(bcl, sourceArgs)` (the SAME generic-alias form BirTypeLowering produces
+        // for type positions — the clrNew `type` is a TypeKey, so the subsequent type-lowering pass lowers the args). A
+        // non-generic owner is the bare BCL Fqn.
+        var typeNode = ownerFqn.Args != null ? new TypeNode.Fqn(bcl, ownerFqn.Args) : new TypeNode.Fqn(bcl);
 
         var args = node["args"] as JsonArray ?? new JsonArray();
 
@@ -4557,9 +4554,8 @@ static class MemberCallSubstitution
         // at run. Drop the trailing loadFactor arg (and its declared argType) so the overload key becomes a bare (int).
         // Gated on a @ClrTypeAlias owner whose declared 2nd ctor param is a Float — the loadFactor idiom is unique to
         // the stdlib collection aliases (no BCL type reaching here has a genuine (int, float) ctor).
-        if (args.Count == 2 && refs.Aliases.ContainsKey(ReferenceMetadataIndex.BareOwnerFqn(ownerToken))
-            && node["argTypes"] is JsonArray dat && dat.Count == 2
-            && (dat[1] as JsonValue)?.GetValue<string>() is string p1 && (p1 == "kotlin.Float" || p1 == "float"))
+        if (args.Count == 2 && refs.Aliases.ContainsKey(ownerFqn.Name)
+            && node["argTypes"] is JsonArray dat && dat.Count == 2 && IsFloatArg(dat[1]))
         {
             args = new JsonArray { args[0].DeepClone() };
             node["argTypes"] = new JsonArray { dat[0].DeepClone() };
@@ -4568,8 +4564,8 @@ static class MemberCallSubstitution
         return new JsonObject
         {
             ["k"] = "clrNew",
-            ["type"] = typeTok,
-            ["argTypes"] = CtorArgTypes(node, args, refs, ownerToken),
+            ["type"] = TypeJson.Write(typeNode),
+            ["argTypes"] = CtorArgTypes(node, args, refs, ownerFqn.Name),
             ["args"] = args.DeepClone(),
         };
     }
@@ -4580,6 +4576,14 @@ static class MemberCallSubstitution
     // precise overload key (`IReadOnlyCollection[int]`) — this disambiguates List's `IEnumerable<T>` ctor from its `int`
     // capacity ctor (a bare `object`/unbound-`gp:E` argType matches neither, so ilemit mis-picked `List(int)` ->
     // InvalidProgramException). Falls back to InferArgTypes when the node has no declared argTypes (older shape).
+    // The 2nd ctor arg is a Float (the JVM loadFactor idiom) — read the structured argType (with a legacy-string fallback).
+    static bool IsFloatArg(JsonNode n)
+    {
+        if (TypeJson.Read(n) is TypeNode.Fqn { Args: null } f) return f.Name is "kotlin.Float" or "float";
+        if (n is JsonValue v && v.TryGetValue<string>(out var s)) return s is "kotlin.Float" or "float";
+        return false;
+    }
+
     static JsonArray CtorArgTypes(JsonObject node, JsonArray args, ReferenceMetadataIndex refs, string ownerToken)
     {
         if (node["argTypes"] is not JsonArray declared || declared.Count != args.Count)
@@ -4632,7 +4636,7 @@ static class MemberCallSubstitution
 
     static JsonNode TransformCall(JsonObject node, ReferenceMetadataIndex refs, bool instance, SubstCtx ctx = null)
     {
-        var ownerToken = (node[instance ? "ownerType" : "owner"] as JsonValue)?.GetValue<string>();
+        var ownerToken = TypeJson.OwnerName(node[instance ? "ownerType" : "owner"]);
         if (string.IsNullOrEmpty(ownerToken))
         {
             // Top-level fun call (`callStatic owner=null`) bound by @ClrIntrinsic. Two shapes (sourced from the ref.dll):
@@ -4671,7 +4675,7 @@ static class MemberCallSubstitution
                 var recvKey = sigParts0.Count >= 1 ? RecvKeyOf(sigParts0[0]) : "";
                 if (refs.TryResolveTopLevelStatic(fn, recvKey, out var fileClassOwner))
                 {
-                    node["owner"] = fileClassOwner;
+                    node["owner"] = TypeJson.Fqn(fileClassOwner);   // owner is a birType-emitted (structured Fqn) slot
                     return node;
                 }
             }
@@ -5089,7 +5093,7 @@ static class MemberCallSubstitution
         return new JsonObject
         {
             ["k"] = "callStatic",
-            ["owner"] = helperOwner,
+            ["owner"] = TypeJson.Fqn(helperOwner),
             ["method"] = helperMethod,
             ["args"] = hargs,
             ["typeArgs"] = new JsonArray { elem },
@@ -5107,7 +5111,7 @@ static class MemberCallSubstitution
         var call = new JsonObject
         {
             ["k"] = "callStatic",
-            ["owner"] = "kotlin.collections.ClrMapDefaultsKt",
+            ["owner"] = TypeJson.Fqn("kotlin.collections.ClrMapDefaultsKt"),
             ["method"] = helperMethod,
             ["args"] = hargs,
             ["typeArgs"] = new JsonArray { k, v },
@@ -5323,7 +5327,7 @@ static class MemberCallSubstitution
         var call = new JsonObject
         {
             ["k"] = "callStatic",
-            ["owner"] = ReferenceMetadataIndex.HelperTypeName(ownerFqn),
+            ["owner"] = TypeJson.Fqn(ReferenceMetadataIndex.HelperTypeName(ownerFqn)),
             ["method"] = member,
             ["args"] = hargs,
         };
