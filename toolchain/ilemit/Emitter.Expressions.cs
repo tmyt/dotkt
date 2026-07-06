@@ -162,7 +162,9 @@ sealed partial class Emitter
                     return ext;
                 }
                 var ctor = SelectCtor(ti, nargs.GetArrayLength());
-                EmitNewArgs(e, nargs);
+                // Pass the constructed instantiation's generic args so a value ctor arg is targeted at its CONCRETE
+                // type (`Box<int>::.ctor(int)`), not boxed to the ResolveTv `object` fallback in a non-generic caller.
+                EmitNewArgs(e, nargs, constructed is { IsGenericType: true } ? constructed.GetGenericArguments() : null);
                 // Constructed user generic `Box<int>` -> resolve the ctor onto the instantiation (static helper).
                 _il.Emit(OpCodes.Newobj, constructed != null ? TypeBuilder.GetConstructor(constructed, ctor) : (ConstructorInfo)ctor);
                 return constructed ?? (Type)ti.TB;

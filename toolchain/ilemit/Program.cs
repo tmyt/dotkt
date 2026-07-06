@@ -288,7 +288,13 @@ sealed partial class Emitter
                     // with this type's leading generic params POSITIONALLY (the BIR keeps the open name so FindMethod still
                     // walks the base chain by bare name for inherited members like AbstractIterator.setNext).
                     var (bopen, bconstructed) = ti.BaseFqn != null ? ParseOwnerT(ti.BaseFqn) : ParseOwner(ti.BaseName);
-                    if (bconstructed != null) { ti.TB.SetParent(bconstructed); }
+                    if (bconstructed != null)
+                    {
+                        ti.TB.SetParent(bconstructed);
+                        // An external referenced generic base (open name not emitted here) is a REFERENCED .NET base —
+                        // record it as ClrBase so the base-ctor emission calls its ctor, not object's.
+                        if (!_types.ContainsKey(bopen)) ti.ClrBase = bconstructed;
+                    }
                     else if (_types.TryGetValue(bopen, out var baseTi))
                     {
                         var baseTb = baseTi.TB;
@@ -296,9 +302,12 @@ sealed partial class Emitter
                         var myArgs = ti.TB.IsGenericTypeDefinition ? ti.TB.GetGenericArguments() : Type.EmptyTypes;
                         ti.TB.SetParent(bArity > 0 && myArgs.Length >= bArity ? baseTb.MakeGenericType(myArgs.Take(bArity).ToArray()) : (Type)baseTb);
                     }
-                    // A bare external .NET base (kotc's pure-FQN output for a non-`clr:`-marked .NET supertype): not in
-                    // `_types`, so resolve it by reflection over referenced assemblies.
-                    else ti.TB.SetParent(ResolveType(bopen));
+                    // A bare external .NET base (kotc's pure-FQN output for a non-`clr:`-marked .NET supertype, e.g.
+                    // `System.Exception` via facadegen `import`): not in `_types`, so resolve it by reflection. Record it
+                    // as ClrBase — WITHOUT this the base-ctor emission has no external base and falls to `object::.ctor`,
+                    // producing a `class : System.Object` (not the declared base) and an unchained base ctor (ilverify
+                    // CallCtor/ThisUninitReturn). Pre-flip the `clr:`-marked base set ClrBase at the branch above.
+                    else ti.TB.SetParent(ti.ClrBase = ResolveType(bopen));
                 }
             }
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
@@ -1786,14 +1795,28 @@ sealed partial class Emitter
     // arg flowing into an `object`/reference ctor param must be BOXED (`Result<T>..ctor(object)` receiving a bare
     // `!!T` was InvalidProgram at a value instantiation), exactly like EmitArgsTyped does for method calls.
     // Falls back to raw emission when the node carries no (or arity-mismatched) argTypes, or a type fails to map.
-    void EmitNewArgs(JsonElement e, JsonElement nargs)
+    void EmitNewArgs(JsonElement e, JsonElement nargs, Type[] classArgs = null)
     {
         Type[] want = null;
         if (e.TryGetProperty("argTypes", out var at) && at.ValueKind == JsonValueKind.Array
             && at.GetArrayLength() == nargs.GetArrayLength())
-            want = at.EnumerateArray().Select(x => { try { return MapType(x); } catch { return null; } }).ToArray();
+            want = at.EnumerateArray().Select(x => { try { return CtorArgTarget(x, classArgs); } catch { return null; } }).ToArray();
         int i = 0;
         foreach (var a in nargs.EnumerateArray()) { if (want?[i] != null) EmitArg(a, want[i]); else EmitExpr(a); i++; }
+    }
+
+    // The target type for a ctor arg. A `new` node's `argTypes` are the ctor's DECLARED param types — for a generic
+    // class those are its OWN open type-vars (`!i`). In a NON-generic caller (`main`), a type-scope tv has no generic
+    // param in scope, so MapType/ResolveTv falls back to `object` and the value arg would be BOXED — yet the CONSTRUCTED
+    // ctor (`Box<int>::.ctor(!0)`) wants the concrete value `int`. Substitute the declared type-var by its position with
+    // the constructed instantiation's concrete arg (`classArgs`) so the target is `int`, not `object`. Inside a generic
+    // caller `classArgs[i]` IS the in-scope generic param, so this is a no-op there (matches the prior ResolveTv result).
+    Type CtorArgTarget(JsonElement x, Type[] classArgs)
+    {
+        if (classArgs != null && x.ValueKind == JsonValueKind.Object
+            && DotKt.Bir.TypeNode.Read(x) is DotKt.Bir.TypeNode.Tv { Scope: "type" } tv && tv.I < classArgs.Length)
+            return classArgs[tv.I];
+        return MapType(x);
     }
 
     // Prefer a BIR-carried concrete result type (`retType`) over reflecting an un-baked builder's `!0`/`!!0`.
