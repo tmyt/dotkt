@@ -292,10 +292,15 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   `ClrMapDefaults` READ helpers now route through the NON-GENERIC `System.Collections.IDictionary` (implemented by every
   `Dictionary<K,V>` regardless of V) via `IDictionaryEnumerator` + `get_Item(object)` — the read-side mirror of bir2cir's
   write-side `MapVarianceRealign`. Regular `mapOf`/`mutableMapOf` read/iterate/`toString` are unaffected. Verified against
-  the JVM oracle (`cases/il-groupby2`, added to `verify-differential`). (A direct `m.size`/`m.containsKey` — and thus
-  `mapValues`' `mapCapacity(size)` pre-size — on a mismatched map still hit the Rule-2 `@ClrIntrinsic("Count")`/
-  `("ContainsKey")` on the invariant generic interface; making those covariance-safe needs a bir2cir Rule 5m route to the
-  new `clrMapSize`/`clrMapContainsKey` helpers, exactly as `get`/`get_keys`/`get_values` already route.)
+  the JVM oracle (`cases/il-groupby2`, added to `verify-differential`).
+- **`groupBy {}.mapValues {}` and a direct `m.size`/`m.containsKey` on a groupBy result are covariance-safe (#29).**
+  `size` and `containsKey` are now UNBOUND on the `Map`/`MutableMap` interface (their `@ClrIntrinsic("Count")`/
+  `("ContainsKey")` bindings, which read through the INVARIANT generic `IDictionary<K,V>`, are removed); bir2cir Rule 5m
+  routes `get_size`/`containsKey` on a `Map`/`MutableMap` owner to the covariance-safe `ClrMapDefaults.clrMapSize`/
+  `clrMapContainsKey` (non-generic `ICollection.Count` / `IDictionary.Contains`), exactly as `get`/`get_keys`/`get_values`
+  already route. This also makes `mapValues`' transitive `mapCapacity(this.size)` pre-size covariance-safe, so
+  `listOf(1,2,3,4).groupBy { it % 2 }.mapValues { it.value.size }` no longer throws `EntryPointNotFound`. Normal
+  `mapOf`/`mutableMapOf` `size`/`containsKey` stay correct. Verified against the JVM oracle (`cases/il-mapvalues`).
 - **Nested collections/maps inside `Pair`/`Triple.toString()`** render Kotlin-style (C11):
   `(listOf(1, 2) to listOf(3, 4)).toString()` is `([1, 2], [3, 4])`, not the raw
   `(System.Collections.Generic.List\`1[System.Int32], …)`. A tuple component's erased generic static type

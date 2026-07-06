@@ -5,9 +5,9 @@
 // no longer throws EntryPointNotFound/InvalidCast. JVM-oracle differential: output must match real Kotlin/JVM
 // (groupBy is a LinkedHashMap → insertion order).
 //
-// NOTE: `mapValues` / a direct `m.size` on a groupBy result are NOT exercised here: they hit `Map.size`
-// (@ClrIntrinsic "Count", a DIRECT Rule-2 member on the invariant generic interface, not routed through a helper),
-// which needs a bir2cir Rule 5m route to the covariance-safe clrMapSize helper — outside the stdlib.
+// NOTE: `mapValues` / a direct `m.size`/`m.containsKey` on a groupBy result are exercised in il-mapvalues (#29):
+// size/containsKey are UNBOUND on the Map interface and route (bir2cir Rule 5m) to the covariance-safe
+// ClrMapDefaults.clrMapSize/clrMapContainsKey (non-generic ICollection.Count / IDictionary.Contains).
 fun main() {
     // value-type key (Int) — the {it % 2} grouping; insertion order 1 (from 1) then 0 (from 2).
     val g = listOf(1, 2, 3, 4).groupBy { it % 2 }

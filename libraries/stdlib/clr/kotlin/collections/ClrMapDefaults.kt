@@ -2,9 +2,10 @@
  * CLR ref/runtime split: default implementations for Map/MutableMap members that have NO 1:1 equivalent on the
  * substituted BCL IDictionary<K,V> (see builtins/Collections.kt for the alias rationale). The backend (bir2cir Rule 5,
  * 2-type-arg map routing) rewrites `m.get(k)` / `m.put(k,v)` / `m.entries` / ... to these statics — the map mirror of
- * ClrCollectionDefaults. The bodies use ONLY BCL-bound members: the @ClrIntrinsic members on the Map/MutableMap
- * interfaces (containsKey -> ContainsKey, size -> Count, clear -> Clear) plus the raw extension intrinsics below
- * (clrMapItem -> get_Item, clrMapSetItem -> set_Item, ...), so they never recurse into a routed member.
+ * ClrCollectionDefaults. The bodies use ONLY BCL-safe members: the @ClrIntrinsic members on the Map/MutableMap
+ * interfaces (clear -> Clear), the raw extension intrinsics below (clrMapItem -> get_Item, clrMapSetItem -> set_Item,
+ * ...), and the covariance-safe size/containsKey (bir2cir Rule 5m routes `m.size`/`m.containsKey` to clrMapSize/
+ * clrMapContainsKey, which read the non-generic facade), so they never recurse into a routed member.
  *
  * Semantics notes (recorded in docs/dotkt-semantics.md):
  *   - `Map.get` is null-on-missing (Kotlin), synthesized as ContainsKey + get_Item (IDictionary's get_Item throws).
@@ -46,8 +47,8 @@ public fun <K, V> Map<K, V>.clrMapNativeKeys(): Iterable<K> = TODO("clr binding 
 // Keys/values arrive boxed to `Any?` off the non-generic IDictionaryEnumerator / get_Item and are narrowed with `as K` /
 // `as V` (unbox.any for value-type K/V). The MUTABLE helpers (put/remove/putAll/...) stay on the generic IDictionary<K,V>
 // path: a genuine MutableMap has matching static/runtime V (groupBy's result is a read-only Map), so no mismatch arises
-// there and the generic path avoids the box. (Direct `m.size`/`m.containsKey` — Rule 2 @ClrIntrinsic on the Map interface,
-// not routed here — remain generic; not on groupBy's read surface.)
+// there and the generic path avoids the box. (`m.size`/`m.containsKey` are UNBOUND on the Map interface and route here
+// too — clrMapSize/clrMapContainsKey below — so a groupBy result's size/containsKey is covariance-safe.)
 
 // Kotlin's Map.toString is `{a=1, b=2}` (AbstractMap.toString). The substituted BCL Dictionary renders its default
 // `System.Collections.Generic.Dictionary`2[...]` instead, so the backend should route `map.toString()` / `println(map)`
@@ -76,14 +77,11 @@ public fun <K, V> clrMapGet(m: Map<K, V>, key: K): V? {
 
 public fun <K, V> clrMapIsEmpty(m: Map<K, V>): Boolean = (m as ClrRawCollection).count() == 0
 
-// COVARIANCE-SAFE size / containsKey: these mirror `size`(@ClrIntrinsic "Count") and `containsKey`(@ClrIntrinsic
-// "ContainsKey") on the Map interface, but read through the NON-GENERIC facade (ICollection.Count / IDictionary.Contains)
-// so they survive a groupBy-style value-type mismatch. The Map interface members are still bound DIRECTLY (Rule 2) — a
-// direct `m.size` / `m.containsKey(k)` on a mismatched map (e.g. groupBy's result) therefore still throws EntryPointNotFound,
-// AND stdlib algorithms that pre-size via `this.size` (mapValues' `mapCapacity(size)`) hit it transitively. Making those
-// covariance-safe needs bir2cir to route `get_size`/`containsKey` on a Map/MutableMap owner to these helpers (Rule 5m,
-// exactly as `get`/`get_keys`/`get_values` already route) after unbinding their @ClrIntrinsic. Provided here as the
-// ready targets for that route (currently un-called).
+// COVARIANCE-SAFE size / containsKey: `size` and `containsKey` on the Map interface are UNBOUND (no @ClrIntrinsic), and
+// bir2cir Rule 5m routes `get_size`/`containsKey` on a Map/MutableMap owner to THESE helpers (exactly as `get`/`get_keys`/
+// `get_values` route). They read through the NON-GENERIC facade (ICollection.Count / IDictionary.Contains) so they survive
+// a groupBy-style value-type mismatch, AND make stdlib algorithms that pre-size via `this.size` (mapValues'
+// `mapCapacity(size)`) covariance-safe transitively.
 public fun <K, V> clrMapSize(m: Map<K, V>): Int = (m as ClrRawCollection).count()
 
 public fun <K, V> clrMapContainsKey(m: Map<K, V>, key: K): Boolean = (m as ClrRawDictionary).Contains(key)
