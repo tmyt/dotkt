@@ -332,7 +332,7 @@ sealed partial class Emitter
                                 ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), tlType, tlAttrs)
                                 : ti.TB.DefineField(f.GetProperty("name").GetString(), tlType, tlAttrs);
                         // H2: a `suspend (…) -> T`-typed top-level property's backing field carries the pre-erasure shape.
-                        if (f.TryGetProperty("suspendFnType", out var tlSf)) ApplySuspendFnType(tlFb, tlSf.GetString());
+                        if (f.TryGetProperty("suspendFnType", out var tlSf)) ApplySuspendFnType(tlFb, tlSf.GetRawText());
                         ti.Fields[f.GetProperty("name").GetString()] = tlFb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: true);
@@ -362,7 +362,7 @@ sealed partial class Emitter
                         // A not-publicly-settable property's backing field -> [KotlinReadOnly] (consumer restores it as `val`).
                         if (f.TryGetProperty("readOnly", out var ro) && ro.GetBoolean()) ApplyKotlinReadOnly(fb);
                         // H2: a `suspend (…) -> T`-typed field/property backing field carries the pre-erasure shape.
-                        if (f.TryGetProperty("suspendFnType", out var fSf)) ApplySuspendFnType(fb, fSf.GetString());
+                        if (f.TryGetProperty("suspendFnType", out var fSf)) ApplySuspendFnType(fb, fSf.GetRawText());
                         ti.Fields[f.GetProperty("name").GetString()] = fb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: false);
@@ -376,7 +376,7 @@ sealed partial class Emitter
                         if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(g.GetString(), out var gm)) pb.SetGetMethod(gm);
                         if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(s.GetString(), out var sm)) pb.SetSetMethod(sm);
                         // H2: a `val/var x: suspend (…) -> T` property carries the pre-erasure `sfunc:` shape (its CLR type is object).
-                        if (p.TryGetProperty("suspendFnType", out var pSf)) ApplySuspendFnType(pb, pSf.GetString());
+                        if (p.TryGetProperty("suspendFnType", out var pSf)) ApplySuspendFnType(pb, pSf.GetRawText());
                     }
                 EnsureCtorsDefined(ti);
             }
@@ -655,7 +655,7 @@ sealed partial class Emitter
                     // lands the walk; see the reported CIR contract.)
                     byte[] retFlags = m.TryGetProperty("retNullableFlags", out var rnf) && rnf.ValueKind == JsonValueKind.Array ? ReadNullableFlags(rnf) : null;
                     // H2: a `suspend (…) -> T` RETURN type — bir2cir carries the pre-erasure `sfunc:` shape in `retSuspendFnType`.
-                    string retSuspendFn = m.TryGetProperty("retSuspendFnType", out var rsf) ? rsf.GetString() : null;
+                    string retSuspendFn = m.TryGetProperty("retSuspendFnType", out var rsf) ? rsf.GetRawText() : null;
                     if (kf == 0 && !inl && nmask == 0 && retFlags == null && string.IsNullOrEmpty(retSuspendFn)) continue;
                     var name = m.GetProperty("name").GetString();
                     if (!ti.MethodsBySig.TryGetValue(SigKey(name, m), out var mb) && !ti.Methods.TryGetValue(name, out mb)) continue;
@@ -3803,6 +3803,59 @@ sealed partial class Emitter
             .ToList();
         // Prefer an exact-arity match over one that needs default-filling.
         return (cands.FirstOrDefault(m => m.GetParameters().Length == shapes.Length) ?? cands.First()).MakeGenericMethod(typeArgs);
+    }
+
+    // #37 m1: a type slot is a STRUCTURED Type node (birType-emitted / bir2cir clr*) OR a legacy STRING token (kotc's
+    // own clrInstance interop `type`, the m3 `sig`/typeArgs tokens). Dispatch on the JSON kind; the string path keeps
+    // the shorthand/legacy-token resolver below, the object path walks TypeNode.
+    Type MapType(JsonElement e) =>
+        e.ValueKind == JsonValueKind.String ? MapType(e.GetString())
+        : e.ValueKind == JsonValueKind.Object ? MapType(DotKt.Bir.TypeNode.Read(e))
+        : typeof(object);
+
+    Type MapType(DotKt.Bir.TypeNode t) => t switch
+    {
+        DotKt.Bir.TypeNode.ByRef b => MapType(b.Of).MakeByRefType(),
+        DotKt.Bir.TypeNode.Array a => MapType(a.Elem).MakeArrayType(),
+        DotKt.Bir.TypeNode.Nullable n => typeof(Nullable<>).MakeGenericType(MapType(n.Of)),
+        DotKt.Bir.TypeNode.Fn fn => FuncType(fn),
+        DotKt.Bir.TypeNode.Tv tv => ResolveTv(tv),
+        DotKt.Bir.TypeNode.Fqn { Args: null } f => MapType(f.Name),   // reuse the shorthand / bare-FQN resolver
+        DotKt.Bir.TypeNode.Fqn f => ConstructGeneric(f.Name, f.Args),
+        _ => typeof(object),
+    };
+
+    // A constructed generic from a structured Fqn(name, args): an emitted open type -> MakeGenericType, else a
+    // referenced .NET generic by arity-suffixed FQN. (A void type-arg -> object, illegal as a .NET type arg.)
+    Type ConstructGeneric(string name, DotKt.Bir.TypeNode[] args)
+    {
+        var mapped = args.Select(a => { var r = MapType(a); return r == typeof(void) ? typeof(object) : r; }).ToArray();
+        if (_types.TryGetValue(name, out var oti)) return oti.AsType.MakeGenericType(mapped);
+        return ResolveType(name + "`" + mapped.Length).MakeGenericType(mapped);
+    }
+
+    // A `tv` (scope + flattened index) -> the CLR generic-parameter builder: scope "method" -> the method's own params
+    // (`!!i`, GenericMethodParameter), scope "type" -> the enclosing type's flattened params (`!i`, GenericTypeParameter).
+    Type ResolveTv(DotKt.Bir.TypeNode.Tv tv)
+    {
+        var pool = tv.Scope == "method" ? _curMethodParams : _curTypeParams;
+        if (pool != null)
+            foreach (var g in pool.Values)
+                if (g.GenericParameterPosition == tv.I) return g;
+        throw new NotSupportedException($"unresolved type variable {tv.Scope}!{tv.I} (no generic param at that position in scope)");
+    }
+
+    // Structured function type -> the CLR delegate (Action/Func or a synthetic for arity > 16).
+    Type FuncType(DotKt.Bir.TypeNode.Fn fn)
+    {
+        var args = fn.Params.Select(MapType).ToArray();
+        var ret = MapType(fn.Ret);
+        if (ret == typeof(void))
+            return args.Length == 0 ? typeof(Action)
+                : args.Length <= 16 ? ResolveType("System.Action`" + args.Length).MakeGenericType(args)
+                : SyntheticActionType(args);
+        var all = args.Append(ret).ToArray();
+        return args.Length <= 16 ? ResolveType("System.Func`" + all.Length).MakeGenericType(all) : SyntheticFuncType(args, ret);
     }
 
     Type MapType(string t)

@@ -181,7 +181,7 @@ sealed partial class Emitter
             // H2: a `suspend (…) -> T` PARAMETER type — bir2cir carries the pre-erasure `sfunc:` shape in `suspendFnType`
             // (the CLR param type itself is the erased `object`). Force the parameter builder so [KotlinSuspendFunctionType]
             // can be stamped even if the param otherwise carries no name/default/nullability.
-            string pSuspendFn = p.TryGetProperty("suspendFnType", out var psf) ? psf.GetString() : null;
+            string pSuspendFn = p.TryGetProperty("suspendFnType", out var psf) ? psf.GetRawText() : null;
             // PARAMETER-level custom attributes (e.g. [ClrRefArgument], which bir2cir reads from the ref.dll to pass the
             // arg by reference). Stripped in the runtime build (kotc emits none), so this rides only the ref.dll.
             JsonElement pattrs = default;
