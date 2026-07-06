@@ -2663,7 +2663,7 @@ static class DefaultArgSplice
         var hasPlaceholder = false;
         for (var j = 0; j < args.Count; j++) if (IsPlaceholder(args[j])) { hasPlaceholder = true; break; }
         if (!hasPlaceholder && args.Count >= sigCount) return;           // no omitted arg to fill
-        var owner = Str(node["owner"]) ?? Str(node["ownerType"]);
+        var owner = TypeJson.OwnerName(node["owner"]) ?? TypeJson.OwnerName(node["ownerType"]);
         var method = Str(node["method"]);
         if (owner == null || method == null) return;
         var defaults = refs.KotlinDefaultsFor(owner, method, sigCount);
@@ -2800,29 +2800,48 @@ static class CharSeqStringLowering
         return "kotlin.String";
     }
 
+    // --- structured Type versions (for the object-valued type slots; the string ones above stay for the m3 sig) ---
+    static readonly TypeNode StringTn = new TypeNode.Fqn("kotlin.String");
+    static bool IsCharSeqT(TypeNode t) => t switch
+    {
+        TypeNode.Fqn f => f.Name == CharSeq,
+        TypeNode.Nullable n => IsCharSeqT(n.Of),
+        TypeNode.Array a => IsCharSeqT(a.Elem),
+        _ => false,
+    };
+    static bool IsCharSeqSlot(JsonNode n) => TypeJson.Read(n) is TypeNode t && IsCharSeqT(t);
+    // A CharSequence Fqn (under nullable/array) -> kotlin.String, preserving the wrappers.
+    static TypeNode LowerTokT(TypeNode t) => t switch
+    {
+        TypeNode.Nullable n => new TypeNode.Nullable(LowerTokT(n.Of)),
+        TypeNode.Array a => new TypeNode.Array(LowerTokT(a.Elem)),
+        _ => StringTn,
+    };
+    static JsonNode LowerSlot(JsonNode n) => TypeJson.Read(n) is TypeNode t ? TypeJson.Write(LowerTokT(t)) : n;
+
     // Lexical name -> declared type (params + local vars, with CharSequence already mapped to kotlin.String), plus
     // whether the enclosing method's return type was CharSequence. Copy-on-extend (mirrors StringCharSequenceBridge.Env).
     sealed class Env
     {
-        public readonly Dictionary<string, string> Vars;
+        public readonly Dictionary<string, TypeNode> Vars;
         public readonly bool RetWasCharSeq;
         public Env() { Vars = new(StringComparer.Ordinal); RetWasCharSeq = false; }
-        Env(Dictionary<string, string> vars, bool ret) { Vars = vars; RetWasCharSeq = ret; }
+        Env(Dictionary<string, TypeNode> vars, bool ret) { Vars = vars; RetWasCharSeq = ret; }
 
         public Env WithDecl(JsonObject decl)
         {
             if (decl["params"] is not JsonArray ps) return this;
-            var vars = new Dictionary<string, string>(Vars, StringComparer.Ordinal);
+            var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal);
             foreach (var p in ps)
-                if (p is JsonObject po && Str(po["name"]) is string pn && Str(po["type"]) is string pt)
-                    vars[pn] = IsCharSeq(pt) ? "kotlin.String" : pt;
-            var ret = decl["ret"] is JsonValue rv && rv.TryGetValue<string>(out var rs) ? IsCharSeq(rs) : RetWasCharSeq;
+                if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
+                    vars[pn] = IsCharSeqT(pt) ? StringTn : pt;
+            var ret = TypeJson.Read(decl["ret"]) is TypeNode rt ? IsCharSeqT(rt) : RetWasCharSeq;
             return new Env(vars, ret);
         }
 
-        public Env WithVar(string name, string type)
+        public Env WithVar(string name, TypeNode type)
         {
-            var vars = new Dictionary<string, string>(Vars, StringComparer.Ordinal) { [name] = type };
+            var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal) { [name] = type };
             return new Env(vars, RetWasCharSeq);
         }
     }
@@ -2859,8 +2878,7 @@ static class CharSeqStringLowering
                 var k = Str(o["k"]);
                 if (k is "delegateNew" or "delegateInvoke"
                     && Str(o["method"]) is string mn
-                    && Str(o["funcType"]) is string ft
-                    && FuncTypeHasCharSeqParam(ft))
+                    && FuncTypeHasCharSeqParam(o["funcType"]))
                     set.Add(mn);
                 foreach (var kv in o) if (kv.Value != null) Scan(kv.Value);
             }
@@ -2870,16 +2888,16 @@ static class CharSeqStringLowering
         return set;
     }
 
-    // `func:<ret>:<arg0>,<arg1>,…` — true iff any ARG segment (everything after the first, ret, segment) is CharSequence.
-    static bool FuncTypeHasCharSeqParam(string ft)
+    // A function type any of whose PARAMS is CharSequence (the delegate-target exemption). funcType is a structured Fn
+    // (delegateNew) or, on a closureNew, a legacy `func:<ret>:<args>` string.
+    static bool FuncTypeHasCharSeqParam(JsonNode ftNode)
     {
-        if (ft == null || !ft.StartsWith("func:", StringComparison.Ordinal)) return false;
+        if (TypeJson.Read(ftNode) is TypeNode.Fn fn) return fn.Params.Any(IsCharSeqT);
+        if (Str(ftNode) is not string ft || !ft.StartsWith("func:", StringComparison.Ordinal)) return false;
         var rest = ft["func:".Length..];
-        // Split off the return type (first top-level `:`-delimited segment), then the remaining args are comma-separated.
         var ci = TopLevelColon(rest);
         if (ci < 0) return false;
-        var argsPart = rest[(ci + 1)..];
-        return SplitTopLevel(argsPart).Any(IsCharSeq);
+        return SplitTopLevel(rest[(ci + 1)..]).Any(IsCharSeq);
     }
 
     // Index of the first `:` not nested inside `[`/`<`/`(` brackets, or -1.
@@ -2926,8 +2944,8 @@ static class CharSeqStringLowering
             var walked = item == null ? null : Walk(item, cur);
             copy.Add(walked);
             if (walked is JsonObject wo && Str(wo["k"]) == "var"
-                && Str(wo["name"]) is string vn && Str(wo["type"]) is string vt)
-                cur = cur.WithVar(vn, IsCharSeq(vt) ? "kotlin.String" : vt);
+                && Str(wo["name"]) is string vn && TypeJson.Read(wo["type"]) is TypeNode vt)
+                cur = cur.WithVar(vn, IsCharSeqT(vt) ? StringTn : vt);
         }
         return copy;
     }
@@ -2939,7 +2957,7 @@ static class CharSeqStringLowering
         // A member READ on a CharSequence value (kotc: callInstance whose ownerType is the synthetic). A stdlib
         // CharSequence-EXTENSION is a callStatic (receiver as arg[0]), never this shape, so this only ever hits the
         // synthetic interface's own length/get/subSequence.
-        if (k == "callInstance" && IsCharSeq(Str(node["ownerType"])))
+        if (k == "callInstance" && IsCharSeqSlot(node["ownerType"]))
         {
             var rewritten = RewriteMemberRead(node);
             if (rewritten != null) return rewritten;
@@ -2951,9 +2969,9 @@ static class CharSeqStringLowering
                 LowerDeclTypes(node);
                 return node;
             case "var":
-                if (node["type"] is JsonValue vt && vt.TryGetValue<string>(out var vts) && IsCharSeq(vts))
+                if (IsCharSeqSlot(node["type"]))
                 {
-                    node["type"] = LowerTok(vts);
+                    node["type"] = LowerSlot(node["type"]);
                     if (node["init"] is JsonNode init && CoerceOrNull(init, env) is JsonNode w) node["init"] = w;
                 }
                 return node;
@@ -2965,7 +2983,7 @@ static class CharSeqStringLowering
                     node["value"] = rw;
                 return node;
             case "cast":
-                if (IsCharSeq(Str(node["type"])) && node["e"] is JsonNode ce)
+                if (IsCharSeqSlot(node["type"]) && node["e"] is JsonNode ce)
                     return CoerceOrNull(ce, env) ?? ce.DeepClone();
                 return node;
             default:
@@ -2978,10 +2996,10 @@ static class CharSeqStringLowering
     {
         if (node["params"] is JsonArray ps)
             foreach (var p in ps)
-                if (p is JsonObject po && Str(po["type"]) is string pt && IsCharSeq(pt)) po["type"] = LowerTok(pt);
-        if (Str(node["ret"]) is string ret && IsCharSeq(ret)) node["ret"] = LowerTok(ret);
-        if (node["k"] == null && Str(node["type"]) is string ft && IsCharSeq(ft) && node["name"] != null)
-            node["type"] = LowerTok(ft);   // a field {name,type}
+                if (p is JsonObject po && IsCharSeqSlot(po["type"])) po["type"] = LowerSlot(po["type"]);
+        if (IsCharSeqSlot(node["ret"])) node["ret"] = LowerSlot(node["ret"]);
+        if (node["k"] == null && IsCharSeqSlot(node["type"]) && node["name"] != null)
+            node["type"] = LowerSlot(node["type"]);   // a field {name,type}
     }
 
     // A LOCAL top-level call (owner null, method in this assembly): lower each CharSequence `sig` slot to kotlin.String
@@ -2989,10 +3007,10 @@ static class CharSeqStringLowering
     // owner, or a name absent from localTopLevelFns) is left untouched -> the StringCharSequenceBridge handles it.
     static void LowerLocalCall(JsonObject node, Env env)
     {
-        if (node["owner"] is JsonValue ov && ov.TryGetValue<string>(out _)) return;   // attributed -> external
+        if (TypeJson.OwnerName(node["owner"]) != null) return;   // attributed -> external
         if (Str(node["method"]) is not string method || !_localFns.Contains(method)) return;
         if (Str(node["sig"]) is not string sig) return;
-        var parts = SplitTopLevel(sig).ToList();
+        var parts = SplitTopLevel(sig).ToList();   // sig stays the m3 legacy string
         var args = node["args"] as JsonArray;
         var changed = false;
         for (var i = 0; i < parts.Count; i++)
@@ -3004,7 +3022,7 @@ static class CharSeqStringLowering
                     args[i] = w;
             }
         if (changed) node["sig"] = string.Join(",", parts);
-        if (Str(node["dynRet"]) is string dr && IsCharSeq(dr)) node["dynRet"] = LowerTok(dr);
+        if (IsCharSeqSlot(node["dynRet"])) node["dynRet"] = LowerSlot(node["dynRet"]);
     }
 
     // `cs.length` -> System.String.Length; `cs[i]` (get) -> get_Chars; `cs.subSequence(a,b)` -> Substring(a, b-a).
@@ -3019,14 +3037,14 @@ static class CharSeqStringLowering
             case "get_length":
                 return new JsonObject
                 {
-                    ["k"] = "clrPropGet", ["type"] = "System.String", ["name"] = "Length",
-                    ["retType"] = "System.Int32", ["static"] = false, ["recv"] = recv?.DeepClone(),
+                    ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn("System.String"), ["name"] = "Length",
+                    ["retType"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = recv?.DeepClone(),
                 };
             case "get":
                 return new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = "System.String", ["method"] = "get_Chars",
-                    ["argTypes"] = new JsonArray { "System.Int32" }, ["ret"] = "System.Char",
+                    ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.String"), ["method"] = "get_Chars",
+                    ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32") }, ["ret"] = TypeJson.Fqn("System.Char"),
                     ["recv"] = recv?.DeepClone(),
                     ["args"] = new JsonArray { args != null && args.Count > 0 ? args[0].DeepClone() : null },
                 };
@@ -3044,13 +3062,13 @@ static class CharSeqStringLowering
                     ["k"] = "valueBlock",
                     ["stmts"] = new JsonArray
                     {
-                        new JsonObject { ["k"] = "var", ["name"] = recvTmp, ["type"] = "System.String", ["init"] = recv?.DeepClone() },
-                        new JsonObject { ["k"] = "var", ["name"] = startTmp, ["type"] = "System.Int32", ["init"] = args[0].DeepClone() },
+                        new JsonObject { ["k"] = "var", ["name"] = recvTmp, ["type"] = TypeJson.Fqn("System.String"), ["init"] = recv?.DeepClone() },
+                        new JsonObject { ["k"] = "var", ["name"] = startTmp, ["type"] = TypeJson.Fqn("System.Int32"), ["init"] = args[0].DeepClone() },
                     },
                     ["result"] = new JsonObject
                     {
-                        ["k"] = "clrInstance", ["type"] = "System.String", ["method"] = "Substring",
-                        ["argTypes"] = new JsonArray { "System.Int32", "System.Int32" }, ["ret"] = "System.String",
+                        ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.String"), ["method"] = "Substring",
+                        ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.Int32") }, ["ret"] = TypeJson.Fqn("System.String"),
                         ["recv"] = new JsonObject { ["k"] = "local", ["name"] = recvTmp },
                         ["args"] = new JsonArray
                         {
@@ -3090,15 +3108,17 @@ static class CharSeqStringLowering
         if (n is not JsonObject o) return false;
         switch (Str(o["k"]))
         {
-            case "const": return IsStringTok(Str(o["type"]));
-            case "local": return Str(o["name"]) is string nm && env.Vars.TryGetValue(nm, out var t) && IsStringTok(t);
-            case "cast": return IsStringTok(Str(o["type"]));
+            case "const": return IsStringTokT(TypeJson.Read(o["type"]));
+            case "local": return Str(o["name"]) is string nm && env.Vars.TryGetValue(nm, out var t) && IsStringTokT(t);
+            case "cast": return IsStringTokT(TypeJson.Read(o["type"]));
             case "concat": return true;   // string concatenation
             case "this": return false;
             default:
-                return IsStringTok(Str(o["ret"]) ?? Str(o["retType"]) ?? Str(o["dynRet"]));
+                return IsStringTokT(TypeJson.Read(o["ret"]) ?? TypeJson.Read(o["retType"]) ?? TypeJson.Read(o["dynRet"]));
         }
     }
+
+    static bool IsStringTokT(TypeNode t) => t is TypeNode.Fqn { Args: null } f && StringTokens.Contains(f.Name);
 
     static IReadOnlyList<string> SplitTopLevel(string value)
     {
