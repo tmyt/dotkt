@@ -3649,7 +3649,13 @@ sealed partial class Emitter
         // Mirrors the event path; covers custom delegates (ApplicationInitializationCallback, ThreadStart) and BCL
         // Func/Action alike. Scoped to literal lambdas (delegateNew/closureNew) so stored delegate/Func values keep
         // their existing pass-through path.
+        // Scoped to a FULLY-CONCRETE target delegate: when `want` is a REFERENCED delegate (`KFunc`) instantiated with a
+        // TypeBuilder/generic-param arg, DelegateCtor's TypeBuilder.GetConstructor path can't build it ("must contain a
+        // TypeBuilder as a generic argument"); the lambda then self-builds its own (assembly-local synthetic) delegate
+        // from `funcType` via the normal EmitExpr path below — the pre-existing behavior. A concrete `want` (e.g.
+        // MapsKt.mapValues's KFunc over referenced Map.Entry/int) still rewraps into the exact callee delegate.
         if (typeof(System.Delegate).IsAssignableFrom(want) && want != typeof(System.Delegate) && want != typeof(System.MulticastDelegate)
+            && !ContainsTypeBuilder(want)
             && a.TryGetProperty("k", out var dk) && (dk.GetString() == "delegateNew" || dk.GetString() == "closureNew"))
         {
             EmitHandlerAsDelegate(a, want);
