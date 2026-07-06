@@ -1638,7 +1638,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// a Tier-2-carrying function (uniform splice source); rides the ref.dll (stripped in the rt build with all attrs).
 		val emitKotlinDefault = ownerFn != null && !stripMetadata && carriesKotlinDefault(ownerFn)
 		val extOffset = if (ownerFn?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true) 1 else 0
-		return params.filter { isValueParameter(it) }
+		val valueParams = params.filter { isValueParameter(it) }
+		// A @KotlinDefault BIR whose default expression reads ANOTHER value parameter (`b: Int = a * 10`) must encode that
+		// read as a call-index token, NOT a bare `local a` (which would resolve to a non-existent local in the CALLER after
+		// bir2cir's cross-module splice). Install a `{"k":"defaultArgParam","idx":N}` captureSubst for every value param
+		// (N = its emitted call index, extension receiver counted first) around the bir emission; bir2cir's DefaultArgSplice
+		// substitutes each token with this call's arg at that index (the peer of its `{this}` → receiver substitution).
+		if (emitKotlinDefault) valueParams.forEachIndexed { regIdx, vp ->
+			captureSubst[vp] = """{"k":"defaultArgParam","idx":${regIdx + extOffset}}"""
+		}
+		val result = valueParams
 			.mapIndexed { regIdx, it ->
 				// `vararg xs: T` -> mark the param so ilemit stamps [ParamArray] (native .NET varargs; a cross-module
 				// consumer can then call `f(1, 2, 3)`). A nullable type rides a `nullable` flag (ref types are nullable
@@ -1662,6 +1671,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
 				"""{"name":${str(it.name.asString())},"type":${str(birType(it.type))}$vararg$nullable$default$pattrs}"""
 			}
+		if (emitKotlinDefault) valueParams.forEach { captureSubst.remove(it) }
+		return result
 	}
 
 	/** A `,"sig":"<paramtypes>"` field carried on a call so ilemit resolves the right OVERLOAD by name+signature. Emit
@@ -2827,35 +2838,52 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val regs = callee.parameters.mapIndexedNotNull { i, p -> if (p.kind == IrParameterKind.Regular) i to p else null }
 		val provided = regs.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
 		val out = ArrayList<String>()
+		// The filled JSON for each already-processed value parameter — the substitution source for a same-module default
+		// that reads ANOTHER value parameter (`b: Int = a * 10`). A Kotlin default may reference only EARLIER params, so
+		// every referenced param is already recorded here by the time its reader is processed.
+		val filledByParam = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueParameter, String>()
 		regs.forEachIndexed { idx, pair ->
 			val p = pair.second
 			val arg = provided[idx]
-			if (arg != null) { out.add(argExpr(arg, p)); return@forEachIndexed }
-			val def = p.defaultValue?.expression ?: return@forEachIndexed
-			when {
-				def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression ->
-					// CROSS-MODULE: the jar dropped the default VALUE. A @KotlinDefault-carrying callee (any non-constant
-					// default — joinToString's CharSequence separators, substringAfter's `= this`) gets a POSITIONAL
-					// placeholder for EVERY omitted arg so a later provided arg (the trailing transform lambda) keeps its
-					// slot; bir2cir fills each from the ref.dll @KotlinDefault. A callee with only metadata-representable
-					// defaults carries none → drop the (trailing) omit for ilemit's [DefaultParameterValue] backfill (unchanged).
-					if (carries) out.add(defaultArgPlaceholder)
-				refsAny(def, valueSyms) ->
-					// SAME-MODULE default reading another VALUE parameter (`b: Int = a * 10`) — needs the callee's own scope
-					// (a $default synthetic), not yet handled at the call site. Reject at the omitting call (not the decl).
-					unsupported(call, "omitting a non-constant default argument",
-						"the default value of parameter '${p.name.asString()}' references another parameter, " +
-						"which the .NET backend cannot evaluate at the call site; pass the argument explicitly")
-				refsAny(def, receiverSyms) -> {
-					// SAME-MODULE default reading the RECEIVER (`= this` / `this.field`). Inline with `this` rewritten to THIS
-					// call's receiver — the $default-scope evaluation, at the emitted-JSON level. Every `this` in the callee's
-					// default denotes the callee's receiver, so replacing them ALL with this call's receiver is correct (an
-					// inserted `{"k":"this"}` from a `this.foo` receiver then denotes the CALLER's this — no further pass).
-					val r = recvJson
-					if (r != null) out.add(expr(def).replace(defaultArgThisToken, r)) else out.add(argExpr(def, p))
+			val emitted: String? = when {
+				arg != null -> argExpr(arg, p)
+				else -> {
+					val def = p.defaultValue?.expression
+					when {
+						def == null -> null
+						def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression ->
+							// CROSS-MODULE: the jar dropped the default VALUE. A @KotlinDefault-carrying callee (any non-constant
+							// default — joinToString's CharSequence separators, substringAfter's `= this`, `b = a * 10`) gets a
+							// POSITIONAL placeholder for EVERY omitted arg so a later provided arg (the trailing transform lambda)
+							// keeps its slot; bir2cir fills each from the ref.dll @KotlinDefault (its `{param n}` tokens → this
+							// call's args). A callee with only metadata-representable defaults carries none → drop the (trailing)
+							// omit for ilemit's [DefaultParameterValue] backfill (unchanged).
+							if (carries) defaultArgPlaceholder else null
+						refsAny(def, valueSyms) -> {
+							// SAME-MODULE default reading another VALUE parameter (`b: Int = a * 10`). Inline with each referenced
+							// value param rewritten to THIS call's filled arg for that param — the $default-scope evaluation at the
+							// emitted-JSON level (the twin of the `= this` receiver case below, via captureSubst instead of a
+							// token replace). Best-effort single-eval: a side-effecting earlier arg read by this default is
+							// duplicated (documented edge, same as the receiver case).
+							val installed = ArrayList<org.jetbrains.kotlin.ir.declarations.IrValueParameter>()
+							for ((vp, js) in filledByParam) { captureSubst[vp] = js; installed.add(vp) }
+							val js = recvJson?.let { expr(def).replace(defaultArgThisToken, it) } ?: expr(def)
+							installed.forEach { captureSubst.remove(it) }
+							js
+						}
+						refsAny(def, receiverSyms) -> {
+							// SAME-MODULE default reading the RECEIVER (`= this` / `this.field`). Inline with `this` rewritten to
+							// THIS call's receiver — the $default-scope evaluation, at the emitted-JSON level. Every `this` in the
+							// callee's default denotes the callee's receiver, so replacing them ALL with this call's receiver is
+							// correct (an inserted `{"k":"this"}` from a `this.foo` receiver then denotes the CALLER's this).
+							val r = recvJson
+							if (r != null) expr(def).replace(defaultArgThisToken, r) else argExpr(def, p)
+						}
+						else -> argExpr(def, p)   // constant / global — inline verbatim (unchanged)
+					}
 				}
-				else -> out.add(argExpr(def, p))   // constant / global — inline verbatim (unchanged)
 			}
+			if (emitted != null) { out.add(emitted); filledByParam[p] = emitted }
 		}
 		return out
 	}
