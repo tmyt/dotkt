@@ -696,7 +696,8 @@ sealed partial class Emitter
             {
                 // `netObj::method` -> a delegate bound to a .NET instance method (resolved by reflection).
                 var ft = MapType(e.GetProperty("funcType"));
-                var type = ClrRef(e.GetProperty("clrType").GetString());
+                // `clrType` is a STRUCTURED TypeNode post type-flip (was a bare string); ClrRef(JsonElement) dispatches both.
+                var type = ClrRef(e.GetProperty("clrType"));
                 var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => ClrRef(a)).ToArray();
                 var mi = type.GetMethod(e.GetProperty("method").GetString(),
                     BindingFlags.Public | BindingFlags.Instance, null, argTypes, null)
