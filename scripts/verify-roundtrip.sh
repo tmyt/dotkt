@@ -34,18 +34,9 @@ declare -A RT_XFAIL=(
 	# (#11 FIXED 2026-07-05: a suspend call inside an INLINE scope function used as a sub-expression —
 	# `doFetch = with(lib){ b.fetch() }` — no longer refuses in kotc; kotc emits the inlined valueBlock verbatim
 	# and bir2cir's SuspendColdLowering flattens it, segmenting the suspend call as an ordinary suspension point.)
-	#
-	# #34b (facadegen side DONE, kotc side PENDING): facadegen now surfaces a top-level `val`/`var` as a `tlprop`
-	# meta token (toolchain/facadegen/Program.cs EmitKotlinFileClass), but kotc does NOT yet CONSUME it — so
-	# `import tlval.greeting` is still `unresolved reference`. Routed to kotc: (1) ClrTypeInjection must parse a
-	# `tlprop <name> <type> <ro|rw>` line and restore a NON-extension top-level property (createTopLevelProperty,
-	# no extensionReceiverType), registering its .NET file class by CallableId (like tlfun/tlextprop); (2) BirEmitter
-	# must route the injected prop READ/WRITE to `staticField`/`staticFieldSet` on that referenced file class (the
-	# current `fileClassOf(p)` fallback + backingField==null->get_/set_ path is wrong for an injected field-backed
-	# prop); (3) kotc should stamp the round-trip readOnly flag on top-level `val` fields (BirEmitter statFields,
-	# ~L575-579 — the member path already emits `readOnly` at ~L1165) so facadegen restores `val` vs `var` (today a
-	# top-level val surfaces as `rw`). When those land, this flips to FIXED — prune it.
-	[roundtrip-toplevel-val]="kotc does not yet consume the facadegen tlprop token (ClrTypeInjection restore + BirEmitter staticField routing pending) — routed to kotc; facadegen side (tlprop emission) is DONE"
+	# (#34b FIXED 2026-07-06: a top-level `val`/`var` fully round-trips — facadegen surfaces it as a `tlprop` meta
+	# token, kotc's ClrTypeInjection restores a non-extension top-level property and BirEmitter routes its read/write
+	# to `staticField`/`staticFieldSet` of the referenced file class; a top-level `val` is stamped `readOnly`.)
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------

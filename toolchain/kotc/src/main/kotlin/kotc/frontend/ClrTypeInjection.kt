@@ -250,6 +250,11 @@ private object ClrMetadataHolder {
 				// tlextprop <Name> <type> <ro|rw> <receiverType> — a top-level EXTENSION property (`val T.p`); the file
 				// class holds its get_/set_<Name>(__self) accessors. Restored as a top-level extension property.
 				"tlextprop" -> topLevelProps.add(ClrTopLevelProp(filePkg ?: FqName.ROOT, fileClass, tok[1], tok[2], tok.getOrNull(3) == "rw", tok[4]))
+				// tlprop <Name> <type> <ro|rw> — a NON-extension top-level property (`val greeting`); the file class holds
+				// it as a plain STATIC FIELD (no get_/set_ accessor). Restored as a top-level property with NO extension
+				// receiver (empty `receiver` = the discriminator vs tlextprop); the backend routes reads/writes to that
+				// static field of the referenced .NET file class (#34b).
+				"tlprop" -> topLevelProps.add(ClrTopLevelProp(filePkg ?: FqName.ROOT, fileClass, tok[1], tok[2], tok.getOrNull(3) == "rw", ""))
 				// super <SimpleName>... — the injectable base class (first) + interfaces; wired by ClrSupertypeInjector.
 				"super" -> supers = tok.drop(1)
 				// basector none — the base class has no accessible no-arg ctor (still linked for assignability, but a
@@ -608,11 +613,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	}
 
 	override fun generateProperties(callableId: CallableId, context: MemberGenerationContext?): List<FirPropertySymbol> {
-		// DotKt round-trip: a top-level EXTENSION property (`val T.p`) — no owner; the backend routes `x.p` to the
-		// file class's get_/set_<p>(__self) statics. No backing field (the accessors carry the value).
+		// DotKt round-trip: a restored top-level property. An EXTENSION property (`val T.p`, non-empty `receiver`) —
+		// no owner; the backend routes `x.p` to the file class's get_/set_<p>(__self) statics. A plain NON-extension
+		// property (`val greeting`, empty `receiver`) has no extension receiver: the backend routes reads/writes to a
+		// STATIC FIELD of the referenced .NET file class (#34b). `isVar = tp.mutable` (rw -> var, ro -> val).
 		topLevelPropByCallable[callableId]?.let { tp ->
 			return listOf(createTopLevelProperty(ClrGeneratedKey, callableId, coneOf(tp.type, null), !tp.mutable, false) {
-				extensionReceiverType(coneOf(tp.receiver, null))
+				if (tp.receiver.isNotEmpty()) extensionReceiverType(coneOf(tp.receiver, null))
 			}.symbol)
 		}
 		val owner = context?.owner ?: return emptyList()

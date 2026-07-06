@@ -576,7 +576,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val bf = p.backingField ?: return@mapNotNull null
 			if (p.isConst) return@mapNotNull null
 			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
-			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))},"static":true,"init":$init${volatileFieldFlag(p)}}"""
+			// A top-level `val` (or `var` with a non-public setter) -> mark the static field read-only so a downstream
+			// consuming module (facadegen `tlprop ... ro`) restores it as `val`, rejecting external writes (#34b, mirrors
+			// the member-field `readOnly` stamp).
+			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")) ""","readOnly":true""" else ""
+			"""{"name":${str(bf.name.asString())},"type":${str(birType(bf.type))},"static":true,"init":$init$ro${volatileFieldFlag(p)}}"""
 		}
 		// Super-typed companions (`companion object X : Base()`) -> lifted concrete singletons `<Outer>.InstanceClass`
 		// (registered in anonNames so typeName resolves them consistently). Must run BEFORE any body emission so a
@@ -3875,13 +3879,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"k":"callStatic","owner":${str(enclosing)},"method":${str(name)}${overloadSigField(callee)}${typeArgsJson(call)},"args":[${filledArgs(call).joinToString(",")}]}"""
 		}
 
-			// An INJECTED top-level EXTENSION property (`val T.p` from a DotKt assembly) -> its get_/set_<name>(__self)
-			// statics on the file class, with the extension receiver passed as `__self`. (body==null = injected stub.)
+			// An INJECTED top-level property (from a DotKt assembly) -> the referenced .NET file class holds it. An
+			// EXTENSION property (`val T.p`) surfaces as get_/set_<name>(__self) statics with the extension receiver
+			// passed as `__self`; a plain NON-extension property (`val greeting`) is a plain STATIC FIELD (no accessor
+			// exists), so read -> `staticField` / write -> `staticFieldSet` of that referenced file class (#34b).
+			// (body==null = injected stub.)
 			(callee.correspondingPropertySymbol?.owner)?.let { p ->
-				// A2 stage 3: read the restored top-level extension property's .NET file-facade class off its RESOLVED IR
+				// A2 stage 3: read the restored top-level property's .NET file-facade class off its RESOLVED IR
 				// `CallableId` (`package` + name).
 				if (declaringClass == null) (p.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
 					?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(CallableId(it.packageFqName, p.name)) }?.let { fileClass ->
+					val isExt = p.getter?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true
+					if (!isExt) {
+						// A plain top-level val/var restored from a referenced DotKt library -> a STATIC FIELD of its .NET
+						// file class. NOT get_/set_ (a plain val/var has no accessor) and NOT `fileClassOf(p)` (the parent is
+						// an IrPackageFragment, so that returns the CURRENT file — the wrong owner). Use the referenced class.
+						return if (callee === p.setter)
+							"""{"k":"staticFieldSet","ownerType":${str(fileClass)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+						else """{"k":"staticField","ownerType":${str(fileClass)},"name":${str(p.name.asString())}}"""
+					}
 					val recv = extensionReceiver(call)
 					if (callee === p.setter) {
 						val args = listOfNotNull(recv) + regularArgs(call)

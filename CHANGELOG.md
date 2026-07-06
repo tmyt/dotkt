@@ -289,6 +289,15 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   referenced file class, plus a `readOnly` flag on top-level `val` fields for the val/var distinction) is
   routed to kotc; the round-trip case `roundtrip-toplevel-val` (reads a library top-level property
   DIRECTLY, no function workaround) is `RT_XFAIL` until that lands, then flips to FIXED.
+- **A referenced DotKt library's top-level `val`/`var` is now read DIRECTLY cross-module (#34b, kotc
+  side).** kotc consumes facadegen's `tlprop` token: `ClrTypeInjection` restores a NON-extension
+  top-level property (`createTopLevelProperty` with no `extensionReceiverType`; `val`/`var` from the
+  `ro`/`rw` flag), and `BirEmitter` routes its read/write to `staticField`/`staticFieldSet` on the
+  referenced .NET file class (not the wrong `fileClassOf(p)`/`get_`/`set_` path — a plain top-level
+  val/var is a static field with no accessor). The producer side stamps a `readOnly` flag on top-level
+  `val` static fields so the val/var distinction survives the round-trip. `import somelib.greeting`
+  works with no function workaround; `roundtrip-toplevel-val` is now GREEN (its `RT_XFAIL` pruned),
+  closing #34b end-to-end (a top-level val fully round-trips).
 - **Round-trip carriers:** re-consuming a DotKt `.dll` as Kotlin now restores `sealed` (modality +
   cross-module inheritance enforcement + exhaustive `when` with no `else`) and `fun interface` nature.
   (Deviations, `docs/dotkt-semantics.md` §10: a `fun interface` restores the nature but a bare lambda
