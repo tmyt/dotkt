@@ -26,10 +26,12 @@ internal val UNARY = mapOf("unaryMinus" to "-", "unaryPlus" to "+", "not" to "!"
 // kotc emits a plain call to the stdlib Char fun; bir2cir substitutes it from
 // CharClr.kt's @ClrIntrinsic("System.Char.IsDigit"/"System.Char.ToUpperInvariant"/…) FQ bindings on the ref.dll.
 
+// Kotlin FQN identity of a primitive array's element (kotc emits the Kotlin FQN; bir2cir lowers to the CLR
+// primitive, ilemit picks the opcode). NO `int`/`long` shorthand — that CLR-resolution vocabulary is gone.
 internal val PRIMITIVE_ARRAY_ELEM = mapOf(
-	"kotlin.IntArray" to "int", "kotlin.LongArray" to "long", "kotlin.DoubleArray" to "double",
-	"kotlin.FloatArray" to "float", "kotlin.BooleanArray" to "bool", "kotlin.CharArray" to "char",
-	"kotlin.ByteArray" to "byte", "kotlin.ShortArray" to "short",
+	"kotlin.IntArray" to "kotlin.Int", "kotlin.LongArray" to "kotlin.Long", "kotlin.DoubleArray" to "kotlin.Double",
+	"kotlin.FloatArray" to "kotlin.Float", "kotlin.BooleanArray" to "kotlin.Boolean", "kotlin.CharArray" to "kotlin.Char",
+	"kotlin.ByteArray" to "kotlin.Byte", "kotlin.ShortArray" to "kotlin.Short",
 )
 internal val ARRAY_FACTORY_NAMES = setOf(
 	"arrayOf", "intArrayOf", "longArrayOf", "doubleArrayOf",
@@ -67,8 +69,8 @@ internal val COLLECTION_OPS = setOf(
 // Primitive array class -> its BCL element type, for lowering the sized constructor `IntArray(size){init}` to a real
 // `new int[size]` + fill loop (a `kotlin.IntArray` object would otherwise be constructed — the wrong representation).
 internal val ARRAY_CLASS_ELEM = mapOf(
-	"kotlin.IntArray" to "int", "kotlin.LongArray" to "long", "kotlin.ShortArray" to "short", "kotlin.ByteArray" to "byte",
-	"kotlin.CharArray" to "char", "kotlin.DoubleArray" to "double", "kotlin.FloatArray" to "float", "kotlin.BooleanArray" to "bool",
+	"kotlin.IntArray" to "kotlin.Int", "kotlin.LongArray" to "kotlin.Long", "kotlin.ShortArray" to "kotlin.Short", "kotlin.ByteArray" to "kotlin.Byte",
+	"kotlin.CharArray" to "kotlin.Char", "kotlin.DoubleArray" to "kotlin.Double", "kotlin.FloatArray" to "kotlin.Float", "kotlin.BooleanArray" to "kotlin.Boolean",
 )
 
 // java.util.SequencedCollection (JDK21) leaks its members onto kotlin.collections.List/MutableList when the frontend
@@ -90,9 +92,11 @@ internal val ENUM_REIFIED_INTRINSICS = setOf(
 )
 
 // Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.
+// Numeric conversion target as a Kotlin FQN (kotc emits the FQN; ilemit selects the CIL conv opcode). The
+// `conv` node stays a primitive-IL op; only its `to` type becomes a structured Kotlin-FQN identity (no `int`).
 internal val NUMBER_CONV = mapOf(
-	"toInt" to "int", "toLong" to "long", "toDouble" to "double", "toFloat" to "float",
-	"toShort" to "short", "toByte" to "byte", "toChar" to "char",
+	"toInt" to "kotlin.Int", "toLong" to "kotlin.Long", "toDouble" to "kotlin.Double", "toFloat" to "kotlin.Float",
+	"toShort" to "kotlin.Short", "toByte" to "kotlin.Byte", "toChar" to "kotlin.Char",
 )
 internal val NUMERIC_FQ = setOf(
 	"kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte",
@@ -104,14 +108,15 @@ internal val PRIMITIVE_EQ_FQ = setOf(
 	"kotlin.Double", "kotlin.Float", "kotlin.Boolean", "kotlin.Char",
 )
 
+// Value-type primitives keyed to their own Kotlin FQN identity (a `T?` = Nullable<T> element). Values are the
+// Kotlin FQN — kotc emits NO `int`/`bool` shorthand; the CLR primitive is bir2cir/ilemit's derivation.
 internal val VALUE_PRIM_BIR = mapOf(
-	"kotlin.Int" to "int", "kotlin.Long" to "long", "kotlin.Short" to "short", "kotlin.Byte" to "byte",
-	"kotlin.Double" to "double", "kotlin.Float" to "float", "kotlin.Boolean" to "bool", "kotlin.Char" to "char",
+	"kotlin.Int" to "kotlin.Int", "kotlin.Long" to "kotlin.Long", "kotlin.Short" to "kotlin.Short", "kotlin.Byte" to "kotlin.Byte",
+	"kotlin.Double" to "kotlin.Double", "kotlin.Float" to "kotlin.Float", "kotlin.Boolean" to "kotlin.Boolean", "kotlin.Char" to "kotlin.Char",
 )
 
-// The primitive-value BIR shorthands (VALUE_PRIM_BIR's range): a `birType` that already reads as one of these
-// (e.g. a substituted generic `T -> int`) is a bare value primitive, so a `when`/`if` join with a `null` branch
-// over it must be tagged `nullable:<shorthand>`.
+// The value-primitive Kotlin FQNs: a birType that IS one of these is a bare value primitive, so a `when`/`if`
+// join with a `null` branch over it must wrap in `nullable`. (Identical to PRIMITIVE_EQ_FQ.)
 internal val PRIMITIVE_SHORTHANDS = VALUE_PRIM_BIR.values.toSet()
 
 // Kotlin types whose values ARE CLR primitives (the signed/bool/char primitives + the unsigned inline classes,

@@ -1,5 +1,6 @@
 package kotc.backend
 
+import kotc.bir.TypeNode
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
@@ -76,16 +77,16 @@ import java.io.File
 internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = when (node) {
 	// A `ClrRef<T>` delegate local (`var x by byref(m())`) -> a `ref T` local holding the live managed pointer
 	// (byrefOf keeps the ref-return's pointer instead of deref'ing it). getValue/setValue inline to ldobj/stobj.
-	is IrVariable -> if (birType(node.type).startsWith("byref:")) {
+	is IrVariable -> if (birType(node.type) is TypeNode.ByRef) {
 		val inner = node.initializer?.let { byrefMarker(it) ?: it }
 		val init = inner?.let { """{"k":"byrefOf","inner":${expr(it)}}""" } ?: "null"
-		"""{"k":"var","name":${str(node.name.asString())},"type":${str(birType(node.type))},"init":$init}"""
+		"""{"k":"var","name":${str(node.name.asString())},"type":${birType(node.type).toJson()},"init":$init}"""
 	}
 	// A ref-cell var: `var x = init` -> `val x = new <>dotkt_Ref_<elem>(init)` (the heap cell).
 	else if (isRefCell(node)) {
 		val rt = refTypeName(node)
-		val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${str(birType(node.type))}}"""
-		"""{"k":"var","name":${str(node.name.asString())},"type":${str("@$rt")},"init":{"k":"new","type":${str(rt)},"args":[$init]}}"""
+		val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${birType(node.type).toJson()}}"""
+		"""{"k":"var","name":${str(node.name.asString())},"type":${fqnJson(rt)},"init":{"k":"new","type":${fqnJson(rt)},"args":[$init]}}"""
 	} else {
 		// Evaluate the initializer FIRST so an object-expr init registers its synthetic name before the var's
 		// type is read (`val x = object {}` whose type IS that anonymous class). A value-type-nullable initializer
@@ -96,7 +97,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		// value-type instantiation (`Int`) would fault on a real null (`var single: T? = null; ...; single as T`).
 		// Emit the sibling `"nullable":true` — the SAME marker the field/property path uses — so bir2cir's
 		// NullableGenericReturnErasure erases the local's `type` -> `object`. Inert until bir2cir consumes it.
-		"""{"k":"var","name":${str(node.name.asString())},"type":${str(birType(node.type))}${nullableGpFieldFlag(node.type)},"init":$init}"""
+		"""{"k":"var","name":${str(node.name.asString())},"type":${birType(node.type).toJson()}${nullableGpFieldFlag(node.type)},"init":$init}"""
 	}
 	// `val x by <delegate>` declared INSIDE a function (IrLocalDelegatedProperty): emit the delegate as a
 	// local var; its getter/setter calls (`<get-x>`) are rewritten to delegate access in call() (localDelegates).
@@ -107,7 +108,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 	}
 	// A ref-cell var write `x = e` -> `x.v = e` (through the shared heap cell, via the capture field inside a closure).
 	is IrSetValue -> if (isRefCell(node.symbol.owner))
-		"""{"k":"setField","ownerType":${str(refTypeName(node.symbol.owner))},"recv":${refBase(node.symbol.owner)},"name":"v","value":${expr(node.value)}}"""
+		"""{"k":"setField","ownerType":${fqnJson(refTypeName(node.symbol.owner))},"recv":${refBase(node.symbol.owner)},"name":"v","value":${expr(node.value)}}"""
 	else """{"k":"setLocal","name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
 	is IrSetField -> {
 		val ownerClass = node.symbol.owner.parent as? IrClass
@@ -116,7 +117,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		if (clr != null)
 			"""{"k":"clrPropSet","type":${str(clr)},"name":${str(node.symbol.owner.name.asString())},"static":false,"recv":$recvJson,"value":${expr(node.value)}}"""
 		else
-			"""{"k":"setField","ownerType":${str(ownerSpec(ownerClass, node.receiver?.type))},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
+			"""{"k":"setField","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
 	}
 	is IrReturn -> {
 		// A `return` inside a SPLICED inline body targeting the spliced fun/lambda must NOT emit a raw method
