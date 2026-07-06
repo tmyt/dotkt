@@ -88,6 +88,33 @@ The meta side (facadegen tlfun/tlextprop/tlprop) emits the SAME `mods` object, n
 (The full per-kind field table is generated from `docs/bir-audit/kotc-emit.md` §1 during impl; this section
 lists only the freeze DECISIONS. The validator (§4) enforces the canonical set.)
 
+### 2.2 `sig` — call-site overload signature is a `Type[]` (retire the comma-joined string)
+A call node carries `sig` so a consumer resolves the right OVERLOAD by name+signature. Today it is a
+**comma-joined string of param type tokens** (`BirEmitter.kt:1705`, `(ext + regs).joinToString(",")`),
+hand-parsed in ≥5 places (bir2cir `EnumMemberBinding`/`MapVarianceRealign`/`ValueTypeNullableCollectionArg`,
+ilemit `Emitter.Expressions.cs:166/227`, `CanonSig`, `FindReflectedMethodBySig`). FREEZE: `sig` is a
+**JSON array of `Type` nodes** (§1) — `"sig":[T, T, …]` (extension receiver first, then value params). No
+comma-join, no `CanonSig`/`FindReflectedMethodBySig` string parse; overload match walks the `Type[]`.
+Generic params in a `sig` use positional `tv` (§1), which kills the def-vs-call name-remap dance.
+
+### 2.3 `@ClrProperty(access:Int)` bitmask → structured flags (no encoded int)
+The stdlib `@ClrProperty` accessor binding encodes read/write as an **int bitmask** (`READ=1`/`WRITE=2`,
+`bir2cir Program.cs:580` `out int access`). A "mysterious int" — replace with explicit booleans
+`{"read":true,"write":true}` (or two attr fields). Same principle for any binding-annotation argument that
+packs structure into an int/string. (`@ClrIntrinsic("System.String.Format")` stays a string — it names one
+BCL method, not an encoded structure — but its target should resolve through the shared naming, not ad-hoc.)
+
+### 2.4 Synthetic type/name generation — collision-free + documented (no lossy regex-mangle)
+Synthetic CLR type names are built by **lossy regex-mangle** of a type FQN
+(`"<>dotkt_ClrH_" + Regex.Replace(fqn, "[^A-Za-z0-9]", "_")` and peers). The abbreviation zoo — `ClrH`
+(CLR helper), `K*` (`KIterator`/`KIterable`/`KProperty` Kotlin synthetics), `RW`/`RO` (read-write/read-only
+property), `Ref` (ref cell), `tryval` (try-expr temp), `obj` (object-expr) — encodes a TYPE into a NAME
+lossily: `kotlin.Char` and a hypothetical `kotlin$Char` collide (both → `kotlin_Char`), and it is not
+reversible. FREEZE: derive synthetic names through a **single registry** that assigns a stable, collision-free
+unique name per DISTINCT structured `Type` (dedup by the `Type` node, not by the mangled string), with the
+prefix set (`ClrH`/`KIterator`/…) DOCUMENTED here as an enum. Name-mangling is not a serialization DSL, but a
+lossy type→string encoding is the same durable-ABI smell (structure hidden in a string) and a real collision bug.
+
 ## 3. Labels & naming (conventions consumed as opaque strings)
 - SM / coroutine method names: `<name>$dotkt_suspend` (cold entry), `<name>$sm` (state machine class) —
   chosen by bir2cir, opaque to ilemit. Resume labels: integer CFG `id`s (ilemit consumes only `label`/
