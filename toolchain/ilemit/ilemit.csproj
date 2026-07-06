@@ -6,4 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>ilemit</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Shared single-source Type read/write helper of the BIR/CIR freeze (#37). Linked (not a project ref)
+         so all three C# tools compile the SAME contract with no build-order dependency. -->
+    <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
+  </ItemGroup>
 </Project>
