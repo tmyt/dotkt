@@ -3972,17 +3972,15 @@ static class StarProjectionLowering
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
-    // True for a star-projected (or `object`-erased) generic collection token: bare owner is a known collection alias
-    // and every type arg is `object` (Kotlin allows only `<*>` in an is/as of these, so the args are always erased).
-    static bool IsStarCollection(string token, out string iface)
+    // True for a star-projected (or `object`-erased) generic collection type: owner is a known collection alias and
+    // every type arg is `object`/`Any` (Kotlin allows only `<*>` in an is/as of these, so the args are always erased).
+    static bool IsStarCollection(JsonNode slot, out string iface)
     {
         iface = null;
-        if (token == null) return false;
-        if (!NonGenericIface.TryGetValue(ReferenceMetadataIndex.BareOwnerFqn(token), out iface)) return false;
-        var lb = token.IndexOf('[');
-        if (lb < 0) return true;                                    // raw / bare collection alias
-        var argstr = token[(lb + 1)..token.LastIndexOf(']')];
-        return argstr.Split(',').All(a => a.Trim() == "object");    // all args erased to object
+        if (TypeJson.Read(slot) is not TypeNode.Fqn f) return false;
+        if (!NonGenericIface.TryGetValue(f.Name, out iface)) return false;
+        if (f.Args == null) return true;                            // raw / bare collection alias
+        return f.Args.All(a => a is TypeNode.Fqn { Args: null, Name: "object" or "kotlin.Any" });
     }
 
     public static void Apply(JsonNode node)
@@ -3992,9 +3990,9 @@ static class StarProjectionLowering
             // Smart-cast member access: `callInstance` on a star-collection alias whose receiver is a `cast` to that
             // same star-collection -> a non-generic BCL member. Rewrite in place so the cast recv is lowered too.
             if (Str(obj["k"]) == "callInstance"
-                && IsStarCollection(Str(obj["ownerType"]), out _)
+                && IsStarCollection(obj["ownerType"], out _)
                 && obj["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
-                && IsStarCollection(Str(recv["type"]), out var recvIface)
+                && IsStarCollection(recv["type"], out var recvIface)
                 && LowerMember(obj, recv, recvIface) is JsonObject rewritten)
             {
                 foreach (var kv in rewritten) obj[kv.Key] = kv.Value?.DeepClone();
@@ -4006,8 +4004,8 @@ static class StarProjectionLowering
                 return;
             }
             // Standalone star-projection `is`-test -> the non-generic interface (always safe: a boolean shape test).
-            if (Str(obj["k"]) == "isinst" && IsStarCollection(Str(obj["type"]), out var ng))
-                obj["type"] = "clr:" + ng;
+            if (Str(obj["k"]) == "isinst" && IsStarCollection(obj["type"], out var ng))
+                obj["type"] = TypeJson.Fqn(ng);
             foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value);
         }
         else if (node is JsonArray arr)
@@ -4019,34 +4017,34 @@ static class StarProjectionLowering
     static JsonObject LowerMember(JsonObject call, JsonObject cast, string iface)
     {
         var recvInner = cast["e"];
-        JsonObject CastTo(string toIface) => new() { ["k"] = "cast", ["type"] = "clr:" + toIface, ["e"] = recvInner.DeepClone() };
+        JsonObject CastTo(string toIface) => new() { ["k"] = "cast", ["type"] = TypeJson.Fqn(toIface), ["e"] = recvInner.DeepClone() };
         var args = call["args"] as JsonArray;
         switch (Str(call["method"]))
         {
             case "get_size":
             case "size":
                 // `.size` -> ICollection/IList/IDictionary.Count.
-                return new JsonObject { ["k"] = "clrPropGet", ["type"] = iface, ["name"] = "Count", ["retType"] = "System.Int32", ["static"] = false, ["recv"] = CastTo(iface) };
+                return new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["retType"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) };
             case "isEmpty":
                 // `.isEmpty()` -> Count == 0 (non-generic interfaces expose no IsEmpty).
                 return new JsonObject
                 {
-                    ["k"] = "bin", ["op"] = "==", ["type"] = "System.Boolean",
-                    ["l"] = new JsonObject { ["k"] = "clrPropGet", ["type"] = iface, ["name"] = "Count", ["retType"] = "System.Int32", ["static"] = false, ["recv"] = CastTo(iface) },
-                    ["r"] = new JsonObject { ["k"] = "const", ["type"] = "System.Int32", ["value"] = 0 },
+                    ["k"] = "bin", ["op"] = "==", ["type"] = TypeJson.Fqn("System.Boolean"),
+                    ["l"] = new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["retType"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) },
+                    ["r"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 0 },
                 };
             case "iterator":
                 // `.iterator()` -> IEnumerable.GetEnumerator (non-generic IEnumerator; Current is object == Any).
-                return new JsonObject { ["k"] = "clrInstance", ["type"] = "System.Collections.IEnumerable", ["method"] = "GetEnumerator", ["argTypes"] = new JsonArray(), ["ret"] = "System.Collections.IEnumerator", ["recv"] = CastTo("System.Collections.IEnumerable") };
+                return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IEnumerable"), ["method"] = "GetEnumerator", ["argTypes"] = new JsonArray(), ["ret"] = TypeJson.Fqn("System.Collections.IEnumerator"), ["recv"] = CastTo("System.Collections.IEnumerable") };
             case "get":
             case "get_Item":
                 // `list[i]` -> IList.get_Item(int) (returns object == Any).
                 if (args == null || args.Count < 1) return null;
-                return new JsonObject { ["k"] = "clrInstance", ["type"] = "System.Collections.IList", ["method"] = "get_Item", ["argTypes"] = new JsonArray { "System.Int32" }, ["ret"] = "System.Object", ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
+                return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IList"), ["method"] = "get_Item", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32") }, ["ret"] = TypeJson.Fqn("System.Object"), ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
             case "contains":
                 // `list.contains(e)` -> IList.Contains(object) (only IList carries a non-generic Contains).
                 if (args == null || args.Count < 1 || iface != "System.Collections.IList") return null;
-                return new JsonObject { ["k"] = "clrInstance", ["type"] = "System.Collections.IList", ["method"] = "Contains", ["argTypes"] = new JsonArray { "System.Object" }, ["ret"] = "System.Boolean", ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
+                return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IList"), ["method"] = "Contains", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") }, ["ret"] = TypeJson.Fqn("System.Boolean"), ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
             default:
                 return null;
         }
@@ -4055,7 +4053,7 @@ static class StarProjectionLowering
 
 static class CatchClauseWidening
 {
-    static readonly string[] IndexOobNet = { "clr:System.ArgumentOutOfRangeException", "clr:System.IndexOutOfRangeException" };
+    static readonly string[] IndexOobNet = { "System.ArgumentOutOfRangeException", "System.IndexOutOfRangeException" };
 
     public static void Apply(JsonNode node)
     {
@@ -4073,13 +4071,13 @@ static class CatchClauseWidening
         for (var i = catches.Count - 1; i >= 0; i--)
         {
             if (catches[i] is not JsonObject c) continue;
-            if ((c["excType"] as JsonValue)?.GetValue<string>() is not string et) continue;
-            if (ReferenceMetadataIndex.BareOwnerFqn(et) != "kotlin.IndexOutOfBoundsException") continue;
+            if (TypeJson.Read(c["excType"]) is not TypeNode.Fqn et
+                || ReferenceMetadataIndex.BareOwnerFqn(et.Name) != "kotlin.IndexOutOfBoundsException") continue;
             catches.RemoveAt(i);
             for (var j = IndexOobNet.Length - 1; j >= 0; j--)   // insert in reverse -> keeps [ArgumentOOR, IndexOOR] order
             {
                 var clone = (JsonObject)c.DeepClone();
-                clone["excType"] = IndexOobNet[j];
+                clone["excType"] = TypeJson.Fqn(IndexOobNet[j]);
                 catches.Insert(i, clone);
             }
         }
@@ -4111,15 +4109,17 @@ static class NullableFuncReturnErasure
                             EraseMethodRet(tmo);
     }
 
+    static readonly TypeNode ObjFqn = new TypeNode.Fqn("object");
+
     static void EraseMethodRet(JsonObject mo)
     {
-        var ret = (mo["ret"] as JsonValue)?.GetValue<string>();
-        if (ret == null || ret == "object" || ret == "void") return;
-        mo["ret"] = "object";
+        if (TypeJson.Read(mo["ret"]) is not TypeNode ret) return;
+        if (ret is TypeNode.Fqn { Args: null, Name: "object" or "void" }) return;
+        mo["ret"] = TypeJson.Write(ObjFqn);
         RetypeReturnValues(mo["body"], ret);
     }
 
-    static void RetypeReturnValues(JsonNode node, string oldRet)
+    static void RetypeReturnValues(JsonNode node, TypeNode oldRet)
     {
         switch (node)
         {
@@ -4127,8 +4127,8 @@ static class NullableFuncReturnErasure
                 if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "return"
                     && obj["value"] is JsonObject v)
                 {
-                    if ((v["type"] as JsonValue)?.TryGetValue<string>(out var vt) == true && vt == oldRet) v["type"] = "object";
-                    if ((v["retType"] as JsonValue)?.TryGetValue<string>(out var vr) == true && vr == oldRet) v["retType"] = "object";
+                    if (TypeJson.Read(v["type"]) is TypeNode vt && vt == oldRet) v["type"] = TypeJson.Write(ObjFqn);
+                    if (TypeJson.Read(v["retType"]) is TypeNode vr && vr == oldRet) v["retType"] = TypeJson.Write(ObjFqn);
                 }
                 foreach (var kv in obj) RetypeReturnValues(kv.Value, oldRet);
                 break;
@@ -4155,25 +4155,26 @@ static class NullableFuncReturnErasure
                     delegateMethods.Add(dm);
                 else if (k == "closureNew" && HasErasedRet(obj) && (obj["closureType"] as JsonValue)?.GetValue<string>() is string ct)
                     closureTypes.Add(ct);
-                else if (k == "var" && (obj["type"] as JsonValue)?.GetValue<string>() is string vt && obj["init"] is JsonObject init)
+                else if (k == "var" && TypeJson.Read(obj["type"]) is TypeNode vt && obj["init"] is JsonObject init)
                 {
                     var ik = (init["k"] as JsonValue)?.TryGetValue<string>(out var iks) == true ? iks : null;
                     var vn = (obj["name"] as JsonValue)?.GetValue<string>();
+                    var isObj = vt is TypeNode.Fqn { Args: null, Name: "object" };
                     if (ik == "delegateInvoke" && HasErasedRet(init))
                     {
-                        if (vt.StartsWith("gp:", StringComparison.Ordinal))
+                        if (vt is TypeNode.Tv)
                         {
-                            obj["type"] = "object";
+                            obj["type"] = TypeJson.Write(ObjFqn);
                             if (vn != null) objectVars.Add(vn);
                         }
-                        else if (vt != "object")
-                            obj["init"] = new JsonObject { ["k"] = "cast", ["type"] = vt, ["e"] = init.DeepClone() };
+                        else if (!isObj)
+                            obj["init"] = new JsonObject { ["k"] = "cast", ["type"] = obj["type"].DeepClone(), ["e"] = init.DeepClone() };
                     }
-                    else if (ik == "local" && vt != "object" && !vt.StartsWith("nullable:", StringComparison.Ordinal)
+                    else if (ik == "local" && !isObj && vt is not TypeNode.Nullable
                         && (init["name"] as JsonValue)?.GetValue<string>() is string src && objectVars.Contains(src))
                         // Post-null-check narrowing of an object-retyped local back into its typed slot:
                         // unbox.any/castclass via the universal `cast`.
-                        obj["init"] = new JsonObject { ["k"] = "cast", ["type"] = vt, ["e"] = init.DeepClone() };
+                        obj["init"] = new JsonObject { ["k"] = "cast", ["type"] = obj["type"].DeepClone(), ["e"] = init.DeepClone() };
                 }
                 foreach (var kv in obj) Sweep(kv.Value, delegateMethods, closureTypes, objectVars);
                 break;
@@ -4185,9 +4186,10 @@ static class NullableFuncReturnErasure
     }
 
     static bool HasErasedRet(JsonObject node)
-        => (node["funcType"] as JsonValue)?.TryGetValue<string>(out var ft) == true
-            && ft.StartsWith("func:nullable:", StringComparison.Ordinal);
+        => TypeJson.Read(node["funcType"]) is TypeNode.Fn { Suspend: false, Ret: TypeNode.Nullable };
 
+    // Type-slot sweep: a NON-suspend function type whose RETURN is a Nullable (`(…) -> R?`) has its return erased to
+    // `object` — the only CLR delegate return that carries a real null for a value-type R. Recurses nested funcs/args.
     static void RewriteAllStrings(JsonNode node)
     {
         switch (node)
@@ -4196,11 +4198,8 @@ static class NullableFuncReturnErasure
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
-                    if (child is JsonValue jv && jv.TryGetValue<string>(out var s))
-                    {
-                        var rewritten = RewriteToken(s);
-                        if (!ReferenceEquals(rewritten, s) && rewritten != s) obj[key] = rewritten;
-                    }
+                    if (child == null) continue;
+                    if (TypeJson.Read(child) is TypeNode tn) obj[key] = TypeJson.Write(RewriteFnRet(tn));
                     else RewriteAllStrings(child);
                 }
                 break;
@@ -4208,58 +4207,28 @@ static class NullableFuncReturnErasure
                 for (var i = 0; i < arr.Count; i++)
                 {
                     var child = arr[i];
-                    if (child is JsonValue jv && jv.TryGetValue<string>(out var s))
-                    {
-                        var rewritten = RewriteToken(s);
-                        if (!ReferenceEquals(rewritten, s) && rewritten != s) arr[i] = rewritten;
-                    }
+                    if (child == null) continue;
+                    if (TypeJson.Read(child) is TypeNode tn) arr[i] = TypeJson.Write(RewriteFnRet(tn));
                     else RewriteAllStrings(child);
                 }
                 break;
         }
     }
 
-    // Rewrites every `func:nullable:<ret>` occurrence in a (possibly composite: sig lists, nested generics)
-    // token string to `func:object`. The ret segment may itself be prefixed (`nullable:gp:R`,
-    // `nullable:clrg:X[..]`) — skip the inner prefix once, then scan to the depth-0 `:` separating ret from args.
-    internal static string RewriteToken(string s)
+    internal static TypeNode RewriteFnRet(TypeNode t) => t switch
     {
-        const string marker = "func:nullable:";
-        var idx = s.IndexOf(marker, StringComparison.Ordinal);
-        if (idx < 0) return s;
-        var sb = new System.Text.StringBuilder(s.Length);
-        var pos = 0;
-        while (idx >= 0)
-        {
-            var retStart = idx + 5;                      // after "func:"
-            var scan = retStart + "nullable:".Length;    // after "nullable:"
-            foreach (var pre in new[] { "clrg:", "clr:", "array:", "gp:", "byref:", "func:" })
-                if (s.AsSpan(scan).StartsWith(pre, StringComparison.Ordinal)) { scan += pre.Length; break; }
-            var depth = 0;
-            var retEnd = -1;
-            for (var i = scan; i < s.Length; i++)
-            {
-                if (s[i] == '[') depth++;
-                else if (s[i] == ']') { if (depth == 0) break; depth--; }   // closing an OUTER bracket: ret ends here
-                else if ((s[i] == ':' || s[i] == ',') && depth == 0) { retEnd = s[i] == ':' ? i : -1; break; }
-            }
-            if (retEnd < 0)
-            {
-                // Malformed / arg-less tail — leave this occurrence untouched.
-                sb.Append(s, pos, retStart - pos);
-                pos = retStart;
-            }
-            else
-            {
-                sb.Append(s, pos, retStart - pos);
-                sb.Append("object");
-                pos = retEnd;
-            }
-            idx = s.IndexOf(marker, Math.Max(pos, retStart), StringComparison.Ordinal);
-        }
-        sb.Append(s, pos, s.Length - pos);
-        return sb.ToString();
-    }
+        TypeNode.Fn { Suspend: false } fn => new TypeNode.Fn(false,
+            fn.Ret is TypeNode.Nullable ? new TypeNode.Fqn("object") : RewriteFnRet(fn.Ret),
+            fn.Params.Select(RewriteFnRet).ToArray(), fn.Recv == null ? null : RewriteFnRet(fn.Recv)),
+        TypeNode.Fn fn => new TypeNode.Fn(true, fn.Ret, fn.Params.Select(RewriteFnRet).ToArray(),
+            fn.Recv == null ? null : RewriteFnRet(fn.Recv)),
+        TypeNode.Nullable n => new TypeNode.Nullable(RewriteFnRet(n.Of)),
+        TypeNode.Fqn { Args: null } f => f,
+        TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(RewriteFnRet).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(RewriteFnRet(a.Elem)),
+        TypeNode.ByRef b => new TypeNode.ByRef(RewriteFnRet(b.Of)),
+        _ => t,
+    };
 }
 
 // .NET EVENT `+=`/`-=` binding (the idiomatic ClrEvent<T> redesign). A .NET event is surfaced by facadegen/kotc as a
