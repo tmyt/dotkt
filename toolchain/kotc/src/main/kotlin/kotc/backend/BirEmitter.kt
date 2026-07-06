@@ -1638,7 +1638,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// a Tier-2-carrying function (uniform splice source); rides the ref.dll (stripped in the rt build with all attrs).
 		val emitKotlinDefault = ownerFn != null && !stripMetadata && carriesKotlinDefault(ownerFn)
 		val extOffset = if (ownerFn?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true) 1 else 0
-		return params.filter { isValueParameter(it) }
+		val valueParams = params.filter { isValueParameter(it) }
+		// A @KotlinDefault BIR whose default expression reads ANOTHER value parameter (`b: Int = a * 10`) must encode that
+		// read as a call-index token, NOT a bare `local a` (which would resolve to a non-existent local in the CALLER after
+		// bir2cir's cross-module splice). Install a `{"k":"defaultArgParam","idx":N}` captureSubst for every value param
+		// (N = its emitted call index, extension receiver counted first) around the bir emission; bir2cir's DefaultArgSplice
+		// substitutes each token with this call's arg at that index (the peer of its `{this}` → receiver substitution).
+		if (emitKotlinDefault) valueParams.forEachIndexed { regIdx, vp ->
+			captureSubst[vp] = """{"k":"defaultArgParam","idx":${regIdx + extOffset}}"""
+		}
+		val result = valueParams
 			.mapIndexed { regIdx, it ->
 				// `vararg xs: T` -> mark the param so ilemit stamps [ParamArray] (native .NET varargs; a cross-module
 				// consumer can then call `f(1, 2, 3)`). A nullable type rides a `nullable` flag (ref types are nullable
@@ -1662,6 +1671,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
 				"""{"name":${str(it.name.asString())},"type":${str(birType(it.type))}$vararg$nullable$default$pattrs}"""
 			}
+		if (emitKotlinDefault) valueParams.forEach { captureSubst.remove(it) }
+		return result
 	}
 
 	/** A `,"sig":"<paramtypes>"` field carried on a call so ilemit resolves the right OVERLOAD by name+signature. Emit
@@ -1773,6 +1784,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// resolves `_types[accessOwner].Methods[firstM]` generically, with no hardcoded kotlin.ranges knowledge). The
 			// Kotlin-specific facts live here in the CIR-lowering layer (the frontend may know Kotlin; the IL backend not).
 			return """{"k":"forRange","label":$lbl,"var":${str(loopVar.name.asString())},"elem":"int","range":${expr(source)},"accessOwner":"kotlin.ranges.IntProgression","firstM":"get_first","lastM":"get_last","stepM":"get_step","body":[$body]}"""
+		// `for (i in <IntRange VALUE>)` in an APP build (`for (i in list.indices)`, `"hi".indices`, a stored IntRange var).
+		// The stdlib-build forRange above resolves the accessors off ilemit's `_types` (IntProgression is emitted only
+		// there); an app merely REFERENCES it, so instead emit a plain counter loop reading the range's first/last as
+		// ordinary cross-module property getters (verified to resolve). An IntRange is always step 1 ascending, so `<=`/1 is
+		// exact (an empty range has first > last -> the loop body never runs). Spill the range ONCE — `list.indices` is a
+		// side-effecting call, and first/last must read the SAME value. Without this, the for falls to the iterator protocol
+		// and hits `IntIterator.hasNext` (unresolved -> emit-time NotSupported).
+		if (!stdlibCompile && source != null && source.type.classFqName?.asString() == "kotlin.ranges.IntRange") {
+			val rng = "__rng${scopeCounter++}"
+			fun acc(m: String) = """{"k":"callInstance","ownerType":"kotlin.ranges.IntProgression","virtual":true,"recv":{"k":"local","name":${str(rng)}},"method":${str(m)},"args":[]}"""
+			return """{"k":"block","body":[{"k":"var","name":${str(rng)},"type":${str(birType(source.type))},"init":${expr(source)}},{"k":"for","label":$lbl,"var":${str(loopVar.name.asString())},"from":${acc("get_first")},"to":${acc("get_last")},"cmp":"<=","step":1,"body":[$body]}]}"""
+		}
 		// `for (i in 1..5)` constant-folds to a `new IntRange(first,last)` (a CONSTRUCTOR, not a rangeTo call) -> emit a
 		// plain counter loop straight from its args, so NO IntRange object reaches ilemit (it stays Kotlin-agnostic; this
 		// is the user-app form of the §1897 forRange, without the IntProgression accessors). Inclusive -> cmp "<=", step 1.
@@ -2815,35 +2838,52 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val regs = callee.parameters.mapIndexedNotNull { i, p -> if (p.kind == IrParameterKind.Regular) i to p else null }
 		val provided = regs.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
 		val out = ArrayList<String>()
+		// The filled JSON for each already-processed value parameter — the substitution source for a same-module default
+		// that reads ANOTHER value parameter (`b: Int = a * 10`). A Kotlin default may reference only EARLIER params, so
+		// every referenced param is already recorded here by the time its reader is processed.
+		val filledByParam = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueParameter, String>()
 		regs.forEachIndexed { idx, pair ->
 			val p = pair.second
 			val arg = provided[idx]
-			if (arg != null) { out.add(argExpr(arg, p)); return@forEachIndexed }
-			val def = p.defaultValue?.expression ?: return@forEachIndexed
-			when {
-				def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression ->
-					// CROSS-MODULE: the jar dropped the default VALUE. A @KotlinDefault-carrying callee (any non-constant
-					// default — joinToString's CharSequence separators, substringAfter's `= this`) gets a POSITIONAL
-					// placeholder for EVERY omitted arg so a later provided arg (the trailing transform lambda) keeps its
-					// slot; bir2cir fills each from the ref.dll @KotlinDefault. A callee with only metadata-representable
-					// defaults carries none → drop the (trailing) omit for ilemit's [DefaultParameterValue] backfill (unchanged).
-					if (carries) out.add(defaultArgPlaceholder)
-				refsAny(def, valueSyms) ->
-					// SAME-MODULE default reading another VALUE parameter (`b: Int = a * 10`) — needs the callee's own scope
-					// (a $default synthetic), not yet handled at the call site. Reject at the omitting call (not the decl).
-					unsupported(call, "omitting a non-constant default argument",
-						"the default value of parameter '${p.name.asString()}' references another parameter, " +
-						"which the .NET backend cannot evaluate at the call site; pass the argument explicitly")
-				refsAny(def, receiverSyms) -> {
-					// SAME-MODULE default reading the RECEIVER (`= this` / `this.field`). Inline with `this` rewritten to THIS
-					// call's receiver — the $default-scope evaluation, at the emitted-JSON level. Every `this` in the callee's
-					// default denotes the callee's receiver, so replacing them ALL with this call's receiver is correct (an
-					// inserted `{"k":"this"}` from a `this.foo` receiver then denotes the CALLER's this — no further pass).
-					val r = recvJson
-					if (r != null) out.add(expr(def).replace(defaultArgThisToken, r)) else out.add(argExpr(def, p))
+			val emitted: String? = when {
+				arg != null -> argExpr(arg, p)
+				else -> {
+					val def = p.defaultValue?.expression
+					when {
+						def == null -> null
+						def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression ->
+							// CROSS-MODULE: the jar dropped the default VALUE. A @KotlinDefault-carrying callee (any non-constant
+							// default — joinToString's CharSequence separators, substringAfter's `= this`, `b = a * 10`) gets a
+							// POSITIONAL placeholder for EVERY omitted arg so a later provided arg (the trailing transform lambda)
+							// keeps its slot; bir2cir fills each from the ref.dll @KotlinDefault (its `{param n}` tokens → this
+							// call's args). A callee with only metadata-representable defaults carries none → drop the (trailing)
+							// omit for ilemit's [DefaultParameterValue] backfill (unchanged).
+							if (carries) defaultArgPlaceholder else null
+						refsAny(def, valueSyms) -> {
+							// SAME-MODULE default reading another VALUE parameter (`b: Int = a * 10`). Inline with each referenced
+							// value param rewritten to THIS call's filled arg for that param — the $default-scope evaluation at the
+							// emitted-JSON level (the twin of the `= this` receiver case below, via captureSubst instead of a
+							// token replace). Best-effort single-eval: a side-effecting earlier arg read by this default is
+							// duplicated (documented edge, same as the receiver case).
+							val installed = ArrayList<org.jetbrains.kotlin.ir.declarations.IrValueParameter>()
+							for ((vp, js) in filledByParam) { captureSubst[vp] = js; installed.add(vp) }
+							val js = recvJson?.let { expr(def).replace(defaultArgThisToken, it) } ?: expr(def)
+							installed.forEach { captureSubst.remove(it) }
+							js
+						}
+						refsAny(def, receiverSyms) -> {
+							// SAME-MODULE default reading the RECEIVER (`= this` / `this.field`). Inline with `this` rewritten to
+							// THIS call's receiver — the $default-scope evaluation, at the emitted-JSON level. Every `this` in the
+							// callee's default denotes the callee's receiver, so replacing them ALL with this call's receiver is
+							// correct (an inserted `{"k":"this"}` from a `this.foo` receiver then denotes the CALLER's this).
+							val r = recvJson
+							if (r != null) expr(def).replace(defaultArgThisToken, r) else argExpr(def, p)
+						}
+						else -> argExpr(def, p)   // constant / global — inline verbatim (unchanged)
+					}
 				}
-				else -> out.add(argExpr(def, p))   // constant / global — inline verbatim (unchanged)
 			}
+			if (emitted != null) { out.add(emitted); filledByParam[p] = emitted }
 		}
 		return out
 	}
@@ -3313,6 +3353,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					"""{"k":"field","ownerType":${str(typeName(ec))},"recv":${expr(e)},"name":"__ordinal"}"""
 				else """{"k":"enumOrdinal","e":${expr(e)}}"""
 				return """{"k":"bin","op":"-","l":${ord(recv)},"r":${ord(arg)}}"""
+			}
+			// A DIRECT primitive `Double/Float.compareTo(y)` — Kotlin contracts a TOTAL order (`-0.0 < 0.0`, NaN largest,
+			// `NaN.compareTo(NaN) == 0`) that System.Double.CompareTo does NOT match (`(-0.0).CompareTo(0.0) == 0`). Route
+			// it to the stdlib total-order body. Direct `<`/`>`/`<=`/`>=` on Doubles are UNAFFECTED — they desugar to the
+			// IEEE compare intrinsics (kotlin.internal.ir.less/…), not to this member (so il-nancmp stays IEEE-green).
+			val cmpFq = recv?.type?.classFqName?.asString()
+			if (recv != null && arg != null && recv.type.isMarkedNullable().not() && (cmpFq == "kotlin.Double" || cmpFq == "kotlin.Float")) {
+				val helper = if (cmpFq == "kotlin.Double") "clrDoubleCompare" else "clrFloatCompare"
+				return """{"k":"callStatic","owner":"kotlin.NumbersKt","method":"$helper","args":[${expr(recv)},${expr(arg)}]}"""
 			}
 		}
 		// A PRIMITIVE `x.compareTo(y)` and a `kotlin.Comparable.compareTo` (the `<`/`>`/`<=`/`>=` desugaring on a
@@ -4000,9 +4049,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `==` (EQEQ): structural — `ceq` for primitives, null-safe `Object.Equals` for String/reference types.
 			// `===` (EQEQEQ): always identity (`ceq`).
 			if (name == "EQEQ" && operands.size == 2) {
-				return if (isPrimitiveEqType(operands[0].type) && isPrimitiveEqType(operands[1].type))
-					"""{"k":"bin","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
-				else """{"k":"objEq","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
+				if (isPrimitiveEqType(operands[0].type) && isPrimitiveEqType(operands[1].type))
+					return """{"k":"bin","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
+				// A BOXED Double/Float `==` (`Any.equals` on a boxed floating value) uses Kotlin's TOTAL order
+				// (`-0.0 != 0.0`, `NaN == NaN`), not Object.Equals' IEEE-ish `Double.Equals` (`-0.0 == 0.0`). Route to the
+				// stdlib total-order helper when both operands unwrap (through Any/nullable casts) to the SAME floating type.
+				floatTotalEqRoute(operands[0], operands[1])?.let { return it }
+				// A collection `==` (List/Set/Map) is STRUCTURAL in Kotlin (`.equals` compares elements), but the operands
+				// lower to BCL collections whose Object.Equals is REFERENCE identity — route to the stdlib structural helper.
+				collEqRoute(operands[0], operands[1])?.let { return it }
+				return """{"k":"objEq","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
 			}
 			if (name == "EQEQEQ" && operands.size == 2)
 				return """{"k":"bin","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
@@ -4544,6 +4600,63 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollToString","args":[${expr(op)}],"typeArgs":[${str(elem)}]}"""
 		}
 		return null
+	}
+
+	// The underlying non-nullable Double/Float value of an operand that is a (possibly Any-boxed) floating value: look
+	// THROUGH CAST/IMPLICIT_CAST wrappers (`x as Any`) and return (FQN, unwrapped-expr) when the underlying static type is
+	// a non-nullable kotlin.Double/kotlin.Float. A bare primitive operand is handled by the isPrimitiveEqType path (never
+	// reaches here); a genuinely Any-typed value with no cast does not unwrap (falls back to Object.Equals).
+	private fun floatingUnwrap(e: IrExpression): Pair<String, IrExpression>? {
+		var x = e
+		while (x is IrTypeOperatorCall && (x.operator == IrTypeOperator.CAST || x.operator == IrTypeOperator.IMPLICIT_CAST)) x = x.argument
+		val fq = x.type.classFqName?.asString()
+		return if (!x.type.isMarkedNullable() && (fq == "kotlin.Double" || fq == "kotlin.Float")) fq!! to x else null
+	}
+
+	// Kotlin total-order equality routing for a BOXED `==` whose operands are (Any-boxed) floating values of the SAME
+	// type — routes to the stdlib `clrDoubleEquals`/`clrFloatEquals` (`-0.0 != 0.0`, `NaN == NaN`). Returns null otherwise
+	// (the caller emits the ordinary Object.Equals objEq). The raw Double/Float values are passed (unwrapped from the box).
+	internal fun floatTotalEqRoute(l: IrExpression, r: IrExpression): String? {
+		val a = floatingUnwrap(l) ?: return null
+		val b = floatingUnwrap(r) ?: return null
+		if (a.first != b.first) return null
+		val helper = if (a.first == "kotlin.Double") "clrDoubleEquals" else "clrFloatEquals"
+		return """{"k":"callStatic","owner":"kotlin.NumbersKt","method":"$helper","args":[${expr(a.second)},${expr(b.second)}]}"""
+	}
+
+	// Kotlin STRUCTURAL equality routing for a collection `==`. Kotlin `==` on List/Set/Map compares elements (via the
+	// AbstractList/Set/Map.equals bodies), but those values lower to BCL collections whose Object.Equals is REFERENCE
+	// identity — so route to a stdlib structural helper (mirrors collToStringRoute). Static-type-driven off BOTH operands:
+	// List/Collection -> ordered elementwise (clrCollStructEquals); Set -> unordered (clrSetStructEquals); Map -> entrywise
+	// (clrMapStructEquals). Both operands must be the SAME collection kind (Kotlin `listOf(1) == setOf(1)` is false). A
+	// nullable operand is fine — the helpers are null-safe. Returns null when either operand is not that collection kind.
+	internal fun collEqRoute(l: IrExpression, r: IrExpression): String? {
+		fun unwrap(e: IrExpression): IrExpression {
+			var x = e
+			while (x is IrTypeOperatorCall && (x.operator == IrTypeOperator.CAST || x.operator == IrTypeOperator.IMPLICIT_CAST)) x = x.argument
+			return x
+		}
+		val lu = unwrap(l); val ru = unwrap(r)
+		val lfq = lu.type.classFqName?.asString() ?: return null
+		val rfq = ru.type.classFqName?.asString() ?: return null
+		if (!lfq.startsWith("kotlin.collections.") || !rfq.startsWith("kotlin.collections.")) return null
+		fun kind(fq: String): String? = when {
+			fq.contains("Map") -> "Map"
+			fq.contains("Set") -> "Set"
+			fq.contains("List") || fq.endsWith("Collection") -> "Coll"
+			else -> null
+		}
+		val lk = kind(lfq) ?: return null
+		if (lk != kind(rfq)) return null
+		// The generic helpers need the collection's element (List/Set) or key+value (Map) type args, exactly as
+		// collToStringRoute passes them — the receiver's own args, so a `List<int32>` binds `T=int32` (no boxing).
+		fun ta(op: IrExpression, i: Int) = (op.type as? IrSimpleType)?.arguments?.getOrNull(i)
+			?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+		return when (lk) {
+			"Map" -> """{"k":"callStatic","owner":"kotlin.collections.ClrMapDefaultsKt","method":"clrMapStructEquals","args":[${expr(lu)},${expr(ru)}],"typeArgs":[${str(ta(lu, 0))},${str(ta(lu, 1))}]}"""
+			"Set" -> """{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrSetStructEquals","args":[${expr(lu)},${expr(ru)}],"typeArgs":[${str(ta(lu, 0))}]}"""
+			else -> """{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollStructEquals","args":[${expr(lu)},${expr(ru)}],"typeArgs":[${str(ta(lu, 0))}]}"""
+		}
 	}
 
 	// Kotlin null-rendering for a string-template / concat operand. Kotlin renders a NULL interpolated value as the

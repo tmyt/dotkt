@@ -107,3 +107,35 @@ public actual fun Long.rotateLeft(bitCount: Int): Long = TODO("clr binding shoul
 @SinceKotlin("1.6")
 @kotlin.clr.ClrIntrinsic("System.Numerics.BitOperations.RotateRight")
 public actual fun Long.rotateRight(bitCount: Int): Long = TODO("clr binding should be implemented")
+
+// ---- Double/Float total-order equality & comparison (C14) ----
+// Kotlin contracts a TOTAL order on Double/Float that differs from IEEE (and from System.Double.Equals /
+// System.Double.CompareTo): `-0.0` sorts strictly below `0.0`, and `NaN` is the LARGEST value with `NaN == NaN`
+// (a single canonical NaN). The primitive `==`/`<`/`>` operators keep the fast IEEE semantics; these helpers are
+// what a BOXED `==` (`kotlin.Any.equals` on a boxed floating value) and `Comparable.compareTo` route to, so
+// structural equality and ordered comparison follow Kotlin, not the CLR default. The bit compare uses `toBits()`
+// (NaN-canonicalizing) — for `-0.0` the sign bit makes its Long/Int pattern negative, hence below `0.0`.
+
+/** Kotlin total-order equality of two Double values: `NaN == NaN`, `-0.0 != 0.0`. */
+public fun clrDoubleEquals(a: Double, b: Double): Boolean = a.toBits() == b.toBits()
+
+/** Kotlin total-order equality of two Float values: `NaN == NaN`, `-0.0f != 0.0f`. */
+public fun clrFloatEquals(a: Float, b: Float): Boolean = a.toBits() == b.toBits()
+
+/** Kotlin total-order comparison of two Double values (`-0.0 < 0.0`, NaN largest, `NaN.compareTo(NaN) == 0`). */
+public fun clrDoubleCompare(a: Double, b: Double): Int {
+    if (a < b) return -1
+    if (a > b) return 1
+    val ab = a.toBits()
+    val bb = b.toBits()
+    return if (ab == bb) 0 else if (ab < bb) -1 else 1
+}
+
+/** Kotlin total-order comparison of two Float values (`-0.0f < 0.0f`, NaN largest, `NaN.compareTo(NaN) == 0`). */
+public fun clrFloatCompare(a: Float, b: Float): Int {
+    if (a < b) return -1
+    if (a > b) return 1
+    val ab = a.toBits()
+    val bb = b.toBits()
+    return if (ab == bb) 0 else if (ab < bb) -1 else 1
+}

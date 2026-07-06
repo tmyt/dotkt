@@ -242,3 +242,15 @@ private class ClrMapSnapshotSet<E>(private val elements: List<E>) : Set<E> {
     override fun containsAll(elements: Collection<E>): Boolean = clrCollContainsAll(this.elements, elements)
     override fun iterator(): Iterator<E> = clrListListIterator(elements, 0)
 }
+
+/** Kotlin structural Map equality: same size and every key of one maps to an equal value in the other (null-safe). */
+public fun <K, V> clrMapStructEquals(a: Map<K, V>?, b: Map<K, V>?): Boolean {
+    if (a === b) return true
+    if (a == null || b == null) return false
+    if (a.size != b.size) return false
+    for (k in a.clrMapNativeKeys()) {
+        if (!b.containsKey(k)) return false
+        if (a.clrMapItem(k) != b.clrMapItem(k)) return false
+    }
+    return true
+}

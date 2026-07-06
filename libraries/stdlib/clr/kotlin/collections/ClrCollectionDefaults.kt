@@ -128,3 +128,27 @@ private class ClrSubList<T>(private val backing: List<T>, private val fromIndex:
 }
 
 public fun <T> clrListSubList(list: List<T>, fromIndex: Int, toIndex: Int): List<T> = ClrSubList(list, fromIndex, toIndex)
+
+// ---- Structural equality (Kotlin `==` on collections is structural; the substituted BCL types use REFERENCE ----
+// Object.Equals, so the backend routes a collection `==` here). Null-safe: the backend passes the raw operands.
+
+/** Kotlin structural List/ordered-collection equality: same size, elementwise-equal IN ORDER. */
+public fun <T> clrCollStructEquals(a: Collection<T>?, b: Collection<T>?): Boolean {
+    if (a === b) return true
+    if (a == null || b == null) return false
+    if (a.size != b.size) return false
+    val ai = a.iterator()
+    val bi = b.iterator()
+    while (ai.hasNext()) {
+        if (ai.next() != bi.next()) return false
+    }
+    return true
+}
+
+/** Kotlin structural Set equality: same size and each element mutually contained (unordered). */
+public fun <T> clrSetStructEquals(a: Collection<T>?, b: Collection<T>?): Boolean {
+    if (a === b) return true
+    if (a == null || b == null) return false
+    if (a.size != b.size) return false
+    return clrCollContainsAll(a, b)
+}

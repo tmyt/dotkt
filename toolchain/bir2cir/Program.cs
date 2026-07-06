@@ -2541,47 +2541,57 @@ static class DefaultArgSplice
         var receiver = args.Count > 0 ? args[0] : null;
         // 1) Replace POSITIONAL `defaultArg` placeholders in place (kotc keeps a later provided arg's slot). Fill by array
         //    index — which equals the @KotlinDefault index (extension receiver counted first, matching kotc's stamp).
+        //    A default reading an EARLIER param (`b = a * 10`) rides a `{param N}` token → this call's already-filled args[N]
+        //    (Kotlin defaults reference only earlier params, and the loop fills lower indices first, so args[N] is resolved).
         for (var j = 0; j < args.Count; j++)
         {
             if (!IsPlaceholder(args[j])) continue;
             if (!defaults.TryGetValue(j, out var bir)) continue;         // no @KotlinDefault at this slot -> leave it (loud downstream)
-            if (SpliceOne(bir, receiver) is JsonNode fill) args[j] = fill;
+            if (SpliceOne(bir, receiver, args) is JsonNode fill) args[j] = fill;
         }
         // 2) Append any purely-TRAILING omitted args (callee carries @KotlinDefault but kotc dropped the tail).
         for (var pos = args.Count; pos < sigCount; pos++)
         {
             if (!defaults.TryGetValue(pos, out var bir)) return;         // gap -> bail (leave the call unchanged)
-            if (SpliceOne(bir, receiver) is JsonNode fill) args.Add(fill); else return;
+            if (SpliceOne(bir, receiver, args) is JsonNode fill) args.Add(fill); else return;
         }
     }
 
     static bool IsPlaceholder(JsonNode n) => n is JsonObject o && Str(o["k"]) == "defaultArg";
 
-    // Parse a @KotlinDefault BIR-json string and bind the callee's `this` (an extension receiver in the default
-    // expression) to the CALL's receiver — a fresh deep clone per occurrence, so the value is a self-contained subtree.
-    static JsonNode SpliceOne(string bir, JsonNode receiver)
+    // Parse a @KotlinDefault BIR-json string and bind the callee's default-expression tokens to THIS call's args: `{this}`
+    // (an extension receiver) -> the call's receiver, and `{param N}` (a read of another value param) -> the call's arg at
+    // index N. A fresh deep clone per occurrence, so each filled value is a self-contained subtree.
+    static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args)
     {
         JsonNode parsed; try { parsed = JsonNode.Parse(bir); } catch { return null; }
-        return receiver == null ? parsed : SubstituteThis(parsed, receiver);
+        return SubstituteTokens(parsed, receiver, args);
     }
 
-    // Rebuild `node`, replacing every `{"k":"this"}` with a deep clone of `receiver` (each `this` in the callee's default
-    // denotes the callee's receiver → this call's receiver). Rebuilds fresh so no node is attached to two parents.
-    static JsonNode SubstituteThis(JsonNode node, JsonNode receiver)
+    // Rebuild `node`, replacing every `{"k":"this"}` with a deep clone of `receiver` and every
+    // `{"k":"defaultArgParam","idx":N}` with a deep clone of `args[N]` (the callee's default-scope reads, resolved to this
+    // call's values). Rebuilds fresh so no node is attached to two parents.
+    static JsonNode SubstituteTokens(JsonNode node, JsonNode receiver, JsonArray args)
     {
         switch (node)
         {
-            case JsonObject obj when Str(obj["k"]) == "this": return receiver.DeepClone();
+            case JsonObject obj when Str(obj["k"]) == "this":
+                return receiver == null ? obj.DeepClone() : receiver.DeepClone();
+            case JsonObject obj when Str(obj["k"]) == "defaultArgParam":
+            {
+                var idx = (obj["idx"] as JsonValue)?.GetValue<int>() ?? -1;
+                return idx >= 0 && idx < args.Count && args[idx] is JsonNode a ? a.DeepClone() : obj.DeepClone();
+            }
             case JsonObject obj:
             {
                 var res = new JsonObject();
-                foreach (var kv in obj) res[kv.Key] = kv.Value == null ? null : SubstituteThis(kv.Value, receiver);
+                foreach (var kv in obj) res[kv.Key] = kv.Value == null ? null : SubstituteTokens(kv.Value, receiver, args);
                 return res;
             }
             case JsonArray arr:
             {
                 var res = new JsonArray();
-                foreach (var it in arr) res.Add(it == null ? null : SubstituteThis(it, receiver));
+                foreach (var it in arr) res.Add(it == null ? null : SubstituteTokens(it, receiver, args));
                 return res;
             }
             default: return node.DeepClone();

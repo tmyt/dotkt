@@ -69,7 +69,34 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   as a `delegateNew`/`delegateInvoke` target with a `<>dotkt_CharSequence` param from the lowering, so its
   param stays synthetic and its member reads stay virtual interface calls. Regression case `il-cwindowedv`
   (JVM-oracle PURE).
-
+- **`Double`/`Float` boxed structural equality and `compareTo` now follow Kotlin's total order (C14).**
+  Kotlin gives floating types a total order in the boxed/`compareTo`/structural-`equals` path (distinct from the
+  primitive IEEE operators): `-0.0 != 0.0`, `NaN` is the largest value, `NaN == NaN` and `NaN.compareTo(NaN) == 0`.
+  On the CLR `kotlin.Double` IS `System.Double`, whose `Object.Equals`/`CompareTo` do not match that order. kotc now
+  routes a BOXED `==` on a floating value to the stdlib total-order helper `clrDoubleEquals`/`clrFloatEquals`
+  (`toBits()` bit-compare) and a direct `Double`/`Float.compareTo` to `clrDoubleCompare`/`clrFloatCompare` (JDK
+  total-order algorithm). Primitive `==`/`<`/`>` stay IEEE (`-0.0 == 0.0` true, `NaN == NaN` false; `il-nancmp`-green).
+  `(-0.0 as Any) == (0.0 as Any)` → `false`, `(-0.0).compareTo(0.0)` → `-1`. Gate: `cases/il-negzero` (JVM-oracle PURE),
+  `docs/dotkt-semantics.md §5a` (was a documented deviation, now removed).
+- **Collection `==` is now STRUCTURAL, not reference identity.** Kotlin `==` on a `List`/`Set`/`Map` compares elements
+  (`AbstractList/Set/Map.equals`), but the CLR-lowered BCL collections use reference `Object.Equals`, so
+  `listOf(7,8) == listOf(7,8)` returned `false`. kotc now routes a collection `==`/`!=` (static-type-driven off both
+  operands, mirroring `collToStringRoute`) to the stdlib structural helpers `clrCollStructEquals` (List/ordered),
+  `clrSetStructEquals` (unordered), `clrMapStructEquals` (entrywise). `listOf(1)==setOf(1)` stays `false` (kind
+  mismatch → reference), and non-collection reference `==` is unchanged. Gate: `cases/il-listeq` (JVM-oracle PURE).
+- **`for (i in coll.indices)` / `"s".indices` now iterates in APP builds.** A for-loop over a non-literal `IntRange`
+  obtained from `.indices` fell to the iterator protocol and hit an unresolved `IntIterator.hasNext` (emit-time
+  crash). kotc now counter-lowers a `for` over an IntRange VALUE in app builds too: it spills the range once and reads
+  `first`/`last` off the referenced type (an IntRange is always step-1 ascending). Gate: `cases/il-indices` (JVM-oracle
+  PURE). (A value-type-element list still crashes in the `.indices` getter itself — the pre-existing
+  `generic-ext-property-getter-typeargs` bug, separate from the loop.)
+- **Same-module default argument referencing another value parameter (C3 residual).** A default like
+  `fun f(a: Int, b: Int = a * 10)` called `f(5)` was rejected (`omitting a non-constant default argument`). kotc's
+  positional-fill now inlines such a default with each referenced value parameter rewritten to THIS call's filled arg
+  (via captureSubst, the twin of the `= this` receiver case). The cross-module `@KotlinDefault` BIR now encodes a
+  value-param read as a `{param N}` token and bir2cir's `DefaultArgSplice` substitutes it (peer of its `{this}`
+  substitution) — latent until `@KotlinDefault` param attributes are encoded into the ref.dll (see Known issues).
+  Gate: `cases/il-defargs2` (JVM-oracle PURE).
 - **`generateSequence(seed){ next }` now drives correctly for value AND reference elements (C13a).**
   Two ilemit codegen bugs in the cold-sequence path are fixed: (1) a generic capturing closure passed as a
   DELEGATE argument (the `{ seed }` closure into `GeneratorSequence`'s `Function0` ctor param) had its
