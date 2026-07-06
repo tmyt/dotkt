@@ -1,5 +1,6 @@
 package kotc.backend
 
+import org.jetbrains.kotlin.backend.common.collectTailRecursionCalls
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
@@ -1407,7 +1408,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Promote captured-mutated `var`s to ref-cells; accumulate (a nested closure inherits the enclosing set).
 		val savedRefCells = refCellVars
 		refCellVars = refCellVars + computeRefCells(fn)
-		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		// `tailrec` tail-call optimization (§2b): if this is a `tailrec` fn with an actual self-tail-call, install a
+		// TailrecCtx so each tail call emits a back-jump (tailrecJump) instead of recursing, and prefix the body with
+		// the entry label the jumps target. The frontend already validated the tail positions; we reuse its own
+		// collectTailRecursionCalls. Restored after the body so a nested/sibling fn is unaffected.
+		val savedTailrec = tailrecCtx
+		val tailrecStart: Int? = if (fn.isTailrec) {
+			val tc = collectTailRecursionCalls(fn) { false }.ir
+			if (tc.isNotEmpty()) cfgFresh().also { tailrecCtx = TailrecCtx(tc, it, fn) } else null
+		} else null
+		val bodyStmts = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		tailrecCtx = savedTailrec
+		val body = if (tailrecStart != null) """{"k":"label","id":$tailrecStart}${if (bodyStmts.isNotEmpty()) ",$bodyStmts" else ""}""" else bodyStmts
 		refCellVars = savedRefCells
 		if (extRecv != null) selfSubst.remove(extRecv)
 		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
@@ -1630,6 +1642,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		!fn.isSuspend && fn.parameters.none { it.kind == IrParameterKind.DispatchReceiver } &&
 			fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null }
 
+	/** A data-class `copy` synthetic — `copy` cannot be user-declared on a data class, so name + `isData` parent is exact. */
+	internal fun isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
+		fn.name.asString() == "copy" && (fn.parent as? IrClass)?.isData == true
+
 	internal fun paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>,
 			ownerFn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction? = null): List<String> {
 		// A `@KotlinDefault(index, bir)` on each defaulted param of a qualifying function: `index` = the param's position
@@ -1706,6 +1722,38 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  never falls through to the surrounding merge — so the merge keeps only the live branch's type. */
 	internal fun breakContinueExpr(xfer: String): String =
 		"""{"k":"valueBlock","stmts":[$xfer],"result":{"k":"throwExpr","value":{"k":"const","type":"kotlin.Unit","value":null}}}"""
+
+	/** Active `tailrec` self-tail-call rewrite for the function currently being emitted. `calls` = the set of
+	 *  self-calls the frontend validated as tail-recursive (identity-keyed); `startLabel` = the CFG label at the
+	 *  method's entry that a tail call jumps back to (see [tailrecJump]); `fn` = the function whose params are the
+	 *  loop variables. Null unless inside a `tailrec` fn body that actually has a tail self-call. */
+	internal class TailrecCtx(val calls: Set<IrCall>, val startLabel: Int, val fn: IrSimpleFunction)
+	internal var tailrecCtx: TailrecCtx? = null
+
+	/** The standard tail-call optimization: a self-tail-call in a `tailrec` fn becomes a back-jump to the method's
+	 *  entry after reassigning the parameters to the call's arguments (Kotlin/JVM's own `tailrec` lowering, which our
+	 *  pipeline skips because it runs Fir2Ir straight into our backend, no JVM lowerings — so without this deep tail
+	 *  recursion overflows the CLR stack; §2b). The call sits in an EXPRESSION slot (`return f(...)`, or a `when`/`if`
+	 *  branch feeding the return), so we emit a `valueBlock`: evaluate every argument into a temp FIRST (so a later arg
+	 *  reading an earlier param — `f(n-1, acc+n)` — is not corrupted by the reassignment), reassign each param (a
+	 *  `setLocal` on a param name emits `starg`), then `goto` the entry label. The block's result is an unreachable
+	 *  `throwExpr` (the jump already left), mirroring [breakContinueExpr] — the surrounding `return` never executes. */
+	internal fun tailrecJump(call: IrCall, ctx: TailrecCtx): String {
+		data class Reassign(val name: String, val tmp: String, val valueJson: String, val type: org.jetbrains.kotlin.ir.types.IrType)
+		val reassigns = ArrayList<Reassign>()
+		ctx.fn.parameters.forEachIndexed { i, p ->
+			// The dispatch receiver of a member `tailrec` self-call is the SAME `this` (Kotlin requires it) — never reassigned.
+			if (p.kind == IrParameterKind.DispatchReceiver) return@forEachIndexed
+			val arg = call.arguments.getOrNull(i) ?: return@forEachIndexed
+			val name = if (p.kind == IrParameterKind.ExtensionReceiver) "__self" else p.name.asString()
+			reassigns.add(Reassign(name, "__tailrec_${ctx.startLabel}_$i", coerceValue(arg, p.type), p.type))
+		}
+		val stmts = ArrayList<String>()
+		reassigns.forEach { stmts.add("""{"k":"var","name":${str(it.tmp)},"type":${str(birType(it.type))},"init":${it.valueJson}}""") }
+		reassigns.forEach { stmts.add("""{"k":"setLocal","name":${str(it.name)},"value":{"k":"local","name":${str(it.tmp)}}}""") }
+		stmts.add("""{"k":"goto","id":${ctx.startLabel}}""")
+		return """{"k":"valueBlock","stmts":[${stmts.joinToString(",")}],"result":{"k":"throwExpr","value":{"k":"const","type":"kotlin.Unit","value":null}}}"""
+	}
 
 	/** `while(c){B}` -> CFG block: `START: if(!c) goto END; B; goto START; END:`. continue->START, break->END. */
 	internal fun cfgWhile(node: IrWhileLoop): String {
@@ -2852,13 +2900,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					when {
 						def == null -> null
 						def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression ->
-							// CROSS-MODULE: the jar dropped the default VALUE. A @KotlinDefault-carrying callee (any non-constant
-							// default — joinToString's CharSequence separators, substringAfter's `= this`, `b = a * 10`) gets a
-							// POSITIONAL placeholder for EVERY omitted arg so a later provided arg (the trailing transform lambda)
-							// keeps its slot; bir2cir fills each from the ref.dll @KotlinDefault (its `{param n}` tokens → this
-							// call's args). A callee with only metadata-representable defaults carries none → drop the (trailing)
-							// omit for ilemit's [DefaultParameterValue] backfill (unchanged).
-							if (carries) defaultArgPlaceholder else null
+							// CROSS-MODULE: the jar dropped the default VALUE. A data-class `copy` (Pair/Triple, or any referenced
+							// data class) is a SPECIAL case: its omitted-field default is ALWAYS `this.<field>` by construction, so
+							// reconstruct it as a receiver FIELD read at the INSTANTIATED call site — the exact BIR kotc emits for a
+							// plain `pair.first` (owner = the actual `kotlin.Pair[Int,Int]`, so no generic `gp:` token leaks; the
+							// @KotlinDefault splice can't carry that instantiation). This is the Pair/Triple partial-`copy` fix (C3).
+							if ((callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { isDataClassCopy(it) } == true && recvJson != null)
+								(dispatchReceiver(call) ?: extensionReceiver(call))?.let { r ->
+									// Owner via ownerSpec (the SAME token the plain `pair.first` property read uses — the referenced,
+									// instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly prefix, no open `gp:` param).
+									"""{"k":"field","ownerType":${str(ownerSpec(callee.parent as? IrClass, r.type))},"recv":${recvJson},"name":${str(p.name.asString())}}"""
+								}
+							// A @KotlinDefault-carrying callee (any non-constant default — joinToString's CharSequence separators,
+							// substringAfter's `= this`, `b = a * 10`) gets a POSITIONAL placeholder for EVERY omitted arg so a later
+							// provided arg (the trailing transform lambda) keeps its slot; bir2cir fills each from the ref.dll
+							// @KotlinDefault (its `{param n}` tokens → this call's args). A callee with only metadata-representable
+							// defaults carries none → drop the (trailing) omit for ilemit's [DefaultParameterValue] backfill.
+							else if (carries) defaultArgPlaceholder else null
 						refsAny(def, valueSyms) -> {
 							// SAME-MODULE default reading another VALUE parameter (`b: Int = a * 10`). Inline with each referenced
 							// value param rewritten to THIS call's filled arg for that param — the $default-scope evaluation at the
@@ -3190,6 +3248,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		emitted.startsWith("""{"k":"const",""") && emitted.endsWith(""","value":null}""")
 
 	internal fun call(call: IrCall): String {
+		// A `tailrec` self-tail-call -> a back-jump to the method entry (TCO, §2b) instead of a recursive call. Matched
+		// by IR identity against the frontend-validated tail-call set installed by `method()`.
+		tailrecCtx?.let { ctx -> if (call in ctx.calls) return tailrecJump(call, ctx) }
 		val callee = call.symbol.owner
 		// NOTE: kotlin.text.MatchResult.value is a REAL interface property (realized by ClrMatchResult) — it must route
 		// through the ordinary member-call path, NOT a hardcoded System...Match.Value lowering (that leftover forced the
@@ -4028,7 +4089,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					collToStringRoute(dispatchReceiver(call)!!)?.let { return it }
 					return """{"k":"objMethod","method":"ToString","recv":${expr(dispatchReceiver(call)!!)}}"""
 				}
-				"equals" -> return """{"k":"objMethod","method":"Equals","recv":${expr(dispatchReceiver(call)!!)},"arg":${expr(regularArgs(call).first())}}"""
+				"equals" -> {
+					val recvE = dispatchReceiver(call)!!; val argE = regularArgs(call).first()
+					// An EXPLICIT `.equals()` on a boxed Double/Float / a collection follows Kotlin's TOTAL order /
+					// STRUCTURAL equality, exactly like the `==` operator (§5a) — Object.Equals would give IEEE
+					// (`(-0.0).equals(0.0)` == true) / reference identity (`listOf(1).equals(listOf(1))` == false). Route
+					// through the SAME stdlib helpers the EQEQ path uses; a plain object (both routes null) keeps Object.Equals.
+					floatTotalEqRoute(recvE, argE)?.let { return it }
+					collEqRoute(recvE, argE)?.let { return it }
+					return """{"k":"objMethod","method":"Equals","recv":${expr(recvE)},"arg":${expr(argE)}}"""
+				}
 			}
 		}
 		// `n.toString(radix)` is NOT lowered in kotc (C4, 2026-07-06). The former `System.Convert.ToString(value, base)`
