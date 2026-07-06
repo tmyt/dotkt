@@ -232,11 +232,11 @@ static class TryValueOperandHoist
 
     // Best-effort static type for a spilled temp (only needed for a side-effecting operand that precedes
     // a hoisted try — absent from the repro; the `pure`-left cases never spill).
-    static string GuessType(JsonNode n)
+    static JsonNode GuessType(JsonNode n)
     {
         if (n is JsonObject o)
             foreach (var key in new[] { "type", "retType", "ret", "dynRet" })
-                if (o[key] is JsonValue v && v.TryGetValue<string>(out var s)) return s;
-        return "kotlin.Any";
+                if (o[key] is JsonNode slot && TypeJson.Read(slot) is DotKt.Bir.TypeNode) return slot.DeepClone();
+        return TypeJson.Fqn("kotlin.Any");
     }
 }

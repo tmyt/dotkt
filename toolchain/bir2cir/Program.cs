@@ -3201,26 +3201,26 @@ static class StringCharSequenceBridge
     // method's return type (for the return-site wrap). Copy-on-extend so a child scope never mutates its parent.
     sealed class Env
     {
-        public readonly Dictionary<string, string> Vars;
-        public readonly string RetType;
+        public readonly Dictionary<string, TypeNode> Vars;
+        public readonly TypeNode RetType;
         public Env() { Vars = new(StringComparer.Ordinal); RetType = null; }
-        Env(Dictionary<string, string> vars, string retType) { Vars = vars; RetType = retType; }
+        Env(Dictionary<string, TypeNode> vars, TypeNode retType) { Vars = vars; RetType = retType; }
 
         // A declaration node (has a `params` array — methods/lambdas always emit one, even empty) opens a child scope
         // seeded with its params and return type. A non-decl node (call/expr — no `params`) returns `this` unchanged.
         public Env WithDecl(JsonObject decl)
         {
             if (decl["params"] is not JsonArray ps) return this;
-            var vars = new Dictionary<string, string>(Vars, StringComparer.Ordinal);
+            var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal);
             foreach (var p in ps)
-                if (p is JsonObject po && Str(po["name"]) is string pn && Str(po["type"]) is string pt)
+                if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
                     vars[pn] = pt;
-            return new Env(vars, Str(decl["ret"]) ?? RetType);
+            return new Env(vars, TypeJson.Read(decl["ret"]) ?? RetType);
         }
 
-        public Env WithVar(string name, string type)
+        public Env WithVar(string name, TypeNode type)
         {
-            var vars = new Dictionary<string, string>(Vars, StringComparer.Ordinal) { [name] = type };
+            var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal) { [name] = type };
             return new Env(vars, RetType);
         }
     }
@@ -3269,7 +3269,7 @@ static class StringCharSequenceBridge
             var walked = item == null ? null : Walk(item, cur);
             copy.Add(walked);
             if (walked is JsonObject wo && Str(wo["k"]) == "var"
-                && Str(wo["name"]) is string vn && Str(wo["type"]) is string vt)
+                && Str(wo["name"]) is string vn && TypeJson.Read(wo["type"]) is TypeNode vt)
                 cur = cur.WithVar(vn, vt);
         }
         return copy;
@@ -3312,23 +3312,33 @@ static class StringCharSequenceBridge
     // (d): a store into a CharSequence-typed local `var cs: CharSequence = <String>`.
     static void WrapVarInit(JsonObject node, Env env)
     {
-        if (IsCharSeqSlot(Str(node["type"])) && node["init"] is JsonNode init && IsStaticString(init, env))
+        if (IsCharSeqT(TypeJson.Read(node["type"])) && node["init"] is JsonNode init && IsStaticString(init, env))
             node["init"] = WrapAdapter(init);
     }
 
     // (c): a return of a static String into a CharSequence return type.
     static void WrapReturn(JsonObject node, Env env)
     {
-        if (IsCharSeqSlot(env.RetType) && node["value"] is JsonNode v && IsStaticString(v, env))
+        if (IsCharSeqT(env.RetType) && node["value"] is JsonNode v && IsStaticString(v, env))
             node["value"] = WrapAdapter(v);
     }
+
+    // A structured Type is (nullable/array of) the CharSequence synthetic.
+    static bool IsCharSeqT(TypeNode t) => t switch
+    {
+        TypeNode.Fqn f => f.Name == CharSeq,
+        TypeNode.Nullable n => IsCharSeqT(n.Of),
+        TypeNode.Array a => IsCharSeqT(a.Elem),
+        _ => false,
+    };
+    static bool IsStringTokT(TypeNode t) => t is TypeNode.Fqn { Args: null } f && StringTokens.Contains(f.Name);
 
     // (e): `as CharSequence` on a static String -> REPLACE the (would-be InvalidCast) `castclass <>dotkt_CharSequence`
     // with the materializing adapter. A non-statically-String cast (an `Any?`->CharSequence runtime check) is left as
     // the plain cast — a runtime-type-check adapter helper for that is a follow-up (see docs 【4-A】).
     static JsonNode WrapCast(JsonObject node, Env env)
     {
-        if (IsCharSeqSlot(Str(node["type"])) && node["e"] is JsonNode e && IsStaticString(e, env))
+        if (IsCharSeqT(TypeJson.Read(node["type"])) && node["e"] is JsonNode e && IsStaticString(e, env))
             return WrapAdapter(e);
         return null;
     }
@@ -3355,13 +3365,13 @@ static class StringCharSequenceBridge
         if (n is not JsonObject o) return false;
         switch (Str(o["k"]))
         {
-            case "const": return IsStringTok(Str(o["type"]));
-            case "local": return Str(o["name"]) is string nm && env.Vars.TryGetValue(nm, out var t) && IsStringTok(t);
-            case "cast": return IsStringTok(Str(o["type"]));
+            case "const": return IsStringTokT(TypeJson.Read(o["type"]));
+            case "local": return Str(o["name"]) is string nm && env.Vars.TryGetValue(nm, out var t) && IsStringTokT(t);
+            case "cast": return IsStringTokT(TypeJson.Read(o["type"]));
             case "this": return false;
             default:
                 // A CLR/Kotlin call node carrying an explicit result type (`ret`/`retType` = System.String).
-                return IsStringTok(Str(o["ret"]) ?? Str(o["retType"]));
+                return IsStringTokT(TypeJson.Read(o["ret"]) ?? TypeJson.Read(o["retType"]));
         }
     }
 
@@ -4255,7 +4265,7 @@ static class ClrEventOperatorBinding
     static JsonNode Transform(JsonObject node)
     {
         if (Str(node["k"]) != "callInstance") return null;
-        if (Str(node["ownerType"]) != "kotlin.clr.ClrEvent") return null;
+        if (TypeJson.OwnerName(node["ownerType"]) != "kotlin.clr.ClrEvent") return null;
         var method = Str(node["method"]);
         if (method != "plusAssign" && method != "minusAssign") return null;
         // The receiver is the event member-access `w.Changed`, emitted as a clrPropGet carrying the .NET owner type
@@ -4306,9 +4316,8 @@ static class KClassMemberBinding
     static JsonNode Transform(JsonObject node)
     {
         if (Str(node["k"]) != "callInstance") return null;
-        // ownerType is `kotlin.reflect.KClass` optionally with a `[..]` type-arg suffix (e.g. `kotlin.reflect.KClass[kotlin.Any]`).
-        var owner = Str(node["ownerType"]);
-        if (owner == null || !(owner == "kotlin.reflect.KClass" || owner.StartsWith("kotlin.reflect.KClass["))) return null;
+        // ownerType is `kotlin.reflect.KClass` (its type-arg, if any, is dropped by OwnerName — we key on the identity).
+        if (TypeJson.OwnerName(node["ownerType"]) != "kotlin.reflect.KClass") return null;
         var bcl = Str(node["method"]) switch
         {
             "get_simpleName" => "Name",
@@ -4320,9 +4329,9 @@ static class KClassMemberBinding
         return new JsonObject
         {
             ["k"] = "clrPropGet",
-            ["type"] = "System.Type",
+            ["type"] = TypeJson.Fqn("System.Type"),
             ["name"] = bcl,
-            ["retType"] = "System.String",
+            ["retType"] = TypeJson.Fqn("System.String"),
             ["static"] = false,
             ["recv"] = recv.DeepClone(),
         };
