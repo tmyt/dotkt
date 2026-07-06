@@ -462,6 +462,33 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   reference in the `InteropBridgeFileClass` comment, ilemit's `cps-field` store-target comment (CPS is
   gone), and kotc's `native-cir`/`compat-passthrough` comment (the dual-track was removed 2026-06-30).
   Behavior-neutral: every gate stays XFAIL-zero.
+- **Residual coverage gaps closed (COV2–COV6, kcc review §2B, 2026-07-06).** Added three gate cases,
+  all JVM-oracle-verified in the differential gate: **`il-atomics`** — `kotlin.concurrent.atomics`
+  `AtomicInt`/`AtomicLong` (`incrementAndFetch`/`fetchAndAdd`/`addAndFetch`/`compareAndSet`/`exchange`/
+  `compareAndExchange`), exercising the `@ClrRefArgument` Interlocked byref binding that previously had
+  ZERO coverage (COV2); **`il-typealias`** — a `typealias` over a stdlib generic / function type / user
+  class, used across a function boundary (COV3); **`il-triple`** — `Triple` construction / destructuring /
+  `componentN` / full-arg `copy` / `toString` (COV4). Wired into both `verify-il` (with ilverify formal
+  coverage) and the differential `PURE` list. Two ktproj-level gates were also added and three unwired
+  fixtures reconciled (see below).
+- **`tailrec` deep-recursion deviation documented (COV5).** A new deep-recursion probe (`cases/il-tailrec`,
+  `sumTo(1_000_000)`) empirically showed our compiler emits **no tail-call optimization** for `tailrec`:
+  deep tail recursion **overflows the CLR stack** where kotlin/jvm rewrites it into a loop. Recorded as a
+  known deviation in `docs/dotkt-semantics.md §2b` (routed fix = tail-call lowering in kotc/bir2cir); the
+  reproducer is intentionally left OUT of every gate so they stay XFAIL-zero.
+- **`ifacesuspend` ilverify code/comment contradiction reconciled (COV6).** `verify-il.sh` had
+  `ifacesuspend` in the ilverify `ASMS` set (verifying clean) while a stale comment still claimed it was
+  "deliberately NOT in ASMS — a REAL latent finding"; the CallAbstract bridge finding had in fact been
+  fixed. Comment corrected to match the code.
+- **Dead/unwired fixtures dispositioned (COV6).** Wired the README-advertised **`ktproj-il`** (pure-IL
+  starter project, previously ungated → could rot) plus **`ktproj-import`** (bare `import System.X`
+  resolution), **`ktproj-refrt`** and **`ktproj-refrt-pr`** (the `<KotlinClrRefRt>` ref→rt property, standalone
+  and across a Kotlin→Kotlin `ProjectReference`) into `verify-ktproj`. **Removed** 13 genuinely-dead
+  fixtures: the 12 retired C#-backend runners (`m-c2`..`m-c8`, `m-i3`..`m-i5`, `m-s4`, `m-s5` — their
+  `runner.csproj` includes the never-generated `build/clr-m*/` C# output) and **`ktproj-ref`** (the retired
+  `import clr.X` + `<KotlinClrFacade>` positional-facade path — facadegen now supports `--meta` mode ONLY,
+  so it no longer builds). The now-orphaned `KotlinClrFacades` target in `cases/KotlinClr.targets` is left
+  in place but has no remaining consumer.
 
 ## 0.9.3 — 2026-06-24
 
