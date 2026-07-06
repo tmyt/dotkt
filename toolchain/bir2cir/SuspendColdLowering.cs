@@ -202,8 +202,18 @@ static class SuspendColdLowering
     readonly record struct FunKey(string Owner, string Name, string Sig);
 
     // The param-type signature discriminating overloaded suspend members (see FunKey.Sig).
+    // Overload-key signature: the CANONICAL JSON of each param's structured TypeNode. Post-#37-flip `p["type"]` is a
+    // TypeNode OBJECT, not a bare string — the old `Str(p["type"])` returned null for EVERY param (→ sig ""), collapsing
+    // all same-arity overloads onto one FunKey (only the last survived). That lost the abstract `yieldAll(Iterator)`
+    // cold entry to the sibling `yieldAll(IEnumerable)` overloads (seqyieldall: an inner `yieldAll$dotkt_suspend(Iterator,
+    // Continuation)` call then fell back to the IEnumerable slot → a Kotlin Iterator cast to IEnumerable → InvalidCast).
+    // The two Iterable/Sequence overloads genuinely alias to the SAME `IEnumerable` sig and still coalesce (correct — one
+    // CLR method), but the distinct Iterator overload now keeps its own entry.
     static string SigOf(JsonObject m) =>
-        m["params"] is JsonArray ps ? string.Join(",", ps.OfType<JsonObject>().Select(p => Str(p["type"]) ?? "")) : "";
+        m["params"] is JsonArray ps
+            ? string.Join(",", ps.OfType<JsonObject>().Select(p =>
+                TypeJson.Read(p["type"]) is TypeNode t ? TypeNode.ToJson(t) : (Str(p["type"]) ?? "")))
+            : "";
 
     // A shape-eligible suspend fun + where it lives (for cold-entry/SM splicing).
     sealed record Entry(JsonObject Method, JsonObject Root, JsonObject TypeNode, string Owner, string FileClass);
