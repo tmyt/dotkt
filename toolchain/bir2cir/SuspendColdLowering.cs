@@ -81,8 +81,10 @@ static class SuspendColdLowering
     static readonly HashSet<string> LambdaKinds = new(StringComparer.Ordinal)
     {
         "closureNew", "delegateNew", "lambda", "forEachInline", "repeatInline",
-        // Part B: a suspend-lambda VALUE inside a suspend fun disqualifies the enclosing fun from cold
-        // transform (its own SM is built separately by SuspendLambdaLowering, which runs after).
+        // A suspend-lambda VALUE built inside a suspend fun. Kept here so the SUBTREE-SKIPPING analyses
+        // (CollectVarFields / DisambiguateShadowedVars) do not descend into the lambda's own body (its vars are
+        // the lambda SM's, not the enclosing SM's). SuspensionsSupported and Rewrite SPECIAL-CASE it (GAP 2): the
+        // enclosing fun IS cold-transformed, the lambda copied opaquely with SM-vocabulary `capValues`.
         "suspendLambdaNew",
     };
 
@@ -152,6 +154,19 @@ static class SuspendColdLowering
         return (o["args"] as JsonArray)?.FirstOrDefault() is JsonObject a
             && Str(a["k"]) is "closureNew" or "delegateNew";
     }
+
+    // GAP 1 (P3 wave-2b) — a call to a suspend functional VALUE: `b()` where `b: suspend (...) -> T` is a
+    // param/local/field. kotc emits it as `recv.invoke()` (suspendCall:true) whose receiver TYPE is a
+    // `kotlin.coroutines.SuspendFunctionN[...]` (SuspendFunction0[R], SuspendFunction1[P,R], ...). Unlike a
+    // NAMED suspend call it has no `<name>$dotkt_suspend` cold entry — the value at runtime IS a SuspendLambda
+    // state machine (a BaseContinuationImpl), so the suspension is driven through the stdlib cold-invoke helper
+    // `startSuspendUninterceptedOrReturn(fn, [receiver,] completion)` (= `create(completion).invokeSuspend(Unit)`),
+    // NOT a virtual invoke (the SM implements no SuspendFunctionN interface / carries no `invoke` bridge).
+    const string SuspendFunctionPrefix = "kotlin.coroutines.SuspendFunction";
+    const string StartSuspendOwner = "kotlin.coroutines.clr.internal.ContinuationImplKt";
+    static bool IsSuspendValueCall(JsonObject o) =>
+        Str(o["k"]) == "callInstance" && Bool(o["suspendCall"]) && Str(o["method"]) == "invoke"
+        && (BareOwner(Str(o["ownerType"]))?.StartsWith(SuspendFunctionPrefix, StringComparison.Ordinal) ?? false);
 
     // The `closureNew` (the `{ c -> … }` block) buried in an intrinsic block's stmts (a `var __inlN` init).
     static JsonObject IntrinsicClosureNew(JsonObject block)
@@ -546,6 +561,13 @@ static class SuspendColdLowering
                 // F2 — a cross-module suspendCoroutine call IS a supported cold suspension point; do NOT descend
                 // into its embedded closureNew/delegateNew block arg (which would trip the LambdaKinds refusal).
                 if (IsSuspendCoroutineCall(o)) return true;
+                // GAP 2 — a `suspendLambdaNew` VALUE built inside a suspend fun (e.g. a member `suspend fun go() =
+                // run1 { … }` that constructs a `this`-capturing suspend lambda and drives it via a suspend-value
+                // call) is SUPPORTED: the lambda is an opaque value whose OWN suspensions become a SEPARATE SM
+                // (SuspendLambdaLowering), and its captures resolve in the enclosing cold SM (a spilled local -> an
+                // SM field, `__outer` -> the member SM's `$this`). Do NOT descend into its body (that is the
+                // lambda's own scope, validated by its own FunGen build) — descending would trip the refusal below.
+                if (k == "suspendLambdaNew") return true;
                 // ANY OTHER lambda/closure/sequence node -> unsupported (genuine suspend lambdas, which emit a
                 // `closureNew` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
                 // Left untouched.
@@ -592,7 +614,10 @@ static class SuspendColdLowering
                 // F2: a cross-module suspendCoroutine call is lowered INLINE (its block reconstructed in the SM),
                 // not routed to a cold entry — so it is NOT a resolvability constraint. Skip it (and its block arg).
                 if (IsSuspendCoroutineCall(o)) return;
-                if (Bool(o["suspendCall"]) && Str(o["method"]) is string mn)
+                // GAP 1: a suspend-VALUE invoke is lowered inline to the cold-invoke helper (no named cold entry to
+                // resolve), so it must NOT add a resolvability constraint — but DO descend (a nested suspension may
+                // sit in the receiver/args). Guard only the CallRef add below.
+                if (Bool(o["suspendCall"]) && !IsSuspendValueCall(o) && Str(o["method"]) is string mn)
                 {
                     var k = Str(o["k"]);
                     if (k == "callInstance")
@@ -1274,6 +1299,15 @@ static class SuspendColdLowering
                     return FieldOf(ThisField, _ownerClass);
                 if (k == "this" && CapturedOuterField() is JsonNode of1)
                     return of1;
+                // GAP 2 — a `suspendLambdaNew` VALUE inside the cold SM is OPAQUE: its own body is the lambda's
+                // scope (a separate SM built by SuspendLambdaLowering, which runs after this pass), so we must NOT
+                // rewrite it here (a `this`/`local` in the lambda body means the LAMBDA's receiver/param, not this
+                // SM's `$this`/field). Copy it verbatim, only resolving each CAPTURE's construction value into THIS
+                // SM's vocabulary (`$this` for the enclosing instance, a spilled-local field, else a still-live
+                // local) as `capValues` — SuspendLambdaLowering consumes that instead of re-synthesizing `this`,
+                // which would wrongly denote the SM here rather than the captured enclosing instance.
+                if (k == "suspendLambdaNew")
+                    return RewriteSuspendLambdaNew(o);
                 if (IsSuspendIntrinsicBlock(o))
                     return EmitIntrinsicSuspension(o, outp);
                 if (IsSuspendCoroutineCall(o))
@@ -2001,6 +2035,36 @@ static class SuspendColdLowering
             (_isLambda && _fields.Contains("__outer"))
                 ? FieldOf("__outer", FieldType("__outer")) : null;
 
+        // GAP 2 — copy a `suspendLambdaNew` verbatim (its body is the lambda's own scope, left for
+        // SuspendLambdaLowering) and attach `capValues`: each capture's construction value resolved into THIS cold
+        // SM's vocabulary. SuspendLambdaLowering builds `new <lambdaSM>(capValues..., null)` at this exact site.
+        JsonObject RewriteSuspendLambdaNew(JsonObject o)
+        {
+            var copy = (JsonObject)o.DeepClone();
+            var capValues = new JsonArray();
+            if (o["captures"] is JsonArray caps)
+                foreach (var c in caps.OfType<JsonObject>())
+                    capValues.Add(CaptureValueInSm(Str(c["name"]), Str(c["type"])));
+            copy["capValues"] = capValues;
+            return copy;
+        }
+
+        // The value of a captured name AS SEEN from inside this cold SM's invokeSuspend: the enclosing instance
+        // (`__outer`) is the member SM's `$this` field (or a spilled `__self`/`__outer` for an extension/lambda SM);
+        // a captured plain local that was spilled is the matching SM field; anything else is a still-live local.
+        JsonNode CaptureValueInSm(string name, string type)
+        {
+            if (name == "__outer")
+            {
+                if (_isMember) return FieldOf(ThisField, _selfType);
+                if (_fields.Contains("__self")) return FieldOf("__self", FieldType("__self"));
+                if (_isLambda && _fields.Contains("__outer")) return FieldOf("__outer", FieldType("__outer"));
+                return new JsonObject { ["k"] = "this" };
+            }
+            if (_fields.Contains(name)) return FieldOf(name, FieldType(name));
+            return new JsonObject { ["k"] = "local", ["name"] = name };
+        }
+
         // The cold call. Shapes (same-assembly callStatic/callInstance, and — BUG 1 — the CROSS-ASSEMBLY
         // clr forms kotc emits for a referenced suspend callee):
         //   callStatic         -> <method>$dotkt_suspend(<args>, cast(this))                     (owner preserved)
@@ -2013,6 +2077,10 @@ static class SuspendColdLowering
         // are rewritten (spilling nested suspensions, redirecting locals/`this`).
         JsonObject ColdCall(JsonObject callNode, List<JsonNode> outp)
         {
+            // GAP 1: a call to a suspend functional VALUE has no named cold entry — drive it through the stdlib
+            // cold-invoke helper `startSuspendUninterceptedOrReturn(fn, [receiver,] completion)`.
+            if (IsSuspendValueCall(callNode)) return SuspendValueColdCall(callNode, outp);
+
             var k = Str(callNode["k"]);
             var method = Str(callNode["method"]) + "$dotkt_suspend";
             var isInstance = k is "callInstance" or "clrInstance" or "clrGenericInstance";
@@ -2108,6 +2176,58 @@ static class SuspendColdLowering
             var origSig = NonEmpty(Str(callNode["sig"]));
             call["sig"] = origSig == null ? ContinuationOfAny : origSig + "," + ContinuationOfAny;
             return call;
+        }
+
+        // GAP 1 — the cold-invoke of a suspend functional VALUE. The value `fn` (`b()`'s receiver) is a cold,
+        // unstarted SuspendLambda state machine (a BaseContinuationImpl). Driving it as a suspension point is the
+        // SAME machinery as a named cold call — set label, start it passing THIS SM (a Continuation) as its
+        // completion, check COROUTINE_SUSPENDED — except the "start" is the stdlib helper
+        // `startSuspendUninterceptedOrReturn(fn, [receiver,] completion)` (= `create(completion).invokeSuspend(Unit)`)
+        // rather than a `<name>$dotkt_suspend` call. EmitSuspensionPoint owns the label/suspend/resume dance and
+        // the result typing (from the invoke's `retType`); this only builds the start call.
+        //   arity-0 (`b()`):   startSuspendUninterceptedOrReturn<Any>(fn, completion)
+        //   arity-1 (`b(x)`):  startSuspendUninterceptedOrReturn<Any,Any>(fn, x, completion)   // x -> receiver R
+        JsonObject SuspendValueColdCall(JsonObject callNode, List<JsonNode> outp)
+        {
+            // Evaluate the value receiver then any invoke arg LEFT-TO-RIGHT (BUG 2 — a nested suspension in an arg).
+            var kids = new List<JsonNode> { callNode["recv"] };
+            if (callNode["args"] is JsonArray oa) foreach (var arg in oa) kids.Add(arg);
+            var rw = RewriteEvalOrder(kids, outp);
+            var recvRw = rw[0];
+            var invokeArgs = rw.Skip(1).ToList();   // 0 or 1 (SuspendFunction0 / SuspendFunction1)
+            if (invokeArgs.Count > 1)
+                throw new NotSupportedException(
+                    $"suspend-value invoke with {invokeArgs.Count} args (SuspendFunction{invokeArgs.Count}) in " +
+                    $"'{(_ownerClass ?? _fileClass)}.{_name}': the cold-invoke protocol covers arity 0/1 (create() parity)");
+
+            var completion = new JsonObject
+            {
+                ["k"] = "cast",
+                ["type"] = ContinuationOfAny,
+                ["e"] = new JsonObject { ["k"] = "this" },
+            };
+
+            // args = fn, [receiver], completion ; the helper is generic (<T> arity-0 / <R,T> arity-1), erased to Any.
+            var args = new JsonArray { recvRw };
+            foreach (var a in invokeArgs) args.Add(a);
+            args.Add(completion);
+            var typeArgs = new JsonArray { "kotlin.Any" };            // T (result) — erased
+            if (invokeArgs.Count == 1) typeArgs.Add("kotlin.Any");    // R (receiver) — erased
+            // sig discriminates the fixed-arity overloads (2/3 params): fn:Any, [receiver:Any], completion:Continuation.
+            var sigParts = new List<string> { "kotlin.Any" };
+            for (var i = 0; i < invokeArgs.Count; i++) sigParts.Add("kotlin.Any");
+            sigParts.Add(ContinuationOfAny);
+
+            return new JsonObject
+            {
+                ["k"] = "callStatic",
+                ["owner"] = StartSuspendOwner,
+                ["method"] = "startSuspendUninterceptedOrReturn",
+                ["typeArgs"] = typeArgs,
+                ["sig"] = string.Join(",", sigParts),
+                ["args"] = args,
+                ["ret"] = "kotlin.Any",
+            };
         }
 
         // ---- declaration synthesis ----

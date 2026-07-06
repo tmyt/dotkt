@@ -198,20 +198,29 @@ static class SuspendLambdaLowering
             ? smName
             : smName + "[" + string.Join(",", typeArgs.Select(t => "gp:" + t)) + "]";
 
-        // The lambda VALUE: `new SM(captureVals..., null)` — captures read as locals at the emit site, a null
-        // completion (a cold, unstarted lambda; create() rebinds the completion when a builder starts it).
+        // The lambda VALUE: `new SM(captureVals..., null)` — captures read at the emit site, a null completion (a
+        // cold, unstarted lambda; create() rebinds the completion when a builder starts it).
+        // GAP 2 — when the construction site is INSIDE a cold state machine (a suspend fun that builds this lambda),
+        // SuspendColdLowering already resolved each capture's value into the SM's vocabulary and attached them as
+        // `capValues` (a spilled local -> an SM field, `__outer` -> the member SM's `$this`). Use those verbatim; a
+        // naive `this`/`local` here would denote the SM, not the captured enclosing instance/local.
+        var capValues = node["capValues"] as JsonArray;
         var args = new JsonArray();
         var argTypes = new JsonArray();
-        foreach (var (n, t) in captures)
+        for (var ci = 0; ci < captures.Count; ci++)
         {
-            // `__outer` is kotc's name for a captured enclosing `<this>`/extension-receiver (BirEmitter.kt:2929).
-            // Its VALUE at the construction site is the enclosing method's receiver: an instance method reads
-            // `this`; a STATIC extension fun (its receiver rode a leading `__self` param) reads `local __self`
-            // (a static method has no `this`). `outerSelf` carries which. Every other capture is a real local.
-            args.Add(n == "__outer"
-                ? (outerSelf ? new JsonObject { ["k"] = "local", ["name"] = "__self" }
-                             : new JsonObject { ["k"] = "this" })
-                : new JsonObject { ["k"] = "local", ["name"] = n });
+            var (n, t) = captures[ci];
+            if (capValues != null && ci < capValues.Count && capValues[ci] != null)
+                args.Add(capValues[ci].DeepClone());
+            else
+                // `__outer` is kotc's name for a captured enclosing `<this>`/extension-receiver (BirEmitter.kt:2929).
+                // Its VALUE at an ORDINARY (non-SM) construction site is the enclosing method's receiver: an instance
+                // method reads `this`; a STATIC extension fun (receiver rode a leading `__self` param) reads
+                // `local __self`. `outerSelf` carries which. Every other capture is a real local.
+                args.Add(n == "__outer"
+                    ? (outerSelf ? new JsonObject { ["k"] = "local", ["name"] = "__self" }
+                                 : new JsonObject { ["k"] = "this" })
+                    : new JsonObject { ["k"] = "local", ["name"] = n });
             argTypes.Add(t);
         }
         args.Add(new JsonObject { ["k"] = "const", ["type"] = ContinuationOfAny, ["value"] = null });
