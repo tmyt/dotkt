@@ -5260,7 +5260,46 @@ static class MemberCallSubstitution
         // non-generic (nativeClone -> Array.Clone) is a harmless no-op there.
         if (node["typeArgs"] is JsonArray callTypeArgs && callTypeArgs.Count > 0)
             call["typeArgs"] = callTypeArgs.DeepClone();
+        CoerceCharSeqArgsToString(argTypes, call["args"] as JsonArray);
         return call;
+    }
+
+    // A synthetic-CharSequence (`<>dotkt_CharSequence`) value flowing as an ARGUMENT into a substituted BCL call has NO
+    // BCL overload: `Appendable.append(CharSequence)` binds to `System.Text.StringBuilder.Append`, and ilemit — finding
+    // no `Append(<>dotkt_CharSequence)` slot — mis-selects `Append(String)` and marshals the interface reference as a raw
+    // string pointer, corrupting memory ("Destination is too short" / AccessViolationException inside joinTo/
+    // joinToString). The CLR has no representation for kotc's monomorphic CharSequence interface at a BCL boundary, so any
+    // CharSequence reaching one must be snapshot to System.String (its `.toString()` content). Convert the arg to a
+    // null-safe `Any?.toString()` (kotlin.LibraryKt.toString) and pin the argType to `kotlin.String` (BirTypeLowering ->
+    // System.String) so the overload binds cleanly. Runs in EVERY non-ref build: the rt-stdlib's OWN joinTo/joinToString
+    // bodies keep the synthetic CharSequence params (CharSeqStringLowering is app-only), so this is the sole marshaling
+    // point for their `buffer.append(separator/prefix/postfix/truncated)` calls.
+    static void CoerceCharSeqArgsToString(JsonArray argTypes, JsonArray args)
+    {
+        if (argTypes == null || args == null) return;
+        for (var i = 0; i < argTypes.Count && i < args.Count; i++)
+            if (IsSyntheticCharSeqToken(argTypes[i]) && args[i] is JsonNode a)
+            {
+                args[i] = new JsonObject
+                {
+                    ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"), ["method"] = "toString",
+                    ["sig"] = "object", ["args"] = new JsonArray { a.DeepClone() },
+                };
+                argTypes[i] = JsonValue.Create("kotlin.String");
+            }
+    }
+
+    // True iff an argType slot (a legacy sig STRING or a structured Fqn) denotes kotc's synthetic monomorphic
+    // `<>dotkt_CharSequence` interface (tolerating a `nullable:`/`@` decoration). The `<>dotkt_StringCharSequence`
+    // adapter deliberately does NOT match — its token has no `<>dotkt_CharSequence` substring.
+    static bool IsSyntheticCharSeqToken(JsonNode slot)
+    {
+        var name = slot switch
+        {
+            JsonValue v when v.TryGetValue<string>(out var s) => s,
+            _ => (TypeJson.Read(slot) as TypeNode.Fqn)?.Name,
+        };
+        return name != null && name.Contains("<>dotkt_CharSequence", StringComparison.Ordinal);
     }
 
     // Rule-3: route to `<>dotkt_ClrH_<owner>.<member>(recv?, args..)`. The receiver is threaded as the helper's
