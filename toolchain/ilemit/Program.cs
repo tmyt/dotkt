@@ -245,7 +245,10 @@ sealed partial class Emitter
                         TB = tb,
                         Def = t,
                         IsInterface = isIface,
-                        BaseName = t.TryGetProperty("base", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null,
+                        BaseFqn = t.TryGetProperty("base", out var b) && b.ValueKind == JsonValueKind.Object
+                            && DotKt.Bir.TypeNode.Read(b) is DotKt.Bir.TypeNode.Fqn bf ? bf : null,
+                        BaseName = t.TryGetProperty("base", out var b2)
+                            ? (b2.ValueKind == JsonValueKind.String ? b2.GetString() : SlotName(b2)) : null,
                     };
                     // Generic type `class Box<T>`: define its type parameters now so member signatures (pass 3) resolve.
                     // (Constraints are applied in pass 2, once every type — possibly referenced by a bound — exists.)
@@ -284,7 +287,7 @@ sealed partial class Emitter
                     // <E>`) must NOT stay an un-instantiated open generic ("could not load" at type-load) — instantiate it
                     // with this type's leading generic params POSITIONALLY (the BIR keeps the open name so FindMethod still
                     // walks the base chain by bare name for inherited members like AbstractIterator.setNext).
-                    var (bopen, bconstructed) = ParseOwner(ti.BaseName);
+                    var (bopen, bconstructed) = ti.BaseFqn != null ? ParseOwnerT(ti.BaseFqn) : ParseOwner(ti.BaseName);
                     if (bconstructed != null) { ti.TB.SetParent(bconstructed); }
                     else if (_types.TryGetValue(bopen, out var baseTi))
                     {
@@ -301,13 +304,12 @@ sealed partial class Emitter
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
                 foreach (var i in ifs.EnumerateArray())
                 {
-                    var spec = i.GetString();
-                    // A .NET-mapped interface (`clr:`/`clrg:...[..]`, e.g. DotKt.Coroutines.Continuation<int>) is
-                    // resolved by reflection; a Kotlin-user interface `Container[int]` comes from _types; a bare external
-                    // .NET interface FQN (pure-FQN, not `_types`) falls back to reflection.
+                    if (DotKt.Bir.TypeNode.Read(i) is not DotKt.Bir.TypeNode.Fqn iFqn) continue;
+                    // A REFERENCED interface (not in `_types` — a .NET Continuation<int>) is resolved by reflection; an
+                    // emitted Kotlin interface (`Container<int>`) comes from `_types` (constructed via ParseOwnerT).
                     Type itype;
-                    if (spec.StartsWith("clr:") || spec.StartsWith("clrg:")) itype = MapType(spec);
-                    else { var (open, constructed) = ParseOwner(spec); itype = constructed ?? (_types.TryGetValue(open, out var oti) ? (Type)oti.TB : ResolveType(open)); }
+                    if (!_types.ContainsKey(iFqn.Name)) itype = MapType(iFqn);
+                    else { var (open, constructed) = ParseOwnerT(iFqn); itype = constructed ?? (Type)_types[open].TB; }
                     ti.TB.AddInterfaceImplementation(itype);
                 }
         }
@@ -397,12 +399,17 @@ sealed partial class Emitter
                 // Worklist over the class's interfaces INCLUDING transitively-inherited ones (a Kotlin interface method
                 // can be inherited through a chain, e.g. MonotonicTimeSource : WithComparableMarks : TimeSource — the
                 // covariant markNow over TimeSource.markNow must be bridged too, or the slot stays unimplemented).
-                var ifWork = new Queue<string>();
+                // The interface entries are STRUCTURED Fqn nodes (birType-emitted). ilemit DERIVES the "referenced-vs-
+                // emitted" decision from the name (`_types` membership), not a clr:/clrg: marker.
+                var ifWork = new Queue<DotKt.Bir.TypeNode.Fqn>();
                 var ifSeen = new HashSet<string>();
-                foreach (var i in ifs.EnumerateArray()) ifWork.Enqueue(i.GetString());
+                foreach (var i in ifs.EnumerateArray())
+                    if (DotKt.Bir.TypeNode.Read(i) is DotKt.Bir.TypeNode.Fqn iff) ifWork.Enqueue(iff);
                 while (ifWork.Count > 0)
                 {
-                    var spec = ifWork.Dequeue();
+                    var specFqn = ifWork.Dequeue();
+                    var spec = SigTokenOf(specFqn);          // the canonical key + a legacy-ish token for the string helpers below
+                    var specName = specFqn.Name;
                     if (!ifSeen.Add(spec)) continue;
                     // The reverse GetEnumerator bridge fires below on a `clr:`/`clrg:` collection interface (the form
                     // bir2cir lowers Kotlin Set/MutableCollection/List/... to in every runnable build). ilemit holds NO
@@ -414,13 +421,14 @@ sealed partial class Emitter
                     // depend on. (Covers both a user `class S : CharSequence` and the injected `<>dotkt_StringCharSequence`.)
                     // Checked on the RAW spec (a canonical synthetic interface spec is the bare name), so a `clr:`/`clrg:`
                     // spec is NOT ParseOwner'd here — doing so eagerly mis-strips a `clrg:` self-ref interface (crash).
-                    bool externalSynthIface = CanonicalSynthetics.Contains(spec)
-                        && !_types.ContainsKey(spec) && ResolvesExternally(spec);
-                    // A .NET-mapped interface (DotKt.Coroutines.Continuation<int>): bind each interface method to the
-                    // class method of the same .NET name via reflection (the class emits PascalCase names already).
-                    if (spec.StartsWith("clr:") || spec.StartsWith("clrg:") || externalSynthIface)
+                    bool externalSynthIface = CanonicalSynthetics.Contains(specName)
+                        && !_types.ContainsKey(specName) && ResolvesExternally(specName);
+                    // A REFERENCED interface (not emitted in THIS assembly — a .NET-mapped Continuation<int>, or an
+                    // external canonical synthetic): bind each interface method to the class method of the same .NET name
+                    // by reflection. An EMITTED interface (in `_types`) falls to the ParseOwner path below.
+                    if (!_types.ContainsKey(specName) || externalSynthIface)
                     {
-                        var itype = externalSynthIface ? ResolveType(spec) : MapType(spec);
+                        var itype = externalSynthIface ? ResolveType(specName) : MapType(specFqn);
                         // C3b reverse bridge: if this is a @Clr collection interface (IEnumerable<E>-derived) and the
                         // class has only a Kotlin iterator(), synthesize GetEnumerator (handles the two overloads itself).
                         GenerateGetEnumeratorIfNeeded(ti, itype);
@@ -460,18 +468,17 @@ sealed partial class Emitter
                         }
                         continue;
                     }
-                    var (open, constructed) = ParseOwner(spec);
+                    var (open, constructed) = ParseOwnerT(specFqn);
                     if (!_types.TryGetValue(open, out var iface)) continue;
+                    // The interface's instantiation args (the concrete args at this implementer): `Comparable<Self>` ->
+                    // [Self]. An interface method's declared type names the INTERFACE's OWN params as `Tv{type,i}`;
+                    // SubstTv re-anchors each to specArgs[i] so it matches the class's own (concrete) member signature.
+                    var specArgs = specFqn.Args;
                     // Transitively process this interface's base interfaces too, substituting the type args through the
-                    // chain (e.g. WithComparableMarks : TimeSource, or List[object] : Collection[object]).
-                    var ifSubstForBases = BuildTypeArgSubst(spec, iface);
+                    // chain (e.g. WithComparableMarks : TimeSource, or List<object> : Collection<object>).
                     if (iface.Def.ValueKind == JsonValueKind.Object && iface.Def.TryGetProperty("interfaces", out var baseIfs))
-                        foreach (var bi in baseIfs.EnumerateArray()) ifWork.Enqueue(SubstSig(bi.GetString(), ifSubstForBases));
-                    // ti.Methods is name-keyed, so OVERLOADED body methods collide and DefineMethodOverride would bind the
-                    // wrong one (e.g. a value class's compareTo(UByte/UShort/UInt/ULong) all map to ti.Methods["compareTo"]
-                    // = the last = ULong, wired to Comparable<UInt32>.compareTo -> TypeLoad "do not match"). Resolve the
-                    // overload by the interface method's TYPE-ARG-SUBSTITUTED signature via MethodsBySig.
-                    var ifSubst = BuildTypeArgSubst(spec, iface);
+                        foreach (var bi in baseIfs.EnumerateArray())
+                            if (SubstTv(DotKt.Bir.TypeNode.Read(bi), specArgs) is DotKt.Bir.TypeNode.Fqn biF) ifWork.Enqueue(biF);
                     // Iterate the interface's method DEFS (not the name-keyed iface.Methods) so OVERLOADED interface
                     // methods (e.g. MutableMap.remove(K):V vs the JVM remove(K,V):Boolean) each resolve to their own
                     // builder by signature, and to the matching body overload by TYPE-ARG-SUBSTITUTED signature. A miss
@@ -484,13 +491,11 @@ sealed partial class Emitter
                             var ifaceBuilder = iface.MethodsBySig.TryGetValue(SigKey(imName, imDef), out var ib) ? ib
                                              : (iface.Methods.TryGetValue(imName, out var ib2) ? ib2 : null);
                             if (ifaceBuilder == null) continue;
-                            // Substitute the iface type args THROUGH each param's (possibly nested) type — a bare `gp:T`
-                            // AND a nested `@kotlin.Result[gp:T]` (a value class over the type param, e.g.
-                            // Continuation.resumeWith(Result<T>)) both lower to the class's `object` instantiation. A
-                            // whole-string dict lookup only catches the bare case; use SubstSig (same as the ret wiring
-                            // below) so the nested arg is replaced and the body-overload sig matches -> the MethodImpl binds.
+                            // The interface method's params with each Tv{type,i} re-anchored to specArgs[i], rendered to
+                            // the sig-token spelling — matched against the class's own MethodsBySig (a nested value-class
+                            // arg like Continuation.resumeWith(Result<T>) substitutes correctly, not just a bare gp).
                             var subSig = imName + "(" + string.Join(",", imDef.GetProperty("params").EnumerateArray()
-                                .Select(p => SubstSig(p.GetProperty("type").GetString(), ifSubst))) + ")";
+                                .Select(p => SigTokenOf(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)))) + ")";
                             // Only wire an EXACT signature match. A miss means the class doesn't override this exact
                             // overload (e.g. it lacks the JVM remove(K,V):Boolean default) -> SKIP rather than mis-wire a
                             // different overload; for a Kotlin interface the same-name+sig method resolves implicitly anyway.
@@ -501,23 +506,22 @@ sealed partial class Emitter
                                 // treat an interface DIM as implicitly implementing the base interface method (Comparable.
                                 // compareTo), so the class slot stays unimplemented. Emit a class-level forwarding bridge
                                 // that calls the inherited DIM and put the MethodImpl on it.
-                                if (!ti.IsInterface) TryEmitDimForwardBridge(ti, imDef, ifSubst, subSig, constructed, ifaceBuilder);
+                                if (!ti.IsInterface) TryEmitDimForwardBridge(ti, imDef, specArgs, subSig, constructed, ifaceBuilder);
                                 continue;
                             }
                             var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
                             // Covariant return: a NARROWED override return type (markNow():ValueTimeMark over the iface's
                             // :ComparableTimeMark) makes a direct MethodImpl fail the CLR's exact-return rule. Emit a bridge
                             // with the iface's (base) return type that calls the narrow body method and upcasts; put the
-                            // MethodImpl on the bridge. The iface ret/params come from imDef (BIR) via MapType — no need to
-                            // reflect the TypeBuilderInstantiation.
+                            // MethodImpl on the bridge. The iface ret comes from imDef (BIR), Tv re-anchored to specArgs.
                             Type ifaceRet = null;
-                            try { if (imDef.TryGetProperty("ret", out var rt)) ifaceRet = MapType(SubstSig(rt.GetString(), ifSubst)); } catch { }
+                            try { if (imDef.TryGetProperty("ret", out var rt)) ifaceRet = MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)); } catch { }
                             // Bridge only on a genuine type NARROWING (different type name) — not two reference-different
                             // instantiations of the SAME generic (Iterator<Object> vs Iterator<Object>), which match fine.
                             if (ifaceRet != null && bodyMethod.ReturnType != ifaceRet &&
                                 ((bodyMethod.ReturnType.Name != ifaceRet.Name && !bodyMethod.ReturnType.IsValueType && !ifaceRet.IsValueType)   // covariant reference narrowing
                                  || (ifaceRet == typeof(void) && bodyMethod.ReturnType != typeof(void))))   // a BCL slot that DROPS the Kotlin return (MutableCollection.add():Boolean -> ICollection.Add():void, set/removeAt:E -> void)
-                                EmitCovariantBridge(ti, imName, imDef, ifSubst, bodyMethod, ifaceMethod, ifaceRet);
+                                EmitCovariantBridge(ti, imName, imDef, specArgs, bodyMethod, ifaceMethod, ifaceRet);
                             else
                                 ti.TB.DefineMethodOverride(bodyMethod, ifaceMethod);
                         }
@@ -1250,20 +1254,12 @@ sealed partial class Emitter
 
     int _covarBridge = 0;
 
-    // Substitute the interface's type params into a BIR type string ({gp:T -> uint}); simple token replace (type-param
-    // names are short, e.g. T/K/V/E), enough for `gp:T` and `X[gp:T]` forms.
-    static string SubstSig(string sig, Dictionary<string, string> subst)
-    {
-        foreach (var kv in subst) sig = sig.Replace(kv.Key, kv.Value);
-        return sig;
-    }
-
     // Emit a covariant-return bridge: a private explicit-interface-impl method with the iface's (base) return type +
     // params, calling the narrow body method on `this` and returning it (a ref upcast); the MethodImpl goes on the bridge.
-    void EmitCovariantBridge(TypeInfo ti, string name, JsonElement imDef, Dictionary<string, string> subst, MethodBuilder body, MethodInfo ifaceMethod, Type ifaceRet)
+    void EmitCovariantBridge(TypeInfo ti, string name, JsonElement imDef, DotKt.Bir.TypeNode[] specArgs, MethodBuilder body, MethodInfo ifaceMethod, Type ifaceRet)
     {
         var paramTypes = imDef.GetProperty("params").EnumerateArray()
-            .Select(p => MapType(SubstSig(p.GetProperty("type").GetString(), subst))).ToArray();
+            .Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
         var bridge = ti.TB.DefineMethod("<>dotkt_covar$" + name + "$" + (_covarBridge++),
             MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
             ifaceRet, paramTypes);
@@ -1283,16 +1279,17 @@ sealed partial class Emitter
     // interface provides it as a DEFAULT method (ComparableTimeMark.compareTo DIM). The CLR doesn't treat the DIM as
     // implicitly implementing the base interface method, so emit a class-level forwarding bridge that calls the inherited
     // DIM (callvirt the base-interface method on `this`) and put the MethodImpl for the interface method on the bridge.
-    void TryEmitDimForwardBridge(TypeInfo ti, JsonElement imDef, Dictionary<string, string> ifSubst, string subSig, Type constructed, MethodBuilder ifaceBuilder)
+    void TryEmitDimForwardBridge(TypeInfo ti, JsonElement imDef, DotKt.Bir.TypeNode[] specArgs, string subSig, Type constructed, MethodBuilder ifaceBuilder)
     {
         if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var dirIfs)) return;
         foreach (var di in dirIfs.EnumerateArray())
         {
-            var (dopen, _) = ParseOwner(di.GetString());
+            if (DotKt.Bir.TypeNode.Read(di) is not DotKt.Bir.TypeNode.Fqn diF) continue;
+            var (dopen, _) = ParseOwnerT(diF);
             if (!_types.TryGetValue(dopen, out var diTi) || !diTi.MethodsBySig.TryGetValue(subSig, out var dim)) continue;
             if (dim.Attributes.HasFlag(MethodAttributes.Abstract)) continue;   // need an actual DEFAULT (bodied) method
-            Type ifaceRet; try { ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstSig(rt.GetString(), ifSubst)) : typeof(void); } catch { return; }
-            Type[] paramTypes; try { paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstSig(p.GetProperty("type").GetString(), ifSubst))).ToArray(); } catch { return; }
+            Type ifaceRet; try { ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void); } catch { return; }
+            Type[] paramTypes; try { paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray(); } catch { return; }
             var bridge = ti.TB.DefineMethod("<>dotkt_dimfwd$" + (_covarBridge++),
                 MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
                 ifaceRet, paramTypes);
@@ -1307,41 +1304,21 @@ sealed partial class Emitter
         }
     }
 
-    // {gp:T -> uint, ...} mapping the open interface's type params to a constructed spec's BIR type args
-    // (`kotlin.Comparable[uint]` + typeParams ['T'] -> {gp:T: uint}), for resolving overloaded overrides by signature.
-    Dictionary<string, string> BuildTypeArgSubst(string spec, TypeInfo iface)
+
+    // A structured owner Fqn -> (open name, constructed .NET type or null for a non-generic). An emitted open type
+    // (`_types`) is MakeGenericType'd; a referenced generic is arity-suffixed by reflection.
+    (string open, Type constructed) ParseOwnerT(DotKt.Bir.TypeNode.Fqn f)
     {
-        var subst = new Dictionary<string, string>();
-        var br = spec.IndexOf('[');
-        if (br < 0 || iface.Def.ValueKind != JsonValueKind.Object || !iface.Def.TryGetProperty("typeParams", out var tps)) return subst;
-        var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).ToList();
-        int k = 0;
-        foreach (var tp in tps.EnumerateArray())
-        {
-            var nm = tp.ValueKind == JsonValueKind.String ? tp.GetString() : (tp.TryGetProperty("name", out var n) ? n.GetString() : null);
-            if (nm != null && k < args.Count) subst["gp:" + nm] = args[k].Trim();
-            k++;
-        }
-        return subst;
+        if (f.Args == null) return (f.Name, null);
+        var args = f.Args.Select(a => { var r = MapType(a); return r == typeof(void) ? typeof(object) : r; }).ToArray();
+        if (_types.TryGetValue(f.Name, out var ti)) return (f.Name, ti.TB.MakeGenericType(args));
+        return (f.Name, ResolveType(f.Name + "`" + args.Length).MakeGenericType(args));
     }
 
-    // The body method whose TYPE-ARG-SUBSTITUTED signature matches the interface method `name` (handles overloaded names
-    // like compareTo). Null if no exact match -> caller falls back to the name-keyed ti.Methods[name].
-    MethodBuilder ResolveOverload(TypeInfo ti, TypeInfo iface, string name, Dictionary<string, string> subst)
-    {
-        if (iface.Def.ValueKind != JsonValueKind.Object || !iface.Def.TryGetProperty("methods", out var ms)) return null;
-        foreach (var m in ms.EnumerateArray())
-        {
-            if (!m.TryGetProperty("name", out var mn) || mn.GetString() != name) continue;
-            var sig = string.Join(",", m.GetProperty("params").EnumerateArray().Select(p =>
-            {
-                var t = p.GetProperty("type").GetString();
-                return subst.TryGetValue(t, out var s) ? s : t;
-            }));
-            if (ti.MethodsBySig.TryGetValue(name + "(" + sig + ")", out var mb)) return mb;
-        }
-        return null;
-    }
+    // An owner slot (structured Fqn or legacy string) -> (open name, constructed type).
+    (string open, Type constructed) ParseOwnerSlot(JsonElement e) =>
+        e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f
+            ? ParseOwnerT(f) : ParseOwner(e.GetString());
 
     (string open, Type constructed) ParseOwner(string spec)
     {
@@ -1903,11 +1880,44 @@ sealed partial class Emitter
         return b < 0 ? n : n[..b];
     }
 
-    // name + parameter-type signature -> the overload key. `m` is a method DEF (or a call carrying "sig"); the param
-    // types are the BIR `type` strings, which match across def and call (same birType of the same function's params).
+    // name + parameter-type signature -> the overload key. `m` is a method DEF; the param types are STRUCTURED Type
+    // nodes rendered to the m3 legacy sig-token spelling (the ONE documented legacy-string exception) so a DEF-side key
+    // matches a CALL-side `sig` comma-string (kotc renders the call sig with the same legacyToken grammar; both are
+    // bir2cir-lowered to the same vocabulary, so `int` == `int` / `gp:T` == `gp:T`).
     static string SigKey(string name, JsonElement methodDef) =>
-        name + "(" + string.Join(",", methodDef.GetProperty("params").EnumerateArray().Select(p => p.GetProperty("type").GetString())) + ")";
+        name + "(" + string.Join(",", methodDef.GetProperty("params").EnumerateArray().Select(p => SigTokenOf(p.GetProperty("type")))) + ")";
     static string SigKey(string name, string sig) => name + "(" + sig + ")";
+
+    // The m3 legacy sig-token spelling of a type SLOT (structured Type node -> token; a legacy string passes verbatim).
+    // Mirrors kotc.bir.TypeNode.legacyToken (a type var collapses to `gp:T`), so def-side and call-side sigs agree.
+    static string SigTokenOf(JsonElement e) =>
+        e.ValueKind == JsonValueKind.String ? e.GetString()
+        : e.ValueKind == JsonValueKind.Object ? SigTokenOf(DotKt.Bir.TypeNode.Read(e))
+        : "object";
+    static string SigTokenOf(DotKt.Bir.TypeNode t) => t switch
+    {
+        DotKt.Bir.TypeNode.Fqn f => f.Args == null ? f.Name : f.Name + "[" + string.Join(",", f.Args.Select(SigTokenOf)) + "]",
+        DotKt.Bir.TypeNode.Tv => "gp:T",
+        DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + SigTokenOf(fn.Ret) + ":" + string.Join(",", fn.Params.Select(SigTokenOf)),
+        DotKt.Bir.TypeNode.Nullable n => "nullable:" + SigTokenOf(n.Of),
+        DotKt.Bir.TypeNode.Array a => "array:" + SigTokenOf(a.Elem),
+        DotKt.Bir.TypeNode.ByRef b => "byref:" + SigTokenOf(b.Of),
+        _ => "object",
+    };
+
+    // Substitute a type-scope type variable `Tv{type,i}` -> `args[i]` (the interface's instantiation), recursively.
+    // Used to re-anchor an interface method's declared type (which names the INTERFACE's own params) to the
+    // implementer's concrete args. A method-scope tv / an out-of-range index is left as-is.
+    static DotKt.Bir.TypeNode SubstTv(DotKt.Bir.TypeNode t, DotKt.Bir.TypeNode[] args) => t switch
+    {
+        DotKt.Bir.TypeNode.Tv { Scope: "type" } tv when args != null && tv.I >= 0 && tv.I < args.Length => args[tv.I],
+        DotKt.Bir.TypeNode.Fqn { Args: { } fa } f => new DotKt.Bir.TypeNode.Fqn(f.Name, fa.Select(a => SubstTv(a, args)).ToArray()),
+        DotKt.Bir.TypeNode.Nullable n => new DotKt.Bir.TypeNode.Nullable(SubstTv(n.Of, args)),
+        DotKt.Bir.TypeNode.Array a => new DotKt.Bir.TypeNode.Array(SubstTv(a.Elem, args)),
+        DotKt.Bir.TypeNode.ByRef b => new DotKt.Bir.TypeNode.ByRef(SubstTv(b.Of, args)),
+        DotKt.Bir.TypeNode.Fn fn => new DotKt.Bir.TypeNode.Fn(fn.Suspend, SubstTv(fn.Ret, args), fn.Params.Select(p => SubstTv(p, args)).ToArray(), fn.Recv == null ? null : SubstTv(fn.Recv, args)),
+        _ => t,
+    };
 
     // On an exact-sig MISS for a call that targets a GENERIC method: the call carries the INSTANTIATED arg types
     // (`array:object,object`) while the method is registered under its generic sig (`array:gp:T,gp:T`), so the exact
@@ -2311,9 +2321,16 @@ sealed partial class Emitter
         return argsPart.Length == 0 ? new List<string>() : SplitTopLevel(argsPart).ToList();
     }
 
+    // The bare NAME a type slot carries (a bir2cir CLR shorthand `int`/`void`/… Fqn, or a legacy string token), for a
+    // name-keyed opcode switch (const/conv). null for a non-Fqn structured node.
+    static string SlotName(JsonElement e) =>
+        e.ValueKind == JsonValueKind.String ? e.GetString()
+        : e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f ? f.Name
+        : null;
+
     Type EmitConst(JsonElement e)
     {
-        var t = e.GetProperty("type").GetString();
+        var t = SlotName(e.GetProperty("type"));
         var v = e.GetProperty("value");
         switch (t)
         {
@@ -2492,7 +2509,7 @@ sealed partial class Emitter
     Type EmitConv(JsonElement e)
     {
         EmitExpr(e.GetProperty("e"));
-        switch (e.GetProperty("to").GetString())
+        switch (SlotName(e.GetProperty("to")))
         {
             case "int": _il.Emit(OpCodes.Conv_I4); return typeof(int);
             case "long": _il.Emit(OpCodes.Conv_I8); return typeof(long);
@@ -2501,14 +2518,14 @@ sealed partial class Emitter
             case "short": _il.Emit(OpCodes.Conv_I2); return typeof(short);
             case "byte": _il.Emit(OpCodes.Conv_I1); return typeof(sbyte);
             case "char": _il.Emit(OpCodes.Conv_U2); return typeof(char);
-            default: throw new NotSupportedException("conv " + e.GetProperty("to").GetString());
+            default: throw new NotSupportedException("conv " + SlotName(e.GetProperty("to")));
         }
     }
 
     Type EmitNativeClrSafeCastValue(JsonElement e)
     {
         // `x as? T` for value T -> `T?`: isinst boxed-T, then unbox+wrap, else empty Nullable<T>.
-        var elem = NativeType(e.GetProperty("elem").GetString());
+        var elem = NativeType(e.GetProperty("elem"));
         var nt = typeof(Nullable<>).MakeGenericType(elem);
         var res = _il.DeclareLocal(nt);
         var has = _il.DefineLabel();
@@ -2532,7 +2549,7 @@ sealed partial class Emitter
     Type EmitNativeClrNullableNull(JsonElement e)
     {
         // `null` typed as Int? -> a Nullable<T> with HasValue=false. NOT ldnull: a value type has no null reference.
-        var elem = NativeType(e.GetProperty("elem").GetString());
+        var elem = NativeType(e.GetProperty("elem"));
         var nt = typeof(Nullable<>).MakeGenericType(elem);
         var loc = _il.DeclareLocal(nt);
         _il.Emit(OpCodes.Ldloca, loc);
@@ -2543,7 +2560,7 @@ sealed partial class Emitter
 
     Type EmitNativeClrNullableWrap(JsonElement e)
     {
-        var elem = NativeType(e.GetProperty("elem").GetString());
+        var elem = NativeType(e.GetProperty("elem"));
         var nt = typeof(Nullable<>).MakeGenericType(elem);
         EmitExpr(e.GetProperty("e"));
         _il.Emit(OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
@@ -2552,7 +2569,7 @@ sealed partial class Emitter
 
     Type EmitNativeClrNullableHasValue(JsonElement e)
     {
-        var elem = NativeType(e.GetProperty("elem").GetString());
+        var elem = NativeType(e.GetProperty("elem"));
         var nt = typeof(Nullable<>).MakeGenericType(elem);
         EmitExpr(e.GetProperty("e"));
         var loc = _il.DeclareLocal(nt);
@@ -2564,7 +2581,7 @@ sealed partial class Emitter
 
     Type EmitNativeClrNullableValue(JsonElement e)
     {
-        var elem = NativeType(e.GetProperty("elem").GetString());
+        var elem = NativeType(e.GetProperty("elem"));
         var nt = typeof(Nullable<>).MakeGenericType(elem);
         EmitExpr(e.GetProperty("e"));
         var loc = _il.DeclareLocal(nt);
@@ -2576,7 +2593,7 @@ sealed partial class Emitter
 
     Type EmitNativeClrTypeOf(JsonElement e)
     {
-        var t = NativeType(e.GetProperty("type").GetString());
+        var t = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, t);
         _il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
         return typeof(Type);
@@ -2593,7 +2610,7 @@ sealed partial class Emitter
     Type EmitNativeClrEnumValue(JsonElement e)
     {
         _il.Emit(OpCodes.Ldc_I4, e.GetProperty("ordinal").GetInt32());
-        return NativeType(e.GetProperty("type").GetString());
+        return NativeType(e.GetProperty("type"));
     }
 
     Type EmitNativeClrEnumOrdinal(JsonElement e)
@@ -2605,7 +2622,7 @@ sealed partial class Emitter
 
     Type EmitNativeClrEnumValues(JsonElement e)
     {
-        var et = NativeType(e.GetProperty("type").GetString());
+        var et = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, et);
         _il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
         _il.Emit(OpCodes.Call, typeof(Enum).GetMethod("GetValues", new[] { typeof(Type) }));
@@ -2615,7 +2632,7 @@ sealed partial class Emitter
 
     Type EmitNativeClrEnumParse(JsonElement e)
     {
-        var et = NativeType(e.GetProperty("type").GetString());
+        var et = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, et);
         _il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
         EmitExpr(e.GetProperty("arg"));
@@ -2984,7 +3001,7 @@ sealed partial class Emitter
 
     Type EmitInlineSplice(JsonElement e)
     {
-        var typeName = e.GetProperty("type").GetString();
+        var typeName = SlotName(e.GetProperty("type"));
         var method = e.GetProperty("method").GetString();
         // Disambiguate overloads (forEach/count for Iterable/Array/CharSequence...) by param count + generic arity, since
         // GetMethod(name) throws AmbiguousMatch. Older nodes without pc/ga fall back to the by-name lookup.
@@ -3211,6 +3228,11 @@ sealed partial class Emitter
         catch { return null; }
     }
 
+    // A type slot for an IL-opcode context (newarr elem / conv / default): a structured node resolves via MapType, a
+    // legacy string token via the shorthand/prefix path below.
+    Type NativeType(JsonElement e) =>
+        e.ValueKind == JsonValueKind.Object ? MapType(DotKt.Bir.TypeNode.Read(e)) : NativeType(e.GetString());
+
     Type NativeType(string spec)
     {
         if (spec == null) return typeof(object);
@@ -3299,9 +3321,9 @@ sealed partial class Emitter
 
     Type EmitClrPropGet(JsonElement e)
     {
-        var typeName = e.GetProperty("type").GetString();
+        var typeName = SlotName(e.GetProperty("type"));
         var propName = e.GetProperty("name").GetString();
-        var type = ClrRef(typeName);
+        var type = ClrRef(e.GetProperty("type"));
         var isStatic = e.GetProperty("static").GetBoolean();
         var getter = PropAccessor(type, propName, getter: true);
         if (getter == null)
@@ -3370,9 +3392,9 @@ sealed partial class Emitter
 
     Type EmitClrPropSet(JsonElement e)
     {
-        var typeName = e.GetProperty("type").GetString();
+        var typeName = SlotName(e.GetProperty("type"));
         var propName = e.GetProperty("name").GetString();
-        var type = ClrRef(typeName);
+        var type = ClrRef(e.GetProperty("type"));
         var isStatic = e.GetProperty("static").GetBoolean();
         var setter = PropAccessor(type, propName, getter: false);
         if (setter == null)

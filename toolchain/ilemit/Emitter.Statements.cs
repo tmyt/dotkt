@@ -16,7 +16,7 @@ sealed partial class Emitter
             case "var":
             {
                 var vname = s.GetProperty("name").GetString();
-                var declared = MapType(s.GetProperty("type").GetString());
+                var declared = MapType(s.GetProperty("type"));
                 var local = _il.DeclareLocal(declared);
                 _locals[vname] = local;
                 if (s.TryGetProperty("init", out var init) && init.ValueKind != JsonValueKind.Null)
@@ -233,7 +233,7 @@ sealed partial class Emitter
                 var arr = _il.DeclareLocal(arrT); _il.Emit(OpCodes.Stloc, arr);
                 var idx = _il.DeclareLocal(typeof(int));
                 _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Stloc, idx);
-                var elem = MapType(s.GetProperty("elem").GetString());
+                var elem = MapType(s.GetProperty("elem"));
                 var lv = _il.DeclareLocal(elem);
                 _locals[s.GetProperty("var").GetString()] = lv;
                 var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();

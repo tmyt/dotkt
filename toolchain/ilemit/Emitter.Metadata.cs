@@ -92,7 +92,7 @@ sealed partial class Emitter
             // An imported .NET attribute (#54): bind its real constructor (resolved by the declared arg types,
             // falling back to arity) and apply it with the constant args.
             var at = ClrRef(attr);
-            var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s.GetString())).ToArray();
+            var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s)).ToArray();
             var nctor = at.GetConstructor(argTypes)
                         ?? at.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == args.Length);
             return TryCab(nctor, args, attr);

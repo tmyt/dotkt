@@ -12,8 +12,9 @@ sealed class TypeInfo
     public JsonElement Def;
     public bool IsFileClass;
     public JsonElement? FileElem; // for file classes: the whole file (for hasMain)
-    public string BaseName;
-    public Type ClrBase;   // set when the base is a .NET type (`clr:`/`clrg:`); resolved by reflection, not in _types
+    public string BaseName;                 // the base's BARE FQN name (for _types lookup / BareTypeKey / chain-walk)
+    public DotKt.Bir.TypeNode.Fqn BaseFqn;  // the base as a structured Fqn (with args), for constructing a generic base
+    public Type ClrBase;   // set when the base is a REFERENCED .NET type; resolved by reflection, not in _types
     public readonly Dictionary<string, FieldBuilder> Fields = new();
     public readonly Dictionary<string, MethodBuilder> Methods = new();
     // Overloaded methods share a name, so `Methods` (name-keyed) collides — the last-declared wins, and the others'
