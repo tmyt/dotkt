@@ -23,11 +23,15 @@
 // (create() rebinds the completion when a builder/intrinsic starts it). Runs in APP builds only, right after
 // SuspendColdLowering and BEFORE BirTypeLowering (its kotlin.* type tokens flow through the type lowering).
 
+using System.Linq;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 static class SuspendLambdaLowering
 {
-    const string ContinuationOfAny = "kotlin.coroutines.Continuation[kotlin.Any]";
+    static readonly TypeNode AnyTn = new TypeNode.Fqn("kotlin.Any");
+    static readonly TypeNode ContAnyTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
+    static JsonNode ContAny() => TypeJson.Write(ContAnyTn);
     const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
     const string RestrictedSuspendLambdaFqn = "kotlin.coroutines.clr.internal.RestrictedSuspendLambda";
 
@@ -39,12 +43,12 @@ static class SuspendLambdaLowering
     // The callee-return-type map (cold-entry name -> Kotlin resultType) produced by SuspendColdLowering.
     // Consulted when building a lambda SM so an awaited suspend-call value gets its real type (+ unbox) —
     // NOT kotlin.Any. Single-threaded per bir2cir run, so a static binding is sufficient.
-    static IReadOnlyDictionary<string, string> _calleeRet;
+    static IReadOnlyDictionary<string, TypeNode> _calleeRet;
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, IReadOnlySet<string> localTypeFqns,
-        IReadOnlyDictionary<string, string> calleeRet = null, ReferenceMetadataIndex refs = null)
+        IReadOnlyDictionary<string, TypeNode> calleeRet = null, ReferenceMetadataIndex refs = null)
     {
         _calleeRet = calleeRet;
         _refs = refs;
@@ -177,7 +181,7 @@ static class SuspendLambdaLowering
         var arity = IntOf(node["arity"]);
         var captures = ReadNameTypes(node["captures"]);
         var lambdaParams = (node["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
-        var resultType = Str(node["resultType"]);
+        var resultType = TypeJson.Read(node["resultType"]);
         var typeArgs = ReadStrings(node["typeArgs"]);
         var smName = ctx + "_lambda" + (++counter[0]) + "$sm";
 
@@ -185,7 +189,7 @@ static class SuspendLambdaLowering
         // gets the RestrictedSuspendLambda SM base. kotc conveys the receiver as a lambda param, so any param whose
         // type is a @RestrictsSuspension owner (per the ref.dll) triggers it. A safe discriminator: only genuinely
         // restricted scopes carry the annotation, so a plain value param never matches.
-        var restricted = _refs != null && lambdaParams.Any(p => _refs.HasRestrictsSuspension(Str(p["type"])));
+        var restricted = _refs != null && lambdaParams.Any(p => _refs.HasRestrictsSuspension(TypeJson.OwnerName(p["type"])));
         var effBaseIsLocal = restricted ? _restrictedBaseIsLocal : baseIsLocal;
 
         var sm = SuspendColdLowering.BuildLambdaSm(
@@ -194,9 +198,9 @@ static class SuspendLambdaLowering
 
         newTypes.Add(sm);
 
-        var smInst = typeArgs.Count == 0
-            ? smName
-            : smName + "[" + string.Join(",", typeArgs.Select(t => "gp:" + t)) + "]";
+        TypeNode smInst = typeArgs.Count == 0
+            ? new TypeNode.Fqn(smName)
+            : new TypeNode.Fqn(smName, Enumerable.Range(0, typeArgs.Count).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
 
         // The lambda VALUE: `new SM(captureVals..., null)` — captures read at the emit site, a null completion (a
         // cold, unstarted lambda; create() rebinds the completion when a builder starts it).
@@ -221,23 +225,23 @@ static class SuspendLambdaLowering
                     ? (outerSelf ? new JsonObject { ["k"] = "local", ["name"] = "__self" }
                                  : new JsonObject { ["k"] = "this" })
                     : new JsonObject { ["k"] = "local", ["name"] = n });
-            argTypes.Add(t);
+            argTypes.Add(TypeJson.Write(t));
         }
-        args.Add(new JsonObject { ["k"] = "const", ["type"] = ContinuationOfAny, ["value"] = null });
-        argTypes.Add(ContinuationOfAny);
+        args.Add(new JsonObject { ["k"] = "const", ["type"] = ContAny(), ["value"] = null });
+        argTypes.Add(ContAny());
 
-        return new JsonObject { ["k"] = "new", ["type"] = smInst, ["argTypes"] = argTypes, ["args"] = args };
+        return new JsonObject { ["k"] = "new", ["type"] = TypeJson.Write(smInst), ["argTypes"] = argTypes, ["args"] = args };
     }
 
     static int IntOf(JsonNode n) => n is JsonValue v && v.TryGetValue<int>(out var i) ? i : 0;
 
-    static List<(string name, string type)> ReadNameTypes(JsonNode arr)
+    static List<(string name, TypeNode type)> ReadNameTypes(JsonNode arr)
     {
-        var list = new List<(string, string)>();
+        var list = new List<(string, TypeNode)>();
         if (arr is JsonArray a)
             foreach (var it in a)
                 if (it is JsonObject o && Str(o["name"]) is string n)
-                    list.Add((n, Str(o["type"]) ?? "kotlin.Any"));
+                    list.Add((n, TypeJson.Read(o["type"]) ?? AnyTn));
         return list;
     }
 

@@ -280,7 +280,7 @@ sealed class Pipeline
         // only; its bodies are body-squashed). The rt-stdlib's CLR-interop suspend fns (kotlin.clr.await/delay) are
         // NOT genuine cold bodies and are excluded INSIDE ApplyAll (InteropBridgeFileClass), so this does not corrupt
         // their ABI. (yield/yieldAll are generic-class override members, still correctly deferred by the v1 shape gate.)
-        IReadOnlyDictionary<string, string> suspendCalleeRet = null;
+        IReadOnlyDictionary<string, DotKt.Bir.TypeNode> suspendCalleeRet = null;
         if (!_options.RefBuild)
             suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns);
 
