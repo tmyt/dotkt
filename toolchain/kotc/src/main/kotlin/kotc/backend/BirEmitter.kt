@@ -4089,7 +4089,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					collToStringRoute(dispatchReceiver(call)!!)?.let { return it }
 					return """{"k":"objMethod","method":"ToString","recv":${expr(dispatchReceiver(call)!!)}}"""
 				}
-				"equals" -> return """{"k":"objMethod","method":"Equals","recv":${expr(dispatchReceiver(call)!!)},"arg":${expr(regularArgs(call).first())}}"""
+				"equals" -> {
+					val recvE = dispatchReceiver(call)!!; val argE = regularArgs(call).first()
+					// An EXPLICIT `.equals()` on a boxed Double/Float / a collection follows Kotlin's TOTAL order /
+					// STRUCTURAL equality, exactly like the `==` operator (§5a) — Object.Equals would give IEEE
+					// (`(-0.0).equals(0.0)` == true) / reference identity (`listOf(1).equals(listOf(1))` == false). Route
+					// through the SAME stdlib helpers the EQEQ path uses; a plain object (both routes null) keeps Object.Equals.
+					floatTotalEqRoute(recvE, argE)?.let { return it }
+					collEqRoute(recvE, argE)?.let { return it }
+					return """{"k":"objMethod","method":"Equals","recv":${expr(recvE)},"arg":${expr(argE)}}"""
+				}
 			}
 		}
 		// `n.toString(radix)` is NOT lowered in kotc (C4, 2026-07-06). The former `System.Convert.ToString(value, base)`

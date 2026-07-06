@@ -201,17 +201,21 @@ largest value with `NaN == NaN` structurally and `NaN.compareTo(NaN) == 0`. On t
 `System.Double` (no distinct Kotlin wrapper), whose `Object.Equals`/`CompareTo` do NOT match that order
 (`(-0.0).Equals(0.0)` is `true`, `(-0.0).CompareTo(0.0)` is `0`). DotKt matches Kotlin (final-review C14, 2026-07-06):
 
-- A **boxed** `==` (`kotlin.Any.equals` on a boxed floating value — e.g. `(-0.0 as Any) == (0.0 as Any)`) is routed by
-  kotc to the stdlib total-order helper `clrDoubleEquals`/`clrFloatEquals` (`toBits()` bit-compare, NaN-canonicalized):
-  `(-0.0 as Any) == (0.0 as Any)` → **`false`**, `(NaN as Any) == (NaN as Any)` → **`true`**.
+- A **boxed** `==` (`kotlin.Any.equals` on a boxed floating value — e.g. `(-0.0 as Any) == (0.0 as Any)`) — AND an
+  **explicit `.equals()`** method call on a boxed floating value (`(-0.0).equals(0.0)`) — are routed by kotc to the
+  stdlib total-order helper `clrDoubleEquals`/`clrFloatEquals` (`toBits()` bit-compare, NaN-canonicalized):
+  `(-0.0 as Any) == (0.0 as Any)` and `(-0.0).equals(0.0)` → **`false`**, `(NaN as Any) == (NaN as Any)` and
+  `Double.NaN.equals(Double.NaN)` → **`true`**.
 - A direct `Double`/`Float.compareTo` is routed to `clrDoubleCompare`/`clrFloatCompare` (JDK total-order algorithm):
   `(-0.0).compareTo(0.0)` → **`-1`**, `Double.NaN.compareTo(1.0)` → **`1`**, `Double.NaN.compareTo(Double.NaN)` → **`0`**.
 
+- A **collection** `.equals()` (List/Set/Map) is likewise routed to the stdlib structural helper, exactly like the
+  `==` operator (`listOf(1,2).equals(listOf(1,2))` → **`true`**), while a **plain object** `.equals()` keeps
+  `Object.Equals` reference identity. String `.equals()` uses String's own value-equality binding.
+
 The **primitive** operators stay IEEE (matching Kotlin, and `il-nancmp`-green): `-0.0 == 0.0` → `true`,
 `Double.NaN == Double.NaN` → `false`, and direct `<`/`>`/`<=`/`>=` (which desugar to the IEEE compare intrinsics, not
-`.compareTo`) are unaffected. Gate: `cases/il-negzero` (JVM-oracle PURE). Note (remaining edge): an EXPLICIT
-`x.equals(y)` method call on a boxed floating value still routes to `Object.Equals` (only the `==` operator is
-total-order-routed); the common idiom is `==`.
+`.compareTo`) are unaffected. Gates: `cases/il-negzero`, `cases/il-listeq`, `cases/il-equalscall` (JVM-oracle PURE).
 
 ## 5b. `CharSequence` is `string` on the CLR — an immutable snapshot, not a live view
 

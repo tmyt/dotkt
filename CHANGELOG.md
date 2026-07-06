@@ -68,6 +68,26 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **`tailrec` is now tail-call optimized — deep tail recursion runs in constant stack (§2b deviation CLOSED).**
+  Our pipeline runs Fir2Ir straight into the backend, skipping the JVM lowerings, so a `tailrec` self-call stayed
+  ordinary recursion and `sumTo(1_000_000, 0)` overflowed the CLR stack where kotlinc/JVM loops. kotc now reapplies
+  the frontend's own tail-call transform: a self-tail-call (identified by `collectTailRecursionCalls`) is rewritten
+  to a back-jump to the method entry — evaluate the args into temporaries (so `sumTo(n-1, acc+n)` isn't corrupted by
+  the reassignment), reassign the parameters, `goto` the loop head. Covered for self / multi-branch-`when` /
+  extension-receiver / member tailrec. Gate: `cases/il-tailrec` (verify-il + JVM-oracle differential).
+- **Partial `Pair`/`Triple.copy(field = x)` no longer misplaces the argument (kcc review C3).**
+  `(1 to 2).copy(second = 20)` returned `(20, 0)` (the named arg fell into the wrong slot) because a data-class
+  copy's per-field default is `this.<field>`, a non-constant default the frontend jar drops cross-module
+  (IrErrorExpression) — so the omitted field was silently dropped. kotc now reconstructs each omitted copy field as
+  a receiver field read at the instantiated call site (`(1 to 2).copy(second=20)` → `(1, 20)`,
+  `Triple(1,2,3).copy(second=9)` → `(1, 9, 3)`), the stdlib-data-class analogue of the same-module user path. Gate:
+  `cases/il-copydef`.
+- **An explicit `.equals()` follows Kotlin's total-order / structural equality (§5a edge CLOSED).**
+  The `==` operator already routed a boxed `Double`/`Float` to the total-order helper and a collection to the
+  structural helper, but an explicit `x.equals(y)` still hit `Object.Equals` (IEEE `-0.0 == 0.0` / reference
+  identity). kotc now routes the explicit call through the same helpers: `(-0.0).equals(0.0)` → `false`,
+  `listOf(1,2).equals(listOf(1,2))` → `true`; a plain object stays reference identity, String keeps its own
+  value-equality binding. Gate: `cases/il-equalscall`.
 - **`CharSequence.windowed(size){ value-type R }` no longer garbles its elements (#25 / W4-B).**
   `"abcd".windowed(2){ it.length }` returned pointer garbage instead of `[2, 2, 2]` (a reference-type `R`
   like `{ it.toString() }` was fine). Root: the pure-app `CharSequence`→`System.String` lowering
