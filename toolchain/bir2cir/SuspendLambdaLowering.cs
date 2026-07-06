@@ -65,6 +65,13 @@ static class SuspendLambdaLowering
                 foreach (var m in methods)
                     if (m is JsonObject mo) WalkMethod(mo, fileClass, newTypes, counter, baseIsLocal);
 
+            // Top-level `val`/`var` backing fields carry their initializer inline as `field.init` (BirEmitter.kt
+            // :577) — a suspend-lambda VALUE stored in a top-level property lands HERE, not in a method body. A
+            // static field initializer runs with no enclosing instance (outerSelf:false / no `this`).
+            if (file["fields"] is JsonArray ffields)
+                foreach (var f in ffields)
+                    if (f is JsonObject fo) WalkFieldInit(fo, fileClass, newTypes, counter, baseIsLocal);
+
             if (file["types"] is JsonArray types)
                 // Snapshot: SuspendColdLowering may have appended SM types; walk the pre-existing ones (a
                 // ToList guards against mutating while enumerating when we add the lambda SMs below).
@@ -81,6 +88,14 @@ static class SuspendLambdaLowering
                         if (to["properties"] is JsonArray tps)
                             foreach (var p in tps)
                                 if (p is JsonObject po) WalkAccessors(po, owner, newTypes, counter, baseIsLocal);
+                        // A non-const `val`/`var` on an object/companion becomes a STATIC field whose initializer
+                        // rides inline as `field.init` (BirEmitter.kt:1171) — the `object Holder { val h = { ... } }`
+                        // suspend-lambda VALUE lands here (a static init has no enclosing instance -> outerSelf:false).
+                        // INSTANCE field initializers are emitted into the ctor body instead (walked via the ctors
+                        // path above), so `this`-capturing suspend lambdas in instance fields are already covered.
+                        if (to["fields"] is JsonArray tfields)
+                            foreach (var f in tfields)
+                                if (f is JsonObject fo) WalkFieldInit(fo, owner, newTypes, counter, baseIsLocal);
                     }
 
             if (newTypes.Count > 0)
@@ -103,6 +118,18 @@ static class SuspendLambdaLowering
         var mn = Str(method["name"]) ?? "m";
         var outerSelf = HasSelfParam(method);
         if (method["body"] is JsonNode body) Walk(body, prefix + "_" + mn, newTypes, counter, baseIsLocal, outerSelf);
+    }
+
+    // Lower a `suspendLambdaNew` stored as a STATIC field's inline initializer (a top-level/object/companion
+    // property backing field). A static initializer has no enclosing instance, so a captured `__outer` cannot
+    // arise here (nothing to capture) -> outerSelf:false. `field.init` is replaced in place with the `new <SM>`.
+    static void WalkFieldInit(JsonObject field, string prefix, List<JsonNode> newTypes, int[] counter, bool baseIsLocal)
+    {
+        var fn = Str(field["name"]) ?? "f";
+        if (field["init"] is JsonObject init && Str(init["k"]) == "suspendLambdaNew")
+            field["init"] = BuildLambda(init, prefix + "_" + fn, newTypes, counter, baseIsLocal, outerSelf: false);
+        else if (field["init"] is JsonNode body)
+            Walk(body, prefix + "_" + fn, newTypes, counter, baseIsLocal, outerSelf: false);
     }
 
     static void WalkAccessors(JsonObject prop, string prefix, List<JsonNode> newTypes, int[] counter, bool baseIsLocal)

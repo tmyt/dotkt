@@ -63,8 +63,17 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   back into an `sfunc:[ret,args]` injection-meta token, and kotc's `ClrTypeInjection` restores it to
   `kotlin.coroutines.SuspendFunctionN` — so the parameter is once again a *suspend* function type and a
   passed lambda re-binds as a suspend lambda. Gated by `cases`-style `roundtrip-suspendfn` in
-  `verify-roundtrip.sh`. (A suspend fn-type in a RETURN/property/field position is metadata-restored too,
-  but its END-TO-END emit is still blocked by a separate suspend-lambda-*value* codegen gap.)
+  `verify-roundtrip.sh`.
+- **A suspend lambda used as a VALUE (returned / stored) now lowers end-to-end (H2 residual, #33).**
+  bir2cir's `SuspendLambdaLowering` previously walked only method/ctor/property-accessor bodies, so a
+  `suspendLambdaNew` node in a static field initializer — a suspend lambda RETURNED from a function or
+  STORED in a top-level/object property or an instance field — reached ilemit un-lowered and crashed with
+  `NotSupportedException: expr suspendLambdaNew`. It now walks `fields[].init` (file-level and type-level)
+  too, lowering a value-position `suspendLambdaNew` to a `new <SuspendLambda SM>` value in ANY position.
+  Return + property + field are proven cross-module by the new `roundtrip-suspendfn-ret` section. (One
+  orthogonal residual remains: a suspend lambda that captures the enclosing instance `this`/`__outer`
+  mis-drives — a PRE-EXISTING capture bug that fails identically in the already-supported call-argument
+  position, not introduced by the value-position lowering.)
 
 ### Language & correctness
 

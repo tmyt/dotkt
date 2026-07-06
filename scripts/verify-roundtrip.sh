@@ -603,6 +603,65 @@ sfexpected="$(printf '42\n42')"
 run_app sfactual "$SF/appil/HofApp.dll"
 check_output roundtrip-suspendfn "$sfexpected" "$sfactual" "a suspend (…) -> T PARAMETER round-trips: the consumer's lambda calls a suspend fun (valid only if the restored param is a suspend fn-type)"
 
+# ----- SUSPEND FUNCTION-TYPE VALUE round-trip (H2 residual, #33): a suspend lambda used as a VALUE ------
+# The PARAMETER position (above) proved a `suspend (…) -> T` slot round-trips. This section proves the
+# remaining H2 positions — a suspend lambda used as a VALUE that is RETURNED from a function, STORED in a
+# top-level PROPERTY, and STORED in an instance FIELD. kotc emits a `suspendLambdaNew` node in each such
+# NON-call-argument position, which bir2cir's SuspendLambdaLowering now lowers to a `new <SuspendLambda SM>`
+# value everywhere (previously only method/ctor/accessor bodies were walked, so a static field initializer's
+# value-position node reached ilemit -> `NotSupportedException: expr suspendLambdaNew`).
+#   - RETURN position is proven cross-module directly: the app calls the LIB's `makeBlock()` (its restored
+#     `suspend () -> Int` return type comes back via facadegen `tlfun makeBlock sfunc:[Int]`) and DRIVES it.
+#   - PROPERTY + FIELD positions are proven by the LIB storing the suspend lambda in a top-level `val` and an
+#     instance `val`, then DRIVING each via `runBlock` inside restorable functions `runProp()`/`runField()`
+#     the app invokes. (kotc emits a top-level `val` as a plain static FIELD, which facadegen does not restore
+#     as a Kotlin `val`, so the app consumes the VALUE through a function rather than the raw field.) A wrong
+#     value-position lowering would crash the LIB emit or mis-drive the SM. See docs/dotkt-semantics.md §10.
+SR="$ROOT/build/roundtrip-suspendfn-ret"; rm -rf "$SR"; mkdir -p "$SR/lib" "$SR/app" "$SR/libbir" "$SR/libil" "$SR/appbir" "$SR/appil"
+cat > "$SR/lib/lib.kt" <<'EOF'
+package hof2
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+@Suppress("UNCHECKED_CAST")
+private class Sink : Continuation<Any?> {
+    var value: Any? = null
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override fun resumeWith(result: Result<Any?>) { value = result.getOrNull() }
+}
+fun runBlock(block: suspend () -> Int): Int {
+    val sink = Sink(); block.startCoroutine(sink); return sink.value as Int
+}
+suspend fun addAsync(a: Int, b: Int): Int = a + b
+fun makeBlock(): suspend () -> Int = { addAsync(20, 22) }       // RETURN position (the H2 gap)
+val blockProp: suspend () -> Int = { addAsync(15, 15) }         // top-level PROPERTY/field position
+private class FieldHolder { val f: suspend () -> Int = { addAsync(100, 7) } }  // instance FIELD position
+fun runProp(): Int = runBlock(blockProp)                        // drives the property-stored lambda
+fun runField(): Int = runBlock(FieldHolder().f)                 // drives the field-stored lambda
+EOF
+cat > "$SR/app/app.kt" <<'EOF'
+import hof2.runBlock
+import hof2.makeBlock
+import hof2.runProp
+import hof2.runField
+fun main() {
+    println(runBlock(makeBlock()))   // 42 — a RETURNED suspend lambda, driven cross-module
+    println(runProp())               // 30 — a suspend lambda STORED in a top-level property, then driven
+    println(runField())              // 107 — a suspend lambda STORED in an instance field, then driven
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$SR/lib" -no-stdlib -classpath "$CP" -d "$SR/libbir" >/dev/null 2>&1 || true
+emit_il "$SR/libil" Hof2Lib "$SR/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$SR/libil/Hof2Lib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$SR/k.meta" --refs "$REFS$SR/libil/Hof2Lib.dll" hof2.LibKt >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$SR/k.meta" "$LAUNCHER" "$SR/app" -no-stdlib -classpath "$CP" -d "$SR/appbir" >/dev/null 2>&1 || true
+emit_il "$SR/appil" Hof2App --ref "$SR/libil/Hof2Lib.dll" "$SR/appbir"/*.bir.json
+cp "$SR/libil/Hof2Lib.dll" "$SR/appil/" 2>/dev/null || true
+srexpected="$(printf '42\n30\n107')"
+run_app sractual "$SR/appil/Hof2App.dll"
+check_output roundtrip-suspendfn-ret "$srexpected" "$sractual" "a suspend (…) -> T VALUE round-trips in RETURN + PROPERTY + FIELD position: bir2cir lowers a value-position suspendLambdaNew to a SuspendLambda SM, the consumer drives it"
+
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
 printf '%s\n' "${SUMMARY[@]}"
