@@ -4429,17 +4429,19 @@ static class MemberCallSubstitution
     // dispatch instead of a plain callvirt on a padded ICollection<object> owner (which mis-dispatches; see Constrainify).
     sealed class SubstCtx
     {
-        public readonly Dictionary<string, string> VarTypes;
-        public readonly Dictionary<string, List<string>> TpConstraints;
+        // VarTypes/TpConstraints hold STRUCTURED types (a param/local's slot Type, a type-param's constraint Types) —
+        // walked natively by Constrainify/CollElemArg/MapKvArgs (a receiver's static type / a collection element).
+        public readonly Dictionary<string, TypeNode> VarTypes;
+        public readonly Dictionary<string, List<TypeNode>> TpConstraints;
         public SubstCtx()
         {
-            VarTypes = new Dictionary<string, string>(StringComparer.Ordinal);
-            TpConstraints = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            VarTypes = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+            TpConstraints = new Dictionary<string, List<TypeNode>>(StringComparer.Ordinal);
         }
         SubstCtx(SubstCtx parent)
         {
-            VarTypes = new Dictionary<string, string>(parent.VarTypes, StringComparer.Ordinal);
-            TpConstraints = new Dictionary<string, List<string>>(parent.TpConstraints, StringComparer.Ordinal);
+            VarTypes = new Dictionary<string, TypeNode>(parent.VarTypes, StringComparer.Ordinal);
+            TpConstraints = new Dictionary<string, List<TypeNode>>(parent.TpConstraints, StringComparer.Ordinal);
         }
         // A child scope extended with this declaration's params + generic-parameter constraints. Returns `this`
         // unchanged when the node introduces no bindings (so plain nodes don't allocate a scope).
@@ -4465,14 +4467,18 @@ static class MemberCallSubstitution
             if (ps != null)
                 foreach (var p in ps)
                     if (p is JsonObject po && (po["name"] as JsonValue)?.GetValue<string>() is string pn
-                        && (po["type"] as JsonValue)?.GetValue<string>() is string pt)
+                        && TypeJson.Read(po["type"]) is TypeNode pt)
                         child.VarTypes[pn] = pt;
+            // TpConstraints is keyed POSITIONALLY, matching a receiver's `tv` (scope+index) — a class decl's params are
+            // the TYPE scope, a method/fun's are the METHOD scope (the common constrained-build/compareTo receiver).
             if (tps != null)
-                foreach (var tp in tps)
-                    if (tp is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn
-                        && to["constraints"] is JsonArray cs)
-                        child.TpConstraints[tn] = cs.Select(c => (c as JsonValue)?.GetValue<string>())
-                                                    .Where(c => c != null).ToList();
+            {
+                var scope = (decl["kind"] as JsonValue)?.GetValue<string>() is "class" or "interface" ? "type" : "method";
+                for (var i = 0; i < tps.Count; i++)
+                    if (tps[i] is JsonObject to && to["constraints"] is JsonArray cs)
+                        child.TpConstraints[scope + ":" + i] =
+                            cs.Select(c => TypeJson.Read(c)).Where(c => c != null).ToList();
+            }
             // Walk a DECLARATION's body once to record its local vars (a local shadows a same-name param; and a
             // materialized collection local is the receiver whose element type CollElemArg/Constrainify recover).
             if (isDecl && decl["body"] is JsonNode body) RecordLocalVars(body, child.VarTypes);
@@ -4481,14 +4487,14 @@ static class MemberCallSubstitution
 
         // Record the `var name/type` of every local declaration in this decl's own body, so a local shadows a
         // same-named param. Stops at a nested param-bearing declaration (an inner lambda/fun scopes its own locals).
-        static void RecordLocalVars(JsonNode node, Dictionary<string, string> vars)
+        static void RecordLocalVars(JsonNode node, Dictionary<string, TypeNode> vars)
         {
             switch (node)
             {
                 case JsonObject o:
                     if ((o["k"] as JsonValue)?.GetValue<string>() == "var"
                         && (o["name"] as JsonValue)?.GetValue<string>() is string vn
-                        && (o["type"] as JsonValue)?.GetValue<string>() is string vt)
+                        && TypeJson.Read(o["type"]) is TypeNode vt)
                         vars[vn] = vt;
                     if (o["params"] is JsonArray ip && ip.Count > 0) return;   // nested decl: its locals are its own
                     foreach (var kv in o) if (kv.Value != null) RecordLocalVars(kv.Value, vars);
@@ -4659,7 +4665,8 @@ static class MemberCallSubstitution
 
     static JsonNode TransformCall(JsonObject node, ReferenceMetadataIndex refs, bool instance, SubstCtx ctx = null)
     {
-        var ownerToken = TypeJson.OwnerName(node[instance ? "ownerType" : "owner"]);
+        var ownerFqnNode = TypeJson.Read(node[instance ? "ownerType" : "owner"]) as TypeNode.Fqn;
+        var ownerToken = ownerFqnNode?.Name;
         if (string.IsNullOrEmpty(ownerToken))
         {
             // Top-level fun call (`callStatic owner=null`) bound by @ClrIntrinsic. Two shapes (sourced from the ref.dll):
@@ -4683,7 +4690,7 @@ static class MemberCallSubstitution
                     || (!refs.IsAmbiguousTopLevelIntrinsic(fn) && !refs.HasNonIntrinsicTopLevel(fn)
                         && refs.TryTopLevelIntrinsic(fn, out fq)))
                 && fq.LastIndexOf('.') is var dot && dot > 0)
-                return ClrCallNode(node, fq[..dot], fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false, refs.TopLevelByrefPositions(fn));
+                return ClrCallNode(node, new TypeNode.Fqn(fq[..dot]), fq[(dot + 1)..], fq[(dot + 1)..], args0, instance: false, refs.TopLevelByrefPositions(fn));
             // bare-intrinsic extension: resolve by name + the first-arg's receiver key + full param count (disambiguates
             // `set`, and keeps `substring(String,Int)`@ClrIntrinsic from capturing the 3-arg `substring(String,Int,Int)`).
             if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, RecvKeyOf(sigParts0[0]), sigParts0.Count, out var extMember))
@@ -4722,10 +4729,10 @@ static class MemberCallSubstitution
                 && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(ownerToken), pmember, pargs.Count, out _, out _);
             if (instance && !directHasProp && !string.IsNullOrEmpty(pmember) && node["overrides"] is JsonArray povChain)
                 foreach (var o in povChain)
-                    if (o is JsonObject oo && (oo["owner"] as JsonValue)?.GetValue<string>() is string ovOwner
+                    if (o is JsonObject oo && TypeJson.OwnerName(oo["owner"]) is string ovOwner
                         && refs.TryResolveClrOwner(ovOwner, out var ovBcl, out _)
-                        && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(ovOwner), pmember, pargs.Count, out var povAccess, out var povName))
-                        return ClrPropNode(node, ClrOwnerType(refs, ovOwner) ?? ovBcl, povName, povAccess, pmember, pargs);
+                        && refs.TryMemberProperty(ovOwner, pmember, pargs.Count, out var povAccess, out var povName))
+                        return ClrPropNode(node, ClrOwnerType(refs, new TypeNode.Fqn(ovOwner)) ?? new TypeNode.Fqn(ovBcl), povName, povAccess, pmember, pargs);
         }
 
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
@@ -4741,10 +4748,10 @@ static class MemberCallSubstitution
         // is the GENERAL inline-erasure rule, not a UInt.toInt special-case; it fixes both the inlined `x.data` and the
         // rule-3 helper body's `self.data`, after which all the unsigned conversions fold to a plain cast.
         if (instance && refs.TryInlineFieldGetter(ownerFqn, member, out var inlineConv))
-            return new JsonObject { ["k"] = "conv", ["to"] = inlineConv, ["e"] = node["recv"]?.DeepClone() };
+            return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(inlineConv), ["e"] = node["recv"]?.DeepClone() };
 
         // The CLR owner TYPE the call addresses (a ClrRef-resolvable BCL token; see ClrOwnerType).
-        var clrOwner = ClrOwnerType(refs, ownerToken) ?? bcl;
+        TypeNode clrOwner = ClrOwnerType(refs, ownerFqnNode) ?? new TypeNode.Fqn(bcl);
 
         // Rule 2p (explicit PROPERTY accessor): the member carries @ClrProperty(access, name) -> route EXPLICITLY to
         // clrPropGet(name) [READ] / clrPropSet(name) [WRITE] on the BCL owner, from the stated access role — NOT the old
@@ -4761,7 +4768,7 @@ static class MemberCallSubstitution
         if (instance && kind == "interface" && ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal)
             && args.Count == 1 && member is "add" or "Add" or "addAll")
             return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
-                member == "addAll" ? "clrCollAddAll" : "clrCollAdd", CollElemArg(node, refs, ctx, ownerToken), args);
+                member == "addAll" ? "clrCollAddAll" : "clrCollAdd", CollElemArg(node, refs, ctx, ownerFqnNode), args);
 
         // PRE-Rule-2 semantic override: MutableList.set(i,e) / removeAt(i) @ClrIntrinsic(set_Item/RemoveAt), but the
         // BCL slots are VOID while Kotlin RETURNS the previous/removed element — binding the intrinsic directly
@@ -4774,8 +4781,8 @@ static class MemberCallSubstitution
             && (((member is "set" or "set_Item") && args.Count == 2) || ((member is "removeAt" or "RemoveAt") && args.Count == 1)))
         {
             var listHelper = member is "set" or "set_Item" ? "clrListSet" : "clrListRemoveAt";
-            var listCall = (JsonObject)CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", listHelper, OwnerElemArg(ownerToken), args);
-            if (RetToken(node) is string lret && !lret.StartsWith("gp:", StringComparison.Ordinal)) listCall["retType"] = lret;
+            var listCall = (JsonObject)CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", listHelper, OwnerElemArg(ownerFqnNode), args);
+            if (RetToken(node) is JsonNode lret && !IsTvType(lret)) listCall["retType"] = lret;
             return listCall;
         }
 
@@ -4789,8 +4796,8 @@ static class MemberCallSubstitution
         if (instance && member == "compareTo" && args.Count == 1 && PrimitiveCompareToBcl(ownerFqn) is string primBcl)
             return new JsonObject
             {
-                ["k"] = "clrInstance", ["type"] = primBcl, ["method"] = "CompareTo",
-                ["argTypes"] = new JsonArray { primBcl }, ["ret"] = "System.Int32",
+                ["k"] = "clrInstance", ["type"] = TypeJson.Fqn(primBcl), ["method"] = "CompareTo",
+                ["argTypes"] = new JsonArray { TypeJson.Fqn(primBcl) }, ["ret"] = TypeJson.Fqn("System.Int32"),
                 ["recv"] = node["recv"]?.DeepClone(), ["args"] = args.DeepClone(),
             };
 
@@ -4806,7 +4813,7 @@ static class MemberCallSubstitution
         // its abstract collection members (isEmpty/contains/iterator/...) need kotc's ClrCollectionDefaults routing, not
         // a non-existent helper. (The ref.dll mis-reports these as non-abstract, so IsRule3Member alone false-positives.)
         if (kind != "interface" && refs.IsRule3Member(ownerFqn, member))
-            return Rule3HelperCall(node, refs, ownerToken, member, args, instance);
+            return Rule3HelperCall(node, refs, ownerFqnNode, member, args, instance);
 
         // Rule 3-inherited: the concrete rule-3 body lives on an ANCESTOR, not the static call owner. `printStackTrace`
         // has its real body on kotlin.Throwable but is called through a kotlin.Exception/RuntimeException subclass
@@ -4817,11 +4824,11 @@ static class MemberCallSubstitution
         if (kind != "interface" && instance && node["overrides"] is JsonArray ovChain)
             foreach (var o in ovChain)
                 if (o is JsonObject oo
-                    && (oo["owner"] as JsonValue)?.GetValue<string>() is string ovOwner
+                    && TypeJson.OwnerName(oo["owner"]) is string ovOwner
                     && (oo["member"] as JsonValue)?.GetValue<string>() is string ovMember
                     && refs.TryResolveClrOwner(ovOwner, out _, out var ovKind) && ovKind != "interface"
                     && refs.IsRule3Member(ovOwner, ovMember))
-                    return Rule3HelperCall(node, refs, ovOwner, ovMember, args, instance);
+                    return Rule3HelperCall(node, refs, new TypeNode.Fqn(ovOwner), ovMember, args, instance);
 
         // Rule 5m (MAP-interface defaults): Map/MutableMap both alias IDictionary<K,V> (see the stdlib rationale), but
         // most Kotlin map members have no 1:1 IDictionary equivalent — `get` is null-on-missing while get_Item THROWS,
@@ -4861,7 +4868,7 @@ static class MemberCallSubstitution
                 _ => null,
             };
             if (helper != null)
-                return MapDefaultCall(node, helper, ownerToken, args, refs, ctx);
+                return MapDefaultCall(node, helper, ownerFqnNode, args, refs, ctx);
             if (mutable && args.Count == 0 && member is "get_keys" or "get_values")
                 return ClrPropNode(node, clrOwner, member == "get_keys" ? "Keys" : "Values", ClrPropRead, member, args);
             // else fall through to Rule 4: an already-BCL member name on the aliased IDictionary owner.
@@ -4875,12 +4882,12 @@ static class MemberCallSubstitution
         // owner token's first type arg; the helper is generic over it.
         else if (instance && kind == "interface" && ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal))
         {
-            var elem = OwnerElemArg(ownerToken);
+            var elem = OwnerElemArg(ownerFqnNode);
             if (member == "iterator" && args.Count == 0)
                 return CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable", elem, args);
             if (member == "listIterator")
             {
-                var idx = args.Count >= 1 ? args : new JsonArray { new JsonObject { ["k"] = "const", ["type"] = "int", ["value"] = 0 } };
+                var idx = args.Count >= 1 ? args : new JsonArray { new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("int"), ["value"] = 0 } };
                 return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", "clrListListIterator", elem, idx);
             }
             if (CollectionDefaults.TryGetValue(member, out var helperMethod))
@@ -4914,7 +4921,7 @@ static class MemberCallSubstitution
             && !member.StartsWith("set_", StringComparison.Ordinal))
             throw new InvalidOperationException(
                 $"bir2cir: unresolved CLR member '{ownerFqn}.{member}' — a lowercase-camelCase member on the CLR-bound "
-                + $"{kind} owner '{clrOwner}' has no @ClrIntrinsic/@ClrProperty/rule-3 binding and is not a BCL member "
+                + $"{kind} owner '{ownerToken}' has no @ClrIntrinsic/@ClrProperty/rule-3 binding and is not a BCL member "
                 + "name (BCL members are PascalCase). This is a routing MISS: fix the stdlib binding or the owner alias, "
                 + "do not let it fall to a silent runtime dynamic-dispatch NRE.");
         return Constrainify(ClrCallNode(node, clrOwner, member, member, args, instance), node, refs, ctx, ownerToken);
@@ -4941,47 +4948,41 @@ static class MemberCallSubstitution
         // LOCAL-only (unchanged) so broadening the receiver shapes cannot re-route a non-compareTo interface call.
         var isCompareTo = (call["method"] as JsonValue)?.GetValue<string>() == "CompareTo";
         var vt = RecvStaticType(recv, ctx, isCompareTo);
-        if (vt == null || !vt.StartsWith("gp:", StringComparison.Ordinal)) return built;
+        if (vt is not TypeNode.Tv tvRecv) return built;   // only a generic-parameter receiver needs constrained dispatch
         // The call's declaring owner must itself be a CLR-bound INTERFACE (concrete-class members dispatch fine already).
         if (!refs.TryResolveClrOwner(ownerToken, out var ownerBcl, out var ownerKind) || ownerKind != "interface")
             return built;
-        string cargs;
+        TypeNode[] cargs;
         if (isCompareTo)
         {
             // COMPARETO (System.IComparable): `T : Comparable<T>` means the interface is `IComparable<recvType>` — the
-            // arg IS the receiver's own static type. No type-param-constraint lookup (the constraints may live on an
-            // OUTER scope absent from THIS declaration's typeParams — e.g. a `Comparator.compare` override whose `T`
-            // is the class type param, so typeParams=null here; the old kotc lowering likewise built IComparable[recvType]
-            // straight from the receiver type without a constraint).
-            cargs = vt;
+            // arg IS the receiver's own static type.
+            cargs = new TypeNode[] { vt };
         }
         else
         {
             // Collection-BUILD (mapTo/filterTo `destination.add`): the element args come from the receiver
-            // type-parameter's own collection-interface constraint (`MutableCollection[gp:R]` -> "gp:R"). Requires the
+            // type-parameter's own collection-interface constraint (`MutableCollection<R>` -> [R]). Requires the
             // constraint to be present on THIS declaration (a local/param receiver of a generic method); local-only.
-            if (!ctx.TpConstraints.TryGetValue(vt.Substring(3), out var cons)) return built;
+            if (!ctx.TpConstraints.TryGetValue(tvRecv.Scope + ":" + tvRecv.I, out var cons)) return built;
             cargs = null;
             foreach (var c in cons)
-            {
-                if (!refs.TryResolveClrOwner(c, out _, out var ck) || ck != "interface") continue;
-                var b = c.IndexOf('[');
-                if (b >= 0 && c.EndsWith("]", StringComparison.Ordinal)) { cargs = c.Substring(b + 1, c.Length - b - 2); break; }
-            }
+                if (c is TypeNode.Fqn cf && cf.Args != null && refs.TryResolveClrOwner(cf.Name, out _, out var ck)
+                    && ck == "interface") { cargs = cf.Args; break; }
             if (cargs == null) return built;
         }
 
         var cc = new JsonObject
         {
             ["k"] = "constrainedCall",
-            ["recvType"] = vt,
-            ["iface"] = "clrg:" + ownerBcl + "[" + cargs + "]",
+            ["recvType"] = TypeJson.Write(vt),
+            ["iface"] = TypeJson.Write(new TypeNode.Fqn(ownerBcl, cargs)),
             ["method"] = (call["method"] as JsonValue)?.GetValue<string>(),
             ["recv"] = call["recv"]?.DeepClone(),
             ["args"] = (call["args"] as JsonArray)?.DeepClone() ?? new JsonArray(),
         };
         if (call["argTypes"] is JsonArray at) cc["argTypes"] = at.DeepClone();
-        if (call["ret"] is JsonValue rv) cc["ret"] = rv.DeepClone();
+        if (call["ret"] is JsonNode rv) cc["ret"] = rv.DeepClone();
         return cc;
     }
 
@@ -4989,7 +4990,7 @@ static class MemberCallSubstitution
     // VarTypes; for the constrained-COMPARETO case a callInstance receiver's declared return (`retType`/`ret`) and an
     // arrayGet's element (`elem`) also carry it (`ClosedRange.get_start(): T` -> compareTo; `a[i]: T` -> compareTo).
     // null when the shape carries no recoverable static type.
-    static string RecvStaticType(JsonObject recv, SubstCtx ctx, bool allowExprShapes)
+    static TypeNode RecvStaticType(JsonObject recv, SubstCtx ctx, bool allowExprShapes)
     {
         var rk = (recv["k"] as JsonValue)?.GetValue<string>();
         if (rk == "local")
@@ -4997,10 +4998,9 @@ static class MemberCallSubstitution
                 && ctx.VarTypes.TryGetValue(vn, out var vt) ? vt : null;
         if (!allowExprShapes) return null;
         if (rk == "callInstance")
-            return (recv["retType"] as JsonValue)?.GetValue<string>()
-                ?? (recv["ret"] as JsonValue)?.GetValue<string>();
+            return TypeJson.Read(recv["retType"]) ?? TypeJson.Read(recv["ret"]);
         if (rk == "arrayGet")
-            return (recv["elem"] as JsonValue)?.GetValue<string>();
+            return TypeJson.Read(recv["elem"]);
         return null;
     }
 
@@ -5023,10 +5023,13 @@ static class MemberCallSubstitution
     // (`MutableCollection[gp:R]` -> gp:R), or — when the owner is BARE because the receiver is a generic
     // parameter (`destination: C where C : MutableCollection<R>`) — the receiver's collection-interface
     // constraint's arg (the same recovery Constrainify performs). Falls back to `object`.
-    static string CollElemArg(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx, string ownerToken)
+    static readonly TypeNode ObjType = new TypeNode.Fqn("object");
+    static bool IsObjType(TypeNode t) => t is TypeNode.Fqn { Args: null } f && (f.Name == "object" || f.Name == "kotlin.Any");
+
+    static TypeNode CollElemArg(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx, TypeNode.Fqn ownerFqn)
     {
-        var own = OwnerElemArg(ownerToken);
-        if (own != "object" || ownerToken.Contains('[')) return own;
+        var own = OwnerElemArg(ownerFqn);
+        if (!IsObjType(own) || ownerFqn.Args != null) return own;
         // The owner is BARE (`kotlin.collections.MutableCollection`, no type args): the frontend dropped the element
         // when inlining `mapTo`/`filterTo`'s `destination.add(...)`. Recover it from the RECEIVER's declared type.
         if (ctx != null && node["recv"] is JsonObject recv && (recv["k"] as JsonValue)?.GetValue<string>() == "local"
@@ -5035,32 +5038,23 @@ static class MemberCallSubstitution
         {
             // (a) The receiver is a type-PARAMETER (`destination: C where C : MutableCollection<R>`): its element comes
             // from the collection-interface constraint's arg (the same recovery Constrainify performs).
-            if (vt.StartsWith("gp:", StringComparison.Ordinal))
+            if (vt is TypeNode.Tv tvR)
             {
-                if (ctx.TpConstraints.TryGetValue(vt.Substring(3), out var cons))
+                if (ctx.TpConstraints.TryGetValue(tvR.Scope + ":" + tvR.I, out var cons))
                     foreach (var c in cons)
-                    {
-                        if (!refs.TryResolveClrOwner(c, out _, out var ck) || ck != "interface") continue;
-                        var b = c.IndexOf('[');
-                        if (b >= 0 && c.EndsWith("]", StringComparison.Ordinal))
-                        {
-                            var inner = SplitTopLevel(c.Substring(b + 1, c.Length - b - 2));
-                            if (inner.Count >= 1 && !string.IsNullOrEmpty(inner[0])) return inner[0];
-                        }
-                    }
+                        if (c is TypeNode.Fqn cf && cf.Args is { Length: >= 1 } && refs.TryResolveClrOwner(cf.Name, out _, out var ck)
+                            && ck == "interface" && cf.Args[0] != null) return cf.Args[0];
             }
-            // (b) The receiver is a CONCRETE generic collection local (`__inlN : ArrayList[kotlin.String]`, mapTo's
+            // (b) The receiver is a CONCRETE generic collection local (`__inlN : ArrayList<String>`, mapTo's
             // materialized destination): its OWN first type-arg is the element. Without this the helper's typeArg stays
-            // the frontend's `object` over-approximation (the `MutableCollection<in R>.add` variance projection), so
-            // clrCollAdd<object> dispatches `ICollection<object>::get_Count` on a runtime `List<string>` — an invariant
-            // interface with no such slot -> EntryPointNotFoundException. Mirrors MapKvArgs' bare-owner recovery.
-            else
+            // the frontend's `object` over-approximation. Mirrors MapKvArgs' bare-owner recovery.
+            else if (vt is TypeNode.Fqn)
             {
-                var elem = OwnerElemArg(vt);
-                if (elem is not ("object" or "kotlin.Any")) return elem;
+                var elem = OwnerElemArg((TypeNode.Fqn)vt);
+                if (!IsObjType(elem)) return elem;
             }
         }
-        return "object";
+        return ObjType;
     }
 
     // The (K, V) type args for a map-defaults helper call — the two-arg twin of CollElemArg. The owner token's own args
@@ -5069,25 +5063,20 @@ static class MemberCallSubstitution
     // key to Any) — the receiver type-parameter's INVARIANT map-interface constraint (`M : MutableMap[gp:K,gp:V]`). This
     // undoes the variance approximation so `associateWith`/`associateBy`'s `destination.put(..)` emits clrMapPut<K,V>, not
     // <object,object> whose `IDictionary<object,..>::ContainsKey` finds no slot on the runtime dict -> EntryPointNotFound.
-    static (string, string) MapKvArgs(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx, string ownerToken)
+    static (TypeNode, TypeNode) MapKvArgs(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx, TypeNode.Fqn ownerFqn)
     {
-        var (k, v) = OwnerKvArgs(ownerToken);
-        var over = k is "object" or "kotlin.Any" || v is "object" or "kotlin.Any";
-        if (!over) return (k, v);
+        var (k, v) = OwnerKvArgs(ownerFqn);
+        if (!IsObjType(k) && !IsObjType(v)) return (k, v);
         if (ctx != null && refs != null && node["recv"] is JsonObject recv && (recv["k"] as JsonValue)?.GetValue<string>() == "local"
-            && (recv["name"] as JsonValue)?.GetValue<string>() is string vn && ctx.VarTypes.TryGetValue(vn, out var vt) && vt.StartsWith("gp:", StringComparison.Ordinal)
-            && ctx.TpConstraints.TryGetValue(vt.Substring(3), out var cons))
+            && (recv["name"] as JsonValue)?.GetValue<string>() is string vn && ctx.VarTypes.TryGetValue(vn, out var vt) && vt is TypeNode.Tv tvR
+            && ctx.TpConstraints.TryGetValue(tvR.Scope + ":" + tvR.I, out var cons))
         {
             foreach (var c in cons)
             {
-                if (!refs.TryResolveClrOwner(c, out _, out var ck) || ck != "interface") continue;
-                var b = c.IndexOf('[');
-                if (b < 0 || !c.EndsWith("]", StringComparison.Ordinal)) continue;
-                var inner = SplitTopLevel(c.Substring(b + 1, c.Length - b - 2));
-                if (inner.Count < 2) continue;
+                if (c is not TypeNode.Fqn cf || cf.Args is not { Length: >= 2 } || !refs.TryResolveClrOwner(cf.Name, out _, out var ck) || ck != "interface") continue;
                 // Only OVERRIDE an over-approximated (object/kotlin.Any) position; a genuinely-concrete owner arg wins.
-                if (k is "object" or "kotlin.Any" && !string.IsNullOrEmpty(inner[0])) k = inner[0];
-                if (v is "object" or "kotlin.Any" && !string.IsNullOrEmpty(inner[1])) v = inner[1];
+                if (IsObjType(k) && cf.Args[0] != null) k = cf.Args[0];
+                if (IsObjType(v) && cf.Args[1] != null) v = cf.Args[1];
                 break;
             }
         }
@@ -5108,7 +5097,7 @@ static class MemberCallSubstitution
 
     // A `callStatic <helperOwner>.<helperMethod>(recv, args...)` typed over the collection's element. Mirrors kotc's
     // collDefault emission shape (owner=ClrCollectionDefaultsKt / ClrIteratorBridgeKt, recv prepended, typeArgs=[elem]).
-    static JsonNode CollDefaultCall(JsonObject node, string helperOwner, string helperMethod, string elem, JsonArray args)
+    static JsonNode CollDefaultCall(JsonObject node, string helperOwner, string helperMethod, TypeNode elem, JsonArray args)
     {
         var hargs = new JsonArray();
         if (node["recv"] != null) hargs.Add(node["recv"].DeepClone());
@@ -5119,54 +5108,46 @@ static class MemberCallSubstitution
             ["owner"] = TypeJson.Fqn(helperOwner),
             ["method"] = helperMethod,
             ["args"] = hargs,
-            ["typeArgs"] = new JsonArray { elem },
+            ["typeArgs"] = new JsonArray { TypeJson.Write(elem) },
         };
     }
 
     // The 2-type-arg map mirror of CollDefaultCall: `callStatic ClrMapDefaultsKt.<helper>(recv, args...)` typed over
     // the map owner token's [K,V] instantiation args.
-    static JsonNode MapDefaultCall(JsonObject node, string helperMethod, string ownerToken, JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx)
+    static JsonNode MapDefaultCall(JsonObject node, string helperMethod, TypeNode.Fqn ownerFqn, JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx)
     {
         var hargs = new JsonArray();
         if (node["recv"] != null) hargs.Add(node["recv"].DeepClone());
         foreach (var a in args) hargs.Add(a?.DeepClone());
-        var (k, v) = MapKvArgs(node, refs, ctx, ownerToken);
+        var (k, v) = MapKvArgs(node, refs, ctx, ownerFqn);
         var call = new JsonObject
         {
             ["k"] = "callStatic",
             ["owner"] = TypeJson.Fqn("kotlin.collections.ClrMapDefaultsKt"),
             ["method"] = helperMethod,
             ["args"] = hargs,
-            ["typeArgs"] = new JsonArray { k, v },
+            ["typeArgs"] = new JsonArray { TypeJson.Write(k), TypeJson.Write(v) },
         };
         // Carry the call's statically-known return (same rationale + `gp:` guard as Rule3HelperCall): a helper
         // returning the BARE map value param (`getOrDefault` -> V) reflects as the callee's own `!!1` at the call
         // site — boxing that out-of-scope token is invalid metadata -> BadImageFormatException at run (both the
         // Map- and MutableMap-typed receivers). `retType` lets ilemit box/convert the concrete instantiation.
-        if (RetToken(node) is string ret && !ret.StartsWith("gp:", StringComparison.Ordinal)) call["retType"] = ret;
+        if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["retType"] = ret;
         return call;
     }
 
     // The first TWO top-level type arguments of a map owner token (`kotlin.collections.Map[gp:K,gp:V]`); `object` when
     // erased/unbound.
-    static (string, string) OwnerKvArgs(string ownerToken)
+    static (TypeNode, TypeNode) OwnerKvArgs(TypeNode.Fqn ownerFqn)
     {
-        var br = ownerToken.IndexOf('[');
-        if (br < 0 || !ownerToken.EndsWith("]", StringComparison.Ordinal)) return ("object", "object");
-        var parts = SplitTopLevel(ownerToken[(br + 1)..^1]);
-        return (parts.Count > 0 && parts[0].Length > 0 ? parts[0] : "object",
-                parts.Count > 1 && parts[1].Length > 0 ? parts[1] : "object");
+        var args = ownerFqn.Args;
+        return (args is { Length: >= 1 } && args[0] != null ? args[0] : ObjType,
+                args is { Length: >= 2 } && args[1] != null ? args[1] : ObjType);
     }
 
-    // The first top-level type argument of an owner token (`kotlin.collections.List[gp:E]` -> `gp:E`); `object` if none.
-    static string OwnerElemArg(string ownerToken)
-    {
-        var br = ownerToken.IndexOf('[');
-        if (br < 0 || !ownerToken.EndsWith("]", StringComparison.Ordinal)) return "object";
-        var inner = ownerToken[(br + 1)..^1];
-        var parts = SplitTopLevel(inner);
-        return parts.Count > 0 && parts[0].Length > 0 ? parts[0] : "object";
-    }
+    // The first top-level type argument of an owner Fqn (`kotlin.collections.List<E>` -> E); `object` if none.
+    static TypeNode OwnerElemArg(TypeNode.Fqn ownerFqn) =>
+        ownerFqn.Args is { Length: >= 1 } args && args[0] != null ? args[0] : ObjType;
 
     // A bare-@ClrIntrinsic top-level EXTENSION fun: `fn(recv, rest...)` -> `recv.<intrinsic>(rest...)`. The extension
     // receiver is the first arg; the first `sig` type is its (CLR) type, the rest are the method's arg types. ilemit
@@ -5188,33 +5169,33 @@ static class MemberCallSubstitution
     // A CLR-bound owner token's ClrRef-resolvable BCL type: a non-generic alias is its bare BCL FQN ("System.String"
     // -- NOT the "string" shorthand, which ilemit ClrRef can't resolve as a clr* `type`); a generic alias keeps its
     // element args (clrg:<bcl>[<args>], or [object x arity] when the token erased them). Null if not CLR-bound.
-    static string ClrOwnerType(ReferenceMetadataIndex refs, string ownerToken)
+    static TypeNode ClrOwnerType(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn)
     {
-        if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out _)) return null;
-        var fqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
-        var br = ownerToken.IndexOf('[');
-        if (br >= 0 && ownerToken.EndsWith("]", StringComparison.Ordinal))
+        if (!refs.TryResolveClrOwner(ownerFqn.Name, out var bcl, out _)) return null;
+        var arity = refs.OwnerArity(ownerFqn.Name);
+        if (ownerFqn.Args != null || arity > 0)
         {
-            // Pad a PARTIALLY-erased arg list to the alias's declared arity (a star-projection `Map<K, *>` reaches
-            // here as `kotlin.collections.Map[gp:K]` — 1 of IDictionary's 2 args; ilemit's GenericType would fail to
-            // resolve `IDictionary`1`). The trailing erased args become `object`, same as the fully-erased case below.
-            var kept = SplitTopLevel(ownerToken[(br + 1)..^1]).Where(a => a.Length > 0).ToList();
-            var arity = refs.OwnerArity(fqn);
-            for (var i = kept.Count; i < arity; i++) kept.Add("object");
-            return "clrg:" + bcl + "[" + string.Join(",", kept) + "]";
+            // Pad a PARTIALLY-erased arg list to the alias's declared arity (a star-projection `Map<K, *>` reaches here
+            // as `kotlin.collections.Map<K>` — 1 of IDictionary's 2 args; ilemit's GenericType would fail to resolve
+            // `IDictionary`1`). The trailing/all erased args become `object`.
+            var kept = (ownerFqn.Args ?? Array.Empty<TypeNode>()).Where(a => a != null).ToList();
+            for (var i = kept.Count; i < arity; i++) kept.Add(ObjType);
+            if (kept.Count > 0) return new TypeNode.Fqn(bcl, kept.ToArray());
         }
-        if (refs.OwnerArity(fqn) is var ar && ar > 0)
-            return "clrg:" + bcl + "[" + string.Join(",", Enumerable.Repeat("object", ar)) + "]";
-        return bcl;
+        return new TypeNode.Fqn(bcl);
     }
 
     static JsonNode TopLevelExtensionInstance(JsonObject node, ReferenceMetadataIndex refs, string intrinsic, JsonArray args, List<string> sigParts)
     {
         if (args.Count == 0) return null;   // no receiver -> not an extension shape; leave for FindStatic to report
-        var sig0 = sigParts.Count > 0 ? sigParts[0] : InferExpressionType(args[0]);
-        // The receiver type must be a ClrRef-resolvable BCL token (System.String / clrg:... / array:...), not a bare
-        // shorthand the later type-lowering would produce (`kotlin.String` -> "string" doesn't resolve in ClrRef).
-        var recvType = ClrOwnerType(refs, sig0) ?? sig0;
+        // The extension receiver's type comes from the first `sig` token (a legacy m3 string) — parse it to the bare
+        // owner FQN and resolve the CLR owner type structurally; the receiver `type` slot must be the ClrRef-resolvable
+        // BCL Fqn (System.String / IReadOnlyList<…> / …), not the "string" shorthand the later lowering would produce.
+        var sig0 = sigParts.Count > 0 ? sigParts[0] : null;
+        var recvOwner = sig0 != null ? new TypeNode.Fqn(ReferenceMetadataIndex.BareOwnerFqn(sig0)) : null;
+        JsonNode recvType = recvOwner != null && ClrOwnerType(refs, recvOwner) is TypeNode ro
+            ? TypeJson.Write(ro)
+            : (sig0 != null ? JsonValue.Create(sig0) : InferArgType(args[0]));
 
         var argTypes = new JsonArray();
         for (var i = 1; i < sigParts.Count; i++) argTypes.Add(sigParts[i]);
@@ -5230,7 +5211,7 @@ static class MemberCallSubstitution
             ["recv"] = args[0].DeepClone(),
             ["args"] = rest,
         };
-        if (RetToken(node) is string ret) call["ret"] = ret;
+        if (RetToken(node) is JsonNode ret) call["ret"] = ret;
         return call;
     }
 
@@ -5244,7 +5225,7 @@ static class MemberCallSubstitution
     // (Rule 4: `get_Count`) — strip a leading get_/set_ so the clrProp `name` is the bare property. `access` = READ/WRITE
     // flags; when BOTH are set (a var property) the accessor member prefix (`set_` -> write) or arg count (1 = write)
     // picks the direction. WRITE takes the single value arg; READ carries the return type.
-    static JsonNode ClrPropNode(JsonObject node, string bcl, string prop, int access, string member, JsonArray args)
+    static JsonNode ClrPropNode(JsonObject node, TypeNode clrOwner, string prop, int access, string member, JsonArray args)
     {
         if (prop.StartsWith("get_", StringComparison.Ordinal) || prop.StartsWith("set_", StringComparison.Ordinal))
             prop = prop[4..];
@@ -5256,12 +5237,12 @@ static class MemberCallSubstitution
         var pg = new JsonObject
         {
             ["k"] = write ? "clrPropSet" : "clrPropGet",
-            ["type"] = bcl,
+            ["type"] = TypeJson.Write(clrOwner),
             ["name"] = prop,
             ["static"] = false,
             ["recv"] = node["recv"]?.DeepClone(),
         };
-        if (!write && RetToken(node) is string ret) pg["retType"] = ret;
+        if (!write && RetToken(node) is JsonNode ret) pg["retType"] = ret;
         if (write && args.Count >= 1) pg["value"] = args[0].DeepClone();
         return pg;
     }
@@ -5276,12 +5257,19 @@ static class MemberCallSubstitution
     {
         if (byrefPositions == null) return;
         foreach (var i in byrefPositions)
-            if (i >= 0 && i < argTypes.Count && argTypes[i] is JsonValue v && v.TryGetValue<string>(out var s)
-                && !s.StartsWith("byref:", StringComparison.Ordinal))
+        {
+            if (i < 0 || i >= argTypes.Count) continue;
+            // A structured arg type -> ByRef(inner); a legacy sig-string token -> "byref:"+s. Idempotent either way.
+            if (TypeJson.Read(argTypes[i]) is TypeNode tn)
+            {
+                if (tn is not TypeNode.ByRef) argTypes[i] = TypeJson.Write(new TypeNode.ByRef(tn));
+            }
+            else if (argTypes[i] is JsonValue v && v.TryGetValue<string>(out var s) && !s.StartsWith("byref:", StringComparison.Ordinal))
                 argTypes[i] = "byref:" + s;
+        }
     }
 
-    static JsonNode ClrCallNode(JsonObject node, string bcl, string intrinsic, string member, JsonArray args, bool instance, int[] byrefPositions = null)
+    static JsonNode ClrCallNode(JsonObject node, TypeNode clrOwner, string intrinsic, string member, JsonArray args, bool instance, int[] byrefPositions = null)
     {
         var argTypes = InferArgTypes(node, args);
         WrapByref(argTypes, byrefPositions);
@@ -5294,12 +5282,12 @@ static class MemberCallSubstitution
         var isGet = member.StartsWith("get_", StringComparison.Ordinal) && args.Count == 0;
         var isSet = member.StartsWith("set_", StringComparison.Ordinal) && args.Count == 1;
         if (instance && (isGet || isSet))
-            return ClrPropNode(node, bcl, intrinsic, isSet ? ClrPropWrite : ClrPropRead, member, args);
+            return ClrPropNode(node, clrOwner, intrinsic, isSet ? ClrPropWrite : ClrPropRead, member, args);
 
         var call = new JsonObject
         {
             ["k"] = instance ? "clrInstance" : "clrStatic",
-            ["type"] = bcl,
+            ["type"] = TypeJson.Write(clrOwner),
             ["method"] = intrinsic,
             ["argTypes"] = argTypes,
         };
@@ -5328,52 +5316,41 @@ static class MemberCallSubstitution
     // (`HashMap<String,Int>().put(..)` -> an open-generic callStatic -> InvalidProgramException at run), and the bare
     // ownerFqn sig slot lowered to the degenerate NON-generic BCL type (`clr:System...Dictionary`) — carry the
     // instantiated token so the `__self` slot and the helper type args agree.
-    static JsonNode Rule3HelperCall(JsonObject node, ReferenceMetadataIndex refs, string ownerToken, string member, JsonArray args, bool instance)
+    static JsonNode Rule3HelperCall(JsonObject node, ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn, string member, JsonArray args, bool instance)
     {
-        var ownerFqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
+        var ownerName = ownerFqn.Name;
         var hargs = new JsonArray();
         if (instance && node["recv"] != null) hargs.Add(node["recv"].DeepClone());
         foreach (var a in args) hargs.Add(a?.DeepClone());
 
-        // The alias class's instantiation args, padded to its declared arity (a bare/partially-erased token — a raw
-        // or star-projected receiver — degrades to `object`, same as ClrOwnerType). Empty for a non-generic alias.
-        var classArgs = new List<string>();
-        var arity = refs.OwnerArity(ownerFqn);
-        if (arity > 0)
-        {
-            var obr = ownerToken.IndexOf('[');
-            if (obr >= 0 && ownerToken.EndsWith("]", StringComparison.Ordinal))
-                classArgs.AddRange(SplitTopLevel(ownerToken[(obr + 1)..^1]).Where(a => a.Length > 0));
-            for (var i = classArgs.Count; i < arity; i++) classArgs.Add("object");
-        }
+        // The alias class's instantiation args, padded to its declared arity (a bare/partially-erased owner — a raw or
+        // star-projected receiver — degrades to `object`, same as ClrOwnerType). Empty for a non-generic alias.
+        var classArgs = (ownerFqn.Args ?? Array.Empty<TypeNode>()).Where(a => a != null).ToList();
+        var arity = refs.OwnerArity(ownerName);
+        for (var i = classArgs.Count; i < arity; i++) classArgs.Add(ObjType);
 
         var call = new JsonObject
         {
             ["k"] = "callStatic",
-            ["owner"] = TypeJson.Fqn(ReferenceMetadataIndex.HelperTypeName(ownerFqn)),
+            ["owner"] = TypeJson.Fqn(ReferenceMetadataIndex.HelperTypeName(ownerName)),
             ["method"] = member,
             ["args"] = hargs,
         };
+        // The helper is instantiated with the alias class's args FIRST, then the method's own typeArgs (structured).
         var typeArgs = new JsonArray();
-        foreach (var ca in classArgs) typeArgs.Add(ca);
+        foreach (var ca in classArgs) typeArgs.Add(TypeJson.Write(ca));
         if (node["typeArgs"] is JsonArray ta) foreach (var t in ta) typeArgs.Add(t?.DeepClone());
         if (typeArgs.Count > 0) call["typeArgs"] = typeArgs;
-        // Positional map class-param NAME -> instantiation arg (E -> kotlin.Int), applied to the declared `sig`
-        // tokens below so a `gp:K,gp:V` sig becomes the call's concrete slot types (they are OUT of scope at the
-        // call site; an unbound gp token is useless to the bridge and to ilemit's overload keys).
-        var gpMap = new Dictionary<string, string>(StringComparer.Ordinal);
-        var names = refs.OwnerTypeParamNames(ownerFqn);
-        if (names != null)
-            for (var i = 0; i < names.Length && i < classArgs.Count; i++) gpMap[names[i]] = classArgs[i];
         // Carry the callee's param-type list (receiver-first, mirroring the hoisted helper's __self) so the
-        // String->CharSequence bridge sees the synthetic-CharSequence slots: without a `sig` the app pushed a raw
-        // string at `Regex.matches(input: CharSequence)`/`find` -> ilverify StackUnexpected (il-regex).
+        // String->CharSequence bridge sees the synthetic-CharSequence slots (il-regex). `sig` is the m3 legacy
+        // comma-string: the receiver token is rendered via the sig-only SigToken; the orig sig tokens pass verbatim
+        // (kotc collapses every type var to `gp:T`, so the old class-param NAME substitution is a no-op now).
         var sigParts = new List<string>();
         if (instance && node["recv"] != null)
-            sigParts.Add(classArgs.Count > 0 ? ownerFqn + "[" + string.Join(",", classArgs) + "]" : ownerFqn);
+            sigParts.Add(SigToken(classArgs.Count > 0 ? new TypeNode.Fqn(ownerName, classArgs.ToArray()) : ownerFqn));
         var origSig = (node["sig"] as JsonValue)?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(origSig))
-            foreach (var p in SplitTopLevel(origSig)) sigParts.Add(SubstituteGenericParams(p, gpMap));
+            foreach (var p in SplitTopLevel(origSig)) sigParts.Add(p);
         // `sig` may be LONGER than args (omitted defaulted params, filled downstream) — the bridge matches
         // positionally from the left; only a SHORTER sig would misalign.
         if (sigParts.Count >= hargs.Count) call["sig"] = string.Join(",", sigParts);
@@ -5384,15 +5361,30 @@ static class MemberCallSubstitution
         // token (an open call site inside another generic body): it buys no conversion there, and when the callee's
         // return is the ERASED nullable-generic `object`, CoerceReturn would `unbox.any !!X` a possibly-null —
         // NullReferenceException for a value instantiation. The open representation of such a value stays `object`.
-        if (RetToken(node) is string ret && !ret.StartsWith("gp:", StringComparison.Ordinal)) call["retType"] = ret;
+        if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["retType"] = ret;
         return call;
     }
+
+    // The legacy sig-token spelling of a SOURCE-vocabulary type, used ONLY to build the m3 `sig` comma-string (the one
+    // documented legacy-string exception). Mirrors kotc.bir.TypeNode.legacyToken (a type var collapses to `gp:T`).
+    static string SigToken(TypeNode t) => t switch
+    {
+        TypeNode.Fqn f => f.Args == null ? f.Name : f.Name + "[" + string.Join(",", f.Args.Select(SigToken)) + "]",
+        TypeNode.Tv => "gp:T",
+        TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + SigToken(fn.Ret) + ":" + string.Join(",", fn.Params.Select(SigToken)),
+        TypeNode.Nullable n => "nullable:" + SigToken(n.Of),
+        TypeNode.Array a => "array:" + SigToken(a.Elem),
+        TypeNode.ByRef b => "byref:" + SigToken(b.Of),
+        _ => "object",
+    };
 
     // The call's parameter types, used as the clr* argTypes overload key. Prefer kotc's `sig` (a comma-joined
     // param-type list); else infer each arg's own type token; else empty. Left in the kotlin.* vocabulary —
     // BirTypeLowering lowers `argTypes` afterwards.
     static JsonArray InferArgTypes(JsonObject node, JsonArray args)
     {
+        // Prefer kotc's `sig` (the m3 legacy comma-string of param-type tokens) — its elements stay STRINGS this
+        // milestone; else infer each arg's own STRUCTURED type. Either form is a valid clr* argTypes overload-key entry.
         var sig = (node["sig"] as JsonValue)?.GetValue<string>();
         var result = new JsonArray();
         if (!string.IsNullOrWhiteSpace(sig))
@@ -5401,25 +5393,29 @@ static class MemberCallSubstitution
             if (result.Count == args.Count) return result;
             result = new JsonArray();
         }
-        foreach (var a in args) result.Add(InferExpressionType(a));
+        foreach (var a in args) result.Add(InferArgType(a));
         return result;
     }
 
-    static string RetToken(JsonObject node)
+    // The structured return-type slot of a call node (dynRet/retType/ret), cloned; null when absent.
+    static JsonNode RetToken(JsonObject node)
     {
         foreach (var key in new[] { "dynRet", "retType", "ret" })
-            if (node[key] is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s))
-                return s;
+            if (node[key] is JsonNode n && TypeJson.Read(n) is TypeNode) return n.DeepClone();
         return null;
     }
 
-    static string InferExpressionType(JsonNode node)
+    // A ret slot is an UNBOUND type parameter (`Tv`) — the guard on carrying a `retType` hint (an open `gp:` token
+    // buys no conversion at the call site and, when the callee return is object-erased, would unbox.any a null).
+    static bool IsTvType(JsonNode slot) => TypeJson.Read(slot) is TypeNode.Tv;
+
+    // An expression's own STRUCTURED type (its type/ret slot), cloned; Fqn("object") when none is recoverable.
+    static JsonNode InferArgType(JsonNode node)
     {
-        if (node is not JsonObject obj) return "object";
-        foreach (var key in new[] { "type", "retType", "resultType", "ret", "dynRet" })
-            if (obj[key] is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s))
-                return s;
-        return "object";
+        if (node is JsonObject obj)
+            foreach (var key in new[] { "type", "retType", "resultType", "ret", "dynRet" })
+                if (obj[key] is JsonNode n && TypeJson.Read(n) is TypeNode) return n.DeepClone();
+        return TypeJson.Fqn("object");
     }
 
     static IReadOnlyList<string> SplitTopLevel(string value)
