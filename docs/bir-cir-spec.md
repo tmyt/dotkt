@@ -88,6 +88,33 @@ The meta side (facadegen tlfun/tlextprop/tlprop) emits the SAME `mods` object, n
 (The full per-kind field table is generated from `docs/bir-audit/kotc-emit.md` §1 during impl; this section
 lists only the freeze DECISIONS. The validator (§4) enforces the canonical set.)
 
+### 2.5 Node-kind FORMAT stabilization — canonical field names + per-kind schema + validator
+Node kinds are `{k}`-tagged objects but their FIELD names drifted (each wave's agent named fields ad-hoc).
+Audit-confirmed drift: the "a type" concept is spelled `type`/`retType`/`ret`/`elem`/`of`/`keyType`
+(`retType`≡`ret` are the SAME return type; `type`≡`of` overlap); a value/sub-expr is `value`/`val`/`init`/
+**`e`/`l`/`r`** (cryptic single letters = expression/left/right); a list is `args`/`params`/`elems`; a name is
+`name`/`member`/`method`/`field`. (`recv` is the good case — one spelling.)
+
+Unlike `Type` (§1), node kinds CANNOT be collapsed to one shared model — there are ~95 distinct shapes. So
+node-format stability is achieved DECLARATIVELY, in three parts:
+0. **Casing convention** — every `k` value AND every field name is **lowerCamelCase**, uniformly. Audit
+   (89 kotc `k` values): no snake_case/UpperCamel/dotted (good), but flattened abbreviations HIDE case
+   boundaries inconsistently — `isinst`/`isinstRef` spell "instance" as `inst` while `callInstance` uses
+   `Instance`. Fix: `isinst`→`isInst`, `isinstRef`→`isInstRef`; de-abbreviate case-hiding shorthands
+   (`bin`→`binOp`, `un`→`unaryOp`) OR pin a documented short-operator exception — one policy, in the spec.
+   Single-word kinds (`for`/`if`/`block`) are already one-word lowerCamel (fine). The validator's canonical
+   `k` set is the casing enforcer: any spelling not in the frozen set reddens the gate.
+1. **Canonical field names** — one name per concept. Collapse pure synonyms (`retType`→`ret`, `val`→`value`);
+   rename cryptic single letters (`e`→`e` is kept ONLY if documented; `l`/`r`→`lhs`/`rhs`). Keep genuinely
+   role-distinct fields distinct (a call's `args` ≠ a decl's `params` ≠ an array's `elems`; `ret`≠`elem`≠`keyType`
+   when the roles differ). Every type-valued field holds a `Type` node (§1).
+2. **Per-kind schema** — the spec pins each `k`'s exact field set (name, required/optional, value shape),
+   generated from the audit. This is the normative node shape.
+3. **Schema validator (§4/§5)** — validates every node against its kind's schema: unknown `k`, unknown/missing
+   field, or a wrong value shape reddens a gate. **This is the ENFORCER** — because there is no single shared
+   node model, the validator is node-format's ONLY structural safety net (contrast `Type`, which is drift-proof
+   by construction). Therefore the validator is NOT deferred to last; it lands early enough to guard the flip.
+
 ### 2.2 `sig` — call-site overload signature is a `Type[]` (retire the comma-joined string)
 A call node carries `sig` so a consumer resolves the right OVERLOAD by name+signature. Today it is a
 **comma-joined string of param type tokens** (`BirEmitter.kt:1705`, `(ext + regs).joinToString(",")`),
