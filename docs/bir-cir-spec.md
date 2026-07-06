@@ -66,6 +66,25 @@ Control flow: the structured `for*` family and the CFG `label`/`brIf`/`goto` whi
 (mid-migration, audit D8) — the freeze picks the CFG form as canonical for lowered output; the structured
 `for*` may remain as a kotc-emit sugar that bir2cir lowers. [finalize in impl]
 
+### 2.1 Declaration modifiers — structured `mods` (replaces string-concat fragments, audit D7)
+Today a decl's modifiers are **order-dependent string-concatenated fragments** (`$inlineFlag$kmods`, the
+meta `final,inline,ext,suspend,infix,operator` comma string) — a stringly-typed set that drifts on ordering
+and forces substring/`Contains` checks. FREEZE: every declaration (method/property/class/param) carries a
+single **`mods` object**, a set of `name:true` flags (absent = not set). Order-free, self-describing,
+additive (a new modifier = a new key). No comma strings, no `Contains`/`StartsWith` on a modifier blob.
+```jsonc
+"mods": { "inline":true, "infix":true, "operator":true }        // a fun; omitted keys = false
+```
+- Method/fun flags: `inline`, `infix`, `operator`, `tailrec`, `external`, `ext` (extension), `override`,
+  `abstract`, `open`, `suspend` (also drives the `fn`-type `suspend` flag §1 — keep consistent), `data`-generated.
+- Class flags: `data`, `sealed`, `inner`, `abstract`, `open`, `enum`, `fun` (fun-interface), `annotation`, `value`.
+- Property flags: `const`, `lateinit`, `override`, `open`, `ext`.
+- Param flags: `noinline`, `crossinline`, `vararg`.
+- **Visibility is NOT a mod** (it is an enum, not a boolean): a separate `"vis": "public"|"private"|"protected"|"internal"`.
+- **Modifier semantics that drive lowering stay first-class** where a consumer keys on them (e.g. `suspend`
+  already gates cold-lowering) — `mods.suspend` is the single source; a redundant top-level `suspend` field is removed.
+The meta side (facadegen tlfun/tlextprop/tlprop) emits the SAME `mods` object, not the `final,inline,ext` comma string.
+
 (The full per-kind field table is generated from `docs/bir-audit/kotc-emit.md` §1 during impl; this section
 lists only the freeze DECISIONS. The validator (§4) enforces the canonical set.)
 
