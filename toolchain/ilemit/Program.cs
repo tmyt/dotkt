@@ -3175,12 +3175,15 @@ sealed partial class Emitter
         // `ClrRef` (not `ResolveType`) so a method on a constructed generic .NET type (`Collection<int>`) resolves.
         var type = ClrRef(e.GetProperty("type"));
         var name = e.GetProperty("method").GetString();
-        var argSpecs = e.GetProperty("argTypes").EnumerateArray().Select(a => a.GetString()).ToList();
+        // `argTypes` entries are structured TypeNodes (post type-flip) OR legacy strings — keep the JsonElements and
+        // resolve via ClrRef(JsonElement) (dispatches both). Reading them as `.GetString()` crashed on the structured
+        // form (InvalidOperationException: element is Object, not String).
+        var argSpecs = e.GetProperty("argTypes").EnumerateArray().ToList();
         var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
         MethodInfo mi = null;
         // Exact overload resolution when every arg type resolves (ClrRef handles array:/clrg:/nullable:/func: too,
         // so e.g. `array:object` -> object[] selects String.Format(string, params object[]) over (string, object)).
-        var resolved = argSpecs.Select(s => { try { return ClrRef(s); } catch { return (Type)null; } }).ToArray();
+        var resolved = argSpecs.Select(a => { try { return ClrRef(a); } catch { return (Type)null; } }).ToArray();
         try
         {
             if (resolved.All(x => x != null))
