@@ -7,6 +7,11 @@
     <AssemblyName>bir2cir</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Shared single-source Type read/write helper of the BIR/CIR freeze (#37). Linked (not a project ref)
+         so all three C# tools compile the SAME contract with no build-order dependency. -->
+    <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Read the metadata-only reference stdlib (throw-stub bodies, kotlin.* signatures) WITHOUT a runtime load:
          Assembly.LoadFrom chokes (TypeLoadException) on it; MetadataLoadContext reads its metadata cleanly. -->
     <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" />

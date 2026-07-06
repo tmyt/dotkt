@@ -31,7 +31,9 @@ FEED       := build/nuget-feed
 # ---- source sets (prerequisites for incrementality) ----------------------------------------------
 KOTC_SRC   := $(shell find toolchain/kotc/src -type f 2>/dev/null) toolchain/kotc/build.gradle.kts settings.gradle.kts
 STDLIB_SRC := $(shell find libraries/stdlib -name '*.kt' 2>/dev/null)
-tool_src    = $(shell find toolchain/$(1) -name '*.cs' -o -name '*.csproj' 2>/dev/null | grep -vE '/(obj|bin)/')
+# bir-common/TypeNode.cs is <Compile Link/>-shared into bir2cir/ilemit/facadegen, so it is a source
+# prerequisite of every C# tool (harmless extra dep for retarget) — include it for incrementality.
+tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -name '*.csproj' 2>/dev/null | grep -vE '/(obj|bin)/')
 
 # ==================================================================================================
 # Aggregate targets
