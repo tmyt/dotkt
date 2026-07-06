@@ -33,59 +33,101 @@ public fun <K, V> MutableMap<K, V>.clrMapRemoveKey(key: K): Boolean = TODO("clr 
 @kotlin.clr.ClrIntrinsic("get_Keys")
 public fun <K, V> Map<K, V>.clrMapNativeKeys(): Iterable<K> = TODO("clr binding should be implemented")
 
-// ---- Map (read) defaults ------------------------------------------------------------------------------------------
+// ---- Map (read) defaults: COVARIANCE-SAFE via the NON-GENERIC System.Collections.IDictionary facade ---------------
+//
+// WHY non-generic: `groupBy` returns `Map<K, List<V>>` (aliased `IDictionary<K, IReadOnlyList<V>>`) but the runtime
+// object it builds is a `Dictionary<K, MutableList<V>>` (`IDictionary<K, IList<V>>`). CLR `IDictionary<,>` is INVARIANT
+// in the value, so the runtime map is NOT assignable to the generic read interface: a `get_Keys`/`get_Item`/`ContainsKey`
+// dispatched through `IDictionary<K, IReadOnlyList<V>>` finds no slot on the runtime `Dictionary<K, IList<V>>` ->
+// EntryPointNotFound (inside clrMapToString etc.). Reading through the NON-GENERIC `ClrRawDictionary`
+// (System.Collections.IDictionary — implemented by EVERY `Dictionary<K,V>` regardless of V) decouples the read path from
+// the generic value-type invariance. This is the read-side mirror of bir2cir's write-side MapVarianceRealign.
+//
+// Keys/values arrive boxed to `Any?` off the non-generic IDictionaryEnumerator / get_Item and are narrowed with `as K` /
+// `as V` (unbox.any for value-type K/V). The MUTABLE helpers (put/remove/putAll/...) stay on the generic IDictionary<K,V>
+// path: a genuine MutableMap has matching static/runtime V (groupBy's result is a read-only Map), so no mismatch arises
+// there and the generic path avoids the box. (Direct `m.size`/`m.containsKey` — Rule 2 @ClrIntrinsic on the Map interface,
+// not routed here — remain generic; not on groupBy's read surface.)
 
 // Kotlin's Map.toString is `{a=1, b=2}` (AbstractMap.toString). The substituted BCL Dictionary renders its default
 // `System.Collections.Generic.Dictionary`2[...]` instead, so the backend should route `map.toString()` / `println(map)`
 // here (the map mirror of clrCollToString). Emitted into the rt assembly for kotc/bir2cir to target.
 public fun <K, V> clrMapToString(m: Map<K, V>): String {
+    val e = (m as ClrRawDictionary).GetEnumerator()
     val sb = StringBuilder()
     sb.append("{")
     var first = true
-    for (k in m.clrMapNativeKeys()) {
+    while (e.MoveNext()) {
         if (!first) sb.append(", ")
         first = false
-        sb.append(clrElemToString(k))                  // recurse: nested collection/map keys/values render Kotlin-style (N7)
+        sb.append(clrElemToString(e.key()))            // recurse: nested collection/map keys/values render Kotlin-style (N7)
         sb.append("=")
-        sb.append(clrElemToString(m.clrMapItem(k)))
+        sb.append(clrElemToString(e.value()))
     }
     sb.append("}")
     return sb.toString()
 }
 
-public fun <K, V> clrMapGet(m: Map<K, V>, key: K): V? = if (m.containsKey(key)) m.clrMapItem(key) else null
+public fun <K, V> clrMapGet(m: Map<K, V>, key: K): V? {
+    val d = m as ClrRawDictionary
+    @Suppress("UNCHECKED_CAST")
+    return if (d.Contains(key)) (d.rawGet(key) as V) else null   // null flows DIRECTLY into the object-erased return (V?-NOTE)
+}
 
-public fun <K, V> clrMapIsEmpty(m: Map<K, V>): Boolean = m.size == 0
+public fun <K, V> clrMapIsEmpty(m: Map<K, V>): Boolean = (m as ClrRawCollection).count() == 0
+
+// COVARIANCE-SAFE size / containsKey: these mirror `size`(@ClrIntrinsic "Count") and `containsKey`(@ClrIntrinsic
+// "ContainsKey") on the Map interface, but read through the NON-GENERIC facade (ICollection.Count / IDictionary.Contains)
+// so they survive a groupBy-style value-type mismatch. The Map interface members are still bound DIRECTLY (Rule 2) — a
+// direct `m.size` / `m.containsKey(k)` on a mismatched map (e.g. groupBy's result) therefore still throws EntryPointNotFound,
+// AND stdlib algorithms that pre-size via `this.size` (mapValues' `mapCapacity(size)`) hit it transitively. Making those
+// covariance-safe needs bir2cir to route `get_size`/`containsKey` on a Map/MutableMap owner to these helpers (Rule 5m,
+// exactly as `get`/`get_keys`/`get_values` already route) after unbinding their @ClrIntrinsic. Provided here as the
+// ready targets for that route (currently un-called).
+public fun <K, V> clrMapSize(m: Map<K, V>): Int = (m as ClrRawCollection).count()
+
+public fun <K, V> clrMapContainsKey(m: Map<K, V>, key: K): Boolean = (m as ClrRawDictionary).Contains(key)
 
 public fun <K, V> clrMapContainsValue(m: Map<K, V>, value: V): Boolean {
-    for (k in m.clrMapNativeKeys()) if (m.clrMapItem(k) == value) return true
+    val e = (m as ClrRawDictionary).GetEnumerator()
+    while (e.MoveNext()) if (e.value() == value) return true
     return false
 }
 
-public fun <K, V> clrMapGetOrDefault(m: Map<K, V>, key: K, defaultValue: V): V =
-    if (m.containsKey(key)) m.clrMapItem(key) else defaultValue
+public fun <K, V> clrMapGetOrDefault(m: Map<K, V>, key: K, defaultValue: V): V {
+    val d = m as ClrRawDictionary
+    @Suppress("UNCHECKED_CAST")
+    return if (d.Contains(key)) (d.rawGet(key) as V) else defaultValue
+}
 
 /** `Map.keys: Set<K>` — Set is PURE Kotlin (unaliased), so IDictionary.Keys can't back it; snapshot into a pure Set. */
 public fun <K, V> clrMapKeys(m: Map<K, V>): Set<K> {
+    val e = (m as ClrRawDictionary).GetEnumerator()
     val out = ArrayList<K>()
-    for (k in m.clrMapNativeKeys()) out.add(k)
+    @Suppress("UNCHECKED_CAST")
+    while (e.MoveNext()) out.add(e.key() as K)
     return ClrMapSnapshotSet(out)
 }
 
 /** `Map.values: Collection<V>` — an ArrayList (BCL List) IS a Collection (IReadOnlyCollection) — snapshot. */
 public fun <K, V> clrMapValues(m: Map<K, V>): Collection<V> {
+    val e = (m as ClrRawDictionary).GetEnumerator()
     val out = ArrayList<V>()
-    for (k in m.clrMapNativeKeys()) out.add(m.clrMapItem(k))
+    @Suppress("UNCHECKED_CAST")
+    while (e.MoveNext()) out.add(e.value() as V)
     return out
 }
 
 /** `Map.entries: Set<Map.Entry<K,V>>` — a pure-Set snapshot of LIVE entries (value reads go through the map). The
  *  element impl is ClrMutableMapEntry (implements MutableEntry TOO), so an entry surfaced through either the Map or
- *  the MutableMap view destructures/casts fine — at runtime every aliased map IS an IDictionary. */
+ *  the MutableMap view destructures/casts fine — at runtime every aliased map IS an IDictionary. The entry KEYS are
+ *  snapshotted off the non-generic enumerator (covariance-safe); each entry's value read also goes non-generic. */
 public fun <K, V> clrMapEntries(m: Map<K, V>): Set<Map.Entry<K, V>> {
-    val mm = m as MutableMap<K, V>   // representation cast: Map and MutableMap both lower to IDictionary<K,V>
+    val d = m as ClrRawDictionary   // non-generic: a generic `m as MutableMap<K,V>` would castclass to the invariant
+    val e = d.GetEnumerator()       // IDictionary<K,IReadOnlyList<V>> and FAIL on a groupBy Dictionary<K,IList<V>>.
     val out = ArrayList<Map.Entry<K, V>>()
-    for (k in mm.clrMapNativeKeys()) out.add(ClrMutableMapEntry(mm, k))
+    @Suppress("UNCHECKED_CAST")
+    while (e.MoveNext()) out.add(ClrMutableMapEntry(d, e.key() as K))
     return ClrMapSnapshotSet(out)
 }
 
@@ -163,20 +205,29 @@ public fun <K, V> clrMapMerge(m: MutableMap<K, V>, key: K, value: V, remappingFu
  * LIVE (value reads and setValue go through the backing map); the set itself is a snapshot.
  */
 public fun <K, V> clrMapMutableEntries(m: MutableMap<K, V>): MutableSet<MutableMap.MutableEntry<K, V>> {
+    val d = m as ClrRawDictionary
+    val e = d.GetEnumerator()
     val out = ArrayList<MutableMap.MutableEntry<K, V>>()
-    for (k in m.clrMapNativeKeys()) out.add(ClrMutableMapEntry(m, k))
+    @Suppress("UNCHECKED_CAST")
+    while (e.MoveNext()) out.add(ClrMutableMapEntry(d, e.key() as K))
     return (out as Any) as MutableSet<MutableMap.MutableEntry<K, V>>
 }
 
 // ---- pure-Kotlin backing types --------------------------------------------------------------------------------------
 
-/** A LIVE mutable entry over the backing map: value reads and setValue dispatch through the raw item intrinsics. */
-private class ClrMutableMapEntry<K, V>(private val map: MutableMap<K, V>, override val key: K) :
+/** A LIVE mutable entry over the backing map, held as the NON-GENERIC IDictionary (raw): value reads (get_Item) and
+ *  setValue (set_Item) dispatch covariance-safely, so an entry surfaced from a groupBy result
+ *  (`Dictionary<K,IList<V>>` read as `IDictionary<K,IReadOnlyList<V>>`) never hits the generic value-type invariance —
+ *  a generic `MutableMap<K,V>`-typed field would already have castclass-failed at construction. Key/value narrow with
+ *  `as K`/`as V` (unbox.any for value types). */
+private class ClrMutableMapEntry<K, V>(private val raw: ClrRawDictionary, override val key: K) :
     MutableMap.MutableEntry<K, V> {
-    override val value: V get() = map.clrMapItem(key)
+    @Suppress("UNCHECKED_CAST")
+    override val value: V get() = raw.rawGet(key) as V
     override fun setValue(newValue: V): V {
-        val old = map.clrMapItem(key)
-        map.clrMapSetItem(key, newValue)
+        @Suppress("UNCHECKED_CAST")
+        val old = raw.rawGet(key) as V
+        raw.rawSet(key, newValue)
         return old
     }
     override fun toString(): String = key.toString() + "=" + value.toString()
