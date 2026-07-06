@@ -392,7 +392,7 @@ static class FacadeGen
                     var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
                     if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
                     if (!iseen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-                    var iret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + (k.suspend ? SuspendRetSuffix(m) : RetSuffix(m));
+                    var iret = k.suspend ? SuspendRetToken(m.ReturnType, t) + SuspendRetSuffix(m) : RetTypeSfx(m, t);
                     var toks = new List<string> { "fun", m.Name, iret, FunModifier("abstract", k) };
                     var mclr = ClrAttrName(m);   // ref/runtime split: member substitution for a method (get -> get_Item)
                     if (mclr != null) toks.Add("clr:" + mclr);
@@ -513,7 +513,7 @@ static class FacadeGen
                     if (Covered(f) || !Supported(f.FieldType) || !seen.Add("prop:" + f.Name)) continue;
                     // `val`/`var ... private set` carries [KotlinReadOnly] -> `ro` (not publicly settable); initonly too.
                     var rw = (f.IsInitOnly || IsKotlinReadOnly(f)) ? "ro" : "rw";
-                    sb.Append($"prop {f.Name} {Map(f.FieldType, t)} {rw} final\n");
+                    sb.Append($"prop {f.Name} {FieldType(f, t)} {rw} final\n");
                 }
                 foreach (var g in t.GetMethods(IM))
                 {
@@ -524,7 +524,7 @@ static class FacadeGen
                     var setter = t.GetMethods(IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn && m.GetParameters().Length == 1 && Vis(m) != null);
                     accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
                     var pv = Vis(g).Value;
-                    sb.Append($"prop {pn} {MapRet(g.ReturnType, t)}{RetSuffix(g)} {(setter != null ? "rw" : "ro")} {Modifier(pv, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
+                    sb.Append($"prop {pn} {RetTypeSfx(g, t)} {(setter != null ? "rw" : "ro")} {Modifier(pv, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
                 }
                 // MEMBER extension properties (`class C { val T.p get() }`): their accessors are `get_X(__self)` /
                 // `set_X(__self, v)` member methods (a leading `__self` extension receiver, so the 0-param loop above
@@ -540,7 +540,7 @@ static class FacadeGen
                     var setter = t.GetMethods(IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn
                         && m.GetParameters().Length == 2 && m.GetParameters()[0].Name == "__self" && Vis(m) != null);
                     accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
-                    sb.Append($"memextprop {pn} {MapRet(g.ReturnType, t)}{RetSuffix(g)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)} {Modifier(prot.Value, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
+                    sb.Append($"memextprop {pn} {RetTypeSfx(g, t)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)} {Modifier(prot.Value, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
                 }
                 // Events (I4). `event <Name> <handlerRetKType> <handlerParams...>` from the delegate's Invoke.
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
@@ -572,7 +572,7 @@ static class FacadeGen
                 // synthesized companion and the backend emits .NET static calls. (Feedback: WinUI Application.Start.)
                 foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Static))
                     if (Supported(f.FieldType) && seen.Add("sfield:" + f.Name))
-                        sb.Append($"sprop {f.Name} {Map(f.FieldType, t)} ro\n");
+                        sb.Append($"sprop {f.Name} {FieldType(f, t)} ro\n");
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
                     if (p.GetIndexParameters().Length == 0 && Supported(p.PropertyType) && p.CanRead && seen.Add("sprop:" + p.Name))
                         sb.Append($"sprop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p)} {(p.CanWrite ? "rw" : "ro")}\n");
@@ -616,7 +616,7 @@ static class FacadeGen
                 foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Static))
                 {
                     if (!Supported(f.FieldType) || !seen.Add("sfield:" + f.Name)) continue;
-                    sb.Append($"prop {f.Name} {Map(f.FieldType, t)} ro final\n");
+                    sb.Append($"prop {f.Name} {FieldType(f, t)} ro final\n");
                 }
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
                 {
@@ -658,7 +658,7 @@ static class FacadeGen
                 // `fun <Name> <ret> <prot-?open|final|abstract>[,infix][,operator][,suspend] [<TypeParam>...] [<param>:<type>]*`
                 // — the modifier stays a single whitespace-free token; bare trailing tokens (no `:`) are type params.
                 var virt = m.IsVirtual && !m.IsFinal;
-                var retTok = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + (k.suspend ? SuspendRetSuffix(m) : RetSuffix(m));
+                var retTok = k.suspend ? SuspendRetToken(m.ReturnType, t) + SuspendRetSuffix(m) : RetTypeSfx(m, t);
                 // A MEMBER extension function (`class C { fun T.f() }`) -> first param `__self`; `,ext` so the injector
                 // restores the extension receiver. A C#-origin `[Extension]` static method is ALSO an extension (its first
                 // param — any name — is the receiver). `,inline` carries the spliceable body (composes with suspend/generic).
@@ -1147,6 +1147,132 @@ static class FacadeGen
         return null;
     }
 
+    // H2: the [KotlinSuspendFunctionType(shape)] attribute stamped by ilemit on a `suspend (…) -> T` function-type
+    // POSITION (param / return / field / property). bir2cir erases the CLR signature slot to `object` (a suspend-lambda
+    // VALUE is a Continuation state-machine object, not a Func), so the suspend ORIGIN + arg/return SHAPE would be lost
+    // on re-consumption. The attribute carries the RAW pre-erasure BIR token `sfunc:<ret>:<arg,arg>` (kotc's emit
+    // vocabulary). SuspendFnMeta translates it into the injector's META grammar `sfunc:[ret,arg,arg]` (bracketed) that
+    // ClrTypeInjection.coneOf restores to `kotlin.coroutines.SuspendFunctionN` — the consumer half of the round-trip.
+    const string KSuspendFnAttr = "DotKt.Runtime.CompilerServices.KotlinSuspendFunctionTypeAttribute";
+    static string SuspendFnMeta(IList<CustomAttributeData> attrs)
+    {
+        string shape = null;
+        try
+        {
+            foreach (var cad in attrs)
+                if (cad.AttributeType.FullName == KSuspendFnAttr && cad.ConstructorArguments.Count == 1)
+                { shape = cad.ConstructorArguments[0].Value as string; break; }
+        }
+        catch { }
+        if (shape == null || !shape.StartsWith("sfunc:", StringComparison.Ordinal)) return null;
+        var body = shape.Substring("sfunc:".Length);
+        // Split RET from ARGS by skipping exactly one full BIR token (so a stacked-prefix ret like `nullable:gp:R` isn't
+        // truncated) — the ret/args separator is the `:` immediately after it; the rest is a bracket-aware comma list.
+        int end = BirSkipTypeToken(body, 0);
+        var retTok = body.Substring(0, end);
+        var argsPart = end < body.Length && body[end] == ':' ? body.Substring(end + 1) : "";
+        var metaRet = BirTokenToMeta(retTok);
+        if (metaRet == null) return null;   // unconvertible shape -> caller keeps the plain erased type (suspend lost, safe)
+        var metaArgs = new List<string>();
+        foreach (var a in BirSplitTopLevel(argsPart))
+        {
+            if (a.Length == 0) continue;
+            var m = BirTokenToMeta(a);
+            if (m == null) return null;
+            metaArgs.Add(m);
+        }
+        return "sfunc:[" + string.Join(",", new[] { metaRet }.Concat(metaArgs)) + "]";
+    }
+
+    // Advance past exactly ONE BIR type token at `i`; return the index just after it (a top-level ':' / ',' / ']' / end).
+    // Ported from ilemit's SkipTypeToken — the canonical structural parse of kotc's BIR type grammar (no resolution).
+    static int BirSkipTypeToken(string s, int i)
+    {
+        static bool At(string s, int i, string pre) => i + pre.Length <= s.Length && s.AsSpan(i, pre.Length).SequenceEqual(pre);
+        foreach (var pre in new[] { "array:", "nullable:", "byref:" })
+            if (At(s, i, pre)) return BirSkipTypeToken(s, i + pre.Length);
+        if (At(s, i, "func:") || At(s, i, "sfunc:"))
+        {
+            i = BirSkipTypeToken(s, i + (At(s, i, "sfunc:") ? 6 : 5));      // ret
+            if (i < s.Length && s[i] == ':') i++;                          // ret/args separator
+            if (i < s.Length && s[i] != ':' && s[i] != ',' && s[i] != ']') // non-empty args -> comma-list
+            {
+                i = BirSkipTypeToken(s, i);
+                while (i < s.Length && s[i] == ',') i = BirSkipTypeToken(s, i + 1);
+            }
+            return i;
+        }
+        foreach (var pre in new[] { "clrg:", "clr:", "gp:" })
+            if (At(s, i, pre)) { i += pre.Length; break; }
+        int depth = 0;
+        for (; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '[') depth++;
+            else if (c == ']') { if (depth == 0) break; depth--; }
+            else if (depth == 0 && (c == ':' || c == ',')) break;
+        }
+        return i;
+    }
+
+    // Split a BIR comma-list at bracket-depth 0 (a compound arg keeps its own `[...]` intact).
+    static IEnumerable<string> BirSplitTopLevel(string s)
+    {
+        if (string.IsNullOrEmpty(s)) yield break;
+        int depth = 0, start = 0;
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '[') depth++;
+            else if (s[i] == ']') depth--;
+            else if (s[i] == ',' && depth == 0) { yield return s.Substring(start, i - start); start = i + 1; }
+        }
+        yield return s.Substring(start);
+    }
+
+    // Translate a single BIR type token (kotc's emit vocabulary) into a facadegen META token (the vocabulary
+    // ClrTypeInjection.coneOf consumes). Returns null when not confidently translatable (brackets/generics/user/
+    // referenced types) — the whole suspend-fn-type shape then degrades to the plain erased slot (suspend lost, safe).
+    static string BirTokenToMeta(string tok)
+    {
+        if (string.IsNullOrEmpty(tok)) return null;
+        if (tok.StartsWith("nullable:", StringComparison.Ordinal))
+        {
+            var inner = BirTokenToMeta(tok.Substring("nullable:".Length));
+            return inner == null ? null : inner + "?";
+        }
+        if (tok.StartsWith("gp:", StringComparison.Ordinal))
+        {
+            var name = tok.Substring(3);                       // a type-variable name -> the bare meta name coneOf binds
+            return IsIdent(name) ? name : null;
+        }
+        return tok switch
+        {
+            "kotlin.Int" or "int" => "Int",
+            "kotlin.Long" or "long" => "Long",
+            "kotlin.Short" or "short" => "Short",
+            "kotlin.Byte" or "sbyte" => "Byte",
+            "kotlin.Boolean" or "bool" => "Boolean",
+            "kotlin.Char" or "char" => "Char",
+            "kotlin.Double" or "double" => "Double",
+            "kotlin.Float" or "float" => "Float",
+            "kotlin.String" or "string" => "String",
+            "kotlin.Unit" or "void" => "Unit",
+            "kotlin.Any" or "object" => "Any?",
+            _ => null,
+        };
+    }
+
+    // H2: a FIELD typed `suspend (…) -> T` -> restore the suspend function type from [KotlinSuspendFunctionType],
+    // else the plain mapped field type.
+    static string FieldType(FieldInfo f, Type self) => SuspendFnMeta(f.GetCustomAttributesData()) ?? Map(f.FieldType, self);
+    // H2: a non-suspend method / property getter that RETURNS a `suspend (…) -> T` value -> restore it from the return
+    // parameter's [KotlinSuspendFunctionType], else the plain mapped return type. (A `suspend fun` itself returns
+    // Task/Task<T> and is restored via SuspendRetToken — a different path, untouched.)
+    static string RetType(MethodInfo m, Type self) => SuspendFnMeta(CustomAttributeData.GetCustomAttributes(m.ReturnParameter)) ?? MapRet(m.ReturnType, self);
+    // As RetType, but folds the nullability suffix for callers that append RetSuffix — a restored suspend function type
+    // carries its own shape and takes no `?`/`!` suffix (the erased `object` slot's NRT is meaningless for it).
+    static string RetTypeSfx(MethodInfo m, Type self) => SuspendFnMeta(CustomAttributeData.GetCustomAttributes(m.ReturnParameter)) ?? (MapRet(m.ReturnType, self) + RetSuffix(m));
+
     // A `suspend fun` is emitted returning Task / Task<T>; restore the Kotlin result type and gate Supported on it.
     static bool IsTask1(Type t) => t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Threading.Tasks.Task`1";
     static bool SuspendRetSupported(Type ret) => IsTask1(ret) ? Supported(ret.GetGenericArguments()[0]) : ret.FullName == "System.Threading.Tasks.Task";
@@ -1200,7 +1326,7 @@ static class FacadeGen
             var setter = t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
                 .FirstOrDefault(s => !s.IsSpecialName && s.Name == "set_" + pn && s.GetParameters().Length == 2 && s.GetParameters()[0].Name == "__self");
             extPropMembers.Add(g.Name); if (setter != null) extPropMembers.Add(setter.Name);
-            sb.Append($"tlextprop {pn} {MapRet(g.ReturnType, t)}{RetSuffix(g)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)}\n");
+            sb.Append($"tlextprop {pn} {RetTypeSfx(g, t)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)}\n");
         }
         foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
@@ -1212,7 +1338,7 @@ static class FacadeGen
             var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
             if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
             if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-            var ret = (k.suspend ? SuspendRetToken(m.ReturnType, t) : MapRet(m.ReturnType, t)) + (k.suspend ? SuspendRetSuffix(m) : RetSuffix(m));
+            var ret = k.suspend ? SuspendRetToken(m.ReturnType, t) + SuspendRetSuffix(m) : RetTypeSfx(m, t);
             // `,inline` tells the injector to mark the fn `inline` (so a non-local return through the lambda is accepted);
             // the body itself stays in the assembly's [KotlinInline] and is read by the consumer's ilemit at splice time.
             // An extension fun's receiver is emitted as the first param `__self` (DotKt convention) -> mark `,ext` so the
@@ -1268,7 +1394,12 @@ static class FacadeGen
     {
         // The nullability suffix (`?` nullable / `!` platform) rides the END of the type token (the injector strips it),
         // read uniformly from .NET NRT metadata (DotKt emits it for its own output too) by RefSuffix.
-        var nul = RefSuffix(p.ParameterType, CustomAttributeData.GetCustomAttributes(p), p.Member as MemberInfo);
+        var attrs = CustomAttributeData.GetCustomAttributes(p);
+        // H2: a `suspend (…) -> T` parameter — bir2cir erased the CLR slot to `object`; restore the suspend function
+        // type from the carried [KotlinSuspendFunctionType] shape so a passed lambda re-binds as a SUSPEND lambda.
+        var sfn = SuspendFnMeta(attrs);
+        if (sfn != null) return $"{MetaParamName(p, i)}:{sfn}";
+        var nul = RefSuffix(p.ParameterType, attrs, p.Member as MemberInfo);
         if (p.ParameterType.IsArray && IsParamArray(p))
             return $"{MetaParamName(p, i)}:vararg:{Map(p.ParameterType.GetElementType(), self)}{nul}";
         var t = Map(p.ParameterType, self);
