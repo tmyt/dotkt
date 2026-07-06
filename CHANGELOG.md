@@ -70,10 +70,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   STORED in a top-level/object property or an instance field — reached ilemit un-lowered and crashed with
   `NotSupportedException: expr suspendLambdaNew`. It now walks `fields[].init` (file-level and type-level)
   too, lowering a value-position `suspendLambdaNew` to a `new <SuspendLambda SM>` value in ANY position.
-  Return + property + field are proven cross-module by the new `roundtrip-suspendfn-ret` section. (One
-  orthogonal residual remains: a suspend lambda that captures the enclosing instance `this`/`__outer`
-  mis-drives — a PRE-EXISTING capture bug that fails identically in the already-supported call-argument
-  position, not introduced by the value-position lowering.)
+  Return + property + field are proven cross-module by the new `roundtrip-suspendfn-ret` section.
+- **A suspend lambda that captures its ENCLOSING instance now resolves the capture correctly (#34a).**
+  When a suspend lambda closes over its enclosing instance — `class Box(val n:Int){ fun make(): suspend
+  ()->Int = { addA(n, 5) } }` — bir2cir's `SuspendLambdaLowering` captures that instance as the state
+  machine's `__outer` field, but the `invokeSuspend` body rewrite left a bare `this` (kotc emits the
+  member read `n` as `this.get_n()`) pointing at the SM instance itself, so `this.n` read garbage
+  (a non-deterministic value, not 42). `SuspendColdLowering` now redirects a lambda-body `this` to read
+  the captured `this.__outer` field (a suspend lambda has no `this` of its own — its receiver, if any,
+  rides a create()-set param field — so every bare `this` denotes the captured enclosing instance;
+  synthesized SM-self nodes use the `smSelf` marker and are unaffected). Correct now in every
+  construction position — value / call-argument / via a member method / object receiver / nested lambda —
+  while a local-capture lambda stays correct. Gated by the new `cases/il-suspendcapture` in `verify-il.sh`.
 
 ### Language & correctness
 
