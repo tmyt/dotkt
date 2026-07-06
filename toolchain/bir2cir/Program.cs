@@ -2686,17 +2686,83 @@ static class CharSeqStringLowering
     }
 
     static HashSet<string> _localFns = new(StringComparer.Ordinal);
+    // Lambda/method names used as a `delegateNew` target whose funcType carries a `<>dotkt_CharSequence` PARAM position.
+    // Such a method is a delegate body invoked by a (stdlib or app-local) higher-order caller, which passes a GENUINE
+    // `<>dotkt_CharSequence` value into that slot — e.g. `CharSequence.windowed(size){…}` calls `transform(subSequence(…))`
+    // and `subSequence` returns a real `<>dotkt_StringCharSequence`, NOT a `System.String`. CharSeqStringLowering never
+    // lowers a `funcType` token (it must keep matching the stdlib's `Func<CharSequence,R>` generic sig), so if we ALSO
+    // collapsed the target lambda's own CharSequence param to `string` its member reads would be emitted as
+    // `System.String.get_Length/get_Chars` and run against a non-String object -> garbage (a value-type `R` transform
+    // reads pointer bits as an int; a reference-type `R` masked it because `toString()` is a virtual objMethod). So the
+    // delegate contract requires the target's param to stay the (un-lowered) synthetic — exempt the whole subtree.
+    static HashSet<string> _delegateTargets = new(StringComparer.Ordinal);
 
     public static JsonNode Apply(JsonNode root, HashSet<string> localTopLevelFns)
     {
         _localFns = localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal);
+        _delegateTargets = CollectCharSeqDelegateTargets(root);
         return Walk(root, new Env());
+    }
+
+    // Collect the `delegateNew`/`delegateInvoke` target method names whose funcType names `<>dotkt_CharSequence` in a
+    // PARAM position (i.e. an argument slot the caller supplies — `func:<ret>:<arg0>,<arg1>,…`). The funcType's leading
+    // segment is the RETURN (a CharSequence return is handled by the return-coercion path, not this exemption).
+    static HashSet<string> CollectCharSeqDelegateTargets(JsonNode root)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        void Scan(JsonNode n)
+        {
+            if (n is JsonObject o)
+            {
+                var k = Str(o["k"]);
+                if (k is "delegateNew" or "delegateInvoke"
+                    && Str(o["method"]) is string mn
+                    && Str(o["funcType"]) is string ft
+                    && FuncTypeHasCharSeqParam(ft))
+                    set.Add(mn);
+                foreach (var kv in o) if (kv.Value != null) Scan(kv.Value);
+            }
+            else if (n is JsonArray a) foreach (var it in a) if (it != null) Scan(it);
+        }
+        Scan(root);
+        return set;
+    }
+
+    // `func:<ret>:<arg0>,<arg1>,…` — true iff any ARG segment (everything after the first, ret, segment) is CharSequence.
+    static bool FuncTypeHasCharSeqParam(string ft)
+    {
+        if (ft == null || !ft.StartsWith("func:", StringComparison.Ordinal)) return false;
+        var rest = ft["func:".Length..];
+        // Split off the return type (first top-level `:`-delimited segment), then the remaining args are comma-separated.
+        var ci = TopLevelColon(rest);
+        if (ci < 0) return false;
+        var argsPart = rest[(ci + 1)..];
+        return SplitTopLevel(argsPart).Any(IsCharSeq);
+    }
+
+    // Index of the first `:` not nested inside `[`/`<`/`(` brackets, or -1.
+    static int TopLevelColon(string s)
+    {
+        int depth = 0;
+        for (var i = 0; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (c is '[' or '<' or '(') depth++;
+            else if (c is ']' or '>' or ')') depth--;
+            else if (c == ':' && depth == 0) return i;
+        }
+        return -1;
     }
 
     static JsonNode Walk(JsonNode node, Env env)
     {
         if (node is JsonObject obj)
         {
+            // A delegate-target lambda keeps its signature matching the (un-lowered) funcType — do not collapse its
+            // CharSequence params/reads to String. Leave the whole subtree verbatim (its member reads stay virtual
+            // interface calls that resolve on the real <>dotkt_CharSequence the caller passes in).
+            if (obj["k"] == null && Str(obj["name"]) is string dn && _delegateTargets.Contains(dn))
+                return obj.DeepClone();
             var childEnv = env.WithDecl(obj);
             var copy = new JsonObject();
             foreach (var kv in obj)

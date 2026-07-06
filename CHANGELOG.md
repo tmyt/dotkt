@@ -57,6 +57,19 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **`CharSequence.windowed(size){ value-type R }` no longer garbles its elements (#25 / W4-B).**
+  `"abcd".windowed(2){ it.length }` returned pointer garbage instead of `[2, 2, 2]` (a reference-type `R`
+  like `{ it.toString() }` was fine). Root: the pure-app `CharSequence`→`System.String` lowering
+  (`CharSeqStringLowering`, bir2cir) collapsed the transform LAMBDA's `it: CharSequence` param to `string`
+  and its member reads to `System.String.get_Length`/`get_Chars` — but that lambda is a `delegateNew` target
+  whose `funcType` KEEPS the synthetic `<>dotkt_CharSequence` (it must match the stdlib's `Func<CharSequence,R>`
+  generic sig), and the stdlib `windowed` passes a genuine `<>dotkt_CharSequence` (its `subSequence` result)
+  into the delegate. Reading `String.Length` off a non-String object then reinterpreted pointer bits as an
+  `Int`; a reference `R` masked it because `toString()` is a virtual `objMethod`. Fix: exempt any lambda used
+  as a `delegateNew`/`delegateInvoke` target with a `<>dotkt_CharSequence` param from the lowering, so its
+  param stays synthetic and its member reads stay virtual interface calls. Regression case `il-cwindowedv`
+  (JVM-oracle PURE).
+
 - **`generateSequence(seed){ next }` now drives correctly for value AND reference elements (C13a).**
   Two ilemit codegen bugs in the cold-sequence path are fixed: (1) a generic capturing closure passed as a
   DELEGATE argument (the `{ seed }` closure into `GeneratorSequence`'s `Function0` ctor param) had its

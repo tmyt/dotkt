@@ -375,6 +375,10 @@ il_check chunk Chunk "$ROOT/cases/il-chunk" "$(printf '3,7,5\n3\n1-2-3 4-5\na,b,
 # it to a valueBlock(goto/break + unreachable throw). eachcount: Grouping.eachCount reads a value-nullable smart-cast
 # (`Int?`) in arithmetic (`count + 1`) — the C1 value-slot-unwrap class, locked here as a regression guard.
 il_check cwindowed CWindowed "$ROOT/cases/il-cwindowed" "$(printf '[ab, bc, cd]\n[ab, cd]\n[abc, bcd, cde, de, e]\n[ab, de]\n[ab, bc, cd]')"
+# cwindowedv: CharSequence.windowed with a VALUE-TYPE transform result (Int/Char). The transform lambda is a
+# delegateNew target whose funcType keeps the synthetic <>dotkt_CharSequence, so its `it` param must stay synthetic
+# (not collapse to System.String) — the stdlib passes a real <>dotkt_CharSequence (subSequence's result) in. W4-B guard.
+il_check cwindowedv CWindowedV "$ROOT/cases/il-cwindowedv" "$(printf '[2, 2, 2]\n[a, b, c]\n[3, 3, 3]\n[ab, bc, cd]')"
 il_check eachcount EachCount "$ROOT/cases/il-eachcount" "$(printf '{a=2, b=1}\n{M=1, i=4, s=4, p=2}\n{1=2, 2=2, 0=2}')"
 il_check collmore CollMore "$ROOT/cases/il-collmore" "$(printf '20,40\n1,10,2,20,3,30,4,40,5,50\n1,2,3,4,5\n15\n14\n-1\n3\n3')"
 # nestedstr: nested collection/map stringification (final-review N7). A nested collection element used to render .NET's
