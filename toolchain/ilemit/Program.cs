@@ -3985,8 +3985,16 @@ sealed partial class Emitter
             // resolution" — so a plain `kotlin.Int`/`Foo`/`kotlin.Any` reference resolves to its emitted TypeBuilder.
             // A bare constructed-generic `Name[args]` whose open name isn't emitted here (e.g. the `ownerType` of a
             // referenced `kotlin.Result[int]` member call) resolves as a referenced generic (GenericType arity-suffixes).
+            // A `<>dotkt_*` canonical synthetic (`<>dotkt_CharSequence`) not emitted in THIS assembly is REFERENCED from
+            // the stdlib dll — dot-less, but a real external type — so resolve it by reflection, don't fall to object.
+            // Before the TYPE flip this rode the `@<>dotkt_X` emitted-type-hint branch; kotc/bir2cir now emit the bare
+            // FQN, so a dot-less synthetic that ResolvesExternally must route to ResolveType here too (mirrors the
+            // externalSynthIface path at the interface-bridge loop). Without this an external synthetic interface
+            // resolved to `object`, and the adapter's AddInterfaceImplementation(object) -> TypeLoadException.
             _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('[')) ? GenericType(t)
-                 : (t != null && t.Contains('.')) ? ResolveType(t) : typeof(object)),
+                 : (t != null && t.Contains('.')) ? ResolveType(t)
+                 : (t != null && t.StartsWith("<>dotkt_", StringComparison.Ordinal) && ResolvesExternally(t)) ? ResolveType(t)
+                 : typeof(object)),
         };
     }
 
