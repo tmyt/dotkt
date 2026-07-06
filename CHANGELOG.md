@@ -424,6 +424,17 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **BIR/CIR freeze — kotc producer flip fix: lifted-anon captured type-params (#37 m1).** A hoisted
+  `object : Sequence<T>` (an object literal inside a `fun <T>`) flattens to a standalone generic class,
+  but under the structured-`Type` producer flip its members referenced the captured `T` as the ENCLOSING
+  function's `{t:tv,scope:"method",i:0}` — unresolvable once the anon is a class of its own (it declared
+  `typeParams:["T"]` yet no member pointed at that slot). `BirEmitter.typeDef` now hoists the capture
+  scan+install ABOVE member rendering: it collects the captured `IrTypeParameter`s and installs a
+  `typeArgSubst` remapping each onto THIS class's own generic space (`scope:"type"`, flattened index after
+  the anon's own params), so member bodies render resolvable `{t:tv,scope:"type",i}`. The construction
+  (`new`) site instantiates the flattened type with those params rendered in the enclosing scope, and its
+  leftover legacy `<>dotkt_objN[gp:T]` string token is flipped to a structured `{t:fqn,…,args:[{t:tv,…}]}`.
+
 - **BIR/CIR freeze — the shared `TypeNode` model (#37 phase 1b, additive).** The frozen Type contract
   (`docs/bir-cir-spec.md` §1) is now concrete and compilable in BOTH languages, ahead of wiring the
   emit/consume paths to it. A single sealed/record hierarchy — `fqn`/`tv`/`fn`/`nullable`/`array`/`byref`
