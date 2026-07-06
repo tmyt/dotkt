@@ -527,7 +527,16 @@ sealed partial class Emitter
                             try { if (imDef.TryGetProperty("ret", out var rt)) ifaceRet = MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)); } catch { }
                             // Bridge only on a genuine type NARROWING (different type name) — not two reference-different
                             // instantiations of the SAME generic (Iterator<Object> vs Iterator<Object>), which match fine.
-                            if (ifaceRet != null && bodyMethod.ReturnType != ifaceRet &&
+                            // A GENERIC body method (`fold<R>`) directly overrides the generic interface method (same
+                            // arity+signature) — never a covariant bridge: the bridge is NON-generic, so a non-generic
+                            // methodimpl body for a generic declaration fails the CLR's signature-match ("Signature of the
+                            // body and declaration in a method implementation do not match" -> TypeLoadException). The
+                            // spurious mismatch here is only because ifaceRet (a method-scope Tv `!!R`) resolves to
+                            // `object` in this wiring context (ResolveTv has no method params in scope), NOT a real
+                            // narrowing. Detect a generic MethodBuilder via _methodTypeParams (IsGenericMethodDefinition
+                            // is unreliable on an un-baked builder).
+                            var bodyIsGeneric = bodyMethod is MethodBuilder gmb && _methodTypeParams.ContainsKey(gmb);
+                            if (!bodyIsGeneric && ifaceRet != null && bodyMethod.ReturnType != ifaceRet &&
                                 ((bodyMethod.ReturnType.Name != ifaceRet.Name && !bodyMethod.ReturnType.IsValueType && !ifaceRet.IsValueType)   // covariant reference narrowing
                                  || (ifaceRet == typeof(void) && bodyMethod.ReturnType != typeof(void))))   // a BCL slot that DROPS the Kotlin return (MutableCollection.add():Boolean -> ICollection.Add():void, set/removeAt:E -> void)
                                 EmitCovariantBridge(ti, imName, imDef, specArgs, bodyMethod, ifaceMethod, ifaceRet);
