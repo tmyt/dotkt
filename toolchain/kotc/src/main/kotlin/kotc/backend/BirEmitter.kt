@@ -1,5 +1,6 @@
 package kotc.backend
 
+import org.jetbrains.kotlin.backend.common.collectTailRecursionCalls
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
@@ -1407,7 +1408,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Promote captured-mutated `var`s to ref-cells; accumulate (a nested closure inherits the enclosing set).
 		val savedRefCells = refCellVars
 		refCellVars = refCellVars + computeRefCells(fn)
-		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		// `tailrec` tail-call optimization (§2b): if this is a `tailrec` fn with an actual self-tail-call, install a
+		// TailrecCtx so each tail call emits a back-jump (tailrecJump) instead of recursing, and prefix the body with
+		// the entry label the jumps target. The frontend already validated the tail positions; we reuse its own
+		// collectTailRecursionCalls. Restored after the body so a nested/sibling fn is unaffected.
+		val savedTailrec = tailrecCtx
+		val tailrecStart: Int? = if (fn.isTailrec) {
+			val tc = collectTailRecursionCalls(fn) { false }.ir
+			if (tc.isNotEmpty()) cfgFresh().also { tailrecCtx = TailrecCtx(tc, it, fn) } else null
+		} else null
+		val bodyStmts = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		tailrecCtx = savedTailrec
+		val body = if (tailrecStart != null) """{"k":"label","id":$tailrecStart}${if (bodyStmts.isNotEmpty()) ",$bodyStmts" else ""}""" else bodyStmts
 		refCellVars = savedRefCells
 		if (extRecv != null) selfSubst.remove(extRecv)
 		val selfParam = extRecv?.let { """{"name":"__self","type":${str(birType(it.type))}}""" }
@@ -1706,6 +1718,38 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  never falls through to the surrounding merge — so the merge keeps only the live branch's type. */
 	internal fun breakContinueExpr(xfer: String): String =
 		"""{"k":"valueBlock","stmts":[$xfer],"result":{"k":"throwExpr","value":{"k":"const","type":"kotlin.Unit","value":null}}}"""
+
+	/** Active `tailrec` self-tail-call rewrite for the function currently being emitted. `calls` = the set of
+	 *  self-calls the frontend validated as tail-recursive (identity-keyed); `startLabel` = the CFG label at the
+	 *  method's entry that a tail call jumps back to (see [tailrecJump]); `fn` = the function whose params are the
+	 *  loop variables. Null unless inside a `tailrec` fn body that actually has a tail self-call. */
+	internal class TailrecCtx(val calls: Set<IrCall>, val startLabel: Int, val fn: IrSimpleFunction)
+	internal var tailrecCtx: TailrecCtx? = null
+
+	/** The standard tail-call optimization: a self-tail-call in a `tailrec` fn becomes a back-jump to the method's
+	 *  entry after reassigning the parameters to the call's arguments (Kotlin/JVM's own `tailrec` lowering, which our
+	 *  pipeline skips because it runs Fir2Ir straight into our backend, no JVM lowerings — so without this deep tail
+	 *  recursion overflows the CLR stack; §2b). The call sits in an EXPRESSION slot (`return f(...)`, or a `when`/`if`
+	 *  branch feeding the return), so we emit a `valueBlock`: evaluate every argument into a temp FIRST (so a later arg
+	 *  reading an earlier param — `f(n-1, acc+n)` — is not corrupted by the reassignment), reassign each param (a
+	 *  `setLocal` on a param name emits `starg`), then `goto` the entry label. The block's result is an unreachable
+	 *  `throwExpr` (the jump already left), mirroring [breakContinueExpr] — the surrounding `return` never executes. */
+	internal fun tailrecJump(call: IrCall, ctx: TailrecCtx): String {
+		data class Reassign(val name: String, val tmp: String, val valueJson: String, val type: org.jetbrains.kotlin.ir.types.IrType)
+		val reassigns = ArrayList<Reassign>()
+		ctx.fn.parameters.forEachIndexed { i, p ->
+			// The dispatch receiver of a member `tailrec` self-call is the SAME `this` (Kotlin requires it) — never reassigned.
+			if (p.kind == IrParameterKind.DispatchReceiver) return@forEachIndexed
+			val arg = call.arguments.getOrNull(i) ?: return@forEachIndexed
+			val name = if (p.kind == IrParameterKind.ExtensionReceiver) "__self" else p.name.asString()
+			reassigns.add(Reassign(name, "__tailrec_${ctx.startLabel}_$i", coerceValue(arg, p.type), p.type))
+		}
+		val stmts = ArrayList<String>()
+		reassigns.forEach { stmts.add("""{"k":"var","name":${str(it.tmp)},"type":${str(birType(it.type))},"init":${it.valueJson}}""") }
+		reassigns.forEach { stmts.add("""{"k":"setLocal","name":${str(it.name)},"value":{"k":"local","name":${str(it.tmp)}}}""") }
+		stmts.add("""{"k":"goto","id":${ctx.startLabel}}""")
+		return """{"k":"valueBlock","stmts":[${stmts.joinToString(",")}],"result":{"k":"throwExpr","value":{"k":"const","type":"kotlin.Unit","value":null}}}"""
+	}
 
 	/** `while(c){B}` -> CFG block: `START: if(!c) goto END; B; goto START; END:`. continue->START, break->END. */
 	internal fun cfgWhile(node: IrWhileLoop): String {
@@ -3190,6 +3234,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		emitted.startsWith("""{"k":"const",""") && emitted.endsWith(""","value":null}""")
 
 	internal fun call(call: IrCall): String {
+		// A `tailrec` self-tail-call -> a back-jump to the method entry (TCO, §2b) instead of a recursive call. Matched
+		// by IR identity against the frontend-validated tail-call set installed by `method()`.
+		tailrecCtx?.let { ctx -> if (call in ctx.calls) return tailrecJump(call, ctx) }
 		val callee = call.symbol.owner
 		// NOTE: kotlin.text.MatchResult.value is a REAL interface property (realized by ClrMatchResult) — it must route
 		// through the ordinary member-call path, NOT a hardcoded System...Match.Value lowering (that leftover forced the
