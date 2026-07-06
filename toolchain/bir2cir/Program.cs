@@ -4630,7 +4630,7 @@ static class MemberCallSubstitution
             // bare-intrinsic extension: resolve by name + the first-arg's receiver key + full param count (disambiguates
             // `set`, and keeps `substring(String,Int)`@ClrIntrinsic from capturing the 3-arg `substring(String,Int,Int)`).
             if (sigParts0.Count >= 1 && refs.TryExtMemberIntrinsic(fn, RecvKeyOf(sigParts0[0]), sigParts0.Count, out var extMember))
-                return TopLevelExtensionInstance(node, refs, extMember, args0, sigParts0);
+                return TopLevelExtensionInstance(node, refs, extMember, args0, sigParts0, ctx);
             // A NON-intrinsic referenced top-level stdlib fun (getOrElse/first/...): kotc emits owner=null (it cannot
             // know the file-class — that is CLR/ref knowledge). In an APP build, attribute it to the file-class the
             // ref.dll says it lives in, so ilemit's owner-present FindMethod reflects it against the runtime stdlib —
@@ -5133,16 +5133,25 @@ static class MemberCallSubstitution
         return new TypeNode.Fqn(bcl);
     }
 
-    static JsonNode TopLevelExtensionInstance(JsonObject node, ReferenceMetadataIndex refs, string intrinsic, JsonArray args, List<string> sigParts)
+    static JsonNode TopLevelExtensionInstance(JsonObject node, ReferenceMetadataIndex refs, string intrinsic, JsonArray args, List<string> sigParts, SubstCtx ctx)
     {
         if (args.Count == 0) return null;   // no receiver -> not an extension shape; leave for FindStatic to report
-        // The extension receiver's type comes from the first `sig` token (a legacy m3 string) — parse it to the bare
-        // owner FQN and resolve the CLR owner type structurally; the receiver `type` slot must be the ClrRef-resolvable
-        // BCL Fqn (System.String / IReadOnlyList<…> / …), not the "string" shorthand the later lowering would produce.
+        // The extension receiver's CLR owner type. PREFER the receiver EXPRESSION's STRUCTURED static type (from ctx):
+        // a param/local typed `MutableCollection<T>` carries the CONCRETE tv element arg (`[tv method 0]`). The legacy
+        // sig0 string's `BareOwnerFqn` STRIPS the receiver's type-args, so a generic-collection receiver would resolve
+        // to the INVARIANT `ICollection<object>` and mis-dispatch at run (`ICollection<object>::Add` on a runtime
+        // `List<string>` -> EntryPointNotFoundException — the stdlib `clrCollNativeAdd`@ClrIntrinsic("Add") crash). The
+        // structured receiver keeps `ICollection<gp:T>`. Fall back to the sig0 bare owner when no structured Fqn is
+        // recoverable; the receiver `type` slot must be the ClrRef-resolvable BCL Fqn, not the "string" shorthand.
         var sig0 = sigParts.Count > 0 ? sigParts[0] : null;
-        var recvOwner = sig0 != null ? new TypeNode.Fqn(ReferenceMetadataIndex.BareOwnerFqn(sig0)) : null;
-        JsonNode recvType = recvOwner != null && ClrOwnerType(refs, recvOwner) is TypeNode ro
-            ? TypeJson.Write(ro)
+        TypeNode recvClr = null;
+        if (ctx != null && args[0] is JsonObject recv0 && RecvStaticType(recv0, ctx, allowExprShapes: false) is TypeNode.Fqn structRecv
+            && ClrOwnerType(refs, structRecv) is TypeNode roStruct)
+            recvClr = roStruct;
+        else if (sig0 != null && ClrOwnerType(refs, new TypeNode.Fqn(ReferenceMetadataIndex.BareOwnerFqn(sig0))) is TypeNode roBare)
+            recvClr = roBare;
+        JsonNode recvType = recvClr != null
+            ? TypeJson.Write(recvClr)
             : (sig0 != null ? JsonValue.Create(sig0) : InferArgType(args[0]));
 
         var argTypes = new JsonArray();
