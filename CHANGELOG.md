@@ -82,6 +82,30 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   synthesized SM-self nodes use the `smSelf` marker and are unaffected). Correct now in every
   construction position — value / call-argument / via a member method / object receiver / nested lambda —
   while a local-capture lambda stays correct. Gated by the new `cases/il-suspendcapture` in `verify-il.sh`.
+- **Invoking a suspend functional VALUE `b()` now lowers instead of aborting (#36, GAP 1).** A call to a
+  `suspend (…) -> T` value — a param/local/field, e.g. `suspend fun run1(b: suspend () -> Int) = b()` or
+  the higher-order `suspend fun times(n, block) { repeat(n){ block() } }` idiom — has no named
+  `<name>$dotkt_suspend` cold entry: the value at runtime is a `SuspendLambda` state machine. kotc emits
+  it as a `SuspendFunctionN.invoke()` suspend call, which bir2cir previously could not resolve to a cold
+  entry, dropped the enclosing fun from the cold-transform set, and then ABORTED at ilemit (`suspend method
+  reached codegen un-lowered`). `SuspendColdLowering` now recognizes a `SuspendFunctionN.invoke` suspend
+  call and drives it at the suspension point through the stdlib cold-invoke helper
+  `startSuspendUninterceptedOrReturn(fn, [receiver,] completion)` (= `create(completion).invokeSuspend()`) —
+  the same label/`COROUTINE_SUSPENDED`/resume machinery as a named cold call, only the "start" is the helper.
+- **A suspend member/fn that BUILDS a capturing suspend lambda and drives it now lowers (#36, GAP 2).** A
+  `class Box(val n:Int){ suspend fun go() = run1 { addA(n, 5) } }` — a suspend fun whose body constructs a
+  `this`-capturing `suspendLambdaNew` and passes it to a suspend-value-invoking fn — previously reached
+  ilemit un-lowered (a `suspendLambdaNew` in a suspend body disqualified the enclosing fun). The lambda is
+  now treated as an OPAQUE value inside the cold state machine: its own body is left for
+  `SuspendLambdaLowering`, and each capture's construction value is resolved into the SM's vocabulary
+  (`__outer` → the member SM's `$this`, a spilled local → its SM field) and threaded as `capValues`.
+- **A discarded generic `Unit`-returning call no longer strands a `kotlin.Unit` on the stack.** A generic
+  method `<T> f(): T` instantiated with `T = kotlin.Unit` (e.g. a discarded `blockOn { …Unit… }`) genuinely
+  pushes a `kotlin.Unit`, but the statement-context call carries `retType:"void"`; ilemit's `RetOr` trusted
+  that and skipped the pop, leaving the value on the stack (`ilverify ReturnVoid`). ilemit now keeps the
+  resolved method's real non-void return so the caller pops/uses it. Covered by the new
+  `cases/il-suspendvalue` in `verify-il.sh` (invoke a suspend param value, the `times`/repeat idiom, a
+  suspend value in a local, and the GAP-2 member shape — all → 42).
 
 ### Language & correctness
 
