@@ -54,6 +54,17 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   as abstract — its cold entry AND `Task<R>` bridge are emitted abstract (no body), mirroring the
   abstract-class shape — so the synthesized bridge no longer does an unverifiable non-virtual `call` on
   the abstract cold entry (`ilverify CallAbstract`). `cases/il-ifacesuspend` is now ilverify-gated.
+- **A `suspend (…) -> T` function type now round-trips across DotKt assemblies (H2).** When a public API
+  takes/returns/holds a suspend function type — `fun runBlock(block: suspend () -> Int)` — bir2cir erases
+  the CLR signature slot to `object` (a suspend-lambda value is a Continuation state machine, not a `Func`),
+  which previously destroyed the suspend origin: a re-consuming module saw a plain `Any?`/`Func` and could
+  not pass a lambda that calls a suspend function. ilemit now stamps `[KotlinSuspendFunctionType(shape)]` on
+  the param/return/property/field (carrying the pre-erasure `sfunc:<ret>:<args>` shape), facadegen reads it
+  back into an `sfunc:[ret,args]` injection-meta token, and kotc's `ClrTypeInjection` restores it to
+  `kotlin.coroutines.SuspendFunctionN` — so the parameter is once again a *suspend* function type and a
+  passed lambda re-binds as a suspend lambda. Gated by `cases`-style `roundtrip-suspendfn` in
+  `verify-roundtrip.sh`. (A suspend fn-type in a RETURN/property/field position is metadata-restored too,
+  but its END-TO-END emit is still blocked by a separate suspend-lambda-*value* codegen gap.)
 
 ### Language & correctness
 
