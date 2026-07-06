@@ -424,6 +424,20 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **BIR/CIR freeze — the shared `TypeNode` model (#37 phase 1b, additive).** The frozen Type contract
+  (`docs/bir-cir-spec.md` §1) is now concrete and compilable in BOTH languages, ahead of wiring the
+  emit/consume paths to it. A single sealed/record hierarchy — `fqn`/`tv`/`fn`/`nullable`/`array`/`byref`
+  — replaces the stringly-typed compound type tokens (`func:`/`sfunc:`/`nullable:`/`array:`/`byref:`/
+  `gp:`/`clr:`/`clrg:`/`@`/primitive-shorthand). A Type is ALWAYS a `{ "t": … }` JSON object; readers
+  dispatch on `t` and never split a string. C# side: `toolchain/bir-common/TypeNode.cs`
+  (namespace `DotKt.Bir`), `<Compile Link/>`-shared into bir2cir/ilemit/facadegen (a linked file, not a
+  project — no build-order dependency) with `TypeNode.Read(JsonElement)` / `Write(TypeNode)→JsonNode` and
+  a `BirCarrier` codec skeleton (`EncodeBody`/`DecodeBody`, `bir-json/1` = UTF8↔JSON, msgpack a future
+  `NotSupported` stub). Kotlin side: `toolchain/kotc/src/main/kotlin/kotc/bir/TypeNode.kt` with a matching
+  compact `toJson()` and a real recursive-descent `parse()`. Both carry a round-trip self-test over a
+  SHARED cross-language fixture (spec §1 examples), proving the two implementations agree byte-for-byte on
+  the JSON shape. NOT yet wired to emit/consume (phases 2-5) — all gates stay XFAIL-zero.
+
 - **ilemit: `@kotlin.clr.KotlinDefault` custom attributes now encode (#23b).** The ref-stdlib emit was
   skipping ~172 `@KotlinDefault(index, bir)` applications with `ArgumentException: Parameter count does not
   match`. Root: `BuildCab` stamps a param/method attribute during pass-3 member declaration, but a
