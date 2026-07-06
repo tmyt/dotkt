@@ -3946,7 +3946,10 @@ sealed partial class Emitter
         {
             var d = p.GetGenericTypeDefinition();
             if (d == typeof(System.Collections.Generic.IEnumerable<>)) return "ienum";
-            if (d.Name.StartsWith("Func`") || d.Name.StartsWith("Action`")) return "func:" + p.GetGenericArguments().Length;
+            // The synthetic `KFunc`/`KAction` delegates (a Kotlin function type over a TypeBuilder generic-param, which
+            // System.Func/Action can't encode) shape-match the same `func:N` as their BCL counterparts.
+            if (d.Name.StartsWith("Func`") || d.Name.StartsWith("Action`")
+                || d.Name.StartsWith("KFunc`") || d.Name.StartsWith("KAction`")) return "func:" + p.GetGenericArguments().Length;
             return "generic";
         }
         return p.Name;
@@ -4089,15 +4092,14 @@ sealed partial class Emitter
             // resolution" — so a plain `kotlin.Int`/`Foo`/`kotlin.Any` reference resolves to its emitted TypeBuilder.
             // A bare constructed-generic `Name[args]` whose open name isn't emitted here (e.g. the `ownerType` of a
             // referenced `kotlin.Result[int]` member call) resolves as a referenced generic (GenericType arity-suffixes).
-            // A `<>dotkt_*` canonical synthetic (`<>dotkt_CharSequence`) not emitted in THIS assembly is REFERENCED from
-            // the stdlib dll — dot-less, but a real external type — so resolve it by reflection, don't fall to object.
-            // Before the TYPE flip this rode the `@<>dotkt_X` emitted-type-hint branch; kotc/bir2cir now emit the bare
-            // FQN, so a dot-less synthetic that ResolvesExternally must route to ResolveType here too (mirrors the
-            // externalSynthIface path at the interface-bridge loop). Without this an external synthetic interface
-            // resolved to `object`, and the adapter's AddInterfaceImplementation(object) -> TypeLoadException.
+            // A dot-LESS name not emitted in THIS assembly but present in a REFERENCED (--ref, LoadFrom'd) assembly is a
+            // real external type — a `<>dotkt_*` canonical synthetic (`<>dotkt_CharSequence`) OR a root-package library
+            // class (`Vec`/`Lib`/`Pt`, no namespace). Resolve it by reflection, don't fall to object. Before the TYPE flip
+            // these rode the `@<>dotkt_X`/`@Name` emitted-type-hint branch; kotc/bir2cir now emit the bare FQN, so a
+            // dot-less name that ResolvesExternally must route to ResolveType here (mirrors the externalSynthIface path).
             _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('[')) ? GenericType(t)
                  : (t != null && t.Contains('.')) ? ResolveType(t)
-                 : (t != null && t.StartsWith("<>dotkt_", StringComparison.Ordinal) && ResolvesExternally(t)) ? ResolveType(t)
+                 : (t != null && ResolvesExternally(t)) ? ResolveType(t)
                  : typeof(object)),
         };
     }
