@@ -1,26 +1,20 @@
+using System.Linq;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // Variance -> invariance type-argument REALIGNMENT for invariant @ClrTypeAlias collection generics.
 //
 // kotc's frontend approximates a use-site `in`/`out` variance projection to `kotlin.Any` (harmless on the JVM = erased).
 // e.g. `val name: String by data` (data: Map<String, Any?>): the property-delegate getValue chain calls
-// `getOrImplicitDefault<K,V>(this)` on a receiver that the frontend views as `Map<in String, V>` — so it infers
-// `K = kotlin.Any` for the call while the ACTUAL receiver is `Map<String, V>`. On the CLR, `IDictionary<,>` is
-// INVARIANT: an `IDictionary<string,V>` argument cannot flow into an `IDictionary<object,V>` param (and
-// `IDictionary<object,object>::ContainsKey` finds no interface slot on a runtime `Dictionary<string,object>`) ->
-// EntryPointNotFound. The fix: for each type param the callee's `sig` places inside an INVARIANT constructed
-// collection generic, realign the CALL's `typeArg` to the corresponding type-argument of the ACTUAL argument's
-// declared type, overriding the frontend's `kotlin.Any` variance-approximation.
+// `getOrImplicitDefault<K,V>(this)` on a receiver the frontend views as `Map<in String, V>` — so it infers
+// `K = kotlin.Any` for the call while the ACTUAL receiver is `Map<String, V>`. On the CLR `IDictionary<,>` is INVARIANT:
+// an `IDictionary<string,V>` argument cannot flow into an `IDictionary<object,V>` param -> EntryPointNotFound. The fix:
+// for each type param the callee places inside an INVARIANT constructed collection generic, realign the CALL's `typeArg`
+// to the corresponding type-argument of the ACTUAL argument's declared type, overriding the `kotlin.Any` approximation.
 //
-// Same bug class as the mutable-map for-in reroute (il-mapforin) and HashSet(cap, loadFactor) (il-hashset2): a
-// general variance -> invariance realignment, scoped to the invariant BCL collection generics so covariant/
-// unconstrained positions and non-collection params are left as-is. A `typeArg` is changed ONLY when the actual arg
-// pins it to a DIFFERENT concrete type, so a genuine `<Any>` call (whose receiver really is `Map<Any,V>`) is a no-op.
-//
-// Runs in BIR-space (before MemberCallSubstitution + type lowering), in every non-ref build. `typeArgs` are positional
-// to the callee's declared type params; the callee's ORDERED param names (aggregated from all input BIR files, keyed
-// by name|arity) map a `sig`'s `gp:NAME` to its `typeArg` index. An unresolvable callee (not a local input file) is
-// left untouched — an app build never re-lowers a referenced stdlib body, so the rt-stdlib self-build fix suffices.
+// #37 m1: FULLY POSITIONAL. kotc's `sig` now collapses every type var to `gp:T` (indistinguishable by name), so the
+// realignment keys on the callee's STRUCTURED param TYPES (a `Tv` in an invariant-collection param names the type-param
+// INDEX via its `i`), matched positionally against the actual arg's structured type — never a `gp:NAME` string match.
 static class MapVarianceRealign
 {
     // The invariant BCL collection generics (their @ClrTypeAlias Kotlin FQNs). Type params here do NOT lift via CLR
@@ -33,17 +27,16 @@ static class MapVarianceRealign
         "kotlin.collections.HashSet", "kotlin.collections.LinkedHashSet",
     };
 
-    // funName|arity -> the callee's ORDERED generic-param names, aggregated across every input BIR file (a same-
-    // assembly cross-file call keeps `owner:null`, so the callee may live in another input). First-wins; a
-    // gp-name-membership check at the realign site guards a same-name/same-arity-but-different-params overload.
-    public static Dictionary<string, string[]> CollectCalleeTypeParams(IEnumerable<JsonNode> roots)
+    // funName|typeParamCount -> the callee's ORDERED param TYPES (structured), aggregated across every input BIR file
+    // (a same-assembly cross-file call keeps `owner:null`, so the callee may live in another input). First-wins.
+    public static Dictionary<string, TypeNode[]> CollectCalleeTypeParams(IEnumerable<JsonNode> roots)
     {
-        var map = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var map = new Dictionary<string, TypeNode[]>(StringComparer.Ordinal);
         foreach (var root in roots) CollectFrom(root, map);
         return map;
     }
 
-    static void CollectFrom(JsonNode root, Dictionary<string, string[]> map)
+    static void CollectFrom(JsonNode root, Dictionary<string, TypeNode[]> map)
     {
         if (root is not JsonObject o) return;
         CollectMethods(o["methods"], map);
@@ -52,7 +45,7 @@ static class MapVarianceRealign
                 if (t != null) CollectFrom(t, map);
     }
 
-    static void CollectMethods(JsonNode methods, Dictionary<string, string[]> map)
+    static void CollectMethods(JsonNode methods, Dictionary<string, TypeNode[]> map)
     {
         if (methods is not JsonArray arr) return;
         foreach (var m in arr)
@@ -60,19 +53,13 @@ static class MapVarianceRealign
             if (m is not JsonObject mo) continue;
             if (Str(mo["name"]) is not string name) continue;
             if (mo["typeParams"] is not JsonArray tps || tps.Count == 0) continue;
-            var names = new List<string>();
-            foreach (var tp in tps)
-            {
-                // A type param is either a bare "V" string or a {name:"V1", constraints:[...]} object.
-                if (tp is JsonValue v && v.TryGetValue<string>(out var s)) names.Add(s);
-                else if (tp is JsonObject to && Str(to["name"]) is string n) names.Add(n);
-            }
-            if (names.Count == 0) continue;
-            map.TryAdd(name + "|" + names.Count, names.ToArray());
+            var paramTypes = (mo["params"] as JsonArray ?? new JsonArray())
+                .Select(p => (p as JsonObject) is JsonObject po ? TypeJson.Read(po["type"]) : null).ToArray();
+            map.TryAdd(name + "|" + tps.Count, paramTypes);
         }
     }
 
-    public static void Apply(JsonNode root, IReadOnlyDictionary<string, string[]> calleeTypeParams)
+    public static void Apply(JsonNode root, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams)
     {
         if (root is not JsonObject o) return;
         ProcessMethods(o["methods"], calleeTypeParams);
@@ -81,49 +68,44 @@ static class MapVarianceRealign
                 if (t != null) Apply(t, calleeTypeParams);
     }
 
-    static void ProcessMethods(JsonNode methods, IReadOnlyDictionary<string, string[]> calleeTypeParams)
+    static void ProcessMethods(JsonNode methods, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams)
     {
         if (methods is not JsonArray arr) return;
         foreach (var m in arr)
         {
             if (m is not JsonObject mo) continue;
-            // Per-method local type environment: params + local `var` declarations -> its declared BIR type token.
-            var env = new Dictionary<string, string>(StringComparer.Ordinal);
+            // Per-method local type environment: params + local `var` declarations -> its declared structured type.
+            var env = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
             if (mo["params"] is JsonArray ps)
                 foreach (var p in ps)
-                    if (p is JsonObject po && Str(po["name"]) is string pn && Str(po["type"]) is string pt)
+                    if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
                         env[pn] = pt;
-            // The method's own type-param bounds: `M -> @kotlin.collections.MutableMap[gp:K,...]`. Recovers the
-            // PRECISE static type of a receiver whose declared type is a type-param `gp:M` (used by OwnerVarianceRealign
-            // to undo the `in K`->kotlin.Any variance approximation the frontend bakes into an inlined Map member call).
-            var constraints = new Dictionary<string, string>(StringComparer.Ordinal);
+            // The method's own type-param bounds: `M -> MutableMap<K,…>`. Recovers the PRECISE static type of a receiver
+            // whose declared type is a type-param `Tv` (used by OwnerVarianceRealign to undo the `in K`->Any variance
+            // approximation). Keyed by the type-param INDEX (matching a receiver Tv.I).
+            var constraints = new Dictionary<int, TypeNode>();
             if (mo["typeParams"] is JsonArray tps)
-                foreach (var tp in tps)
-                    if (tp is JsonObject to && Str(to["name"]) is string tn && to["constraints"] is JsonArray cs)
+                for (var i = 0; i < tps.Count; i++)
+                    if (tps[i] is JsonObject to && to["constraints"] is JsonArray cs)
                         foreach (var c in cs)
-                            if (Str(c) is string ct && InvariantGenericArgs(ct) != null) { constraints[tn] = ct; break; }
-            // Local-copy aliasing: `var __inlN = <local src>` -> __inlN aliases src, so a receiver copied off a
-            // `gp:M`-typed param traces back to its precise constraint.
+                            if (TypeJson.Read(c) is TypeNode ct && InvariantGenericArgs(ct) != null) { constraints[i] = ct; break; }
             var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
             if (mo["body"] is JsonNode body)
             {
                 GatherLocals(body, env, aliases);
-                // Only when the method has an invariant-collection-bounded type param (M : MutableMap<in K, ..>) can the
-                // `in`/`out`->kotlin.Any variance approximation have leaked into inlined locals; scope the var-type
-                // realignment to that case so ordinary `val x: Any = t` widenings are never touched.
                 if (constraints.Count > 0) RealignVarTypes(body, env, aliases, constraints);
                 Walk(body, env, calleeTypeParams, aliases, constraints);
             }
         }
     }
 
-    static void GatherLocals(JsonNode node, Dictionary<string, string> env, Dictionary<string, string> aliases)
+    static void GatherLocals(JsonNode node, Dictionary<string, TypeNode> env, Dictionary<string, string> aliases)
     {
         if (node is JsonObject o)
         {
             if (Str(o["k"]) == "var" && Str(o["name"]) is string n)
             {
-                if (Str(o["type"]) is string t) env.TryAdd(n, t);
+                if (TypeJson.Read(o["type"]) is TypeNode t) env.TryAdd(n, t);
                 if (o["init"] is JsonObject io && Str(io["k"]) == "local" && Str(io["name"]) is string src)
                     aliases.TryAdd(n, src);
             }
@@ -135,23 +117,19 @@ static class MapVarianceRealign
                 if (it != null) GatherLocals(it, env, aliases);
     }
 
-    // Restore the type an inlined temp had BEFORE the frontend's `in`/`out`->kotlin.Any variance approximation erased it.
-    // The frontend inlines `destination.getOrPut(...)` (destination: M, M : MutableMap<in K, MutableList<T>>) and bakes
-    // the projected `in K` key as kotlin.Any into the inlined map-copy temp (`__inl : MutableMap[kotlin.Any,..]`) and the
-    // key temp (`__inl : kotlin.Any`). ilemit then types those local slots at IDictionary<object,..>/object, so the
-    // realigned clrMapGet<K,..> call is fed a wrongly-typed receiver/key -> InvalidProgramException. Recover each temp's
-    // precise type from its alias-root source (a `gp:M` param -> its invariant-collection bound; a `gp:K` local -> itself).
-    static void RealignVarTypes(JsonNode node, Dictionary<string, string> env,
-        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<string, string> constraints)
+    // Restore the type an inlined temp had BEFORE the `in`/`out`->kotlin.Any variance approximation erased it. Recover
+    // each temp's precise type from its alias-root source (a `Tv` param -> its invariant-collection bound).
+    static void RealignVarTypes(JsonNode node, Dictionary<string, TypeNode> env,
+        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<int, TypeNode> constraints)
     {
         if (node is JsonObject o)
         {
-            if (Str(o["k"]) == "var" && Str(o["name"]) is string n && Str(o["type"]) is string declType
+            if (Str(o["k"]) == "var" && Str(o["name"]) is string n && TypeJson.Read(o["type"]) is TypeNode declType
                 && aliases.ContainsKey(n))
             {
                 var root = ResolveAliasRoot(n, aliases);
-                if (env.TryGetValue(root, out var srcType) && RealignedType(declType, srcType, constraints) is string nt && nt != declType)
-                { o["type"] = nt; env[n] = nt; }
+                if (env.TryGetValue(root, out var srcType) && RealignedType(declType, srcType, constraints) is TypeNode nt && nt != declType)
+                { o["type"] = TypeJson.Write(nt); env[n] = nt; }
             }
             foreach (var kv in o)
                 if (kv.Value != null) RealignVarTypes(kv.Value, env, aliases, constraints);
@@ -162,30 +140,20 @@ static class MapVarianceRealign
     }
 
     // The precise type for a temp declared `declType` but aliased to a source of `srcType`. When the source is a
-    // type-param `gp:X`: a bare kotlin.Any/object temp regains `gp:X` (the erased key); a temp declared as an invariant
-    // collection generic regains X's bound's concrete args wherever it holds an over-approximated (kotlin.Any) position.
-    static string RealignedType(string declType, string srcType, IReadOnlyDictionary<string, string> constraints)
+    // type-param `Tv`: a bare kotlin.Any/object temp regains that Tv; a temp declared as an invariant collection generic
+    // regains the bound's concrete args wherever it holds an over-approximated (kotlin.Any) position.
+    static TypeNode RealignedType(TypeNode declType, TypeNode srcType, IReadOnlyDictionary<int, TypeNode> constraints)
     {
-        if (!srcType.StartsWith("gp:", StringComparison.Ordinal)) return declType;
-        if (declType is "kotlin.Any" or "object") return srcType;
-        var tp = srcType["gp:".Length..];
-        if (!constraints.TryGetValue(tp, out var bound)) return declType;
-        if (InvariantGenericArgs(declType) is not IReadOnlyList<string> declArgs) return declType;
-        if (InvariantGenericArgs(bound) is not IReadOnlyList<string> boundArgs || boundArgs.Count != declArgs.Count) return declType;
-        var open = declType.StartsWith("@", StringComparison.Ordinal) ? declType[1..] : declType;
-        var head = open[..open.IndexOf('[')];
-        var realigned = new List<string>(declArgs.Count);
-        var changed = false;
-        for (var i = 0; i < declArgs.Count; i++)
-            if ((declArgs[i] is "kotlin.Any" or "object") && boundArgs[i] is not ("kotlin.Any" or "object"))
-            { realigned.Add(boundArgs[i]); changed = true; }
-            else realigned.Add(declArgs[i]);
-        if (!changed) return declType;
-        return (declType.StartsWith("@", StringComparison.Ordinal) ? "@" : "") + head + "[" + string.Join(",", realigned) + "]";
+        if (srcType is not TypeNode.Tv srcTv) return declType;
+        if (IsObjectish(declType)) return srcType;
+        if (!constraints.TryGetValue(srcTv.I, out var bound)) return declType;
+        if (InvariantGenericArgs(declType) is not TypeNode[] declArgs) return declType;
+        if (InvariantGenericArgs(bound) is not TypeNode[] boundArgs || boundArgs.Length != declArgs.Length) return declType;
+        return RealignArgs((TypeNode.Fqn)declType, declArgs, boundArgs);
     }
 
-    static void Walk(JsonNode node, Dictionary<string, string> env, IReadOnlyDictionary<string, string[]> calleeTypeParams,
-        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<string, string> constraints)
+    static void Walk(JsonNode node, Dictionary<string, TypeNode> env, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams,
+        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<int, TypeNode> constraints)
     {
         if (node is JsonObject o)
         {
@@ -202,43 +170,33 @@ static class MapVarianceRealign
                 if (it != null) Walk(it, env, calleeTypeParams, aliases, constraints);
     }
 
-    // Undo the use-site `in`/`out` variance over-approximation that the frontend bakes into an INLINED Map member call.
-    // `groupByTo<T,K,M : MutableMap<in K, MutableList<T>>>` inlines `destination.getOrPut(...)`; the `in K` projection
-    // makes the inlined `get`/`put` callInstance carry `ownerType = MutableMap[kotlin.Any, MutableList[gp:T]]` (Any is
-    // the approximated key). MemberCallSubstitution then derives `clrMapGet<object, IList<T>>`, whose
-    // `IDictionary<object,..>::ContainsKey` finds no slot on the runtime `Dictionary<K,..>` -> EntryPointNotFound. Fix:
-    // recover the receiver's PRECISE static type from its type-param bound (`M : MutableMap[gp:K,..]`) and realign each
-    // over-approximated (kotlin.Any) ownerType position to the constraint's concrete arg (`gp:K`). Only Any positions
-    // that the bound pins to something MORE specific change — a genuine `Map<Any,..>` receiver is a no-op.
-    static void OwnerVarianceRealign(JsonObject call, Dictionary<string, string> env,
-        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<string, string> constraints)
+    // Undo the use-site `in`/`out` variance over-approximation baked into an INLINED Map member call: recover the
+    // receiver's PRECISE static type from its type-param bound (`M : MutableMap<K,…>`) and realign each over-approximated
+    // (kotlin.Any) ownerType position to the constraint's concrete arg.
+    static void OwnerVarianceRealign(JsonObject call, Dictionary<string, TypeNode> env,
+        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<int, TypeNode> constraints)
     {
-        if (Str(call["ownerType"]) is not string ownerType) return;
-        if (InvariantGenericArgs(ownerType) is not IReadOnlyList<string> ownerArgs) return;
-        if (!ownerArgs.Any(a => a is "kotlin.Any" or "object")) return;   // nothing over-approximated -> no-op
-        // Resolve the receiver to its precise static type via the local-copy alias chain, then to its type-param bound.
+        if (TypeJson.Read(call["ownerType"]) is not TypeNode ownerType) return;
+        if (InvariantGenericArgs(ownerType) is not TypeNode[] ownerArgs || !ownerArgs.Any(IsObjectish)) return;
         if (call["recv"] is not JsonObject recv || Str(recv["k"]) != "local" || Str(recv["name"]) is not string rn) return;
         var root = ResolveAliasRoot(rn, aliases);
-        if (!env.TryGetValue(root, out var rootType)) return;
-        var tp = rootType.StartsWith("gp:", StringComparison.Ordinal) ? rootType["gp:".Length..] : null;
-        if (tp == null || !constraints.TryGetValue(tp, out var bound)) return;
-        if (InvariantGenericArgs(bound) is not IReadOnlyList<string> boundArgs) return;
-        if (boundArgs.Count != ownerArgs.Count) return;
+        if (!env.TryGetValue(root, out var rootType) || rootType is not TypeNode.Tv rootTv) return;
+        if (!constraints.TryGetValue(rootTv.I, out var bound)) return;
+        if (InvariantGenericArgs(bound) is not TypeNode[] boundArgs || boundArgs.Length != ownerArgs.Length) return;
+        var realigned = RealignArgs((TypeNode.Fqn)ownerType, ownerArgs, boundArgs);
+        if (realigned != ownerType) call["ownerType"] = TypeJson.Write(realigned);
+    }
 
-        var open = ownerType.StartsWith("@", StringComparison.Ordinal) ? ownerType[1..] : ownerType;
-        var br = open.IndexOf('[');
-        var head = open[..br];
-        var realigned = new List<string>(ownerArgs.Count);
+    // Replace every over-approximated (kotlin.Any/object) arg with the corresponding `boundArgs` arg (when it is more
+    // specific), returning the reconstructed Fqn; the original when nothing changed.
+    static TypeNode RealignArgs(TypeNode.Fqn owner, TypeNode[] args, TypeNode[] boundArgs)
+    {
+        var realigned = new TypeNode[args.Length];
         var changed = false;
-        for (var i = 0; i < ownerArgs.Count; i++)
-        {
-            if ((ownerArgs[i] is "kotlin.Any" or "object") && boundArgs[i] is not ("kotlin.Any" or "object"))
-            { realigned.Add(boundArgs[i]); changed = true; }
-            else realigned.Add(ownerArgs[i]);
-        }
-        if (!changed) return;
-        var prefix = ownerType.StartsWith("@", StringComparison.Ordinal) ? "@" : "";
-        call["ownerType"] = prefix + head + "[" + string.Join(",", realigned) + "]";
+        for (var i = 0; i < args.Length; i++)
+            if (IsObjectish(args[i]) && !IsObjectish(boundArgs[i])) { realigned[i] = boundArgs[i]; changed = true; }
+            else realigned[i] = args[i];
+        return changed ? new TypeNode.Fqn(owner.Name, realigned) : owner;
     }
 
     static string ResolveAliasRoot(string name, IReadOnlyDictionary<string, string> aliases)
@@ -248,98 +206,47 @@ static class MapVarianceRealign
         return name;
     }
 
-    static void Realign(JsonObject call, Dictionary<string, string> env, IReadOnlyDictionary<string, string[]> calleeTypeParams)
+    static void Realign(JsonObject call, Dictionary<string, TypeNode> env, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams)
     {
         if (call["typeArgs"] is not JsonArray typeArgs || typeArgs.Count == 0) return;
         if (Str(call["method"]) is not string method) return;
-        if (Str(call["sig"]) is not string sig || sig.Length == 0) return;
         if (call["args"] is not JsonArray args) return;
-        // The callee's ordered generic-param names -> a gp:NAME's typeArg index. Keyed by name|arity; the membership
-        // check below rejects a mismatched same-name/same-arity overload (its gp names would differ).
-        if (!calleeTypeParams.TryGetValue(method + "|" + typeArgs.Count, out var gpNames)) return;
+        // The callee's ordered param TYPES (keyed by name|typeParamCount == typeArgs.Count). A `Tv` inside an
+        // invariant-collection param names the type-param INDEX (its `i`); the actual arg pins that typeArg.
+        if (!calleeTypeParams.TryGetValue(method + "|" + typeArgs.Count, out var paramTypes)) return;
 
-        var sigParams = SplitTop(sig);
-        // callStatic (extension): the receiver IS arg0 / sig param0. callInstance: kotc's `sig` covers the VALUE params
-        // and `args` are those value params — a positional 1:1 either way (the separate `recv` is not matched here).
-        var count = Math.Min(sigParams.Count, args.Count);
-        Dictionary<string, string> subst = null;
+        var count = Math.Min(paramTypes.Length, args.Count);
+        Dictionary<int, TypeNode> subst = null;
         for (var i = 0; i < count; i++)
         {
-            if (InvariantGenericArgs(sigParams[i]) is not IReadOnlyList<string> sigGps) continue;
-            if (ActualArgType(args[i], env) is not string actual) continue;
-            if (InvariantGenericArgs(actual) is not IReadOnlyList<string> actualGps) continue;
-            var n = Math.Min(sigGps.Count, actualGps.Count);
+            if (paramTypes[i] is not TypeNode pt || InvariantGenericArgs(pt) is not TypeNode[] sigGps) continue;
+            if (ActualArgType(args[i], env) is not TypeNode actual || InvariantGenericArgs(actual) is not TypeNode[] actualGps) continue;
+            var n = Math.Min(sigGps.Length, actualGps.Length);
             for (var j = 0; j < n; j++)
-            {
-                var sg = sigGps[j];
-                if (!sg.StartsWith("gp:", StringComparison.Ordinal)) continue;   // a concrete sig arg pins nothing new
-                var concrete = actualGps[j];
-                if (concrete.StartsWith("gp:", StringComparison.Ordinal)) continue; // actual still open -> leave as-is
-                (subst ??= new Dictionary<string, string>(StringComparer.Ordinal))[sg["gp:".Length..]] = concrete;
-            }
+                if (sigGps[j] is TypeNode.Tv tv && actualGps[j] is not TypeNode.Tv && tv.I >= 0 && tv.I < typeArgs.Count)
+                    (subst ??= new Dictionary<int, TypeNode>())[tv.I] = actualGps[j];
         }
         if (subst == null) return;
-        foreach (var (gpName, concrete) in subst)
-        {
-            var idx = Array.IndexOf(gpNames, gpName);
-            if (idx < 0 || idx >= typeArgs.Count) continue;       // gp not this callee's -> mismatched overload, skip
-            if (Str(typeArgs[idx]) == concrete) continue;         // already aligned (a genuine <Any> call is a no-op)
-            typeArgs[idx] = concrete;
-        }
+        foreach (var (idx, concrete) in subst)
+            if (!(TypeJson.Read(typeArgs[idx]) is TypeNode cur && cur == concrete))   // already aligned -> no-op
+                typeArgs[idx] = TypeJson.Write(concrete);
     }
 
-    // The generic type-argument tokens of a token whose head (arity-stripped) is an INVARIANT collection generic,
-    // e.g. `@kotlin.collections.Map[gp:K,gp:V]` -> ["gp:K","gp:V"]. Null for a non-collection or non-generic token —
-    // which prevents matching against an unrelated bracketed shape (func:/array:) positionally.
-    static IReadOnlyList<string> InvariantGenericArgs(string token)
-    {
-        var t = token.Trim();
-        if (t.StartsWith("@", StringComparison.Ordinal)) t = t[1..];
-        var br = t.IndexOf('[');
-        if (br < 0 || !t.EndsWith("]", StringComparison.Ordinal)) return null;
-        var head = StripArity(t[..br]);
-        if (!InvariantCollections.Contains(head)) return null;
-        return SplitTop(t[(br + 1)..^1]);
-    }
+    // The generic type-argument tokens of a type whose head is an INVARIANT collection generic, e.g.
+    // `kotlin.collections.Map<K,V>` -> [K,V]. Null for a non-collection / non-generic type.
+    static TypeNode[] InvariantGenericArgs(TypeNode t) =>
+        t is TypeNode.Fqn { Args: { } args } f && InvariantCollections.Contains(f.Name) ? args : null;
 
-    // The declared BIR type of a call argument node: a local/param reference resolved through the method's type env,
-    // else the node's own `type`/`retType` when present. Null when the argument's type is not statically recoverable
-    // here (a bare `this`, a literal, etc.) — such args simply do not drive a realignment.
-    static string ActualArgType(JsonNode arg, Dictionary<string, string> env)
+    // The declared structured type of a call argument node: a local/param reference resolved through the method's type
+    // env, else the node's own `type`/`retType`. Null when not statically recoverable here.
+    static TypeNode ActualArgType(JsonNode arg, Dictionary<string, TypeNode> env)
     {
         if (arg is not JsonObject o) return null;
         if (Str(o["k"]) == "local" && Str(o["name"]) is string nm && env.TryGetValue(nm, out var t)) return t;
-        if (Str(o["type"]) is string tt) return tt;
-        if (Str(o["retType"]) is string rt) return rt;
-        return null;
+        return TypeJson.Read(o["type"]) ?? TypeJson.Read(o["retType"]);
     }
 
-    static string StripArity(string s)
-    {
-        var bt = s.IndexOf('`');
-        return bt < 0 ? s : s[..bt];
-    }
+    static bool IsObjectish(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Any" or "object" };
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
-
-    // Top-level comma split respecting `[...]` nesting.
-    static IReadOnlyList<string> SplitTop(string value)
-    {
-        if (value.Length == 0) return Array.Empty<string>();
-        var result = new List<string>();
-        var depth = 0;
-        var start = 0;
-        for (var i = 0; i < value.Length; i++)
-        {
-            if (value[i] == '[') depth++;
-            else if (value[i] == ']') depth--;
-            else if (value[i] == ',' && depth == 0)
-            {
-                result.Add(value[start..i].Trim());
-                start = i + 1;
-            }
-        }
-        result.Add(value[start..].Trim());
-        return result;
-    }
 }
