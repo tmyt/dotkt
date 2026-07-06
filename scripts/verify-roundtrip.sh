@@ -555,6 +555,54 @@ daexpected="$(printf 'Hi, A!\nYo, B!\nHi, C?\nHey, E!\n123\n129\n527\nTrue/x y\n
 run_app daactual "$DA/appil/KApp.dll"
 check_output roundtrip-defargs "$daexpected" "$daactual" "default args: trailing/named-middle/reordered omission, on functions + constructors"
 
+# ----- SUSPEND FUNCTION-TYPE round-trip (H2): a `suspend (…) -> T` PARAMETER survives re-consumption -----
+# A library exports `fun runBlock(block: suspend () -> Int)` — bir2cir erases the CLR parameter SLOT to `object` (a
+# suspend-lambda VALUE is a Continuation state-machine, not a Func), so WITHOUT the position metadata the consumer
+# would see a plain `Any?` and a passed lambda could NOT call a suspend function. ilemit stamps the parameter with
+# [KotlinSuspendFunctionType("sfunc:kotlin.Int:")]; facadegen reads it back as the `sfunc:[Int]` meta token;
+# ClrTypeInjection restores `block` as `kotlin.coroutines.SuspendFunction0<Int>`. PROOF that suspend survives: the
+# consumer's `runBlock { addAsync(...) }` lambda BODY calls `addAsync` (itself a suspend fun) — which only compiles
+# if `block` is a suspend function type (else "suspend function called from non-suspend context"), and only runs if
+# the suspend lambda is driven as a state machine. (A suspend fn-type in a RETURN/property/field position is wired in
+# facadegen too, but blocked E2E on a separate suspend-lambda-VALUE emit limitation — `expr suspendLambdaNew`.)
+# See docs/dotkt-semantics.md §10.
+SF="$ROOT/build/roundtrip-suspendfn"; rm -rf "$SF"; mkdir -p "$SF/lib" "$SF/app" "$SF/libbir" "$SF/libil" "$SF/appbir" "$SF/appil"
+cat > "$SF/lib/lib.kt" <<'EOF'
+package hof
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+@Suppress("UNCHECKED_CAST")
+private class Sink : Continuation<Any?> {                        // Continuation is `in T` (contravariant), so a
+    var value: Any? = null                                      // Continuation<Any?> is a Continuation<Int> completion
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    override fun resumeWith(result: Result<Any?>) { value = result.getOrNull() }
+}
+fun runBlock(block: suspend () -> Int): Int {                    // a `suspend (…) -> T` PARAMETER (the H2 position)
+    val sink = Sink(); block.startCoroutine(sink); return sink.value as Int
+}
+suspend fun addAsync(a: Int, b: Int): Int = a + b
+EOF
+cat > "$SF/app/app.kt" <<'EOF'
+import hof.runBlock
+import hof.addAsync
+fun main() {
+    println(runBlock { addAsync(20, 22) })                          // 42 — passes a suspend lambda cross-module
+    println(runBlock { val a = addAsync(10, 5); addAsync(a, 27) })  // 42 — two suspension points in the passed lambda
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$SF/lib" -no-stdlib -classpath "$CP" -d "$SF/libbir" >/dev/null 2>&1 || true
+emit_il "$SF/libil" HofLib "$SF/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$SF/libil/HofLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$SF/k.meta" --refs "$REFS$SF/libil/HofLib.dll" hof.LibKt >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$SF/k.meta" "$LAUNCHER" "$SF/app" -no-stdlib -classpath "$CP" -d "$SF/appbir" >/dev/null 2>&1 || true
+emit_il "$SF/appil" HofApp --ref "$SF/libil/HofLib.dll" "$SF/appbir"/*.bir.json
+cp "$SF/libil/HofLib.dll" "$SF/appil/" 2>/dev/null || true
+sfexpected="$(printf '42\n42')"
+run_app sfactual "$SF/appil/HofApp.dll"
+check_output roundtrip-suspendfn "$sfexpected" "$sfactual" "a suspend (…) -> T PARAMETER round-trips: the consumer's lambda calls a suspend fun (valid only if the restored param is a suspend fn-type)"
+
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
 printf '%s\n' "${SUMMARY[@]}"
