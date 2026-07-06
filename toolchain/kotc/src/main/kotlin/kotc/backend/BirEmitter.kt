@@ -1642,6 +1642,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		!fn.isSuspend && fn.parameters.none { it.kind == IrParameterKind.DispatchReceiver } &&
 			fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null }
 
+	/** A data-class `copy` synthetic — `copy` cannot be user-declared on a data class, so name + `isData` parent is exact. */
+	internal fun isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean =
+		fn.name.asString() == "copy" && (fn.parent as? IrClass)?.isData == true
+
 	internal fun paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>,
 			ownerFn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction? = null): List<String> {
 		// A `@KotlinDefault(index, bir)` on each defaulted param of a qualifying function: `index` = the param's position
@@ -2896,13 +2900,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					when {
 						def == null -> null
 						def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression ->
-							// CROSS-MODULE: the jar dropped the default VALUE. A @KotlinDefault-carrying callee (any non-constant
-							// default — joinToString's CharSequence separators, substringAfter's `= this`, `b = a * 10`) gets a
-							// POSITIONAL placeholder for EVERY omitted arg so a later provided arg (the trailing transform lambda)
-							// keeps its slot; bir2cir fills each from the ref.dll @KotlinDefault (its `{param n}` tokens → this
-							// call's args). A callee with only metadata-representable defaults carries none → drop the (trailing)
-							// omit for ilemit's [DefaultParameterValue] backfill (unchanged).
-							if (carries) defaultArgPlaceholder else null
+							// CROSS-MODULE: the jar dropped the default VALUE. A data-class `copy` (Pair/Triple, or any referenced
+							// data class) is a SPECIAL case: its omitted-field default is ALWAYS `this.<field>` by construction, so
+							// reconstruct it as a receiver FIELD read at the INSTANTIATED call site — the exact BIR kotc emits for a
+							// plain `pair.first` (owner = the actual `kotlin.Pair[Int,Int]`, so no generic `gp:` token leaks; the
+							// @KotlinDefault splice can't carry that instantiation). This is the Pair/Triple partial-`copy` fix (C3).
+							if ((callee as? org.jetbrains.kotlin.ir.declarations.IrSimpleFunction)?.let { isDataClassCopy(it) } == true && recvJson != null)
+								(dispatchReceiver(call) ?: extensionReceiver(call))?.let { r ->
+									// Owner via ownerSpec (the SAME token the plain `pair.first` property read uses — the referenced,
+									// instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly prefix, no open `gp:` param).
+									"""{"k":"field","ownerType":${str(ownerSpec(callee.parent as? IrClass, r.type))},"recv":${recvJson},"name":${str(p.name.asString())}}"""
+								}
+							// A @KotlinDefault-carrying callee (any non-constant default — joinToString's CharSequence separators,
+							// substringAfter's `= this`, `b = a * 10`) gets a POSITIONAL placeholder for EVERY omitted arg so a later
+							// provided arg (the trailing transform lambda) keeps its slot; bir2cir fills each from the ref.dll
+							// @KotlinDefault (its `{param n}` tokens → this call's args). A callee with only metadata-representable
+							// defaults carries none → drop the (trailing) omit for ilemit's [DefaultParameterValue] backfill.
+							else if (carries) defaultArgPlaceholder else null
 						refsAny(def, valueSyms) -> {
 							// SAME-MODULE default reading another VALUE parameter (`b: Int = a * 10`). Inline with each referenced
 							// value param rewritten to THIS call's filled arg for that param — the $default-scope evaluation at the
