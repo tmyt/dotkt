@@ -1795,8 +1795,19 @@ sealed partial class Emitter
     }
 
     // Prefer a BIR-carried concrete result type (`retType`) over reflecting an un-baked builder's `!0`/`!!0`.
-    Type RetOr(JsonElement e, Type fallback) =>
-        e.TryGetProperty("retType", out var r) ? MapType(r.GetString()) : fallback;
+    Type RetOr(JsonElement e, Type fallback)
+    {
+        if (!e.TryGetProperty("retType", out var r)) return fallback;
+        var declared = MapType(r.GetString());
+        // A generic method `<T> f(): T` instantiated with T = kotlin.Unit genuinely PUSHES a kotlin.Unit value, yet a
+        // Unit/statement-context call site carries retType="void" (kotc lowers Unit results to void). Trusting that
+        // "void" would skip the caller's pop, stranding the kotlin.Unit on the stack (ilverify ReturnVoid — e.g. a
+        // discarded `blockOn { …Unit… }`). When the RESOLVED method's actual return (`fallback`, computed by
+        // ApplyTypeArgs from the reified type args) is a real non-void type, keep it so the caller pops/uses it. A
+        // genuinely void method reports fallback==void here, so this only rescues the generic-Unit-erasure mismatch.
+        if (declared == typeof(void) && fallback != null && fallback != typeof(void)) return fallback;
+        return declared;
+    }
 
     // Boundary conversion after a call whose ACTUAL return is `System.Object` — the erased representation of a
     // generic `T?` (NullableGenericReturnErasure in bir2cir). The caller's statically-known type (`retType`) says
