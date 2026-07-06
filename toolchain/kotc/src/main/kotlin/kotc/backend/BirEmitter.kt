@@ -1705,7 +1705,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
 		val ext = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
 		val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type) }
-		return ""","sig":${str((listOfNotNull(ext) + regs).joinToString(","))}"""
+		return ""","sig":${str((listOfNotNull(ext) + regs).joinToString(",") { legacyToken(it) })}"""
+	}
+
+	/** MILESTONE-1 BRIDGE: `sig` stays a comma-joined legacy type-token string (spec §2.2 / structuring is
+	 *  milestone 3), so a Type node is rendered back to the legacy grammar for the sig slot ONLY. bir2cir's
+	 *  ParamKey consumes it as before (it folds primitives / strips `@`/brackets / collapses `gp:`), so the
+	 *  exact leaf spelling is normalized away. NOT used for any other field — every other type slot is structured. */
+	internal fun legacyToken(t: TypeNode): String = when (t) {
+		is TypeNode.Fqn -> if (t.args == null) t.name else t.name + "[" + t.args.joinToString(",") { legacyToken(it) } + "]"
+		is TypeNode.Tv -> "gp:T"                       // ParamKey collapses every gp:* to `gp`
+		is TypeNode.Fn -> (if (t.suspend) "sfunc:" else "func:") + legacyToken(t.ret) + ":" + t.params.joinToString(",") { legacyToken(it) }
+		is TypeNode.Nullable -> "nullable:" + legacyToken(t.of)
+		is TypeNode.Array -> "array:" + legacyToken(t.elem)
+		is TypeNode.ByRef -> "byref:" + legacyToken(t.of)
 	}
 
 
