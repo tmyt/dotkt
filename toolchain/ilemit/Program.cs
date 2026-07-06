@@ -3330,9 +3330,16 @@ sealed partial class Emitter
         // STATIC type we hand back must be the substituted one or the caller mis-types its temp/local — so trust the
         // BIR `ret` hint, which already carries the substituted type. (Only when the reflected return is still open.)
         if ((mi.ReturnType.IsGenericParameter || mi.ReturnType.ContainsGenericParameters)
-            && e.TryGetProperty("ret", out var rh) && rh.ValueKind == JsonValueKind.String)
+            && e.TryGetProperty("ret", out var rh))
         {
-            var hinted = TryResolveClr(rh.GetString());
+            // Post type-flip the `ret` hint is a STRUCTURED TypeNode (`{"t":"tv","scope":"method",...}`); the legacy
+            // form was a bare string. A method-scope Tv return (`IReadOnlyList<T>::get_Item` on the non-generic
+            // `_CollectionsKt.firstOrNull<T>`) reflects as the OPEN interface param `!0` (type-scope, position 0) —
+            // a standalone `!0` token in a non-generic method body is INVALID metadata (`box !0` -> BadImageFormat at
+            // JIT). MapType resolves the structured Tv against `_curMethodParams` to the method's own `!!T`, so the
+            // caller boxes/consumes the correct method-scope token. (String hint keeps the legacy ClrRef path.)
+            Type hinted = rh.ValueKind == JsonValueKind.String ? TryResolveClr(rh.GetString())
+                        : rh.ValueKind == JsonValueKind.Object ? TryMapType(rh) : null;
             if (hinted != null) return hinted;
         }
         return mi.ReturnType;
@@ -3386,6 +3393,9 @@ sealed partial class Emitter
 
     // ClrRef (generic-aware type resolution) that returns null instead of throwing.
     Type TryResolveClr(string spec) { try { return ClrRef(spec); } catch { return null; } }
+
+    // MapType (structured-TypeNode resolution) that returns null instead of throwing.
+    Type TryMapType(JsonElement e) { try { return MapType(e); } catch { return null; } }
 
     // ResolveType but returns null instead of throwing (for optional/best-effort overload resolution).
     static Type TryResolveType(string name)
