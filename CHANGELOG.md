@@ -247,6 +247,19 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   (each a JVM abstraction with a single faithful CLR representation), so `joinToString`/`joinTo` and
   CharSequence polymorphism run. `CharSequence` is an immutable snapshot, not a live view (deviation,
   §5b); a user `class S : CharSequence` keeps a synthetic polymorphic interface.
+- **Suspend function-type POSITIONS now carry round-trip metadata (H2).** A `suspend (…) -> T` in a
+  parameter / return / property / field position has its type slot erased to `object` (a suspend-lambda
+  value is a `Continuation`-based state-machine object, not a `Func` delegate), which previously destroyed
+  the suspend origin AND its arg/return shape — `fun run(block: suspend () -> T)` was indistinguishable
+  from a plain function-typed one in the emitted metadata. bir2cir now records the pre-erasure
+  `sfunc:<ret>:<args>` shape as a positional fact (`suspendFnType`/`retSuspendFnType`) and ilemit stamps
+  it as an embedded `[KotlinSuspendFunctionType(shape)]` at every such position (mirroring the
+  `[Nullable]`/`[KotlinInline]` metadata-carrier model — a SHAPE string, not a bare flag, since the CLR
+  type is `object`). Verified applied+reflectable on the stdlib coroutine intrinsics at all four position
+  kinds (`createCoroutine`/`startCoroutine` receivers, `suspend()`'s return, `DeepRecursiveFunction.block`
+  property). NOTE: the metadata now SURVIVES emission, but facadegen does not yet reconstruct the
+  `suspend (…) -> T` type on re-consumption — that final restore hop requires a kotc `ClrTypeInjection`
+  change (an `sfunc:` case in `coneOf` building `kotlin.coroutines.SuspendFunctionN`), tracked separately.
 
 ### Standard library
 

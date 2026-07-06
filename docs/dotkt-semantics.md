@@ -302,7 +302,8 @@ runtime.
 | Kotlin construct | carrier |
 |---|---|
 | `infix` / `operator` | `[KotlinFunction(Infix\|Operator)]` |
-| `suspend` | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
+| `suspend` (a `suspend fun`) | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
+| a `suspend (…) -> T` **function TYPE** (param / return / property / field position) | `[KotlinSuspendFunctionType("sfunc:<ret>:<args>")]` — carries the pre-erasure SHAPE, because the type slot itself erases to `object` (a suspend-lambda value is a `Continuation`-based state-machine object, not a `Func`). **The attribute is stamped today (bir2cir records the fact, ilemit stamps it), but facadegen does NOT yet reconstruct the type on re-consumption** — that final restore hop needs a kotc `ClrTypeInjection` `sfunc:` → `kotlin.coroutines.SuspendFunctionN` case. So the metadata survives, but a cross-module `suspend`-fn-type parameter is currently seen as a plain `object`/`Any?` by a consumer. (H2, partial.) |
 | top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions. Same-name overloads that live in **different** source files of the same package (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) each route back to their **own** file-facade class — resolved by the call's arity, so no cross-file mis-routing. |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
 | **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
