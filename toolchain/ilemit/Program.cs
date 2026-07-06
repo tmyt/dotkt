@@ -325,7 +325,7 @@ sealed partial class Emitter
                 if (ti.Def.TryGetProperty("fields", out var ffs))
                     foreach (var f in ffs.EnumerateArray())
                     {
-                        var tlType = MapType(f.GetProperty("type").GetString());
+                        var tlType = MapType(f.GetProperty("type"));
                         var tlAttrs = FieldAttributes.Public | FieldAttributes.Static;
                         // `@kotlin.concurrent.Volatile` on a top-level `var` -> a `modreq(IsVolatile)` static field.
                         var tlFb = f.TryGetProperty("volatile", out var tlVol) && tlVol.GetBoolean()
@@ -354,7 +354,7 @@ sealed partial class Emitter
                             _ => FieldAttributes.Public,
                         };
                         if (f.TryGetProperty("static", out var st) && st.GetBoolean()) fattrs |= FieldAttributes.Static;
-                        var ftype = MapType(f.GetProperty("type").GetString());
+                        var ftype = MapType(f.GetProperty("type"));
                         // `@kotlin.concurrent.Volatile` -> a `modreq(IsVolatile)` field (the C# `volatile` encoding).
                         var fb = f.TryGetProperty("volatile", out var vol) && vol.GetBoolean()
                             ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), ftype, fattrs)
@@ -372,7 +372,7 @@ sealed partial class Emitter
                 if (ti.Def.TryGetProperty("properties", out var props))
                     foreach (var p in props.EnumerateArray())
                     {
-                        var pb = ti.TB.DefineProperty(p.GetProperty("name").GetString(), PropertyAttributes.None, MapType(p.GetProperty("type").GetString()), null);
+                        var pb = ti.TB.DefineProperty(p.GetProperty("name").GetString(), PropertyAttributes.None, MapType(p.GetProperty("type")), null);
                         if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(g.GetString(), out var gm)) pb.SetGetMethod(gm);
                         if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(s.GetString(), out var sm)) pb.SetSetMethod(sm);
                         // H2: a `val/var x: suspend (…) -> T` property carries the pre-erasure `sfunc:` shape (its CLR type is object).
@@ -844,15 +844,15 @@ sealed partial class Emitter
             _methodTypeParams[mb] = map;
             _curMethodParams = map;
             ApplyConstraints(genTps.Value, map, false);   // `<T : Comparable<T>>` on the method (variance N/A on methods)
-            ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
+            ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
             mb.SetParameters(ps);
-            mb.SetReturnType(MapType(m.GetProperty("ret").GetString()));
+            mb.SetReturnType(MapType(m.GetProperty("ret")));
             _curMethodParams = null;
         }
         else
         {
-            ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
-            mb = ti.TB.DefineMethod(name, attrs, MapType(m.GetProperty("ret").GetString()), ps);
+            ps = m.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
+            mb = ti.TB.DefineMethod(name, attrs, MapType(m.GetProperty("ret")), ps);
         }
         ti.Methods[name] = mb; ti.MethodsBySig[SigKey(name, m)] = mb;
         _mparams[mb] = ps;   // MethodBuilder.GetParameters() throws pre-bake; record param types for call-site boxing
@@ -972,7 +972,7 @@ sealed partial class Emitter
         _curTypeParams = EffectiveTps(ti);   // so a `gp:T` ctor param resolves when pulled early out of pass-3 order
         foreach (var c in ctors.EnumerateArray())
         {
-            var ps = c.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type").GetString())).ToArray();
+            var ps = c.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
             var cb = ti.TB.DefineConstructor(AccessOf(c), CallingConventions.Standard, ps);
             DefineParamNames(cb, c);   // ctor param NAMES + [Optional]/DefaultParameterValue (named-arg ctor calls)
             ti.Ctors.Add(cb);
@@ -1064,7 +1064,7 @@ sealed partial class Emitter
         foreach (var p in m.GetProperty("params").EnumerateArray())
         {
             var pn = p.GetProperty("name").GetString();
-            _argTypes[pn] = MapType(p.GetProperty("type").GetString());
+            _argTypes[pn] = MapType(p.GetProperty("type"));
             _args[pn] = i++;
         }
     }
@@ -1235,7 +1235,7 @@ sealed partial class Emitter
             }
             if (x.TryGetProperty("constraints", out var cs))
             {
-                var types = cs.EnumerateArray().Select(c => MapType(c.GetString())).ToList();
+                var types = cs.EnumerateArray().Select(c => MapType(c)).ToList();
                 var ifaces = types.Where(t => t.IsInterface).ToArray();
                 var baseT = types.FirstOrDefault(t => !t.IsInterface);
                 if (baseT != null) gp.SetBaseTypeConstraint(baseT);
@@ -1677,7 +1677,7 @@ sealed partial class Emitter
         var ps = _mparams.TryGetValue(m, out var p) ? p : null;
         if (e.TryGetProperty("typeArgs", out var ta) && ta.GetArrayLength() > 0)
         {
-            var targs = ta.EnumerateArray().Select(x => MapType(x.GetString())).ToArray();
+            var targs = ta.EnumerateArray().Select(x => MapType(x)).ToArray();
             // Substitute by REFERENCE IDENTITY (the method's own gp builders -> the concrete type args), NOT by
             // reflecting `DeclaringMethod`/`GenericParameterPosition` — those are null/garbage on an un-baked
             // MethodBuilder, which silently dropped the substitution and boxed value args. Identity is reliable.
@@ -1789,7 +1789,7 @@ sealed partial class Emitter
         Type[] want = null;
         if (e.TryGetProperty("argTypes", out var at) && at.ValueKind == JsonValueKind.Array
             && at.GetArrayLength() == nargs.GetArrayLength())
-            want = at.EnumerateArray().Select(x => { try { return MapType(x.GetString()); } catch { return null; } }).ToArray();
+            want = at.EnumerateArray().Select(x => { try { return MapType(x); } catch { return null; } }).ToArray();
         int i = 0;
         foreach (var a in nargs.EnumerateArray()) { if (want?[i] != null) EmitArg(a, want[i]); else EmitExpr(a); i++; }
     }
@@ -1798,7 +1798,7 @@ sealed partial class Emitter
     Type RetOr(JsonElement e, Type fallback)
     {
         if (!e.TryGetProperty("retType", out var r)) return fallback;
-        var declared = MapType(r.GetString());
+        var declared = MapType(r);
         // A generic method `<T> f(): T` instantiated with T = kotlin.Unit genuinely PUSHES a kotlin.Unit value, yet a
         // Unit/statement-context call site carries retType="void" (kotc lowers Unit results to void). Trusting that
         // "void" would skip the caller's pop, stranding the kotlin.Unit on the stack (ilverify ReturnVoid — e.g. a
@@ -1818,7 +1818,7 @@ sealed partial class Emitter
     {
         if (actual == typeof(object) && e.TryGetProperty("retType", out var r))
         {
-            var want = MapType(r.GetString());
+            var want = MapType(r);
             if (want != null && want != typeof(object))
             {
                 if (want.IsValueType || want.IsGenericParameter) { _il.Emit(OpCodes.Unbox_Any, want); return want; }
@@ -2627,7 +2627,7 @@ sealed partial class Emitter
     // Array literal (`intArrayOf(...)` / `arrayOf(...)`) -> newarr + per-element stelem.
     Type EmitNewArray(JsonElement e)
     {
-        var elem = MapType(e.GetProperty("elem").GetString());
+        var elem = MapType(e.GetProperty("elem"));
         var elems = e.GetProperty("elems").EnumerateArray().ToList();
         _il.Emit(OpCodes.Ldc_I4, elems.Count);
         _il.Emit(OpCodes.Newarr, elem);
@@ -2716,7 +2716,7 @@ sealed partial class Emitter
     {
         // A value-type-nullable if/when (`Int?`) tags its result type so each branch's `T`/`null` coerces to Nullable<T>.
         Type want = null;
-        if (e.TryGetProperty("type", out var tt)) { try { want = ClrRef(tt.GetString()); } catch { } }
+        if (e.TryGetProperty("type", out var tt)) { try { want = ClrRef(tt); } catch { } }
         var elseL = _il.DefineLabel(); var end = _il.DefineLabel();
         EmitExpr(e.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, elseL);
         var t = EmitBranchCoerced(e.GetProperty("then"), want); _il.Emit(OpCodes.Br, end);
@@ -2810,8 +2810,8 @@ sealed partial class Emitter
 
     Type EmitClrNew(JsonElement e)
     {
-        var type = ClrRef(e.GetProperty("type").GetString());
-        var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => { try { return ClrRef(a.GetString()); } catch { return (Type)null; } }).ToArray();
+        var type = ClrRef(e.GetProperty("type"));
+        var argTypes = e.GetProperty("argTypes").EnumerateArray().Select(a => { try { return ClrRef(a); } catch { return (Type)null; } }).ToArray();
         var args = e.GetProperty("args");
         // `new List<R>()` where R is the enclosing generic FUNCTION's type parameter: List<R> is a
         // TypeBuilderInstantiation whose .GetConstructor/.GetConstructors throw — resolve the ctor on the open generic
@@ -2864,7 +2864,7 @@ sealed partial class Emitter
         if (!e.TryGetProperty("argTypes", out var atEl) || atEl.ValueKind != JsonValueKind.Array) return null;
         if (atEl.GetArrayLength() != argc) return null;
         Type[] argTypes;
-        try { argTypes = atEl.EnumerateArray().Select(a => ClrRef(a.GetString())).ToArray(); } catch { return null; }
+        try { argTypes = atEl.EnumerateArray().Select(a => ClrRef(a)).ToArray(); } catch { return null; }
         if (argTypes.Any(t => t == null)) return null;
         try { return type.GetConstructor(argTypes); } catch { return null; }
     }
@@ -3068,7 +3068,7 @@ sealed partial class Emitter
     Type EmitClrCall(JsonElement e, bool instance, bool deref = true)
     {
         // `ClrRef` (not `ResolveType`) so a method on a constructed generic .NET type (`Collection<int>`) resolves.
-        var type = ClrRef(e.GetProperty("type").GetString());
+        var type = ClrRef(e.GetProperty("type"));
         var name = e.GetProperty("method").GetString();
         var argSpecs = e.GetProperty("argTypes").EnumerateArray().Select(a => a.GetString()).ToList();
         var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
@@ -3169,7 +3169,7 @@ sealed partial class Emitter
         // (Array.Clone) leave IsGenericMethodDefinition false, so this is a no-op there.
         if (mi.IsGenericMethodDefinition
             && e.TryGetProperty("typeArgs", out var clrTa) && clrTa.ValueKind == JsonValueKind.Array && clrTa.GetArrayLength() > 0)
-            mi = mi.MakeGenericMethod(clrTa.EnumerateArray().Select(a => MapType(a.GetString())).ToArray());
+            mi = mi.MakeGenericMethod(clrTa.EnumerateArray().Select(a => MapType(a)).ToArray());
         // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()).
         if (instance)
         {
@@ -3412,7 +3412,7 @@ sealed partial class Emitter
     // `button.Click += (s,e)=>{}` lowers to in C#.
     Type EmitClrEvent(JsonElement e, bool add)
     {
-        var type = ClrRef(e.GetProperty("type").GetString());
+        var type = ClrRef(e.GetProperty("type"));
         var ev = type.GetEvent(e.GetProperty("event").GetString());
         var accessor = add ? ev.GetAddMethod() : ev.GetRemoveMethod();
         var delType = accessor.GetParameters()[0].ParameterType;   // == ev.EventHandlerType
@@ -3436,7 +3436,7 @@ sealed partial class Emitter
         MethodInfo invoke = ct.Methods[e.GetProperty("method").GetString()];
         Type constructed = null;
         if (e.TryGetProperty("typeArgs", out var taProp) && taProp.GetArrayLength() > 0)
-            constructed = ct.TB.MakeGenericType(taProp.EnumerateArray().Select(a => MapType(a.GetString())).ToArray());
+            constructed = ct.TB.MakeGenericType(taProp.EnumerateArray().Select(a => MapType(a)).ToArray());
         else if (ct.TB.IsGenericTypeDefinition)
             constructed = ct.TB.MakeGenericType(ct.TB.GetGenericArguments().Select(gp => MapType("gp:" + gp.Name)).ToArray());
         if (constructed != null)
@@ -3723,6 +3723,11 @@ sealed partial class Emitter
     // so nested generics (List[ValueTuple[int,string]]) parse correctly.
     // Resolve a .NET type reference that may be a plain name (ResolveType), a generic `clrg:Open[args]`,
     // or a func/closed encoding (MapType). Used by clrNew/clrPropGet so they accept generic types (System.Lazy<T>).
+    // A clr* owner/type slot: structured (bir2cir MemberCallSubstitution) walks TypeNode; a legacy string (kotc's own
+    // clrInstance interop `type`, a synthesized argType shorthand) keeps the string path.
+    Type ClrRef(JsonElement e) =>
+        e.ValueKind == JsonValueKind.Object ? MapType(DotKt.Bir.TypeNode.Read(e)) : ClrRef(e.GetString());
+
     Type ClrRef(string s) =>
         s.StartsWith("byref:") ? ClrRef(s.Substring(6)).MakeByRefType() :   // `out`/`ref` param type (T&)
         s.StartsWith("clrg:") ? GenericType(s.Substring(5)) :
