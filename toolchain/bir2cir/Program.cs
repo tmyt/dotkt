@@ -1844,9 +1844,11 @@ static class BirTypeLowering
                 if (loweredArgs == null)
                 {
                     // A leaf: a foundational primitive (numeric/bool/char + String/Any/Nothing + the unsigned set)
-                    // lowers to the CLR shorthand — EXCEPT in a type-arg position, where it stays boxed kotlin.*.
+                    // lowers to the CLR shorthand in EVERY position — a type-arg primitive reifies as the CLR value type
+                    // (`List<Int>` -> IReadOnlyList<int>), the CLR-idiomatic form (the boxed `kotlin.*` isn't an emitted
+                    // type in the substitute/app build; the ref build keeps kotlin.* via the refBuild passthrough above).
                     var map = force ? KotlinAllToClr : KotlinToClr;
-                    if (map.TryGetValue(f.Name, out var clr)) return typeArg ? f : new TypeNode.Fqn(clr);
+                    if (map.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
                     // A non-generic @ClrTypeAlias type (StringBuilder/Regex/IComparable/…) -> the BCL FQN.
                     if (AliasBcl(f.Name) is string bclNonGen) return new TypeNode.Fqn(bclNonGen);
                     return f;   // user / stdlib / in-assembly FQN — identity preserved
@@ -4668,6 +4670,18 @@ static class MemberCallSubstitution
                         && refs.TryMemberProperty(ovOwner, pmember, pargs.Count, out var povAccess, out var povName))
                         return ClrPropNode(node, ClrOwnerType(refs, new TypeNode.Fqn(ovOwner)) ?? new TypeNode.Fqn(ovBcl), povName, povAccess, pmember, pargs);
         }
+
+        // A Kotlin-collection `iterator()` on an EMITTED (non-@ClrTypeAlias) collection type — a `kotlin.collections.
+        // AbstractMutable*` self-call: its abstract iterator() slot vanished when its collection supertype substituted
+        // to the BCL IEnumerable face, so `this.iterator()` finds no slot. Route it to the ClrIteratorBridge over the
+        // receiver (the exact target the @ClrTypeAlias-interface path — Rule 5 — uses; here the owner is a CLASS not in
+        // the alias table, so that rule never reaches it). Element type = the owner's first type-arg.
+        if (instance && ownerToken.StartsWith("kotlin.collections.", StringComparison.Ordinal)
+            && (node["method"] as JsonValue)?.GetValue<string>() == "iterator"
+            && node["args"] is JsonArray itArgs && itArgs.Count == 0
+            && ownerFqnNode != null && !refs.TryResolveClrOwner(ownerToken, out _, out _))
+            return CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable",
+                OwnerElemArg(ownerFqnNode), itArgs);
 
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
 

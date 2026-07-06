@@ -1727,7 +1727,8 @@ sealed partial class Emitter
             // method ("not a GenericMethodDefinition"). When the resolved REFERENCED method is not a generic definition,
             // FindMethod already picked the right specialization — use it as-is. (A MethodBuilder reports
             // IsGenericMethodDefinition unreliably pre-bake, so this guards only reflected referenced methods.)
-            if (m is not MethodBuilder && !m.IsGenericMethodDefinition) { retType = m.ReturnType; paramTypes = ps; return m; }
+            if ((m is not MethodBuilder && !m.IsGenericMethodDefinition)
+                || m.GetGenericArguments().Length != targs.Length) { retType = m.ReturnType; paramTypes = ps; return m; }
             var inst = m.MakeGenericMethod(targs);
             // A pure-reflection generic method (an EXTERNAL rt-stdlib static, e.g. `Result`1<object>::success<T>`
             // anchored by AnchorOpenGenericOwnerStatic) carries no `_mparams`/`_methodTypeParams` record, so `sub` is
@@ -2291,9 +2292,15 @@ sealed partial class Emitter
     // returning a user class).
     static bool ContainsTypeBuilder(Type t)
     {
-        if (t is TypeBuilder || t is GenericTypeParameterBuilder) return true;
+        // `IsGenericParameter` (not just `is GenericTypeParameterBuilder`): the new Reflection.Emit hands generic
+        // params read back off a constructed type (via GetElementType/GetGenericArguments) as a normalized param type
+        // that fails the `is`-check yet still needs TypeBuilder.GetX to encode (e.g. `Func<E[]>` in a generic method).
+        if (t is TypeBuilder || t is GenericTypeParameterBuilder || t.IsGenericParameter) return true;
         if (t.HasElementType) return ContainsTypeBuilder(t.GetElementType());
-        if (t.IsGenericType)
+        // `GetGenericArguments().Length > 0`, NOT `IsGenericType`: the new Reflection.Emit reports IsGenericType=false
+        // for a TypeBuilderInstantiation (a runtime-def generic like `Func<E[]>` instantiated over builder args), which
+        // would skip the recursion that finds the nested builder/param.
+        if (!t.IsGenericParameter && t.GetGenericArguments().Length > 0)
         {
             // A CONSTRUCTED generic whose open definition is a TypeBuilder (e.g. `Iterator<int>` while Iterator is being
             // emitted) is a TypeBuilderInstantiation: resolving its members needs TypeBuilder.GetX, yet it is not itself
@@ -2304,28 +2311,40 @@ sealed partial class Emitter
         return false;
     }
     static bool IsTypeBuilderBackedGeneric(Type t) =>
-        t.IsGenericType && t.GetGenericTypeDefinition() is TypeBuilder;
+        IsGenericInst(t) && t.GetGenericTypeDefinition() is TypeBuilder;
 
     ConstructorInfo DelegateCtor(Type ft)
     {
         var sig = new[] { typeof(object), typeof(IntPtr) };
         if (ft.IsGenericType && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateCtors.TryGetValue(dtb, out var dctor))
             return TypeBuilder.GetConstructor(ft, dctor);
-        return (ft.IsGenericType && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
+        return (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
             ? TypeBuilder.GetConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
             : ft.GetConstructor(sig);
     }
+    // A generic INSTANTIATION test that survives the new Reflection.Emit (where a TypeBuilderInstantiation reports
+    // IsGenericType=false): its generic-arg list is still populated.
+    static bool IsGenericInst(Type t) => !t.IsGenericParameter && t.GetGenericArguments().Length > 0;
     // The delegate's `Invoke` method, bridged via TypeBuilder.GetMethod for a TypeBuilder-involving instantiation.
     MethodInfo InvokeOf(Type ft)
     {
-        if (ft.IsGenericType && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateInvokes.TryGetValue(dtb, out var invoke))
+        if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateInvokes.TryGetValue(dtb, out var invoke))
             return TypeBuilder.GetMethod(ft, invoke);
-        return (ft.IsGenericType && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
-            ? TypeBuilder.GetMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"))
-            : ft.GetMethod("Invoke");
+        if (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
+            return TypeBuilder.GetMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
+        return ft.GetMethod("Invoke");
     }
     // The RETURN .NET type from a `func:<ret>:<args>` string — carried by the BIR, so we never reflect the
     // ReturnType of a TypeBuilder-baked Invoke (which is unreliable on an un-baked generic instantiation).
+    // Structured funcType (a Fn node) or a legacy `func:` string -> the delegate's return type / mapped arg types.
+    Type FuncRetType(JsonElement e) =>
+        e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fn fn
+            ? MapType(fn.Ret) : FuncRetType(e.GetString());
+    List<Type> FuncArgTypes(JsonElement e) =>
+        e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fn fn
+            ? fn.Params.Select(MapType).ToList()
+            : FuncArgSpecs(e.GetString()).Select(MapType).ToList();
+
     Type FuncRetType(string t)
     {
         var rest = t.Substring(5);
@@ -3651,15 +3670,7 @@ sealed partial class Emitter
         var ret = rest.Substring(0, colon);
         var argsPart = rest.Substring(colon + 1);
         var args = SplitTopLevel(argsPart).Select(MapType).ToArray();
-        if (ret == "void")
-            return args.Length == 0 ? typeof(Action)
-                : args.Length <= 16
-                    ? ResolveType("System.Action`" + args.Length).MakeGenericType(args)
-                    : SyntheticActionType(args);
-        var all = args.Append(MapType(ret)).ToArray();
-        return args.Length <= 16
-            ? ResolveType("System.Func`" + all.Length).MakeGenericType(all)
-            : SyntheticFuncType(args, MapType(ret));
+        return BuildFuncType(args, ret == "void" ? typeof(void) : MapType(ret));
     }
 
     Type SyntheticFuncType(Type[] args, Type ret) =>
@@ -3910,12 +3921,22 @@ sealed partial class Emitter
     {
         var args = fn.Params.Select(MapType).ToArray();
         var ret = MapType(fn.Ret);
+        return BuildFuncType(args, ret);
+    }
+
+    // A runtime System.Func/Action cannot encode a generic arg that is a CONSTRUCTED type over a generic param
+    // (`Func<E[]>` / `Func<List<E>,R>`) — ModuleBuilderImpl's member-ref encoding throws "Invoke could not be found"
+    // (a BARE `Func<T>`, or fully-concrete args, are fine). Route such delegates through a synthetic (TypeBuilder-
+    // backed) delegate, which encodes reliably via TypeBuilder.GetMethod. Also used for arity > 16.
+    Type BuildFuncType(Type[] args, Type ret)
+    {
+        bool synth = args.Append(ret).Any(a => !a.IsGenericParameter && ContainsTypeBuilder(a));
         if (ret == typeof(void))
             return args.Length == 0 ? typeof(Action)
-                : args.Length <= 16 ? ResolveType("System.Action`" + args.Length).MakeGenericType(args)
+                : args.Length <= 16 && !synth ? ResolveType("System.Action`" + args.Length).MakeGenericType(args)
                 : SyntheticActionType(args);
         var all = args.Append(ret).ToArray();
-        return args.Length <= 16 ? ResolveType("System.Func`" + all.Length).MakeGenericType(all) : SyntheticFuncType(args, ret);
+        return args.Length <= 16 && !synth ? ResolveType("System.Func`" + all.Length).MakeGenericType(all) : SyntheticFuncType(args, ret);
     }
 
     Type MapType(string t)

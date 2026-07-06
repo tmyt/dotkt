@@ -709,8 +709,8 @@ sealed partial class Emitter
                     if (had) _inlineSubst[lam.lamParam] = prev; else _inlineSubst.Remove(lam.lamParam);
                     return typeof(void);
                 }
-                var ftStr = e.GetProperty("funcType").GetString();
-                var ft = MapType(ftStr);
+                var ftNode = e.GetProperty("funcType");
+                var ft = MapType(ftNode);
                 EmitExpr(e.GetProperty("recv"));
                 // Coerce each invoke arg to the delegate param type declared in the funcType. The delegate's Invoke
                 // param is the FUNCTION type parameter (`Func<T,R>::Invoke(!0)`), so at a VALUE-type instantiation
@@ -719,18 +719,18 @@ sealed partial class Emitter
                 // tolerates the object (it IS a valid reference), which is why only value-typed elements crashed
                 // (generateSequence(1){…} -> InvalidProgramException in the GeneratorSequence iterator's calcNext).
                 // `unbox.any <param>` is the universal fix: unbox a value-type param, castclass a reference one.
-                var invArgSpecs = FuncArgSpecs(ftStr);
+                var invArgSpecs = FuncArgTypes(ftNode);
                 var invArgs = e.GetProperty("args").EnumerateArray().ToArray();
                 for (int ia = 0; ia < invArgs.Length; ia++)
                 {
                     var got = EmitExpr(invArgs[ia]);
-                    if (ia < invArgSpecs.Count && MapType(invArgSpecs[ia]) is { } want && got != null
+                    if (ia < invArgSpecs.Count && invArgSpecs[ia] is { } want && got != null
                         && (want.IsValueType || want.IsGenericParameter)
                         && !got.IsValueType && !got.IsGenericParameter && got != want)
                         _il.Emit(OpCodes.Unbox_Any, want);
                 }
                 _il.Emit(OpCodes.Callvirt, InvokeOf(ft));
-                return FuncRetType(ftStr);
+                return FuncRetType(ftNode);
             }
             case "inlineSplice": return EmitInlineSplice(e);
             case "closureNew":

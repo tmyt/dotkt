@@ -2219,7 +2219,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + ps.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
-			return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${(listOf(selfT) + ps.map { birTypeDeleg(it.type) }).joinToString(",")}"$typeArgs}"""
+			return """{"k":"delegateNew","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
 		}
 		// A .NET method reference. Bound `obj::m` -> a delegate over the .NET instance method (ldftn). Unbound
 		// `NetType::m` -> a lifted static `__mref(self, args) = self.m(args)` via clrInstance.
@@ -2250,7 +2250,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
 				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
-				return """{"k":"delegateNew","method":${str(lname)},"funcType":"func:$retT:${(listOf(selfT) + regs.map { birTypeDeleg(it.type) }).joinToString(",")}"$typeArgs}"""
+				return """{"k":"delegateNew","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
 			}
 		}
 		return unsupported(node, "a method reference to a .NET method (`::${fn.name}`)",
@@ -3655,7 +3655,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (calleeFq == "kotlin.to") {
 			val a = extensionReceiver(call); val b = regularArgs(call).getOrNull(0)
 			if (a != null && b != null)
-				return """{"k":"new","type":"kotlin.Pair[${birType(a.type)},${birType(b.type)}]","args":[${expr(a)},${expr(b)}]}"""
+				return """{"k":"new","type":${TypeNode.Fqn("kotlin.Pair", listOf(birType(a.type), birType(b.type))).toJson()},"args":[${expr(a)},${expr(b)}]}"""
 		}
 		if (declaringClass?.fqNameWhenAvailable?.asString() in setOf("kotlin.Pair", "kotlin.Triple", "kotlin.collections.IndexedValue")
 			&& name.startsWith("component") && name.drop("component".length).all { it.isDigit() }) {
