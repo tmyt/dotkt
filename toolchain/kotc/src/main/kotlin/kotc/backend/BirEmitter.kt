@@ -1725,7 +1725,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val srcAttrs = attrsJson(it.annotations)
 				val kotlinDefault = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
 					val bir = expr(def)   // BIR of the default expression (real IR here — the callee's own build)
-					"""{"attr":"kotlin.clr.KotlinDefault","argTypes":["kotlin.Int","kotlin.String"],"args":[{"k":"const","type":${fqnJson("kotlin.Int")},"value":${regIdx + extOffset}},{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(bir)}}]}"""
+					"""{"attr":"kotlin.clr.KotlinDefault","argTypes":[${fqnJson("kotlin.Int")},${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.Int")},"value":${regIdx + extOffset}},{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(bir)}}]}"""
 				} else null
 				val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
 				val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
@@ -2773,8 +2773,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  (exception-map-to-clrtypealias, USER 2026-07-01.) `msgJson` is an already-quoted JSON string, or
 	 *  null for the no-arg ctor. */
 	internal fun newExc(type: String, msgJson: String?): String =
-		if (msgJson != null) """{"k":"new","type":${str(type)},"argTypes":["kotlin.String"],"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":$msgJson}]}"""
-		else """{"k":"new","type":${str(type)},"argTypes":[],"args":[]}"""
+		if (msgJson != null) """{"k":"new","type":${fqnJson(type)},"argTypes":[${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":$msgJson}]}"""
+		else """{"k":"new","type":${fqnJson(type)},"argTypes":[],"args":[]}"""
 
 	internal fun throwExpr(exc: String): String = """{"k":"throwExpr","value":$exc}"""
 
@@ -3589,7 +3589,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						val one = if (cls == "kotlin.Long") """{"k":"const","type":${fqnJson("kotlin.Long")},"value":1}""" else """{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}"""
 						"""{"k":"bin","op":"-","l":${expr(end)},"r":$one}"""
 					} else expr(end)
-					return """{"k":"new","type":${str(rangeType)},"args":[${expr(recv)},$endExpr]}"""
+					return """{"k":"new","type":${fqnJson(rangeType)},"args":[${expr(recv)},$endExpr]}"""
 				}
 			}
 		}
@@ -4283,7 +4283,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// message (the 1-arg ctor, so no cross-module default-value gap); error()/check() throw IllegalStateException.
 			if (calleeFq == "kotlin.TODO") return throwExpr(newExc("kotlin.NotImplementedError", str("An operation is not implemented.")))
 			if (calleeFq == "kotlin.error")
-				return throwExpr("""{"k":"new","type":${fqnJson("kotlin.IllegalStateException")},"argTypes":["kotlin.String"],"args":[${regularArgs(call).firstOrNull()?.let { expr(it) } ?: """{"k":"const","type":${fqnJson("kotlin.String")},"value":"error"}"""}]}""")
+				return throwExpr("""{"k":"new","type":${fqnJson("kotlin.IllegalStateException")},"argTypes":[${fqnJson("kotlin.String")}],"args":[${regularArgs(call).firstOrNull()?.let { expr(it) } ?: """{"k":"const","type":${fqnJson("kotlin.String")},"value":"error"}"""}]}""")
 			if (calleeFq == "kotlin.require")
 				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null},"else":${throwExpr(newExc("kotlin.IllegalArgumentException", "\"Failed requirement\""))}}"""
 			if (calleeFq == "kotlin.check")
