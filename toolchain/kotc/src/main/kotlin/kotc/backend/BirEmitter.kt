@@ -944,6 +944,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * a relationship-layer lowering (eventual home: bir2cir); it lives here for now alongside the other kotc-side
 	 * lowerings (Unit->void, star-projection->object).
 	 */
+	/** True if [t] is or contains a `tv` (an unresolved type variable). Used by the lifted-anon capture scan to
+	 *  decide whether an inline-substituted param resolves to an ENCLOSING generic param (must be captured) vs a
+	 *  concrete type (resolves fine). */
+	internal fun containsTv(t: TypeNode): Boolean = when (t) {
+		is TypeNode.Tv -> true
+		is TypeNode.Fqn -> t.args?.any { containsTv(it) } == true
+		is TypeNode.Fn -> containsTv(t.ret) || t.params.any { containsTv(it) } || (t.recv?.let { containsTv(it) } == true)
+		is TypeNode.Nullable -> containsTv(t.of)
+		is TypeNode.Array -> containsTv(t.elem)
+		is TypeNode.ByRef -> containsTv(t.of)
+	}
+
 	internal fun innerEnclosingTypeParams(klass: IrClass): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
 		if (!klass.isInner) return emptyList()
 		val result = mutableListOf<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
@@ -1181,9 +1193,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			fun scan(t: IrType, excluded: Set<String>) {
 				val cls = t.classifierOrNull
 				if (cls is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) {
-					if (!typeArgSubst.containsKey(cls.owner)) {
-						if (cls.owner.name.asString() !in excluded) capturedTpParams.add(cls.owner)
-					}
+					// Capture a param that is (a) NOT inline-substituted, OR (b) substituted to an unresolved ENCLOSING
+					// type var. Case (b) is the object literal produced by INLINING a generic fn: `Sequence<T>{...}`
+					// inlined into `asSequence<T>` maps the callee's `T` to the CALLER's method-scoped `tv` in
+					// typeArgSubst, which cannot resolve once the anon is flattened to a standalone generic class
+					// (ilemit falls the unresolvable `!!method` to `object` -> `IEnumerable<object>` vs the real
+					// value-type `Iterator<int>` -> EntryPointNotFound). So a `tv`-valued subst still needs the param
+					// declared on THIS class + instantiated at the `new` site; a subst to a CONCRETE type resolves fine.
+					val subst = typeArgSubst[cls.owner]
+					if ((subst == null || containsTv(subst)) && cls.owner.name.asString() !in excluded)
+						capturedTpParams.add(cls.owner)
 					return
 				}
 				(t as? IrSimpleType)?.arguments?.forEach { (it as? IrTypeProjection)?.type?.let { at -> scan(at, excluded) } }
