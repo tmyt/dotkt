@@ -3354,6 +3354,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else """{"k":"enumOrdinal","e":${expr(e)}}"""
 				return """{"k":"bin","op":"-","l":${ord(recv)},"r":${ord(arg)}}"""
 			}
+			// A DIRECT primitive `Double/Float.compareTo(y)` — Kotlin contracts a TOTAL order (`-0.0 < 0.0`, NaN largest,
+			// `NaN.compareTo(NaN) == 0`) that System.Double.CompareTo does NOT match (`(-0.0).CompareTo(0.0) == 0`). Route
+			// it to the stdlib total-order body. Direct `<`/`>`/`<=`/`>=` on Doubles are UNAFFECTED — they desugar to the
+			// IEEE compare intrinsics (kotlin.internal.ir.less/…), not to this member (so il-nancmp stays IEEE-green).
+			val cmpFq = recv?.type?.classFqName?.asString()
+			if (recv != null && arg != null && recv.type.isMarkedNullable().not() && (cmpFq == "kotlin.Double" || cmpFq == "kotlin.Float")) {
+				val helper = if (cmpFq == "kotlin.Double") "clrDoubleCompare" else "clrFloatCompare"
+				return """{"k":"callStatic","owner":"kotlin.NumbersKt","method":"$helper","args":[${expr(recv)},${expr(arg)}]}"""
+			}
 		}
 		// A PRIMITIVE `x.compareTo(y)` and a `kotlin.Comparable.compareTo` (the `<`/`>`/`<=`/`>=` desugaring on a
 		// bounded generic `<T : Comparable<T>>`) are NO LONGER intercepted here (layer purity): kotc emits the PLAIN
@@ -4040,9 +4049,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `==` (EQEQ): structural — `ceq` for primitives, null-safe `Object.Equals` for String/reference types.
 			// `===` (EQEQEQ): always identity (`ceq`).
 			if (name == "EQEQ" && operands.size == 2) {
-				return if (isPrimitiveEqType(operands[0].type) && isPrimitiveEqType(operands[1].type))
-					"""{"k":"bin","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
-				else """{"k":"objEq","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
+				if (isPrimitiveEqType(operands[0].type) && isPrimitiveEqType(operands[1].type))
+					return """{"k":"bin","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
+				// A BOXED Double/Float `==` (`Any.equals` on a boxed floating value) uses Kotlin's TOTAL order
+				// (`-0.0 != 0.0`, `NaN == NaN`), not Object.Equals' IEEE-ish `Double.Equals` (`-0.0 == 0.0`). Route to the
+				// stdlib total-order helper when both operands unwrap (through Any/nullable casts) to the SAME floating type.
+				floatTotalEqRoute(operands[0], operands[1])?.let { return it }
+				// A collection `==` (List/Set/Map) is STRUCTURAL in Kotlin (`.equals` compares elements), but the operands
+				// lower to BCL collections whose Object.Equals is REFERENCE identity — route to the stdlib structural helper.
+				collEqRoute(operands[0], operands[1])?.let { return it }
+				return """{"k":"objEq","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
 			}
 			if (name == "EQEQEQ" && operands.size == 2)
 				return """{"k":"bin","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
@@ -4584,6 +4600,63 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollToString","args":[${expr(op)}],"typeArgs":[${str(elem)}]}"""
 		}
 		return null
+	}
+
+	// The underlying non-nullable Double/Float value of an operand that is a (possibly Any-boxed) floating value: look
+	// THROUGH CAST/IMPLICIT_CAST wrappers (`x as Any`) and return (FQN, unwrapped-expr) when the underlying static type is
+	// a non-nullable kotlin.Double/kotlin.Float. A bare primitive operand is handled by the isPrimitiveEqType path (never
+	// reaches here); a genuinely Any-typed value with no cast does not unwrap (falls back to Object.Equals).
+	private fun floatingUnwrap(e: IrExpression): Pair<String, IrExpression>? {
+		var x = e
+		while (x is IrTypeOperatorCall && (x.operator == IrTypeOperator.CAST || x.operator == IrTypeOperator.IMPLICIT_CAST)) x = x.argument
+		val fq = x.type.classFqName?.asString()
+		return if (!x.type.isMarkedNullable() && (fq == "kotlin.Double" || fq == "kotlin.Float")) fq!! to x else null
+	}
+
+	// Kotlin total-order equality routing for a BOXED `==` whose operands are (Any-boxed) floating values of the SAME
+	// type — routes to the stdlib `clrDoubleEquals`/`clrFloatEquals` (`-0.0 != 0.0`, `NaN == NaN`). Returns null otherwise
+	// (the caller emits the ordinary Object.Equals objEq). The raw Double/Float values are passed (unwrapped from the box).
+	internal fun floatTotalEqRoute(l: IrExpression, r: IrExpression): String? {
+		val a = floatingUnwrap(l) ?: return null
+		val b = floatingUnwrap(r) ?: return null
+		if (a.first != b.first) return null
+		val helper = if (a.first == "kotlin.Double") "clrDoubleEquals" else "clrFloatEquals"
+		return """{"k":"callStatic","owner":"kotlin.NumbersKt","method":"$helper","args":[${expr(a.second)},${expr(b.second)}]}"""
+	}
+
+	// Kotlin STRUCTURAL equality routing for a collection `==`. Kotlin `==` on List/Set/Map compares elements (via the
+	// AbstractList/Set/Map.equals bodies), but those values lower to BCL collections whose Object.Equals is REFERENCE
+	// identity — so route to a stdlib structural helper (mirrors collToStringRoute). Static-type-driven off BOTH operands:
+	// List/Collection -> ordered elementwise (clrCollStructEquals); Set -> unordered (clrSetStructEquals); Map -> entrywise
+	// (clrMapStructEquals). Both operands must be the SAME collection kind (Kotlin `listOf(1) == setOf(1)` is false). A
+	// nullable operand is fine — the helpers are null-safe. Returns null when either operand is not that collection kind.
+	internal fun collEqRoute(l: IrExpression, r: IrExpression): String? {
+		fun unwrap(e: IrExpression): IrExpression {
+			var x = e
+			while (x is IrTypeOperatorCall && (x.operator == IrTypeOperator.CAST || x.operator == IrTypeOperator.IMPLICIT_CAST)) x = x.argument
+			return x
+		}
+		val lu = unwrap(l); val ru = unwrap(r)
+		val lfq = lu.type.classFqName?.asString() ?: return null
+		val rfq = ru.type.classFqName?.asString() ?: return null
+		if (!lfq.startsWith("kotlin.collections.") || !rfq.startsWith("kotlin.collections.")) return null
+		fun kind(fq: String): String? = when {
+			fq.contains("Map") -> "Map"
+			fq.contains("Set") -> "Set"
+			fq.contains("List") || fq.endsWith("Collection") -> "Coll"
+			else -> null
+		}
+		val lk = kind(lfq) ?: return null
+		if (lk != kind(rfq)) return null
+		// The generic helpers need the collection's element (List/Set) or key+value (Map) type args, exactly as
+		// collToStringRoute passes them — the receiver's own args, so a `List<int32>` binds `T=int32` (no boxing).
+		fun ta(op: IrExpression, i: Int) = (op.type as? IrSimpleType)?.arguments?.getOrNull(i)
+			?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: "object"
+		return when (lk) {
+			"Map" -> """{"k":"callStatic","owner":"kotlin.collections.ClrMapDefaultsKt","method":"clrMapStructEquals","args":[${expr(lu)},${expr(ru)}],"typeArgs":[${str(ta(lu, 0))},${str(ta(lu, 1))}]}"""
+			"Set" -> """{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrSetStructEquals","args":[${expr(lu)},${expr(ru)}],"typeArgs":[${str(ta(lu, 0))}]}"""
+			else -> """{"k":"callStatic","owner":"kotlin.collections.ClrCollectionDefaultsKt","method":"clrCollStructEquals","args":[${expr(lu)},${expr(ru)}],"typeArgs":[${str(ta(lu, 0))}]}"""
+		}
 	}
 
 	// Kotlin null-rendering for a string-template / concat operand. Kotlin renders a NULL interpolated value as the
