@@ -1820,6 +1820,20 @@ static class BirTypeLowering
                 else
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, here);
             }
+            // H2 — SUSPEND FUNCTION-TYPE POSITION metadata. LowerTypeString erases an `sfunc:` token (a `suspend (…)->T`
+            // type) to `object` at a param/field/property `type` or a method `ret` (a suspend-lambda VALUE is a
+            // Continuation-based state-machine object, not a Func delegate). That fold destroys the suspend ORIGIN and
+            // its arg/return SHAPE in the CLR signature, so a re-consuming DotKt assembly can no longer tell
+            // `fun run(block: suspend () -> T)` from a plain function-typed one. Record the RAW pre-erasure `sfunc:`
+            // token alongside — mirroring the `nullable`/`retNullable` positional-fact model — so ilemit can stamp
+            // [KotlinSuspendFunctionType(raw)] and facadegen restore the suspend function type on re-consumption. This
+            // carries the SHAPE STRING (not a bare flag): the erased CLR type is `object`, from which the arg/return
+            // types are otherwise unrecoverable. Additive — ilemit reads it only on param/return/field/property builders;
+            // harmless on any other node that happens to carry an sfunc-typed `type`/`ret`.
+            if (obj["type"] is JsonValue h2tv && h2tv.TryGetValue<string>(out var h2traw) && h2traw.Contains("sfunc:", StringComparison.Ordinal))
+                copy["suspendFnType"] = h2traw;
+            if (obj["ret"] is JsonValue h2rv && h2rv.TryGetValue<string>(out var h2rraw) && h2rraw.Contains("sfunc:", StringComparison.Ordinal))
+                copy["retSuspendFnType"] = h2rraw;
             // ANNOTATION-BASE DERIVATION (annotation-base-lowering-to-bir2cir, USER 2026-07-02): kotc emits a user
             // `annotation class` as a plain class carrying `"annotation":true` (base:null) — the Kotlin fact. bir2cir
             // is the Kotlin<->CLR layer that DERIVES the CLR base: an annotation class extends System.Attribute. Set
