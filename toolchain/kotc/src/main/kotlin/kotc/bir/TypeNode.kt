@@ -33,8 +33,8 @@ sealed class TypeNode {
     /** `array`: `Array<T>` (this-assembly array). */
     data class Array(val elem: TypeNode) : TypeNode()
 
-    /** `byref`: a CLR by-ref `ref T`. */
-    data class Byref(val of: TypeNode) : TypeNode()
+    /** `byRef`: a CLR by-ref `ref T`. */
+    data class ByRef(val of: TypeNode) : TypeNode()
 
     /**
      * Compact canonical JSON string of this type. Field order = required first, optional last —
@@ -62,7 +62,7 @@ sealed class TypeNode {
             }
             is Nullable -> { sb.append("{\"t\":\"nullable\",\"of\":"); of.write(sb); sb.append('}') }
             is Array -> { sb.append("{\"t\":\"array\",\"elem\":"); elem.write(sb); sb.append('}') }
-            is Byref -> { sb.append("{\"t\":\"byref\",\"of\":"); of.write(sb); sb.append('}') }
+            is ByRef -> { sb.append("{\"t\":\"byRef\",\"of\":"); of.write(sb); sb.append('}') }
         }
     }
 
@@ -117,7 +117,7 @@ sealed class TypeNode {
                 )
                 "nullable" -> Nullable(fromValue(o["of"]))
                 "array" -> Array(fromValue(o["elem"]))
-                "byref" -> Byref(fromValue(o["of"]))
+                "byRef" -> ByRef(fromValue(o["of"]))
                 else -> throw IllegalArgumentException("unknown Type discriminator `t`=\"$t\"")
             }
         }

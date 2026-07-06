@@ -50,8 +50,8 @@ public abstract record TypeNode
     /// <summary>`array`: <c>Array&lt;T&gt;</c> (this-assembly array).</summary>
     public sealed record Array(TypeNode Elem) : TypeNode;
 
-    /// <summary>`byref`: a CLR by-ref <c>ref T</c>.</summary>
-    public sealed record Byref(TypeNode Of) : TypeNode;
+    /// <summary>`byRef`: a CLR by-ref <c>ref T</c>.</summary>
+    public sealed record ByRef(TypeNode Of) : TypeNode;
 
     private static bool SeqEq(TypeNode[]? a, TypeNode[]? b)
     {
@@ -87,8 +87,8 @@ public abstract record TypeNode
                 return new Nullable(Read(e.GetProperty("of")));
             case "array":
                 return new Array(Read(e.GetProperty("elem")));
-            case "byref":
-                return new Byref(Read(e.GetProperty("of")));
+            case "byRef":
+                return new ByRef(Read(e.GetProperty("of")));
             default:
                 throw new FormatException($"unknown Type discriminator `t`=\"{t}\"");
         }
@@ -132,8 +132,8 @@ public abstract record TypeNode
                 return new JsonObject { ["t"] = "nullable", ["of"] = Write(n.Of) };
             case Array a:
                 return new JsonObject { ["t"] = "array", ["elem"] = Write(a.Elem) };
-            case Byref b:
-                return new JsonObject { ["t"] = "byref", ["of"] = Write(b.Of) };
+            case ByRef b:
+                return new JsonObject { ["t"] = "byRef", ["of"] = Write(b.Of) };
             default:
                 throw new ArgumentException($"unknown TypeNode variant {t.GetType().Name}");
         }
@@ -220,8 +220,8 @@ public static class TypeNodeSelfTest
                     new TypeNode.Fqn("Foo", new TypeNode[] { new TypeNode.Tv(0) })),
                 "{\"t\":\"fn\",\"suspend\":true,\"ret\":{\"t\":\"nullable\",\"of\":{\"t\":\"tv\",\"i\":0}},\"params\":[],\"recv\":{\"t\":\"fqn\",\"name\":\"Foo\",\"args\":[{\"t\":\"tv\",\"i\":0}]}}"),
             // array + byref (cover the remaining variants)
-            (new TypeNode.Array(new TypeNode.Byref(new TypeNode.Fqn("kotlin.Long"))),
-                "{\"t\":\"array\",\"elem\":{\"t\":\"byref\",\"of\":{\"t\":\"fqn\",\"name\":\"kotlin.Long\"}}}"),
+            (new TypeNode.Array(new TypeNode.ByRef(new TypeNode.Fqn("kotlin.Long"))),
+                "{\"t\":\"array\",\"elem\":{\"t\":\"byRef\",\"of\":{\"t\":\"fqn\",\"name\":\"kotlin.Long\"}}}"),
         };
 
         int n = 0;

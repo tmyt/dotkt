@@ -25,7 +25,7 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `fn` | `suspend:bool`, `ret:T`, `params:[T…]`, `recv?:T` | a function type; `suspend` is a flag, `recv` = extension receiver | `func:ret:args`, `sfunc:ret:args` |
 | `nullable` | `of:T` | `T?` | `nullable:X` |
 | `array` | `elem:T` | `Array<T>` (this-assembly array) | `array:X` |
-| `byref` | `of:T` | a CLR by-ref `ref T` | `byref:X` |
+| `byRef` | `of:T` | a CLR by-ref `ref T` | `byRef:X` |
 
 Notes:
 - **No CLR-resolution marker in kotc output.** kotc emits `{t:"fqn",name:"kotlin.Int"}` — the *identity*
@@ -141,6 +141,35 @@ reversible. FREEZE: derive synthetic names through a **single registry** that as
 unique name per DISTINCT structured `Type` (dedup by the `Type` node, not by the mangled string), with the
 prefix set (`ClrH`/`KIterator`/…) DOCUMENTED here as an enum. Name-mangling is not a serialization DSL, but a
 lossy type→string encoding is the same durable-ABI smell (structure hidden in a string) and a real collision bug.
+
+### 2.6 Naming convention — ONE rule for the whole format vocabulary
+Every identifier in the serialization vocabulary is **lowerCamelCase**, uniformly: node `k` values, type
+`t` values (§1), ALL field names (§2.5.1), `mods` keys (§2.1), `vis` enum values, injection-decl kinds (§5b),
+carrier field names. Rules:
+- **Multi-word → camelCase boundaries; never case-hiding-flat.** `byref`→`byRef`, `isinst`→`isInst`,
+  `staticfieldset`→`staticFieldSet`. A boundary between words is always a case change.
+- **No cryptic single letters / silent truncations** where they hide meaning: `e`/`l`/`r`→documented or
+  `expr`/`lhs`/`rhs`; `bin`/`un`→`binOp`/`unaryOp` (or a pinned short-operator exception).
+- **Accepted acronym tags** (documented, treated as a single lowercase unit — like the top-level `k`/`t`
+  keys themselves): `fqn`, `tv`, `fn`. These are universal 2-3 letter type-tag units, NOT case-hiding
+  multiword flattenings; they stay lowercase. (If one ever appears mid-identifier it becomes `Fqn`/`Tv`/`Fn`.)
+- **Documented EXCEPTIONS (different domain, intentionally not lowerCamel):**
+  - **.NET attribute TYPE names** are UpperCamel — `KotlinInlineAttribute`, `KotlinSuspendFunctionTypeAttribute`,
+    `KotlinDefaultAttribute` — because they are CLR types and MUST follow the CLR/BCL convention. Their
+    *constructor-arg / field* names still follow the lowerCamel rule.
+  - **carrier version tags** are kebab-with-slash — `"bir-json/1"`, `"bir-msgpack/1"` — a codec+schema version
+    identifier, not a vocabulary identifier; the `/` separates codec from schema-major.
+- **SCOPE — vocabulary, NOT payload data.** This policy governs the format's OWN identifiers (the
+  meta-language: `k`/`t` tags, field names, `mods` keys, decl kinds). It does **NOT** govern the DATA those
+  fields carry — the Kotlin/CLR **symbol names** in a `name` value (`{"t":"fqn","name":"…"}`), which follow
+  their SOURCE language's conventions and are copied verbatim. Concretely: the BIR type TAG for a by-ref is
+  `byRef` (our vocabulary → lowerCamel), but the user-facing Kotlin by-ref SYMBOL is `kotlin.clr.byref`
+  (lowercase BY DESIGN — a Kotlin API name, carried as a `name` value, untouched by this policy). Same for
+  `kotlin.Int`, `System.String`, a user's `myFun` — `name` values are object-language data, never re-cased.
+- **The validator enforces the canonical sets** (§4/§5): any `k`/`t`/field/mod/decl-kind spelling not in the
+  frozen spec — wrong casing, an undocumented abbreviation, a synonym — reddens the gate. There is no
+  case-insensitive fallback and no alias table; the spelling in this spec is THE spelling. (The validator
+  checks VOCABULARY spelling, never a `name`-value's payload.)
 
 ## 3. Labels & naming (conventions consumed as opaque strings)
 - SM / coroutine method names: `<name>$dotkt_suspend` (cold entry), `<name>$sm` (state machine class) —
