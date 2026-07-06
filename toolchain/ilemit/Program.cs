@@ -1393,8 +1393,12 @@ sealed partial class Emitter
 
     // Resolve a field for emit; out-param gives the substituted (concrete) field type for boxing decisions.
     FieldInfo ResolveField(string spec, string name, out Type fieldType)
+        => ResolveField(ParseOwner(spec), name, out fieldType);
+
+    // Structured owner overload (keeps the constructed-generic instantiation — see ResolveMethod's overload note).
+    FieldInfo ResolveField((string open, Type constructed) owner, string name, out Type fieldType)
     {
-        var (open, constructed) = ParseOwner(spec);
+        var (open, constructed) = owner;
         // A REFERENCED generic owner constructed from PURE reflection types (NOT a TypeBuilder instantiation): reflect
         // the field directly on the constructed instantiation — its GetField carries the substituted field type, so no
         // TypeBuilder.GetField re-anchoring is needed. Mirrors ResolveMethod's external-constructed branch. (Reaches a
@@ -1418,8 +1422,15 @@ sealed partial class Emitter
 
     // Resolve a method for emit; out-param gives the substituted (concrete) return type for boxing decisions.
     MethodInfo ResolveMethod(string spec, string name, out Type retType, string sig = null)
+        => ResolveMethod(ParseOwner(spec), name, out retType, sig);
+
+    // Structured owner overload: a constructed-generic owner slot (`kotlin.Pair[int,int]`) arriving as a native
+    // TypeNode.Fqn must keep its ARGS — `SlotName` collapses the Fqn to its open name, which would resolve the member
+    // on the OPEN generic def (`kotlin.Pair`2::get_first`), an invalid cross-assembly memberref -> runtime
+    // TypeLoadException. ParseOwnerSlot preserves the instantiation; this overload consumes the pre-parsed owner.
+    MethodInfo ResolveMethod((string open, Type constructed) owner, string name, out Type retType, string sig = null)
     {
-        var (open, constructed) = ParseOwner(spec);
+        var (open, constructed) = owner;
         // A REFERENCED generic owner constructed from PURE reflection types (NOT a TypeBuilder instantiation): resolve
         // the member directly on the constructed instantiation — its GetMethods carry the substituted signature, so no
         // TypeBuilder.GetMethod re-anchoring (below) is needed. A referenced-generic instantiated with an EMITTED
@@ -1494,8 +1505,12 @@ sealed partial class Emitter
     // anchored on the (possibly constructed-generic) owner, or null when the owner is emitted in THIS assembly (its
     // backing field is directly accessible) or no such accessor exists (a public `@ClrField` -> keep the direct field).
     MethodInfo ExternalPropAccessor(string spec, string accessor)
+        => ExternalPropAccessor(ParseOwner(spec), accessor);
+
+    // Structured owner overload (keeps the constructed-generic instantiation — see ResolveMethod's overload note).
+    MethodInfo ExternalPropAccessor((string open, Type constructed) owner, string accessor)
     {
-        var (open, constructed) = ParseOwner(spec);
+        var (open, constructed) = owner;
         if (_types.ContainsKey(open)) return null;
         // Pure-reflection constructed generic: resolve directly on the instantiation (its accessor carries the
         // SUBSTITUTED return/param types, so no TypeBuilder re-anchoring is needed) — mirrors ResolveMethod's branch.
@@ -1848,7 +1863,7 @@ sealed partial class Emitter
                 return;
             case "field":
                 EmitExpr(e.GetProperty("recv"));
-                _il.Emit(OpCodes.Ldflda, ResolveField(SlotName(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
+                _il.Emit(OpCodes.Ldflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
         }
         var t = EmitExpr(e);

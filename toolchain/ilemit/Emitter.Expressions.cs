@@ -53,11 +53,16 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Callvirt, typeof(MethodInfo).GetMethod("Invoke", new[] { typeof(object), typeof(object[]) }));
         // result: pop a dropped void return, else unbox/cast to the CIR-declared dynRet. The spec is a CLR spelling —
         // bir2cir derives Unit->void upstream, so ilemit never sees a Kotlin `unit`/`kotlin.Unit` here (if it did, that
-        // would be a bir2cir lowering defect, not something ilemit should silently absorb).
-        var retSpec = e.TryGetProperty("dynRet", out var rr) && rr.ValueKind == JsonValueKind.String ? rr.GetString()
-                    : e.TryGetProperty("ret", out var rr2) && rr2.ValueKind == JsonValueKind.String ? rr2.GetString() : "void";
-        if (retSpec is "void" or "System.Void") { _il.Emit(OpCodes.Pop); return typeof(void); }
-        var retT = MapType(retSpec);
+        // would be a bir2cir lowering defect, not something ilemit should silently absorb). The slot is a structured
+        // TypeNode (post type-flip) OR a legacy string — MapType(JsonElement) dispatches both; only the bare-string
+        // "void"/"System.Void" legacy spelling needed the special-case. (Regression guard: before the flip this read the
+        // slot ONLY as a string, so a structured `dynRet` fell through to "void" and POPPED a live bool — e.g. a
+        // dynamic-dispatched `it.MoveNext()` loop condition -> `brfalse` on an empty stack -> InvalidProgram.)
+        JsonElement retEl = default; bool hasRet = false;
+        if (e.TryGetProperty("dynRet", out var rr) && rr.ValueKind != JsonValueKind.Null) { retEl = rr; hasRet = true; }
+        else if (e.TryGetProperty("ret", out var rr2) && rr2.ValueKind != JsonValueKind.Null) { retEl = rr2; hasRet = true; }
+        var retT = hasRet ? MapType(retEl) : typeof(void);
+        if (retT == typeof(void)) { _il.Emit(OpCodes.Pop); return typeof(void); }
         _il.Emit(OpCodes.Unbox_Any, retT);   // universal: unbox a value type, cast a ref type, resolve a generic param
         return retT;
     }
@@ -81,7 +86,7 @@ sealed partial class Emitter
             }
             case "field":
             {
-                var fon = SlotName(e.GetProperty("ownerType"));
+                var fon = ParseOwnerSlot(e.GetProperty("ownerType"));
                 var fnm = e.GetProperty("name").GetString();
                 // (No Throwable.message/cause -> System.Exception.Message/InnerException correction here: bir2cir now
                 // substitutes those reads to clrPropGet off the @ClrProperty binding on kotlin.Throwable, so ilemit only
@@ -102,7 +107,7 @@ sealed partial class Emitter
             }
             case "setFieldExpr":
             {
-                var son = SlotName(e.GetProperty("ownerType"));
+                var son = ParseOwnerSlot(e.GetProperty("ownerType"));
                 var snm = e.GetProperty("name").GetString();
                 if (ExternalPropAccessor(son, "set_" + snm) is { } setter)
                 {
@@ -122,7 +127,7 @@ sealed partial class Emitter
             {
                 // `lateinit var` read: load the field; if still null (uninitialized), throw.
                 EmitExpr(e.GetProperty("recv"));
-                var fld = ResolveField(SlotName(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _);
+                var fld = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _);
                 _il.Emit(OpCodes.Ldfld, fld);
                 _il.Emit(OpCodes.Dup);
                 var ok = _il.DefineLabel();
@@ -147,7 +152,12 @@ sealed partial class Emitter
                     var ext = constructed ?? ResolveType(open);
                     var ctorE = NewCtorBySig(ext, e, nargs.GetArrayLength())
                         ?? ext.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == nargs.GetArrayLength());
-                    EmitNewArgs(e, nargs);
+                    // Emit the ctor args against the RESOLVED ctor's SUBSTITUTED param types (a constructed-generic
+                    // `Triple<int,string,int>` ctor wants value `int`, not object) — NOT the node's `argTypes`, which are
+                    // the ctor's DECLARED params (the open class type-vars `!0/!1/!2`); those resolve to `object` in a
+                    // non-generic caller, so EmitNewArgs would box the value args -> a `newobj` arg-type mismatch
+                    // (ilverify StackUnexpected [found ref int32][expected Int32] -> runtime InvalidProgram).
+                    if (ctorE != null) EmitArgs(nargs, ctorE.GetParameters()); else EmitNewArgs(e, nargs);
                     _il.Emit(OpCodes.Newobj, ctorE);
                     return ext;
                 }
@@ -168,8 +178,9 @@ sealed partial class Emitter
                 // A @Clr-bound member whose STATIC resolution fails -- it lives on a BCL clrg: interface that FindMethod
                 // skips (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) -- falls back to dynamic
                 // dispatch. Gated to nodes carrying "dynRet" (the @Clr member calls), so a genuine miss elsewhere throws.
-                try { m0 = ResolveMethod(SlotName(e.GetProperty("ownerType")), e.GetProperty("method").GetString(), out rt, cisig); }
-                catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _) && OwnerHasClrInterface(SlotName(e.GetProperty("ownerType")))) { return EmitDynamicCall(e); }
+                var ciOwner = ParseOwnerSlot(e.GetProperty("ownerType"));   // keeps a constructed-generic owner's args
+                try { m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig); }
+                catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _) && OwnerHasClrInterface(ciOwner.open)) { return EmitDynamicCall(e); }
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
                 EmitExpr(e.GetProperty("recv"));
                 if (m == m0) EmitCallArgs(e.GetProperty("args"), m); else EmitArgsTyped(e.GetProperty("args"), mps, m);
