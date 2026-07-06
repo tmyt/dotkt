@@ -328,10 +328,12 @@ sealed partial class Emitter
                         var tlType = MapType(f.GetProperty("type").GetString());
                         var tlAttrs = FieldAttributes.Public | FieldAttributes.Static;
                         // `@kotlin.concurrent.Volatile` on a top-level `var` -> a `modreq(IsVolatile)` static field.
-                        ti.Fields[f.GetProperty("name").GetString()] =
-                            f.TryGetProperty("volatile", out var tlVol) && tlVol.GetBoolean()
+                        var tlFb = f.TryGetProperty("volatile", out var tlVol) && tlVol.GetBoolean()
                                 ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), tlType, tlAttrs)
                                 : ti.TB.DefineField(f.GetProperty("name").GetString(), tlType, tlAttrs);
+                        // H2: a `suspend (…) -> T`-typed top-level property's backing field carries the pre-erasure shape.
+                        if (f.TryGetProperty("suspendFnType", out var tlSf)) ApplySuspendFnType(tlFb, tlSf.GetString());
+                        ti.Fields[f.GetProperty("name").GetString()] = tlFb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: true);
             }
@@ -359,6 +361,8 @@ sealed partial class Emitter
                             : ti.TB.DefineField(f.GetProperty("name").GetString(), ftype, fattrs);
                         // A not-publicly-settable property's backing field -> [KotlinReadOnly] (consumer restores it as `val`).
                         if (f.TryGetProperty("readOnly", out var ro) && ro.GetBoolean()) ApplyKotlinReadOnly(fb);
+                        // H2: a `suspend (…) -> T`-typed field/property backing field carries the pre-erasure shape.
+                        if (f.TryGetProperty("suspendFnType", out var fSf)) ApplySuspendFnType(fb, fSf.GetString());
                         ti.Fields[f.GetProperty("name").GetString()] = fb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: false);
@@ -371,6 +375,8 @@ sealed partial class Emitter
                         var pb = ti.TB.DefineProperty(p.GetProperty("name").GetString(), PropertyAttributes.None, MapType(p.GetProperty("type").GetString()), null);
                         if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(g.GetString(), out var gm)) pb.SetGetMethod(gm);
                         if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(s.GetString(), out var sm)) pb.SetSetMethod(sm);
+                        // H2: a `val/var x: suspend (…) -> T` property carries the pre-erasure `sfunc:` shape (its CLR type is object).
+                        if (p.TryGetProperty("suspendFnType", out var pSf)) ApplySuspendFnType(pb, pSf.GetString());
                     }
                 EnsureCtorsDefined(ti);
             }
@@ -648,18 +654,26 @@ sealed partial class Emitter
                     // nullable); it takes precedence over the scalar. (No emitter today -> a verified no-op until bir2cir
                     // lands the walk; see the reported CIR contract.)
                     byte[] retFlags = m.TryGetProperty("retNullableFlags", out var rnf) && rnf.ValueKind == JsonValueKind.Array ? ReadNullableFlags(rnf) : null;
-                    if (kf == 0 && !inl && nmask == 0 && retFlags == null) continue;
+                    // H2: a `suspend (…) -> T` RETURN type — bir2cir carries the pre-erasure `sfunc:` shape in `retSuspendFnType`.
+                    string retSuspendFn = m.TryGetProperty("retSuspendFnType", out var rsf) ? rsf.GetString() : null;
+                    if (kf == 0 && !inl && nmask == 0 && retFlags == null && string.IsNullOrEmpty(retSuspendFn)) continue;
                     var name = m.GetProperty("name").GetString();
                     if (!ti.MethodsBySig.TryGetValue(SigKey(name, m), out var mb) && !ti.Methods.TryGetValue(name, out mb)) continue;
                     if (kf != 0) ApplyKotlinFunction(mb, kf);
                     // [KotlinInline(body)]: carry this inline+lambda fn's BIR (params + body) so a consumer can splice it.
                     if (inl) ApplyKotlinInline(mb, "{\"params\":" + m.GetProperty("params").GetRawText() + ",\"body\":" + m.GetProperty("body").GetRawText() + "}");
-                    // Nullable RETURN -> [Nullable(...)] on the return parameter (position 0; param nullability is stamped
-                    // by DefineParamNames, which owns the parameter builders). The type's [NullableContext(1)] is the
-                    // non-null default, so only the nullable positions need an override. The nested byte-array form wins
-                    // over the scalar when present.
-                    if (retFlags != null) ApplyNullable(mb.DefineParameter(0, ParameterAttributes.None, null), retFlags);
-                    else if ((nmask & 1u) != 0) ApplyNullable(mb.DefineParameter(0, ParameterAttributes.None, null));
+                    // Return-position metadata rides the return parameter (position 0). Define it ONCE (a second
+                    // DefineParameter(0) would be a duplicate builder) and stamp every present fact: [Nullable(...)] for a
+                    // nullable return (nested byte-array form wins over the scalar), [KotlinSuspendFunctionType] for a
+                    // suspend fn-type return. The type's [NullableContext(1)] is the non-null default, so only the nullable
+                    // positions need an override.
+                    if (retFlags != null || (nmask & 1u) != 0 || !string.IsNullOrEmpty(retSuspendFn))
+                    {
+                        var retPb = mb.DefineParameter(0, ParameterAttributes.None, null);
+                        if (retFlags != null) ApplyNullable(retPb, retFlags);
+                        else if ((nmask & 1u) != 0) ApplyNullable(retPb);
+                        if (!string.IsNullOrEmpty(retSuspendFn)) ApplySuspendFnType(retPb, retSuspendFn);
+                    }
                 }
         }
 

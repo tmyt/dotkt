@@ -12,7 +12,7 @@ sealed partial class Emitter
     // The embedded `DotKt.Runtime.CompilerServices.*` attribute types — defined into THIS module by EnsureKotlinAttrs
     // (Emitter.CompilerServices.cs). Always available once defined (no external reference needed to stamp).
     bool _kAttrsResolved;
-    Type _kFuncAttr, _kFileAttr, _kInlineAttr, _kReadOnlyAttr, _kFunIfaceAttr, _kSealedAttr, _nullableAttr, _nullableCtxAttr;
+    Type _kFuncAttr, _kFileAttr, _kInlineAttr, _kReadOnlyAttr, _kFunIfaceAttr, _kSealedAttr, _nullableAttr, _nullableCtxAttr, _kSuspendFnAttr;
 
     // Fields carrying `@kotlin.concurrent.Volatile` (kotc emits `"volatile":true`). Emitted with a REQUIRED
     // `modreq(System.Runtime.CompilerServices.IsVolatile)` custom modifier — EXACTLY how C# encodes a `volatile`
@@ -178,11 +178,15 @@ sealed partial class Emitter
             // NESTED param nullability (bundle-6 BUG 2): the flattened byte walk when a nullable `?` rides an inner
             // type arg (a `List<String?>` param). Supplied by bir2cir; takes precedence over the scalar `nullable`.
             byte[] pFlags = p.TryGetProperty("nullableFlags", out var pnf) && pnf.ValueKind == JsonValueKind.Array ? ReadNullableFlags(pnf) : null;
+            // H2: a `suspend (…) -> T` PARAMETER type — bir2cir carries the pre-erasure `sfunc:` shape in `suspendFnType`
+            // (the CLR param type itself is the erased `object`). Force the parameter builder so [KotlinSuspendFunctionType]
+            // can be stamped even if the param otherwise carries no name/default/nullability.
+            string pSuspendFn = p.TryGetProperty("suspendFnType", out var psf) ? psf.GetString() : null;
             // PARAMETER-level custom attributes (e.g. [ClrRefArgument], which bir2cir reads from the ref.dll to pass the
             // arg by reference). Stripped in the runtime build (kotc emits none), so this rides only the ref.dll.
             JsonElement pattrs = default;
             bool hasAttrs = !_stripMetadata && p.TryGetProperty("attrs", out pattrs) && pattrs.GetArrayLength() > 0;
-            if (name.Length == 0 && !vararg && !hasDefault && !nullable && pFlags == null && !hasAttrs) { i++; continue; }
+            if (name.Length == 0 && !vararg && !hasDefault && !nullable && pFlags == null && !hasAttrs && string.IsNullOrEmpty(pSuspendFn)) { i++; continue; }
             // A constant default -> [Optional] + DefaultParameterValue, so a cross-module caller can omit the arg.
             var attrs = hasDefault ? ParameterAttributes.Optional | ParameterAttributes.HasDefault : ParameterAttributes.None;
             var pb = defineParam(i, attrs, name.Length > 0 ? name : null);
@@ -191,6 +195,7 @@ sealed partial class Emitter
             if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
             if (pFlags != null) ApplyNullable(pb, pFlags);
             else if (nullable) ApplyNullable(pb);
+            if (!string.IsNullOrEmpty(pSuspendFn)) ApplySuspendFnType(pb, pSuspendFn);   // H2 suspend fn-type param shape
             // Apply each param attribute whose type this assembly can encode (in-assembly emitted type or a clr:-imported
             // one); an attr referencing a type not in `_types` is skipped (BuildCab would KeyNotFound) — the same "the CLR
             // layer decides what is encodable" policy the method-level attr path uses.

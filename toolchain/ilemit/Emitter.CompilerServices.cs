@@ -55,6 +55,13 @@ sealed partial class Emitter
         // class/interface->abstract-class/interface). Metadata-only, read back by facadegen to restore the Kotlin nature.
         _kFunIfaceAttr = DefineEmbeddedAttr(CompilerServicesNs + "KotlinFunInterfaceAttribute");            // `fun interface` (SAM)
         _kSealedAttr   = DefineEmbeddedAttr(CompilerServicesNs + "KotlinSealedAttribute");                  // `sealed` class/interface
+        // H2: a `suspend (…) -> T` function TYPE in a param/return/field/property POSITION. bir2cir erases the `sfunc:`
+        // token to `object` in the CLR signature (a suspend-lambda VALUE is a Continuation-based SM object, not a Func),
+        // which destroys the suspend origin AND its shape (arg/return types). This attribute carries the ORIGINAL
+        // `sfunc:<ret>:<args>` SHAPE string (not a bare flag — the erased CLR type is `object`, so a flag alone could not
+        // reconstruct the function type) so a re-consuming Kotlin module (facadegen reads it back) can restore the
+        // `suspend (…) -> T` type. Metadata-only; a C# consumer ignores it. (Mirrors the KotlinInline body-carrier model.)
+        _kSuspendFnAttr = DefineEmbeddedAttr(CompilerServicesNs + "KotlinSuspendFunctionTypeAttribute", typeof(string));
         // Reference-type nullability uses .NET's OWN NRT metadata (not a DotKt attribute), embedded under its standard
         // System.Runtime.CompilerServices names so a C# consumer recognizes it too — the csc model. [NullableContext(b)]
         // is the per-type default (we emit 1 = non-null); [Nullable(2)] overrides a specific nullable reference position.
@@ -97,6 +104,29 @@ sealed partial class Emitter
     {
         EnsureKotlinAttrs();
         pb.SetCustomAttribute(new CustomAttributeBuilder(_nullableAttr.GetConstructor(new[] { typeof(byte) }), new object[] { b }));
+    }
+
+    // [KotlinSuspendFunctionType(shape)] — H2. Stamp the ORIGINAL `sfunc:<ret>:<args>` shape string of a suspend
+    // function-type position (a param/return via a ParameterBuilder; a field/property below). `shape` is supplied
+    // verbatim by bir2cir (the `suspendFnType`/`retSuspendFnType` CIR fact), which owns the Kotlin->CLR erasure and
+    // therefore the only place the pre-erasure shape survives. ilemit only stamps.
+    void ApplySuspendFnType(ParameterBuilder pb, string shape)
+    {
+        if (string.IsNullOrEmpty(shape)) return;
+        EnsureKotlinAttrs();
+        pb.SetCustomAttribute(new CustomAttributeBuilder(_kSuspendFnAttr.GetConstructor(new[] { typeof(string) }), new object[] { shape }));
+    }
+    void ApplySuspendFnType(FieldBuilder fb, string shape)
+    {
+        if (string.IsNullOrEmpty(shape)) return;
+        EnsureKotlinAttrs();
+        fb.SetCustomAttribute(new CustomAttributeBuilder(_kSuspendFnAttr.GetConstructor(new[] { typeof(string) }), new object[] { shape }));
+    }
+    void ApplySuspendFnType(PropertyBuilder pb, string shape)
+    {
+        if (string.IsNullOrEmpty(shape)) return;
+        EnsureKotlinAttrs();
+        pb.SetCustomAttribute(new CustomAttributeBuilder(_kSuspendFnAttr.GetConstructor(new[] { typeof(string) }), new object[] { shape }));
     }
 
     // Read a CIR `retNullableFlags`/`nullableFlags` JSON array (bir2cir's flattened NullableAttribute byte walk) into
