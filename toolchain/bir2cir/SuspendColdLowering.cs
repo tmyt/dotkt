@@ -1230,6 +1230,8 @@ static class SuspendColdLowering
                         ? NullConst(Str(o["type"]) ?? "kotlin.Any") : RewriteNoSpill(o["init"]));
                 if (_isMember && Str(o["k"]) == "this")
                     return FieldOf(ThisField, _ownerClass);
+                if (Str(o["k"]) == "this" && CapturedOuterField() is JsonNode of0)
+                    return of0;
                 var copy = new JsonObject();
                 foreach (var kv in o) copy[kv.Key] = kv.Value == null ? null : RewriteNoSpill(kv.Value);
                 return copy;
@@ -1270,6 +1272,8 @@ static class SuspendColdLowering
                         ? NullConst(Str(o["type"]) ?? "kotlin.Any") : Rewrite(o["init"], outp));
                 if (_isMember && k == "this")
                     return FieldOf(ThisField, _ownerClass);
+                if (k == "this" && CapturedOuterField() is JsonNode of1)
+                    return of1;
                 if (IsSuspendIntrinsicBlock(o))
                     return EmitIntrinsicSuspension(o, outp);
                 if (IsSuspendCoroutineCall(o))
@@ -1984,6 +1988,17 @@ static class SuspendColdLowering
         // which the generic local->field rule already redirects — this alias is only for the lambda-capture mismatch.
         JsonNode CapturedSelfField() =>
             (!_fields.Contains("__self") && _fields.Contains("__outer"))
+                ? FieldOf("__outer", FieldType("__outer")) : null;
+
+        // #34a — a suspend LAMBDA that closes over its enclosing INSTANCE captures it as the `__outer` field
+        // (SuspendLambdaLowering seeds the ctor arg from the enclosing `this`/`__self`). kotc emits references to
+        // that instance's members as a bare `this.member` (recv `{k:"this"}`) inside the lambda body, but inside the
+        // SM `this` is the SM itself — so a body `this` must read the captured `__outer` field (`this.__outer`). A
+        // lambda has no `this` of its own (its receiver, if any, rides a create()-set param field), so EVERY bare
+        // `this` in the lambda body denotes the captured enclosing instance. Only synthesized SM-self nodes use the
+        // `smSelf` marker, so they are unaffected. Absent an `__outer` capture there is nothing to redirect.
+        JsonNode CapturedOuterField() =>
+            (_isLambda && _fields.Contains("__outer"))
                 ? FieldOf("__outer", FieldType("__outer")) : null;
 
         // The cold call. Shapes (same-assembly callStatic/callInstance, and — BUG 1 — the CROSS-ASSEMBLY
