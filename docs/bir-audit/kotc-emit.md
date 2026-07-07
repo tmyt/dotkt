@@ -95,8 +95,8 @@ representative emit site is given.
 |-----|--------|---------|-----------|
 | `clrStatic` | `type,method,argTypes,ret,args,suspendCall?` | static call on FIR-injected .NET type | `:3825` |
 | `clrInstance` | `type,method,argTypes,ret,recv,args` | instance call on injected .NET type | `:2214` |
-| `clrGenericStatic` | `type,method,typeArgs,shapes,args` | generic static on injected .NET type | `:2729` |
-| `clrGenericInstance` | `type,method,typeArgs,shapes,recv,args,suspendCall?` | generic instance on injected .NET type | `:3783` |
+| `clrGenericStatic` | `type,method,typeArgs,shapeTypes,args` | generic static on injected .NET type; kotc emits `shapeTypes` (pure-Kotlin declared-param `birType` nodes), bir2cir's `ShapeSynthesis` derives the frozen `shapes` string array off the `@ClrTypeAlias` index (#55 §4) | `:2729` |
+| `clrGenericInstance` | `type,method,typeArgs,shapeTypes,recv,args,suspendCall?` | generic instance on injected .NET type; `shapeTypes`→`shapes` as above (#55 §4) | `:3783` |
 | `newClr` | `type,argTypes,args` | ctor of injected .NET type | `Expr:174` |
 | `clrPropGet` | `type,name,retType,static,recv` | injected .NET property get | `:3812`, `Expr:136` |
 | `clrPropSet` | `type,name,static,recv,value` | injected .NET property set | `:3811`, `Stmt:117` |

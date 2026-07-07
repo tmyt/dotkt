@@ -513,8 +513,20 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   `@ClrTypeAlias("System.Object")` in the stdlib (it erases to `object`, mirroring `kotlin.Any`) so it too
   resolves from metadata rather than a hardcode. The attribute-blob force map (`KotlinAllToClr`) STAYS: a
   custom-attribute blob needs a concrete `System.*` even in the reference build, which has no ref.dll to read.
-  This is a behavior-preserving reroute — emitted primitive values are byte-identical. (Decoupled follow-ups
-  left out of scope: facadegen's reverse `System.*`→`kotlin.*` map and kotc's `clrMethodShape` shape-matcher.)
+  This is a behavior-preserving reroute — emitted primitive values are byte-identical. (One decoupled follow-up
+  left out of scope: facadegen's reverse `System.*`→`kotlin.*` map.)
+- **Generic-overload `shapes` are metadata-driven — kotc's `clrMethodShape` .NET-name matcher is DELETED
+  (#55 §4).** The `clrGenericStatic`/`clrGenericInstance` nodes carry a `shapes` array (the SIG-KEY reflection
+  island) that ilemit matches against reflected `MethodInfo` parameter shapes to pick the exact generic-method
+  overload. kotc used to compute those tokens itself in `clrMethodShape(IrType)` — including the .NET SIMPLE
+  NAMES (`kotlin.Long` → `"Int64"`, `kotlin.Byte` → `"SByte"`, `kotlin.Float` → `"Single"`, …), a keystone CLR-
+  knowledge leak in the frontend (kotc is the only layer coupled to the Kotlin IR API, so this blocked the
+  2.4 bump). kotc now emits only the DECLARED parameter types as pure-Kotlin `birType` identities in a transient
+  `shapeTypes` array; a new bir2cir pass (`ShapeSynthesis`) derives the `shapes` tokens off the `@ClrTypeAlias`
+  index (`kotlin.Long` → `System.Int64` → `"Int64"`, the signed/unsigned split per #53/#54) and drops
+  `shapeTypes` before ilemit. The structural tokens (`gp`/`array`/`generic`/`ienum`/`func:N`/`string`/`char`/
+  `int`) are derived from the `TypeNode` shape; ilemit is unchanged. Behavior-preserving — generic overload
+  resolution is byte-identical (the `gen*`/`sort`/`taskwhen`/`netgen` samples are the safety net).
 - **kotc `BirMappings.kt` shed of dead + vestigial tables (#40).** Post-#37-freeze audit of the
   Kotlin→BIR name/shape tables removed four entries: `COLLECTION_MEMBER` and `PRIMITIVE_SHORTHANDS`
   (both ref-count 0 — dead) and `VALUE_PRIM_BIR` (a `kotlin.Int`→`kotlin.Int` identity map whose only

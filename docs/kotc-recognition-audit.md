@@ -100,6 +100,16 @@ operator/conv/range bucket is *misplaced-but-expensive*, and honesty requires ma
 deferred) rather than "must-stay." The genuinely-unavoidable frontend residue (a literal with no relocatable
 synthesis and no IR origin) is **near-zero**.
 
+> **✅ Update (#55 §4, 2026-07-08) — the `clrMethodShape` .NET-name matcher is GONE.** Not a `fqnJson`
+> literal (so outside the ~95-count metric above), but the same species of leak: kotc's
+> `clrMethodShape(IrType)` emitted the ilemit overload-matcher `shapes` tokens directly — including the
+> .NET SIMPLE NAMES `Int64`/`SByte`/`Single`/… — onto `clrGenericStatic`/`clrGenericInstance`. That is
+> CLR knowledge in the only IR-coupled layer (bump-blocking). kotc now emits the DECLARED parameter types
+> as pure-Kotlin `birType` identities in a transient `shapeTypes` array; bir2cir's `ShapeSynthesis` pass
+> derives the frozen `shapes` string tokens off the `@ClrTypeAlias` index and drops `shapeTypes`.
+> `clrMethodShape` + the dead `clrGen` helper are deleted (`grep clrMethodShape toolchain/kotc/src` → 0);
+> byte-identical overload resolution; full gate green.
+
 ---
 
 ## Part 1 — BirMappings.kt (15 tables)

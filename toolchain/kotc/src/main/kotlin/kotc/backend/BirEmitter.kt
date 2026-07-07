@@ -2743,10 +2743,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return if (fn == null) TypeNode.Fqn("kotlin.Unit") else birType(fn.returnType)
 	}
 
-	/**
-	 * Build a generic static call node. `shapes` names the EXACT intended overload's parameter shapes
-	 * (ienum/func:N/string/gp/int/…) so ilemit picks it deterministically — no heuristic overload guessing.
-	 */
 	/** A `throw`-able exception construction node: a plain `new <KotlinExceptionFQN>(msg?)` on the PURE-KOTLIN
 	 *  exception class (`kotlin.IllegalArgumentException` / `kotlin.IllegalStateException` / …). kotc names NO
 	 *  `System.*` CLR exception type — it emits the Kotlin FQN identity exactly like a user `throw
@@ -2760,9 +2756,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		else """{"k":"new","type":${fqnJson(type)},"argTypes":[],"args":[]}"""
 
 	internal fun throwExpr(exc: String): String = """{"k":"throwExpr","value":$exc}"""
-
-	internal fun clrGen(type: String, method: String, typeArgs: List<String>, shapes: List<String>, args: List<String>): String =
-		"""{"k":"clrGenericStatic","type":${str(type)},"method":${str(method)},"typeArgs":[${typeArgs.joinToString(",") { str(it) }}],"shapes":[${shapes.joinToString(",") { str(it) }}],"args":[${args.joinToString(",")}]}"""
 
 	/** Free value references in a lambda body (referenced but not declared inside) = its captured vars. */
 	internal fun capturedVars(fn: IrSimpleFunction, includeThis: Boolean = false): List<IrValueDeclaration> {
@@ -3040,54 +3033,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** The callee's ordinary (non-receiver) value parameters, in order. */
 	internal fun regularParams(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): List<IrValueParameter> =
 		callee.parameters.filter { isValueParameter(it) }
-
-	/**
-	 * A parameter-shape token matching ilemit's `Shape(Type)` — used to pick the exact generic-method overload
-	 * before `MakeGenericMethod`. A method type parameter is `gp`; primitives/strings/known generics get their
-	 * canonical token; everything else is the .NET simple name (`Object`, `Int64`, ...).
-	 */
-	/** A parameter shape matching ilemit's `Shape()` (for resolving a generic .NET overload by name+arity+shapes). */
-	// Receiver discriminator matching ClrTypeInjection's (simple type name; kotlin.Array -> "array"). The registry keys
-	// a top-level fun's file class by this, so reversed/toList on Iterable resolves to _CollectionsKt (not _UArraysKt).
-	internal fun clrMethodShape(t: IrType): String {
-		if (t.classifierOrNull is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) return "gp"   // bare type param
-		if (isArrayType(t)) return "array"
-		val fq = t.classFqName?.asString()
-		when (fq) {
-			"kotlin.String" -> return "string"
-			"kotlin.Char" -> return "char"
-			"kotlin.Int" -> return "int"
-		}
-		// Kotlin function types ((P..)->R / suspend (P..)->R) -> a CLR Func/Action -> ilemit "func:<#generic-args>".
-		// A `(P..)->R` with R != Unit is a `Func<P..,R>` (#args = params+1); with R == Unit it is an `Action<P..>`
-		// (#args = params, NO return slot) — so drop the trailing Unit from the count to match ilemit's Action shape.
-		if (fq != null && (fq.startsWith("kotlin.Function") || fq.startsWith("kotlin.coroutines.SuspendFunction"))) {
-			val targs = (t as? IrSimpleType)?.arguments
-			val n = targs?.size ?: 1
-			val retUnit = (targs?.lastOrNull() as? IrTypeProjection)?.type?.classFqName?.asString() == "kotlin.Unit"
-			return "func:" + (if (retUnit && n > 0) n - 1 else n)
-		}
-		// kotlin.collections.Iterable substitutes to System.Collections.Generic.IEnumerable, whose ilemit Shape is the
-		// special "ienum" (not the generic default) -> so a generic stdlib op's Iterable<T> receiver matches the rt's
-		// IEnumerable<T> param in ResolveGenericMethod (else 0 candidates -> "Sequence contains no elements" at emit).
-		if (stdlibSubstitute && (fq == "kotlin.collections.Iterable" || fq == "kotlin.collections.MutableIterable")) return "ienum"
-		// Any other parameterized generic .NET type (Task<T>, Continuation<T>, …) -> "generic" (ilemit's IsGenericType default).
-		if ((t as? IrSimpleType)?.arguments?.isNotEmpty() == true) return "generic"
-		// The default shape token equals ilemit's Shape(Type) = the parameter's .NET SIMPLE NAME (Int64/Single/…), so
-		// map the value primitives whose .NET name differs from the Kotlin FQN's last segment;
-		// a @Clr/injected class contributes its bound .NET name; anything unmapped erases to `Object` (ilemit's fallback
-		// shape for a reference param). This is an ilemit-Shape MATCHER (like the string/char/int early-returns above),
-		// not a type EMISSION.
-		return when (fq) {
-			"kotlin.Long" -> "Int64"; "kotlin.Short" -> "Int16"; "kotlin.Byte" -> "SByte"
-			"kotlin.Float" -> "Single"; "kotlin.Double" -> "Double"; "kotlin.Boolean" -> "Boolean"
-			"kotlin.Unit" -> "Void"
-			// Unsigned inline classes -> their .NET shape simple names. kotlin.Byte is SIGNED (SByte); kotlin.UByte is the
-			// UNSIGNED System.Byte. (#53 — layer-violation shape matcher, kept byte-correct; full removal is a follow-up.)
-			"kotlin.UByte" -> "Byte"; "kotlin.UShort" -> "UInt16"; "kotlin.UInt" -> "UInt32"; "kotlin.ULong" -> "UInt64"
-			else -> (t.classifierOrNull?.owner as? IrClass)?.let { clrName(it) }?.substringAfterLast('.') ?: "Object"
-		}
-	}
 
 	internal fun extensionReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {
 		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return null
@@ -3763,15 +3708,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// first param -> prepend its value + shape so by-shape overload resolution and the call line up.
 					val gExt = if (!isStatic) extensionReceiver(call) else null
 					val shapeParams = (if (gExt != null) listOf(gExt.type) else emptyList()) + regularParams(callee).map { it.type }
-					val shapes = shapeParams.joinToString(",") { str(clrMethodShape(it)) }
+					// kotc emits the DECLARED parameter types as PURE-KOTLIN `birType` identities (`shapeTypes`); bir2cir
+					// DERIVES the ilemit `shapes` overload-matcher tokens (the .NET simple names Int64/SByte/… + gp/
+					// generic/ienum/func:N) off the @ClrTypeAlias index and drops `shapeTypes`. No CLR-shape knowledge here.
+					val shapeTypes = shapeParams.joinToString(",") { birType(it).toJson() }
 					val argsJson = (listOfNotNull(gExt) + regularArgs(call)).joinToString(",") { expr(it) }
 					// A `suspend` generic .NET-member callee carries the `"suspendCall":true` FACT for bir2cir's deferred
 					// Task/await lowering, exactly like the non-generic call paths (suspendCallTag) — otherwise a generic
 					// .NET-member suspend call would silently drop out of the suspension lowering. (latent ⑤.)
 					return if (isStatic)
-						"""{"k":"clrGenericStatic","type":${clrType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapes":[$shapes],"args":[$argsJson]${suspendCallTag(callee)}}"""
+						"""{"k":"clrGenericStatic","type":${clrType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[$argsJson]${suspendCallTag(callee)}}"""
 					else
-						"""{"k":"clrGenericInstance","type":${memberType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapes":[$shapes],"recv":${expr(recv!!)},"args":[$argsJson]${suspendCallTag(callee)}}"""
+						"""{"k":"clrGenericInstance","type":${memberType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"recv":${expr(recv!!)},"args":[$argsJson]${suspendCallTag(callee)}}"""
 				}
 			}
 			val prop = callee.correspondingPropertySymbol?.owner
@@ -4311,11 +4259,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 					if (targs.all { it != null }) {
 						val taJson = targs.joinToString(",") { birType(it!!).toJson() }
-						// `shapes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
-						// fun's `__self` receiver shape is included — else ilemit's by-shape overload pick finds 0 params.
+						// `shapeTypes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
+						// fun's `__self` receiver type is included — else bir2cir's by-shape overload pick finds 0 params.
+						// PURE-KOTLIN `birType` identities; bir2cir derives the ilemit `shapes` tokens (see the member path above).
 						val shapeParams = (if (extRecv != null) listOf(callee.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }) else emptyList()) + regularParams(callee)
-						val shapes = shapeParams.joinToString(",") { str(clrMethodShape(it.type)) }
-						return """{"k":"clrGenericStatic","type":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapes":[$shapes],"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
+						val shapeTypes = shapeParams.joinToString(",") { birType(it.type).toJson() }
+						return """{"k":"clrGenericStatic","type":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
 					}
 				}
 				// PLAIN Kotlin return type; a `suspend` callee is flagged by `suspendCallTag` (Task/await lowering deferred).

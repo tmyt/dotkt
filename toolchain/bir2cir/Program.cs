@@ -134,6 +134,12 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
+            // #55 §4 — DERIVE the `clrGeneric*` overload-matcher `shapes` from kotc's pure-Kotlin `shapeTypes` (the
+            // DECLARED parameter identities) via the @ClrTypeAlias index. kotc no longer knows the .NET shape names
+            // (Int64/SByte/…) — that CLR knowledge lives HERE. Runs FIRST in the per-file loop, before ANY type-erasing
+            // pass (NullableGenericReturnErasure sweeps a `nullable:gp` shapeType to `object`) and before the suspend
+            // passes that read the resulting `shapes`. Pure identity in -> reflection-island string out; drops shapeTypes.
+            ShapeSynthesis.Apply(bir.Root, refs.Aliases, _options.RefBuild);
             // VALUE-TYPE NULLABLE-COLLECTION receiver boxing (bundle-6 BUG-1 Part A): a value-type-element collection
             // (`List<Int?>`) passed to a nullable-generic collection extension (`Iterable<T?>.filterNotNull()`) is NOT
             // covariantly `IEnumerable<object>` on the CLR — wrap the receiver in `Enumerable.Cast<object>` so it boxes

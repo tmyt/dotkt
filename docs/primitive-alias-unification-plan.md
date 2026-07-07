@@ -1,10 +1,12 @@
 # TASK #55 — Primitive `@ClrTypeAlias` unification: feasibility + staged plan
 
-> **Status: Stages A–C DONE (2026-07-08).** The redundant `KotlinToClr` map is deleted; primitives
+> **Status: Stages A–D DONE (2026-07-08).** The redundant `KotlinToClr` map is deleted; primitives
 > now lower to their ref.dll `@ClrTypeAlias` BCL form via `AliasBcl`, and the three ilemit opcode
-> switches normalize it back through `PrimShorthandName`. Behavior-preserving (values byte-identical);
-> full gate green. Stages D (kotc `clrMethodShape`) and E (facadegen reverse map) remain as decoupled
-> follow-ups. Implementation notes appended at the end.
+> switches normalize it back through `PrimShorthandName`. **Stage D landed too:** kotc's
+> `clrMethodShape` .NET-name shape-matcher is DELETED — kotc emits pure-Kotlin `shapeTypes`, and
+> bir2cir's new `ShapeSynthesis` pass derives the frozen `shapes` tokens off the `@ClrTypeAlias`
+> index. Behavior-preserving (values + overload resolution byte-identical); full gate green. Only
+> Stage E (facadegen reverse map) remains as a decoupled follow-up. Implementation notes at the end.
 >
 > Original READ-ONLY investigation follows: verdict, then evidence per §1–5, then the crux (is the
 > shorthand token vocabulary deletable?), then the staged plan + honest cost.
@@ -194,6 +196,21 @@ needs its own overload-resolution regression pass.
 **Verdict §4: feasible, deletable, but a separate work item (BIR-schema-touching, needs bir2cir shape
 synthesis + a generic-overload regression sweep).**
 
+> **✅ DONE (Stage D, 2026-07-08).** Implemented exactly as scoped, via the transient-`shapeTypes`
+> design Codex recommended (option a): kotc emits the DECLARED parameter types as pure-Kotlin `birType`
+> nodes in a BIR-only `shapeTypes` array (the two sites at `BirEmitter.kt` — generic .NET member +
+> generic top-level fun); bir2cir's new `ShapeSynthesis.cs` pass converts each to the ilemit shape token
+> and writes the frozen `shapes` string array (unchanged reflection island), then removes `shapeTypes`.
+> The `.NET` simple names come from the ref.dll `@ClrTypeAlias` index (`refs.Aliases`, `kotlin.Long` →
+> `System.Int64` → `"Int64"`); a hardcoded primitive fallback (`PrimShapeName`) covers the alias-less ref
+> build, mirroring the `KotlinAllToClr` decision. The structural tokens (`gp`/`array`/`generic`/`ienum`/
+> `func:N`/`string`/`char`/`int`) fall straight out of the `TypeNode` shape. `clrMethodShape` and the dead
+> `clrGen` helper are deleted from kotc (`grep clrMethodShape toolchain/kotc/src` → 0). The pass runs in
+> the Phase-1 per-file loop right after `MemberCallSubstitution` — before `SuspendColdLowering` (which
+> reads `shapes`) and before type lowering (int/string/char depend on the pre-lowering kotlin.* spelling).
+> **ilemit is untouched.** Behavior byte-identical: the full stdlib + app `(method, shapes)` set is
+> unchanged vs baseline; verify-il 242/0, all gates green, schema 0 violations.
+
 ---
 
 ## §5 — Blast radius of `KotlinToClr` / the shorthand vocabulary
@@ -300,7 +317,7 @@ decoupled from A–D.
 | #1 `KotlinToClr` (non-force map) | **Yes — data already in `_aliases`** | Delete shadow + 3 opcode switches (Stage B+C) | **Contained reroute** (~a day incl. gate) |
 | #1 `KotlinAllToClr` (force/attr) | No (no ref.dll in ref build) | **Must stay** | none — keep |
 | shorthand alphabet `"int"`/… | It's the opcode vocabulary, not the mapping fact | Load-bearing in 3 switches + bir2cir synthetic producers | **Not deletable**; only convertible with extra churn (Stage C c1) |
-| #4 kotc `clrMethodShape` | Yes (derivable) | bir2cir shape synth + kotc delete | **Contained, separate** (BIR-touching, overload regression) |
+| #4 kotc `clrMethodShape` | Yes (derivable) | bir2cir shape synth + kotc delete | **✅ DONE (Stage D)** — `ShapeSynthesis.cs` derives `shapes` from `shapeTypes`; byte-identical |
 | #3 facadegen reverse | Yes (invertible) | New ref.dll input + inversion | **Contained, separate** (new dependency, #53 subtlety) |
 
 **Is #55 a contained reroute or a Phase-5-scale core rewrite?** — **Contained.** There is **no core
