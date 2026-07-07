@@ -4077,7 +4077,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// primitive (the cast-to-concrete coercion below handles it).
 			fun primOperand(o: IrExpression) = o.type.classFqName?.asString() in PRIMITIVE_OP_FQ
 			fun boxedAny(o: IrExpression) = birType(o.type) == OBJ
-			BINARY[name]?.let { op -> if (operands.size == 2 && callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }
+			COMPARE[name]?.let { op -> if (operands.size == 2 && callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }
 					&& operands.any { primOperand(it) } && operands.all { primOperand(it) || boxedAny(it) }) {
 				// A boxed (Any) operand via an un-narrowed smart-cast (`x is Int && x > 10`) against a primitive:
 				// cast it to the other operand's type so the numeric/compare op sees the right value, not the box.
@@ -4107,8 +4107,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					else if (leftChar && retFq == "kotlin.Char") """{"k":"conv","to":${fqnJson("kotlin.Char")},"e":$core}"""
 					else core
 			} }
-			// Same primitive gate for unary/inc/dec: `Duration.unaryMinus()` is a real member call, not a CIL neg.
-			UNARY[name]?.let { if (operands.size == 1 && primOperand(operands[0])) return """{"k":"unaryOp","op":${str(it)},"e":${valueOperand(operands[0])}}""" }
+			// UNARY (unaryMinus/unaryPlus/not/inv) recognition MOVED to bir2cir (#52 Phase 5): kotc emits the faithful
+			// `callInstance kotlin.Int.unaryMinus()` (0-arg member) and bir2cir re-emits `{k:unaryOp}` from the
+			// PRIMITIVE_OP_FQ owner. The receiver is value-shaped by the general callInstance path (recvExpr).
 			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) -> `(i + 1)`/`(i - 1)`.
 			if (name == "inc" && operands.size == 1 && primOperand(operands[0])) return """{"k":"binOp","op":"+","lhs":${valueOperand(operands[0])},"rhs":{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}}"""
 			if (name == "dec" && operands.size == 1 && primOperand(operands[0])) return """{"k":"binOp","op":"-","lhs":${valueOperand(operands[0])},"rhs":{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}}"""
@@ -4288,7 +4289,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// -- lives on the BCL interface FindMethod skips). ilemit gates on the owner-interface so non-collection misses
 			// still throw. See ilemit EmitDynamicCall.
 			val dynRet = ""","dynRet":${birType(call.type).toJson()}"""
-			"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${expr(recv)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}}"""
+			"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${recvExpr(recv, ownerStr)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}}"""
 		} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}}"""
 	}
 
@@ -4444,8 +4445,28 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (!isPreUnwrappedRead(arg)) nullableValueUnwrapElem(arg.type, param.type)?.let { elem ->
 				return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(arg)}}"""
 			}
+			// A boxed Any operand (an un-narrowed smart-cast, `x is Int && f(x)`) passed to a concrete value-primitive
+			// param -> cast to the param type so the VALUE, not the box, reaches the slot. This is the arg twin of
+			// recvExpr's boxed-Any coercion, and the former operator operand-cast that moved out of kotc (#52 Phase 5):
+			// a relocated primitive operator (`a + b`) now flows its arg through here.
+			(birType(param.type) as? TypeNode.Fqn)?.name?.takeIf { it in PRIMITIVE_OP_FQ }?.let { pfq ->
+				if (birType(arg.type) == OBJ) return """{"k":"cast","type":${str(TypeNode.Fqn(pfq))},"e":${expr(arg)}}"""
+			}
 		}
 		return expr(arg)
+	}
+
+	/** Read the RECEIVER of a member call on a value-type primitive as its BARE VALUE: a value-nullable (`Int?`)
+	 *  smart-cast surfaces `Nullable<T>.Value`; a boxed `Any` smart-cast casts to the primitive. The receiver-slot
+	 *  twin of [argExpr]'s value coercion — a member call on `kotlin.Int`/`kotlin.Char`/… (a relocated primitive
+	 *  operator, `compareTo`, `toString`, …) needs the raw value, not a `Nullable<T>` struct load / a box. A no-op
+	 *  for any non-primitive owner. (The former operator operand-shaping that moved out of kotc — #52 Phase 5.) */
+	internal fun recvExpr(recv: IrExpression, ownerType: TypeNode): String {
+		val ownerFq = (ownerType as? TypeNode.Fqn)?.name
+		if (ownerFq == null || ownerFq !in PRIMITIVE_OP_FQ || isPreUnwrappedRead(recv)) return expr(recv)
+		nullableElem(recv.type)?.let { elem -> return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(recv)}}""" }
+		if (birType(recv.type) == OBJ) return """{"k":"cast","type":${str(ownerType)},"e":${expr(recv)}}"""
+		return expr(recv)
 	}
 	
 	/** A `byref(...)` target that is an own-source-set property read -> its BACKING-FIELD node, so ilemit takes the

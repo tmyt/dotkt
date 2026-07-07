@@ -463,6 +463,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **Primitive OPERATOR recognition moved out of kotc into bir2cir (#52 Phase 5).** kotc no longer
+  recognizes a primitive's operators: it emits the FAITHFUL member call (`callInstance kotlin.Int.plus`,
+  `kotlin.Char.unaryMinus`) with its recv/args value-shaped (nullable-unwrap + boxed-Any cast), and a new
+  bir2cir pass `PrimitiveOperatorLowering` re-emits the SAME `binOp`/`unaryOp` (+ the Char-arith `conv`)
+  node the retired kotc `BINARY`/`UNARY` tables produced — so ilemit is UNCHANGED and the CIR is
+  byte-identical. The primitive-op gate (`PRIMITIVE_OP_FQ`) and IL-op selection are CLR-relation knowledge
+  and now live in bir2cir, keyed off the pure-Kotlin owner FQN. The pass runs unconditionally (reference +
+  app builds) at the very start of the pipeline, restoring the exact tree shape every downstream pass (ref
+  body-squash, type lowering, suspend) expects — and, crucially, a reference-build ctor field-init / base-arg
+  (which is not body-squashed) carries a raw IL op rather than an unresolvable call to the bodyless builtin
+  `kotlin.Int.inv`. _Class 1 (arithmetic `plus`/`minus`/`times`/`div`/`rem`, bitwise `and`/`or`/`xor`/`shl`/
+  `shr`/`ushr`, unary `unaryMinus`/`unaryPlus`/`not`/`inv`) done._
 - **Numeric conversions are metadata-driven — `@ClrConv` replaces kotc's `NUMBER_CONV` name-heuristic
   (#52 Phase 0/1).** kotc no longer *recognizes* a numeric conversion: it emits the faithful IR call
   `callInstance kotlin.Double.toInt` and nothing more. A new stdlib marker `@kotlin.clr.ClrConv` (no

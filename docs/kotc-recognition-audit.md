@@ -408,7 +408,25 @@ the clean/dead set.)
 **Verified:** verify-il 242/0, ktproj/differential/roundtrip green, schema 0 violations; byte-identical behavior
 on the collection/map struct-equality + toString + Double/Float total-order + iterator samples.
 
-### Phase 5 — the operator / conv / range-desugar bucket (relocate to bir2cir; DEFERRED for cost)
+### Phase 5 — the operator bucket (relocate to bir2cir) — IN PROGRESS
+
+**Class 1 (arithmetic + bitwise + unary MEMBER operators) — ✅ DONE.** kotc's `BINARY` (arithmetic
+`plus`/`minus`/`times`/`div`/`rem` + bitwise `and`/`or`/`xor`/`shl`/`shr`/`ushr`) and `UNARY`
+(`unaryMinus`/`unaryPlus`/`not`/`inv`) recognition is REMOVED: kotc emits the faithful `callInstance
+kotlin.Int.plus` / `callInstance kotlin.Char.unaryMinus`. A new bir2cir pass `PrimitiveOperatorLowering`
+(runs FIRST, unconditionally in ref + app builds) re-emits the identical `binOp`/`unaryOp` — and the
+Char-arith `conv` (Int/Char), derived from the member + the `sig`'s arg type. Operand shaping stays in
+kotc as faithful VALUE coercion of the call's recv/args (the receiver-slot twin `recvExpr` + `argExpr`'s
+boxed-Any cast — the CLR twin of JVM's implicit `intValue()`), NOT operator recognition. `BINARY`→`COMPARE`
+(comparison-only, pending class 3); `UNARY` deleted. Byte-identical: verify-il 243/0, ktproj/differential
+(194/0)/roundtrip green, schema 0 violations. **Key finding:** the pass MUST run in the reference build
+too — a ref-build ctor field-init / base-arg is not body-squashed, so a surviving `callInstance
+kotlin.Int.inv` (bodyless builtin, no ref.dll symbol) would reach ilemit as an unresolvable method call;
+the OLD kotc emitted `unaryOp` (a raw IL op, no method lookup) in every build.
+
+_Remaining classes: class 2 (inc/dec), class 3 (comparison intrinsics), class 4 (equality EQEQ/EQEQEQ)._
+
+**Original plan (for the full bucket):**
 - **Principled target, per the faithful-transcriber rule:** kotc emits the faithful `callInstance`
   (`kotlin.Int.inc`, `x.compareTo(y)`, `a.plus(b)`, `x.toLong()`, the for-loop's `iterator()`/`hasNext()`/
   `next()`) and **bir2cir** realizes the CLR form (CIL `add`/`sub`/`conv`, counter-loop optimization, IEEE

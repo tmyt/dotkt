@@ -4,14 +4,15 @@ package kotc.backend
 // collection ops -> their .NET equivalents, primitive/exception type maps). Lifted out of BirEmitter so the
 // expr/stmt extension files can reach them by simple name; they are pure data, no emitter state.
 
-internal val BINARY = mapOf(
-	"plus" to "+", "minus" to "-", "times" to "*", "div" to "/", "rem" to "%",
+// Comparison operator names -> IL comparison symbol (the `<`/`<=`/`>`/`>=` desugarings, which are
+// `kotlin.internal.ir` COMPILER INTRINSICS — top-level, no ref.dll symbol). ARITHMETIC (plus/minus/times/
+// div/rem), BITWISE (and/or/xor/shl/shr/ushr) and UNARY (unaryMinus/unaryPlus/not/inv) operator recognition
+// MOVED to bir2cir (#52 Phase 5): kotc emits the FAITHFUL primitive member call (`callInstance kotlin.Int.plus`
+// / `callInstance kotlin.Int.unaryMinus`) and bir2cir re-emits the binOp/unaryOp. Comparison stays here pending
+// class 3; EQEQ/EQEQEQ (the structural/reference split) stays pending class 4.
+internal val COMPARE = mapOf(
 	"less" to "<", "lessOrEqual" to "<=", "greater" to ">", "greaterOrEqual" to ">=",
-	"EQEQ" to "==", "EQEQEQ" to "==",
-	// Bitwise / shift infix functions (Int/Long/Boolean).
-	"and" to "&", "or" to "|", "xor" to "^", "shl" to "<<", "shr" to ">>", "ushr" to ">>>",
 )
-internal val UNARY = mapOf("unaryMinus" to "-", "unaryPlus" to "+", "not" to "!", "inv" to "~")
 
 // No kotlin.math.* -> System.Math.* map here: that CLR knowledge lives in bir2cir. kotc emits a plain call to the
 // stdlib math fun; bir2cir substitutes it from MathClr.kt's @ClrIntrinsic bindings on the ref.dll (System.Math.*

@@ -134,6 +134,11 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
+            // PRIMITIVE OPERATORS (#52 Phase 5): re-emit the binOp/unaryOp kotc used to synthesize for a primitive's
+            // arithmetic/bitwise/unary operator (kotc now emits the faithful `callInstance kotlin.Int.plus`). Runs
+            // FIRST and UNCONDITIONALLY (ref + app) so every downstream pass sees the old tree shape, and a ref-build
+            // ctor field-init / base-arg (not body-squashed) carries a raw IL op, not an unresolvable builtin call.
+            PrimitiveOperatorLowering.Apply(bir.Root);
             // #55 §4 — DERIVE the `clrGeneric*` overload-matcher `shapes` from kotc's pure-Kotlin `shapeTypes` (the
             // DECLARED parameter identities) via the @ClrTypeAlias index. kotc no longer knows the .NET shape names
             // (Int64/SByte/…) — that CLR knowledge lives HERE. Runs FIRST in the per-file loop, before ANY type-erasing
