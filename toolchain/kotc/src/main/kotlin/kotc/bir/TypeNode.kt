@@ -32,8 +32,12 @@ sealed class TypeNode {
         val recv: TypeNode? = null,
     ) : TypeNode()
 
-    /** `nullable`: `T?`. */
-    data class Nullable(val of: TypeNode) : TypeNode()
+    /**
+     * `nullable`: `T?` (nullable). With [nrt] == "platform" it is the flexible/platform type `T!`
+     * (NRT-oblivious `(T..T?)`) — spec §1 tri-state nullability. [nrt] is null for a plain nullable;
+     * facadegen META emits the platform value, kotc BIR never does (platform is frontend-only).
+     */
+    data class Nullable(val of: TypeNode, val nrt: String? = null) : TypeNode()
 
     /** `array`: `Array<T>` (this-assembly array). */
     data class Array(val elem: TypeNode) : TypeNode()
@@ -65,7 +69,11 @@ sealed class TypeNode {
                 if (recv != null) { sb.append(",\"recv\":"); recv.write(sb) }
                 sb.append('}')
             }
-            is Nullable -> { sb.append("{\"t\":\"nullable\",\"of\":"); of.write(sb); sb.append('}') }
+            is Nullable -> {
+                sb.append("{\"t\":\"nullable\",\"of\":"); of.write(sb)
+                if (nrt != null) { sb.append(",\"nrt\":").append(esc(nrt)) }
+                sb.append('}')
+            }
             is Array -> { sb.append("{\"t\":\"array\",\"elem\":"); elem.write(sb); sb.append('}') }
             is ByRef -> { sb.append("{\"t\":\"byRef\",\"of\":"); of.write(sb); sb.append('}') }
         }
@@ -105,6 +113,14 @@ sealed class TypeNode {
         /** Parse a canonical type JSON string back into a [TypeNode] (real recursive-descent parse, no string-splitting). */
         fun parse(json: String): TypeNode = fromValue(JsonParser(json).parseValue())
 
+        /** Parse an arbitrary JSON document into raw values (Map/List/String/Number/Boolean/null) — the
+         *  injection-metadata reader ([kotc.frontend.ClrTypeInjection]) walks this, reusing the one JSON parser. */
+        fun parseJsonValue(json: String): Any? = JsonParser(json).parseValue()
+
+        /** Build a [TypeNode] from an already-parsed JSON sub-value (a `{t:…}` object). Used by the injection
+         *  reader to reconstruct an embedded Type node without re-serializing it to a string first. */
+        fun fromJsonValue(v: Any?): TypeNode = fromValue(v)
+
         @Suppress("UNCHECKED_CAST")
         private fun fromValue(v: Any?): TypeNode {
             val o = v as? Map<String, Any?> ?: throw IllegalArgumentException("Type must be a JSON object, got $v")
@@ -123,7 +139,7 @@ sealed class TypeNode {
                     (o["params"] as List<Any?>).map { fromValue(it) },
                     o["recv"]?.let { fromValue(it) },
                 )
-                "nullable" -> Nullable(fromValue(o["of"]))
+                "nullable" -> Nullable(fromValue(o["of"]), o["nrt"] as? String)
                 "array" -> Array(fromValue(o["elem"]))
                 "byRef" -> ByRef(fromValue(o["of"]))
                 else -> throw IllegalArgumentException("unknown Type discriminator `t`=\"$t\"")
