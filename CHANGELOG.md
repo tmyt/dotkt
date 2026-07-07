@@ -424,6 +424,23 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **BIR/CIR freeze — tri-state nullability unification (#37 #48).** kotc now emits the `?` on the **Type
+  node** (`{t:nullable,of:T}`) UNIFORMLY for value, reference, and type-variable positions — the duplicate
+  decl-level scalar `nullable`/`retNullable` flags are RETIRED. The value-vs-reference split is derived
+  below the kotc boundary: bir2cir's `DeclNullableFlags` walks each decl slot's type and emits the flattened
+  `NullableAttribute` byte array (`nullableFlags` / `retNullableFlags`), then `ReferenceNullableStrip`
+  removes every reference `{t:nullable,of:<ref>}` in ANY position (decl slots, owner generic args,
+  `argTypes`/`typeArgs`, cast/expression types) while KEEPING a value `{t:nullable,of:<value>}` as the
+  structural `System.Nullable<T>`; ilemit's `MapNullable` realizes value→`Nullable<T>` (via
+  `TypeBuilder.GetConstructor` for an emitted value type) / reference→bare + the stamped NRT byte. As part of
+  landing this, six object-erasure and variance-approximation predicates that pattern-matched a **bare** node
+  learned to see through the new nullability wrapper — a nullable map/collection receiver kept its concrete
+  type-args instead of collapsing to `IDictionary<object,object>`/`ICollection<object>` (fixing
+  `EntryPointNotFound` in structural-`==` and `groupBy`/`mapValues`); an unconstrained `T?` accumulator, a
+  `delegateInvoke` result temp, and a `forEach` loop-var over an `Iterable<T?>` source erase to `object`
+  (fixing `NullReferenceException`/`InvalidProgram` in `merge`/`mapNotNull`/`filterNotNull` on value elements);
+  and a top-level generic `T?` **param** is kept as the bare `T` + its NRT byte so facadegen round-trips the
+  type-param identity (`orDefault<T>(x: T?)` stays inferable, not a `T`-less `Any?`). Spec §1 + schema updated.
 - **BIR/CIR freeze — kotc producer flip fix: lifted-anon captured type-params (#37 m1).** A hoisted
   `object : Sequence<T>` (an object literal inside a `fun <T>`) flattens to a standalone generic class,
   but under the structured-`Type` producer flip its members referenced the captured `T` as the ENCLOSING

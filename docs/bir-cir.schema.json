@@ -137,11 +137,11 @@
     },
     "param": {
       "type": "object",
-      "description": "A value parameter. TARGET: nullability lives on `type` (§1). m5 STATUS: the sibling `nullable` decl flag is NOT yet retired — see §2 nullability STATUS note (folding the reference `?` needs a MapType value/ref split + NRT-from-type-node; deferred under the full roundtrip gate).",
+      "description": "A value parameter. Nullability lives on `type` (§1). #48 STATUS: FOLDED — the sibling `nullable` decl flag is RETIRED; kotc emits the `?` on the `type` node (`{t:nullable,of:T}`). bir2cir's `DeclNullableFlags` derives the flattened `NullableAttribute` byte array (`nullableFlags`) from the reference-nullable positions of the type before `ReferenceNullableStrip` strips the wrappers.",
       "properties": {
         "name":     { "type": "string" },
         "type":     { "$ref": "#/$defs/type" },
-        "nullable": { "type": "boolean", "$comment": "PENDING RETIREMENT (m5): reference `?` / type-var `T?` NRT carrier; to fold onto the `type` node. Absent once the value/ref-split fold lands." },
+        "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "bir2cir-derived flattened NullableAttribute bytes (0=oblivious,1=not-null,2=nullable) for this param's reference-nullable positions; stamped by ilemit. Absent when the type carries no nullable-reference position." },
         "mods":     { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline apply to a param" },
         "default":  { "$ref": "#/$defs/node", "description": "a KotlinDefault expression; absent = required" }
       },
@@ -177,6 +177,7 @@
       "properties": {
         "name":       { "type": "string" },
         "ret":        { "$ref": "#/$defs/type" },
+        "retNullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the RETURN's reference-nullable positions (the retired scalar `retNullable` flag's replacement); stamped by ilemit on the return parameter. Absent when the return carries no nullable-reference position." },
         "mods":       { "$ref": "#/$defs/mods" },
         "vis":        { "$ref": "#/$defs/vis" },
         "static":     { "type": "boolean", "$comment": "a load-bearing CLR-shape flag, kept scalar (not a Kotlin source modifier)" },
@@ -196,7 +197,8 @@
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
         "mods": { "$ref": "#/$defs/mods" }, "vis": { "$ref": "#/$defs/vis" },
         "recv": { "$ref": "#/$defs/type", "description": "extension receiver (ext property)" },
-        "get":  { "type": "string" }, "set": { "type": ["string", "null"] }
+        "get":  { "type": "string" }, "set": { "type": ["string", "null"] },
+        "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the slot's reference-nullable positions (replaces the retired scalar `nullable` flag)." }
       },
       "required": ["name", "type"],
       "additionalProperties": true
@@ -205,7 +207,8 @@
       "type": "object",
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
-        "vis": { "$ref": "#/$defs/vis" }, "volatile": { "type": "boolean" }
+        "vis": { "$ref": "#/$defs/vis" }, "volatile": { "type": "boolean" },
+        "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the slot's reference-nullable positions (replaces the retired scalar `nullable` flag)." }
       },
       "required": ["name", "type"],
       "additionalProperties": true

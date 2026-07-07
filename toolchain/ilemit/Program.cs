@@ -665,19 +665,14 @@ sealed partial class Emitter
                     // restores `suspend fun f(...)` — its suspend CALLS then lower to the `f$dotkt_suspend` cold entry.
                     if (m.TryGetProperty("suspendBridge", out var sb) && sb.GetBoolean()) kf |= 4;   // .Suspend
                     bool inl = ModFlag(m, "inline");
-                    // Nullability mask: bit 0 = return nullable, bit (i+1) = param i nullable.
-                    uint nmask = 0;
-                    if (m.TryGetProperty("retNullable", out var rn) && rn.GetBoolean()) nmask |= 1u;
-                    if (m.TryGetProperty("params", out var nps)) { int pi = 0; foreach (var p in nps.EnumerateArray()) { if (p.TryGetProperty("nullable", out var pn) && pn.GetBoolean()) nmask |= 1u << (pi + 1); pi++; } }
-                    // NESTED return nullability (bundle-6 BUG 2): when the nullable `?` rides an INNER type arg — a
-                    // `suspend fun f(): String?`'s bridge return `Task<string?>` — the scalar `retNullable` can't express
-                    // it. bir2cir supplies the flattened byte walk in `retNullableFlags` ([1,2] = outer non-null, inner
-                    // nullable); it takes precedence over the scalar. (No emitter today -> a verified no-op until bir2cir
-                    // lands the walk; see the reported CIR contract.)
+                    // Return nullability (#37/#48): rides the Type node ONLY. bir2cir ALWAYS supplies the flattened NRT
+                    // byte walk in `retNullableFlags` ([1,2] = outer non-null, inner nullable) for every reference-nullable
+                    // return — the scalar decl-level `"retNullable"` flag (and the old param-`nullable`-derived nmask) are
+                    // retired. Param nullability is stamped separately in DefineParamNames from `nullableFlags`.
                     byte[] retFlags = m.TryGetProperty("retNullableFlags", out var rnf) && rnf.ValueKind == JsonValueKind.Array ? ReadNullableFlags(rnf) : null;
                     // H2: a `suspend (…) -> T` RETURN type — bir2cir carries the pre-erasure `sfunc:` shape in `retSuspendFnType`.
                     string retSuspendFn = m.TryGetProperty("retSuspendFnType", out var rsf) ? rsf.GetRawText() : null;
-                    if (kf == 0 && !inl && nmask == 0 && retFlags == null && string.IsNullOrEmpty(retSuspendFn)) continue;
+                    if (kf == 0 && !inl && retFlags == null && string.IsNullOrEmpty(retSuspendFn)) continue;
                     var name = m.GetProperty("name").GetString();
                     if (!ti.MethodsBySig.TryGetValue(SigKey(name, m), out var mb) && !ti.Methods.TryGetValue(name, out mb)) continue;
                     if (kf != 0) ApplyKotlinFunction(mb, kf);
@@ -688,11 +683,10 @@ sealed partial class Emitter
                     // nullable return (nested byte-array form wins over the scalar), [KotlinSuspendFunctionType] for a
                     // suspend fn-type return. The type's [NullableContext(1)] is the non-null default, so only the nullable
                     // positions need an override.
-                    if (retFlags != null || (nmask & 1u) != 0 || !string.IsNullOrEmpty(retSuspendFn))
+                    if (retFlags != null || !string.IsNullOrEmpty(retSuspendFn))
                     {
                         var retPb = mb.DefineParameter(0, ParameterAttributes.None, null);
                         if (retFlags != null) ApplyNullable(retPb, retFlags);
-                        else if ((nmask & 1u) != 0) ApplyNullable(retPb);
                         if (!string.IsNullOrEmpty(retSuspendFn)) ApplySuspendFnType(retPb, retSuspendFn);
                     }
                 }
@@ -2842,7 +2836,12 @@ sealed partial class Emitter
         var got = EmitExpr(node);
         if (wantNullable && got != null && want.GetGenericArguments()[0] == got)
         {
-            _il.Emit(OpCodes.Newobj, want.GetConstructor(new[] { got }));
+            // want = Nullable<got>. When got is an EMITTED value type (a TypeBuilder), Reflection.Emit can't resolve
+            // the ctor on the MakeGenericType — use TypeBuilder.GetConstructor(constructed, open Nullable<>'s ctor).
+            var ctor = ContainsTypeBuilder(want)
+                ? TypeBuilder.GetConstructor(want, typeof(Nullable<>).GetConstructors()[0])
+                : want.GetConstructor(new[] { got });
+            _il.Emit(OpCodes.Newobj, ctor);
             return want;
         }
         // A value-type / generic-param branch flowing into an `object` want (an erased generic `T?` return whose
@@ -4003,13 +4002,25 @@ sealed partial class Emitter
     {
         DotKt.Bir.TypeNode.ByRef b => MapType(b.Of).MakeByRefType(),
         DotKt.Bir.TypeNode.Array a => MapType(a.Elem).MakeArrayType(),
-        DotKt.Bir.TypeNode.Nullable n => typeof(Nullable<>).MakeGenericType(MapType(n.Of)),
+        DotKt.Bir.TypeNode.Nullable n => MapNullable(n),
         DotKt.Bir.TypeNode.Fn fn => FuncType(fn),
         DotKt.Bir.TypeNode.Tv tv => ResolveTv(tv),
         DotKt.Bir.TypeNode.Fqn { Args: null } f => MapType(f.Name),   // reuse the shorthand / bare-FQN resolver
         DotKt.Bir.TypeNode.Fqn f => ConstructGeneric(f.Name, f.Args),
         _ => typeof(object),
     };
+
+    // #37/#48: nullability realizes value-vs-reference HERE (MapType resolves the inner type, so it's the natural
+    // split point). VALUE-type nullability is STRUCTURAL -> `System.Nullable<T>`. REFERENCE-type nullability is
+    // METADATA-only -> the bare reference type (the IL type of `String?` IS `String`; its nullability rides an NRT
+    // byte at DECL positions, computed by bir2cir). bir2cir strips + byte-walks reference nullables at decl positions;
+    // any `{t:nullable,of:<reference>}` that still reaches here is a USAGE position (an owner/nested type-arg, e.g.
+    // `Continuation<Any?>`) where nullability is compile-time-only and carries no byte — so it simply resolves bare.
+    Type MapNullable(DotKt.Bir.TypeNode.Nullable n)
+    {
+        var inner = MapType(n.Of);
+        return inner.IsValueType ? typeof(Nullable<>).MakeGenericType(inner) : inner;
+    }
 
     // A constructed generic from a structured Fqn(name, args): an emitted open type -> MakeGenericType, else a
     // referenced .NET generic by arity-suffixed FQN. (A void type-arg -> object, illegal as a .NET type arg.)

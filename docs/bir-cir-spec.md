@@ -56,19 +56,29 @@ Notes:
   in a BIR/CIR the backend produces; bir2cir/ilemit's `TypeNode.Read` accepts it for round-trip but never
   encounters it); **facadegen META emits all three** (a `.NET` member with NO `NullableAttribute` → `oblivious`).
   `oblivious` is a coherent sibling node (each state names itself), NOT a `nullable`-node refinement flag —
-  additive per principle 3. The old duplicate nullability encodings — the type wrapper AND the separate
-  decl-level `"nullable":true` flag — are to collapse onto the Type node (a type's nullability lives on the Type
-  node). **STATUS (m5): NOT YET FOLDED — deferred.** The decl-level flag is only a *true* duplicate for the
-  value-type case (`Int?`, where the type node is already `{t:"nullable","of":kotlin.Int}`); for a **reference**
-  `String?` the flag is the SOLE carrier (kotc's `birType` intentionally drops the reference `?` — a CLR ref
-  type is nullable in IL regardless — so no type wrapper exists to dedup against), and for a **type-variable**
-  `T?` it rides a bare `gp:T` slot. Folding the reference `?` onto `{t:"nullable"}` is **unsafe as-is**: ilemit's
-  `MapType` lowers a `nullable:` type node to `System.Nullable<T>`, valid only for value `T` (`Nullable<string>`
-  is invalid). The unified model therefore requires `{t:"nullable"}` to mean "NRT-annotated nullable"
-  (`NullableAttribute`=2, per the §1 table) with a *value-vs-reference split* in `MapType` (reference → the bare
-  ref type + a NRT byte; value → `System.Nullable<T>`) AND the NRT byte-walk deriving from the type node instead
-  of the flag — a representational change to NRT metadata emission (a roundtrip/facadegen surface the verify-il
-  gate does not exercise), NOT a mechanical rename. It is sequenced separately, under the full roundtrip gate.
+  additive per principle 3. **STATUS (#48): FOLDED — landed.** The old duplicate nullability encodings — the type
+  wrapper AND the separate decl-level `"nullable":true` / `"retNullable":true` flags — have collapsed onto the Type
+  node: **kotc BIR emits `{t:"nullable","of":T}` UNIFORMLY** for value AND reference AND type-variable `?` (the
+  decl-level scalar flags are RETIRED — a type's nullability lives on its Type node, nowhere else). The value-vs-
+  reference split is derived BELOW the kotc boundary, on the tri-state model where `{t:"nullable"}` means
+  "NRT-annotated nullable" (`NullableAttribute`=2):
+  - **bir2cir** (`DeclNullableFlags` → `ReferenceNullableStrip` → `BirTypeLowering`, in that order, all on the
+    semantic tree): `DeclNullableFlags` walks each decl slot's Type node and emits the flattened `NullableAttribute`
+    byte array (`nullableFlags` on a param/field/property, `retNullableFlags` on a method return) — the NRT byte-walk
+    now derives from the **type node**, not a flag. `ReferenceNullableStrip` then removes EVERY reference
+    `{t:"nullable","of":<reference>}` in ANY position (decl slots, owner generic type-args, `argTypes`/`typeArgs`,
+    expression `cast`/`type`), leaving a bare ref type (ilemit's `MapType` asserts a VALUE inner, so no reference
+    `Nullable<>` may reach it); a VALUE `{t:"nullable","of":<value/struct/enum>}` is KEPT as the structural
+    `System.Nullable<T>`. An **unconstrained `T?`** (`{t:"nullable","of":{t:"tv"}}`) erases to `object` in every
+    value-holding position (return / field / local accumulator / safe-call & delegate-invoke temp / forEach loop-var
+    over a `<T?>` source) — the one CLR rep that carries a real null for BOTH a value and a reference instantiation —
+    EXCEPT a top-level generic **param** `T?`, which is kept as the bare `T` + its NRT byte so facadegen round-trips
+    the type-param identity (`orDefault<T>(x: T?)`, not a `T`-less `Any?`).
+  - **ilemit** (`MapNullable`): a value `{t:"nullable"}` realizes `System.Nullable<T>` (via `TypeBuilder.GetConstructor`
+    for an emitted-value-type inner — `EmitNullableCoerced`); a reference is the bare type; the scalar `nullable`/
+    `retNullable` reads are retired, and `nullableFlags`/`retNullableFlags` are stamped as the `NullableAttribute`
+    (facadegen reads them back). The value-vs-reference decision is `IsValueType` + generic-constraint driven, per
+    the tri-state model — never a hardcoded FQN set.
 - Examples:
   - `kotlin.Int` → `{"t":"fqn","name":"kotlin.Int"}`
   - `List<Int>` → `{"t":"fqn","name":"kotlin.collections.List","args":[{"t":"fqn","name":"kotlin.Int"}]}`

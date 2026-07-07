@@ -180,9 +180,8 @@ sealed partial class Emitter
             // A nullable reference parameter needs a [Nullable(2)] override against the type's non-null default, so the
             // parameter builder must exist even if it otherwise carries no name/vararg/default. (A value-type `X?` is the
             // structural Nullable<X> instead; the [Nullable] on it is simply ignored by readers — harmless.)
-            bool nullable = p.TryGetProperty("nullable", out var pn) && pn.GetBoolean();
-            // NESTED param nullability (bundle-6 BUG 2): the flattened byte walk when a nullable `?` rides an inner
-            // type arg (a `List<String?>` param). Supplied by bir2cir; takes precedence over the scalar `nullable`.
+            // #37/#48: nullability now rides the Type node ONLY — bir2cir ALWAYS supplies the flattened NRT byte walk in
+            // `nullableFlags` for every reference-nullable param (the scalar decl-level `"nullable"` flag is retired).
             byte[] pFlags = p.TryGetProperty("nullableFlags", out var pnf) && pnf.ValueKind == JsonValueKind.Array ? ReadNullableFlags(pnf) : null;
             // H2: a `suspend (…) -> T` PARAMETER type — bir2cir carries the pre-erasure `sfunc:` shape in `suspendFnType`
             // (the CLR param type itself is the erased `object`). Force the parameter builder so [KotlinSuspendFunctionType]
@@ -192,7 +191,7 @@ sealed partial class Emitter
             // arg by reference). Stripped in the runtime build (kotc emits none), so this rides only the ref.dll.
             JsonElement pattrs = default;
             bool hasAttrs = !_stripMetadata && p.TryGetProperty("attrs", out pattrs) && pattrs.GetArrayLength() > 0;
-            if (name.Length == 0 && !vararg && !hasDefault && !nullable && pFlags == null && !hasAttrs && string.IsNullOrEmpty(pSuspendFn)) { i++; continue; }
+            if (name.Length == 0 && !vararg && !hasDefault && pFlags == null && !hasAttrs && string.IsNullOrEmpty(pSuspendFn)) { i++; continue; }
             // A constant default -> [Optional] + DefaultParameterValue, so a cross-module caller can omit the arg.
             var attrs = hasDefault ? ParameterAttributes.Optional | ParameterAttributes.HasDefault : ParameterAttributes.None;
             var pb = defineParam(i, attrs, name.Length > 0 ? name : null);
@@ -200,7 +199,6 @@ sealed partial class Emitter
             if (vararg) pb.SetCustomAttribute(new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
             if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
             if (pFlags != null) ApplyNullable(pb, pFlags);
-            else if (nullable) ApplyNullable(pb);
             if (!string.IsNullOrEmpty(pSuspendFn)) ApplySuspendFnType(pb, pSuspendFn);   // H2 suspend fn-type param shape
             // Apply each param attribute whose type this assembly can encode (in-assembly emitted type or a clr:-imported
             // one); an attr referencing a type not in `_types` is skipped (BuildCab would KeyNotFound) — the same "the CLR

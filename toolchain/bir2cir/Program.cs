@@ -99,6 +99,15 @@ sealed class Pipeline
                 foreach (var t in ts)
                     if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
                         localTypeFqns.Add(tn);
+        // The LOCAL VALUE-type FQNs declared in this compilation (kotc emits `kind:"enum"` for a real CLR enum,
+        // `kind:"struct"` for a value type). These are value types not present on the ref.dll, so the struct-ness
+        // ORACLE must know them — a nullable local enum `E?` is `Nullable<E>`, not a bare reference. Collected across
+        // ALL input files (a cross-file `E?` in file B references an enum declared in file A).
+        var localValueTypeFqns = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var b in birFiles)
+            CollectLocalValueTypes(b.Root, localValueTypeFqns);
+        // The combined value-type oracle: ref.dll struct/enum + foundational primitives, OR a local enum/struct.
+        Func<string, bool> isValueFqn = name => refs.IsValueTypeFqn(name) || localValueTypeFqns.Contains(name);
         // Attribute referenced top-level stdlib funs to their file-class owner only in an APP build: the stdlib self-
         // build (DOTKT_STDLIB_COMPILE set) defines them locally, so owner=null is correct there. The reference build
         // never runs MemberCallSubstitution at all (see the RefBuild gate below).
@@ -328,11 +337,23 @@ sealed class Pipeline
             // `System.Collections.IEnumerable`/`IEnumerator` + an element cast. Non-ref; before type lowering (the src's
             // `kotlin.sequences.Sequence` FQN is still in the source vocabulary).
             if (!_options.RefBuild) SequenceForEachLowering.Apply(substituted);
+            // DECL-position NRT byte collection (#37/#48): stamp `nullableFlags`/`retNullableFlags` from the SEMANTIC
+            // `{t:nullable}` reference wrappers BEFORE BirTypeLowering strips them to bare types. Runs in ALL builds so
+            // the ref.dll + rt.dll + app views of a signature's nullability agree (the scalar decl flags are retired).
+            DeclNullableFlags.Apply(substituted, isValueFqn);
+            // COMPREHENSIVE reference-nullable strip (#37/#48): remove EVERY `{t:nullable,of:<reference>}` from the whole
+            // tree — decl slots AND usage positions (owner generic type-args, argTypes/typeArgs, cast/expression types)
+            // that LowerNode walks as generic JSON without routing through LowerType. ilemit's MapType asserts a value
+            // inner, so a reference nullable in ANY position (a `Continuation<Any?>` owner arg crashed the ref emit) must
+            // be gone. Runs AFTER DeclNullableFlags (byte walk already captured the semantic nullability) and BEFORE type
+            // lowering (oracle unambiguous on kotlin.* names). Value/struct/enum `{t:nullable}` stays for ilemit.
+            ReferenceNullableStrip.Apply(substituted, isValueFqn);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
-            // hardcoded primitives) wherever it appears as a type token.
-            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases);
+            // hardcoded primitives) wherever it appears as a type token. The struct-ness oracle drives the reference
+            // `{t:nullable}` strip (a value `T?` stays `Nullable<T>`; a reference `T?` -> bare + the NRT byte above).
+            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
             // `.size` on a collection-OF-collections (groupBy's `Map<K, List<T>>`, whose runtime value is the MUTABLE
             // `IList<T>` while its STATIC value is `IReadOnlyList<T>`): Count comes via the INVARIANT `ICollection<KVP<K,V>>`,
             // so the reified generic slot the app dispatches (`...<KVP<int,IReadOnlyList<int>>>`) is absent on the runtime
@@ -361,6 +382,22 @@ sealed class Pipeline
         }
 
         return files;
+    }
+
+    // Collect the FQNs of every LOCAL value type (a `kind:"enum"` real CLR enum, or a `kind:"struct"` value type),
+    // recursively including nested types. Feeds the struct-ness oracle so a nullable local enum/struct keeps its
+    // `System.Nullable<T>` wrapper. A `kind:"class"` (incl. a rich enum lowered to a singleton class) is a reference.
+    static void CollectLocalValueTypes(JsonNode node, HashSet<string> into)
+    {
+        if (node is not JsonObject o || o["types"] is not JsonArray types) return;
+        foreach (var t in types)
+            if (t is JsonObject to)
+            {
+                if ((to["kind"] as JsonValue)?.GetValue<string>() is "enum" or "struct"
+                    && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
+                    into.Add(tn);
+                CollectLocalValueTypes(to, into);
+            }
     }
 
     // A lowered CIR root that carries no types, no methods and no fields contributes nothing — its file-class would be
@@ -473,6 +510,11 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
     readonly Dictionary<string, int> _ownerArity = new(StringComparer.Ordinal);      // Kotlin FQN -> generic arity
     readonly Dictionary<string, string[]> _ownerTypeParams = new(StringComparer.Ordinal); // Kotlin FQN -> generic param names
+    // Per owner-FQN, the CLR generic-parameter CONSTRAINT class of each flattened type-param position:
+    // "struct" (NotNullableValueTypeConstraint), "class" (ReferenceTypeConstraint), or "unconstrained". Drives the
+    // struct-ness ORACLE for a type variable (#37/#48 nullability fold): a struct-constrained `T?` is `Nullable<T>`,
+    // a class/unconstrained `T?` is a bare reference (nullability rides an NRT byte).
+    readonly Dictionary<string, string[]> _ownerTypeParamConstraints = new(StringComparer.Ordinal);
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "<>dotkt_ClrH_*"
     readonly HashSet<string> _restrictsSuspension = new(StringComparer.Ordinal);     // @RestrictsSuspension owners
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
@@ -496,6 +538,19 @@ sealed class ReferenceMetadataIndex
         ["kotlin.Nothing"] = "System.Object",
     };
 
+    // The foundational VALUE-type identities (seed for the struct-ness ORACLE): the numeric/bool/char primitives and
+    // the unsigned set, in BOTH their kotlin.* spelling and the CLR shorthand a lowered/synthesized node may carry.
+    // A nullable value type is the structural `System.Nullable<T>` (a DISTINCT type), so it keeps its `{t:nullable}`
+    // wrapper through lowering — unlike a reference type, whose `?` is stripped to a bare type + an NRT byte. The
+    // authoritative source for a concrete NON-primitive is the ref.dll `_ownerKind` (struct/enum); this seed makes the
+    // primitives resolve even with no ref.dll loaded and shadows any ref-scan miss.
+    static readonly HashSet<string> ValueTypePrimitiveFqns = new(StringComparer.Ordinal)
+    {
+        "kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte", "kotlin.Double", "kotlin.Float",
+        "kotlin.Boolean", "kotlin.Char", "kotlin.UInt", "kotlin.ULong", "kotlin.UShort", "kotlin.UByte",
+        "int", "long", "short", "byte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "ubyte",
+    };
+
     ReferenceMetadataIndex(List<ReferenceAssembly> assemblies)
     {
         _assemblies = assemblies;
@@ -505,6 +560,7 @@ sealed class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.TypeKinds) _ownerKind[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
+            foreach (var kv in asm.DotKt.TypeParamConstraints) _ownerTypeParamConstraints[kv.Key] = kv.Value;
             foreach (var h in asm.DotKt.HelperTypes) _helperTypes.Add(h);
             foreach (var s in asm.DotKt.RestrictsSuspensionTypes) _restrictsSuspension.Add(s);
             foreach (var m in asm.DotKt.MemberBindings)
@@ -587,6 +643,31 @@ sealed class ReferenceMetadataIndex
 
     public int OwnerArity(string ownerFqn) => _ownerArity.GetValueOrDefault(ownerFqn, 0);
     public string[] OwnerTypeParamNames(string ownerFqn) => _ownerTypeParams.GetValueOrDefault(ownerFqn);
+
+    // The struct-ness ORACLE (#37/#48 nullability fold). True iff a CONCRETE Kotlin/CLR type FQN is a VALUE type
+    // (a foundational primitive, or a ref.dll struct/enum). A value `T?` is `System.Nullable<T>` (keeps its wrapper);
+    // a reference `T?` is a bare type + an NRT byte. Consulted by BirTypeLowering (the Nullable strip) and the decl
+    // NRT-byte walk. Not for type VARIABLES — use TvConstraint for those. Foundational value primitives resolve from
+    // the hardcoded seed even with no ref.dll; a ref.dll struct/enum resolves from the scanned `_ownerKind`.
+    public bool IsValueTypeFqn(string fqn)
+    {
+        if (fqn == null) return false;
+        if (ValueTypePrimitiveFqns.Contains(fqn)) return true;
+        var bare = StripGenericArity(fqn);
+        var kind = _ownerKind.GetValueOrDefault(bare);
+        return kind == "struct" || kind == "enum";
+    }
+
+    // The CLR generic-parameter constraint class of a type variable declared on `ownerFqn` at flattened index `i`:
+    // "struct" (a value-type constraint -> a `T?` is `Nullable<T>`), "class" (a reference constraint -> bare + NRT),
+    // or "unconstrained"/null (unknown -> treated as reference by the caller's sound fallback). Recorded from the
+    // ref.dll's GenericParameterAttributes during the scan; empty when the owner is a local type / not on the ref.dll.
+    public string TvConstraint(string ownerFqn, int i)
+    {
+        if (ownerFqn == null) return null;
+        var arr = _ownerTypeParamConstraints.GetValueOrDefault(StripGenericArity(ownerFqn));
+        return arr != null && i >= 0 && i < arr.Length ? arr[i] : null;
+    }
 
     // The @ClrProperty accessor binding for owner.member: its READ/WRITE access flags + the .NET property name. Routes the
     // call EXPLICITLY to clrPropGet/clrPropSet (no get_/set_ string-prefix sniff). Overload-disambiguated by arg count.
@@ -897,8 +978,12 @@ sealed class ReferenceMetadataIndex
                     metadata.TypeKinds[ownerFqn] = TypeKind(type);
                     if (type.IsGenericType)
                     {
-                        metadata.TypeArity[ownerFqn] = type.GetGenericArguments().Length;
-                        metadata.TypeParamNames[ownerFqn] = type.GetGenericArguments().Select(g => g.Name).ToArray();
+                        var gargs = type.GetGenericArguments();
+                        metadata.TypeArity[ownerFqn] = gargs.Length;
+                        metadata.TypeParamNames[ownerFqn] = gargs.Select(g => g.Name).ToArray();
+                        // The struct-ness ORACLE for a TYPE VARIABLE (#37/#48): record each type-param's CLR constraint
+                        // class from GenericParameterAttributes so a `T?` on a struct-constrained param stays Nullable<T>.
+                        metadata.TypeParamConstraints[ownerFqn] = gargs.Select(GenericParamConstraintClass).ToArray();
                     }
                     var classAlias = ClrAliasOf(type.GetCustomAttributesData());
                     if (classAlias != null) metadata.Aliases[ownerFqn] = classAlias;
@@ -1188,6 +1273,17 @@ sealed class ReferenceMetadataIndex
         return "class";
     }
 
+    // The constraint class of a generic parameter (a `GetGenericArguments()` element): "struct" when it carries the
+    // value-type constraint (`where T : struct`), "class" when it carries the reference constraint (`where T : class`),
+    // else "unconstrained". Drives the tv struct-ness oracle for the nullability fold.
+    static string GenericParamConstraintClass(Type gp)
+    {
+        var a = gp.GenericParameterAttributes;
+        if ((a & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0) return "struct";
+        if ((a & GenericParameterAttributes.ReferenceTypeConstraint) != 0) return "class";
+        return "unconstrained";
+    }
+
     static string StripGenericArity(string value)
     {
         var idx = value.IndexOf('`');
@@ -1208,6 +1304,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
+    public readonly Dictionary<string, string[]> TypeParamConstraints = new(StringComparer.Ordinal); // ownerFqn -> per-param "struct"/"class"/"unconstrained"
     public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "<>dotkt_ClrH_*" rule-3 helpers
     // Types carrying @kotlin.coroutines.RestrictsSuspension (BINARY-retained, so present on the ref.dll). A suspend
     // lambda whose RECEIVER is such a scope (e.g. SequenceScope) gets the RestrictedSuspendLambda SM base (bundle-6 P5).
@@ -1804,7 +1901,23 @@ static class BirTypeLowering
     // shadowed by KotlinToClr (checked first), keeping their CLR shorthand ("int"/"string"/"object").
     static IReadOnlyDictionary<string, string> _aliases = new Dictionary<string, string>(StringComparer.Ordinal);
 
+    // The struct-ness ORACLE (#37/#48 nullability fold), set per top-level Lower() call. True for a VALUE type FQN
+    // (a foundational primitive, a ref.dll struct/enum, or a LOCAL enum/struct in this compilation). Decides whether a
+    // `{t:nullable}` node keeps its wrapper (value inner -> `System.Nullable<T>`) or is STRIPPED to the bare inner
+    // (reference inner -> the CLR type is nullable in IL regardless; the `?` rides an NRT byte the decl walk emitted).
+    static Func<string, bool> _isValueFqn = _ => false;
+
     static string AliasBcl(string fqn) => _aliases.TryGetValue(fqn, out var bcl) ? bcl : null;
+
+    // Whether the INNER of a `{t:nullable}` node is a value type — evaluated on the SEMANTIC (pre-lowering) inner so a
+    // struct/enum/primitive FQN is recognized before it is rewritten to a CLR shorthand / BCL name. A generic
+    // application, function type, array, byRef, or type variable is treated as a reference (stripped). A value FQN
+    // keeps the wrapper (a value `T?` is the structural `System.Nullable<T>`).
+    static bool IsValueNullableInner(TypeNode of) => of switch
+    {
+        TypeNode.Fqn { Args: null } f => _isValueFqn(f.Name),
+        _ => false,
+    };
 
     // === STRUCTURED TypeNode lowering (#37 m1) =================================================
     // The freeze put every kotc type field as a structured `{t:…}` Type node (DotKt.Bir.TypeNode). The
@@ -1868,7 +1981,15 @@ static class BirTypeLowering
                 // -> erase to object; a plain fn is a delegate (Func/Action) with lowered ret/params.
                 return fn.Suspend ? ObjectType : LowerFnDelegate(fn, refBuild, force);
             case TypeNode.Nullable n:
-                return new TypeNode.Nullable(LowerType(n.Of, refBuild, force, typeArg: false));
+            {
+                // #37/#48: a VALUE `T?` stays `System.Nullable<T>` (ilemit builds it — the inner is kept verbatim in the
+                // ref build, lowered to the CLR primitive otherwise); a REFERENCE `T?` is STRIPPED to the bare lowered
+                // inner in EVERY build — a CLR reference is nullable in IL regardless, and its `?` was already emitted as
+                // an NRT byte by the decl walk. NEVER produce `Nullable<referenceType>` (ilemit's MapNullable asserts the
+                // inner is a value type, in the ref build too). Decided on the SEMANTIC inner via the struct-ness oracle.
+                var lowered = LowerType(n.Of, refBuild, force, typeArg: false);
+                return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
+            }
             case TypeNode.Array a:
                 return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
             case TypeNode.ByRef b:
@@ -1902,9 +2023,11 @@ static class BirTypeLowering
     static bool IsTypeObject(JsonNode n) =>
         n is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s != null;
 
-    public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null)
+    public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
+        Func<string, bool> isValueFqn = null)
     {
         _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        _isValueFqn = isValueFqn ?? (_ => false);
         return LowerNode(root, refBuild, force: false);
     }
 
@@ -3533,7 +3656,7 @@ static class NullableGenericReturnErasure
                     if (getters.Contains(nm)) mo["ret"] = TypeJson.Fqn("object");
                     if (setters.Contains(nm) && mo["params"] is JsonArray ps)
                         foreach (var p in ps)
-                            if (p is JsonObject po && TypeJson.Read(po["type"]) is TypeNode.Tv)
+                            if (p is JsonObject po && TypeJson.Read(po["type"]) is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })
                                 po["type"] = TypeJson.Fqn("object");
                 }
             if (getters.Count > 0)
@@ -3593,9 +3716,10 @@ static class NullableGenericReturnErasure
     {
         if (arr is not JsonArray a) return;
         foreach (var d in a)
+            // #37/#48: a nullable generic-parameter property is the TYPE NODE `{t:nullable,of:{t:tv}}` (was `gp:T` +
+            // the retired scalar `nullable` flag). Capture its accessor names BEFORE the type is erased to `object`.
             if (d is JsonObject po
-                && (po["nullable"] as JsonValue)?.TryGetValue<bool>(out var nb) == true && nb
-                && TypeJson.Read(po["type"]) is TypeNode.Tv)
+                && TypeJson.Read(po["type"]) is TypeNode.Nullable { Of: TypeNode.Tv })
             {
                 if ((po["get"] as JsonValue)?.TryGetValue<string>(out var g) == true && g != null) getters.Add(g);
                 if ((po["set"] as JsonValue)?.TryGetValue<string>(out var s) == true && s != null) setters.Add(s);
@@ -3611,7 +3735,7 @@ static class NullableGenericReturnErasure
         {
             case JsonObject obj:
                 if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "var"
-                    && TypeJson.Read(obj["type"]) is TypeNode.Tv
+                    && TypeJson.Read(obj["type"]) is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv }
                     && obj["init"] is JsonObject init
                     && (init["k"] as JsonValue)?.TryGetValue<string>(out var ik) == true && ik == "callInstance"
                     && (init["method"] as JsonValue)?.TryGetValue<string>(out var im) == true && getters.Contains(im))
@@ -3665,10 +3789,16 @@ static class NullableGenericReturnErasure
         switch (node)
         {
             case JsonObject obj:
+                // #37/#48: a value-type-nullable accumulator local is `{t:nullable,of:{t:tv}}` (was `gp:T` + the retired
+                // scalar `nullable` flag). The blanket EraseNullableGpAllStrings sweep deliberately SKIPS body-local var
+                // type slots (it can no longer tell an accumulator from a safe-call temp — both are now identical nodes),
+                // so this init-gated pass OWNS them: erase to `object` ONLY the null-const / Map.get idiom (the case that
+                // genuinely needs a surviving null), leaving safe-call temps to lower to the bare `gp:T` (see the WHY-GATE
+                // note above) — the surviving safe-call temp's `{t:nullable,of:{t:tv}}` is stripped to bare `gp:T` by
+                // BirTypeLowering (an unconstrained tv is reference-treated), preserving the old bare-`gp:T` behavior.
                 if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "var"
-                    && (obj["nullable"] as JsonValue)?.TryGetValue<bool>(out var nb) == true && nb
-                    && TypeJson.Read(obj["type"]) is TypeNode.Tv
-                    && (IsNullConstInit(obj["init"]) || IsNullableGenericMapGet(obj["init"])))
+                    && TypeJson.Read(obj["type"]) is TypeNode.Nullable { Of: TypeNode.Tv }
+                    && (IsNullConstInit(obj["init"]) || IsNullableGenericMapGet(obj["init"]) || IsNullableFuncReturnInvoke(obj["init"])))
                     obj["type"] = TypeJson.Fqn("object");
                 foreach (var kv in obj) RetypeNullableGpVars(kv.Value);
                 break;
@@ -3699,6 +3829,24 @@ static class NullableGenericReturnErasure
                 && (own == "kotlin.collections.Map" || own == "kotlin.collections.MutableMap"))
                 return true;
         return false;
+    }
+
+    // True when a var initializer is a `delegateInvoke` whose function-type RETURN is a nullable generic (`(…) -> V?`,
+    // `{t:nullable,of:{t:tv}}`). NullableFuncReturnErasure lowers such a delegate's `Invoke` return to `object` (the one
+    // rep a value/reference instantiation agree on), so a local receiving it must be an `object` slot too — covering BOTH
+    //   * a genuine `val computed = remappingFunction(…)` accumulator read through an explicit null-check + `as V`
+    //     (clrMapMerge's remove-on-null path; il-mapmerge), AND
+    //   * a kotc-synthesized safe-call receiver temp `val tmpN_safe_receiver = transform(x)` for `transform(x)?.let{…}`
+    //     (mapNotNullTo; il-collmore) — pre-#48 this WAS an `object` slot (the blanket `nullable:gp:` sweep erased it);
+    //     leaving it a bare value `V` made bir2cir insert an eager `cast<V>(…:object)` that unbox.any-NREs on a null
+    //     transform result. The alias reader chain (`__inlN = tmp; __lamN = __inl`) re-narrows at the value consumer.
+    // These are the delegate-invoke initializers — the safe-call temps that init from a plain callInstance/callStatic
+    // (a genuine `foo?.bar` receiver read implicitly) are NOT matched here and lower to the bare `gp:V` as before.
+    static bool IsNullableFuncReturnInvoke(JsonNode init)
+    {
+        if (init is not JsonObject io) return false;
+        if ((io["k"] as JsonValue)?.TryGetValue<string>(out var ik) != true || ik != "delegateInvoke") return false;
+        return TypeJson.Read(io["funcType"]) is TypeNode.Fn { Ret: TypeNode.Nullable { Of: TypeNode.Tv } };
     }
 
     // True when a var initializer is the null literal (`{k:"const", value:null}`) — the `T? = null` accumulator idiom.
@@ -3739,7 +3887,13 @@ static class NullableGenericReturnErasure
                     && (src["k"] as JsonValue)?.TryGetValue<string>(out var sk) == true && sk == "local"
                     && (src["name"] as JsonValue)?.TryGetValue<string>(out var sn) == true
                     && nullableSrc.TryGetValue(sn, out var tp)
-                    && TypeJson.Read(obj["elem"]) is TypeNode.Tv el && el == tp
+                    // #37/#48: the loop `elem` is the nullable element `T?` = `{t:nullable,of:{t:tv}}` (pre-#48 kotc emitted
+                    // a BARE `gp:T` here, the `?` riding a retired scalar flag). Match BOTH shapes — unwrap a Nullable(Tv)
+                    // wrapper to its Tv — else the loop-var re-narrow never fires and the blanket sweep still erases `elem`
+                    // to `object`, leaving `clrCollAdd(dst, element:object)` with no unbox.any -> InvalidProgram on a VALUE
+                    // element instantiation (il-chunk `List<Int?>.filterNotNull()`).
+                    && TypeJson.Read(obj["elem"]) is TypeNode elemT
+                    && ((elemT as TypeNode.Tv) ?? ((elemT as TypeNode.Nullable)?.Of as TypeNode.Tv)) is TypeNode.Tv el && el == tp
                     && (obj["var"] as JsonValue)?.TryGetValue<string>(out var lv) == true)
                 {
                     obj["elem"] = TypeJson.Fqn("object");
@@ -3782,29 +3936,46 @@ static class NullableGenericReturnErasure
     {
         if (arr is not JsonArray a) return;
         foreach (var d in a)
+            // #37/#48: a nullable generic-parameter field/property is `{t:nullable,of:{t:tv}}` (was `gp:T` + the retired
+            // scalar `nullable` flag) -> the reference `object` slot (a value-type instantiation then holds a real null).
             if (d is JsonObject fo
-                && (fo["nullable"] as JsonValue)?.TryGetValue<bool>(out var nb) == true && nb
-                && TypeJson.Read(fo["type"]) is TypeNode.Tv)
+                && TypeJson.Read(fo["type"]) is TypeNode.Nullable { Of: TypeNode.Tv })
                 fo["type"] = TypeJson.Fqn("object");
     }
 
     // Blanket type-slot sweep applying EraseNullableTv to every structured Type in the tree — a `Nullable(Tv)` (a
     // value-type-nullable type variable `T?`) erases to `object` wherever it sits (a clrg-nested type-arg / field /
     // standalone-param), the same value-type-null fault as the return case. Mirrors NullableFuncReturnErasure.
-    static void EraseNullableGpAllStrings(JsonNode node)
+    static void EraseNullableGpAllStrings(JsonNode node, bool inParams = false)
     {
         switch (node)
         {
             case JsonObject obj:
+                // #37/#48 (Codex-confirmed Option A): a body-local `var`'s TOP-LEVEL `{t:nullable,of:{t:tv}}` type slot
+                // is NOT erased here — under the unified type-node encoding a safe-call receiver temp and a genuine
+                // accumulator are IDENTICAL nodes, and the init-gated RetypeNullableGpVars (which already ran) owns that
+                // discrimination. NESTED nullable-tv (a `var x: List<T?>` generic arg — a value-instantiation lifeline)
+                // is still erased. Every non-var / structural position (fields, returns, generic args, call sigs)
+                // keeps the uniform erasure.
+                var isVar = (obj["k"] as JsonValue)?.GetValue<string>() == "var";
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
                     if (child == null) continue;
+                    if (isVar && key == "type" && TypeJson.Read(child) is TypeNode.Nullable { Of: TypeNode.Tv }) continue;
+                    // A declaration PARAM's TOP-LEVEL `T?` (`{t:nullable,of:{t:tv}}`) is NOT erased to `object` here (#37/#48
+                    // round-trip): kept as `Nullable(Tv)`, DeclNullableFlags stamps its NRT byte [2] and BirTypeLowering
+                    // strips it to the bare generic-param `T` + a `NullableAttribute(2)`. This preserves the type-param
+                    // IDENTITY in the emitted signature so facadegen reconstructs `x: T?` (not the T-less `Any?` that made
+                    // `T` uninferable — roundtrip-generic `orDefault<T>(x: T?, …)`). Mirrors the pre-#48 bare-`gp:T`+flag
+                    // param (the JVM-idiom object-erasure applied to inline `nullable:gp:` returns/locals, not to params).
+                    // NESTED nullable-tv in a param (`Iterable<T?>`) still erases via EraseNullableTv (the Fqn recursion).
+                    if (inParams && key == "type" && TypeJson.Read(child) is TypeNode.Nullable { Of: TypeNode.Tv }) continue;
                     // A call's `sig` is a STRUCTURED TypeNode array (#37 m3b), so its `nullable:gp:X` (Nullable(Tv))
                     // elements erase to `object` for free via the array-recursion below (EraseNullableTv) — DEF and CALL
                     // sigs stay in agreement structurally, no sig-string special case needed.
                     if (TypeJson.Read(child) is TypeNode tn) obj[key] = TypeJson.Write(EraseNullableTv(tn));
-                    else EraseNullableGpAllStrings(child);
+                    else EraseNullableGpAllStrings(child, inParams: key == "params");
                 }
                 break;
             case JsonArray arr:
@@ -3812,7 +3983,10 @@ static class NullableGenericReturnErasure
                 {
                     var child = arr[i];
                     if (child == null) continue;
-                    if (TypeJson.Read(child) is TypeNode tn) arr[i] = TypeJson.Write(EraseNullableTv(tn));
+                    // A `params` element's OWN top-level nullable-tv is preserved (handled in the JsonObject case via
+                    // `inParams`); its nested nullable-tv still erases. Non-param arrays (`sig`, generic args) erase fully.
+                    if (inParams && child is JsonObject) EraseNullableGpAllStrings(child, inParams: true);
+                    else if (TypeJson.Read(child) is TypeNode tn) arr[i] = TypeJson.Write(EraseNullableTv(tn));
                     else EraseNullableGpAllStrings(child);
                 }
                 break;
@@ -3849,8 +4023,10 @@ static class NullableGenericReturnErasure
     static void ApplyToMethod(JsonNode m)
     {
         if (m is not JsonObject mo) return;
-        if (TypeJson.Read(mo["ret"]) is not TypeNode.Tv gp) return;
-        if ((mo["retNullable"] as JsonValue)?.TryGetValue<bool>(out var rn) != true || !rn) return;
+        // #37/#48: the nullable generic return is the TYPE NODE `{t:nullable,of:{t:tv}}` (was a bare `gp:X` ret + a
+        // retired scalar `retNullable` flag). Erase it to `object` — the only CLR rep of a generic `T?` that carries a
+        // real null for a value-type instantiation.
+        if (TypeJson.Read(mo["ret"]) is not TypeNode.Nullable { Of: TypeNode.Tv gp }) return;
         mo["ret"] = TypeJson.Fqn("object");
         // A return-value expression whose STATIC type is the (now-erased) `gp:X` must also flow as object so its
         // null/value coercion targets object: a `return (cond typed gp:X)` (if-empty-null-else-elem) and a
@@ -4382,7 +4558,7 @@ static class MemberCallSubstitution
                 foreach (var p in ps)
                     if (p is JsonObject po && (po["name"] as JsonValue)?.GetValue<string>() is string pn
                         && TypeJson.Read(po["type"]) is TypeNode pt)
-                        child.VarTypes[pn] = pt;
+                        child.VarTypes[pn] = UnwrapNullability(pt);
             // TpConstraints is keyed POSITIONALLY, matching a receiver's `tv` (scope+index) — a class decl's params are
             // the TYPE scope, a method/fun's are the METHOD scope (the common constrained-build/compareTo receiver).
             if (tps != null)
@@ -4399,6 +4575,20 @@ static class MemberCallSubstitution
             return child;
         }
 
+        // Strip the OUTER nullability annotation (`{t:nullable}` / `{t:oblivious}`) off a receiver-slot type before it is
+        // recorded in VarTypes (#37/#48). A receiver's declared nullability is IRRELEVANT to which CLR owner/element type
+        // its member calls dispatch on — but every VarTypes reader (RecvStaticType, CollElemArg, MapKvArgs) pattern-matches
+        // the RAW node against `TypeNode.Fqn`/`Tv`. A `Map<K,V>?` receiver is a `TypeNode.Nullable`, so it failed those
+        // matches and fell back to the type-arg-STRIPPING `BareOwnerFqn` -> `IDictionary<object,object>` (a value-type-
+        // invariance EntryPointNotFound at run). Unwrapping here keeps a nullable receiver's concrete type args intact,
+        // exactly as the pre-#48 scalar-`nullable`-flag world did (where the slot type was already the bare `Fqn`).
+        static TypeNode UnwrapNullability(TypeNode t) => t switch
+        {
+            TypeNode.Nullable n => UnwrapNullability(n.Of),
+            TypeNode.Oblivious o => UnwrapNullability(o.Of),
+            _ => t,
+        };
+
         // Record the `var name/type` of every local declaration in this decl's own body, so a local shadows a
         // same-named param. Stops at a nested param-bearing declaration (an inner lambda/fun scopes its own locals).
         static void RecordLocalVars(JsonNode node, Dictionary<string, TypeNode> vars)
@@ -4409,7 +4599,7 @@ static class MemberCallSubstitution
                     if ((o["k"] as JsonValue)?.GetValue<string>() == "var"
                         && (o["name"] as JsonValue)?.GetValue<string>() is string vn
                         && TypeJson.Read(o["type"]) is TypeNode vt)
-                        vars[vn] = vt;
+                        vars[vn] = UnwrapNullability(vt);
                     if (o["params"] is JsonArray ip && ip.Count > 0) return;   // nested decl: its locals are its own
                     foreach (var kv in o) if (kv.Value != null) RecordLocalVars(kv.Value, vars);
                     break;
@@ -4954,7 +5144,16 @@ static class MemberCallSubstitution
     // parameter (`destination: C where C : MutableCollection<R>`) — the receiver's collection-interface
     // constraint's arg (the same recovery Constrainify performs). Falls back to `object`.
     static readonly TypeNode ObjType = new TypeNode.Fqn("object");
-    static bool IsObjType(TypeNode t) => t is TypeNode.Fqn { Args: null } f && (f.Name == "object" || f.Name == "kotlin.Any");
+    // See through a nullability wrapper (#37/#48): the `in`/`out` variance over-approximation `kotlin.Any` is emitted as
+    // the nullable-wrapped `Any?` (`{t:nullable,of:kotlin.Any}`), so the object-ish test on a map/collection owner arg
+    // must unwrap it to keep the CollElemArg/MapKvArgs constraint-recovery firing (pre-#48 it saw a bare Fqn `kotlin.Any`).
+    static bool IsObjType(TypeNode t) => t switch
+    {
+        TypeNode.Nullable n => IsObjType(n.Of),
+        TypeNode.Oblivious o => IsObjType(o.Of),
+        TypeNode.Fqn { Args: null } f => f.Name == "object" || f.Name == "kotlin.Any",
+        _ => false,
+    };
 
     static TypeNode CollElemArg(JsonObject node, ReferenceMetadataIndex refs, SubstCtx ctx, TypeNode.Fqn ownerFqn)
     {

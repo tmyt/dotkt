@@ -246,7 +246,19 @@ static class MapVarianceRealign
         return TypeJson.Read(o["type"]) ?? TypeJson.Read(o["ret"]);
     }
 
-    static bool IsObjectish(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Any" or "object" };
+    // The `in`/`out` use-site variance over-approximation is `kotlin.Any` — but a projected key/value is genuinely
+    // NULLABLE (`Map<in K, V>` -> the key projects to `Any?`), so post-#37/#48 kotc emits the marker as the wrapped
+    // `{t:nullable,of:kotlin.Any}` rather than a bare `kotlin.Any` (pre-#48 the `?` was a retired scalar flag, leaving a
+    // bare Fqn here). See through the nullability wrapper so the realignment still recognizes the approximation and
+    // restores the concrete constraint arg — without this, a `MutableMap<Any?, MutableList<T>>` inlined receiver in
+    // groupByTo left `clrMapPut`/`set_Item` dispatched on `IDictionary<object,…>` (value-type-invariance EntryPointNotFound).
+    static bool IsObjectish(TypeNode t) => t switch
+    {
+        TypeNode.Nullable n => IsObjectish(n.Of),
+        TypeNode.Oblivious o => IsObjectish(o.Of),
+        TypeNode.Fqn { Args: null } f => f.Name is "kotlin.Any" or "object",
+        _ => false,
+    };
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
 }

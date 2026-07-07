@@ -71,6 +71,7 @@ import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
+import org.jetbrains.kotlin.ir.types.makeNotNull
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.IrFileEntry
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
@@ -641,12 +642,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val name = clrIfaceMemberName(fn) ?: (prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString())
 			val isSetter = prop != null && fn == prop.setter
 			val ret = if (isSetter) TypeNode.Fqn("kotlin.Unit") else birType(fn.returnType)
-			// Return nullability (`fun <E> get(key): E?`) — same computation the concrete `method()` path applies. An abstract
-			// interface member whose return is a nullable type-parameter MUST carry `retNullable:true` so it stays symmetric
-			// with its concrete override; else bir2cir's NullableGenericReturnErasure erases only the override to `object`,
-			// leaving the interface slot as `E`, and the method-impl link fails with a signature mismatch (TypeLoadException,
-			// CoroutineContext.get / EmptyCoroutineContext.get).
-			val retNull = if (!isSetter && fn.returnType.isMarkedNullable()) ""","retNullable":true""" else ""
+			// Return nullability (`fun <E> get(key): E?`) now rides the `ret` type node itself (`{t:nullable,of:tv}` from
+			// the uniform birType) — the decl-level `retNullable` flag is RETIRED. bir2cir derives the nullable-generic
+			// erasure from the type node, keeping the abstract slot symmetric with its concrete override.
 			// A Kotlin interface method with a DEFAULT implementation (a body, not abstract) -> carry that body so ilemit
 			// emits a CLR default interface method; an implementer that doesn't override it then INHERITS the default
 			// instead of failing to load ("does not have an implementation", e.g. CoroutineContext.plus, ClosedRange.contains).
@@ -661,7 +659,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `method()` path emits (BirEmitter.kt:1413). Without it bir2cir has nothing to key off for an INTERFACE
 			// suspend member — it can't synthesize the Task-bridge signature / cold-entry — so a cross-assembly
 			// `interface Fetcher { suspend fun fetch(): Int }` round-trip breaks (the abstract-CLASS path already tags it).
-			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}$retNull${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
+			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 			.filterNot { it.signatureMentionsJava() }
@@ -1150,15 +1148,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}.joinToString(",")
 	}
 
-	/** Nullable generic-parameter marker for a FIELD / PROPERTY slot: a `T?` (nullable type-parameter) whose CLR
-	 *  rep is a bare `gp:T` carries no nullability in IL, so a value-type instantiation (`Int`) would fault on a
-	 *  real null (SequenceBuilderIterator.nextValue: T?). Emit the sibling `"nullable":true` so bir2cir's extended
-	 *  NullableGenericReturnErasure erases the slot's `type` -> `object` (the SAME `T?`->object model the method-return
-	 *  path uses, just extended from returns to fields/props). Inert until bir2cir consumes it.
-	 *  `internal` so the LOCAL-var / PARAM emission (BirEmitterStatements.kt) can reuse the same marker. */
-	internal fun nullableGpFieldFlag(t: IrType): String =
-		if (t.isMarkedNullable() && birType(t) is TypeNode.Tv) ""","nullable":true""" else ""
-
 	/** A property whose type is `kotlin.clr.ClrEvent<T>` — the compile-time-only fiction surfacing a .NET event.
 	 *  A .NET event is subscribed via `+=`/`-=` and is NEVER a first-class value or a real inherited property, so
 	 *  such a property must never be emitted as a member. This matters for a FAKE-OVERRIDE: when a Kotlin class
@@ -1258,14 +1247,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A property that isn't publicly SETTABLE (`val`, or `var ... private/protected set`) -> mark the public
 			// backing field read-only so a consuming Kotlin module restores it as `val` (rejecting external writes).
 			val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public"))) ""","readOnly":true""" else ""
-			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson$ro${nullableGpFieldFlag(bf.type)}${volatileFieldFlag(p)}}"""
+			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson$ro${volatileFieldFlag(p)}}"""
 		}
 		// Companion non-const `val`/`var` -> static fields (with initializer run in a static ctor); const is inlined.
 		val statFields = companion?.declarations?.filterIsInstance<IrProperty>()?.mapNotNull { p ->
 			val bf = p.backingField ?: return@mapNotNull null
 			if (p.isConst) return@mapNotNull null
 			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
-			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init${nullableGpFieldFlag(bf.type)}${volatileFieldFlag(p)}}"""
+			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init${volatileFieldFlag(p)}}"""
 		}.orEmpty()
 		// A capturing object literal carries its captured outer values as extra instance fields.
 		val capFields = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
@@ -1327,7 +1316,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val propsList = klass.declarations.filterIsInstance<IrProperty>().filter { emitsGet(it) }.joinToString(",") { p ->
 			val getName = clrIfaceMemberName(p.getter!!) ?: "get_" + p.name.asString()
 			val setName = if (emitsSet(p)) str(clrIfaceMemberName(p.setter!!) ?: "set_" + p.name.asString()) else "null"
-			"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${nullableGpFieldFlag(p.getter!!.returnType)},"get":${str(getName)},"set":$setName${overridesJson(p.getter!!)}}"""
+			"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()},"get":${str(getName)},"set":$setName${overridesJson(p.getter!!)}}"""
 		}
 		val methods = (instMethods + statMethods + companionAccessors + clrAccessors + userAccessors).joinToString(",")
 		// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
@@ -1500,9 +1489,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// does NO coroutine lowering (body emits plainly; suspend calls carry `"suspendCall":true`), the await/state-
 		// machine/Task-ABI lowering is a DEFERRED downstream layer; `resultType` (its Kotlin result type) rides alongside.
 		val mods = funModsJson(fn, isInlineWithLambda(fn))
-		// Return nullability (`fun f(): String?`) — the params carry their own `nullable` flag; ilemit stamps both as .NET NRT ([Nullable]/[NullableContext]).
-		val retNull = if (fn.returnType.isMarkedNullable()) ""","retNullable":true""" else ""
-		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$mods$retNull${resultTypeJson(fn)},"params":[$ps],"ret":${birType(fn.returnType).toJson()},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}}"""
+		// Return nullability (`fun f(): String?`) rides the `ret` type node (`{t:nullable,of:...}` from the uniform
+		// birType) — the decl-level `retNullable` flag is RETIRED. bir2cir/ilemit derive .NET NRT from the type node.
+		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$mods${resultTypeJson(fn)},"params":[$ps],"ret":${birType(fn.returnType).toJson()},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}}"""
 	}
 
 	// ===== Rule 3 (CLR binding): static-helper hoist — SYNTHESIS + type-strip live in bir2cir =====
@@ -1730,10 +1719,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val result = valueParams
 			.mapIndexed { regIdx, it ->
 				// `vararg xs: T` -> mark the param so ilemit stamps [ParamArray] (native .NET varargs; a cross-module
-				// consumer can then call `f(1, 2, 3)`). A nullable type rides a `nullable` flag (ref types are nullable
-				// in IL anyway; the flag is for the consumer's FIR to restore `T?`).
+				// consumer can then call `f(1, 2, 3)`). Param nullability now rides the `type` node itself
+				// (`{t:nullable,of:...}` from the uniform birType) — the decl-level `nullable` flag is RETIRED.
 				val vararg = if (it.varargElementType != null) ""","mods":{"vararg":true}""" else ""
-				val nullable = if (it.type.isMarkedNullable()) ""","nullable":true""" else ""
 				// TIER 1 — a metadata-representable default -> carry it so ilemit stamps [Optional]+[DefaultParameterValue]
 				// (a C# OR kcc caller can omit the arg; ilemit's EmitDefaultArg fills it from the .NET metadata). A TIER-2
 				// default carries NO `default` field, so the param is emitted REQUIRED (no [Optional]) — a C# caller must
@@ -1749,7 +1737,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				} else null
 				val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
 				val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
-				"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$vararg$nullable$default$pattrs}"""
+				"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$vararg$default$pattrs}"""
 			}
 		if (emitKotlinDefault) valueParams.forEach { captureSubst.remove(it) }
 		return result
@@ -2885,8 +2873,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 */
 	internal fun funcRetTypeOf(t: IrType): TypeNode {
 		if (t.isUnit()) return TypeNode.Fqn("kotlin.Unit")
-		val enc = birTypeDeleg(t)
-		return if (t.isMarkedNullable() && enc is TypeNode.Tv) TypeNode.Nullable(enc) else enc
+		// birTypeDeleg already wraps a nullable core as `{t:nullable,of:...}` (uniform birType), incl. a nullable `tv`.
+		return birTypeDeleg(t)
 	}
 
 	/**
@@ -3168,7 +3156,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// in a local" rule, ClrMapDefaults.kt). Erase to object: every use site of a nullable subject is
 		// ref-typed (objEq null-check / objMethod / ref member).
 		val bt = birType(type)
-		val vt = if (bt is TypeNode.Tv && type.isMarkedNullable()) OBJ else bt
+		// A nullable generic-param subject now surfaces as `{t:nullable,of:tv}` (uniform birType) — erase THAT to object.
+		val vt = if (bt is TypeNode.Nullable && bt.of is TypeNode.Tv) OBJ else bt
 		return """{"k":"var","name":${str(tv)},"type":${vt.toJson()},"init":${expr(init)}}""" to
 			"""{"k":"local","name":${str(tv)}}"""
 	}
@@ -4858,14 +4847,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	private fun argType(t: IrType, i: Int): TypeNode? =
 		(t as? IrSimpleType)?.arguments?.getOrNull(i)?.let { (it as? IrTypeProjection)?.type?.let(::birType) }
 
-	/** A type-argument's identity, preserving a nullable type-PARAMETER (`Iterable<T?>` inner `T?`) as `nullable(tv)`
-	 *  (the Kotlin FACT, else lost for an unconstrained generic); bir2cir erases the marked arg. Matches funcRetTypeOf. */
-	internal fun argElemNullable(at: IrType): TypeNode {
-		val enc = birType(at)
-		return if (at.isMarkedNullable() && enc is TypeNode.Tv) TypeNode.Nullable(enc) else enc
-	}
+	/** A type-argument's identity. `birType` now UNIFORMLY wraps any nullable core (incl. a nullable type-PARAMETER
+	 *  `Iterable<T?>` inner `T?`) as `{t:nullable,of:...}`, so this is just `birType`; kept as a named seam for the
+	 *  call sites that document the "preserve nullable type-arg" intent. bir2cir erases the marked arg. */
+	internal fun argElemNullable(at: IrType): TypeNode = birType(at)
 
 	internal fun birType(t: IrType): TypeNode {
+		// UNIFORM nullability: any `T?` -> `{t:nullable,of:<non-null core>}`, for VALUE, REFERENCE, and type-variable
+		// types alike (spec §1). kotc stays CLR-free — it does NOT distinguish struct from ref; nullability rides the
+		// type node only, and the decl-level `nullable`/`retNullable` flags are RETIRED. bir2cir DERIVES the CLR form
+		// (value `Nullable<T>` vs reference NRT byte) from this node. Wrapping the non-null core makes every early-return
+		// special case below (ClrRef/Span/array/fn/Comparator/charSeq/coroutine-fn/type-parameter) apply to the core.
+		if (t.isMarkedNullable()) return TypeNode.Nullable(birType(t.makeNotNull()))
 		// A type parameter `T` -> a positional `tv` (resolved in IL context). On the CLR generics are reified, so
 		// even `reified T` rides on this (no inlining) — see [[clr-not-jvm-discard-jvmisms]].
 		(t.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.let { tp ->
@@ -4879,8 +4872,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// The intrinsic `kotlin.clr.Span<T>` -> the real `System.Span<T>`.
 		if (t.classFqName?.asString() == "kotlin.clr.Span")
 			return TypeNode.Fqn("System.Span", listOf(argType(t, 0) ?: OBJ))
-		// Nullable value type `Int?` -> Nullable<Int> (reference nullables stay as the ref type).
-		nullableElem(t)?.let { return TypeNode.Nullable(it) }
 		if (isArrayType(t)) return TypeNode.Array(arrayElemType(t))
 		val fqp = t.classFqName?.asString()
 		// kotlin.text.Regex stays its bare `kotlin.*` FQN here (falls through to the user-class `@kotlin.text.Regex`

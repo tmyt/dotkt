@@ -757,7 +757,8 @@ static class SuspendColdLowering
         readonly string _smType;                 // bare SM type name
         readonly TypeNode _smTypeInst;           // instantiated (`f$sm<T>`) or bare when non-generic
         readonly string _coldName;
-        readonly TypeNode _resultType;           // Kotlin resultType (VoidTn for Unit)
+        readonly TypeNode _resultType;           // Kotlin resultType, OUTER `?` stripped (VoidTn for Unit)
+        readonly bool _resultNullable;           // the suspend fn's result had an outer `?` (#37/#48: read off the type node)
         readonly List<JsonObject> _params;       // original params (extension: leading __self)
         readonly List<string> _typeParams;       // generic type-param names ([] when non-generic)
         readonly HashSet<string> _fields = new(StringComparer.Ordinal);
@@ -806,7 +807,12 @@ static class SuspendColdLowering
             _memberVirtual = _isMember && Bool(m["virtual"]);
             _smType = (ownerClass ?? fileClass) + "_" + name + smNameSuffix + "$sm";
             _coldName = name + "$dotkt_suspend";
-            _resultType = TypeJson.Read(m["suspendRet"]) ?? VoidTn;
+            // #37/#48: the result nullability now rides the `suspendRet` TYPE NODE (`{t:nullable,of:R}`), not a retired
+            // scalar `retNullable` flag. Strip the outer `?` so `_resultType` is the bare R (as it always was for the
+            // reference case) and record it in `_resultNullable` for the Task-bridge NRT walk.
+            var suspendRetRaw = TypeJson.Read(m["suspendRet"]);
+            _resultNullable = suspendRetRaw is TypeNode.Nullable;
+            _resultType = (suspendRetRaw is TypeNode.Nullable srn ? srn.Of : suspendRetRaw) ?? VoidTn;
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
             _typeParams = ReadTypeParamNames(m["typeParams"]);
             // The SM is generic over the ENCLOSING class's type params (an instance member on a generic class) PLUS
@@ -847,7 +853,8 @@ static class SuspendColdLowering
             _baseIsLocal = baseIsLocal;
             _smType = smName;
             _coldName = null;
-            _resultType = resultType ?? VoidTn;
+            _resultNullable = resultType is TypeNode.Nullable;
+            _resultType = (resultType is TypeNode.Nullable lrn ? lrn.Of : resultType) ?? VoidTn;
             _params = lambdaParams ?? new List<JsonObject>();
             _typeParams = typeParams ?? new List<string>();
             _smAllTps = _typeParams;   // a lambda SM has no enclosing-class type params
@@ -2898,7 +2905,7 @@ static class SuspendColdLowering
         // `suspend fun f(): String?` -> {1,2}; `List<String>?` -> {1,2,1}.
         JsonArray TaskReturnNullableFlags()
         {
-            if (!Bool(_m?["retNullable"])) return null;   // no outer `?` -> nothing nullable to encode
+            if (!_resultNullable) return null;   // no outer `?` (off the type node now) -> nothing nullable to encode
             var rKotlin = IsUnitTn(_resultType) ? UnitTn : _resultType;
             var flags = new List<int> { 1 };             // the Task<...> outer node is a non-null reference
             if (!WalkNullable(rKotlin, outerNullable: true, flags)) return null;   // R was a value type -> Nullable<T>
