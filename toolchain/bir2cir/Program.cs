@@ -1615,7 +1615,7 @@ sealed class SuspendShapeAnalyzer
 
     static void CollectMethod(JsonNode method, string owner, List<SuspendFunctionShape> functions)
     {
-        if (method is not JsonObject obj || !BoolProp(obj, "suspend")) return;
+        if (method is not JsonObject obj || !ModFlag(obj, "suspend")) return;
 
         var awaits = CountKind(obj, "coSuspend");
         var intrinsicAwaits = CountKind(obj, "coSuspendIntrinsic");
@@ -1647,6 +1647,8 @@ sealed class SuspendShapeAnalyzer
 
     static string StringProp(JsonObject obj, string name) => (obj[name] as JsonValue)?.GetValue<string>();
     static bool BoolProp(JsonObject obj, string name) => (obj[name] as JsonValue)?.GetValue<bool>() == true;
+    // Structured declaration modifier (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).
+    static bool ModFlag(JsonObject obj, string name) => obj["mods"] is JsonObject m && (m[name] as JsonValue)?.GetValue<bool>() == true;
 }
 
 sealed record SuspendShapeAnalysis(IReadOnlyList<SuspendFunctionShape> Functions)
@@ -1950,10 +1952,10 @@ static class BirTypeLowering
             // the base here (the `clr:` form ilemit resolves to the referenced .NET type) and drop the Kotlin-only
             // flag so it never reaches the CIR/ilemit. The `here`/force path above already lowered its field/ctor
             // types with the full map (IsAttributeClass recognizes the flag), so the attribute is emittable.
-            if (obj["annotation"] is JsonValue av && av.TryGetValue<bool>(out var annFlag) && annFlag)
+            if (ModFlag(obj, "annotation"))
             {
                 copy["base"] = TypeNode.Write(new TypeNode.Fqn("System.Attribute"));
-                copy.Remove("annotation");
+                (copy["mods"] as JsonObject)?.Remove("annotation");   // drop the Kotlin-only flag; never reaches CIR/ilemit
             }
             // UNIT -> void DERIVATION (unit-fold-in-bir2cir, USER 2026-07-05): kotc emits the pure Kotlin `kotlin.Unit`
             // FQN identity for a "no value" position — the Unit-literal `const` type and a Unit-valued `try` expression
@@ -1984,8 +1986,11 @@ static class BirTypeLowering
     // bir2cir, USER 2026-07-02; kotc no longer names the CLR base). Also true once the base has already been derived
     // (an already-`System.Attribute`-based class, e.g. a .NET attribute surfaced with a real base). Its ctor params /
     // fields / property accessors must carry concrete CLR types so the attribute is emittable — hence the force path.
+    // Structured declaration modifier (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).
+    static bool ModFlag(JsonObject obj, string name) => obj["mods"] is JsonObject m && (m[name] as JsonValue)?.GetValue<bool>() == true;
+
     static bool IsAttributeClass(JsonObject obj) =>
-        (obj["annotation"] is JsonValue a && a.TryGetValue<bool>(out var isAnn) && isAnn) ||
+        ModFlag(obj, "annotation") ||
         (obj["base"] is JsonObject b && b["t"] is JsonValue bt && bt.TryGetValue<string>(out var bts) && bts == "fqn" &&
          b["name"] is JsonValue bn && bn.TryGetValue<string>(out var s) && s != null &&
          s.EndsWith("System.Attribute", StringComparison.Ordinal));
@@ -3131,7 +3136,7 @@ static class StringCharSequenceBridge
     const string AdapterTypeJson = """
     {
       "name": "<>dotkt_StringCharSequence",
-      "kind": "class", "abstract": false, "vis": "public", "isSealed": false, "base": null,
+      "kind": "class", "abstract": false, "vis": "public", "base": null,
       "interfaces": ["<>dotkt_CharSequence"],
       "fields": [{"name": "value", "type": "kotlin.String", "vis": "internal"}],
       "ctors": [{
@@ -3140,7 +3145,7 @@ static class StringCharSequenceBridge
         "body": [{"k": "setField", "ownerType": "<>dotkt_StringCharSequence", "recv": {"k": "this"}, "name": "value", "value": {"k": "local", "name": "value"}}]
       }],
       "methods": [
-        {"name": "get", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public", "operator": true,
+        {"name": "get", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public", "mods": {"operator": true},
          "params": [{"name": "index", "type": "kotlin.Int"}], "ret": "kotlin.Char",
          "body": [{"k": "return", "value": {"k": "clrInstance", "type": "System.String", "method": "get_Chars", "argTypes": ["System.Int32"], "ret": "System.Char",
            "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},

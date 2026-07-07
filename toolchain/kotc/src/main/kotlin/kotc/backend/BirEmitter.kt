@@ -661,8 +661,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `method()` path emits (BirEmitter.kt:1413). Without it bir2cir has nothing to key off for an INTERFACE
 			// suspend member — it can't synthesize the Task-bridge signature / cold-entry — so a cross-assembly
 			// `interface Fetcher { suspend fun fetch(): Int }` round-trip breaks (the abstract-CLASS path already tags it).
-			val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${birType(fn.returnType).toJson()}""" else ""
-			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}$retNull$suspendField,"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
+			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}$retNull${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 			.filterNot { it.signatureMentionsJava() }
@@ -706,9 +705,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				}
 			}
 			.joinToString(",")
-		// Round-trip class-nature facts (Kotlin, not CLR): `fun interface` (SAM) and `sealed` — carried so a re-consuming
-		// Kotlin module can restore them (ilemit stamps [KotlinFunInterface]/[KotlinSealed]; a plain CLR interface loses both).
-		val funSealed = ""","isFun":${iface.isFun},"isSealed":${iface.modality == Modality.SEALED}"""
+		// Round-trip class-nature facts (Kotlin, not CLR) as structured `mods` (spec §2.1): `fun interface` (SAM) and
+		// `sealed` — carried so a re-consuming Kotlin module can restore them (ilemit stamps [KotlinFunInterface]/
+		// [KotlinSealed]; a plain CLR interface loses both).
+		val funSealed = classModsJson(fnIface = iface.isFun, sealed = iface.modality == Modality.SEALED)
 		return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn$funSealed${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods],"properties":[$ifaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
 	}
 
@@ -1120,7 +1120,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val fields = ctorParams.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
 		val assigns = ctorParams.joinToString(",") { """{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(it.name.asString())},"value":{"k":"local","name":${str(it.name.asString())}}}""" }
 		val ctor = """{"params":[$fields],"baseArgs":[],"thisArgs":null,"vis":"public","body":[$assigns]}"""
-		return """{"name":${str(typeName(klass))},"kind":"class","annotation":true,"abstract":false,"vis":"public","base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
+		return """{"name":${str(typeName(klass))},"kind":"class"${classModsJson(annotation = true)},"abstract":false,"vis":"public","base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
 	}
 
 	/** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. A Kotlin-authored
@@ -1385,7 +1385,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
 		// Round-trip: a Kotlin `sealed` class lowers to a CLR abstract class (loses the sealed modality) — carry the fact
 		// so a re-consuming Kotlin module restores `sealed` (ilemit stamps [KotlinSealed]).
-		val sealedFlag = ""","isSealed":${klass.modality == Modality.SEALED}"""
+		val sealedFlag = classModsJson(sealed = klass.modality == Modality.SEALED)
 		// typeParams = the anon/class's own params PLUS the captured enclosing params (scanned + installed at the top).
 		val ownTpsJson = typeParamsJson(ownTps).removePrefix(""","typeParams":[""").removeSuffix("]")
 		val extraJson = capturedTpParams.joinToString(",") { str(it.name.asString()) }
@@ -1493,20 +1493,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
 		// Kotlin modifiers with no .NET analog -> stamped as [KotlinFunction] by ilemit so a consuming Kotlin module
 		// can restore them (infix/operator call resolution). `final/open/abstract` ride .NET virtual-ness already.
-		val kmods = kotlinModsJson(fn)
-		// A user `inline fun` that takes a lambda param: ilemit additionally stamps [KotlinInlineBody] with this body
-		// (this method def IS the body), so a consuming module can splice it at the call site — the only way a
-		// cross-module non-local `return` through the lambda can work (DotKt inlines at emit, needing the body).
-		val inlineFlag = if (isInlineWithLambda(fn)) ""","inline":true""" else ""
+		// Structured modifiers (spec §2.1): `mods.inline` = ilemit stamps [KotlinInlineBody] with this body (this method
+		// def IS the body) so a consuming module can splice it — the only way a cross-module non-local `return` through
+		// the lambda works. `mods.infix/operator` -> [KotlinFunction]. `mods.suspend` = the neutral coroutine FACT: kotc
+		// does NO coroutine lowering (body emits plainly; suspend calls carry `"suspendCall":true`), the await/state-
+		// machine/Task-ABI lowering is a DEFERRED downstream layer; `resultType` (its Kotlin result type) rides alongside.
+		val mods = funModsJson(fn, isInlineWithLambda(fn))
 		// Return nullability (`fun f(): String?`) — the params carry their own `nullable` flag; ilemit stamps both as .NET NRT ([Nullable]/[NullableContext]).
 		val retNull = if (fn.returnType.isMarkedNullable()) ""","retNullable":true""" else ""
-		// A `suspend fun` carries the neutral `"suspend":true` FACT (+ `resultType` = its Kotlin result type). kotc does
-		// NO coroutine lowering: the body emits plainly (suspend calls carry `"suspendCall":true` from the call path), and
-		// the await/state-machine/Task-ABI lowering is a DEFERRED downstream layer. ilemit's own suspend handling reads
-		// `resultType` for the kickoff signature and (under stdlib-compile) emits a throwing stub. See MEMORY
-		// coroutine-lowering-layer-deferred.
-		val suspendField = if (fn.isSuspend) ""","suspend":true,"resultType":${birType(fn.returnType).toJson()}""" else ""
-		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$kmods$inlineFlag$retNull$suspendField,"params":[$ps],"ret":${birType(fn.returnType).toJson()},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}}"""
+		return """{"name":${str(emitName)},"static":$static,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${objName != null},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$mods$retNull${resultTypeJson(fn)},"params":[$ps],"ret":${birType(fn.returnType).toJson()},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}}"""
 	}
 
 	// ===== Rule 3 (CLR binding): static-helper hoist — SYNTHESIS + type-strip live in bir2cir =====
@@ -1517,9 +1512,33 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// `clrHelperName` is retained only for the facadegen .NET-interop rule-3 CALL routing below (an injected .NET owner).
 	internal fun clrHelperName(cls: IrClass): String = "<>dotkt_ClrH_" + typeName(cls).replace(Regex("[^A-Za-z0-9]"), "_")
 
-	/** `infix`/`operator` flags as BIR JSON fragments (only emitted when set), shared by the regular + suspend paths. */
-	internal fun kotlinModsJson(fn: IrSimpleFunction): String =
-		(if (fn.isInfix) ""","infix":true""" else "") + (if (fn.isOperator) ""","operator":true""" else "")
+	/** Structured declaration-modifier object (spec §2.1): a single `"mods":{name:true,…}` carrying ONLY the set flags
+	 *  (absent key = not set), replacing the order-dependent `$kmods$inlineFlag$suspendField` fragment concatenation.
+	 *  `inline` = the "inline body must travel" fact (isInlineWithLambda), the only inline shape ilemit splices. */
+	internal fun funModsJson(fn: IrSimpleFunction, inline: Boolean = false): String {
+		val flags = buildList {
+			if (inline) add(""""inline":true""")
+			if (fn.isInfix) add(""""infix":true""")
+			if (fn.isOperator) add(""""operator":true""")
+			if (fn.isSuspend) add(""""suspend":true""")
+		}
+		return if (flags.isEmpty()) "" else ""","mods":{${flags.joinToString(",")}}"""
+	}
+
+	/** A `suspend fun`'s Kotlin result type rides ALONGSIDE `mods.suspend` (it is a Type, not a modifier flag). */
+	internal fun resultTypeJson(fn: IrSimpleFunction): String =
+		if (fn.isSuspend) ""","resultType":${birType(fn.returnType).toJson()}""" else ""
+
+	/** Structured class-modifier object (spec §2.1): `"mods":{name:true,…}` for class-nature Kotlin facts
+	 *  (`fun`-interface, `sealed`, `annotation`, …) — only the set flags, absent = not set. */
+	internal fun classModsJson(fnIface: Boolean = false, sealed: Boolean = false, annotation: Boolean = false): String {
+		val flags = buildList {
+			if (annotation) add(""""annotation":true""")
+			if (fnIface) add(""""fun":true""")
+			if (sealed) add(""""sealed":true""")
+		}
+		return if (flags.isEmpty()) "" else ""","mods":{${flags.joinToString(",")}}"""
+	}
 
 	/** An `inline fun` with at least one (inlinable) lambda parameter — the only inline shape whose body must travel
 	 *  for cross-module consumption (lambda-less inline funs degrade to ordinary calls; the JIT inlines those). */
@@ -1712,7 +1731,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// `vararg xs: T` -> mark the param so ilemit stamps [ParamArray] (native .NET varargs; a cross-module
 				// consumer can then call `f(1, 2, 3)`). A nullable type rides a `nullable` flag (ref types are nullable
 				// in IL anyway; the flag is for the consumer's FIR to restore `T?`).
-				val vararg = if (it.varargElementType != null) ""","vararg":true""" else ""
+				val vararg = if (it.varargElementType != null) ""","mods":{"vararg":true}""" else ""
 				val nullable = if (it.type.isMarkedNullable()) ""","nullable":true""" else ""
 				// TIER 1 — a metadata-representable default -> carry it so ilemit stamps [Optional]+[DefaultParameterValue]
 				// (a C# OR kcc caller can omit the arg; ilemit's EmitDefaultArg fills it from the .NET metadata). A TIER-2

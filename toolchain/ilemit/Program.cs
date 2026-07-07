@@ -651,20 +651,20 @@ sealed partial class Emitter
             // Class-nature markers: a `fun interface` (SAM) lowers to a plain CLR interface, and a `sealed` class/
             // interface lowers to a CLR abstract-class/interface — both lose the Kotlin nature. Stamp a marker so a
             // re-consuming Kotlin module can restore it (facadegen reads them back; a C# consumer ignores them).
-            if (ti.TB != null && ti.Def.TryGetProperty("isFun", out var isFun) && isFun.GetBoolean()) ApplyKotlinFunInterface(ti.TB);
-            if (ti.TB != null && ti.Def.TryGetProperty("isSealed", out var isSealed) && isSealed.GetBoolean()) ApplyKotlinSealed(ti.TB);
+            if (ti.TB != null && ModFlag(ti.Def, "fun")) ApplyKotlinFunInterface(ti.TB);
+            if (ti.TB != null && ModFlag(ti.Def, "sealed")) ApplyKotlinSealed(ti.TB);
             if (ti.Def.TryGetProperty("methods", out var kms))
                 foreach (var m in kms.EnumerateArray())
                 {
                     int kf = 0;
-                    if (m.TryGetProperty("infix", out var inf) && inf.GetBoolean()) kf |= 1;       // KotlinFunctionFlags.Infix
-                    if (m.TryGetProperty("operator", out var op) && op.GetBoolean()) kf |= 2;       // .Operator
-                    if (m.TryGetProperty("suspend", out var su) && su.GetBoolean()) kf |= 4;        // .Suspend
+                    if (ModFlag(m, "infix")) kf |= 1;       // KotlinFunctionFlags.Infix
+                    if (ModFlag(m, "operator")) kf |= 2;    // .Operator
+                    if (ModFlag(m, "suspend")) kf |= 4;     // .Suspend
                     // The bir2cir-synthesized public Task<R> bridge (bundle-6 P4): a plain `Task`-returning method that
                     // IS the Kotlin `suspend fun`'s CLR ABI. Stamp it Suspend so a round-tripping consumer (kcc/facadegen)
                     // restores `suspend fun f(...)` — its suspend CALLS then lower to the `f$dotkt_suspend` cold entry.
                     if (m.TryGetProperty("suspendBridge", out var sb) && sb.GetBoolean()) kf |= 4;   // .Suspend
-                    bool inl = m.TryGetProperty("inline", out var il) && il.GetBoolean();
+                    bool inl = ModFlag(m, "inline");
                     // Nullability mask: bit 0 = return nullable, bit (i+1) = param i nullable.
                     uint nmask = 0;
                     if (m.TryGetProperty("retNullable", out var rn) && rn.GetBoolean()) nmask |= 1u;
@@ -1019,9 +1019,9 @@ sealed partial class Emitter
         _methodRetType = mb.ReturnType;
         _curTypeParams = EffectiveTps(ti);
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
-        if (m.TryGetProperty("suspend", out var su) && su.GetBoolean())
+        if (ModFlag(m, "suspend"))
         {
-            // A leftover `"suspend":true` method reaching ilemit means the real coroutine state machine (cold entry +
+            // A leftover `mods.suspend` method reaching ilemit means the real coroutine state machine (cold entry +
             // `ContinuationImpl` SM class + public `Task<T>` bridge) was NOT synthesized — that lowering is bir2cir's
             // (cold-core, bundle-6); ilemit itself is coroutine-codegen-free.
             //

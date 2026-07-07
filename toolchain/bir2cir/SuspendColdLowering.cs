@@ -105,6 +105,8 @@ static class SuspendColdLowering
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
     static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
+    // Structured declaration modifier (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).
+    static bool Mod(JsonObject decl, string key) => decl["mods"] is JsonObject m && Bool(m[key]);
 
     // The inline `suspendCoroutineUninterceptedOrReturn { c -> … }` intrinsic marker. kotc's IR inliner has
     // already run when this reaches bir2cir: the `@InlineOnly inline` intrinsic's fake body (a bare
@@ -532,9 +534,9 @@ static class SuspendColdLowering
 
     static bool IsShapeEligible(JsonObject m)
     {
-        if (!Bool(m["suspend"])) return false;
+        if (!Mod(m, "suspend")) return false;
         if (!Bool(m["static"])) return false;                       // top-level statics + extensions (kotc: __self param)
-        if (Bool(m["inline"]) || Bool(m["abstract"])) return false;
+        if (Mod(m, "inline") || Bool(m["abstract"])) return false;
         if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;  // old CPS / sequence path
         if (m["body"] is not JsonArray body) return false;
         return SuspensionsSupported(body, inHandler: false, tryDepth: 0);
@@ -547,9 +549,9 @@ static class SuspendColdLowering
     // lockstep with the original so a virtual `x.g()` resolves to the right override at runtime).
     static bool IsMemberShapeEligible(JsonObject m, JsonObject typeNode)
     {
-        if (!Bool(m["suspend"])) return false;
+        if (!Mod(m, "suspend")) return false;
         if (Bool(m["static"])) return false;                        // a static member fun -> deferred
-        if (Bool(m["inline"])) return false;
+        if (Mod(m, "inline")) return false;
         if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;
         // A member that is BOTH generic on its own (its own type params) AND on a generic class is deferred v1:
         // the SM would need to thread the union of both param lists (e.g. DeepRecursiveScope<T,R>'s
@@ -2304,7 +2306,6 @@ static class SuspendColdLowering
                 ["kind"] = "class",
                 ["abstract"] = false,
                 ["vis"] = "public",
-                ["isSealed"] = false,
                 ["base"] = Tn(ContinuationImplFqn),
                 ["interfaces"] = new JsonArray(),
                 ["fields"] = fields,
@@ -2385,7 +2386,6 @@ static class SuspendColdLowering
                 ["kind"] = "class",
                 ["abstract"] = false,
                 ["vis"] = "public",
-                ["isSealed"] = false,
                 ["base"] = Tn(lambdaBaseFqn),
                 ["interfaces"] = new JsonArray(),
                 ["fields"] = fields,

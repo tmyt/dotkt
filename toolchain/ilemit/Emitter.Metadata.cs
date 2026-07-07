@@ -47,6 +47,12 @@ sealed partial class Emitter
         mb.SetCustomAttribute(new CustomAttributeBuilder(_kInlineAttr.GetConstructor(new[] { typeof(string) }), new object[] { body }));
     }
 
+    // Structured declaration-modifier lookup (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).
+    // Replaces the scattered top-level boolean fields (isFun/isSealed/inline/infix/operator/suspend/vararg…).
+    internal static bool ModFlag(JsonElement decl, string key)
+        => decl.TryGetProperty("mods", out var mo) && mo.ValueKind == JsonValueKind.Object
+           && mo.TryGetProperty(key, out var f) && f.ValueKind == JsonValueKind.True;
+
     // [KotlinFunction(flags)] — Kotlin modifiers with no .NET analog (infix/operator/suspend), for Kotlin re-consumption.
     void ApplyKotlinFunction(MethodBuilder mb, int flags)
     {
@@ -169,7 +175,7 @@ sealed partial class Emitter
         foreach (var p in ps.EnumerateArray())
         {
             var name = (p.TryGetProperty("name", out var nn) ? nn.GetString() : null) ?? "";
-            bool vararg = p.TryGetProperty("vararg", out var vv) && vv.GetBoolean();
+            bool vararg = ModFlag(p, "vararg");
             bool hasDefault = p.TryGetProperty("default", out var dflt);
             // A nullable reference parameter needs a [Nullable(2)] override against the type's non-null default, so the
             // parameter builder must exist even if it otherwise carries no name/vararg/default. (A value-type `X?` is the
