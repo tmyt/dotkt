@@ -276,9 +276,9 @@ sealed partial class Emitter
             // NOTE: the `console` op (println/print -> System.Console.Write/WriteLine) was RETIRED (2026-07-02, bundle 1):
             // kotc now emits println/print as PLAIN top-level fun calls and bir2cir substitutes them to the BCL from the
             // stdlib @ClrIntrinsic (ConsoleClr.kt). This CLR-Console lowering is gone; no producer emits `k:"console"`.
-            case "bin": return EmitBin(e);
+            case "binOp": return EmitBin(e);
             case "objEq": return EmitObjEq(e);
-            case "un": return EmitUn(e);
+            case "unaryOp": return EmitUn(e);
             case "conv": return EmitConv(e);
             case "valueBlock":
             {
@@ -470,7 +470,7 @@ sealed partial class Emitter
                 _loops.RemoveAt(_loops.Count - 1);
                 return typeof(void);
             }
-            case "isinst":
+            case "isInst":
             {
                 // `x is T` -> isinst T; (ref != null) as bool. A value-type / generic-param receiver MUST be boxed
                 // first: `isinst` consumes an object reference off the stack, so reading an unboxed value type (or an
@@ -506,7 +506,7 @@ sealed partial class Emitter
             {
                 return EmitNativeClrGetType(e);
             }
-            case "isinstRef":
+            case "isInstRef":
             {
                 // `x as? T` for reference T -> `isinst T` (leaves the ref, or null on mismatch). The result is a
                 // reference (objref or null), so report `object` — never a generic-param type that would make a

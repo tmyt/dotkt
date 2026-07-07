@@ -3058,7 +3058,7 @@ static class CharSeqStringLowering
                         ["args"] = new JsonArray
                         {
                             new JsonObject { ["k"] = "local", ["name"] = startTmp },
-                            new JsonObject { ["k"] = "bin", ["op"] = "-", ["l"] = args[1].DeepClone(), ["r"] = new JsonObject { ["k"] = "local", ["name"] = startTmp } },
+                            new JsonObject { ["k"] = "binOp", ["op"] = "-", ["l"] = args[1].DeepClone(), ["r"] = new JsonObject { ["k"] = "local", ["name"] = startTmp } },
                         },
                     },
                 };
@@ -3154,7 +3154,7 @@ static class StringCharSequenceBridge
          "body": [{"k": "return", "value": {"k": "new", "type": "<>dotkt_StringCharSequence", "argTypes": ["kotlin.String"],
            "args": [{"k": "clrInstance", "type": "System.String", "method": "Substring", "argTypes": ["System.Int32", "System.Int32"], "ret": "System.String",
              "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
-             "args": [{"k": "local", "name": "startIndex"}, {"k": "bin", "op": "-", "l": {"k": "local", "name": "endIndex"}, "r": {"k": "local", "name": "startIndex"}}]}]}}], "attrs": []},
+             "args": [{"k": "local", "name": "startIndex"}, {"k": "binOp", "op": "-", "l": {"k": "local", "name": "endIndex"}, "r": {"k": "local", "name": "startIndex"}}]}]}}], "attrs": []},
         {"name": "get_value", "static": false, "override": false, "virtual": false, "abstract": false, "objectOverride": false, "vis": "public",
          "params": [], "ret": "kotlin.String",
          "body": [{"k": "return", "value": {"k": "field", "ownerType": "<>dotkt_StringCharSequence", "recv": {"k": "this"}, "name": "value"}}]},
@@ -3973,7 +3973,7 @@ static class StarProjectionLowering
                 return;
             }
             // Standalone star-projection `is`-test -> the non-generic interface (always safe: a boolean shape test).
-            if (Str(obj["k"]) == "isinst" && IsStarCollection(obj["type"], out var ng))
+            if (Str(obj["k"]) == "isInst" && IsStarCollection(obj["type"], out var ng))
                 obj["type"] = TypeJson.Fqn(ng);
             foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value);
         }
@@ -3998,7 +3998,7 @@ static class StarProjectionLowering
                 // `.isEmpty()` -> Count == 0 (non-generic interfaces expose no IsEmpty).
                 return new JsonObject
                 {
-                    ["k"] = "bin", ["op"] = "==", ["type"] = TypeJson.Fqn("System.Boolean"),
+                    ["k"] = "binOp", ["op"] = "==", ["type"] = TypeJson.Fqn("System.Boolean"),
                     ["l"] = new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["retType"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) },
                     ["r"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 0 },
                 };

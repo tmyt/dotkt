@@ -1375,7 +1375,7 @@ static class SuspendColdLowering
                 // suspension resumes). Applies to `bin` (l,r) and call/new arg lists (recv,args...).
                 if (HasSuspension(o))
                 {
-                    if (k == "bin")
+                    if (k == "binOp")
                     {
                         var rw = RewriteEvalOrder(new List<JsonNode> { o["l"], o["r"] }, outp);
                         var binCopy = new JsonObject();
@@ -1543,7 +1543,7 @@ static class SuspendColdLowering
                     // so the temp SM field is typed precisely (avoids a kotlin.Any box of a value-type element).
                     if (TypeJson.Read(o["elem"]) is TypeNode et) return et;
                     break;
-                case "bin":
+                case "binOp":
                     return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" ? BoolTn : TypeOfExpr(o["l"]);
             }
             return AnyTn;
@@ -3029,6 +3029,6 @@ static class SuspendColdLowering
         static JsonObject BrIf(JsonNode cond, bool on, int id) => new()
             { ["k"] = "brIf", ["cond"] = cond, ["on"] = on, ["id"] = id };
         static JsonObject BinEq(JsonNode l, JsonNode r) => new()
-            { ["k"] = "bin", ["op"] = "==", ["l"] = l, ["r"] = r };
+            { ["k"] = "binOp", ["op"] = "==", ["l"] = l, ["r"] = r };
     }
 }

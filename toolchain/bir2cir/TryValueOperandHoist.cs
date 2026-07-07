@@ -116,7 +116,7 @@ static class TryValueOperandHoist
             return o["result"] is JsonNode r ? r.DeepClone() : o;
         }
 
-        if (k == "bin" && o["l"] != null && o["r"] != null)
+        if (k == "binOp" && o["l"] != null && o["r"] != null)
         {
             HoistOrdered(2, i => i == 0 ? o["l"] : o["r"], (i, v) => { if (i == 0) o["l"] = v; else o["r"] = v; }, atEmpty, pre);
             return o;
@@ -205,7 +205,7 @@ static class TryValueOperandHoist
         if (node is not JsonObject o) return false;
         var k = K(o);
         if (k == "valueBlock" && IsTryValueBlock(o)) return !atEmpty;
-        if (k == "bin" && o["l"] != null && o["r"] != null)
+        if (k == "binOp" && o["l"] != null && o["r"] != null)
             return WillHoist(o["l"], atEmpty) || WillHoist(o["r"], false);
         if (k == "concat" && o["parts"] is JsonArray parts)
         {

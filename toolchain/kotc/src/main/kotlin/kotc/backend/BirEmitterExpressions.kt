@@ -197,8 +197,8 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrStringConcatenation -> """{"k":"concat","parts":[${node.arguments.joinToString(",") { concatOperand(it) }}]}"""
 	is IrTypeOperatorCall -> when (node.operator) {
 		// `x is T` (exhaustive when matching) -> isinst + not-null check.
-		IrTypeOperator.INSTANCEOF -> """{"k":"isinst","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
-		IrTypeOperator.NOT_INSTANCEOF -> """{"k":"un","op":"!","e":{"k":"isinst","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}}"""
+		IrTypeOperator.INSTANCEOF -> """{"k":"isInst","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
+		IrTypeOperator.NOT_INSTANCEOF -> """{"k":"unaryOp","op":"!","e":{"k":"isInst","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}}"""
 		// `x as T` / smart-cast downcast -> castclass (or unbox for value types). Throws on mismatch.
 		// A value-type-nullable source (`Int?` = `Nullable<T>`) cast to its non-null value (`Int`) must UNWRAP
 		// `Nullable<T>.Value` — `unbox.any int` over a `Nullable<int>` struct is invalid IL / garbage (the C1
@@ -212,7 +212,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		IrTypeOperator.SAFE_CAST -> {
 			val velem = node.typeOperand.classFqName?.asString()?.takeIf { it in PRIMITIVE_EQ_FQ }?.let { TypeNode.Fqn(it) }
 			if (velem != null) """{"k":"safeCastValue","elem":${velem.toJson()},"e":${expr(node.argument)}}"""
-			else """{"k":"isinstRef","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
+			else """{"k":"isInstRef","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
 		}
 		// A fun-interface SAM conversion (`Comparator { a, b -> … }`) -> a synthetic class implementing the interface
 		// (the SAM method = the lambda body), NOT a Func delegate -- a delegate has no `compare` so a call site that

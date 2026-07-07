@@ -333,7 +333,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			else -> { // notNull: throws until first set (lateinit-style); flag tracks whether assigned
 				val flag = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__set"}"""
 				val flds = """{"name":"value","type":${v.toJson()}},{"name":"__set","type":${fqnJson("kotlin.Boolean")}}"""
-				val getBody = """{"k":"if","branches":[{"cond":{"k":"un","op":"!","e":$flag},"body":[{"k":"exprStmt","expr":${throwExpr(newExc("kotlin.IllegalStateException", str("Property has not been initialized")))}}]}]},{"k":"return","value":$fieldVal}"""
+				val getBody = """{"k":"if","branches":[{"cond":{"k":"unaryOp","op":"!","e":$flag},"body":[{"k":"exprStmt","expr":${throwExpr(newExc("kotlin.IllegalStateException", str("Property has not been initialized")))}}]}]},{"k":"return","value":$fieldVal}"""
 				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${v.toJson()}}],"ret":${fqnJson("kotlin.Unit")},"body":[${setVal("""{"k":"local","name":"newValue"}""")},{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__set","value":{"k":"const","type":${fqnJson("kotlin.Boolean")},"value":true}}]}"""
 				// override getter body for notNull (throws if unset)
 				return@getOrPut cname.also {
@@ -3473,7 +3473,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				fun ord(e: IrExpression): String = if (isRichEnum(ec))
 					"""{"k":"field","ownerType":${fqnJson(typeName(ec))},"recv":${expr(e)},"name":"__ordinal"}"""
 				else """{"k":"enumOrdinal","e":${expr(e)}}"""
-				return """{"k":"bin","op":"-","l":${ord(recv)},"r":${ord(arg)}}"""
+				return """{"k":"binOp","op":"-","l":${ord(recv)},"r":${ord(arg)}}"""
 			}
 			// A DIRECT primitive `Double/Float.compareTo(y)` — Kotlin contracts a TOTAL order (`-0.0 < 0.0`, NaN largest,
 			// `NaN.compareTo(NaN) == 0`) that System.Double.CompareTo does NOT match (`(-0.0).CompareTo(0.0) == 0`). Route
@@ -3596,7 +3596,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				if (rangeType != null) {
 					val endExpr = if (name == "rangeUntil") {
 						val one = if (cls == "kotlin.Long") """{"k":"const","type":${fqnJson("kotlin.Long")},"value":1}""" else """{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}"""
-						"""{"k":"bin","op":"-","l":${expr(end)},"r":$one}"""
+						"""{"k":"binOp","op":"-","l":${expr(end)},"r":$one}"""
 					} else expr(end)
 					return """{"k":"new","type":${fqnJson(rangeType)},"args":[${expr(recv)},$endExpr]}"""
 				}
@@ -3614,7 +3614,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				if (cmp != null && ops.size == 2) {
 					val (xVar, x) = bindOnce(value, value.type, "__in")
 					val lo = expr(ops[0]); val hi = expr(ops[1])
-					val core = """{"k":"cond","cond":{"k":"bin","op":">=","l":$x,"r":$lo},"then":{"k":"bin","op":${str(cmp)},"l":$x,"r":$hi},"else":{"k":"const","type":${fqnJson("kotlin.Boolean")},"value":false}}"""
+					val core = """{"k":"cond","cond":{"k":"binOp","op":">=","l":$x,"r":$lo},"then":{"k":"binOp","op":${str(cmp)},"l":$x,"r":$hi},"else":{"k":"const","type":${fqnJson("kotlin.Boolean")},"value":false}}"""
 					return if (xVar == null) core else """{"k":"valueBlock","stmts":[$xVar],"result":$core}"""
 				}
 			}
@@ -4193,7 +4193,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `===` (EQEQEQ): always identity (`ceq`).
 			if (name == "EQEQ" && operands.size == 2) {
 				if (isPrimitiveEqType(operands[0].type) && isPrimitiveEqType(operands[1].type))
-					return """{"k":"bin","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
+					return """{"k":"binOp","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
 				// A BOXED Double/Float `==` (`Any.equals` on a boxed floating value) uses Kotlin's TOTAL order
 				// (`-0.0 != 0.0`, `NaN == NaN`), not Object.Equals' IEEE-ish `Double.Equals` (`-0.0 == 0.0`). Route to the
 				// stdlib total-order helper when both operands unwrap (through Any/nullable casts) to the SAME floating type.
@@ -4204,7 +4204,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"objEq","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
 			}
 			if (name == "EQEQEQ" && operands.size == 2)
-				return """{"k":"bin","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
+				return """{"k":"binOp","op":"==","l":${expr(operands[0])},"r":${expr(operands[1])}}"""
 			// Arithmetic/compare lowering applies to the primitive OPERATORS only: a primitive's operator is a MEMBER
 			// (kotlin.Int.plus) and the IR compare intrinsics (kotlin.internal.ir.less/greater/...) are top-level with
 			// plain value params — neither has an EXTENSION receiver. A stdlib EXTENSION that shares the name
@@ -4233,7 +4233,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					val otherConcrete = tt != OBJ
 					return if (anyTok && otherConcrete) """{"k":"cast","type":${str(tt)},"e":${expr(o)}}""" else expr(o)
 				}
-				val core = """{"k":"bin","op":${str(op)},"l":${operand(operands[0], operands[1])},"r":${operand(operands[1], operands[0])}}"""
+				val core = """{"k":"binOp","op":${str(op)},"l":${operand(operands[0], operands[1])},"r":${operand(operands[1], operands[0])}}"""
 				// Char arithmetic result typing. Kotlin: `Char.minus(Char): Int`, but `Char.plus(Int)`/`Char.minus(Int): Char`.
 				// ilemit types a `bin` result as its LEFT operand and promotes a Char (uint16) operand to Int in a mixed
 				// Char+Int op — so a Char result would render as a number and an Int result as the invisible control glyph
@@ -4248,10 +4248,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					else core
 			} }
 			// Same primitive gate for unary/inc/dec: `Duration.unaryMinus()` is a real member call, not a CIL neg.
-			UNARY[name]?.let { if (operands.size == 1 && primOperand(operands[0])) return """{"k":"un","op":${str(it)},"e":${valueOperand(operands[0])}}""" }
+			UNARY[name]?.let { if (operands.size == 1 && primOperand(operands[0])) return """{"k":"unaryOp","op":${str(it)},"e":${valueOperand(operands[0])}}""" }
 			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) -> `(i + 1)`/`(i - 1)`.
-			if (name == "inc" && operands.size == 1 && primOperand(operands[0])) return """{"k":"bin","op":"+","l":${valueOperand(operands[0])},"r":{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}}"""
-			if (name == "dec" && operands.size == 1 && primOperand(operands[0])) return """{"k":"bin","op":"-","l":${valueOperand(operands[0])},"r":{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}}"""
+			if (name == "inc" && operands.size == 1 && primOperand(operands[0])) return """{"k":"binOp","op":"+","l":${valueOperand(operands[0])},"r":{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}}"""
+			if (name == "dec" && operands.size == 1 && primOperand(operands[0])) return """{"k":"binOp","op":"-","l":${valueOperand(operands[0])},"r":{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}}"""
 			// Numeric conversion `x.toLong()`/`x.toInt()`/… (numeric receiver) -> a CIL conv.
 			NUMBER_CONV[name]?.let { to ->
 				val recv = dispatchReceiver(call)
@@ -4299,7 +4299,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null},"else":${throwExpr(newExc("kotlin.IllegalStateException", "\"Check failed\""))}}"""
 			if (name == "ieee754equals" && regularArgs(call).size == 2) {
 				val a = regularArgs(call)
-				return """{"k":"bin","op":"==","l":${expr(a[0])},"r":${expr(a[1])}}"""
+				return """{"k":"binOp","op":"==","l":${expr(a[0])},"r":${expr(a[1])}}"""
 			}
 			// requireNotNull(x)/checkNotNull(x) -> evaluate once; throw if null, else the (non-null) value.
 			if (calleeFq == "kotlin.requireNotNull" || calleeFq == "kotlin.checkNotNull") {
@@ -4313,7 +4313,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// value-nullable T?: HasValue ? Value : throw.
 					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(velem).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${velem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${velem.toJson()},"e":$nvLoc},"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
 				} else {
-					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${birType(arg.type).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"un","op":"!","e":{"k":"objEq","l":$nvLoc,"r":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}}},"then":$nvLoc,"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
+					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${birType(arg.type).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","l":$nvLoc,"r":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}}},"then":$nvLoc,"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
 				}
 			}
 			// `coerceAtMost`/`coerceAtLeast`/`coerceIn` are NOT lowered here (layer purity).
