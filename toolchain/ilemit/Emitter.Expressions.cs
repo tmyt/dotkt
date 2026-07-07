@@ -72,7 +72,6 @@ sealed partial class Emitter
         switch (e.GetProperty("k").GetString())
         {
             case "const": return EmitConst(e);
-            case "clr.const": return EmitConst(e);
             case "this":
                 _il.Emit(OpCodes.Ldarg_0); return typeof(object);
             case "local":
@@ -190,7 +189,6 @@ sealed partial class Emitter
                 return CoerceReturn(e, m == m0 ? rt : mrt);
             }
             case "constrainedCall":
-            case "clr.constrained.compareTo":
             {
                 // General N-arg form: a CLR-aliased INTERFACE member invoked on a generic-parameter receiver
                 // (`destination.add(x)` where `destination: C` and `C : MutableCollection<R>`). A plain callvirt on the
@@ -279,24 +277,9 @@ sealed partial class Emitter
             // kotc now emits println/print as PLAIN top-level fun calls and bir2cir substitutes them to the BCL from the
             // stdlib @ClrIntrinsic (ConsoleClr.kt). This CLR-Console lowering is gone; no producer emits `k:"console"`.
             case "bin": return EmitBin(e);
-            case "clr.bin": return EmitBin(e);
             case "objEq": return EmitObjEq(e);
-            case "clr.obj.eq": return EmitObjEq(e);
             case "un": return EmitUn(e);
-            case "clr.un": return EmitUn(e);
             case "conv": return EmitConv(e);
-            case "clr.conv": return EmitConv(e);
-            case "clr.safeCast.value": return EmitNativeClrSafeCastValue(e);
-            case "clr.nullable.null": return EmitNativeClrNullableNull(e);
-            case "clr.nullable.wrap": return EmitNativeClrNullableWrap(e);
-            case "clr.nullable.hasValue": return EmitNativeClrNullableHasValue(e);
-            case "clr.nullable.value": return EmitNativeClrNullableValue(e);
-            case "clr.typeof": return EmitNativeClrTypeOf(e);
-            case "clr.getType": return EmitNativeClrGetType(e);
-            case "clr.enum.value": return EmitNativeClrEnumValue(e);
-            case "clr.enum.ordinal": return EmitNativeClrEnumOrdinal(e);
-            case "clr.enum.values": return EmitNativeClrEnumValues(e);
-            case "clr.enum.parse": return EmitNativeClrEnumParse(e);
             case "valueBlock":
             {
                 // Inlined scope function: run the spliced statements, then yield the result expression.
@@ -349,7 +332,6 @@ sealed partial class Emitter
                 return mi.ReturnType;
             }
             case "newArray": return EmitNewArray(e);
-            case "clr.newarr": return EmitNewArray(e);
             case "newArraySized":
             {
                 // `IntArray(size)` (no init) -> a zero-filled BCL array (newarr zero-initializes).
@@ -389,7 +371,6 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, arr); return arr.LocalType;
             }
             case "default":
-            case "clr.default":
             {
                 // `default(T)` -> the zero value: ldnull for a reference type, else a zero-init local (initobj).
                 var dt = MapType(e.GetProperty("type"));
@@ -400,7 +381,6 @@ sealed partial class Emitter
                 return dt;
             }
             case "spreadConcat":
-            case "clr.array.spread":
             {
                 // `f(1, *a, 2)` -> new List<elem>(); Add(literal) / AddRange(spread); ToArray().
                 var elem = MapType(e.GetProperty("elem"));
@@ -422,14 +402,12 @@ sealed partial class Emitter
                 return elem.MakeArrayType();
             }
             case "arrayGet":
-            case "clr.ldelem":
             {
                 EmitExpr(e.GetProperty("array")); EmitExpr(e.GetProperty("index"));
                 var elem = MapType(e.GetProperty("elem"));
                 EmitLdelem(elem); return elem;
             }
             case "arraySet":
-            case "clr.stelem":
             {
                 EmitExpr(e.GetProperty("array")); EmitExpr(e.GetProperty("index"));
                 var selem = MapType(e.GetProperty("elem"));
@@ -442,7 +420,6 @@ sealed partial class Emitter
                 EmitStelem(selem); return typeof(void);
             }
             case "arrayLen":
-            case "clr.ldlen":
                 EmitExpr(e.GetProperty("array")); _il.Emit(OpCodes.Ldlen); _il.Emit(OpCodes.Conv_I4); return typeof(int);
             case "forEachInline":
             {
@@ -592,7 +569,6 @@ sealed partial class Emitter
                 return EmitNativeClrEnumParse(e);
             }
             case "objMethod": return EmitObjMethod(e);
-            case "clr.obj.method": return EmitObjMethod(e);
             case "strReversed":
             {
                 // `s.reversed()` -> new string(Enumerable.Reverse(s).ToArray()).
@@ -778,7 +754,6 @@ sealed partial class Emitter
                 return result;
             }
             case "concat": return EmitConcat(e);
-            case "clr.str.concat": return EmitConcat(e);
             case "cond": return EmitCond(e);
             case "clrNew": return EmitClrNew(e);
             case "clrStatic": return EmitClrCall(e, instance: false);
@@ -799,7 +774,6 @@ sealed partial class Emitter
                 return null;
             }
             case "stackAlloc":
-            case "clr.stackalloc":
             {
                 // `localloc` a zero-initialized stack buffer of `count * sizeof(elem)` bytes, leaving its pointer.
                 // (Unverifiable, like C#'s own stackalloc.)
@@ -815,7 +789,6 @@ sealed partial class Emitter
                 return typeof(byte).MakePointerType();
             }
             case "stackGet":
-            case "clr.stack.get":
             {
                 EmitStackBounds(e);
                 var elem = MapType(e.GetProperty("elem"));
@@ -824,7 +797,6 @@ sealed partial class Emitter
                 return elem;
             }
             case "stackSet":
-            case "clr.stack.set":
             {
                 EmitStackBounds(e);
                 var elem = MapType(e.GetProperty("elem"));
@@ -834,7 +806,6 @@ sealed partial class Emitter
                 return typeof(void);
             }
             case "stackAsSpan":
-            case "clr.stack.asSpan":
             {
                 // `new System.Span<T>(void* ptr, int length)` over the stack buffer -> a real Span for .NET APIs.
                 var elem = MapType(e.GetProperty("elem"));

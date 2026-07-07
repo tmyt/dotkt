@@ -461,7 +461,6 @@ sealed class ReferenceMetadataIndex
 {
     const string KotlinFileClassAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
-    const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string JvmInlineAttr = "kotlin.jvm.JvmInline";
     const string RestrictsSuspensionAttr = "kotlin.coroutines.RestrictsSuspension";
     // [KotlinFunction(flags)] flag word (mirrors ilemit Program.cs pass 4 / facadegen): Infix=1, Operator=2, Suspend=4.

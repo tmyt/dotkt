@@ -1479,7 +1479,7 @@ static class SuspendColdLowering
             "callStatic", "callInstance", "clrStatic", "clrInstance", "clrGenericStatic",
             "new", "clrNew", "setLocal", "setField", "throwExpr", "dynCall",
             "field", "staticField", "lateinitGet",
-            "arrayGet", "clr.ldelem",
+            "arrayGet",
         };
         static bool IsPureExpr(JsonNode n)
         {
@@ -1538,7 +1538,7 @@ static class SuspendColdLowering
                     if (_fieldTypes.TryGetValue("#" + fname, out var fft2)) return fft2;
                     break;
                 }
-                case "arrayGet": case "clr.ldelem":
+                case "arrayGet":
                     // N4-sibling eval-order spill: an array-element read carries its element type verbatim on `elem`,
                     // so the temp SM field is typed precisely (avoids a kotlin.Any box of a value-type element).
                     if (TypeJson.Read(o["elem"]) is TypeNode et) return et;
