@@ -3433,8 +3433,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"cast","type":${TypeNode.Array(TypeNode.Fqn("kotlin.UByte")).toJson()},"e":${expr(er)}}"""
 		}
 
-		// `e!!` (not-null assertion) -> the value itself (the use site throws on null anyway).
-		if (name == "CHECK_NOT_NULL") return expr(call.arguments.filterNotNull().first())
+		// `e!!` (not-null assertion). A value-type-nullable operand (`Int?` = `Nullable<T>`) MUST unwrap via
+		// HasValue/Value and throw NPE on null: a bare pass-through leaves a `Nullable<T>` STRUCT where the use
+		// site consumes the bare value (`n!! + 1` -> InvalidProgram; `n!!.toLong()` reads garbage) AND silently
+		// skips the null check (`z!!` never throws). Mirrors the requireNotNull/checkNotNull value-nullable path
+		// below, but `!!` throws kotlin.NullPointerException. Reference-nullable stays a pass-through.
+		if (name == "CHECK_NOT_NULL") {
+			val arg = call.arguments.filterNotNull().first()
+			val velem = nullableElem(arg.type)
+			if (velem != null) {
+				val nv = "__nn${scopeCounter++}"
+				val nvLoc = """{"k":"local","name":${str(nv)}}"""
+				return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(velem).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${velem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${velem.toJson()},"e":$nvLoc},"else":${throwExpr(newExc("kotlin.NullPointerException", null))}}}"""
+			}
+			return expr(arg)
+		}
 
 		// Primitive range operators are declared as Kotlin builtins, but CLR primitives have no instance methods.
 		// Materialize the stdlib range classes directly for value-position ranges; structured for-loops are handled

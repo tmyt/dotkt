@@ -500,7 +500,13 @@ c.CollectionChanged -= h                                     // unsubscribe (del
 
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
-A Kotlin value-type `X?` is the structural `System.Nullable<X>` (§ value types). A **reference-type** `X?` has no
+A Kotlin value-type `X?` is the structural `System.Nullable<X>` (§ value types). The **not-null assertion**
+`v!!` on such a value (`Int?`/`Long?`/`Double?`/`Byte?`…) is therefore not a no-op: kotc lowers `CHECK_NOT_NULL`
+to a `Nullable<X>.HasValue` test that throws `NullPointerException` on empty and otherwise unwraps the bare
+value via `Nullable<X>.Value` (the same `nullableHasValue`/`nullableValue` nodes the smart-cast path uses, #15).
+A raw pass-through would leave the `Nullable<X>` **struct** on the stack where the use site expects the bare
+value — invalid IL for `v!! + 1`, garbage for `v!!.toLong()`, and no throw for `null!!` (#56). A
+**reference-type** `X?` has no
 structural form on the CLR (a reference is always null-capable), so it rides **.NET's own nullable-reference metadata**:
 ilemit stamps `[NullableContext(1)]` per type (reference positions default to non-null) and `[Nullable(2)]` on each
 nullable reference return/parameter — the exact encoding the C# compiler uses, so a **C# consumer also sees** DotKt's

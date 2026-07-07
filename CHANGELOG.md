@@ -120,6 +120,13 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **`!!` on a value-type nullable (`Int?`/`Long?`/`Double?`/`Byte?`…) now emits verifiable IL and throws on null (#56).**
+  kotc lowered the `CHECK_NOT_NULL` intrinsic (`v!!`) to a bare pass-through, leaving the `System.Nullable<X>` **struct**
+  on the stack where the use site consumes the bare value: `n!! + 1` produced an `InvalidProgramException`, `n!!.toLong()`
+  read garbage, and `null!!` silently failed to throw. kotc now lowers `v!!` on a value-type nullable to a
+  `Nullable<X>.HasValue` test — throw `NullPointerException` on empty, else unwrap `Nullable<X>.Value` — reusing the
+  same `nullableHasValue`/`nullableValue` nodes as the #15 smart-cast unwrap. Reference-type `!!` is unchanged. Gate:
+  `cases/il-nullbang` (int/long/double/byte, non-null + null-throws-NPE; ilverify-clean).
 - **`tailrec` is now tail-call optimized — deep tail recursion runs in constant stack (§2b deviation CLOSED).**
   Our pipeline runs Fir2Ir straight into the backend, skipping the JVM lowerings, so a `tailrec` self-call stayed
   ordinary recursion and `sumTo(1_000_000, 0)` overflowed the CLR stack where kotlinc/JVM loops. kotc now reapplies
