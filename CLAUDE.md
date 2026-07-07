@@ -170,11 +170,14 @@ taxonomy is archived at `docs/archive/bir2cir-migration-inventory.md`.)
 > metadata; its method bodies are meant to be squashed to `throw NotImplementedException`, so a bare-value
 > `kotlin.Int` never reaches arithmetic/box IL); in **every other** build (rt, app — anything non-ref)
 > `kotlin.Int` lowers to the CLR primitive. The CompatBir/`--native-cir` dual-track is **removed** (2026-06-30):
-> bir2cir owns this on a single path, env-gated by `refBuild`. Two coupled pieces still **pend the kotc switch**
-> (kotc currently emits the CLR shorthand, so the pass is a verified no-op today): (a) kotc emitting `kotlin.*`
-> symbols, and (b) the ref-build **body-squash** (NOT yet implemented — only `kotlin.TODO()` throws today), which
-> the bare-value `kotlin.Int`-in-ref design depends on. Until both land, bir2cir's active lowering is scoped to the
-> signed/bool/char primitives (a no-op against current output).
+> bir2cir owns this on a single path, env-gated by `refBuild`. Both formerly-coupled pieces have **landed** (2026-07):
+> (a) kotc emits `kotlin.*` FQN identities (freeze m1 TYPE flip, `#37`) — not the CLR shorthand; and (b) the ref-build
+> **body-squash IS implemented** (`RefBodySquash`, bir2cir `Program.cs`, gated on `refBuild`): every ref-stdlib
+> declaration body becomes a single `throw NotImplementedException()`, so a bare-value `kotlin.Int` never reaches
+> arithmetic/box IL, AND a ref method that leaks into runtime fails loud (the sentinel). bir2cir's primitive lowering
+> is therefore now **fully active**, not a no-op. This is what makes the ref.dll a pure **annotation surface**:
+> every stdlib member carries its `@Clr*` binding metadata with a throw-only body, and bir2cir reads that metadata by
+> CLR reflection to transform BIR→CIR — the mechanism `#52` (kotc-purity) exists to finally use for ALL recognition.
 
 # The cardinal rule: do NOT special-case the compiler
 
