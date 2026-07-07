@@ -2005,13 +2005,10 @@ static class BirTypeLowering
             // the shape, folding suspend->false; a plain fn likewise. Any non-fn type lowers normally.
             return TypeNode.Write(tn is TypeNode.Fn fn ? LowerFnDelegate(fn, refBuild, force) : LowerType(tn, refBuild, force, false));
         }
-        if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
-            return JsonValue.Create(LowerTypeString(FoldSFuncToFunc(s), refBuild, force));
+        // funcType is ALWAYS a structured `fn` node (kotc emits `TypeNode.Fn`, #37 #49) — the string `func:`/`sfunc:`
+        // funcType form is retired. A non-object slot can only be a rare bare-FQN synthetic; lower it structurally.
         return LowerTypeValued(val, refBuild, force);
     }
-
-    static string FoldSFuncToFunc(string t) =>
-        t.Contains("sfunc:", StringComparison.Ordinal) ? t.Replace("sfunc:", "func:", StringComparison.Ordinal) : t;
 
     // A return-slot value: a bare top-level `kotlin.Unit` -> `void` (UNIFORM, both modes); otherwise the normal type
     // lowering (so a return like clrg:List[kotlin.Int] still lowers its inner Int).
@@ -2068,20 +2065,14 @@ static class BirTypeLowering
     // bare kotlin.* foundational token inside a generic lowers too.
     public static string LowerTypeString(string raw, bool refBuild, bool force = false)
     {
-        // bundle-6 P3 wave-2b (final): `sfunc:` (the suspend-fn-type token) erases to `object` in EVERY build
-        // (ref/rt/app), consistently. A suspend-lambda VALUE is a SuspendLambda state machine — a Continuation-
-        // based OBJECT that extends BaseContinuationImpl — NOT a Func delegate; typing it as `object` lets the SM
-        // pass anywhere a `suspend () -> T` is expected and satisfy the intrinsics' `as? BaseContinuationImpl`.
-        // A TOP-LEVEL sfunc token is erased here before the refBuild/no-kotlin guards (an `sfunc:gp:T:` token has
-        // no "kotlin." substring and would otherwise slip through with `sfunc:` intact — ilemit has no opcode for
-        // it). A NESTED sfunc (a `func:`/generic arg) is reached by the structural recursion below, so the guard
-        // must also descend when any `sfunc:` is present. ilemit NEVER receives `sfunc:`.
+        // Function types are structured `fn` nodes now (#37 #49): the `func:`/`sfunc:` STRING type token is retired,
+        // so this string resolver never receives one. It survives only for the bare-FQN + CLR-shorthand LEAF slots
+        // that kotc/bir2cir still emit as strings (synthetic interface names like `<>dotkt_KProperty`, the injected
+        // StringCharSequenceBridge adapter's `kotlin.String` slots) — resolved by the kotlin.* map / LowerLeaf below.
         var t = raw.Trim();
-        if (t.StartsWith("sfunc:", StringComparison.Ordinal)) return "object";
         // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers
-        // unconditionally. A token with neither "kotlin." nor a nested "sfunc:" carries nothing to rewrite.
-        if (!raw.Contains("sfunc:", StringComparison.Ordinal)
-            && ((!force && refBuild) || !raw.Contains("kotlin.", StringComparison.Ordinal))) return raw;
+        // unconditionally. A token without "kotlin." carries nothing to rewrite.
+        if ((!force && refBuild) || !raw.Contains("kotlin.", StringComparison.Ordinal)) return raw;
 
         if (t.Length == 0) return raw;
 
@@ -2091,7 +2082,6 @@ static class BirTypeLowering
 
         if (t.StartsWith("gp:", StringComparison.Ordinal)) return t;
         if (t.StartsWith("clr:", StringComparison.Ordinal)) return t;
-        if (t.StartsWith("func:", StringComparison.Ordinal)) return LowerFuncString(t, refBuild, force);
 
         var br = t.IndexOf('[');
         if (br >= 0 && t.EndsWith("]", StringComparison.Ordinal))
@@ -2130,19 +2120,6 @@ static class BirTypeLowering
         return LowerLeaf(t, force);
     }
 
-    static string LowerFuncString(string t, bool refBuild, bool force)
-    {
-        // func:<ret>:<arg,arg,...>  — the ret/args separator is the first top-level ':' AFTER the ret's own
-        // leading type prefix (so a ret like clrg:Foo[int] is not split on its clrg: colon). The func RETURN is a
-        // return slot -> a Unit ret lowers to void (Action vs Func); args are value positions.
-        var body = t["func:".Length..];
-        var sep = FuncRetEnd(body);
-        var ret = sep >= body.Length ? body : body[..sep];
-        var args = sep >= body.Length ? "" : body[(sep + 1)..];
-        var loweredArgs = string.Join(",", SplitTopLevel(args).Select(a => LowerTypeString(a, refBuild, force)));
-        return "func:" + LowerReturnSlot(ret, refBuild, force) + ":" + loweredArgs;
-    }
-
     static string LowerLeaf(string t, bool force)
     {
         // @-decorated and clrg: references are emitted/CLR type references whose head is never a bare primitive
@@ -2160,67 +2137,6 @@ static class BirTypeLowering
         // TextWriter/...) -> clr:<bcl>. Applies whether or not it carried the `@` marker (BCL-aliased -> drop `@`).
         if (AliasBcl(bare) is string bcl) return "clr:" + bcl;
         return t;
-    }
-
-    // Index of the ':' separating RET from ARGS in a `func:` BODY (leading "func:" already stripped). When the RET is a
-    // NESTED func — `(Int)->(()->Int)` = body `func:kotlin.Int::kotlin.Int` — its own depth-0 ret/args colon must NOT
-    // be taken as the outer separator (the old first-colon split produced the malformed `func:func:int:::kotlin.Int`,
-    // leaving `:kotlin.Int` un-lowered). Recursively skip the whole inner func in that case; every OTHER ret shape keeps
-    // the prior single-prefix scan (scoped narrowly so only the genuine nested-func-ret changes vs. the prior lowering).
-    static int FuncRetEnd(string value)
-    {
-        if (value.StartsWith("func:", StringComparison.Ordinal) || value.StartsWith("sfunc:", StringComparison.Ordinal))
-            return SkipTypeToken(value, 0);
-        var start = PrefixLength(value);
-        var depth = 0;
-        for (var i = start; i < value.Length; i++)
-        {
-            if (value[i] == '[') depth++;
-            else if (value[i] == ']') depth--;
-            else if (value[i] == ':' && depth == 0) return i;
-        }
-        return value.Length;
-    }
-
-    // Advance past exactly ONE type token at `i`; return the index just after it (a top-level ':' / ',' / ']' / end).
-    // A func:/sfunc: token recurses through its ret + comma-list args; a modifier prefix recurses into its element;
-    // a leaf/clrg:/clr:/gp: token scans to the next top-level delimiter with [] nesting protecting inner ':'/','.
-    static int SkipTypeToken(string value, int i)
-    {
-        static bool At(string s, int i, string pre) => i + pre.Length <= s.Length && s.AsSpan(i, pre.Length).SequenceEqual(pre);
-        foreach (var pre in new[] { "array:", "nullable:", "byref:" })
-            if (At(value, i, pre)) return SkipTypeToken(value, i + pre.Length);
-        foreach (var fp in new[] { "func:", "sfunc:" })
-            if (At(value, i, fp))
-            {
-                i = SkipTypeToken(value, i + fp.Length);                              // ret
-                if (i < value.Length && value[i] == ':') i++;                         // ret/args separator
-                if (i < value.Length && value[i] != ':' && value[i] != ',' && value[i] != ']')
-                {
-                    i = SkipTypeToken(value, i);
-                    while (i < value.Length && value[i] == ',') i = SkipTypeToken(value, i + 1);
-                }
-                return i;
-            }
-        foreach (var pre in new[] { "clrg:", "clr:", "gp:" })
-            if (At(value, i, pre)) { i += pre.Length; break; }
-        var depth = 0;
-        for (; i < value.Length; i++)
-        {
-            var c = value[i];
-            if (c == '[') depth++;
-            else if (c == ']') { if (depth == 0) break; depth--; }
-            else if (depth == 0 && (c == ':' || c == ',')) break;
-        }
-        return i;
-    }
-
-    static int PrefixLength(string value)
-    {
-        foreach (var prefix in new[] { "clrg:", "clr:", "array:", "nullable:", "sfunc:", "func:", "gp:", "byref:" })
-            if (value.StartsWith(prefix, StringComparison.Ordinal))
-                return prefix.Length;
-        return 0;
     }
 
     static IReadOnlyList<string> SplitTopLevel(string value)

@@ -3101,22 +3101,12 @@ sealed partial class Emitter
         }).First();
     }
 
-    // Delegate arity of a `funcType` slot — a structured `{t:"fn",params:[...]}` node (post type-flip) or a legacy
-    // `func:`/`sfunc:` string. Matches how FuncType builds the CLR delegate (from `fn.Params`), so the score compares
-    // against the same arity the emitted delegate's Invoke carries.
+    // Delegate arity of a `funcType` slot — a structured `{t:"fn",params:[...]}` node (funcType is ALWAYS an `fn`
+    // node now, #37 #49; the `func:`/`sfunc:` string form is retired). Matches how FuncType builds the CLR delegate
+    // (from `fn.Params`), so the score compares against the same arity the emitted delegate's Invoke carries.
     static int FuncArityOf(JsonElement ft) =>
-        ft.ValueKind == JsonValueKind.String ? FuncArity(ft.GetString())
-        : ft.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(ft) is DotKt.Bir.TypeNode.Fn fn ? fn.Params.Length
+        ft.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(ft) is DotKt.Bir.TypeNode.Fn fn ? fn.Params.Length
         : 0;
-
-    /** Arity of a `func:<ret>:<p1,p2,...>` encoding (`func:void:` -> 0, `func:void:object` -> 1). */
-    static int FuncArity(string funcType)
-    {
-        var c = funcType.IndexOf(':'); if (c < 0) return 0;
-        var c2 = funcType.IndexOf(':', c + 1); if (c2 < 0) return 0;
-        var ps = funcType.Substring(c2 + 1);
-        return ps.Length == 0 ? 0 : SplitTopLevel(ps).Count();
-    }
 
     // Cross-module inline splice: read the callee's carried BIR body from its [KotlinInline] (on a --ref'd assembly)
     // and emit it HERE with the call's bindings substituted (param `local`s -> bound values; lambda-param invokes ->
