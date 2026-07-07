@@ -4653,13 +4653,17 @@ static class MemberCallSubstitution
                 if (kt == null || vt == null) return null;                       // can't reconstruct K,V -> plain call
                 var entries = new JsonArray();
                 // The vararg wrapper newArray's elem is `kotlin.Pair<K,V>` (never K), so a lone newArray arg IS the
-                // vararg (wrapperElemType=null). Each element must be a `new kotlin.Pair(k,v)` LITERAL to be split; a
-                // non-literal Pair (`mapOf(pairVar)`) aborts the whole substitution -> the real mapOf body runs.
+                // vararg (wrapperElemType=null). Each element must be an INLINE Pair construction to be split, in either
+                // of the two shapes kotc can now emit: a `new kotlin.Pair(k,v)` LITERAL, or a `callStatic .to(k,v)` — the
+                // `a to b` idiom (#52 Phase 3 stopped kotc synthesizing `new kotlin.Pair` for `to`; it emits the plain
+                // infix `to` call, whose body IS `Pair(this, that)`, so its two args ARE the key/value). Splitting both
+                // avoids building the real body's `Pair<K,V>[]` vararg array, which would ArrayTypeMismatch under reified
+                // generics when the elements are more-specifically-typed (`Pair<String,String>` into `Pair<String,Any>[]`).
+                // A non-inline Pair (`mapOf(pairVar)`) matches neither shape and aborts the substitution -> the real
+                // mapOf body runs (the single-element homogeneous case that does NOT hit the covariance mismatch).
                 foreach (var el in FactoryElems(args, null))
                 {
-                    if (el is JsonObject eo && (eo["k"] as JsonValue)?.GetValue<string>() == "new"
-                        && TypeJson.OwnerName(eo["type"]) == "kotlin.Pair"
-                        && eo["args"] is JsonArray pa && pa.Count == 2)
+                    if (el is JsonObject eo && PairKV(eo) is JsonArray pa && pa.Count == 2)
                         entries.Add(new JsonObject { ["key"] = pa[0].DeepClone(), ["value"] = pa[1].DeepClone() });
                     else
                         return null;
@@ -4694,6 +4698,21 @@ static class MemberCallSubstitution
             foreach (var el in (wrapper?["elems"] as JsonArray) ?? new JsonArray()) arrElems.Add(el.DeepClone());
             return new JsonObject { ["k"] = "newArray", ["elem"] = arrElem.DeepClone(), ["elems"] = arrElems };
         }
+        return null;
+    }
+
+    // An INLINE Pair construction's two operands (key, value), or null if `el` is not one. Two shapes: a `new
+    // kotlin.Pair(k,v)` literal, or a `callStatic .to(k,v)` — the `a to b` idiom whose stdlib body is `Pair(this,
+    // that)` (so its two args ARE the operands). By the time this runs the `to` call has been owner-attributed to its
+    // file class (bottom-up transform), so match on method="to" + a `kotlin.Pair` return, not on owner=null.
+    static JsonArray PairKV(JsonObject el)
+    {
+        var k = (el["k"] as JsonValue)?.GetValue<string>();
+        if (k == "new" && TypeJson.OwnerName(el["type"]) == "kotlin.Pair" && el["args"] is JsonArray na && na.Count == 2)
+            return na;
+        if (k == "callStatic" && (el["method"] as JsonValue)?.GetValue<string>() == "to"
+            && TypeJson.OwnerName(el["ret"]) == "kotlin.Pair" && el["args"] is JsonArray ta && ta.Count == 2)
+            return ta;
         return null;
     }
 

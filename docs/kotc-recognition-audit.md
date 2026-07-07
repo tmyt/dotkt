@@ -138,12 +138,14 @@ Plus `SCOPE_FUNCTIONS` (defined in BirEmitter.kt:500, not BirMappings): `let/run
 | ~~**Map factory** 3510–3535~~ ✅ DONE (#52) | `in MAP_FACTORIES` | `{k:newMap}` (splits `a to b` literals) | **(a)** `@ClrCollectionFactory("map")`; the `mapOf(pair)` vs `mapOf(a to b)` split moved to bir2cir intact — a NON-literal Pair is left as a plain call | DONE |
 | ~~**Array factory** 3545–3553~~ ✅ DONE (#52) | `name in ARRAY_FACTORY_NAMES`, pkg `kotlin` | `{k:newArray}` | **(a)** `@ClrArrayFactory("vararg")` → bir2cir unwraps the vararg `newArray` | DONE |
 | ~~**arrayOfNulls** 3539–3543~~ ✅ DONE (#52) | `name == "arrayOfNulls"`, pkg `kotlin` | `{k:newArraySized}` | **(a)** `@ClrArrayFactory("sized")` → `{k:newArraySized}` from the size arg | DONE |
-| **`kotlin.to`** 3658–3662 | `calleeFq == "kotlin.to"` | `new kotlin.Pair` | **(a)** drop intercept; let the real stdlib `to` body build `Pair` (it already exists), or `@ClrIntrinsic`-style. | contained |
-| **Pair/Triple/IndexedValue components** 3663–3673 | `declaringClass in setOf("kotlin.Pair","kotlin.Triple","kotlin.collections.IndexedValue")` + `componentN` | field read (`first`/`second`/`third`/`index`/`value`) | **(a)** these are real stdlib types with real properties — emit the plain `componentN()` call; `@ClrProperty`/real body resolves it | contained |
+| ~~**`kotlin.to`** 3658–3662~~ ✅ DONE (#52 Phase 3) | `calleeFq == "kotlin.to"` | `new kotlin.Pair` | **(a)** intercept DROPPED — the real stdlib infix `to` (body `Pair(this, that)`) resolves the plain call; **no marker needed** (a real emitted member, unlike conv/factories) | DONE |
+| ~~**Pair/Triple/IndexedValue components** 3663–3673~~ ✅ DONE (#52 Phase 3) | `declaringClass in setOf("kotlin.Pair","kotlin.Triple","kotlin.collections.IndexedValue")` + `componentN` | field read (`first`/`second`/`third`/`index`/`value`) | **(a)** intercept DROPPED — these are real emitted data-class types; the materialized `component1()`/`component2()`/`component3()` operators resolve the plain call; **no marker needed** | DONE |
 
-**Group verdict:** these 8 rows are the migration the user wants. They are all *"kotc decides the CLR shape of
-a specific stdlib symbol"*. Shared mechanism: **run the real stdlib body OR add a `@Clr*` factory/conv marker
-bir2cir reads off the ref.dll.** Total churn is small and self-contained.
+**Group verdict:** these 8 rows are the migration the user wanted — **all ✅ DONE (#52 Phases 1–3).** They were
+all *"kotc decides the CLR shape of a specific stdlib symbol"*. Two shared mechanisms landed: (Phases 1–2) add
+a `@Clr*` conv/factory marker bir2cir reads off the ref.dll and re-emits the CLR-shaped node; (Phase 3) for the
+`to`/`componentN` rows — real emitted stdlib types with real members — simply **drop the kotc intercept** and
+let the plain call resolve against the real surface (no marker). Total churn was small and self-contained.
 
 ### 2.2 INTEROP-legitimate (.NET space / injection metadata — KEEP, per the boundary)
 
@@ -324,10 +326,26 @@ Ordered high-value-contained → gray → defer. Each phase is independently gat
   the real body (never force-split). Verified: verify-il 242/0, ktproj/differential/roundtrip green, schema 0
   violations.
 
-### Phase 3 — the specific stdlib types
-- `kotlin.to` (§2.1): drop the intercept; the real stdlib `to` builds `Pair`.
-- `Pair`/`Triple`/`IndexedValue` `componentN` (§2.1): emit plain calls; `@ClrProperty`/real bodies resolve.
-- **Risk:** low — these are real emitted stdlib types with real members.
+### Phase 3 — the specific stdlib types — ✅ DONE (#52)
+- `kotlin.to` (§2.1): intercept DROPPED — kotc emits the plain `to` call; the real stdlib infix `to`
+  (`= Pair(this, that)`) resolves it.
+- `Pair`/`Triple`/`IndexedValue` `componentN` (§2.1): intercept DROPPED — kotc emits the plain
+  `component1()`/`component2()`/`component3()` call; the materialized data-class `componentN()` operators
+  (already emitted onto the stdlib surface) resolve it.
+- **No marker, no stdlib change.** Unlike conv/factories (which synthesize CLR-shaped nodes and so needed a
+  ref.dll marker + a bir2cir re-emit), these are real emitted types with real members — dropping the two kotc
+  intercepts is the core migration. The explicit `.first`/`.second`/`.third`/`.index`/`.value` **property** read
+  (3960–3976) is a SEPARATE site and stays a direct field read (out of scope).
+- **One coupled bir2cir follow-on (mapOf-split).** Phase 2's `mapOf(a to b)` literal-split matched only a
+  `new kotlin.Pair` node — the shape kotc emitted for `to`. With `to` now a plain call, the split (`PairKV` in
+  `TryFactorySubst`) also decomposes a `callStatic .to(k,v)` element (body `Pair(this, that)`). Required for
+  correctness, not just optimization: the real `mapOf` body builds a `Pair<K,V>[]` vararg array that
+  `ArrayTypeMismatch`-crashes under reified generics when elements are more-specific (`Pair<String,String>`
+  into `Pair<String,Any>[]`) — the split sidesteps the array. `mapOf(pairVar)` still aborts to the real body
+  (the homogeneous single-element case that does not hit the mismatch).
+- **Verified:** verify-il 242/0, ktproj/differential/roundtrip green, schema 0 violations; destructuring
+  (`val (a, b) = pair`, `val (k, v) = mapEntry`, `val (i, v) = list.withIndex().first()`, `val (a, b, c) =
+  triple`), explicit `t.component1()`, and `"x" to 1` all correct.
 
 ### Phase 4 (gray, medium) — the stdlib-helper routings (§3.3)
 - Make `collToString`/`collEq`/`floatTotalEq`/iterator-bridge/coll-defaults resolve to **real stdlib default

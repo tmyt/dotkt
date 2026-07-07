@@ -482,6 +482,22 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   `mapOf` body. The four recognition tables + their `BirEmitter` sites are deleted from kotc. (The factory
   markers live in the COMMON stdlib source set — `libraries/stdlib/src/kotlin/clr/Factories.kt` — because they
   annotate factory bodies in common sources that cannot reference a platform-only `kotlin.clr` binding.)
+- **`to` / `Pair`·`Triple`·`IndexedValue` `componentN` are no longer recognized by kotc — the real stdlib
+  types resolve them (#52 Phase 3).** kotc used to intercept the `a to b` infix call (synthesizing
+  `new kotlin.Pair`) and the `component1()`/`component2()`/`component3()` operator calls on
+  `Pair`/`Triple`/`IndexedValue` (synthesizing a `first`/`second`/`third`/`index`/`value` field read). Both
+  intercepts are DELETED: unlike the conv/factory families (which synthesize CLR-shaped nodes and so need a
+  ref.dll marker), these are **real emitted stdlib types with real members** — the infix `to`
+  (`= Pair(this, that)`) and the data-class `componentN()` operators are materialized IR declarations already
+  emitted onto the stdlib surface. kotc now emits the plain call (`5 to 6`, `val (a, b) = pair`,
+  `t.component1()`) and it resolves against that surface with **no marker and no bir2cir change**. NOTE: the
+  explicit `.first`/`.second`/`.third`/`.index`/`.value` property read (a separate site) stays a direct field
+  read; only the `to`/`componentN` recognitions moved. One coupled follow-on in bir2cir: the Phase-2
+  `mapOf(a to b, …)` literal-split recognized only a `new kotlin.Pair` node, which was the shape kotc used to
+  emit for `to`; now that `to` is a plain call, the split also decomposes a `callStatic .to(k, v)` element
+  (whose stdlib body is `Pair(this, that)`). Without this, `mapOf("a" to 1, "b" to 2)` fell to the real `mapOf`
+  body, which builds a `Pair<K,V>[]` vararg array and `ArrayTypeMismatch`-crashed under reified generics when
+  the elements are more-specifically typed (`Pair<String,String>` stored into `Pair<String,Any>[]`).
 - **kotc `BirMappings.kt` shed of dead + vestigial tables (#40).** Post-#37-freeze audit of the
   Kotlin→BIR name/shape tables removed four entries: `COLLECTION_MEMBER` and `PRIMITIVE_SHORTHANDS`
   (both ref-count 0 — dead) and `VALUE_PRIM_BIR` (a `kotlin.Int`→`kotlin.Int` identity map whose only

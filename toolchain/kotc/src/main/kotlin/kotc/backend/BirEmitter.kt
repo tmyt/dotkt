@@ -3625,25 +3625,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
-		// `a to b` -> the stdlib Pair class. Pair/Triple/IndexedValue are emitted by stdlib itself, so don't
-		// lower their ABI to CLR ValueTuple here.
-		if (calleeFq == "kotlin.to") {
-			val a = extensionReceiver(call); val b = regularArgs(call).getOrNull(0)
-			if (a != null && b != null)
-				return """{"k":"new","type":${TypeNode.Fqn("kotlin.Pair", listOf(birType(a.type), birType(b.type))).toJson()},"args":[${expr(a)},${expr(b)}]}"""
-		}
-		if (declaringClass?.fqNameWhenAvailable?.asString() in setOf("kotlin.Pair", "kotlin.Triple", "kotlin.collections.IndexedValue")
-			&& name.startsWith("component") && name.drop("component".length).all { it.isDigit() }) {
-			dispatchReceiver(call)?.let { r ->
-				val field = when (declaringClass?.fqNameWhenAvailable?.asString() to name) {
-					"kotlin.Pair" to "component1", "kotlin.Triple" to "component1", "kotlin.collections.IndexedValue" to "component1" -> if (declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.collections.IndexedValue") "index" else "first"
-					"kotlin.Pair" to "component2", "kotlin.Triple" to "component2", "kotlin.collections.IndexedValue" to "component2" -> if (declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.collections.IndexedValue") "value" else "second"
-					"kotlin.Triple" to "component3" -> "third"
-					else -> null
-				}
-				if (field != null) return """{"k":"field","ownerType":${birType(r.type).toJson()},"recv":${expr(r)},"name":${str(field)}}"""
-			}
-		}
+		// `a to b` and Pair/Triple/IndexedValue `componentN()` are NOT recognized here (#52 Phase 3): these are real
+		// emitted stdlib types with real members — the infix `to` (body `Pair(this, that)`) and the data-class
+		// component1()/component2()/component3() operators are materialized IR declarations. kotc emits the plain call
+		// (faithful IR) and it resolves against the real stdlib surface; no marker is needed (unlike conv/factories,
+		// which synthesize CLR-shaped nodes). So `5 to 6`, `val (a, b) = pair`, `t.component1()` all fall through to
+		// the ordinary call path.
 		// Map-entry destructuring `entry.component1()/.component2()` is NOT lowered to KeyValuePair.Key/.Value here:
 		// map entries are real `kotlin.collections.Map.Entry` objects (rt ClrMutableMapEntry; both Map/MutableMap alias
 		// IDictionary), so the destructure components emit as the PLAIN Kotlin extension calls and resolve like any
