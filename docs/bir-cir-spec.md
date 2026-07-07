@@ -321,3 +321,51 @@ is a list of structured declaration nodes:
 Validate live BIR/CIR + every emitted `[KotlinInline]` body against this spec: unknown `k`, a type that is
 not a valid `Type` node, or an unknown `version` reddens a gate. Round-trip: decode every stdlib ref.dll
 inline body, assert it re-encodes identically.
+
+## 7. The validator — LANDED (#37 m6, the freeze ENFORCER)
+`scripts/verify-schema.py` (gate wrapper `scripts/verify-schema.sh`, Makefile target `verify-schema`) is the
+structural enforcer for this contract. Because `Type` is drift-proof by construction but node FIELD names are
+NOT (§2.5 — there is no single shared node model), the validator is node-format's ONLY safety net: it walks the
+freshly-emitted BIR + CIR and reddens the gate on any drift.
+
+**What it checks**
+- **Types are nodes (§1) — the core invariant.** Enforced by an INVERSE allow-list: the finite set of keys that
+  MAY carry a bare string (`STR_OK` — the format vocabulary `k`/`t`, object-language `name` payloads, the enum
+  keys `scope`/`op`/`vis`/`variance`/`kind`, and the documented owner/member/attribute NAME islands §2.2.1) is
+  fixed; a bare string at ANY other key is a type-token leak and reds. Array string elements red too, except the
+  `typeParams` name-declaration shorthand (`STRARR_OK`). This fails closed across the whole tree — a future
+  string type token anywhere reddens without the validator having to enumerate every type slot.
+- **Canonical node kinds + type tags (§2.5/§2.6).** Every `{k}` must be in the frozen `KINDS` set (the union of
+  every kind the current toolchain emits across a full fresh build — regenerate with `--dump-kinds`); every `{t}`
+  in `{fqn,tv,fn,nullable,oblivious,array,byRef}`. A typo, a retired spelling (`bin`/`un`/`isinst`/`isinstRef`/
+  `setFieldExpr`/`staticFieldSet`), or an ad-hoc new kind reds. Casing is enforced by set membership.
+- **Well-formed types (§1):** each `{t}` carries its required fields with the right value shapes; a `{k}`+`{t}`
+  mixed object (roles are disjoint) reds.
+- **`mods` keys ⊆ the frozen set, `vis` ∈ the enum (§2.1).**
+
+**Coverage** = `build/clr-stdlib/{bir,cir}` (the 250-file bulk corpus, fresh after `make stdlib`) + every app
+sample `build/{bir,cir}-*` (fresh after `verify-il` — exercises the CLR-lowered `clr*`, coroutine-lowered `co*`,
+and StringCharSequence-adapter kinds the stdlib build alone does not). Wired into the gate aggregate AFTER
+`verify-il` (which re-emits every app BIR/CIR), and into `m1verify`.
+
+**Carrier (§0) scope.** The `[KotlinInline]`/`[KotlinSuspendFunctionType]` carriers ride as CLR attributes on the
+emitted assembly, not as document nodes, so they are out of the document walk. Their version is guarded LOUDLY at
+decode time by `bir-common` `BirCarrier.DecodeBody` (an unknown version throws `NotSupportedException` — never a
+silent mis-decode) and is exercised end-to-end by `verify-roundtrip` (facadegen decodes every stdlib ref.dll
+inline body through the one codec). The decoded carrier BODY is itself a node/type that ALSO appears inline as the
+emitting method's body in the BIR/CIR — validated there by the document walk.
+
+**Residual string type slots structuralized to land the enforcer clean** (bir2cir/kotc were still injecting a few
+bare-FQN strings the wire format forbids):
+- `conv.to` (kotc `BirEmitter.kt` numeric-conversion path) — was `str(to)` (bare `"kotlin.Int"`) → `fqnJson(to)`.
+- Synthetic `<>dotkt_KProperty` interface refs (kotc `synthDelegate`/`kPropertyDefs`) — `str(iface)`/literal → `fqnJson`.
+- `suspendLambdaNew`'s free-type-param list — a type-param NAME-declaration list, not a type-usage slot: renamed
+  `typeArgs` → `typeParams` (the name-shorthand, consistent with the other lambda paths; kotc emit + bir2cir
+  `SuspendLambdaLowering` read).
+- The `StringCharSequenceBridge` adapter (bir2cir `AdapterTypeJson` literal + `WrapAdapter`) — every `type`/`ret`/
+  `elem`/`argTypes`/`interfaces`/`ownerType` slot rewritten to `{t:"fqn",…}`; the retired `@<name>` this-assembly
+  marker dropped (bir2cir/ilemit derive local-vs-referenced from the FQN via `_types`).
+
+The OWNER-FQN and SIG-KEY string islands (§2.2.1) are deliberately OUT of scope — they are not document type slots
+(owner is its own slot kind; the sig-key is a transient reflection-comparison key), so `STR_OK` allow-lists the
+narrow owner/member-name keys and the validator never flags them.

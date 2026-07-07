@@ -437,6 +437,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   `facadegen`'s `KotlinInlineBody` / `SuspendFnNode`) all route through the one codec. This is the groundwork
   for a binary (MessagePack) body codec: the version tag decouples the logical body from its physical encoding.
   Spec §0 updated.
+- **BIR/CIR freeze — the schema VALIDATOR wired into the gate (#37 m6, the enforcer).** A structural validator
+  (`scripts/verify-schema.py`, gate `scripts/verify-schema.sh`, Make target `verify-schema`, folded into the
+  `verify` aggregate after `verify-il`) walks the freshly-emitted BIR + CIR (the whole stdlib corpus + every app
+  sample) and reddens on any drift from the frozen contract: a document type slot that is a bare string instead of
+  a `{t:…}` node (types-are-nodes — enforced by an inverse allow-list that fails closed across the tree), an
+  unknown/typo'd/retired node kind `{k}` or type tag `{t}`, a malformed Type, or an unknown `mods`/`vis` value.
+  Verified to fire: injecting a bare-string type slot, a retired `k` (`bin`), or an unknown tag (`clrg`) all red.
+  Landing it clean surfaced and structuralized the last bir2cir/kotc-injected string type slots — `conv.to`, the
+  synthetic `<>dotkt_KProperty` interface refs, the `StringCharSequenceBridge` adapter literal + `WrapAdapter`, a
+  lifted-local-call `gp:T` typeArgs, the `Cast<object>` typeArgs, the CharSequence→String arg-coercion argType, and
+  a `suspendLambdaNew` field renamed `typeArgs`→`typeParams` (a type-param NAME-decl list, not a type-usage slot).
+  The two documented string islands (owner-FQN, sig-key reflection) stay out of scope. Spec §7 + schema updated.
 - **BIR/CIR freeze — `funcType` structuralized: the last string type slot is gone (#37 #49).** The
   delegate-view function type on `closureNew`/`delegateNew`/`samNew`/`suspendLambdaNew`/`boundDelegateNew`/
   `delegateInvoke` was the final stringly-typed type slot (`func:<ret>:<args>` / `sfunc:<ret>:<args>`). kotc
