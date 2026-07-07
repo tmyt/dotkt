@@ -7,6 +7,7 @@
 package kotc.frontend
 
 import java.io.File
+import kotc.bir.TypeNode
 import org.jetbrains.kotlin.GeneratedDeclarationKey
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.config.CompilerConfiguration
@@ -56,32 +57,32 @@ object ClrGeneratedKey : GeneratedDeclarationKey()
 
 // ----- metadata model (produced by `facadegen --meta`, read here) -----
 
-private class ClrParam(val name: String, val type: String)
-// `open`/`abstract` = .NET virtual/abstract (Kotlin OPEN/ABSTRACT modality, overridable); `protected` = .NET
-// Family/FamORAssem (so a Kotlin subclass can override a protected virtual lifecycle method — feedback item 2).
-// `typeParams` = method-level generic parameters (`SizeOf<T>()` -> ["T"]); empty for ordinary methods.
-// `infix`/`operator`/`suspend` = Kotlin modifiers with no .NET analog, restored from a DotKt assembly's
-// [KotlinFunction] (carried in the `fun`/`tlfun` modifier token as comma-suffixes). For a `suspend` fun the
-// returnType is already the unwrapped result T (facadegen unwrapped the emitted Task<T>).
-private class ClrMethod(val name: String, val returnType: String, val open: Boolean, val abstract: Boolean, val protected: Boolean, val params: List<ClrParam>, val typeParams: List<String> = emptyList(),
-	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false, val clrName: String? = null) {
-	// gap ①: upper bounds of this method's own type params (`<T : Comparable<T>>`), keyed by param name. Filled from the
-	// `mbound` lines that follow the `fun`/`tlfun` line (mutable so the line-by-line parser can append after construction).
-	val typeParamBounds: MutableMap<String, MutableList<String>> = HashMap()
-}
+// A restored default-arg value (`{valueType, value}`): `valueType` = the primitive kind (Int/Long/String/…) the
+// consumer builds a FirLiteralExpression of; `value` = the literal as a string, or NULL for a `null` default.
+private class ClrDefault(val valueType: String, val value: String?)
+// `type` is a structured TypeNode (spec §1); `vararg` -> the param is a vararg whose ELEMENT type is `type`.
+private class ClrParam(val name: String, val type: TypeNode, val vararg: Boolean = false, val default: ClrDefault? = null)
+// A generic type parameter: its name, declaration-site `variance` (interfaces), and upper `bounds` (`<T : Comparable<T>>`).
+private class ClrTypeParam(val name: String, val variance: String? = null, val bounds: List<TypeNode> = emptyList())
+// `open`/`abstract` = .NET virtual/abstract (Kotlin OPEN/ABSTRACT modality); `protected` = .NET Family/FamORAssem.
+// `infix`/`operator`/`suspend`/`inline`/`ext` = Kotlin modifiers restored from the `mods` object. For a `suspend` fun
+// the returnType is already the unwrapped result T (facadegen unwrapped the emitted Task<T>).
+private class ClrMethod(val name: String, val returnType: TypeNode, val open: Boolean, val abstract: Boolean, val protected: Boolean, val params: List<ClrParam>, val typeParams: List<ClrTypeParam> = emptyList(),
+	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false, val clrName: String? = null)
 // A restored top-level Kotlin function: its package, the .NET file-facade class to call, and the function itself.
 private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
 // N5: one file-class candidate for a top-level CallableId (`.NET file class` + the value-param arity range it covers).
 // Several candidates under one CallableId = same-name same-package overloads across DIFFERENT source files; the backend
 // disambiguates by the resolved callee's arity. See `clrInjectedTopLevelFileClass`.
 internal class TopLevelSig(val fileClass: String, val minArity: Int, val maxArity: Int)
-private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: String, val mutable: Boolean, val receiver: String)
-private class ClrProperty(val name: String, val type: String, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean, val clrName: String? = null)
+// A top-level property: `receiver` (a TypeNode) present => an EXTENSION property (`val T.p`); null => a plain top-level prop.
+private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode?)
+private class ClrProperty(val name: String, val type: TypeNode, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean, val clrName: String? = null)
 // A MEMBER extension property (`class C { val T.p }`): restored as a member property of C with an extension receiver.
-private class ClrMemberExtProp(val name: String, val type: String, val mutable: Boolean, val receiver: String, val protected: Boolean)
-private class ClrEvent(val name: String, val handlerReturn: String, val handlerParams: List<ClrParam>)
+private class ClrMemberExtProp(val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode, val protected: Boolean)
+private class ClrEvent(val name: String, val handlerReturn: TypeNode, val handlerParams: List<ClrParam>)
 // A `this[i]` indexer -> Kotlin `operator fun get/set` (`set` only when mutable).
-private class ClrIndexer(val indexType: String, val valueType: String, val mutable: Boolean)
+private class ClrIndexer(val indexType: TypeNode, val valueType: TypeNode, val mutable: Boolean)
 private class ClrType(
 	val kotlinName: String,
 	val dotNetName: String,
@@ -89,24 +90,22 @@ private class ClrType(
 	val isInterface: Boolean,          // .NET interface => Kotlin can implement it
 	val isAnnotation: Boolean,         // System.Attribute-derived => Kotlin annotation class (apply on decls)
 	val open: Boolean,                 // .NET non-sealed => Kotlin can extend it
-	val typeParams: List<String>,      // generic type parameter names (`Collection<T>` -> ["T"])
-	val superTypes: List<String>,      // injectable base class + interfaces (simple names) — wired by ClrSupertypeInjector
+	val typeParams: List<ClrTypeParam>,// generic type parameters (name + variance + bounds)
+	val superTypes: List<TypeNode>,    // injectable base class + interfaces — wired by ClrSupertypeInjector
 	val methods: List<ClrMethod>,
 	val ctors: List<List<ClrParam>>,
 	val properties: List<ClrProperty>,
 	val events: List<ClrEvent>,
 	val indexer: ClrIndexer?,
-	val baseNoArgCtor: Boolean,        // false ("basector none"): base lacks a no-arg ctor -> don't synthesize `: super()`
+	val baseNoArgCtor: Boolean,        // false: base lacks a no-arg ctor -> don't synthesize `: super()`
 	val staticMethods: List<ClrMethod>,// public static methods of a NORMAL class -> companion-object members (App.Start)
 	val staticProps: List<ClrProperty>,// public static props/fields of a NORMAL class -> companion-object members
 	val staticEvents: List<ClrEvent> = emptyList(),  // (N6) public STATIC events of a NORMAL class -> companion `ClrEvent<T>` props
 	val memberExtProps: List<ClrMemberExtProp> = emptyList(),  // `class C { val T.p }` member extension properties
 	val clrBinding: String? = null,    // ref/runtime split: the BCL type this Kotlin type binds to (`List` -> IReadOnlyList)
-	val typeParamVariance: Map<String, String> = emptyMap(),   // gap ①: declaration-site variance (`out`/`in`) per type param (interfaces)
-	val typeParamBounds: Map<String, List<String>> = emptyMap(), // gap ①: upper bound(s) per type param (`<T : Comparable<T>>`)
-	val isFunInterface: Boolean = false,   // round-trip: was a Kotlin `fun interface` (SAM) — restore `status.isFun` so lambdas convert
+	val isFunInterface: Boolean = false,   // round-trip: was a Kotlin `fun interface` (SAM) — restore `status.isFun`
 	val isSealed: Boolean = false,         // round-trip: was a Kotlin `sealed` class/interface — restore Modality.SEALED
-	val iteratorElem: String? = null,      // IEnumerable<T> element -> a frontend-only `operator fun iterator(): Iterator<T>` (for-in resolves; backend uses GetEnumerator)
+	val iteratorElem: TypeNode? = null,    // IEnumerable<T> element -> a frontend-only `operator fun iterator(): Iterator<T>`
 )
 private class ClrModule(val types: List<ClrType>, val topLevel: List<ClrTopLevel> = emptyList(), val topLevelProps: List<ClrTopLevelProp> = emptyList())
 
@@ -114,16 +113,6 @@ private class ClrModule(val types: List<ClrType>, val topLevel: List<ClrTopLevel
 // events (`TaskScheduler.UnobservedTaskException`). All companion-gating sites funnel through this so a class whose
 // ONLY statics are events still materializes its companion (and its `ClrEvent<T>` static-event properties).
 private val ClrType.hasStatics: Boolean get() = staticMethods.isNotEmpty() || staticProps.isNotEmpty() || staticEvents.isNotEmpty()
-
-// Parse a `fun`/`tlfun` modifier token: `[prot-]<open|final|abstract>[,infix][,operator][,suspend]` — a single
-// whitespace-free token (so the meta parser's type-param split is unaffected), the flags as comma-suffixes.
-private class FunMods(val open: Boolean, val abstract: Boolean, val protected: Boolean, val infix: Boolean, val operator: Boolean, val suspend: Boolean, val inline: Boolean, val ext: Boolean)
-private fun parseFunMods(tok: String?): FunMods {
-	val parts = (tok ?: "final").split(',')
-	val mod = parts[0]; val prot = mod.startsWith("prot-"); val bare = mod.removePrefix("prot-")
-	val f = parts.drop(1).toHashSet()
-	return FunMods(bare == "open", bare == "abstract", prot, "infix" in f, "operator" in f, "suspend" in f, "inline" in f, "ext" in f)
-}
 
 /**
  * A2 keystone (interop-no-registry, stage 1): the backend reads an injected .NET type's name off its IR `ClassId`
@@ -190,135 +179,88 @@ internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? =
 private object ClrMetadataHolder {
 	val module: ClrModule? by lazy { System.getenv("CLR_TYPES_METADATA")?.let { load(File(it)) } }
 
+	// The injection metadata is now a structured JSON document (spec §5b): `{ "types": [...], "files": [...] }`,
+	// reusing the BIR TypeNode / mods / decl vocabulary. The walk below reconstructs the ClrType/ClrTopLevel model;
+	// there is no line grammar, no token-splitting, no type-string prefix parse (all types are TypeNode nodes).
+	@Suppress("UNCHECKED_CAST")
 	private fun load(file: File): ClrModule? {
 		if (!file.isFile) return null
-		val types = ArrayList<ClrType>()
-		var name = ""; var dotNet = ""; var isObject = false; var isInterface = false; var isOpen = false; var isAnnotation = false
-		var isFunIface = false; var isSealedTy = false   // round-trip: `funinterface`/`sealed` marker lines for the CURRENT type
-		var clrBind: String? = null   // ref/runtime split: BCL binding from `token[2] = KotlinFqn=BclName`
-		var tparams = emptyList<String>(); var supers = emptyList<String>()
-		val methods = ArrayList<ClrMethod>(); val ctors = ArrayList<List<ClrParam>>()
-		val props = ArrayList<ClrProperty>(); val events = ArrayList<ClrEvent>()
-		var indexer: ClrIndexer? = null
-		var iteratorElem: String? = null
-		var baseNoArgCtor = true
-		val staticMethods = ArrayList<ClrMethod>(); val staticProps = ArrayList<ClrProperty>(); val staticEvents = ArrayList<ClrEvent>()
-		val memberExtProps = ArrayList<ClrMemberExtProp>()
-		val topLevel = ArrayList<ClrTopLevel>(); val topLevelProps = ArrayList<ClrTopLevelProp>(); var filePkg: FqName? = null; var fileClass = ""   // current [KotlinFile] section
-			// gap ①: per-type-param variance/bounds accumulators for the CURRENT type (from `tvariance`/`tbound` lines);
-			// `lastMethod` is the most-recently-parsed fun/tlfun, the target of any following `mbound` (method-level) line.
-			val tpVariance = HashMap<String, String>(); val tpBounds = HashMap<String, MutableList<String>>(); var lastMethod: ClrMethod? = null
-		fun flush() { if (name.isNotEmpty()) types.add(ClrType(name, dotNet, isObject, isInterface, isAnnotation, isOpen, tparams, supers, ArrayList(methods), ArrayList(ctors), ArrayList(props), ArrayList(events), indexer, baseNoArgCtor, ArrayList(staticMethods), ArrayList(staticProps), ArrayList(staticEvents), ArrayList(memberExtProps), clrBind, HashMap(tpVariance), tpBounds.mapValues { it.value.toList() }, isFunIface, isSealedTy, iteratorElem)); clrBind = null }
-		for (raw in file.readLines()) {
-			val line = raw.trim()
-			if (line.isEmpty()) continue
-			val tok = line.split(' ')
-			when (tok[0]) {
-				"package" -> {}   // ignored: types resolve at their real .NET namespace, not a synthetic package
-				"object", "class", "interface" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); staticEvents.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
-					// ref/runtime split: `token[2] = KotlinFqn=BclName` -> LEFT = Kotlin identity (drives namespace/ClassId),
-					// RIGHT (if any) = the BCL binding for clrName. Most injected types have no `=`.
-					val dn = tok[2]; val eq = dn.indexOf('='); dotNet = if (eq >= 0) dn.substring(0, eq) else dn; clrBind = if (eq >= 0) dn.substring(eq + 1) else null
-					name = tok[1]; isObject = tok[0] == "object"; isInterface = tok[0] == "interface"; isAnnotation = false
-					isOpen = !isObject && !isInterface && tok.getOrNull(3) == "open"
-					// `class <Name> <DotNet> <open|sealed> [<TP>...]` (TPs at 4, after the modality token) vs
-					// `interface <Name> <DotNet> [<TP>...]` (TPs at 3, no modality token). `object` has none.
-					tparams = when (tok[0]) { "class" -> tok.drop(4); "interface" -> tok.drop(3); else -> emptyList() }
-				}
-				// annotation <Name> <DotNet> [<param>:<type>]* — a .NET attribute -> Kotlin annotation class; the
-				// trailing params (from its longest ctor) become the single annotation constructor.
-				"annotation" -> {
-					flush(); methods.clear(); ctors.clear(); props.clear(); events.clear(); indexer = null; iteratorElem = null; baseNoArgCtor = true; staticMethods.clear(); staticProps.clear(); staticEvents.clear(); memberExtProps.clear(); supers = emptyList(); filePkg = null; tpVariance.clear(); tpBounds.clear(); lastMethod = null; isFunIface = false; isSealedTy = false
-					name = tok[1]; dotNet = tok[2]; isObject = false; isInterface = false; isAnnotation = true; isOpen = false; tparams = emptyList()
-					ctors.add(parseParams(tok.drop(3)))
-				}
-				// file <package> <fileClassFqn> — a Kotlin file facade ([KotlinFile]); subsequent `tlfun` lines are
-				// TOP-LEVEL functions in <package> (`-` = root), restored as a .NET static call to <fileClassFqn>.
-				"file" -> {
-					flush(); name = ""; supers = emptyList(); tpVariance.clear(); tpBounds.clear(); lastMethod = null
-					filePkg = if (tok.getOrNull(1) == "-" || tok.getOrNull(1).isNullOrEmpty()) FqName.ROOT else FqName(tok[1])
-					fileClass = tok.getOrNull(2) ?: ""
-				}
-				// tlfun <Name> <ret> <prot-?open|final|abstract>[,infix][,operator][,suspend] [<TP>...] [<param>:<type>]*
-				"tlfun" -> {
-					val fm = parseFunMods(tok.getOrNull(3))
-					val m = ClrMethod(tok[1], tok[2], fm.open, fm.abstract, fm.protected,
-						parseParams(tok.drop(4)), tok.drop(4).filterNot { it.contains(':') }, fm.infix, fm.operator, fm.suspend, fm.inline, fm.ext)
-					topLevel.add(ClrTopLevel(filePkg ?: FqName.ROOT, fileClass, m)); lastMethod = m   // gap ①: target of any following `mbound`
-				}
-				// tlextprop <Name> <type> <ro|rw> <receiverType> — a top-level EXTENSION property (`val T.p`); the file
-				// class holds its get_/set_<Name>(__self) accessors. Restored as a top-level extension property.
-				"tlextprop" -> topLevelProps.add(ClrTopLevelProp(filePkg ?: FqName.ROOT, fileClass, tok[1], tok[2], tok.getOrNull(3) == "rw", tok[4]))
-				// tlprop <Name> <type> <ro|rw> — a NON-extension top-level property (`val greeting`); the file class holds
-				// it as a plain STATIC FIELD (no get_/set_ accessor). Restored as a top-level property with NO extension
-				// receiver (empty `receiver` = the discriminator vs tlextprop); the backend routes reads/writes to that
-				// static field of the referenced .NET file class (#34b).
-				"tlprop" -> topLevelProps.add(ClrTopLevelProp(filePkg ?: FqName.ROOT, fileClass, tok[1], tok[2], tok.getOrNull(3) == "rw", ""))
-				// super <SimpleName>... — the injectable base class (first) + interfaces; wired by ClrSupertypeInjector.
-				"super" -> supers = tok.drop(1)
-				// basector none — the base class has no accessible no-arg ctor (still linked for assignability, but a
-				// synthesized `: super()` delegating call must be suppressed).
-				"basector" -> if (tok.getOrNull(1) == "none") baseNoArgCtor = false
-				// fun <Name> <ret> <prot-?open|final|abstract> [<TypeParam>...] [<param>:<type>]* — the modifier is a
-				// single token (so it never looks like a type param); bare trailing tokens (no `:`) are type params.
-				"fun" -> {
-					val fm = parseFunMods(tok.getOrNull(3))
-					val rest = tok.drop(4)   // ref/runtime split: pull the `clr:Name` member-binding token out before param/typeparam parsing
-					val mclr = rest.firstOrNull { it.startsWith("clr:") }?.removePrefix("clr:")
-					val body = rest.filterNot { it.startsWith("clr:") }
-					methods.add(ClrMethod(tok[1], tok[2], fm.open, fm.abstract, fm.protected,
-						parseParams(body), body.filterNot { it.contains(':') }, fm.infix, fm.operator, fm.suspend, fm.inline, fm.ext, mclr))
-						lastMethod = methods.last()   // gap ①: target of any following `mbound`
-				}
-				"ctor" -> ctors.add(parseParams(tok.drop(1)))
-				// sfun <Name> <ret> [<TypeParam>...] [<param>:<type>]* — a public STATIC method of a normal class (-> companion).
-				// Bare trailing tokens (no `:`) are the method's own type parameters (`Task.FromResult<TResult>`), mirroring
-				// the `fun`/`tlfun` convention — KEEP them so a generic static (Task.FromResult<T>/Run<T>) can build Task<T>.
-				"sfun" -> { val rest = tok.drop(3)
-					staticMethods.add(ClrMethod(tok[1], tok[2], false, false, false, parseParams(rest), rest.filterNot { it.contains(':') })) }
-				// sprop <Name> <type> <ro|rw> — a public STATIC prop/field of a normal class (-> companion).
-				"sprop" -> staticProps.add(ClrProperty(tok[1], tok[2], tok.getOrNull(3) == "rw", false, false, false))
-				// (N6) sevent <Name> <handlerRet> <handlerParams...> — a public STATIC event of a normal class (-> a companion
-				// `ClrEvent<T>` property, subscribed via `Type.Event += h`; the backend emits a STATIC add/remove accessor).
-				"sevent" -> staticEvents.add(ClrEvent(tok[1], tok[2], parseParams(tok.drop(3))))
-				// prop <Name> <type> <ro|rw> <prot-?open|final|abstract>
-				"prop" -> {
-					val mod = tok.getOrNull(4) ?: "final"; val prot = mod.startsWith("prot-"); val bare = mod.removePrefix("prot-")
-					val pclr = tok.firstOrNull { it.startsWith("clr:") }?.removePrefix("clr:")   // ref/runtime split: size -> Count
-					props.add(ClrProperty(tok[1], tok[2], tok.getOrNull(3) == "rw", bare == "open", bare == "abstract", prot, pclr))
-				}
-				// memextprop <Name> <type> <ro|rw> <receiverType> <prot-?final> — a member extension property `val T.p`
-				"memextprop" -> memberExtProps.add(ClrMemberExtProp(tok[1], tok[2], tok.getOrNull(3) == "rw", tok[4], (tok.getOrNull(5) ?: "final").startsWith("prot-")))
-				// event <Name> <handlerRet> <handlerParams...>
-				"event" -> events.add(ClrEvent(tok[1], tok[2], parseParams(tok.drop(3))))
-				// index <indexType> <valueType> <ro|rw> — `this[i]` indexer -> operator get/set.
-				"index" -> indexer = ClrIndexer(tok[1], tok[2], tok.getOrNull(3) == "rw")
-					// iterator <elem> — a type implementing IEnumerable<elem> -> a frontend-only `operator fun iterator(): Iterator<elem>`.
-					"iterator" -> iteratorElem = tok.getOrNull(1)
-					// round-trip: `funinterface` = the current interface was a Kotlin `fun interface` (restore status.isFun for SAM);
-					// `sealed` = the current class/interface was Kotlin `sealed` (restore Modality.SEALED). Standalone marker lines.
-					"funinterface" -> isFunIface = true
-					"sealed" -> isSealedTy = true
-					// gap 1: `tvariance <param> <out|in>` = declaration-site variance of a class/interface type param.
-					"tvariance" -> if (tok.size >= 3) tpVariance[tok[1]] = tok[2]
-					// gap 1: `tbound <param> <boundToken>` = an upper bound of a class/interface type param (repeatable).
-					"tbound" -> if (tok.size >= 3) tpBounds.getOrPut(tok[1]) { ArrayList() }.add(tok[2])
-					// gap 1: `mbound <param> <boundToken>` = an upper bound of the most-recent fun/tlfun method type param.
-					"mbound" -> if (tok.size >= 3) lastMethod?.typeParamBounds?.getOrPut(tok[1]) { ArrayList() }?.add(tok[2])
+		val root = TypeNode.parseJsonValue(file.readText()) as? Map<String, Any?> ?: return null
+		val types = (root["types"] as? List<Any?>).orEmpty().map { readType(it as Map<String, Any?>) }
+		val topLevel = ArrayList<ClrTopLevel>(); val topLevelProps = ArrayList<ClrTopLevelProp>()
+		for (f in (root["files"] as? List<Any?>).orEmpty()) {
+			val fo = f as Map<String, Any?>
+			val pkg = (fo["pkg"] as? String).let { if (it.isNullOrEmpty()) FqName.ROOT else FqName(it) }
+			val fileClass = fo["fileClass"] as? String ?: ""
+			for (fn in (fo["funs"] as? List<Any?>).orEmpty())
+				topLevel.add(ClrTopLevel(pkg, fileClass, readFun(fn as Map<String, Any?>)))
+			for (pp in (fo["props"] as? List<Any?>).orEmpty()) {
+				val p = pp as Map<String, Any?>
+				topLevelProps.add(ClrTopLevelProp(pkg, fileClass, p["name"] as String, typeOf(p["type"]),
+					p["rw"] == true, (p["recv"])?.let { typeOf(it) }))
 			}
 		}
-		flush()
-		val module = ClrModule(types, topLevel, topLevelProps)
-		// A2 stage 3 / event redesign: NOTHING is registered by name here anymore. A restored top-level function/extension-
-		// property's .NET file-facade class is read off the resolved IR `CallableId` (`fileClassByTopLevelCallableId` /
-		// `fileClassByTopLevelPropCallableId`); a .NET event carries NO side-channel at all — it is surfaced as a `ClrEvent<T>`
-		// property that bir2cir binds via the `+=`/`-=` operators.
-		return module
+		return ClrModule(types, topLevel, topLevelProps)
 	}
 
-	private fun parseParams(tokens: List<String>): List<ClrParam> =
-		tokens.filter { it.contains(':') }.map { ClrParam(it.substringBefore(':'), it.substringAfter(':')) }
+	private fun typeOf(v: Any?): TypeNode = TypeNode.fromJsonValue(v)
+	@Suppress("UNCHECKED_CAST")
+	private fun modsOf(v: Any?): Set<String> = (v as? Map<String, Any?>)?.filterValues { it == true }?.keys ?: emptySet()
+
+	@Suppress("UNCHECKED_CAST")
+	private fun readParam(o: Map<String, Any?>): ClrParam {
+		val default = (o["default"] as? Map<String, Any?>)?.let { ClrDefault(it["valueType"] as? String ?: "", it["value"] as? String) }
+		return ClrParam(o["name"] as String, typeOf(o["type"]), "vararg" in modsOf(o["mods"]), default)
+	}
+	@Suppress("UNCHECKED_CAST")
+	private fun readParams(v: Any?): List<ClrParam> = (v as? List<Any?>).orEmpty().map { readParam(it as Map<String, Any?>) }
+	@Suppress("UNCHECKED_CAST")
+	private fun readTypeParam(o: Map<String, Any?>): ClrTypeParam =
+		ClrTypeParam(o["name"] as String, o["variance"] as? String, (o["bounds"] as? List<Any?>).orEmpty().map { typeOf(it) })
+	@Suppress("UNCHECKED_CAST")
+	private fun readTypeParams(v: Any?): List<ClrTypeParam> = (v as? List<Any?>).orEmpty().map { readTypeParam(it as Map<String, Any?>) }
+
+	@Suppress("UNCHECKED_CAST")
+	private fun readFun(o: Map<String, Any?>): ClrMethod {
+		val mods = modsOf(o["mods"]); val vis = o["vis"] as? String ?: "public"
+		return ClrMethod(o["name"] as String, typeOf(o["ret"]), "open" in mods, "abstract" in mods, vis == "protected",
+			readParams(o["params"]), readTypeParams(o["typeParams"]),
+			"infix" in mods, "operator" in mods, "suspend" in mods, "inline" in mods, "ext" in mods, o["clrName"] as? String)
+	}
+	@Suppress("UNCHECKED_CAST")
+	private fun readProp(o: Map<String, Any?>): ClrProperty {
+		val mods = modsOf(o["mods"]); val vis = o["vis"] as? String ?: "public"
+		return ClrProperty(o["name"] as String, typeOf(o["type"]), o["rw"] == true, "open" in mods, "abstract" in mods, vis == "protected", o["clrName"] as? String)
+	}
+	@Suppress("UNCHECKED_CAST")
+	private fun readEvent(o: Map<String, Any?>): ClrEvent =
+		ClrEvent(o["name"] as String, typeOf(o["handlerRet"]), readParams(o["handlerParams"]))
+
+	@Suppress("UNCHECKED_CAST")
+	private fun readType(o: Map<String, Any?>): ClrType {
+		val kind = o["kind"] as? String
+		fun props(k: String) = (o[k] as? List<Any?>).orEmpty().map { readProp(it as Map<String, Any?>) }
+		fun funs(k: String) = (o[k] as? List<Any?>).orEmpty().map { readFun(it as Map<String, Any?>) }
+		fun events(k: String) = (o[k] as? List<Any?>).orEmpty().map { readEvent(it as Map<String, Any?>) }
+		val memberExtProps = (o["memberExtProps"] as? List<Any?>).orEmpty().map {
+			val p = it as Map<String, Any?>
+			ClrMemberExtProp(p["name"] as String, typeOf(p["type"]), p["rw"] == true, typeOf(p["recv"]), (p["vis"] as? String) == "protected")
+		}
+		val ctors = (o["ctors"] as? List<Any?>).orEmpty().map { readParams((it as Map<String, Any?>)["params"]) }
+		val indexer = (o["indexer"] as? Map<String, Any?>)?.let { ClrIndexer(typeOf(it["indexType"]), typeOf(it["valueType"]), it["rw"] == true) }
+		return ClrType(
+			o["name"] as String, o["dotNet"] as String,
+			isObject = kind == "object", isInterface = kind == "interface", isAnnotation = kind == "annotation",
+			open = o["open"] == true, typeParams = readTypeParams(o["typeParams"]),
+			superTypes = (o["supers"] as? List<Any?>).orEmpty().map { typeOf(it) },
+			methods = funs("funs"), ctors = ctors, properties = props("props"), events = events("events"),
+			indexer = indexer, baseNoArgCtor = o["baseNoArgCtor"] != false,
+			staticMethods = funs("staticFuns"), staticProps = props("staticProps"), staticEvents = events("staticEvents"),
+			memberExtProps = memberExtProps, clrBinding = o["clrBinding"] as? String,
+			isFunInterface = o["funInterface"] == true, isSealed = o["sealed"] == true,
+			iteratorElem = o["iteratorElem"]?.let { typeOf(it) },
+		)
+	}
 
 	// Shared lookups (also used by ClrSupertypeInjector). Each .NET type resolves at its REAL namespace, so
 	// `import System.Text.StringBuilder` works through Kotlin's normal package machinery (the .NET namespace IS the
@@ -376,7 +318,7 @@ private object ClrMetadataHolder {
 		buildMap<CallableId, MutableList<TopLevelSig>> {
 			for (tl in module?.topLevel.orEmpty()) {
 				val vps = if (tl.fn.ext && tl.fn.params.isNotEmpty()) tl.fn.params.drop(1) else tl.fn.params
-				val trailingOpt = vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
+				val trailingOpt = vps.reversed().takeWhile { it.default != null }.count()
 				getOrPut(CallableId(tl.pkg, Name.identifier(tl.fn.name))) { ArrayList() }
 					.add(TopLevelSig(stripClrFileClass(tl.fileClassDotNet), vps.size - trailingOpt, vps.size))
 			}
@@ -515,14 +457,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// Generic .NET type (`Collection<T>`) -> declare its type parameters. gap ①: restore declaration-site variance
 			// (`out`/`in`, interfaces) and upper bound(s) (`<T : Comparable<T>>`) that facadegen now reads back (else invariant/unbounded).
 			for (tp in type.typeParams) {
-				val variance = when (type.typeParamVariance[tp]) {
+				val variance = when (tp.variance) {
 					"out" -> org.jetbrains.kotlin.types.Variance.OUT_VARIANCE
 					"in" -> org.jetbrains.kotlin.types.Variance.IN_VARIANCE
 					else -> org.jetbrains.kotlin.types.Variance.INVARIANT
 				}
-				typeParameter(Name.identifier(tp), variance, false, ClrGeneratedKey) {
-					for (b in type.typeParamBounds[tp].orEmpty())
-						bound { tps -> boundConeOf(b, type.typeParams, tps) ?: session.builtinTypes.nullableAnyType.coneType }
+				typeParameter(Name.identifier(tp.name), variance, false, ClrGeneratedKey) {
+					for (b in tp.bounds)
+						bound { tps -> boundConeOf(b, tps) ?: session.builtinTypes.nullableAnyType.coneType }
 				}
 			}
 			// Supertypes: a class's base (`Button` -> `Widget`, for assignability + inherited/protected members),
@@ -530,13 +472,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// `Add` surface — item 3). A spec is either a simple name or `generic:Open[arg,arg]` (args are the owner's
 			// type params, resolved against `tps` below). Deferred provider form -> lazy cross-generation.
 			for (spec in type.superTypes) {
-				val (openName, arity) = if (spec.startsWith("generic:")) {
-					val rest = spec.removePrefix("generic:")
-					val br = rest.indexOf('[')
-					if (br < 0) rest to 0
-					else rest.substring(0, br) to splitTopLevel(rest.substring(br + 1, rest.length - 1)).size
-				} else spec to 0
-				val scid = ClrMetadataHolder.classIdFor(openName, arity) ?: continue
+				val scid = superClassId(spec) ?: continue
 				superType { tps -> superTypeCone(spec, scid, tps) }
 			}
 		}
@@ -619,7 +555,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		// STATIC FIELD of the referenced .NET file class (#34b). `isVar = tp.mutable` (rw -> var, ro -> val).
 		topLevelPropByCallable[callableId]?.let { tp ->
 			return listOf(createTopLevelProperty(ClrGeneratedKey, callableId, coneOf(tp.type, null), !tp.mutable, false) {
-				if (tp.receiver.isNotEmpty()) extensionReceiverType(coneOf(tp.receiver, null))
+				tp.receiver?.let { extensionReceiverType(coneOf(it, null)) }
 			}.symbol)
 		}
 		val owner = context?.owner ?: return emptyList()
@@ -680,7 +616,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// lowered (construction is native clrNew) so the missing delegation is harmless.
 			val real = realDefaults(params)   // all-buildable ctor defaults -> real defaults (`Pt(y = 4)` omits x); else required
 			createConstructor(context.owner, ClrGeneratedKey, i == 0, type.baseNoArgCtor) {
-				for (p in params) valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner), hasDefaultValue = real && p.type.startsWith("opt:"))
+				for (p in params) valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner), hasDefaultValue = real && p.default != null)
 			}.also { if (real) applyDefaults(it, params) }.symbol
 		}
 	}
@@ -719,20 +655,20 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					val extRecv = if (m.ext && m.params.isNotEmpty()) m.params[0] else null
 					val vps = if (extRecv != null) m.params.drop(1) else m.params
 					val real = realDefaults(vps)
-					val trailingOpt = if (real) 0 else vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
+					val trailingOpt = if (real) 0 else vps.reversed().takeWhile { it.default != null }.count()
 					((vps.size - trailingOpt)..vps.size).map { arity ->
-						createTopLevelFunction(ClrGeneratedKey, callableId, { tps -> coneOfMethod(m.returnType, null, m.typeParams, tps) }) {
-							for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey) {
-								for (b in m.typeParamBounds[tp].orEmpty())   // gap ①: `<T : Comparable<T>>` bound on a top-level fun
-									bound { tps -> boundConeOf(b, m.typeParams, tps) ?: session.builtinTypes.nullableAnyType.coneType }
+						createTopLevelFunction(ClrGeneratedKey, callableId, { tps -> coneOf(m.returnType, null, tps) }) {
+							for (tp in m.typeParams) typeParameter(Name.identifier(tp.name), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey) {
+								for (b in tp.bounds)   // gap ①: `<T : Comparable<T>>` bound on a top-level fun
+									bound { tps -> boundConeOf(b, tps) ?: session.builtinTypes.nullableAnyType.coneType }
 							}
 							if (m.suspend) status { isSuspend = true }
 							if (m.inline) status { isInline = true }   // accept non-local return; ilemit splices the carried body
 							if (m.infix || m.operator) status { isInfix = m.infix; isOperator = m.operator }   // top-level extension operators
-							if (extRecv != null) extensionReceiverType { tps -> coneOfMethod(extRecv.type, null, m.typeParams, tps) }
+							if (extRecv != null) extensionReceiverType { tps -> coneOf(extRecv.type, null, tps) }
 							for (p in vps.take(arity))
-								if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod("array:" + p.type.removePrefix("vararg:"), null, m.typeParams, tps) }, isVararg = true)
-								else valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, null, m.typeParams, tps) }, hasDefaultValue = real && p.type.startsWith("opt:"))
+								if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), null, tps) }, isVararg = true)
+								else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, null, tps) }, hasDefaultValue = real && p.default != null)
 						}.also { if (real) applyDefaults(it, vps) }.symbol
 					}
 				}
@@ -798,16 +734,13 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					// provider forms — the params don't exist until the function is being built), like the generic instance path.
 					// This is the seam that lets Kotlin BUILD a Task<T> from a .NET generic factory (async interop).
 					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName,
-						{ tps -> coneOfMethod(m.returnType, owner, m.typeParams, tps) }) {
-						for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
-						// N3-deep: a GENERIC static's `vararg` param (`Task.WhenAll<T>(params Task<T>[])`) must strip the
-						// `vararg:` prefix and rebuild as an `array:` vararg — mirroring the non-generic (:794) and top-level
-						// (:687) paths. Without this the param falls through coneOf's else -> Any?, the vararg overload surfaces
-						// as `WhenAll(tasks: Any?)`, and ilemit's ResolveGenericMethod finds no `params Task<T>[]` overload of
-						// shape "Object" ("Sequence contains no elements"). (The facadegen N3 fix is the sibling half.)
+						{ tps -> coneOf(m.returnType, owner, tps) }) {
+						for (tp in m.typeParams) typeParameter(Name.identifier(tp.name), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey)
+						// N3-deep: a GENERIC static's `vararg` param (`Task.WhenAll<T>(params Task<T>[])`) rebuilds as an
+						// `Array<elem>` vararg so it resolves to the real `params Task<T>[]` overload (not `Any?`).
 						for (p in m.params)
-							if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod("array:" + p.type.removePrefix("vararg:"), owner, m.typeParams, tps) }, isVararg = true)
-							else valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) })
+							if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps) }, isVararg = true)
+							else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, owner, tps) })
 					}.symbol
 			}
 		}
@@ -833,7 +766,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		if (callName == "iterator" && type.iteratorElem != null) {
 			val iterCid = ClassId(FqName("kotlin.collections"), Name.identifier("Iterator"))
 			val iterSym = session.symbolProvider.getClassLikeSymbolByClassId(iterCid)
-			val ret = iterSym?.constructType(arrayOf(coneOf(type.iteratorElem, owner)), false)
+			val ret = iterSym?.constructType(arrayOf(coneOf(type.iteratorElem!!, owner)), false)
 				?: session.builtinTypes.nullableAnyType.coneType
 			val fn = createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, ret) {
 				status { isOperator = true }
@@ -857,99 +790,97 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				// Default args: ONE function with REAL constant default values (applyDefaults), so the consumer can omit a
 				// default arg ANYWHERE (trailing, named-middle `f(c=9)`, reordered); fir2ir inlines the literal.
 				val real = realDefaults(vps)
-				val trailingOpt = if (real) 0 else vps.reversed().takeWhile { it.type.startsWith("opt:") }.count()
+				val trailingOpt = if (real) 0 else vps.reversed().takeWhile { it.default != null }.count()
 				((vps.size - trailingOpt)..vps.size).map { arity ->
 				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
 					// interface members + .NET abstract => ABSTRACT (must implement); .NET virtual => OPEN (overridable).
 					if (type.isInterface || m.abstract) modality = Modality.ABSTRACT
 					else if (m.open && !type.isObject) modality = Modality.OPEN
 					if (m.protected) visibility = Visibilities.Protected   // overridable protected lifecycle methods (item 2)
-					// DotKt round-trip: Kotlin modifiers with no .NET analog, restored from [KotlinFunction].
+					// DotKt round-trip: Kotlin modifiers with no .NET analog, restored from the `mods` object.
 					if (m.infix || m.operator || m.suspend) status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
 					if (m.inline) status { isInline = true }
 					if (extRecv != null) extensionReceiverType(coneOf(extRecv.type, owner))
 					for (p in vps.take(arity))
-						if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), coneOf("array:" + p.type.removePrefix("vararg:"), owner), isVararg = true)
-						else valueParameter(Name.identifier(p.name), coneOf(p.type, owner), hasDefaultValue = real && p.type.startsWith("opt:"))
+						if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), owner), isVararg = true)
+						else valueParameter(Name.identifier(p.name), coneOf(p.type, owner), hasDefaultValue = real && p.default != null)
 				}.also { if (real) applyDefaults(it, vps) }.symbol
 				}
 			} else listOf(
-				// A generic .NET method (`SizeOf<T>()`, `As<T>(o): T`). Declare its method type parameters, then
-				// resolve the return type and any T-typed param/receiver against THOSE params (via the provider forms,
-				// since the type params don't exist until the function is being built). The CLR has reified generics,
-				// so the backend just emits a generic .NET method call (MakeGenericMethod) — see [[clr-not-jvm-discard-jvmisms]].
+				// A generic .NET method (`SizeOf<T>()`, `As<T>(o): T`). Declare its method type parameters, then resolve
+				// the return type and any T-typed param/receiver against THOSE params (via the provider forms). The CLR
+				// has reified generics, so the backend just emits a generic .NET method call (MakeGenericMethod).
 				createMemberFunction(owner, ClrGeneratedKey, callableId.callableName,
-					{ tps -> coneOfMethod(m.returnType, owner, m.typeParams, tps) }) {
+					{ tps -> coneOf(m.returnType, owner, tps) }) {
 					if (m.abstract) modality = Modality.ABSTRACT
 					else if (m.open && !type.isObject) modality = Modality.OPEN
 					if (m.protected) visibility = Visibilities.Protected
 					if (m.infix || m.operator || m.suspend) status { isInfix = m.infix; isOperator = m.operator; isSuspend = m.suspend }
 					if (m.inline) status { isInline = true }
-					for (tp in m.typeParams) typeParameter(Name.identifier(tp), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey) {
-						for (b in m.typeParamBounds[tp].orEmpty())   // gap ①: `<T : Comparable<T>>` bound on a member fun
-							bound { tps -> boundConeOf(b, m.typeParams, tps) ?: session.builtinTypes.nullableAnyType.coneType }
+					for (tp in m.typeParams) typeParameter(Name.identifier(tp.name), org.jetbrains.kotlin.types.Variance.INVARIANT, false, ClrGeneratedKey) {
+						for (b in tp.bounds)   // gap ①: `<T : Comparable<T>>` bound on a member fun
+							bound { tps -> boundConeOf(b, tps) ?: session.builtinTypes.nullableAnyType.coneType }
 					}
-					if (extRecv != null) extensionReceiverType { tps -> coneOfMethod(extRecv.type, owner, m.typeParams, tps) }
-					// N3-deep: a GENERIC member method's `vararg` param must strip `vararg:` and rebuild as an `array:`
-					// vararg, mirroring the non-generic member path (:822) — else it falls to coneOf's else -> Any? and the
-					// vararg overload mis-resolves (see the generic-static path above).
+					if (extRecv != null) extensionReceiverType { tps -> coneOf(extRecv.type, owner, tps) }
+					// N3-deep: a GENERIC member method's `vararg` param rebuilds as an `Array<elem>` vararg so it resolves.
 					for (p in vps)
-						if (p.type.startsWith("vararg:")) valueParameter(Name.identifier(p.name), { tps -> coneOfMethod("array:" + p.type.removePrefix("vararg:"), owner, m.typeParams, tps) }, isVararg = true)
-						else valueParameter(Name.identifier(p.name), { tps -> coneOfMethod(p.type, owner, m.typeParams, tps) }, hasDefaultValue = realDefaults(vps) && p.type.startsWith("opt:"))
+						if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps) }, isVararg = true)
+						else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, owner, tps) }, hasDefaultValue = realDefaults(vps) && p.default != null)
 				}.also { if (realDefaults(vps)) applyDefaults(it, vps) }.symbol
 			)
 		}
 	}
 
-	/** Resolve a supertype spec (a simple injected name, or `generic:Open[arg,arg]`) to a ConeKotlinType, mapping
-	 *  type-argument names to the owner's own type parameters (`tps`, available in the class-builder superType form). */
-	private fun superTypeCone(spec: String, scid: ClassId, tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType {
+	/** The ClassId of a supertype `spec` (a `Fqn`) — a fully-qualified `pkg.Name` or a (simpleName, arity) injected type. */
+	private fun superClassId(spec: TypeNode): ClassId? {
+		val f = spec as? TypeNode.Fqn ?: return null
+		val arity = f.args?.size ?: 0
+		return if ('.' in f.name) ClassId(FqName(f.name.substringBeforeLast('.')), Name.identifier(f.name.substringAfterLast('.')))
+			else ClrMetadataHolder.classIdFor(f.name, arity)
+	}
+
+	/** Resolve a supertype spec (a `Fqn`, optionally with args) to a ConeKotlinType, resolving arg type-variables against
+	 *  the owner's own type parameters (`tps`, available in the class-builder superType form). */
+	private fun superTypeCone(spec: TypeNode, scid: ClassId, tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType {
 		val sym = session.symbolProvider.getClassLikeSymbolByClassId(scid) ?: return session.builtinTypes.anyType.coneType
-		if (!spec.startsWith("generic:")) return sym.constructType(emptyArray(), false)
-		val rest = spec.removePrefix("generic:"); val br = rest.indexOf('[')
-		val argStr = if (br < 0) "" else rest.substring(br + 1, rest.length - 1)
-		val args = if (argStr.isEmpty()) emptyList() else splitTopLevel(argStr).map { superArgCone(it, tps) }
+		val args = (spec as? TypeNode.Fqn)?.args ?: emptyList()
 		@Suppress("UNCHECKED_CAST")
-		return sym.constructType(args.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, false)
+		return sym.constructType(args.map { superArgCone(it, tps) }.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, false)
 	}
 
-	/** A supertype type-argument: the owner's type parameter (matched by name in [tps]), else a primitive or another
-	 *  injected type. (Interface supertype args are almost always the owner's own type params, e.g. `ICollection<T>`.) */
-	private fun superArgCone(name: String, tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType {
-		tps.firstOrNull { it.symbol.name.identifier == name }?.let { return it.symbol.constructType(emptyArray(), false) }
+	/** A supertype type-argument: a `Tv(type,i)` binds to the owner's type parameter (`tps[i]`), else a primitive or
+	 *  another injected type built as a LAZY lookup-tag cone. A self-referential supertype (`Money : IComparable<Money>`)
+	 *  runs THIS lambda while `Money` is still being built, so the lookup-tag cone (a by-ClassId reference resolved later)
+	 *  avoids the re-entrant StackOverflow that resolving the symbol here would cause. */
+	private fun superArgCone(node: TypeNode, tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType {
 		val bt = session.builtinTypes
-		return when (name) {
-			"Int" -> bt.intType.coneType; "Long" -> bt.longType.coneType; "Double" -> bt.doubleType.coneType
-			"Float" -> bt.floatType.coneType; "Short" -> bt.shortType.coneType; "Byte" -> bt.byteType.coneType
-			"Boolean" -> bt.booleanType.coneType; "Char" -> bt.charType.coneType; "String" -> bt.stringType.coneType
-			// Build the cross-type arg from its ClassId LOOKUP TAG, not by resolving the symbol. A self-referential
-			// supertype (`Money : IComparable<Money>`) runs THIS lambda synchronously while `Money` is still being
-			// built (not yet cached), so resolving its symbol here re-enters generation -> StackOverflow. A lookup-tag
-			// cone is a lazy by-ClassId reference; the symbol resolves later, once `Money` is fully built.
-			else -> {
-				// A fully-qualified arg (`P.Money`, from the FQN member/arg encoding) resolves to that exact ClassId;
-				// a bare name resolves by (simpleName, arity 0). Both via a lazy lookup-tag cone (self-ref safe).
-				val cid = if ('.' in name) ClassId(FqName(name.substringBeforeLast('.')), Name.identifier(name.substringAfterLast('.')))
-					else ClrMetadataHolder.classIdFor(name, 0)
-				cid?.let { ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(it), emptyArray(), false) } ?: bt.nullableAnyType.coneType
+		return when (node) {
+			is TypeNode.Tv -> (if (node.scope == "type") tps.getOrNull(node.i)?.symbol?.constructType(emptyArray(), false) else null) ?: bt.nullableAnyType.coneType
+			is TypeNode.Nullable -> superArgCone(node.of, tps).withNullability(true, session.typeContext)
+			is TypeNode.Oblivious -> superArgCone(node.of, tps)
+			is TypeNode.Fqn -> when (node.name) {
+				"Int" -> bt.intType.coneType; "Long" -> bt.longType.coneType; "Double" -> bt.doubleType.coneType
+				"Float" -> bt.floatType.coneType; "Short" -> bt.shortType.coneType; "Byte" -> bt.byteType.coneType
+				"Boolean" -> bt.booleanType.coneType; "Char" -> bt.charType.coneType; "String" -> bt.stringType.coneType
+				else -> {
+					val arity = node.args?.size ?: 0
+					val cid = if ('.' in node.name) ClassId(FqName(node.name.substringBeforeLast('.')), Name.identifier(node.name.substringAfterLast('.')))
+						else ClrMetadataHolder.classIdFor(node.name, arity)
+					if (cid == null) bt.nullableAnyType.coneType
+					else {
+						@Suppress("UNCHECKED_CAST")
+						val args = (node.args?.map { superArgCone(it, tps) } ?: emptyList()).toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
+						ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(cid), args, false)
+					}
+				}
 			}
+			else -> bt.nullableAnyType.coneType
 		}
 	}
-
-	/** Like [coneOf], but also resolves a reference to one of the method's own generic parameters (`T`). owner is
-	 *  null for a top-level function (no enclosing class type params). */
-	private fun coneOfMethod(typeName: String, owner: FirClassSymbol<*>?, methodTypeParams: List<String>,
-	                         tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType =
-		// Resolve the spec through `coneOf`, but with a type-variable resolver so a method type param `T` — even nested
-		// inside a `generic:Box[T]` arg — binds to the function's own type parameter (not the owner's, and not Any?).
-		coneOf(typeName, owner) { name ->
-			val i = methodTypeParams.indexOf(name)
-			if (i >= 0 && i < tps.size) tps[i].symbol.constructType(emptyArray(), false) else null
-		}
 
 	// gap ①: kotlin BUILTIN types that appear as generic-constraint targets but aren't in the injection metadata (the
-	// jar/frontend owns them). The common one: a Kotlin `T : Comparable<T>` bound lowers to the CLR `System.IComparable<T>`,
-	// which facadegen reverses to `generic:Comparable[T]` (MapBound). Resolve that back to the real kotlin.Comparable symbol.
+	// jar/frontend owns them). The common one: a Kotlin `T : Comparable<T>` bound lowers to CLR `System.IComparable<T>`,
+	// which facadegen reverses to `Fqn("Comparable",[T])` (MapBoundT). Resolve that back to the real kotlin.Comparable symbol.
 	private val builtinBoundOpen: Map<String, ClassId> = mapOf(
 		"Comparable" to ClassId(FqName("kotlin"), Name.identifier("Comparable")),
 		"Number" to ClassId(FqName("kotlin"), Name.identifier("Number")),
@@ -957,40 +888,32 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		"CharSequence" to ClassId(FqName("kotlin"), Name.identifier("CharSequence")),
 	)
 
-	/** gap ①: the ClassId of a bound token's OPEN class — an INJECTED type (by name+arity, or a fully-qualified ClassId),
-	 *  or a well-known kotlin builtin. Null => resolves to nothing (the caller drops the bound, restoring an unconstrained
-	 *  `T` exactly as before — never worse than the previous behavior). NOTE: returns a ClassId, NOT a resolved symbol —
-	 *  the caller builds a LAZY lookup-tag cone from it (see boundConeOf), so it never eagerly resolves the symbol. */
+	/** gap ①: the ClassId of a bound's OPEN class — an INJECTED type (by name+arity, or a dotted ClassId), or a
+	 *  well-known kotlin builtin. Null => the caller drops the bound (unconstrained `T`). Returns a ClassId (the caller
+	 *  builds a LAZY lookup-tag cone), never a resolved symbol. */
 	private fun boundClassId(open: String, arity: Int): ClassId? =
 		ClrMetadataHolder.classIdFor(open, arity)
 			?: if ('.' in open) ClassId(FqName(open.substringBeforeLast('.')), Name.identifier(open.substringAfterLast('.'))) else builtinBoundOpen[open]
 
-	/** gap ①: resolve a generic-constraint bound token (`generic:Comparable[T]`, an injected type, or a bare name) to a
-	 *  cone, binding a self-referential arg (`T`) to the declaring type/function's own type parameters (`tps`). Null =>
-	 *  unresolvable (the caller falls back to `Any?`, i.e. no effective bound).
-	 *
-	 *  The open class is built as a LAZY lookup-tag cone (`ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(cid), ...)`),
-	 *  NOT by resolving its symbol — the curiously-recurring BCL bounds (`TSelf : INumber<TSelf>`, the whole numeric
-	 *  tower reachable from a `System.*` injection closure) reference types that are STILL BEING BUILT, so eagerly
-	 *  resolving the symbol here re-enters generation and StackOverflows (the same hazard superArgCone documents). The
-	 *  whole thing is also wrapped fail-soft: a pathological bound restores an unconstrained `T`, never a crash. */
-	private fun boundConeOf(token: String, declaredParams: List<String>, tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType? {
+	/** gap ①: resolve a generic-constraint bound TypeNode (`Fqn("Comparable",[T])`, an injected type, or a `Tv`) to a
+	 *  cone, binding a self-referential arg (`Tv`) to the declaring type/function's own type parameters (`tps`). Null =>
+	 *  unresolvable (the caller falls back to `Any?`). The open class is a LAZY lookup-tag cone (never resolves the symbol
+	 *  eagerly — the curiously-recurring BCL bounds reference types STILL BEING BUILT). Fail-soft: never a crash. */
+	private fun boundConeOf(node: TypeNode, tps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>): ConeKotlinType? {
 		try {
-			val nullable = token.endsWith("?"); val t = token.removeSuffix("?")
-			val tv: (String) -> ConeKotlinType? = { name -> declaredParams.indexOf(name).let { i -> if (i in tps.indices) tps[i].symbol.constructType(emptyArray(), false) else null } }
-			tv(t)?.let { return if (nullable) it.withNullability(true, session.typeContext) else it }   // a whole-bound type-param ref
-			if (t.startsWith("generic:")) {
-				val rest = t.removePrefix("generic:"); val br = rest.indexOf('[')
-				val open = if (br < 0) rest else rest.substring(0, br)
-				val inner = if (br < 0) "" else rest.substring(br + 1, rest.length - 1)
-				val argToks = if (inner.isEmpty()) emptyList() else splitTopLevel(inner)
-				val cid = boundClassId(open, argToks.size) ?: return null
-				val args = argToks.map { coneOf(it, null, tv) }
-				@Suppress("UNCHECKED_CAST")
-				return ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(cid), args.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, nullable)
+			return when (node) {
+				is TypeNode.Tv -> tps.getOrNull(node.i)?.symbol?.constructType(emptyArray(), false)
+				is TypeNode.Nullable -> boundConeOf(node.of, tps)?.withNullability(true, session.typeContext)
+				is TypeNode.Oblivious -> boundConeOf(node.of, tps)
+				is TypeNode.Fqn -> {
+					val cid = boundClassId(node.name, node.args?.size ?: 0) ?: return null
+					@Suppress("UNCHECKED_CAST")
+					val args = (node.args?.map { boundConeOf(it, tps) ?: session.builtinTypes.nullableAnyType.coneType } ?: emptyList())
+						.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
+					ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(cid), args, false)
+				}
+				else -> null
 			}
-			val cid = boundClassId(t, 0) ?: return null
-			return ConeClassLikeTypeImpl(ConeClassLikeLookupTagImpl(cid), emptyArray(), nullable)
 		} catch (e: Throwable) { return null }
 	}
 
@@ -1040,39 +963,14 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		session.symbolProvider.getClassLikeSymbolByClassId(clrEventClassId)?.constructType(arrayOf(handler), false)
 			?: session.builtinTypes.nullableAnyType.coneType
 
-	/** Split a metadata type list (`generic:Box[V]` / `func:[ret,a,b]` children) on commas at bracket-depth 0, so a
-	 *  compound child keeps its own `[...]` intact. Mirrors ilemit's SplitTopLevel — the recursive grammar's parser. */
-	private fun splitTopLevel(s: String): List<String> {
-		if (s.isEmpty()) return emptyList()
-		val res = ArrayList<String>(); var depth = 0; var start = 0
-		for (i in s.indices) when (s[i]) {
-			'[' -> depth++
-			']' -> depth--
-			',' -> if (depth == 0) { res.add(s.substring(start, i)); start = i + 1 }
-		}
-		res.add(s.substring(start))
-		return res
-	}
-
-	/** Decode a meta-encoded default value (`\\`->`\`, `\s`->space, `\0`->NUL). */
-	private fun decodeDefault(s: String): String {
-		val sb = StringBuilder(); var i = 0
-		while (i < s.length) {
-			if (s[i] == '\\' && i + 1 < s.length) { when (s[i + 1]) { '\\' -> sb.append('\\'); 's' -> sb.append(' '); else -> sb.append(s[i + 1]) }; i += 2 }
-			else { sb.append(s[i]); i++ }
-		}
-		return sb.toString()
-	}
-
-	/** `opt:Int=2` -> a `FirLiteralExpression(2)`, so a restored default arg has a REAL constant value fir2ir can inline
-	 *  at the call site (the consumer may omit it ANYWHERE — trailing, named-middle `f(c=9)`, or reordered). */
-	private fun optDefault(optType: String): FirExpression? {
-		if (!optType.startsWith("opt:")) return null
-		val rest = optType.removePrefix("opt:"); val eq = rest.indexOf('='); if (eq < 0) return null
-		val ty = rest.substring(0, eq); val raw = rest.substring(eq + 1)
-		if (raw == "\\0") return buildLiteralExpression(null, ConstantValueKind.Null, null, setType = true)
-		val v = decodeDefault(raw)
-		val (kind, value) = when (ty) {
+	/** `ClrDefault` -> a `FirLiteralExpression`, so a restored default arg has a REAL constant value fir2ir can inline at
+	 *  the call site (the consumer may omit it ANYWHERE — trailing, named-middle `f(c=9)`, or reordered). A `null` value =>
+	 *  the null default; an unbuildable `valueType` (enum/struct) -> null (the caller falls back to @JvmOverloads arities). */
+	private fun optDefault(d: ClrDefault?): FirExpression? {
+		if (d == null) return null
+		if (d.value == null) return buildLiteralExpression(null, ConstantValueKind.Null, null, setType = true)
+		val v = d.value
+		val (kind, value) = when (d.valueType) {
 			"Int" -> ConstantValueKind.Int to (v.toIntOrNull() ?: return null)
 			"Long" -> ConstantValueKind.Long to (v.toLongOrNull() ?: return null)
 			"Short" -> ConstantValueKind.Short to (v.toShortOrNull() ?: return null)
@@ -1090,108 +988,71 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 	/** Apply restored constant defaults to a generated function/ctor's value parameters (replaces the fir2ir-crashing
 	 *  stub the `hasDefaultValue` flag inserts with a real literal). `params` are the value params in order. */
 	private fun applyDefaults(fn: FirFunction, params: List<ClrParam>) {
-		fn.valueParameters.forEachIndexed { i, vp -> if (i < params.size) optDefault(params[i].type)?.let { vp.replaceDefaultValue(it) } }
+		fn.valueParameters.forEachIndexed { i, vp -> if (i < params.size) optDefault(params[i].default)?.let { vp.replaceDefaultValue(it) } }
 	}
 
-	/** True when EVERY default-arg (`opt:`) param has a buildable constant default — then the function/ctor is restored
-	 *  as ONE function with real defaults (the consumer may omit ANY default arg: trailing/named-middle/reordered).
-	 *  A .NET BCL method with an enum/struct default (`NumberStyles = 7`) isn't buildable -> @JvmOverloads fallback
-	 *  (trailing-omission overloads; ilemit fills the .NET default at the call site). Setting `hasDefaultValue` without a
-	 *  real literal crashes fir2ir, so the two strategies must not mix on one function. */
+	/** True when EVERY default-arg param has a buildable constant default -> the function/ctor is restored as ONE function
+	 *  with real defaults (the consumer may omit ANY default arg). A BCL method with an enum/struct default isn't
+	 *  buildable -> @JvmOverloads fallback (trailing-omission arities). The two strategies must not mix on one function. */
 	private fun realDefaults(params: List<ClrParam>): Boolean =
-		params.all { !it.type.startsWith("opt:") || optDefault(it.type) != null }
+		params.all { it.default == null || optDefault(it.default) != null }
 
-	// `tv` resolves a bare type-variable name (a method/function type parameter) to its cone type; null when the name
-	// isn't one. Threaded through every recursion so a `T` nested in `generic:Box[T]`/`array:T`/`func:…` also binds.
-	private fun coneOf(typeName: String, owner: FirClassSymbol<*>?, tv: ((String) -> ConeKotlinType?)? = null): ConeKotlinType {
-		// A trailing `?` -> the Kotlin nullable form `T?` (so a consumer can pass/handle null). From .NET NRT metadata.
-		if (typeName.endsWith("?")) return coneOf(typeName.dropLast(1), owner, tv).withNullability(true, session.typeContext)
-		// A trailing `!` -> a Kotlin PLATFORM (flexible) type `T!` = (T..T?): the .NET reference type carried NO nullability
-		// metadata (an assembly that never opted into NRT), so we neither force non-null nor nullable — the consumer
-		// decides, exactly as Kotlin/JVM treats un-annotated Java. Modeled as ConeFlexibleType(lower = T, upper = T?).
-		if (typeName.endsWith("!")) {
-			val lower = coneOf(typeName.dropLast(1), owner, tv)
-			val upper = lower.withNullability(true, session.typeContext)
-			if (lower is ConeRigidType && upper is ConeRigidType) return ConeFlexibleType(lower, upper, false)
-			return lower
-		}
-		// `opt:T=<const>` marks a default-arg param: the type is T (the `=<const>` default value is applied separately
-		// via applyDefaults -> replaceDefaultValue). Strip both the prefix and the trailing `=<const>`.
-		if (typeName.startsWith("opt:")) return coneOf(typeName.removePrefix("opt:").substringBefore('='), owner, tv)
-		// A .NET out/ref param / ref return (`byref:Int`) -> the intrinsic `ClrRef<Int>`.
-		if (typeName.startsWith("byref:")) return clrRefOf(coneOf(typeName.removePrefix("byref:"), owner, tv))
-		// A .NET `Span<T>` param (`span:Int`) -> the intrinsic `Span<Int>` (the real System.Span<Int>).
-		if (typeName.startsWith("span:")) return spanOf(coneOf(typeName.removePrefix("span:"), owner, tv))
-		// (4) A .NET delegate parameter (`func:<ret>:<arg>,<arg>`) -> a Kotlin function type `(args) -> ret`, so a
-		// lambda binds and overloads disambiguate. The backend builds the real delegate from the call-site param type.
-		if (typeName.startsWith("func:")) {
-			// `func:[ret,arg,arg]` — bracketed, split at bracket-depth 0 so a compound child (`generic:Box[V]`) nests.
-			val parts = splitTopLevel(typeName.removePrefix("func:").removeSurrounding("[", "]"))
-			val ret = parts.firstOrNull() ?: "Unit"; val args = parts.drop(1)
-			return coneFunctionType(args.map { coneOf(it, owner, tv) }, coneOf(ret, owner, tv))
-		}
-		// H2: A `suspend (…) -> T` function TYPE in a position (`sfunc:[ret,arg,arg]`) -> `SuspendFunctionN`. Same
-		// bracketed grammar as `func:`, but builds the SUSPEND function type so a passed lambda is a suspend lambda.
-		// facadegen emits this from the DotKt assembly's KotlinSuspendFunctionType attribute (bir2cir erased the CLR
-		// signature slot to `object`); restoring it here is the consumer half of the suspend-fn-type round-trip.
-		if (typeName.startsWith("sfunc:")) {
-			val parts = splitTopLevel(typeName.removePrefix("sfunc:").removeSurrounding("[", "]"))
-			val ret = parts.firstOrNull() ?: "Unit"; val args = parts.drop(1)
-			return coneSuspendFunctionType(args.map { coneOf(it, owner, tv) }, coneOf(ret, owner, tv))
-		}
-		// (3) A constructed generic (`generic:IList[ResourceDictionary]`, or `generic:Box[T]` of a generic fn) -> the
-		// injected open type applied to the (recursively resolved) args, so chained members / type inference work.
-		if (typeName.startsWith("generic:")) {
-			val rest = typeName.removePrefix("generic:")
-			val br = rest.indexOf('[')
-			val open = if (br < 0) rest else rest.substring(0, br)
-			val inner = if (br < 0) "" else rest.substring(br + 1, rest.length - 1)
-			val argNames = if (inner.isEmpty()) emptyList() else splitTopLevel(inner)
-			val cid = ClrMetadataHolder.classIdFor(open, argNames.size) ?: return session.builtinTypes.nullableAnyType.coneType
-			val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return session.builtinTypes.nullableAnyType.coneType
-			val args = argNames.map { coneOf(it, owner, tv) }
-			@Suppress("UNCHECKED_CAST")
-			return sym.constructType(args.toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>, false)
-		}
-		// A bare type-variable name (`T`): a function type parameter (via `tv`) takes priority, then the owner's own.
-		tv?.invoke(typeName)?.let { return it }
-		owner?.typeParameterSymbols?.firstOrNull { it.name.identifier == typeName }
-			?.let { return it.constructType(emptyArray(), false) }
+	/** Resolve a structured TypeNode (spec §1) to a ConeKotlinType. `methodTps` = the enclosing method's declared type
+	 *  parameters, so a `Tv(scope="method", i)` binds to `methodTps[i]`; a `Tv(scope="type", i)` binds to the owner's
+	 *  i-th type parameter. There is NO type-string parsing — every case dispatches on the node kind. */
+	private fun coneOf(node: TypeNode, owner: FirClassSymbol<*>?, methodTps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>? = null): ConeKotlinType {
 		val bt = session.builtinTypes
-		// A .NET array param/return (`array:String` -> Kotlin `Array<String>` / primitive `IntArray`).
-		if (typeName.startsWith("array:")) {
-			val elem = coneOf(typeName.removePrefix("array:"), owner, tv)
-			val prim = mapOf("Int" to "IntArray", "Long" to "LongArray", "Double" to "DoubleArray", "Float" to "FloatArray",
-				"Short" to "ShortArray", "Byte" to "ByteArray", "Boolean" to "BooleanArray", "Char" to "CharArray")[typeName.removePrefix("array:")]
-			val cid = if (prim != null) ClassId(FqName("kotlin"), Name.identifier(prim))
-				else ClassId(FqName("kotlin"), Name.identifier("Array"))
-			val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return bt.nullableAnyType.coneType
-			return sym.constructType(if (prim != null) emptyArray() else arrayOf(elem), false)
-		}
-		return when (typeName) {
-			"Int" -> bt.intType.coneType
-			"Long" -> bt.longType.coneType
-			"Double" -> bt.doubleType.coneType
-			"Float" -> bt.floatType.coneType
-			"Short" -> bt.shortType.coneType
-			"Byte" -> bt.byteType.coneType
-			"Boolean" -> bt.booleanType.coneType
-			"Char" -> bt.charType.coneType
-			"String" -> bt.stringType.coneType
-			"Unit" -> bt.unitType.coneType
-			else -> {
-				// A fully-qualified cross-type (`Microsoft.UI.Xaml.LaunchActivatedEventArgs`) resolves to that EXACT
-				// ClassId — disambiguating same-simple-name types from different namespaces. A bare name (legacy /
-				// nested fallback) resolves by (simpleName, arity 0).
-				val cid = if ('.' in typeName)
-					ClassId(FqName(typeName.substringBeforeLast('.')), Name.identifier(typeName.substringAfterLast('.')))
-				else ClrMetadataHolder.classIdFor(typeName, 0)
-				val sym = when {
-					cid == null -> null
-					cid == owner?.classId -> owner
-					else -> session.symbolProvider.getClassLikeSymbolByClassId(cid)
+		return when (node) {
+			// `T?` (nullable) and `T!` (oblivious/flexible platform `(T..T?)` — the frontend decides null-safety per use).
+			is TypeNode.Nullable -> coneOf(node.of, owner, methodTps).withNullability(true, session.typeContext)
+			is TypeNode.Oblivious -> {
+				val lower = coneOf(node.of, owner, methodTps)
+				val upper = lower.withNullability(true, session.typeContext)
+				if (lower is ConeRigidType && upper is ConeRigidType) ConeFlexibleType(lower, upper, false) else lower
+			}
+			// A .NET out/ref param / ref return -> the intrinsic `ClrRef<T>`.
+			is TypeNode.ByRef -> clrRefOf(coneOf(node.of, owner, methodTps))
+			// A .NET array -> Kotlin `Array<T>` / a primitive `IntArray`/etc.
+			is TypeNode.Array -> {
+				val prim = (node.elem as? TypeNode.Fqn)?.takeIf { it.args == null }?.name?.let {
+					mapOf("Int" to "IntArray", "Long" to "LongArray", "Double" to "DoubleArray", "Float" to "FloatArray",
+						"Short" to "ShortArray", "Byte" to "ByteArray", "Boolean" to "BooleanArray", "Char" to "CharArray")[it]
 				}
+				val cid = if (prim != null) ClassId(FqName("kotlin"), Name.identifier(prim)) else ClassId(FqName("kotlin"), Name.identifier("Array"))
+				val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return bt.nullableAnyType.coneType
+				sym.constructType(if (prim != null) emptyArray() else arrayOf(coneOf(node.elem, owner, methodTps)), false)
+			}
+			// A .NET delegate / a `suspend (…) -> T` position -> a Kotlin (suspend) function type, so a lambda binds and
+			// overloads disambiguate. A suspend fn makes a passed lambda a SUSPEND lambda (the H2 round-trip).
+			is TypeNode.Fn ->
+				if (node.suspend) coneSuspendFunctionType(node.params.map { coneOf(it, owner, methodTps) }, coneOf(node.ret, owner, methodTps))
+				else coneFunctionType(node.params.map { coneOf(it, owner, methodTps) }, coneOf(node.ret, owner, methodTps))
+			// A positional type variable: scope "method" -> the method's own type param `methodTps[i]`; scope "type" ->
+			// the owner's i-th type parameter. (The `gp:`-name remap is gone — spec §1.)
+			is TypeNode.Tv -> {
+				val sym = if (node.scope == "method") methodTps?.getOrNull(node.i)?.symbol
+					else owner?.typeParameterSymbols?.getOrNull(node.i)
 				sym?.constructType(emptyArray(), false) ?: bt.nullableAnyType.coneType
+			}
+			// A named type: a primitive/builtin, else an injected type by (simpleName, arity) or a dotted `pkg.Name`.
+			is TypeNode.Fqn -> {
+				if (node.args == null) when (node.name) {
+					"Int" -> return bt.intType.coneType; "Long" -> return bt.longType.coneType
+					"Double" -> return bt.doubleType.coneType; "Float" -> return bt.floatType.coneType
+					"Short" -> return bt.shortType.coneType; "Byte" -> return bt.byteType.coneType
+					"Boolean" -> return bt.booleanType.coneType; "Char" -> return bt.charType.coneType
+					"String" -> return bt.stringType.coneType; "Unit" -> return bt.unitType.coneType
+				}
+				val arity = node.args?.size ?: 0
+				val cid = if ('.' in node.name) ClassId(FqName(node.name.substringBeforeLast('.')), Name.identifier(node.name.substringAfterLast('.')))
+					else ClrMetadataHolder.classIdFor(node.name, arity)
+				val sym = when { cid == null -> null; cid == owner?.classId -> owner; else -> session.symbolProvider.getClassLikeSymbolByClassId(cid) }
+				if (sym == null) bt.nullableAnyType.coneType
+				else {
+					@Suppress("UNCHECKED_CAST")
+					val args = (node.args?.map { coneOf(it, owner, methodTps) } ?: emptyList()).toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
+					sym.constructType(args, false)
+				}
 			}
 		}
 	}

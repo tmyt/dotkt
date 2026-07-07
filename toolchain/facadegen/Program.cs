@@ -5,6 +5,9 @@
 //   facadegen --meta <outFile> [--refs a.dll;b.dll;...] <Type.Full.Name>... [--import-list <file>] [--scan-asm <dll>]
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using TN = DotKt.Bir.TypeNode;
 
 static class FacadeGen
 {
@@ -170,7 +173,10 @@ static class FacadeGen
     static int EmitMeta(string outFile, IEnumerable<string> typeNames)
     {
         MetaMode = true;   // enable array/cross-type member support for the FIR-injection path
-        var sb = new StringBuilder();
+        // Structured injection document (spec §5b): `{ "types": [...], "files": [...] }` — decls reusing the
+        // BIR TypeNode / mods vocabulary. The line grammar is retired.
+        var types = new JsonArray();
+        var files = new JsonArray();
         // (6) Reachable-closure auto-injection: the imported types are SEEDS; we BFS out to every type their API
         // surface references (base class chain, implemented interfaces, member return/param/element/generic-arg
         // types) and inject the whole reachable closure. This is what makes chained access (`panel.Children.Add`)
@@ -233,7 +239,7 @@ static class FacadeGen
             // warning rather than aborting the whole façade scan. Emit into a local buffer committed only on success.
             try
             {
-                var one = new StringBuilder(); EmitOneType(t, one); sb.Append(one);
+                EmitOneType(t, types, files);
                 foreach (var r in ReferencedTypes(t))
                     foreach (var u in Unwrap(r))
                         if (ShouldInject(u)) Enqueue(u);
@@ -249,9 +255,10 @@ static class FacadeGen
         // design-coroutine-cold-core-task-bridge.md §5/§12). facadegen only SURFACES the symbol so kotc resolves
         // `task.await()` in a suspend context and emits it as a suspend call; the BODY is bir2cir-lowered at the call
         // site to the TaskAwaiter + Continuation bridge — facadegen binds NO intrinsic here.
-        EmitTaskAwait(done, sb);
+        EmitTaskAwait(done, files);
+        var doc = new JsonObject { ["types"] = types, ["files"] = files };
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
-        File.WriteAllText(outFile, sb.ToString());
+        File.WriteAllText(outFile, doc.ToJsonString(new JsonSerializerOptions { WriteIndented = false }));
         return 0;
     }
 
@@ -267,16 +274,27 @@ static class FacadeGen
     // `Task1` (ALWAYS arity-clashes in the BCL, so KotlinName is stable), the non-generic `Task` -> plain `Task`.
     // So `import System.Threading.Tasks.Task; import kotlin.clr.await; task.await()` resolves on the ONE
     // facadegen-surfaced Task (design §12 "removes the two Tasks").
-    static void EmitTaskAwait(HashSet<string> injected, StringBuilder sb)
+    static void EmitTaskAwait(HashSet<string> injected, JsonArray files)
     {
         var hasGeneric = injected.Contains(TaskGeneric);
         var hasNonGeneric = injected.Contains(TaskNonGeneric);
         if (!hasGeneric && !hasNonGeneric) return;
-        sb.Append("file kotlin.clr kotlin.clr.CoroutinesKt\n");
-        // `suspend fun <T> Task<T>.await(): T` — receiver Task`1 (Kotlin Task1), returns the element type T.
-        if (hasGeneric) sb.Append("tlfun await T final,ext,suspend T __self:generic:Task1[T]\n");
+        var funs = new JsonArray();
+        // `suspend fun <T> Task<T>.await(): T` — receiver Task1<T>, T = the method's own type param 0.
+        if (hasGeneric)
+        {
+            var tp = new JsonArray { new JsonObject { ["name"] = "T" } };
+            var ps = new JsonArray { new JsonObject { ["name"] = "__self",
+                ["type"] = Ty(new TN.Fqn("Task1", new TN[] { new TN.Tv("method", 0) })) } };
+            funs.Add(FunObj("await", new TN.Tv("method", 0), Mods(("ext", true), ("suspend", true)), "public", null, tp, ps));
+        }
         // `suspend fun Task.await(): Unit` — non-generic Task receiver.
-        if (hasNonGeneric) sb.Append("tlfun await Unit final,ext,suspend __self:Task\n");
+        if (hasNonGeneric)
+        {
+            var ps = new JsonArray { new JsonObject { ["name"] = "__self", ["type"] = Ty(new TN.Fqn("Task")) } };
+            funs.Add(FunObj("await", new TN.Fqn("Unit"), Mods(("ext", true), ("suspend", true)), "public", null, null, ps));
+        }
+        files.Add(new JsonObject { ["pkg"] = "kotlin.clr", ["fileClass"] = "kotlin.clr.CoroutinesKt", ["funs"] = funs });
         Console.WriteLine("meta: kotlin.clr.await (Task.await CLR platform suspend extension — bir2cir-lowered)");
     }
 
@@ -323,16 +341,162 @@ static class FacadeGen
         catch { return false; }
     }
 
-    static void EmitOneType(Type t, StringBuilder sb)
+    // ====================================================================================================
+    // Structured injection-document builders (spec §5b) — the decls reuse the shared BIR TypeNode / mods
+    // vocabulary. These replace the retired space-separated line grammar.
+    // ====================================================================================================
+
+    static JsonNode Ty(TN t) => TN.Write(t);
+    static TN AnyQ() => new TN.Nullable(new TN.Fqn("Any"));            // the erased/unresolvable identity ("Any?")
+    static bool IsAnyQ(TN t) => t is TN.Nullable { Of: TN.Fqn { Name: "Any", Args: null } };
+    static bool IsGenericFqn(TN t) => t is TN.Fqn { Args: not null };  // a constructed generic (was `generic:`)
+
+    // A `mods` object with only the TRUE flags present (absent key = false), per spec §2.1.
+    static JsonObject Mods(params (string name, bool on)[] flags)
     {
-            // A Kotlin file-facade ([KotlinFileClass]) -> its statics become TOP-LEVEL Kotlin functions, not a class.
-            if (HasKotlinFileClass(t)) { EmitKotlinFileClass(t, sb); return; }
-            // A .NET enum -> an object whose members are `val` properties typed as the enum itself
-            // (avoids FIR enum-entry synthesis; `DayOfWeek.Friday` still maps to the real enum value).
+        var o = new JsonObject();
+        foreach (var (n, on) in flags) if (on) o[n] = true;
+        return o;
+    }
+
+    // The member modality/visibility split (spec §2.1): modality abstract|open (final = neither) into `mods`,
+    // visibility into a separate `vis` enum. `prot` = .NET Family/FamORAssem -> protected.
+    static (JsonObject mods, string vis) ModVis(bool prot, bool isAbstract, bool isOpen,
+        bool infix = false, bool op = false, bool suspend = false, bool inline = false, bool ext = false)
+    {
+        var mods = new JsonObject();
+        if (isAbstract) mods["abstract"] = true; else if (isOpen) mods["open"] = true;
+        if (infix) mods["infix"] = true; if (op) mods["operator"] = true; if (suspend) mods["suspend"] = true;
+        if (inline) mods["inline"] = true; if (ext) mods["ext"] = true;
+        return (mods, prot ? "protected" : "public");
+    }
+
+    // A `fun` decl `{name, ret, mods, vis?, clrName?, typeParams?, params}` (spec §5b).
+    static JsonObject FunObj(string name, TN ret, JsonObject mods, string vis, string clrName,
+        JsonArray typeParams, JsonArray paramObjs)
+    {
+        var o = new JsonObject { ["name"] = name, ["ret"] = Ty(ret), ["mods"] = mods };
+        if (vis != "public") o["vis"] = vis;
+        if (clrName != null) o["clrName"] = clrName;
+        if (typeParams != null && typeParams.Count > 0) o["typeParams"] = typeParams;
+        o["params"] = paramObjs;
+        return o;
+    }
+
+    // A `prop` decl `{name, type, rw, mods, vis?, clrName?, recv?}` (spec §5b). `recv` (a top-level/member
+    // extension property) is the discriminator vs a plain property.
+    static JsonObject PropObj(string name, TN type, bool rw, JsonObject mods, string vis, string clrName, TN recv)
+    {
+        var o = new JsonObject { ["name"] = name, ["type"] = Ty(type), ["rw"] = rw, ["mods"] = mods };
+        if (vis != "public") o["vis"] = vis;
+        if (clrName != null) o["clrName"] = clrName;
+        if (recv != null) o["recv"] = Ty(recv);
+        return o;
+    }
+
+    // An event decl `{name, handlerRet, handlerParams}` from a delegate's Invoke.
+    static JsonObject EventObj(EventInfo ev, MethodInfo inv, Type self) => new()
+    {
+        ["name"] = ev.Name,
+        ["handlerRet"] = Ty(MapT(inv.ReturnType, self)),
+        ["handlerParams"] = ParamsArr(inv.GetParameters(), self),
+    };
+
+    // A param decl `{name, type, mods?, default?}` (spec §5b). vararg -> mods.vararg (element type in `type`);
+    // a Kotlin default arg -> a structured `default` (no opt: token). __self keeps its name (the ext-receiver marker).
+    static JsonObject ParamObj(ParameterInfo p, int i, Type self)
+    {
+        var o = new JsonObject { ["name"] = MetaParamName(p, i) };
+        var attrs = CustomAttributeData.GetCustomAttributes(p);
+        var sfn = SuspendFnNode(attrs);   // H2: a `suspend (…) -> T` parameter
+        if (sfn != null) { o["type"] = Ty(sfn); return o; }
+        if (p.ParameterType.IsArray && IsParamArray(p))
+        {
+            // vararg: the ELEMENT type rides `type` (the consumer arrays it, picking IntArray/etc. for a primitive
+            // element). A vararg is non-null by nature, so the element carries NO NRT wrapper — an `oblivious`/`nullable`
+            // wrapper here would defeat the consumer's primitive-array detection (`Array<Int!>` instead of `IntArray`).
+            o["type"] = Ty(MapT(p.ParameterType.GetElementType(), self));
+            o["mods"] = Mods(("vararg", true));
+            return o;
+        }
+        o["type"] = Ty(ApplyNrt(MapT(p.ParameterType, self), p.ParameterType, attrs, p.Member as MemberInfo));
+        if (HasDefault(p)) o["default"] = DefaultObj(p, self);
+        return o;
+    }
+
+    static JsonArray ParamsArr(ParameterInfo[] ps, Type self)
+    {
+        var arr = new JsonArray();
+        for (int i = 0; i < ps.Length; i++) arr.Add(ParamObj(ps[i], i, self));
+        return arr;
+    }
+
+    // A structured default-arg value `{valueType, value}` (replaces opt:T=<const>). `value` is a JSON string
+    // literal, or JSON null for a null default; `valueType` is the primitive kind the consumer builds a
+    // FirLiteralExpression of. An unbuildable kind (enum/struct) -> the consumer's @JvmOverloads arity fallback.
+    static JsonObject DefaultObj(ParameterInfo p, Type self)
+    {
+        var o = new JsonObject { ["valueType"] = DefaultValueType(p.ParameterType, self) };
+        object v; try { v = p.RawDefaultValue; } catch { v = null; }
+        if (v == null) o["value"] = null;
+        else o["value"] = v is bool b ? (b ? "true" : "false") : (v.ToString() ?? "");
+        return o;
+    }
+
+    static string DefaultValueType(Type t, Type self)
+    {
+        TN n = MapT(t, self);
+        while (n is TN.Nullable nn) n = nn.Of;
+        while (n is TN.Oblivious oo) n = oo.Of;
+        return n is TN.Fqn f ? f.Name : "";
+    }
+
+    // Type-parameter declarations `[{name, variance?, bounds?:[T]}]` (spec §5b) — folds the retired
+    // tvariance/tbound/mbound lines into structured typeParam objects (variance is interface-type-level only).
+    static JsonArray TypeParamsArr(Type[] genArgs, Type self, bool isInterface, bool typeLevel)
+    {
+        var arr = new JsonArray();
+        foreach (var g in genArgs)
+        {
+            if (!g.IsGenericParameter) continue;
+            var tp = new JsonObject { ["name"] = g.Name };
+            if (typeLevel && isInterface)
+            {
+                var a = g.GenericParameterAttributes;
+                if ((a & GenericParameterAttributes.Covariant) != 0) tp["variance"] = "out";
+                else if ((a & GenericParameterAttributes.Contravariant) != 0) tp["variance"] = "in";
+            }
+            Type[] cons; try { cons = g.GetGenericParameterConstraints(); } catch { cons = Array.Empty<Type>(); }
+            var bounds = new JsonArray();
+            foreach (var c in cons)
+            {
+                if (NO_INJECT.Contains(c.FullName ?? "")) continue;
+                var bt = MapBoundT(c, self);
+                if (IsAnyQ(bt)) continue;
+                bounds.Add(Ty(bt));
+            }
+            if (bounds.Count > 0) tp["bounds"] = bounds;
+            arr.Add(tp);
+        }
+        return arr;
+    }
+
+    static void EmitOneType(Type t, JsonArray types, JsonArray files)
+    {
+        var typeObj = new JsonObject();
+        var ctors = new JsonArray(); var props = new JsonArray(); var funs = new JsonArray();
+        var memberExtProps = new JsonArray(); var events = new JsonArray(); var supers = new JsonArray();
+        var staticFuns = new JsonArray(); var staticProps = new JsonArray(); var staticEvents = new JsonArray();
+            // A Kotlin file-facade ([KotlinFileClass]) -> top-level functions/properties (a `file` decl).
+            if (HasKotlinFileClass(t)) { EmitKotlinFileClass(t, files); return; }
+            // A .NET enum -> an object whose entries are `val` props typed as the enum itself.
             if (t.IsEnum)
             {
-                sb.Append($"object {t.Name} {t.FullName}\n");
-                foreach (var nm in Enum.GetNames(t)) sb.Append($"prop {nm} {t.Name} ro final\n");
+                typeObj["kind"] = "object"; typeObj["name"] = t.Name; typeObj["dotNet"] = t.FullName;
+                foreach (var nm in Enum.GetNames(t))
+                    props.Add(PropObj(nm, new TN.Fqn(t.Name), false, new JsonObject(), "public", null, null));
+                typeObj["props"] = props;
+                types.Add(typeObj);
                 Console.WriteLine($"meta: {t.FullName} (enum)");
                 return;
             }
@@ -341,93 +505,77 @@ static class FacadeGen
             // `generic:IList:Foo` resolves to a real `interface IList<T>` (P1-2). `interface <Name> <DotNet> [<TP>...]`.
             if (t.IsInterface)
             {
-                var iname = KotlinName(t);
-                // app-emit substitution (kotc-level): a @Clr-bound stdlib interface keeps its KOTLIN identity (drives the
-                // injection's namespace/ClassId) and carries the BCL binding via `=`: token[2] = `kotlin.collections.List`1=
-                // System.Collections.Generic.IReadOnlyList`. The injection splits it -> app's clrName binds List->IReadOnlyList.
-                // The .NET-name side is the TRUE CLR name (backtick arity) — see ClrOpenName.
-                var ikt = t.IsGenericTypeDefinition ? ClrOpenName(t) : t.FullName;
-                var iclr = ClrAttrName(t);
-                var idot = iclr != null ? ikt + "=" + iclr : ikt;
-                var itp = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
-                sb.Append($"interface {iname} {idot}{itp}\n");
-                // Round-trip class-nature markers (separate lines so an un-updated injector safely ignores them): a
-                // `fun interface` (SAM) -> `funinterface` (consumer can pass a lambda); a `sealed` interface -> `sealed`.
-                if (HasKotlinFunInterface(t)) sb.Append("funinterface\n");
-                if (HasKotlinSealed(t)) sb.Append("sealed\n");
+                // A @Clr-bound stdlib interface keeps its KOTLIN identity (drives namespace/ClassId) and carries the BCL
+                // binding separately in `clrBinding` (List -> IReadOnlyList). The .NET name is the TRUE CLR name (backtick arity).
+                typeObj["kind"] = "interface"; typeObj["name"] = KotlinName(t);
+                typeObj["dotNet"] = t.IsGenericTypeDefinition ? ClrOpenName(t) : t.FullName;
+                var iclr = ClrAttrName(t); if (iclr != null) typeObj["clrBinding"] = iclr;
+                // Round-trip class-nature: a `fun interface` (SAM) / a `sealed` interface.
+                if (HasKotlinFunInterface(t)) typeObj["funInterface"] = true;
+                if (HasKotlinSealed(t)) typeObj["sealed"] = true;
                 // Round-trip gap ①: declaration-site variance (`out`/`in`) + upper bounds of the interface's type params.
-                if (t.IsGenericTypeDefinition) EmitTypeParamMeta(t.GetGenericArguments(), t, sb, isInterface: true, typeLevel: true);
-                // Interface->interface supertypes (GENERIC only) so an injected `IList<T>` carries its inherited
-                // members (`ICollection<T>.Add`, `IEnumerable<T>.GetEnumerator`) — the `IList<ResourceDictionary>.Add`
-                // case (item 3). Non-generic shadows (IEnumerable) are skipped to avoid GetEnumerator generic-vs-
-                // nongeneric overload clashes. Interface inheritance needs no member satisfaction, so it's safe.
-                var isup = InterfaceSuperTypes(t);
-                if (isup.Count > 0) sb.Append("super " + string.Join(" ", isup) + "\n");
-                // (3)/(6): `for (x in it)` over an INTERFACE-typed receiver (an `IEnumerable<String>` return, an
-                // `IList<Widget>` property): emit the frontend-only iterator marker on `IEnumerable<T>` ITSELF (elem =
-                // its own type param). Every derived interface (ICollection/IList/IReadOnlyList/...) inherits it
-                // through the generic super chain — a single declaration point, so no duplicate-member clashes.
-                // The backend bypasses it and enumerates via GetEnumerator/MoveNext/Current, same as the class path.
+                if (t.IsGenericTypeDefinition)
+                {
+                    var tps = TypeParamsArr(t.GetGenericArguments(), t, isInterface: true, typeLevel: true);
+                    if (tps.Count > 0) typeObj["typeParams"] = tps;
+                }
+                // Interface->interface supertypes (GENERIC only) so an injected `IList<T>` carries its inherited members.
+                foreach (var s in InterfaceSuperTypes(t)) supers.Add(Ty(s));
+                if (supers.Count > 0) typeObj["supers"] = supers;
+                // (3)/(6): `for (x in it)` over an INTERFACE-typed receiver — the frontend-only iterator marker on
+                // `IEnumerable<T>` ITSELF (elem = its own type param 0). Derived interfaces inherit it via the super chain.
                 if (t.FullName == "System.Collections.Generic.IEnumerable`1")
-                    sb.Append($"iterator {t.GetGenericArguments()[0].Name}\n");
+                    typeObj["iteratorElem"] = Ty(new TN.Tv("type", 0));
                 var iseen = new HashSet<string>();
                 var iprops = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (m.IsSpecialName) continue;
-                    // A property accessor (get_size/set_size) that isn't flagged SpecialName (a DotKt PropertyBuilder
-                    // accessor) -> skip; the `prop` line below covers it (else the meta has both `fun get_size` + `prop size`).
+                    // A property accessor (get_size/set_size) not flagged SpecialName -> skip; the `prop` below covers it.
                     if (iprops.Any(p => p.GetMethod == m || p.SetMethod == m)) continue;
-                    // A GENERIC interface method (`U Convert<U>(object)`) is emitted with its own method type-parameter
-                    // tokens, same as the class path: the frontend declares the type params and resolves the
-                    // return/params against them, and fir2ir fake-overrides it onto an implementing class.
                     if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
                     var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                     var ps = m.GetParameters();
-                    // DotKt round-trip (bug ③): an INTERFACE member carries the same no-.NET-analog Kotlin flags a class
-                    // member does — restore infix/operator/suspend + nullability, else the member can't be called as
-                    // `suspend` (nor its `?` seen). A `suspend` member is emitted returning `Task<T>`; gate + map on the
-                    // Kotlin RESULT type, and read the ? from the inner result level (SuspendRetSuffix), not the Task.
+                    // DotKt round-trip: an INTERFACE member carries the same no-.NET-analog Kotlin flags a class member does.
                     var k = KotlinFun(m);
                     var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
                     if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
                     if (!iseen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-                    var iret = k.suspend ? SuspendRetToken(m.ReturnType, t) + SuspendRetSuffix(m) : RetTypeSfx(m, t);
-                    var toks = new List<string> { "fun", m.Name, iret, FunModifier("abstract", k) };
-                    var mclr = ClrAttrName(m);   // ref/runtime split: member substitution for a method (get -> get_Item)
-                    if (mclr != null) toks.Add("clr:" + mclr);
-                    toks.AddRange(gp);
-                    toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t)));
-                    sb.Append(string.Join(" ", toks) + "\n");
-                    if (m.IsGenericMethodDefinition) EmitTypeParamMeta(m.GetGenericArguments(), t, sb, isInterface: false, typeLevel: false);  // gap ①: method type-param bounds
+                    var iret = k.suspend ? SuspendRetNode(m, t) : RetTypeSfxN(m, t);
+                    var (mmods, mvis) = ModVis(false, isAbstract: true, isOpen: false, infix: k.infix, op: k.op, suspend: k.suspend);
+                    funs.Add(FunObj(m.Name, iret, mmods, mvis, ClrAttrName(m),
+                        m.IsGenericMethodDefinition ? TypeParamsArr(m.GetGenericArguments(), t, false, false) : null,
+                        ParamsArr(ps, t)));
                 }
-                // Interface properties (Count, IsReadOnly, ...) + indexer (`this[i]`) -> abstract members so member
-                // access resolves on an interface-typed receiver.
+                // Interface properties (Count, IsReadOnly, ...) -> abstract members.
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType) || !p.CanRead || !iseen.Add("prop:" + p.Name)) continue;
                     var pclr = p.GetMethod != null ? ClrAttrName(p.GetMethod) : null;   // member substitution: size -> Count
-                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p)} {(p.CanWrite ? "rw" : "ro")} abstract{(pclr != null ? " clr:" + pclr : "")}\n");
+                    props.Add(PropObj(p.Name, ApplyNrt(MapT(p.PropertyType, t), p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p),
+                        p.CanWrite, Mods(("abstract", true)), "public", pclr, null));
                 }
-                // (N6) INTERFACE instance events (`INotifyPropertyChanged.PropertyChanged`) -> a `ClrEvent<T>` abstract
-                // member, so `x.PropertyChanged += h` resolves on an interface-typed receiver. Mirrors the class-event
-                // `event` line. When a Kotlin class SUBCLASSES a .NET class that implements such an interface
-                // (`class MyApp : Avalonia.Application`), fir2ir synthesizes a fake-override getter returning
-                // `kotlin.clr.ClrEvent<T>`; kotc's isClrEventProperty now ELIDES that fake-override (a .NET event is never
-                // a real inherited property), so framework subclassing (ktproj-avalonia) stays green.
+                // (N6) INTERFACE instance events -> a `ClrEvent<T>` member.
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
                 {
                     var inv = ev.EventHandlerType?.GetMethod("Invoke");
                     if (inv == null || !iseen.Add("event:" + ev.Name)) continue;
                     var eps = inv.GetParameters();
                     if (!eps.All(p => Supported(p.ParameterType)) || !Supported(inv.ReturnType)) continue;
-                    sb.Append($"event {ev.Name} {Map(inv.ReturnType, t)} {MetaParams(eps, t)}".TrimEnd() + "\n");
+                    events.Add(EventObj(ev, inv, t));
                 }
                 var iix = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .FirstOrDefault(p => p.GetIndexParameters().Length == 1
                         && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));
                 if (iix != null)
-                    sb.Append($"index {Map(iix.GetIndexParameters()[0].ParameterType, t)} {Map(iix.PropertyType, t)} {(iix.CanWrite ? "rw" : "ro")}\n");
+                    typeObj["indexer"] = new JsonObject {
+                        ["indexType"] = Ty(MapT(iix.GetIndexParameters()[0].ParameterType, t)),
+                        ["valueType"] = Ty(MapT(iix.PropertyType, t)),
+                        ["rw"] = iix.CanWrite };
+                if (props.Count > 0) typeObj["props"] = props;
+                if (funs.Count > 0) typeObj["funs"] = funs;
+                if (events.Count > 0) typeObj["events"] = events;
+                types.Add(typeObj);
                 Console.WriteLine($"meta: {t.FullName} (interface)");
                 return;
             }
@@ -440,27 +588,29 @@ static class FacadeGen
                     .Where(c => c.GetParameters().All(p => Supported(p.ParameterType)))
                     .OrderByDescending(c => c.GetParameters().Length).FirstOrDefault();
                 var aps = actor?.GetParameters() ?? Array.Empty<ParameterInfo>();
-                sb.Append($"annotation {t.Name} {t.FullName} {MetaParams(aps, t)}".TrimEnd() + "\n");
+                typeObj["kind"] = "annotation"; typeObj["name"] = t.Name; typeObj["dotNet"] = t.FullName;
+                ctors.Add(new JsonObject { ["params"] = ParamsArr(aps, t) });
+                typeObj["ctors"] = ctors;
+                types.Add(typeObj);
                 Console.WriteLine($"meta: {t.FullName} (annotation)");
                 return;
             }
             var isStatic = t.IsAbstract && t.IsSealed;
-            // A generic type definition (`Collection`1`) -> Kotlin simple name (arity-suffixed iff its name family
-            // clashes — see KotlinName), the TRUE CLR name (`Namespace.Collection`1`, arity-qualified so `Task` and
-            // `Task`1` are distinct tokens), and the type parameter names as trailing tokens.
-            var simpleName = KotlinName(t);
-            var dotNet = t.IsGenericTypeDefinition ? ClrOpenName(t) : t.FullName;
-            var tparams = t.IsGenericTypeDefinition ? " " + string.Join(" ", t.GetGenericArguments().Select(g => g.Name)) : "";
-            // `class <Name> <DotNetName> <open|sealed> [<TypeParam>...]` carries inheritability + generic arity.
-            sb.Append(isStatic ? $"object {simpleName} {dotNet}\n"
-                               : $"class {simpleName} {dotNet} {(t.IsSealed ? "sealed" : "open")}{tparams}\n");
-            // Round-trip: a Kotlin `sealed` class lowered to a CLR abstract (non-sealed) class, so the `open` token above
-            // understates it — mark it `sealed` (a separate line; an un-updated injector ignores it). The consumer sees
-            // `sealed` (restricted subclassing) but the closed inheritor set isn't carried (exhaustive `when` needs `else`).
-            if (!isStatic && HasKotlinSealed(t)) sb.Append("sealed\n");
-            // Round-trip gap ①: upper bounds of the class's type params (a CLR class type param has no variance form, so
-            // only bounds — e.g. `class SortedPair<T : Comparable<T>>` -> `tbound T generic:Comparable[T]`).
-            if (!isStatic && t.IsGenericTypeDefinition) EmitTypeParamMeta(t.GetGenericArguments(), t, sb, isInterface: false, typeLevel: true);
+            // A generic type definition -> Kotlin simple name (arity-suffixed iff its name family clashes) + the TRUE
+            // CLR name (backtick arity) in `dotNet`; the type params carry variance/bounds via `typeParams`. `open` =
+            // inheritability (a non-sealed CLR class).
+            typeObj["kind"] = isStatic ? "object" : "class";
+            typeObj["name"] = KotlinName(t);
+            typeObj["dotNet"] = t.IsGenericTypeDefinition ? ClrOpenName(t) : t.FullName;
+            if (!isStatic) typeObj["open"] = !t.IsSealed;
+            // Round-trip: a Kotlin `sealed` class lowered to a CLR abstract (non-sealed) class.
+            if (!isStatic && HasKotlinSealed(t)) typeObj["sealed"] = true;
+            // Round-trip gap ①: upper bounds of the class's type params (a CLR class type param has no variance form).
+            if (!isStatic && t.IsGenericTypeDefinition)
+            {
+                var tps = TypeParamsArr(t.GetGenericArguments(), t, isInterface: false, typeLevel: true);
+                if (tps.Count > 0) typeObj["typeParams"] = tps;
+            }
             // (1)(2) Supertypes: emit the injectable base class + interfaces so subtype assignability and inherited-
             // member access hold. Members declared in the contiguous injectable base chain ("covered") arrive via
             // those supertypes, so we skip re-declaring them (avoids fake-override clashes). `IM` includes protected.
@@ -469,14 +619,13 @@ static class FacadeGen
             if (!isStatic)
             {
                 // Base class (assignability + inherited/protected members) + the interfaces this class fully and
-                // publicly implements (assignable to an interface parameter, e.g. `Circle` -> `IShape`).
-                var supers = SuperTypes(t).Concat(ClassInterfaceSuperTypes(t)).ToList();
-                if (supers.Count > 0) sb.Append("super " + string.Join(" ", supers) + "\n");
-                // The base edge is emitted for assignability even when the base has no accessible no-arg ctor (e.g.
-                // WinUI UIElement, SafeHandle). In that case the injector must NOT synthesize a `: super()` delegating
-                // call (it would fail — no no-arg base ctor); a façade ctor is never lowered anyway (clrNew). Mark it.
+                // publicly implements (assignable to an interface parameter, e.g. `Circle` -> `IShape`). The base is first.
+                foreach (var s in SuperTypes(t).Concat(ClassInterfaceSuperTypes(t))) supers.Add(Ty(s));
+                if (supers.Count > 0) typeObj["supers"] = supers;
+                // The base edge is emitted for assignability even when the base has no accessible no-arg ctor (WinUI
+                // UIElement, SafeHandle). `baseNoArgCtor=false` tells the injector NOT to synthesize a `: super()` call.
                 if (t.BaseType != null && EmittableBase(t.BaseType) && !HasAccessibleNoArgCtor(t.BaseType))
-                    sb.Append("basector none\n");
+                    typeObj["baseNoArgCtor"] = false;
             }
             var seen = new HashSet<string>();
             var accessorMembers = new HashSet<string>();   // get_/set_ method names surfaced as `prop` (skip in the fun loop)
@@ -490,30 +639,28 @@ static class FacadeGen
                     var ps = c.GetParameters();
                     if (!ps.All(p => Supported(p.ParameterType))) continue;
                     if (!seen.Add("ctor(" + Sig(ps, t) + ")")) continue;
-                    sb.Append($"ctor {MetaParams(ps, t)}".TrimEnd() + "\n");
+                    ctors.Add(new JsonObject { ["params"] = ParamsArr(ps, t) });
                 }
-                // Instance properties (non-indexer). `prop <Name> <KType> <ro|rw> <prot-?open|final|abstract>`.
+                // Instance properties (non-indexer).
                 foreach (var p in t.GetProperties(IM))
                 {
                     if (Covered(p) || p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType)) continue;
                     var prot = Vis(p.GetMethod); if (prot == null) continue;
                     if (!p.CanRead || !seen.Add("prop:" + p.Name)) continue;
                     var get = p.GetMethod;
-                    var isAbstract = get?.IsAbstract ?? false;
                     var virt = (get?.IsVirtual ?? false) && !(get?.IsFinal ?? false);
-                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p)} {(p.CanWrite ? "rw" : "ro")} {Modifier(prot.Value, isAbstract, virt)}\n");
+                    var (pm, pv) = ModVis(prot.Value, get?.IsAbstract ?? false, virt);
+                    props.Add(PropObj(p.Name, ApplyNrt(MapT(p.PropertyType, t), p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p),
+                        p.CanWrite, pm, pv, null, null));
                 }
-                // DotKt round-trip: a Kotlin property's BACKING FIELD is emitted as a plain public field (no .NET
-                // PropertyDef), and a CUSTOM-ACCESSOR property as `get_X`/`set_X` methods. Surface both as Kotlin `prop`s
-                // (the consumer's clrPropGet/Set falls back to the field or calls the accessor). `accessorMembers` keeps
-                // the get_/set_ methods out of the `fun` loop below.
+                // DotKt round-trip: a Kotlin property's BACKING FIELD -> a plain public field; a CUSTOM-ACCESSOR property
+                // -> get_X/set_X methods. Surface both as `prop`s. `accessorMembers` keeps get_/set_ out of the fun loop.
                 accessorMembers.Clear();
                 foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (Covered(f) || !Supported(f.FieldType) || !seen.Add("prop:" + f.Name)) continue;
-                    // `val`/`var ... private set` carries [KotlinReadOnly] -> `ro` (not publicly settable); initonly too.
-                    var rw = (f.IsInitOnly || IsKotlinReadOnly(f)) ? "ro" : "rw";
-                    sb.Append($"prop {f.Name} {FieldType(f, t)} {rw} final\n");
+                    var rw = !(f.IsInitOnly || IsKotlinReadOnly(f));
+                    props.Add(PropObj(f.Name, FieldTypeN(f, t), rw, new JsonObject(), "public", null, null));
                 }
                 foreach (var g in t.GetMethods(IM))
                 {
@@ -523,12 +670,10 @@ static class FacadeGen
                     if (!seen.Add("prop:" + pn)) continue;
                     var setter = t.GetMethods(IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn && m.GetParameters().Length == 1 && Vis(m) != null);
                     accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
-                    var pv = Vis(g).Value;
-                    sb.Append($"prop {pn} {RetTypeSfx(g, t)} {(setter != null ? "rw" : "ro")} {Modifier(pv, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
+                    var (pm, pv) = ModVis(Vis(g).Value, g.IsAbstract, g.IsVirtual && !g.IsFinal);
+                    props.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, pm, pv, null, null));
                 }
-                // MEMBER extension properties (`class C { val T.p get() }`): their accessors are `get_X(__self)` /
-                // `set_X(__self, v)` member methods (a leading `__self` extension receiver, so the 0-param loop above
-                // skipped them). `memextprop <name> <type> <ro|rw> <receiverType> <prot-?final>`.
+                // MEMBER extension properties (`class C { val T.p get() }`): accessors get_X(__self)/set_X(__self, v).
                 foreach (var g in t.GetMethods(IM))
                 {
                     if (g.IsSpecialName || !g.Name.StartsWith("get_")) continue;
@@ -540,9 +685,10 @@ static class FacadeGen
                     var setter = t.GetMethods(IM).FirstOrDefault(m => !m.IsSpecialName && m.Name == "set_" + pn
                         && m.GetParameters().Length == 2 && m.GetParameters()[0].Name == "__self" && Vis(m) != null);
                     accessorMembers.Add(g.Name); if (setter != null) accessorMembers.Add(setter.Name);
-                    sb.Append($"memextprop {pn} {RetTypeSfx(g, t)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)} {Modifier(prot.Value, g.IsAbstract, g.IsVirtual && !g.IsFinal)}\n");
+                    memberExtProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, new JsonObject(),
+                        prot.Value ? "protected" : "public", null, MapT(gps[0].ParameterType, t)));
                 }
-                // Events (I4). `event <Name> <handlerRetKType> <handlerParams...>` from the delegate's Invoke.
+                // Events (I4).
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
                 {
                     if (Covered(ev)) continue;
@@ -550,64 +696,53 @@ static class FacadeGen
                     if (inv == null || !seen.Add("event:" + ev.Name)) continue;
                     var ps = inv.GetParameters();
                     if (!ps.All(p => Supported(p.ParameterType)) || !Supported(inv.ReturnType)) continue;
-                    sb.Append($"event {ev.Name} {Map(inv.ReturnType, t)} {MetaParams(ps, t)}".TrimEnd() + "\n");
+                    events.Add(EventObj(ev, inv, t));
                 }
-                // Indexer (`this[i]`) -> `index <indexKType> <valueKType> <ro|rw>`; injector synthesizes operator get/set.
+                // Indexer (`this[i]`) -> `{indexType, valueType, rw}`; the injector synthesizes operator get/set.
                 var ix = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .FirstOrDefault(p => p.GetIndexParameters().Length == 1
                         && Supported(p.GetIndexParameters()[0].ParameterType) && Supported(p.PropertyType));
                 if (ix != null)
-                    sb.Append($"index {Map(ix.GetIndexParameters()[0].ParameterType, t)} {Map(ix.PropertyType, t)} {(ix.CanWrite ? "rw" : "ro")}\n");
-                // IEnumerable<T> -> a FRONTEND-ONLY `operator fun iterator(): Iterator<T>` so `for (x in it)` resolves
-                // unambiguously (otherwise the stdlib extension iterator()s clash). The backend ignores it and
-                // enumerates via GetEnumerator/MoveNext/Current (forEachInline).
+                    typeObj["indexer"] = new JsonObject {
+                        ["indexType"] = Ty(MapT(ix.GetIndexParameters()[0].ParameterType, t)),
+                        ["valueType"] = Ty(MapT(ix.PropertyType, t)),
+                        ["rw"] = ix.CanWrite };
+                // IEnumerable<T> -> a frontend-only `operator fun iterator(): Iterator<T>`.
                 Type ienum = null;
                 try { ienum = t.GetInterfaces().FirstOrDefault(i => i.IsGenericType
                     && i.GetGenericTypeDefinition().FullName == "System.Collections.Generic.IEnumerable`1"
                     && Supported(i.GetGenericArguments()[0])); } catch { }
                 if (ienum != null)
-                    sb.Append($"iterator {Map(ienum.GetGenericArguments()[0], t)}\n");
-                // Public STATIC members of a NORMAL class (it also has instance members) -> companion-object members,
-                // so `App.Start(cb)` / `App.Current` resolve. `sfun`/`sprop` lines; the injector puts them on a
-                // synthesized companion and the backend emits .NET static calls. (Feedback: WinUI Application.Start.)
+                    typeObj["iteratorElem"] = Ty(MapT(ienum.GetGenericArguments()[0], t));
+                // Public STATIC members of a NORMAL class -> companion-object members (App.Start / App.Current).
                 foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Static))
                     if (Supported(f.FieldType) && seen.Add("sfield:" + f.Name))
-                        sb.Append($"sprop {f.Name} {FieldType(f, t)} ro\n");
+                        staticProps.Add(PropObj(f.Name, FieldTypeN(f, t), false, new JsonObject(), "public", null, null));
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
                     if (p.GetIndexParameters().Length == 0 && Supported(p.PropertyType) && p.CanRead && seen.Add("sprop:" + p.Name))
-                        sb.Append($"sprop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p)} {(p.CanWrite ? "rw" : "ro")}\n");
+                        staticProps.Add(PropObj(p.Name, ApplyNrt(MapT(p.PropertyType, t), p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p),
+                            p.CanWrite, new JsonObject(), "public", null, null));
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
                 {
-                    // A CONSTRUCTED generic static (`Task.FromResult<Int>`) is skipped; a generic METHOD DEFINITION
-                    // (`Task.FromResult<T>`/`Task.Run<T>`) is now surfaced so Kotlin can BUILD a `Task<T>` — its method
-                    // type params + any T-typed param/return map to bare type-param tokens (Map returns the param Name),
-                    // mirroring the `fun`/`tlfun` generic-method emission. kotc's generic-static companion builder resolves
-                    // `Task.FromResult(42)` -> `FromResult<Int>(42): Task<Int>` from this shape (bundle-6 async interop §②).
+                    // A generic METHOD DEFINITION (`Task.FromResult<T>`/`Task.Run<T>`) is surfaced so Kotlin can BUILD a
+                    // `Task<T>` (async interop §②); a CONSTRUCTED generic static is skipped.
                     if (m.IsSpecialName || OBJECT_MEMBERS.Contains(m.Name) || (m.IsGenericMethod && !m.IsGenericMethodDefinition)) continue;
                     var sgp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                     var sps = m.GetParameters();
                     if (!sps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
                     if (!seen.Add("sm:" + m.Name + "<" + string.Join(",", sgp) + ">(" + Sig(sps, t) + ")")) continue;
-                    // `sfun <Name> <ret> [<TypeParam>...] [<param>:<type>]*` — bare (colon-free) type-param tokens sit
-                    // between the return type and the params (identical to `fun`/`tlfun`); an empty `sgp` leaves the
-                    // non-generic shape byte-for-byte unchanged (additive).
-                    var stoks = new List<string> { "sfun", m.Name, MapRet(m.ReturnType, t) };
-                    stoks.AddRange(sgp);
-                    stoks.AddRange(sps.Select((p, i) => ParamTok(p, i, t)));
-                    sb.Append(string.Join(" ", stoks) + "\n");
-                    if (m.IsGenericMethodDefinition) EmitTypeParamMeta(m.GetGenericArguments(), t, sb, isInterface: false, typeLevel: false);  // gap ①: method type-param bounds
+                    staticFuns.Add(FunObj(m.Name, MapRetT(m.ReturnType, t), new JsonObject(), "public", null,
+                        m.IsGenericMethodDefinition ? TypeParamsArr(m.GetGenericArguments(), t, false, false) : null,
+                        ParamsArr(sps, t)));
                 }
-                // (N6) Public STATIC events of a NORMAL class (`TaskScheduler.UnobservedTaskException`) -> a companion
-                // `ClrEvent<T>` property, subscribed via `Type.Event += h` / `-= h`. `sevent` mirrors `sfun`/`sprop`; the
-                // injector puts it on the synthesized companion and the backend emits a STATIC add/remove accessor (the
-                // companion receiver -> clrPropGet static=true -> bir2cir ClrEventOperatorBinding -> Call, not Callvirt).
+                // (N6) Public STATIC events of a NORMAL class -> a companion `ClrEvent<T>` property.
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Static))
                 {
                     var inv = ev.EventHandlerType?.GetMethod("Invoke");
                     if (inv == null || !seen.Add("sevent:" + ev.Name)) continue;
                     var eps = inv.GetParameters();
                     if (!eps.All(p => Supported(p.ParameterType)) || !Supported(inv.ReturnType)) continue;
-                    sb.Append($"sevent {ev.Name} {Map(inv.ReturnType, t)} {MetaParams(eps, t)}".TrimEnd() + "\n");
+                    staticEvents.Add(EventObj(ev, inv, t));
                 }
             }
             else
@@ -616,24 +751,22 @@ static class FacadeGen
                 foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Static))
                 {
                     if (!Supported(f.FieldType) || !seen.Add("sfield:" + f.Name)) continue;
-                    sb.Append($"prop {f.Name} {FieldType(f, t)} ro final\n");
+                    props.Add(PropObj(f.Name, FieldTypeN(f, t), false, new JsonObject(), "public", null, null));
                 }
                 foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Static))
                 {
                     if (p.GetIndexParameters().Length > 0 || !Supported(p.PropertyType) || !p.CanRead || !seen.Add("sprop:" + p.Name)) continue;
-                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p)} {(p.CanWrite ? "rw" : "ro")} final\n");
+                    props.Add(PropObj(p.Name, ApplyNrt(MapT(p.PropertyType, t), p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p),
+                        p.CanWrite, new JsonObject(), "public", null, null));
                 }
-                // (N6) Public STATIC events of a STATIC class (`Console.CancelKeyPress`) -> a `ClrEvent<T>` member of the
-                // object; `Console.CancelKeyPress += h` reads the object member (recv = the object value -> clrPropGet
-                // static=true -> a STATIC add/remove accessor). An `object`'s members ARE its statics, so this is `event`
-                // (not `sevent` — there is no separate companion).
+                // (N6) Public STATIC events of a STATIC class (`Console.CancelKeyPress`) -> a `ClrEvent<T>` member of the object.
                 foreach (var ev in t.GetEvents(BindingFlags.Public | BindingFlags.Static))
                 {
                     var inv = ev.EventHandlerType?.GetMethod("Invoke");
                     if (inv == null || !seen.Add("event:" + ev.Name)) continue;
                     var eps = inv.GetParameters();
                     if (!eps.All(p => Supported(p.ParameterType)) || !Supported(inv.ReturnType)) continue;
-                    sb.Append($"event {ev.Name} {Map(inv.ReturnType, t)} {MetaParams(eps, t)}".TrimEnd() + "\n");
+                    events.Add(EventObj(ev, inv, t));
                 }
             }
             var flags = BindingFlags.Public | BindingFlags.NonPublic | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
@@ -645,67 +778,59 @@ static class FacadeGen
                 if (m.DeclaringType?.FullName == "System.Object") continue;
                 if (Covered(m)) continue;                 // arrives via an injected supertype
                 var prot = Vis(m); if (prot == null) continue;   // skip private/internal; keep public + protected
-                // A generic method (`SizeOf<T>()`) is now emitted: its method type params + any T-typed param/return
-                // map to the param names (Map returns the generic-parameter Name). Only simple shapes survive Supported.
                 if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
-                var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                 var ps = m.GetParameters();
                 // DotKt round-trip: a `suspend fun` is emitted returning Task<T>; restore the result type T and gate on it.
                 var k = KotlinFun(m);
                 var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
                 if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
+                var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
                 if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-                // `fun <Name> <ret> <prot-?open|final|abstract>[,infix][,operator][,suspend] [<TypeParam>...] [<param>:<type>]*`
-                // — the modifier stays a single whitespace-free token; bare trailing tokens (no `:`) are type params.
                 var virt = m.IsVirtual && !m.IsFinal;
-                var retTok = k.suspend ? SuspendRetToken(m.ReturnType, t) + SuspendRetSuffix(m) : RetTypeSfx(m, t);
-                // A MEMBER extension function (`class C { fun T.f() }`) -> first param `__self`; `,ext` so the injector
-                // restores the extension receiver. A C#-origin `[Extension]` static method is ALSO an extension (its first
-                // param — any name — is the receiver). `,inline` carries the spliceable body (composes with suspend/generic).
+                var retNode = k.suspend ? SuspendRetNode(m, t) : RetTypeSfxN(m, t);
+                // A MEMBER extension function (`class C { fun T.f() }`) -> first param `__self`; a C#-origin `[Extension]`
+                // static is ALSO an extension. `inline` carries the spliceable body (composes with suspend/generic).
                 var isExt = ps.Length > 0 && (ps[0].Name == "__self" || IsExtensionMethod(m));
-                var mod = FunModifier(Modifier(prot.Value, m.IsAbstract, virt), k) + (KotlinInlineBody(m) != null ? ",inline" : "") + (isExt ? ",ext" : "");
-                var toks = new List<string> { "fun", m.Name, retTok, mod };
-                if (GenuineNet(t)) toks.Add("clr:" + m.Name);   // identity BCL-member binding (see GenuineNet) -> direct .NET call
-                toks.AddRange(gp);
-                toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t)));
-                sb.Append(string.Join(" ", toks) + "\n");
-                if (m.IsGenericMethodDefinition) EmitTypeParamMeta(m.GetGenericArguments(), t, sb, isInterface: false, typeLevel: false);  // gap ①: method type-param bounds
+                var (mm, mv) = ModVis(prot.Value, m.IsAbstract, virt, infix: k.infix, op: k.op, suspend: k.suspend,
+                    inline: KotlinInlineBody(m) != null, ext: isExt);
+                funs.Add(FunObj(m.Name, retNode, mm, mv, GenuineNet(t) ? m.Name : null,   // identity BCL-member binding
+                    m.IsGenericMethodDefinition ? TypeParamsArr(m.GetGenericArguments(), t, false, false) : null,
+                    ParamsArr(ps, t)));
             }
-            // .NET OPERATORS (`op_Addition`/`op_UnaryNegation`/…) are STATIC methods (IsSpecialName, so skipped above).
-            // Surface them as Kotlin `operator fun`s on a genuine .NET value/ref type: the LEFT operand is the receiver,
-            // so a binary op drops param[0] (kept as the receiver) and a unary op has no value params. Each carries
-            // `clr:op_*` so the consumer's backend re-prepends the receiver and emits the static `op_*` call
-            // (BirEmitter `member.startsWith("op_")`). Only when param[0] IS the declaring type (a member operator on `t`).
+            // .NET OPERATORS (`op_Addition`/…) are STATIC methods -> Kotlin `operator fun`s on a genuine .NET type: the
+            // LEFT operand is the receiver, so a binary op drops param[0] and a unary op has no value params. `clrName =
+            // op_*` re-prepends the receiver + emits the static call. Only when param[0] IS the declaring type.
             if (!isStatic && GenuineNet(t))
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
                 {
                     if (!m.IsSpecialName || !OPERATOR_NAMES.TryGetValue(m.Name, out var kop)) continue;
                     var unary = UNARY_OPERATORS.Contains(kop);
                     var ps = m.GetParameters();
-                    // The LEFT operand must be the declaring type itself (so the operator becomes a member on `t`). Bug ⑤:
-                    // an OPEN generic type (`Vector<T>`) has a non-null definition FullName, but the operand `Vector<T>`
-                    // (referencing the type's own param) has a NULL FullName -> the old `FullName != FullName` guard was
-                    // ALWAYS true and dropped every generic-type operator. Compare the operand's OPEN definition against `t`.
                     var p0 = ps.Length > 0 ? ps[0].ParameterType : null;
                     var p0def = p0 != null && p0.IsGenericType ? p0.GetGenericTypeDefinition() : p0;
                     if (ps.Length != (unary ? 1 : 2) || p0def == null || (p0def != t && p0def.FullName != t.FullName)) continue;
                     if (!ps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
                     var vps = unary ? Array.Empty<ParameterInfo>() : ps.Skip(1).ToArray();
                     if (!seen.Add("op:" + kop + "(" + Sig(vps, t) + ")")) continue;
-                    var toks = new List<string> { "fun", kop, MapRet(m.ReturnType, t), "final,operator", "clr:" + m.Name };
-                    toks.AddRange(vps.Select((p, i) => ParamTok(p, i, t)));
-                    sb.Append(string.Join(" ", toks) + "\n");
+                    funs.Add(FunObj(kop, MapRetT(m.ReturnType, t), Mods(("operator", true)), "public", m.Name, null, ParamsArr(vps, t)));
                 }
-            // (explicit impl) Emit concrete stubs for in-scope members of the generic interfaces this class implements
-            // but doesn't expose PUBLICLY (e.g. `List<T>.IsReadOnly`, an explicit `ICollection<T>` impl). `c : I` in
-            // .NET guarantees `c` implements every member of `I`, so we can always stub the non-public ones — that
-            // makes the injected class satisfy `ICollection<T>`/`IList<T>` (so `List<T>` is assignable to them) with no
-            // abstract member left for a user subclass. The backend resolves the call through the interface (P1-2).
-            if (!isStatic) EmitExplicitInterfaceStubs(t, sb, seen);
+            // (explicit impl) Concrete stubs for in-scope members of the generic interfaces this class implements but
+            // doesn't expose PUBLICLY, so the injected class satisfies `ICollection<T>`/`IList<T>` with no abstract member left.
+            if (!isStatic) EmitExplicitInterfaceStubs(t, props, funs, seen);
+            // Commit the type: attach only the non-empty sub-arrays (the consumer defaults absent = empty).
+            if (ctors.Count > 0) typeObj["ctors"] = ctors;
+            if (props.Count > 0) typeObj["props"] = props;
+            if (funs.Count > 0) typeObj["funs"] = funs;
+            if (memberExtProps.Count > 0) typeObj["memberExtProps"] = memberExtProps;
+            if (events.Count > 0) typeObj["events"] = events;
+            if (staticFuns.Count > 0) typeObj["staticFuns"] = staticFuns;
+            if (staticProps.Count > 0) typeObj["staticProps"] = staticProps;
+            if (staticEvents.Count > 0) typeObj["staticEvents"] = staticEvents;
+            types.Add(typeObj);
             Console.WriteLine($"meta: {t.FullName} ({(isStatic ? "object" : "class")})");
     }
 
-    static void EmitExplicitInterfaceStubs(Type t, StringBuilder sb, HashSet<string> seen)
+    static void EmitExplicitInterfaceStubs(Type t, JsonArray props, JsonArray funs, HashSet<string> seen)
     {
         var pubProps = new HashSet<string>();
         try { foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance)) if (p.GetIndexParameters().Length == 0) pubProps.Add(p.Name); } catch { }
@@ -719,7 +844,8 @@ static class FacadeGen
                 {
                     if (p.GetIndexParameters().Length > 0 || !p.CanRead || !Supported(p.PropertyType)) continue;
                     if (pubProps.Contains(p.Name) || !seen.Add("prop:" + p.Name)) continue;
-                    sb.Append($"prop {p.Name} {Map(p.PropertyType, t)}{PropSuffix(p)} {(p.CanWrite ? "rw" : "ro")} final\n");
+                    props.Add(PropObj(p.Name, ApplyNrt(MapT(p.PropertyType, t), p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p),
+                        p.CanWrite, new JsonObject(), "public", null, null));
                 }
                 foreach (var m in i.GetMethods())
                 {
@@ -727,7 +853,7 @@ static class FacadeGen
                     var ps = m.GetParameters();
                     if (!ps.All(x => Supported(x.ParameterType)) || !Supported(m.ReturnType)) continue;
                     if (!seen.Add(m.Name + "<>(" + Sig(ps, t) + ")")) continue;   // already a public member -> skip
-                    sb.Append($"fun {m.Name} {MapRet(m.ReturnType, t)} final {MetaParams(ps, t)}".TrimEnd() + "\n");
+                    funs.Add(FunObj(m.Name, MapRetT(m.ReturnType, t), new JsonObject(), "public", null, null, ParamsArr(ps, t)));
                 }
             }
             catch { }
@@ -924,17 +1050,17 @@ static class FacadeGen
     // `generic:Open:args` (via Map). Non-generic interfaces are skipped — they'd reintroduce the non-generic
     // GetEnumerator/etc. alongside the generic one (an overload clash). Interface inheritance imposes no member-
     // satisfaction obligation, so (unlike class-implements-interface) this is safe.
-    static List<string> InterfaceSuperTypes(Type t)
+    static List<TN> InterfaceSuperTypes(Type t)
     {
-        Type[] all; try { all = t.GetInterfaces(); } catch { return new List<string>(); }
+        Type[] all; try { all = t.GetInterfaces(); } catch { return new List<TN>(); }
         var implied = new HashSet<Type>();
         foreach (var i in all) { try { foreach (var sub in i.GetInterfaces()) implied.Add(sub); } catch { } }
-        var supers = new List<string>(); var seen = new HashSet<string>();
+        var supers = new List<TN>(); var seen = new HashSet<string>();
         foreach (var i in all)
         {
             if (implied.Contains(i) || !i.IsGenericType) continue;   // direct + generic only
-            var enc = Map(i, t);                                      // -> "generic:Open:args" for a constructed generic
-            if (enc.StartsWith("generic:") && seen.Add(enc)) supers.Add(enc);
+            var node = MapT(i, t);                                    // a constructed generic -> Fqn with args
+            if (IsGenericFqn(node) && seen.Add(TN.ToJson(node))) supers.Add(node);
         }
         return supers;
     }
@@ -966,7 +1092,7 @@ static class FacadeGen
         return res;
     }
 
-    static List<string> ClassInterfaceSuperTypes(Type c)
+    static List<TN> ClassInterfaceSuperTypes(Type c)
     {
         // The MAXIMAL set of interfaces `c` satisfies. We consider ALL implemented interfaces, not just "direct" ones,
         // so e.g. `List<T>` links every interface it implements (`IList<T>`, `IReadOnlyList<T>`, ...); the explicit
@@ -975,13 +1101,13 @@ static class FacadeGen
         // Drop any satisfiable interface implied by another satisfiable one (avoid redundant supertype edges).
         var implied = new HashSet<Type>();
         foreach (var i in sat) { try { foreach (var s in i.GetInterfaces()) implied.Add(s); } catch { } }
-        var supers = new List<string>(); var seen = new HashSet<string>();
+        var supers = new List<TN>(); var seen = new HashSet<string>();
         foreach (var i in sat)
         {
             if (implied.Contains(i)) continue;
-            var enc = i.IsGenericType ? Map(i, c) : SimpleName(i);
-            if (enc == "Any?" || (i.IsGenericType && !enc.StartsWith("generic:"))) continue;
-            if (seen.Add(enc)) supers.Add(enc);
+            var node = i.IsGenericType ? MapT(i, c) : new TN.Fqn(SimpleName(i));
+            if (IsAnyQ(node) || (i.IsGenericType && !IsGenericFqn(node))) continue;
+            if (seen.Add(TN.ToJson(node))) supers.Add(node);
         }
         return supers;
     }
@@ -1004,19 +1130,11 @@ static class FacadeGen
     // always line up with the interface contract (e.g. a generic `Collection<T>` vs the non-generic `IList.Add`),
     // which would leave "unimplemented abstract member" errors. Class-hierarchy assignability (the WinUI control
     // pass-through case — feedback item 1) is the priority; interfaces come with the P1-2 generic work.
-    static List<string> SuperTypes(Type t)
+    static List<TN> SuperTypes(Type t)
     {
-        var supers = new List<string>();
-        if (t.BaseType != null && EmittableBase(t.BaseType)) supers.Add(SimpleName(t.BaseType));
+        var supers = new List<TN>();
+        if (t.BaseType != null && EmittableBase(t.BaseType)) supers.Add(new TN.Fqn(SimpleName(t.BaseType)));
         return supers;
-    }
-
-    // (2) Combined visibility+modality token for a member: optional `prot-` (protected) prefix + abstract|open|final.
-    // A single space-free token so it can't be mistaken for a trailing type-parameter token in the `fun` line.
-    static string Modifier(bool prot, bool isAbstract, bool isVirtual)
-    {
-        var m = isAbstract ? "abstract" : (isVirtual ? "open" : "final");
-        return prot ? "prot-" + m : m;
     }
 
     // ----- DotKt metadata: restore Kotlin modifiers a DotKt-compiled assembly stamped (no .NET analog) -----
@@ -1111,27 +1229,19 @@ static class FacadeGen
         return 0; // no context -> oblivious (the assembly didn't opt into NRT)
     }
 
-    // The nullability suffix on a REFERENCE-type position's token: "" non-null, "?" nullable, "!" platform/flexible
-    // (the position carries no nullability info, à la Kotlin/JVM's `T!`). Read UNIFORMLY from .NET NRT metadata for any
-    // assembly — DotKt now emits NRT for its own output too (a non-null default [NullableContext(1)] per type plus a
-    // [Nullable(2)] on each nullable reference position). Value types / byref get no suffix (a value-type `X?` is the
-    // structural `Nullable<X>` token); generic params DO read NRT (a nullable `T?` carries [Nullable(2)]).
-    static string RefSuffix(Type t, IList<CustomAttributeData> elementAttrs, MemberInfo context)
+    // Wrap a mapped TypeNode in the tri-state NRT nullability of a REFERENCE-type position (spec §1): bare = not-null
+    // (NullableAttribute=1), `Nullable` = `T?` (=2), `Oblivious` = `T!` (=0, NRT-oblivious / platform). Read UNIFORMLY
+    // from .NET NRT metadata for any assembly (DotKt emits NRT for its own output too). Value types / byref get no
+    // wrapper (a value-type `X?` is already the structural `Nullable`); a node that ALREADY carries nullability
+    // (`Any?`, a value-type `X?`) is left untouched (never double-wrapped).
+    static TN ApplyNrt(TN node, Type t, IList<CustomAttributeData> attrs, MemberInfo ctx)
     {
-        if (t.IsValueType || t.IsByRef || t.IsPointer) return "";
-        byte b = NrtByteOf(elementAttrs);
-        if (b == 255) b = NrtContextOf(context);
-        return b == 2 ? "?" : b == 0 ? "!" : "";
+        if (t.IsValueType || t.IsByRef || t.IsPointer) return node;
+        if (node is TN.Nullable || node is TN.Oblivious) return node;
+        byte b = NrtByteOf(attrs);
+        if (b == 255) b = NrtContextOf(ctx);
+        return b == 2 ? new TN.Nullable(node) : b == 0 ? new TN.Oblivious(node) : node;
     }
-
-    // The nullability suffix for a method/getter RETURN value (its [Nullable] lives on the return parameter).
-    static string RetSuffix(MethodInfo m) =>
-        RefSuffix(m.ReturnType, CustomAttributeData.GetCustomAttributes(m.ReturnParameter), m);
-
-    // The nullability suffix for a .NET property (its [Nullable] sits on the property; the type's [NullableContext] is
-    // the default).
-    static string PropSuffix(PropertyInfo p) =>
-        RefSuffix(p.PropertyType, CustomAttributeData.GetCustomAttributes(p), p);
 
     const string KInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     // The carried BIR body of an inline+lambda fn ([KotlinInline]), or null. Splice-able by a consuming module.
@@ -1155,7 +1265,12 @@ static class FacadeGen
     // BIR string). SuspendFnMeta reads it via the shared TypeNode contract and re-serializes it into the injector's META
     // grammar `sfunc:[ret,arg,arg]` (bracketed) that ClrTypeInjection.coneOf restores to `kotlin.coroutines.SuspendFunctionN`.
     const string KSuspendFnAttr = "DotKt.Runtime.CompilerServices.KotlinSuspendFunctionTypeAttribute";
-    static string SuspendFnMeta(IList<CustomAttributeData> attrs)
+    // The pre-erasure `suspend (…) -> T` type carried in [KotlinSuspendFunctionType] as a STRUCTURED TypeNode JSON —
+    // an `fn` node with `suspend:true` (bir2cir erased the CLR slot to `object`). Now embedded DIRECTLY as the shared
+    // TypeNode (no META-string re-serialization): the injector's coneOf sees the `fn` and restores SuspendFunctionN.
+    // Null when absent/malformed, or when it carries an extension receiver (coneSuspendFunctionType takes params+ret
+    // only) -> the caller keeps the plain erased slot (suspend lost, safe).
+    static TN SuspendFnNode(IList<CustomAttributeData> attrs)
     {
         string shape = null;
         try
@@ -1166,111 +1281,53 @@ static class FacadeGen
         }
         catch { }
         if (string.IsNullOrEmpty(shape)) return null;
-        DotKt.Bir.TypeNode node;
-        try { node = DotKt.Bir.TypeNode.Parse(shape); }
-        catch { return null; }   // malformed/legacy payload -> caller keeps the plain erased type (suspend lost, safe)
-        // Only a suspend function type carries an sfunc: shape; an extension-receiver form (recv) has no meta counterpart
-        // (coneSuspendFunctionType takes params+ret only) -> degrade rather than drop the receiver silently.
-        if (node is not DotKt.Bir.TypeNode.Fn { Suspend: true, Recv: null } fn) return null;
-        var metaRet = TypeNodeToMeta(fn.Ret);
-        if (metaRet == null) return null;   // unconvertible shape -> keep the plain erased type (suspend lost, safe)
-        var metaArgs = new List<string>();
-        foreach (var p in fn.Params)
-        {
-            var m = TypeNodeToMeta(p);
-            if (m == null) return null;
-            metaArgs.Add(m);
-        }
-        return "sfunc:[" + string.Join(",", new[] { metaRet }.Concat(metaArgs)) + "]";
-    }
-
-    // Translate a structured TypeNode (a KotlinSuspendFunctionType child) into a facadegen META token (the vocabulary
-    // ClrTypeInjection.coneOf consumes). Returns null when not confidently translatable (constructed generics / user /
-    // referenced types / type variables / arrays / nested fn) — the whole suspend-fn-type shape then degrades to the
-    // plain erased slot (suspend lost, but safe). Mirrors the coverage of the retired BIR-string BirTokenToMeta.
-    static string TypeNodeToMeta(DotKt.Bir.TypeNode t)
-    {
-        switch (t)
-        {
-            case DotKt.Bir.TypeNode.Nullable n:
-            {
-                var inner = TypeNodeToMeta(n.Of);
-                return inner == null ? null : inner + "?";
-            }
-            case DotKt.Bir.TypeNode.Fqn { Args: null } f:
-                return f.Name switch
-                {
-                    "kotlin.Int" => "Int",
-                    "kotlin.Long" => "Long",
-                    "kotlin.Short" => "Short",
-                    "kotlin.Byte" => "Byte",
-                    "kotlin.Boolean" => "Boolean",
-                    "kotlin.Char" => "Char",
-                    "kotlin.Double" => "Double",
-                    "kotlin.Float" => "Float",
-                    "kotlin.String" => "String",
-                    "kotlin.Unit" => "Unit",
-                    "kotlin.Any" => "Any?",
-                    _ => null,
-                };
-            default:
-                return null;
-        }
+        try { var node = TN.Parse(shape); return node is TN.Fn { Suspend: true, Recv: null } ? node : null; }
+        catch { return null; }
     }
 
     // H2: a FIELD typed `suspend (…) -> T` -> restore the suspend function type from [KotlinSuspendFunctionType],
     // else the plain mapped field type.
-    static string FieldType(FieldInfo f, Type self) => SuspendFnMeta(f.GetCustomAttributesData()) ?? Map(f.FieldType, self);
+    static TN FieldTypeN(FieldInfo f, Type self) => SuspendFnNode(f.GetCustomAttributesData()) ?? MapT(f.FieldType, self);
     // H2: a non-suspend method / property getter that RETURNS a `suspend (…) -> T` value -> restore it from the return
     // parameter's [KotlinSuspendFunctionType], else the plain mapped return type. (A `suspend fun` itself returns
     // Task/Task<T> and is restored via SuspendRetToken — a different path, untouched.)
-    static string RetType(MethodInfo m, Type self) => SuspendFnMeta(CustomAttributeData.GetCustomAttributes(m.ReturnParameter)) ?? MapRet(m.ReturnType, self);
-    // As RetType, but folds the nullability suffix for callers that append RetSuffix — a restored suspend function type
-    // carries its own shape and takes no `?`/`!` suffix (the erased `object` slot's NRT is meaningless for it).
-    static string RetTypeSfx(MethodInfo m, Type self) => SuspendFnMeta(CustomAttributeData.GetCustomAttributes(m.ReturnParameter)) ?? (MapRet(m.ReturnType, self) + RetSuffix(m));
+    // A method/getter RETURN type as a TypeNode, folding the tri-state NRT nullability. A restored suspend function
+    // type carries its own shape and takes no NRT wrapper (the erased `object` slot's NRT is meaningless for it).
+    static TN RetTypeSfxN(MethodInfo m, Type self)
+    {
+        var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
+        return SuspendFnNode(attrs) ?? ApplyNrt(MapRetT(m.ReturnType, self), m.ReturnType, attrs, m);
+    }
 
     // A `suspend fun` is emitted returning Task / Task<T>; restore the Kotlin result type and gate Supported on it.
     static bool IsTask1(Type t) => t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Threading.Tasks.Task`1";
     static bool SuspendRetSupported(Type ret) => IsTask1(ret) ? Supported(ret.GetGenericArguments()[0]) : ret.FullName == "System.Threading.Tasks.Task";
-    static string SuspendRetToken(Type ret, Type self) => IsTask1(ret) ? MapRet(ret.GetGenericArguments()[0], self) : "Unit";
-    // The Kotlin nullability of a `suspend fun` rides its RESULT type (the INNER T of the emitted `Task<T>`), NOT the
-    // always-non-null `Task` wrapper. So read the inner NRT position (index 1 of the return's flattened [Nullable] byte
-    // array — index 0 is the Task itself), robust to both the scalar [Nullable(2)] and the array [Nullable({1,2})]
-    // encodings. Bug ②: the old code fed the whole `Task<T>` return through RetSuffix, which read index 0 and so lost
-    // (array form) or mis-attributed the `?`. A value-type result (`Task<Int>`) carries no NRT slot -> no suffix, and a
-    // non-generic `Task` (suspend -> Unit) has no result type.
-    static string SuspendRetSuffix(MethodInfo m)
+
+    // The Kotlin RESULT type of a `suspend fun` (the INNER T of the emitted `Task<T>`, or Unit for a non-generic Task),
+    // as a TypeNode. Its nullability rides the result (index 1 of the return's flattened [Nullable] byte array — index 0
+    // is the always-non-null `Task` wrapper), robust to the scalar and array NRT encodings. A value-type result carries
+    // no NRT slot -> no wrapper.
+    static TN SuspendRetNode(MethodInfo m, Type self)
     {
-        if (!IsTask1(m.ReturnType)) return "";
-        if (m.ReturnType.GetGenericArguments()[0].IsValueType) return "";
+        if (!IsTask1(m.ReturnType)) return new TN.Fqn("Unit");
+        var inner = m.ReturnType.GetGenericArguments()[0];
+        var node = MapRetT(inner, self);
+        if (inner.IsValueType || node is TN.Nullable || node is TN.Oblivious) return node;
         var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
         byte b = NrtByteAt(attrs, 1);
         if (b == 255) b = NrtContextOf(m);
-        return b == 2 ? "?" : b == 0 ? "!" : "";
+        return b == 2 ? new TN.Nullable(node) : b == 0 ? new TN.Oblivious(node) : node;
     }
 
-    // Build the `fun`/`tlfun`/`sfun` modifier token, folding in the no-.NET-analog Kotlin flags as comma-suffixes
-    // (`final,infix`, `open,suspend`, ...) — kept a SINGLE whitespace-free token so the meta parser's type-param
-    // split (bare trailing tokens) is unaffected.
-    static string FunModifier(string baseMod, (bool infix, bool op, bool suspend) k)
+    // Emit a Kotlin file-facade class ([KotlinFileClass]) as a `file` decl: top-level functions (a `fun` per public
+    // static method, Main + object members skipped) + top-level (extension) properties.
+    static void EmitKotlinFileClass(Type t, JsonArray files)
     {
-        if (k.infix) baseMod += ",infix";
-        if (k.op) baseMod += ",operator";
-        if (k.suspend) baseMod += ",suspend";
-        return baseMod;
-    }
-
-    // Emit a Kotlin file-facade class ([KotlinFileClass]) as TOP-LEVEL functions in its .NET namespace (= Kotlin package),
-    // instead of a class: `file <package>` then a `tlfun` per public static method (Main and object members skipped).
-    static void EmitKotlinFileClass(Type t, StringBuilder sb)
-    {
-        // `file <package> <fileClassFqn>` — the package is the Kotlin namespace; the .NET FQN is where the backend
-        // emits the static call for each restored top-level function. Empty package ("") is the root package.
-        sb.Append($"file {(string.IsNullOrEmpty(t.Namespace) ? "-" : t.Namespace)} {t.FullName}\n");
+        var funs = new JsonArray();
+        var tlProps = new JsonArray();
         var seen = new HashSet<string>();
-        // Extension properties (`val T.p`) compile to top-level `get_p(__self: T)` (+ `set_p(__self, v)` for `var`). Surface
-        // them as `tlextprop <name> <type> <ro|rw> <receiverType>` so the injector restores `val/var T.p`; the consumer's
-        // `x.p` then routes to the static get_/set_. These accessor methods are kept out of the `tlfun` loop below.
+        // Extension properties (`val T.p`) compile to top-level get_p(__self: T) (+ set_p for `var`). Surface them as a
+        // top-level `prop` WITH a `recv` (the discriminator vs a plain top-level prop); the consumer restores `val/var T.p`.
         var extPropMembers = new HashSet<string>();
         foreach (var g in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
@@ -1282,112 +1339,66 @@ static class FacadeGen
             var setter = t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
                 .FirstOrDefault(s => !s.IsSpecialName && s.Name == "set_" + pn && s.GetParameters().Length == 2 && s.GetParameters()[0].Name == "__self");
             extPropMembers.Add(g.Name); if (setter != null) extPropMembers.Add(setter.Name);
-            sb.Append($"tlextprop {pn} {RetTypeSfx(g, t)} {(setter != null ? "rw" : "ro")} {Map(gps[0].ParameterType, t)}\n");
+            tlProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, Mods(("ext", true)), "public", null, MapT(gps[0].ParameterType, t)));
         }
         foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
             if (m.IsSpecialName || m.Name == "Main" || OBJECT_MEMBERS.Contains(m.Name) || extPropMembers.Contains(m.Name)) continue;
             if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
-            var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
             var ps = m.GetParameters();
             var k = KotlinFun(m);
             var retOk = k.suspend ? SuspendRetSupported(m.ReturnType) : Supported(m.ReturnType);
             if (!ps.All(p => Supported(p.ParameterType)) || !retOk) continue;
+            var gp = m.IsGenericMethodDefinition ? m.GetGenericArguments().Select(g => g.Name).ToList() : new List<string>();
             if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
-            var ret = k.suspend ? SuspendRetToken(m.ReturnType, t) + SuspendRetSuffix(m) : RetTypeSfx(m, t);
-            // `,inline` tells the injector to mark the fn `inline` (so a non-local return through the lambda is accepted);
-            // the body itself stays in the assembly's [KotlinInline] and is read by the consumer's ilemit at splice time.
-            // An extension fun's receiver is emitted as the first param `__self` (DotKt convention) -> mark `,ext` so the
-            // injector restores it as an extension receiver (composes with operator -> top-level extension operators).
-            // ref/rt app-frontend de-duplication: skip a NON-EXTENSION tlfun (a plain factory like listOf/mapOf) whose
-            // return is an unresolvable kotlin generic (List/Set/Map/...) -> it injects as Any? and is AMBIGUOUS with the
-            // JVM kotlin-stdlib.jar's same-signature factory (overload resolution can't pick by return). EXTENSION funs
-            // (toList/sorted/reversed: Iterable<T>.f()) are KEPT: the injected version SHADOWS the jar's (receiver-based
-            // resolution), so no ambiguity, and they route cross-module via the round-trip path (else the jar's body is
-            // a local callStatic -> "static method not found"). @Clr / concretely-typed tlfuns (uppercase->String) kept.
+            var ret = k.suspend ? SuspendRetNode(m, t) : RetTypeSfxN(m, t);
+            // An extension fun's receiver is the first param `__self` -> `mods.ext`. `mods.inline` carries the spliceable
+            // body (in the assembly's [KotlinInline], read by the consumer's ilemit at splice time).
             var isExt = ps.Length > 0 && ps[0].Name == "__self";
-            // Bug ④: this ambiguity-with-the-jar guard is SPECIFIC to the kotlin-stdlib.jar's own factory functions
-            // (listOf/mapOf/setOf...), which live in a `kotlin.*` package. Restricting it there stops it from SILENTLY
-            // discarding a legitimate USER top-level function that merely returns a collection (`fun makeList(): List<Int>`
-            // in a user library) — that has no jar counterpart to collide with. Any actual drop is now logged (no silent
-            // truncation).
-            if (!isExt && (t.Namespace ?? "").StartsWith("kotlin")
-                && System.Text.RegularExpressions.Regex.IsMatch(ret, @"^generic:(List|MutableList|Set|MutableSet|Map|MutableMap|Collection|MutableCollection|Iterable|MutableIterable|Pair|Triple|HashMap|LinkedHashMap|HashSet|LinkedHashSet|ArrayList|Sequence)\["))
+            // ref/rt de-dup (Bug ④): skip a NON-EXTENSION factory (listOf/mapOf) whose return is an unresolvable kotlin
+            // collection -> AMBIGUOUS with the jar's same-signature factory. Scoped to `kotlin.*` (a user `fun
+            // makeList(): List<Int>` has no jar counterpart). EXTENSION funs are KEPT (receiver-based, no ambiguity).
+            if (!isExt && (t.Namespace ?? "").StartsWith("kotlin") && IsStdlibCollectionFqn(ret))
             {
-                Console.Error.WriteLine($"note: dropped stdlib collection factory tlfun {(string.IsNullOrEmpty(t.Namespace) ? "" : t.Namespace + ".")}{m.Name} (its {ret.Substring(0, ret.IndexOf('['))} return is ambiguous with the kotlin-stdlib.jar's same-signature factory)");
+                Console.Error.WriteLine($"note: dropped stdlib collection factory tlfun {(string.IsNullOrEmpty(t.Namespace) ? "" : t.Namespace + ".")}{m.Name} (its {(ret as TN.Fqn)?.Name} return is ambiguous with the kotlin-stdlib.jar's same-signature factory)");
                 continue;
             }
-            // An EXTENSION whose RECEIVER maps to Any? (an unresolvable type, e.g. CharSequence) is a CATCH-ALL: it
-            // matches every receiver and mis-wins overload resolution against the specific Iterable<T> overload (so
-            // `list.count{}`/`.filter{}` resolve to the _StringsKt Any? overload, not _CollectionsKt). Skip it; the jar
-            // provides the CharSequence form and the specific Iterable/Array overloads handle the real receivers.
-            if (isExt && ParamTok(ps[0], 0, t).EndsWith(":Any?")) continue;
-            var mod = FunModifier("final", k) + (KotlinInlineBody(m) != null ? ",inline" : "") + (isExt ? ",ext" : "");
-            var toks = new List<string> { "tlfun", m.Name, ret, mod };
-            toks.AddRange(gp);
-            toks.AddRange(ps.Select((p, i) => ParamTok(p, i, t)));
-            sb.Append(string.Join(" ", toks) + "\n");
-            if (m.IsGenericMethodDefinition) EmitTypeParamMeta(m.GetGenericArguments(), t, sb, isInterface: false, typeLevel: false);  // gap ①: method type-param bounds
+            // An EXTENSION whose RECEIVER maps to Any? is a CATCH-ALL that mis-wins overload resolution; skip it.
+            if (isExt && IsAnyQ(MapT(ps[0].ParameterType, t))) continue;
+            var (mm, mv) = ModVis(false, isAbstract: false, isOpen: false, infix: k.infix, op: k.op, suspend: k.suspend,
+                inline: KotlinInlineBody(m) != null, ext: isExt);
+            funs.Add(FunObj(m.Name, ret, mm, mv, null,
+                m.IsGenericMethodDefinition ? TypeParamsArr(m.GetGenericArguments(), t, false, false) : null,
+                ParamsArr(ps, t)));
         }
-        // #34b: a top-level `val`/`var` (with a backing field) compiles to a plain Public|Static FIELD on the file class
-        // (no get_/set_ accessor — only backing-field-LESS props, i.e. extension/computed props, get accessors). Surface
-        // each such field as `tlprop <name> <type> <ro|rw>` so the injector restores a Kotlin top-level property whose
-        // read/write the backend routes to the referenced file class's static field (mirrors the `tlfun`/`tlextprop`
-        // top-level path; the .NET file-class FQN rides the enclosing `file` line, as for tlfun/tlextprop). `val` vs
-        // `var` is read from [KotlinReadOnly] / InitOnly (kotc stamps the round-trip read-only flag on the field).
+        // #34b: a top-level `val`/`var` (with a backing field) compiles to a plain static FIELD -> a top-level `prop`
+        // WITHOUT a recv (the backend routes read/write to that static field). `val` vs `var` from [KotlinReadOnly]/InitOnly.
         foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
-            // Skip compiler-synthetic backing fields (`<...>`/`$...`) — only genuine top-level `val`/`var`s surface.
             if (f.Name.Length == 0 || f.Name[0] == '<' || f.Name[0] == '$') continue;
             if (!Supported(f.FieldType) || !seen.Add("tlprop:" + f.Name)) continue;
-            var rw = (f.IsInitOnly || IsKotlinReadOnly(f)) ? "ro" : "rw";
-            sb.Append($"tlprop {f.Name} {FieldType(f, t)} {rw}\n");
+            var rw = !(f.IsInitOnly || IsKotlinReadOnly(f));
+            tlProps.Add(PropObj(f.Name, FieldTypeN(f, t), rw, new JsonObject(), "public", null, null));
         }
+        // A `file` decl: the package (empty = root) + the .NET file-class FQN (where the backend emits the static call).
+        var fileObj = new JsonObject { ["pkg"] = string.IsNullOrEmpty(t.Namespace) ? "" : t.Namespace, ["fileClass"] = t.FullName };
+        if (funs.Count > 0) fileObj["funs"] = funs;
+        if (tlProps.Count > 0) fileObj["props"] = tlProps;
+        files.Add(fileObj);
         Console.WriteLine($"meta: {t.FullName} (kotlin file -> top-level)");
     }
+
+    // The kotlin.* stdlib collection factory return names whose constructed-generic form is ambiguous with the jar.
+    static readonly HashSet<string> STDLIB_COLLECTION_NAMES = new()
+    { "List", "MutableList", "Set", "MutableSet", "Map", "MutableMap", "Collection", "MutableCollection", "Iterable",
+      "MutableIterable", "Pair", "Triple", "HashMap", "LinkedHashMap", "HashSet", "LinkedHashSet", "ArrayList", "Sequence" };
+    static bool IsStdlibCollectionFqn(TN t) => t is TN.Fqn { Args: not null } f && STDLIB_COLLECTION_NAMES.Contains(f.Name);
 
     // null => skip (private/internal); false => public; true => protected (Family / protected-internal). Frameworks
     // (WinUI/WPF/Avalonia) override protected virtual lifecycle methods, so these MUST be injected (item 2).
     static bool? Vis(MethodBase m) =>
         m == null ? null : m.IsPublic ? false : (m.IsFamily || m.IsFamilyOrAssembly) ? true : (bool?)null;
 
-    // A method's RETURN type: a `ref T` return surfaces as plain `T` (a plain `val x = m()` is a value copy; the live
-    // ref is captured only via `byref(m())`). Parameters keep their byref (-> ClrRef<T>) via Map.
-    static string MapRet(Type t, Type self) => Map(t.IsByRef ? t.GetElementType() : t, self);
-
-    static string MetaParams(ParameterInfo[] ps, Type self) =>
-        string.Join(" ", ps.Select((p, i) => ParamTok(p, i, self)));
-
-    // `<name>:<type>` for a meta param; a [ParamArray] (Kotlin `vararg`) -> `<name>:vararg:<elementType>` so the
-    // injector restores a `vararg <name>: <elem>` (a cross-module consumer can then call `f(1, 2, 3)`).
-    static string ParamTok(ParameterInfo p, int i, Type self)
-    {
-        // The nullability suffix (`?` nullable / `!` platform) rides the END of the type token (the injector strips it),
-        // read uniformly from .NET NRT metadata (DotKt emits it for its own output too) by RefSuffix.
-        var attrs = CustomAttributeData.GetCustomAttributes(p);
-        // H2: a `suspend (…) -> T` parameter — bir2cir erased the CLR slot to `object`; restore the suspend function
-        // type from the carried [KotlinSuspendFunctionType] shape so a passed lambda re-binds as a SUSPEND lambda.
-        var sfn = SuspendFnMeta(attrs);
-        if (sfn != null) return $"{MetaParamName(p, i)}:{sfn}";
-        var nul = RefSuffix(p.ParameterType, attrs, p.Member as MemberInfo);
-        if (p.ParameterType.IsArray && IsParamArray(p))
-            return $"{MetaParamName(p, i)}:vararg:{Map(p.ParameterType.GetElementType(), self)}{nul}";
-        var t = Map(p.ParameterType, self);
-        // A Kotlin default arg ([Optional]+DefaultParameterValue) -> `opt:<type>=<constant>` so the injector restores a
-        // REAL default value (the consumer can omit it ANYWHERE, incl. a named middle omission `f(c=9)` — fir2ir inlines
-        // the constant). The value rides the token (spaces escaped) so the meta's space-split is unaffected.
-        if (HasDefault(p)) t = "opt:" + t + "=" + EncodeDefault(p.RawDefaultValue);
-        return $"{MetaParamName(p, i)}:{t}{nul}";
-    }
-    // Encode a constant default value for the meta token: `\` -> `\\`, ` ` -> `\s` (so a String default with spaces
-    // stays one whitespace-free token); `null` -> `\0`. bool lowercased to match Kotlin. The injector decodes + builds
-    // a FirLiteralExpression of the param's type.
-    static string EncodeDefault(object v)
-    {
-        if (v == null) return "\\0";   // null marker (a real string is backslash-escaped, so it can never produce `\0`)
-        string s = v is bool b ? (b ? "true" : "false") : v.ToString() ?? "";
-        return s.Replace("\\", "\\\\").Replace(" ", "\\s");
-    }
     static bool HasDefault(ParameterInfo p) { try { return p.HasDefaultValue && !p.IsOut; } catch { return false; } }
     static bool IsParamArray(ParameterInfo p)
     {
@@ -1419,192 +1430,120 @@ static class FacadeGen
                 // it ContainsGenericParameters (the method's T), but each arg resolves, so the `generic:` encoding works.
                 || (MetaMode && t.IsGenericType && t.GetGenericArguments().All(Supported)))));
 
-    // Map a .NET type to a Kotlin façade type. Primitives map precisely; generic params map to their
-    // name (T); the type itself maps to its façade; everything else degrades to Any?.
-    static string Map(Type t, Type self)
+    // Map a .NET type to a Kotlin TypeNode (spec §1). Primitives -> kotlin Fqn; a generic parameter -> a POSITIONAL
+    // scope-tagged `tv`; a delegate -> an `fn`; a byref -> `byRef`; everything else via CrossTypeT / degrade to Any?.
+    static TN MapT(Type t, Type self)
     {
-        // An `out`/`ref` param or a `ref`-returning method (T&) surfaces as the intrinsic `ClrRef<T>` (meta `byref:T`):
-        // the caller wraps an arg in `byref(x)`, and a ref return is `by`-delegatable.
-        if (t.IsByRef) return "byref:" + Map(t.GetElementType(), self);
-        // Compare by FullName, not typeof identity: types reflected from LoadFrom'd reference assemblies
-        // (I2) have a different assembly identity than the runtime's, so `t == typeof(...)` would miss.
-        if (t.FullName == "System.Void") return "Unit";
-        if (t.IsGenericParameter) return t.Name;
-        // A .NET `Span<T>` parameter -> the intrinsic `Span<T>` (meta `span:T`); the caller can pass `buf.asSpan()`.
+        // An `out`/`ref` param / `ref`-returning method (T&) -> `byRef` (the injector surfaces it as ClrRef<T>).
+        if (t.IsByRef) return new TN.ByRef(MapT(t.GetElementType(), self));
+        // Compare by FullName, not typeof identity (LoadFrom'd reference assemblies have a different assembly identity).
+        if (t.FullName == "System.Void") return new TN.Fqn("Unit");
+        // A generic parameter -> a positional `tv`: scope "method" (the method's own params, CLR !!i) when declared on a
+        // method, else scope "type" (the enclosing type's params, CLR !i). Non-nested here, so position IS the flattened index.
+        if (t.IsGenericParameter)
+            return new TN.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
+        // A .NET `Span<T>` -> the intrinsic `kotlin.clr.Span<T>` (resolves via the dotted-FQN path; the caller passes buf.asSpan()).
         if (t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Span`1")
-            return "span:" + Map(t.GetGenericArguments()[0], self);
-        // A .NET `X?` (Nullable<X>, a nullable value type — e.g. WinUI CheckBox.IsChecked is `bool?`) -> Kotlin's
-        // nullable form `X?`, NOT the literal generic `Nullable<X>` (Kotlin treats that as a distinct type, so a plain
-        // `X` couldn't be assigned to it). The backend already represents a value-type `X?` as System.Nullable<X>.
+            return new TN.Fqn("kotlin.clr.Span", new[] { MapT(t.GetGenericArguments()[0], self) });
+        // A .NET `X?` (Nullable<X>, a nullable value type) -> Kotlin's `X?`, NOT the literal generic `Nullable<X>`.
         if (t.IsGenericType && t.GetGenericTypeDefinition().FullName == "System.Nullable`1")
         {
-            var inner = Map(t.GetGenericArguments()[0], self);
-            return inner == "Any?" ? "Any?" : inner + "?";
+            var inner = MapT(t.GetGenericArguments()[0], self);
+            return IsAnyQ(inner) ? AnyQ() : new TN.Nullable(inner);
         }
-        // (4) A .NET delegate type -> a Kotlin function type `func:[<ret>,<arg>,<arg>]` (meta/injection path only).
-        // A lambda then binds to the delegate parameter and overloads disambiguate by arity; the backend builds the
-        // SPECIFIC delegate from the parameter type resolved at the call site (so the delegate name isn't needed in
-        // the metadata). Args/ret may themselves be compound (`generic:Box[V]`) — the bracketed grammar nests them.
+        // (4) A .NET delegate -> a Kotlin function type `fn`. A lambda then binds to the delegate parameter and overloads
+        // disambiguate by arity; the backend builds the SPECIFIC delegate from the call-site param type.
         if (MetaMode && IsDelegate(t))
         {
             var inv = t.GetMethod("Invoke");
             if (inv != null && inv.GetParameters().All(p => Supported(p.ParameterType)) && Supported(inv.ReturnType))
             {
-                var dret = MapRet(inv.ReturnType, self);
-                var dps = inv.GetParameters().Select(p => Map(p.ParameterType, self)).ToList();
-                // `func:[ret,arg,arg]` — bracketed so a compound child (its own `[...]`) keeps its commas; the
-                // injector splits at bracket-depth 0. Only an unresolved child (`Any?`) sinks the whole delegate.
-                if (dret != "Any?" && dps.All(a => a != "Any?"))
-                    return "func:[" + string.Join(",", new[] { dret }.Concat(dps)) + "]";
+                var dret = MapRetT(inv.ReturnType, self);
+                var dps = inv.GetParameters().Select(p => MapT(p.ParameterType, self)).ToArray();
+                if (!IsAnyQ(dret) && dps.All(a => !IsAnyQ(a))) return new TN.Fn(false, dret, dps);
             }
-            return "Any?";
+            return AnyQ();
         }
-        // Only short-circuit to the enclosing type's name when the FullName MATCH is real. Bug N3 (twin of ⑤ at :643):
-        // an OPEN constructed generic (`Task<T>`, `IEnumerable<Task<T>>`) referencing a type param has a NULL FullName,
-        // so `null == null` matched here and returned KotlinName(self) — the ENCLOSING type — instead of recursing into
-        // the arg. `WhenAll<T>(IEnumerable<Task<T>>)` then surfaced as `IEnumerable[IEnumerable]`. Require non-null.
-        if (t.FullName != null && t.FullName == self.FullName) return KotlinName(self);
+        // Only short-circuit to the enclosing type's name when the FullName MATCH is real (an OPEN constructed generic
+        // referencing a type param has a NULL FullName -> must recurse into the arg, not return the enclosing type).
+        if (t.FullName != null && t.FullName == self.FullName) return new TN.Fqn(KotlinName(self));
         return t.FullName switch
         {
-            "System.Int32" => "Int",
-            "System.Int64" => "Long",
-            "System.Int16" => "Short",
-            // Unsigned .NET primitives map to Kotlin's unsigned types (System.UInt32 == kotlin.UInt, etc.). Without
-            // these they fell to CrossType -> the bare name "UInt32", which doesn't unify with `UInt` (e.g. a `uint`
-            // parameter like WinUI's `Bootstrap.Initialize(uint)`).
-            "System.UInt32" => "UInt",
-            "System.UInt64" => "ULong",
-            "System.UInt16" => "UShort",
-            // Kotlin `Byte` is signed (== System.SByte). System.Byte is unsigned (strictly Kotlin `UByte`), but we map
-            // it to `Byte` so Int literals stay assignable (e.g. `Stream.WriteByte(65)`); the bit pattern matches for
-            // 0..127. (Revisit if a use needs the full 0..255 range typed as UByte.)
-            "System.SByte" => "Byte",
-            "System.Byte" => "Byte",
-            "System.Boolean" => "Boolean",
-            "System.Double" => "Double",
-            "System.Single" => "Float",
-            "System.Char" => "Char",
-            "System.String" => "String",
-            "System.Object" => "Any?",
-            _ => MetaMode ? CrossType(t) : "Any?",
+            "System.Int32" => new TN.Fqn("Int"),
+            "System.Int64" => new TN.Fqn("Long"),
+            "System.Int16" => new TN.Fqn("Short"),
+            // Unsigned .NET primitives -> Kotlin's unsigned types (System.UInt32 == kotlin.UInt, etc.).
+            "System.UInt32" => new TN.Fqn("UInt"),
+            "System.UInt64" => new TN.Fqn("ULong"),
+            "System.UInt16" => new TN.Fqn("UShort"),
+            // Kotlin `Byte` is signed (== System.SByte). System.Byte (unsigned) maps to `Byte` so Int literals stay
+            // assignable (bit pattern matches for 0..127).
+            "System.SByte" => new TN.Fqn("Byte"),
+            "System.Byte" => new TN.Fqn("Byte"),
+            "System.Boolean" => new TN.Fqn("Boolean"),
+            "System.Double" => new TN.Fqn("Double"),
+            "System.Single" => new TN.Fqn("Float"),
+            "System.Char" => new TN.Fqn("Char"),
+            "System.String" => new TN.Fqn("String"),
+            "System.Object" => AnyQ(),
+            _ => MetaMode ? CrossTypeT(t) : AnyQ(),
         };
     }
 
-    // Diagnostic: a member's signature type could not be projected to a real Kotlin/.NET type and degraded to `Any?`.
-    // Left silent, this SILENTLY WEAKENS the injected member's overload (an `Any?` param/return matches too much). Emit
-    // a `note:` to stderr (the build-log wrapper surfaces it) so the degradation is visible, not invisible. Deduped by
-    // the dropped type's identity — one note per distinct type, not per reference — to keep a large closure quiet.
+    // A method's RETURN type: a `ref T` return surfaces as plain `T` (a plain `val x = m()` is a value copy).
+    static TN MapRetT(Type t, Type self) => MapT(t.IsByRef ? t.GetElementType() : t, self);
+
+    // Diagnostic: a member's signature type degraded to `Any?` — logged once per distinct type (a silent `Any?` weakens
+    // the injected overload). Returns the "Any?" node so callers can use it directly.
     static readonly HashSet<string> s_degradeNoted = new(StringComparer.Ordinal);
-    static string DegradeToAny(Type t, string reason)
+    static TN DegradeToAny(Type t, string reason)
     {
         var id = t?.FullName ?? t?.Name ?? "<null>";
         if (s_degradeNoted.Add(id))
             Console.Error.WriteLine($"note: signature type degraded to Any? ({reason}): {id}");
-        return "Any?";
+        return AnyQ();
     }
 
-    // A reference to another .NET type -> emit its SIMPLE name. The FIR injector resolves it to that type IF it is
-    // also injected (imported); otherwise it falls back to Any?. Generics/arrays/byref/global types stay Any? here.
-    static string CrossType(Type t)
+    // A reference to another .NET type -> a Fqn (simple name / dotted FQN) the injector resolves IF injected, else Any?.
+    static TN CrossTypeT(Type t)
     {
-        if (t.IsArray) { var e = Map(t.GetElementType(), t); return e == "Any?" ? "Any?" : "array:" + e; }
-        // A root-namespace GENERIC user type (`Box<T>`, t.Namespace empty) is handled by the generic branch below; only
-        // reject an empty namespace for NON-generic types (a global/compiler type with no useful injectable identity).
-        if (t.IsByRef || t.IsPointer || t.IsGenericParameter || (string.IsNullOrEmpty(t.Namespace) && !t.IsGenericType)) return "Any?";
-        // (3) A constructed generic (`IList<ResourceDictionary>`) -> `generic:<OpenSimple>[<arg>,<arg>]` so the
-        // injector resolves it to `IList<ResourceDictionary>` (chained `.Add`/`for-in` work). Requires the open def
-        // injectable; args may be compound (nested `generic:`/`func:`) — the bracketed grammar nests them recursively.
+        if (t.IsArray) { var e = MapT(t.GetElementType(), t); return IsAnyQ(e) ? AnyQ() : new TN.Array(e); }
+        // A root-namespace GENERIC user type (`Box<T>`) is handled by the generic branch; only reject an empty namespace
+        // for NON-generic types (a global/compiler type with no useful injectable identity).
+        if (t.IsByRef || t.IsPointer || t.IsGenericParameter || (string.IsNullOrEmpty(t.Namespace) && !t.IsGenericType)) return AnyQ();
+        // (3) A constructed generic (`IList<ResourceDictionary>`) -> `Fqn(OpenSimple, [args])`; args may nest.
         if (t.IsGenericType)
         {
             var open = t.GetGenericTypeDefinition();
-            // A NESTED generic definition (`List`1+Enumerator`) is NOT injected (ShouldInject rejects it: the meta
-            // grammar has no CLR-addressable open name for it, and the old rendering produced the nonexistent FQN
-            // `System.Collections.Generic.Enumerator`). Degrade the reference to Any? — consistent with the injected set.
+            // A NESTED generic definition (`List`1+Enumerator`) is NOT injected (no CLR-addressable open name); degrade.
             if (open.IsNested) return DegradeToAny(t, "nested generic definition — no CLR-addressable open name");
             var openName = KotlinName(open);   // arity-suffixed iff the name family clashes (Task`1 -> Task1)
-            // A root-namespace open def (`open.Namespace` null) is a legitimately injectable user type (`Box<T>`), not a
-            // global/compiler type — only reject the explicitly non-injectable ones and names that aren't a simple ident.
-            if (NO_INJECT.Contains(open.FullName ?? "")
-                || !openName.All(c => char.IsLetterOrDigit(c) || c == '_'))
+            if (NO_INJECT.Contains(open.FullName ?? "") || !openName.All(c => char.IsLetterOrDigit(c) || c == '_'))
                 return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
-            var args = t.GetGenericArguments().Select(a => Map(a, t)).ToList();
-            // `generic:Open[arg,arg]` — bracketed so a compound arg (`generic:Inner[X]`, `func:[...]`) nests; the
-            // injector splits at bracket-depth 0. Only an unresolved arg (`Any?`) sinks the whole type.
-            if (args.Any(a => a == "Any?")) return DegradeToAny(t, "a generic type argument was unresolvable");
-            return "generic:" + openName + "[" + string.Join(",", args) + "]";
+            var args = t.GetGenericArguments().Select(a => MapT(a, t)).ToArray();
+            if (args.Any(IsAnyQ)) return DegradeToAny(t, "a generic type argument was unresolvable");
+            return new TN.Fqn(openName, args);
         }
-        // Emit the FULLY-QUALIFIED name so the injector resolves the EXACT type, not whichever same-simple-name type
-        // from another namespace won the dedup (e.g. Microsoft.UI.Xaml.LaunchActivatedEventArgs vs the UWP
-        // Windows.ApplicationModel.Activation.LaunchActivatedEventArgs — feedback item 2). Fall back to the simple
-        // name for nested types (FullName has '+') so they at least resolve as before.
+        // The FULLY-QUALIFIED name (so the injector resolves the EXACT type, not a same-simple-name type from another
+        // namespace); fall back to the simple name for nested types (FullName has '+').
         var fqn = t.FullName;
-        if (fqn != null && fqn.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.')) return fqn;
+        if (fqn != null && fqn.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '.')) return new TN.Fqn(fqn);
         var n = t.Name;
-        return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? n : DegradeToAny(t, "name is not a resolvable identifier");
+        return n.All(c => char.IsLetterOrDigit(c) || c == '_') ? new TN.Fqn(n) : DegradeToAny(t, "name is not a resolvable identifier");
     }
 
-    // Round-trip gap ①: restore the generic CONSTRAINTS + declaration-site VARIANCE that ilemit wrote into the assembly
-    // (ApplyConstraints -> SetBaseTypeConstraint/SetInterfaceConstraints + GenericParameterAttributes.Covariant/
-    // Contravariant) but that facadegen previously DROPPED (it emitted only the bare type-param NAME). `genArgs` are the
-    // type parameters of a generic type definition or a generic method. Emitted as SEPARATE lines (`tvariance`/`tbound`
-    // for a type-level param, `mbound` for a method-level one) so an un-updated FIR injector safely IGNORES them — the
-    // metadata is a private wire format between facadegen and ClrTypeInjection, and unknown line kinds are skipped there.
-    static void EmitTypeParamMeta(Type[] genArgs, Type self, StringBuilder sb, bool isInterface, bool typeLevel)
-    {
-        foreach (var g in genArgs)
-        {
-            if (!g.IsGenericParameter) continue;
-            // Declaration-site variance is CLR-legal ONLY on an interface type param (a class type param has no variance
-            // form), so ilemit only stamps it there and Kotlin can only restore it there. `out` = Covariant, `in` = Contravariant.
-            if (typeLevel && isInterface)
-            {
-                var attrs = g.GenericParameterAttributes;
-                if ((attrs & GenericParameterAttributes.Covariant) != 0) sb.Append($"tvariance {g.Name} out\n");
-                else if ((attrs & GenericParameterAttributes.Contravariant) != 0) sb.Append($"tvariance {g.Name} in\n");
-            }
-            // Upper bound(s): the interface + base-class constraints (a `where` list becomes several lines). Skip the
-            // implicit System.Object/ValueType/Enum base (Kotlin's default `Any?`/no bound) and any bound that doesn't
-            // map to a resolvable Kotlin type token (-> Any?, dropped: no worse than today's unconstrained `T`).
-            Type[] cons; try { cons = g.GetGenericParameterConstraints(); } catch { cons = Array.Empty<Type>(); }
-            var kw = typeLevel ? "tbound" : "mbound";
-            foreach (var c in cons)
-            {
-                // Skip a bound with no meaningful/restorable Kotlin form: the implicit Object/ValueType/Enum base (Kotlin's
-                // default `Any?`/no bound) plus the special CLR bases (Delegate/MulticastDelegate/Array/…) and primitives
-                // that NO_INJECT already refuses. A constructed-generic BCL interface (IUnsignedNumber<T>, IComparable<T>)
-                // has a null FullName here and is NOT in NO_INJECT, so it still round-trips.
-                if (NO_INJECT.Contains(c.FullName ?? "")) continue;
-                var tok = MapBound(c, self);
-                if (tok == "Any?") continue;
-                sb.Append($"{kw} {g.Name} {tok}\n");
-            }
-        }
-    }
-
-    // Map a CLR generic-parameter CONSTRAINT type to a Kotlin bound token. ilemit lowers a Kotlin `Comparable<T>` bound to
-    // the CLR `System.IComparable<T>` (the Comparable<->IComparable alias, MEMORY comparable-iclr-typealias), so reverse
-    // that here — otherwise the common `<T : Comparable<T>>` would round-trip as the un-restorable BCL `IComparable`.
-    // Everything else goes through the ordinary type map (a BCL/injected bound resolves via the injection closure).
-    static string MapBound(Type c, Type self)
+    // Map a CLR generic-parameter CONSTRAINT type to a Kotlin bound TypeNode. ilemit lowers a Kotlin `Comparable<T>`
+    // bound to CLR `System.IComparable<T>`, so reverse that (else `<T : Comparable<T>>` round-trips as BCL `IComparable`).
+    static TN MapBoundT(Type c, Type self)
     {
         if (c.IsGenericType && c.GetGenericTypeDefinition().FullName == "System.IComparable`1")
-            return "generic:Comparable[" + Map(c.GetGenericArguments()[0], self) + "]";
-        return Map(c, self);
+            return new TN.Fqn("Comparable", new[] { MapT(c.GetGenericArguments()[0], self) });
+        return MapT(c, self);
     }
 
-    static string Sig(ParameterInfo[] ps, Type self) => string.Join(",", ps.Select(p => Map(p.ParameterType, self)));
+    // A call-site signature dedup key — the canonical JSON of each mapped param type (never emitted; internal only).
+    static string Sig(ParameterInfo[] ps, Type self) => string.Join(",", ps.Select(p => TN.ToJson(MapT(p.ParameterType, self))));
 
-    static string KParams(ParameterInfo[] ps, Type self) =>
-        string.Join(", ", ps.Select((p, i) => $"{ParamName(p, i)}: {Map(p.ParameterType, self)}"));
-
-    static string ParamName(ParameterInfo p, int i)
-    {
-        var n = p.Name;
-        if (string.IsNullOrEmpty(n) || !IsIdent(n)) n = "arg" + i;
-        return KEYWORDS.Contains(n) ? "`" + n + "`" : n;
-    }
-
-    static string Decap(string s) => string.IsNullOrEmpty(s) ? s : char.ToLowerInvariant(s[0]) + s.Substring(1);
     static bool IsIdent(string s) => s.Length > 0 && (char.IsLetter(s[0]) || s[0] == '_') && s.All(c => char.IsLetterOrDigit(c) || c == '_');
 
     static readonly HashSet<string> OBJECT_MEMBERS = new()
