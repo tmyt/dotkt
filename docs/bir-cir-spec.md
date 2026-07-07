@@ -23,7 +23,8 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `fqn` | `name:string`, `args?:[T…]` | a named type `kotlin.collections.List<…>` — a PURE Kotlin/CLR FQN identity, generic args optional | plain FQN, `clr:`, `clrg:Name[..]`, `@Name`/`@Name[..]`, primitive shorthand (`int`/`string`/`void`/`object`/…) |
 | `tv` | `scope:"type"\|"method"`, `i:int` | a type variable — `scope` is the CLR generic-param SPACE, `i` the owner-local positional index | `gp:X` (name-keyed, space-blind) |
 | `fn` | `suspend:bool`, `ret:T`, `params:[T…]`, `recv?:T` | a function type; `suspend` is a flag, `recv` = extension receiver | `func:ret:args`, `sfunc:ret:args` |
-| `nullable` | `of:T`, `nrt?:"platform"` | `T?` (nullable); with `nrt:"platform"` a flexible/platform type `T!` (NRT-oblivious) | `nullable:X`, and the META `!` platform suffix |
+| `nullable` | `of:T` | `T?` (NRT-annotated nullable, `NullableAttribute`=2) | `nullable:X` |
+| `oblivious` | `of:T` | `T!` — an NRT-*oblivious* flexible type `(T..T?)` (`NullableAttribute`=0); the CLR term, not the Kotlin-consumer "platform" name | the META `!` platform suffix |
 | `array` | `elem:T` | `Array<T>` (this-assembly array) | `array:X` |
 | `byRef` | `of:T` | a CLR by-ref `ref T` | `byRef:X` |
 
@@ -40,20 +41,24 @@ Notes:
   map `scope`+`i` straight to `!i` / `!!i`.
 - `fn` subsumes both plain and suspend function types; the H2 position metadata is just an `fn` with
   `suspend:true` in a param/return/field slot — no separate `sfunc:` token, no `BirTokenToMeta`.
-- **Nullability is TRI-STATE, mirroring .NET NRT** (`NullableAttribute` 1/2/0 = notnull/nullable/oblivious).
-  A reference type is one of three states, and the representation must hold all three honestly (it must NOT
-  collapse platform to nullable — that breaks overload resolution + null-safety on every un-annotated BCL member):
-  - **not-null `T`** — the BARE type node (no `nullable` wrapper). Default.
-  - **nullable `T?`** — `{t:"nullable","of":T}`.
-  - **platform / flexible `T!`** — `{t:"nullable","of":T,"nrt":"platform"}` (NRT-oblivious `(T..T?)`; the
-    frontend/`ConeFlexibleType` decides null-safety per use, exactly as Kotlin treats un-annotated Java).
-  This is ONE tri-state model shared by BIR and META: **kotc BIR emits only not-null + nullable** (platform is
-  frontend-only — resolved before the backend, so a `nrt:"platform"` never appears in BIR); **facadegen META
-  emits all three** (a `.NET` member without `NullableAttribute` → `nrt:"platform"`). The old **duplicate**
-  nullability encodings — the `{t:nullable}` type wrapper AND the separate decl-level `"nullable":true` flag —
-  collapse into this single type-node property (the decl flag is retired; a type's nullability lives on the
-  Type node). No `flexible` 7th variant is added to the shared TypeNode: platform is a `nullable`-node
-  refinement (`nrt`), so the backend that never sees platform needs no new variant.
+- **Nullability is TRI-STATE, named with the CLR/Roslyn vocabulary** (`NullableAttribute` 1/2/0 =
+  not-annotated / annotated / **oblivious**). A reference type is one of three states, each a COHERENT node
+  naming its own CLR state (the representation must NOT collapse oblivious to nullable — that breaks overload
+  resolution + null-safety on every un-annotated BCL member):
+  - **not-null `T`** — the BARE type node (no wrapper). Default.
+  - **nullable `T?`** — `{t:"nullable","of":T}` (NRT-annotated nullable).
+  - **oblivious `T!`** — `{t:"oblivious","of":T}` — a flexible type `(T..T?)`; the frontend/`ConeFlexibleType`
+    decides null-safety per use, exactly as Kotlin treats un-annotated Java. `oblivious` is the CLR/Roslyn term
+    for `NullableAttribute`=0, NOT the Kotlin-consumer "platform" name — the node states the .NET metadata's
+    actual annotation, not how a consumer treats it.
+  This is ONE tri-state model shared by BIR and META: **kotc BIR emits only not-null + nullable** (`oblivious`
+  is frontend-only — resolved to a concrete nullability BEFORE the backend, so `{t:"oblivious"}` never appears
+  in a BIR/CIR the backend produces; bir2cir/ilemit's `TypeNode.Read` accepts it for round-trip but never
+  encounters it); **facadegen META emits all three** (a `.NET` member with NO `NullableAttribute` → `oblivious`).
+  `oblivious` is a coherent sibling node (each state names itself), NOT a `nullable`-node refinement flag —
+  additive per principle 3. The old **duplicate** nullability encodings — the type wrapper AND the separate
+  decl-level `"nullable":true` flag — collapse onto the Type node (the decl flag is retired in m5; a type's
+  nullability lives on the Type node).
 - Examples:
   - `kotlin.Int` → `{"t":"fqn","name":"kotlin.Int"}`
   - `List<Int>` → `{"t":"fqn","name":"kotlin.collections.List","args":[{"t":"fqn","name":"kotlin.Int"}]}`
