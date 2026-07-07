@@ -590,7 +590,7 @@ sealed partial class Emitter
                 {
                     _il.Emit(OpCodes.Dup);
                     EmitArg(en.GetProperty("key"), kt);
-                    EmitArg(en.GetProperty("val"), vt);
+                    EmitArg(en.GetProperty("value"), vt);
                     _il.Emit(OpCodes.Callvirt, setItem);
                 }
                 return dt;

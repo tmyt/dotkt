@@ -3553,7 +3553,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			val kvs = elems.map { toPairKV(it) }
 			if (kvs.all { it != null }) {
-				val entries = kvs.filterNotNull().joinToString(",") { (k, v) -> """{"key":${expr(k)},"val":${expr(v)}}""" }
+				val entries = kvs.filterNotNull().joinToString(",") { (k, v) -> """{"key":${expr(k)},"value":${expr(v)}}""" }
 				return """{"k":"mapNew","keyType":${str(kt)},"valType":${str(vt)},"entries":[$entries]}"""
 			}
 			// else: not a statically-decomposable pair literal -> fall through to normal call emission.
