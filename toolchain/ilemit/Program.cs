@@ -2459,9 +2459,24 @@ sealed partial class Emitter
         : e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f ? f.Name
         : null;
 
+    // A primitive type slot may now arrive as the @ClrTypeAlias BCL name ("System.Int32") rather than the CLR
+    // shorthand ("int"): bir2cir routes primitives through the ref.dll alias index (the redundant hardcoded
+    // KotlinToClr shadow was deleted, #55), so a primitive lowers to its `@ClrTypeAlias("System.Int32")` form.
+    // Normalize the alias spelling back to ilemit's opcode-alphabet shorthand so the name-keyed opcode switches
+    // (EmitConst/EmitConv/ConstArgValue) key uniformly. Signedness is preserved from the alias: System.SByte is
+    // SIGNED (Kotlin Byte -> "sbyte"), System.Byte is UNSIGNED (Kotlin UByte -> "byte") — matching #53/#54.
+    static string PrimShorthandName(string t) => t switch
+    {
+        "System.Int32" => "int", "System.Int64" => "long", "System.Int16" => "short", "System.SByte" => "sbyte",
+        "System.Double" => "double", "System.Single" => "float", "System.Boolean" => "bool", "System.Char" => "char",
+        "System.String" => "string", "System.Object" => "object", "System.Void" => "void",
+        "System.UInt32" => "uint", "System.UInt64" => "ulong", "System.Byte" => "byte", "System.UInt16" => "ushort",
+        _ => t,
+    };
+
     Type EmitConst(JsonElement e)
     {
-        var t = SlotName(e.GetProperty("type"));
+        var t = PrimShorthandName(SlotName(e.GetProperty("type")));
         var v = e.GetProperty("value");
         switch (t)
         {
@@ -2640,7 +2655,8 @@ sealed partial class Emitter
     Type EmitConv(JsonElement e)
     {
         EmitExpr(e.GetProperty("e"));
-        switch (SlotName(e.GetProperty("to")))
+        var to = PrimShorthandName(SlotName(e.GetProperty("to")));
+        switch (to)
         {
             case "int" or "kotlin.Int": _il.Emit(OpCodes.Conv_I4); return typeof(int);
             case "long" or "kotlin.Long": _il.Emit(OpCodes.Conv_I8); return typeof(long);
@@ -2649,7 +2665,7 @@ sealed partial class Emitter
             case "short" or "kotlin.Short": _il.Emit(OpCodes.Conv_I2); return typeof(short);
             case "sbyte" or "kotlin.Byte": _il.Emit(OpCodes.Conv_I1); return typeof(sbyte);
             case "char" or "kotlin.Char": _il.Emit(OpCodes.Conv_U2); return typeof(char);
-            default: throw new NotSupportedException("conv " + SlotName(e.GetProperty("to")));
+            default: throw new NotSupportedException("conv " + to);
         }
     }
 

@@ -142,7 +142,7 @@ sealed partial class Emitter
     {
         // Annotation arguments are always compile-time constants (const nodes).
         if (!e.TryGetProperty("value", out var v)) return null;
-        var ty = e.TryGetProperty("type", out var tEl) ? SlotName(tEl) : null;
+        var ty = e.TryGetProperty("type", out var tEl) ? PrimShorthandName(SlotName(tEl)) : null;
         switch (v.ValueKind)
         {
             // A `char` default may arrive as its single-char STRING form (`' '` -> "  ") — SetConstant needs a real

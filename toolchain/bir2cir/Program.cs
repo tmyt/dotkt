@@ -1757,24 +1757,13 @@ static class BirTypeLowering
     // ReturnKeys path; a Unit VALUE keeps the emitted Unit type — you cannot have a `void` field), handled
     // separately. KotlinAllToClr (the attribute-blob force map) additionally carries kotlin.Unit -> void and is
     // applied UNCONDITIONALLY because an attribute blob needs a concrete System.* type even in the ref build.
-    static readonly IReadOnlyDictionary<string, string> KotlinToClr = new Dictionary<string, string>(StringComparer.Ordinal)
-    {
-        ["kotlin.Int"] = "int",
-        ["kotlin.Long"] = "long",
-        ["kotlin.Short"] = "short",
-        ["kotlin.Byte"] = "sbyte",
-        ["kotlin.Double"] = "double",
-        ["kotlin.Float"] = "float",
-        ["kotlin.Boolean"] = "bool",
-        ["kotlin.Char"] = "char",
-        ["kotlin.Nothing"] = "object",
-        ["kotlin.String"] = "string",
-        ["kotlin.Any"] = "object",
-        ["kotlin.UInt"] = "uint",
-        ["kotlin.ULong"] = "ulong",
-        ["kotlin.UByte"] = "byte",
-        ["kotlin.UShort"] = "ushort",
-    };
+    // #55: the non-force `KotlinToClr` map was DELETED. It was pure redundancy — every entry (kotlin.Int -> "int",
+    // kotlin.String -> "string", …) merely SHADOWED the primitive's own `@ClrTypeAlias("System.Int32"/"System.String"/…)`,
+    // which bir2cir already scans from the ref.dll into the `_aliases` index. A primitive now lowers to its BCL alias
+    // (System.Int32/System.SByte/…) via `AliasBcl` in LowerType/LowerLeaf, exactly like every other @ClrTypeAlias type;
+    // ilemit's MapType resolves `System.Int32` to `typeof(int)` identically to the old shorthand, and its three
+    // name-keyed opcode switches (EmitConst/EmitConv/ConstArgValue) normalize the alias back to the shorthand alphabet.
+    // Only `KotlinAllToClr` (below) survives, for the attribute-blob force path where no ref.dll is loaded.
 
     // The FULL kotlin.* -> CLR map, used UNCONDITIONALLY (both modes) on the attribute-metadata force path. A
     // custom-attribute's constructor-argument / field / property types are encoded into the assembly's attribute
@@ -1826,7 +1815,7 @@ static class BirTypeLowering
     // generic arg like Sequence<Unit>, a receiver) keeps the emitted Unit type (you cannot have a `void` field), and
     // an already-decorated `@kotlin.Unit` type-arg passes through unchanged. (Mirrors kotc birTypeDeleg's
     // "kotlin.Unit -> void in return, @kotlin.Unit in type-arg" split.) The numeric primitives are NOT
-    // position-dependent — they lower uniformly everywhere via KotlinToClr.
+    // position-dependent — they lower uniformly everywhere via their @ClrTypeAlias (the AliasBcl path, #55).
     // RETURN-POSITION type keys, grouped by a SHARED PROPERTY (a return-slot type, where kotlin.Unit lowers to
     // `void` via LowerReturnValued) — NOT synonyms. The members are DISTINCT ROLES that can coexist on one node:
     // `ret` (plain return), `dynRet` (@Clr dynamic-dispatch return), `suspendRet` (a suspend fn/lambda's T of
@@ -1840,10 +1829,11 @@ static class BirTypeLowering
 
     static readonly string[] ModifierPrefixes = { "byref:", "array:", "nullable:" };
 
-    // The ref.dll @ClrTypeAlias index (Kotlin FQN -> BCL), set per top-level Lower() call. Consulted for ANY CLR-bound
-    // type token beyond the hardcoded foundational primitives (collections -> System...IReadOnlyCollection, StringBuilder,
-    // Regex, ...). Single-threaded per bir2cir run, so a static binding is sufficient. The foundational primitives stay
-    // shadowed by KotlinToClr (checked first), keeping their CLR shorthand ("int"/"string"/"object").
+    // The ref.dll @ClrTypeAlias index (Kotlin FQN -> BCL), set per top-level Lower() call. Consulted for EVERY CLR-bound
+    // type token — the foundational primitives (kotlin.Int -> System.Int32, kotlin.String -> System.String, …) AND the
+    // rest (collections -> System...IReadOnlyCollection, StringBuilder, Regex, …). #55: the primitives are no longer
+    // shadowed by a hardcoded map; they resolve here like any other alias. Single-threaded per bir2cir run, so a static
+    // binding is sufficient.
     static IReadOnlyDictionary<string, string> _aliases = new Dictionary<string, string>(StringComparer.Ordinal);
 
     // The struct-ness ORACLE (#37/#48 nullability fold), set per top-level Lower() call. True for a VALUE type FQN
@@ -1869,7 +1859,7 @@ static class BirTypeLowering
     // string helpers below (LowerTypeString/…) survive ONLY for the still-string legacy fields (`sig`
     // comma-list, a literal `accessOwner`/clr* owner FQN); every OBJECT-valued type slot flows through
     // LowerType(TypeNode). Output vocabulary mirrors the old strings exactly, wrapped in TypeNode:
-    //   primitive -> Fqn("int"/…) (the CLR shorthand, so ilemit's opcode switch is unchanged),
+    //   primitive -> Fqn("System.Int32"/…) (its @ClrTypeAlias BCL form, #55; ilemit's opcode switches normalize it back),
     //   Unit-in-return / const|try Unit value -> Fqn("void"), a suspend fn VALUE slot -> Fqn("object"),
     //   @ClrTypeAlias owner -> Fqn(bcl[,args]) (no clr:/clrg: marker — ilemit derives from the name),
     //   an in-assembly/user/stdlib FQN -> unchanged, a `tv` -> unchanged (ilemit maps scope+i to !i/!!i).
@@ -1877,7 +1867,8 @@ static class BirTypeLowering
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
 
     static bool IsObjectish(TypeNode t) =>
-        t is TypeNode.Fqn f && f.Args == null && (f.Name == "object" || f.Name == "kotlin.Any" || f.Name == "kotlin.Nothing");
+        t is TypeNode.Fqn f && f.Args == null &&
+        (f.Name == "object" || f.Name == "System.Object" || f.Name == "kotlin.Any" || f.Name == "kotlin.Nothing");
 
     // typeArg = "this type sits in a generic type-ARGUMENT position": a primitive there stays BOXED
     // (kotlin.Int / the JVM-boxing dual-representation — Comparable<kotlin.Int>, IReadOnlyList<kotlin.Int>);
@@ -1899,12 +1890,16 @@ static class BirTypeLowering
                 if (loweredArgs == null)
                 {
                     // A leaf: a foundational primitive (numeric/bool/char + String/Any/Nothing + the unsigned set)
-                    // lowers to the CLR shorthand in EVERY position — a type-arg primitive reifies as the CLR value type
-                    // (`List<Int>` -> IReadOnlyList<int>), the CLR-idiomatic form (the boxed `kotlin.*` isn't an emitted
-                    // type in the substitute/app build; the ref build keeps kotlin.* via the refBuild passthrough above).
-                    var map = force ? KotlinAllToClr : KotlinToClr;
-                    if (map.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
-                    // A non-generic @ClrTypeAlias type (StringBuilder/Regex/IComparable/…) -> the BCL FQN.
+                    // lowers to the CLR type in EVERY position — a type-arg primitive reifies as the CLR value type
+                    // (`List<Int>` -> IReadOnlyList<System.Int32>), the CLR-idiomatic form (the boxed `kotlin.*` isn't an
+                    // emitted type in the substitute/app build; the ref build keeps kotlin.* via the refBuild passthrough).
+                    // #55: the non-force path reads the primitive's `@ClrTypeAlias("System.Int32")` straight from the
+                    // ref.dll index (AliasBcl below) — the hardcoded KotlinToClr shadow was DELETED. The force/attribute-
+                    // blob path keeps KotlinAllToClr: a custom-attribute blob needs a concrete System.* even in the ref
+                    // build, which has no ref.dll to read.
+                    if (force && KotlinAllToClr.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
+                    // A @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) OR a non-primitive BCL
+                    // (StringBuilder/Regex/IComparable/…) -> the BCL FQN, read from the ref.dll alias index.
                     if (AliasBcl(f.Name) is string bclNonGen) return new TypeNode.Fqn(bclNonGen);
                     return f;   // user / stdlib / in-assembly FQN — identity preserved
                 }
@@ -2198,7 +2193,7 @@ static class BirTypeLowering
             // an `@` (this-assembly-emitted) marker even on a substituted type (a CLR-resolution marker that belongs
             // below kotc) — strip it for the alias lookup and DROP it when the type is BCL-aliased; a non-alias `@`
             // head is a genuine emitted type and keeps its `@`. ilemit builds the generic by arg count. The foundational
-            // primitives never appear as a generic head, so KotlinToClr need not gate here.
+            // primitives never appear as a generic head, so the primitive-alias path need not gate here.
             var bareHead = head.StartsWith("@", StringComparison.Ordinal) ? head[1..] : head;
             // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (C2): a Kotlin `enum class` is emitted as a real CLR
             // `System.Enum`-backed enum (ilemit `DefineEnum`), which does NOT extend the stdlib's generic `kotlin.Enum<E>`
@@ -2215,7 +2210,9 @@ static class BirTypeLowering
                 // `(T) -> Comparable<*>?` and its boxed selector value must ride the non-generic dispatch spine
                 // (clrRawCompareTo's `as IComparable`); a reified `IComparable<object>` castclass fails on every primitive.
                 // A CONCRETE arg (`Comparable<C>` / `Comparable<gp:T>`) keeps the generic form (`sorted`'s element cast).
-                if (genericBcl == "System.IComparable" && args == "object") return "clr:System.IComparable";
+                // The star/Any arg arrives as the shorthand "object" (a kotc-emitted CLR token) or, now that the
+                // primitive alias path lowers a bare kotlin.Any leaf, as "clr:System.Object" (#55) — accept both.
+                if (genericBcl == "System.IComparable" && (args == "object" || args == "clr:System.Object")) return "clr:System.IComparable";
                 return "clrg:" + genericBcl + "[" + args + "]";
             }
             return head + "[" + args + "]";
@@ -2232,13 +2229,17 @@ static class BirTypeLowering
         // position-dependent kotlin.Unit value, user/stdlib FQNs like kotlin.collections.List) pass through.
         if (t.StartsWith("clrg:", StringComparison.Ordinal)) return t;
         // An `@`-decorated PRIMITIVE is the dual-representation type-arg form (Comparable<@kotlin.Int>) and MUST stay
-        // verbatim — never lowered to the bare CLR primitive. A bare primitive lowers to its CLR shorthand.
+        // verbatim — never lowered to the bare CLR primitive. A bare primitive lowers to its @ClrTypeAlias BCL form.
         var decorated = t.StartsWith("@", StringComparison.Ordinal);
         var bare = decorated ? t[1..] : t;
-        var map = force ? KotlinAllToClr : KotlinToClr;
-        if (map.TryGetValue(bare, out var clr)) return decorated ? t : clr;
-        // A non-primitive @ClrTypeAlias type used bare (a non-generic BCL: StringBuilder/Regex/Match/IComparable/
-        // TextWriter/...) -> clr:<bcl>. Applies whether or not it carried the `@` marker (BCL-aliased -> drop `@`).
+        // The attribute-blob force path keeps the hardcoded KotlinAllToClr map (no ref.dll in the ref build). #55: the
+        // non-force `KotlinToClr` shadow was deleted, so a bare primitive falls to AliasBcl (its ref.dll @ClrTypeAlias).
+        if (force && KotlinAllToClr.TryGetValue(bare, out var clr)) return decorated ? t : clr;
+        // A decorated (dual-representation) primitive type-arg stays verbatim in the non-force path — @kotlin.Int keeps
+        // its boxed form and is never lowered to the CLR value type.
+        if (decorated) return t;
+        // A @ClrTypeAlias type used bare — a foundational primitive (kotlin.Int -> clr:System.Int32) OR a non-generic
+        // BCL (StringBuilder/Regex/Match/IComparable/TextWriter/...) -> clr:<bcl>, read from the ref.dll alias index.
         if (AliasBcl(bare) is string bcl) return "clr:" + bcl;
         return t;
     }

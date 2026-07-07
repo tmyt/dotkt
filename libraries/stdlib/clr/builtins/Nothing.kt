@@ -14,4 +14,10 @@ package kotlin
  * Nothing has no instances. You can use Nothing to represent "a value that never exists": for example,
  * if a function has the return type of Nothing, it means that it never returns (always throws an exception).
  */
+// @ClrTypeAlias to System.Object: the Kotlin bottom type has no CLR value; in any type slot it erases to `object`
+// (a Nothing-returning method is a method that never returns normally). bir2cir reads this alias from the ref.dll
+// and lowers kotlin.Nothing -> System.Object, exactly like kotlin.Any — mirroring the FoundationalRefAliases entry
+// that the member-call substituter already uses. Without it, deleting the hardcoded KotlinToClr map (#55) would
+// leave kotlin.Nothing un-lowered (identity), since Nothing carries no other alias source.
+@kotlin.clr.ClrTypeAlias("System.Object")
 public actual class Nothing private constructor()

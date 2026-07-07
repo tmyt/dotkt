@@ -498,6 +498,23 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   (whose stdlib body is `Pair(this, that)`). Without this, `mapOf("a" to 1, "b" to 2)` fell to the real `mapOf`
   body, which builds a `Pair<K,V>[]` vararg array and `ArrayTypeMismatch`-crashed under reified generics when
   the elements are more-specifically typed (`Pair<String,String>` stored into `Pair<String,Any>[]`).
+- **Primitive Kotlin↔CLR mapping is metadata-driven — bir2cir's hardcoded `KotlinToClr` map is DELETED
+  (#55).** The stdlib primitives already carry their CLR identity as metadata: `@ClrTypeAlias("System.Int32")
+  class Int`, `@ClrTypeAlias("System.SByte") class Byte`, … (signed/unsigned split per #53/#54), and bir2cir
+  already folds every such alias off the ref.dll into its `_aliases` index. The `KotlinToClr` dictionary
+  (`kotlin.Int` → `"int"`, `kotlin.String` → `"string"`, …) was pure redundancy — it merely *shadowed* the
+  alias the compiler already reads. It is removed: a primitive now lowers to its `@ClrTypeAlias` BCL form
+  (`System.Int32`/`System.SByte`/…) via the same `AliasBcl` path as every other CLR-bound type. ilemit's
+  `MapType` resolves `System.Int32` to `typeof(int)` identically to the old shorthand, so type resolution,
+  value-type detection, boxing, arithmetic, arrays and generic construction are unchanged; the three name-keyed
+  opcode switches (`EmitConst`/`EmitConv`/`ConstArgValue`) gained a `PrimShorthandName` normalizer that maps the
+  alias spelling back to the opcode alphabet (`System.SByte` → `sbyte` signed, `System.Byte` → `byte` unsigned).
+  `kotlin.Nothing` — the one primitive-ish token with no CLR value — gained an explicit
+  `@ClrTypeAlias("System.Object")` in the stdlib (it erases to `object`, mirroring `kotlin.Any`) so it too
+  resolves from metadata rather than a hardcode. The attribute-blob force map (`KotlinAllToClr`) STAYS: a
+  custom-attribute blob needs a concrete `System.*` even in the reference build, which has no ref.dll to read.
+  This is a behavior-preserving reroute — emitted primitive values are byte-identical. (Decoupled follow-ups
+  left out of scope: facadegen's reverse `System.*`→`kotlin.*` map and kotc's `clrMethodShape` shape-matcher.)
 - **kotc `BirMappings.kt` shed of dead + vestigial tables (#40).** Post-#37-freeze audit of the
   Kotlin→BIR name/shape tables removed four entries: `COLLECTION_MEMBER` and `PRIMITIVE_SHORTHANDS`
   (both ref-count 0 — dead) and `VALUE_PRIM_BIR` (a `kotlin.Int`→`kotlin.Int` identity map whose only
