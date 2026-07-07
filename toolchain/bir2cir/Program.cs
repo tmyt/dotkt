@@ -692,6 +692,21 @@ sealed class ReferenceMetadataIndex
         return true;
     }
 
+    // The @ClrConv numeric-conversion binding for owner.member: its conv TARGET (the callee's own return-type token, a
+    // pre-lowering Kotlin FQN like `kotlin.Long`). Returns true when owner.member (arg count matched when possible) is a
+    // @ClrConv-marked conversion — MemberCallSubstitution then emits `{k:conv, to:<convTo>, e:<recv>}`. A conversion is
+    // nullary, so arg count is always 0; the arity match is kept for symmetry with the other member lookups.
+    public bool TryMemberConv(string ownerFqn, string memberName, int argCount, out string convTo)
+    {
+        convTo = null;
+        if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return false;
+        var cands = list.Where(m => m.Name == memberName && m.Conv).ToList();
+        if (cands.Count == 0) return false;
+        var pick = cands.FirstOrDefault(m => m.ParamCount == argCount) ?? cands[0];
+        convTo = pick.ConvTo;
+        return convTo != null;
+    }
+
     // The @ClrIntrinsic BCL member name for owner.member (overload-disambiguated by arg count when possible).
     public bool TryMemberIntrinsic(string ownerFqn, string memberName, int argCount, out string intrinsic)
     {
@@ -915,7 +930,7 @@ sealed class ReferenceMetadataIndex
     // (Rule 2p) — so it must NOT hoist its throwing TODO body into the helper (the same exclusion @ClrIntrinsic gets).
     public bool IsRule3Member(string ownerFqn, string memberName) =>
         _membersByOwner.TryGetValue(ownerFqn, out var list) &&
-        list.Any(m => m.Name == memberName && m.Intrinsic == null && m.PropertyName == null && !m.IsAbstract);
+        list.Any(m => m.Name == memberName && m.Intrinsic == null && m.PropertyName == null && !m.Conv && !m.IsAbstract);
 
     public static string HelperTypeName(string ownerFqn) =>
         "<>dotkt_ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
@@ -1010,6 +1025,13 @@ sealed class ReferenceMetadataIndex
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
+                        // @ClrConv (numeric primitive conversion): the call lowers to a CIL `conv` to the callee's OWN
+                        // declared return type (toLong -> the emitted `kotlin.Long` type, ...). Read the marker + capture
+                        // the return-type token here (the pre-lowering Kotlin FQN, from THIS reference/metadata dll), so
+                        // MemberCallSubstitution can emit `{k:conv, to:<convTo>, e:<recv>}` — the target BirTypeLowering
+                        // then lowers to System.Int64/etc. and ilemit picks the conv opcode.
+                        var isConv = HasAttribute(method.GetCustomAttributesData(), "kotlin.clr.ClrConv");
+                        var convTo = isConv ? TypeName(method.ReturnType) : null;
                         // @KotlinDefault(index, bir) on the method's params -> the cross-module default-arg splice source.
                         var kdefaults = KotlinDefaultsOf(method);
                         if (kdefaults != null)
@@ -1031,7 +1053,9 @@ sealed class ReferenceMetadataIndex
                             prop?.Access ?? 0,
                             prop?.Name,
                             byrefPositions,
-                            suspend));
+                            suspend,
+                            isConv,
+                            convTo));
                         // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
                         //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.
                         //   bare "Name"      -> a member on an EXTENSION receiver (`Array<T>.nativeClone()` ->
@@ -1358,7 +1382,7 @@ sealed class ReferenceDotKtMetadata
 // (Suspend bit = 4) in the LIVE MetadataLoadContext scan. Populated for the Task-based coroutine bundle (bundle 6):
 // a cross-module call site must know "is this referenced callee suspend?" (its CLR shape is the Task<T> kickoff).
 // NO consumer reads it yet — bundle 6 wires it.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null);
 
 sealed class CallSiteAnalyzer
 {
@@ -4633,6 +4657,15 @@ static class MemberCallSubstitution
         if (string.IsNullOrEmpty(member)) return null;
         var ownerFqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
         var args = node["args"] as JsonArray ?? new JsonArray();
+
+        // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,
+        // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit `{k:conv, to:<callee return type>, e:<receiver>}`, the
+        // SAME node kotc used to synthesize from the retired NUMBER_CONV name-heuristic. The `to` is the callee's own
+        // declared return token (a pre-lowering Kotlin FQN, e.g. `kotlin.Long`); BirTypeLowering later lowers it to the
+        // CLR primitive and ilemit selects conv.i4/conv.i8/conv.r8/char. A conversion is nullary (no args). Handled first
+        // so it never falls through to Rule 2/3 (the conversion members are intrinsic-less, so IsRule3Member excludes them).
+        if (instance && args.Count == 0 && refs.TryMemberConv(ownerFqn, member, 0, out var convTo))
+            return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(convTo), ["e"] = node["recv"]?.DeepClone() };
 
         // Rule 0 (inline-class ERASURE / unbox): the backing-field getter of an @JvmInline value class erased to its
         // primitive CLR form (`uint.get_data()`) is the unbox — the receiver value IS the field. Collapse it to a

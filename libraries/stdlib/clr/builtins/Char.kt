@@ -63,40 +63,47 @@ public actual class Char private constructor() : Comparable<Char> {
     @Deprecated("Conversion of Char to Number is deprecated. Use Char.code property instead.", ReplaceWith("this.code.toByte()"))
     @DeprecatedSinceKotlin(warningSince = "1.5")
     @kotlin.internal.IntrinsicConstEvaluation
+    @kotlin.clr.ClrConv
     public actual fun toByte(): Byte = TODO("clr binding should be implemented")
 
     /** Returns the value of this character as a `Char`. */
     @kotlin.internal.IntrinsicConstEvaluation
+    @kotlin.clr.ClrConv
     public actual fun toChar(): Char = TODO("clr binding should be implemented")
 
     /** Returns the value of this character as a `Short`. */
     @Deprecated("Conversion of Char to Number is deprecated. Use Char.code property instead.", ReplaceWith("this.code.toShort()"))
     @DeprecatedSinceKotlin(warningSince = "1.5")
     @kotlin.internal.IntrinsicConstEvaluation
+    @kotlin.clr.ClrConv
     public actual fun toShort(): Short = TODO("clr binding should be implemented")
 
     /** Returns the value of this character as a `Int`. */
     @Deprecated("Conversion of Char to Number is deprecated. Use Char.code property instead.", ReplaceWith("this.code"))
     @DeprecatedSinceKotlin(warningSince = "1.5")
     @kotlin.internal.IntrinsicConstEvaluation
+    @kotlin.clr.ClrConv
     public actual fun toInt(): Int = TODO("clr binding should be implemented")
 
     /** Returns the value of this character as a `Long`. */
     @Deprecated("Conversion of Char to Number is deprecated. Use Char.code property instead.", ReplaceWith("this.code.toLong()"))
     @DeprecatedSinceKotlin(warningSince = "1.5")
     @kotlin.internal.IntrinsicConstEvaluation
+    @kotlin.clr.ClrConv
     public actual fun toLong(): Long = TODO("clr binding should be implemented")
 
     /** Returns the value of this character as a `Float`. */
     @Deprecated("Conversion of Char to Number is deprecated. Use Char.code property instead.", ReplaceWith("this.code.toFloat()"))
     @DeprecatedSinceKotlin(warningSince = "1.5")
     @kotlin.internal.IntrinsicConstEvaluation
+    @kotlin.clr.ClrConv
     public actual fun toFloat(): Float = TODO("clr binding should be implemented")
 
     /** Returns the value of this character as a `Double`. */
     @Deprecated("Conversion of Char to Number is deprecated. Use Char.code property instead.", ReplaceWith("this.code.toDouble()"))
     @DeprecatedSinceKotlin(warningSince = "1.5")
     @kotlin.internal.IntrinsicConstEvaluation
+    @kotlin.clr.ClrConv
     public actual fun toDouble(): Double = TODO("clr binding should be implemented")
 
     @kotlin.internal.IntrinsicConstEvaluation

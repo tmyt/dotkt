@@ -60,17 +60,6 @@ internal val MAP_FACTORIES = setOf(
 	"kotlin.collections.mapOf", "kotlin.collections.mutableMapOf", "kotlin.collections.hashMapOf",
 	"kotlin.collections.emptyMap",
 )
-internal val COLLECTION_OPS = setOf(
-	"map", "filter", "take", "drop", "reversed", "distinct", "toList",
-	"count", "any", "none", "all", "first", "last", "contains", "fold", "joinToString", "forEach",
-	"firstOrNull", "lastOrNull", "isEmpty", "isNotEmpty", "sum", "sumOf", "sorted", "maxOrNull", "minOrNull", "reduce",
-	"maxByOrNull", "minByOrNull", "zip", "associateWith", "associateBy", "groupBy",
-	"asSequence", "toSet", "takeWhile", "dropWhile", "single", "singleOrNull",
-	"sortedDescending", "sortedBy", "sortedByDescending", "mapIndexed", "chunked", "filterNotNull",
-	"mapNotNull", "flatMap", "flatten", "average", "indexOf",
-	"partition", "withIndex", "associate", "scan", "runningFold", "windowed",
-)
-
 // Primitive array class -> its BCL element type, for lowering the sized constructor `IntArray(size){init}` to a real
 // `new int[size]` + fill loop (a `kotlin.IntArray` object would otherwise be constructed — the wrong representation).
 internal val ARRAY_CLASS_ELEM = mapOf(
@@ -88,17 +77,12 @@ internal val ENUM_REIFIED_INTRINSICS = setOf(
 	"kotlin.enumValues", "kotlin.enumValueOf", "kotlin.enums.enumEntries", "kotlin.enums.enumEntriesIntrinsic",
 )
 
-// Numeric conversions on a number receiver (`3.7.toInt()`) -> a CIL conv to this BIR type.
-// Numeric conversion target as a Kotlin FQN (kotc emits the FQN; ilemit selects the CIL conv opcode). The
-// `conv` node stays a primitive-IL op; only its `to` type becomes a structured Kotlin-FQN identity (no `int`).
-internal val NUMBER_CONV = mapOf(
-	"toInt" to "kotlin.Int", "toLong" to "kotlin.Long", "toDouble" to "kotlin.Double", "toFloat" to "kotlin.Float",
-	"toShort" to "kotlin.Short", "toByte" to "kotlin.Byte", "toChar" to "kotlin.Char",
-)
-internal val NUMERIC_FQ = setOf(
-	"kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte",
-	"kotlin.Double", "kotlin.Float", "kotlin.Char",
-)
+// Numeric conversions (`3.7.toInt()`, `x.toLong()`, `c.toInt()`) are NO LONGER recognized in kotc: kotc emits the plain
+// `callInstance kotlin.Double.toInt` (the faithful IR). bir2cir reads the `@kotlin.clr.ClrConv` marker off each stdlib
+// primitive's conversion member on the ref.dll and emits the `conv` node from the callee's return type. The retired
+// name->target map + receiver-type guard were a kotc name-heuristic; the `conv` node itself — a genuine primitive IL op —
+// is still emitted (now bir2cir-produced), and ilemit still selects the conv opcode.
+
 // Value-type primitives -> BIR element type (for Nullable<T> representation of `T?`).
 internal val PRIMITIVE_EQ_FQ = setOf(
 	"kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte",

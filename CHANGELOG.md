@@ -456,6 +456,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **Numeric conversions are metadata-driven — `@ClrConv` replaces kotc's `NUMBER_CONV` name-heuristic
+  (#52 Phase 0/1).** kotc no longer *recognizes* a numeric conversion: it emits the faithful IR call
+  `callInstance kotlin.Double.toInt` and nothing more. A new stdlib marker `@kotlin.clr.ClrConv` (no
+  argument) annotates the 7 conversions (`toByte`/`toShort`/`toInt`/`toLong`/`toFloat`/`toDouble`/`toChar`)
+  on each signed primitive (Byte/Short/Int/Long/Float/Double/Char). bir2cir reads it off the ref.dll and
+  emits `{k:conv, to:<callee return type>, e:<recv>}` — the SAME `conv` node kotc used to synthesize, so
+  ilemit is untouched (it still selects `conv.i4`/`conv.i8`/`conv.r8`). The `conv` stays a genuine
+  primitive IL op; only the *recognition* moved to the layer that owns CLR knowledge, keyed on the exact
+  stdlib symbol (precise) instead of a `name`+numeric-receiver guess (which could misfire). This
+  establishes the ref.dll-metadata → bir2cir pattern for the remaining recognition sites (factories,
+  `Pair`/`componentN`). The `NUMBER_CONV`/`NUMERIC_FQ` tables + the conv site's `fqnJson("kotlin.Int")`
+  literals are gone from kotc. Also deletes the dead `COLLECTION_OPS` table (Phase 0 — no live consumer).
 - **kotc `BirMappings.kt` shed of dead + vestigial tables (#40).** Post-#37-freeze audit of the
   Kotlin→BIR name/shape tables removed four entries: `COLLECTION_MEMBER` and `PRIMITIVE_SHORTHANDS`
   (both ref-count 0 — dead) and `VALUE_PRIM_BIR` (a `kotlin.Int`→`kotlin.Int` identity map whose only

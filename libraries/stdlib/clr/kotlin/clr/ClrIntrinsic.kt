@@ -11,6 +11,16 @@ package kotlin.clr
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 public annotation class ClrIntrinsic(val name: String)
 
+// Marks a primitive numeric CONVERSION function (`Int.toLong()`, `Double.toInt()`, `Char.toInt()`, ...): a call to it
+// lowers to a CIL `conv` to the function's OWN declared return type (toLong -> kotlin.Long, toInt -> kotlin.Int, ...).
+// bir2cir reads this marker off the REFERENCE assembly and emits `{k:conv, to:<callee return type>, e:<receiver>}` — the
+// SAME node kotc used to synthesize from a `NUMBER_CONV[name]` name-heuristic. The genuine primitive IL op stays a
+// lowering (ilemit selects conv.i4/conv.i8/conv.r8), but the RECOGNITION ("this call is a numeric conversion") is now
+// metadata on the exact stdlib symbol, not a kotc name+receiver guess (which could misfire on any `toLong`-named member
+// with a numeric receiver). NO argument: the conv target is always the callee's declared return type.
+@Target(AnnotationTarget.FUNCTION)
+public annotation class ClrConv
+
 // Bitwise-combinable ACCESS flags for @ClrProperty. `READ` = a get accessor, `WRITE` = a set accessor; `READ or WRITE`
 // (const-foldable) marks a get+set property. Int (not enum/Boolean) because an Int primitive attr arg encodes into the
 // ref.dll reliably (an enum arg may not encode via ilemit), and `const val` inlines the literal at the use site.

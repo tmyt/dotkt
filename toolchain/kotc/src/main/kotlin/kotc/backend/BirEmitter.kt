@@ -124,7 +124,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
 		// Compiling the stdlib ITSELF (DOTKT_STDLIB_COMPILE): don't fail the whole file on one unsupported construct in
 		// one op's body — emit a THROWING stub (a `throw NotSupportedException("[DOTKT-STDLIB] …")`) and warn. The op
-		// is left a compiler lowering (NOT migrated off COLLECTION_OPS), so the stub is never actually called; this lets
+		// is left a compiler lowering (the op keeps its lowering), so the stub is never actually called; this lets
 		// the supported ops in the same file compile while the few backend-gap ops (object-expr-captures-T, …) wait.
 		if (System.getenv("DOTKT_STDLIB_COMPILE") != null) {
 			messageCollector?.report(CompilerMessageSeverity.WARNING,
@@ -3707,8 +3707,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		// MutableList/MutableCollection mutation members (`add`/`remove`/`clear`/`removeAt`) -> the BCL List<T>
 		// instance method. Kotlin collections lower to System.Collections.Generic.List<T>; these are instance calls,
-		// not COLLECTION_OPS extension ops (those already returned above). Lets the real stdlib `map`/`filter`/`mapTo`
-		// — which build an ArrayList via `.add(...)` — run on the BCL list. `contains`/`indexOf` stay COLLECTION_OPS.
+		// not collection extension ops (the real stdlib `map`/`filter`/`mapTo` bodies — which build an ArrayList via
+		// `.add(...)` — run on the BCL list).
 		// Array indexing `a[i]` / `a[i] = v` (the `get`/`set` operators on Array/primitive arrays).
 		if (callee.isOperator && (name == "get" || name == "set")) {
 			val recv = dispatchReceiver(call)
@@ -4245,12 +4245,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) -> `(i + 1)`/`(i - 1)`.
 			if (name == "inc" && operands.size == 1 && primOperand(operands[0])) return """{"k":"binOp","op":"+","lhs":${valueOperand(operands[0])},"rhs":{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}}"""
 			if (name == "dec" && operands.size == 1 && primOperand(operands[0])) return """{"k":"binOp","op":"-","lhs":${valueOperand(operands[0])},"rhs":{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}}"""
-			// Numeric conversion `x.toLong()`/`x.toInt()`/… (numeric receiver) -> a CIL conv.
-			NUMBER_CONV[name]?.let { to ->
-				val recv = dispatchReceiver(call)
-				if (recv != null && recv.type.classFqName?.asString() in NUMERIC_FQ)
-					return """{"k":"conv","to":${fqnJson(to)},"e":${expr(recv)}}"""
-			}
+			// Numeric conversion `x.toLong()`/`x.toInt()`/… is NO LONGER recognized here: kotc emits the plain
+			// `callInstance kotlin.Int.toLong` (the faithful IR); bir2cir reads the `@kotlin.clr.ClrConv` marker off the
+			// stdlib primitive's conversion member on the ref.dll and emits the `conv` node from the callee's return type.
 			val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
 			if (fq == "kotlin.io" && (name == "println" || name == "print")) {
 				// A collection operand prints Kotlin-style `[a, b]`, not .NET's type-name ToString -> route via clrCollToString.

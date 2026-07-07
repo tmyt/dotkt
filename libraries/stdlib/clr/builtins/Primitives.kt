@@ -310,7 +310,8 @@ public actual class Byte private constructor() : Number(), Comparable<Byte> {
 
     /** Returns this value. */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toByte(): Byte
+    @kotlin.clr.ClrConv
+    public actual override fun toByte(): Byte = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Byte] value to [Char].
@@ -323,7 +324,8 @@ public actual class Byte private constructor() : Number(), Comparable<Byte> {
     @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead.", ReplaceWith("this.toInt().toChar()"))
     @DeprecatedSinceKotlin(warningSince = "1.5", errorSince = "2.3")
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toChar(): Char
+    @kotlin.clr.ClrConv
+    public actual override fun toChar(): Char = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Byte] value to [Short].
@@ -334,7 +336,8 @@ public actual class Byte private constructor() : Number(), Comparable<Byte> {
      * whereas the most significant 8 bits are filled with the sign bit of this value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toShort(): Short
+    @kotlin.clr.ClrConv
+    public actual override fun toShort(): Short = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Byte] value to [Int].
@@ -345,7 +348,8 @@ public actual class Byte private constructor() : Number(), Comparable<Byte> {
      * whereas the most significant 24 bits are filled with the sign bit of this value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toInt(): Int
+    @kotlin.clr.ClrConv
+    public actual override fun toInt(): Int = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Byte] value to [Long].
@@ -356,7 +360,8 @@ public actual class Byte private constructor() : Number(), Comparable<Byte> {
      * whereas the most significant 56 bits are filled with the sign bit of this value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toLong(): Long
+    @kotlin.clr.ClrConv
+    public actual override fun toLong(): Long = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Byte] value to [Float].
@@ -364,7 +369,8 @@ public actual class Byte private constructor() : Number(), Comparable<Byte> {
      * The resulting `Float` value represents the same numerical value as this `Byte`.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toFloat(): Float
+    @kotlin.clr.ClrConv
+    public actual override fun toFloat(): Float = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Byte] value to [Double].
@@ -372,7 +378,8 @@ public actual class Byte private constructor() : Number(), Comparable<Byte> {
      * The resulting `Double` value represents the same numerical value as this `Byte`.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toDouble(): Double
+    @kotlin.clr.ClrConv
+    public actual override fun toDouble(): Double = TODO("clr binding should be implemented")
 
     @kotlin.internal.IntrinsicConstEvaluation
     public actual override fun toString(): String
@@ -688,7 +695,8 @@ public actual class Short private constructor() : Number(), Comparable<Short> {
      * The resulting `Byte` value is represented by the least significant 8 bits of this `Short` value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toByte(): Byte
+    @kotlin.clr.ClrConv
+    public actual override fun toByte(): Byte = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Short] value to [Char].
@@ -699,11 +707,13 @@ public actual class Short private constructor() : Number(), Comparable<Short> {
     @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead.", ReplaceWith("this.toInt().toChar()"))
     @DeprecatedSinceKotlin(warningSince = "1.5", errorSince = "2.3")
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toChar(): Char
+    @kotlin.clr.ClrConv
+    public actual override fun toChar(): Char = TODO("clr binding should be implemented")
 
     /** Returns this value. */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toShort(): Short
+    @kotlin.clr.ClrConv
+    public actual override fun toShort(): Short = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Short] value to [Int].
@@ -714,7 +724,8 @@ public actual class Short private constructor() : Number(), Comparable<Short> {
      * whereas the most significant 16 bits are filled with the sign bit of this value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toInt(): Int
+    @kotlin.clr.ClrConv
+    public actual override fun toInt(): Int = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Short] value to [Long].
@@ -725,7 +736,8 @@ public actual class Short private constructor() : Number(), Comparable<Short> {
      * whereas the most significant 48 bits are filled with the sign bit of this value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toLong(): Long
+    @kotlin.clr.ClrConv
+    public actual override fun toLong(): Long = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Short] value to [Float].
@@ -733,7 +745,8 @@ public actual class Short private constructor() : Number(), Comparable<Short> {
      * The resulting `Float` value represents the same numerical value as this `Short`.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toFloat(): Float
+    @kotlin.clr.ClrConv
+    public actual override fun toFloat(): Float = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Short] value to [Double].
@@ -741,7 +754,8 @@ public actual class Short private constructor() : Number(), Comparable<Short> {
      * The resulting `Double` value represents the same numerical value as this `Short`.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toDouble(): Double
+    @kotlin.clr.ClrConv
+    public actual override fun toDouble(): Double = TODO("clr binding should be implemented")
 
     @kotlin.internal.IntrinsicConstEvaluation
     public actual override fun toString(): String
@@ -1100,7 +1114,8 @@ public actual class Int private constructor() : Number(), Comparable<Int> {
      * The resulting `Byte` value is represented by the least significant 8 bits of this `Int` value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toByte(): Byte
+    @kotlin.clr.ClrConv
+    public actual override fun toByte(): Byte = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Int] value to [Char].
@@ -1112,7 +1127,8 @@ public actual class Int private constructor() : Number(), Comparable<Int> {
      */
     @Suppress("OVERRIDE_DEPRECATION")
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toChar(): Char
+    @kotlin.clr.ClrConv
+    public actual override fun toChar(): Char = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Int] value to [Short].
@@ -1123,11 +1139,13 @@ public actual class Int private constructor() : Number(), Comparable<Int> {
      * The resulting `Short` value is represented by the least significant 16 bits of this `Int` value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toShort(): Short
+    @kotlin.clr.ClrConv
+    public actual override fun toShort(): Short = TODO("clr binding should be implemented")
 
     /** Returns this value. */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toInt(): Int
+    @kotlin.clr.ClrConv
+    public actual override fun toInt(): Int = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Int] value to [Long].
@@ -1138,7 +1156,8 @@ public actual class Int private constructor() : Number(), Comparable<Int> {
      * whereas the most significant 32 bits are filled with the sign bit of this value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toLong(): Long
+    @kotlin.clr.ClrConv
+    public actual override fun toLong(): Long = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Int] value to [Float].
@@ -1148,7 +1167,8 @@ public actual class Int private constructor() : Number(), Comparable<Int> {
      * the one with zero at least significant bit of mantissa is selected.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toFloat(): Float
+    @kotlin.clr.ClrConv
+    public actual override fun toFloat(): Float = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Int] value to [Double].
@@ -1156,7 +1176,8 @@ public actual class Int private constructor() : Number(), Comparable<Int> {
      * The resulting `Double` value represents the same numerical value as this `Int`.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toDouble(): Double
+    @kotlin.clr.ClrConv
+    public actual override fun toDouble(): Double = TODO("clr binding should be implemented")
 
     @kotlin.internal.IntrinsicConstEvaluation
     public actual override fun toString(): String
@@ -1515,7 +1536,8 @@ public actual class Long private constructor() : Number(), Comparable<Long> {
      * The resulting `Byte` value is represented by the least significant 8 bits of this `Long` value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toByte(): Byte
+    @kotlin.clr.ClrConv
+    public actual override fun toByte(): Byte = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Long] value to [Char].
@@ -1528,7 +1550,8 @@ public actual class Long private constructor() : Number(), Comparable<Long> {
     @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead.", ReplaceWith("this.toInt().toChar()"))
     @DeprecatedSinceKotlin(warningSince = "1.5", errorSince = "2.3")
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toChar(): Char
+    @kotlin.clr.ClrConv
+    public actual override fun toChar(): Char = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Long] value to [Short].
@@ -1539,7 +1562,8 @@ public actual class Long private constructor() : Number(), Comparable<Long> {
      * The resulting `Short` value is represented by the least significant 16 bits of this `Long` value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toShort(): Short
+    @kotlin.clr.ClrConv
+    public actual override fun toShort(): Short = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Long] value to [Int].
@@ -1550,11 +1574,13 @@ public actual class Long private constructor() : Number(), Comparable<Long> {
      * The resulting `Int` value is represented by the least significant 32 bits of this `Long` value.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toInt(): Int
+    @kotlin.clr.ClrConv
+    public actual override fun toInt(): Int = TODO("clr binding should be implemented")
 
     /** Returns this value. */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toLong(): Long
+    @kotlin.clr.ClrConv
+    public actual override fun toLong(): Long = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Long] value to [Float].
@@ -1564,7 +1590,8 @@ public actual class Long private constructor() : Number(), Comparable<Long> {
      * the one with zero at least significant bit of mantissa is selected.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toFloat(): Float
+    @kotlin.clr.ClrConv
+    public actual override fun toFloat(): Float = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Long] value to [Double].
@@ -1574,7 +1601,8 @@ public actual class Long private constructor() : Number(), Comparable<Long> {
      * the one with zero at least significant bit of mantissa is selected.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toDouble(): Double
+    @kotlin.clr.ClrConv
+    public actual override fun toDouble(): Double = TODO("clr binding should be implemented")
 
     @kotlin.internal.IntrinsicConstEvaluation
     public actual override fun toString(): String
@@ -1856,7 +1884,8 @@ public actual class Float private constructor() : Number(), Comparable<Float> {
     @Deprecated("Unclear conversion. To achieve the same result convert to Int explicitly and then to Byte.", ReplaceWith("toInt().toByte()"))
     @DeprecatedSinceKotlin(warningSince = "1.3", errorSince = "1.5")
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toByte(): Byte
+    @kotlin.clr.ClrConv
+    public actual override fun toByte(): Byte = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Float] value to [Char].
@@ -1866,7 +1895,8 @@ public actual class Float private constructor() : Number(), Comparable<Float> {
     @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead.", ReplaceWith("this.toInt().toChar()"))
     @DeprecatedSinceKotlin(warningSince = "1.5", errorSince = "2.3")
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toChar(): Char
+    @kotlin.clr.ClrConv
+    public actual override fun toChar(): Char = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Float] value to [Short].
@@ -1876,7 +1906,8 @@ public actual class Float private constructor() : Number(), Comparable<Float> {
     @Deprecated("Unclear conversion. To achieve the same result convert to Int explicitly and then to Short.", ReplaceWith("toInt().toShort()"))
     @DeprecatedSinceKotlin(warningSince = "1.3", errorSince = "1.5")
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toShort(): Short
+    @kotlin.clr.ClrConv
+    public actual override fun toShort(): Short = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Float] value to [Int].
@@ -1886,7 +1917,8 @@ public actual class Float private constructor() : Number(), Comparable<Float> {
      * [Int.MAX_VALUE] if it's bigger than `Int.MAX_VALUE`.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toInt(): Int
+    @kotlin.clr.ClrConv
+    public actual override fun toInt(): Int = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Float] value to [Long].
@@ -1896,11 +1928,13 @@ public actual class Float private constructor() : Number(), Comparable<Float> {
      * [Long.MAX_VALUE] if it's bigger than `Long.MAX_VALUE`.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toLong(): Long
+    @kotlin.clr.ClrConv
+    public actual override fun toLong(): Long = TODO("clr binding should be implemented")
 
     /** Returns this value. */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toFloat(): Float
+    @kotlin.clr.ClrConv
+    public actual override fun toFloat(): Float = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Float] value to [Double].
@@ -1908,7 +1942,8 @@ public actual class Float private constructor() : Number(), Comparable<Float> {
      * The resulting `Double` value represents the same numerical value as this `Float`.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toDouble(): Double
+    @kotlin.clr.ClrConv
+    public actual override fun toDouble(): Double = TODO("clr binding should be implemented")
 
     @kotlin.internal.IntrinsicConstEvaluation
     public actual override fun toString(): String
@@ -2198,7 +2233,8 @@ public actual class Double private constructor() : Number(), Comparable<Double> 
     @Deprecated("Unclear conversion. To achieve the same result convert to Int explicitly and then to Byte.", ReplaceWith("toInt().toByte()"))
     @DeprecatedSinceKotlin(warningSince = "1.3", errorSince = "1.5")
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toByte(): Byte
+    @kotlin.clr.ClrConv
+    public actual override fun toByte(): Byte = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Double] value to [Char].
@@ -2208,7 +2244,8 @@ public actual class Double private constructor() : Number(), Comparable<Double> 
     @Deprecated("Direct conversion to Char is deprecated. Use toInt().toChar() or Char constructor instead.", ReplaceWith("this.toInt().toChar()"))
     @DeprecatedSinceKotlin(warningSince = "1.5", errorSince = "2.3")
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toChar(): Char
+    @kotlin.clr.ClrConv
+    public actual override fun toChar(): Char = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Double] value to [Short].
@@ -2218,7 +2255,8 @@ public actual class Double private constructor() : Number(), Comparable<Double> 
     @Deprecated("Unclear conversion. To achieve the same result convert to Int explicitly and then to Short.", ReplaceWith("toInt().toShort()"))
     @DeprecatedSinceKotlin(warningSince = "1.3", errorSince = "1.5")
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toShort(): Short
+    @kotlin.clr.ClrConv
+    public actual override fun toShort(): Short = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Double] value to [Int].
@@ -2228,7 +2266,8 @@ public actual class Double private constructor() : Number(), Comparable<Double> 
      * [Int.MAX_VALUE] if it's bigger than `Int.MAX_VALUE`.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toInt(): Int
+    @kotlin.clr.ClrConv
+    public actual override fun toInt(): Int = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Double] value to [Long].
@@ -2238,7 +2277,8 @@ public actual class Double private constructor() : Number(), Comparable<Double> 
      * [Long.MAX_VALUE] if it's bigger than `Long.MAX_VALUE`.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toLong(): Long
+    @kotlin.clr.ClrConv
+    public actual override fun toLong(): Long = TODO("clr binding should be implemented")
 
     /**
      * Converts this [Double] value to [Float].
@@ -2248,11 +2288,13 @@ public actual class Double private constructor() : Number(), Comparable<Double> 
      * the one with zero at least significant bit of mantissa is selected.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toFloat(): Float
+    @kotlin.clr.ClrConv
+    public actual override fun toFloat(): Float = TODO("clr binding should be implemented")
 
     /** Returns this value. */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual override fun toDouble(): Double
+    @kotlin.clr.ClrConv
+    public actual override fun toDouble(): Double = TODO("clr binding should be implemented")
 
     @kotlin.internal.IntrinsicConstEvaluation
     public actual override fun toString(): String
