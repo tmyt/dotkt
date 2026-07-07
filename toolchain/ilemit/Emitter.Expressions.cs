@@ -175,7 +175,7 @@ sealed partial class Emitter
                 // sidestepping static resolution that cascades (a member on a BCL `clrg:` interface FindMethod skips).
                 if (e.TryGetProperty("dyn", out var dynF) && dynF.ValueKind == JsonValueKind.True)
                     return EmitDynamicCall(e);
-                var cisig = e.TryGetProperty("sig", out var ciEl) && ciEl.ValueKind == JsonValueKind.String ? ciEl.GetString() : null;
+                var cisig = SigString(e);
                 MethodInfo m0 = null; Type rt = null;
                 // A @Clr-bound member whose STATIC resolution fails -- it lives on a BCL clrg: interface that FindMethod
                 // skips (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) -- falls back to dynamic
@@ -237,7 +237,7 @@ sealed partial class Emitter
             case "callStatic":
             {
                 var name = e.GetProperty("method").GetString();
-                var csig = e.TryGetProperty("sig", out var csEl) && csEl.ValueKind == JsonValueKind.String ? csEl.GetString() : null;
+                var csig = SigString(e);
                 // owner present -> a static method on that named class (companion); else a file-class sibling.
                 // A static on a GENERIC emitted class (a generic class's companion fun) must be anchored onto a
                 // constructed owner — an open-typedef parent token is invalid IL at a foreign call site.

@@ -1735,27 +1735,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return result
 	}
 
-	/** A `,"sig":"<paramtypes>"` field carried on a call so ilemit resolves the right OVERLOAD by name+signature. Emit
-	 *  it ALWAYS: for a non-overloaded callee it's harmless (ilemit's `MethodsBySig` lookup hits the sole method, or
-	 *  falls back to the name), and emitting unconditionally avoids any overload-detection edge case. The signature
-	 *  MATCHES how `method()` lays out the def's `params` ([ext receiver?] + regular params, each `birType`). */
+	/** A `,"sig":[<TypeNode>,...]` field carried on a call so ilemit resolves the right OVERLOAD by name+signature.
+	 *  Emit it ALWAYS: for a non-overloaded callee it's harmless (ilemit's `MethodsBySig` lookup hits the sole method,
+	 *  or falls back to the name), and emitting unconditionally avoids any overload-detection edge case. The signature
+	 *  MATCHES how `method()` lays out the def's `params` ([ext receiver?] + regular params, each `birType`) — the
+	 *  #37 m3b type-path structuring: sig is a STRUCTURED TypeNode array (the same `birType(...).toJson()` path every
+	 *  other type slot uses), NOT a legacy comma-string; bir2cir/ilemit derive the overload key from the TypeNodes. */
 	internal fun overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
 		val ext = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
 		val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type) }
-		return ""","sig":${str((listOfNotNull(ext) + regs).joinToString(",") { legacyToken(it) })}"""
-	}
-
-	/** MILESTONE-1 BRIDGE: `sig` stays a comma-joined legacy type-token string (spec §2.2 / structuring is
-	 *  milestone 3), so a Type node is rendered back to the legacy grammar for the sig slot ONLY. bir2cir's
-	 *  ParamKey consumes it as before (it folds primitives / strips `@`/brackets / collapses `gp:`), so the
-	 *  exact leaf spelling is normalized away. NOT used for any other field — every other type slot is structured. */
-	internal fun legacyToken(t: TypeNode): String = when (t) {
-		is TypeNode.Fqn -> if (t.args == null) t.name else t.name + "[" + t.args.joinToString(",") { legacyToken(it) } + "]"
-		is TypeNode.Tv -> "gp:T"                       // ParamKey collapses every gp:* to `gp`
-		is TypeNode.Fn -> (if (t.suspend) "sfunc:" else "func:") + legacyToken(t.ret) + ":" + t.params.joinToString(",") { legacyToken(it) }
-		is TypeNode.Nullable -> "nullable:" + legacyToken(t.of)
-		is TypeNode.Array -> "array:" + legacyToken(t.elem)
-		is TypeNode.ByRef -> "byref:" + legacyToken(t.of)
+		return ""","sig":[${(listOfNotNull(ext) + regs).joinToString(",") { it.toJson() }}]"""
 	}
 
 

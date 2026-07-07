@@ -68,8 +68,6 @@ static class SuspendColdLowering
     static JsonNode Tw(TypeNode t) => TypeJson.Write(t);
     static JsonNode ContAny() => TypeJson.Write(ContAnyTn);
     static JsonNode ContUnit() => TypeJson.Write(ContUnitTn);
-    // The Continuation<Any?> sig token (the m3 legacy sig comma-string keeps the bracket form).
-    const string ContinuationOfAnySig = "kotlin.coroutines.Continuation[kotlin.Any]";
     static bool IsUnitTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "void" or "kotlin.Unit" };
     static bool IsAnyTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Any" };
 
@@ -106,7 +104,6 @@ static class SuspendColdLowering
     };
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
-    static string NonEmpty(string s) => string.IsNullOrEmpty(s) ? null : s;
     static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
     // The inline `suspendCoroutineUninterceptedOrReturn { c -> … }` intrinsic marker. kotc's IR inliner has
@@ -2001,7 +1998,7 @@ static class SuspendColdLowering
                 ["virtual"] = true,
                 ["recv"] = new JsonObject { ["k"] = "this" },
                 ["method"] = "resumeWith",
-                ["sig"] = "kotlin.Result[kotlin.Any]",
+                ["sig"] = new JsonArray { Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn })) },
                 ["retType"] = Tw(VoidTn),
                 ["args"] = new JsonArray
                 {
@@ -2198,8 +2195,11 @@ static class SuspendColdLowering
             // so the sig's kotlin.* tokens are lowered together with the rest and string-match the def's lowered
             // `params[].type`. Without it, FindMethod falls to an ARBITRARY `ti.Methods[name]` -> wrong overload
             // -> arg/param mismatch -> BadImageFormatException. (yield works today only because it has ONE overload.)
-            var origSig = NonEmpty(Str(callNode["sig"]));
-            call["sig"] = origSig == null ? ContinuationOfAnySig : origSig + "," + ContinuationOfAnySig;
+            // Structured sig (#37 m3b): the ORIGINAL call's param TypeNodes + the appended `completion` slot
+            // (Continuation<Any>). ilemit resolves the `<method>$dotkt_suspend` overload by this structured signature.
+            var sigArr = callNode["sig"] is JsonArray os ? (JsonArray)os.DeepClone() : new JsonArray();
+            sigArr.Add(ContAny());
+            call["sig"] = sigArr;
             return call;
         }
 
@@ -2239,9 +2239,10 @@ static class SuspendColdLowering
             var typeArgs = new JsonArray { Tw(AnyTn) };            // T (result) — erased
             if (invokeArgs.Count == 1) typeArgs.Add(Tw(AnyTn));    // R (receiver) — erased
             // sig discriminates the fixed-arity overloads (2/3 params): fn:Any, [receiver:Any], completion:Continuation.
-            var sigParts = new List<string> { "kotlin.Any" };
-            for (var i = 0; i < invokeArgs.Count; i++) sigParts.Add("kotlin.Any");
-            sigParts.Add(ContinuationOfAnySig);
+            // Structured TypeNode array (#37 m3b).
+            var sigArr = new JsonArray { Tw(AnyTn) };
+            for (var i = 0; i < invokeArgs.Count; i++) sigArr.Add(Tw(AnyTn));
+            sigArr.Add(ContAny());
 
             return new JsonObject
             {
@@ -2249,7 +2250,7 @@ static class SuspendColdLowering
                 ["owner"] = StartSuspendOwner,
                 ["method"] = "startSuspendUninterceptedOrReturn",
                 ["typeArgs"] = typeArgs,
-                ["sig"] = string.Join(",", sigParts),
+                ["sig"] = sigArr,
                 ["args"] = args,
                 ["ret"] = Tw(AnyTn),
             };
@@ -2532,7 +2533,7 @@ static class SuspendColdLowering
                     ["virtual"] = true,
                     ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "__sm" },
                     ["method"] = "invokeSuspend",
-                    ["sig"] = "kotlin.Any",
+                    ["sig"] = new JsonArray { Tw(AnyTn) },
                     ["args"] = new JsonArray { NullConst(AnyTn) },
                     ["retType"] = Tw(AnyTn),
                 }),

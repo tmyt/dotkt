@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
@@ -50,11 +51,19 @@ static class ValueTypeNullableCollectionArg
     static void MaybeWrap(JsonObject call)
     {
         if ((call["k"] as JsonValue)?.TryGetValue<string>(out var k) != true || k != "callStatic") return;
-        if ((call["sig"] as JsonValue)?.TryGetValue<string>(out var sig) != true || sig == null) return;
-        // A kotlin.collections collection receiver whose element is `nullable:gp:` — NOT an array (`array:`) param.
-        if (!sig.Contains("kotlin.collections.", StringComparison.Ordinal)
-            || !sig.Contains("[nullable:gp:", StringComparison.Ordinal)
-            || sig.Contains("array:", StringComparison.Ordinal)) return;
+        if (call["sig"] is not JsonArray sig) return;   // sig is a structured TypeNode array (#37 m3b)
+        // A kotlin.collections collection receiver whose element is a nullable type variable (`X<T?>`) — NOT an array
+        // param. Walk the sig's structured TypeNodes: the old string checks (`kotlin.collections.`, `[nullable:gp:`,
+        // `array:`) become structural predicates over the parameter type tree.
+        bool hasColl = false, hasNullableTvArg = false, hasArray = false;
+        foreach (var el in sig)
+            if (TypeJson.Read(el) is TypeNode tn)
+            {
+                if (HasKotlinCollections(tn)) hasColl = true;
+                if (HasNullableTvDirectArg(tn)) hasNullableTvArg = true;
+                if (HasArray(tn)) hasArray = true;
+            }
+        if (!hasColl || !hasNullableTvArg || hasArray) return;
         if (call["typeArgs"] is not JsonArray ta || ta.Count == 0) return;
         if (!IsValueTypeArg(ta[0])) return;
         if (call["args"] is not JsonArray args || args.Count == 0) return;
@@ -71,6 +80,42 @@ static class ValueTypeNullableCollectionArg
             ["args"] = new JsonArray { args[0].DeepClone() },
         };
     }
+
+    // Any Fqn in the type tree named `kotlin.collections.*` (the old `sig.Contains("kotlin.collections.")`).
+    static bool HasKotlinCollections(TypeNode t) => t switch
+    {
+        TypeNode.Fqn f => f.Name.StartsWith("kotlin.collections.", StringComparison.Ordinal)
+                          || (f.Args?.Any(HasKotlinCollections) ?? false),
+        TypeNode.Nullable n => HasKotlinCollections(n.Of),
+        TypeNode.Array a => HasKotlinCollections(a.Elem),
+        TypeNode.ByRef b => HasKotlinCollections(b.Of),
+        TypeNode.Fn fn => HasKotlinCollections(fn.Ret) || fn.Params.Any(HasKotlinCollections),
+        _ => false,
+    };
+
+    // A `Nullable(Tv)` sitting DIRECTLY in some Fqn's type-argument list (the old `sig.Contains("[nullable:gp:")` —
+    // a `[` before `nullable:gp:` only comes from an Fqn's `[...]` arg list, and the tv must be its immediate arg).
+    static bool HasNullableTvDirectArg(TypeNode t) => t switch
+    {
+        TypeNode.Fqn f => (f.Args?.Any(a => a is TypeNode.Nullable { Of: TypeNode.Tv }) ?? false)
+                          || (f.Args?.Any(HasNullableTvDirectArg) ?? false),
+        TypeNode.Nullable n => HasNullableTvDirectArg(n.Of),
+        TypeNode.Array a => HasNullableTvDirectArg(a.Elem),
+        TypeNode.ByRef b => HasNullableTvDirectArg(b.Of),
+        TypeNode.Fn fn => HasNullableTvDirectArg(fn.Ret) || fn.Params.Any(HasNullableTvDirectArg),
+        _ => false,
+    };
+
+    // Any Array node anywhere in the type tree (the old `sig.Contains("array:")`).
+    static bool HasArray(TypeNode t) => t switch
+    {
+        TypeNode.Array => true,
+        TypeNode.Fqn f => f.Args?.Any(HasArray) ?? false,
+        TypeNode.Nullable n => HasArray(n.Of),
+        TypeNode.ByRef b => HasArray(b.Of),
+        TypeNode.Fn fn => HasArray(fn.Ret) || fn.Params.Any(HasArray),
+        _ => false,
+    };
 
     // A `typeArgs[0]` value-type test on the pre-lowering structured Type node (a bare-primitive Fqn), with a legacy
     // string fallback. ValueTypeTokens carries both the kotlin.* and the CLR-shorthand spellings.

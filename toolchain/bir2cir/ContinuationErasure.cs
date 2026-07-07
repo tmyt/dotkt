@@ -75,18 +75,9 @@ static class ContinuationErasure
                     // there must NOT gain a [kotlin.Any] arg. Every actual type-reference slot (type/ownerType/ret/base/
                     // interfaces/funcType/typeArgs/…) is rewritten.
                     if (key == "name" || key == "owner") continue;
-                    // A call's `sig` is a LEGACY m3 STRING (`sfunc:gp:T:,kotlin.coroutines.Continuation[gp:T]`), not a
-                    // structured TypeNode — TypeJson.Read misses it, so the structured erasure below never touches it and
-                    // the call keeps `Continuation[gp:T]` while the callee DEF's `Continuation<T>` param erases to
-                    // `Continuation[object]`. That DEF/CALL sig mismatch breaks ilemit's exact-sig overload resolution
-                    // (two `createCoroutineUnintercepted` overloads share a name), so it falls to a name-only pick and
-                    // JITs the WRONG (2-type-param) overload with one type-arg -> "not fully instantiated". Erase the
-                    // Continuation/Result args inside the sig string too, so DEF and CALL agree.
-                    if (key == "sig" && val is JsonValue sv && sv.TryGetValue<string>(out var sigStr))
-                    {
-                        obj[key] = EraseSigString(sigStr);
-                        continue;
-                    }
+                    // A call's `sig` is a STRUCTURED TypeNode array (#37 m3b), so its `Continuation<T>`/`Result<T>`
+                    // elements erase to `Continuation<object>`/`Result<object>` for free via the array-recursion below
+                    // (EraseType) — DEF and CALL sigs stay in agreement structurally, no sig-string special case needed.
                     if (TypeJson.Read(val) is TypeNode tn)
                         obj[key] = TypeJson.Write(EraseType(tn));
                     else
@@ -175,36 +166,6 @@ static class ContinuationErasure
     // impossible on a structured Fqn (the Name is an exact FQN, not a substring). Nested args/nullable/array/byRef/fn
     // are recursed so a Continuation/Result buried in a generic arg or delegate signature erases too.
     static readonly TypeNode[] AnyArg = { new TypeNode.Fqn("kotlin.Any") };
-
-    // Erase `kotlin.coroutines.Continuation[...]` and constructed `kotlin.Result[...]` args to `[kotlin.Any]` inside a
-    // legacy sig STRING, preserving all bracket nesting (a `Continuation` buried in an `sfunc:` fn-token or a nested
-    // generic arg erases too). Mirrors EraseType's structured rewrite; the resulting `kotlin.Any` is lowered to `object`
-    // by the same BirTypeLowering that lowers the erased DEF param, so the two sig keys agree.
-    static string EraseSigString(string sig)
-    {
-        foreach (var owner in new[] { Cont, ResultFqn })
-        {
-            var probe = owner + "[";
-            var from = 0;
-            int at;
-            while ((at = sig.IndexOf(probe, from, StringComparison.Ordinal)) >= 0)
-            {
-                // Find the matching close bracket of this owner's arg list.
-                var open = at + owner.Length;
-                var depth = 0; var close = -1;
-                for (var i = open; i < sig.Length; i++)
-                {
-                    if (sig[i] == '[') depth++;
-                    else if (sig[i] == ']') { depth--; if (depth == 0) { close = i; break; } }
-                }
-                if (close < 0) break;   // malformed; leave the rest untouched
-                const string repl = "[kotlin.Any]";
-                sig = sig[..open] + repl + sig[(close + 1)..];
-                from = open + repl.Length;   // advance PAST this replacement so it is not re-matched
-            }
-        }
-        return sig;
-    }
 
     static TypeNode EraseType(TypeNode t)
     {

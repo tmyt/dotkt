@@ -1514,8 +1514,8 @@ sealed record CallSite(
         var targetName = StringProp(node, "method")
             ?? StringProp(node, "name")
             ?? "";
-        var signature = StringProp(node, "sig") ?? "";
-        var argTypes = ArgumentTypes(node, signature);
+        var argTypes = ArgumentTypes(node);
+        var signature = string.Join(",", argTypes);
 
         return new CallSite(
             kind,
@@ -1552,10 +1552,11 @@ sealed record CallSite(
 
     static string StringProp(JsonObject obj, string name) => (obj[name] as JsonValue)?.GetValue<string>();
 
-    static IReadOnlyList<string> ArgumentTypes(JsonObject node, string signature)
+    static IReadOnlyList<string> ArgumentTypes(JsonObject node)
     {
-        if (!string.IsNullOrWhiteSpace(signature))
-            return SplitTopLevel(signature);
+        // `sig` is a STRUCTURED TypeNode array (#37 m3b) — render each param's canonical ParamKey for the diagnostic.
+        if (node["sig"] is JsonArray sig && sig.Count > 0)
+            return sig.Select(el => ReferenceMetadataIndex.ParamKey(el)).ToList();
 
         if (node["args"] is not JsonArray args) return Array.Empty<string>();
 
@@ -1573,28 +1574,6 @@ sealed record CallSite(
             ?? StringProp(obj, "resultType")
             ?? StringProp(obj, "ret")
             ?? "";
-    }
-
-    static IReadOnlyList<string> SplitTopLevel(string value)
-    {
-        if (value.Length == 0) return Array.Empty<string>();
-
-        var result = new List<string>();
-        var depth = 0;
-        var start = 0;
-        for (var i = 0; i < value.Length; i++)
-        {
-            if (value[i] == '[') depth++;
-            else if (value[i] == ']') depth--;
-            else if (value[i] == ',' && depth == 0)
-            {
-                result.Add(value[start..i].Trim());
-                start = i + 1;
-            }
-        }
-
-        result.Add(value[start..].Trim());
-        return result;
     }
 }
 
@@ -2023,13 +2002,19 @@ static class BirTypeLowering
         return null;
     }
 
-    // A `sig` value is a top-level comma-joined list of parameter type tokens (the overload key ilemit matches by
-    // STRING EQUALITY against a method def's lowered `params[].type`). Lower each element so the call-side sig and
-    // the def-side params stay in the SAME vocabulary, else overload resolution misses.
+    // A `sig` value is a STRUCTURED array of parameter-type TypeNodes (#37 m3b) — the overload key ilemit matches
+    // against a method def's lowered `params[].type`. Lower each element through the SAME structured type path the
+    // def params use (LowerTypeObject), so the call-side sig and the def-side params stay in the SAME vocabulary
+    // (identical SigTokenOf render), else overload resolution misses.
     static JsonNode LowerSigValue(JsonNode val, bool refBuild, bool force)
     {
-        if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
-            return JsonValue.Create(string.Join(",", SplitTopLevel(s).Select(p => LowerTypeString(p, refBuild, force))));
+        if (val is JsonArray arr)
+        {
+            var copy = new JsonArray();
+            foreach (var item in arr)
+                copy.Add(item == null ? null : IsTypeObject(item) ? LowerTypeObject(item, refBuild, force, typeArg: false) : LowerNode(item, refBuild, force));
+            return copy;
+        }
         return LowerNode(val, refBuild, force);
     }
 
@@ -2673,8 +2658,8 @@ static class DefaultArgSplice
     {
         var k = Str(node["k"]);
         if (k != "callStatic" && k != "callInstance") return;
-        if (node["args"] is not JsonArray args || Str(node["sig"]) is not string sig) return;
-        var sigCount = SplitTopLevel(sig).Count;
+        if (node["args"] is not JsonArray args || node["sig"] is not JsonArray sig) return;
+        var sigCount = sig.Count;
         var hasPlaceholder = false;
         for (var j = 0; j < args.Count; j++) if (IsPlaceholder(args[j])) { hasPlaceholder = true; break; }
         if (!hasPlaceholder && args.Count >= sigCount) return;           // no omitted arg to fill
@@ -2746,21 +2731,6 @@ static class DefaultArgSplice
     }
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
-
-    static IReadOnlyList<string> SplitTopLevel(string value)
-    {
-        var result = new List<string>();
-        int depth = 0, start = 0;
-        for (int i = 0; i < value.Length; i++)
-        {
-            var c = value[i];
-            if (c == '[' || c == '<' || c == '(') depth++;
-            else if (c == ']' || c == '>' || c == ')') depth--;
-            else if (c == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
-        }
-        result.Add(value[start..].Trim());
-        return result;
-    }
 }
 
 // CHARSEQUENCE -> System.String (docs/design-charsequence-clr-string.md, the 3-point model). `kotlin.CharSequence` is
@@ -3024,19 +2994,15 @@ static class CharSeqStringLowering
     {
         if (TypeJson.OwnerName(node["owner"]) != null) return;   // attributed -> external
         if (Str(node["method"]) is not string method || !_localFns.Contains(method)) return;
-        if (Str(node["sig"]) is not string sig) return;
-        var parts = SplitTopLevel(sig).ToList();   // sig stays the m3 legacy string
+        if (node["sig"] is not JsonArray sig) return;   // sig is a structured TypeNode array (#37 m3b)
         var args = node["args"] as JsonArray;
-        var changed = false;
-        for (var i = 0; i < parts.Count; i++)
-            if (IsCharSeq(parts[i]))
+        for (var i = 0; i < sig.Count; i++)
+            if (TypeJson.Read(sig[i]) is TypeNode tn && IsCharSeqT(tn))
             {
-                parts[i] = LowerTok(parts[i]);
-                changed = true;
+                sig[i] = TypeJson.Write(LowerTokT(tn));
                 if (args != null && i < args.Count && args[i] is JsonNode a && CoerceOrNull(a, env) is JsonNode w)
                     args[i] = w;
             }
-        if (changed) node["sig"] = string.Join(",", parts);
         if (IsCharSeqSlot(node["dynRet"])) node["dynRet"] = LowerSlot(node["dynRet"]);
     }
 
@@ -3112,7 +3078,7 @@ static class CharSeqStringLowering
         return new JsonObject
         {
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"), ["method"] = "toString",
-            ["sig"] = "object", ["args"] = new JsonArray { value.DeepClone() },
+            ["sig"] = new JsonArray { TypeJson.Fqn("object") }, ["args"] = new JsonArray { value.DeepClone() },
         };
     }
 
@@ -3316,11 +3282,10 @@ static class StringCharSequenceBridge
     // trailing defaulted params were dropped — pair only the present args.
     static void WrapCallArgs(JsonObject node, Env env)
     {
-        if (node["args"] is not JsonArray args || Str(node["sig"]) is not string sig) return;
-        var parts = SplitTopLevel(sig);
-        var n = Math.Min(parts.Count, args.Count);
+        if (node["args"] is not JsonArray args || node["sig"] is not JsonArray sig) return;
+        var n = Math.Min(sig.Count, args.Count);
         for (var i = 0; i < n; i++)
-            if (IsCharSeqSlot(parts[i]) && args[i] is JsonNode a && IsStaticString(a, env))
+            if (TypeJson.Read(sig[i]) is TypeNode tn && IsCharSeqT(tn) && args[i] is JsonNode a && IsStaticString(a, env))
                 args[i] = WrapAdapter(a);
     }
 
@@ -3403,22 +3368,6 @@ static class StringCharSequenceBridge
         if (t.StartsWith("@", StringComparison.Ordinal)) t = t[1..];
         return t;
     }
-
-    static IReadOnlyList<string> SplitTopLevel(string value)
-    {
-        if (value.Length == 0) return Array.Empty<string>();
-        var result = new List<string>();
-        var depth = 0;
-        var start = 0;
-        for (var i = 0; i < value.Length; i++)
-        {
-            if (value[i] == '[') depth++;
-            else if (value[i] == ']') depth--;
-            else if (value[i] == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
-        }
-        result.Add(value[start..].Trim());
-        return result;
-    }
 }
 
 // Non-generic `System.IComparable` bridge. A Kotlin `class C : Comparable<C>` lowers (via the stdlib's
@@ -3488,7 +3437,7 @@ static class ComparableBridgeSynthesis
                         ["virtual"] = true,
                         ["recv"] = new JsonObject { ["k"] = "this" },
                         ["method"] = targetName,
-                        ["sig"] = MemberCallSubstitution.SigToken(selfArg),
+                        ["sig"] = new JsonArray { TypeJson.Write(selfArg) },
                         ["args"] = new JsonArray(new JsonObject
                         {
                             ["k"] = "cast",
@@ -3843,19 +3792,9 @@ static class NullableGenericReturnErasure
                 {
                     var child = obj[key];
                     if (child == null) continue;
-                    // A call's `sig` is a LEGACY m3 STRING token (`clrg:System.Collections.Generic.IEnumerable[nullable:gp:T]`),
-                    // not a structured TypeNode — TypeJson.Read misses it, so the structured EraseNullableTv above never
-                    // touches it, and the CALL keeps `nullable:gp:T` while the callee DEF's `Iterable<T?>` param erases to
-                    // `IEnumerable<object>`. That DEF/CALL sig mismatch drops ilemit off the exact-sig overload (two
-                    // `filterNotNull`/`filterNotNullTo` overloads share a name) onto the ARRAY overload — an IEnumerable where
-                    // `T[]` is expected -> segfault/empty result (il-chunk / il-collmore). Erase the `nullable:gp:X` tokens
-                    // inside the sig string too so DEF and CALL agree, mirroring EraseNullableTv's structured rewrite.
-                    if (key == "sig" && child is JsonValue sv && sv.TryGetValue<string>(out var sigStr)
-                        && sigStr.Contains("nullable:gp:", StringComparison.Ordinal))
-                    {
-                        obj[key] = EraseNullableGpSigString(sigStr);
-                        continue;
-                    }
+                    // A call's `sig` is a STRUCTURED TypeNode array (#37 m3b), so its `nullable:gp:X` (Nullable(Tv))
+                    // elements erase to `object` for free via the array-recursion below (EraseNullableTv) — DEF and CALL
+                    // sigs stay in agreement structurally, no sig-string special case needed.
                     if (TypeJson.Read(child) is TypeNode tn) obj[key] = TypeJson.Write(EraseNullableTv(tn));
                     else EraseNullableGpAllStrings(child);
                 }
@@ -3870,30 +3809,6 @@ static class NullableGenericReturnErasure
                 }
                 break;
         }
-    }
-
-    // Replace every `nullable:gp:<ident>` token inside a legacy sig STRING with `object` (the boxed/erased nullable
-    // rep that carries a real null), preserving all bracket/comma structure — the string twin of EraseNullableTv.
-    // A token nested in a `clrg:Owner[...]` arg list (`IEnumerable[nullable:gp:T]` -> `IEnumerable[object]`), an
-    // `array:nullable:gp:T` (-> `array:object`), a `func:` return/param, or a standalone comma-separated token all
-    // collapse to `object`, so the erased CALL sig agrees with the callee DEF param (erased structurally to `object`).
-    static string EraseNullableGpSigString(string sig)
-    {
-        const string probe = "nullable:gp:";
-        var sb = new System.Text.StringBuilder(sig.Length);
-        var i = 0;
-        while (i < sig.Length)
-        {
-            var at = sig.IndexOf(probe, i, StringComparison.Ordinal);
-            if (at < 0) { sb.Append(sig, i, sig.Length - i); break; }
-            sb.Append(sig, i, at - i);
-            sb.Append("object");
-            // Skip PAST the `nullable:gp:` prefix and its type-param identifier (ends at `]`, `,`, or EOS).
-            var j = at + probe.Length;
-            while (j < sig.Length && (char.IsLetterOrDigit(sig[j]) || sig[j] == '_')) j++;
-            i = j;
-        }
-        return sb.ToString();
     }
 
     // Replace every `Nullable(Tv)` (a value-type-nullable type variable) with `object`, recursively. LEAVES a func
@@ -4676,7 +4591,7 @@ static class MemberCallSubstitution
             // and never for a name that ALSO has a real-bodied (non-intrinsic) top-level overload: `sort`'s 8
             // primitive-array intrinsics all agree on "System.Array.Sort" (not "ambiguous"), yet the name fallback
             // captured the real-bodied `MutableList<T>.sort()` call inside the compiled `sorted()` body.
-            var sigKey0 = string.Join(",", sigParts0.Select(ReferenceMetadataIndex.ParamKey));
+            var sigKey0 = string.Join(",", sigParts0.Select(t => ReferenceMetadataIndex.ParamKey(t)));
             if ((refs.TryTopLevelIntrinsicBySig(fn, sigKey0, out var fq)
                     || (!refs.IsAmbiguousTopLevelIntrinsic(fn) && !refs.HasNonIntrinsicTopLevel(fn)
                         && refs.TryTopLevelIntrinsic(fn, out fq)))
@@ -5159,19 +5074,25 @@ static class MemberCallSubstitution
     // A bare-@ClrIntrinsic top-level EXTENSION fun: `fn(recv, rest...)` -> `recv.<intrinsic>(rest...)`. The extension
     // receiver is the first arg; the first `sig` type is its (CLR) type, the rest are the method's arg types. ilemit
     // resolves the BCL member on that receiver type (incl. its array-Clone / dynamic-dispatch fallbacks).
-    static List<string> SplitSig(JsonObject node)
+    static List<TypeNode> SplitSig(JsonObject node)
     {
-        var sig = (node["sig"] as JsonValue)?.GetValue<string>();
-        return string.IsNullOrWhiteSpace(sig) ? new List<string>() : SplitTopLevel(sig).ToList();
+        var result = new List<TypeNode>();
+        if (node["sig"] is JsonArray arr)
+            foreach (var el in arr)
+                if (TypeJson.Read(el) is TypeNode tn) result.Add(tn);
+        return result;
     }
 
     // The receiver-type key of a call's first-arg type (mirrors ReferenceMetadataIndex.RecvKey on the ref.dll side).
-    static string RecvKeyOf(string sig0)
+    static string RecvKeyOf(TypeNode sig0) => sig0 switch
     {
-        if (sig0.StartsWith("array:", StringComparison.Ordinal)) return "[]";
-        if (sig0.StartsWith("gp:", StringComparison.Ordinal)) return "gp";
-        return ReferenceMetadataIndex.BareOwnerFqn(sig0);
-    }
+        TypeNode.Array => "[]",
+        TypeNode.Tv => "gp",
+        TypeNode.Nullable n => RecvKeyOf(n.Of),
+        TypeNode.ByRef b => RecvKeyOf(b.Of),
+        TypeNode.Fqn f => ReferenceMetadataIndex.BareOwnerFqn(f.Name),
+        _ => "",
+    };
 
     // A CLR-bound owner token's ClrRef-resolvable BCL type: a non-generic alias is its bare BCL FQN ("System.String"
     // -- NOT the "string" shorthand, which ilemit ClrRef can't resolve as a clr* `type`); a generic alias keeps its
@@ -5192,7 +5113,7 @@ static class MemberCallSubstitution
         return new TypeNode.Fqn(bcl);
     }
 
-    static JsonNode TopLevelExtensionInstance(JsonObject node, ReferenceMetadataIndex refs, string intrinsic, JsonArray args, List<string> sigParts, SubstCtx ctx)
+    static JsonNode TopLevelExtensionInstance(JsonObject node, ReferenceMetadataIndex refs, string intrinsic, JsonArray args, List<TypeNode> sigParts, SubstCtx ctx)
     {
         if (args.Count == 0) return null;   // no receiver -> not an extension shape; leave for FindStatic to report
         // The extension receiver's CLR owner type. PREFER the receiver EXPRESSION's STRUCTURED static type (from ctx):
@@ -5207,14 +5128,14 @@ static class MemberCallSubstitution
         if (ctx != null && args[0] is JsonObject recv0 && RecvStaticType(recv0, ctx, allowExprShapes: false) is TypeNode.Fqn structRecv
             && ClrOwnerType(refs, structRecv) is TypeNode roStruct)
             recvClr = roStruct;
-        else if (sig0 != null && ClrOwnerType(refs, new TypeNode.Fqn(ReferenceMetadataIndex.BareOwnerFqn(sig0))) is TypeNode roBare)
+        else if (sig0 is TypeNode.Fqn sig0f && ClrOwnerType(refs, new TypeNode.Fqn(ReferenceMetadataIndex.BareOwnerFqn(sig0f.Name))) is TypeNode roBare)
             recvClr = roBare;
         JsonNode recvType = recvClr != null
             ? TypeJson.Write(recvClr)
-            : (sig0 != null ? JsonValue.Create(sig0) : InferArgType(args[0]));
+            : (sig0 != null ? TypeJson.Write(sig0) : InferArgType(args[0]));
 
         var argTypes = new JsonArray();
-        for (var i = 1; i < sigParts.Count; i++) argTypes.Add(sigParts[i]);
+        for (var i = 1; i < sigParts.Count; i++) argTypes.Add(TypeJson.Write(sigParts[i]));
         var rest = new JsonArray();
         for (var i = 1; i < args.Count; i++) rest.Add(args[i]?.DeepClone());
 
@@ -5342,7 +5263,7 @@ static class MemberCallSubstitution
                 args[i] = new JsonObject
                 {
                     ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"), ["method"] = "toString",
-                    ["sig"] = "object", ["args"] = new JsonArray { a.DeepClone() },
+                    ["sig"] = new JsonArray { TypeJson.Fqn("object") }, ["args"] = new JsonArray { a.DeepClone() },
                 };
                 argTypes[i] = JsonValue.Create("kotlin.String");
             }
@@ -5397,18 +5318,16 @@ static class MemberCallSubstitution
         if (node["typeArgs"] is JsonArray ta) foreach (var t in ta) typeArgs.Add(t?.DeepClone());
         if (typeArgs.Count > 0) call["typeArgs"] = typeArgs;
         // Carry the callee's param-type list (receiver-first, mirroring the hoisted helper's __self) so the
-        // String->CharSequence bridge sees the synthetic-CharSequence slots (il-regex). `sig` is the m3 legacy
-        // comma-string: the receiver token is rendered via the sig-only SigToken; the orig sig tokens pass verbatim
-        // (kotc collapses every type var to `gp:T`, so the old class-param NAME substitution is a no-op now).
-        var sigParts = new List<string>();
+        // String->CharSequence bridge sees the synthetic-CharSequence slots (il-regex). `sig` is a STRUCTURED
+        // TypeNode array (#37 m3b): the receiver type prepends the original sig's structured elements verbatim.
+        var sigParts = new JsonArray();
         if (instance && node["recv"] != null)
-            sigParts.Add(SigToken(classArgs.Count > 0 ? new TypeNode.Fqn(ownerName, classArgs.ToArray()) : ownerFqn));
-        var origSig = (node["sig"] as JsonValue)?.GetValue<string>();
-        if (!string.IsNullOrWhiteSpace(origSig))
-            foreach (var p in SplitTopLevel(origSig)) sigParts.Add(p);
+            sigParts.Add(TypeJson.Write(classArgs.Count > 0 ? new TypeNode.Fqn(ownerName, classArgs.ToArray()) : ownerFqn));
+        if (node["sig"] is JsonArray origSig)
+            foreach (var p in origSig) sigParts.Add(p?.DeepClone());
         // `sig` may be LONGER than args (omitted defaulted params, filled downstream) — the bridge matches
         // positionally from the left; only a SHORTER sig would misalign.
-        if (sigParts.Count >= hargs.Count) call["sig"] = string.Join(",", sigParts);
+        if (sigParts.Count >= hargs.Count) call["sig"] = sigParts;
         // Carry the call's statically-known return: a helper returning the alias class's BARE type param
         // (`ArrayList<Int>.removeAt` -> E) reflects as the callee's own `!!n` at the call site, and boxing that
         // out-of-scope token is invalid IL (BadImageFormat); ilemit's RetOr/CoerceReturn recover the concrete type
@@ -5420,31 +5339,17 @@ static class MemberCallSubstitution
         return call;
     }
 
-    // The legacy sig-token spelling of a SOURCE-vocabulary type, used ONLY to build the m3 `sig` comma-string (the one
-    // documented legacy-string exception). Mirrors kotc.bir.TypeNode.legacyToken (a type var collapses to `gp:T`).
-    internal static string SigToken(TypeNode t) => t switch
-    {
-        TypeNode.Fqn f => f.Args == null ? f.Name : f.Name + "[" + string.Join(",", f.Args.Select(SigToken)) + "]",
-        TypeNode.Tv => "gp:T",
-        TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + SigToken(fn.Ret) + ":" + string.Join(",", fn.Params.Select(SigToken)),
-        TypeNode.Nullable n => "nullable:" + SigToken(n.Of),
-        TypeNode.Array a => "array:" + SigToken(a.Elem),
-        TypeNode.ByRef b => "byref:" + SigToken(b.Of),
-        _ => "object",
-    };
-
     // The call's parameter types, used as the clr* argTypes overload key. Prefer kotc's `sig` (a comma-joined
     // param-type list); else infer each arg's own type token; else empty. Left in the kotlin.* vocabulary —
     // BirTypeLowering lowers `argTypes` afterwards.
     static JsonArray InferArgTypes(JsonObject node, JsonArray args)
     {
-        // Prefer kotc's `sig` (the m3 legacy comma-string of param-type tokens) — its elements stay STRINGS this
-        // milestone; else infer each arg's own STRUCTURED type. Either form is a valid clr* argTypes overload-key entry.
-        var sig = (node["sig"] as JsonValue)?.GetValue<string>();
+        // Prefer kotc's `sig` (the STRUCTURED TypeNode array of param types, #37 m3b); else infer each arg's own
+        // STRUCTURED type. Either form is a valid clr* argTypes overload-key entry.
         var result = new JsonArray();
-        if (!string.IsNullOrWhiteSpace(sig))
+        if (node["sig"] is JsonArray sig && sig.Count > 0)
         {
-            foreach (var p in SplitTopLevel(sig)) result.Add(p);
+            foreach (var p in sig) result.Add(p?.DeepClone());
             if (result.Count == args.Count) return result;
             result = new JsonArray();
         }

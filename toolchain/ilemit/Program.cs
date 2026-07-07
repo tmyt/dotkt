@@ -1981,6 +1981,15 @@ sealed partial class Emitter
         e.ValueKind == JsonValueKind.String ? e.GetString()
         : e.ValueKind == JsonValueKind.Object ? SigTokenOf(DotKt.Bir.TypeNode.Read(e))
         : "object";
+
+    // The call node's `sig` — a STRUCTURED TypeNode array (#37 m3b) — rendered to the canonical overload-key token
+    // string that the KEPT SigKey/SigTokenMatches machinery matches against a def's SigKey (both call- and def-side
+    // walk the same structured TypeNodes via SigTokenOf, so the keys agree). Null when the node carries no `sig`
+    // array; "" for an empty (nullary) sig (the existing sig.Length==0 -> argc 0 convention).
+    static string SigString(JsonElement e) =>
+        e.TryGetProperty("sig", out var s) && s.ValueKind == JsonValueKind.Array
+            ? string.Join(",", s.EnumerateArray().Select(SigTokenOf))
+            : null;
     static string SigTokenOf(DotKt.Bir.TypeNode t) => t switch
     {
         DotKt.Bir.TypeNode.Fqn f => f.Args == null ? f.Name : f.Name + "[" + string.Join(",", f.Args.Select(SigTokenOf)) + "]",
@@ -2200,14 +2209,23 @@ sealed partial class Emitter
         if (tok.StartsWith("nullable:", StringComparison.Ordinal))
             return SigTokenMatches(tok.Substring(9), p.IsGenericType && p.GetGenericTypeDefinition() == typeof(Nullable<>) ? p.GetGenericArguments()[0] : p);
         if (tok.StartsWith("gp:", StringComparison.Ordinal)) return p.IsGenericParameter || _sigConstructedOwner;
-        if (tok.StartsWith("clrg:", StringComparison.Ordinal))
+        // A constructed-generic owner token: either the legacy `clrg:Owner[args]` spelling OR — post #37 m3b type-path
+        // structuring, where the CALL-side sig is rendered from structured TypeNodes via SigTokenOf which drops the
+        // `clrg:` resolution prefix — a BARE `Owner[args]` (top-level `[`, no prefix-colon in the owner head; a `gp:`/
+        // `func:` argument's colon sits AFTER the bracket). Both route to the generic-owner-definition match.
         {
+            var genBr = tok.IndexOf('[');
+            var isClrg = tok.StartsWith("clrg:", StringComparison.Ordinal);
+            var firstColon = tok.IndexOf(':');
+            var isBareGeneric = !isClrg && genBr > 0 && tok.EndsWith("]", StringComparison.Ordinal)
+                && (firstColon < 0 || firstColon > genBr);
+            if (!isClrg && !isBareGeneric) goto notGeneric;
             // Match on the generic-type-DEFINITION owner, not just "is a constructed generic": several same-arity
             // overloads (SequenceScope.yieldAll over Iterator<T> / IEnumerable<T> / Sequence<T>) all satisfy
             // IsGenericType, so the loose test binds an arbitrary one. The token's arg (`gp:T`) stays open, but its
             // OWNER (`System.Collections.Generic.IEnumerable`) still distinguishes IEnumerable<T> from Iterator<T>.
             if (!p.IsGenericType) return false;
-            var body = tok.Substring(5);
+            var body = isClrg ? tok.Substring(5) : tok;
             var br = body.IndexOf('[');
             var openName = br < 0 ? body : body.Substring(0, br);
             var argToks = br < 0 ? new List<string>() : SplitTopLevel(body.Substring(br + 1, body.Length - br - 2)).ToList();
@@ -2225,6 +2243,7 @@ sealed partial class Emitter
                 if (!SigTokenMatches(argToks[i], actualArgs[i])) return false;
             return true;
         }
+        notGeneric:
         if (tok.StartsWith("func:", StringComparison.Ordinal))
         {
             // `func:<ret>:<arg1>,<arg2>,...` -> Func<arg1,...,argN,ret> (or Action<...> when ret==void). Match the
