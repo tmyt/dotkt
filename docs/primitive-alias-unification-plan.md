@@ -169,6 +169,21 @@ the unsigned inline-class declarations, not the signed Primitives.kt. Confirm th
 input (the ref.dll) + an inversion pass with the signed/unsigned subtlety. Lower priority; it does
 not block the bir2cir/ilemit reroute.
 
+**DECISION 2026-07-08 (user): §3 stays HARDCODED for now — principled keep.** `@ClrTypeAlias` is
+inherently a FORWARD annotation (on the Kotlin class); the reverse (`System.X → kotlin.X`) has no
+natural metadata (you cannot annotate a foreign `System.SByte`). Inverting the ref.dll index in
+facadegen is more machinery than a small, stable, non-IR-coupled (bump-irrelevant) hardcoded map
+warrants. The "read the metadata" principle applies only where the metadata is readable in the needed
+direction; the facadegen reverse is where it isn't — an honest hardcode, not a betrayal of the rule.
+
+**FUTURE approach if §3 is ever done (user idea, deferred — "not now"):** emit a **reverse-map DB as an
+embedded RESOURCE in the ref.dll** at ref-build time. The compiler already holds the full
+`@ClrTypeAlias` set during the ref build, so it can materialize the inverted table (`System.X →
+kotlin.X`) into a resource blob. facadegen then just LOADS that resource and looks up — no ref.dll
+type-loading, no inversion pass. This keeps the single-source invariant (the reverse DB is DERIVED
+from the forward annotations, not a hand-maintained map) while sparing facadegen the index-inversion
+machinery. Elegant, but not warranted now.
+
 ---
 
 ## §4 — kotc `clrMethodShape` (BirEmitter.kt:3052): **kotc-purity item; deletable but needs a bir2cir shape-synth.**
