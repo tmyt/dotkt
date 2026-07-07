@@ -21,6 +21,12 @@ public annotation class ClrIntrinsic(val name: String)
 @Target(AnnotationTarget.FUNCTION)
 public annotation class ClrConv
 
+// NOTE: the collection/array FACTORY markers (@ClrCollectionFactory / @ClrArrayFactory) are defined in the COMMON source
+// set (libraries/stdlib/src/kotlin/clr/Factories.kt), NOT here. They must annotate the vararg factory bodies that live in
+// the COMMON stdlib (`listOf`/`mapOf` in kotlin.collections, the unsigned array factories) — and a COMMON source cannot
+// reference a PLATFORM-only declaration under the jar's multi-platform compile. So the two factory annotations live in
+// common (where common + platform sources can both see them); the other kotlin.clr bindings above stay platform-only.
+
 // Bitwise-combinable ACCESS flags for @ClrProperty. `READ` = a get accessor, `WRITE` = a set accessor; `READ or WRITE`
 // (const-foldable) marks a get+set property. Int (not enum/Boolean) because an Int primitive attr arg encodes into the
 // ref.dll reliably (an enum arg may not encode via ilemit), and `const val` inlines the literal at the use site.

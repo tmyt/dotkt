@@ -72,12 +72,14 @@ private class ArrayAsCollection<T>(val values: Array<out T>, val isVarargs: Bool
  * Returns an empty read-only list.  The returned list is serializable (JVM).
  * @sample samples.collections.Collections.Lists.emptyReadOnlyList
  */
+@kotlin.clr.ClrCollectionFactory("list")
 public fun <T> emptyList(): List<T> = EmptyList
 
 /**
  * Returns a new read-only list of given elements.  The returned list is serializable (JVM).
  * @sample samples.collections.Collections.Lists.readOnlyList
  */
+@kotlin.clr.ClrCollectionFactory("list")
 public fun <T> listOf(vararg elements: T): List<T> = if (elements.size > 0) elements.asList() else emptyList()
 
 /**
@@ -117,6 +119,7 @@ public inline fun <T> arrayListOf(): ArrayList<T> = ArrayList()
  * Returns a new [MutableList] with the given elements.
  * @sample samples.collections.Collections.Lists.mutableList
  */
+@kotlin.clr.ClrCollectionFactory("list")
 public fun <T> mutableListOf(vararg elements: T): MutableList<T> =
     if (elements.size == 0) ArrayList() else elements.asArrayList()
 
@@ -124,6 +127,7 @@ public fun <T> mutableListOf(vararg elements: T): MutableList<T> =
  * Returns a new [ArrayList] with the given elements.
  * @sample samples.collections.Collections.Lists.arrayList
  */
+@kotlin.clr.ClrCollectionFactory("list")
 public fun <T> arrayListOf(vararg elements: T): ArrayList<T> =
     if (elements.size == 0) ArrayList() else elements.asArrayList()
 

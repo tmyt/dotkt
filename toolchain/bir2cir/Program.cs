@@ -524,6 +524,9 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _extMemberIntrinsics = new(StringComparer.Ordinal); // "name|recvKey|paramCount" -> bare member
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
     readonly Dictionary<string, List<(string Owner, string RecvKey)>> _topLevelStatics = new(StringComparer.Ordinal); // non-intrinsic top-level fun name -> [(file-class, recvKey)]
+    readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"/"map"
+    readonly Dictionary<string, string> _arrayFactories = new(StringComparer.Ordinal);       // @ClrArrayFactory fun name -> "vararg"/"sized"
+    readonly Dictionary<string, string> _arrayFactoryElemHints = new(StringComparer.Ordinal);// array factory name -> concrete elem FQN (empty-call fallback)
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaults = new(StringComparer.Ordinal); // "owner|name|paramCount" -> (argPos -> default BIR)
 
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
@@ -581,8 +584,19 @@ sealed class ReferenceMetadataIndex
                 lst.AddRange(kv.Value);
             }
             foreach (var kv in asm.DotKt.KotlinDefaults) _kotlinDefaults.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.CollectionFactories) _collectionFactories.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.ArrayFactories) _arrayFactories.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.ArrayFactoryElemHints) _arrayFactoryElemHints.TryAdd(kv.Key, kv.Value);
         }
     }
+
+    // The @ClrCollectionFactory kind ("list"/"set"/"map") for a top-level fun NAME, or null when the fun is not a
+    // collection factory. MemberCallSubstitution consults this on a `callStatic owner=null` to re-emit newList/newSet/newMap.
+    public string CollectionFactoryKind(string funName) => _collectionFactories.GetValueOrDefault(funName);
+    // The @ClrArrayFactory kind ("vararg"/"sized") for a top-level fun NAME, or null when not an array factory.
+    public string ArrayFactoryKind(string funName) => _arrayFactories.GetValueOrDefault(funName);
+    // The concrete element FQN for an array factory (empty-call fallback for `intArrayOf()`), or null.
+    public string ArrayFactoryElemHint(string funName) => _arrayFactoryElemHints.GetValueOrDefault(funName);
 
     // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> default-expression BIR-json). Matched by
     // owner FQN + method name + total parameter count (the emitted-call arity, extension receiver included). Null when
@@ -1095,6 +1109,26 @@ sealed class ReferenceMetadataIndex
                                 metadata.TopLevelStatics[method.Name] = lst = new List<(string, string)>();
                             lst.Add((ownerFqn, rk));
                         }
+                        // Collection/array FACTORY markers on a [KotlinFileClass] static (listOf/setOf/mapOf/arrayOf/…):
+                        // record name -> kind so MemberCallSubstitution re-emits the newList/newSet/newMap/newArray node
+                        // (the recognition kotc used to do via its LIST/SET/MAP/ARRAY_FACTORY tables). Every overload of a
+                        // factory name agrees on the kind, so a name key is enough.
+                        if (isFileClass && method.IsStatic)
+                        {
+                            if (AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrCollectionFactory") is string cf)
+                                metadata.CollectionFactories[method.Name] = cf;
+                            if (AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrArrayFactory") is string af)
+                            {
+                                metadata.ArrayFactories[method.Name] = af;
+                                // Element hint for an EMPTY concrete primitive factory (`intArrayOf()`): kotc drops the
+                                // empty vararg (args=[]) and these funs carry NO type argument, so neither typeArgs nor
+                                // the vararg wrapper yields the element. Capture it from the factory's array return type
+                                // (`kotlin.IntArray` -> element `kotlin.Int`); null for the generic `arrayOf<T>` (whose
+                                // element is a type variable — typeArgs[0] covers it there).
+                                if (ArrayElemHint(method.ReturnType) is string ah)
+                                    metadata.ArrayFactoryElemHints[method.Name] = ah;
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1111,6 +1145,31 @@ sealed class ReferenceMetadataIndex
 
     static bool HasAttribute(IList<CustomAttributeData> attrs, string fullName) =>
         attrs.Any(a => a.AttributeType.FullName == fullName);
+
+    // The first constructor string argument of the attribute `fullName` (e.g. @ClrCollectionFactory("list") -> "list"),
+    // or null when the attribute is absent / carries no string arg. Used for the factory-kind markers.
+    static string AttrStringArg(IList<CustomAttributeData> attrs, string fullName)
+    {
+        var a = attrs.FirstOrDefault(x => x.AttributeType.FullName == fullName);
+        return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
+    }
+
+    // The element type FQN of an array factory's return type (`kotlin.IntArray` -> "kotlin.Int"), or null when the return
+    // is not a concrete array (the generic `arrayOf<T>` returns `Array<T>` whose element is a type variable). Used only as
+    // a last-resort element source for an EMPTY concrete primitive factory call, where args + typeArgs are both empty.
+    static string ArrayElemHint(Type retType)
+    {
+        try
+        {
+            if (retType != null && retType.IsArray)
+            {
+                var el = retType.GetElementType();
+                if (el != null && !el.IsGenericParameter) return TypeName(el);
+            }
+        }
+        catch { }
+        return null;
+    }
 
     // The class-level CLR binding: @ClrTypeAlias (the type-identity binding); a class-level @ClrIntrinsic is also
     // accepted for any not-yet-renamed bound class. Returns the single ctor-arg (the .NET FQN), or null if not CLR-bound.
@@ -1368,6 +1427,14 @@ sealed class ReferenceDotKtMetadata
     // type when the name is defined across multiple file-classes (CollectionsKt vs ArraysKt vs MapsKt). NOT consulted in
     // a stdlib self-build (the fun is local there; owner=null + FindStatic finds the sibling).
     public readonly Dictionary<string, List<(string Owner, string RecvKey)>> TopLevelStatics = new(StringComparer.Ordinal);
+    // Collection/array FACTORY top-level funs, keyed by fun NAME -> the factory kind. A @kotlin.clr.ClrCollectionFactory
+    // ("list"/"set"/"map") or @kotlin.clr.ClrArrayFactory ("vararg"/"sized") marker on a [KotlinFileClass] static.
+    // MemberCallSubstitution reads these on a `callStatic owner=null` (listOf/setOf/mapOf/arrayOf/intArrayOf/arrayOfNulls
+    // -> the `{k:newList/newSet/newMap/newArray/newArraySized}` construction node kotc used to synthesize). Keyed by name
+    // alone: every overload of a factory name shares the kind, so no receiver disambiguation is needed.
+    public readonly Dictionary<string, string> CollectionFactories = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> ArrayFactories = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> ArrayFactoryElemHints = new(StringComparer.Ordinal); // concrete-primitive elem (empty call)
     // A defaulted parameter's default-value expression as BIR (from @KotlinDefault), for CROSS-MODULE splice of an
     // omitted argument. Keyed "ownerFqn|methodName|paramCount" -> (argPosition -> BIR-json string). The DefaultArgSplice
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
@@ -4567,6 +4634,83 @@ static class MemberCallSubstitution
         return sb.ToString();
     }
 
+    // A `callStatic owner=null` to a @ClrCollectionFactory/@ClrArrayFactory top-level fun -> its construction node, or
+    // null when the call is not a factory (or is a non-decomposable mapOf -> left as a plain call). The element/key/value
+    // TYPES come from the call's `typeArgs` (the canonical source: correct for empty factories, single-element overloads,
+    // and mapOf's [K,V]); the ELEMENTS from the vararg argument (kotc emits it as a `newArray`), the lone non-vararg
+    // element, or none. Mirrors the retired kotc factory recognition (BirEmitter.kt LIST/SET/MAP/ARRAY_FACTORY sites).
+    static JsonNode TryFactorySubst(JsonObject node, ReferenceMetadataIndex refs, string fn)
+    {
+        var args = node["args"] as JsonArray ?? new JsonArray();
+        var typeArgs = node["typeArgs"] as JsonArray;
+
+        if (refs.CollectionFactoryKind(fn) is string collKind)
+        {
+            if (collKind == "map")
+            {
+                var kt = TypeArgAt(typeArgs, 0);
+                var vt = TypeArgAt(typeArgs, 1);
+                if (kt == null || vt == null) return null;                       // can't reconstruct K,V -> plain call
+                var entries = new JsonArray();
+                // The vararg wrapper newArray's elem is `kotlin.Pair<K,V>` (never K), so a lone newArray arg IS the
+                // vararg (wrapperElemType=null). Each element must be a `new kotlin.Pair(k,v)` LITERAL to be split; a
+                // non-literal Pair (`mapOf(pairVar)`) aborts the whole substitution -> the real mapOf body runs.
+                foreach (var el in FactoryElems(args, null))
+                {
+                    if (el is JsonObject eo && (eo["k"] as JsonValue)?.GetValue<string>() == "new"
+                        && TypeJson.OwnerName(eo["type"]) == "kotlin.Pair"
+                        && eo["args"] is JsonArray pa && pa.Count == 2)
+                        entries.Add(new JsonObject { ["key"] = pa[0].DeepClone(), ["value"] = pa[1].DeepClone() });
+                    else
+                        return null;
+                }
+                return new JsonObject { ["k"] = "newMap", ["keyType"] = kt.DeepClone(), ["valType"] = vt.DeepClone(), ["entries"] = entries };
+            }
+            var elemT = TypeArgAt(typeArgs, 0);
+            if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
+            var elems = new JsonArray();
+            foreach (var el in FactoryElems(args, elemT)) elems.Add(el.DeepClone());
+            return new JsonObject { ["k"] = collKind == "set" ? "newSet" : "newList", ["elem"] = elemT.DeepClone(), ["elems"] = elems };
+        }
+
+        if (refs.ArrayFactoryKind(fn) is string arrKind)
+        {
+            if (arrKind == "sized")                                             // arrayOfNulls<T>(size) -> newArraySized
+            {
+                var elemT = TypeArgAt(typeArgs, 0);
+                if (elemT == null || args.Count < 1) return null;
+                return new JsonObject { ["k"] = "newArraySized", ["elem"] = elemT.DeepClone(), ["size"] = args[0].DeepClone() };
+            }
+            // "vararg": arrayOf<T>(...) / intArrayOf(...) -> newArray. kotc emits the vararg as a single `newArray` arg
+            // (an EMPTY vararg is dropped -> args=[]). The elem source, in precedence: typeArgs[0] (the generic
+            // arrayOf<T>, reliable even when empty) -> the vararg wrapper's own elem (concrete primitive intArrayOf/…
+            // NON-empty) -> the ref.dll return-type hint (concrete primitive, EMPTY call). The elements come from the
+            // wrapper, or none when the vararg was dropped.
+            var wrapper = args.Count == 1 && args[0] is JsonObject w && (w["k"] as JsonValue)?.GetValue<string>() == "newArray" ? w : null;
+            var arrElem = TypeArgAt(typeArgs, 0) ?? wrapper?["elem"]
+                ?? (refs.ArrayFactoryElemHint(fn) is string hint ? TypeJson.Fqn(hint) : null);
+            if (arrElem == null) return null;                                   // no element source -> plain call
+            var arrElems = new JsonArray();
+            foreach (var el in (wrapper?["elems"] as JsonArray) ?? new JsonArray()) arrElems.Add(el.DeepClone());
+            return new JsonObject { ["k"] = "newArray", ["elem"] = arrElem.DeepClone(), ["elems"] = arrElems };
+        }
+        return null;
+    }
+
+    // The i-th call type argument (a structured Type node), or null when absent. The canonical element/key/value source.
+    static JsonNode TypeArgAt(JsonArray typeArgs, int i) => typeArgs != null && i < typeArgs.Count ? typeArgs[i] : null;
+
+    // The element nodes of a factory call: the single vararg argument's `elems` when args is one `newArray` that IS the
+    // vararg wrapper (its elem matches `wrapperElemType`; pass null to accept any lone newArray, for mapOf whose wrapper
+    // elem is `Pair<K,V>` not the map key), otherwise the args verbatim (the lone non-vararg element, or none for empty).
+    static IEnumerable<JsonNode> FactoryElems(JsonArray args, JsonNode wrapperElemType)
+    {
+        if (args.Count == 1 && args[0] is JsonObject o && (o["k"] as JsonValue)?.GetValue<string>() == "newArray"
+            && (wrapperElemType == null || JsonNode.DeepEquals(o["elem"], wrapperElemType)))
+            return (o["elems"] as JsonArray ?? new JsonArray());
+        return args;
+    }
+
     static JsonNode TransformCall(JsonObject node, ReferenceMetadataIndex refs, bool instance, SubstCtx ctx = null)
     {
         var ownerFqnNode = TypeJson.Read(node[instance ? "ownerType" : "owner"]) as TypeNode.Fqn;
@@ -4580,6 +4724,13 @@ static class MemberCallSubstitution
             //                       sig type is the receiver type; the rest are the method args.
             var fn = (node["method"] as JsonValue)?.GetValue<string>();
             if (instance || string.IsNullOrEmpty(fn)) return null;
+            // Collection/array FACTORY (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`): a
+            // @ClrCollectionFactory/@ClrArrayFactory marker on the ref.dll top-level fun -> re-emit the
+            // newList/newSet/newMap/newArray/newArraySized CONSTRUCTION node (the recognition kotc used to do via its
+            // LIST/SET/MAP/ARRAY_FACTORY tables). Handled first so a factory never falls through to the plain top-level
+            // owner-attribution below. A non-decomposable form (`mapOf(pairVariable)` — not a `to`-Pair literal) returns
+            // null here and stays a plain call to the real factory body.
+            if (TryFactorySubst(node, refs, fn) is JsonNode factoryNode) return factoryNode;
             var args0 = node["args"] as JsonArray ?? new JsonArray();
             var sigParts0 = SplitSig(node);
             // A top-level @ClrIntrinsic bound to a FQ BCL static. Resolve the EXACT overload by the call's full

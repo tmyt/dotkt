@@ -78,4 +78,5 @@ public inline fun UByteArray(size: Int, init: (Int) -> UByte): UByteArray {
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrArrayFactory("vararg")
 public inline fun ubyteArrayOf(vararg elements: UByte): UByteArray = elements

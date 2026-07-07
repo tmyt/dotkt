@@ -78,4 +78,5 @@ public inline fun UIntArray(size: Int, init: (Int) -> UInt): UIntArray {
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrArrayFactory("vararg")
 public inline fun uintArrayOf(vararg elements: UInt): UIntArray = elements

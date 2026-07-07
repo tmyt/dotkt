@@ -33,6 +33,7 @@ internal object EmptySet : Set<Nothing>, Serializable {
  * Returns an empty read-only set.  The returned set is serializable (JVM).
  * @sample samples.collections.Collections.Sets.emptyReadOnlySet
  */
+@kotlin.clr.ClrCollectionFactory("set")
 public fun <T> emptySet(): Set<T> = EmptySet
 
 /**
@@ -41,6 +42,7 @@ public fun <T> emptySet(): Set<T> = EmptySet
  * The returned set is serializable (JVM).
  * @sample samples.collections.Collections.Sets.readOnlySet
  */
+@kotlin.clr.ClrCollectionFactory("set")
 public fun <T> setOf(vararg elements: T): Set<T> = elements.toSet()
 
 /**
@@ -75,6 +77,7 @@ public inline fun <T> mutableSetOf(): MutableSet<T> = LinkedHashSet()
  * Elements of the set are iterated in the order they were specified.
  * @sample samples.collections.Collections.Sets.mutableSet
  */
+@kotlin.clr.ClrCollectionFactory("set")
 public fun <T> mutableSetOf(vararg elements: T): MutableSet<T> = elements.toCollection(LinkedHashSet(mapCapacity(elements.size)))
 
 /** Returns an empty new [HashSet]. */
@@ -83,6 +86,7 @@ public fun <T> mutableSetOf(vararg elements: T): MutableSet<T> = elements.toColl
 public inline fun <T> hashSetOf(): HashSet<T> = HashSet()
 
 /** Returns a new [HashSet] with the given elements. */
+@kotlin.clr.ClrCollectionFactory("set")
 public fun <T> hashSetOf(vararg elements: T): HashSet<T> = elements.toCollection(HashSet(mapCapacity(elements.size)))
 
 /**

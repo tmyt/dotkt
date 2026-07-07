@@ -109,10 +109,10 @@ synthesis and no IR origin) is **near-zero**.
 | 1 | `BINARY` | op-name→IL symbol (`plus`→`+`) | 4195 binOp | recognition (operator) | **(c) keep** — primitive IL op; CLR primitives have no Kotlin member ops |
 | 2 | `UNARY` | op-name→IL symbol | 4226 unaryOp | recognition (operator) | **(c) keep** |
 | 3 | `PRIMITIVE_ARRAY_ELEM` | `kotlin.IntArray`→`kotlin.Int` | 4610 `isArrayType`, 4615 `arrayElemType` | recognition (array shape) | **(c) keep** — "IntArray is a CLR array" is a frontend representation fact; elem FQN is IR identity |
-| 4 | `ARRAY_FACTORY_NAMES` | `arrayOf`,`intArrayOf`,… | 3545 | recognition (factory) | **(a/b) MIGRATE** — see §Factories |
-| 5 | `LIST_FACTORIES` | `listOf`/`mutableListOf`/… FQNs | 3502 | recognition (factory) | **(a/b) MIGRATE** |
-| 6 | `SET_FACTORIES` | `setOf`/… FQNs | 3502/3506 | recognition (factory) | **(a/b) MIGRATE** |
-| 7 | `MAP_FACTORIES` | `mapOf`/… FQNs | 3510 | recognition (factory) | **(a/b) MIGRATE** |
+| 4 | `ARRAY_FACTORY_NAMES` | `arrayOf`,`intArrayOf`,… | ~~3545~~ | recognition (factory) | ✅ **MIGRATED (#52 Phase 2)** — `@ClrArrayFactory` on the ref.dll; deleted |
+| 5 | `LIST_FACTORIES` | `listOf`/`mutableListOf`/… FQNs | ~~3502~~ | recognition (factory) | ✅ **MIGRATED (#52 Phase 2)** — `@ClrCollectionFactory("list")`; deleted |
+| 6 | `SET_FACTORIES` | `setOf`/… FQNs | ~~3502/3506~~ | recognition (factory) | ✅ **MIGRATED (#52 Phase 2)** — `@ClrCollectionFactory("set")`; deleted |
+| 7 | `MAP_FACTORIES` | `mapOf`/… FQNs | ~~3510~~ | recognition (factory) | ✅ **MIGRATED (#52 Phase 2)** — `@ClrCollectionFactory("map")`; deleted |
 | 8 | `COLLECTION_OPS` | 60+ op names (`map`,`filter`,…) | **NONE (comments only)** | **DEAD** | ✅ **DELETED (#52 Phase 0)** — no live consumer |
 | 9 | `ARRAY_CLASS_ELEM` | array class→elem for sized ctor | Expressions.kt:150 (`IntArray(n){}`→newarr) | recognition (array shape) | **(c) keep** — CLR array allocation shape |
 | 10 | `INT_PROGRESSION_FQ` | `IntRange`,`IntProgression` | 1868/1881/1893, Statements | recognition (range) | **(c) keep loop-shape**, but push CLR accessor names down (see §Ranges) |
@@ -134,10 +134,10 @@ Plus `SCOPE_FUNCTIONS` (defined in BirEmitter.kt:500, not BirMappings): `let/run
 | Site | Recognizes | Synthesizes (lowering) | Mechanism | Cost |
 |---|---|---|---|---|
 | ~~**Conv** 4231–4234~~ ✅ DONE (#52) | `NUMBER_CONV[name]` on `NUMERIC_FQ` receiver | `{k:conv,to:kotlin.X}` | **(a)** `@kotlin.clr.ClrConv` marker on each primitive's conversion members; bir2cir reads it off the ref.dll (`MemberBinding.Conv`/`ConvTo`) → conv node from the callee's return type. **kotc emits the plain call.** | DONE |
-| **List/Set factory** 3502–3508 | `in LIST_FACTORIES`/`SET_FACTORIES` | `{k:newList/newSet}` | **(a)** `@ClrCollectionFactory(kind)` marker → bir2cir; or **(b)** FQN set in bir2cir; or **run the real stdlib body** and drop the intercept | contained |
-| **Map factory** 3510–3535 | `in MAP_FACTORIES` | `{k:newMap}` (splits `a to b` literals) | **(a/b)** as above. **Risk:** the `mapOf(pair)` vs `mapOf(a to b)` split must move intact — do NOT force-split an arbitrary Pair | contained |
-| **Array factory** 3545–3553 | `name in ARRAY_FACTORY_NAMES`, pkg `kotlin` | `{k:newArray}` | **(a/b)** `@ClrArrayFactory` marker or bir2cir FQN; allocation realization, not frontend semantics | contained |
-| **arrayOfNulls** 3539–3543 | `name == "arrayOfNulls"`, pkg `kotlin` | `{k:newArraySized}` | **(a/b)** same bucket as array factories | contained |
+| ~~**List/Set factory** 3502–3508~~ ✅ DONE (#52) | `in LIST_FACTORIES`/`SET_FACTORIES` | `{k:newList/newSet}` | **(a)** `@ClrCollectionFactory("list"/"set")` marker → bir2cir `TryFactorySubst`; kotc emits the plain call | DONE |
+| ~~**Map factory** 3510–3535~~ ✅ DONE (#52) | `in MAP_FACTORIES` | `{k:newMap}` (splits `a to b` literals) | **(a)** `@ClrCollectionFactory("map")`; the `mapOf(pair)` vs `mapOf(a to b)` split moved to bir2cir intact — a NON-literal Pair is left as a plain call | DONE |
+| ~~**Array factory** 3545–3553~~ ✅ DONE (#52) | `name in ARRAY_FACTORY_NAMES`, pkg `kotlin` | `{k:newArray}` | **(a)** `@ClrArrayFactory("vararg")` → bir2cir unwraps the vararg `newArray` | DONE |
+| ~~**arrayOfNulls** 3539–3543~~ ✅ DONE (#52) | `name == "arrayOfNulls"`, pkg `kotlin` | `{k:newArraySized}` | **(a)** `@ClrArrayFactory("sized")` → `{k:newArraySized}` from the size arg | DONE |
 | **`kotlin.to`** 3658–3662 | `calleeFq == "kotlin.to"` | `new kotlin.Pair` | **(a)** drop intercept; let the real stdlib `to` body build `Pair` (it already exists), or `@ClrIntrinsic`-style. | contained |
 | **Pair/Triple/IndexedValue components** 3663–3673 | `declaringClass in setOf("kotlin.Pair","kotlin.Triple","kotlin.collections.IndexedValue")` + `componentN` | field read (`first`/`second`/`third`/`index`/`value`) | **(a)** these are real stdlib types with real properties — emit the plain `componentN()` call; `@ClrProperty`/real body resolves it | contained |
 
@@ -296,12 +296,33 @@ Ordered high-value-contained → gray → defer. Each phase is independently gat
   `InvalidProgramException`), orthogonal to conv recognition; NOT introduced by this migration. Verified:
   verify-il 242/0, ktproj/differential(194/0)/roundtrip green, schema 0 violations.
 
-### Phase 2 — the factories (shared mechanism)
-- Migrate `LIST_FACTORIES`/`SET_FACTORIES`/`MAP_FACTORIES`/`ARRAY_FACTORY_NAMES`/`arrayOfNulls`
-  (§2.1). Mechanism **(a)** `@ClrCollectionFactory(kind)`/`@ClrArrayFactory` markers bir2cir reads, **or**
-  simply run the real stdlib factory bodies and delete the intercepts.
-- **Risk:** the `mapOf(a to b)` literal-split must move to bir2cir intact; keep the "don't split an arbitrary
-  Pair" guard. Contained.
+### Phase 2 — the factories (shared mechanism) — ✅ DONE (#52)
+- Migrated `LIST_FACTORIES`/`SET_FACTORIES`/`MAP_FACTORIES`/`ARRAY_FACTORY_NAMES`/`arrayOfNulls` (§2.1) via
+  mechanism **(a)** — the metadata-driven pattern Phase 1 established:
+  - **stdlib**: two new markers `@kotlin.clr.ClrCollectionFactory(kind)` (kind = "list"/"set"/"map") and
+    `@kotlin.clr.ClrArrayFactory(kind)` (kind = "vararg"/"sized"). Collection factories
+    (`listOf`/`mutableListOf`/`arrayListOf`/`emptyList` + set/map families, every overload incl. the
+    single-element `listOf(element)`/`setOf(element)`/`mapOf(pair)`) are annotated in the COMMON sources
+    (`kotlin.collections.*`); array factories (`arrayOf`/`intArrayOf`/…, unsigned `ubyteArrayOf`/…, and the
+    sized `arrayOfNulls`) in `clr/builtins/Library.kt` + `unsigned/src`. **The two annotations are DEFINED in
+    the common source set** (`libraries/stdlib/src/kotlin/clr/Factories.kt`), not the platform
+    `clr/kotlin/clr/ClrIntrinsic.kt`, because a COMMON factory body cannot reference a PLATFORM-only
+    `kotlin.clr` declaration under the jar's `-Xcommon-sources` multi-platform compile.
+  - **bir2cir**: reads the markers off the ref.dll into `ReferenceMetadata.CollectionFactories`/
+    `ArrayFactories` (name → kind); a new `TryFactorySubst` (run FIRST in the `owner=null` top-level branch of
+    `MemberCallSubstitution.TransformCall`, near the @ClrConv `TryMemberConv`) re-emits the
+    `{k:newList/newSet/newMap/newArray/newArraySized}` node. **Type source = the call's `typeArgs`** (canonical;
+    correct for `emptyList()`, `arrayOf<String>()` with 0 elems, the single-element overload, and mapOf's
+    `[K,V]`); **elements** from the single vararg argument (kotc emits it as a `newArray`; the wrapper is
+    identified by its `elem` matching `typeArgs[0]`, so a `listOf(intArrayOf(…))` single element is not
+    mis-unwrapped), the lone non-vararg element, or none.
+  - **kotc**: emits the plain top-level factory `callStatic` (faithful IR); the four recognition tables +
+    their `BirEmitter.kt` sites (3502–3556) are deleted.
+- **Risk covered:** the `mapOf(a to b)` literal-split moved to bir2cir INTACT with its guard — each vararg
+  element must be a `new kotlin.Pair(k,v)` LITERAL node to be split into a key/value entry; a NON-literal Pair
+  (`mapOf(pairVariable)`, `mapOf(this[0])`) aborts the whole substitution → the call stays a plain `mapOf` to
+  the real body (never force-split). Verified: verify-il 242/0, ktproj/differential/roundtrip green, schema 0
+  violations.
 
 ### Phase 3 — the specific stdlib types
 - `kotlin.to` (§2.1): drop the intercept; the real stdlib `to` builds `Pair`.

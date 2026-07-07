@@ -42,24 +42,11 @@ internal val UNSIGNED_ARRAY_ELEM = mapOf(
 	"kotlin.UByteArray" to "kotlin.UByte", "kotlin.UShortArray" to "kotlin.UShort",
 	"kotlin.UIntArray" to "kotlin.UInt", "kotlin.ULongArray" to "kotlin.ULong",
 )
-internal val ARRAY_FACTORY_NAMES = setOf(
-	"arrayOf", "intArrayOf", "longArrayOf", "doubleArrayOf",
-	"floatArrayOf", "booleanArrayOf", "charArrayOf", "byteArrayOf", "shortArrayOf",
-	// Unsigned specialized-array factories (#53): `ubyteArrayOf(...)` -> a native `new byte[]{...}` (elem `ubyte`).
-	"ubyteArrayOf", "ushortArrayOf", "uintArrayOf", "ulongArrayOf",
-)
-internal val LIST_FACTORIES = setOf(
-	"kotlin.collections.listOf", "kotlin.collections.mutableListOf", "kotlin.collections.arrayListOf",
-	"kotlin.collections.emptyList",
-)
-internal val SET_FACTORIES = setOf(
-	"kotlin.collections.setOf", "kotlin.collections.mutableSetOf", "kotlin.collections.hashSetOf",
-	"kotlin.collections.emptySet",
-)
-internal val MAP_FACTORIES = setOf(
-	"kotlin.collections.mapOf", "kotlin.collections.mutableMapOf", "kotlin.collections.hashMapOf",
-	"kotlin.collections.emptyMap",
-)
+// The collection/array factory RECOGNITION name-sets (listOf/setOf/mapOf/arrayOf/intArrayOf/…) are GONE (#52 Phase 2):
+// kotc emits the plain top-level factory call (the faithful IR); bir2cir reads the `@kotlin.clr.ClrCollectionFactory`/
+// `@kotlin.clr.ClrArrayFactory` marker off each stdlib factory function on the ref.dll and emits the
+// newList/newSet/newMap/newArray/newArraySized construction node. The name-set heuristic was a kotc CLR-shape decision
+// on specific stdlib symbols — exactly the recognition the 4-layer migration moves to bir2cir.
 // Primitive array class -> its BCL element type, for lowering the sized constructor `IntArray(size){init}` to a real
 // `new int[size]` + fill loop (a `kotlin.IntArray` object would otherwise be constructed — the wrong representation).
 internal val ARRAY_CLASS_ELEM = mapOf(

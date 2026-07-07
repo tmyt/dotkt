@@ -31,51 +31,61 @@ public actual operator fun String?.plus(other: Any?): String = (this ?: "null") 
  *
  * @throws RuntimeException if the specified [size] is negative.
  */
+@kotlin.clr.ClrArrayFactory("sized")
 public actual fun <reified T> arrayOfNulls(size: Int): Array<T?> = TODO("clr binding should be implemented")
 
 /**
  * Returns an array containing the specified elements.
  */
+@kotlin.clr.ClrArrayFactory("vararg")
 public actual inline fun <reified T> arrayOf(vararg elements: T): Array<T> = TODO("clr binding should be implemented")
 
 /**
  * Returns an array containing the specified [Double] numbers.
  */
+@kotlin.clr.ClrArrayFactory("vararg")
 public actual fun doubleArrayOf(vararg elements: Double): DoubleArray = TODO("clr binding should be implemented")
 
 /**
  * Returns an array containing the specified [Float] numbers.
  */
+@kotlin.clr.ClrArrayFactory("vararg")
 public actual fun floatArrayOf(vararg elements: Float): FloatArray = TODO("clr binding should be implemented")
 
 /**
  * Returns an array containing the specified [Long] numbers.
  */
+@kotlin.clr.ClrArrayFactory("vararg")
 public actual fun longArrayOf(vararg elements: Long): LongArray = TODO("clr binding should be implemented")
 
 /**
  * Returns an array containing the specified [Int] numbers.
  */
+@kotlin.clr.ClrArrayFactory("vararg")
 public actual fun intArrayOf(vararg elements: Int): IntArray = TODO("clr binding should be implemented")
 
 /**
  * Returns an array containing the specified characters.
  */
+@kotlin.clr.ClrArrayFactory("vararg")
 public actual fun charArrayOf(vararg elements: Char): CharArray = TODO("clr binding should be implemented")
 
 /**
  * Returns an array containing the specified [Short] numbers.
  */
+@kotlin.clr.ClrArrayFactory("vararg")
 public actual fun shortArrayOf(vararg elements: Short): ShortArray = TODO("clr binding should be implemented")
 
 /**
  * Returns an array containing the specified [Byte] numbers.
  */
+@kotlin.clr.ClrArrayFactory("vararg")
 public actual fun byteArrayOf(vararg elements: Byte): ByteArray = TODO("clr binding should be implemented")
 
 /**
  * Returns an array containing the specified boolean values.
  */
+@kotlin.clr.ClrArrayFactory("vararg")
 public actual fun booleanArrayOf(vararg elements: Boolean): BooleanArray = TODO("clr binding should be implemented")
 
 /**

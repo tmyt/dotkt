@@ -78,4 +78,5 @@ public inline fun UShortArray(size: Int, init: (Int) -> UShort): UShortArray {
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrArrayFactory("vararg")
 public inline fun ushortArrayOf(vararg elements: UShort): UShortArray = elements

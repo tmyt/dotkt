@@ -3499,61 +3499,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (recvExpr != null && lambda != null) return inlineUse(recvExpr, lambda, birType(call.type))
 		}
 
-		// Collection factories `listOf`/`setOf` -> a `newList`/`newSet` (List<elem>/HashSet<elem>). Handles both the
-		// vararg overload (`listOf(a, b, …)`) and the single-element overload (`listOf(x)` is NOT a vararg). The
-		// element type comes from the call's `List<T>` return so a single-element `listOf(3)` is List<Int>, not <object>.
-		if (calleeFq in LIST_FACTORIES || calleeFq in SET_FACTORIES) {
-			val elems = (call.arguments.firstOrNull() as? IrVararg)?.elements?.filterIsInstance<IrExpression>()
-				?: regularArgs(call)
-			val elemT = collectionElemType(call.type)
-			val kind = if (calleeFq in SET_FACTORIES) "newSet" else "newList"
-			return """{"k":${str(kind)},"elem":${str(elemT)},"elems":[${elems.joinToString(",") { expr(it) }}]}"""
-		}
-		// `mapOf(k to v, …)` -> a Dictionary<K,V> (each element is a `to` call: key=ext recv, value=arg).
-		if (calleeFq in MAP_FACTORIES) {
-			val (kt, vt) = mapKV(call.type)
-			// The factory intercept applies ONLY to the statically-decomposable literal forms: `mapOf()` (empty)
-			// and `mapOf(a to 1, b to 2, …)` / the since-1.9 single-pair `mapOf(a to 1)` (NOT a vararg — the Pair
-			// rides as a regular arg), where EVERY element is a `to` infix literal we can split into key/value.
-			// A single-pair overload called with a general Pair-VALUED argument (`mapOf(this[0])`,
-			// `mapOf(iterator().next())`, `mapOf(pair)`) is NOT decomposable here — those elements are ordinary
-			// calls (a `get` operator, etc.) with no `to` shape, so we must NOT force-split them (the old
-			// `extensionReceiver(p)!!` NPE'd on `mapOf(this[0])`, aborting the whole file). Fall through to a normal
-			// call to the real stdlib `mapOf(pair)` instead.
-			val elems = (call.arguments.firstOrNull() as? IrVararg)?.elements?.filterIsInstance<IrExpression>()
-				?: regularArgs(call)
-			fun toPairKV(e: IrExpression): Pair<IrExpression, IrExpression>? {
-				val c = e as? IrCall ?: return null
-				if (c.symbol.owner.fqNameWhenAvailable?.asString() != "kotlin.to") return null
-				val k = extensionReceiver(c) ?: return null
-				val v = regularArgs(c).getOrNull(0) ?: return null
-				return k to v
-			}
-			val kvs = elems.map { toPairKV(it) }
-			if (kvs.all { it != null }) {
-				val entries = kvs.filterNotNull().joinToString(",") { (k, v) -> """{"key":${expr(k)},"value":${expr(v)}}""" }
-				return """{"k":"newMap","keyType":${str(kt)},"valType":${str(vt)},"entries":[$entries]}"""
-			}
-			// else: not a statically-decomposable pair literal -> fall through to normal call emission.
-		}
+		// Collection/array factories (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`/…) are NO LONGER
+		// recognized here: kotc emits the plain top-level `callStatic kotlin.collections.listOf(...)` (the faithful IR;
+		// the vararg argument itself rides as a `newArray` node). bir2cir reads the `@kotlin.clr.ClrCollectionFactory`
+		// (kind list/set/map) / `@kotlin.clr.ClrArrayFactory` (vararg/sized) marker off each stdlib factory function on
+		// the ref.dll and re-emits the same `{k:newList/newSet/newMap/newArray/newArraySized}` construction node — the
+		// element/key/value types from the call's `typeArgs`, the elements from the vararg arg. The `mapOf(a to b)`
+		// literal-split (and its "do NOT force-split a non-literal Pair" guard — `mapOf(pairVar)` stays a real call)
+		// moved to bir2cir intact. The retired LIST/SET/MAP/ARRAY_FACTORY tables were a kotc name-heuristic.
 
-		// `arrayOfNulls<T>(size)` -> a sized `new T[size]` (the reified builtin's actual is a TODO stub; lower it here
-		// like IntArray(size)). Used by toTypedArray/collectionToArray etc. -- elem = the type arg (object/gp:T/clrg:...).
-		if (declaringClass == null && name == "arrayOfNulls" &&
-			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString() == "kotlin") {
-			val elemT = call.typeArguments.getOrNull(0)?.let { birType(it) } ?: OBJ
-			return """{"k":"newArraySized","elem":${str(elemT)},"size":${expr(regularArgs(call).first())}}"""
-		}
-		// Array factory `intArrayOf(...)`/`arrayOf(...)` -> a `newArray` (vararg elements).
-		if (declaringClass == null && name in ARRAY_FACTORY_NAMES &&
-			(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString() == "kotlin") {
-			val v = call.arguments.firstOrNull() as? IrVararg
-			val elems = v?.elements?.filterIsInstance<IrExpression>().orEmpty()
-			// Prefer the generic `arrayOf<T>`'s type argument (reliable even when EMPTY); fall back to the vararg's
-			// element type (for the non-generic primitive factories like intArrayOf).
-			val elemT = call.typeArguments.getOrNull(0)?.let { birType(it) } ?: v?.let { birType(it.varargElementType) } ?: OBJ
-			return """{"k":"newArray","elem":${str(elemT)},"elems":[${elems.joinToString(",") { expr(it) }}]}"""
-		}
 		// Unsigned<->signed byte-array reinterpret (#53). In a consumer build UByteArray IS System.Byte[] and ByteArray
 		// IS System.SByte[]; the two are freely castclass-compatible at runtime (same 8-bit storage, ECMA reduced-type
 		// array compatibility). So `UByteArray.toByteArray()` / `ByteArray.toUByteArray()` — the stdlib's @InlineOnly

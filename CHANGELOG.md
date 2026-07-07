@@ -468,6 +468,20 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   establishes the ref.dll-metadata → bir2cir pattern for the remaining recognition sites (factories,
   `Pair`/`componentN`). The `NUMBER_CONV`/`NUMERIC_FQ` tables + the conv site's `fqnJson("kotlin.Int")`
   literals are gone from kotc. Also deletes the dead `COLLECTION_OPS` table (Phase 0 — no live consumer).
+- **Collection & array factories are metadata-driven — `@ClrCollectionFactory`/`@ClrArrayFactory` replace
+  kotc's `LIST_FACTORIES`/`SET_FACTORIES`/`MAP_FACTORIES`/`ARRAY_FACTORY_NAMES` recognition (#52 Phase 2).**
+  kotc no longer *recognizes* a factory call: it emits the plain top-level call
+  (`callStatic kotlin.collections.listOf(...)`, the vararg argument itself riding as a `newArray` node). Two
+  new stdlib markers — `@kotlin.clr.ClrCollectionFactory(kind = "list"/"set"/"map")` on
+  `listOf`/`mutableListOf`/`arrayListOf`/`emptyList` + the `set`/`map` families, and
+  `@kotlin.clr.ClrArrayFactory(kind = "vararg"/"sized")` on `arrayOf`/`intArrayOf`/… + `arrayOfNulls` — are
+  read off the ref.dll by bir2cir, which re-emits the SAME `{k:newList/newSet/newMap/newArray/newArraySized}`
+  construction node (element/key/value types from the call's `typeArgs`; elements from the vararg argument),
+  so ilemit is untouched. The `mapOf(a to b, …)` literal-split moved to bir2cir intact, **keeping its guard**:
+  a non-literal Pair argument (`mapOf(pairVariable)`) is *not* force-split — it stays a plain call to the real
+  `mapOf` body. The four recognition tables + their `BirEmitter` sites are deleted from kotc. (The factory
+  markers live in the COMMON stdlib source set — `libraries/stdlib/src/kotlin/clr/Factories.kt` — because they
+  annotate factory bodies in common sources that cannot reference a platform-only `kotlin.clr` binding.)
 - **kotc `BirMappings.kt` shed of dead + vestigial tables (#40).** Post-#37-freeze audit of the
   Kotlin→BIR name/shape tables removed four entries: `COLLECTION_MEMBER` and `PRIMITIVE_SHORTHANDS`
   (both ref-count 0 — dead) and `VALUE_PRIM_BIR` (a `kotlin.Int`→`kotlin.Int` identity map whose only

@@ -78,4 +78,5 @@ public inline fun ULongArray(size: Int, init: (Int) -> ULong): ULongArray {
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrArrayFactory("vararg")
 public inline fun ulongArrayOf(vararg elements: ULong): ULongArray = elements

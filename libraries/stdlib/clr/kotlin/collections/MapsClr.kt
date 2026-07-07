@@ -17,6 +17,7 @@ package kotlin.collections
  *
  * @sample samples.collections.Maps.Instantiation.mapFromPairs
  */
+@kotlin.clr.ClrCollectionFactory("map")
 public actual fun <K, V> mapOf(pair: Pair<K, V>): Map<K, V> {
     val map = LinkedHashMap<K, V>(mapCapacity(1))
     map.put(pair.first, pair.second)
