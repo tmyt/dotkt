@@ -63,7 +63,7 @@ is largely STALE** — a code-grounded currency check found:
   **unreachable DEAD CODE** (`Emitter.Expressions.cs` has both `case "bin"` and `case "clr.bin"` → same emitter).
 - **bir2cir's reference-metadata resolver + `@ClrIntrinsic` substitution is ALREADY BUILT and live** in production
   (`MemberCallSubstitution.Apply`, `bir2cir/Program.cs:2194`, wired `:118`, gated by `RefBuild` — rewrites plain
-  `callInstance`/`callStatic` → `clrInstance`/`clrStatic`/`clrNew` on the BCL owner; reads ref.dll via
+  `callInstance`/`callStatic` → `clrInstance`/`clrStatic`/`newClr` on the BCL owner; reads ref.dll via
   `ReferenceMetadataIndex`; does `@ClrProperty`/`@ClrTypeAlias`/constrained-dispatch). So Wave 5's "heaviest resolver"
   is **essentially done** (`gap-analysis §1` "substitution ZERO" is stale).
 - **Wave 3–4 are MOOT** — `this`/`local`/`setField`/`lateinitGet`/`byref*` are pure structural/physical nodes with NO
@@ -79,7 +79,7 @@ is largely STALE** — a code-grounded currency check found:
   (`:3533+`) → move to stdlib `@ClrIntrinsic` + let the (already-built) bir2cir `MemberCallSubstitution` consume it;
   then DELETE kotc's `clrName`/`annClr` read path (`BirEmitter.kt:4247`) so bir2cir is the SOLE substituter (today
   they run idempotently in parallel — `bir2cir/Program.cs:114-117`). Plus the 7 STILL-OPEN retire ops
-  (`strRepeat`/`strReversed`/`split`/`console`/`listNew`/`setNew`/`mapNew`; `listNew`/`setNew` are emitted via a
+  (`strRepeat`/`strReversed`/`split`/`console`/`newList`/`newSet`/`newMap`; `newList`/`newSet` are emitted via a
   computed `kind` var at `BirEmitter.kt:3247`, NOT dead).
   - ✅ **`System.Math` (kotlin.math.*) — DONE 2026-07-02, the PILOT** (`5a3ab8e` kotc retire, `c80760a` bir2cir).
     Deleted `MATH_FUNCS` + the `BirEmitter.kt:3876-3893` emit site; MathClr.kt's `@ClrIntrinsic` bindings already
@@ -135,7 +135,7 @@ is largely STALE** — a code-grounded currency check found:
     - **indexer `get_/set_Item` (`:3400`/`:3414`)** — `String s[i]`→`get_Chars` is String/CharSequence dual-rep (same
       class as batch-2-blocked String ops); the injected-`.NET`-indexer arm is per-sample facadegen metadata (NOT the
       stdlib ref.dll), so bir2cir's ref-sourced substitution cannot reach it. Bundle-4 dual-rep + facadegen interop.
-    - **`listOf`/`setOf`/`mapOf` → `listNew`/`setNew`/`mapNew` (`:3247`/`:3254`)** — STRUCTURAL collection-literal
+    - **`listOf`/`setOf`/`mapOf` → `newList`/`newSet`/`newMap` (`:3247`/`:3254`)** — STRUCTURAL collection-literal
       factories; must retire TOGETHER with the `COLLECTION_MEMBER`/`COLLECTION_OPS` clrName table so "kotlin lists ARE
       BCL `List<T>`" stays coherent (the collection-bridge). Bundle-4.
     - **`System.Text.RegularExpressions` (`:3785`)** — CharSequence dual-rep + `MatchResult` adapters (`find`/`value`).
@@ -170,7 +170,7 @@ is largely STALE** — a code-grounded currency check found:
 - **② Cleanup (low-risk, bulk):** delete the 18 DEAD retire-list ilemit cases (`listGet`/`mapGet`/`associate*`/
   `groupBy`/`linq*`/`tupleNew`/… in `Emitter.Expressions.cs`) + the native-cir remnant physical `clr.*` cases
   (`clr.bin`/`clr.newobj`/`clr.call`/…).
-- **③ Deferred:** Wave 6 (`delegateNew`/`boundDelegateNew`/`delegateInvoke`/`closureNew` — plumbing, low-pri;
+- **③ Deferred:** Wave 6 (`newDelegate`/`newBoundDelegate`/`delegateInvoke`/`newClosure` — plumbing, low-pri;
   `delegateInvoke` gated on the inline phase) + `clrStaticField`/coroutine hardcode (coroutine phase).
 
 ## 【2】 stdlib completeness — ✅ ESSENTIALLY CLOSED (audited + executed 2026-07-02)
@@ -408,8 +408,8 @@ retire recipe (baseline the fail-set, require gate-neutral). Cost: one allocatio
   `MutableList<T>.sort()`, the missing NON-generic `System.IComparable` face on user Comparable implementors
   (new bir2cir `ComparableBridgeSynthesis`), and ilemit's name-keyed clr-iface slot wiring mis-binding the
   resulting CompareTo overloads. NO adapter needed, as predicted.
-- **collection-element / `listNew` (`listOf`/`setOf`/`mapOf`)** — collections HAVE a BCL representation (`List<T>`, already
-  `@ClrTypeAlias` in `builtins/Collections.kt`); this is the **collection-bridge**: retire the `listNew`/`setNew`/`mapNew`
+- **collection-element / `newList` (`listOf`/`setOf`/`mapOf`)** — collections HAVE a BCL representation (`List<T>`, already
+  `@ClrTypeAlias` in `builtins/Collections.kt`); this is the **collection-bridge**: retire the `newList`/`newSet`/`newMap`
   factories together with the `COLLECTION_MEMBER`/`COLLECTION_OPS` clrName tables, riding the Iterable→IEnumerable
   precedent (`@ClrTypeAlias`), NOT an adapter.
 
@@ -649,7 +649,7 @@ Comparable-self and the collection-bridge are separate tracks (own agents), not 
   nullable generic func return (funcTypeOf + both birType function-type paths — the Kotlin fact only); bir2cir
   `NullableFuncReturnErasure` (all builds) lowers every nullable-marked func return to `Func<…, object>`
   (the one rep the open/value views agree on; reference instantiations stay bare and ride Func's out-covariance),
-  erases the backing delegateNew/closureNew lambda-method rets, and repairs the local dataflow (gp: var →
+  erases the backing newDelegate/newClosure lambda-method rets, and repairs the local dataflow (gp: var →
   object; re-narrowing inits get the universal `cast`). ilemit never sees a stacked `nullable:gp:` (its
   FuncRetEnd parses one prefix). **Two more root causes surfaced under it:** (a) kotc's inline-splice
   `typeArgSubst` was NAME-keyed — `mapNotNullTo<T>` splicing `forEach<T>` erased the OUTER T to object, and

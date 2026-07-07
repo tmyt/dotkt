@@ -969,7 +969,7 @@ static class FacadeGen
 
     // A base CLASS supertype edge is emitted purely for ASSIGNABILITY (is-a): e.g. a WinUI `TextBlock` must be usable
     // where `UIElement` is expected. This is INDEPENDENT of whether the base is constructible — injected façade
-    // instances come from .NET (method returns etc.), and `Foo()` lowers to native `new Foo()` (clrNew, which chains
+    // instances come from .NET (method returns etc.), and `Foo()` lowers to native `new Foo()` (newClr, which chains
     // base ctors internally), so no Kotlin `: Base()` super-chain is synthesized for injected types. (A non-activatable
     // WinRT base like `UIElement` has no no-arg ctor; requiring one here dropped the FrameworkElement->UIElement edge
     // and broke assignability for every control below it — feedback item 1.)

@@ -19,7 +19,7 @@ There are **four `k`-dispatch switches** that consume node kinds, plus three aux
 - `EmitStmt` — statement emitter (`Emitter.Statements.cs:14`), default throws `stmt <k>` (`:304`).
 - `EmitAddr` — lvalue-address emitter (`Program.cs:1849`); recognizes only `local`/`this`/`field`,
   else materializes to a temp and takes its address.
-- `EmitHandlerAsDelegate` — event/delegate-arg handler (`Program.cs:3455`); `delegateNew`/`closureNew`
+- `EmitHandlerAsDelegate` — event/delegate-arg handler (`Program.cs:3455`); `newDelegate`/`newClosure`
   else pass-through.
 - `StmtAlwaysReturns` (`Program.cs:1103`) and `StmtsHaveReturn`/`k=="return"` (`Program.cs:1082`) —
   control-flow analysis, read `return`/`throw`/`if`/`try`.
@@ -61,7 +61,7 @@ There are **four `k`-dispatch switches** that consume node kinds, plus three aux
 | `clr.getType` | Expr:282 | `callvirt object::GetType` |
 | `clr.enum.value`/`.ordinal`/`.values`/`.parse` | Expr:283-286 | enum helpers |
 | `valueBlock` | Expr:287 | splice `stmts` then yield `result` |
-| `listNew` | Expr:293 | `new List<elem>` + repeated `Add` |
+| `newList` | Expr:293 | `new List<elem>` + repeated `Add` |
 | `clrGenericStatic` | Expr:308 | `MakeGenericMethod`+`call` (LINQ overload by `shapes`) |
 | `clrGenericInstance` | Expr:322 | `MakeGenericMethod`+`callvirt`/`call` |
 | `newArray` | Expr:338 → EmitNewArray | `newarr` (+ init loop) |
@@ -91,21 +91,21 @@ There are **four `k`-dispatch switches** that consume node kinds, plus three aux
 | `objMethod` | Expr:581 → EmitObjMethod (Program:2730) | `GetHashCode`/`ToString`/`Equals` on `object` |
 | `clr.obj.method` | Expr:582 → EmitObjMethod | **SYNONYM of `objMethod`** (dead) |
 | `strReversed` | Expr:583 | `Enumerable.Reverse`+`ToArray`+`new string(char[])` |
-| `mapNew` | Expr:592 | `new Dictionary<K,V>`+`set_Item` |
-| `setNew` | Expr:609 | `new HashSet<elem>`+`Add`/`pop` |
+| `newMap` | Expr:592 | `new Dictionary<K,V>`+`set_Item` |
+| `newSet` | Expr:609 | `new HashSet<elem>`+`Add`/`pop` |
 | `throwExpr` | Expr:625 | eval + `throw` |
 | `returnExpr` | Expr:632 | expression-position return (mirrors `return` stmt, try-leave) |
-| `delegateNew` | Expr:654 | `ldnull;ldftn;newobj Delegate` (non-capturing lambda) |
-| `boundDelegateNew` | Expr:670 | `obj::method` → `dup;ldvirtftn`/`ldftn`+`newobj` |
-| `boundClrDelegateNew` | Expr:682 | bound delegate over a reflected .NET method |
+| `newDelegate` | Expr:654 | `ldnull;ldftn;newobj Delegate` (non-capturing lambda) |
+| `newBoundDelegate` | Expr:670 | `obj::method` → `dup;ldvirtftn`/`ldftn`+`newobj` |
+| `newBoundClrDelegate` | Expr:682 | bound delegate over a reflected .NET method |
 | `delegateInvoke` | Expr:697 | inline lambda-param splice, else `callvirt Invoke` |
 | `inlineSplice` | Expr:735 → EmitInlineSplice | cross-module `[KotlinInline]` body splice |
-| `closureNew` | Expr:736 | `newobj Closure(captures)`+`ldftn invoke`+`newobj Delegate` |
-| `samNew` | Expr:749 | `newobj <Sam>(captures)` (fun-interface impl class) |
+| `newClosure` | Expr:736 | `newobj Closure(captures)`+`ldftn invoke`+`newobj Delegate` |
+| `newSam` | Expr:749 | `newobj <Sam>(captures)` (fun-interface impl class) |
 | `concat` | Expr:766 → EmitConcat | `String.Concat` |
 | `clr.str.concat` | Expr:767 → EmitConcat | **SYNONYM of `concat`** (dead) |
 | `cond` | Expr:768 → EmitCond | ternary/if-expr merge |
-| `clrNew` | Expr:769 → EmitClrNew | `newobj` on a **reflected .NET** ctor (by `argTypes`) |
+| `newClr` | Expr:769 → EmitClrNew | `newobj` on a **reflected .NET** ctor (by `argTypes`) |
 | `clrStatic` | Expr:770 → EmitClrCall(instance:false) | `call` reflected .NET static |
 | `clrInstance` | Expr:771 → EmitClrCall(instance:true) | `callvirt`/`call`/`constrained.` reflected .NET instance |
 | `clrPropGet` | Expr:772 → EmitClrPropGet (Program:3300) | .NET property/field getter (or `get_X` method) |

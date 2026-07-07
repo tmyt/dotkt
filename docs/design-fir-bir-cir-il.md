@@ -744,7 +744,7 @@ This rule prevents class-level CLR binding from recreating the old compiler-owne
 
 `--native-cir` emits `callSites` as an observation aid for the TypeLowering migration. It scans BIR expressions and classifies call/member/type sites as:
 
-- `already-clr`: a physical CLR-ish node already emitted by FIR -> BIR, such as `clrStatic`, `clrNew`, or a `clr:` / `clrg:` owner.
+- `already-clr`: a physical CLR-ish node already emitted by FIR -> BIR, such as `clrStatic`, `newClr`, or a `clr:` / `clrg:` owner.
 - `kotlin-symbol`: a Kotlin symbol that still needs BIR -> CIR resolution, such as `callStatic`, `callInstance`, `new`, or `field`.
 
 Each site carries a stable JSON path into the original BIR payload. The path is the rewrite anchor for later native CIR transforms and lets `cirDraft.resolvedCalls` point back to the exact expression that can become a CLR node.

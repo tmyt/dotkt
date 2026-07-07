@@ -165,7 +165,7 @@ sealed class Pipeline
             // generic view `nullable:gp:R`; a value instantiation `nullable:int`). Its only CLR rep that agrees
             // across open/value/reference instantiations is Func<…, object> (reference instantiations stay bare-typed
             // and ride Func's `out TResult` covariance into the object slot). Rewrites every such token (param slots,
-            // sig strings, delegateNew/delegateInvoke funcTypes), erases the backing lambda methods' returns to
+            // sig strings, newDelegate/delegateInvoke funcTypes), erases the backing lambda methods' returns to
             // object, and repairs the local dataflow (see the class). MUST consume every `nullable:`-marked func ret:
             // ilemit's FuncRetEnd parses a single leading prefix and would misparse a stacked `nullable:gp:R`.
             NullableFuncReturnErasure.Apply(bir.Root);
@@ -292,11 +292,11 @@ sealed class Pipeline
         if (!_options.RefBuild)
             suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns);
 
-        // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `suspendLambdaNew`
+        // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
         // (SuspendColdLowering.BuildLambdaSm, the shared FunGen machinery). Runs after the cold lowering (so a
         // suspend-lambda relocated into a synthesized SM invokeSuspend body is still caught — this pass walks
-        // the newly-added SM types too) and before type lowering. kotc emits `suspendLambdaNew` for every
+        // the newly-added SM types too) and before type lowering. kotc emits `newSuspendLambda` for every
         // `suspend` lambda literal (exercised by cases/il-lam1, il-lam2); same (non-ref) gate as the cold lowering.
         if (!_options.RefBuild)
             SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
@@ -1362,7 +1362,7 @@ sealed class CallSiteAnalyzer
         "clrGenericStatic",
         "clrInstance",
         "clrGenericInstance",
-        "clrNew",
+        "newClr",
         "clrPropGet",
         "clrPropSet",
         "clrStaticField",
@@ -1726,7 +1726,7 @@ static class BirTypeLowering
     // RETURN-POSITION type keys, grouped by a SHARED PROPERTY (a return-slot type, where kotlin.Unit lowers to
     // `void` via LowerReturnValued) — NOT synonyms. The members are DISTINCT ROLES that can coexist on one node:
     // `ret` (plain return), `dynRet` (@Clr dynamic-dispatch return), `suspendRet` (a suspend fn/lambda's T of
-    // Continuation<T>) — e.g. a callInstance carries ret+dynRet, a suspendLambdaNew carries ret+suspendRet. This is
+    // Continuation<T>) — e.g. a callInstance carries ret+dynRet, a newSuspendLambda carries ret+suspendRet. This is
     // the return-position parallel to `TypeKeys` (value-position types). (Dead keys `selRet`/`returnType` — 0 BIR
     // emit, no value ever read — were removed in #37 m5.)
     static readonly HashSet<string> ReturnKeys = new(StringComparer.Ordinal)
@@ -1990,12 +1990,12 @@ static class BirTypeLowering
         return LowerNode(val, refBuild, force);
     }
 
-    // The `funcType` key names the DELEGATE type constructed by a closureNew/delegateNew/delegateInvoke. A suspend-fn
+    // The `funcType` key names the DELEGATE type constructed by a newClosure/newDelegate/delegateInvoke. A suspend-fn
     // delegate (`sfunc:`) here is a genuine CLR delegate — the pre-P3 sequence/iterator closure path (`iterator {}`
-    // yields a `closureNew` whose funcType is `sfunc:void:SequenceScope[..]`) — NOT an object-erased SM value slot.
+    // yields a `newClosure` whose funcType is `sfunc:void:SequenceScope[..]`) — NOT an object-erased SM value slot.
     // So fold `sfunc:`->`func:` for THIS key only (delegate shape preserved), then lower normally; every OTHER type
     // slot (param/field/return/receiver) erases `sfunc:`->`object`. The APP suspend-lambda SM path never reaches
-    // here: its `suspendLambdaNew` is replaced by a `new <SM>` node (SuspendLambdaLowering) before type lowering.
+    // here: its `newSuspendLambda` is replaced by a `new <SM>` node (SuspendLambdaLowering) before type lowering.
     static JsonNode LowerFuncTypeValued(JsonNode val, bool refBuild, bool force)
     {
         if (IsTypeObject(val))
@@ -2168,7 +2168,7 @@ static class BirTypeLowering
 // @ClrIntrinsic (member name) labels — ilemit receives only `System.X.Member`, never a kotlin.* label.
 //
 // Three rewrites (mirrors docs/clr-stdlib-intrinsic-audit.md's three binding rules):
-//   1. construction `new T(..)` on a CLR-bound REFERENCE owner T -> `clrNew System.X(..)`.
+//   1. construction `new T(..)` on a CLR-bound REFERENCE owner T -> `newClr System.X(..)`.
 //   2. member `r.m(..)` / `T.m(..)` where m carries @ClrIntrinsic("Name") -> `clrInstance`/`clrStatic` System.X.Name.
 //   3. member m with NO @ClrIntrinsic but concrete (a real Kotlin body kotc hoisted to `<>dotkt_ClrH_<T>`) ->
 //      a static call to that helper, with the receiver threaded as the helper's first arg. Gated on the helper
@@ -2720,7 +2720,7 @@ static class CharSeqStringLowering
     }
 
     static HashSet<string> _localFns = new(StringComparer.Ordinal);
-    // Lambda/method names used as a `delegateNew` target whose funcType carries a `<>dotkt_CharSequence` PARAM position.
+    // Lambda/method names used as a `newDelegate` target whose funcType carries a `<>dotkt_CharSequence` PARAM position.
     // Such a method is a delegate body invoked by a (stdlib or app-local) higher-order caller, which passes a GENUINE
     // `<>dotkt_CharSequence` value into that slot — e.g. `CharSequence.windowed(size){…}` calls `transform(subSequence(…))`
     // and `subSequence` returns a real `<>dotkt_StringCharSequence`, NOT a `System.String`. CharSeqStringLowering never
@@ -2738,7 +2738,7 @@ static class CharSeqStringLowering
         return Walk(root, new Env());
     }
 
-    // Collect the `delegateNew`/`delegateInvoke` target method names whose funcType names `<>dotkt_CharSequence` in a
+    // Collect the `newDelegate`/`delegateInvoke` target method names whose funcType names `<>dotkt_CharSequence` in a
     // PARAM position (i.e. an argument slot the caller supplies — `func:<ret>:<arg0>,<arg1>,…`). The funcType's leading
     // segment is the RETURN (a CharSequence return is handled by the return-coercion path, not this exemption).
     static HashSet<string> CollectCharSeqDelegateTargets(JsonNode root)
@@ -2749,7 +2749,7 @@ static class CharSeqStringLowering
             if (n is JsonObject o)
             {
                 var k = Str(o["k"]);
-                if (k is "delegateNew" or "delegateInvoke"
+                if (k is "newDelegate" or "delegateInvoke"
                     && Str(o["method"]) is string mn
                     && FuncTypeHasCharSeqParam(o["funcType"]))
                     set.Add(mn);
@@ -2762,7 +2762,7 @@ static class CharSeqStringLowering
     }
 
     // A function type any of whose PARAMS is CharSequence (the delegate-target exemption). funcType is a structured Fn
-    // (delegateNew) or, on a closureNew, a legacy `func:<ret>:<args>` string.
+    // (newDelegate) or, on a newClosure, a legacy `func:<ret>:<args>` string.
     static bool FuncTypeHasCharSeqParam(JsonNode ftNode)
     {
         if (TypeJson.Read(ftNode) is TypeNode.Fn fn) return fn.Params.Any(IsCharSeqT);
@@ -3826,8 +3826,8 @@ static class NullableGenericReturnErasure
 // instantiation is never nullable-marked by kotc and keeps its bare Func<…, T>, which flows into the object slot
 // via Func's `out TResult` covariance. Three coordinated rewrites:
 //   1. every `func:` TOKEN whose return segment is `nullable:`-marked (param slots, call sig strings,
-//      delegateNew/closureNew/delegateInvoke funcTypes, nested occurrences) — ret segment -> `object`;
-//   2. the backing lambda method of an erased delegateNew/closureNew — its `ret` -> `object` (+ the return-value
+//      newDelegate/newClosure/delegateInvoke funcTypes, nested occurrences) — ret segment -> `object`;
+//   2. the backing lambda method of an erased newDelegate/newClosure — its `ret` -> `object` (+ the return-value
 //      expression types, mirroring NullableGenericReturnErasure.RetypeReturns);
 //   3. local dataflow repair where an erased delegateInvoke result lands in a typed var: a `gp:X` var is retyped
 //      to `object` (it must still hold the null); a `nullable:V`/reference var keeps its type and the init is
@@ -4050,7 +4050,7 @@ static class NullableFuncReturnErasure
         }
     }
 
-    // Walks the tree recording (a) delegateNew/closureNew whose funcType RETURN is nullable-marked and
+    // Walks the tree recording (a) newDelegate/newClosure whose funcType RETURN is nullable-marked and
     // (b) `var` nodes needing dataflow repair. Carries the per-walk set of var names retyped to object so a
     // downstream `var y: gp:R = local(x_object)` re-narrowing gets a cast wrap.
     static void StructuralSweep(JsonNode node, HashSet<string> delegateMethods, HashSet<string> closureTypes)
@@ -4063,14 +4063,14 @@ static class NullableFuncReturnErasure
             case JsonObject obj:
             {
                 var k = (obj["k"] as JsonValue)?.TryGetValue<string>(out var ks) == true ? ks : null;
-                if (k == "delegateNew" && HasErasedRet(obj) && (obj["method"] as JsonValue)?.GetValue<string>() is string dm)
+                if (k == "newDelegate" && HasErasedRet(obj) && (obj["method"] as JsonValue)?.GetValue<string>() is string dm)
                     delegateMethods.Add(dm);
                 // `closureType` is a STRUCTURED TypeNode (`{t:fqn,name:…}`) since the #37 type flip — read the fqn
                 // NAME, not a bare string (the old `as JsonValue` silently missed EVERY closure, so a capturing
                 // closure whose funcType erased its `(…)->R?` return to `Func<object>` kept an `invoke` returning the
                 // value-type `!T` → `newobj Func<object>(ldftn !T ::invoke)` read the value as an object ref → NRE,
                 // the genseq2 `generateSequence(1){…}` `{ seed }` closure).
-                else if (k == "closureNew" && HasErasedRet(obj) && TypeJson.Read(obj["closureType"]) is TypeNode.Fqn { Name: { } ct })
+                else if (k == "newClosure" && HasErasedRet(obj) && TypeJson.Read(obj["closureType"]) is TypeNode.Fqn { Name: { } ct })
                     closureTypes.Add(ct);
                 else if (k == "var" && TypeJson.Read(obj["type"]) is TypeNode vt && obj["init"] is JsonObject init)
                 {
@@ -4417,7 +4417,7 @@ static class MemberCallSubstitution
         return new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("object"), ["value"] = null };
     }
 
-    // `new T(..)` on a CLR-bound REFERENCE owner -> clrNew. A value-type (struct) owner is left untouched: a value
+    // `new T(..)` on a CLR-bound REFERENCE owner -> newClr. A value-type (struct) owner is left untouched: a value
     // primitive keeps its identity (the inline-value-class / unsigned representation is a primitive concern handled
     // by type lowering + kotc, not a member-call substitution).
     static JsonNode TransformNew(JsonObject node, ReferenceMetadataIndex refs)
@@ -4438,7 +4438,7 @@ static class MemberCallSubstitution
 
         // A GENERIC @ClrTypeAlias owner (`new HashSet<E>()`) must carry its element args so ilemit reconstructs the
         // instantiation: the structured `Fqn(bcl, sourceArgs)` (the SAME generic-alias form BirTypeLowering produces
-        // for type positions — the clrNew `type` is a TypeKey, so the subsequent type-lowering pass lowers the args). A
+        // for type positions — the newClr `type` is a TypeKey, so the subsequent type-lowering pass lowers the args). A
         // non-generic owner is the bare BCL Fqn.
         var typeNode = ownerFqn.Args != null ? new TypeNode.Fqn(bcl, ownerFqn.Args) : new TypeNode.Fqn(bcl);
 
@@ -4459,14 +4459,14 @@ static class MemberCallSubstitution
 
         return new JsonObject
         {
-            ["k"] = "clrNew",
+            ["k"] = "newClr",
             ["type"] = TypeJson.Write(typeNode),
             ["argTypes"] = CtorArgTypes(node, args, refs, ownerFqn.Name),
             ["args"] = args.DeepClone(),
         };
     }
 
-    // The clrNew's ctor-overload key. kotc emits the ctor's DECLARED param types on the `new` node's `argTypes`, but they
+    // The newClr's ctor-overload key. kotc emits the ctor's DECLARED param types on the `new` node's `argTypes`, but they
     // reference the class's OWN type parameters (`ArrayList<E>`'s copy ctor -> `Collection[gp:E]`). Substitute those with
     // the instantiation's type args (`ArrayList[kotlin.Int]` => E:=kotlin.Int) so the lowered argType is a RESOLVABLE,
     // precise overload key (`IReadOnlyCollection[int]`) — this disambiguates List's `IEnumerable<T>` ctor from its `int`
@@ -5441,7 +5441,7 @@ static class RefBodySquash
             ["k"] = "throw",
             ["value"] = new JsonObject
             {
-                ["k"] = "clrNew",
+                ["k"] = "newClr",
                 ["type"] = TypeJson.Fqn("System.NotImplementedException"),
                 ["argTypes"] = new JsonArray(),
                 ["args"] = new JsonArray(),

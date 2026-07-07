@@ -946,7 +946,7 @@ sealed partial class Emitter
             // parent set to the CONSTRUCTED base `Base<!T>` (ti.TB.BaseType); the base-ctor operand must be scoped
             // to that constructed type, not the open definition `Base<>` — a bare `call Base``1::.ctor` is "not
             // fully instantiated" (InvalidProgramException). Anchor the open ConstructorBuilder onto the constructed
-            // base via the static helper (mirrors closureNew's TypeBuilder.GetConstructor over MakeGenericType).
+            // base via the static helper (mirrors newClosure's TypeBuilder.GetConstructor over MakeGenericType).
             var baseType = ti.TB.BaseType;
             if (baseType != null && baseType.IsGenericType && !baseType.IsGenericTypeDefinition)
                 bctor = TypeBuilder.GetConstructor(baseType, bctor);
@@ -3076,7 +3076,7 @@ sealed partial class Emitter
     }
 
     /** Pick a ctor by arity when exact type match fails; among equal-arity ctors prefer the one whose delegate-typed
-     *  params match the arity of the lambda (delegateNew/closureNew) args — disambiguates ThreadStart (`()->`) from
+     *  params match the arity of the lambda (newDelegate/newClosure) args — disambiguates ThreadStart (`()->`) from
      *  ParameterizedThreadStart (`(object)->`). */
     ConstructorInfo PickClrCtor(Type type, JsonElement args)
     {
@@ -3090,7 +3090,7 @@ sealed partial class Emitter
             foreach (var a in args.EnumerateArray())
             {
                 var p = ps[i++].ParameterType;
-                if (a.TryGetProperty("k", out var k) && (k.GetString() == "delegateNew" || k.GetString() == "closureNew")
+                if (a.TryGetProperty("k", out var k) && (k.GetString() == "newDelegate" || k.GetString() == "newClosure")
                     && typeof(System.Delegate).IsAssignableFrom(p) && a.TryGetProperty("funcType", out var ft))
                 {
                     var invoke = p.GetMethod("Invoke");
@@ -3592,12 +3592,12 @@ sealed partial class Emitter
         return typeof(void);
     }
 
-    // Resolve a closureNew node's ctor + invoke, INSTANTIATING the closure generic when it is a generic definition.
+    // Resolve a newClosure node's ctor + invoke, INSTANTIATING the closure generic when it is a generic definition.
     // A capturing closure over an enclosing type param (`{ seed }` in `generateSequence<T>`) is a GENERIC class;
     // left as its open definition the `newobj Closure`1::.ctor(!0)` operand is OPEN -> a TypeLoadException at run.
     // Close it with the node's explicit `typeArgs`, else (C13a: kotc/bir2cir omitted them for the non-`this`-capturing
     // form) with the enclosing params matched by NAME (the same resolution `MapType("gp:<name>")` uses). Shared by the
-    // main closureNew emit and the delegate-arg binding path so neither can diverge.
+    // main newClosure emit and the delegate-arg binding path so neither can diverge.
     (ConstructorInfo Ctor, MethodInfo Invoke) ResolveClosure(JsonElement e)
     {
         var ct = _types[SlotName(e.GetProperty("closureType"))];
@@ -3616,19 +3616,19 @@ sealed partial class Emitter
         return (ctor, invoke);
     }
 
-    // Bind a lambda handler (delegateNew = non-capturing, closureNew = capturing) into a SPECIFIC delegate type.
-    // Mirrors the delegateNew/closureNew cases but uses `want` (the event's delegate type) for the ctor.
+    // Bind a lambda handler (newDelegate = non-capturing, newClosure = capturing) into a SPECIFIC delegate type.
+    // Mirrors the newDelegate/newClosure cases but uses `want` (the event's delegate type) for the ctor.
     void EmitHandlerAsDelegate(JsonElement h, Type want)
     {
         var ctor = DelegateCtor(want);
         switch (h.GetProperty("k").GetString())
         {
-            case "delegateNew":
+            case "newDelegate":
                 _il.Emit(OpCodes.Ldnull);
                 _il.Emit(OpCodes.Ldftn, FindStatic(h.GetProperty("method").GetString()));
                 _il.Emit(OpCodes.Newobj, ctor);
                 break;
-            case "closureNew":
+            case "newClosure":
                 var (cctor, cinvoke) = ResolveClosure(h);
                 foreach (var c in h.GetProperty("captures").EnumerateArray()) EmitExpr(c);
                 _il.Emit(OpCodes.Newobj, cctor);
@@ -3687,7 +3687,7 @@ sealed partial class Emitter
         // (4) A LAMBDA passed to a .NET DELEGATE parameter -> build that SPECIFIC delegate (the FIR types the param
         // as a Kotlin function type; the real delegate is `want`, resolved here from the target method's signature).
         // Mirrors the event path; covers custom delegates (ApplicationInitializationCallback, ThreadStart) and BCL
-        // Func/Action alike. Scoped to literal lambdas (delegateNew/closureNew) so stored delegate/Func values keep
+        // Func/Action alike. Scoped to literal lambdas (newDelegate/newClosure) so stored delegate/Func values keep
         // their existing pass-through path.
         // Scoped to a FULLY-CONCRETE target delegate: when `want` is a REFERENCED delegate (`KFunc`) instantiated with a
         // TypeBuilder/generic-param arg, DelegateCtor's TypeBuilder.GetConstructor path can't build it ("must contain a
@@ -3696,7 +3696,7 @@ sealed partial class Emitter
         // MapsKt.mapValues's KFunc over referenced Map.Entry/int) still rewraps into the exact callee delegate.
         if (typeof(System.Delegate).IsAssignableFrom(want) && want != typeof(System.Delegate) && want != typeof(System.MulticastDelegate)
             && !ContainsTypeBuilder(want)
-            && a.TryGetProperty("k", out var dk) && (dk.GetString() == "delegateNew" || dk.GetString() == "closureNew"))
+            && a.TryGetProperty("k", out var dk) && (dk.GetString() == "newDelegate" || dk.GetString() == "newClosure"))
         {
             EmitHandlerAsDelegate(a, want);
             return;
@@ -3889,7 +3889,7 @@ sealed partial class Emitter
     // BIR `clrg:<openName>[<arg1>,<arg2>,...]` -> a constructed generic .NET type. Args split at bracket-depth 0
     // so nested generics (List[ValueTuple[int,string]]) parse correctly.
     // Resolve a .NET type reference that may be a plain name (ResolveType), a generic `clrg:Open[args]`,
-    // or a func/closed encoding (MapType). Used by clrNew/clrPropGet so they accept generic types (System.Lazy<T>).
+    // or a func/closed encoding (MapType). Used by newClr/clrPropGet so they accept generic types (System.Lazy<T>).
     // A clr* owner/type slot: structured (bir2cir MemberCallSubstitution) walks TypeNode; a legacy string (kotc's own
     // clrInstance interop `type`, a synthesized argType shorthand) keeps the string path.
     Type ClrRef(JsonElement e) =>
@@ -3901,7 +3901,7 @@ sealed partial class Emitter
         (s.StartsWith("func:") || s.StartsWith("clr:") || s.StartsWith("array:") || s.StartsWith("nullable:") || s.StartsWith("gp:") || s.StartsWith("@")) ? MapType(s) :
         // A bare PRIMITIVE/string/void shorthand (int/long/bool/char/string/object/…) is CLR-resolution vocabulary that
         // ResolveType (BCL reflection by FQN) cannot resolve — route it through MapType (which owns the shorthand switch).
-        // An `argTypes` entry can be such a shorthand: bir2cir's TransformNew synthesizes clrNew.argTypes from an arg's BIR
+        // An `argTypes` entry can be such a shorthand: bir2cir's TransformNew synthesizes newClr.argTypes from an arg's BIR
         // token and the type-lowering pass lowers e.g. `kotlin.String` -> "string"; without this the ctor-overload lookup
         // nulls that entry and falls back to arity, mis-picking StringBuilder(Int32) for StringBuilder(String).
         PrimShorthand.Contains(s) ? MapType(s) :

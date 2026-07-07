@@ -286,7 +286,7 @@ sealed partial class Emitter
                 foreach (var st in e.GetProperty("stmts").EnumerateArray()) EmitStmt(st);
                 return EmitExpr(e.GetProperty("result"));
             }
-            case "listNew":
+            case "newList":
             {
                 // `listOf(...)` -> new List<elem> { ... } via repeated Add.
                 var elem = MapType(e.GetProperty("elem"));
@@ -578,7 +578,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Newobj, typeof(string).GetConstructor(new[] { typeof(char[]) }));
                 return typeof(string);
             }
-            case "mapNew":
+            case "newMap":
             {
                 // `mapOf(k to v, …)` -> new Dictionary<K,V> { [k]=v, … } via set_Item.
                 var kt = MapType(e.GetProperty("keyType"));
@@ -595,7 +595,7 @@ sealed partial class Emitter
                 }
                 return dt;
             }
-            case "setNew":
+            case "newSet":
             {
                 // `setOf(...)` -> new HashSet<elem> { ... } via repeated Add (Add returns bool -> pop).
                 var elem = MapType(e.GetProperty("elem"));
@@ -640,7 +640,7 @@ sealed partial class Emitter
                 }
                 return typeof(object);
             }
-            case "delegateNew":
+            case "newDelegate":
             {
                 // Non-capturing lambda: bind the lifted static method into a Func/Action delegate.
                 var ft = MapType(e.GetProperty("funcType"));
@@ -656,7 +656,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
                 return ft;
             }
-            case "boundDelegateNew":
+            case "newBoundDelegate":
             {
                 // `obj::method` -> a delegate bound to the receiver. ldvirtftn needs the object twice (dup); a
                 // final method uses ldftn (the target stays on the stack as the delegate's first ctor arg).
@@ -668,7 +668,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
                 return ft;
             }
-            case "boundClrDelegateNew":
+            case "newBoundClrDelegate":
             {
                 // `netObj::method` -> a delegate bound to a .NET instance method (resolved by reflection).
                 var ft = MapType(e.GetProperty("funcType"));
@@ -723,7 +723,7 @@ sealed partial class Emitter
                 return FuncRetType(ftNode);
             }
             case "inlineSplice": return EmitInlineSplice(e);
-            case "closureNew":
+            case "newClosure":
             {
                 // Capturing lambda: `new Closure(captures)` then bind its `invoke` instance method as a delegate.
                 // ResolveClosure instantiates the closure generic when it captures an enclosing type param (a generic
@@ -736,7 +736,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
                 return ft;
             }
-            case "samNew":
+            case "newSam":
             {
                 // SAM conversion `Comparator { … }` -> `new <Sam>(captures)` -- a synthetic class IMPLEMENTING the fun
                 // interface (no delegate). The instance IS the interface value (implicit upcast at the use site).
@@ -755,7 +755,7 @@ sealed partial class Emitter
             }
             case "concat": return EmitConcat(e);
             case "cond": return EmitCond(e);
-            case "clrNew": return EmitClrNew(e);
+            case "newClr": return EmitClrNew(e);
             case "clrStatic": return EmitClrCall(e, instance: false);
             case "clrInstance": return EmitClrCall(e, instance: true);
             case "clrPropGet": return EmitClrPropGet(e);

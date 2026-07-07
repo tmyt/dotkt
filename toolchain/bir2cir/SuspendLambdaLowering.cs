@@ -1,15 +1,15 @@
 // bir2cir — SuspendLambdaLowering (bundle-6 P3 wave-2b, Part B): the LIVE consumer of the
-// `suspendLambdaNew` BIR node. Replaces each such node with `new <mangled>_lambdaN$sm(captures..., null)`
+// `newSuspendLambda` BIR node. Replaces each such node with `new <mangled>_lambdaN$sm(captures..., null)`
 // and synthesizes the SuspendLambda state machine (via SuspendColdLowering's FunGen lambda mode — the SAME
 // invokeSuspend/label/spill/field machinery the named-fun cold lowering uses).
 //
-// kotc emits `suspendLambdaNew` for every `suspend` lambda literal (BirEmitter.kt, ~:1912); this pass is the
+// kotc emits `newSuspendLambda` for every `suspend` lambda literal (BirEmitter.kt, ~:1912); this pass is the
 // producer's counterpart and is exercised by the gate (cases/il-lam1, il-lam2 — a capturing suspend lambda
 // with a real suspend call). The consumer landed BEFORE the producer during the rollout, so an unrecognized
 // node could never reach ilemit as an unknown-node break.
 //
-// The `suspendLambdaNew` contract (v1; the spec kotc step 2 emits to):
-//   { "k":"suspendLambdaNew",
+// The `newSuspendLambda` contract (v1; the spec kotc step 2 emits to):
+//   { "k":"newSuspendLambda",
 //     "arity": 0|1,                              // the lambda's OWN param count (v1: 0 or 1; >=2 refused)
 //     "captures":[{"name","type"}],              // captured vars -> SM ctor params + fields
 //     "params":  [{"name","type"}],              // the lambda's own params (arity-1: create(value) sets it)
@@ -124,13 +124,13 @@ static class SuspendLambdaLowering
         if (method["body"] is JsonNode body) Walk(body, prefix + "_" + mn, newTypes, counter, baseIsLocal, outerSelf);
     }
 
-    // Lower a `suspendLambdaNew` stored as a STATIC field's inline initializer (a top-level/object/companion
+    // Lower a `newSuspendLambda` stored as a STATIC field's inline initializer (a top-level/object/companion
     // property backing field). A static initializer has no enclosing instance, so a captured `__outer` cannot
     // arise here (nothing to capture) -> outerSelf:false. `field.init` is replaced in place with the `new <SM>`.
     static void WalkFieldInit(JsonObject field, string prefix, List<JsonNode> newTypes, int[] counter, bool baseIsLocal)
     {
         var fn = Str(field["name"]) ?? "f";
-        if (field["init"] is JsonObject init && Str(init["k"]) == "suspendLambdaNew")
+        if (field["init"] is JsonObject init && Str(init["k"]) == "newSuspendLambda")
             field["init"] = BuildLambda(init, prefix + "_" + fn, newTypes, counter, baseIsLocal, outerSelf: false);
         else if (field["init"] is JsonNode body)
             Walk(body, prefix + "_" + fn, newTypes, counter, baseIsLocal, outerSelf: false);
@@ -152,7 +152,7 @@ static class SuspendLambdaLowering
                 foreach (var key in o.Select(kv => kv.Key).ToList())
                 {
                     var child = o[key];
-                    if (child is JsonObject co && Str(co["k"]) == "suspendLambdaNew")
+                    if (child is JsonObject co && Str(co["k"]) == "newSuspendLambda")
                         o[key] = BuildLambda(co, ctx, newTypes, counter, baseIsLocal, outerSelf);
                     else if (child != null)
                         Walk(child, ctx, newTypes, counter, baseIsLocal, outerSelf);
@@ -162,7 +162,7 @@ static class SuspendLambdaLowering
                 for (var i = 0; i < a.Count; i++)
                 {
                     var child = a[i];
-                    if (child is JsonObject co && Str(co["k"]) == "suspendLambdaNew")
+                    if (child is JsonObject co && Str(co["k"]) == "newSuspendLambda")
                         a[i] = BuildLambda(co, ctx, newTypes, counter, baseIsLocal, outerSelf);
                     else if (child != null)
                         Walk(child, ctx, newTypes, counter, baseIsLocal, outerSelf);

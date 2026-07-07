@@ -70,7 +70,7 @@ coroutine 内部 (e) 専用パスで処理／定数畳み込み済み のいず�
 |---|---|---|---|---|---|
 | ~~B1~~ | ~~object 式から外側ローカルへ書込~~ ✅ 2026-06-21 実装（`il-refcell`） | — | heap ref-cell 実装済 | 単型化 `<>dotkt_Ref_<elem>{ var v }` に昇格、読書を `.v` に。lambda/object/local-class 横断、++/+= 含む | done |
 | ~~B2~~ | ~~ローカルクラスから外側ローカルへ書込~~ ✅ 2026-06-21 実装（`il-refcell`） | — | B1 と同一機構 | — | done |
-| B3 | **.NET メソッド参照** `obj::netMethod` / `NetType::method` | `BirEmitter:1289` | .NET メソッドの delegate 束縛は稀＋自明な回避策あり | lifted `__mref`/`boundDelegateNew` を .NET 受け手にも対応。回避: ラムダ `{ a -> x.m(a) }` | S–M |
+| B3 | **.NET メソッド参照** `obj::netMethod` / `NetType::method` | `BirEmitter:1289` | .NET メソッドの delegate 束縛は稀＋自明な回避策あり | lifted `__mref`/`newBoundDelegate` を .NET 受け手にも対応。回避: ラムダ `{ a -> x.m(a) }` | S–M |
 | B4 | **非リテラル `String.format`** | `BirEmitter:2441` | printf↔.NET composite（`%d`↔`{0}`）は非互換。実行時変換には runtime helper が要る | DotKt.Runtime に printf→composite 変換器、または `String.Format` 直叩き | S |
 | ~~B5~~ | ~~`out`/`ref` パラメータ~~ ✅ 2026-06-21 実装（`il-outref`） | — | 単一 `byref` マーカー方式（out/ref を統合） | frontend に `fun <T> byref(x:T): ClrRef<T>` を注入→backend がマーカーを読み arg を `byref:` 型＋lvalue アドレス渡し、ilemit が `MakeByRefType`+`ldloca`。out/ref 両対応 | done |
 

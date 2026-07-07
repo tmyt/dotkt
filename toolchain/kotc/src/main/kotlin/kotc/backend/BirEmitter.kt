@@ -1164,7 +1164,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A lifted anonymous-object class that CAPTURES enclosing generic type parameters (reified CLR generics —
 		// `object : Box<T>`, or an inlined `object` whose supertype/captures resolve to the enclosing `T`) must be GENERIC
 		// over them itself: on the CLR a `tv` referenced by its members is unresolved unless the flattened class DECLARES
-		// the param and the construction site instantiates it with the enclosing arg (mirrors closureNew/samNew). This runs
+		// the param and the construction site instantiates it with the enclosing arg (mirrors newClosure/newSam). This runs
 		// ONLY for the lifted object-literal path (`liftedAnon`) — a normal named declaration owns all of its params — and
 		// derives the captured set STRUCTURALLY from the class's real type positions (supertypes, own type-param bounds,
 		// captured-var field types, ctor/member parameter + return + body-operand types). It deliberately does NOT scan a
@@ -1537,7 +1537,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	// ===== Coroutine SUSPEND FACTS (kotc emits facts only; ALL coroutine lowering is bir2cir's) =====
 	// kotc does NO coroutine lowering. A `suspend fun`/lambda body emits PLAINLY: decls carry `"suspend":true`
-	// (+ `resultType`), suspend call sites carry `"suspendCall":true`, and a suspend lambda emits `suspendLambdaNew`.
+	// (+ `resultType`), suspend call sites carry `"suspendCall":true`, and a suspend lambda emits `newSuspendLambda`.
 	// bir2cir consumes those facts to build the `ContinuationImpl` state machine + the public `Task<T>` bridge; kotc
 	// bakes NO coroutine ABI. The helpers below (isAwaitIntrinsic / isSuspensionCall / containsSuspend) are the ONLY
 	// coroutine code left in kotc, and they exist purely to DRIVE the fact emission (skip the await intrinsic method,
@@ -1989,15 +1989,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 
 	/**
-	 * A lambda -> a delegate. Non-capturing lambdas lift to a static method (`delegateNew`); capturing
-	 * lambdas synthesize a closure class (fields = captured vars, instance `invoke` method) (`closureNew`).
+	 * A lambda -> a delegate. Non-capturing lambdas lift to a static method (`newDelegate`); capturing
+	 * lambdas synthesize a closure class (fields = captured vars, instance `invoke` method) (`newClosure`).
 	 */
 	/**
 	 * The enclosing type parameters a synthesized closure CLASS must be generic over: those referenced by its capture
 	 * field types (and its own parameter/return types). On the CLR generics are reified, so a closure that captures a
 	 * `T`-typed value (or a `List<T>` / `(T)->Unit`) becomes a SEPARATE class with a `gp:T` field — and `T` (an
 	 * enclosing *method* type parameter) is not in scope from inside that class. The closure class must therefore
-	 * declare `T` itself and be instantiated with the enclosing `T` at `closureNew`, or `MapType` fails to resolve it.
+	 * declare `T` itself and be instantiated with the enclosing `T` at `newClosure`, or `MapType` fails to resolve it.
 	 */
 	private fun freeTypeParams(types: List<IrType>): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
 		val acc = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
@@ -2030,7 +2030,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/**
-	 * A `suspend` lambda literal -> the `suspendLambdaNew` BIR node (the dormant bir2cir SuspendLambdaLowering consumer).
+	 * A `suspend` lambda literal -> the `newSuspendLambda` BIR node (the dormant bir2cir SuspendLambdaLowering consumer).
 	 * Emits ONLY pure Kotlin facts — captures, own params, result type, enclosing type-param names, and the body EXACTLY
 	 * as a suspend-fun body (its suspend calls already carry `"suspendCall":true`). bir2cir builds the `ContinuationImpl`
 	 * state machine (create/invokeSuspend/resume) from these; kotc bakes no coroutine ABI. Returns null (-> plain closure
@@ -2040,10 +2040,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * `sequence { }`/`iterator { }`'s `SequenceScope`) flow through THIS path too — bir2cir picks the
 	 * `RestrictedSuspendLambda` base from the scope's annotation. kotc has no `sequence`/`yield` knowledge.
 	 * Captures/params reuse the SAME machinery as the closure path (`capturedVars(includeThis=true)` / `captureFieldName`
-	 * / `captureFieldType`). NOTE: unlike closureNew, the body is emitted WITHOUT installing `captureSubst` — bir2cir's
+	 * / `captureFieldType`). NOTE: unlike newClosure, the body is emitted WITHOUT installing `captureSubst` — bir2cir's
 	 * SM builder rewrites captured-var reads (plain `{"k":"local"}`) into SM field reads itself. typeArgs are the BARE
 	 * enclosing type-param names (bir2cir prepends `gp:` when it instantiates the open SM), NOT the `gp:`-prefixed form
-	 * closureNew emits for ilemit.
+	 * newClosure emits for ilemit.
 	 */
 	private fun suspendLambda(node: IrFunctionExpression): String? {
 		val fn = node.function
@@ -2069,12 +2069,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// type-USAGE slot, so it rides as the `typeParams` name shorthand (§2.5), consistent with the other lambda paths.
 		val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-		return """{"k":"suspendLambdaNew","arity":${ownParams.size},"captures":[$capturesJson],"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
+		return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson],"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 	}
 
 	internal fun lambda(node: IrFunctionExpression): String {
 		val fn = node.function
-		// A `suspend` lambda LITERAL -> a `suspendLambdaNew` node: bir2cir turns it into a SuspendLambda state machine
+		// A `suspend` lambda LITERAL -> a `newSuspendLambda` node: bir2cir turns it into a SuspendLambda state machine
 		// (app-build only; the SM's create/resume protocol makes `blockOn { ... }` run). kotc emits only the pure FACTS
 		// (captures/params/body-with-suspendCall-tags); the SM lowering is downstream. Non-v1 shapes (arity>=2) fall
 		// through to the plain closure path below; restricted-suspension builders (sequence{}/iterator{}) go through
@@ -2096,7 +2096,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
 			}
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-			return """{"k":"delegateNew","method":${str(lname)},"funcType":${str(ftype)}$typeArgs}"""
+			return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(ftype)}$typeArgs}"""
 		}
 		// Capturing: build a closure class. Captures rewrite to `this.<field>` (by symbol identity, so the
 		// enclosing `this` — captured when the lambda reads a member — maps to a `__outer` field, not the
@@ -2120,18 +2120,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 		val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
 		// The closure must be GENERIC over any enclosing type parameters it captures (reified CLR generics — a `gp:T`
-		// field is unresolved otherwise). Declare them on the class and pass them as type arguments at `closureNew`.
+		// field is unresolved otherwise). Declare them on the class and pass them as type arguments at `newClosure`.
 		val freeTps = freeTypeParams(capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 		liftedTypes.add("""{"name":${str(cname)},"kind":"class"${typeParamsJson(freeTps)},"base":null,"interfaces":[],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$invoke]}""")
 		// Capture values are evaluated in the enclosing context (the outer `this`, or an outer local).
 		val capExprs = captures.joinToString(",") { capValueExpr(it) }
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-		return """{"k":"closureNew","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${str(ftype)}$typeArgs}"""
+		return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${str(ftype)}$typeArgs}"""
 	}
 
 	/**
 	 * SAM conversion `Comparator { a, b -> … }` -> a synthetic class that IMPLEMENTS the fun interface (the SAM method =
-	 * the lambda body) and is instantiated via `samNew`. Unlike a function-type lambda (which lowers to a Func delegate),
+	 * the lambda body) and is instantiated via `newSam`. Unlike a function-type lambda (which lowers to a Func delegate),
 	 * a fun-interface value is used by INTERFACE (`comparator.compare(...)`), so a delegate has no matching method
 	 * (EntryPointNotFound). This mirrors the closure-class build but implements the iface + names the method after the SAM
 	 * + override:true, and returns the instance itself (not a delegate). Reuses the working object:Comparator emission.
@@ -2165,12 +2165,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		liftedTypes.add("""{"name":${str(cname)},"kind":"class"${typeParamsJson(freeTps)},"base":null,"interfaces":[${str(ifaceSpec)}],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$samMethod]}""")
 		val capExprs = captures.joinToString(",") { capValueExpr(it) }
 		val tArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-		return """{"k":"samNew","samType":${fqnJson(cname)},"captures":[$capExprs]$tArgs}"""
+		return """{"k":"newSam","samType":${fqnJson(cname)},"captures":[$capExprs]$tArgs}"""
 	}
 
 	/**
 	 * A callable reference `::foo` -> a delegate bound to the referenced function. v1 scope: a top-level/static
-	 * function reference (no receiver, no bound args) reuses the lambda `delegateNew` path — top-level funs are
+	 * function reference (no receiver, no bound args) reuses the lambda `newDelegate` path — top-level funs are
 	 * emitted as static file-class methods, so `FindStatic(name)` resolves the `ldftn` target. Bound-instance
 	 * (`obj::method`), member, and constructor references are deferred (clean `unsupportedExpr`).
 	 */
@@ -2189,20 +2189,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
 				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
-				return """{"k":"delegateNew","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
+				return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
 			}
-			// `::NetType` — a lifted factory `__ctorref(args) = new NetType(args)` (clrNew), bound as a delegate.
+			// `::NetType` — a lifted factory `__ctorref(args) = new NetType(args)` (newClr), bound as a delegate.
 			if (klass != null) {
 				val ps = ctor.parameters.filter { it.kind == IrParameterKind.Regular }
 				val lname = "__ctorref${lambdaCounter++}"
 				val psJson = ps.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
 				val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 				val retT = birType(ctor.returnType)
-				val newE = """{"k":"clrNew","type":${fqnJson(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { birType(it.type).toJson() }}],"args":[$argsJson]}"""
+				val newE = """{"k":"newClr","type":${fqnJson(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { birType(it.type).toJson() }}],"args":[$argsJson]}"""
 				val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
 				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
-				return """{"k":"delegateNew","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
+				return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
 			}
 			return unsupported(node, "this constructor reference", "the constructor's class could not be resolved")
 		}
@@ -2212,14 +2212,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val hasExt = fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }
 		// `::topLevelFun` — no receiver: a delegate over the static file-class method (FindStatic resolves it).
 		if (dispatchIdx < 0 && !hasExt)
-			return """{"k":"delegateNew","method":${str(fn.name.asString())},"funcType":${funcTypeOf(fn).toJson()}}"""
+			return """{"k":"newDelegate","method":${str(fn.name.asString())},"funcType":${funcTypeOf(fn).toJson()}}"""
 		// `obj::method` — a bound instance reference: a delegate whose target is the bound receiver. Only USER
 		// classes (the method resolves via FindMethod); .NET-method / extension / unbound refs are deferred.
 		val boundRecv = if (dispatchIdx >= 0 && !hasExt) node.arguments.getOrNull(dispatchIdx) else null
 		val ownerClass = fn.parent as? IrClass
 		if (boundRecv != null && ownerClass != null && clrName(ownerClass) == null) {
 			val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
-			return """{"k":"boundDelegateNew","ownerType":${fqnJson(typeName(ownerClass))},"method":${str(fn.name.asString())},"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}}"""
+			return """{"k":"newBoundDelegate","ownerType":${fqnJson(typeName(ownerClass))},"method":${str(fn.name.asString())},"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}}"""
 		}
 		// `Class::method` (UNbound) -> a lifted static `__mref(self, args) = self.method(args)`; the receiver
 		// becomes the delegate's first parameter. User classes only (`Func<UserType,…>` resolves via DelegateCtor).
@@ -2238,7 +2238,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + ps.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
-			return """{"k":"delegateNew","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
+			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
 		}
 		// A .NET method reference. Bound `obj::m` -> a delegate over the .NET instance method (ldftn). Unbound
 		// `NetType::m` -> a lifted static `__mref(self, args) = self.m(args)` via clrInstance.
@@ -2249,7 +2249,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val member = clrName(fn) ?: objectMethodName(fn) ?: fn.name.asString()
 			val virtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT
 			if (boundRecv != null)
-				return """{"k":"boundClrDelegateNew","clrType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}}"""
+				return """{"k":"newBoundClrDelegate","clrType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}}"""
 			if (dispatchIdx >= 0) {
 				val selfT = birType(fn.parameters[dispatchIdx].type)
 				val lname = "__mref${lambdaCounter++}"
@@ -2269,7 +2269,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
 				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
-				return """{"k":"delegateNew","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
+				return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, listOf(selfT) + regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
 			}
 		}
 		return unsupported(node, "a method reference to a .NET method (`::${fn.name}`)",
@@ -2848,7 +2848,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			fn.parameters.filter { it.kind == IrParameterKind.Regular }
 
 	/** The function type `fn` for a lambda's signature (extension receiver first). A `suspend` lambda sets
-	 *  `fn.suspend=true` — same delegate shape carrying the suspend FACT for the suspendLambdaNew SM builder.
+	 *  `fn.suspend=true` — same delegate shape carrying the suspend FACT for the newSuspendLambda SM builder.
 	 *  bir2cir ERASES a suspend `fn` to `object` wherever it appears in a TYPE slot; only the `funcType` node
 	 *  key itself keeps it. So this stays behavior-preserving. */
 	internal fun funcTypeOf(fn: IrSimpleFunction): TypeNode.Fn {
@@ -3169,7 +3169,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// whose supertype/captures resolve to the enclosing `T`): typeDef makes the synthesized class GENERIC over
 				// the params its members reference (reified CLR generics), recording them in `liftedTypeArgNames`. The `new`
 				// site must then INSTANTIATE it with the enclosing args — bracket those `gp:` tokens onto the constructed type
-				// (they resolve at THIS site, i.e. the enclosing method/type scope). Mirrors closureNew/samNew's `typeArgs`.
+				// (they resolve at THIS site, i.e. the enclosing method/type scope). Mirrors newClosure/newSam's `typeArgs`.
 				val capPairs = captured.map { it to captureFieldName(it) }
 				// Save any PRIOR binding for each captured decl: when this object literal is nested inside a capturing
 				// closure/object that captures the SAME outer var (`element`), the enclosing frame already bound it to
@@ -3300,7 +3300,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// ref.dll (kotlin.Throwable is @ClrTypeAlias("System.Exception")). No BCL member name lives in kotc (layer purity).
 		// `kotlin.sequences.sequence { yield(…) }` is now ORDINARY library code: it resolves to the real stdlib
 		// `sequence(block)` function over the cold core (SequenceBuilderIterator), with `{ yield(...) }` flowing through
-		// the ordinary suspend-lambda path (suspendLambdaNew -> bir2cir's RestrictedSuspendLambda SM). kotc has NO
+		// the ordinary suspend-lambda path (newSuspendLambda -> bir2cir's RestrictedSuspendLambda SM). kotc has NO
 		// knowledge of the `sequence`/`yield`/`yieldAll` symbols — the compiler no longer knows the builder exists.
 		// `stackBuffer(n) { … }` intrinsic -> scoped stack allocation (splice the block into the caller's frame).
 		// Matched by FULL name (`kotlin.clr.stackBuffer`, its CLR-intrinsic home) so a user function happening to be
@@ -3500,14 +3500,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (recvExpr != null && lambda != null) return inlineUse(recvExpr, lambda, birType(call.type))
 		}
 
-		// Collection factories `listOf`/`setOf` -> a `listNew`/`setNew` (List<elem>/HashSet<elem>). Handles both the
+		// Collection factories `listOf`/`setOf` -> a `newList`/`newSet` (List<elem>/HashSet<elem>). Handles both the
 		// vararg overload (`listOf(a, b, …)`) and the single-element overload (`listOf(x)` is NOT a vararg). The
 		// element type comes from the call's `List<T>` return so a single-element `listOf(3)` is List<Int>, not <object>.
 		if (calleeFq in LIST_FACTORIES || calleeFq in SET_FACTORIES) {
 			val elems = (call.arguments.firstOrNull() as? IrVararg)?.elements?.filterIsInstance<IrExpression>()
 				?: regularArgs(call)
 			val elemT = collectionElemType(call.type)
-			val kind = if (calleeFq in SET_FACTORIES) "setNew" else "listNew"
+			val kind = if (calleeFq in SET_FACTORIES) "newSet" else "newList"
 			return """{"k":${str(kind)},"elem":${str(elemT)},"elems":[${elems.joinToString(",") { expr(it) }}]}"""
 		}
 		// `mapOf(k to v, …)` -> a Dictionary<K,V> (each element is a `to` call: key=ext recv, value=arg).
@@ -3533,7 +3533,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val kvs = elems.map { toPairKV(it) }
 			if (kvs.all { it != null }) {
 				val entries = kvs.filterNotNull().joinToString(",") { (k, v) -> """{"key":${expr(k)},"value":${expr(v)}}""" }
-				return """{"k":"mapNew","keyType":${str(kt)},"valType":${str(vt)},"entries":[$entries]}"""
+				return """{"k":"newMap","keyType":${str(kt)},"valType":${str(vt)},"entries":[$entries]}"""
 			}
 			// else: not a statically-decomposable pair literal -> fall through to normal call emission.
 		}
@@ -4892,7 +4892,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		charSeqIface(t)?.let { return TypeNode.Fqn(it) }
 		// A function type as a value (e.g. a `(P)->R` parameter): `kotlin.FunctionN` -> `fn` (Func/Action shape). A
 		// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) sets `fn.suspend=true` — the SAME delegate
-		// shape carrying the suspend FACT (which the suspendLambdaNew SM builder needs). bir2cir ERASES a suspend `fn`
+		// shape carrying the suspend FACT (which the newSuspendLambda SM builder needs). bir2cir ERASES a suspend `fn`
 		// to `object` wherever it lands in a TYPE slot (only the `funcType` node key keeps it), so kotc bakes no
 		// coroutine ABI here — behavior-preserving.
 		if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.Function"))) {

@@ -613,7 +613,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 		return ctors.mapIndexed { i, params ->
 			// Only synthesize a `: super()` delegating call when the base actually has a no-arg ctor; a base linked
 			// purely for assignability (e.g. WinUI UIElement, SafeHandle) has none, and the façade ctor is never
-			// lowered (construction is native clrNew) so the missing delegation is harmless.
+			// lowered (construction is native newClr) so the missing delegation is harmless.
 			val real = realDefaults(params)   // all-buildable ctor defaults -> real defaults (`Pt(y = 4)` omits x); else required
 			createConstructor(context.owner, ClrGeneratedKey, i == 0, type.baseNoArgCtor) {
 				for (p in params) valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner), hasDefaultValue = real && p.default != null)

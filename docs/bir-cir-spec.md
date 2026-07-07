@@ -48,7 +48,7 @@ Notes:
 - `fn` subsumes both plain and suspend function types; the H2 position metadata is just an `fn` with
   `suspend:true` in a param/return/field slot — no separate `sfunc:` token, no `BirTokenToMeta`.
   **STATUS (#49): the `funcType` slot is FOLDED.** The delegate-view function type on
-  `closureNew`/`delegateNew`/`samNew`/`suspendLambdaNew`/`boundDelegateNew`/`delegateInvoke` was the LAST
+  `newClosure`/`newDelegate`/`newSam`/`newSuspendLambda`/`newBoundDelegate`/`delegateInvoke` was the LAST
   string-typed type slot (`func:<ret>:<args>` / `sfunc:<ret>:<args>`); kotc now emits it as the structured
   `fn` node (0 `func:`/`sfunc:` strings in the emitted BIR), bir2cir's `LowerFuncTypeValued` lowers the `fn`
   node via `LowerFnDelegate` (suspend→delegate shape kept for the sequence/iterator closure path; a suspend
@@ -112,6 +112,10 @@ DELETED (dead / producer-zero — `docs/bir-audit/ilemit-consume.md`):
   `clr.ldelem`, `clr.stelem`, `clr.ldlen`, `clr.str.concat`, `clr.obj.method`, `clr.default`,
   `clr.array.spread`, `clr.stackalloc`, `clr.stack.*`, `clr.constrained.compareTo`, `clr.nullable.*`,
   `clr.enum.*`, `clr.safeCast.value`, `clr.typeof`, `clr.getType`. (The live spelling is the non-`clr.` twin.)
+- `sequenceNew` and `tupleNew`: producer-zero construction kinds. `sequenceNew` was retired in the coroutine
+  sequence cutover (the real `SequenceBuilderIterator` landed); `tupleNew` is unused (`Pair`/`Triple` construct
+  via `new`). Removed from the KINDS set (the rest of the construction family renamed thing-first→operation-first
+  `<thing>New`→`new<Thing>` in the same change).
 
 MERGED (same-shape variants → one canonical kind):
 - `setField` / `setFieldExpr` / `staticFieldSet` field-write family → decide one canonical write node
@@ -175,7 +179,7 @@ node-format stability is achieved DECLARATIVELY, in three parts:
      = **`{ret, dynRet, suspendRet}`**, a consistent `<context>Ret` family: `ret` (plain return), `dynRet`
      (`@Clr` dynamic-dispatch return), `suspendRet` (a suspend fn/lambda's `T` of `Continuation<T>` — renamed from
      the odd-one-out `resultType` in m5). These are DISTINCT ROLES that can COEXIST on one node (a `callInstance`
-     carries `ret`+`dynRet`; a `suspendLambdaNew` carries `ret`+`suspendRet`) — grouped by shared position, NOT
+     carries `ret`+`dynRet`; a `newSuspendLambda` carries `ret`+`suspendRet`) — grouped by shared position, NOT
      synonyms; the return-position parallel to the value-position `TypeKeys`. Dead keys `selRet`/`returnType`
      (0 emit, never read) were deleted in m5.
 2. **Per-kind schema** — the spec pins each `k`'s exact field set (name, required/optional, value shape),
@@ -359,7 +363,7 @@ emitting method's body in the BIR/CIR — validated there by the document walk.
 bare-FQN strings the wire format forbids):
 - `conv.to` (kotc `BirEmitter.kt` numeric-conversion path) — was `str(to)` (bare `"kotlin.Int"`) → `fqnJson(to)`.
 - Synthetic `<>dotkt_KProperty` interface refs (kotc `synthDelegate`/`kPropertyDefs`) — `str(iface)`/literal → `fqnJson`.
-- `suspendLambdaNew`'s free-type-param list — a type-param NAME-declaration list, not a type-usage slot: renamed
+- `newSuspendLambda`'s free-type-param list — a type-param NAME-declaration list, not a type-usage slot: renamed
   `typeArgs` → `typeParams` (the name-shorthand, consistent with the other lambda paths; kotc emit + bir2cir
   `SuspendLambdaLowering` read).
 - The `StringCharSequenceBridge` adapter (bir2cir `AdapterTypeJson` literal + `WrapAdapter`) — every `type`/`ret`/

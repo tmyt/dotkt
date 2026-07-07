@@ -75,7 +75,7 @@ C# 経路は出荷フォーマットだけでなく**3 役**を兼ねる。各�
 ### 3.2 .NET イベント `+=`/`-=` の IL 化 — C-track / E-1
 
 frontend は既に整備済（FIR injector が `add_<E>`/`remove_<E>` を合成、`ClrEventRegistry` に (event名, op) を記録）。残りは backend のみ。
-- **BirEmitter**: call が injected `add_`/`remove_` のとき（`ClrEventRegistry.lookup`）→ 新ノード `clrEventAdd`/`clrEventRemove`（`type`=.NET 型, `event`=イベント名, `recv`, `handler`=delegate 式）。handler は既存の lambda→delegate 経路（`closureNew`/`delegateInvoke`）。
+- **BirEmitter**: call が injected `add_`/`remove_` のとき（`ClrEventRegistry.lookup`）→ 新ノード `clrEventAdd`/`clrEventRemove`（`type`=.NET 型, `event`=イベント名, `recv`, `handler`=delegate 式）。handler は既存の lambda→delegate 経路（`newClosure`/`delegateInvoke`）。
 - **ilemit**: `ResolveType(type).GetEvent(name).GetAddMethod()/GetRemoveMethod()` を `callvirt`、引数は handler delegate。
 - これで `class App : Application()` 上で `button.Click += { … }` 相当が IL で動く＝**windowing の完全 IL 化**（基底継承は Round 8 で済、イベントが最後のピース）。Avalonia/WPF サンプルを IL で点灯。
 
@@ -142,7 +142,7 @@ IL 出力は通常の .NET アセンブリ＝C# から `ProjectReference` で消
 
 ### フェーズ 1 — イベント `+=`/`-=`（M・即着手可）✅ 2026-06-18 完了
 - [x] **1.1** BirEmitter: `ClrEventRegistry.lookup(declFq, name)` で injected `add_`/`remove_` 呼出を検出。`declFq` = resolveFakeOverride 経由の実 .NET 宣言型 FQN。
-- [x] **1.2** BirEmitter: `clrEventAdd`/`clrEventRemove` ノードを emit（`type`=構築済 .NET 型, `event`=イベント名, `recv`, `handler`=既存 lambda→delegate 経路の delegateNew/closureNew or 保存ローカル）。
+- [x] **1.2** BirEmitter: `clrEventAdd`/`clrEventRemove` ノードを emit（`type`=構築済 .NET 型, `event`=イベント名, `recv`, `handler`=既存 lambda→delegate 経路の newDelegate/newClosure or 保存ローカル）。
 - [x] **1.3** ilemit: `EmitClrEvent`＝`ClrRef(type).GetEvent(name).GetAddMethod()/GetRemoveMethod()` を `callvirt`。`EmitHandlerAsDelegate` がハンドラを**イベント固有のデリゲート型**へバインド（リテラルは直接、保存値は `Invoke` 経由で再ラップ＝デリゲート等価性を保ち `-=` を成立）。
 - [x] **1.4** サンプル `cases/il-event`（`ObservableCollection<Int>` の `CollectionChanged` を `+=`/`-=`、同期発火）＋ `verify-il.sh` 投入（`il:event` PASS, `VERIFY event` clean）。
 - [~] **1.5** Avalonia/WPF サンプルを **IL 経路で点灯**: イベント機構は IL で完成（基盤確立）。実 UI 点灯は Avalonia アセンブリ注入（`--refs`/`<KotlinClrType>`）の IL 経路配線が要るため E-5 サンプル整備時に実施。

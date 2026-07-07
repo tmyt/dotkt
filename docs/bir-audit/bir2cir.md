@@ -27,7 +27,7 @@ node kinds bir2cir reads (via `Str(o["k"])` equality, `case` labels, or `HashSet
 |-----------|--------------------|--------------|
 | `callStatic` | `Program.cs:4378` (Transform), `:2842`,`:3144`, `SuspendColdLowering.cs:1362/1454/1491`, `CrossClassPrivateWidening.cs:77`, `IteratorConsumerNormalization` `:2175` | member-call substitution; suspend cold-call detection; CharSequence rewrite; private-widening |
 | `callInstance` | `Program.cs:4377`, `:3145`, `GenericSelfInstantiation.cs:57`, `CrossClassPrivateWidening.cs:73`, `SuspendColdLowering.cs:1362/1500`, `EnumMemberBinding` | member-call substitution; self-instantiation; enum member binding |
-| `new` | `Program.cs:4376` (TransformNew), `SuspendColdLowering.cs:1488` | construction → `clrNew` on CLR-bound owner |
+| `new` | `Program.cs:4376` (TransformNew), `SuspendColdLowering.cs:1488` | construction → `newClr` on CLR-bound owner |
 | `staticField` | `Program.cs:4379` (TransformStaticField), `:1384`, `SuspendColdLowering.cs:1456/1506` | companion INSTANCE load → null const; impurity/type-of-expr |
 | `field` | `Program.cs:1383`,`:3637`, `GenericSelfInstantiation.cs:58`, `CrossClassPrivateWidening.cs:81`, `SuspendColdLowering.cs:1456/1506` | self-instantiation; SM field lowering; impurity |
 | `setField` | `GenericSelfInstantiation.cs:59`, `CrossClassPrivateWidening.cs:82`, `TryValueOperandHoist.cs:96` | self-instantiation; operand hoist |
@@ -54,9 +54,9 @@ node kinds bir2cir reads (via `Str(o["k"])` equality, `case` labels, or `HashSet
 | `isinst` | `Program.cs` (walk) | (type-token bearing) |
 | `cond` | `Program.cs` (walk) | (type-token bearing) |
 | `objEq` | produced; also walked | SM |
-| `suspendLambdaNew` | `SuspendLambdaLowering.cs:129/151/161`, `SuspendColdLowering.cs:88/570`, `Program.cs:286` | suspend-lambda → `new <SM>` |
-| `closureNew` | `Program.cs:1891/2742/4038`, `SuspendColdLowering.cs:83/155/176` | delegate/CharSeq; suspend cold detection; LambdaKinds refusal |
-| `delegateNew` | `Program.cs:2742/4036`, `SuspendColdLowering.cs:83/155` | CharSeq delegate targets; suspend detection |
+| `newSuspendLambda` | `SuspendLambdaLowering.cs:129/151/161`, `SuspendColdLowering.cs:88/570`, `Program.cs:286` | suspend-lambda → `new <SM>` |
+| `newClosure` | `Program.cs:1891/2742/4038`, `SuspendColdLowering.cs:83/155/176` | delegate/CharSeq; suspend cold detection; LambdaKinds refusal |
+| `newDelegate` | `Program.cs:2742/4036`, `SuspendColdLowering.cs:83/155` | CharSeq delegate targets; suspend detection |
 | `delegateInvoke` | `Program.cs:2742/4044` | CharSeq / nullable-func erasure |
 | `forEachInline` | `Program.cs:3637`, `SuspendColdLowering.cs:83` | nullable-generic loop repair; LambdaKinds refusal |
 | `repeatInline` / `lambda` | `SuspendColdLowering.cs:83` | LambdaKinds refusal |
@@ -65,7 +65,7 @@ node kinds bir2cir reads (via `Str(o["k"])` equality, `case` labels, or `HashSet
 | `dynCall` | `SuspendColdLowering.cs:1455` (ImpureKinds) | impurity |
 
 `CallSiteAnalyzer.InterestingKinds` (`Program.cs:1378`) additionally enumerates the CLR-side kinds
-it walks for analysis: `clrStatic clrGenericStatic clrInstance clrGenericInstance clrNew clrPropGet
+it walks for analysis: `clrStatic clrGenericStatic clrInstance clrGenericInstance newClr clrPropGet
 clrPropSet clrStaticField` — these are normally PRODUCED by bir2cir but are also re-read when a
 pass runs after substitution.
 
@@ -80,7 +80,7 @@ Grouped by producing pass. All are `["k"] = "…"` object constructions or `obj[
 |--------------|------|---------|
 | `clrInstance` | `:2278`,`:2414`,`:4638`,`:5072`,`:5147`, ClrCallNode | instance BCL call `System.X.Method` (Rule 1c/2/4) |
 | `clrStatic` | `:5147` (ClrCallNode, `instance?…:clrStatic`) | static BCL call |
-| `clrNew` | `:4443` (TransformNew), `:5364` | `new System.X(..)` on CLR-bound reference owner (Rule 1) |
+| `newClr` | `:4443` (TransformNew), `:5364` | `new System.X(..)` on CLR-bound reference owner (Rule 1) |
 | `clrPropGet` | `:2904`,`:3911/3917`,`:4247`,`:5104` (ClrPropNode `write?…`) | property read `get_X` → `System.X.Prop` |
 | `clrPropSet` | `:5104` | property write |
 | `constrainedCall` | `:4822` (Constrainify) | `constrained.` virtual dispatch on a `gp:T` receiver over a CLR-bound interface (IComparable / MutableCollection.add) |
@@ -91,7 +91,7 @@ Grouped by producing pass. All are `["k"] = "…"` object constructions or `obj[
 | `cast` | `:3464`,`:3669`,`:4052/4058` | object-box / value-type coercion inserted around args & inits |
 | `bin` (`==`) | `:3916`,`:2940` | isEmpty→Count==0 lowering; substring arithmetic |
 | `new` | `:3206` | adapter type instantiation |
-| `throw` | `:5361` | (with nested `clrNew`) |
+| `throw` | `:5361` | (with nested `newClr`) |
 | `valueBlock` | `:2926` | CharSequence.subSequence temp-spill block |
 | `clrGenericStatic` | `ValueTypeNullableCollectionArg.cs:65` | value-type nullable-collection arg wrap |
 | `clrMapSize` etc. | `:4690` **(NOTE: METHOD-name string, NOT a `k` value)** | routed as `method` on a callStatic to `ClrMapDefaultsKt` |
@@ -99,7 +99,7 @@ Grouped by producing pass. All are `["k"] = "…"` object constructions or `obj[
 ### 2b. Suspend cold lowering (`SuspendColdLowering.cs`) — synthesizes the state machine
 Produces: `callStatic` (cold entry / bridge / newSafeContinuation / throwOnFailure / getCompleted),
 `callInstance` (resumeWith / MoveNext), `clrInstance` (GetAwaiter/OnCompleted/GetResult/Wait/
-GetCompleted), `clrPropGet` (IsCompleted / `Task` / `type=tcsType`), `clrNew` (TaskCompletionSource /
+GetCompleted), `clrPropGet` (IsCompleted / `Task` / `type=tcsType`), `newClr` (TaskCompletionSource /
 RootContinuation), `new` (`<SM>` construct), `field`/`setField` (SM slots, `recv:{k:smSelf}`),
 `var`/`setLocal`/`return`/`exprStmt`/`try`/`block`/`label`/`goto`/`brIf`/`objEq`/`bin`/`cast`/`const`/
 `local`/`this`, and the INTERNAL `smSelf` marker (`:1727`,`:1836`) that it later rewrites to `this`
@@ -116,7 +116,7 @@ Verified every produced CLR `k` against `toolchain/ilemit/` consumption:
 
 | produced `k` | ilemit consumes? | verdict |
 |--------------|------------------|---------|
-| clrInstance, clrStatic, clrPropGet, clrPropSet, clrNew, clrGenericStatic, clrGenericInstance, constrainedCall, boundDelegateNew, objMethod, valueBlock, staticField, staticFieldSet, clr.ldelem, lateinitGet | YES | spelling matches — no drift |
+| clrInstance, clrStatic, clrPropGet, clrPropSet, newClr, clrGenericStatic, clrGenericInstance, constrainedCall, newBoundDelegate, objMethod, valueBlock, staticField, staticFieldSet, clr.ldelem, lateinitGet | YES | spelling matches — no drift |
 | **`smSelf`** | ilemit occurrences = **0** | **OK — internal-only**: SuspendColdLowering rewrites every `smSelf` → `this` (`:1246`,`:1284`) before emit; never reaches ilemit. |
 | **`clrMapSize`** | ilemit occurrences = **0** | **OK — NOT a node kind**: it is a HELPER METHOD NAME (`method` field of a callStatic to `ClrMapDefaultsKt`), one of the `clrMap*` family (Get/Size/ContainsKey/…). Do not confuse with a `k`. |
 
@@ -184,7 +184,7 @@ CLR primitive shorthand (`int`/`long`/`bool`/`char`/`void`/`object`/`string`/`i8
    - `LowerTypeString:1958` and `ParamKey:660`: `sfunc:` → **`object`/`obj`** (param/field/return/receiver
      slot — the SM VALUE is an object).
    - `LowerFuncTypeValued` / `FoldSuspendToFunc` (`:1905`): `sfunc:` → **`func:`** (the `funcType` key of a
-     `closureNew`/`delegateNew` — a genuine delegate view, e.g. `iterator{}` SequenceScope path).
+     `newClosure`/`newDelegate` — a genuine delegate view, e.g. `iterator{}` SequenceScope path).
    Two rules keyed on the JSON KEY, not the token — a token audit that only greps `sfunc:` will miss that
    the same token has two lowerings. `H2` metadata (`:1833`/`:1835`) additionally records the RAW
    pre-erasure `sfunc:` alongside so ilemit can stamp the suspend flag. **ilemit must NEVER receive a raw
@@ -214,7 +214,7 @@ from ref.dll `@ClrTypeAlias` (owner identity) + `@ClrIntrinsic` (member name); i
 
 | Rule | Site | Owner condition | Emits |
 |------|------|-----------------|-------|
-| 1 (ctor) | TransformNew `:4400` | CLR-bound REFERENCE owner | `clrNew System.X` |
+| 1 (ctor) | TransformNew `:4400` | CLR-bound REFERENCE owner | `newClr System.X` |
 | 1c (prim compareTo) | `:4635` | boxed kotlin.<Prim> | `clrInstance System.<Prim>.CompareTo` |
 | 2 (intrinsic) | `:4644` `TryMemberIntrinsic` | member `@ClrIntrinsic("Name")` | `Constrainify(ClrCallNode …)` → clrInstance/clrStatic/clrPropGet/clrPropSet |
 | 2p (@ClrProperty) | ClrPropNode | explicit accessor binding (READ=1/WRITE=2) | clrPropGet / clrPropSet on bare name |

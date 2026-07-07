@@ -61,7 +61,7 @@ The top level of every `*.bir.json` is a **file object** (one per Kotlin source 
 ## 1. NODE KINDS (`"k":"…"`) — the full inventory
 
 Grouped by category. **Count** = distinct emit-site lines matching `{"k":"<kind>"` across the three files
-(dynamic `listNew`/`setNew` at `:3476` are not counted by grep — see Literals). Meaning is 1 line; the
+(dynamic `newList`/`newSet` at `:3476` are not counted by grep — see Literals). Meaning is 1 line; the
 representative emit site is given.
 
 ### 1a. Literals / references
@@ -97,7 +97,7 @@ representative emit site is given.
 | `clrInstance` | `type,method,argTypes,ret,recv,args` | instance call on injected .NET type | `:2214` |
 | `clrGenericStatic` | `type,method,typeArgs,shapes,args` | generic static on injected .NET type | `:2729` |
 | `clrGenericInstance` | `type,method,typeArgs,shapes,recv,args,suspendCall?` | generic instance on injected .NET type | `:3783` |
-| `clrNew` | `type,argTypes,args` | ctor of injected .NET type | `Expr:174` |
+| `newClr` | `type,argTypes,args` | ctor of injected .NET type | `Expr:174` |
 | `clrPropGet` | `type,name,retType,static,recv` | injected .NET property get | `:3812`, `Expr:136` |
 | `clrPropSet` | `type,name,static,recv,value` | injected .NET property set | `:3811`, `Stmt:117` |
 
@@ -133,9 +133,9 @@ representative emit site is given.
 | `arraySet` | `elem,array,index,value` | `a[i] = v` | `:3669` |
 | `arrayLen` | `array` | `a.size` / `EnumEntries` length | `:3978` |
 | `spreadConcat` | `elem,parts[{spread,e}]` | mixed `f(1,*a,2)` vararg build | `Expr:276` |
-| `listNew` | `elem,elems` | `listOf(...)` → List<elem> | `:3476` (dynamic `kind`) |
-| `setNew` | `elem,elems` | `setOf(...)` → HashSet<elem> | `:3476` (dynamic `kind`) |
-| `mapNew` | `keyType,valType,entries` | `mapOf(a to 1,...)` → Dictionary | `:3501` |
+| `newList` | `elem,elems` | `listOf(...)` → List<elem> | `:3476` (dynamic `kind`) |
+| `newSet` | `elem,elems` | `setOf(...)` → HashSet<elem> | `:3476` (dynamic `kind`) |
+| `newMap` | `keyType,valType,entries` | `mapOf(a to 1,...)` → Dictionary | `:3501` |
 
 ### 1g. Control flow — statements
 | `k` | Fields | Meaning | Emit site |
@@ -167,12 +167,12 @@ representative emit site is given.
 ### 1i. Closures / delegates / SAM
 | `k` | Fields | Meaning | Emit site |
 |-----|--------|---------|-----------|
-| `closureNew` | `closureType,captures,method,funcType,typeArgs?` | lambda w/ captures → synthetic closure class | `:2076` |
-| `delegateNew` | `method,funcType,typeArgs?` | capture-free lambda / `::foo` → bare delegate | `:2046` |
-| `boundDelegateNew` | `ownerType,method,virtual,recv,funcType` | `obj::method` bound to a receiver (user type) | `:2169` |
-| `boundClrDelegateNew` | `clrType,method,argTypes,virtual,recv,funcType` | `obj::method` bound (injected .NET owner) | `:2199` |
-| `samNew` | `samType,captures,typeArgs?` | fun-interface SAM conversion → synthetic impl class | `:2115` |
-| `suspendLambdaNew` | `arity,captures,params,resultType,typeArgs,body,funcType` | `suspend {}` lambda (SM built downstream) | `:2019` |
+| `newClosure` | `closureType,captures,method,funcType,typeArgs?` | lambda w/ captures → synthetic closure class | `:2076` |
+| `newDelegate` | `method,funcType,typeArgs?` | capture-free lambda / `::foo` → bare delegate | `:2046` |
+| `newBoundDelegate` | `ownerType,method,virtual,recv,funcType` | `obj::method` bound to a receiver (user type) | `:2169` |
+| `newBoundClrDelegate` | `clrType,method,argTypes,virtual,recv,funcType` | `obj::method` bound (injected .NET owner) | `:2199` |
+| `newSam` | `samType,captures,typeArgs?` | fun-interface SAM conversion → synthetic impl class | `:2115` |
+| `newSuspendLambda` | `arity,captures,params,resultType,typeArgs,body,funcType` | `suspend {}` lambda (SM built downstream) | `:2019` |
 | `delegateInvoke` | `funcType,recv,args` | invoke a delegate value | `:316` |
 
 ### 1j. Property-delegate glue (`by`)
@@ -213,7 +213,7 @@ representative emit site is given.
 | `strReversed` | `s` | `String.reversed()` (kotc-lowered, pending stdlib fix) | `:4292` | ⚠ lone kotc string-op lowering — Drift D5 |
 | `unsupportedExpr` | `of` | placeholder for an unlowerable IR node (compile already ERRORed) | `:135` | |
 
-**Total distinct `k` values: ~95** (93 grep-visible single-line + `listNew`/`setNew` dynamic).
+**Total distinct `k` values: ~95** (93 grep-visible single-line + `newList`/`newSet` dynamic).
 
 ---
 
@@ -296,7 +296,7 @@ and bir2cir/kcc re-reads them cross-module.
 | `{"k":"this"}` (`defaultArgThisToken`) | receiver-splice token inside a default BIR string | `:2867` | bir2cir substitutes the call's receiver |
 | `,"suspend":true,"resultType":<ty>` | suspend FACT + Kotlin result type on the method def | `:1460` | ilemit kickoff signature; bir2cir SM transform |
 | `,"suspendCall":true` | suspend FACT on a CALL node | `suspendCallTag :4395` | bir2cir await/SM lowering |
-| `sfunc:<ret>:<params>` | suspend-fn-type token (a `func:` variant) as a value type | `:4821`, `funcTypeOf :2817` | bir2cir erases `sfunc:` → `object` in TYPE slots (only the `funcType` node key keeps `func:`); `suspendLambdaNew.funcType` keeps it for the SM builder |
+| `sfunc:<ret>:<params>` | suspend-fn-type token (a `func:` variant) as a value type | `:4821`, `funcTypeOf :2817` | bir2cir erases `sfunc:` → `object` in TYPE slots (only the `funcType` node key keeps `func:`); `newSuspendLambda.funcType` keeps it for the SM builder |
 | `,"attrs":[…]` on decl/param | annotations → .NET custom attrs; user annotation named by plain Kotlin FQN | `attrsJson :1106`, `:1690` | bir2cir derives `: System.Attribute` base from `annotation:true` flag |
 
 **meta tokens:** kotc does **NOT** emit `meta:` type tokens — the `meta`/facade-metadata vocabulary is
@@ -351,7 +351,7 @@ not emit a `meta` token). Confirmed: no `"meta"` literal is produced in any of t
 ### 4e. Coroutine names — **kotc emits NONE**
 `$dotkt_suspend`, `$sm`, resume labels, state-machine field names do **NOT** appear anywhere in kotc's output
 (verified: no `$sm` / `$dotkt_suspend` literal in any emitter file). kotc emits suspend **FACTS only**
-(`suspend:true` / `suspendCall:true` / `sfunc:` / `suspendLambdaNew`); the entire SM naming vocabulary is
+(`suspend:true` / `suspendCall:true` / `sfunc:` / `newSuspendLambda`); the entire SM naming vocabulary is
 bir2cir's. This is the correct boundary and must stay in the freeze.
 
 ---
@@ -361,7 +361,7 @@ bir2cir's. This is the correct boundary and must stay in the freeze.
 These are NOT node kinds but drive which nodes/tokens get emitted:
 `BINARY`/`UNARY` (op strings), `PRIMITIVE_ARRAY_ELEM`/`ARRAY_CLASS_ELEM`/`VALUE_PRIM_BIR` (→ shorthand tokens),
 `NUMBER_CONV` (→ `conv.to`), `PRIMITIVE_SHORTHANDS`, `PRIMITIVE_OP_FQ`/`PRIMITIVE_EQ_FQ` (which owners lower to
-`bin`/`un`), `LIST_FACTORIES`/`SET_FACTORIES`/`MAP_FACTORIES` (→ `listNew`/`setNew`/`mapNew`),
+`bin`/`un`), `LIST_FACTORIES`/`SET_FACTORIES`/`MAP_FACTORIES` (→ `newList`/`newSet`/`newMap`),
 `COLLECTION_MEMBER`/`COLLECTION_OPS` (interception sets), `ENUM_REIFIED_INTRINSICS`, `INT_PROGRESSION_FQ`,
 `SEQUENCED_COLLECTION_LEAK`. Note the file explicitly REMOVED the math/string/char/exception maps (now bir2cir's).
 
@@ -373,7 +373,7 @@ kotc is supposed to do "zero lowering", but it currently still structurally lowe
 toward bir2cir, per the layer rule):
 - **primitive ops** → `bin`/`un`/`conv` (genuine IL ops — the sanctioned residual).
 - **rich enum** → a hand-built `class` with `values`/`valueOf`/`ToString`/static singleton fields (`:743-870`).
-- **collection/map factories** → `listNew`/`setNew`/`mapNew` (`:3471-3501`).
+- **collection/map factories** → `newList`/`newSet`/`newMap` (`:3471-3501`).
 - **for-loops** → `for`/`forArray`/`forRange`/`forEachInline`/`repeatInline` (structured, IL-shaped).
 - **`while`/`do-while`/`when`** → CFG `label`/`brIf`/`goto` (`cfgWhile`/`cfgDoWhile`/`cfgWhen`).
 - **nullable value-type** (`Int?`) → the `nullable*` family (Nullable<T> IL model — a CLR representation choice).
@@ -386,7 +386,7 @@ toward bir2cir, per the layer rule):
 ## 7. The `clr*` node family + `clrName()` — LEGACY scope note
 
 The `clr:`/`clrg:` type tokens and the `clrStatic`/`clrInstance`/`clrGenericStatic`/`clrGenericInstance`/
-`clrNew`/`clrPropGet`/`clrPropSet` nodes are produced **only** via `clrName()` (`:4451`), which — post Task-#5 —
+`newClr`/`clrPropGet`/`clrPropSet` nodes are produced **only** via `clrName()` (`:4451`), which — post Task-#5 —
 reads its name **exclusively from FIR-injected .NET-interop symbols** (`kotc.frontend.clrInjectedDotNetName` /
 `clrInjectedMemberName`, i.e. facadegen's `import System.X`), plus the one `java.util.Comparator` re-alias.
 `clrName()` **no longer reads `@ClrIntrinsic`/`@ClrTypeAlias`** (the stdlib substitution is bir2cir's). So these

@@ -95,12 +95,12 @@ static class SuspendColdLowering
     // throw-stub): suspend lambdas / closures / inline collection loops.
     static readonly HashSet<string> LambdaKinds = new(StringComparer.Ordinal)
     {
-        "closureNew", "delegateNew", "lambda", "forEachInline", "repeatInline",
+        "newClosure", "newDelegate", "lambda", "forEachInline", "repeatInline",
         // A suspend-lambda VALUE built inside a suspend fun. Kept here so the SUBTREE-SKIPPING analyses
         // (CollectVarFields / DisambiguateShadowedVars) do not descend into the lambda's own body (its vars are
         // the lambda SM's, not the enclosing SM's). SuspensionsSupported and Rewrite SPECIAL-CASE it (GAP 2): the
         // enclosing fun IS cold-transformed, the lambda copied opaquely with SM-vocabulary `capValues`.
-        "suspendLambdaNew",
+        "newSuspendLambda",
     };
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
@@ -149,7 +149,7 @@ static class SuspendColdLowering
     // F2 — the CROSS-MODULE suspendCoroutine shape. Our compiler does NOT inline @InlineOnly cross-module,
     // so an APP calling `suspendCoroutine { … }` / `suspendCoroutineUninterceptedOrReturn { … }` does NOT get
     // the same-module `valueBlock`+`NotImplementedError` intrinsic block above — instead kotc emits a plain
-    // `callStatic <name>(<closureNew|delegateNew>) suspendCall:true`, owner:null (top-level intrinsic), the
+    // `callStatic <name>(<newClosure|newDelegate>) suspendCall:true`, owner:null (top-level intrinsic), the
     // block materialized as a closure class (capturing) or a top-level `__lambdaN` (non-capturing). This IS a
     // suspension point — recognized here, lowered by EmitSuspendCoroutineCall (which reconstructs the wrapper's
     // SafeContinuation body / the unintercepted block, since the un-inlined wrapper body is unavailable).
@@ -168,7 +168,7 @@ static class SuspendColdLowering
         var owner = TypeJson.OwnerName(o["owner"]);
         if (owner != null && owner != expectOwner) return false;
         return (o["args"] as JsonArray)?.FirstOrDefault() is JsonObject a
-            && Str(a["k"]) is "closureNew" or "delegateNew";
+            && Str(a["k"]) is "newClosure" or "newDelegate";
     }
 
     // GAP 1 (P3 wave-2b) — a call to a suspend functional VALUE: `b()` where `b: suspend (...) -> T` is a
@@ -184,12 +184,12 @@ static class SuspendColdLowering
         Str(o["k"]) == "callInstance" && Bool(o["suspendCall"]) && Str(o["method"]) == "invoke"
         && (BareOwner(TypeJson.OwnerName(o["ownerType"]))?.StartsWith(SuspendFunctionPrefix, StringComparison.Ordinal) ?? false);
 
-    // The `closureNew` (the `{ c -> … }` block) buried in an intrinsic block's stmts (a `var __inlN` init).
+    // The `newClosure` (the `{ c -> … }` block) buried in an intrinsic block's stmts (a `var __inlN` init).
     static JsonObject IntrinsicClosureNew(JsonObject block)
     {
         if (block["stmts"] is JsonArray a)
             foreach (var s in a)
-                if (s is JsonObject so && so["init"] is JsonObject init && Str(init["k"]) == "closureNew")
+                if (s is JsonObject so && so["init"] is JsonObject init && Str(init["k"]) == "newClosure")
                     return init;
         return null;
     }
@@ -370,7 +370,7 @@ static class SuspendColdLowering
                 foreach (var t in otps)
                     if (t is JsonValue tv2 && tv2.TryGetValue<string>(out var s2)) ownerTps.Add(s2);
                     else if (t is JsonObject to2 && Str(to2["name"]) is string n2) ownerTps.Add(n2);
-            // Per-file registry of top-level `__lambdaN` methods (the non-capturing `delegateNew` block bodies of a
+            // Per-file registry of top-level `__lambdaN` methods (the non-capturing `newDelegate` block bodies of a
             // cross-module suspendCoroutine — F2). Keyed within the declaring file (kotc names lambdas per-file, so a
             // global map would collide across files).
             var fileLambdas = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -493,7 +493,7 @@ static class SuspendColdLowering
         return string.Join("", parts);
     }
 
-    // Part B entry: build a suspend-LAMBDA state-machine TYPE from a suspendLambdaNew node's parts (used by
+    // Part B entry: build a suspend-LAMBDA state-machine TYPE from a newSuspendLambda node's parts (used by
     // SuspendLambdaLowering). Returns null for arity >= 2 — the create()/invoke protocol covers arities 0/1
     // only (JVM parity), so a wider lambda is not expressible v1 and the caller keeps the node (reports it).
     public static JsonObject BuildLambdaSm(string smName, int arity,
@@ -581,20 +581,20 @@ static class SuspendColdLowering
                 var k = Str(o["k"]);
                 // The inline `suspendCoroutineUninterceptedOrReturn { c -> … }` intrinsic (a valueBlock whose
                 // result is the fake NotImplementedError throw) IS a supported cold suspension point — do NOT
-                // descend into its embedded closureNew (which would trip the LambdaKinds refusal below).
+                // descend into its embedded newClosure (which would trip the LambdaKinds refusal below).
                 if (IsSuspendIntrinsicBlock(o)) return true;
                 // F2 — a cross-module suspendCoroutine call IS a supported cold suspension point; do NOT descend
-                // into its embedded closureNew/delegateNew block arg (which would trip the LambdaKinds refusal).
+                // into its embedded newClosure/newDelegate block arg (which would trip the LambdaKinds refusal).
                 if (IsSuspendCoroutineCall(o)) return true;
-                // GAP 2 — a `suspendLambdaNew` VALUE built inside a suspend fun (e.g. a member `suspend fun go() =
+                // GAP 2 — a `newSuspendLambda` VALUE built inside a suspend fun (e.g. a member `suspend fun go() =
                 // run1 { … }` that constructs a `this`-capturing suspend lambda and drives it via a suspend-value
                 // call) is SUPPORTED: the lambda is an opaque value whose OWN suspensions become a SEPARATE SM
                 // (SuspendLambdaLowering), and its captures resolve in the enclosing cold SM (a spilled local -> an
                 // SM field, `__outer` -> the member SM's `$this`). Do NOT descend into its body (that is the
                 // lambda's own scope, validated by its own FunGen build) — descending would trip the refusal below.
-                if (k == "suspendLambdaNew") return true;
+                if (k == "newSuspendLambda") return true;
                 // ANY OTHER lambda/closure/sequence node -> unsupported (genuine suspend lambdas, which emit a
-                // `closureNew` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
+                // `newClosure` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
                 // Left untouched.
                 if (k != null && LambdaKinds.Contains(k))
                     return false;
@@ -745,7 +745,7 @@ static class SuspendColdLowering
         // Closure-class registry (name -> type node) for the suspendCoroutine intrinsic inliner. Empty in lambda mode.
         readonly IReadOnlyDictionary<string, JsonObject> _closures;
         // Top-level `__lambdaN` method registry (name -> method) for a cross-module suspendCoroutine's non-capturing
-        // `delegateNew` block body (F2). Empty in lambda mode.
+        // `newDelegate` block body (F2). Empty in lambda mode.
         readonly IReadOnlyDictionary<string, JsonObject> _lambdaMethods;
         // Lambda mode (bundle-6 P3 wave-2b Part B): a suspend LAMBDA SM (extends SuspendLambda, no cold
         // entry/main-drain, adds the create() override protocol). Left at defaults for the named-fun path.
@@ -828,7 +828,7 @@ static class SuspendColdLowering
         // The first `n` type-scope generic params by flattened index (Tv{type,0..n-1}).
         static TypeNode[] TypeTvs(int n) => Enumerable.Range(0, n).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
 
-        // Lambda-mode ctor (Part B). Builds a `<smName> : SuspendLambda` SM from a suspendLambdaNew node's
+        // Lambda-mode ctor (Part B). Builds a `<smName> : SuspendLambda` SM from a newSuspendLambda node's
         // parts. Captures become ctor params + fields; the lambda's own params become fields set by create().
         public FunGen(string smName, int arity, List<(string name, TypeNode type)> captures,
             List<JsonObject> lambdaParams, JsonArray body, TypeNode resultType, List<string> typeParams,
@@ -951,7 +951,7 @@ static class SuspendColdLowering
         // bridge. `main` is excluded (it is the entry point, drained by the synthesized plain `main`).
         // EXCLUDED too:
         //  - `_baseIsLocal` (the rt-STDLIB build): the bridge's RootContinuation/TCS/Task sinks are the coroutine
-        //    primitives being DEFINED here, not external .NET refs — a bridge would `clrNew` a local type as if it
+        //    primitives being DEFINED here, not external .NET refs — a bridge would `newClr` a local type as if it
         //    were referenced (NotSupported). The stdlib's own suspend members (yield/yieldAll/callRecursive) are
         //    internal machinery, not C#-facing Task APIs; the bridge is an APP-build concern (consumers of the dll).
         // A virtual/abstract/override member DOES get a bridge (BUG 3): the bridge's virtuality rides in lockstep with
@@ -1331,14 +1331,14 @@ static class SuspendColdLowering
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (k == "this" && CapturedOuterField() is JsonNode of1)
                     return of1;
-                // GAP 2 — a `suspendLambdaNew` VALUE inside the cold SM is OPAQUE: its own body is the lambda's
+                // GAP 2 — a `newSuspendLambda` VALUE inside the cold SM is OPAQUE: its own body is the lambda's
                 // scope (a separate SM built by SuspendLambdaLowering, which runs after this pass), so we must NOT
                 // rewrite it here (a `this`/`local` in the lambda body means the LAMBDA's receiver/param, not this
                 // SM's `$this`/field). Copy it verbatim, only resolving each CAPTURE's construction value into THIS
                 // SM's vocabulary (`$this` for the enclosing instance, a spilled-local field, else a still-live
                 // local) as `capValues` — SuspendLambdaLowering consumes that instead of re-synthesizing `this`,
                 // which would wrongly denote the SM here rather than the captured enclosing instance.
-                if (k == "suspendLambdaNew")
+                if (k == "newSuspendLambda")
                     return RewriteSuspendLambdaNew(o);
                 if (IsSuspendIntrinsicBlock(o))
                     return EmitIntrinsicSuspension(o, outp);
@@ -1392,7 +1392,7 @@ static class SuspendColdLowering
                         return binCopy;
                     }
                     if (k is "callStatic" or "callInstance" or "clrStatic" or "clrInstance"
-                        or "clrGenericStatic" or "new" or "clrNew")
+                        or "clrGenericStatic" or "new" or "newClr")
                         return RewriteCallOrdered(o, outp);
                 }
                 var copy = new JsonObject();
@@ -1484,7 +1484,7 @@ static class SuspendColdLowering
         static readonly HashSet<string> ImpureKinds = new(StringComparer.Ordinal)
         {
             "callStatic", "callInstance", "clrStatic", "clrInstance", "clrGenericStatic",
-            "new", "clrNew", "setLocal", "setField", "throwExpr", "dynCall",
+            "new", "newClr", "setLocal", "setField", "throwExpr", "dynCall",
             "field", "staticField", "lateinitGet",
             "arrayGet",
         };
@@ -1517,7 +1517,7 @@ static class SuspendColdLowering
             var k = Str(o["k"]);
             switch (k)
             {
-                case "const": case "cast": case "new": case "clrNew": case "valueBlock": case "var":
+                case "const": case "cast": case "new": case "newClr": case "valueBlock": case "var":
                     if (TypeJson.Read(o["type"]) is TypeNode t) return t;
                     break;
                 case "callStatic":
@@ -1626,8 +1626,8 @@ static class SuspendColdLowering
         // is Unit (discarded); the general form supports a synchronous value too.
         JsonNode EmitIntrinsicSuspension(JsonObject block, List<JsonNode> outp)
         {
-            var closureNew = IntrinsicClosureNew(block);
-            var closureType = closureNew == null ? null : TypeJson.OwnerName(closureNew["closureType"]);
+            var newClosure = IntrinsicClosureNew(block);
+            var closureType = newClosure == null ? null : TypeJson.OwnerName(newClosure["closureType"]);
             if (closureType == null || !_closures.TryGetValue(closureType, out var closureCls))
             {
                 // Failure posture (LOUD): the suspendCoroutineUninterceptedOrReturn body is UNRESOLVABLE — its
@@ -1650,7 +1650,7 @@ static class SuspendColdLowering
             // capture[i] binds closure field[i] (declaration order). A field read in the invoke body ->
             // the corresponding capture expression (later rewritten: a captured `this` -> $this).
             var capMap = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
-            if (closureCls["fields"] is JsonArray flds && closureNew["captures"] is JsonArray caps)
+            if (closureCls["fields"] is JsonArray flds && newClosure["captures"] is JsonArray caps)
                 for (var i = 0; i < flds.Count && i < caps.Count; i++)
                     if (flds[i] is JsonObject fo && Str(fo["name"]) is string fn)
                         capMap[fn] = caps[i];
@@ -1701,7 +1701,7 @@ static class SuspendColdLowering
         // F2 — a CROSS-MODULE `suspendCoroutine { … }` / `suspendCoroutineUninterceptedOrReturn { … }` call, lowered to
         // a real cold suspension point. Our compiler does NOT inline @InlineOnly cross-module, so (unlike the same-module
         // valueBlock intrinsic that EmitIntrinsicSuspension handles) the app carries a plain
-        // `callStatic <name>(<closureNew|delegateNew>)`, its wrapper body NOT inlined. We reconstruct it here:
+        // `callStatic <name>(<newClosure|newDelegate>)`, its wrapper body NOT inlined. We reconstruct it here:
         //   suspendCoroutine (block returns Unit, wraps a SafeContinuation):
         //     this.__safe = newSafeContinuation((Continuation)this)   // buffers a synchronous resume
         //     <inlined block, `c` -> this.__safe>                      // e.g. resume(this.__safe, 42)
@@ -1719,7 +1719,7 @@ static class SuspendColdLowering
             if (invBody == null)
                 throw new InvalidOperationException(
                     $"unresolved {method} block in '{(_ownerClass ?? _fileClass)}.{_name}': the `{{ c -> … }}` block " +
-                    $"(closureNew/delegateNew) could not be resolved in the compilation — refusing to emit a broken coroutine");
+                    $"(newClosure/newDelegate) could not be resolved in the compilation — refusing to emit a broken coroutine");
 
             var resultT = TypeJson.Read(callNode["ret"]) ?? AnyTn;
             var retTok = IsUnitTn(resultT) ? AnyTn : resultT;
@@ -1785,16 +1785,16 @@ static class SuspendColdLowering
             return FieldOf(awField, retTok);
         }
 
-        // Resolve a suspendCoroutine block arg (closureNew -> a top-level closure class in _closures; delegateNew -> a
+        // Resolve a suspendCoroutine block arg (newClosure -> a top-level closure class in _closures; newDelegate -> a
         // top-level __lambdaN in _lambdaMethods) to its invoke body, continuation-param name, and capture map (empty
-        // for delegateNew). Returns (null, …) when unresolvable.
+        // for newDelegate). Returns (null, …) when unresolvable.
         (JsonArray body, string cParam, Dictionary<string, JsonNode> capMap, string closureType)
         ResolveBlockLambda(JsonObject arg)
         {
             var capMap = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
             JsonObject invoke;
             string closureType = null;
-            if (arg != null && Str(arg["k"]) == "closureNew")
+            if (arg != null && Str(arg["k"]) == "newClosure")
             {
                 closureType = TypeJson.OwnerName(arg["closureType"]);
                 if (closureType == null || !_closures.TryGetValue(closureType, out var cls))
@@ -1804,7 +1804,7 @@ static class SuspendColdLowering
                     for (var i = 0; i < flds.Count && i < caps.Count; i++)
                         if (flds[i] is JsonObject fo && Str(fo["name"]) is string fn) capMap[fn] = caps[i];
             }
-            else if (arg != null && Str(arg["k"]) == "delegateNew")
+            else if (arg != null && Str(arg["k"]) == "newDelegate")
             {
                 if (Str(arg["method"]) is not string mname || !_lambdaMethods.TryGetValue(mname, out invoke))
                     return (null, null, null, null);
@@ -1963,7 +1963,7 @@ static class SuspendColdLowering
                     {
                         new JsonObject
                         {
-                            ["k"] = "boundDelegateNew", ["funcType"] = Tw(new TypeNode.Fn(false, VoidTn, System.Array.Empty<TypeNode>())),
+                            ["k"] = "newBoundDelegate", ["funcType"] = Tw(new TypeNode.Fn(false, VoidTn, System.Array.Empty<TypeNode>())),
                             ["ownerType"] = Tw(_smTypeInst), ["method"] = cbName, ["virtual"] = false,
                             ["recv"] = new JsonObject { ["k"] = "this" },
                         },
@@ -2066,7 +2066,7 @@ static class SuspendColdLowering
             (_isLambda && _fields.Contains("__outer"))
                 ? FieldOf("__outer", FieldType("__outer")) : null;
 
-        // GAP 2 — copy a `suspendLambdaNew` verbatim (its body is the lambda's own scope, left for
+        // GAP 2 — copy a `newSuspendLambda` verbatim (its body is the lambda's own scope, left for
         // SuspendLambdaLowering) and attach `capValues`: each capture's construction value resolved into THIS cold
         // SM's vocabulary. SuspendLambdaLowering builds `new <lambdaSM>(capValues..., null)` at this exact site.
         JsonObject RewriteSuspendLambdaNew(JsonObject o)
@@ -2677,14 +2677,14 @@ static class SuspendColdLowering
                     new JsonObject
                     {
                         ["k"] = "var", ["name"] = "__tcs", ["type"] = Tw(tcsType),
-                        ["init"] = new JsonObject { ["k"] = "clrNew", ["type"] = Tw(tcsType), ["argTypes"] = new JsonArray(), ["args"] = new JsonArray() },
+                        ["init"] = new JsonObject { ["k"] = "newClr", ["type"] = Tw(tcsType), ["argTypes"] = new JsonArray(), ["args"] = new JsonArray() },
                     },
                     new JsonObject
                     {
                         ["k"] = "var", ["name"] = "__root", ["type"] = Tw(rootType),
                         ["init"] = new JsonObject
                         {
-                            ["k"] = "clrNew", ["type"] = Tw(rootType),
+                            ["k"] = "newClr", ["type"] = Tw(rootType),
                             ["argTypes"] = new JsonArray { Tw(tcsType) }, ["args"] = new JsonArray { Local("__tcs") },
                         },
                     },
@@ -2804,14 +2804,14 @@ static class SuspendColdLowering
                 new JsonObject
                 {
                     ["k"] = "var", ["name"] = "__tcs", ["type"] = Tw(tcsType),
-                    ["init"] = new JsonObject { ["k"] = "clrNew", ["type"] = Tw(tcsType), ["argTypes"] = new JsonArray(), ["args"] = new JsonArray() },
+                    ["init"] = new JsonObject { ["k"] = "newClr", ["type"] = Tw(tcsType), ["argTypes"] = new JsonArray(), ["args"] = new JsonArray() },
                 },
                 new JsonObject
                 {
                     ["k"] = "var", ["name"] = "__root", ["type"] = Tw(rootType),
                     ["init"] = new JsonObject
                     {
-                        ["k"] = "clrNew", ["type"] = Tw(rootType),
+                        ["k"] = "newClr", ["type"] = Tw(rootType),
                         ["argTypes"] = new JsonArray { Tw(tcsType) },
                         ["args"] = new JsonArray { Local("__tcs") },
                     },

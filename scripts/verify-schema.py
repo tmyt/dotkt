@@ -81,8 +81,8 @@ KINDS = {
     "callInstance", "callStatic", "objMethod", "delegateInvoke",
     "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat", "cond",
     "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
-    "listNew", "setNew", "mapNew", "closureNew", "delegateNew", "samNew", "suspendLambdaNew",
-    "sequenceNew", "boundDelegateNew", "boundClrDelegateNew",
+    "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
+    "newBoundDelegate", "newBoundClrDelegate",
     "enumValue", "enumOrdinal", "default", "defaultArg", "classRef", "console",
     "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
     "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
@@ -92,11 +92,11 @@ KINDS = {
     # three remain LIVE kinds until that lands.
     "setFieldExpr", "staticFieldSet",
     "lateinitGet", "getType", "safeCastValue", "constrainedCall", "spreadConcat", "strReversed",
-    "tupleNew", "tupleItem", "unsupportedExpr",
+    "tupleItem", "unsupportedExpr",
     "stackAlloc", "stackGet", "stackSet", "stackAsSpan",
     "byrefOf", "byrefLoad", "byrefStore",
     # --- CLR-lowered (bir2cir → CIR) ---
-    "clrNew", "clrInstance", "clrStatic", "clrGenericStatic", "clrGenericInstance",
+    "newClr", "clrInstance", "clrStatic", "clrGenericStatic", "clrGenericInstance",
     "clrPropGet", "clrPropSet", "clrStaticField", "clrEventAdd", "clrEventRemove",
     # --- coroutine-lowered (bir2cir → CIR) ---
     "coReturn", "coSuspend", "coLabel", "coGoto", "coCondGoto", "coYield", "coYieldAll",

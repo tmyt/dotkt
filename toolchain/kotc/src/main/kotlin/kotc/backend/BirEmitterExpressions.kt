@@ -170,9 +170,9 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// BCL collection (`new List<R>()` / `new HashSet<T>()`): birType already maps the type. Lets the real stdlib
 		// `map`/`filter`/`mapTo` (which build an ArrayList) compile straight to the BCL collection DotKt uses.
 		// A builtin-exception ctor (`throw IllegalStateException(msg)`) is NOT mapped here: it emits a plain `new
-		// @kotlin.IllegalStateException` and bir2cir rewrites it to `clrNew System.X` off the stdlib's @ClrTypeAlias.
+		// @kotlin.IllegalStateException` and bir2cir rewrites it to `newClr System.X` off the stdlib's @ClrTypeAlias.
 		if (clr != null)
-			"""{"k":"clrNew","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
+			"""{"k":"newClr","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
 		else {
 			// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg.
 			val outerArg = if (klass?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
@@ -181,7 +181,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val args = (listOfNotNull(outerArg) + capArgs + filledArgExprs(node).map { expr(it) }).joinToString(",")
 			// The resolved ctor's regular-parameter STATIC TYPES, as pure Kotlin FQNs (bir2cir/ilemit derive the CLR
 			// forms — kotc emits identity, not resolution). This lets a `new` of a type with overloaded constructors
-			// resolve by SIGNATURE, not by arg count alone (mirrors `clrNew`, which carries `argTypes`). Only the ctor's
+			// resolve by SIGNATURE, not by arg count alone (mirrors `newClr`, which carries `argTypes`). Only the ctor's
 			// OWN params are described — prepended enclosing/capture args are not — so a consumer uses these only when
 			// their count lines up with the emitted args (in-assembly types stay arity-resolved).
 			val ctorArgTypes = node.symbol.owner.parameters
