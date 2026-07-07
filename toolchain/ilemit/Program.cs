@@ -3155,7 +3155,7 @@ sealed partial class Emitter
                  ?? throw new NotSupportedException($"inline splice: method {typeName}.{method} not found");
         var cad = mi.GetCustomAttributesData().FirstOrDefault(c => c.AttributeType.FullName == "DotKt.Runtime.CompilerServices.KotlinInlineAttribute")
                   ?? throw new NotSupportedException($"inline splice: [KotlinInline] body missing on {typeName}.{method}");
-        var doc = JsonDocument.Parse((string)cad.ConstructorArguments[0].Value);
+        var doc = JsonDocument.Parse(DecodeCarrier(cad));
         _inlineDocs.Add(doc);
         var addedVals = new List<string>(); var addedLams = new List<string>();
         foreach (var b in e.GetProperty("bindings").EnumerateArray())

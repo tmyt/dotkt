@@ -40,11 +40,15 @@ sealed partial class Emitter
         fb.SetCustomAttribute(new CustomAttributeBuilder(_kReadOnlyAttr.GetConstructor(Type.EmptyTypes), new object[0]));
     }
 
-    // [KotlinInline(body)] — the inline+lambda fn's BIR body, for cross-module splicing.
+    // [KotlinInline(version, content)] — the inline+lambda fn's BIR body, for cross-module splicing. Rides the versioned,
+    // codec-agnostic carrier envelope (spec §0): `version` = "bir-json/1" today, `content` = the codec-encoded body.
     void ApplyKotlinInline(MethodBuilder mb, string body)
     {
         EnsureKotlinAttrs();
-        mb.SetCustomAttribute(new CustomAttributeBuilder(_kInlineAttr.GetConstructor(new[] { typeof(string) }), new object[] { body }));
+        byte[] content = DotKt.Bir.BirCarrier.EncodeBody(DotKt.Bir.BirCarrier.JsonV1, System.Text.Json.Nodes.JsonNode.Parse(body)!);
+        mb.SetCustomAttribute(new CustomAttributeBuilder(
+            _kInlineAttr.GetConstructor(new[] { typeof(string), typeof(byte[]) }),
+            new object[] { DotKt.Bir.BirCarrier.JsonV1, content }));
     }
 
     // Structured declaration-modifier lookup (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).

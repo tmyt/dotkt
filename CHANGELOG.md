@@ -424,6 +424,19 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **BIR/CIR freeze — the versioned carrier envelope (#37 m6).** The two metadata-carrier attributes that
+  ride cross-module BIR on the emitted assembly — `[KotlinInline]` (an inline+lambda fn's body, for splice)
+  and `[KotlinSuspendFunctionType]` (a `suspend (…) -> T` position's pre-erasure `fn` shape) — now stamp a
+  **versioned, codec-agnostic `(string version, byte[] content)`** envelope instead of a bare `(string)`.
+  `version` = `"bir-json/1"` today (`content` = `UTF8(json)`); a future `"bir-msgpack/1"` swaps the physical
+  codec without touching the logical node, and a schema bump is `"bir-json/2"`. A SINGLE
+  `BirCarrier.EncodeBody(version,node)` / `DecodeBody(version,byte[])` pair dispatches on `version`, and an
+  **unknown version is REJECTED** (a loud `NotSupportedException`, never a silent mis-decode) — mirroring the
+  `NullableAttribute` scalar/array dual-ctor shape. The old `(string body)` ctors are DELETED (no dual-track);
+  producers (`ilemit` `ApplyKotlinInline` / `ApplySuspendFnType`) and consumers (`ilemit`'s cross-module splice,
+  `facadegen`'s `KotlinInlineBody` / `SuspendFnNode`) all route through the one codec. This is the groundwork
+  for a binary (MessagePack) body codec: the version tag decouples the logical body from its physical encoding.
+  Spec §0 updated.
 - **BIR/CIR freeze — `funcType` structuralized: the last string type slot is gone (#37 #49).** The
   delegate-view function type on `closureNew`/`delegateNew`/`samNew`/`suspendLambdaNew`/`boundDelegateNew`/
   `delegateInvoke` was the final stringly-typed type slot (`func:<ret>:<args>` / `sfunc:<ret>:<args>`). kotc

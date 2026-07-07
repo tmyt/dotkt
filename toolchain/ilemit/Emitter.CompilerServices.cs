@@ -49,7 +49,7 @@ sealed partial class Emitter
         _kAttrsResolved = true;
         _kFuncAttr     = DefineEmbeddedAttr(CompilerServicesNs + "KotlinFunctionAttribute", typeof(int));   // infix/operator/suspend
         _kFileAttr     = DefineEmbeddedAttr(CompilerServicesNs + "KotlinFileClassAttribute");               // <File>Kt facade marker
-        _kInlineAttr   = DefineEmbeddedAttr(CompilerServicesNs + "KotlinInlineAttribute", typeof(string));  // carried BIR body
+        _kInlineAttr   = DefineEmbeddedAttr(CompilerServicesNs + "KotlinInlineAttribute", typeof(string), typeof(byte[]));  // carried BIR body: (version, content)
         _kReadOnlyAttr = DefineEmbeddedAttr(CompilerServicesNs + "KotlinReadOnlyAttribute");                // public field, `val`
         // Round-trip class-nature markers with no faithful .NET analog (a `fun interface`->plain interface, a `sealed`
         // class/interface->abstract-class/interface). Metadata-only, read back by facadegen to restore the Kotlin nature.
@@ -58,10 +58,11 @@ sealed partial class Emitter
         // H2: a `suspend (…) -> T` function TYPE in a param/return/field/property POSITION. bir2cir erases the `sfunc:`
         // token to `object` in the CLR signature (a suspend-lambda VALUE is a Continuation-based SM object, not a Func),
         // which destroys the suspend origin AND its shape (arg/return types). This attribute carries the ORIGINAL
-        // `sfunc:<ret>:<args>` SHAPE string (not a bare flag — the erased CLR type is `object`, so a flag alone could not
+        // `fn` TypeNode SHAPE (not a bare flag — the erased CLR type is `object`, so a flag alone could not
         // reconstruct the function type) so a re-consuming Kotlin module (facadegen reads it back) can restore the
-        // `suspend (…) -> T` type. Metadata-only; a C# consumer ignores it. (Mirrors the KotlinInline body-carrier model.)
-        _kSuspendFnAttr = DefineEmbeddedAttr(CompilerServicesNs + "KotlinSuspendFunctionTypeAttribute", typeof(string));
+        // `suspend (…) -> T` type. Metadata-only; a C# consumer ignores it. Rides the SAME versioned `(version, byte[])`
+        // carrier envelope as KotlinInline (spec §0), so a future binary codec covers both.
+        _kSuspendFnAttr = DefineEmbeddedAttr(CompilerServicesNs + "KotlinSuspendFunctionTypeAttribute", typeof(string), typeof(byte[]));
         // Reference-type nullability uses .NET's OWN NRT metadata (not a DotKt attribute), embedded under its standard
         // System.Runtime.CompilerServices names so a C# consumer recognizes it too — the csc model. [NullableContext(b)]
         // is the per-type default (we emit 1 = non-null); [Nullable(2)] overrides a specific nullable reference position.
@@ -106,27 +107,57 @@ sealed partial class Emitter
         pb.SetCustomAttribute(new CustomAttributeBuilder(_nullableAttr.GetConstructor(new[] { typeof(byte) }), new object[] { b }));
     }
 
-    // [KotlinSuspendFunctionType(shape)] — H2. Stamp the ORIGINAL `sfunc:<ret>:<args>` shape string of a suspend
+    // [KotlinSuspendFunctionType(version, content)] — H2. Stamp the ORIGINAL `fn` TypeNode shape of a suspend
     // function-type position (a param/return via a ParameterBuilder; a field/property below). `shape` is supplied
     // verbatim by bir2cir (the `suspendFnType`/`retSuspendFnType` CIR fact), which owns the Kotlin->CLR erasure and
-    // therefore the only place the pre-erasure shape survives. ilemit only stamps.
+    // therefore the only place the pre-erasure shape survives. Rides the SAME versioned `(version, byte[])` carrier
+    // envelope as KotlinInline (spec §0). ilemit only stamps.
+    CustomAttributeBuilder SuspendFnAttr(string shape)
+    {
+        EnsureKotlinAttrs();
+        byte[] content = DotKt.Bir.BirCarrier.EncodeBody(DotKt.Bir.BirCarrier.JsonV1, System.Text.Json.Nodes.JsonNode.Parse(shape)!);
+        return new CustomAttributeBuilder(
+            _kSuspendFnAttr.GetConstructor(new[] { typeof(string), typeof(byte[]) }),
+            new object[] { DotKt.Bir.BirCarrier.JsonV1, content });
+    }
     void ApplySuspendFnType(ParameterBuilder pb, string shape)
     {
         if (string.IsNullOrEmpty(shape)) return;
-        EnsureKotlinAttrs();
-        pb.SetCustomAttribute(new CustomAttributeBuilder(_kSuspendFnAttr.GetConstructor(new[] { typeof(string) }), new object[] { shape }));
+        pb.SetCustomAttribute(SuspendFnAttr(shape));
     }
     void ApplySuspendFnType(FieldBuilder fb, string shape)
     {
         if (string.IsNullOrEmpty(shape)) return;
-        EnsureKotlinAttrs();
-        fb.SetCustomAttribute(new CustomAttributeBuilder(_kSuspendFnAttr.GetConstructor(new[] { typeof(string) }), new object[] { shape }));
+        fb.SetCustomAttribute(SuspendFnAttr(shape));
     }
     void ApplySuspendFnType(PropertyBuilder pb, string shape)
     {
         if (string.IsNullOrEmpty(shape)) return;
-        EnsureKotlinAttrs();
-        pb.SetCustomAttribute(new CustomAttributeBuilder(_kSuspendFnAttr.GetConstructor(new[] { typeof(string) }), new object[] { shape }));
+        pb.SetCustomAttribute(SuspendFnAttr(shape));
+    }
+
+    // Read a `(string version, byte[] content)` carrier attribute (spec §0: KotlinInline / KotlinSuspendFunctionType)
+    // back to its decoded JSON string. Routes through the single BirCarrier.DecodeBody dispatch — an UNKNOWN version
+    // throws (loud, never a silent mis-decode).
+    static string DecodeCarrier(CustomAttributeData cad)
+    {
+        var version = (string)cad.ConstructorArguments[0].Value!;
+        var content = ReadByteArrayArg(cad.ConstructorArguments[1]);
+        return DotKt.Bir.BirCarrier.DecodeBody(version, content).ToJsonString();
+    }
+
+    // A reflected byte[] constructor argument materializes as an IReadOnlyList<CustomAttributeTypedArgument> (each
+    // element's .Value is a boxed byte), not a byte[] — reify it.
+    static byte[] ReadByteArrayArg(CustomAttributeTypedArgument a)
+    {
+        if (a.Value is byte[] b) return b;
+        if (a.Value is System.Collections.Generic.IReadOnlyList<CustomAttributeTypedArgument> arr)
+        {
+            var r = new byte[arr.Count];
+            for (int i = 0; i < arr.Count; i++) r[i] = (byte)arr[i].Value!;
+            return r;
+        }
+        throw new FormatException("carrier content is not a byte[]");
     }
 
     // Read a CIR `retNullableFlags`/`nullableFlags` JSON array (bir2cir's flattened NullableAttribute byte walk) into

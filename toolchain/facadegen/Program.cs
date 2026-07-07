@@ -1245,16 +1245,31 @@ static class FacadeGen
 
     const string KInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     // The carried BIR body of an inline+lambda fn ([KotlinInline]), or null. Splice-able by a consuming module.
+    // Reads the versioned `(string version, byte[] content)` carrier envelope (spec §0) via the single BirCarrier
+    // dispatch — an UNKNOWN version throws (loud), never a silent mis-decode.
     static string KotlinInlineBody(MethodInfo m)
     {
-        try
-        {
-            foreach (var cad in m.GetCustomAttributesData())
-                if (cad.AttributeType.FullName == KInlineAttr && cad.ConstructorArguments.Count == 1)
-                    return cad.ConstructorArguments[0].Value as string;
-        }
-        catch { }
+        foreach (var cad in m.GetCustomAttributesData())
+            if (cad.AttributeType.FullName == KInlineAttr && cad.ConstructorArguments.Count == 2)
+                return DecodeCarrier(cad);
         return null;
+    }
+
+    // Materialize a `(string version, byte[] content)` carrier attribute (spec §0) to its decoded JSON string. The
+    // byte[] ctor arg reflects back as an IReadOnlyList<CustomAttributeTypedArgument>, so reify it before decoding.
+    static string DecodeCarrier(CustomAttributeData cad)
+    {
+        var version = (string)cad.ConstructorArguments[0].Value!;
+        var raw = cad.ConstructorArguments[1].Value;
+        byte[] content;
+        if (raw is byte[] b) content = b;
+        else if (raw is IReadOnlyList<CustomAttributeTypedArgument> arr)
+        {
+            content = new byte[arr.Count];
+            for (int i = 0; i < arr.Count; i++) content[i] = (byte)arr[i].Value!;
+        }
+        else throw new FormatException("carrier content is not a byte[]");
+        return DotKt.Bir.BirCarrier.DecodeBody(version, content).ToJsonString();
     }
 
     // H2: the [KotlinSuspendFunctionType(shape)] attribute stamped by ilemit on a `suspend (…) -> T` function-type
@@ -1273,13 +1288,9 @@ static class FacadeGen
     static TN SuspendFnNode(IList<CustomAttributeData> attrs)
     {
         string shape = null;
-        try
-        {
-            foreach (var cad in attrs)
-                if (cad.AttributeType.FullName == KSuspendFnAttr && cad.ConstructorArguments.Count == 1)
-                { shape = cad.ConstructorArguments[0].Value as string; break; }
-        }
-        catch { }
+        foreach (var cad in attrs)
+            if (cad.AttributeType.FullName == KSuspendFnAttr && cad.ConstructorArguments.Count == 2)
+            { shape = DecodeCarrier(cad); break; }
         if (string.IsNullOrEmpty(shape)) return null;
         try { var node = TN.Parse(shape); return node is TN.Fn { Suspend: true, Recv: null } ? node : null; }
         catch { return null; }

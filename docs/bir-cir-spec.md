@@ -7,11 +7,17 @@
 > codec-agnostic, single-source. **BIR contains NO stringly-typed compound tokens — types are nodes.**
 
 ## 0. Envelope & versioning
-- The carrier attributes stamp `(string version, byte[] content)`. `version` = `"bir-json/1"` today
-  (future binary = `"bir-msgpack/1"`; schema bump = `"bir-json/2"`). `content` = the codec-encoded body.
-- A single `DecodeBody(version, byte[])` / `EncodeBody(version, node)` dispatches on `version`.
-- Carriers: `KotlinInlineAttribute(string version, byte[] content)` (inline-fn body),
-  `KotlinSuspendFunctionTypeAttribute` folds into the structured `Type` (its `sfunc:` string is gone).
+- **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` =
+  `"bir-json/1"` today (future binary = `"bir-msgpack/1"`; schema bump = `"bir-json/2"`). `content` = the
+  codec-encoded body (today `UTF8(json)`).
+- A single `BirCarrier.DecodeBody(version, byte[])` / `EncodeBody(version, node)`
+  (`toolchain/bir-common/TypeNode.cs`) dispatches on `version`. An UNKNOWN version is REJECTED
+  (loud `NotSupportedException`, never a silent mis-decode).
+- Carriers: `KotlinInlineAttribute(string version, byte[] content)` (inline-fn body) and
+  `KotlinSuspendFunctionTypeAttribute(string version, byte[] content)` (a `suspend (…) -> T` position's
+  pre-erasure `fn` `Type` shape). The old bare `(string)` ctors are DELETED (no dual-track). Producers
+  (`ilemit` `ApplyKotlinInline` / `ApplySuspendFnType`) and consumers (`ilemit` cross-module splice,
+  `facadegen` `KotlinInlineBody` / `SuspendFnNode`) all route through the one codec.
 
 ## 1. Type — the universal type representation (FULL structured, no exceptions)
 
