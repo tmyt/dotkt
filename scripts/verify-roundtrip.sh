@@ -702,6 +702,53 @@ svexpected="$(printf 'hi\n42\n(1, 2)')"
 run_app svactual "$SV/appil/TlvalApp.dll"
 check_output roundtrip-toplevel-val "$svexpected" "$svactual" "a top-level val/var round-trips: the consumer reads the library's top-level property DIRECTLY (no fn workaround) via the facadegen tlprop meta token"
 
+# ----- TRI-STATE NULLABILITY (NRT) round-trip (#48): T / T? restored via the NullableAttribute byte + value Nullable<int> -----
+# #48 unified tri-state nullability (T / T? / T!) with proper NRT emission. The sharp proof that the NullableAttribute
+# byte round-trips faithfully is NOT runtime output (a reference `String?` is bare `String` at the CLR level — null
+# passes regardless of the byte), it is the CONSUMER's COMPILE-ABILITY: a mis-restored nullability makes the consumer
+# fail to compile, reddening the gate. This section exercises both CLR nullability MECHANISMS:
+#   - reference NRT byte:  non-null String (byte 1) and nullable String? (byte 2).
+#   - value structural:    Int? = System.Nullable<int> (NOT NRT — a distinct CLR shape that must also round-trip).
+# Sharp compile-dependencies (a wrong NRT byte -> the consumer will NOT compile -> `nrtactual` stays empty -> FAIL):
+#   * `retNonNull().length` with NO `?.` compiles ONLY if the return restored non-null (byte 1). A mis-restore to
+#     String? -> "only safe (?.) or non-null asserted (!!.) calls allowed on a nullable receiver" -> consumer fails.
+#   * `takeNullable(null)` compiles ONLY if the param restored nullable (byte 2). A mis-restore to non-null String ->
+#     "null can not be a value of a non-null type String" -> consumer fails. (THE sharp T? signal.)
+# The consumer also prints deterministic values (lengths / -1 for nulls) as a second signal: a value Int? mis-restored
+# to non-null would mis-drive at runtime. (T! / oblivious byte 0 is covered by the netbase/netgen/netinterop il-samples —
+# a .NET member with no NullableAttribute round-trips to ConeFlexibleType there; adding a System.* seed here would mix
+# facadegen's --meta and import-list paths, so per the task it is intentionally left to those sections.)
+NRT="$ROOT/build/roundtrip-nrt"; rm -rf "$NRT"; mkdir -p "$NRT/lib" "$NRT/app" "$NRT/libbir" "$NRT/libil" "$NRT/appbir" "$NRT/appil"
+cat > "$NRT/lib/lib.kt" <<'EOF'
+fun retNonNull(): String = "x"                                     // T  (non-null return, NullableAttribute byte 1)
+fun takeNonNull(s: String): Int = s.length                         // T  (non-null param)
+fun retNullable(flag: Boolean): String? = if (flag) "y" else null  // T? (nullable return, byte 2)
+fun takeNullable(s: String?): Int = s?.length ?: -1                // T? (nullable param — the sharp signal)
+fun retNullableInt(flag: Boolean): Int? = if (flag) 1 else null    // value T? = System.Nullable<int> (structural)
+EOF
+cat > "$NRT/app/app.kt" <<'EOF'
+fun main() {
+    println(retNonNull().length)             // 1   NO ?. — compiles only if the return restored non-null (byte 1)
+    println(takeNonNull("abcd"))             // 4   non-null param called with a non-null
+    println(retNullable(false)?.length ?: -1)// -1  nullable return, null branch
+    println(retNullable(true)?.length ?: -1) // 1   nullable return, value branch
+    println(takeNullable(null))              // -1  passing null compiles only if the param restored nullable (byte 2)
+    println(takeNullable("hello"))           // 5   nullable param with a non-null arg
+    println(retNullableInt(false) ?: -1)     // -1  value Nullable<int> — the null (HasValue=false) branch
+    println(retNullableInt(true) ?: -1)      // 1   value Nullable<int> — the value branch
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$NRT/lib" -no-stdlib -classpath "$CP" -d "$NRT/libbir" >/dev/null 2>&1 || true
+emit_il "$NRT/libil" NrtLib "$NRT/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$NRT/libil/NrtLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NRT/k.meta" --refs "$REFS$NRT/libil/NrtLib.dll" LibKt >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$NRT/k.meta" "$LAUNCHER" "$NRT/app" -no-stdlib -classpath "$CP" -d "$NRT/appbir" >/dev/null 2>&1 || true
+emit_il "$NRT/appil" NrtApp --ref "$NRT/libil/NrtLib.dll" "$NRT/appbir"/*.bir.json
+cp "$NRT/libil/NrtLib.dll" "$NRT/appil/" 2>/dev/null || true
+nrtexpected="$(printf '1\n4\n-1\n1\n-1\n5\n-1\n1')"
+run_app nrtactual "$NRT/appil/NrtApp.dll"
+check_output roundtrip-nrt "$nrtexpected" "$nrtactual" "tri-state NRT fidelity: non-null (byte 1) + nullable (byte 2) reference via consumer compile-dependency, + value Nullable<int> structural"
+
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
 printf '%s\n' "${SUMMARY[@]}"
