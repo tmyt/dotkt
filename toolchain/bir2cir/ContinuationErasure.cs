@@ -133,7 +133,7 @@ static class ContinuationErasure
         var method = (obj["method"] as JsonValue)?.TryGetValue<string>(out var me) == true ? me : null;
         if (method is "getOrThrow" or "getOrNull" or "getOrDefault" or "getOrElse")
         {
-            var rk = obj.ContainsKey("retType") ? "retType" : (obj.ContainsKey("ret") ? "ret" : null);
+            var rk = obj.ContainsKey("ret") ? "ret" : null;
             // Pre-lowering the hint is still the source `kotlin.Unit` (void folds later) — promote a void/Unit hint to
             // kotlin.Any so ilemit pops the discarded getOrThrow value.
             if (rk != null && TypeJson.Read(obj[rk]) is TypeNode.Fqn { Args: null } rf

@@ -3866,7 +3866,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				}
 				return if (callee === prop.setter)
 					"""{"k":"clrPropSet","type":${memberType!!.toJson()},"name":${str(pn)},"static":$isStatic,"recv":$recvJson,"value":${expr(regularArgs(call).first())}}"""
-				else """{"k":"clrPropGet","type":${memberType!!.toJson()},"name":${str(pn)},"retType":${birType(callee.returnType).toJson()},"static":$isStatic,"recv":$recvJson}"""
+				else """{"k":"clrPropGet","type":${memberType!!.toJson()},"name":${str(pn)},"ret":${birType(callee.returnType).toJson()},"static":$isStatic,"recv":$recvJson}"""
 			}
 			val member = clrInteropName(callee) ?: objectMethodName(callee) ?: name
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
@@ -4435,16 +4435,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/**
-	 * `,"retType":${fqnJson("kotlin.Int")}` for a generic call/member access: the concrete result type is known here (FIR-resolved
+	 * `,"ret":${fqnJson("kotlin.Int")}` for a generic call/member access: the concrete result type is known here (FIR-resolved
 	 * `call.type`), so ilemit need not reflect the un-baked builder's return type (which stays `!0`/`!!0` and
 	 * would mis-drive value-type boxing). Only emitted for the generic/constructed paths to stay non-invasive.
 	 */
 	internal fun retHint(generic: Boolean, t: IrType): String =
-		if (generic) ""","retType":${birType(t).toJson()}""" else ""
+		if (generic) ""","ret":${birType(t).toJson()}""" else ""
 
 	/** Like [retHint] but with a pre-computed return-type string (e.g. a suspend call's kickoff `Task<T>`). */
 	internal fun retHintStr(generic: Boolean, ret: TypeNode): String =
-		if (generic) ""","retType":${ret.toJson()}""" else ""
+		if (generic) ""","ret":${ret.toJson()}""" else ""
 
 	/** Neutral metadata tag marking a call whose callee is a `suspend` function. kotc records only the FACT
 	 *  (mirroring the `"suspend":true` fn-decl flag); the coroutine LOWERING (await / state machine / Task ABI)

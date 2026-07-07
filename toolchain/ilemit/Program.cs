@@ -1853,7 +1853,7 @@ sealed partial class Emitter
     // Prefer a BIR-carried concrete result type (`retType`) over reflecting an un-baked builder's `!0`/`!!0`.
     Type RetOr(JsonElement e, Type fallback)
     {
-        if (!e.TryGetProperty("retType", out var r)) return fallback;
+        if (!e.TryGetProperty("ret", out var r)) return fallback;
         var declared = MapType(r);
         // A generic method `<T> f(): T` instantiated with T = kotlin.Unit genuinely PUSHES a kotlin.Unit value, yet a
         // Unit/statement-context call site carries retType="void" (kotc lowers Unit results to void). Trusting that
@@ -1872,7 +1872,7 @@ sealed partial class Emitter
     // (an internal nullable->nullable hand-off) there is nothing to do. A non-object actual return is untouched.
     Type CoerceReturn(JsonElement e, Type actual)
     {
-        if (actual == typeof(object) && e.TryGetProperty("retType", out var r))
+        if (actual == typeof(object) && e.TryGetProperty("ret", out var r))
         {
             var want = MapType(r);
             if (want != null && want != typeof(object))

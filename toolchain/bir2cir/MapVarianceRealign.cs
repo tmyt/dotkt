@@ -243,7 +243,7 @@ static class MapVarianceRealign
     {
         if (arg is not JsonObject o) return null;
         if (Str(o["k"]) == "local" && Str(o["name"]) is string nm && env.TryGetValue(nm, out var t)) return t;
-        return TypeJson.Read(o["type"]) ?? TypeJson.Read(o["retType"]);
+        return TypeJson.Read(o["type"]) ?? TypeJson.Read(o["ret"]);
     }
 
     static bool IsObjectish(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Any" or "object" };

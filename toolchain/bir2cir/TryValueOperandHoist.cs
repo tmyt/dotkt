@@ -235,7 +235,7 @@ static class TryValueOperandHoist
     static JsonNode GuessType(JsonNode n)
     {
         if (n is JsonObject o)
-            foreach (var key in new[] { "type", "retType", "ret", "dynRet" })
+            foreach (var key in new[] { "type", "ret", "dynRet" })
                 if (o[key] is JsonNode slot && TypeJson.Read(slot) is DotKt.Bir.TypeNode) return slot.DeepClone();
         return TypeJson.Fqn("kotlin.Any");
     }

@@ -134,7 +134,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// in kotc). A direct backing-FIELD read reaching here is only kotlin.Throwable's own generated getter body in the
 		// stdlib ref build, where `message` is a real field — the plain `field` path below serves it.
 		if (clr != null)
-			"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"retType":${birType(node.type).toJson()},"static":false,"recv":$recvJson}"""
+			"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"ret":${birType(node.type).toJson()},"static":false,"recv":$recvJson}"""
 		// A `lateinit var` backing-field read -> throw if still uninitialized (null) — proper lateinit semantics.
 		else if (node.symbol.owner.correspondingPropertySymbol?.owner?.isLateinit == true)
 			"""{"k":"lateinitGet","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(fldName)}}"""

@@ -1261,7 +1261,7 @@ sealed class TypeSiteAnalyzer
         "type",
         "ownerType",
         "ret",
-        "retType",
+        "ret",
         "resultType",
         "base",
         "interfaces",
@@ -1569,9 +1569,8 @@ sealed record CallSite(
     {
         if (node is not JsonObject obj) return "";
         return StringProp(obj, "type")
-            ?? StringProp(obj, "retType")
-            ?? StringProp(obj, "resultType")
             ?? StringProp(obj, "ret")
+            ?? StringProp(obj, "resultType")
             ?? "";
     }
 }
@@ -1769,7 +1768,7 @@ static class BirTypeLowering
     static readonly HashSet<string> TypeKeys = new(StringComparer.Ordinal)
     {
         // signature positions (the original TypeProperties set)
-        "type", "ownerType", "ret", "retType", "resultType", "base", "interfaces", "argTypes",
+        "type", "ownerType", "ret", "resultType", "base", "interfaces", "argTypes",
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
         "keyType", "valType", "iterType", "accessOwner", "elem", "to", "owner",
@@ -1789,7 +1788,7 @@ static class BirTypeLowering
     // position-dependent — they lower uniformly everywhere via KotlinToClr.
     static readonly HashSet<string> ReturnKeys = new(StringComparer.Ordinal)
     {
-        "ret", "retType", "dynRet", "selRet", "returnType", "resultType",
+        "ret", "dynRet", "selRet", "returnType", "resultType",
     };
 
     static readonly string[] ModifierPrefixes = { "byref:", "array:", "nullable:" };
@@ -3023,7 +3022,7 @@ static class CharSeqStringLowering
                 return new JsonObject
                 {
                     ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn("System.String"), ["name"] = "Length",
-                    ["retType"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = recv?.DeepClone(),
+                    ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = recv?.DeepClone(),
                 };
             case "get":
                 return new JsonObject
@@ -3099,7 +3098,7 @@ static class CharSeqStringLowering
             case "concat": return true;   // string concatenation
             case "this": return false;
             default:
-                return IsStringTokT(TypeJson.Read(o["ret"]) ?? TypeJson.Read(o["retType"]) ?? TypeJson.Read(o["dynRet"]));
+                return IsStringTokT(TypeJson.Read(o["ret"]) ?? TypeJson.Read(o["dynRet"]));
         }
     }
 
@@ -3160,7 +3159,7 @@ static class StringCharSequenceBridge
          "body": [{"k": "return", "value": {"k": "field", "ownerType": "<>dotkt_StringCharSequence", "recv": {"k": "this"}, "name": "value"}}]},
         {"name": "get_length", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
          "params": [], "ret": "kotlin.Int",
-         "body": [{"k": "return", "value": {"k": "clrPropGet", "type": "System.String", "name": "Length", "retType": "System.Int32", "static": false,
+         "body": [{"k": "return", "value": {"k": "clrPropGet", "type": "System.String", "name": "Length", "ret": "System.Int32", "static": false,
            "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []}}}]},
         {"name": "ToString", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": true, "vis": "public",
          "params": [], "ret": "kotlin.String",
@@ -3355,7 +3354,7 @@ static class StringCharSequenceBridge
             case "this": return false;
             default:
                 // A CLR/Kotlin call node carrying an explicit result type (`ret`/`retType` = System.String).
-                return IsStringTokT(TypeJson.Read(o["ret"]) ?? TypeJson.Read(o["retType"]));
+                return IsStringTokT(TypeJson.Read(o["ret"]));
         }
     }
 
@@ -3631,8 +3630,8 @@ static class NullableGenericReturnErasure
             case JsonObject obj:
                 if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "callInstance"
                     && (obj["method"] as JsonValue)?.TryGetValue<string>(out var mn) == true && getters.Contains(mn)
-                    && TypeJson.Read(obj["retType"]) is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })
-                    obj["retType"] = TypeJson.Fqn("object");
+                    && TypeJson.Read(obj["ret"]) is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })
+                    obj["ret"] = TypeJson.Fqn("object");
                 foreach (var kv in obj) RetypeErasedGetterCalls(kv.Value, getters);
                 break;
             case JsonArray arr:
@@ -3863,7 +3862,7 @@ static class NullableGenericReturnErasure
                     && obj["value"] is JsonObject v)
                 {
                     if (TypeJson.Read(v["type"]) is TypeNode.Tv vt && vt == gp) v["type"] = TypeJson.Fqn("object");
-                    if (TypeJson.Read(v["retType"]) is TypeNode.Tv vr && vr == gp) v["retType"] = TypeJson.Fqn("object");
+                    if (TypeJson.Read(v["ret"]) is TypeNode.Tv vr && vr == gp) v["ret"] = TypeJson.Fqn("object");
                 }
                 foreach (var kv in obj) RetypeReturns(kv.Value, gp);
                 break;
@@ -3993,13 +3992,13 @@ static class StarProjectionLowering
             case "get_size":
             case "size":
                 // `.size` -> ICollection/IList/IDictionary.Count.
-                return new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["retType"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) };
+                return new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) };
             case "isEmpty":
                 // `.isEmpty()` -> Count == 0 (non-generic interfaces expose no IsEmpty).
                 return new JsonObject
                 {
                     ["k"] = "binOp", ["op"] = "==", ["type"] = TypeJson.Fqn("System.Boolean"),
-                    ["l"] = new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["retType"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) },
+                    ["l"] = new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) },
                     ["r"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 0 },
                 };
             case "iterator":
@@ -4097,7 +4096,7 @@ static class NullableFuncReturnErasure
                     && obj["value"] is JsonObject v)
                 {
                     if (TypeJson.Read(v["type"]) is TypeNode vt && vt == oldRet) v["type"] = TypeJson.Write(ObjFqn);
-                    if (TypeJson.Read(v["retType"]) is TypeNode vr && vr == oldRet) v["retType"] = TypeJson.Write(ObjFqn);
+                    if (TypeJson.Read(v["ret"]) is TypeNode vr && vr == oldRet) v["ret"] = TypeJson.Write(ObjFqn);
                 }
                 foreach (var kv in obj) RetypeReturnValues(kv.Value, oldRet);
                 break;
@@ -4307,7 +4306,7 @@ static class KClassMemberBinding
             ["k"] = "clrPropGet",
             ["type"] = TypeJson.Fqn("System.Type"),
             ["name"] = bcl,
-            ["retType"] = TypeJson.Fqn("System.String"),
+            ["ret"] = TypeJson.Fqn("System.String"),
             ["static"] = false,
             ["recv"] = recv.DeepClone(),
         };
@@ -4704,7 +4703,7 @@ static class MemberCallSubstitution
         {
             var listHelper = member is "set" or "set_Item" ? "clrListSet" : "clrListRemoveAt";
             var listCall = (JsonObject)CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", listHelper, OwnerElemArg(ownerFqnNode), args);
-            if (RetToken(node) is JsonNode lret && !IsTvType(lret)) listCall["retType"] = lret;
+            if (RetToken(node) is JsonNode lret && !IsTvType(lret)) listCall["ret"] = lret;
             return listCall;
         }
 
@@ -4924,7 +4923,7 @@ static class MemberCallSubstitution
                 && ctx.VarTypes.TryGetValue(vn, out var vt) ? vt : null;
         if (!allowExprShapes) return null;
         if (rk == "callInstance")
-            return TypeJson.Read(recv["retType"]) ?? TypeJson.Read(recv["ret"]);
+            return TypeJson.Read(recv["ret"]);
         if (rk == "arrayGet")
             return TypeJson.Read(recv["elem"]);
         return null;
@@ -5058,7 +5057,7 @@ static class MemberCallSubstitution
         // returning the BARE map value param (`getOrDefault` -> V) reflects as the callee's own `!!1` at the call
         // site — boxing that out-of-scope token is invalid metadata -> BadImageFormatException at run (both the
         // Map- and MutableMap-typed receivers). `retType` lets ilemit box/convert the concrete instantiation.
-        if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["retType"] = ret;
+        if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["ret"] = ret;
         return call;
     }
 
@@ -5183,7 +5182,7 @@ static class MemberCallSubstitution
             ["static"] = false,
             ["recv"] = node["recv"]?.DeepClone(),
         };
-        if (!write && RetToken(node) is JsonNode ret) pg["retType"] = ret;
+        if (!write && RetToken(node) is JsonNode ret) pg["ret"] = ret;
         if (write && args.Count >= 1) pg["value"] = args[0].DeepClone();
         return pg;
     }
@@ -5339,7 +5338,7 @@ static class MemberCallSubstitution
         // token (an open call site inside another generic body): it buys no conversion there, and when the callee's
         // return is the ERASED nullable-generic `object`, CoerceReturn would `unbox.any !!X` a possibly-null —
         // NullReferenceException for a value instantiation. The open representation of such a value stays `object`.
-        if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["retType"] = ret;
+        if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["ret"] = ret;
         return call;
     }
 
@@ -5364,7 +5363,7 @@ static class MemberCallSubstitution
     // The structured return-type slot of a call node (dynRet/retType/ret), cloned; null when absent.
     static JsonNode RetToken(JsonObject node)
     {
-        foreach (var key in new[] { "dynRet", "retType", "ret" })
+        foreach (var key in new[] { "dynRet", "ret" })
             if (node[key] is JsonNode n && TypeJson.Read(n) is TypeNode) return n.DeepClone();
         return null;
     }
@@ -5377,7 +5376,7 @@ static class MemberCallSubstitution
     static JsonNode InferArgType(JsonNode node)
     {
         if (node is JsonObject obj)
-            foreach (var key in new[] { "type", "retType", "resultType", "ret", "dynRet" })
+            foreach (var key in new[] { "type", "ret", "resultType", "ret", "dynRet" })
                 if (obj[key] is JsonNode n && TypeJson.Read(n) is TypeNode) return n.DeepClone();
         return TypeJson.Fqn("object");
     }

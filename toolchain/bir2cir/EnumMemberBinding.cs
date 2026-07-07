@@ -48,7 +48,7 @@ static class EnumMemberBinding
                 ["method"] = "ToString",
                 ["recv"] = recv.DeepClone(),
             };
-            foreach (var key in new[] { "ownerType", "virtual", "method", "args", "sig", "dynRet", "retType", "overrides", "recv" })
+            foreach (var key in new[] { "ownerType", "virtual", "method", "args", "sig", "dynRet", "ret", "overrides", "recv" })
                 obj.Remove(key);
             foreach (var kv in newNode) obj[kv.Key] = kv.Value.DeepClone();
         }

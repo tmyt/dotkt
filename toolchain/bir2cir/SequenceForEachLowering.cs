@@ -104,7 +104,7 @@ static class SequenceForEachLowering
     // True iff the src expression's static type is `kotlin.sequences.Sequence` (the erased-anon-object Sequence case).
     static bool IsSequenceTyped(JsonObject src)
     {
-        foreach (var key in new[] { "retType", "dynRet", "type", "ret" })
+        foreach (var key in new[] { "ret", "dynRet", "type" })
             if (src[key] is JsonNode n && Unwrap(TypeJson.Read(n)) is TypeNode.Fqn f && f.Name == "kotlin.sequences.Sequence")
                 return true;
         return false;

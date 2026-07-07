@@ -1504,7 +1504,7 @@ static class SuspendColdLowering
         TypeNode TypeOfExpr(JsonNode n)
         {
             if (n is not JsonObject o) return AnyTn;
-            if (TypeJson.Read(o["retType"]) is TypeNode t0) return t0;
+            if (TypeJson.Read(o["ret"]) is TypeNode t0) return t0;
             if (TypeJson.Read(o["ret"]) is TypeNode t1) return t1;
             if (TypeJson.Read(o["dynRet"]) is TypeNode t2) return t2;
             var k = Str(o["k"]);
@@ -1572,7 +1572,7 @@ static class SuspendColdLowering
         // (inline); else fall through to the merge label, rethrow a failed resume, store the awaited value.
         JsonNode EmitSuspensionPoint(JsonObject callNode, List<JsonNode> outp)
         {
-            var retTok = TypeJson.Read(callNode["retType"])
+            var retTok = TypeJson.Read(callNode["ret"])
                 ?? TypeJson.Read(callNode["dynRet"])
                 // A CROSS-ASSEMBLY suspend call arrives in the `clr*` vocabulary, whose declared return type rides `ret`
                 // (not `retType`/`sig`) and is absent from _calleeRet (a same-assembly-only map). Read it so the awaited
@@ -1714,7 +1714,7 @@ static class SuspendColdLowering
                     $"unresolved {method} block in '{(_ownerClass ?? _fileClass)}.{_name}': the `{{ c -> … }}` block " +
                     $"(closureNew/delegateNew) could not be resolved in the compilation — refusing to emit a broken coroutine");
 
-            var resultT = TypeJson.Read(callNode["retType"]) ?? TypeJson.Read(callNode["ret"]) ?? AnyTn;
+            var resultT = TypeJson.Read(callNode["ret"]) ?? AnyTn;
             var retTok = IsUnitTn(resultT) ? AnyTn : resultT;
 
             var state = ++_state;
@@ -1842,7 +1842,7 @@ static class SuspendColdLowering
             ["ownerType"] = Tw(_smTypeInst),
             ["recv"] = new JsonObject { ["k"] = "smSelf" },
             ["name"] = name,
-            ["retType"] = Tw(type),
+            ["ret"] = Tw(type),
         };
 
         // Substitute a closure-class invoke body for inlining: a field read of the closure's own captured field ->
@@ -1938,7 +1938,7 @@ static class SuspendColdLowering
             outp.Add(BrIf(new JsonObject
             {
                 ["k"] = "clrPropGet", ["type"] = Tw(awaiterType), ["name"] = "IsCompleted",
-                ["static"] = false, ["recv"] = FieldOf(awField, awaiterType), ["retType"] = Tw(BoolTn),
+                ["static"] = false, ["recv"] = FieldOf(awField, awaiterType), ["ret"] = Tw(BoolTn),
             }, true, afterLabel));
             // this.label = state; this.<aw>.OnCompleted(<callback Action>); return COROUTINE_SUSPENDED;
             outp.Add(SetField("label", IntConst(state)));
@@ -2001,7 +2001,7 @@ static class SuspendColdLowering
                 ["recv"] = new JsonObject { ["k"] = "this" },
                 ["method"] = "resumeWith",
                 ["sig"] = new JsonArray { Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn })) },
-                ["retType"] = Tw(VoidTn),
+                ["ret"] = Tw(VoidTn),
                 ["args"] = new JsonArray
                 {
                     // Result.success(null): the PUBLIC static companion factory (the internal `Result(value)` ctor is
@@ -2174,7 +2174,7 @@ static class SuspendColdLowering
                     ["recv"] = recvRw,
                     ["method"] = method,
                     ["args"] = args,
-                    ["retType"] = Tw(AnyTn),
+                    ["ret"] = Tw(AnyTn),
                 };
             }
             else
@@ -2535,7 +2535,7 @@ static class SuspendColdLowering
                     ["method"] = "invokeSuspend",
                     ["sig"] = new JsonArray { Tw(AnyTn) },
                     ["args"] = new JsonArray { NullConst(AnyTn) },
-                    ["retType"] = Tw(AnyTn),
+                    ["ret"] = Tw(AnyTn),
                 }),
             };
             return ColdMethod(body);
@@ -2704,7 +2704,7 @@ static class SuspendColdLowering
                         ["recv"] = new JsonObject
                         {
                             ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
-                            ["recv"] = Local("__tcs"), ["retType"] = Tw(taskType),
+                            ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
                         },
                         ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = Tw(VoidTn),
                     },
@@ -2844,7 +2844,7 @@ static class SuspendColdLowering
             JsonNode tcsTask = new JsonObject
             {
                 ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
-                ["recv"] = Local("__tcs"), ["retType"] = Tw(taskType),
+                ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
             };
             // Unit: upcast the Task<Unit> (TCS<Unit>.Task) to the non-generic public `Task` return (Task<T> : Task).
             if (isUnit) tcsTask = new JsonObject { ["k"] = "cast", ["type"] = Tw(taskRetType), ["e"] = tcsTask };
@@ -2945,7 +2945,7 @@ static class SuspendColdLowering
                     ["recv"] = new JsonObject { ["k"] = "this" },
                     ["method"] = _coldName,
                     ["args"] = args,
-                    ["retType"] = Tw(AnyTn),
+                    ["ret"] = Tw(AnyTn),
                 };
             else
                 call = new JsonObject
@@ -2999,7 +2999,7 @@ static class SuspendColdLowering
             ["ownerType"] = Tw(_smTypeInst),
             ["recv"] = new JsonObject { ["k"] = "this" },
             ["name"] = name,
-            ["retType"] = Tw(type),
+            ["ret"] = Tw(type),
         };
 
         static JsonObject Suspended() => new()
