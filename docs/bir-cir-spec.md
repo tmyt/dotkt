@@ -145,6 +145,13 @@ node-format stability is achieved DECLARATIVELY, in three parts:
    use `e` accordingly; `conv` carries its target type as `to`, the `nullable*` element as `elem`). Keep genuinely
    role-distinct fields distinct (a call's `args` ≠ a decl's `params` ≠ an array's `elems`; `ret`≠`elem`≠`keyType`
    when the roles differ). Every type-valued field holds a `Type` node (§1).
+   - **Return-position type keys** (the `ReturnKeys` set — a return-slot type where `kotlin.Unit` lowers to `void`)
+     = **`{ret, dynRet, suspendRet}`**, a consistent `<context>Ret` family: `ret` (plain return), `dynRet`
+     (`@Clr` dynamic-dispatch return), `suspendRet` (a suspend fn/lambda's `T` of `Continuation<T>` — renamed from
+     the odd-one-out `resultType` in m5). These are DISTINCT ROLES that can COEXIST on one node (a `callInstance`
+     carries `ret`+`dynRet`; a `suspendLambdaNew` carries `ret`+`suspendRet`) — grouped by shared position, NOT
+     synonyms; the return-position parallel to the value-position `TypeKeys`. Dead keys `selRet`/`returnType`
+     (0 emit, never read) were deleted in m5.
 2. **Per-kind schema** — the spec pins each `k`'s exact field set (name, required/optional, value shape),
    generated from the audit. This is the normative node shape.
 3. **Schema validator (§4/§5)** — validates every node against its kind's schema: unknown `k`, unknown/missing

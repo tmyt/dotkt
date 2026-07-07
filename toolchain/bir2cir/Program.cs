@@ -1261,8 +1261,7 @@ sealed class TypeSiteAnalyzer
         "type",
         "ownerType",
         "ret",
-        "ret",
-        "resultType",
+        "suspendRet",
         "base",
         "interfaces",
         "argTypes",
@@ -1570,7 +1569,7 @@ sealed record CallSite(
         if (node is not JsonObject obj) return "";
         return StringProp(obj, "type")
             ?? StringProp(obj, "ret")
-            ?? StringProp(obj, "resultType")
+            ?? StringProp(obj, "suspendRet")
             ?? "";
     }
 }
@@ -1622,7 +1621,7 @@ sealed class SuspendShapeAnalyzer
         functions.Add(new SuspendFunctionShape(
             owner,
             StringProp(obj, "name") ?? "<anonymous>",
-            StringProp(obj, "resultType") ?? StringProp(obj, "ret") ?? "void",
+            StringProp(obj, "suspendRet") ?? StringProp(obj, "ret") ?? "void",
             awaits,
             intrinsicAwaits,
             returns,
@@ -1678,7 +1677,7 @@ sealed record SuspendFunctionShape(
     {
         ["owner"] = Owner,
         ["name"] = Name,
-        ["resultType"] = ResultType,
+        ["suspendRet"] = ResultType,
         ["awaits"] = Awaits,
         ["intrinsicAwaits"] = IntrinsicAwaits,
         ["returns"] = Returns,
@@ -1768,13 +1767,13 @@ static class BirTypeLowering
     static readonly HashSet<string> TypeKeys = new(StringComparer.Ordinal)
     {
         // signature positions (the original TypeProperties set)
-        "type", "ownerType", "ret", "resultType", "base", "interfaces", "argTypes",
+        "type", "ownerType", "ret", "suspendRet", "base", "interfaces", "argTypes",
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
         "keyType", "valType", "iterType", "accessOwner", "elem", "to", "owner",
         "samType", "closureType",
         // additional type-reference keys ilemit reads (absent in today's BIR but lowered for robustness)
-        "elemType", "accType", "clrType", "tupleType", "selRet", "parameterTypes", "returnType",
+        "elemType", "accType", "clrType", "tupleType", "parameterTypes",
     };
 
     // The RETURN-slot keys. kotlin.Unit is the ONE position-dependent token: kotc's birType change made it emit
@@ -1786,9 +1785,15 @@ static class BirTypeLowering
     // an already-decorated `@kotlin.Unit` type-arg passes through unchanged. (Mirrors kotc birTypeDeleg's
     // "kotlin.Unit -> void in return, @kotlin.Unit in type-arg" split.) The numeric primitives are NOT
     // position-dependent — they lower uniformly everywhere via KotlinToClr.
+    // RETURN-POSITION type keys, grouped by a SHARED PROPERTY (a return-slot type, where kotlin.Unit lowers to
+    // `void` via LowerReturnValued) — NOT synonyms. The members are DISTINCT ROLES that can coexist on one node:
+    // `ret` (plain return), `dynRet` (@Clr dynamic-dispatch return), `suspendRet` (a suspend fn/lambda's T of
+    // Continuation<T>) — e.g. a callInstance carries ret+dynRet, a suspendLambdaNew carries ret+suspendRet. This is
+    // the return-position parallel to `TypeKeys` (value-position types). (Dead keys `selRet`/`returnType` — 0 BIR
+    // emit, no value ever read — were removed in #37 m5.)
     static readonly HashSet<string> ReturnKeys = new(StringComparer.Ordinal)
     {
-        "ret", "dynRet", "selRet", "returnType", "resultType",
+        "ret", "dynRet", "suspendRet",
     };
 
     static readonly string[] ModifierPrefixes = { "byref:", "array:", "nullable:" };
@@ -5376,7 +5381,7 @@ static class MemberCallSubstitution
     static JsonNode InferArgType(JsonNode node)
     {
         if (node is JsonObject obj)
-            foreach (var key in new[] { "type", "ret", "resultType", "ret", "dynRet" })
+            foreach (var key in new[] { "type", "ret", "suspendRet", "dynRet" })
                 if (obj[key] is JsonNode n && TypeJson.Read(n) is TypeNode) return n.DeepClone();
         return TypeJson.Fqn("object");
     }

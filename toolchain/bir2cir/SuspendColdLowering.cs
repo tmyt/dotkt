@@ -258,7 +258,7 @@ static class SuspendColdLowering
         // Built here (before the early returns) so it is ALWAYS returned for the lambda phase's use.
         var calleeRet = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         foreach (var (k, e) in entries)
-            calleeRet[k.Name] = TypeJson.Read(e.Method["resultType"]) ?? AnyTn;
+            calleeRet[k.Name] = TypeJson.Read(e.Method["suspendRet"]) ?? AnyTn;
 
         // A global (owner#name -> resultType) index of EVERY method (not just suspend). The eval-order spill
         // (BUG 2 fix, Rewrite/RewriteEvalOrder) uses it to type a temp SM field holding a left-of-suspension
@@ -276,7 +276,7 @@ static class SuspendColdLowering
             if (file["methods"] is JsonArray fms)
                 foreach (var m in fms)
                     if (m is JsonObject mo && Str(mo["name"]) is string mn)
-                        methodRets["#" + mn] = TypeJson.Read(mo["resultType"]) ?? TypeJson.Read(mo["ret"]) ?? AnyTn;
+                        methodRets["#" + mn] = TypeJson.Read(mo["suspendRet"]) ?? TypeJson.Read(mo["ret"]) ?? AnyTn;
             if (file["fields"] is JsonArray ffs)
                 foreach (var f in ffs)
                     if (f is JsonObject fo && Str(fo["name"]) is string fn && TypeJson.Read(fo["type"]) is TypeNode ft0)
@@ -288,7 +288,7 @@ static class SuspendColdLowering
                         if (to["methods"] is JsonArray tms)
                             foreach (var m in tms)
                                 if (m is JsonObject mo && Str(mo["name"]) is string mn)
-                                    methodRets[ow + "#" + mn] = TypeJson.Read(mo["resultType"]) ?? TypeJson.Read(mo["ret"]) ?? AnyTn;
+                                    methodRets[ow + "#" + mn] = TypeJson.Read(mo["suspendRet"]) ?? TypeJson.Read(mo["ret"]) ?? AnyTn;
                         if (to["fields"] is JsonArray tfs)
                             foreach (var f in tfs)
                                 if (f is JsonObject fo && Str(fo["name"]) is string fn && TypeJson.Read(fo["type"]) is TypeNode ft1)
@@ -806,7 +806,7 @@ static class SuspendColdLowering
             _memberVirtual = _isMember && Bool(m["virtual"]);
             _smType = (ownerClass ?? fileClass) + "_" + name + smNameSuffix + "$sm";
             _coldName = name + "$dotkt_suspend";
-            _resultType = TypeJson.Read(m["resultType"]) ?? VoidTn;
+            _resultType = TypeJson.Read(m["suspendRet"]) ?? VoidTn;
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
             _typeParams = ReadTypeParamNames(m["typeParams"]);
             // The SM is generic over the ENCLOSING class's type params (an instance member on a generic class) PLUS

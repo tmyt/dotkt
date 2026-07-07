@@ -13,7 +13,7 @@
 //     "arity": 0|1,                              // the lambda's OWN param count (v1: 0 or 1; >=2 refused)
 //     "captures":[{"name","type"}],              // captured vars -> SM ctor params + fields
 //     "params":  [{"name","type"}],              // the lambda's own params (arity-1: create(value) sets it)
-//     "resultType":"kotlin.X",                   // the lambda's result type ("void"/"kotlin.Unit" -> Unit)
+//     "suspendRet":"kotlin.X",                   // the lambda's result type ("void"/"kotlin.Unit" -> Unit)
 //     "typeArgs":[<tp-name>,...],                // enclosing generic type params (open SM instantiation)
 //     "body":[ ...structured, suspendCall-tagged... ],
 //     "funcType":"sfunc:<ret>:<args>" }          // informational (the delegate view; not consumed here)
@@ -181,7 +181,7 @@ static class SuspendLambdaLowering
         var arity = IntOf(node["arity"]);
         var captures = ReadNameTypes(node["captures"]);
         var lambdaParams = (node["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
-        var resultType = TypeJson.Read(node["resultType"]);
+        var resultType = TypeJson.Read(node["suspendRet"]);
         var typeArgs = ReadStrings(node["typeArgs"]);
         var smName = ctx + "_lambda" + (++counter[0]) + "$sm";
 

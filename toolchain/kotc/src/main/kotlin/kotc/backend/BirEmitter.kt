@@ -1528,7 +1528,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** A `suspend fun`'s Kotlin result type rides ALONGSIDE `mods.suspend` (it is a Type, not a modifier flag). */
 	internal fun resultTypeJson(fn: IrSimpleFunction): String =
-		if (fn.isSuspend) ""","resultType":${birType(fn.returnType).toJson()}""" else ""
+		if (fn.isSuspend) ""","suspendRet":${birType(fn.returnType).toJson()}""" else ""
 
 	/** Structured class-modifier object (spec §2.1): `"mods":{name:true,…}` for class-nature Kotlin facts
 	 *  (`fun`-interface, `sealed`, `annotation`, …) — only the set flags, absent = not set. */
@@ -2078,7 +2078,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val freeTps = freeTypeParams(captures.map { it.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 		val typeArgsJson = freeTps.joinToString(",") { str(it.name.asString()) }
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-		return """{"k":"suspendLambdaNew","arity":${ownParams.size},"captures":[$capturesJson],"params":[$paramsJson],"resultType":${str(resultType)},"typeArgs":[$typeArgsJson],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
+		return """{"k":"suspendLambdaNew","arity":${ownParams.size},"captures":[$capturesJson],"params":[$paramsJson],"suspendRet":${str(resultType)},"typeArgs":[$typeArgsJson],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 	}
 
 	internal fun lambda(node: IrFunctionExpression): String {
