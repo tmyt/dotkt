@@ -41,6 +41,16 @@ Notes:
   map `scope`+`i` straight to `!i` / `!!i`.
 - `fn` subsumes both plain and suspend function types; the H2 position metadata is just an `fn` with
   `suspend:true` in a param/return/field slot — no separate `sfunc:` token, no `BirTokenToMeta`.
+  **STATUS (#49): the `funcType` slot is FOLDED.** The delegate-view function type on
+  `closureNew`/`delegateNew`/`samNew`/`suspendLambdaNew`/`boundDelegateNew`/`delegateInvoke` was the LAST
+  string-typed type slot (`func:<ret>:<args>` / `sfunc:<ret>:<args>`); kotc now emits it as the structured
+  `fn` node (0 `func:`/`sfunc:` strings in the emitted BIR), bir2cir's `LowerFuncTypeValued` lowers the `fn`
+  node via `LowerFnDelegate` (suspend→delegate shape kept for the sequence/iterator closure path; a suspend
+  `fn` in a plain type slot still erases to `object`), and ilemit derives the CLR delegate from the `fn` node
+  (`MapType(Fn)`→`FuncType(Fn)`, `FuncArityOf`/`FuncRetType`/`FuncArgTypes` read the node). The dead
+  `func:`/`sfunc:` STRING-parsing scanners (kotc `synthLambda`; bir2cir `LowerFuncString`/`FuncRetEnd`/
+  `SkipTypeToken`/`PrefixLength`/`FoldSFuncToFunc` + the `func:`/`sfunc:` branches of `LowerTypeString`;
+  ilemit `FuncArity(string)` + `FuncArityOf`'s string path) are DELETED.
 - **Nullability is TRI-STATE, named with the CLR/Roslyn vocabulary** (`NullableAttribute` 1/2/0 =
   not-annotated / annotated / **oblivious**). A reference type is one of three states, each a COHERENT node
   naming its own CLR state (the representation must NOT collapse oblivious to nullable — that breaks overload
@@ -177,6 +187,36 @@ ilemit `Emitter.Expressions.cs:166/227`, `CanonSig`, `FindReflectedMethodBySig`)
 **JSON array of `Type` nodes** (§1) — `"sig":[T, T, …]` (extension receiver first, then value params). No
 comma-join, no `CanonSig`/`FindReflectedMethodBySig` string parse; overload match walks the `Type[]`.
 Generic params in a `sig` use positional `tv` (§1), which kills the def-vs-call name-remap dance.
+
+### 2.2.1 The TWO intentional string islands (documented KEEP — not producer-zero)
+The BIR/CIR **wire format** carries no stringly-typed compound type token (§1): every `type`/`ret`/`elem`/
+`funcType`/`base`/`interfaces`/`sig` slot is a structured `Type` node or an array of them. But TWO
+consumer-internal string forms are DELIBERATELY retained (rendering a structured `Type`→string for a
+narrow, entangled, low-payoff comparison); they are NOT drift and MUST NOT be "cleaned up" by re-stringing
+the format:
+
+1. **The owner-FQN island** — ilemit `ParseOwner`/`ParseOwnerSlot`/`TryMapEmittedType` key this
+   assembly's emitted types (`_types`) by their bare FQN **string** and split a constructed-generic
+   `Name[arg,…]` owner spec into (open name, args). `ParseOwnerSlot(JsonElement)` reads a structured `fqn`
+   owner node (`ParseOwnerT`) — the wire stays structured — but the internal `_types` lookup and the
+   `Name[…]` split remain string-keyed. This is a private in-assembly type-table index, not a serialization
+   token.
+2. **The sig-key reflection island** — ilemit `SigTokenOf`/`SigTokenMatches`/`SigTokenMatchesOpen`
+   (and bir2cir `ParamKey`) RENDER a structured `Type` (incl. `fn`→`func:`/`sfunc:`, `clr:`/`clrg:`/`array:`/
+   `nullable:`/`byRef:`/`gp:` prefixes) to a canonical **string token** SOLELY to compare a call/binding
+   signature against a **reflected `MethodInfo`** from a `--ref` .NET assembly (`FindReflectedMethodBySig`).
+   Reflection surfaces `System.Type`, not our nodes, so the match unavoidably canonicalizes to a string on
+   both sides. This is why ilemit's `MapType(string)` prefix branches + `FuncType(string)`/`FuncRetEnd`/
+   `SkipTypeToken`/`GenericType`/`ClrRef(string)` are KEPT: they are the RE-PARSE side of this island (a
+   concrete `func:`/`clr:` sig token can route back through `MapType(string)`).
+
+Also NOTE — the bare-FQN + CLR-shorthand string LEAF resolver (bir2cir `LowerTypeString`/`LowerLeaf` + the
+`kotlin.*`→shorthand map; ilemit `MapType(string)`'s `_ =>` FQN/shorthand switch + `TryMapEmittedType`) is
+NOT retired: it is the primary resolver for every structured `fqn` node's bare `name` (reached via
+`MapType(fqn.Name)`), and it is still fed a few genuinely-string type slots that kotc/bir2cir emit as
+strings — synthetic interface names (`<>dotkt_KProperty`) and the injected `StringCharSequenceBridge`
+adapter's `kotlin.String`/`<>dotkt_CharSequence` slots. Only the **prefix-scanning** logic tied to the
+retired string TYPE TOKENS is dead; the leaf that resolves a bare identity is load-bearing.
 
 ### 2.3 `@ClrProperty(access:Int)` bitmask → structured flags (no encoded int)
 The stdlib `@ClrProperty` accessor binding encodes read/write as an **int bitmask** (`READ=1`/`WRITE=2`,

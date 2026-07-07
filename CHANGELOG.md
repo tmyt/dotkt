@@ -424,6 +424,19 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **BIR/CIR freeze — `funcType` structuralized: the last string type slot is gone (#37 #49).** The
+  delegate-view function type on `closureNew`/`delegateNew`/`samNew`/`suspendLambdaNew`/`boundDelegateNew`/
+  `delegateInvoke` was the final stringly-typed type slot (`func:<ret>:<args>` / `sfunc:<ret>:<args>`). kotc
+  now emits it as the structured `fn` node UNIFORMLY (the emitted BIR carries 0 `func:`/`sfunc:` strings and
+  ~5000 `{t:fn}` nodes), bir2cir lowers the node via `LowerFnDelegate`, and ilemit derives the CLR delegate
+  from the node (`MapType(Fn)`→`FuncType(Fn)`; `FuncArityOf`/`FuncRetType`/`FuncArgTypes` read it). The now-dead
+  `func:`/`sfunc:` STRING scanners are deleted — kotc's uncalled `synthLambda`; bir2cir's `LowerFuncString`/
+  `FuncRetEnd`/`SkipTypeToken`/`PrefixLength`/`FoldSFuncToFunc` + the `func:`/`sfunc:` branches of
+  `LowerTypeString`; ilemit's `FuncArity(string)` + `FuncArityOf`'s string path — plus the fully-dead
+  `TypeSiteAnalyzer`/`TypeSiteAnalysis`/`TypeSite` (a `BirFile.Types` report no consumer read). The two
+  intentional string islands — the owner-FQN `_types` index (`ParseOwner`) and the sig-key reflection matcher
+  (`SigTokenOf`/`SigTokenMatches`, bir2cir `ParamKey`), which render a structured `Type`→string only to compare
+  against a reflected `--ref` `MethodInfo` — are documented KEEPs (spec §2.2.1). Spec §1/§2 updated.
 - **BIR/CIR freeze — tri-state nullability unification (#37 #48).** kotc now emits the `?` on the **Type
   node** (`{t:nullable,of:T}`) UNIFORMLY for value, reference, and type-variable positions — the duplicate
   decl-level scalar `nullable`/`retNullable` flags are RETIRED. The value-vs-reference split is derived
