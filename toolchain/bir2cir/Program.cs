@@ -3057,7 +3057,7 @@ static class CharSeqStringLowering
                         ["args"] = new JsonArray
                         {
                             new JsonObject { ["k"] = "local", ["name"] = startTmp },
-                            new JsonObject { ["k"] = "binOp", ["op"] = "-", ["l"] = args[1].DeepClone(), ["r"] = new JsonObject { ["k"] = "local", ["name"] = startTmp } },
+                            new JsonObject { ["k"] = "binOp", ["op"] = "-", ["lhs"] = args[1].DeepClone(), ["rhs"] = new JsonObject { ["k"] = "local", ["name"] = startTmp } },
                         },
                     },
                 };
@@ -3153,7 +3153,7 @@ static class StringCharSequenceBridge
          "body": [{"k": "return", "value": {"k": "new", "type": "<>dotkt_StringCharSequence", "argTypes": ["kotlin.String"],
            "args": [{"k": "clrInstance", "type": "System.String", "method": "Substring", "argTypes": ["System.Int32", "System.Int32"], "ret": "System.String",
              "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
-             "args": [{"k": "local", "name": "startIndex"}, {"k": "binOp", "op": "-", "l": {"k": "local", "name": "endIndex"}, "r": {"k": "local", "name": "startIndex"}}]}]}}], "attrs": []},
+             "args": [{"k": "local", "name": "startIndex"}, {"k": "binOp", "op": "-", "lhs": {"k": "local", "name": "endIndex"}, "rhs": {"k": "local", "name": "startIndex"}}]}]}}], "attrs": []},
         {"name": "get_value", "static": false, "override": false, "virtual": false, "abstract": false, "objectOverride": false, "vis": "public",
          "params": [], "ret": "kotlin.String",
          "body": [{"k": "return", "value": {"k": "field", "ownerType": "<>dotkt_StringCharSequence", "recv": {"k": "this"}, "name": "value"}}]},
@@ -3998,8 +3998,8 @@ static class StarProjectionLowering
                 return new JsonObject
                 {
                     ["k"] = "binOp", ["op"] = "==", ["type"] = TypeJson.Fqn("System.Boolean"),
-                    ["l"] = new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) },
-                    ["r"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 0 },
+                    ["lhs"] = new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) },
+                    ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 0 },
                 };
             case "iterator":
                 // `.iterator()` -> IEnumerable.GetEnumerator (non-generic IEnumerator; Current is object == Any).

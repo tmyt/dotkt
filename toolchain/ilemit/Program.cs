@@ -2541,8 +2541,8 @@ sealed partial class Emitter
     Type EmitBin(JsonElement e)
     {
         var op = e.GetProperty("op").GetString();
-        var lt = EmitExpr(e.GetProperty("l"));
-        var rt = EmitExpr(e.GetProperty("r"));
+        var lt = EmitExpr(e.GetProperty("lhs"));
+        var rt = EmitExpr(e.GetProperty("rhs"));
         // Mixed numeric operands (e.g. `Double / Int`, `Int + Long`) -> coerce both to the wider type. Shifts keep
         // their int shift-amount operand, so they're excluded.
         if (op != "<<" && op != ">>" && op != ">>>")
@@ -2903,18 +2903,18 @@ sealed partial class Emitter
     {
         var nonNull = _il.DefineLabel();
         var done = _il.DefineLabel();
-        var lt = EmitExpr(e.GetProperty("l"));
+        var lt = EmitExpr(e.GetProperty("lhs"));
         if (NeedsBoxToRef(lt)) _il.Emit(OpCodes.Box, lt);
         _il.Emit(OpCodes.Dup);
         _il.Emit(OpCodes.Brtrue, nonNull);
         _il.Emit(OpCodes.Pop);                                   // a is null -> result = (b == null)
-        var rt1 = EmitExpr(e.GetProperty("r"));
+        var rt1 = EmitExpr(e.GetProperty("rhs"));
         if (NeedsBoxToRef(rt1)) _il.Emit(OpCodes.Box, rt1);
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Ceq);
         _il.Emit(OpCodes.Br, done);
         _il.MarkLabel(nonNull);                                  // a non-null -> a.Equals((object)b)
-        var rt2 = EmitExpr(e.GetProperty("r"));
+        var rt2 = EmitExpr(e.GetProperty("rhs"));
         if (NeedsBoxToRef(rt2)) _il.Emit(OpCodes.Box, rt2);
         _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("Equals", new[] { typeof(object) }));
         _il.MarkLabel(done);

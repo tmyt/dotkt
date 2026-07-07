@@ -116,9 +116,9 @@ static class TryValueOperandHoist
             return o["result"] is JsonNode r ? r.DeepClone() : o;
         }
 
-        if (k == "binOp" && o["l"] != null && o["r"] != null)
+        if (k == "binOp" && o["lhs"] != null && o["rhs"] != null)
         {
-            HoistOrdered(2, i => i == 0 ? o["l"] : o["r"], (i, v) => { if (i == 0) o["l"] = v; else o["r"] = v; }, atEmpty, pre);
+            HoistOrdered(2, i => i == 0 ? o["lhs"] : o["rhs"], (i, v) => { if (i == 0) o["lhs"] = v; else o["rhs"] = v; }, atEmpty, pre);
             return o;
         }
         if (k == "concat" && o["parts"] is JsonArray parts)
@@ -205,8 +205,8 @@ static class TryValueOperandHoist
         if (node is not JsonObject o) return false;
         var k = K(o);
         if (k == "valueBlock" && IsTryValueBlock(o)) return !atEmpty;
-        if (k == "binOp" && o["l"] != null && o["r"] != null)
-            return WillHoist(o["l"], atEmpty) || WillHoist(o["r"], false);
+        if (k == "binOp" && o["lhs"] != null && o["rhs"] != null)
+            return WillHoist(o["lhs"], atEmpty) || WillHoist(o["rhs"], false);
         if (k == "concat" && o["parts"] is JsonArray parts)
         {
             for (var i = 0; i < parts.Count; i++) if (WillHoist(parts[i], i == 0 && atEmpty)) return true;

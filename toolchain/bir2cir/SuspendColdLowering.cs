@@ -1377,11 +1377,11 @@ static class SuspendColdLowering
                 {
                     if (k == "binOp")
                     {
-                        var rw = RewriteEvalOrder(new List<JsonNode> { o["l"], o["r"] }, outp);
+                        var rw = RewriteEvalOrder(new List<JsonNode> { o["lhs"], o["rhs"] }, outp);
                         var binCopy = new JsonObject();
                         foreach (var kv in o) binCopy[kv.Key] = kv.Value?.DeepClone();
-                        binCopy["l"] = rw[0];
-                        binCopy["r"] = rw[1];
+                        binCopy["lhs"] = rw[0];
+                        binCopy["rhs"] = rw[1];
                         return binCopy;
                     }
                     if (k is "callStatic" or "callInstance" or "clrStatic" or "clrInstance"
@@ -1544,7 +1544,7 @@ static class SuspendColdLowering
                     if (TypeJson.Read(o["elem"]) is TypeNode et) return et;
                     break;
                 case "binOp":
-                    return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" ? BoolTn : TypeOfExpr(o["l"]);
+                    return Str(o["op"]) is "==" or "!=" or "<" or ">" or "<=" or ">=" ? BoolTn : TypeOfExpr(o["lhs"]);
             }
             return AnyTn;
         }
@@ -1592,8 +1592,8 @@ static class SuspendColdLowering
             outp.Add(BrIf(new JsonObject
             {
                 ["k"] = "objEq",
-                ["l"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
-                ["r"] = Suspended(),
+                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
+                ["rhs"] = Suspended(),
             }, false, resumeLabel));
             if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));   // BUG 1: mark the suspend-return
             outp.Add(Ret(Suspended()));
@@ -1678,8 +1678,8 @@ static class SuspendColdLowering
             outp.Add(BrIf(new JsonObject
             {
                 ["k"] = "objEq",
-                ["l"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
-                ["r"] = Suspended(),
+                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
+                ["rhs"] = Suspended(),
             }, false, resumeLabel));
             if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));   // BUG 1: mark the suspend-return
             outp.Add(Ret(Suspended()));
@@ -1765,8 +1765,8 @@ static class SuspendColdLowering
             outp.Add(BrIf(new JsonObject
             {
                 ["k"] = "objEq",
-                ["l"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
-                ["r"] = Suspended(),
+                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
+                ["rhs"] = Suspended(),
             }, false, resumeLabel));
             if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));
             outp.Add(Ret(Suspended()));
@@ -2694,7 +2694,7 @@ static class SuspendColdLowering
                 };
                 // if (r !== COROUTINE_SUSPENDED) return;   else  tcs.Task.Wait();   (block for the async resume)
                 var skipL = NextLabel();
-                body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["l"] = Local("__r"), ["r"] = Suspended() }, false, skipL));
+                body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = Local("__r"), ["rhs"] = Suspended() }, false, skipL));
                 body.Add(new JsonObject
                 {
                     ["k"] = "exprStmt",
@@ -2835,7 +2835,7 @@ static class SuspendColdLowering
             };
 
             var skipL = NextLabel();
-            body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["l"] = Local("__r"), ["r"] = Suspended() }, true, skipL));
+            body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = Local("__r"), ["rhs"] = Suspended() }, true, skipL));
             JsonNode resultVal = IsAnyTn(rKotlin)
                 ? Local("__r")
                 : new JsonObject { ["k"] = "cast", ["type"] = Tw(rKotlin), ["e"] = Local("__r") };
@@ -3029,6 +3029,6 @@ static class SuspendColdLowering
         static JsonObject BrIf(JsonNode cond, bool on, int id) => new()
             { ["k"] = "brIf", ["cond"] = cond, ["on"] = on, ["id"] = id };
         static JsonObject BinEq(JsonNode l, JsonNode r) => new()
-            { ["k"] = "binOp", ["op"] = "==", ["l"] = l, ["r"] = r };
+            { ["k"] = "binOp", ["op"] = "==", ["lhs"] = l, ["rhs"] = r };
     }
 }
