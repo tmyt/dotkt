@@ -89,6 +89,17 @@ public abstract class BaseContinuationImpl(
     public open fun create(value: Any?, completion: Continuation<*>): Continuation<Unit> {
         throw UnsupportedOperationException("create(Any?;Continuation) has not been overridden")
     }
+
+    /**
+     * The general (arity >= 2) form of [create]: the N invoke args arrive BOXED in [args]. The JVM has no
+     * such slot (arity-2+ suspend lambdas there route through the generated `FunctionN.invoke(...)`); this
+     * is the CLR cold-core generalization — a generated N-ary suspend-lambda SM overrides it, allocates a
+     * fresh copy bound to [completion], unpacks `args[i]` into its param fields (with unbox/castclass), and
+     * returns it. The arity 0/1 [create] overloads stay as the fixed fast paths.
+     */
+    public open fun create(args: Array<Any?>, completion: Continuation<*>): Continuation<Unit> {
+        throw UnsupportedOperationException("create(Array<Any?>;Continuation) has not been overridden")
+    }
 }
 
 /** Base for state machines of named RESTRICTED suspend functions (`@RestrictsSuspension` scopes). */
@@ -165,16 +176,13 @@ public fun <R, T> startSuspendUninterceptedOrReturn(fn: Any?, receiver: R, compl
 }
 
 /**
- * The receiver+param (arity-2) form. NOT expressible pre-P3: the [BaseContinuationImpl.create]
- * protocol only covers arities 0/1 (JVM parity — the JVM routes arity-2 through the FunctionN
- * `invoke(r, p, completion)` we do not port); it needs the bir2cir suspend-invoke protocol
- * (bundle-6 P3, the sfunc/delegate path).
+ * The general (arity >= 2) form of [startSuspendUninterceptedOrReturn]: the N invoke args arrive BOXED in
+ * [args]. The cold SM overrides [BaseContinuationImpl.create]`(args, completion)`, unpacking [args] into its
+ * param fields; this starts the created SM to its first suspension exactly like the arity 0/1 helpers.
  */
-public fun <R, P, T> startSuspendUninterceptedOrReturn(fn: Any?, receiver: R, param: P, completion: Continuation<T>): Any? {
-    throw NotImplementedError(
-        "startCoroutineUninterceptedOrReturn (arity-2): requires the suspend-invoke protocol (bundle-6 P3); " +
-        "create() covers arities 0/1 only"
-    )
+public fun <T> startSuspendUninterceptedOrReturnN(fn: Any?, args: Array<Any?>, completion: Continuation<T>): Any? {
+    val sm = fn as? BaseContinuationImpl ?: notAStateMachine("startCoroutineUninterceptedOrReturn")
+    return (sm.create(args, completion) as BaseContinuationImpl).invokeSuspend(Unit)
 }
 
 // --- F2: cross-module suspendCoroutine app-drive bridges ---------------------------------------------

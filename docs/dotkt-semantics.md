@@ -131,6 +131,15 @@ This is a user-stated foundational deviation, not an implementation detail.
 - Gotcha: a member `suspend fun` returning a **user type** drove out a Reflection.Emit limitation
   (`AsyncTaskMethodBuilder<UserT>` is a TypeBuilder instantiation) — fixed by re-anchoring those members via
   `TypeBuilder.GetMethod`.
+- **Invoking a stored suspend function VALUE of arity N uses a cold `create(args)` slot the JVM lacks.** A
+  value of type `suspend (A,B,…) -> R` is a cold `SuspendLambda` state machine (a `BaseContinuationImpl`),
+  not a `FunctionN`. Invoking it (`f(a,b,…)`) drives the SM to its first suspension via the stdlib helpers.
+  Arities 0/1 use the fixed `create(completion)` / `create(value, completion)` slots (JVM parity); arity ≥ 2
+  uses a DotKt-specific general slot `BaseContinuationImpl.create(args: Array<Any?>, completion)` — the N
+  invoke args are boxed into an `Array<Any?>` and unpacked into the SM's param fields. The JVM has no such
+  slot (there an arity-2+ suspend lambda is driven through the generated `FunctionN.invoke(a,b,…,completion)`
+  bridge, which DotKt does not synthesize); the array-create is the CLR cold-core generalization. Purely an
+  internal ABI difference — the language semantics of `f(a,b,…)` are unchanged.
 - Deep dives: `docs/coroutine-abi.md` (the ABI contract), `docs/design-coroutines-clr.md` (design + Track-2 plan),
   `docs/coroutine-stdlib-port-plan.md` (the live implementation plan), memory `coroutine-abi-decision`.
 

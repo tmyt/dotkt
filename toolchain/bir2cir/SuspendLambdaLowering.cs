@@ -10,9 +10,9 @@
 //
 // The `newSuspendLambda` contract (v1; the spec kotc step 2 emits to):
 //   { "k":"newSuspendLambda",
-//     "arity": 0|1,                              // the lambda's OWN param count (v1: 0 or 1; >=2 refused)
+//     "arity": N,                                // the lambda's OWN param count (0/1 = fixed create() slots; >=2 = array create)
 //     "captures":[{"name","type"}],              // captured vars -> SM ctor params + fields
-//     "params":  [{"name","type"}],              // the lambda's own params (arity-1: create(value) sets it)
+//     "params":  [{"name","type"}],              // the lambda's own params (create() sets them on the fresh SM)
 //     "suspendRet":"kotlin.X",                   // the lambda's result type ("void"/"kotlin.Unit" -> Unit)
 //     "typeParams":[<tp-name>,...],              // enclosing generic type-param NAME decls (open SM instantiation)
 //     "body":[ ...structured, suspendCall-tagged... ],
@@ -194,7 +194,7 @@ static class SuspendLambdaLowering
 
         var sm = SuspendColdLowering.BuildLambdaSm(
             smName, arity, captures, lambdaParams, body, resultType, typeArgs, effBaseIsLocal, _calleeRet, restricted);
-        if (sm == null) return node;   // arity >= 2 -> not expressible v1; keep the node (surfaces as a report)
+        if (sm == null) return node;   // arity < 0 (never) -> keep the node; arbitrary N is now expressible
 
         newTypes.Add(sm);
 

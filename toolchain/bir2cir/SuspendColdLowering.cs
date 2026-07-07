@@ -494,14 +494,14 @@ static class SuspendColdLowering
     }
 
     // Part B entry: build a suspend-LAMBDA state-machine TYPE from a newSuspendLambda node's parts (used by
-    // SuspendLambdaLowering). Returns null for arity >= 2 — the create()/invoke protocol covers arities 0/1
-    // only (JVM parity), so a wider lambda is not expressible v1 and the caller keeps the node (reports it).
+    // SuspendLambdaLowering). Handles arbitrary arity N: arities 0/1 override the fixed create() slots, arity
+    // >= 2 overrides the general create(args, completion) slot (CreateMethods unpacks the boxed args).
     public static JsonObject BuildLambdaSm(string smName, int arity,
         List<(string name, TypeNode type)> captures, List<JsonObject> lambdaParams, JsonArray body,
         TypeNode resultType, List<string> typeParams, bool baseIsLocal,
         IReadOnlyDictionary<string, TypeNode> calleeRet = null, bool restricted = false)
     {
-        if (arity is < 0 or > 1) return null;
+        if (arity < 0) return null;
         var gen = new FunGen(smName, arity, captures ?? new List<(string, TypeNode)>(), lambdaParams, body,
             resultType, typeParams,
             calleeRet as Dictionary<string, TypeNode> ??
@@ -2219,8 +2219,12 @@ static class SuspendColdLowering
         // `startSuspendUninterceptedOrReturn(fn, [receiver,] completion)` (= `create(completion).invokeSuspend(Unit)`)
         // rather than a `<name>$dotkt_suspend` call. EmitSuspensionPoint owns the label/suspend/resume dance and
         // the result typing (from the invoke's `retType`); this only builds the start call.
-        //   arity-0 (`b()`):   startSuspendUninterceptedOrReturn<Any>(fn, completion)
-        //   arity-1 (`b(x)`):  startSuspendUninterceptedOrReturn<Any,Any>(fn, x, completion)   // x -> receiver R
+        //   arity-0 (`b()`):    startSuspendUninterceptedOrReturn<Any>(fn, completion)
+        //   arity-1 (`b(x)`):    startSuspendUninterceptedOrReturn<Any,Any>(fn, x, completion)   // x -> receiver R
+        //   arity-N (`b(x,y)`):  startSuspendUninterceptedOrReturnN<Any>(fn, arrayOf<Any?>(x,y,…), completion)
+        //     — the fixed create()/2-3-arg helpers only cover 0/1, so N>=2 boxes the args into an Array<Any?> and
+        //     drives the value through the general create(args, completion) slot (the SM overrides it, unpacking
+        //     args[i] into its param fields). The invoke args are the receiver + params in SuspendFunctionN order.
         JsonObject SuspendValueColdCall(JsonObject callNode, List<JsonNode> outp)
         {
             // Evaluate the value receiver then any invoke arg LEFT-TO-RIGHT (BUG 2 — a nested suspension in an arg).
@@ -2228,11 +2232,7 @@ static class SuspendColdLowering
             if (callNode["args"] is JsonArray oa) foreach (var arg in oa) kids.Add(arg);
             var rw = RewriteEvalOrder(kids, outp);
             var recvRw = rw[0];
-            var invokeArgs = rw.Skip(1).ToList();   // 0 or 1 (SuspendFunction0 / SuspendFunction1)
-            if (invokeArgs.Count > 1)
-                throw new NotSupportedException(
-                    $"suspend-value invoke with {invokeArgs.Count} args (SuspendFunction{invokeArgs.Count}) in " +
-                    $"'{(_ownerClass ?? _fileClass)}.{_name}': the cold-invoke protocol covers arity 0/1 (create() parity)");
+            var invokeArgs = rw.Skip(1).ToList();   // 0 / 1 / N (SuspendFunction0 / 1 / N)
 
             var completion = new JsonObject
             {
@@ -2240,6 +2240,25 @@ static class SuspendColdLowering
                 ["type"] = ContAny(),
                 ["e"] = new JsonObject { ["k"] = "this" },
             };
+
+            if (invokeArgs.Count >= 2)
+            {
+                // arity >= 2: box the N invoke args into an Array<Any?> and call the general N-arg start helper.
+                var elems = new JsonArray();
+                foreach (var a in invokeArgs) elems.Add(a);
+                var argArray = new JsonObject { ["k"] = "newArray", ["elem"] = Tw(AnyTn), ["elems"] = elems };
+                return new JsonObject
+                {
+                    ["k"] = "callStatic",
+                    ["owner"] = StartSuspendOwner,
+                    ["method"] = "startSuspendUninterceptedOrReturnN",
+                    ["typeArgs"] = new JsonArray { Tw(AnyTn) },        // T (result) — erased
+                    // fn:Any, args:Array<Any?>, completion:Continuation<Any> — discriminates the N-arg overload.
+                    ["sig"] = new JsonArray { Tw(AnyTn), Tw(new TypeNode.Array(new TypeNode.Nullable(AnyTn))), ContAny() },
+                    ["args"] = new JsonArray { recvRw, argArray, completion },
+                    ["ret"] = Tw(AnyTn),
+                };
+            }
 
             // args = fn, [receiver], completion ; the helper is generic (<T> arity-0 / <R,T> arity-1), erased to Any.
             var args = new JsonArray { recvRw };
@@ -2429,9 +2448,12 @@ static class SuspendColdLowering
         //   arity-0:  create(completion): Continuation            -> new SM(captures..., completion)
         //   arity-1:  create(value, completion): Continuation     -> sm = new SM(captures..., completion);
         //                                                             sm.<param> = value; return sm
+        //   arity-N:  create(args: Array<Any?>, completion): Continuation
+        //                 -> sm = new SM(captures..., completion); sm.<p0> = args[0]; …; sm.<pN-1> = args[N-1]; return sm
         // Matches BaseContinuationImpl.create's erased CLR ABI: params (Continuation<object>) / (object,
-        // Continuation<object>), return Continuation<object> (Unit-as-typearg erases to object). ilemit binds
-        // the base slot by name + param types (clrOverride), so the param types MUST match exactly.
+        // Continuation<object>) / (object[], Continuation<object>), return Continuation<object> (Unit-as-typearg
+        // erases to object). ilemit binds the base slot by name + param types (clrOverride), so the param types MUST
+        // match exactly.
         IEnumerable<JsonObject> CreateMethods()
         {
             if (_arity == 0)
@@ -2439,6 +2461,46 @@ static class SuspendColdLowering
                 yield return CreateMethod(
                     new JsonArray { new JsonObject { ["name"] = "completion", ["type"] = ContAny() } },
                     new JsonArray { Ret(NewSm()) });
+            }
+            else if (_arity >= 2)
+            {
+                // arity >= 2: override create(args: Array<Any?>, completion). Allocate the SM, unpack each boxed
+                // arg into its param field (the same object -> param cast the arity-1 path uses), return it.
+                var body = new JsonArray
+                {
+                    new JsonObject { ["k"] = "var", ["name"] = "__sm", ["type"] = Tw(_smTypeInst), ["init"] = NewSm() },
+                };
+                for (var i = 0; i < _params.Count; i++)
+                {
+                    var paramName = Str(_params[i]["name"]);
+                    var paramType = TypeJson.Read(_params[i]["type"]) ?? AnyTn;
+                    JsonNode elem = new JsonObject
+                    {
+                        ["k"] = "arrayGet",
+                        ["elem"] = Tw(AnyTn),
+                        ["array"] = new JsonObject { ["k"] = "local", ["name"] = "args" },
+                        ["index"] = IntConst(i),
+                    };
+                    JsonNode storedValue = IsAnyTn(paramType)
+                        ? elem
+                        : new JsonObject { ["k"] = "cast", ["type"] = Tw(paramType), ["e"] = elem };
+                    body.Add(new JsonObject
+                    {
+                        ["k"] = "setField",
+                        ["ownerType"] = Tw(_smTypeInst),
+                        ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "__sm" },
+                        ["name"] = paramName,
+                        ["value"] = storedValue,
+                    });
+                }
+                body.Add(Ret(new JsonObject { ["k"] = "local", ["name"] = "__sm" }));
+                yield return CreateMethod(
+                    new JsonArray
+                    {
+                        new JsonObject { ["name"] = "args", ["type"] = Tw(new TypeNode.Array(new TypeNode.Nullable(AnyTn))) },
+                        new JsonObject { ["name"] = "completion", ["type"] = ContAny() },
+                    },
+                    body);
             }
             else
             {

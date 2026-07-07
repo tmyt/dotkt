@@ -2,8 +2,9 @@
 // (kotlin.coroutines.clr.internal — docs/design-coroutine-cold-core-task-bridge.md §11): a suspend
 // function VALUE is (post-P3) a cold state-machine instance extending BaseContinuationImpl, so
 //   createCoroutineUnintercepted  = sm.create(completion)             [REAL body now]
-//   startCoroutineUninterceptedOrReturn = sm.create(...).invokeSuspend(Unit)  [REAL for arities 0/1;
-//     the arity-2 (receiver, param) form needs the P3 suspend-invoke protocol and throws until then]
+//   startCoroutineUninterceptedOrReturn = sm.create(...).invokeSuspend(Unit)  [REAL for all arities: 0/1
+//     use the fixed create() fast paths; arity >= 2 uses the general create(args, completion) protocol via
+//     startSuspendUninterceptedOrReturnN(fn, arrayOf(args...), completion)]
 //   intercepted                   = identity (v1 — §11: no interceptor dispatch)
 // Until P3 lands, suspend values are NOT SMs, so create/start throw a precise NotImplementedError
 // (from clr.internal.notAStateMachine) instead of silently misbehaving.
@@ -16,6 +17,7 @@ import kotlin.coroutines.clr.internal.BaseContinuationImpl
 import kotlin.coroutines.clr.internal.ContinuationImpl
 import kotlin.coroutines.clr.internal.notAStateMachine
 import kotlin.coroutines.clr.internal.startSuspendUninterceptedOrReturn
+import kotlin.coroutines.clr.internal.startSuspendUninterceptedOrReturnN
 import kotlin.internal.InlineOnly
 
 @SinceKotlin("1.3")
@@ -36,7 +38,7 @@ internal actual inline fun <R, P, T> (suspend R.(P) -> T).startCoroutineUninterc
     receiver: R,
     param: P,
     completion: Continuation<T>
-): Any? = startSuspendUninterceptedOrReturn(this, receiver, param, completion) // arity-2: throws until P3
+): Any? = startSuspendUninterceptedOrReturnN(this, arrayOf<Any?>(receiver, param), completion) // arity-2 via the N-arg protocol
 
 @SinceKotlin("1.3")
 public actual fun <T> (suspend () -> T).createCoroutineUnintercepted(

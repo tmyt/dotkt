@@ -99,6 +99,17 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   now treated as an OPAQUE value inside the cold state machine: its own body is left for
   `SuspendLambdaLowering`, and each capture's construction value is resolved into the SM's vocabulary
   (`__outer` → the member SM's `$this`, a spilled local → its SM field) and threaded as `capValues`.
+- **Invoking a suspend functional VALUE of arity ≥ 2 now lowers (#38).** #36 covered arity 0/1 (the fixed
+  `create(completion)` / `create(value, completion)` continuation slots) and refused arity ≥ 2. The
+  cold core now carries a GENERAL N-arg protocol: `BaseContinuationImpl.create(args: Array<Any?>,
+  completion)` (a new open slot the JVM lacks — there arity 2+ routes through the generated
+  `FunctionN.invoke`) plus `startSuspendUninterceptedOrReturnN(fn, args, completion)`. bir2cir boxes the N
+  invoke args into an `Array<Any?>` and drives the value through that helper, and the generated N-ary
+  suspend-lambda SM overrides `create(args, completion)` — allocating the SM bound to the completion and
+  unpacking `args[i]` into its param fields (the same `object → param` unbox/cast the arity-1 path uses).
+  kotc no longer gates `newSuspendLambda` on arity, so a `suspend (Int,Int) -> Int` / arity-3 capturing
+  lambda emits the pure facts for any N. Covered by the new `cases/il-suspendval2` (arity-2 param/local
+  values + an arity-3 capturing lambda, all → 42).
 - **A discarded generic `Unit`-returning call no longer strands a `kotlin.Unit` on the stack.** A generic
   method `<T> f(): T` instantiated with `T = kotlin.Unit` (e.g. a discarded `blockOn { …Unit… }`) genuinely
   pushes a `kotlin.Unit`, but the statement-context call carries `retType:"void"`; ilemit's `RetOr` trusted
