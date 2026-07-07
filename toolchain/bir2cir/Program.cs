@@ -71,8 +71,7 @@ sealed class Pipeline
                 json,
                 root,
                 SuspendShapeAnalyzer.Analyze(root),
-                CallSiteAnalyzer.Analyze(root),
-                TypeSiteAnalyzer.Analyze(root)));
+                CallSiteAnalyzer.Analyze(root)));
         }
 
         return files;
@@ -491,7 +490,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IRe
     }
 }
 
-sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend, CallSiteAnalysis Calls, TypeSiteAnalysis Types);
+sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend, CallSiteAnalysis Calls);
 sealed record CirFile(string OutputName, string Json);
 
 sealed class ReferenceMetadataIndex
@@ -1348,163 +1347,6 @@ sealed class ReferenceDotKtMetadata
 // NO consumer reads it yet — bundle 6 wires it.
 sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false);
 
-sealed class TypeSiteAnalyzer
-{
-    // The type-bearing JSON keys whose string (or string[]) values carry a type token. SHARED with
-    // BirTypeLowering, which rewrites exactly these. `type` also covers nested params[].type / fields[].type;
-    // `interfaces` and `argTypes` are string arrays.
-    internal static readonly HashSet<string> TypeProperties = new(StringComparer.Ordinal)
-    {
-        "type",
-        "ownerType",
-        "ret",
-        "suspendRet",
-        "base",
-        "interfaces",
-        "argTypes",
-    };
-
-    static readonly HashSet<string> PrimitiveTypes = new(StringComparer.Ordinal)
-    {
-        // CLR-codegen shorthand (bir2cir's output vocabulary).
-        "bool",
-        "byte",
-        "char",
-        "double",
-        "float",
-        "int",
-        "long",
-        "object",
-        "short",
-        "string",
-        "ubyte",
-        "uint",
-        "ulong",
-        "ushort",
-        "void",
-        // The pure-Kotlin input vocabulary — a bare kotlin.* primitive is a recognised primitive (bir2cir lowers
-        // it directly), not an unresolved kotlin-symbol that needs a reference lookup.
-        "kotlin.Boolean",
-        "kotlin.Byte",
-        "kotlin.Char",
-        "kotlin.Double",
-        "kotlin.Float",
-        "kotlin.Int",
-        "kotlin.Long",
-        "kotlin.Any",
-        "kotlin.Nothing",
-        "kotlin.Short",
-        "kotlin.String",
-        "kotlin.UByte",
-        "kotlin.UInt",
-        "kotlin.ULong",
-        "kotlin.UShort",
-        "kotlin.Unit",
-    };
-
-    public static TypeSiteAnalysis Analyze(JsonNode root)
-    {
-        var sites = new List<TypeSite>();
-        Collect(root, "$", sites);
-        return new TypeSiteAnalysis(sites);
-    }
-
-    static void Collect(JsonNode node, string path, List<TypeSite> sites)
-    {
-        if (node is JsonObject obj)
-        {
-            foreach (var child in obj)
-            {
-                if (child.Value == null) continue;
-                var childPath = path + "." + EscapePathSegment(child.Key);
-                if (TypeProperties.Contains(child.Key))
-                    CollectTypeProperty(child.Key, child.Value, childPath, sites);
-                Collect(child.Value, childPath, sites);
-            }
-        }
-        else if (node is JsonArray arr)
-        {
-            for (var i = 0; i < arr.Count; i++)
-                if (arr[i] != null)
-                    Collect(arr[i], path + "[" + i + "]", sites);
-        }
-    }
-
-    static void CollectTypeProperty(string property, JsonNode value, string path, List<TypeSite> sites)
-    {
-        if (value is JsonValue scalar && scalar.TryGetValue<string>(out var type))
-        {
-            AddType(property, path, type, sites);
-        }
-        else if (value is JsonArray arr)
-        {
-            for (var i = 0; i < arr.Count; i++)
-                if (arr[i] is JsonValue item && item.TryGetValue<string>(out var itemType))
-                    AddType(property, path + "[" + i + "]", itemType, sites);
-        }
-    }
-
-    static void AddType(string property, string path, string type, List<TypeSite> sites)
-    {
-        if (string.IsNullOrWhiteSpace(type)) return;
-        sites.Add(new TypeSite(
-            path,
-            property,
-            type,
-            NormalizeTypeName(type),
-            StatusFor(type)));
-    }
-
-    static string StatusFor(string type)
-    {
-        var normalized = NormalizeTypeName(type);
-        if (PrimitiveTypes.Contains(normalized)) return "already-clr";
-        if (normalized.StartsWith("clr:", StringComparison.Ordinal)) return "already-clr";
-        if (normalized.StartsWith("clrg:", StringComparison.Ordinal)) return "already-clr";
-        if (normalized.StartsWith("array:", StringComparison.Ordinal)) return "already-clr";
-        if (normalized.StartsWith("func:", StringComparison.Ordinal)) return "already-clr";
-        if (normalized.StartsWith("sfunc:", StringComparison.Ordinal)) return "already-clr";   // suspend fn type -> object (wave-2b)
-        if (normalized.StartsWith("gp:", StringComparison.Ordinal)) return "already-clr";
-        return "kotlin-symbol";
-    }
-
-    static string NormalizeTypeName(string type) =>
-        type.Trim().TrimStart('@');
-
-    static string EscapePathSegment(string segment) =>
-        segment.Replace("~", "~0", StringComparison.Ordinal).Replace(".", "~1", StringComparison.Ordinal);
-}
-
-sealed record TypeSiteAnalysis(IReadOnlyList<TypeSite> Sites)
-{
-    public JsonObject ToJson()
-    {
-        var byStatus = Sites
-            .GroupBy(s => s.Status)
-            .OrderBy(g => g.Key, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        return new JsonObject
-        {
-            ["total"] = Sites.Count,
-            ["byStatus"] = new JsonObject(byStatus.ToDictionary(kv => kv.Key, kv => (JsonNode)JsonValue.Create(kv.Value))),
-            ["sites"] = new JsonArray(Sites.Select(s => s.ToJson()).Cast<JsonNode>().ToArray()),
-        };
-    }
-}
-
-sealed record TypeSite(string Path, string Property, string Type, string NormalizedType, string Status)
-{
-    public JsonObject ToJson() => new()
-    {
-        ["path"] = Path,
-        ["property"] = Property,
-        ["type"] = Type,
-        ["normalizedType"] = NormalizedType,
-        ["status"] = Status,
-    };
-}
-
 sealed class CallSiteAnalyzer
 {
     static readonly HashSet<string> InterestingKinds = new(StringComparer.Ordinal)
@@ -1856,8 +1698,7 @@ static class BirTypeLowering
     };
 
     // Every JSON key whose string (or string[]) value is a TYPE reference, across signatures, expressions and
-    // statements. SHARED-IN-SPIRIT with TypeSiteAnalyzer.TypeProperties but a strict superset: the analyzer only
-    // ever needed the signature keys, whereas lowering must catch a primitive WHEREVER it sits. Identity/data keys
+    // statements. Lowering must catch a primitive WHEREVER it sits. Identity/data keys
     // that may carry a kotlin.*-looking string but are NOT types (name/value/var/method/id/kind/...) are
     // deliberately excluded — lowering them would corrupt a declaration name or a string literal. `sig` (a
     // comma-joined type list) and `attrs` (attribute applications) get their own handling below.
