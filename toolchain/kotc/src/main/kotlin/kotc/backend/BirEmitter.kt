@@ -2345,19 +2345,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return """{"k":"valueBlock","stmts":[${init.joinToString(",")}],"result":$result}"""
 	}
 
-	internal var synthCounter = 0
-	/**
-	 * A synthetic one-arg lambda `(__x: paramType) -> bodyOf("__x")` lifted to a static method + delegate. Used for
-	 * LINQ ops that need a transform Kotlin doesn't supply as a user lambda (e.g. `chunked` -> `Select(c => c.ToList())`,
-	 * `filterNotNull` -> `Where(x => x != null)`). `bodyOf` builds the body expression from the param-ref BIR.
-	 */
-	internal fun synthLambda(paramType: String, retType: String, bodyOf: (String) -> String): String {
-		val lname = "__synth${synthCounter++}"
-		val pref = """{"k":"local","name":"__x"}"""
-		liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false,"params":[{"name":"__x","type":${str(paramType)}}],"ret":${str(retType)},"body":[{"k":"return","value":${bodyOf(pref)}}]}""")
-		return """{"k":"delegateNew","method":${str(lname)},"funcType":${str("func:$retType:$paramType")}}"""
-	}
-
 	internal fun hasLambdaArg(call: IrCall): Boolean = regularArgs(call).any {
 		it is IrFunctionExpression || ((it as? IrGetValue)?.symbol?.owner?.let { owner -> inlineLambdas.containsKey(owner) } == true)
 	}
