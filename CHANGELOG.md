@@ -498,6 +498,25 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   (whose stdlib body is `Pair(this, that)`). Without this, `mapOf("a" to 1, "b" to 2)` fell to the real `mapOf`
   body, which builds a `Pair<K,V>[]` vararg array and `ArrayTypeMismatch`-crashed under reified generics when
   the elements are more-specifically typed (`Pair<String,String>` stored into `Pair<String,Any>[]`).
+- **Collection-interface member routing is owned by bir2cir alone — kotc's dead duplicate is DELETED
+  (#52 Phase 4).** kotc had a second copy of the routing that rewrites a `kotlin.collections` interface member
+  whose substituted BCL face lacks the slot — `iterator()`/`isEmpty`/`contains`/`containsAll`/`indexOf`/
+  `lastIndexOf`/`subList`/`listIterator()` — into the rt `ClrIteratorBridge`/`ClrCollectionDefaults` helper
+  statics. bir2cir Rule 5 (`Program.cs`) already performs this routing off the ref.dll `@ClrTypeAlias` metadata;
+  kotc's copies were gated on `clrName(declaringClass) != null`, which is **null** for the jar-sourced stdlib
+  collection interfaces (they are not facadegen-injected), so once #5 stopped kotc reading `@ClrTypeAlias` the
+  kotc sites became unreachable dead code. They are removed (three call-site blocks + the lifted
+  `Iterable::iterator` method-reference special-case), which purges the `kotlin.collections.ClrIteratorBridgeKt`
+  owner literal from kotc entirely and drops the `clrListListIterator`/collection-default uses of
+  `ClrCollectionDefaultsKt`. kotc now emits the plain member call; bir2cir derives the CLR-gap routing.
+  Behavior-preserving (the `coll`/`coll2`/`coll3`/`iter`/`iterable`/`sort` samples are the safety net).
+  The Kotlin-**semantic** helper routings that a plain op genuinely CANNOT resolve stay in the frontend as a
+  documented BCL gap (audit §3.3): collection/Map Kotlin-style `toString` (`[a, b]`/`{k=v}` vs the raw .NET
+  type name), structural `==` on List/Set/Map (the substituted BCL collection's `Object.Equals` is reference
+  identity), `Double`/`Float` total-order `compareTo`/`==` (differs from `System.Double.CompareTo`/`Equals`),
+  and the null-safe `Any?.toString()` string-template stringifier — the runtime object is a raw BCL type with
+  no Kotlin override (or a CLR primitive with different semantics), so no real stdlib default body dispatches
+  on it; the helper is the only home.
 - **Primitive Kotlin↔CLR mapping is metadata-driven — bir2cir's hardcoded `KotlinToClr` map is DELETED
   (#55).** The stdlib primitives already carry their CLR identity as metadata: `@ClrTypeAlias("System.Int32")
   class Int`, `@ClrTypeAlias("System.SByte") class Byte`, … (signed/unsigned split per #53/#54), and bir2cir

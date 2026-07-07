@@ -206,8 +206,8 @@ origin (kotc's own `<>dotkt_*` closure/delegate/KProperty synthetic types) — i
 | `compareTo` Double/Float total order 3443–3461, enum 3447–3452 | receiver type/kind | stdlib helper call / `binOp` | Kotlin total-order semantics (differs from `System.Double.CompareTo`) — routes to a stdlib helper, layer-ok |
 | Array `get`/`set` 3695–3701 | `isOperator` + `isArrayType` | `arrayGet`/`arraySet` | CLR array indexing is a primitive IL op |
 | `Delegates.observable/vetoable/notNull` 3432–3438 | `declaringClass=="kotlin.properties.Delegates"` + name | synth delegate class | property-delegation protocol (frontend); **(a) migratable only if stdlib ships real delegate impls** — deferred, medium risk |
-| Collection-default bridges 3376–3409 (`iterator`/`isEmpty`/`contains`/`listIterator`) | name + `clrName(declaringClass)!=null` + `kotlin.collections` | callStatic into `ClrIteratorBridgeKt`/`ClrCollectionDefaultsKt` | **substitute-mode only** (`clrName` non-null); bridges the BCL `IEnumerable` gap. Kotlin-semantic; borderline — could be stdlib default bodies (see §Bridges) |
-| collection toString/equals routing 4137/4146/4178/4243, `collToStringRoute`, `floatTotalEqRoute`, `collEqRoute` | static collection/float type | callStatic into `ClrCollectionDefaultsKt`/`ClrMapDefaultsKt`/`NumbersKt` | Kotlin structural-equality / Kotlin-style `[a, b]` toString — a language semantic routed to a stdlib helper |
+| ~~Collection-default bridges (`iterator`/`isEmpty`/`contains`/`listIterator`)~~ | name + `clrName(declaringClass)!=null` + `kotlin.collections` | callStatic into `ClrIteratorBridgeKt`/`ClrCollectionDefaultsKt` | ✅ **DELETED (#52 Phase 4)** — dead code; bir2cir Rule 5 owns the routing (gate was null for jar-sourced stdlib interfaces) |
+| collection toString/equals routing `collToStringRoute`/`floatTotalEqRoute`/`collEqRoute`/`concatOperand`, `compareTo` Double/Float | static collection/float type | callStatic into `ClrCollectionDefaultsKt`/`ClrMapDefaultsKt`/`NumbersKt`/`LibraryKt` | **GENUINE-GAP, KEPT (#52 Phase 4)** — Kotlin structural-`==` / `[a, b]` toString / Double-Float total order / null-safe stringify; raw BCL runtime object has no Kotlin override → no real body resolves it (see Part 4 Phase 4) |
 
 ---
 
@@ -247,19 +247,23 @@ them in isolation (irBuiltIns) is the half-measure; the real fix is relocating t
 kotc synthesizes `callStatic` into a **named stdlib runtime helper** by hardcoded FQN. These encode a
 **Kotlin-semantic → stdlib-helper** routing:
 
-| Owner literal | Sites | What it routes | Note |
+| Owner literal | Sites | What it routes | Verdict (#52 Phase 4) |
 |---|---|---|---|
-| `kotlin.collections.ClrIteratorBridgeKt` | 2262, 3382 | `iterator()` → GetEnumerator bridge | substitute-mode bridge (§Bridges) |
-| `kotlin.collections.ClrCollectionDefaultsKt` | 3397, 3407, 4717, 4774/4775 | isEmpty/contains/indexOf/subList/listIterator + coll toString/struct-eq | substitute-mode + Kotlin-semantic routing |
-| `kotlin.collections.ClrMapDefaultsKt` | 4713, 4773 | map toString / struct-eq | Kotlin-semantic routing |
-| `kotlin.NumbersKt` | 3460, 4741 | Double/Float total-order compare/equals | Kotlin total-order semantic |
-| `kotlin.LibraryKt` | 4791 | (helper) | check at fix time |
+| `kotlin.collections.ClrIteratorBridgeKt` | 2262 (mref), 3330 (call) | `iterator()` → GetEnumerator bridge | ✅ **CLEAN-MIGRATE (deleted)** — dead, bir2cir Rule 5 owns it |
+| `kotlin.collections.ClrCollectionDefaultsKt` (member routing) | 3345, 3355 | isEmpty/contains/containsAll/indexOf/lastIndexOf/subList/listIterator | ✅ **CLEAN-MIGRATE (deleted)** — dead, bir2cir Rule 5 owns it |
+| `kotlin.collections.ClrCollectionDefaultsKt` (semantics) | 4589, 4646, 4647 | coll toString / List+Set struct-eq | **GENUINE-GAP (kept)** — raw BCL `List<T>` has no Kotlin override |
+| `kotlin.collections.ClrMapDefaultsKt` | 4585, 4645 | map toString / struct-eq | **GENUINE-GAP (kept)** — raw BCL `Dictionary` has no Kotlin override |
+| `kotlin.NumbersKt` | 3373, 4613 | Double/Float total-order compare/equals | **GENUINE-GAP (kept)** — differs from `System.Double.CompareTo`/`Equals` |
+| `kotlin.LibraryKt` | 4663 | null-safe `Any?.toString()` (`this?.toString() ?: "null"`) string-template stringifier | **GENUINE-GAP (kept)** — CLR concat of null → `""`, Kotlin → `"null"` |
 
-**Verdict:** these are the *grayest* area. They are Kotlin *semantics* (structural equality, Kotlin-style
-`toString`, the enumerator-protocol bridge), so by the letter they belong to kotc/frontend — **but** they name
-a concrete stdlib helper, which is the same smell. The cleanest end-state is that these become **plain member
-calls that resolve to real stdlib default bodies** (e.g. `AbstractList.toString`/`.equals` already exist),
-letting kotc emit `x.toString()`/`x == y` plainly. **Medium effort, medium value; sequence AFTER §2.1.**
+**Verdict:** the *grayest* area, resolved by SPLIT (details in Part 4 Phase 4). The **collection-member routing**
+(iterator/isEmpty/contains/…) is DEAD — bir2cir Rule 5 already routes it off the ref.dll `@ClrTypeAlias`
+metadata; kotc's copies were gated on `clrName(declaringClass) != null` which is null for the jar-sourced stdlib
+collection interfaces. **Deleted.** The **Kotlin-semantic routings** (structural `==`, Kotlin-style `toString`,
+Double/Float total order, null-safe stringify) are **GENUINE-GAP, kept**: the naive "resolve to a real
+`AbstractList.toString`/`.equals` body" premise is FALSE — `listOf(…)` lowers to a **raw .NET `List<T>`**, not a
+Kotlin `AbstractList`, so no default body dispatches on it; a plain `x.toString()`/`x == y` would be wrong. The
+helper is the only home for those semantics.
 
 ### 3.4 Synthetic-type / interop literals (KEEP)
 
@@ -357,13 +361,52 @@ Ordered high-value-contained → gray → defer. Each phase is independently gat
   (`val (a, b) = pair`, `val (k, v) = mapEntry`, `val (i, v) = list.withIndex().first()`, `val (a, b, c) =
   triple`), explicit `t.component1()`, and `"x" to 1` all correct.
 
-### Phase 4 (gray, medium) — the stdlib-helper routings (§3.3)
-- Make `collToString`/`collEq`/`floatTotalEq`/iterator-bridge/coll-defaults resolve to **real stdlib default
-  bodies** (`AbstractList.toString`/`.equals`, an `IEnumerable`→Iterator adapter in the stdlib) so kotc emits
-  plain `x.toString()`/`x == y`/`for`. Removes the `ClrCollectionDefaultsKt`/`ClrMapDefaultsKt`/`NumbersKt`/
-  `ClrIteratorBridgeKt`/`LibraryKt` literal owners.
-- **Risk:** medium — these were added to paper over BCL-collection gaps; needs the stdlib default bodies to
-  actually run under substitution. Sequence AFTER Phases 1–3.
+### Phase 4 (gray, medium) — the stdlib-helper routings (§3.3) — ✅ DONE (#52), PARTIAL by design
+Investigated each §3.3 helper-owner site. The gray area splits cleanly into **DEAD-DUPLICATE** (bir2cir already
+owns the routing — delete) and **GENUINE-GAP** (Kotlin semantics a plain op cannot resolve — keep + document).
+The naive premise of the original plan — "make them resolve to a real `AbstractList.toString`/`.equals` body" —
+is **false**: `listOf(…)` lowers (via bir2cir factory substitution → `newList`) to a **raw .NET `List<T>`**, NOT
+an instance of Kotlin's `AbstractList`. So `AbstractCollection.toString`/`AbstractList.equals` never dispatch on
+the runtime object — `System.Object.ToString` / reference-`Equals` run instead. A plain `x.toString()`/`x == y`
+would therefore be WRONG. The helper is the only home for those Kotlin semantics.
+
+**CLEAN-MIGRATE (deleted from kotc):**
+- **Iterator bridge** — `ClrIteratorBridgeKt.iteratorOverEnumerable`, sites 2262 (lifted `Iterable::iterator`
+  mref special-case) + 3330 (call-site `iterator()`). **Dead** — superseded by bir2cir Rule 5
+  (`Program.cs` ~4993) + the emitted-collection self-call path (~4828). kotc's gate `clrName(declaringClass)
+  != null` is null for the jar-sourced stdlib collection interfaces. Deleted → the `ClrIteratorBridgeKt` owner
+  literal is GONE from kotc entirely.
+- **Collection defaults** — `ClrCollectionDefaultsKt.{clrCollIsEmpty,clrCollContains,clrCollContainsAll,
+  clrListIndexOf,clrListLastIndexOf,clrListSubList,clrListListIterator}`, sites 3345 (`isEmpty`/`contains`/…)
+  + 3355 (`listIterator`). **Dead** — superseded by bir2cir Rule 5 (`CollectionDefaults` map + the
+  `listIterator` branch). Deleted → the `clrListListIterator`/collection-default uses of `ClrCollectionDefaultsKt`
+  are gone (the literal survives only in the toString/struct-equals GENUINE-GAP sites below).
+
+**GENUINE-GAP (kept in kotc, documented BCL gap):** these are Kotlin **semantics** applied off the operand's
+static type; the substituted runtime object (raw BCL collection / CLR primitive) has no Kotlin override, so no
+real default body can resolve them. They correctly live in the frontend and route to a stdlib helper because the
+BCL type offers no such method. (A future move to bir2cir would be mechanism-(b) recognition-relocation — same
+hardcode one layer down, NOT a "real body resolves it" win — so out of scope for this phase, which migrates only
+the clean/dead set.)
+- **Collection/Map Kotlin-style `toString`** — `ClrCollectionDefaultsKt.clrCollToString` (`[a, b]`),
+  `ClrMapDefaultsKt.clrMapToString` (`{k=v}`), sites 4589/4585. The BCL `List<T>`/`Dictionary<K,V>` `ToString`
+  yields the raw .NET type name; Kotlin contracts `[a, b]`/`{k=v}`. `collToStringRoute` also feeds the
+  string-template / `+`-concat / explicit-`toString()` paths.
+- **Structural `==` on List/Set/Map** — `ClrCollectionDefaultsKt.{clrCollStructEquals,clrSetStructEquals}` +
+  `ClrMapDefaultsKt.clrMapStructEquals`, sites 4645–4647. Kotlin `==` on collections is structural (element/
+  entrywise); the substituted BCL collection's `Object.Equals` is REFERENCE identity. `collEqRoute` matches the
+  collection KIND off both operands (`listOf(1) == setOf(1)` stays false).
+- **`Double`/`Float` total-order** — `NumbersKt.{clrDoubleCompare,clrFloatCompare,clrDoubleEquals,clrFloatEquals}`,
+  sites 3373 (direct `compareTo`) + 4613 (boxed `==`). Kotlin's total order (`-0.0 < 0.0`, `NaN` largest,
+  `NaN.compareTo(NaN) == 0`, `NaN == NaN`) differs from `System.Double.CompareTo`/`Equals` — and bir2cir's
+  Rule 1c would route a plain primitive `compareTo` to the WRONG `System.Double.CompareTo`. Direct `<`/`>`
+  keep the fast IEEE intrinsics (unaffected).
+- **Null-safe `Any?.toString()` stringifier** — `LibraryKt.toString` (`this?.toString() ?: "null"`), site 4663.
+  A nullable string-template / concat operand must render a null as the string `"null"`; a bare CLR
+  `String.Concat`/`Append` of a null reference yields `""`. Pure Kotlin-language rendering rule.
+
+**Verified:** verify-il 242/0, ktproj/differential/roundtrip green, schema 0 violations; byte-identical behavior
+on the collection/map struct-equality + toString + Double/Float total-order + iterator samples.
 
 ### Phase 5 — the operator / conv / range-desugar bucket (relocate to bir2cir; DEFERRED for cost)
 - **Principled target, per the faithful-transcriber rule:** kotc emits the faithful `callInstance`
@@ -404,8 +447,8 @@ Ordered high-value-contained → gray → defer. Each phase is independently gat
 - Preconditions: `4263–4293` (+ `newExc` 132/337/847). Scope: `3485–3489`. use: `3493`. repeat: `4301`.
 - Operators: `4159–4235`. EQEQ/EQEQEQ: `4169–4182`. String.plus: `4162`.
 - Delegates.observable/vetoable/notNull: `3432–3438`.
-- Collection bridges: `iterator` `3376–3384`, defaults `3387–3399`, `listIterator` `3401–3409`, lifted
-  `iterator` mref `2260–2263`.
-- Kotlin-semantic helper routes: `collToStringRoute` `4701–4720`, `floatTotalEqRoute` `4736–4742`,
-  `collEqRoute` `4744+`, `compareTo` Double/Float `3457–3461`.
+- Collection bridges (iterator/defaults/listIterator + lifted `iterator` mref): ✅ DELETED (#52 Phase 4) —
+  routing owned by bir2cir Rule 5 (`Program.cs`).
+- Kotlin-semantic helper routes (GENUINE-GAP, KEPT — #52 Phase 4): `collToStringRoute`, `floatTotalEqRoute`,
+  `collEqRoute`, `concatOperand` (LibraryKt), `compareTo` Double/Float.
 - clrName (interop, keep): `4483–4534`.

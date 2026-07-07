@@ -2254,13 +2254,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 				val retVoid = fn.returnType.isUnit()
 				val retT = birType(fn.returnType)
-				// A lifted `Iterable::iterator` (e.g. `Sequence { this.iterator() }`) reaches here, NOT the call-site
-				// iterator() lowering — route it to the enumerator bridge too, else `__self.iterator()` calls a
-				// non-existent `iterator()` on the substituted BCL IEnumerable.
-				val callE = if (member == "iterator" && ownerClass?.fqNameWhenAvailable?.asString()?.startsWith("kotlin.collections") == true) {
-					val elem = (fn.parameters[dispatchIdx].type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
-					"""{"k":"callStatic","owner":${fqnJson("kotlin.collections.ClrIteratorBridgeKt")},"method":"iteratorOverEnumerable","args":[{"k":"local","name":"__self"}],"typeArgs":[${str(elem)}]}"""
-				} else """{"k":"clrInstance","type":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]}"""
+				// A genuine `NetType::m` method reference -> a lifted static forwarding to the .NET instance method.
+				// (A kotlin.collections `Iterable::iterator` never reaches here: clrOwner is null for a jar-sourced stdlib
+				// collection interface, so the enumerator-bridge routing lives in bir2cir Rule 5, not this clrOwner!=null path.)
+				val callE = """{"k":"clrInstance","type":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]}"""
 				val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 				val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
 				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
@@ -3316,45 +3313,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// funs is metadata-driven and stays). See [clrInteropName] / CLAUDE.md "kotc reads
 		// NEITHER @ClrIntrinsic NOR @ClrTypeAlias".
 
-		// `recv.iterator()` on a CLR-bound (@Clr) kotlin.collections.Iterable -> the stdlib enumerator bridge
-		// `iteratorOverEnumerable(recv)`. A BCL IEnumerable has GetEnumerator (a struct for List<T>), NOT a Kotlin
-		// `iterator()`; the bridge wraps GetEnumerator in a Kotlin Iterator adapter (hasNext/next over MoveNext/Current).
-		// `for` desugars to iterator()/hasNext()/next() in FIR — only iterator() needs interception; hasNext/next then run
-		// on the returned adapter. expect/actual forces iterator() abstract, so it can't carry a default body (rule 3).
-		if (name == "iterator" && callee.correspondingPropertySymbol == null &&
-			callee.parameters.none { it.kind == IrParameterKind.Regular } &&
-			declaringClass != null && clrName(declaringClass) != null &&
-			declaringClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin.collections") == true) {
-			dispatchReceiver(call)?.let { recv ->
-				val elem = (recv.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
-				return """{"k":"callStatic","owner":${fqnJson("kotlin.collections.ClrIteratorBridgeKt")},"method":"iteratorOverEnumerable","args":[${expr(recv)}],"typeArgs":[${str(elem)}]}"""
-			}
-		}
-		// Non-BCL Collection/List members -> runtime default helpers (same bridge pattern as iterator()): the substituted
-		// BCL IReadOnly* types lack isEmpty/contains/containsAll/indexOf/lastIndexOf. Helper takes (recv, args...).
-		val collDefault = when (name) {
-			"isEmpty" -> "clrCollIsEmpty"; "contains" -> "clrCollContains"; "containsAll" -> "clrCollContainsAll"
-			"indexOf" -> "clrListIndexOf"; "lastIndexOf" -> "clrListLastIndexOf"; "subList" -> "clrListSubList"; else -> null
-		}
-		if (collDefault != null && callee.correspondingPropertySymbol == null &&
-			declaringClass != null && clrName(declaringClass) != null &&
-			declaringClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin.collections") == true) {
-			dispatchReceiver(call)?.let { recv ->
-				val elem = (recv.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
-				val cargs = (listOf(expr(recv)) + regularArgs(call).map { expr(it) }).joinToString(",")
-				return """{"k":"callStatic","owner":${fqnJson("kotlin.collections.ClrCollectionDefaultsKt")},"method":"$collDefault","args":[$cargs],"typeArgs":[${str(elem)}]}"""
-			}
-		}
-		// listIterator() / listIterator(index) -> the ClrListIterator adapter; default index 0 for the no-arg overload.
-		if (name == "listIterator" && callee.correspondingPropertySymbol == null &&
-			declaringClass != null && clrName(declaringClass) != null &&
-			declaringClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin.collections") == true) {
-			dispatchReceiver(call)?.let { recv ->
-				val elem = (recv.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
-				val idxArg = regularArgs(call).firstOrNull()?.let { expr(it) } ?: """{"k":"const","type":${fqnJson("kotlin.Int")},"value":0}"""
-				return """{"k":"callStatic","owner":${fqnJson("kotlin.collections.ClrCollectionDefaultsKt")},"method":"clrListListIterator","args":[${expr(recv)},$idxArg],"typeArgs":[${str(elem)}]}"""
-			}
-		}
+		// NOTE: collection-interface member routing — `iterator()`/`isEmpty`/`contains`/`containsAll`/`indexOf`/
+		// `lastIndexOf`/`subList`/`listIterator()` on a @ClrTypeAlias `kotlin.collections` interface, whose substituted
+		// BCL IReadOnly*/IEnumerable face lacks these slots — is OWNED BY bir2cir Rule 5 (Program.cs ~4979), which routes
+		// them to the rt `ClrIteratorBridge`/`ClrCollectionDefaults` helpers off the ref.dll @ClrTypeAlias metadata. kotc
+		// emits the PLAIN member call (faithful IR); it does NOT name the helper class. The former kotc copies here were
+		// gated on `clrName(declaringClass) != null`, which is null for the jar-sourced stdlib collection interfaces (they
+		// are NOT facadegen-injected) — so they were dead once #5 stopped kotc reading @ClrTypeAlias. Removed (#52 Phase 4).
 
 		// A call to a lifted local function -> static call with captured values (incl. enclosing `this`) prepended.
 		localFns[callee]?.let { (lname, caps, tps) ->
