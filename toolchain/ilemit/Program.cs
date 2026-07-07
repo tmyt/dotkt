@@ -2474,11 +2474,11 @@ sealed partial class Emitter
             // ldc opcode loads the right bits, only the stack TYPE differs (so add/print are unsigned).
             case "uint": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(uint);
             case "ulong": _il.Emit(OpCodes.Ldc_I8, v.GetInt64()); return typeof(ulong);
-            case "ubyte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(byte);
+            case "byte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(byte);
             case "ushort": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(ushort);
-            // Signed Byte/Short (Kotlin Byte = sbyte, Short = Int16). Without these a `const byte`/`const short`
-            // fell to default -> Ldnull -> InvalidProgramException when passed to a byte/short parameter.
-            case "byte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(sbyte);
+            // Signed Byte/Short (Kotlin Byte = sbyte token, Short = Int16). Without these a `const sbyte`/`const short`
+            // fell to default -> Ldnull -> InvalidProgramException when passed to an sbyte/short parameter.
+            case "sbyte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(sbyte);
             case "short": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(short);
             // NaN / ±Infinity are emitted as a JSON STRING (not a number token, which JSON forbids) — parse them back.
             case "double": _il.Emit(OpCodes.Ldc_R8, v.ValueKind == JsonValueKind.String ? double.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetDouble()); return typeof(double);
@@ -2647,7 +2647,7 @@ sealed partial class Emitter
             case "double" or "kotlin.Double": _il.Emit(OpCodes.Conv_R8); return typeof(double);
             case "float" or "kotlin.Float": _il.Emit(OpCodes.Conv_R4); return typeof(float);
             case "short" or "kotlin.Short": _il.Emit(OpCodes.Conv_I2); return typeof(short);
-            case "byte" or "kotlin.Byte": _il.Emit(OpCodes.Conv_I1); return typeof(sbyte);
+            case "sbyte" or "kotlin.Byte": _il.Emit(OpCodes.Conv_I1); return typeof(sbyte);
             case "char" or "kotlin.Char": _il.Emit(OpCodes.Conv_U2); return typeof(char);
             default: throw new NotSupportedException("conv " + SlotName(e.GetProperty("to")));
         }
@@ -3392,7 +3392,7 @@ sealed partial class Emitter
         return spec switch
         {
             "void" or "int" or "long" or "double" or "float" or "bool" or "char" or "string" or
-            "uint" or "ulong" or "ubyte" or "ushort" or "short" or "byte" or "object" => MapType(spec),
+            "uint" or "ulong" or "byte" or "ushort" or "short" or "sbyte" or "object" => MapType(spec),
             _ => ClrRef(ClrOwnerSpec(spec)),
         };
     }
@@ -3908,7 +3908,7 @@ sealed partial class Emitter
         ResolveType(s);
 
     static readonly HashSet<string> PrimShorthand = new(StringComparer.Ordinal)
-    { "void", "object", "string", "int", "long", "short", "byte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "ubyte" };
+    { "void", "object", "string", "int", "long", "short", "sbyte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "byte" };
 
     // A generic TYPE ARGUMENT of `System.Void` is illegal in .NET; Kotlin `Unit`/`Nothing` map to `void` for a return
     // position but as a type arg (`Continuation<Unit>`, `Map<K, Unit>`, …) they must be a real type -> `object`.
@@ -4102,9 +4102,10 @@ sealed partial class Emitter
             "void" => typeof(void), "int" => typeof(int), "long" => typeof(long),
             "double" => typeof(double), "float" => typeof(float), "bool" => typeof(bool),
             "char" => typeof(char), "string" => typeof(string),
-            "uint" => typeof(uint), "ulong" => typeof(ulong), "ubyte" => typeof(byte), "ushort" => typeof(ushort),
-            // Kotlin Byte is SIGNED (sbyte, -128..127); UByte is the unsigned `byte`.
-            "short" => typeof(short), "byte" => typeof(sbyte),
+            "uint" => typeof(uint), "ulong" => typeof(ulong), "byte" => typeof(byte), "ushort" => typeof(ushort),
+            // .NET-aligned 8-bit tokens (#54): token "sbyte" is SIGNED (kotlin.Byte, -128..127); token "byte" is
+            // UNSIGNED (kotlin.UByte, System.Byte, 0..255) — matching int/short/long naming.
+            "short" => typeof(short), "sbyte" => typeof(sbyte),
             // A bare FQN identity (kotc's pure-FQN output — NO `@`/`clr:` marker): ilemit DERIVES where the type lives.
             // An in-assembly emitted type (`_types`, incl. the constructed `Name[args]` form) wins FIRST, else a
             // referenced .NET type by reflection (`System.X`), else fall back to object (the pre-existing default for an

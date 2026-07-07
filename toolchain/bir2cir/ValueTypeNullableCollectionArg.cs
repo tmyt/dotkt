@@ -29,7 +29,7 @@ static class ValueTypeNullableCollectionArg
     {
         "kotlin.Boolean", "kotlin.Byte", "kotlin.Char", "kotlin.Double", "kotlin.Float", "kotlin.Int",
         "kotlin.Long", "kotlin.Short", "kotlin.UByte", "kotlin.UInt", "kotlin.ULong", "kotlin.UShort",
-        "bool", "byte", "char", "double", "float", "int", "long", "short", "ubyte", "uint", "ulong", "ushort",
+        "bool", "sbyte", "char", "double", "float", "int", "long", "short", "byte", "uint", "ulong", "ushort",
     };
 
     public static void Apply(JsonNode root) => Walk(root);

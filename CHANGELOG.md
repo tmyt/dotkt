@@ -321,6 +321,16 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   completes bir2cir's `PrimitiveBirName` (the missing `sbyte` + unsigned family) and resolves injected unsigned
   return types in the frontend (they previously degraded to `Any?` in a return position). See
   `docs/dotkt-semantics.md` §9b.
+- **De-invert the internal 8-bit shorthand tokens to match .NET (#54).** The compiler's internal
+  primitive shorthand `"byte"` used to mean SIGNED (`kotlin.Byte` = `System.SByte`) and `"ubyte"` UNSIGNED
+  (`System.Byte`) — inverted vs .NET/CIL/C#, where `byte` is unsigned and `sbyte` is signed. `int`/`short`/
+  `long` already agreed with .NET; `byte` was the lone outlier that followed Kotlin's naming, leaving an
+  active semantic inversion in the CLR-facing bir2cir↔ilemit layer. The 8-bit tokens are now .NET-aligned:
+  the token `"sbyte"` is SIGNED (`kotlin.Byte`→`typeof(sbyte)`) and `"byte"` is UNSIGNED
+  (`kotlin.UByte`→`typeof(byte)`), uniform with `int`→`Int32`/`short`→`Int16`/`long`→`Int64`. Purely an
+  internal token rename across bir2cir (producer) and ilemit (consumer) — the CIR `{t:fqn,name:…}` wire value
+  changes spelling (`byte`→`sbyte` for signed, `ubyte`→`byte` for unsigned) but byte VALUES are identical; the
+  JSON schema/validator treat `fqn.name` as an opaque identity string, so the frozen contract is untouched.
 - **Idiomatic .NET events: `w.Changed += handler` / `-= handler`.** A .NET event surfaces as a
   `ClrEvent<T>` member with `+=`/`-=` operators (replacing the `add_`/`remove_` accessor stopgap), for
   instance, static, and interface events. The event Kotlin↔CLR relation now lives entirely in bir2cir.

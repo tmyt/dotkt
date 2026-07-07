@@ -547,7 +547,7 @@ sealed class ReferenceMetadataIndex
     {
         "kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte", "kotlin.Double", "kotlin.Float",
         "kotlin.Boolean", "kotlin.Char", "kotlin.UInt", "kotlin.ULong", "kotlin.UShort", "kotlin.UByte",
-        "int", "long", "short", "byte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "ubyte",
+        "int", "long", "short", "sbyte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "byte",
     };
 
     ReferenceMetadataIndex(List<ReferenceAssembly> assemblies)
@@ -757,7 +757,7 @@ sealed class ReferenceMetadataIndex
         if (t.StartsWith("gp:", StringComparison.Ordinal)) return "gp";
         return t switch
         {
-            "kotlin.Byte" or "System.SByte" or "sbyte" or "byte" => "i8",   // kotc BIR shorthand "byte" IS kotlin.Byte (SByte)
+            "kotlin.Byte" or "System.SByte" or "sbyte" => "i8",             // signed 8-bit; token "sbyte" IS kotlin.Byte (System.SByte)
             "kotlin.Short" or "System.Int16" or "short" => "i16",
             "kotlin.Int" or "System.Int32" or "int" => "i32",
             "kotlin.Long" or "System.Int64" or "long" => "i64",
@@ -780,7 +780,7 @@ sealed class ReferenceMetadataIndex
             "kotlin.CharArray" => "array:char",
             // Unsigned specialized arrays (#53): native System.Byte[]/UInt16[]/UInt32[]/UInt64[]. Same array key as
             // their element token so an @ClrIntrinsic signature over the ref.dll spelling matches.
-            "kotlin.UByteArray" => "array:ubyte",
+            "kotlin.UByteArray" => "array:byte",
             "kotlin.UShortArray" => "array:ushort",
             "kotlin.UIntArray" => "array:uint",
             "kotlin.ULongArray" => "array:ulong",
@@ -1166,12 +1166,12 @@ sealed class ReferenceMetadataIndex
     static string SigKeyOf(ParameterInfo[] ps) => string.Join(",", ps.Select(p => ParamKey(TypeName(p.ParameterType))));
 
     // An @JvmInline backing-field's CLR `conv` target — the ilemit conv opcode token for the field's primitive type
-    // (kotlin.Int -> "int", kotlin.Byte -> "byte"=sbyte, ...). Null if the field is not a primitive ilemit conv'able.
+    // (kotlin.Int -> "int", kotlin.Byte -> "sbyte", ...). Null if the field is not a primitive ilemit conv'able.
     static string InlineFieldConv(Type fieldType) => fieldType.FullName switch
     {
-        "kotlin.Int" => "int", "kotlin.Long" => "long", "kotlin.Short" => "short", "kotlin.Byte" => "byte",
+        "kotlin.Int" => "int", "kotlin.Long" => "long", "kotlin.Short" => "short", "kotlin.Byte" => "sbyte",
         "kotlin.Char" => "char", "kotlin.Double" => "double", "kotlin.Float" => "float",
-        "System.Int32" => "int", "System.Int64" => "long", "System.Int16" => "short", "System.SByte" => "byte",
+        "System.Int32" => "int", "System.Int64" => "long", "System.Int16" => "short", "System.SByte" => "sbyte",
         "System.Char" => "char", "System.Double" => "double", "System.Single" => "float",
         _ => null,
     };
@@ -1234,11 +1234,11 @@ sealed class ReferenceMetadataIndex
     static string PrimitiveBirName(Type type)
     {
         if (type == typeof(bool)) return "bool";
-        // .NET SByte is SIGNED = kotlin.Byte (token "byte"); .NET Byte is UNSIGNED = kotlin.UByte (token "ubyte").
-        // #53: sbyte was previously missing (fell through to a raw "System.SByte" string) and byte carried the wrong
-        // sign. The unsigned family (ushort/uint/ulong) is added here for the same reason.
-        if (type == typeof(sbyte)) return "byte";
-        if (type == typeof(byte)) return "ubyte";
+        // .NET-aligned 8-bit tokens (#54): "sbyte" is SIGNED = kotlin.Byte (System.SByte); "byte" is UNSIGNED =
+        // kotlin.UByte (System.Byte). This matches int/short/long, whose token names already agree with .NET.
+        // The unsigned family (ushort/uint/ulong) is here for the same reason.
+        if (type == typeof(sbyte)) return "sbyte";
+        if (type == typeof(byte)) return "byte";
         if (type == typeof(char)) return "char";
         if (type == typeof(double)) return "double";
         if (type == typeof(float)) return "float";
@@ -1260,7 +1260,7 @@ sealed class ReferenceMetadataIndex
     static string PrimitiveBirNameByFullName(string fullName) => fullName switch
     {
         "kotlin.Boolean" => "bool",
-        "kotlin.Byte" => "byte",
+        "kotlin.Byte" => "sbyte",
         "kotlin.Char" => "char",
         "kotlin.Double" => "double",
         "kotlin.Float" => "float",
@@ -1269,7 +1269,7 @@ sealed class ReferenceMetadataIndex
         "kotlin.Any" => "object",
         "kotlin.Short" => "short",
         "kotlin.String" => "string",
-        "kotlin.UByte" => "ubyte",
+        "kotlin.UByte" => "byte",
         "kotlin.UInt" => "uint",
         "kotlin.ULong" => "ulong",
         "kotlin.UShort" => "ushort",
@@ -1660,7 +1660,7 @@ static class BirTypeLowering
     // kotc emits ONLY the type's FQN identity (kotlin.String / kotlin.Any / kotlin.UInt / ...), never a CLR
     // resolution marker — so EVERY @Clr-bound foundational type lowers HERE, uniformly, exactly like the signed/
     // bool/char primitives: kotlin.String -> string, kotlin.Any -> object, and the unsigned set (note
-    // kotlin.UByte is an UNSIGNED byte = System.Byte, token "ubyte", NOT the signed "byte"). The whole set is
+    // kotlin.UByte is an UNSIGNED byte = System.Byte, token "byte", NOT the signed "sbyte"). The whole set is
     // mode-gated by refBuild (LowerTypeString below): the reference surface keeps kotlin.* verbatim, every other
     // build lowers. kotlin.Unit is the ONE token NOT here: it is position-dependent (return -> void via the
     // ReturnKeys path; a Unit VALUE keeps the emitted Unit type — you cannot have a `void` field), handled
@@ -1671,7 +1671,7 @@ static class BirTypeLowering
         ["kotlin.Int"] = "int",
         ["kotlin.Long"] = "long",
         ["kotlin.Short"] = "short",
-        ["kotlin.Byte"] = "byte",
+        ["kotlin.Byte"] = "sbyte",
         ["kotlin.Double"] = "double",
         ["kotlin.Float"] = "float",
         ["kotlin.Boolean"] = "bool",
@@ -1681,7 +1681,7 @@ static class BirTypeLowering
         ["kotlin.Any"] = "object",
         ["kotlin.UInt"] = "uint",
         ["kotlin.ULong"] = "ulong",
-        ["kotlin.UByte"] = "ubyte",
+        ["kotlin.UByte"] = "byte",
         ["kotlin.UShort"] = "ushort",
     };
 
@@ -1695,7 +1695,7 @@ static class BirTypeLowering
         ["kotlin.Int"] = "int",
         ["kotlin.Long"] = "long",
         ["kotlin.Short"] = "short",
-        ["kotlin.Byte"] = "byte",
+        ["kotlin.Byte"] = "sbyte",
         ["kotlin.Double"] = "double",
         ["kotlin.Float"] = "float",
         ["kotlin.Boolean"] = "bool",
@@ -1706,7 +1706,7 @@ static class BirTypeLowering
         ["kotlin.Unit"] = "void",
         ["kotlin.UInt"] = "uint",
         ["kotlin.ULong"] = "ulong",
-        ["kotlin.UByte"] = "ubyte",
+        ["kotlin.UByte"] = "byte",
         ["kotlin.UShort"] = "ushort",
     };
 

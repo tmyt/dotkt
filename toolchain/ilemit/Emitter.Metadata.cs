@@ -159,7 +159,7 @@ sealed partial class Emitter
                     "double" => v.GetDouble(),
                     "float" => (float)v.GetDouble(),
                     "short" => (short)v.GetInt32(),
-                    "byte" => (sbyte)v.GetInt32(),
+                    "sbyte" => (sbyte)v.GetInt32(),
                     "char" => (char)v.GetInt32(),   // a char default given as its numeric code point
                     _ => v.GetInt32(),
                 };
