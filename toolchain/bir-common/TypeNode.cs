@@ -49,13 +49,17 @@ public abstract record TypeNode
         public override int GetHashCode() => System.HashCode.Combine(Suspend, Ret, Params.Length, Recv);
     }
 
+    /// <summary>`nullable`: <c>T?</c> (NullableAttribute=2).</summary>
+    public sealed record Nullable(TypeNode Of) : TypeNode;
+
     /// <summary>
-    /// `nullable`: <c>T?</c> (nullable). With <c>Nrt == "platform"</c> it is the flexible/platform type
-    /// <c>T!</c> (NRT-oblivious <c>(T..T?)</c>) — spec §1 tri-state nullability. <c>Nrt</c> is null for a
-    /// plain nullable; the value is emitted by facadegen META and never appears in kotc BIR (platform is
-    /// frontend-only, resolved before the backend), so bir2cir/ilemit never observe it.
+    /// `oblivious`: <c>T!</c> — an NRT-oblivious reference type (NullableAttribute=0), the flexible/platform
+    /// <c>(T..T?)</c> (spec §1 tri-state nullability). A sibling of <see cref="Nullable"/> with the same
+    /// <c>{of:T}</c> shape. facadegen META emits it for a .NET member with no NullableAttribute; the kotc
+    /// frontend maps it to a <c>ConeFlexibleType</c>. It is frontend-only — resolved to not-null/nullable
+    /// before the backend — so bir2cir/ilemit never emit it (they only Read it transparently).
     /// </summary>
-    public sealed record Nullable(TypeNode Of, string? Nrt = null) : TypeNode;
+    public sealed record Oblivious(TypeNode Of) : TypeNode;
 
     /// <summary>`array`: <c>Array&lt;T&gt;</c> (this-assembly array).</summary>
     public sealed record Array(TypeNode Elem) : TypeNode;
@@ -96,9 +100,9 @@ public abstract record TypeNode
                     ReadArray(e.GetProperty("params")),
                     e.TryGetProperty("recv", out var recv) ? Read(recv) : null);
             case "nullable":
-                return new Nullable(
-                    Read(e.GetProperty("of")),
-                    e.TryGetProperty("nrt", out var nrt) ? nrt.GetString() : null);
+                return new Nullable(Read(e.GetProperty("of")));
+            case "oblivious":
+                return new Oblivious(Read(e.GetProperty("of")));
             case "array":
                 return new Array(Read(e.GetProperty("elem")));
             case "byRef":
@@ -143,11 +147,9 @@ public abstract record TypeNode
                 return o;
             }
             case Nullable n:
-            {
-                var o = new JsonObject { ["t"] = "nullable", ["of"] = Write(n.Of) };
-                if (n.Nrt is not null) o["nrt"] = n.Nrt;
-                return o;
-            }
+                return new JsonObject { ["t"] = "nullable", ["of"] = Write(n.Of) };
+            case Oblivious ob:
+                return new JsonObject { ["t"] = "oblivious", ["of"] = Write(ob.Of) };
             case Array a:
                 return new JsonObject { ["t"] = "array", ["elem"] = Write(a.Elem) };
             case ByRef b:

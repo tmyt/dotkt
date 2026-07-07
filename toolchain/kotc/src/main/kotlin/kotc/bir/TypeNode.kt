@@ -32,12 +32,16 @@ sealed class TypeNode {
         val recv: TypeNode? = null,
     ) : TypeNode()
 
+    /** `nullable`: `T?` (NullableAttribute=2). */
+    data class Nullable(val of: TypeNode) : TypeNode()
+
     /**
-     * `nullable`: `T?` (nullable). With [nrt] == "platform" it is the flexible/platform type `T!`
-     * (NRT-oblivious `(T..T?)`) — spec §1 tri-state nullability. [nrt] is null for a plain nullable;
-     * facadegen META emits the platform value, kotc BIR never does (platform is frontend-only).
+     * `oblivious`: `T!` — an NRT-oblivious reference type (NullableAttribute=0), the flexible/platform
+     * `(T..T?)` (spec §1 tri-state nullability). A sibling of [Nullable] with the same `{of:T}` shape.
+     * facadegen META emits it; the frontend maps it to a `ConeFlexibleType`. Frontend-only — kotc BIR
+     * never emits it (resolved to not-null/nullable before the backend).
      */
-    data class Nullable(val of: TypeNode, val nrt: String? = null) : TypeNode()
+    data class Oblivious(val of: TypeNode) : TypeNode()
 
     /** `array`: `Array<T>` (this-assembly array). */
     data class Array(val elem: TypeNode) : TypeNode()
@@ -69,11 +73,8 @@ sealed class TypeNode {
                 if (recv != null) { sb.append(",\"recv\":"); recv.write(sb) }
                 sb.append('}')
             }
-            is Nullable -> {
-                sb.append("{\"t\":\"nullable\",\"of\":"); of.write(sb)
-                if (nrt != null) { sb.append(",\"nrt\":").append(esc(nrt)) }
-                sb.append('}')
-            }
+            is Nullable -> { sb.append("{\"t\":\"nullable\",\"of\":"); of.write(sb); sb.append('}') }
+            is Oblivious -> { sb.append("{\"t\":\"oblivious\",\"of\":"); of.write(sb); sb.append('}') }
             is Array -> { sb.append("{\"t\":\"array\",\"elem\":"); elem.write(sb); sb.append('}') }
             is ByRef -> { sb.append("{\"t\":\"byRef\",\"of\":"); of.write(sb); sb.append('}') }
         }
@@ -139,7 +140,8 @@ sealed class TypeNode {
                     (o["params"] as List<Any?>).map { fromValue(it) },
                     o["recv"]?.let { fromValue(it) },
                 )
-                "nullable" -> Nullable(fromValue(o["of"]), o["nrt"] as? String)
+                "nullable" -> Nullable(fromValue(o["of"]))
+                "oblivious" -> Oblivious(fromValue(o["of"]))
                 "array" -> Array(fromValue(o["elem"]))
                 "byRef" -> ByRef(fromValue(o["of"]))
                 else -> throw IllegalArgumentException("unknown Type discriminator `t`=\"$t\"")

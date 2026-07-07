@@ -952,6 +952,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		is TypeNode.Fqn -> t.args?.any { containsTv(it) } == true
 		is TypeNode.Fn -> containsTv(t.ret) || t.params.any { containsTv(it) } || (t.recv?.let { containsTv(it) } == true)
 		is TypeNode.Nullable -> containsTv(t.of)
+		is TypeNode.Oblivious -> containsTv(t.of)   // frontend-only, but keep the match exhaustive
 		is TypeNode.Array -> containsTv(t.elem)
 		is TypeNode.ByRef -> containsTv(t.of)
 	}
@@ -4832,6 +4833,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		is TypeNode.Fqn -> t.args?.any { hasTv(it) } == true
 		is TypeNode.Fn -> hasTv(t.ret) || t.params.any { hasTv(it) } || (t.recv?.let { hasTv(it) } == true)
 		is TypeNode.Nullable -> hasTv(t.of)
+		is TypeNode.Oblivious -> hasTv(t.of)   // frontend-only, but keep the match exhaustive
 		is TypeNode.Array -> hasTv(t.elem)
 		is TypeNode.ByRef -> hasTv(t.of)
 	}
