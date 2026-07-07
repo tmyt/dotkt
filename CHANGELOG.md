@@ -435,6 +435,17 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **kotc `BirMappings.kt` shed of dead + vestigial tables (#40).** Post-#37-freeze audit of the
+  Kotlin→BIR name/shape tables removed four entries: `COLLECTION_MEMBER` and `PRIMITIVE_SHORTHANDS`
+  (both ref-count 0 — dead) and `VALUE_PRIM_BIR` (a `kotlin.Int`→`kotlin.Int` identity map whose only
+  consumer was `PRIMITIVE_SHORTHANDS`, so dead once it went). The JVM-ism guard `SEQUENCED_COLLECTION_LEAK`
+  (a filter dropping the `getFirst`/`addFirst`/`removeFirst`/… members that `java.util.SequencedCollection`
+  (JDK21) leaked onto `List`/`MutableList` when kotc read the **JVM** kotlin-stdlib builtins) plus its
+  single consumer in `BirEmitter` are deleted: kotc now reads the **self-host** frontend jar (built from
+  our CLR stdlib sources) whose `kotlin/collections` builtins carry no `java.util.*` and no
+  SequencedCollection members, so the filter was a verified no-op. The legitimate operator/factory/
+  primitive-IL-op tables are kept (genuine Kotlin-frontend logic; primitive ops stay compiler-lowered per
+  the cardinal rule).
 - **BIR/CIR freeze — the versioned carrier envelope (#37 m6).** The two metadata-carrier attributes that
   ride cross-module BIR on the emitted assembly — `[KotlinInline]` (an inline+lambda fn's body, for splice)
   and `[KotlinSuspendFunctionType]` (a `suspend (…) -> T` position's pre-erasure `fn` shape) — now stamp a

@@ -49,12 +49,6 @@ internal val MAP_FACTORIES = setOf(
 	"kotlin.collections.mapOf", "kotlin.collections.mutableMapOf", "kotlin.collections.hashMapOf",
 	"kotlin.collections.emptyMap",
 )
-// MutableList/MutableCollection INSTANCE mutation members (not COLLECTION_OPS extension ops) -> the BCL List<T>
-// method. Kotlin's collections lower to System.Collections.Generic.List<T>, so `list.add(x)` etc. bind to its methods.
-internal val COLLECTION_MEMBER = mapOf(
-	"add" to "Add", "remove" to "Remove", "clear" to "Clear", "removeAt" to "RemoveAt",
-	"contains" to "Contains", "indexOf" to "IndexOf",
-)
 internal val COLLECTION_OPS = setOf(
 	"map", "filter", "take", "drop", "reversed", "distinct", "toList",
 	"count", "any", "none", "all", "first", "last", "contains", "fold", "joinToString", "forEach",
@@ -72,14 +66,6 @@ internal val ARRAY_CLASS_ELEM = mapOf(
 	"kotlin.IntArray" to "kotlin.Int", "kotlin.LongArray" to "kotlin.Long", "kotlin.ShortArray" to "kotlin.Short", "kotlin.ByteArray" to "kotlin.Byte",
 	"kotlin.CharArray" to "kotlin.Char", "kotlin.DoubleArray" to "kotlin.Double", "kotlin.FloatArray" to "kotlin.Float", "kotlin.BooleanArray" to "kotlin.Boolean",
 )
-
-// java.util.SequencedCollection (JDK21) leaks its members onto kotlin.collections.List/MutableList when the frontend
-// reads the JVM builtins. On the CLR these are pure JVM-isms (IReadOnlyList/IList have no getFirst/addFirst/…), so an
-// ABSTRACT injected interface slot has no implementer -> "method does not have an implementation". Drop them (discard
-// the JVM-ism); a concrete type's REAL addFirst/removeFirst (with a body, e.g. ArrayDeque) is emitted independently.
-// `reversed` is included: the SequencedCollection member leaks as ABSTRACT; the real `kotlin.collections.reversed`
-// EXTENSION (a top-level function with a body) handles `list.reversed()` calls, so dropping the member slot is safe.
-internal val SEQUENCED_COLLECTION_LEAK = setOf("getFirst", "getLast", "addFirst", "addLast", "removeFirst", "removeLast", "reversed")
 
 // Int-range/-progression types whose for-loop can be counter-lowered (over get_first/get_last/get_step) when the source
 // is a range VALUE (e.g. `for (i in indices)`), avoiding the iterator protocol + its covariant-return iterator.
@@ -107,17 +93,6 @@ internal val PRIMITIVE_EQ_FQ = setOf(
 	"kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte",
 	"kotlin.Double", "kotlin.Float", "kotlin.Boolean", "kotlin.Char",
 )
-
-// Value-type primitives keyed to their own Kotlin FQN identity (a `T?` = Nullable<T> element). Values are the
-// Kotlin FQN — kotc emits NO `int`/`bool` shorthand; the CLR primitive is bir2cir/ilemit's derivation.
-internal val VALUE_PRIM_BIR = mapOf(
-	"kotlin.Int" to "kotlin.Int", "kotlin.Long" to "kotlin.Long", "kotlin.Short" to "kotlin.Short", "kotlin.Byte" to "kotlin.Byte",
-	"kotlin.Double" to "kotlin.Double", "kotlin.Float" to "kotlin.Float", "kotlin.Boolean" to "kotlin.Boolean", "kotlin.Char" to "kotlin.Char",
-)
-
-// The value-primitive Kotlin FQNs: a birType that IS one of these is a bare value primitive, so a `when`/`if`
-// join with a `null` branch over it must wrap in `nullable`. (Identical to PRIMITIVE_EQ_FQ.)
-internal val PRIMITIVE_SHORTHANDS = VALUE_PRIM_BIR.values.toSet()
 
 // Kotlin types whose values ARE CLR primitives (the signed/bool/char primitives + the unsigned inline classes,
 // which lower to native CLR unsigned primitives; unsigned arithmetic is already frontend-lowered to plain ops).
