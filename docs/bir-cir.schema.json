@@ -1,0 +1,315 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dotkt/bir-cir.schema.json",
+  "title": "BIR / CIR — frozen serialization contract (#37)",
+  "description": "The durable ABI for kotlin/clr's backend interchange. BIR (kotc→bir2cir) and CIR (bir2cir→ilemit) share ONE schema; they differ only by lowering stage, not shape. Names shown are the post-m5 canonical form (the m6 validator enforces this document). Version tag: bir-json/1.",
+
+  "type": "object",
+  "$comment": "A BIR/CIR file is a compilation unit. Injection metadata (facadegen→kotc, §5b) reuses $defs.type/$defs.decl but has its own root ($defs.injectionDoc).",
+  "properties": {
+    "types":    { "type": "array", "items": { "$ref": "#/$defs/typeDecl" } },
+    "topLevel": { "type": "array", "items": { "$ref": "#/$defs/decl" }, "description": "top-level funs/props (the file-class members)" }
+  },
+  "additionalProperties": true,
+
+  "$defs": {
+
+    "//== TYPE (§1) — the universal type representation ==//": null,
+    "type": {
+      "description": "A Type is ALWAYS an object with a `t` discriminator. There is NO bare-string type. Readers dispatch(t); they never split/scan a string. Seven variants.",
+      "oneOf": [
+        { "$ref": "#/$defs/tFqn" },
+        { "$ref": "#/$defs/tTv" },
+        { "$ref": "#/$defs/tFn" },
+        { "$ref": "#/$defs/tNullable" },
+        { "$ref": "#/$defs/tOblivious" },
+        { "$ref": "#/$defs/tArray" },
+        { "$ref": "#/$defs/tByRef" }
+      ]
+    },
+    "tFqn": {
+      "type": "object",
+      "description": "A named type — a PURE Kotlin/CLR FQN identity. kotc emits identity ONLY; bir2cir DERIVES the CLR form (primitive opcode / generic construction / referenced-type resolution). Replaces plain-FQN, clr:, clrg:Name[..], @Name, and the primitive shorthand (int/string/void/object/…).",
+      "properties": {
+        "t":    { "const": "fqn" },
+        "name": { "type": "string", "description": "e.g. kotlin.Int, kotlin.collections.List, System.Exception, <>dotkt_CharSequence" },
+        "args": { "type": "array", "items": { "$ref": "#/$defs/type" }, "description": "generic type arguments; absent = non-generic" }
+      },
+      "required": ["t", "name"],
+      "additionalProperties": false
+    },
+    "tTv": {
+      "type": "object",
+      "description": "A type variable. `scope` is the CLR generic-param SPACE (distinct on the CLR); `i` the owner-local FLATTENED positional index. scope+i map straight to !i / !!i. Replaces gp:X (name-keyed).",
+      "properties": {
+        "t":     { "const": "tv" },
+        "scope": { "enum": ["type", "method"], "description": "type → enclosing type's params (CLR !i); method → the method's own params (CLR !!i)" },
+        "i":     { "type": "integer", "minimum": 0 }
+      },
+      "required": ["t", "scope", "i"],
+      "additionalProperties": false
+    },
+    "tFn": {
+      "type": "object",
+      "description": "A function type; subsumes plain AND suspend (the H2 position metadata is just an fn with suspend:true). Replaces func:/sfunc:.",
+      "properties": {
+        "t":       { "const": "fn" },
+        "suspend": { "type": "boolean" },
+        "ret":     { "$ref": "#/$defs/type" },
+        "params":  { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "recv":    { "$ref": "#/$defs/type", "description": "extension receiver; absent = none" }
+      },
+      "required": ["t", "suspend", "ret", "params"],
+      "additionalProperties": false
+    },
+    "tNullable": {
+      "type": "object",
+      "description": "T? — NRT-annotated nullable (NullableAttribute=2).",
+      "properties": {
+        "t":  { "const": "nullable" },
+        "of": { "$ref": "#/$defs/type" }
+      },
+      "required": ["t", "of"],
+      "additionalProperties": false
+    },
+    "tOblivious": {
+      "type": "object",
+      "description": "T! — an NRT-OBLIVIOUS flexible type (T..T?) (NullableAttribute=0). `oblivious` is the CLR/Roslyn term, not the Kotlin-consumer 'platform' name. Frontend-only: kotc BIR NEVER emits it (resolved before the backend); facadegen META emits it for a .NET member with no NullableAttribute; kotc maps it to ConeFlexibleType(T,T?).",
+      "properties": {
+        "t":  { "const": "oblivious" },
+        "of": { "$ref": "#/$defs/type" }
+      },
+      "required": ["t", "of"],
+      "additionalProperties": false
+    },
+    "tArray": {
+      "type": "object",
+      "description": "Array<T> (this-assembly array). Replaces array:X.",
+      "properties": {
+        "t":    { "const": "array" },
+        "elem": { "$ref": "#/$defs/type" }
+      },
+      "required": ["t", "elem"],
+      "additionalProperties": false
+    },
+    "tByRef": {
+      "type": "object",
+      "description": "a CLR by-ref `ref T`. Replaces byRef:X.",
+      "properties": {
+        "t":  { "const": "byRef" },
+        "of": { "$ref": "#/$defs/type" }
+      },
+      "required": ["t", "of"],
+      "additionalProperties": false
+    },
+
+    "//== MODIFIERS (§2.1) + VISIBILITY ==//": null,
+    "mods": {
+      "type": "object",
+      "description": "Order-free set of name:true flags (absent = not set). Replaces the $kmods string-concat + the final,inline,ext,… comma string + scattered flat booleans. Visibility is NOT a mod (see `vis`).",
+      "properties": {
+        "inline":     { "const": true }, "infix":     { "const": true },
+        "operator":   { "const": true }, "tailrec":   { "const": true },
+        "external":   { "const": true }, "ext":       { "const": true },
+        "override":   { "const": true }, "abstract":  { "const": true },
+        "open":       { "const": true }, "suspend":   { "const": true },
+        "data":       { "const": true }, "sealed":    { "const": true },
+        "inner":      { "const": true }, "enum":      { "const": true },
+        "fun":        { "const": true }, "annotation":{ "const": true },
+        "value":      { "const": true }, "const":     { "const": true },
+        "lateinit":   { "const": true }, "vararg":    { "const": true },
+        "noinline":   { "const": true }, "crossinline":{ "const": true }
+      },
+      "additionalProperties": false
+    },
+    "vis": { "enum": ["public", "private", "protected", "internal"] },
+
+    "//== DECLARATIONS ==//": null,
+    "typeParam": {
+      "type": "object",
+      "properties": {
+        "name":     { "type": "string", "$comment": "the tv NAME is retained on the DECLARATION; references use positional tv{scope,i}" },
+        "variance": { "enum": ["in", "out"] },
+        "bounds":   { "type": "array", "items": { "$ref": "#/$defs/type" } }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "param": {
+      "type": "object",
+      "description": "A value parameter. Nullability lives on `type` (§1) — there is NO sibling `nullable` flag (m5-unified).",
+      "properties": {
+        "name":    { "type": "string" },
+        "type":    { "$ref": "#/$defs/type" },
+        "mods":    { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline apply to a param" },
+        "default": { "$ref": "#/$defs/node", "description": "a KotlinDefault expression; absent = required" }
+      },
+      "required": ["name", "type"],
+      "additionalProperties": false
+    },
+    "typeDecl": {
+      "type": "object",
+      "description": "A class/interface/object/enum/annotation. `mods` carries data/sealed/inner/enum/fun/annotation/value; `vis` is separate.",
+      "properties": {
+        "name":       { "type": "string" },
+        "kind":       { "enum": ["class", "interface", "object", "enum", "annotation"] },
+        "mods":       { "$ref": "#/$defs/mods" },
+        "vis":        { "$ref": "#/$defs/vis" },
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
+        "base":       { "$ref": "#/$defs/type", "description": "superclass; absent = none/Object" },
+        "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "nestedIn":   { "type": "string" },
+        "fields":     { "type": "array", "items": { "$ref": "#/$defs/fieldDecl" } },
+        "ctors":      { "type": "array", "items": { "$ref": "#/$defs/ctorDecl" } },
+        "methods":    { "type": "array", "items": { "$ref": "#/$defs/funDecl" } },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/propDecl" } },
+        "entries":    { "type": "array", "items": { "type": "object" }, "description": "enum entries" }
+      },
+      "required": ["name", "kind"],
+      "additionalProperties": true
+    },
+    "decl": {
+      "oneOf": [ { "$ref": "#/$defs/funDecl" }, { "$ref": "#/$defs/propDecl" }, { "$ref": "#/$defs/fieldDecl" } ]
+    },
+    "funDecl": {
+      "type": "object",
+      "properties": {
+        "name":       { "type": "string" },
+        "ret":        { "$ref": "#/$defs/type" },
+        "mods":       { "$ref": "#/$defs/mods" },
+        "vis":        { "$ref": "#/$defs/vis" },
+        "static":     { "type": "boolean", "$comment": "a load-bearing CLR-shape flag, kept scalar (not a Kotlin source modifier)" },
+        "virtual":    { "type": "boolean" },
+        "objectOverride": { "type": "boolean" },
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
+        "params":     { "type": "array", "items": { "$ref": "#/$defs/param" } },
+        "body":       { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "attrs":      { "type": "array" }
+      },
+      "required": ["name", "ret"],
+      "additionalProperties": true
+    },
+    "propDecl": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
+        "mods": { "$ref": "#/$defs/mods" }, "vis": { "$ref": "#/$defs/vis" },
+        "recv": { "$ref": "#/$defs/type", "description": "extension receiver (ext property)" },
+        "get":  { "type": "string" }, "set": { "type": ["string", "null"] }
+      },
+      "required": ["name", "type"],
+      "additionalProperties": true
+    },
+    "fieldDecl": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
+        "vis": { "$ref": "#/$defs/vis" }, "volatile": { "type": "boolean" }
+      },
+      "required": ["name", "type"],
+      "additionalProperties": true
+    },
+
+    "//== NODES (§2.5) — {k}-tagged expressions & statements ==//": null,
+    "node": {
+      "description": "Every node is a {k}-tagged object. ~60 canonical kinds; k + all field names are lowerCamelCase. A type-valued field always holds a $defs/type. Dispatch on k; never scan a string.",
+      "type": "object",
+      "required": ["k"],
+      "properties": { "k": { "$ref": "#/$defs/nodeKind" } },
+      "allOf": [ { "$ref": "#/$defs/nodeByKind" } ]
+    },
+    "nodeKind": {
+      "enum": [
+        "local", "const", "this", "var", "setLocal",
+        "callInstance", "callStatic", "objMethod", "delegateInvoke",
+        "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat", "cond",
+        "field", "setField", "staticField",
+        "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
+        "listNew", "setNew", "mapNew", "closureNew", "delegateNew", "samNew", "suspendLambdaNew",
+        "enumValue", "enumOrdinal", "default",
+        "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
+        "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
+        "if", "cond2", "label", "goto", "brIf", "break", "continue",
+        "forRange", "forArray", "forEachInline", "try"
+      ],
+      "$comment": "The m6 validator rejects any k not in this frozen set. (cond = ternary expression; if = statement.)"
+    },
+    "nodeByKind": {
+      "$comment": "Representative canonical shapes (the m6 validator pins the full per-kind field set, generated from docs/bir-audit/kotc-emit.md §1). Canonical field vocabulary below.",
+      "oneOf": [
+        { "properties": { "k": { "const": "local" }, "name": { "type": "string" } }, "required": ["name"] },
+        { "properties": { "k": { "const": "const" }, "type": { "$ref": "#/$defs/type" }, "value": {} }, "required": ["type"] },
+        { "properties": { "k": { "const": "this" } } },
+        { "properties": { "k": { "const": "var" }, "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "init": { "$ref": "#/$defs/node" } }, "required": ["name", "type"] },
+        { "properties": { "k": { "const": "setLocal" }, "name": { "type": "string" }, "value": { "$ref": "#/$defs/node" } }, "required": ["name", "value"] },
+        { "properties": { "k": { "const": "callInstance" }, "ownerType": { "$ref": "#/$defs/type" }, "method": { "type": "string" }, "recv": { "$ref": "#/$defs/node" }, "args": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "ret": { "$ref": "#/$defs/type" }, "virtual": { "type": "boolean" } }, "required": ["method", "recv", "args"] },
+        { "properties": { "k": { "const": "callStatic" }, "ownerType": { "$ref": "#/$defs/type" }, "method": { "type": "string" }, "args": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "ret": { "$ref": "#/$defs/type" } }, "required": ["method", "args"] },
+        { "properties": { "k": { "const": "binOp" }, "op": { "type": "string" }, "lhs": { "$ref": "#/$defs/node" }, "rhs": { "$ref": "#/$defs/node" } }, "required": ["op", "lhs", "rhs"], "$comment": "was `bin` with l/r" },
+        { "properties": { "k": { "const": "unaryOp" }, "op": { "type": "string" }, "operand": { "$ref": "#/$defs/node" } }, "required": ["op", "operand"], "$comment": "was `un`" },
+        { "properties": { "k": { "const": "conv" }, "value": { "$ref": "#/$defs/node" }, "type": { "$ref": "#/$defs/type" } }, "required": ["value", "type"] },
+        { "properties": { "k": { "const": "cast" }, "value": { "$ref": "#/$defs/node" }, "type": { "$ref": "#/$defs/type" } }, "required": ["value", "type"] },
+        { "properties": { "k": { "const": "isInst" }, "value": { "$ref": "#/$defs/node" }, "type": { "$ref": "#/$defs/type" } }, "required": ["value", "type"], "$comment": "was `isinst`" },
+        { "properties": { "k": { "const": "objEq" }, "lhs": { "$ref": "#/$defs/node" }, "rhs": { "$ref": "#/$defs/node" } }, "required": ["lhs", "rhs"] },
+        { "properties": { "k": { "const": "cond" }, "cond": { "$ref": "#/$defs/node" }, "then": { "$ref": "#/$defs/node" }, "else": { "$ref": "#/$defs/node" } }, "required": ["cond", "then"], "$comment": "ternary expression" },
+        { "properties": { "k": { "const": "field" }, "ownerType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/node" }, "name": { "type": "string" } }, "required": ["name", "recv"] },
+        { "properties": { "k": { "const": "setField" }, "ownerType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/node" }, "name": { "type": "string" }, "value": { "$ref": "#/$defs/node" } }, "required": ["name", "value"] },
+        { "properties": { "k": { "const": "staticField" }, "ownerType": { "$ref": "#/$defs/type" }, "name": { "type": "string" } }, "required": ["name"] },
+        { "properties": { "k": { "const": "new" }, "type": { "$ref": "#/$defs/type" }, "args": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } } }, "required": ["type", "args"] },
+        { "properties": { "k": { "const": "arrayGet" }, "array": { "$ref": "#/$defs/node" }, "index": { "$ref": "#/$defs/node" } }, "required": ["array", "index"] },
+        { "properties": { "k": { "const": "arraySet" }, "array": { "$ref": "#/$defs/node" }, "index": { "$ref": "#/$defs/node" }, "value": { "$ref": "#/$defs/node" } }, "required": ["array", "index", "value"] },
+        { "properties": { "k": { "const": "arrayLen" }, "array": { "$ref": "#/$defs/node" } }, "required": ["array"] },
+        { "properties": { "k": { "const": "newArraySized" }, "elem": { "$ref": "#/$defs/type" }, "size": { "$ref": "#/$defs/node" } }, "required": ["elem", "size"] },
+        { "properties": { "k": { "const": "newArrayInit" }, "elem": { "$ref": "#/$defs/type" }, "items": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["elem", "items"] },
+        { "properties": { "k": { "const": "closureNew" }, "closureType": { "$ref": "#/$defs/type" }, "funcType": { "$ref": "#/$defs/type" }, "captures": { "type": "array" } }, "required": ["closureType"] },
+        { "properties": { "k": { "const": "suspendLambdaNew" }, "arity": { "type": "integer" }, "captures": { "type": "array" }, "params": { "type": "array" }, "resultType": { "$ref": "#/$defs/type" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "funcType": { "$ref": "#/$defs/type" } }, "required": ["arity"] },
+        { "properties": { "k": { "const": "enumValue" }, "type": { "$ref": "#/$defs/type" }, "name": { "type": "string" } }, "required": ["type", "name"] },
+        { "properties": { "k": { "const": "default" }, "type": { "$ref": "#/$defs/type" } }, "required": ["type"] },
+        { "properties": { "k": { "const": "nullableWrap" }, "value": { "$ref": "#/$defs/node" }, "type": { "$ref": "#/$defs/type" } }, "required": ["value"] },
+        { "properties": { "k": { "const": "block" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["body"] },
+        { "properties": { "k": { "const": "valueBlock" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "value": { "$ref": "#/$defs/node" } }, "required": ["body", "value"] },
+        { "properties": { "k": { "const": "exprStmt" }, "expr": { "$ref": "#/$defs/node" } }, "required": ["expr"] },
+        { "properties": { "k": { "const": "return" }, "value": { "$ref": "#/$defs/node" } } },
+        { "properties": { "k": { "const": "throw" }, "value": { "$ref": "#/$defs/node" }, "excType": { "$ref": "#/$defs/type" } }, "required": ["value"] },
+        { "properties": { "k": { "const": "if" }, "cond": { "$ref": "#/$defs/node" }, "then": { "$ref": "#/$defs/node" }, "else": { "$ref": "#/$defs/node" } }, "required": ["cond", "then"] },
+        { "properties": { "k": { "const": "label" }, "name": { "type": "string" } }, "required": ["name"] },
+        { "properties": { "k": { "const": "goto" }, "label": { "type": "string" } }, "required": ["label"] },
+        { "properties": { "k": { "const": "brIf" }, "cond": { "$ref": "#/$defs/node" }, "label": { "type": "string" } }, "required": ["cond", "label"] },
+        { "properties": { "k": { "const": "forRange" }, "var": { "type": "string" }, "from": { "$ref": "#/$defs/node" }, "to": { "$ref": "#/$defs/node" }, "step": { "$ref": "#/$defs/node" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["var", "from", "to", "body"] },
+        { "properties": { "k": { "const": "forArray" }, "var": { "type": "string" }, "array": { "$ref": "#/$defs/node" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["var", "array", "body"] },
+        { "properties": { "k": { "const": "forEachInline" }, "elem": { "$ref": "#/$defs/type" }, "src": { "$ref": "#/$defs/node" }, "var": { "type": "string" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["elem", "src", "var", "body"] },
+        { "properties": { "k": { "const": "try" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "catches": { "type": "array" }, "finally": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["body"] },
+        { "$comment": "…remaining kinds in the nodeKind enum follow the same {k, canonical-fields} pattern; enumerated in full by the m6 validator." }
+      ]
+    },
+
+    "//== CARRIER (§0) — how a BIR body rides in CLR metadata ==//": null,
+    "carrier": {
+      "description": "Inline-fn bodies + suspend fn-types are SHIPPED as attributes on the emitted assembly. Retired the (string body) form for a versioned (string version, byte[] content) envelope — codec-agnostic groundwork (JSON today, MessagePack later).",
+      "attributes": {
+        "KotlinInlineAttribute": { "ctor": ["string version", "byte[] content"], "note": "version = 'bir-json/1'; content = UTF8(json of a node body). Reader: DecodeInlineBody(version, byte[]) — unknown version rejected." },
+        "KotlinSuspendFunctionTypeAttribute": { "ctor": ["string version", "byte[] content"], "note": "content = a $defs/type (an fn with suspend:true)" }
+      }
+    },
+
+    "//== INJECTION METADATA (§5b) — facadegen→kotc, SAME vocabulary ==//": null,
+    "injectionDoc": {
+      "type": "object",
+      "description": "Structured JSON reusing $defs/type + $defs/mods + $defs/decl. The tlfun/tlextprop/tlprop/file LINE GRAMMAR is retired. BIR = META = one vocabulary.",
+      "properties": {
+        "types": { "type": "array", "items": { "$ref": "#/$defs/typeDecl" }, "$comment": ".NET-surfaced types; carry `dotNet` FQN + optional `clrBinding`" },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pkg":       { "type": "string" },
+              "fileClass": { "type": "string" },
+              "funs":      { "type": "array", "items": { "$ref": "#/$defs/funDecl" } },
+              "props":     { "type": "array", "items": { "$ref": "#/$defs/propDecl" } }
+            }
+          }
+        }
+      }
+    }
+  }
+}
