@@ -14,7 +14,7 @@
 //     "captures":[{"name","type"}],              // captured vars -> SM ctor params + fields
 //     "params":  [{"name","type"}],              // the lambda's own params (arity-1: create(value) sets it)
 //     "suspendRet":"kotlin.X",                   // the lambda's result type ("void"/"kotlin.Unit" -> Unit)
-//     "typeArgs":[<tp-name>,...],                // enclosing generic type params (open SM instantiation)
+//     "typeParams":[<tp-name>,...],              // enclosing generic type-param NAME decls (open SM instantiation)
 //     "body":[ ...structured, suspendCall-tagged... ],
 //     "funcType":"sfunc:<ret>:<args>" }          // informational (the delegate view; not consumed here)
 //
@@ -182,7 +182,7 @@ static class SuspendLambdaLowering
         var captures = ReadNameTypes(node["captures"]);
         var lambdaParams = (node["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
         var resultType = TypeJson.Read(node["suspendRet"]);
-        var typeArgs = ReadStrings(node["typeArgs"]);
+        var typeArgs = ReadStrings(node["typeParams"]);
         var smName = ctx + "_lambda" + (++counter[0]) + "$sm";
 
         // A suspend lambda whose RECEIVER (its create()-bound param) is a @RestrictsSuspension scope (SequenceScope)

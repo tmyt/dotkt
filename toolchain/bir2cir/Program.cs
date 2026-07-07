@@ -3016,43 +3016,47 @@ static class StringCharSequenceBridge
     // Injected exactly once per app assembly (dedup below). Pre-BirTypeLowering vocabulary: kotlin.* signature tokens
     // (lowered by the next pass), CLR-call bodies (String.get_Chars/Length/Substring — the SAME shape kotc emits for a
     // user `class S(val s:String): CharSequence`). Structurally mirrors that verified S class, renamed s->value.
+    // Type slots are STRUCTURED `{t:"fqn",…}` nodes (§1 — types are nodes, no bare strings), exactly as kotc emits
+    // for a real user `class S(val s:String): CharSequence`; the subsequent DeclNullableFlags/ReferenceNullableStrip/
+    // BirTypeLowering passes lower the `kotlin.*` identities to the CLR forms uniformly. (The retired `@<name>`
+    // this-assembly marker is dropped — bir2cir/ilemit derive local-vs-referenced from the FQN via `_types`.)
     const string AdapterTypeJson = """
     {
       "name": "<>dotkt_StringCharSequence",
       "kind": "class", "abstract": false, "vis": "public", "base": null,
-      "interfaces": ["<>dotkt_CharSequence"],
-      "fields": [{"name": "value", "type": "kotlin.String", "vis": "internal"}],
+      "interfaces": [{"t":"fqn","name":"<>dotkt_CharSequence"}],
+      "fields": [{"name": "value", "type": {"t":"fqn","name":"kotlin.String"}, "vis": "internal"}],
       "ctors": [{
-        "params": [{"name": "value", "type": "kotlin.String"}],
+        "params": [{"name": "value", "type": {"t":"fqn","name":"kotlin.String"}}],
         "baseArgs": null, "thisArgs": null, "vis": "public",
-        "body": [{"k": "setField", "ownerType": "<>dotkt_StringCharSequence", "recv": {"k": "this"}, "name": "value", "value": {"k": "local", "name": "value"}}]
+        "body": [{"k": "setField", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "recv": {"k": "this"}, "name": "value", "value": {"k": "local", "name": "value"}}]
       }],
       "methods": [
         {"name": "get", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public", "mods": {"operator": true},
-         "params": [{"name": "index", "type": "kotlin.Int"}], "ret": "kotlin.Char",
-         "body": [{"k": "return", "value": {"k": "clrInstance", "type": "System.String", "method": "get_Chars", "argTypes": ["System.Int32"], "ret": "System.Char",
-           "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
+         "params": [{"name": "index", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"kotlin.Char"},
+         "body": [{"k": "return", "value": {"k": "clrInstance", "type": {"t":"fqn","name":"System.String"}, "method": "get_Chars", "argTypes": [{"t":"fqn","name":"System.Int32"}], "ret": {"t":"fqn","name":"System.Char"},
+           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
            "args": [{"k": "local", "name": "index"}]}}], "attrs": []},
         {"name": "subSequence", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
-         "params": [{"name": "startIndex", "type": "kotlin.Int"}, {"name": "endIndex", "type": "kotlin.Int"}], "ret": "@<>dotkt_CharSequence",
-         "body": [{"k": "return", "value": {"k": "new", "type": "<>dotkt_StringCharSequence", "argTypes": ["kotlin.String"],
-           "args": [{"k": "clrInstance", "type": "System.String", "method": "Substring", "argTypes": ["System.Int32", "System.Int32"], "ret": "System.String",
-             "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
+         "params": [{"name": "startIndex", "type": {"t":"fqn","name":"kotlin.Int"}}, {"name": "endIndex", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"<>dotkt_CharSequence"},
+         "body": [{"k": "return", "value": {"k": "new", "type": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "argTypes": [{"t":"fqn","name":"kotlin.String"}],
+           "args": [{"k": "clrInstance", "type": {"t":"fqn","name":"System.String"}, "method": "Substring", "argTypes": [{"t":"fqn","name":"System.Int32"}, {"t":"fqn","name":"System.Int32"}], "ret": {"t":"fqn","name":"System.String"},
+             "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
              "args": [{"k": "local", "name": "startIndex"}, {"k": "binOp", "op": "-", "lhs": {"k": "local", "name": "endIndex"}, "rhs": {"k": "local", "name": "startIndex"}}]}]}}], "attrs": []},
         {"name": "get_value", "static": false, "override": false, "virtual": false, "abstract": false, "objectOverride": false, "vis": "public",
-         "params": [], "ret": "kotlin.String",
-         "body": [{"k": "return", "value": {"k": "field", "ownerType": "<>dotkt_StringCharSequence", "recv": {"k": "this"}, "name": "value"}}]},
+         "params": [], "ret": {"t":"fqn","name":"kotlin.String"},
+         "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]},
         {"name": "get_length", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
-         "params": [], "ret": "kotlin.Int",
-         "body": [{"k": "return", "value": {"k": "clrPropGet", "type": "System.String", "name": "Length", "ret": "System.Int32", "static": false,
-           "recv": {"k": "callInstance", "ownerType": "<>dotkt_StringCharSequence", "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []}}}]},
+         "params": [], "ret": {"t":"fqn","name":"kotlin.Int"},
+         "body": [{"k": "return", "value": {"k": "clrPropGet", "type": {"t":"fqn","name":"System.String"}, "name": "Length", "ret": {"t":"fqn","name":"System.Int32"}, "static": false,
+           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []}}}]},
         {"name": "ToString", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": true, "vis": "public",
-         "params": [], "ret": "kotlin.String",
-         "body": [{"k": "return", "value": {"k": "field", "ownerType": "<>dotkt_StringCharSequence", "recv": {"k": "this"}, "name": "value"}}]}
+         "params": [], "ret": {"t":"fqn","name":"kotlin.String"},
+         "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]}
       ],
       "properties": [
-        {"name": "value", "type": "kotlin.String", "get": "get_value", "set": null},
-        {"name": "length", "type": "kotlin.Int", "get": "get_length", "set": null}
+        {"name": "value", "type": {"t":"fqn","name":"kotlin.String"}, "get": "get_value", "set": null},
+        {"name": "length", "type": {"t":"fqn","name":"kotlin.Int"}, "get": "get_length", "set": null}
       ],
       "attrs": []
     }
@@ -3217,11 +3221,13 @@ static class StringCharSequenceBridge
     static JsonObject WrapAdapter(JsonNode strExpr)
     {
         _fired = true;   // request the app-local adapter type injection for this file (Apply)
+        // Structured type slots (§1 — types are nodes): the adapter owner + the `kotlin.String` ctor-arg type as
+        // `{t:"fqn",…}` nodes; BirTypeLowering lowers `kotlin.String` -> `System.String` downstream.
         return new JsonObject
         {
             ["k"] = "new",
-            ["type"] = Adapter,
-            ["argTypes"] = new JsonArray { "kotlin.String" },
+            ["type"] = new JsonObject { ["t"] = "fqn", ["name"] = Adapter },
+            ["argTypes"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "kotlin.String" } },
             ["args"] = new JsonArray { strExpr.DeepClone() },
         };
     }
@@ -5229,7 +5235,7 @@ static class MemberCallSubstitution
                     ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"), ["method"] = "toString",
                     ["sig"] = new JsonArray { TypeJson.Fqn("object") }, ["args"] = new JsonArray { a.DeepClone() },
                 };
-                argTypes[i] = JsonValue.Create("kotlin.String");
+                argTypes[i] = TypeJson.Fqn("kotlin.String");
             }
     }
 

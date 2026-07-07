@@ -75,7 +75,9 @@ static class ValueTypeNullableCollectionArg
             ["k"] = "clrGenericStatic",
             ["type"] = "System.Linq.Enumerable",
             ["method"] = "Cast",
-            ["typeArgs"] = new JsonArray { "object" },
+            // typeArgs is a document type slot (ilemit MapType-resolves it) -> a structured `{t:fqn}` node; `shapes`
+            // stays a raw string (the SIG-KEY reflection island, §2.2.1 — ilemit reads it verbatim for MethodInfo match).
+            ["typeArgs"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "object" } },
             ["shapes"] = new JsonArray { "IEnumerable" },
             ["args"] = new JsonArray { args[0].DeepClone() },
         };

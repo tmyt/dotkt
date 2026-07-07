@@ -338,11 +338,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${v.toJson()}}],"ret":${fqnJson("kotlin.Unit")},"body":[${setVal("""{"k":"local","name":"newValue"}""")},{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__set","value":{"k":"const","type":${fqnJson("kotlin.Boolean")},"value":true}}]}"""
 				// override getter body for notNull (throws if unset)
 				return@getOrPut cname.also {
-					synthDelegateDefs.add("""{"name":${str(cname)},"kind":"class","vis":"public","base":null,"interfaces":[${str(iface)}],"fields":[$flds],"ctors":[{"params":[],"baseArgs":null,"thisArgs":null,"vis":"public","body":[]}],"methods":[{"name":"getValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp],"ret":${v.toJson()},"body":[$getBody]},$st]}""")
+					synthDelegateDefs.add("""{"name":${str(cname)},"kind":"class","vis":"public","base":null,"interfaces":[${fqnJson(iface)}],"fields":[$flds],"ctors":[{"params":[],"baseArgs":null,"thisArgs":null,"vis":"public","body":[]}],"methods":[{"name":"getValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp],"ret":${v.toJson()},"body":[$getBody]},$st]}""")
 				}
 			}
 		}
-		synthDelegateDefs.add("""{"name":${str(cname)},"kind":"class","vis":"public","base":null,"interfaces":[${str(iface)}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":null,"thisArgs":null,"vis":"public","body":[$ctorBody]}],"methods":[$getter,$setter]}""")
+		synthDelegateDefs.add("""{"name":${str(cname)},"kind":"class","vis":"public","base":null,"interfaces":[${fqnJson(iface)}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":null,"thisArgs":null,"vis":"public","body":[$ctorBody]}],"methods":[$getter,$setter]}""")
 		cname
 	}
 
@@ -353,7 +353,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val iface = """{"name":"<>dotkt_KProperty","kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$ifaceName]}"""
 		val getName = """{"name":"get_name","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":${fqnJson("kotlin.String")},"body":[{"k":"return","value":{"k":"field","ownerType":${fqnJson("<>dotkt_KPropertyImpl")},"recv":{"k":"this"},"name":"name"}}]}"""
 		val ctorBody = """{"k":"setField","ownerType":${fqnJson("<>dotkt_KPropertyImpl")},"recv":{"k":"this"},"name":"name","value":{"k":"local","name":"name"}}"""
-		val impl = """{"name":"<>dotkt_KPropertyImpl","kind":"class","vis":"public","base":null,"interfaces":["<>dotkt_KProperty"],"fields":[{"name":"name","type":${fqnJson("kotlin.String")}}],"ctors":[{"params":[{"name":"name","type":${fqnJson("kotlin.String")}}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[$ctorBody]}],"methods":[$getName]}"""
+		val impl = """{"name":"<>dotkt_KPropertyImpl","kind":"class","vis":"public","base":null,"interfaces":[${fqnJson("<>dotkt_KProperty")}],"fields":[{"name":"name","type":${fqnJson("kotlin.String")}}],"ctors":[{"params":[{"name":"name","type":${fqnJson("kotlin.String")}}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[$ctorBody]}],"methods":[$getName]}"""
 		return listOf(iface, impl)
 	}
 
@@ -2064,9 +2064,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Enclosing generic type params referenced by the SM (captures/params/return/body operands) -> open SM
 		// instantiation. BARE names: bir2cir prepends `gp:`.
 		val freeTps = freeTypeParams(captures.map { it.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
-		val typeArgsJson = freeTps.joinToString(",") { str(it.name.asString()) }
+		// The SM's own generic-parameter NAME declarations (the enclosing free type params the state machine is
+		// generic over) — a type-param DECLARATION list (bir2cir names the SM's params + instantiates `!i`), NOT a
+		// type-USAGE slot, so it rides as the `typeParams` name shorthand (§2.5), consistent with the other lambda paths.
+		val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
 		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-		return """{"k":"suspendLambdaNew","arity":${ownParams.size},"captures":[$capturesJson],"params":[$paramsJson],"suspendRet":${str(resultType)},"typeArgs":[$typeArgsJson],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
+		return """{"k":"suspendLambdaNew","arity":${ownParams.size},"captures":[$capturesJson],"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 	}
 
 	internal fun lambda(node: IrFunctionExpression): String {
@@ -3413,7 +3416,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		localFns[callee]?.let { (lname, caps, tps) ->
 			val capArgs = caps.map { capValueExpr(it) }
 			// If the lifted method is generic (captured enclosing type params), pass them as type arguments.
-			val typeArgs = if (tps.isEmpty()) "" else ""","typeArgs":[${tps.joinToString(",") { str("gp:" + it.name.asString()) }}]"""
+			val typeArgs = if (tps.isEmpty()) "" else ""","typeArgs":[${tps.joinToString(",") { tvOf(it).toJson() }}]"""
 			return """{"k":"callStatic","owner":null,"method":${str(lname)},"args":[${(capArgs + filledArgs(call)).joinToString(",")}]$typeArgs}"""
 		}
 
@@ -3435,7 +3438,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val v = (call.type as? IrSimpleType)?.arguments?.getOrNull(1)
 				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: OBJ
 			val cname = synthDelegate(name, v)
-			return """{"k":"new","type":${str(cname)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
+			return """{"k":"new","type":${fqnJson(cname)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
 		}
 		// `by lazy { … }` is NOT intercepted: the `kotlin.lazy(initializer)` call resolves to the real stdlib
 		// `lazy()` actual (returns `UnsafeLazyImpl(initializer)`, a pure-Kotlin `Lazy<T>`) and flows through the
@@ -4232,7 +4235,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			NUMBER_CONV[name]?.let { to ->
 				val recv = dispatchReceiver(call)
 				if (recv != null && recv.type.classFqName?.asString() in NUMERIC_FQ)
-					return """{"k":"conv","to":${str(to)},"e":${expr(recv)}}"""
+					return """{"k":"conv","to":${fqnJson(to)},"e":${expr(recv)}}"""
 			}
 			val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
 			if (fq == "kotlin.io" && (name == "println" || name == "print")) {
