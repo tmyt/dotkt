@@ -1487,10 +1487,12 @@ static class FacadeGen
             "System.UInt32" => new TN.Fqn("UInt"),
             "System.UInt64" => new TN.Fqn("ULong"),
             "System.UInt16" => new TN.Fqn("UShort"),
-            // Kotlin `Byte` is signed (== System.SByte). System.Byte (unsigned) maps to `Byte` so Int literals stay
-            // assignable (bit pattern matches for 0..127).
+            // Kotlin `Byte` is SIGNED (== System.SByte); System.Byte is UNSIGNED (== kotlin.UByte). STRICT mapping
+            // (#53), consistent with the other unsigned widths (UInt16->UShort / UInt32->UInt / UInt64->ULong) and with
+            // the forward direction (kotlin.UByte->System.Byte). This preserves UByte round-trip fidelity: a .NET byte
+            // 200 reads as UByte 200, not the lossy signed Byte -56 the old collapse produced.
             "System.SByte" => new TN.Fqn("Byte"),
-            "System.Byte" => new TN.Fqn("Byte"),
+            "System.Byte" => new TN.Fqn("UByte"),
             "System.Boolean" => new TN.Fqn("Boolean"),
             "System.Double" => new TN.Fqn("Double"),
             "System.Single" => new TN.Fqn("Float"),

@@ -310,6 +310,17 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### .NET interop
 
+- **Strict unsigned-byte mapping: `System.Byte` ⇔ `kotlin.UByte`, `System.Byte[]` ⇔ `UByteArray` (#53).**
+  `System.Byte` is unsigned, so it now maps to Kotlin's unsigned `UByte` (and `byte[]` to the specialized
+  native `UByteArray`), consistent with the wider unsigned widths (`UInt16↔UShort`, `UInt32↔UInt`,
+  `UInt64↔ULong`) and with the forward direction; `kotlin.Byte` (signed) stays `System.SByte`. This ends the
+  old lossy collapse where a .NET byte `200` re-consumed as a signed `Byte -56`, and makes `UByte`/`UByteArray`
+  round-trip faithfully. `UByteArray` is a native `System.Byte[]` (not a wrapper, not `Array<UByte>`); its
+  `ubyteArrayOf`/indexing/`size` are native array ops, and `UByteArray.toByteArray()` / `ByteArray.toUByteArray()`
+  reinterpret between the runtime-interchangeable `System.Byte[]`/`System.SByte[]` (a view, not a copy). Also
+  completes bir2cir's `PrimitiveBirName` (the missing `sbyte` + unsigned family) and resolves injected unsigned
+  return types in the frontend (they previously degraded to `Any?` in a return position). See
+  `docs/dotkt-semantics.md` §9b.
 - **Idiomatic .NET events: `w.Changed += handler` / `-= handler`.** A .NET event surfaces as a
   `ClrEvent<T>` member with `+=`/`-=` operators (replacing the `add_`/`remove_` accessor stopgap), for
   instance, static, and interface events. The event Kotlin↔CLR relation now lives entirely in bir2cir.

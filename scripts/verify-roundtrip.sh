@@ -749,6 +749,39 @@ nrtexpected="$(printf '1\n4\n-1\n1\n-1\n5\n-1\n1')"
 run_app nrtactual "$NRT/appil/NrtApp.dll"
 check_output roundtrip-nrt "$nrtexpected" "$nrtactual" "tri-state NRT fidelity: non-null (byte 1) + nullable (byte 2) reference via consumer compile-dependency, + value Nullable<int> structural"
 
+# ---- UNSIGNED BYTE round-trip (#53): UByte / UByteArray fidelity through the DotKt emit -> facadegen consume cycle ----
+# A DotKt lib exposes UByte / UByteArray / a UByte-consuming fun. Emitted, the lib's CLR surface is System.Byte /
+# System.Byte[]. facadegen (STRICT #53) must surface them BACK as kotlin.UByte / kotlin.UByteArray (NOT the lossy signed
+# Byte/ByteArray) — proven by the consumer compiling AND reading value 200 as UByte 200 (a signed Byte would be -56).
+UB="$ROOT/build/roundtrip-ubyte"; rm -rf "$UB"; mkdir -p "$UB/lib" "$UB/app" "$UB/libbir" "$UB/libil" "$UB/appbir" "$UB/appil"
+cat > "$UB/lib/lib.kt" <<'EOF'
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
+fun ub(): UByte = 200u                                   // emits System.Byte 200 -> facadegen surfaces as UByte
+fun uba(): UByteArray = ubyteArrayOf(1u, 2u, 250u)       // emits System.Byte[] -> facadegen surfaces as UByteArray
+fun takeUb(x: UByte): Int = x.toInt()                    // System.Byte param -> facadegen surfaces as UByte
+EOF
+cat > "$UB/app/app.kt" <<'EOF'
+@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
+fun main() {
+    val u: UByte = ub()          // compiles ONLY if the return restored UByte (not Byte)
+    println(u.toInt())           // 200  unsigned fidelity (a mis-restored signed Byte would print -56)
+    val a: UByteArray = uba()    // compiles ONLY if byte[] restored to UByteArray (not ByteArray/Array<UByte>)
+    println(a.size)              // 3
+    println(a[2].toInt())        // 250
+    println(takeUb(200u))        // 200  pass a UByte to a UByte-restored param
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$UB/lib" -no-stdlib -classpath "$CP" -d "$UB/libbir" >/dev/null 2>&1 || true
+emit_il "$UB/libil" UbLib "$UB/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$UB/libil/UbLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$UB/k.meta" --refs "$REFS$UB/libil/UbLib.dll" LibKt >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$UB/k.meta" "$LAUNCHER" "$UB/app" -no-stdlib -classpath "$CP" -d "$UB/appbir" >/dev/null 2>&1 || true
+emit_il "$UB/appil" UbApp --ref "$UB/libil/UbLib.dll" "$UB/appbir"/*.bir.json
+cp "$UB/libil/UbLib.dll" "$UB/appil/" 2>/dev/null || true
+ubexpected="$(printf '200\n3\n250\n200')"
+run_app ubactual "$UB/appil/UbApp.dll"
+check_output roundtrip-ubyte "$ubexpected" "$ubactual" "UByte/UByteArray strict-mapping fidelity: System.Byte->UByte + System.Byte[]->UByteArray via consumer compile-dependency + value 200"
+
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
 printf '%s\n' "${SUMMARY[@]}"

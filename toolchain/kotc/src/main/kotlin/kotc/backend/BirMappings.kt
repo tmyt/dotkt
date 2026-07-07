@@ -33,9 +33,20 @@ internal val PRIMITIVE_ARRAY_ELEM = mapOf(
 	"kotlin.FloatArray" to "kotlin.Float", "kotlin.BooleanArray" to "kotlin.Boolean", "kotlin.CharArray" to "kotlin.Char",
 	"kotlin.ByteArray" to "kotlin.Byte", "kotlin.ShortArray" to "kotlin.Short",
 )
+// The UNSIGNED specialized arrays (#53). Unlike the signed arrays above (Kotlin builtins with no source body), these
+// are library value classes (`UByteArray(storage: ByteArray)`) — so this native-array lowering applies ONLY in app/rt
+// consumer builds (`!stdlibCompile`); the stdlib's OWN compile keeps them as the emitted value class so UByteArray.kt /
+// _UArrays.kt compile against a real `storage`. Element = the unsigned scalar (bir2cir lowers kotlin.UByte -> `ubyte`,
+// ilemit -> System.Byte[]). Mirrors how kotlin.UInt stays a value class in the ref build but lowers to native `uint` elsewhere.
+internal val UNSIGNED_ARRAY_ELEM = mapOf(
+	"kotlin.UByteArray" to "kotlin.UByte", "kotlin.UShortArray" to "kotlin.UShort",
+	"kotlin.UIntArray" to "kotlin.UInt", "kotlin.ULongArray" to "kotlin.ULong",
+)
 internal val ARRAY_FACTORY_NAMES = setOf(
 	"arrayOf", "intArrayOf", "longArrayOf", "doubleArrayOf",
 	"floatArrayOf", "booleanArrayOf", "charArrayOf", "byteArrayOf", "shortArrayOf",
+	// Unsigned specialized-array factories (#53): `ubyteArrayOf(...)` -> a native `new byte[]{...}` (elem `ubyte`).
+	"ubyteArrayOf", "ushortArrayOf", "uintArrayOf", "ulongArrayOf",
 )
 internal val LIST_FACTORIES = setOf(
 	"kotlin.collections.listOf", "kotlin.collections.mutableListOf", "kotlin.collections.arrayListOf",

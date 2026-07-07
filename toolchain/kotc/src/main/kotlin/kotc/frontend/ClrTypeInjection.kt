@@ -75,6 +75,13 @@ private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: 
 // Several candidates under one CallableId = same-name same-package overloads across DIFFERENT source files; the backend
 // disambiguates by the resolved callee's arity. See `clrInjectedTopLevelFileClass`.
 internal class TopLevelSig(val fileClass: String, val minArity: Int, val maxArity: Int)
+
+// Unsigned Kotlin types (scalar + specialized array) live in the `kotlin` package as LIBRARY types — they have no
+// `bt.*` builtin, so a facadegen-injected reference to one resolves straight off the symbol provider by ClassId, not
+// via the .NET-injected `classIdFor` (which knows nothing about them). #53.
+internal val UNSIGNED_KOTLIN_TYPES = setOf(
+	"UByte", "UShort", "UInt", "ULong", "UByteArray", "UShortArray", "UIntArray", "ULongArray",
+)
 // A top-level property: `receiver` (a TypeNode) present => an EXTENSION property (`val T.p`); null => a plain top-level prop.
 private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode?)
 private class ClrProperty(val name: String, val type: TypeNode, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean, val clrName: String? = null)
@@ -865,6 +872,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				else -> {
 					val arity = node.args?.size ?: 0
 					val cid = if ('.' in node.name) ClassId(FqName(node.name.substringBeforeLast('.')), Name.identifier(node.name.substringAfterLast('.')))
+						else if (node.name in UNSIGNED_KOTLIN_TYPES) ClassId(FqName("kotlin"), Name.identifier(node.name))  // #53
 						else ClrMetadataHolder.classIdFor(node.name, arity)
 					if (cid == null) bt.nullableAnyType.coneType
 					else {
@@ -1016,7 +1024,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			is TypeNode.Array -> {
 				val prim = (node.elem as? TypeNode.Fqn)?.takeIf { it.args == null }?.name?.let {
 					mapOf("Int" to "IntArray", "Long" to "LongArray", "Double" to "DoubleArray", "Float" to "FloatArray",
-						"Short" to "ShortArray", "Byte" to "ByteArray", "Boolean" to "BooleanArray", "Char" to "CharArray")[it]
+						"Short" to "ShortArray", "Byte" to "ByteArray", "Boolean" to "BooleanArray", "Char" to "CharArray",
+						// A .NET unsigned-element array -> Kotlin's SPECIALIZED unsigned primitive array (#53): System.Byte[]
+						// -> UByteArray (NOT Array<UByte>), consistent with the signed primitive arrays above.
+						"UByte" to "UByteArray", "UShort" to "UShortArray", "UInt" to "UIntArray", "ULong" to "ULongArray")[it]
 				}
 				val cid = if (prim != null) ClassId(FqName("kotlin"), Name.identifier(prim)) else ClassId(FqName("kotlin"), Name.identifier("Array"))
 				val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return bt.nullableAnyType.coneType
@@ -1045,6 +1056,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				}
 				val arity = node.args?.size ?: 0
 				val cid = if ('.' in node.name) ClassId(FqName(node.name.substringBeforeLast('.')), Name.identifier(node.name.substringAfterLast('.')))
+					// Unsigned scalar/array types have no `bt.*` builtin (they are library types in the `kotlin` package);
+					// resolve them straight off the symbol provider. WITHOUT this a facadegen-injected System.Byte->UByte
+					// RETURN degrades to Any? (#53 — a PARAM position tolerated the degrade, a return does not).
+					else if (node.name in UNSIGNED_KOTLIN_TYPES) ClassId(FqName("kotlin"), Name.identifier(node.name))
 					else ClrMetadataHolder.classIdFor(node.name, arity)
 				val sym = when { cid == null -> null; cid == owner?.classId -> owner; else -> session.symbolProvider.getClassLikeSymbolByClassId(cid) }
 				if (sym == null) bt.nullableAnyType.coneType

@@ -350,6 +350,9 @@ il_check mapdes MapDes "$ROOT/cases/il-mapdes" "$(printf '10\n60\n13\nx=1\ny=2\n
 # instantiated sig) + Map/MutableMap getOrDefault (bare-V map-defaults helper: retType carry, was BadImageFormat).
 il_check mapgen MapGen "$ROOT/cases/il-mapgen" "$(printf '1\n1\n-1\n3\n9\n2\n7\nempty\n20\n50\n5\n6\n6')"
 il_check unsgn Unsigned "$ROOT/cases/il-unsigned" "$(printf '4000000100\n4000000000\n18000000000000000000\n60000\n250')"
+# ubytearr: UByteArray -> native System.Byte[] (#53). ubyteArrayOf/get/size as native array ops; toByteArray/toUByteArray
+# reinterpret between SByte[] (signed) and Byte[] (unsigned) — 250 unsigned reads as -6 signed and back.
+il_check ubytearr UByteArr "$ROOT/cases/il-ubytearr" "$(printf '3\n250\n-6\n250\n200')"
 il_check regex Regex "$ROOT/cases/il-regex" "$(printf 'True\nFalse\na#b#c#\na_b_c\nTrue\nFalse\n42\nnull')"
 # regexreplace: Regex.replaceFirst / replace(String,String) marshaling (final-review N1). replaceFirst mis-bound the
 # 3-arg System...Regex.Replace(string,string,int) — returned the input unchanged + AccessViolationException on a
@@ -485,6 +488,9 @@ il_check_inject injbase InjBase "$ROOT/cases/il-injbase" "placed:0" KfcInjB
 il_check_inject injfqn InjFqn "$ROOT/cases/il-injfqn" "42" KfcInjF
 il_check_inject injstatic InjStatic "$ROOT/cases/il-injstatic" "$(printf 'p=42\n7\n99\n123\np=42\n7\n99\n123')" KfcStatic
 il_check_inject injuint InjUint "$ROOT/cases/il-injuint" "$(printf '65542\n42')" Boot
+# ubyteinj: .NET-interop STRICT byte mapping (#53) — facadegen maps System.Byte->UByte and byte[]->UByteArray, so a
+# .NET byte 200 reads as UByte 200 (not signed -56) and a byte[] surfaces as a native UByteArray (round-trip fidelity).
+il_check_inject ubyteinj UByteInj "$ROOT/cases/il-ubyteinj" "$(printf '200\n3\n250\n200\n253')" Bt
 # c1net consumes types from its OWN runtime.cs (Probe assembly) via `import Probe.X` -> il_check_inject (build the
 # runtime, scan the imports through facadegen, --ref it). The old no-import-scan @Clr-facade path is gone.
 il_check_inject c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21\n41\n117\n20\n5\nyo!')" Probe

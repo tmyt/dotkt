@@ -778,6 +778,12 @@ sealed class ReferenceMetadataIndex
             "kotlin.DoubleArray" => "array:f64",
             "kotlin.BooleanArray" => "array:bool",
             "kotlin.CharArray" => "array:char",
+            // Unsigned specialized arrays (#53): native System.Byte[]/UInt16[]/UInt32[]/UInt64[]. Same array key as
+            // their element token so an @ClrIntrinsic signature over the ref.dll spelling matches.
+            "kotlin.UByteArray" => "array:ubyte",
+            "kotlin.UShortArray" => "array:ushort",
+            "kotlin.UIntArray" => "array:uint",
+            "kotlin.ULongArray" => "array:ulong",
             _ => StripGenericArity(t),
         };
     }
@@ -1228,7 +1234,11 @@ sealed class ReferenceMetadataIndex
     static string PrimitiveBirName(Type type)
     {
         if (type == typeof(bool)) return "bool";
-        if (type == typeof(byte)) return "byte";
+        // .NET SByte is SIGNED = kotlin.Byte (token "byte"); .NET Byte is UNSIGNED = kotlin.UByte (token "ubyte").
+        // #53: sbyte was previously missing (fell through to a raw "System.SByte" string) and byte carried the wrong
+        // sign. The unsigned family (ushort/uint/ulong) is added here for the same reason.
+        if (type == typeof(sbyte)) return "byte";
+        if (type == typeof(byte)) return "ubyte";
         if (type == typeof(char)) return "char";
         if (type == typeof(double)) return "double";
         if (type == typeof(float)) return "float";
@@ -1236,6 +1246,9 @@ sealed class ReferenceMetadataIndex
         if (type == typeof(long)) return "long";
         if (type == typeof(object)) return "object";
         if (type == typeof(short)) return "short";
+        if (type == typeof(ushort)) return "ushort";
+        if (type == typeof(uint)) return "uint";
+        if (type == typeof(ulong)) return "ulong";
         if (type == typeof(string)) return "string";
         if (type == typeof(void)) return "void";
         // The REFERENCE stdlib emits the pure-Kotlin primitives as real types whose FullName is literally

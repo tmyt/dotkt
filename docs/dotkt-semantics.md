@@ -518,6 +518,32 @@ Reading the other direction, consuming **any** .NET assembly:
 enforces neither — exactly how Kotlin/JVM treats un-annotated Java. This avoids the unsound alternative of forcing a
 possibly-null .NET value into a Kotlin non-null type.
 
+## 9b. `System.Byte` is UNSIGNED — it maps to `kotlin.UByte`, not `kotlin.Byte` (STRICT, #53)
+
+Kotlin's `Byte` is **signed** (−128..127); the CLR's `System.Byte` is **unsigned** (0..255). So the mapping is strict
+in both directions, exactly parallel to the wider unsigned widths (`UInt16↔UShort`, `UInt32↔UInt`, `UInt64↔ULong`):
+
+| Kotlin | .NET | why |
+|---|---|---|
+| `kotlin.Byte` (signed) | `System.SByte` | both signed 8-bit |
+| `kotlin.UByte` (unsigned) | `System.Byte` | both unsigned 8-bit |
+| `kotlin.ByteArray` | `System.SByte[]` | signed native array |
+| `kotlin.UByteArray` | `System.Byte[]` | **unsigned native array** |
+
+Consequences:
+- A .NET `byte` member (return/param/field) surfaces to Kotlin as **`UByte`**, and a `byte[]` as **`UByteArray`** (the
+  specialized primitive array — a native `System.Byte[]`, **not** `Array<UByte>` and **not** a value-class wrapper). A
+  .NET byte value `200` reads as `UByte 200`, where the previous lossy collapse to signed `Byte` gave `-56`. This makes
+  `UByte`/`UByteArray` round-trip faithfully through a DotKt emit → re-consume cycle.
+- `UByteArray` is represented at runtime as a native `System.Byte[]` (like `ByteArray` is `System.SByte[]`); its
+  `ubyteArrayOf`/indexing/`size`/iteration are native array operations, not calls on a wrapper object.
+- **Escape hatch for signed-byte consumers:** `UByteArray.toByteArray()` and `ByteArray.toUByteArray()` reinterpret
+  between the two. On the CLR `System.Byte[]` and `System.SByte[]` share identical storage and are freely
+  interchangeable at runtime (ECMA reduced-type array compatibility), so these lower to a **reinterpret cast — a VIEW,
+  not a defensive copy** (a deliberate `discard-jvmisms` deviation: the JVM's `copyOf()` is defensively copying the same
+  8-bit storage; on the CLR the two arrays are already the same bytes). Mutations through one view are visible through
+  the other. The scalar `UByte.toByte()` / `Byte.toUByte()` remain bit-reinterprets of a single 8-bit value as before.
+
 ## 10. Round-trip fidelity audit — what re-consuming a DotKt assembly as Kotlin LOSES
 
 §6 lists what survives the round-trip (Kotlin → DotKt `.dll` → re-consumed as Kotlin: `facadegen` reflects the dll and
@@ -634,6 +660,7 @@ implicit resolution, no `FirEnumEntry` synthesis), not by a missing `[Kotlin*]` 
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
 - A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.
+- `System.Byte` is UNSIGNED → maps to `UByte` (and `byte[]` → `UByteArray`, a native `System.Byte[]`); `kotlin.Byte` is signed = `System.SByte`. `UByteArray.toByteArray()` is a reinterpret VIEW, not a copy. §9b.
 - `import System.Text.StringBuilder` and `kotlin.text.StringBuilder` are two distinct typed views of one CLR type; mixing them is a type error (cast to cross). §8b.
 - An injected .NET class's statics resolve implicitly (`Application.Start(...)`); `.Companion` is optional. §8c.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.

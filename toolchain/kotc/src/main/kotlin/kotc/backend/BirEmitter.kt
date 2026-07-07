@@ -3082,6 +3082,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"kotlin.Long" -> "Int64"; "kotlin.Short" -> "Int16"; "kotlin.Byte" -> "SByte"
 			"kotlin.Float" -> "Single"; "kotlin.Double" -> "Double"; "kotlin.Boolean" -> "Boolean"
 			"kotlin.Unit" -> "Void"
+			// Unsigned inline classes -> their .NET shape simple names. kotlin.Byte is SIGNED (SByte); kotlin.UByte is the
+			// UNSIGNED System.Byte. (#53 — layer-violation shape matcher, kept byte-correct; full removal is a follow-up.)
+			"kotlin.UByte" -> "Byte"; "kotlin.UShort" -> "UInt16"; "kotlin.UInt" -> "UInt32"; "kotlin.ULong" -> "UInt64"
 			else -> (t.classifierOrNull?.owner as? IrClass)?.let { clrName(it) }?.substringAfterLast('.') ?: "Object"
 		}
 	}
@@ -3551,6 +3554,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val elemT = call.typeArguments.getOrNull(0)?.let { birType(it) } ?: v?.let { birType(it.varargElementType) } ?: OBJ
 			return """{"k":"newArray","elem":${str(elemT)},"elems":[${elems.joinToString(",") { expr(it) }}]}"""
 		}
+		// Unsigned<->signed byte-array reinterpret (#53). In a consumer build UByteArray IS System.Byte[] and ByteArray
+		// IS System.SByte[]; the two are freely castclass-compatible at runtime (same 8-bit storage, ECMA reduced-type
+		// array compatibility). So `UByteArray.toByteArray()` / `ByteArray.toUByteArray()` — the stdlib's @InlineOnly
+		// `storage.copyOf()` extensions, whose value-class `storage` does NOT exist on a native array — lower to a plain
+		// array cast (a reinterpret VIEW, not a defensive copy; noted in dotkt-semantics). Guarded on the EXACT receiver
+		// array identity so the Collection<Byte>/Array<out Byte> overloads of the same names are untouched.
+		if (!stdlibCompile && (name == "toByteArray" || name == "toUByteArray")) {
+			val er = extensionReceiver(call)
+			val erFq = er?.type?.classFqName?.asString()
+			if (name == "toByteArray" && erFq == "kotlin.UByteArray")
+				return """{"k":"cast","type":${TypeNode.Array(TypeNode.Fqn("kotlin.Byte")).toJson()},"e":${expr(er)}}"""
+			if (name == "toUByteArray" && erFq == "kotlin.ByteArray")
+				return """{"k":"cast","type":${TypeNode.Array(TypeNode.Fqn("kotlin.UByte")).toJson()},"e":${expr(er)}}"""
+		}
+
 		// `e!!` (not-null assertion) -> the value itself (the use site throws on null anyway).
 		if (name == "CHECK_NOT_NULL") return expr(call.arguments.filterNotNull().first())
 
@@ -4607,12 +4625,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** Kotlin `Array<T>` / primitive arrays -> a BIR `array:<elem>` type (ilemit -> `T[]`). */
 	internal fun isArrayType(t: IrType): Boolean {
 		val fq = t.classFqName?.asString()
-		return fq == "kotlin.Array" || fq in PRIMITIVE_ARRAY_ELEM
+		// Unsigned specialized arrays are native only in consumer builds (#53) — see UNSIGNED_ARRAY_ELEM.
+		return fq == "kotlin.Array" || fq in PRIMITIVE_ARRAY_ELEM || (!stdlibCompile && fq in UNSIGNED_ARRAY_ELEM)
 	}
 
 	internal fun arrayElemType(t: IrType): TypeNode {
 		val fq = t.classFqName?.asString()
 		PRIMITIVE_ARRAY_ELEM[fq]?.let { return TypeNode.Fqn(it) }
+		if (!stdlibCompile) UNSIGNED_ARRAY_ELEM[fq]?.let { return TypeNode.Fqn(it) }
 		if (fq == "kotlin.Array")
 			return (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
 		return OBJ
