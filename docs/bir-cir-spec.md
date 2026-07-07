@@ -56,9 +56,19 @@ Notes:
   in a BIR/CIR the backend produces; bir2cir/ilemit's `TypeNode.Read` accepts it for round-trip but never
   encounters it); **facadegen META emits all three** (a `.NET` member with NO `NullableAttribute` → `oblivious`).
   `oblivious` is a coherent sibling node (each state names itself), NOT a `nullable`-node refinement flag —
-  additive per principle 3. The old **duplicate** nullability encodings — the type wrapper AND the separate
-  decl-level `"nullable":true` flag — collapse onto the Type node (the decl flag is retired in m5; a type's
-  nullability lives on the Type node).
+  additive per principle 3. The old duplicate nullability encodings — the type wrapper AND the separate
+  decl-level `"nullable":true` flag — are to collapse onto the Type node (a type's nullability lives on the Type
+  node). **STATUS (m5): NOT YET FOLDED — deferred.** The decl-level flag is only a *true* duplicate for the
+  value-type case (`Int?`, where the type node is already `{t:"nullable","of":kotlin.Int}`); for a **reference**
+  `String?` the flag is the SOLE carrier (kotc's `birType` intentionally drops the reference `?` — a CLR ref
+  type is nullable in IL regardless — so no type wrapper exists to dedup against), and for a **type-variable**
+  `T?` it rides a bare `gp:T` slot. Folding the reference `?` onto `{t:"nullable"}` is **unsafe as-is**: ilemit's
+  `MapType` lowers a `nullable:` type node to `System.Nullable<T>`, valid only for value `T` (`Nullable<string>`
+  is invalid). The unified model therefore requires `{t:"nullable"}` to mean "NRT-annotated nullable"
+  (`NullableAttribute`=2, per the §1 table) with a *value-vs-reference split* in `MapType` (reference → the bare
+  ref type + a NRT byte; value → `System.Nullable<T>`) AND the NRT byte-walk deriving from the type node instead
+  of the flag — a representational change to NRT metadata emission (a roundtrip/facadegen surface the verify-il
+  gate does not exercise), NOT a mechanical rename. It is sequenced separately, under the full roundtrip gate.
 - Examples:
   - `kotlin.Int` → `{"t":"fqn","name":"kotlin.Int"}`
   - `List<Int>` → `{"t":"fqn","name":"kotlin.collections.List","args":[{"t":"fqn","name":"kotlin.Int"}]}`
@@ -123,12 +133,16 @@ node-format stability is achieved DECLARATIVELY, in three parts:
 0. **Casing convention** — every `k` value AND every field name is **lowerCamelCase**, uniformly. Audit
    (89 kotc `k` values): no snake_case/UpperCamel/dotted (good), but flattened abbreviations HIDE case
    boundaries inconsistently — `isinst`/`isinstRef` spell "instance" as `inst` while `callInstance` uses
-   `Instance`. Fix: `isinst`→`isInst`, `isinstRef`→`isInstRef`; de-abbreviate case-hiding shorthands
-   (`bin`→`binOp`, `un`→`unaryOp`) OR pin a documented short-operator exception — one policy, in the spec.
+   `Instance`. **APPLIED policy (m5 batch-1, landed): de-abbreviate** — `isinst`→`isInst`, `isinstRef`→`isInstRef`,
+   `bin`→`binOp`, `un`→`unaryOp`. No short-operator exception is used; every `k` value is spelled-out lowerCamel.
    Single-word kinds (`for`/`if`/`block`) are already one-word lowerCamel (fine). The validator's canonical
    `k` set is the casing enforcer: any spelling not in the frozen set reddens the gate.
-1. **Canonical field names** — one name per concept. Collapse pure synonyms (`retType`→`ret`, `val`→`value`);
-   rename cryptic single letters (`e`→`e` is kept ONLY if documented; `l`/`r`→`lhs`/`rhs`). Keep genuinely
+1. **Canonical field names** — one name per concept. **APPLIED (m5 batches 2-4, landed):** pure synonyms
+   collapsed — `retType`→`ret`, `val`→`value` (map-entry value); cryptic left/right renamed `l`/`r`→`lhs`/`rhs`
+   (on `binOp`/`objEq`). **`e` is KEPT and DOCUMENTED** as the canonical single-sub-expression / operand field —
+   it is shared uniformly by `unaryOp`, `conv`, `cast`, `isInst`, `isInstRef`, `cond`/`if` (as a child), and the
+   `nullable*` nodes, so it is one documented name per concept, not a cryptic drift (the schema's per-kind shapes
+   use `e` accordingly; `conv` carries its target type as `to`, the `nullable*` element as `elem`). Keep genuinely
    role-distinct fields distinct (a call's `args` ≠ a decl's `params` ≠ an array's `elems`; `ret`≠`elem`≠`keyType`
    when the roles differ). Every type-valued field holds a `Type` node (§1).
 2. **Per-kind schema** — the spec pins each `k`'s exact field set (name, required/optional, value shape),
@@ -171,8 +185,9 @@ Every identifier in the serialization vocabulary is **lowerCamelCase**, uniforml
 carrier field names. Rules:
 - **Multi-word → camelCase boundaries; never case-hiding-flat.** `byref`→`byRef`, `isinst`→`isInst`,
   `staticfieldset`→`staticFieldSet`. A boundary between words is always a case change.
-- **No cryptic single letters / silent truncations** where they hide meaning: `e`/`l`/`r`→documented or
-  `expr`/`lhs`/`rhs`; `bin`/`un`→`binOp`/`unaryOp` (or a pinned short-operator exception).
+- **No cryptic single letters / silent truncations** where they hide meaning: `l`/`r`→`lhs`/`rhs` (applied);
+  `e` is KEPT as the DOCUMENTED single-operand field (§2.5 part 1); `bin`/`un`→`binOp`/`unaryOp` (applied,
+  de-abbreviated — no short-operator exception).
 - **Accepted acronym tags** (documented, treated as a single lowercase unit — like the top-level `k`/`t`
   keys themselves): `fqn`, `tv`, `fn`. These are universal 2-3 letter type-tag units, NOT case-hiding
   multiword flattenings; they stay lowercase. (If one ever appears mid-identifier it becomes `Fqn`/`Tv`/`Fn`.)
