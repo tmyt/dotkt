@@ -248,9 +248,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// monomorphization was a pre-generic-interface workaround ("IL can't define a generic interface" — false: the
 	// BCL is full of them, ilemit emits the stdlib's own, and `Lazy<T>` proves a value-type arg works). Retired (#58).
 	// A custom (non-lazy) delegated property passes a `KProperty<*>` to getValue/setValue. KProperty has no
-	// BCL equivalent (pure binding), so — like Kotlin/JVM's PropertyReferenceImpl — we compiler-generate a
-	// minimal `KProperty` interface (`name`) + `KPropertyImpl(name)` class into the user's assembly.
-	internal var needsKProperty = false
+	// BCL equivalent (pure binding), so — like Kotlin/JVM's PropertyReferenceImpl — a minimal `<>dotkt_KProperty`
+	// interface (`name`) + `<>dotkt_KPropertyImpl(name)` class is synthesized into the user's assembly. #52: kotc emits
+	// only the use-site references (the FACT); bir2cir's SharedSyntheticSynthesis owns the TYPE definitions.
 
 	/** A user/anon class's emitted name (anon "<no name provided>" -> its synthetic lifted name). */
 	// A user type's .NET name = its Kotlin package projected as the .NET namespace (`alpha.Box`), so classes with the
@@ -301,30 +301,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun companionObjectTypeName(comp: IrClass): String =
 		typeName(comp.parent as IrClass) + "." + comp.name.asString() + "CompanionObject"
 
-	/** The compiler-generated `KProperty` interface + `KPropertyImpl` class, if any delegated property used one. */
-	internal fun kPropertyDefs(): List<String> {
-		if (!needsKProperty) return emptyList()
-		val ifaceName = """{"name":"get_name","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":${fqnJson("kotlin.String")},"body":[]}"""
-		val iface = """{"name":"<>dotkt_KProperty","kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$ifaceName]}"""
-		val getName = """{"name":"get_name","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":${fqnJson("kotlin.String")},"body":[{"k":"return","value":{"k":"field","ownerType":${fqnJson("<>dotkt_KPropertyImpl")},"recv":{"k":"this"},"name":"name"}}]}"""
-		val ctorBody = """{"k":"setField","ownerType":${fqnJson("<>dotkt_KPropertyImpl")},"recv":{"k":"this"},"name":"name","value":{"k":"local","name":"name"}}"""
-		val impl = """{"name":"<>dotkt_KPropertyImpl","kind":"class","vis":"public","base":null,"interfaces":[${fqnJson("<>dotkt_KProperty")}],"fields":[{"name":"name","type":${fqnJson("kotlin.String")}}],"ctors":[{"params":[{"name":"name","type":${fqnJson("kotlin.String")}}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[$ctorBody]}],"methods":[$getName]}"""
-		return listOf(iface, impl)
-	}
+	// #52 (kotc-purity): the compiler-generated `<>dotkt_KProperty` interface + `<>dotkt_KPropertyImpl` class (a pure
+	// binding, #57) is a CLR-representation synthetic. kotc emits ONLY the FACT — a `new <>dotkt_KPropertyImpl(name)`
+	// / a `callInstance <>dotkt_KProperty.get_name` at each `::prop` / delegate use site. bir2cir's
+	// SharedSyntheticSynthesis owns the two fixed-shape TYPE definitions, injecting them into any referencing file.
 
 	// kotlin.CharSequence has no faithful .NET equivalent (it's a read-only INDEXED polymorphic char view — neither
 	// IEnumerable<char>, char[], nor IReadOnlyList<char> fits, and String doesn't implement any of them as a common
 	// supertype). So a user `class S : CharSequence` gets a synthetic monomorphized interface `<>dotkt_CharSequence`
 	// (length getter + get(i) operator + subSequence). To pass a .NET string API, call `.toString()`.
-	internal var usesCharSeq = false
+	// #52 (kotc-purity): kotc emits ONLY the FACT — the `<>dotkt_CharSequence` identity at a use site (a supertype in a
+	// `class S : CharSequence`, or a CharSequence-typed param/local/return). bir2cir's SharedSyntheticSynthesis owns the
+	// actual fixed-shape interface TYPE definition, injecting it into any file that references the identity.
 	internal fun charSeqIface(t: IrType): String? =
-		if (t.classFqName?.asString() == "kotlin.CharSequence") { usesCharSeq = true; "<>dotkt_CharSequence" } else null
-	internal fun charSeqIfaceDefs(): List<String> = if (!usesCharSeq) emptyList() else listOf({
-		val getLen = """{"name":"get_length","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":${fqnJson("kotlin.Int")},"body":[]}"""
-		val get = """{"name":"get","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[{"name":"index","type":${fqnJson("kotlin.Int")}}],"ret":${fqnJson("kotlin.Char")},"body":[]}"""
-		val subSeq = """{"name":"subSequence","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[{"name":"startIndex","type":${fqnJson("kotlin.Int")}},{"name":"endIndex","type":${fqnJson("kotlin.Int")}}],"ret":${fqnJson("<>dotkt_CharSequence")},"body":[]}"""
-		"""{"name":"<>dotkt_CharSequence","kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$getLen,$get,$subSeq]}"""
-	}())
+		if (t.classFqName?.asString() == "kotlin.CharSequence") "<>dotkt_CharSequence" else null
 
 	// A `kotlin.properties.Read(Write)Property<T,V>`-typed delegate is NOT monomorphized: kotc emits the REAL
 	// generic stdlib interface identity (like `by lazy`'s `kotlin.Lazy<T>`), so delegate field/local types,
@@ -339,10 +329,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val elem = birType(d.type)
 		return refTypes.getOrPut(elem.toJson()) { "<>dotkt_${synthScope}_Ref_" + mangle(elem) }
 	}
-	internal fun refDefs(): List<String> = refTypes.map { (elemJson, name) ->
-		// A monomorphized heap cell `class <>dotkt_Ref_<elem>(var v: elem)` (non-generic -> trivial field access).
-		val ctor = """{"params":[{"name":"v","type":$elemJson}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[{"k":"setField","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":"v","value":{"k":"local","name":"v"}}]}"""
-		"""{"name":${str(name)},"kind":"class","abstract":false,"vis":"public","typeParams":[],"base":null,"interfaces":[],"fields":[{"name":"v","type":$elemJson}],"ctors":[$ctor],"methods":[]}"""
+	// #52 (kotc-purity): the monomorphized heap cell `<>dotkt_Ref_<elem>{ var v }` is a CLR-representation synthetic.
+	// kotc emits ONLY the FACT — a file-level `refTypes` registry (each cell's name + element TYPE identity) plus the
+	// use-site `new`/`field`/`setField` on the cell. bir2cir's RefCellSynthesis assembles the actual trivial class
+	// (single `v` field + its init ctor) into the file `types` from this registry. The element type is unrecoverable
+	// from the use-site nodes alone (a bare `field .v` read carries no type), so the registry is the required fact.
+	internal fun refTypesJson(): String = refTypes.entries.joinToString(",") { (elemJson, name) ->
+		"""{"name":${str(name)},"elem":$elemJson}"""
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
@@ -399,7 +392,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// de-duplicated by ilemit, but lifted `__lambdaN` are file-class methods that are NOT — so the duplication is
 		// real metadata bloat and a correctness hazard.
 		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear()
-		usesCharSeq = false; needsKProperty = false
 		// The `@ClrAwait` await intrinsic (`fun <T> Task<T>.await(): T`) is never emitted as a real method —
 		// a suspend call site is flagged with `"suspendCall":true` and lowered by the deferred downstream layer. Skip it.
 		// The `byref` out/ref marker is an intrinsic consumed at its call sites (the arg becomes a `byref:` param) —
@@ -495,13 +487,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			superCompanions.map { typeDef(it, isObject = true) } +
 			(richEnums + nestedRichEnums).map { richEnumDef(it) } + annClasses.map { annotationDef(it) }
 		val methods = (fnMethods + topPropAccessors + liftedMethods).joinToString(",")
-		// Synthetic types (iterator interfaces, KProperty) are registered lazily while emitting bodies above ->
-		// append last (order matters: producers before kPropertyDefs, which reads flags the producers populate).
-		// The CLR-bound (@ClrTypeAlias) classes are already in `typeDefs` (they flow through `classes` like any other
-		// type — kotc no longer strips them). bir2cir's AliasHelperHoist drops each alias type def and, for a class,
-		// hoists its rule-3 members into the <>dotkt_ClrH_<owner> static helper. kotc synthesizes NO helper itself.
-		val types = (typeDefs + liftedTypes + charSeqIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
-		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
+		// #52 (kotc-purity): the CLR-representation synthetic TYPE definitions are no longer synthesized here — kotc emits
+		// only the FACTS. bir2cir owns the type synthesis: SharedSyntheticSynthesis builds the fixed-shape
+		// `<>dotkt_CharSequence` interface + `<>dotkt_KProperty(Impl)` from their use-site references; RefCellSynthesis
+		// builds each `<>dotkt_Ref_<elem>` cell from the `refTypes` registry below; ClosureSynthesis builds each capturing
+		// closure class from the `synthClass` fact on its `newClosure` node. The CLR-bound (@ClrTypeAlias) classes are
+		// already in `typeDefs` (they flow through `classes` like any other type — kotc no longer strips them); bir2cir's
+		// AliasHelperHoist drops each alias type def and, for a class, hoists its rule-3 members into the helper.
+		val types = (typeDefs + liftedTypes).joinToString(",")
+		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types],"refTypes":[${refTypesJson()}]}"""
 	}
 
 	internal fun interfaceDef(iface: IrClass): String {
@@ -1475,7 +1469,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode {
 		klass ?: return TypeNode.Fqn("?")
 		// CharSequence (declaring class of a call on a CharSequence-typed value) -> the synthetic interface name.
-		if (klass.fqNameWhenAvailable?.asString() == "kotlin.CharSequence") { usesCharSeq = true; return TypeNode.Fqn("<>dotkt_CharSequence") }
+		if (klass.fqNameWhenAvailable?.asString() == "kotlin.CharSequence") return TypeNode.Fqn("<>dotkt_CharSequence")
 		val name = typeName(klass)
 		// An `inner class` re-declares its enclosing type params; construct it WITH them (as `tv`). See innerEnclosingTypeParams.
 		val enclArgs = innerEnclosingTypeParams(klass).map { tvOf(it) }
@@ -1960,22 +1954,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		capPairs.forEach { (decl, fname) ->
 			captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 		}
-		val invoke: String
-		run {
-			val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-			invoke = """{"name":"invoke","static":false,"override":false,"virtual":false,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}"""
-		}
+		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 		val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
-		val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
 		// The closure must be GENERIC over any enclosing type parameters it captures (reified CLR generics — a `gp:T`
 		// field is unresolved otherwise). Declare them on the class and pass them as type arguments at `newClosure`.
 		val freeTps = freeTypeParams(capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
-		liftedTypes.add("""{"name":${str(cname)},"kind":"class"${typeParamsJson(freeTps)},"base":null,"interfaces":[],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$invoke]}""")
+		// #52 (kotc-purity): kotc no longer SYNTHESIZES the closure CLASS (a CLR-representation type). It emits the raw
+		// build-INGREDIENTS as a transient `synthClass` fact (capture fields=name+type, invoke params/ret/body, generic
+		// type-param decls); bir2cir's ClosureSynthesis assembles the actual closure class (kind/base/interfaces wrapper +
+		// the ctor field-init body) into the file `types`, then STRIPS `synthClass`, leaving the lean `newClosure`
+		// (closureType + capture VALUE exprs + funcType + typeArgs) that ilemit consumes for the `new` — byte-identical.
+		val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]${typeParamsJson(freeTps)}}"""
 		// Capture values are evaluated in the enclosing context (the outer `this`, or an outer local).
 		val capExprs = captures.joinToString(",") { capValueExpr(it) }
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-		return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${str(ftype)}$typeArgs}"""
+		return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${str(ftype)}$typeArgs,"synthClass":$synthClass}"""
 	}
 
 	/**
@@ -3152,7 +3146,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else -> null to false
 			}
 			if (owner != null) {
-				needsKProperty = true
 				val kprop = """{"k":"new","type":${fqnJson("<>dotkt_KPropertyImpl")},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(ldp.name.asString())}}]}"""
 				val nullRef = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
 				return if (callee === ldp.setter)
@@ -3754,7 +3747,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `kProperty.name` -> the compiler-generated KProperty.get_name().
 		if (property?.name?.asString() == "name" &&
 			declaringClass?.fqNameWhenAvailable?.asString()?.startsWith("kotlin.reflect.KProperty") == true) {
-			needsKProperty = true
 			val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
 			return """{"k":"callInstance","ownerType":${fqnJson("<>dotkt_KProperty")},"virtual":true,"recv":$recv,"method":"get_name","args":[]}"""
 		}
@@ -3796,7 +3788,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else -> null to false
 			}
 			if (delegate != null && owner != null) {
-				needsKProperty = true
 				val kprop = """{"k":"new","type":${fqnJson("<>dotkt_KPropertyImpl")},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(property.name.asString())}}]}"""
 				// callvirt: getValue/setValue is virtual (interface impl) or final (duck-typed) — callvirt fits both.
 				return if (callee === property.setter)
@@ -3816,7 +3807,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val target = bodyCall.symbol.owner
 				if (delegate == null || target.parent is IrClass) return@run
 				if (target.name.asString() != "getValue" && target.name.asString() != "setValue") return@run
-				needsKProperty = true
 				val kprop = """{"k":"new","type":${fqnJson("<>dotkt_KPropertyImpl")},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(property.name.asString())}}]}"""
 				val ta = typeArgsJson(bodyCall)
 				val setArg = if (callee === property.setter) ",${expr(regularArgs(call).first())}" else ""
@@ -4592,9 +4582,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// that CLR type is SEALED, so a Kotlin class could not implement it, and the alias was pure CLR knowledge
 		// that must not live in kotc (layer purity — cf. coerce/isBlank pure-body migration).
 		// kotlin.reflect.KProperty* (delegated-property metadata) -> the synthetic compiler-generated `KProperty`.
-		if (fqp != null && (fqp.startsWith("kotlin.reflect.KProperty") || fqp.startsWith("kotlin.reflect.KMutableProperty"))) {
-			needsKProperty = true; return TypeNode.Fqn("<>dotkt_KProperty")
-		}
+		if (fqp != null && (fqp.startsWith("kotlin.reflect.KProperty") || fqp.startsWith("kotlin.reflect.KMutableProperty")))
+			return TypeNode.Fqn("<>dotkt_KProperty")
 		// kotlin.properties.Read(Write)Property<T,V> is NOT monomorphized: it falls through to the
 		// user-class/interface branch below (`@kotlin.properties.ReadWriteProperty[…]`), the REAL generic
 		// stdlib interface — same as `by lazy`'s `kotlin.Lazy<T>`. A delegate field/local typed as this

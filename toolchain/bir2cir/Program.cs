@@ -134,6 +134,16 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
+            // SYNTHETIC CLR-REPRESENTATION TYPES (#52 kotc-purity): kotc emits only the FACTS — a capturing lambda's
+            // `newClosure` carries a transient `synthClass` ingredient bag; a CharSequence / KProperty use references
+            // the identity; a heap ref-cell rides the `refTypes` registry. Assemble the actual closure / interface /
+            // cell TYPE definitions HERE, in the Kotlin<->CLR layer, and inject them into the file `types`. Runs FIRST
+            // (before every other transform) so the synthesized types are present exactly as kotc's old liftedTypes /
+            // charSeqIfaceDefs / kPropertyDefs / refDefs used to be — and, crucially, before Phase-1.5
+            // SuspendColdLowering builds its `closures` lookup from `types`. ClosureSynthesis first so a closure invoke
+            // body that references KProperty is in `types` when SharedSyntheticSynthesis scans for it.
+            ClosureSynthesis.Apply(bir.Root);
+            SharedSyntheticSynthesis.Apply(bir.Root);
             // RANGE FOR-LOOP (#52 Phase 5 "range partial"): kotc emits a FAITHFUL `forRange` (range VALUE + loop var +
             // Kotlin `rangeType`, NO CLR accessor names/owner). Realize the IntProgression get_first/get_last/get_step
             // access HERE — the stdlib form keeps `forRange` + injects the accessors (ilemit resolves off `_types`);

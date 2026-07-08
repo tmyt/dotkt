@@ -463,6 +463,29 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **The synthetic CLR-representation TYPE *definitions* moved kotc → bir2cir — kotc emits the FACT, bir2cir
+  synthesizes the TYPE (#52, final purity step).** kotc used to hand-build four families of `<>dotkt_*`
+  CLR-representation types directly into its BIR `types`: the capturing-lambda **closure class**
+  (`<>dotkt_<scope>_Closure<N>`), the **`<>dotkt_CharSequence`** monomorphic interface, the
+  **`<>dotkt_KProperty`/`KPropertyImpl`** reflection stub, and the monomorphized **heap ref-cell**
+  (`<>dotkt_<scope>_Ref_<elem>`) for a captured-and-mutated `var`. These are CLR-representation inventions (no such
+  type exists in the Kotlin source), so — like every other #52 recognition — the *synthesis* belongs in the
+  Kotlin↔CLR layer, not the frontend. kotc now emits only the structural FACTS and bir2cir assembles the type defs:
+  - **closure** — kotc's `newClosure` node carries a transient `synthClass` ingredient bag (capture fields
+    `{name,type}`, invoke params/ret/body, generic `typeParams`); the new bir2cir `ClosureSynthesis` pass builds the
+    class (class/base/interfaces wrapper + the ctor field-init body) and strips `synthClass`, leaving the lean
+    `newClosure` ilemit already lowers to `new`. Runs first in the phase-1 loop, before `SuspendColdLowering` reads
+    the closure defs from `types` to inline a `suspendCoroutineUninterceptedOrReturn { c -> … }` intrinsic.
+  - **CharSequence / KProperty** — kotc emits only the use-site references; the new bir2cir
+    `SharedSyntheticSynthesis` pass injects each fixed-shape def into any file that references the identity (ilemit
+    still dedups per assembly + canonicalizes to the rt stdlib's copy when it resolves externally).
+  - **ref-cell** — kotc emits a file-level `refTypes` registry ({name, element type} — the element type is
+    unrecoverable from the bare `field .v` use-sites); `SharedSyntheticSynthesis` assembles each `{ var v }` cell
+    from it and drops the registry.
+  Output is byte-identical (the synthesized defs match kotc's retired `charSeqIfaceDefs`/`kPropertyDefs`/`refDefs`
+  and the closure `liftedTypes.add` verbatim); behavior + ilverify unchanged. kotc's `usesCharSeq`/`needsKProperty`
+  flags and the four producer functions are deleted. (The SAM shim + lifted local-class/anon-object types stay in
+  kotc — they are lifts of user-authored declarations, not pure synthetics; an analogous follow-up, not in scope.)
 - **The `<>dotkt_KIterator_<elem>`/`<>dotkt_KIterable_<elem>` iterator-protocol monomorphization is retired — user
   `Iterable`/`Iterator` value-type-element classes use the real generic (#58).** kotc used to compiler-synthesize a
   per-concrete-element non-generic interface (`<>dotkt_KIterator_int`, `<>dotkt_KIterable_int`) for a user

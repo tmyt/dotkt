@@ -554,13 +554,32 @@ _All operator classes (1–4) + the range partial + String.plus are done._
   `it.hasNext()`/`it.next()` dispatches on that real generic (bir2cir `IteratorConsumerNormalization` normalizes
   the dispatch to `clrInstance` on the base `Iterator<Int>`, covering the inherited-member `MutableIterator` case).
   Its premise ("IL can't define a generic interface") was false — the reverse bridge already used the real generic
-  in the substitute build; app builds now match. The `<>dotkt_KProperty`/`KPropertyImpl` property-reference pair
-  and the `<>dotkt_CharSequence` adapter stay — the latter has NO faithful BCL equivalent, a DIFFERENT (genuine)
-  reason, not the false generic-interface premise.)
-  These are CLR-representation inventions for closures/property-references that
-  CLAUDE.md keeps in the "delegate/closure family" bucket; their FQN literals (`<>dotkt_*`) are not `kotlin.*`
-  and name a type kotc itself defines, so they are outside the "hardcoded `kotlin.*` literal" metric. Even these
-  are "move toward the boundary when touched" per CLAUDE.md — but they are the last, smallest residue.
+  in the substitute build; app builds now match. The `<>dotkt_CharSequence` interface stays a synthetic — it has NO
+  faithful BCL equivalent, a DIFFERENT (genuine) reason, not the false generic-interface premise; likewise the
+  `<>dotkt_KProperty`/`KPropertyImpl` property-reference pair (a pure binding, no BCL equivalent).)
+
+  **#52 (2026-07-08) — the synthetic TYPE *definitions* moved kotc → bir2cir.** These CLR-representation types are
+  still *needed*, but kotc no longer SYNTHESIZES them — it emits only the Kotlin FACTS, and bir2cir (where CLR
+  knowledge lives) assembles the actual type defs into the CIR `types`:
+  - **closure class** (`<>dotkt_<scope>_Closure<N>`): kotc emits `newClosure` carrying a transient `synthClass`
+    ingredient bag (capture fields `{name,type}` + invoke params/ret/body + generic `typeParams`);
+    bir2cir `ClosureSynthesis` builds the class (class/base/interfaces wrapper + the ctor field-init body) and
+    strips `synthClass`, leaving the lean `newClosure` (closureType + capture values + funcType + typeArgs) ilemit
+    already consumes for the `new`. Runs FIRST in the phase-1 loop — before `SuspendColdLowering` builds its closure
+    lookup from `types` for the `suspendCoroutineUninterceptedOrReturn` inliner.
+  - **`<>dotkt_CharSequence` interface** + **`<>dotkt_KProperty(Impl)`**: kotc emits only the use-site references
+    (the fact); bir2cir `SharedSyntheticSynthesis` injects the fixed-shape def into any file that references the
+    identity (ilemit still dedups per assembly + canonicalizes to the rt stdlib's copy when it resolves externally).
+  - **heap ref-cell** (`<>dotkt_<scope>_Ref_<elem>`): kotc emits a file-level `refTypes` registry ({name, element
+    type} — the element type is unrecoverable from the bare `field .v` use-sites); bir2cir `SharedSyntheticSynthesis`
+    assembles each `{ var v }` cell from it and drops the registry.
+  (The **SAM shim** `<>dotkt_<scope>_Sam<N>` — a lift of a user `fun interface` impl — plus lifted local-class /
+  anon-object types stay in kotc: they are lifts of user-authored declarations, not pure synthetics. Analogous to
+  the closure move; a candidate follow-up, not in #52 scope.)
+
+  Their FQN literals (`<>dotkt_*`) are not `kotlin.*`, so they were always outside the "hardcoded `kotlin.*` literal"
+  metric; after #52 kotc no longer *defines* a closure/CharSequence/KProperty/ref-cell type at all — it emits the
+  fact and bir2cir owns the CLR-representation synthesis, the last, smallest residue closed.
 - **Interop reads** (`kotlin.clr.*`, facadegen injection, `@Volatile`/`@ClrField`/`@ClrAwait`): the sanctioned
   .NET-space / annotation-flag reads. Legitimate by the boundary rule (kotc *may* read the .NET space).
 
