@@ -524,6 +524,20 @@ through the Phase-4b collection stringifier (verified `[1, 2, 3]`, not the raw .
 
 _All operator classes (1–4) + the range partial + String.plus are done._
 
+**#59 — the faithful-hint TYPE HINTS are RETIRED; bir2cir recovers operand static types itself.** The
+Phase-4b/5 mechanism left kotc emitting a transient operand-static-type HINT alongside the faithful op
+(`argTypes`+`argValueTypes` on `EQEQ`; `partTypes` on `String.plus`/template `concat`; `argTypes` on
+`println`/`print`; `recvType`/`argType` on `objMethod ToString`/`Equals`) so bir2cir could re-derive the
+collection/Double/Float/nullable split. **All of these hints are DELETED** — kotc emits ONLY the faithful op +
+faithful operand nodes. **STEP-0 finding:** the smart-cast refined type is ALREADY a first-class BIR fact (a
+smart-cast USE emits `{k:cast,type:<refined>,…}` on the operand; member calls carry the frontend-resolved
+`ownerType`), so no new node was needed — the hints were REDUNDANT with the operand expression + a
+local/param type environment. bir2cir now owns a single uniform recovery — `StaticTypeResolver.cs`
+(`BirScope` local-type env, the early-pass twin of `SubstCtx.VarTypes`; `StaticType.Surface`/`.Value`) — read
+by `PrimitiveOperatorLowering` (the `EQEQ` split) and `FaithfulHintRecognition` (concat/println/ToString/Equals/
+compareTo). ilemit unchanged; byte-identical (all 9 helper families still fire in the stdlib CIR; verify-schema
+0 violations; ilverify-clean). Two recovery subtleties (both caught by the full gate as NEW-FAILs and fixed): (1) LEXICAL SCOPING — `BirScope` records a `var` for the SUBSEQUENT siblings only, so two sibling `for ((k,v) in ...)` loops with a `v` of different element type (`il-groupby2`: List<Int> then List<String>) do not collide into one flat last-wins dict (the collision `clrCollToString<String>`-ed an Int list -> InvalidCast); (2) RET-LESS CALL RESOLUTION — a call whose node lacks a `ret` (kotc emits `ret` only for a GENERIC call, via `retHint`) is resolved from the ref.dll: `MemberBinding` carries the callee's structured return `TypeNode` (`TypeNodeOf`), and `StaticType` resolves a `callStatic owner=null` / member / field read via `TryTopLevelReturn`/`TryMemberReturn` (`il-cwindowed`: `"abcd".windowed(2)` returns `List<String>`, not on the node, now recovered -> `[ab, bc, cd]`). A this-assembly raw `field`/`lateinitGet`/`staticField` read resolves the same way (the property getter's declared return type). **COMPARE** carries NO type hint (only operand value-shaping, which STAYS in kotc as faithful call-operand coercion); its recognition already flows via the `kotlin.internal.ir` owner marker, so nothing hint-like moved for it.
+
 **Original plan (for the full bucket):**
 - **Principled target, per the faithful-transcriber rule:** kotc emits the faithful `callInstance`
   (`kotlin.Int.inc`, `x.compareTo(y)`, `a.plus(b)`, `x.toLong()`, the for-loop's `iterator()`/`hasNext()`/

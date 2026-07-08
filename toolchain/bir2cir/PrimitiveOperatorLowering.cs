@@ -59,59 +59,73 @@ static class PrimitiveOperatorLowering
         "kotlin.Double", "kotlin.Float", "kotlin.Boolean", "kotlin.Char",
     };
 
-    public static void Apply(JsonNode root)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null)
     {
+        StaticType.Refs = refs;
+        StaticType.LocalTypes = StaticType.CollectTypes(root);
         switch (root)
         {
-            case JsonObject o: WalkObject(o); break;
-            case JsonArray a: WalkArray(a); break;
+            case JsonObject o: WalkObject(o, BirScope.Empty); break;
+            case JsonArray a: WalkArray(a, BirScope.Empty); break;
         }
     }
 
-    static void WalkArray(JsonArray arr)
+    static void WalkArray(JsonArray arr, BirScope scope)
     {
+        // A statement sequence: a `var` enters scope for the SUBSEQUENT siblings only (lexical block scoping — so two
+        // for-loops each destructuring to `v` of different element types do not collide). The mutable child is created
+        // lazily, only when the array actually declares a var (args/sig arrays allocate nothing).
+        var cur = scope;
         for (var i = 0; i < arr.Count; i++)
+        {
             switch (arr[i])
             {
-                case JsonObject co: WalkObject(co); if (Lower(co) is JsonNode r) arr[i] = r; break;
-                case JsonArray ca: WalkArray(ca); break;
+                case JsonObject co: WalkObject(co, cur); if (Lower(co, cur) is JsonNode r) arr[i] = r; break;
+                case JsonArray ca: WalkArray(ca, cur); break;
             }
+            if (arr[i] is JsonObject vo && (vo["k"] as JsonValue)?.GetValue<string>() == "var")
+            {
+                if (ReferenceEquals(cur, scope)) cur = scope.Child();
+                cur.Declare(vo);
+            }
+        }
     }
 
     // Bottom-up: rewrite a node's CHILDREN (so a nested operator operand is already lowered), THEN lower the node
-    // itself — wrapping the already-lowered recv/args into the binOp/unaryOp.
-    static void WalkObject(JsonObject obj)
+    // itself — wrapping the already-lowered recv/args into the binOp/unaryOp. A declaration node extends `scope` with
+    // its params + body locals so StaticType can recover a bare operand `local`'s declared type.
+    static void WalkObject(JsonObject obj, BirScope scope)
     {
+        var child = scope.Extend(obj);
         foreach (var key in obj.Select(kv => kv.Key).ToList())
             switch (obj[key])
             {
-                case JsonObject co: WalkObject(co); if (Lower(co) is JsonNode r) obj[key] = r; break;
-                case JsonArray ca: WalkArray(ca); break;
+                case JsonObject co: WalkObject(co, child); if (Lower(co, child) is JsonNode r) obj[key] = r; break;
+                case JsonArray ca: WalkArray(ca, child); break;
             }
     }
 
     // A primitive-operator `callInstance` / a comparison-intrinsic `callStatic` -> the binOp/unaryOp node kotc
     // used to synthesize, else null (leave as-is).
-    static JsonNode Lower(JsonObject o)
+    static JsonNode Lower(JsonObject o, BirScope scope)
     {
         var k = (o["k"] as JsonValue)?.GetValue<string>();
-        if (k == "callStatic") return LowerIntrinsic(o);
+        if (k == "callStatic") return LowerIntrinsic(o, scope);
         if (k != "callInstance") return null;
         if (OwnerFqn(o["ownerType"]) is not string ownerFqn) return null;
         if ((o["method"] as JsonValue)?.GetValue<string>() is not string member) return null;
         var args = o["args"] as JsonArray ?? new JsonArray();
 
         // String concatenation (`a + b`, receiver `kotlin.String`) — the MEMBER recognition kotc used to do (#52
-        // Phase 5). kotc now emits the FAITHFUL `callInstance kotlin.String.plus(a, b)` + a cast-stripped `partTypes`
-        // hint (the SAME the string-template path carries); re-emit the identical 2-part `concat` node kotc used to
-        // synthesize. FaithfulHintRecognition (runs NEXT) then consumes `partTypes` exactly as for a string template —
-        // the Phase-4b part routing (collection -> clrCollToString, nullable -> LibraryKt.toString) is unchanged.
+        // Phase 5). kotc now emits the FAITHFUL `callInstance kotlin.String.plus(a, b)` (no type hint); re-emit the
+        // identical 2-part `concat` node kotc used to synthesize. FaithfulHintRecognition (runs NEXT) recovers each
+        // part's static type via StaticType (the former `partTypes` hint) and applies the Phase-4b part routing
+        // (collection -> clrCollToString, nullable -> LibraryKt.toString) — the SAME as for a string template.
         if (ownerFqn == "kotlin.String" && member == "plus" && args.Count == 1)
             return new JsonObject
             {
                 ["k"] = "concat",
                 ["parts"] = new JsonArray { o["recv"]?.DeepClone(), args[0]?.DeepClone() },
-                ["partTypes"] = (o["partTypes"] as JsonArray)?.DeepClone(),
             };
 
         if (!PrimitiveOpFq.Contains(ownerFqn)) return null;
@@ -148,7 +162,7 @@ static class PrimitiveOperatorLowering
 
     // A comparison intrinsic `callStatic owner=kotlin.internal.ir` -> `{k:binOp, op:<}`, else null. The operands
     // are already value-shaped by kotc (same shaping the retired binOp had), so the CIR is byte-identical.
-    static JsonNode LowerIntrinsic(JsonObject o)
+    static JsonNode LowerIntrinsic(JsonObject o, BirScope scope)
     {
         if (OwnerFqn(o["owner"]) != IntrinsicOwner) return null;
         if ((o["method"] as JsonValue)?.GetValue<string>() is not string m) return null;
@@ -170,27 +184,27 @@ static class PrimitiveOperatorLowering
         // Object.Equals -> invalid IL).
         if (m == "EQEQ" && args.Count == 2)
         {
-            var at = o["argTypes"] as JsonArray;
-            var bothPrim = at != null && at.Count == 2 && IsPrimEq(at[0]) && IsPrimEq(at[1]);
-            if (bothPrim)
+            // #59: recover the operand static types via StaticType (no kotc hint). SURFACE (the former `argTypes`)
+            // drives the prim fast-path; VALUE (the former cast-stripped `argValueTypes`) drives collection/float.
+            var ls = StaticType.Surface(args[0], scope);
+            var rs = StaticType.Surface(args[1], scope);
+            if (ls is TypeNode.Fqn lsf && PrimitiveEqFq.Contains(lsf.Name)
+                && rs is TypeNode.Fqn rsf && PrimitiveEqFq.Contains(rsf.Name))
                 return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
-            if (o["argValueTypes"] is JsonArray avt && avt.Count == 2)
+            var lt = StaticType.Value(args[0], scope);
+            var rt = StaticType.Value(args[1], scope);
+            var lc = lt != null ? FaithfulHints.ClassifyColl(lt) : null;
+            var rc = rt != null ? FaithfulHints.ClassifyColl(rt) : null;
+            var lu = FaithfulHints.StripAnyCast(args[0]);
+            var ru = FaithfulHints.StripAnyCast(args[1]);
+            if (lc is { } lk && rc is { } rk && lk.kind == rk.kind)
+                return FaithfulHints.StructEquals(lu, ru, lk.kind, lk.args);
+            if (lt != null && rt != null)
             {
-                var lt = TypeJson.Read(avt[0]);
-                var rt = TypeJson.Read(avt[1]);
-                var lc = lt != null ? FaithfulHints.ClassifyColl(lt) : null;
-                var rc = rt != null ? FaithfulHints.ClassifyColl(rt) : null;
-                var lu = FaithfulHints.StripAnyCast(args[0]);
-                var ru = FaithfulHints.StripAnyCast(args[1]);
-                if (lc is { } lk && rc is { } rk && lk.kind == rk.kind)
-                    return FaithfulHints.StructEquals(lu, ru, lk.kind, lk.args);
-                if (lt != null && rt != null)
-                {
-                    if (FaithfulHints.IsNonNullFqn(lt, "kotlin.Double") && FaithfulHints.IsNonNullFqn(rt, "kotlin.Double"))
-                        return FaithfulHints.FloatCall("clrDoubleEquals", lu, ru);
-                    if (FaithfulHints.IsNonNullFqn(lt, "kotlin.Float") && FaithfulHints.IsNonNullFqn(rt, "kotlin.Float"))
-                        return FaithfulHints.FloatCall("clrFloatEquals", lu, ru);
-                }
+                if (FaithfulHints.IsNonNullFqn(lt, "kotlin.Double") && FaithfulHints.IsNonNullFqn(rt, "kotlin.Double"))
+                    return FaithfulHints.FloatCall("clrDoubleEquals", lu, ru);
+                if (FaithfulHints.IsNonNullFqn(lt, "kotlin.Float") && FaithfulHints.IsNonNullFqn(rt, "kotlin.Float"))
+                    return FaithfulHints.FloatCall("clrFloatEquals", lu, ru);
             }
             return new JsonObject { ["k"] = "objEq", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         }
@@ -199,8 +213,6 @@ static class PrimitiveOperatorLowering
             return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         return null;
     }
-
-    static bool IsPrimEq(JsonNode t) => TypeJson.Read(t) is TypeNode.Fqn f && PrimitiveEqFq.Contains(f.Name);
 
     static string OwnerFqn(JsonNode t) =>
         TypeJson.Read(t) is TypeNode.Fqn f ? ReferenceMetadataIndex.BareOwnerFqn(f.Name) : null;

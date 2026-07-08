@@ -154,16 +154,16 @@ sealed class Pipeline
             // arithmetic/bitwise/unary operator (kotc now emits the faithful `callInstance kotlin.Int.plus`). Runs
             // FIRST and UNCONDITIONALLY (ref + app) so every downstream pass sees the old tree shape, and a ref-build
             // ctor field-init / base-arg (not body-squashed) carries a raw IL op, not an unresolvable builtin call.
-            PrimitiveOperatorLowering.Apply(bir.Root);
-            // FAITHFUL-HINT RECOGNITION (#52 Phase 4b): kotc emits the faithful op (`objMethod ToString/Equals`, `concat`,
-            // `callStatic println/print`, Double/Float `callInstance compareTo`) + a transient cast-stripped static-type
-            // HINT; bir2cir recognizes the collection/Map/Double/Float/null types off the hint and reproduces the SAME
-            // stdlib-helper `callStatic` node kotc used to emit (clrCollToString/clrMapToString/clrCollStructEquals/
-            // clrDoubleCompare/LibraryKt.toString…), then STRIPS the hint. (The EQEQ family is handled by
+            PrimitiveOperatorLowering.Apply(bir.Root, refs);
+            // FAITHFUL-HINT RECOGNITION (#52 Phase 4b / #59): kotc emits the faithful op (`objMethod ToString/Equals`,
+            // `concat`, `callStatic println/print`, Double/Float `callInstance compareTo`) with NO type hint; bir2cir
+            // RECOVERS the collection/Map/Double/Float/null operand types via StaticType (StaticTypeResolver.cs) and
+            // reproduces the SAME stdlib-helper `callStatic` node kotc used to emit (clrCollToString/clrMapToString/
+            // clrCollStructEquals/clrDoubleCompare/LibraryKt.toString…). (The EQEQ family is handled by
             // PrimitiveOperatorLowering above.) Runs SECOND — right after the primitive-op restore, before the compareTo
             // callInstance reaches MemberCallSubstitution's primitive-compareTo -> System.Double.CompareTo routing, and
             // before any type-erasing pass — so the inner value nodes stay pure kotlin.* and lower normally downstream.
-            FaithfulHintRecognition.Apply(bir.Root);
+            FaithfulHintRecognition.Apply(bir.Root, refs);
             // #55 §4 — DERIVE the `clrGeneric*` overload-matcher `shapes` from kotc's pure-Kotlin `shapeTypes` (the
             // DECLARED parameter identities) via the @ClrTypeAlias index. kotc no longer knows the .NET shape names
             // (Int64/SByte/…) — that CLR knowledge lives HERE. Runs FIRST in the per-file loop, before ANY type-erasing
@@ -954,6 +954,22 @@ sealed class ReferenceMetadataIndex
         return false;
     }
 
+    // The declared RETURN type of a bound member (owner.name, matched by arg count then by name), from the ref.dll —
+    // used by StaticType (#59) to recover a call / field read whose BIR node carries NO `ret` (kotc emits `ret` only for
+    // a GENERIC call). null when the owner/member is unknown or its return type was not structurable (a delegate/gp).
+    public TypeNode TryMemberReturn(string ownerFqn, string name, int argCount)
+    {
+        if (ownerFqn == null || !_membersByOwner.TryGetValue(ownerFqn, out var list)) return null;
+        return (list.FirstOrDefault(b => b.Name == name && b.ParamCount == argCount && b.ReturnType != null)
+                ?? list.FirstOrDefault(b => b.Name == name && b.ReturnType != null))?.ReturnType;
+    }
+
+    // The declared RETURN type of a top-level fun (a `callStatic owner=null`), resolved via its file-class owner then the
+    // member's return type. `recvKey` = the call's first sig-param bare owner (disambiguates overloads across file-classes);
+    // `argCount` = the sig's total param count (receiver + args), matching the ref.dll static's ParamCount. null if unresolved.
+    public TypeNode TryTopLevelReturn(string funName, string recvKey, int argCount) =>
+        TryResolveTopLevelStatic(funName, recvKey, out var owner) ? TryMemberReturn(owner, funName, argCount) : null;
+
     // A bare-@ClrIntrinsic extension fun resolved by name + the receiver-type key (the call's first-arg type) + the
     // FULL parameter count (receiver + args), so `set` on a MutableMap receiver -> set_Item (not StringBuilder's
     // set_Chars) AND a same-name/same-receiver overload of a DIFFERENT arity does not collide: `substring(String,Int)`
@@ -1105,7 +1121,8 @@ sealed class ReferenceMetadataIndex
                             byrefPositions,
                             suspend,
                             isConv,
-                            convTo));
+                            convTo,
+                            TypeNodeOf(method.ReturnType)));
                         // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
                         //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.
                         //   bare "Name"      -> a member on an EXTENSION receiver (`Array<T>.nativeClone()` ->
@@ -1329,6 +1346,30 @@ sealed class ReferenceMetadataIndex
         return PrimitiveBirName(type) ?? StripGenericArity(type.FullName ?? type.Name);
     }
 
+    // A STRUCTURED TypeNode from a reflected ref.dll type — the pure-Kotlin identity kotc would have emitted (the ref
+    // surface's types ARE named kotlin.* — kotlin.collections.List<kotlin.String>, kotlin.Int, …). Used to carry a
+    // top-level fn / member RETURN type so bir2cir StaticType (#59) can recover a `callStatic`/`callInstance` whose
+    // node lacks a `ret` (a non-generic call — kotc emits `ret` only for a generic call). Covers the shapes StaticType
+    // needs (Fqn+args for collection detect, nullable, array, primitive, tv); a delegate/func return is left null.
+    static TypeNode TypeNodeOf(Type type)
+    {
+        if (type.IsByRef) return TypeNodeOf(type.GetElementType()!) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
+        if (type.IsArray) return TypeNodeOf(type.GetElementType()!) is TypeNode e1 ? new TypeNode.Array(e1) : null;
+        if (type.IsGenericParameter) return null;   // an unresolved fn type-param: no useful static identity
+        if (IsDelegate(type)) return null;
+        if (type.IsConstructedGenericType)
+        {
+            var def = type.GetGenericTypeDefinition();
+            var args = type.GetGenericArguments().Select(TypeNodeOf).ToArray();
+            if (def == typeof(Nullable<>)) return args[0] is TypeNode nv ? new TypeNode.Nullable(nv) : null;
+            if (IsFunc(def) || IsAction(def)) return null;
+            if (args.Any(a => a == null)) return new TypeNode.Fqn(StripGenericArity(def.FullName ?? def.Name));
+            return new TypeNode.Fqn(StripGenericArity(def.FullName ?? def.Name), args);
+        }
+        var prim = PrimitiveBirName(type);
+        return new TypeNode.Fqn(prim ?? StripGenericArity(type.FullName ?? type.Name));
+    }
+
     static bool IsFunc(Type type) =>
         type.Namespace == "System" && type.Name.StartsWith("Func`", StringComparison.Ordinal);
 
@@ -1485,7 +1526,7 @@ sealed class ReferenceDotKtMetadata
 // (Suspend bit = 4) in the LIVE MetadataLoadContext scan. Populated for the Task-based coroutine bundle (bundle 6):
 // a cross-module call site must know "is this referenced callee suspend?" (its CLR shape is the Task<T> kickoff).
 // NO consumer reads it yet — bundle 6 wires it.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null);
 
 sealed class CallSiteAnalyzer
 {

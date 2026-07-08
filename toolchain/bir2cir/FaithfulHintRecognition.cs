@@ -4,18 +4,20 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// FAITHFUL-HINT RECOGNITION (#52 Phase 4b): kotc stopped routing four Kotlin-SEMANTIC recognition families to the
-// stdlib helpers (ClrCollectionDefaultsKt / ClrMapDefaultsKt / NumbersKt / LibraryKt) by hardcoded FQN. It now emits
-// the FAITHFUL op (`objMethod ToString/Equals`, `concat` with parts, `callStatic EQEQ`, `callStatic println/print`,
-// `callInstance compareTo`) plus a TRANSIENT cast-stripped static-TYPE HINT (recvType / argType / argValueTypes /
-// argTypes / partTypes). bir2cir does ALL the recognition off those hints — reproducing the EXACT SAME helper
-// `callStatic` node kotc used to synthesize — then STRIPS every consumed hint so the CIR is clean. Final IL is
-// byte-identical: only the RECOGNITION moved, the helper bodies are unchanged.
+// FAITHFUL-HINT RECOGNITION (#52 Phase 4b / #59): kotc stopped routing four Kotlin-SEMANTIC recognition families to
+// the stdlib helpers (ClrCollectionDefaultsKt / ClrMapDefaultsKt / NumbersKt / LibraryKt) by hardcoded FQN. It emits
+// the FAITHFUL op (`objMethod ToString/Equals`, `concat` with parts, `callStatic println/print`, `callInstance
+// compareTo`) with NO type hint (#59 — the transient recvType/argType/argTypes/partTypes hints are RETIRED). bir2cir
+// does ALL the recognition off the operand's RECOVERED static type (StaticType — StaticTypeResolver.cs), reproducing
+// the EXACT SAME helper `callStatic` node kotc used to synthesize. Final IL is byte-identical: only the RECOGNITION
+// moved, the helper bodies are unchanged.
 //
 // The EQEQ family is handled inside PrimitiveOperatorLowering.LowerIntrinsic (it already owns the EQEQ arm); this pass
 // handles the remaining four sites (objMethod ToString/Equals, println/print, concat, Double/Float compareTo). Both
 // run EARLY — before MemberCallSubstitution / factory / BirTypeLowering — so the inner value nodes still carry the
 // pure kotlin.* / listOf shapes and flow through the normal downstream lowering, exactly as when kotc wrapped them.
+// Each pass threads a BirScope (the declaration-scoped local/param type environment) so StaticType can recover a
+// bare operand `local`'s declared type — the early-pass twin of MemberCallSubstitution's SubstCtx.VarTypes.
 
 // Shared recognition primitives used by BOTH this pass and PrimitiveOperatorLowering's EQEQ arm.
 static class FaithfulHints
@@ -121,59 +123,74 @@ static class FaithfulHints
 
 static class FaithfulHintRecognition
 {
-    public static void Apply(JsonNode root) => Walk(root);
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null)
+    {
+        StaticType.Refs = refs;
+        StaticType.LocalTypes = StaticType.CollectTypes(root);
+        Walk(root, BirScope.Empty);
+    }
 
     // Bottom-up: recurse into a node's children (so an inner site is recognized first), THEN transform the node itself,
-    // replacing it in its parent when the transform produced a fresh node.
-    static void Walk(JsonNode node)
+    // replacing it in its parent when the transform produced a fresh node. A declaration node extends `scope` with its
+    // params + body locals so StaticType can recover a bare operand `local`'s declared type (#59 — the former hints).
+    static void Walk(JsonNode node, BirScope scope)
     {
         switch (node)
         {
             case JsonObject o:
+                var child = scope.Extend(o);
                 foreach (var key in o.Select(kv => kv.Key).ToList())
                 {
-                    var child = o[key];
-                    if (child != null) Walk(child);
-                    if (o[key] is JsonObject co && Transform(co) is JsonNode r && !ReferenceEquals(r, co)) o[key] = r;
+                    var c = o[key];
+                    if (c != null) Walk(c, child);
+                    if (o[key] is JsonObject co && Transform(co, child) is JsonNode r && !ReferenceEquals(r, co)) o[key] = r;
                 }
                 break;
             case JsonArray a:
+                // A statement sequence: a `var` enters scope for the SUBSEQUENT siblings only (lexical block scoping —
+                // two loops each destructuring to `v` of different element types must not collide via a flat dict).
+                var cur = scope;
                 for (var i = 0; i < a.Count; i++)
                 {
-                    var child = a[i];
-                    if (child != null) Walk(child);
-                    if (a[i] is JsonObject co && Transform(co) is JsonNode r && !ReferenceEquals(r, co)) a[i] = r;
+                    var c = a[i];
+                    if (c != null) Walk(c, cur);
+                    if (a[i] is JsonObject co && Transform(co, cur) is JsonNode r && !ReferenceEquals(r, co)) a[i] = r;
+                    if (a[i] is JsonObject vo && (vo["k"] as JsonValue)?.GetValue<string>() == "var")
+                    {
+                        if (ReferenceEquals(cur, scope)) cur = scope.Child();
+                        cur.Declare(vo);
+                    }
                 }
                 break;
         }
     }
 
-    static JsonNode Transform(JsonObject o) => (o["k"] as JsonValue)?.GetValue<string>() switch
+    static JsonNode Transform(JsonObject o, BirScope scope) => (o["k"] as JsonValue)?.GetValue<string>() switch
     {
-        "objMethod" => TransformObjMethod(o),
-        "callStatic" => TransformPrintln(o),
-        "concat" => TransformConcat(o),
+        "objMethod" => TransformObjMethod(o, scope),
+        "callStatic" => TransformPrintln(o, scope),
+        "concat" => TransformConcat(o, scope),
         "callInstance" => TransformCompareTo(o),
         _ => o,
     };
 
-    // `objMethod ToString`+recvType: a collection/Map receiver -> clrCollToString/clrMapToString (Kotlin `[a, b]`);
-    // else DROP recvType and keep the plain .NET ToString. `objMethod Equals`+recvType+argType: SAME collection kind ->
-    // struct-eq helper; both non-null Double/Float -> float-equals helper; else DROP the hints, keep Object.Equals.
-    static JsonNode TransformObjMethod(JsonObject o)
+    // `objMethod ToString`: a collection/Map receiver (StaticType.Value of `recv`) -> clrCollToString/clrMapToString
+    // (Kotlin `[a, b]`); else keep the plain .NET ToString. `objMethod Equals`: SAME collection kind -> struct-eq
+    // helper; both non-null Double/Float -> float-equals helper; else keep Object.Equals. (#59 — the former
+    // recvType/argType hints, recovered structurally.)
+    static JsonNode TransformObjMethod(JsonObject o, BirScope scope)
     {
         var method = (o["method"] as JsonValue)?.GetValue<string>();
-        if (method == "ToString" && o["recvType"] is JsonNode rtNode)
+        if (method == "ToString" && o["recv"] is JsonNode recv)
         {
-            if (TypeJson.Read(rtNode) is TypeNode rt && FaithfulHints.ClassifyColl(rt) is { } c)
+            if (StaticType.Value(recv, scope) is TypeNode rt && FaithfulHints.ClassifyColl(rt) is { } c)
                 return FaithfulHints.CollToString(FaithfulHints.StripAnyCast(o["recv"]), c.kind, c.args);
-            o.Remove("recvType");
             return o;
         }
-        if (method == "Equals" && o["recvType"] is JsonNode ertNode && o["argType"] is JsonNode eatNode)
+        if (method == "Equals" && o["recv"] is JsonNode erecv && o["arg"] is JsonNode earg)
         {
-            var recvT = TypeJson.Read(ertNode);
-            var argT = TypeJson.Read(eatNode);
+            var recvT = StaticType.Value(erecv, scope);
+            var argT = StaticType.Value(earg, scope);
             var rc = recvT != null ? FaithfulHints.ClassifyColl(recvT) : null;
             var ac = argT != null ? FaithfulHints.ClassifyColl(argT) : null;
             if (rc is { } rk && ac is { } ak && rk.kind == ak.kind)
@@ -181,39 +198,35 @@ static class FaithfulHintRecognition
                     FaithfulHints.StripAnyCast(o["recv"]), FaithfulHints.StripAnyCast(o["arg"]), rk.kind, rk.args);
             if (recvT != null && argT != null && FloatEqualsMethod(recvT, argT) is string fm)
                 return FaithfulHints.FloatCall(fm, FaithfulHints.StripAnyCast(o["recv"]), FaithfulHints.StripAnyCast(o["arg"]));
-            o.Remove("recvType");
-            o.Remove("argType");
             return o;
         }
         return o;
     }
 
-    // `callStatic owner=null method∈{println,print}`+argTypes: wrap each collection/Map arg in clrCollToString/
-    // clrMapToString IN PLACE, then DROP argTypes. The println/print callStatic itself is LEFT for the later Console
-    // substitution (MemberCallSubstitution).
-    static JsonNode TransformPrintln(JsonObject o)
+    // `callStatic owner=null method∈{println,print}`: wrap each collection/Map arg (StaticType.Value) in
+    // clrCollToString/clrMapToString IN PLACE. The println/print callStatic itself is LEFT for the later Console
+    // substitution (MemberCallSubstitution). (#59 — the former `argTypes` hint.)
+    static JsonNode TransformPrintln(JsonObject o, BirScope scope)
     {
         if (o["owner"] != null) return o;
         var method = (o["method"] as JsonValue)?.GetValue<string>();
         if (method != "println" && method != "print") return o;
-        if (o["argTypes"] is not JsonArray argTypes) return o;
         if (o["args"] is JsonArray args)
-            for (var i = 0; i < args.Count && i < argTypes.Count; i++)
-                if (TypeJson.Read(argTypes[i]) is TypeNode t && FaithfulHints.ClassifyColl(t) is { } c)
+            for (var i = 0; i < args.Count; i++)
+                if (StaticType.Value(args[i], scope) is TypeNode t && FaithfulHints.ClassifyColl(t) is { } c)
                     args[i] = FaithfulHints.CollToString(FaithfulHints.StripAnyCast(args[i]), c.kind, c.args);
-        o.Remove("argTypes");
         return o;
     }
 
-    // `concat`+partTypes: a collection part -> collToString/mapToString; else a NULLABLE part -> LibraryKt.toString
-    // (null -> "null"); else leave. Then DROP partTypes.
-    static JsonNode TransformConcat(JsonObject o)
+    // `concat`: a collection part (StaticType.Value) -> collToString/mapToString; else a NULLABLE part ->
+    // LibraryKt.toString (null -> "null"); else leave. (#59 — the former `partTypes` hint, for both the string
+    // template and the String.plus-lowered concat.)
+    static JsonNode TransformConcat(JsonObject o, BirScope scope)
     {
-        if (o["partTypes"] is not JsonArray partTypes) return o;
         if (o["parts"] is JsonArray parts)
-            for (var i = 0; i < parts.Count && i < partTypes.Count; i++)
+            for (var i = 0; i < parts.Count; i++)
             {
-                if (TypeJson.Read(partTypes[i]) is not TypeNode t) continue;
+                if (StaticType.Value(parts[i], scope) is not TypeNode t) continue;
                 if (FaithfulHints.ClassifyColl(t) is { } c)
                     parts[i] = FaithfulHints.CollToString(FaithfulHints.StripAnyCast(parts[i]), c.kind, c.args);
                 else if (FaithfulHints.IsNullable(t))
@@ -222,7 +235,6 @@ static class FaithfulHintRecognition
                     // nullable value operand would feed a raw value to LibraryKt.toString's Any? param.
                     parts[i] = FaithfulHints.LibraryToString(parts[i]);
             }
-        o.Remove("partTypes");
         return o;
     }
 

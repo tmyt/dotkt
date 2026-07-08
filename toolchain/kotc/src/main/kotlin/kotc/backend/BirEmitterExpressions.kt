@@ -191,11 +191,11 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		}
 		}
 	}
-	// A string template (`"$x"`). #52 Phase 4b: emit the FAITHFUL concat plus cast-stripped `partTypes` HINTS. bir2cir
-	// wraps a collection/Map part in clrCollToString/clrMapToString (Kotlin-style `[a, b]` / `{a=1, b=2}`, else `"$map"`
-	// yields the raw .NET type name) and a NULLABLE part in LibraryKt.toString (null -> "null", else a null ref appends
-	// empty), then drops partTypes. Static-type-driven off the operand's stripped IR type.
-	is IrStringConcatenation -> """{"k":"concat","parts":[${node.arguments.joinToString(",") { expr(it) }}],"partTypes":[${node.arguments.joinToString(",") { stripImplicit(it).toJson() }}]}"""
+	// A string template (`"$x"`). #59: emit ONLY the FAITHFUL concat. bir2cir (FaithfulHintRecognition) recovers each
+	// part's static type via StaticType and wraps a collection/Map part in clrCollToString/clrMapToString (Kotlin-style
+	// `[a, b]` / `{a=1, b=2}`, else `"$map"` yields the raw .NET type name) and a NULLABLE part in LibraryKt.toString
+	// (null -> "null", else a null ref appends empty).
+	is IrStringConcatenation -> """{"k":"concat","parts":[${node.arguments.joinToString(",") { expr(it) }}]}"""
 	is IrTypeOperatorCall -> when (node.operator) {
 		// `x is T` (exhaustive when matching) -> isinst + not-null check.
 		IrTypeOperator.INSTANCEOF -> """{"k":"isInst","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""

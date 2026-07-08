@@ -463,6 +463,33 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **kotc's last operator/faithful-hint TYPE HINTS retired — bir2cir recovers operand static types itself
+  (#59, the final #52 purity step).** kotc used to attach a per-site operand-static-type HINT so bir2cir
+  could re-derive the collection/Double/Float/nullable Kotlin-semantic split it could not read off a bare
+  operand node: `argTypes`+`argValueTypes` on the `EQEQ` intrinsic, `partTypes` on `String.plus`/the string
+  template `concat`, `argTypes` on `println`/`print`, and `recvType`/`argType` on `objMethod ToString`/
+  `Equals`. Those hints are **deleted** — kotc now emits ONLY the faithful op + the faithful operand
+  expression nodes. bir2cir gains a single uniform static-type recovery (`toolchain/bir2cir/StaticTypeResolver.cs`:
+  `BirScope` — a local/param type environment built by extending each declaration scope, the early-pass twin
+  of `MemberCallSubstitution`'s `SubstCtx.VarTypes`; and `StaticType.Surface`/`.Value` — reading the operand's
+  type off the node itself: `cast`→its target / peeled underlying, `local`→the scope, `const`→its type,
+  `call*`→`ret`, `conv`→`to`, a LOWERED `binOp`/`unaryOp`→its result type, `arrayGet`→`elem`, `cond`(elvis/
+  if-expr)→its branch, `concat`→`String`, `nullableValue`/`safeCastValue`→the value type, …). No new BIR node
+  was needed — the smart-cast refined type was ALREADY a first-class BIR fact: a smart-cast USE emits
+  `{k:cast,type:<refined>,…}` on the operand (and member calls carry the frontend-resolved `ownerType`), so
+  the refined type reaches every consumer through the ONE `StaticType` path, closing the ad-hoc-per-consumer
+  gap. `PrimitiveOperatorLowering` (EQEQ) + `FaithfulHintRecognition` (concat/println/ToString/Equals/
+  compareTo) reproduce the EXACT SAME helper `callStatic` nodes (`clrCollStructEquals`/`clrCollToString`/
+  `clr{Double,Float}Equals`/`LibraryKt.toString`/…) off the recovered types; ilemit is unchanged and the CIR
+  is byte-identical (verify-schema 0 violations on the 250-file stdlib corpus + apps; ilverify-clean). Two
+  subtleties the recovery handles: (a) `BirScope` records a `var` **lexically** (in scope for the subsequent
+  siblings only), so two sibling `for ((k,v) in …)` loops whose `v` differs (List<Int> vs List<String>) don't
+  collide into one flat last-wins dict — the collision would `clrCollToString<String>` an Int list → InvalidCast;
+  (b) a call whose BIR node lacks a `ret` (kotc emits `ret` only for a GENERIC call) is resolved from the ref.dll
+  — `MemberBinding` now carries the callee's structured return `TypeNode` (built by `TypeNodeOf`), and
+  `StaticType` resolves a `callStatic owner=null` / member call / field read's type via
+  `TryTopLevelReturn`/`TryMemberReturn`, so a non-generic collection-returning stdlib call (`"abcd".windowed(2)`)
+  still stringifies Kotlin-style (`[ab, bc, cd]`) and no operand is left silently `Any`.
 - **The synthetic CLR-representation TYPE *definitions* moved kotc → bir2cir — kotc emits the FACT, bir2cir
   synthesizes the TYPE (#52, final purity step).** kotc used to hand-build four families of `<>dotkt_*`
   CLR-representation types directly into its BIR `types`: the capturing-lambda **closure class**

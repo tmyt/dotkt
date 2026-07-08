@@ -3872,7 +3872,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// bir2cir recognizes a collection/Map receiver off it and routes to the Kotlin-style clrCollToString /
 					// clrMapToString helper (`[a, b]` / `{a=1, b=2}`); else it drops recvType and keeps the raw .NET ToString.
 					val recvE = dispatchReceiver(call)!!
-					return """{"k":"objMethod","method":"ToString","recv":${expr(recvE)},"recvType":${stripImplicit(recvE).toJson()}}"""
+					return """{"k":"objMethod","method":"ToString","recv":${expr(recvE)}}"""
 				}
 				"equals" -> {
 					val recvE = dispatchReceiver(call)!!; val argE = regularArgs(call).first()
@@ -3881,7 +3881,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// STRUCTURAL equality (Object.Equals gives IEEE `(-0.0).equals(0.0)==true` / reference identity), so
 					// bir2cir recognizes those off the hints and routes to the SAME helper the EQEQ path uses; else it drops
 					// the hints and keeps Object.Equals.
-					return """{"k":"objMethod","method":"Equals","recv":${expr(recvE)},"arg":${expr(argE)},"recvType":${stripCast(recvE).toJson()},"argType":${stripCast(argE).toJson()}}"""
+					return """{"k":"objMethod","method":"Equals","recv":${expr(recvE)},"arg":${expr(argE)}}"""
 				}
 			}
 		}
@@ -3894,36 +3894,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 		if (isBuiltin) {
 			val operands = call.arguments.filterNotNull()
-			// `String + x` (concatenation, not numeric add). #52 Phase 5: emit the FAITHFUL `callInstance
-			// kotlin.String.plus` (a plain 2-operand member call) — the `String.plus -> concat` MEMBER recognition is
-			// bir2cir's now (PrimitiveOperatorLowering re-emits the `concat`, exactly like the relocated arithmetic
-			// operators). The cast-stripped `partTypes` hint (the SAME the string-template path carries) travels along so
-			// bir2cir's Phase-4b part routing still wraps a collection/Map part in clrCollToString/clrMapToString and a
-			// NULLABLE part in LibraryKt.toString; the declared param type (Any?) cannot recover it, so it is a real hint.
+			// `String + x` (concatenation, not numeric add). #59: emit the FAITHFUL `callInstance kotlin.String.plus`
+			// (a plain 2-operand member call) — the `String.plus -> concat` MEMBER recognition is bir2cir's
+			// (PrimitiveOperatorLowering re-emits the `concat`, like the relocated arithmetic operators). bir2cir
+			// recovers each part's static type via StaticType (no kotc hint) and applies the collection/nullable part
+			// routing — the declared param type (Any?) is irrelevant to that, the part expression node carries the type.
 			if (name == "plus" && declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.String" && operands.size == 2)
-				return """{"k":"callInstance","ownerType":${fqnJson("kotlin.String")},"virtual":false,"recv":${expr(operands[0])},"method":"plus","args":[${expr(operands[1])}],"partTypes":[${stripImplicit(operands[0]).toJson()},${stripImplicit(operands[1]).toJson()}]}"""
-			// `==` (EQEQ) / `===` (EQEQEQ) are `kotlin.internal.ir` COMPILER INTRINSICS. The ceq-vs-Object.Equals SPLIT
-			// (structural `==`: `ceq` for primitives, null-safe `Object.Equals` for reference types; `===`: identity
-			// `ceq`) recognition MOVED to bir2cir (#52 Phase 5 class 4). kotc emits the FAITHFUL intrinsic call with
-			// owner = `kotlin.internal.ir` (collision-safe) and — for EQEQ — the operands' IR-derived static `argTypes`,
-			// off which bir2cir (PrimitiveOperatorLowering) re-derives the split: both argTypes primitive-eq -> `binOp ==`
-			// (ceq), else -> `objEq`. #52 Phase 4b: the Kotlin-SEMANTIC structural routings (a boxed Double/Float
-			// total-order `==` and a collection structural `==`) ALSO moved to bir2cir — kotc now carries a second,
-			// cast-stripped `argValueTypes` hint off which bir2cir recognizes them; only the primitive fast-path check
-			// (both non-null primitives -> ceq, unchanged and FIRST) stays here, purely as a comment for the reader.
-			if (name == "EQEQ" && operands.size == 2) {
-				// #52 Phase 4b: the FAITHFUL EQEQ intrinsic carries TWO type hints. Surface `argTypes` (the operands'
-				// declared static types) drive bir2cir's prim/ref split (both primitive-eq -> ceq; else Object.Equals).
-				// The new cast-stripped `argValueTypes` drive its Kotlin-SEMANTIC recognition — a boxed Double/Float
-				// total-order `==` (`-0.0 != 0.0`, `NaN == NaN`) and a collection structural `==` (List/Set/Map) — which
-				// USED to be routed here by floatTotalEqRoute/collEqRoute (now moved to bir2cir). Same node in every case.
-				fun eqeq() = """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"EQEQ","argTypes":[${birType(operands[0].type).toJson()},${birType(operands[1].type).toJson()}],"argValueTypes":[${stripCast(operands[0]).toJson()},${stripCast(operands[1]).toJson()}],"args":[${expr(operands[0])},${expr(operands[1])}]}"""
-				// Primitive fast-path FIRST (byte-identical ordering): both non-null primitives -> bir2cir emits ceq.
-				if (isPrimitiveEqType(operands[0].type) && isPrimitiveEqType(operands[1].type)) return eqeq()
-				// Reference / boxed-float / collection `==`: bir2cir picks Object.Equals / float-equals / struct-eq off
-				// the surface argTypes + argValueTypes carried on the SAME faithful node.
-				return eqeq()
-			}
+				return """{"k":"callInstance","ownerType":${fqnJson("kotlin.String")},"virtual":false,"recv":${expr(operands[0])},"method":"plus","args":[${expr(operands[1])}]}"""
+			// `==` (EQEQ) / `===` (EQEQEQ) are `kotlin.internal.ir` COMPILER INTRINSICS. ALL of the ceq-vs-Object.Equals
+			// SPLIT + the Kotlin-SEMANTIC structural routings (collection `==`, boxed Double/Float total-order `==`)
+			// recognition lives in bir2cir (#52 Phase 5 / #59): kotc emits ONLY the FAITHFUL intrinsic call with owner =
+			// `kotlin.internal.ir` (collision-safe). PrimitiveOperatorLowering recovers the operands' SURFACE static type
+			// (prim fast-path -> ceq) and VALUE static type (collection/float helpers, else objEq) via StaticType — the
+			// former argTypes/argValueTypes hints are GONE; the operand expression nodes + the local env carry the types.
+			if (name == "EQEQ" && operands.size == 2)
+				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"EQEQ","args":[${expr(operands[0])},${expr(operands[1])}]}"""
 			if (name == "EQEQEQ" && operands.size == 2)
 				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"EQEQEQ","args":[${expr(operands[0])},${expr(operands[1])}]}"""
 			// Arithmetic/compare lowering applies to the primitive OPERATORS only: a primitive's operator is a MEMBER
@@ -3976,10 +3961,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// #52 Phase 4b: emit the PLAIN top-level callStatic (bir2cir substitutes it to System.Console.Write/WriteLine
 				// from the stdlib @ClrIntrinsic in runtime/stdlib/clr/kotlin/io/ConsoleClr.kt) plus a cast-stripped
 				// `argTypes` HINT per operand. bir2cir wraps a collection/Map arg in clrCollToString/clrMapToString off it
-				// (Kotlin-style `[a, b]`, not .NET's type-name ToString), then drops argTypes. No CLR console node in kotc.
+				// (Kotlin-style `[a, b]`, not .NET's type-name ToString). No CLR console node in kotc. #59: the operand
+				// static types are recovered by bir2cir via StaticType (no argTypes hint).
 				val argJson = operands.joinToString(",") { expr(it) }
-				val argTypesJson = operands.joinToString(",") { stripImplicit(it).toJson() }
-				return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)},"argTypes":[$argTypesJson],"args":[$argJson]}"""
+				return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)},"args":[$argJson]}"""
 			}
 			// `readLine()` is NOT lowered: the CLR stdlib exposes readln()/readlnOrNull() (readlnOrNull is @ClrIntrinsic-bound
 			// to System.Console.ReadLine in ConsoleClr.kt). There is no `kotlin.io.readLine` symbol in the frontend jar.
@@ -4450,24 +4435,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 
-	// #52 Phase 4b: cast-stripped static-TYPE HINTS for bir2cir's collection/float/toString recognition. Transient
-	// (bir2cir strips them before CIR), IR-derived, FAITHFUL — the pure-kotlin.* `birType` of the operand's static type
-	// with any surface cast peeled off. kotc no longer names the ClrCollectionDefaultsKt/ClrMapDefaultsKt/NumbersKt/
-	// LibraryKt helper FQNs; it emits the faithful op WITH the cast (bir2cir strips it) plus one of these hints, off
-	// which bir2cir reproduces the exact helper callStatic nodes. Both PRESERVE nullability + generic args.
-	//   stripImplicit — walk through IMPLICIT_CAST only (a `list.toString()` receiver / template operand arrives boxed
-	//     to kotlin.Any via an IMPLICIT_CAST fake-override; peel it to recover the collection/Map static type).
-	//   stripCast — walk through CAST and IMPLICIT_CAST (an explicit `x as Any` boxed Double/Float `==`/`.equals()`).
-	internal fun stripImplicit(e: IrExpression): TypeNode {
-		var x = e
-		while (x is IrTypeOperatorCall && x.operator == IrTypeOperator.IMPLICIT_CAST) x = x.argument
-		return birType(x.type)
-	}
-	internal fun stripCast(e: IrExpression): TypeNode {
-		var x = e
-		while (x is IrTypeOperatorCall && (x.operator == IrTypeOperator.CAST || x.operator == IrTypeOperator.IMPLICIT_CAST)) x = x.argument
-		return birType(x.type)
-	}
+	// #59: the cast-stripped static-TYPE HINTS (stripImplicit/stripCast) are RETIRED. kotc emits ONLY the faithful op
+	// + faithful operand expression nodes; bir2cir (StaticType / StaticTypeResolver.cs) recovers each operand's static
+	// type STRUCTURALLY off the emitted node + a local/param type environment — the single uniform source, replacing
+	// the per-operator argTypes/argValueTypes/partTypes/recvType/argType hints for the collection/float/toString/
+	// nullable Kotlin-semantic recognition (those helpers stay; only the recognition moved fully to bir2cir).
 
 	// The erased / star-projection / Any? fallback type identity. kotc emits the pure Kotlin FQN `kotlin.Any`;
 	// bir2cir/ilemit resolve it to System.Object. (Replaces the old bare-string `object` shorthand.)
