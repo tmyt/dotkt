@@ -47,6 +47,11 @@
   in case". The clean 4-layer is the ONLY path; the `--compat-bir`/`--native-cir` output-selection flags (and the
   CompatBir verbatim-copy mode / the native-CIR envelope) were **removed** (2026-06-30), leaving a single unflagged
   bir2cir type-lowering path. Always choose a clean rebuild over an incremental compat shim, even when the rebuild is larger.
+- **Clean as you go — the "same change" rule extends to COMMENTS and DOCS, not just code (2026-07-08, user-directed).**
+  When you relocate/delete logic, in the SAME change delete the comments, dead helpers, and stale doc lines it
+  leaves behind — otherwise debt-repayment mass-produces incorrect comments/docs/dead-code (a whole cleanup pass had to
+  reconcile them). And a stale **false** claim must be **DELETED or replaced with the current truth, NEVER annotated**
+  ("this used to be true but…") — an annotation still carries the false claim. State what the code does NOW.
 - **Prefer dedicated subagents for tasks, and actively use Codex.** Delegate substantive work to dedicated
   (specialized) subagents rather than doing it inline — the coordinator orchestrates and integrates. Use **Codex**
   for design and investigation, and **instruct every subagent to USE Codex** (not merely note it's "available") —
@@ -115,6 +120,20 @@ The **authoritative** layer table — including the reference artifact each stag
 (facadegen ← CLR dll, kotc ← stdlib.jar, bir2cir ← stdlib.ref.dll, ilemit ← stdlib.rt.dll) and the
 **`@ClrIntrinsic` invariant** (sourced from ref.dll, consumed by bir2cir, **never passed to ilemit**)
 — is **`docs/ship-tasks.md` §0**. The summary below must not drift from it.
+
+> ### Who references the .NET Reference Assemblies (the binding layer is bir2cir)
+> - **facadegen** reads them → to GENERATE Kotlin FIR-injection metadata (.NET metadata → Kotlin).
+> - **bir2cir** reads them → to RESOLVE cross-assembly types/references — **this is where .NET binding belongs.**
+> - **ilemit** ideally does NOT (it emits IL from CIR; it historically referenced them only because bir2cir+ilemit
+>   were once one process — that merge is why some .NET-resolution is still scattered upward).
+> - **runtime** references them → for execution.
+>
+> So **kotc must be .NET-AGNOSTIC**: a facadegen-injected library is, to kotc, just "a weird Kotlin library with
+> PascalCase packages." kotc emits a plain `callStatic`/`callInstance` by the FQN identity and does NOT decide the
+> .NET call shape; **bir2cir** resolves the owner FQN against the Reference Assemblies and binds it
+> (`clrStatic`/`clrInstance`/`clrPropGet`…) — the SAME "emit the identity, bind in bir2cir" pattern as stdlib, one
+> axis over. kotc's current clr*-shape emission for facadegen-injected owners is a DEVIATION to restore (task #61 /
+> MEMORY `a2-restore-bir2cir-net-binding`), not the design.
 
 > ### BINDING INVARIANT — `kotlin.*` comes from the JAR, never from facadegen
 > kotc resolves the **entire stdlib (`kotlin.*`)** from the frontend **jar** (`-classpath`), which
