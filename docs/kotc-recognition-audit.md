@@ -172,7 +172,22 @@ let the plain call resolve against the real surface (no marker). Total churn was
 ### 2.2 INTEROP-legitimate (.NET space / injection metadata — KEEP, per the boundary)
 
 These read the **.NET space** (facadegen injection metadata / the `kotlin.clr.*` interop fictions). The
-boundary rule says the .NET space is exactly what kotc *may* read. **All (c) keep.**
+boundary rule says the .NET space is exactly what kotc *may* read. **The `kotlin.clr.*` interop-fiction rows
+are (c) keep; the facadegen-injected `clr*`-SHAPE rows are A2/#61 — see the callout.**
+
+> **⚠️ A2 (task #61) — the injected-.NET `clr*`-SHAPE emission is a DEVIATION to RESTORE, not "must-stay."**
+> Reading the injection metadata so a facadegen-injected symbol *resolves / typechecks* is the sanctioned
+> .NET-space read. But kotc's BACKEND *also* reads `clrInjectedDotNetName` (`clrName` 4483–4534) and emits the
+> CLR call SHAPE itself — `clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet` (`BirEmitter.kt:3525–3564`, top-level
+> facade `:4046`). Per the confirmed architecture (CLAUDE.md "Who references the .NET Reference Assemblies";
+> MEMORY `a2-restore-bir2cir-net-binding`), that shape decision belongs in **bir2cir**: kotc must be
+> **.NET-AGNOSTIC** — emit a plain `callStatic`/`callInstance` by the owner's FQN identity — and bir2cir resolves
+> the FQN against the loaded Reference Assemblies and binds the shape, the SAME "emit the identity, bind in bir2cir"
+> pattern #52 established for stdlib off the ref.dll. So the `clrName`/`clrStatic`/top-level-facade rows below are
+> **(c)-keep ONLY for the metadata READ; their shape-emission is DEFERRED-RESTORE (#61)**, not permanently
+> frontend-legit. (The ClrH routing arm was already deleted — #62 / CLEANUP-A1, see §"Genuinely unavoidable"
+> below.) The one other open kotc-purity item is **naming purity** (`generated:true` flag / `<>dotkt_CharSequence`
+> naming) — cosmetic, tracked separately.
 
 | Site | Reads | Why legit |
 |---|---|---|

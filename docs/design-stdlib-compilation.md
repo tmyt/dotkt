@@ -207,10 +207,13 @@ stub+rename mechanism. Layout: `libraries/stdlib/clr/<X>.kt` (platform fragment)
 
 Not every collection type is a clean `@ClrIntrinsic`-to-BCL bind. `expect interface Iterator<out T>` is Kotlin's protocol
 (`next(): T` + `hasNext(): Boolean`), which does NOT match .NET `IEnumerator` (`MoveNext(): bool` + `Current`) — the
-shapes differ, so a name-map isn't enough. **DotKt already represents the Kotlin iterator protocol** via the
-monomorphized synthetic `@KIterator_<elem>` / `@KIterable_<elem>` interfaces (`birType`'s `iteratorElemIface` /
-`iterableElemIface`, and the `for (x in xs)` lowering). So the `Iterator`/`Iterable` actuals should bind to / reuse that
-machinery (a DotKt-side `IKIterator`-style interface), NOT raw `IEnumerable`/`IEnumerator`. Concrete collections
+shapes differ, so a name-map isn't enough. **(SUPERSEDED, #58 2026-07-08 — do not implement as written.)** This
+section originally recommended a DotKt-side `IKIterator`-style monomorphized synthetic (`@KIterator_<elem>` /
+`@KIterable_<elem>`); that monomorphization is **RETIRED**. The real generic `kotlin.collections.Iterator<T>` /
+`Iterable<T>` are used instead — `Iterable<T>` is `@ClrTypeAlias`'d to `System.Collections.Generic.IEnumerable<T>`
+and the reverse `GetEnumerator` bridge synthesizes `GetEnumerator` from `iterator()` (the "IL can't define a generic
+interface" premise that motivated the monomorphization was FALSE). See `docs/kotc-recognition-audit.md` §"Genuinely
+unavoidable". Concrete collections
 (`List`→`IReadOnlyList`, `MutableList`→`IList`, `Map`→`IReadOnlyDictionary`) bind more directly (members map by
 `@ClrIntrinsic` name) but must still yield Kotlin iterators. This protocol reconciliation is the first design decision of the
 collections actuals — resolve it before writing them.
@@ -284,8 +287,9 @@ then the `COLLECTION_OPS` removal + a regression case land. (The untracked vendo
 copy ops from as we migrate.)
 
 Random-access ops (`first`/`last`/`getOrElse`/`get`/`indexOf`/`isEmpty`/`single`/…) are migratable now (no iteration).
-Iteration ops (`map`/`filter`/`fold`/…) additionally need the `Iterable`→`IEnumerable` reconciliation (today Kotlin
-`Iterable` is the synthetic monomorphized `<>dotkt_KIterable`).
+Iteration ops (`map`/`filter`/`fold`/…) additionally need the `Iterable`→`IEnumerable` reconciliation (Kotlin
+`Iterable<T>` is `@ClrTypeAlias`'d to the real generic `System.Collections.Generic.IEnumerable<T>` — the synthetic
+monomorphized `<>dotkt_KIterable` this line once described was RETIRED, #58).
 
 ## Compiling the REAL generated `_Collections.kt` — the recipe (2026-06-25)
 

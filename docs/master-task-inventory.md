@@ -2,6 +2,12 @@
 
 > **RECONCILE 2026-07-05:** all gates are XFAIL-ZERO (verify-il 209/0, differential ALL MATCH, ktproj 9/9); coroutine bundle-6, the A2 interop-no-registry keystone (4 registries deleted), the Polish layer-purity, and the 2026-07-05 final-review findings (N1-N8, F1/F2) are all DONE. Any item below marked open/TODO that concerns those is STALE. Genuine residuals: roundtrip-memext2 (with{}-scope suspend), interface events, and the LOW hardening items in the session task list.
 
+> **RECONCILE 2026-07-08 (#52 kotc-purity):** the stdlib-recognition axis of bundle 8 (【6b】) is DONE — kotc
+> recognizes ZERO operators, reads no `@Clr*`, and is substitute-independent (#66). The only remaining bundle-8 items
+> are **A2 = #61** (RESTORE the intended design — kotc must be .NET-agnostic; bir2cir binds facadegen-interop call
+> shapes off the .NET refs — a DEFERRED deviation, not "add purity") and **naming purity** (`generated:true` /
+> CharSequence naming). See 【6b】 + `docs/kotc-recognition-audit.md`.
+
 
 > **Canonical remaining-work list (2026-07-02).** This is a *de-duplicated* stocktake that consolidates the
 > scattered task docs (`ship-tasks.md`, `remaining-tasks.md`, `coroutine-stdlib-port-plan.md`, and — now in
@@ -787,20 +793,30 @@ The old G1-G6/TypedCont-port plan (`coroutine-stdlib-port-plan.md`) is SUPERSEDE
 - Later layers (NOT this bundle): CancellationToken ABI (S); structured concurrency (`Job`/`launch`/`async`) =
   Track 2 = compiling kotlinx over the cold core.
 
-## 【6b】 kotc purity completion  *(NEW 2026-07-03 — user-deferred separate bundle; does NOT gate 1.0)*
-Removing the coroutine family does NOT make kotc CLR-free: a 10-family audit (2026-07-03) found the residual.
-Keystone = **A2: the `clrName`/`clrInteropName`/`ClrTypeRegistry` facadegen-interop resolution living in the
-kotc frontend** (`BirEmitter.kt:4375-4430` + `frontend/ClrTypeInjection.kt` population) — moving it to bir2cir
-(same shape as the DONE stdlib `@ClrIntrinsic`→`MemberCallSubstitution` migration, extended to app-injected
-types) makes kotc truly CLR-free. Satellites: A1 `appColl` collection-shape map, A3's registry `clr:`/`clrg:`
-arm, A6 residual named-BCL-method lowerings (Math/String/Convert/Type/Lazy — some blocked on stdlib-body bugs).
-Quick wins (mechanical, independent): A9 fun-interface `@ClrTypeAlias`/`@ClrIntrinsic` DIRECT READ at
-`BirEmitter.kt:2216` (a bug vs the "reads NEITHER annotation" invariant), A4 BCL exception-type + accessor
-decisions (~12 sites), A5 primitive `System.Int32` shapes, A3 single-type arms (Span/Regex/Closeable/Lazy/
-Comparator). Medium: A7 `func:`/Func-Action delegate-shape encoding + `birTypeDeleg` CLR tokens, A8 the
-monomorphized `<>dotkt_KIterator/KIterable/CharSequence/RW-ROProperty` synthetics (`<>dotkt_Ref`/`KProperty`
-are structural-Kotlin and STAY). Order: A9+A4+A5+A3-single → A7+A8 → A2+A1+A6. (NB: some quick wins may have
-landed via the concurrent kotc batch `3db4846` — re-audit before starting.)
+## 【6b】 kotc purity completion (bundle 8)  *(does NOT gate 1.0)*
+**✅ The stdlib-recognition axis is DONE (#52, 2026-07-08).** kotc now recognizes **ZERO** operators, reads no
+`@Clr*` annotation, and is **substitute-independent** (ref/rt BIR bit-identical, #66) — a pure faithful IR→BIR
+transcriber for everything except the genuine structural lowerings and the facadegen-interop shape (A2, below). The
+full end-state is `docs/kotc-recognition-audit.md`. What the original 2026-07-03 10-family audit called satellites
+has landed: **A5/A6** (named-BCL + primitive-op recognition) → bir2cir `PrimitiveOperatorLowering` +
+`MemberCallSubstitution` (#52 Phases 1–5); **A1/A7/A8** the `<>dotkt_KIterator`/`KIterable` and
+`RW-`/`ROProperty` monomorphizations are **RETIRED** (#57/#58 — the real generic `kotlin.collections.Iterable<T>` /
+`ReadWriteProperty<Any?,V>` are used now; the "IL can't define a generic interface" premise was FALSE); **A9**
+fun-interface direct `@Clr` read removed; **A3's ClrH routing arm DELETED** (#62 / CLEANUP-A1 — it was reasoned-dead).
+The synthetic-type *definitions* (closure / `<>dotkt_CharSequence` / KProperty / ref-cell) moved kotc→bir2cir (#52);
+the remaining kotc **structural** lowerings (closure / anon-object / SAM / ref-cell / KProperty + the
+`<>dotkt_CharSequence` synthetic) are genuine frontend facts and **STAY**.
+
+**Two genuine residuals remain (both deferred, neither gates 1.0):**
+- **A2 = task #61 — RESTORE the intended design (NOT "add purity").** kotc STILL special-cases facadegen-**injected**
+  .NET types: its backend reads `clrInjectedDotNetName`/`clrInjectedMemberName` and emits the CLR call SHAPE itself —
+  `clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet` (`BirEmitter.kt:3525-3564`, top-level facade `:4046`). Per the
+  confirmed architecture (CLAUDE.md "Who references the .NET Reference Assemblies"; MEMORY
+  `a2-restore-bir2cir-net-binding`), this is a **DEVIATION**, not purity-polish: kotc must be **.NET-AGNOSTIC** —
+  emit a plain `callStatic`/`callInstance` by the owner's FQN identity — and **bir2cir** resolves that FQN against the
+  loaded Reference Assemblies and binds the shape, exactly as #52 did for stdlib off the ref.dll. (The 2026-07-05
+  "interop-no-registry" work deleted the 4 lookup registries but did **not** move the shape decision — that is #61.)
+- **Naming purity** — the `generated:true` flag / `<>dotkt_CharSequence`-style synthetic naming residue. Cosmetic.
 
 ## 【7】 1.0 ship gate  *(non-code / production)*
 Sources: `remaining-tasks.md F`, `archive/research-roadmap.md Track P/X`.
@@ -813,11 +829,13 @@ Sources: `remaining-tasks.md F`, `archive/research-roadmap.md Track P/X`.
   expansion, Avalonia cache) · version/support policy (Kotlin 2.2.0 pin, TFMs, semver).
 
 ## 【8】 Accepted known limitations  *(NOT tasks)*
-- round-trip **② companion call / ③ fun-interface lambda SAM / ④ enum class / ⑥ non-const default** — all pinned
-  Kotlin 2.2.0 plugin-FIR-API limits (unfixable without unpinning; documented in `dotkt-semantics.md §10`).
-- context receivers (`-Xcontext-parameters` rejected) · `object` singleton round-trip consumption · generic-class
-  member `suspend` (BadImageFormat) · `Pair<T,T>` generic construction (`Pair2<A,B>` workaround) · private/internal
-  not exported.
+- round-trip **③ fun-interface lambda SAM / ④ enum class** — pinned Kotlin 2.2.0 plugin-FIR-API limits (unfixable
+  without unpinning; documented in `dotkt-semantics.md §10`). *(② companion IMPLICIT access is FIXED — `50c2c9f`;
+  ⑥ non-const default is MOSTLY FIXED — receiver-referencing defaults work, only a default reading another value
+  parameter remains. See `dotkt-semantics.md §10.4`.)*
+- context receivers (`-Xcontext-parameters` rejected) · `object` singleton `.INSTANCE` round-trip consumption ·
+  generic-class member `suspend` (BadImageFormat) · `Pair<T,T>` generic construction (`Pair2<A,B>` workaround) ·
+  private/internal not exported.
 
 ## 【9】 Doc hygiene  *(phase ④)* — ✅ DONE 2026-07-03 (the doc overhaul pass)
 - ✅ 7 superseded docs ARCHIVED to `docs/archive/` with HISTORICAL headers + inbound-ref repointing:

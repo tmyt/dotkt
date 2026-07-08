@@ -615,11 +615,13 @@ type's subtypes are themselves injected into the consumer's session via their `s
    metadata; `ClrTypeInjection` restores `out`/`in` variance + upper bounds (lazy lookup-tag cones, self-ref-safe for the
    BCL numeric tower, fail-soft). Covers every generic library API (`<T : Comparable<T>>`, `Comparator<in T>`, …). No new
    attribute — reconstructor-side only (`facadegen` emission + injector consumption).
-2. **`object` singleton / companion implicit access** — pervasive in real Kotlin libraries; the ergonomic
-   `Type.member` call site does not round-trip. **KNOWN / ACCEPTED LIMITATION (2026-07-01): NOT a follow-up fix.**
-   `facadegen` *would* emit the restoration, but the pinned Kotlin **embedded compiler (2.2.0)** does not support the
-   implicit `Type.member`→companion/`.INSTANCE` resolution the consumer's FIR would need — so it is not facadegen-fixable
-   from our side. Consumers use `.Companion`/`.INSTANCE` explicitly (MEMORY `injected-static-members-need-companion`).
+2. **`object` singleton round-trip** — the **companion IMPLICIT access** (`Type.member`) is **FIXED (2026-07-02,
+   `50c2c9f`):** kotc eagerly creates + links the injected class's companion (setting the FIR-internal
+   `ownerGenerator` via the `FirInternals.java` shim — the old NPE was a FIR wiring gap, not a pinned-K2 limit), so
+   implicit `Class.member` resolves for both facadegen-injected .NET statics (§8c) and round-tripped Kotlin
+   companions (§10.3). MEMORY `injected-static-members-need-companion` is RESOLVED. **The residual (accepted):** a
+   re-consumed top-level **`object` singleton** restores as a plain **class**, so its members are reached through the
+   class / `.INSTANCE`, not the Kotlin singleton sugar `MyObject.member`.
 3. **`fun interface` SAM** — **PARTIALLY FIXED (gap ③, 2026-07-02).** The `fun interface` *nature* now round-trips
    (`[KotlinFunInterface]` → `funinterface` meta → `status.isFun`), so a consumer sees a functional interface and can
    implement it (anonymous `object`). A bare **lambda** still won't SAM-convert — pinned-2.2.0 FIR `computeSamCandidateNames`
@@ -640,10 +642,11 @@ type's subtypes are themselves injected into the consumer's session via their `s
    (`b = a * 10`) still needs the callee scope and is rejected at the omitting call (a real `$default` synthetic would
    lift it); and the receiver-rewrite is single-eval only for a trivial receiver (§7).
 
-Status: **#1 (variance/bounds), #5 (sealed), #6 (default args) are FIXED; #3 (fun interface) is PARTIAL** (nature
-restored, SAM-lambda pinned-compiler-blocked). **#2 (object/companion), #4 (enum class) remain KNOWN / ACCEPTED
-limitations** — each blocked by the pinned Kotlin 2.2.0 `FirDeclarationGenerationExtension` surface (no companion-
-implicit resolution, no `FirEnumEntry` synthesis), not by a missing `[Kotlin*]` attribute we could add.
+Status: **#1 (variance/bounds), #5 (sealed), #6 (default args) are FIXED; #2 companion IMPLICIT access is FIXED
+(`50c2c9f`); #3 (fun interface) is PARTIAL** (nature restored, SAM-lambda pinned-compiler-blocked). **#4 (enum
+class) remains a KNOWN / ACCEPTED limitation** — blocked by the pinned Kotlin 2.2.0 `FirDeclarationGenerationExtension`
+surface (no `FirEnumEntry` synthesis), not by a missing `[Kotlin*]` attribute we could add. The only object/companion
+residual is the **`object` singleton `.INSTANCE`** round-trip (#2), not implicit companion access.
 
 ---
 
@@ -671,4 +674,4 @@ implicit resolution, no `FirEnumEntry` synthesis), not by a missing `[Kotlin*]` 
 - An injected .NET class's statics resolve implicitly (`Application.Start(...)`); `.Companion` is optional. §8c.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
 - A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
-- Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ①), **`sealed`** (gap ⑤ — modality, cross-module enforcement, exhaustive `when`), and the **`fun interface` nature** (gap ③ — usable, though a bare lambda still won't SAM-convert under the pinned 2.2.0 compiler); `enum class` and `object`/companion still restore as plain `object`/`class`. §10.
+- Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ①), **`sealed`** (gap ⑤ — modality, cross-module enforcement, exhaustive `when`), and the **`fun interface` nature** (gap ③ — usable, though a bare lambda still won't SAM-convert under the pinned 2.2.0 compiler), and a re-consumed **companion resolves implicitly** (`50c2c9f`); `enum class` and top-level **`object` singletons** still restore as a plain `class` (the `.INSTANCE` singleton sugar is lost). §10.

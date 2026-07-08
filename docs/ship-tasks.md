@@ -1,6 +1,8 @@
 # kotlin/clr — 出荷タスクリスト（stdlib + パイプライン）
 
 > **RECONCILE 2026-07-05:** all gates are XFAIL-ZERO (verify-il 209/0, differential ALL MATCH, ktproj 9/9); coroutine bundle-6, the A2 interop-no-registry keystone (4 registries deleted), the Polish layer-purity, and the 2026-07-05 final-review findings (N1-N8, F1/F2) are all DONE. Any item below marked open/TODO that concerns those is STALE. Genuine residuals: roundtrip-memext2 (with{}-scope suspend), interface events, and the LOW hardening items in the session task list.
+>
+> **RECONCILE 2026-07-08 (#52 kotc-purity):** kotc now recognizes ZERO operators, reads no `@Clr*`, and is substitute-independent (ref/rt BIR bit-identical, #66) — the stdlib-recognition axis of §0's kotc responsibility is fully realized (bir2cir owns all substitution). NB the "A2 interop-no-registry (4 registries deleted)" above is a DIFFERENT, partial item: the **facadegen-interop A2 = task #61 is STILL DEFERRED** — kotc's backend still emits the `clrStatic`/`clrInstance`/`clrPropGet` SHAPE for injected .NET types, and per §0 + CLAUDE.md that shape decision must move to **bir2cir** (kotc emits the plain call by FQN identity; bir2cir binds off the .NET refs). Remaining kotc-purity = A2/#61 + naming purity (`generated:true`/CharSequence). See `docs/master-task-inventory.md` 【6b】 + `docs/kotc-recognition-audit.md`.
 
 
 最終更新: 2026-07-03。**§0（確定アーキテクチャ）は現在も binding**（CLAUDE.md が直接参照）。
