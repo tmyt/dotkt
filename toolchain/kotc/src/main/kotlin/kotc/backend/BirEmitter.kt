@@ -297,55 +297,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun companionObjectTypeName(comp: IrClass): String =
 		typeName(comp.parent as IrClass) + "." + comp.name.asString() + "CompanionObject"
 
-	// Synthesized stdlib delegate classes for Delegates.observable/vetoable/notNull (their stdlib bodies are
-	// absent from our IR, so we compiler-generate equivalents, monomorphized by value type, each implementing
-	// the synthetic RWProperty_<V>). Keyed "<kind>:<V>" -> class name; defs accumulated for emission.
-	internal val synthDelegates = LinkedHashMap<String, String>()
-	internal val synthDelegateDefs = ArrayList<String>()
-
-	/** Register (once) a synthesized observable/vetoable/notNull delegate class for value type V; return its name. */
-	internal fun synthDelegate(kind: String, v: TypeNode): String = synthDelegates.getOrPut("$kind:${v.toJson()}") {
-		needsKProperty = true
-		val safe = mangle(v)
-		val cname = "<>dotkt_${kind}Delegate_$safe"
-		val iface = propIface0("kotlin.properties.ReadWriteProperty", v)   // RWProperty_<V>; registers it
-		val thisRef = """{"name":"thisRef","type":${fqnJson("kotlin.Any")}}"""
-		val kp = """{"name":"property","type":${fqnJson("<>dotkt_KProperty")}}"""
-		val fieldVal = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"value"}"""
-		val setVal = { e: String -> """{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"value","value":$e}""" }
-		val getter = """{"name":"getValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp],"ret":${v.toJson()},"body":[{"k":"return","value":$fieldVal}]}"""
-		val (fields, ctorParams, ctorBody, setter) = when (kind) {
-			"observable", "vetoable" -> {
-				// KProperty erased to Any in the callback type (see birTypeDeleg) -> matches the passed lambda.
-				val fnT = TypeNode.Fn(false, if (kind == "observable") TypeNode.Fqn("kotlin.Unit") else TypeNode.Fqn("kotlin.Boolean"), listOf(OBJ, v, v)).toJson()
-				val onChange = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"onChange"}"""
-				val invoke = """{"k":"delegateInvoke","funcType":$fnT,"recv":$onChange,"args":[{"k":"local","name":"property"},{"k":"local","name":"__old"},{"k":"local","name":"newValue"}]}"""
-				val flds = """{"name":"value","type":${v.toJson()}},{"name":"onChange","type":$fnT}"""
-				val cps = """{"name":"value","type":${v.toJson()}},{"name":"onChange","type":$fnT}"""
-				val cb = """${setVal("""{"k":"local","name":"value"}""")},{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"onChange","value":{"k":"local","name":"onChange"}}"""
-				val old = """{"k":"var","name":"__old","type":${v.toJson()},"init":$fieldVal}"""
-				val body = if (kind == "observable")
-					"""$old,${setVal("""{"k":"local","name":"newValue"}""")},{"k":"exprStmt","expr":$invoke}"""
-				else // vetoable: only store if the callback approves
-					"""$old,{"k":"if","branches":[{"cond":$invoke,"body":[${setVal("""{"k":"local","name":"newValue"}""")}]}]}"""
-				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${v.toJson()}}],"ret":${fqnJson("kotlin.Unit")},"body":[$body]}"""
-				listOf(flds, cps, cb, st)
-			}
-			else -> { // notNull: throws until first set (lateinit-style); flag tracks whether assigned
-				val flag = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__set"}"""
-				val flds = """{"name":"value","type":${v.toJson()}},{"name":"__set","type":${fqnJson("kotlin.Boolean")}}"""
-				val getBody = """{"k":"if","branches":[{"cond":{"k":"unaryOp","op":"!","e":$flag},"body":[{"k":"exprStmt","expr":${throwExpr(newExc("kotlin.IllegalStateException", str("Property has not been initialized")))}}]}]},{"k":"return","value":$fieldVal}"""
-				val st = """{"name":"setValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp,{"name":"newValue","type":${v.toJson()}}],"ret":${fqnJson("kotlin.Unit")},"body":[${setVal("""{"k":"local","name":"newValue"}""")},{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__set","value":{"k":"const","type":${fqnJson("kotlin.Boolean")},"value":true}}]}"""
-				// override getter body for notNull (throws if unset)
-				return@getOrPut cname.also {
-					synthDelegateDefs.add("""{"name":${str(cname)},"kind":"class","vis":"public","base":null,"interfaces":[${fqnJson(iface)}],"fields":[$flds],"ctors":[{"params":[],"baseArgs":null,"thisArgs":null,"vis":"public","body":[]}],"methods":[{"name":"getValue","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[$thisRef,$kp],"ret":${v.toJson()},"body":[$getBody]},$st]}""")
-				}
-			}
-		}
-		synthDelegateDefs.add("""{"name":${str(cname)},"kind":"class","vis":"public","base":null,"interfaces":[${fqnJson(iface)}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":null,"thisArgs":null,"vis":"public","body":[$ctorBody]}],"methods":[$getter,$setter]}""")
-		cname
-	}
-
 	/** The compiler-generated `KProperty` interface + `KPropertyImpl` class, if any delegated property used one. */
 	internal fun kPropertyDefs(): List<String> {
 		if (!needsKProperty) return emptyList()
@@ -401,49 +352,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		"""{"name":"<>dotkt_CharSequence","kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$getLen,$get,$subSeq]}"""
 	}())
 
-	// kotlin.properties.Read(Write)Property<T,V> -> monomorphized-by-V synthetic interfaces (like the iterator
-	// protocol). The user delegate class implements one of these; getValue/setValue take (thisRef, KProperty[, V]).
-	internal val roPropIfaces = LinkedHashMap<String, String>()   // V (birType) -> interface name
-	internal val rwPropIfaces = LinkedHashMap<String, String>()
-
-	/** `kotlin.properties.Read(Write)Property<T,V>` -> the monomorphized synthetic interface name, else null. */
-	internal fun propIface(t: IrType): String? {
-		val fq = t.classFqName?.asString() ?: return null
-		if (fq != "kotlin.properties.ReadWriteProperty" && fq != "kotlin.properties.ReadOnlyProperty") return null
-		val v = (t as? IrSimpleType)?.arguments?.getOrNull(1)?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: OBJ
-		// A value type that CONTAINS a type variable can't be a monomorphized synthetic (it would bake an unresolvable
-		// `tv`); fall through to the real generic stdlib ReadWriteProperty/ReadOnlyProperty interface instead.
-		if (hasTv(v)) return null
-		return propIface0(fq, v)
-	}
-
-	/** Register (once) the synthetic Read(Write)Property interface for value type `v`; return its name. */
-	internal fun propIface0(fq: String, v: TypeNode): String {
-		needsKProperty = true
-		val key = v.toJson(); val safe = mangle(v)
-		return if (fq == "kotlin.properties.ReadWriteProperty") rwPropIfaces.getOrPut(key) { "<>dotkt_RWProperty_$safe" }
-		else roPropIfaces.getOrPut(key) { "<>dotkt_ROProperty_$safe" }
-	}
-
-	/** BIR defs for every synthesized Read(Write)Property interface (getValue/setValue over (thisRef, KProperty)).
-	 *  The map key `vJson` is already the value type's structured JSON. */
-	internal fun propIfaceDefs(): List<String> {
-		fun m(name: String, params: String, retJson: String) =
-			"""{"name":${str(name)},"static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[$params],"ret":$retJson,"body":[]}"""
-		val kp = """{"name":"property","type":${fqnJson("<>dotkt_KProperty")}}"""
-		val thisRef = """{"name":"thisRef","type":${fqnJson("kotlin.Any")}}"""
-		val out = ArrayList<String>()
-		roPropIfaces.forEach { (vJson, name) ->
-			val getV = m("getValue", "$thisRef,$kp", vJson)
-			out.add("""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$getV]}""")
-		}
-		rwPropIfaces.forEach { (vJson, name) ->
-			val getV = m("getValue", "$thisRef,$kp", vJson)
-			val setV = m("setValue", "$thisRef,$kp,{\"name\":\"value\",\"type\":$vJson}", fqnJson("kotlin.Unit"))
-			out.add("""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$getV,$setV]}""")
-		}
-		return out
-	}
+	// A `kotlin.properties.Read(Write)Property<T,V>`-typed delegate is NOT monomorphized: kotc emits the REAL
+	// generic stdlib interface identity (like `by lazy`'s `kotlin.Lazy<T>`), so delegate field/local types,
+	// the `Delegates.observable(…)` value, and the getValue/setValue dispatch owner share one type (ilverify-clean).
 
 	/** BIR defs for every synthesized Kotlin-iterator interface seen while emitting this file. The map key
 	 *  `elemJson` is already the element type's structured JSON. */
@@ -525,8 +436,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// file class (e.g. App.kt's `__lambda*` reappearing in ControlsKt/DslKt/…). The `<>dotkt_*` types are
 		// de-duplicated by ilemit, but lifted `__lambdaN` are file-class methods that are NOT — so the duplication is
 		// real metadata bloat and a correctness hazard.
-		liftedMethods.clear(); liftedTypes.clear(); synthDelegateDefs.clear(); refTypes.clear()
-		iterIfaces.clear(); iterableIfaces.clear(); roPropIfaces.clear(); rwPropIfaces.clear()
+		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear()
+		iterIfaces.clear(); iterableIfaces.clear()
 		usesCharSeq = false; needsKProperty = false
 		// The `@ClrAwait` await intrinsic (`fun <T> Task<T>.await(): T`) is never emitted as a real method —
 		// a suspend call site is flagged with `"suspendCall":true` and lowered by the deferred downstream layer. Skip it.
@@ -623,14 +534,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			superCompanions.map { typeDef(it, isObject = true) } +
 			(richEnums + nestedRichEnums).map { richEnumDef(it) } + annClasses.map { annotationDef(it) }
 		val methods = (fnMethods + topPropAccessors + liftedMethods).joinToString(",")
-		// Synthetic types (iterator/Read(Write)Property interfaces, synthesized Delegates.* classes, KProperty)
-		// are registered lazily while emitting bodies above -> append last (order matters: producers before
-		// kPropertyDefs/propIfaceDefs, which read flags/maps the producers populate).
-		val synthDelegateTypes = synthDelegateDefs.joinToString(",").let { if (it.isEmpty()) emptyList() else listOf(it) }
+		// Synthetic types (iterator interfaces, KProperty) are registered lazily while emitting bodies above ->
+		// append last (order matters: producers before kPropertyDefs, which reads flags the producers populate).
 		// The CLR-bound (@ClrTypeAlias) classes are already in `typeDefs` (they flow through `classes` like any other
 		// type — kotc no longer strips them). bir2cir's AliasHelperHoist drops each alias type def and, for a class,
 		// hoists its rule-3 members into the <>dotkt_ClrH_<owner> static helper. kotc synthesizes NO helper itself.
-		val types = (typeDefs + liftedTypes + synthDelegateTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + propIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
+		val types = (typeDefs + liftedTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
 
@@ -1353,7 +1262,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					when {
 						bt is TypeNode.Fn -> null
 						stClass?.let { clrName(it) } != null -> bt.toJson()
-						else -> (charSeqIface(st) ?: propIface(st))?.let { fqnJson(it) } ?: stClass?.let { ownerSpec(it, st).toJson() }
+						else -> charSeqIface(st)?.let { fqnJson(it) } ?: stClass?.let { ownerSpec(it, st).toJson() }
 					}
 				}
 			}
@@ -3274,18 +3183,26 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$dlocal,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, ldp.getter.returnType)}}"""
 			}
 			val delegateClass = dvar.type.classifierOrNull?.owner as? IrClass
-			val ownerName = when {
+			val dvFq = dvar.type.classFqName?.asString()
+			// A user delegate class -> its concrete type; a stdlib Read(Write)Property-typed delegate (e.g.
+			// `by Delegates.observable(…)`) -> the REAL generic stdlib interface (mirrors `by lazy` on real
+			// `kotlin.Lazy<T>`), binding to the actual emitted stdlib getValue/setValue.
+			val (owner, ownerGeneric) = when {
 				delegateClass != null && clrName(delegateClass) == null &&
-					delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true -> typeName(delegateClass)
-				else -> propIface(dvar.type)
+					delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true -> str(typeName(delegateClass)) to false
+				dvFq == "kotlin.properties.ReadWriteProperty" || dvFq == "kotlin.properties.ReadOnlyProperty" -> {
+					val os = ownerSpec(delegateClass, dvar.type)
+					os.toJson() to ((os as? TypeNode.Fqn)?.args != null)
+				}
+				else -> null to false
 			}
-			if (ownerName != null) {
+			if (owner != null) {
 				needsKProperty = true
 				val kprop = """{"k":"new","type":${fqnJson("<>dotkt_KPropertyImpl")},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(ldp.name.asString())}}]}"""
 				val nullRef = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
 				return if (callee === ldp.setter)
-					"""{"k":"callInstance","ownerType":${fqnJson(ownerName)},"virtual":true,"recv":$dlocal,"method":"setValue","args":[$nullRef,$kprop,${expr(regularArgs(call).first())}]}"""
-				else """{"k":"callInstance","ownerType":${fqnJson(ownerName)},"virtual":true,"recv":$dlocal,"method":"getValue","args":[$nullRef,$kprop]}"""
+					"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$dlocal,"method":"setValue","args":[$nullRef,$kprop,${expr(regularArgs(call).first())}]}"""
+				else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$dlocal,"method":"getValue","args":[$nullRef,$kprop]${retHint(ownerGeneric, ldp.getter.returnType)}}"""
 			}
 		}
 		val name = callee.name.asString()
@@ -3329,15 +3246,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		//     bodies are absent from our IR, so only user inline funs (body present) inline; others fall through.
 		if (callee.isInline && callee.body != null && hasLambdaArg(call)) return inlineCall(call)
 
-		// `Delegates.observable/vetoable/notNull(…)` -> a `new <synthesized delegate>(args)` (stdlib bodies are
-		// absent from our IR, so we compiler-generate the equivalent delegate class, monomorphized by value type).
-		if (declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.properties.Delegates" &&
-			(name == "observable" || name == "vetoable" || name == "notNull")) {
-			val v = (call.type as? IrSimpleType)?.arguments?.getOrNull(1)
-				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: OBJ
-			val cname = synthDelegate(name, v)
-			return """{"k":"new","type":${fqnJson(cname)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
-		}
+		// `Delegates.observable/vetoable/notNull(…)` is NOT intercepted: it resolves to the REAL stdlib
+		// `Delegates.observable`/`vetoable`/`notNull` (emitted into DotKt.Stdlib.dll — each returns a real
+		// `ReadWriteProperty<Any?,V>`: an `ObservableProperty` subclass or `NotNullVar`) and flows through the
+		// ordinary top-level-call path. The delegate-access sites dispatch getValue/setValue on the real generic
+		// interface (see the `by lazy`-parallel routing above). No compiler-synthesized delegate class.
 		// `by lazy { … }` is NOT intercepted: the `kotlin.lazy(initializer)` call resolves to the real stdlib
 		// `lazy()` actual (returns `UnsafeLazyImpl(initializer)`, a pure-Kotlin `Lazy<T>`) and flows through the
 		// ordinary top-level-call path below. No System.Lazy construction here (that is CLR knowledge; layer purity).
@@ -3910,23 +3823,30 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// fall through to the getValue/setValue delegate routing so it emits as real kotlin.* calls.
 			// Route getValue/setValue to the delegate object. The dispatch type is either the concrete user
 			// delegate class (duck-typed or implementing Read(Write)Property) or — when the field is typed as
-			// the Read(Write)Property interface (e.g. Delegates.observable) — the synthetic interface.
+			// the Read(Write)Property interface (e.g. `by Delegates.observable(…)`, `by Delegates.notNull()`) —
+			// the REAL generic stdlib `kotlin.properties.Read(Write)Property<T,V>` interface. That mirrors the
+			// `by lazy` path (dispatch on the real generic `kotlin.Lazy<T>`): the delegate value is the real
+			// emitted stdlib `ObservableProperty`/`NotNullVar`, which implements the real generic interface, so
+			// the call binds to the actual stdlib getValue/setValue — no compiler-synthesized delegate class.
 			val delegateClass = bf?.type?.classifierOrNull?.owner as? IrClass
 			val isUserDelegate = delegateClass != null && clrName(delegateClass) == null &&
 				delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true
-			val ownerName = when {
-				isUserDelegate -> typeName(delegateClass!!)
-				bf != null -> propIface(bf.type)   // ReadWriteProperty/ReadOnlyProperty-typed field
-				else -> null
+			val bfFq = bf?.type?.classFqName?.asString()
+			val (owner, ownerGeneric) = when {
+				isUserDelegate -> str(typeName(delegateClass!!)) to false
+				bf != null && (bfFq == "kotlin.properties.ReadWriteProperty" || bfFq == "kotlin.properties.ReadOnlyProperty") -> {
+					val os = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
+					os.toJson() to ((os as? TypeNode.Fqn)?.args != null)
+				}
+				else -> null to false
 			}
-			if (delegate != null && ownerName != null) {
+			if (delegate != null && owner != null) {
 				needsKProperty = true
-				val owner = str(ownerName)
 				val kprop = """{"k":"new","type":${fqnJson("<>dotkt_KPropertyImpl")},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(property.name.asString())}}]}"""
 				// callvirt: getValue/setValue is virtual (interface impl) or final (duck-typed) — callvirt fits both.
 				return if (callee === property.setter)
 					"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"setValue","args":[$recv,$kprop,${expr(regularArgs(call).first())}]}"""
-				else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue","args":[$recv,$kprop]}"""
+				else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue","args":[$recv,$kprop]${retHint(ownerGeneric, callee.returnType)}}"""
 			}
 			// `val x by map` (a TOP-LEVEL-extension delegate convention): FIR resolved the accessor to the stdlib
 			// `kotlin.collections.getValue/setValue(thisRef, property)` extension (MapAccessors.kt) — the resolved
@@ -4722,8 +4642,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (fqp != null && (fqp.startsWith("kotlin.reflect.KProperty") || fqp.startsWith("kotlin.reflect.KMutableProperty"))) {
 			needsKProperty = true; return TypeNode.Fqn("<>dotkt_KProperty")
 		}
-		// kotlin.properties.Read(Write)Property<T,V> -> the monomorphized synthetic interface.
-		propIface(t)?.let { return TypeNode.Fqn(it) }
+		// kotlin.properties.Read(Write)Property<T,V> is NOT monomorphized: it falls through to the
+		// user-class/interface branch below (`@kotlin.properties.ReadWriteProperty[…]`), the REAL generic
+		// stdlib interface — same as `by lazy`'s `kotlin.Lazy<T>`. A delegate field/local typed as this
+		// interface, the value from `Delegates.observable(…)`, and the getValue/setValue dispatch owner then
+		// all agree on one type identity (ilverify-clean). The old `<>dotkt_RWProperty_<V>` per-value monomorph
+		// was a pre-generic-interface workaround, disproven by generic `kotlin.Lazy<T>` working with a value V.
 		// Kotlin function type `(A,B)->R` (kotlin.FunctionN<A,B,R>) and a callable-reference type `KFunctionN<…>`
 		// (the inferred type of `obj::method`/`::foo`) -> an `fn` (Func/Action delegate).
 		val fqn = t.classFqName?.asString()

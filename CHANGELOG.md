@@ -463,6 +463,23 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **`Delegates.observable`/`vetoable`/`notNull` now resolve to the real stdlib — kotc's `synthDelegate`
+  vestige + the `ReadWriteProperty` monomorphization are deleted (#57).** kotc used to intercept
+  `kotlin.properties.Delegates.observable/vetoable/notNull` and compiler-synthesize a per-value-type delegate
+  class (`<>dotkt_*Delegate_<V>`) implementing a monomorphized `<>dotkt_RWProperty_<V>` interface — a workaround
+  from before the CLR stdlib shipped `ObservableProperty`/`Delegates`/`NotNullVar`. The stdlib now emits those
+  as real types into `DotKt.Stdlib.dll`, so the interception and `synthDelegate` are removed: `by
+  Delegates.observable(…)` resolves to the real stdlib `Delegates.observable` (returns a real
+  `ReadWriteProperty<Any?,V>`), and the delegate-access sites dispatch getValue/setValue on the **real generic
+  `kotlin.properties.ReadWriteProperty<Any?,V>`** interface — exactly as `by lazy` dispatches on the real generic
+  `kotlin.Lazy<T>`. The `<>dotkt_RWProperty_<V>`/`<>dotkt_ROProperty_<V>` monomorphization (`propIface`/`propIface0`/
+  `propIfaceDefs`) is fully retired: `birType` and user delegate-class supertypes emit the real generic interface,
+  so the delegate field type, the `observable(…)` value, and the dispatch owner all share one type identity
+  (previously they diverged — a latent ilverify `StackUnexpected` that the monomorphization masked by keeping
+  everything app-local). Output is byte-identical and every case is ilverify-clean; the synthetic
+  `<>dotkt_KProperty`/`KPropertyImpl` property-reference pair stays (KProperty is a pure binding with no BCL
+  equivalent). The monomorphization was a pre-generic-interface assumption, disproven by generic `kotlin.Lazy<T>`
+  already working with a value-type `V`.
 - **The range for-loop's CLR accessor knowledge moved out of kotc into bir2cir — kotc now emits ZERO CLR
   recognition (#52 Phase 5, the "range partial").** kotc's range for-loop lowering used to leak CLR accessor
   names: the stdlib-build `forRange` node carried `accessOwner="kotlin.ranges.IntProgression"` +

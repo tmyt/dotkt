@@ -205,7 +205,7 @@ origin (kotc's own `<>dotkt_*` closure/delegate/KProperty synthetic types) — i
 | ~~`String.plus` concat 4162~~ | `name=="plus"` + `kotlin.String` | `concat` | ✅ **RELOCATED TO bir2cir (#52 Phase 5)** — kotc emits the FAITHFUL `callInstance kotlin.String.plus(a,b)` (+ the same cast-stripped `partTypes` hint the string-template path carries); `PrimitiveOperatorLowering.Lower` recognizes `ownerType==kotlin.String && method==plus && args==1` and re-emits the identical 2-part `concat`; FaithfulHintRecognition then consumes `partTypes` unchanged. Byte-identical. (Was "language op"; the corrected discipline — default RELOCATE, no "special-op" excuse — applied since `kotlin.String.plus` is a real stdlib member) |
 | `compareTo` Double/Float total order 3443–3461, enum 3447–3452 | receiver type/kind | stdlib helper call / `binOp` | Kotlin total-order semantics (differs from `System.Double.CompareTo`) — routes to a stdlib helper, layer-ok |
 | Array `get`/`set` 3695–3701 | `isOperator` + `isArrayType` | `arrayGet`/`arraySet` | CLR array indexing is a primitive IL op |
-| `Delegates.observable/vetoable/notNull` 3432–3438 | `declaringClass=="kotlin.properties.Delegates"` + name | synth delegate class | property-delegation protocol (frontend); **(a) migratable only if stdlib ships real delegate impls** — deferred, medium risk |
+| ~~`Delegates.observable/vetoable/notNull`~~ | `declaringClass=="kotlin.properties.Delegates"` + name | synth delegate class | ✅ **DELETED (#57)** — the stdlib now ships the real `ObservableProperty`/`Delegates`/`NotNullVar` (emitted into `DotKt.Stdlib.dll`), so the interception + `synthDelegate` (per-`V` monomorphized delegate class) are gone. `by Delegates.observable(…)` resolves to the real stdlib `Delegates.observable`, and the delegate-access sites dispatch getValue/setValue on the **real generic `kotlin.properties.ReadWriteProperty<Any?,V>`** (mirroring `by lazy` on real `kotlin.Lazy<T>`). The `<>dotkt_RWProperty_<V>`/`<>dotkt_ROProperty_<V>` monomorphization was **fully retired** (`propIface`/`propIface0`/`propIfaceDefs` deleted; `birType` + user-delegate-class supertypes now emit the real generic interface) — it was a pre-generic-interface workaround, disproven by generic `kotlin.Lazy<T>` already working with a value-type `V`. Byte-identical output; ilverify-clean (the field type, the `Delegates.observable` value, and the dispatch owner now share one type identity). The synthetic `<>dotkt_KProperty`/`KPropertyImpl` stays (KProperty is a pure binding, no BCL equivalent) |
 | ~~Collection-default bridges (`iterator`/`isEmpty`/`contains`/`listIterator`)~~ | name + `clrName(declaringClass)!=null` + `kotlin.collections` | callStatic into `ClrIteratorBridgeKt`/`ClrCollectionDefaultsKt` | ✅ **DELETED (#52 Phase 4)** — dead code; bir2cir Rule 5 owns the routing (gate was null for jar-sourced stdlib interfaces) |
 | collection toString/equals routing `collToStringRoute`/`floatTotalEqRoute`/`collEqRoute`/`concatOperand`, `compareTo` Double/Float | static collection/float type | callStatic into `ClrCollectionDefaultsKt`/`ClrMapDefaultsKt`/`NumbersKt`/`LibraryKt` | ✅ **RELOCATED TO bir2cir (#52 Phase 4b)** — kotc emits the faithful op + a cast-stripped static-type hint; bir2cir (`FaithfulHintRecognition` + the extended `PrimitiveOperatorLowering` EQEQ arm) recognizes the type and reproduces the SAME helper call. The recognition moved (mechanism-(b)); the helpers stay. (Was Phase-4 GENUINE-GAP; see Part 4 Phase 4b) |
 
@@ -542,8 +542,11 @@ _All operator classes (1–4) + the range partial + String.plus are done._
   synthetic getter call). See the "Range for-loop" note under Phase 5 above.
 
 ### Genuinely unavoidable (near-zero) — the only true must-stay
-- kotc's **own synthetic types** with no IR origin: the `<>dotkt_*` closure/delegate/`KPropertyImpl`/
-  `CharSequence`-adapter family. These are CLR-representation inventions for closures/property-references that
+- kotc's **own synthetic types** with no IR origin: the `<>dotkt_*` closure/`KPropertyImpl`/
+  `CharSequence`-adapter family. (The `<>dotkt_*Delegate_<V>` **delegate classes** and the `<>dotkt_RWProperty_<V>`
+  monomorphized interface are **gone** — #57 retired them; `Delegates.*` uses the real stdlib + real generic
+  `ReadWriteProperty`. The `<>dotkt_KProperty`/`KPropertyImpl` property-reference pair stays.)
+  These are CLR-representation inventions for closures/property-references that
   CLAUDE.md keeps in the "delegate/closure family" bucket; their FQN literals (`<>dotkt_*`) are not `kotlin.*`
   and name a type kotc itself defines, so they are outside the "hardcoded `kotlin.*` literal" metric. Even these
   are "move toward the boundary when touched" per CLAUDE.md — but they are the last, smallest residue.
@@ -565,7 +568,9 @@ _All operator classes (1–4) + the range partial + String.plus are done._
 - Preconditions: `4263–4293` (+ `newExc` 132/337/847). Scope: `3485–3489`. use: `3493`. repeat: `4301`.
 - Operators: `4159–4235`. EQEQ/EQEQEQ: `4169–4182`. String.plus: ✅ RELOCATED to bir2cir (#52 Phase 5) —
   kotc emits the faithful `callInstance kotlin.String.plus`; `PrimitiveOperatorLowering` re-emits the `concat`.
-- Delegates.observable/vetoable/notNull: `3432–3438`.
+- Delegates.observable/vetoable/notNull: ✅ DELETED (#57) — resolve to the real stdlib `Delegates`/`ObservableProperty`/
+  `NotNullVar`; delegate-access dispatches getValue/setValue on the real generic `kotlin.properties.ReadWriteProperty<Any?,V>`
+  (`by lazy`-parallel). `<>dotkt_RWProperty_<V>` monomorphization (`propIface*`) fully retired.
 - Collection bridges (iterator/defaults/listIterator + lifted `iterator` mref): ✅ DELETED (#52 Phase 4) —
   routing owned by bir2cir Rule 5 (`Program.cs`).
 - Kotlin-semantic helper routes (GENUINE-GAP, KEPT — #52 Phase 4): `collToStringRoute`, `floatTotalEqRoute`,
