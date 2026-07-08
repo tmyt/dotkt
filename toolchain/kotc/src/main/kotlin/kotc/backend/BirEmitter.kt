@@ -3841,13 +3841,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 		if (isBuiltin) {
 			val operands = call.arguments.filterNotNull()
-			// `String + x` (concatenation, not numeric add). #59: emit the FAITHFUL `callInstance kotlin.String.plus`
-			// (a plain 2-operand member call) — the `String.plus -> concat` MEMBER recognition is bir2cir's
-			// (PrimitiveOperatorLowering re-emits the `concat`, like the relocated arithmetic operators). bir2cir
-			// recovers each part's static type via StaticType (no kotc hint) and applies the collection/nullable part
-			// routing — the declared param type (Any?) is irrelevant to that, the part expression node carries the type.
-			if (name == "plus" && declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.String" && operands.size == 2)
-				return """{"k":"callInstance","ownerType":${fqnJson("kotlin.String")},"virtual":false,"recv":${expr(operands[0])},"method":"plus","args":[${expr(operands[1])}]}"""
+			// `String + x` (concatenation, not numeric add) is NOT recognized here: kotc emits the plain
+			// `callInstance kotlin.String.plus` (a faithful member call) via the general member-call path, and bir2cir's
+			// PrimitiveOperatorLowering re-emits the `concat` (recovering each part's static type via StaticType, applying
+			// the collection/nullable part routing) — the `String.plus -> concat` MEMBER recognition is bir2cir's.
 			// `==` (EQEQ) / `===` (EQEQEQ) are `kotlin.internal.ir` COMPILER INTRINSICS. ALL of the ceq-vs-Object.Equals
 			// SPLIT + the Kotlin-SEMANTIC structural routings (collection `==`, boxed Double/Float total-order `==`)
 			// recognition lives in bir2cir: kotc emits ONLY the FAITHFUL intrinsic call with owner =
@@ -3904,15 +3901,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `callInstance kotlin.Int.toLong` (the faithful IR); bir2cir reads the `@kotlin.clr.ClrConv` marker off the
 			// stdlib primitive's conversion member on the ref.dll and emits the `conv` node from the callee's return type.
 			val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
-			if (fq == "kotlin.io" && (name == "println" || name == "print")) {
-				// Emit the PLAIN top-level callStatic (bir2cir substitutes it to System.Console.Write/WriteLine
-				// from the stdlib @ClrIntrinsic in runtime/stdlib/clr/kotlin/io/ConsoleClr.kt) plus a cast-stripped
-				// `argTypes` HINT per operand. bir2cir wraps a collection/Map arg in clrCollToString/clrMapToString off it
-				// (Kotlin-style `[a, b]`, not .NET's type-name ToString). No CLR console node in kotc. #59: the operand
-				// static types are recovered by bir2cir via StaticType (no argTypes hint).
-				val argJson = operands.joinToString(",") { expr(it) }
-				return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)},"args":[$argJson]}"""
-			}
+			// `println(...)`/`print(...)` are NOT recognized here: kotc emits the plain top-level `callStatic owner:null`
+			// via the general call path, and bir2cir substitutes it to System.Console.Write/WriteLine off the stdlib
+			// @ClrIntrinsic (runtime/stdlib/clr/kotlin/io/ConsoleClr.kt) and wraps a collection/Map arg in
+			// clrCollToString/clrMapToString (Kotlin-style `[a, b]`) — recovering the operand static types via StaticType.
 			// `readLine()` is NOT lowered: the CLR stdlib exposes readln()/readlnOrNull() (readlnOrNull is @ClrIntrinsic-bound
 			// to System.Console.ReadLine in ConsoleClr.kt). There is no `kotlin.io.readLine` symbol in the frontend jar.
 			// Regex is NOT lowered here: `kotlin.text.Regex` is
