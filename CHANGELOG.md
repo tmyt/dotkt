@@ -560,6 +560,17 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   inherited `hasNext`/`next` resolve nowhere as a `callInstance` (every `for (x in aMutableList)` hits this). The
   `<>dotkt_CharSequence` adapter is untouched — `kotlin.CharSequence` has no faithful BCL equivalent, a genuine
   reason distinct from the false generic-interface premise. Output runs correctly and is ilverify-clean.
+- **Dead-code sweep after the #57/#58 synthetic retirements + facadegen's unused `--scan-asm` option (#62,
+  verify-by-deletion).** Removals that #58 left as follow-up cleanup, plus a long-dead facadegen option: (a)
+  **facadegen** loses the `--scan-asm <dll>` option and its `ScanAsmKotlinTypes` helper — no script/target/ktproj ever
+  invoked it (it was the "inject stdlib facades from `DotKt.Stdlib`" mechanism, killed by the "never `--scan-asm` the
+  stdlib; `kotlin.*` comes from the frontend jar" invariant); the general `IsKotlinStdlibSymbol` defense-in-depth guard
+  is KEPT (it also protects the production `--meta`/`--import-list` and `--refs` DotKt-library paths, not just
+  `--scan-asm`). (b) **bir2cir** deletes the now-inert `SyntheticIteratorUnification` pass (dead once #58 stopped kotc
+  emitting the `<>dotkt_KIterator_`/`KIterable_` synthetic) and the unreachable `<>dotkt_KIterable_`/`SynthPrefix`
+  branches in `IteratorConsumerNormalization`/`IteratorDispatchElem`; with the synthetic-owner dispatch gone, the pass's
+  now-write-only `map` name→element bookkeeping is dropped (each `hasNext`/`next` reads its element straight off the real
+  iterator owner's type arg). No behavior change — the sole remaining producers of those tokens were the retired paths.
 - **`Delegates.observable`/`vetoable`/`notNull` now resolve to the real stdlib — kotc's `synthDelegate`
   vestige + the `ReadWriteProperty` monomorphization are deleted (#57).** kotc used to intercept
   `kotlin.properties.Delegates.observable/vetoable/notNull` and compiler-synthesize a per-value-type delegate

@@ -2,7 +2,7 @@
 // call those .NET types FAÇADE-FREE (`import System.X` resolves directly; the compiler's FIR injector consumes the
 // metadata).
 //
-//   facadegen --meta <outFile> [--refs a.dll;b.dll;...] <Type.Full.Name>... [--import-list <file>] [--scan-asm <dll>]
+//   facadegen --meta <outFile> [--refs a.dll;b.dll;...] <Type.Full.Name>... [--import-list <file>]
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -15,7 +15,7 @@ static class FacadeGen
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("usage: facadegen --meta <outFile> [--refs a.dll;...] <TypeFullName>... [--import-list <file>] [--scan-asm <dll>]");
+            Console.Error.WriteLine("usage: facadegen --meta <outFile> [--refs a.dll;...] <TypeFullName>... [--import-list <file>]");
             return 1;
         }
         // S5 generalization: emit a compact metadata file consumed by the compiler's FIR injector,
@@ -34,19 +34,10 @@ static class FacadeGen
             // compiler's `kotc --scan-imports` PSI pass (a real parser, not a regex: handles aliases, `.*`,
             // multi-line, comments, backtick identifiers — interop feedback item 5). Merge both; EmitMeta warns
             // on any .NET-looking name that resolves to nothing (no silent drop).
-            // `--scan-asm <dll>`: inject ALL [KotlinFileClass] facades from a referenced DotKt library (DotKt.Stdlib).
-            // Auto-imported stdlib functions (`list.getOrElse(...)`) never appear in the import-list, so the whole
-            // library's top-level functions must be pulled in wholesale for the FIR injector to see them.
-            var scanned = new List<string>();
-            for (var scanAt = rest.IndexOf("--scan-asm"); scanAt >= 0 && scanAt + 1 < rest.Count; scanAt = rest.IndexOf("--scan-asm"))
-            {
-                scanned.AddRange(ScanAsmKotlinTypes(rest[scanAt + 1]));
-                rest.RemoveRange(scanAt, 2);
-            }
             var listAt = rest.IndexOf("--import-list");
             var explicitTypes = listAt < 0 ? rest : rest.Take(listAt).ToList();
             var imported = listAt < 0 || listAt + 1 >= rest.Count ? Enumerable.Empty<string>() : ReadImportList(rest[listAt + 1]);
-            return EmitMeta(args[1], explicitTypes.Concat(imported).Concat(scanned).Distinct());
+            return EmitMeta(args[1], explicitTypes.Concat(imported).Distinct());
         }
         // .NET interop is façade-free via `--meta` (the FIR injector consumes the metadata directly). There is no other mode.
         Console.Error.WriteLine("facadegen: only `--meta` mode is supported (façade-free .NET injection); see usage above.");
@@ -930,10 +921,11 @@ static class FacadeGen
     // kotc resolves the ENTIRE Kotlin stdlib (`kotlin.*`) from the frontend JAR on -classpath, which preserves full
     // Kotlin semantics (the Companion-object call sites the stdlib is premised on). facadegen owns the .NET space ONLY
     // and must NEVER inject a `kotlin.*` symbol — a facadegen-reconstructed `kotlin.*` DUPLICATES the jar's, which then
-    // conflict (overload-resolution ambiguity), and re-scanning the whole stdlib is slower than the prebuilt jar. Today the operating discipline ("never
-    // --scan-asm the stdlib") already keeps `kotlin.*` out of every seed/closure; this predicate makes the guarantee
-    // live IN the owning layer (defense-in-depth, output-neutral) rather than relying only on that discipline plus the
-    // downstream `ClrTypeInjection.kt` filter (which covers injected classes/interfaces but NOT top-level functions).
+    // conflict (overload-resolution ambiguity), and re-scanning the whole stdlib is slower than the prebuilt jar.
+    // facadegen resolves only explicit .NET type names + the PSI import-list (all .NET-space names), so `kotlin.*`
+    // never enters a seed/closure; this predicate makes the guarantee live IN the owning layer (defense-in-depth,
+    // output-neutral) rather than relying only on that plus the downstream `ClrTypeInjection.kt` filter (which
+    // covers injected classes/interfaces but NOT top-level functions).
     // WHITELIST: the deliberate `kotlin.clr.await` CLR-async bridge is surfaced textually by EmitTaskAwait (keyed off
     // the BCL Task family), never through this type-injection path (`import kotlin.clr.await` resolves to no type here),
     // so it is naturally exempt — this predicate only gates types that flow through Enqueue/ShouldInject/seed-resolve.
@@ -951,8 +943,8 @@ static class FacadeGen
         if (t == null || t.IsGenericParameter || t.IsPointer || t.IsByRef) return false;
         if (string.IsNullOrEmpty(t.Namespace) || t.FullName == null) return false;
         // BINDING INVARIANT: never inject a `kotlin.*` stdlib symbol — it comes from the frontend JAR (see
-        // IsKotlinStdlibSymbol). Defense-in-depth: the closure never reaches one under the "don't --scan-asm the
-        // stdlib" discipline, so this is output-neutral; it just moves the guarantee into the owning layer.
+        // IsKotlinStdlibSymbol). Defense-in-depth: the closure never reaches one (facadegen resolves only .NET-space
+        // names), so this is output-neutral; it just moves the guarantee into the owning layer.
         if (IsKotlinStdlibSymbol(t)) return false;
         // A NESTED generic type (`List`1+Enumerator` — it inherits the enclosing type's params, so IsGenericType is
         // true even without own params) has no CLR-addressable open name in the meta grammar; excluded, and CrossType
@@ -1181,18 +1173,6 @@ static class FacadeGen
     {
         try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == KSealedAttr); }
         catch { return false; }
-    }
-
-    // Every [KotlinFileClass] facade type in a referenced DotKt assembly (DotKt.Stdlib) -> its FullName, so EmitMeta
-    // restores its statics as top-level Kotlin functions. Lets a whole compiled stdlib slice be auto-injected.
-    static IEnumerable<string> ScanAsmKotlinTypes(string path)
-    {
-        System.Reflection.Assembly asm;
-        try { asm = Mlc.LoadFromAssemblyPath(Path.GetFullPath(path)); }
-        catch (Exception e) { Console.Error.WriteLine($"--scan-asm: cannot load {path}: {e.Message}"); yield break; }
-        Type[] types; try { types = asm.GetTypes(); } catch { yield break; }
-        foreach (var t in types)
-            if (t.FullName != null && HasKotlinFileClass(t)) yield return t.FullName;
     }
 
     const string KReadOnlyAttr = "DotKt.Runtime.CompilerServices.KotlinReadOnlyAttribute";
