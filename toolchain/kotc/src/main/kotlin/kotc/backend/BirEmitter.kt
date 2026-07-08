@@ -112,14 +112,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// Compiling the stdlib ITSELF: the app-only kotlin.* lowerings (e.g. the Regex BCL binding) must be OFF so the
 	// stdlib uses its OWN kotlin.* definitions (it IS the runtime).
 	internal val stdlibCompile: Boolean get() = System.getenv("DOTKT_STDLIB_COMPILE") != null
-	// RUNTIME-assembly build ("substitute mode"): the stdlib FUNCTIONS compiled with @Clr ACTIVE so List->IReadOnlyList,
-	// size->Count etc. are applied (the @Clr-bound TYPES then bind to the BCL and aren't emitted, so no clash). Still uses
-	// the stdlib-compile flags (-Xstdlib-compilation, package kotlin, per-file resilience). docs/design-clr-stdlib-ref-runtime-split.md.
-	internal val stdlibSubstitute: Boolean get() = System.getenv("DOTKT_STDLIB_SUBSTITUTE") != null
-	// ORTHOGONAL to substitution: strip the roundtrip metadata ([Kotlin*]/[KotlinInline]/NRT). ONLY the stdlib RUNTIME
-	// sets this — it's CLR-executed, never re-read as Kotlin. A USER LIBRARY is also substituted but KEEPS its attributes
-	// (it may be consumed AS KOTLIN by another module, needing [KotlinInline] etc.), so it must NOT set this flag.
-	internal val stripMetadata: Boolean get() = System.getenv("DOTKT_STRIP_METADATA") != null
+	// #66: kotc emits ONE substitute/strip-INDEPENDENT BIR — it NO LONGER reads DOTKT_STDLIB_SUBSTITUTE or
+	// DOTKT_STRIP_METADATA. The ref/rt divergence (BCL substitution, the kotlin.Comparable-bound + `in`-variance drops,
+	// the metadata strip) is entirely bir2cir's + ilemit's, keyed off those env vars downstream. The stdlib REFERENCE
+	// build and the RUNTIME build now produce BIT-IDENTICAL BIR from a single kotc frontend run.
+	// docs/design-clr-stdlib-ref-runtime-split.md.
 
 	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
 		// Compiling the stdlib ITSELF (DOTKT_STDLIB_COMPILE): don't fail the whole file on one unsupported construct in
@@ -500,9 +497,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	internal fun interfaceDef(iface: IrClass): String {
 		fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
-			// C3b reverse direction: a Kotlin interface extending a @Clr interface (Set : Collection->IReadOnlyCollection)
-			// must emit its overriding members with the BCL slot names (size getter -> get_Count) so implementers satisfy
-			// the BCL interface. clrIfaceMemberName is null in the ref build (pure Kotlin: get_size) and binds in substitute.
+			// C3b reverse direction: a Kotlin interface extending a @Clr interface (Set : Collection->IReadOnlyCollection).
+			// clrIfaceMemberName reads facadegen .NET-interop metadata ONLY (not @ClrIntrinsic); in the stdlib build
+			// (CLR_TYPES_METADATA="") it is substitute-INDEPENDENT — the BCL override-slot rename (get_size -> get_Count) is
+			// bir2cir's DeclarationRename off the ref.dll @ClrIntrinsic, so kotc emits the plain Kotlin get_size here.
 			val name = clrIfaceMemberName(fn) ?: (prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString())
 			val isSetter = prop != null && fn == prop.setter
 			val ret = if (isSetter) TypeNode.Fqn("kotlin.Unit") else birType(fn.returnType)
@@ -957,15 +955,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val virtual = clrIface || acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty()
 		val vis = if (clrIface) "public" else visOf(acc)
 		val isAbstract = acc.modality == Modality.ABSTRACT && acc.body == null
-		// REF BUILD ONLY: emit the PROPERTY's @ClrIntrinsic onto its accessor method so the ref.dll carries the binding
+		// STDLIB BUILD: emit the PROPERTY's @ClrIntrinsic onto its accessor method so the ref.dll carries the binding
 		// (like a normal method's — method()/ifaceMethod already do). The @ClrIntrinsic is on the property (`@ClrIntrinsic
 		// ("Length") val length`), so read it from the corresponding property. bir2cir consumes it from the get_<name>
-		// accessor (TryMemberIntrinsic / DeclarationRename) to lower a `.length` read to clrPropGet Length. Gated to the
-		// ref build: the rt/app CIR must stay byte-identical to the annClr-era output (which emitted no accessor attrs),
-		// and the rt.dll never needs the binding — its call sites are already substituted. (See Task #5 clrName migration.)
-		// The REF build is COMPILE-without-SUBSTITUTE (the rt/app build sets BOTH env flags), so gate on exactly that.
+		// accessor (TryMemberIntrinsic / DeclarationRename) to lower a `.length` read to clrPropGet Length. kotc emits ONE
+		// substitute-INDEPENDENT BIR (#66): the accessor attrs ride BOTH the ref and rt BIR identically; the rt build
+		// strips ALL metadata downstream (ilemit under DOTKT_STRIP_METADATA), so the rt.dll never carries the binding —
+		// its call sites are already substituted. App builds (no stdlibCompile) emit no accessor attrs, unchanged.
 		val propAnns = (acc.correspondingPropertySymbol?.owner ?: acc).annotations
-		val accAttrs = if (stdlibCompile && !stdlibSubstitute) ""","attrs":[${attrsJson(propAnns)}]""" else ""
+		val accAttrs = if (stdlibCompile) ""","attrs":[${attrsJson(propAnns)}]""" else ""
 		return """{"name":${str(mname)},"static":false,"override":${clrIface || isOverrideClass},"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 	}
 
@@ -996,9 +994,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  downstream (its `: System.Attribute` type or an arg type being unresolvable at ilemit), that is a bir2cir/ilemit
 	 *  concern, NOT a reason to re-introduce a kotc filter. */
 	internal fun attrsJson(anns: List<IrConstructorCall>): String {
-		// Strip roundtrip metadata ([Kotlin*]/[Clr]) — ONLY when DOTKT_STRIP_METADATA (the stdlib runtime). NOT tied to
-		// substitution: a user library is substituted but KEEPS its attributes (round-trip consumable). (Per user.)
-		if (stripMetadata) return ""
+		// kotc emits ONE substitute/strip-INDEPENDENT BIR (#66): the roundtrip metadata ([Kotlin*]/[Clr]) rides EVERY
+		// build's BIR verbatim — the rt-build metadata strip is downstream (ilemit skips ALL attrs under
+		// DOTKT_STRIP_METADATA, Program.cs:626), so the rt.dll carries none while the ref/app BIR are byte-identical here.
 		return anns.mapNotNull { ann ->
 			val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
 			if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
@@ -1422,22 +1420,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun typeParamsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String {
 		if (tps.isEmpty()) return ""
 		val entries = tps.joinToString(",") { tp ->
-			// In the runtime (substitute) build drop a `kotlin.Comparable` upper bound: a BCL primitive (Int32) doesn't
-			// implement kotlin.Comparable, so ClosedRange<Int> would violate the constraint at load; the body's compareTo
-			// already emits a `constrained. System.IComparable<T>::CompareTo` (which primitives satisfy). Runtime constraints
-			// are not enforced anyway (the app type-checked against the ref). Other bounds (clr/clrg) are kept.
-			// (A `C : MutableCollection<T>` bound on filterTo/mapTo/toCollection is NOT simply droppable -- the body still
-			// references MutableCollection in a `constrained.` call -> TypeLoad. It needs MutableCollection->ICollection
-			// SUBSTITUTION in both the bound and the body, i.e. the rt-build collection-reference substitution. TODO.)
-			val bounds = tp.superTypes.filter { it.classFqName?.asString() != "kotlin.Any" && !(stdlibSubstitute && it.classFqName?.asString() == "kotlin.Comparable") }.map { birType(it) }
+			// kotc emits the PURE-KOTLIN bound in EVERY build (#66): the `kotlin.Comparable` upper-bound DROP is a
+			// SUBSTITUTION CONSEQUENCE (a substituted BCL primitive has no kotlin.Comparable bound), so it belongs to
+			// bir2cir (StdlibSubstituteTypeParams, rt-build only), NOT here. `kotlin.Any` bounds are still dropped
+			// (a pure-Kotlin fact — Any is the implicit top). Other bounds (clr/clrg) are kept.
+			val bounds = tp.superTypes.filter { it.classFqName?.asString() != "kotlin.Any" }.map { birType(it) }
 			// Declaration-site variance `out`/`in` -> CLR covariant/contravariant (ilemit applies it only on
 			// interfaces, where the CLR allows variance; on classes it's Kotlin-level only — dropped).
 			val variance = when (tp.variance) {
 				org.jetbrains.kotlin.types.Variance.OUT_VARIANCE -> "out"
-				// `in` (contravariant) is dropped in the runtime build: the CLR's variance-validity check is stricter than
-				// Kotlin's (e.g. Continuation<in T>.resumeWith(Result<out T>) — T appears covariantly in an input position,
-				// which the CLR rejects). Runtime types don't need declaration-site variance (a compile-time concern).
-				org.jetbrains.kotlin.types.Variance.IN_VARIANCE -> if (stdlibSubstitute) null else "in"
+				// `in` (contravariant) is emitted verbatim here in EVERY build (#66). The runtime DROP of `in` (the CLR's
+				// variance-validity check is stricter than Kotlin's, e.g. Continuation<in T>.resumeWith(Result<out T>)) is
+				// a SUBSTITUTION CONSEQUENCE, moved to bir2cir (StdlibSubstituteTypeParams, rt-build only).
+				org.jetbrains.kotlin.types.Variance.IN_VARIANCE -> "in"
 				else -> null
 			}
 			if (bounds.isEmpty() && variance == null) str(tp.name.asString())
@@ -1551,8 +1546,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A `@KotlinDefault(index, bir)` on each defaulted param of a qualifying function: `index` = the param's position
 		// in the emitted call (extension receiver first, if any), `bir` = the default expression as a BIR-json STRING (so
 		// bir2cir splices it PRE-lowering; it is opaque to this build's type lowering). Stamped on ALL defaulted params of
-		// a Tier-2-carrying function (uniform splice source); rides the ref.dll (stripped in the rt build with all attrs).
-		val emitKotlinDefault = ownerFn != null && !stripMetadata && carriesKotlinDefault(ownerFn)
+		// a Tier-2-carrying function (uniform splice source). kotc emits ONE substitute/strip-INDEPENDENT BIR (#66): the
+		// attr rides every build; the rt build strips it downstream (ilemit param-attr strip under DOTKT_STRIP_METADATA).
+		val emitKotlinDefault = ownerFn != null && carriesKotlinDefault(ownerFn)
 		val extOffset = if (ownerFn?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true) 1 else 0
 		val valueParams = params.filter { isValueParameter(it) }
 		// A @KotlinDefault BIR whose default expression reads ANOTHER value parameter (`b: Int = a * 10`) must encode that
@@ -1710,11 +1706,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `kotlin.sequences.Sequence` is an enumerable BY KOTLIN SEMANTICS (@ClrTypeAlias(IEnumerable), which bir2cir
 		// expands) — recognize it here by FQN so a CONCRETE-element `for (x in seq)` takes forEachInline (GetEnumerator)
 		// like Iterable, NOT the monomorphized synthetic KIterator the rt SequenceBuilderIterator doesn't implement
-		// (EntryPointNotFound). This is Kotlin-layer knowledge ("this type is for-in enumerable"), independent of the
-		// substitute-mode gating on clrName/isSubstIterable (both OFF in app builds). `.toList()` already uses the
-		// generic-T CLR-native IEnumerator path; this covers the concrete-element for-in.
+		// (EntryPointNotFound). This is Kotlin-layer knowledge ("this type is for-in enumerable"), independent of
+		// isStdlibCollectionIterable (stdlib-build only) / clrName (.NET-interop only), both OFF in app builds.
+		// `.toList()` already uses the generic-T CLR-native IEnumerator path; this covers the concrete-element for-in.
 		val forInEnumerable = source != null && ((source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null
-			|| isSubstIterable(source.type) || source.type.classFqName?.asString() == "kotlin.sequences.Sequence")
+			|| isStdlibCollectionIterable(source.type) || source.type.classFqName?.asString() == "kotlin.sequences.Sequence")
 		if (source != null && source.type.classFqName?.asString() != "kotlin.ranges.IntRange" && source.type.classFqName?.asString() !in INT_PROGRESSION_FQ && forInEnumerable) {
 			val elem = (source.type as? IrSimpleType)?.arguments?.firstOrNull()
 				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
@@ -4124,13 +4120,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * (A2 interop-no-registry, stages 1-2 — no injector-populated name-keyed side-table). The backend must resolve these so
 	 * injected types are real .NET types (otherwise they leak in as user classes and their members mis-route as fields).
 	 */
-	// In the SUBSTITUTE STDLIB BUILD (rt: stdlibCompile && stdlibSubstitute), collection member calls stay plain kotlin.*
-	// (bir2cir substitutes them via the IReadOnly*/@ClrIntrinsic supertype, not a kotc-side map), so a `for (e in coll)` falls to the Kotlin iterator
-	// protocol (coll.iterator()/Iterator.hasNext) -> EntryPointNotFound when an app calls the rt op. Detect a kotlin.collections
-	// iterable here so the for-loop emits forEachInline instead: ilemit's GetEnumerator resolves through the IEnumerable the
-	// IReadOnly* supertype carries. rt-build-only (app/ref unaffected).
-	private fun isSubstIterable(t: org.jetbrains.kotlin.ir.types.IrType): Boolean {
-		if (!(stdlibCompile && stdlibSubstitute)) return false
+	// In the STDLIB BUILD (stdlibCompile — BOTH ref and rt), collection member calls stay plain kotlin.* (bir2cir
+	// substitutes them via the IReadOnly*/@ClrIntrinsic supertype, not a kotc-side map), so a `for (e in coll)` would fall
+	// to the Kotlin iterator protocol (coll.iterator()/Iterator.hasNext) -> EntryPointNotFound when an app calls the rt op.
+	// Detect a kotlin.collections iterable here so the for-loop emits forEachInline instead: ilemit's GetEnumerator resolves
+	// through the IEnumerable the IReadOnly* supertype carries. #66: gated on stdlibCompile ALONE (substitute-independent) —
+	// kotc emits ONE BIR for ref+rt; the ref build's forEachInline body is squashed to `throw` by bir2cir RefBodySquash
+	// (never reaching ilemit's GetEnumerator emit), so the ref.dll is unaffected. App builds (no stdlibCompile) keep the
+	// plain Kotlin iterator protocol, unchanged.
+	private fun isStdlibCollectionIterable(t: org.jetbrains.kotlin.ir.types.IrType): Boolean {
+		if (!stdlibCompile) return false
 		val collFqs = setOf("kotlin.collections.Iterable", "kotlin.collections.MutableIterable", "kotlin.collections.Collection",
 			"kotlin.collections.MutableCollection", "kotlin.collections.List", "kotlin.collections.MutableList",
 			"kotlin.collections.Set", "kotlin.collections.MutableSet",
@@ -4167,10 +4166,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// member-call dispatch (-> clrInstance), and the supertype all resolve it via the .NET-type (clrg:) path from the
 		// loaded --ref rt -- NOT the _types app-table (which only holds app-emitted types -> KeyNotFound).
 		if ((decl as? IrClass)?.fqNameWhenAvailable?.asString() == "java.util.Comparator") return "kotlin.Comparator"
-		// REFERENCE-assembly build (the stdlib under DOTKT_STDLIB_COMPILE): @Clr does NOT bind — it is emitted as a [Clr]
-		// metadata attribute (attrsJson) and the BCL substitution is deferred to app-emit. So the ref assembly is PURE
-		// Kotlin shapes (no C3, no clrg: BCL refs). docs/design-clr-stdlib-ref-runtime-split.md.
-		if (stdlibCompile && !stdlibSubstitute) return null   // ref build = gated; runtime (substitute) build = @Clr binds
+		// STDLIB build (DOTKT_STDLIB_COMPILE, both ref and rt): kotc emits PURE Kotlin shapes — no BCL binding here. The
+		// member binding is sourced from the ref.dll by bir2cir; the stdlib build injects NO facadegen metadata
+		// (CLR_TYPES_METADATA=""), so the FIR-injection lookup below is empty anyway. Substitute-INDEPENDENT (#66): both
+		// the ref and rt stdlib build return null here identically. docs/design-clr-stdlib-ref-runtime-split.md.
+		if (stdlibCompile) return null
 		// kotc reads NEITHER @ClrIntrinsic NOR @ClrTypeAlias (Task #5, DONE): the stdlib member binding is sourced from the
 		// ref.dll by bir2cir, so there is NO annotation read here. The ONLY source left is the app-interop FIR-injection
 		// metadata, read off the injected member's resolved IR CallableId (`kotc.frontend.clrInjectedMemberName` — A2 stage 2,

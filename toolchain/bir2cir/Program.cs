@@ -383,6 +383,11 @@ sealed class Pipeline
             // be gone. Runs AFTER DeclNullableFlags (byte walk already captured the semantic nullability) and BEFORE type
             // lowering (oracle unambiguous on kotlin.* names). Value/struct/enum `{t:nullable}` stays for ilemit.
             ReferenceNullableStrip.Apply(substituted, isValueFqn);
+            // #66 — RUNTIME stdlib build only: drop the `kotlin.Comparable` upper bound + `in` declaration-site variance
+            // that kotc used to strip under DOTKT_STDLIB_SUBSTITUTE. kotc now emits the pure-Kotlin type params in EVERY
+            // build (ref==rt BIR); this reproduces the substitution consequence so the rt.dll stays byte-identical. Runs
+            // BEFORE BirTypeLowering (the constraint is still the pure `kotlin.Comparable` token here).
+            if (_options.SubstituteStdlibBuild) StdlibSubstituteTypeParams.Apply(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
@@ -492,6 +497,14 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IRe
     public bool RefBuild =>
         Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") != null &&
         Environment.GetEnvironmentVariable("DOTKT_STDLIB_SUBSTITUTE") == null;
+
+    // The RUNTIME stdlib build (DOTKT_STDLIB_COMPILE + DOTKT_STDLIB_SUBSTITUTE) — NOT an app build. Since #66 kotc emits
+    // one substitute-independent BIR, the rt-only type-param drops (kotlin.Comparable bound / `in` variance) that kotc
+    // used to do live here (StdlibSubstituteTypeParams). App builds (no STDLIB_COMPILE) keep those, substituting the
+    // Comparable bound to System.IComparable — so this must be the stdlib-substitute build ONLY.
+    public bool SubstituteStdlibBuild =>
+        Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") != null &&
+        Environment.GetEnvironmentVariable("DOTKT_STDLIB_SUBSTITUTE") != null;
 
     public static DriverOptions Parse(string[] args)
     {

@@ -463,6 +463,23 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **kotc is now SUBSTITUTE-INDEPENDENT — the stdlib REFERENCE and RUNTIME builds share ONE frontend run and
+  a BIT-IDENTICAL BIR (#66).** `BirEmitter` used to read `DOTKT_STDLIB_SUBSTITUTE` / `DOTKT_STRIP_METADATA`,
+  so the ref-build and rt-build BIR diverged — a residual layer leak (kotc knowing about BCL substitution).
+  kotc now emits ONE pure-Kotlin BIR; ALL ref/rt divergence is bir2cir's + ilemit's. Proven: running the
+  frontend under the ref env (`DOTKT_STDLIB_COMPILE=1`) and the rt env
+  (`DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITUTE=1 DOTKT_STRIP_METADATA=1`) and `diff -rq`-ing the
+  `*.bir.json` is byte-identical. Five sites moved: (1) the roundtrip-metadata / accessor / `@KotlinDefault`
+  attrs are always emitted (the rt strip is ilemit's `_stripMetadata`, `Program.cs:626`); (2) the
+  `kotlin.Comparable` upper-bound drop and (3) the `in` declaration-site variance drop moved to bir2cir
+  (`StdlibSubstituteTypeParams.cs`, rt-build only, before `BirTypeLowering`); (4) the
+  `for`-over-`kotlin.collections`→`forEachInline` recognition is gated on `stdlibCompile` alone (ref emits it
+  too, its body squashed by `RefBodySquash`); (5) `clrName`'s ref-build early-return became substitute-free.
+  The two `build-stdlib-{ref,rt}.sh` scripts are unified into `scripts/build-stdlib.sh` (ONE kotc run → a
+  shared, cacheable BIR → ref emit + rt emit): a build speedup, and the emitted `DotKt.Private.Stdlib.dll` +
+  `DotKt.Stdlib.dll` are byte-identical (modulo the non-deterministic PE timestamp + MVID) between the
+  two-script and unified paths, with the rt.dll unchanged from before the change.
+
 - **kotc's vestigial `<>dotkt_ClrH_` rule-3 routing arm deleted (verify-by-deletion).** The member-call
   emitter's `if (clrType != null)` interop block carried a dead "Rule 3" arm that routed a concrete member to
   a `<>dotkt_ClrH_<Class>` static hoist helper via `clrHelperName`. Since kotc reads **no** `@Clr` annotation,

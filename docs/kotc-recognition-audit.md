@@ -9,6 +9,18 @@ Scope audited: `BirEmitter.kt` (5016 L), `BirEmitterExpressions.kt`, `BirEmitter
 `BirMappings.kt`. Verified against the 2026-07-07 tree; Codex (`gpt-5.5`) consulted for the per-category
 migration verdicts (its conclusions are folded in below).
 
+> **#66 (2026-07-08) — kotc is now SUBSTITUTE-INDEPENDENT.** `BirEmitter` no longer reads
+> `DOTKT_STDLIB_SUBSTITUTE` or `DOTKT_STRIP_METADATA` (both getters deleted): it emits ONE pure-Kotlin BIR
+> and the stdlib REFERENCE vs RUNTIME builds get BIT-IDENTICAL `*.bir.json` (proven by `diff -rq`). The
+> five substitute/strip-gated sites moved down: (1) always-emit the roundtrip-metadata attrs / accessor
+> attrs / `@KotlinDefault` — the rt strip is ilemit's (`_stripMetadata`); (2) the `kotlin.Comparable`
+> upper-bound drop and (3) the `in`-variance drop → **bir2cir** `StdlibSubstituteTypeParams` (rt build only,
+> before `BirTypeLowering`); (4) the `for`-over-`kotlin.collections`→`forEachInline` recognition is now gated
+> on `stdlibCompile` alone (ref emits it too; the ref body is squashed by `RefBodySquash`); (5) the
+> `clrName` ref-build early-return became `stdlibCompile` (substitute-free, identical result). The two
+> `build-stdlib-{ref,rt}.sh` are unified into `scripts/build-stdlib.sh` (ONE kotc run → shared BIR → ref+rt
+> emit); the emitted dlls are byte-identical (modulo PE timestamp + MVID) between the two paths.
+
 ## The distinction (the three residual columns)
 
 - **(A) INPUT recognition** — kotc pattern-matches a *specific* stdlib symbol (`classFqName == "kotlin.X"`,

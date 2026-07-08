@@ -106,6 +106,31 @@ So the runtime stdlib build = "substitute mode applied to the stdlib source". Ap
 the exact same machinery; only the stdlib's REFERENCE build is special (it's the one that emits the metadata everyone
 else consumes).
 
+### #66 (2026-07-08): kotc emits ONE substitute-independent BIR — the ref/rt split is bir2cir+ilemit ONLY
+The ref/rt divergence had leaked UP into kotc: `BirEmitter` read `DOTKT_STDLIB_SUBSTITUTE` (and `DOTKT_STRIP_METADATA`)
+so the ref-build BIR ≠ rt-build BIR. Since #52's kotc-purity goal, kotc must be substitute-INDEPENDENT — it emits ONE
+pure-Kotlin BIR and ALL ref/rt divergence lives below the boundary. This is now enforced and PROVEN: run the frontend
+twice (`DOTKT_STDLIB_COMPILE=1` vs `DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITUTE=1 DOTKT_STRIP_METADATA=1`) and
+`diff -rq` the `*.bir.json` — **bit-identical**. What moved where:
+
+- **Metadata strip** — kotc no longer strips `[Kotlin*]/[Clr]` attrs, `@KotlinDefault`, or property-accessor attrs
+  under `DOTKT_STRIP_METADATA`; they ride EVERY build's BIR verbatim. The rt build strips them downstream (ilemit skips
+  ALL declaration/param/type attrs under `_stripMetadata`, `ilemit/Program.cs:626`). rt.dll unchanged.
+- **`kotlin.Comparable` upper-bound drop** + **`in` declaration-site variance drop** (a substituted BCL primitive has no
+  Comparable bound; the CLR variance-validity check is stricter than Kotlin's) — moved to **bir2cir**
+  (`StdlibSubstituteTypeParams.cs`, gated on the substitute stdlib build, run BEFORE `BirTypeLowering` so the constraint
+  is still the pure `kotlin.Comparable` token). kotc emits the pure-Kotlin type params in every build.
+- **`for (x in kotlin.collections.Iterable)` → `forEachInline`** — kotc emits this in the WHOLE stdlib build (ref+rt),
+  gated on `stdlibCompile` alone (was `stdlibCompile && stdlibSubstitute`). The ref build's `forEachInline` body is
+  squashed to `throw` by `RefBodySquash` before it reaches ilemit's `GetEnumerator` emit, so the ref.dll's *binding
+  surface* is unaffected (only anonymous gensym numbering — `__lam`/`__local`/`<>dotkt_obj`/CFG-label ids — shifts, which
+  is semantically irrelevant; the rt.dll built by consuming that ref.dll is byte-identical).
+
+**Unified build:** `scripts/build-stdlib.sh` runs kotc ONCE → a shared cacheable BIR → then the ref emit (bir2cir
+refBuild + ilemit + retarget) and the rt emit (bir2cir substitute reading the just-built ref.dll + ilemit + strip). It
+supersedes the two separate `build-stdlib-{ref,rt}.sh` (each ran its own kotc); the emitted dlls are byte-identical
+(modulo the non-deterministic PE timestamp + MVID GUID) between the two-script and unified paths.
+
 ### Q3/Q4 — ref vs runtime signature divergence is FINE (no binary compat needed)
 The app is FULLY substituted: every `kotlin.*` type/member/call in the app IL becomes BCL or a runtime-stdlib BCL-signature
 member. `stdlib.ref.dll` is NEVER loaded at runtime. ref and runtime have DISTINCT assembly names (ref =
