@@ -430,7 +430,15 @@ emits the faithful `callInstance kotlin.Int.inc()` (0-arg member, receiver value
 `kotlin.Int` for every primitive, matching the retired kotc literal) moved to bir2cir with it. Byte-identical:
 verify-il 243/0, all gates green.
 
-_Remaining classes: class 3 (comparison intrinsics), class 4 (equality EQEQ/EQEQEQ)._
+**Class 3 (comparison intrinsics) — ✅ DONE.** kotc's `COMPARE` (`less`/`lessOrEqual`/`greater`/
+`greaterOrEqual` — the `<`/`<=`/`>`/`>=` `kotlin.internal.ir` COMPILER INTRINSICS) lowering is REMOVED: kotc
+emits the intrinsic FAITHFULLY as a `callStatic owner=kotlin.internal.ir` (operands value-shaped exactly as
+the retired binOp). `PrimitiveOperatorLowering` re-emits `{k:binOp, op:<}`. **Encoding note:** the owner
+marker `kotlin.internal.ir` (the intrinsic's home package) makes the bir2cir match collision-safe — a user
+top-level `fun less(a,b)` never carries that owner; and the transient node is rewritten to `binOp` before CIR,
+so ilemit never sees the marker. Byte-identical: verify-il 243/0, all gates green.
+
+_Remaining class: class 4 (equality EQEQ/EQEQEQ)._
 
 **Original plan (for the full bucket):**
 - **Principled target, per the faithful-transcriber rule:** kotc emits the faithful `callInstance`

@@ -39,6 +39,15 @@ static class PrimitiveOperatorLowering
     {
         ["unaryMinus"] = "-", ["unaryPlus"] = "+", ["not"] = "!", ["inv"] = "~",
     };
+    // Comparison intrinsic name -> IL comparison symbol. These are `kotlin.internal.ir` COMPILER INTRINSICS
+    // (top-level, no ref.dll symbol); kotc emits them faithfully as a `callStatic owner=kotlin.internal.ir`
+    // (the owner marker makes the match collision-safe vs a user top-level `less`).
+    static readonly Dictionary<string, string> CompareOp = new(StringComparer.Ordinal)
+    {
+        ["less"] = "<", ["lessOrEqual"] = "<=", ["greater"] = ">", ["greaterOrEqual"] = ">=",
+    };
+    // The IR-intrinsic marker owner kotc stamps on the comparison/equality intrinsic calls.
+    const string IntrinsicOwner = "kotlin.internal.ir";
 
     public static void Apply(JsonNode root)
     {
@@ -71,10 +80,13 @@ static class PrimitiveOperatorLowering
             }
     }
 
-    // A primitive-operator `callInstance` -> the binOp/unaryOp node kotc used to synthesize, else null (leave as-is).
+    // A primitive-operator `callInstance` / a comparison-intrinsic `callStatic` -> the binOp/unaryOp node kotc
+    // used to synthesize, else null (leave as-is).
     static JsonNode Lower(JsonObject o)
     {
-        if ((o["k"] as JsonValue)?.GetValue<string>() != "callInstance") return null;
+        var k = (o["k"] as JsonValue)?.GetValue<string>();
+        if (k == "callStatic") return LowerIntrinsic(o);
+        if (k != "callInstance") return null;
         if (OwnerFqn(o["ownerType"]) is not string ownerFqn || !PrimitiveOpFq.Contains(ownerFqn)) return null;
         if ((o["method"] as JsonValue)?.GetValue<string>() is not string member) return null;
         var args = o["args"] as JsonArray ?? new JsonArray();
@@ -106,6 +118,18 @@ static class PrimitiveOperatorLowering
                 ["lhs"] = o["recv"]?.DeepClone(),
                 ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = 1 },
             };
+        return null;
+    }
+
+    // A comparison intrinsic `callStatic owner=kotlin.internal.ir` -> `{k:binOp, op:<}`, else null. The operands
+    // are already value-shaped by kotc (same shaping the retired binOp had), so the CIR is byte-identical.
+    static JsonNode LowerIntrinsic(JsonObject o)
+    {
+        if (OwnerFqn(o["owner"]) != IntrinsicOwner) return null;
+        if ((o["method"] as JsonValue)?.GetValue<string>() is not string m) return null;
+        var args = o["args"] as JsonArray ?? new JsonArray();
+        if (args.Count == 2 && CompareOp.TryGetValue(m, out var cop))
+            return new JsonObject { ["k"] = "binOp", ["op"] = cop, ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         return null;
     }
 

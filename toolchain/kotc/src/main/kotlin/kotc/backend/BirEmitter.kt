@@ -4077,13 +4077,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// primitive (the cast-to-concrete coercion below handles it).
 			fun primOperand(o: IrExpression) = o.type.classFqName?.asString() in PRIMITIVE_OP_FQ
 			fun boxedAny(o: IrExpression) = birType(o.type) == OBJ
-			COMPARE[name]?.let { op -> if (operands.size == 2 && callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }
+			COMPARE[name]?.let { _ -> if (operands.size == 2 && callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }
 					&& operands.any { primOperand(it) } && operands.all { primOperand(it) || boxedAny(it) }) {
 				// A boxed (Any) operand via an un-narrowed smart-cast (`x is Int && x > 10`) against a primitive:
-				// cast it to the other operand's type so the numeric/compare op sees the right value, not the box.
+				// cast it to the other operand's type so the compare op sees the right value, not the box. Kept, so the
+				// intrinsic's args are BYTE-IDENTICAL to the retired binOp's operands.
 				fun operand(o: IrExpression, other: IrExpression): String {
-					// A value-type-nullable operand (`Int?` smart-cast to `Int` -- `n + 1`/`n > 5` after `if (n != null)`)
-					// must surface `Nullable<T>.Value`; a raw `Nullable<T>` struct load into a numeric/compare op is
+					// A value-type-nullable operand (`Int?` smart-cast to `Int` -- `n > 5` after `if (n != null)`)
+					// must surface `Nullable<T>.Value`; a raw `Nullable<T>` struct load into a compare op is
 					// invalid IL / reads garbage (the C1 miscompile). The smart-cast leaves `o.type` still `Int?`.
 					if (!isPreUnwrappedRead(o)) nullableElem(o.type)?.let { elem -> return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(o)}}""" }
 					val ot = birType(o.type); val tt = birType(other.type)
@@ -4093,19 +4094,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					val otherConcrete = tt != OBJ
 					return if (anyTok && otherConcrete) """{"k":"cast","type":${str(tt)},"e":${expr(o)}}""" else expr(o)
 				}
-				val core = """{"k":"binOp","op":${str(op)},"lhs":${operand(operands[0], operands[1])},"rhs":${operand(operands[1], operands[0])}}"""
-				// Char arithmetic result typing. Kotlin: `Char.minus(Char): Int`, but `Char.plus(Int)`/`Char.minus(Int): Char`.
-				// ilemit types a `bin` result as its LEFT operand and promotes a Char (uint16) operand to Int in a mixed
-				// Char+Int op — so a Char result would render as a number and an Int result as the invisible control glyph
-				// U+001F (`'a'-'B'` printed blank instead of `31`, `'a'+1` printed `98` instead of `b`). Force the
-				// operator's DECLARED Kotlin return type (Int -> conv int, Char -> conv char) so the value carries the right
-				// type. Comparisons return Boolean, so they never enter this branch; the left operand is always the Char
-				// (Kotlin defines Char.plus/minus, not Int.plus(Char)), so `leftChar` alone selects the Char operators.
-				val leftChar = operands[0].type.classFqName?.asString() == "kotlin.Char"
-				val retFq = callee.returnType.classFqName?.asString()
-				return if (leftChar && retFq == "kotlin.Int") """{"k":"conv","to":${fqnJson("kotlin.Int")},"e":$core}"""
-					else if (leftChar && retFq == "kotlin.Char") """{"k":"conv","to":${fqnJson("kotlin.Char")},"e":$core}"""
-					else core
+				// COMPARISON intrinsic (`kotlin.internal.ir.less`/`lessOrEqual`/`greater`/`greaterOrEqual`) recognition
+				// MOVED to bir2cir (#52 Phase 5 class 3): kotc emits the FAITHFUL intrinsic call with owner = its home
+				// package `kotlin.internal.ir` (collision-safe — a user top-level `less` never has this owner);
+				// PrimitiveOperatorLowering re-emits `{k:binOp, op:<}`. Operands value-shaped exactly as the retired
+				// binOp, so the CIR is byte-identical. Comparison returns Boolean, so there is no Char-arith conv here.
+				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":${str(name)},"args":[${operand(operands[0], operands[1])},${operand(operands[1], operands[0])}]}"""
 			} }
 			// UNARY (unaryMinus/unaryPlus/not/inv) recognition MOVED to bir2cir (#52 Phase 5): kotc emits the faithful
 			// `callInstance kotlin.Int.unaryMinus()` (0-arg member) and bir2cir re-emits `{k:unaryOp}` from the

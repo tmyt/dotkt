@@ -475,7 +475,10 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   (which is not body-squashed) carries a raw IL op rather than an unresolvable call to the bodyless builtin
   `kotlin.Int.inv`. _Class 1 (arithmetic `plus`/`minus`/`times`/`div`/`rem`, bitwise `and`/`or`/`xor`/`shl`/
   `shr`/`ushr`, unary `unaryMinus`/`unaryPlus`/`not`/`inv`) done._ _Class 2 (`inc`/`dec`, the `i++`/`i--`
-  desugaring) done — the `const 1:kotlin.Int` literal moved to bir2cir with it._
+  desugaring) done — the `const 1:kotlin.Int` literal moved to bir2cir with it._ _Class 3 (comparison
+  `less`/`lessOrEqual`/`greater`/`greaterOrEqual`, the `<`/`<=`/`>`/`>=` `kotlin.internal.ir` intrinsics) done:
+  kotc emits the intrinsic faithfully as a `callStatic owner=kotlin.internal.ir` (the owner marker makes the
+  bir2cir match collision-safe vs a user top-level `less`), operands shaped exactly as the retired binOp._
 - **Numeric conversions are metadata-driven — `@ClrConv` replaces kotc's `NUMBER_CONV` name-heuristic
   (#52 Phase 0/1).** kotc no longer *recognizes* a numeric conversion: it emits the faithful IR call
   `callInstance kotlin.Double.toInt` and nothing more. A new stdlib marker `@kotlin.clr.ClrConv` (no
