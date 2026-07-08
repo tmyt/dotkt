@@ -252,7 +252,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrCall -> call(node)
 	// A property reference passed to a delegate's getValue/setValue -> a `new KPropertyImpl("<name>")`.
 	is IrPropertyReference ->
-		"""{"k":"new","type":${fqnJson("<>dotkt_KPropertyImpl")},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(node.symbol.owner.name.asString())}}]}"""
+		"""{"k":"new","type":${fqnJson("dotkt\$KPropertyImpl")},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(node.symbol.owner.name.asString())}}]}"""
 	is IrFunctionExpression -> lambda(node)
 	// A callable reference `::foo` -> a delegate bound to the referenced function (same Func/Action as a lambda).
 	is IrFunctionReference -> functionRef(node)

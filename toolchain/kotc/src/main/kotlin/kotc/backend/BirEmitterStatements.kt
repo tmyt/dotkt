@@ -82,7 +82,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		val init = inner?.let { """{"k":"byrefOf","inner":${expr(it)}}""" } ?: "null"
 		"""{"k":"var","name":${str(node.name.asString())},"type":${birType(node.type).toJson()},"init":$init}"""
 	}
-	// A ref-cell var: `var x = init` -> `val x = new <>dotkt_Ref_<elem>(init)` (the heap cell).
+	// A ref-cell var: `var x = init` -> `val x = new dotkt$Ref_<elem>(init)` (the heap cell).
 	else if (isRefCell(node)) {
 		val rt = refTypeName(node)
 		val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${birType(node.type).toJson()}}"""

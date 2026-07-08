@@ -133,7 +133,7 @@ static class FacadeGen
             try { types = asm.GetTypes(); } catch { continue; }
             foreach (var t in types)
             {
-                if (t.Namespace != dns || !t.IsPublic || t.IsNested || t.FullName == null) continue;
+                if (t.Namespace != dns || !t.IsPublic || t.IsNested || t.FullName == null || IsCompilerGenerated(t)) continue;   // #68: skip generated types by attribute
                 var name = t.FullName.Contains('`') ? t.FullName.Substring(0, t.FullName.IndexOf('`')) : t.FullName;
                 if (seen.Add(name)) yield return name;
             }
@@ -308,7 +308,7 @@ static class FacadeGen
     // type). Its injected members are REAL BCL members addressed BY NAME, so each is emitted with an identity
     // `clr:<.NETName>` binding — the consumer's `clrInteropName` then resolves it as a DIRECT BCL member and the backend
     // routes the call straight to that BCL member. WITHOUT the binding, the backend's rule-3 (a non-@Clr concrete member
-    // of a CLR-bound class) wrongly hoists the call to a non-existent `<>dotkt_ClrH_<Type>` static helper (the helper is
+    // of a CLR-bound class) wrongly hoists the call to a non-existent `dotkt$ClrH_<Type>` static helper (the helper is
     // only emitted for @Clr STDLIB classes with real Kotlin bodies; a facadegen-injected member has no body). A
     // `kotlin.*`/@Clr type is EXCLUDED: those carry their substitution via @ClrIntrinsic (mclr) and their bodied members
     // are legitimate rule-3 hoist candidates — stamping identity bindings on them would suppress that hoist.
@@ -938,9 +938,20 @@ static class FacadeGen
     // Inject only real, named, resolvable types — including generic DEFINITIONS (List`1, IList`1) so a
     // `generic:List:Foo` member type resolves to a real `class List<T>` (P1-2). Constructed generics are unwrapped
     // to (open def + args) by [Unwrap] before this check.
+    // #68: a compiler-generated type (a DotKt closure/ref-cell/KProperty/CharSequence/ClrH helper, or any BCL generated
+    // type) is skipped by its STANDARD [CompilerGenerated] attribute — never by `dotkt$` name-sniffing. Every such type
+    // now carries the attribute (kotc/bir2cir flag `generated:true` -> ilemit stamps it; ilemit stamps its own synthetics
+    // too), so this is the primary skip; the empty-namespace guard below is belt-and-suspenders. MetadataLoadContext-safe.
+    static bool IsCompilerGenerated(Type t)
+    {
+        try { return t.GetCustomAttributesData().Any(c => c.AttributeType.FullName == "System.Runtime.CompilerServices.CompilerGeneratedAttribute"); }
+        catch { return false; }
+    }
+
     static bool ShouldInject(Type t)
     {
         if (t == null || t.IsGenericParameter || t.IsPointer || t.IsByRef) return false;
+        if (IsCompilerGenerated(t)) return false;
         if (string.IsNullOrEmpty(t.Namespace) || t.FullName == null) return false;
         // BINDING INVARIANT: never inject a `kotlin.*` stdlib symbol — it comes from the frontend JAR (see
         // IsKotlinStdlibSymbol). Defense-in-depth: the closure never reaches one (facadegen resolves only .NET-space

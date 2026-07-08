@@ -5,7 +5,7 @@ using DotKt.Bir;
 
 // A `for (x in seq)` over a Kotlin `Sequence` (@ClrTypeAlias IEnumerable) is kotc-lowered to `forEachInline`, which
 // ilemit emits as a TYPED `IEnumerable<elem>::GetEnumerator` dispatch. But the object `sequence { .. }` returns
-// (`<>dotkt_obj*` — the lifted anon Sequence) has NO type params of its OWN yet declares its `IEnumerable<T>` interface
+// (`dotkt_obj*` — the lifted anon Sequence) has NO type params of its OWN yet declares its `IEnumerable<T>` interface
 // referencing the ENCLOSING `sequence<T>` method's type param (`tv scope=method`), so it is erased to
 // `IEnumerable<object>` at runtime. The typed `IEnumerable<string>::GetEnumerator` slot the app then dispatches is
 // therefore absent -> System.EntryPointNotFoundException (cases/il-seqforin).

@@ -186,8 +186,13 @@ are (c) keep; the facadegen-injected `clr*`-SHAPE rows are A2/#61 — see the ca
 > pattern #52 established for stdlib off the ref.dll. So the `clrName`/`clrStatic`/top-level-facade rows below are
 > **(c)-keep ONLY for the metadata READ; their shape-emission is DEFERRED-RESTORE (#61)**, not permanently
 > frontend-legit. (The ClrH routing arm was already deleted — #62 / CLEANUP-A1, see §"Genuinely unavoidable"
-> below.) The one other open kotc-purity item is **naming purity** (`generated:true` flag / `<>dotkt_CharSequence`
-> naming) — cosmetic, tracked separately.
+> below.) The one other kotc-purity item — **naming purity** — is now **DONE (#68, 2026-07-08)**: kotc no longer
+> authors the `<>dotkt_` CLR-unspeakability marker. Synthetic type defs carry a structural **`generated:true`** flag
+> (ilemit stamps `[System.Runtime.CompilerServices.CompilerGenerated]` from it — no `<>dotkt_` name-sniff), and the
+> unspeakable names now use Kotlin's OWN marker **`$`** (`dotkt$Closure0`/`dotkt$Ref$…`/`dotkt$KProperty` — `$` is the
+> string-template char, unspeakable in normal Kotlin, frontend-legit; the C#-ism `<>` is gone). CharSequence flows as
+> the plain `kotlin.CharSequence` identity from kotc and is SUBSTITUTED to `dotkt$CharSequence` in bir2cir. facadegen
+> skips generated types by the `[CompilerGenerated]` attribute, never by name.
 
 | Site | Reads | Why legit |
 |---|---|---|
@@ -598,6 +603,14 @@ compareTo). ilemit unchanged; byte-identical (all 9 helper families still fire i
   in the substitute build; app builds now match. The `<>dotkt_CharSequence` interface stays a synthetic — it has NO
   faithful BCL equivalent, a DIFFERENT (genuine) reason, not the false generic-interface premise; likewise the
   `<>dotkt_KProperty`/`KPropertyImpl` property-reference pair (a pure binding, no BCL equivalent).)
+
+  **#68 (2026-07-08) — naming purity: `<>dotkt_` → `dotkt$…` + `generated:true`.** The `<>dotkt_*` names below are the
+  RETIRED spelling. kotc no longer authors the C#-ism `<>` marker: synthetic type defs carry a structural
+  **`generated:true`** flag (ilemit stamps `[CompilerGenerated]` from it — no name-sniff; ilemit stamps its own internal
+  synthetics too), and the unspeakable names use Kotlin's OWN `$` marker (`dotkt$<scope>$Closure<N>` /
+  `dotkt$<scope>$Ref$<elem>` / `dotkt$CharSequence` / `dotkt$KProperty(Impl)`). CharSequence is emitted by kotc as the
+  plain `kotlin.CharSequence` identity and SUBSTITUTED to `dotkt$CharSequence` in bir2cir (`SubstituteCharSeqIdentity`).
+  facadegen skips generated types by the `[CompilerGenerated]` attribute. (Names shown `<>dotkt_*` below = read `dotkt$*`.)
 
   **#52 (2026-07-08) — the synthetic TYPE *definitions* moved kotc → bir2cir.** These CLR-representation types are
   still *needed*, but kotc no longer SYNTHESIZES them — it emits only the Kotlin FACTS, and bir2cir (where CLR

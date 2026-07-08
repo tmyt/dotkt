@@ -9,7 +9,7 @@
   "properties": {
     "types":    { "type": "array", "items": { "$ref": "#/$defs/typeDecl" } },
     "topLevel": { "type": "array", "items": { "$ref": "#/$defs/decl" }, "description": "top-level funs/props (the file-class members)" },
-    "refTypes": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "elem": { "$ref": "#/$defs/type" } }, "required": ["name", "elem"] }, "$comment": "#52 BIR-ONLY transient: the heap-ref-cell registry ({name, element type}). bir2cir's SharedSyntheticSynthesis ASSEMBLES each `<>dotkt_<scope>_Ref_<elem>{ var v }` cell class from it, then DROPS the key — absent in CIR." }
+    "refTypes": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "elem": { "$ref": "#/$defs/type" } }, "required": ["name", "elem"] }, "$comment": "#52 BIR-ONLY transient: the heap-ref-cell registry ({name, element type}). bir2cir's SharedSyntheticSynthesis ASSEMBLES each `dotkt$<scope>$Ref$<elem>{ var v }` cell class from it, then DROPS the key — absent in CIR." }
   },
   "additionalProperties": true,
 
@@ -33,7 +33,7 @@
       "description": "A named type — a PURE Kotlin/CLR FQN identity. kotc emits identity ONLY; bir2cir DERIVES the CLR form (primitive opcode / generic construction / referenced-type resolution). Replaces plain-FQN, clr:, clrg:Name[..], @Name, and the primitive shorthand (int/string/void/object/…).",
       "properties": {
         "t":    { "const": "fqn" },
-        "name": { "type": "string", "description": "e.g. kotlin.Int, kotlin.collections.List, System.Exception, <>dotkt_CharSequence" },
+        "name": { "type": "string", "description": "e.g. kotlin.Int, kotlin.collections.List, System.Exception, dotkt$CharSequence (a compiler-generated synthetic — `$` is Kotlin-unspeakable; the def carries generated:true)" },
         "args": { "type": "array", "items": { "$ref": "#/$defs/type" }, "description": "generic type arguments; absent = non-generic" }
       },
       "required": ["t", "name"],
@@ -155,6 +155,7 @@
       "properties": {
         "name":       { "type": "string" },
         "kind":       { "enum": ["class", "interface", "object", "enum", "annotation"] },
+        "generated":  { "type": "boolean", "description": "#68: compiler-generated synthetic (closure/ref-cell/KProperty/CharSequence/ClrH/lifted-anon); ilemit stamps [CompilerGenerated] from it — replaces the retired `<>dotkt_` name-sniff" },
         "mods":       { "$ref": "#/$defs/mods" },
         "vis":        { "$ref": "#/$defs/vis" },
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },

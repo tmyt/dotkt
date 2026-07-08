@@ -5,10 +5,10 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // bir2cir — GenericSelfInstantiation (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object / closure class
-// (`<>dotkt_obj*<T>`) emits its SELF instance accesses with the BARE type name as `ownerType`
-// (`<>dotkt_obj144`, no type args) — so at runtime .NET throws InvalidOperationException "the method itself or
+// (`dotkt_obj*<T>`) emits its SELF instance accesses with the BARE type name as `ownerType`
+// (`dotkt_obj144`, no type args) — so at runtime .NET throws InvalidOperationException "the method itself or
 // the containing type is not fully instantiated": the emitted `this.get_nextState()` targets the OPEN generic
-// type definition instead of the constructed self `<>dotkt_obj144<!0>`.
+// type definition instead of the constructed self `dotkt_obj144<!0>`.
 //
 // A NORMAL generic class already emits its self-calls with the constructed token `Owner[gp:T]` (IndexingIterable
 // etc. resolve fine); the lifted-anon-object lowering path is the one that leaves the self owner OPEN. Per the

@@ -463,6 +463,26 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **kotc no longer authors the `<>dotkt_` compiler-generated-name convention (#68).** The `<>` prefix is a
+  C#/CLR codegen convention (`<>c__DisplayClass`, `<>d__`); kotc emitting it meant the Kotlin frontend knew a CLR
+  naming rule. Now: (a) synthetic type definitions (capturing-lambda closures, heap ref-cells, `KProperty(Impl)`,
+  the monomorphic `CharSequence` interface, lifted anon-object/local classes, the `StringCharSequence` adapter, and
+  the rule-3 `ClrH` helpers) carry a structural **`generated:true`** flag; **ilemit** stamps the standard
+  `[System.Runtime.CompilerServices.CompilerGenerated]` from that flag (replacing every `name.StartsWith("<>dotkt_")`
+  prefix-sniff — a #37-freeze structured-flag-over-string win) and stamps its OWN internal synthetics too — the
+  reverse-enumerator adapter `dotkt$EnumeratorOverKotlinIterator` and the variance/DIM method bridges
+  (`dotkt$covar$…`/`dotkt$dimimpl$…`/`dotkt$dimfwd$…`) — which ALSO drop `<>` for the same `$` spelling, so ONE
+  consistent marker spans the whole toolchain and the only `<>` left in emitted metadata is the CLR-mandated set
+  (`<Module>`, `.ctor`); (b) the
+  unspeakable names now use Kotlin's own `$` marker (`dotkt$Closure0` / `dotkt$Ref$…` / `dotkt$CharSequence` /
+  `dotkt$KProperty`) — `$` is the string-template char, unspeakable in normal Kotlin source, so it is a frontend-legit
+  collision guard, not a CLR-ism; a single canonical spelling flows through every layer. (c) **CharSequence** is
+  emitted by kotc as the plain `kotlin.CharSequence` identity and **substituted** to the synthetic interface in
+  bir2cir (same machinery as `kotlin.String`→`System.String`), so kotc knows nothing of the synthetic. (d)
+  **facadegen** skips compiler-generated types by reading the `[CompilerGenerated]` attribute, never by
+  `<>dotkt_` name-sniffing. kotc now authors ZERO `<>dotkt_*` names and ZERO `<>` knowledge. Additive to the frozen
+  #37 schema (a `generated` boolean on type-decl nodes; verify-schema stays green).
+
 - **kotc is now SUBSTITUTE-INDEPENDENT — the stdlib REFERENCE and RUNTIME builds share ONE frontend run and
   a BIT-IDENTICAL BIR (#66).** `BirEmitter` used to read `DOTKT_STDLIB_SUBSTITUTE` / `DOTKT_STRIP_METADATA`,
   so the ref-build and rt-build BIR diverged — a residual layer leak (kotc knowing about BCL substitution).

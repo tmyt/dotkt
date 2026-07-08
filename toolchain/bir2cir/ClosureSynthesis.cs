@@ -118,6 +118,8 @@ static class ClosureSynthesis
         {
             ["name"] = name,
             ["kind"] = "class",
+            // #68: a capturing-lambda closure is compiler-generated — flag it so ilemit stamps [CompilerGenerated].
+            ["generated"] = true,
         };
         // Emit `typeParams` only when non-empty — matches kotc (typeParamsJson omitted the key entirely for a
         // non-generic closure), so the shape is byte-identical for the common case.

@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 // LIFTED anon-object / closure class reaches cross-class, so a separate top-level CLR class can access them.
 //
 // A Kotlin `object : I { … }` inside a class body (or a capturing lambda/closure) is emitted by kotc as a
-// SEPARATE top-level CLR class (`<>dotkt_obj*`) that captures its enclosing instance as an `__outer` field
+// SEPARATE top-level CLR class (`dotkt_obj*`) that captures its enclosing instance as an `__outer` field
 // and reads the enclosing class's members through it — e.g. FilteringSequence.iterator()'s anon Iterator
 // reads the private `sequence`/`predicate`/`sendWhen` getters via `__outer`. On the JVM those are legal
 // (the anon is a NESTED class with private access); on the CLR a separate top-level class canNOT touch

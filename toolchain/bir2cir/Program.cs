@@ -77,8 +77,38 @@ sealed class Pipeline
         return files;
     }
 
+    // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
+    // `dotkt$CharSequence` identity SharedSyntheticSynthesis materializes. A type reference is any object carrying `t=="fqn"`;
+    // a type DECLARATION (which has `kind`, not `t`) is left alone. This IS the CharSequence substitution — bir2cir owns the
+    // Kotlin<->CLR relation, so recognizing the one type with no faithful .NET supertype belongs here, not in kotc.
+    static void SubstituteCharSeqIdentity(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                if ((o["t"] as JsonValue)?.GetValue<string>() == "fqn"
+                    && (o["name"] as JsonValue)?.GetValue<string>() == "kotlin.CharSequence")
+                    o["name"] = SharedSyntheticSynthesis.CharSeq;
+                foreach (var kv in o) SubstituteCharSeqIdentity(kv.Value);
+                break;
+            case JsonArray a:
+                foreach (var it in a) SubstituteCharSeqIdentity(it);
+                break;
+        }
+    }
+
     List<CirFile> TransformFiles(IReadOnlyList<BirFile> birFiles, ReferenceMetadataIndex refs)
     {
+        // #68 (PART 2): kotc emits the PLAIN Kotlin identity `kotlin.CharSequence` at every CharSequence use site (no CLR
+        // synthetic name — kotc knows nothing of the synthetic). Recognizing `kotlin.CharSequence` as a synthesize-target is
+        // a bir2cir concern (the Kotlin<->CLR layer), so SUBSTITUTE it here — as a one-type hardcode, exactly like the ref.dll
+        // @ClrTypeAlias types substitute `kotlin.String` -> `System.String`. It runs FIRST (before the `hasUserCharSeqImpl`
+        // detection, CharSeqStringLowering, and the per-file SharedSyntheticSynthesis trigger) so every downstream pass sees
+        // the canonical `dotkt$CharSequence` identity exactly as kotc's retired charSeqIface() mapping used to emit it. Only a
+        // `{t:"fqn"}` type-reference NAME is rewritten (a type DECLARATION's own `name` sits under `kind`, not `t`, so real
+        // kotlin.CharSequence declarations — if any — are untouched).
+        foreach (var b in birFiles) SubstituteCharSeqIdentity(b.Root);
+
         // The top-level funs DEFINED in this compilation (every file-class's own static methods, across all input
         // files). A `callStatic owner=null` to one of these must stay owner-less (ilemit's FindStatic finds the
         // sibling); only a name absent here is eligible for referenced-stdlib file-class attribution (Gap B).
@@ -113,7 +143,7 @@ sealed class Pipeline
         var attributeTopLevelOwner = Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") == null;
 
         // Does THIS assembly declare a user `class S : CharSequence` (a type whose `interfaces` names the synthetic
-        // `<>dotkt_CharSequence`)? If so, CharSequence must stay the polymorphic synthetic ASSEMBLY-WIDE: a
+        // `dotkt$CharSequence`)? If so, CharSequence must stay the polymorphic synthetic ASSEMBLY-WIDE: a
         // CharSequence param/local in such an assembly may hold that user impl and be read polymorphically
         // (`show(cs: CharSequence) = cs.length` with `show(S("hello"))` == 5) — collapsing it to `string` would
         // snapshot the value via `.toString()` and lose the length. So the CharSequence -> System.String lowering
@@ -219,7 +249,7 @@ sealed class Pipeline
             // ref.dll's @ClrIntrinsic labels, NOT from kotc. Runs BEFORE type lowering so it sees the kotlin.* owners.
             // RULE-3 HOIST (all CLR-bound alias classes): kotc emits EVERY @ClrTypeAlias class with hoistable bodies as a
             // PLAIN BIR type — alias-only files (String/Char/Boolean) AND the MIXED files (StringBuilder/collections/
-            // Regex/unsigned) alike — and synthesizes NO <>dotkt_ClrH_* helper itself. This pass reads the ref.dll
+            // Regex/unsigned) alike — and synthesizes NO dotkt$ClrH_* helper itself. This pass reads the ref.dll
             // @ClrTypeAlias index, turns each such plain type into the static helper + drops it, BEFORE call substitution
             // so the (already-BCL) member bodies and the rule-3 call routing both see a consistent helper. No-op for ref.
             // MEMBER-STRIP (clrName migration): drop the @ClrIntrinsic-bound stub declarations kotc used to exclude
@@ -268,13 +298,13 @@ sealed class Pipeline
             // CharSequence bridge + type lowering so a spliced String default is coerced/lowered like an explicit arg.
             if (attributeTopLevelOwner) DefaultArgSplice.Apply(substituted, refs);
             // String -> CharSequence adapter bridge: materialize a bare `System.String` flowing into a synthetic
-            // `<>dotkt_CharSequence` slot as `new <>dotkt_StringCharSequence(str)` (String is sealed, can't implement
+            // `dotkt$CharSequence` slot as `new dotkt$StringCharSequence(str)` (String is sealed, can't implement
             // the synthetic interface). Runs on EVERY non-ref build — app AND the RT stdlib self-build. The RT build
-            // NEEDS it too: the stdlib's own CharSequence-extension bodies widen a `String` into a `<>dotkt_CharSequence`
+            // NEEDS it too: the stdlib's own CharSequence-extension bodies widen a `String` into a `dotkt$CharSequence`
             // slot INTERNALLY (`CharSequence.indexOf(string: String)` -> the private `indexOf(other: CharSequence)`;
             // `String.trim()` -> `(this as CharSequence).trim()`), and without the wrap those compiled rt.dll bodies pass
             // a raw String where the interface is required -> InvalidProgram / EntryPointNotFound at run. The adapter is
-            // injected into the rt assembly exactly once (dedup), implementing the RT's canonical `<>dotkt_CharSequence`,
+            // injected into the rt assembly exactly once (dedup), implementing the RT's canonical `dotkt$CharSequence`,
             // so an app that then routes a String op to a real stdlib body works. Skipped only for the ref build (its
             // bodies are squashed to `throw` anyway). Purely additive: only positively-String values are wrapped.
             // CharSequence -> System.String (the 3-point model, point ①/②). In a "pure" APP assembly (no user
@@ -332,7 +362,7 @@ sealed class Pipeline
             SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
 
         // PHASE 1.7 — CROSS-CLASS PRIVATE WIDENING (bundle-6 P5 BUG A): a LIFTED anon-object / closure class
-        // (`<>dotkt_obj*`) is a SEPARATE top-level CLR class that reads its enclosing class's PRIVATE members
+        // (`dotkt_obj*`) is a SEPARATE top-level CLR class that reads its enclosing class's PRIVATE members
         // via its captured `__outer` — legal on the JVM (nested class), a System.MethodAccessException on the
         // CLR. Widen exactly the private members reached CROSS-CLASS to `internal` (assembly-visible). Runs
         // GLOBALLY, in non-ref builds, AFTER the suspend passes (so synthesized SM types are covered too) and
@@ -341,8 +371,8 @@ sealed class Pipeline
             CrossClassPrivateWidening.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // PHASE 1.8 — GENERIC SELF INSTANTIATION (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object emits
-        // its self instance accesses with the BARE type name (`<>dotkt_obj144`, no type args) -> ".NET method/type
-        // not fully instantiated" at runtime. Derive the constructed self `<>dotkt_obj144[gp:T]` for those
+        // its self instance accesses with the BARE type name (`dotkt_obj144`, no type args) -> ".NET method/type
+        // not fully instantiated" at runtime. Derive the constructed self `dotkt_obj144[gp:T]` for those
         // executable instance accesses (kotc emits the FQN identity; bir2cir derives the CLR instantiation).
         if (!_options.RefBuild)
             GenericSelfInstantiation.ApplyAll(staged.Select(s => s.Root).ToList());
@@ -443,7 +473,7 @@ sealed class Pipeline
         return Empty(o["types"]) && Empty(o["methods"]) && Empty(o["fields"]);
     }
 
-    // True iff this file declares a type whose `interfaces` names the synthetic `<>dotkt_CharSequence` — i.e. a user
+    // True iff this file declares a type whose `interfaces` names the synthetic `dotkt$CharSequence` — i.e. a user
     // `class S : CharSequence`. Such a type is a genuine polymorphic implementer, so the whole assembly must keep the
     // synthetic (CharSeqStringLowering is disabled). Only kotc's `interfaces` array carries this name at the top level
     // of a type; the synthetic interface DEFINITION itself (name == the synthetic) has an EMPTY interfaces list, so it
@@ -458,9 +488,9 @@ sealed class Pipeline
                     // read via OwnerName so a user `class S : CharSequence` is still detected. A stale `as JsonValue`
                     // read missed it -> hasUserCharSeqImpl wrongly false -> CharSeqStringLowering ran on an assembly
                     // with a real polymorphic implementer, lowering its `subSequence(): CharSequence` override return to
-                    // System.String (+ toString coercion) while it overrides a `<>dotkt_CharSequence` slot -> TypeLoad
+                    // System.String (+ toString coercion) while it overrides a `dotkt$CharSequence` slot -> TypeLoad
                     // "signature of the body and declaration do not match" (il-charseq/charseqx).
-                    if (TypeJson.OwnerName(i)?.TrimStart('@') == "<>dotkt_CharSequence")
+                    if (TypeJson.OwnerName(i)?.TrimStart('@') == "dotkt$CharSequence")
                         return true;
         return false;
     }
@@ -557,7 +587,7 @@ sealed class ReferenceMetadataIndex
     // struct-ness ORACLE for a type variable (#37/#48 nullability fold): a struct-constrained `T?` is `Nullable<T>`,
     // a class/unconstrained `T?` is a bare reference (nullability rides an NRT byte).
     readonly Dictionary<string, string[]> _ownerTypeParamConstraints = new(StringComparer.Ordinal);
-    readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "<>dotkt_ClrH_*"
+    readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "dotkt$ClrH_*"
     readonly HashSet<string> _restrictsSuspension = new(StringComparer.Ordinal);     // @RestrictsSuspension owners
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
@@ -998,7 +1028,7 @@ sealed class ReferenceMetadataIndex
     public bool IsInlineValueClass(string ownerFqn) => _inlineBacking.ContainsKey(ownerFqn);
 
     // A rule-3 hoist candidate: owner.member exists, is concrete (non-abstract) and carries NEITHER @ClrIntrinsic NOR
-    // @ClrProperty, so its real Kotlin body is hoisted by bir2cir's AliasHelperHoist to the static helper `<>dotkt_ClrH_<owner>`. A @ClrProperty
+    // @ClrProperty, so its real Kotlin body is hoisted by bir2cir's AliasHelperHoist to the static helper `dotkt$ClrH_<owner>`. A @ClrProperty
     // accessor (setLength/capacity/nativeSetCapacity/ticks) is a BOUND stub — its call substitutes to clrPropGet/clrPropSet
     // (Rule 2p) — so it must NOT hoist its throwing TODO body into the helper (the same exclusion @ClrIntrinsic gets).
     public bool IsRule3Member(string ownerFqn, string memberName) =>
@@ -1006,7 +1036,7 @@ sealed class ReferenceMetadataIndex
         list.Any(m => m.Name == memberName && m.Intrinsic == null && m.PropertyName == null && !m.Conv && !m.IsAbstract);
 
     public static string HelperTypeName(string ownerFqn) =>
-        "<>dotkt_ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
+        "dotkt$ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
 
 
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
@@ -1080,7 +1110,7 @@ sealed class ReferenceMetadataIndex
                     }
                     var classAlias = ClrAliasOf(type.GetCustomAttributesData());
                     if (classAlias != null) metadata.Aliases[ownerFqn] = classAlias;
-                    if (ownerFqn.StartsWith("<>dotkt_ClrH_", StringComparison.Ordinal)) metadata.HelperTypes.Add(ownerFqn);
+                    if (ownerFqn.StartsWith("dotkt$ClrH_", StringComparison.Ordinal)) metadata.HelperTypes.Add(ownerFqn);
                     if (HasAttribute(type.GetCustomAttributesData(), RestrictsSuspensionAttr)) metadata.RestrictsSuspensionTypes.Add(ownerFqn);
                     var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
 
@@ -1484,7 +1514,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly Dictionary<string, string[]> TypeParamConstraints = new(StringComparer.Ordinal); // ownerFqn -> per-param "struct"/"class"/"unconstrained"
-    public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "<>dotkt_ClrH_*" rule-3 helpers
+    public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "dotkt$ClrH_*" rule-3 helpers
     // Types carrying @kotlin.coroutines.RestrictsSuspension (BINARY-retained, so present on the ref.dll). A suspend
     // lambda whose RECEIVER is such a scope (e.g. SequenceScope) gets the RestrictedSuspendLambda SM base (bundle-6 P5).
     public readonly HashSet<string> RestrictsSuspensionTypes = new(StringComparer.Ordinal);
@@ -2250,7 +2280,7 @@ static class BirTypeLowering
     {
         // Function types are structured `fn` nodes now (#37 #49): the `func:`/`sfunc:` STRING type token is retired,
         // so this string resolver never receives one. It survives only for the bare-FQN + CLR-shorthand LEAF slots
-        // that kotc/bir2cir still emit as strings (synthetic interface names like `<>dotkt_KProperty`, the injected
+        // that kotc/bir2cir still emit as strings (synthetic interface names like `dotkt$KProperty`, the injected
         // StringCharSequenceBridge adapter's `kotlin.String` slots) — resolved by the kotlin.* map / LowerLeaf below.
         var t = raw.Trim();
         // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers
@@ -2359,7 +2389,7 @@ static class BirTypeLowering
 // Three rewrites (mirrors docs/clr-stdlib-intrinsic-audit.md's three binding rules):
 //   1. construction `new T(..)` on a CLR-bound REFERENCE owner T -> `newClr System.X(..)`.
 //   2. member `r.m(..)` / `T.m(..)` where m carries @ClrIntrinsic("Name") -> `clrInstance`/`clrStatic` System.X.Name.
-//   3. member m with NO @ClrIntrinsic but concrete (a real Kotlin body AliasHelperHoist lifts to `<>dotkt_ClrH_<T>`) ->
+//   3. member m with NO @ClrIntrinsic but concrete (a real Kotlin body AliasHelperHoist lifts to `dotkt$ClrH_<T>`) ->
 //      a static call to that helper, with the receiver threaded as the helper's first arg. Gated on the helper
 //      actually being present in the ref.dll (it is for @Clr-bound classes; for @ClrTypeAlias classes once kotc
 //      keys helper emission on @ClrTypeAlias) so we never emit a call to a non-existent helper.
@@ -2406,7 +2436,7 @@ static class IteratorConsumerNormalization
             }
             // An `Iterator[elem]`-typed var initialized by a call INTO THE RT STDLIB (a `kotlin.*` owner — an unaliased
             // kotlin.collections interface like Set.iterator(), or an attributed top-level like MapsKt.iterator(map)
-            // — or the ALREADY-SUBSTITUTED rule-3 helper `<>dotkt_ClrH_kotlin_*`: MemberCallSubstitution runs BEFORE
+            // — or the ALREADY-SUBSTITUTED rule-3 helper `dotkt$ClrH_kotlin_*`: MemberCallSubstitution runs BEFORE
             // this pass, so a concrete alias receiver's `ArrayList<Int>().iterator()` arrives as a callStatic on the
             // rt helper owner, and its ArrayListIterator likewise implements the REAL Iterator, not the synthetic):
             // the runtime iterator is an rt-dll type implementing the REAL kotlin.collections.Iterator — so its
@@ -2417,7 +2447,7 @@ static class IteratorConsumerNormalization
                 IteratorVarElem(TypeJson.Read(obj["type"])) is (string head, TypeNode elem2) &&
                 (TypeJson.OwnerName(init2["owner"]) ?? TypeJson.OwnerName(init2["ownerType"]) ?? "") is string initOwner &&
                 (initOwner.StartsWith("kotlin.", StringComparison.Ordinal)
-                    || initOwner.StartsWith("<>dotkt_ClrH_kotlin_", StringComparison.Ordinal)))
+                    || initOwner.StartsWith("dotkt$ClrH_kotlin_", StringComparison.Ordinal)))
             {
                 // MUTABLE-MAP for-in REROUTE (bundle-6 BUG-2): `for ((k,v) in mm)` desugars to
                 // `MutableMap.iterator(): MutableIterator<MutableEntry>`, which lowers to the SAME signature
@@ -2523,30 +2553,30 @@ static class IteratorConsumerNormalization
 
 // STRING -> CharSequence adapter bridge. `kotlin.String` is @ClrTypeAlias("System.String") — a SEALED BCL type whose
 // CharSequence face is bound in-place (@ClrIntrinsic Length/get_Chars). `kotlin.CharSequence` has NO BCL equivalent, so
-// bir2cir's SharedSyntheticSynthesis synthesizes the monomorphic interface `<>dotkt_CharSequence` (get_length/get/subSequence). A `System.String`
-// (sealed) cannot implement that interface, so a bare String flowing into a `@<>dotkt_CharSequence` slot crashes
+// bir2cir's SharedSyntheticSynthesis synthesizes the monomorphic interface `dotkt$CharSequence` (get_length/get/subSequence). A `System.String`
+// (sealed) cannot implement that interface, so a bare String flowing into a `@dotkt$CharSequence` slot crashes
 // (InvalidProgram / InvalidCast). This pass MATERIALIZES the coercion: wherever a value whose STATIC type is String
-// flows into a CharSequence slot, it inserts `new <>dotkt_StringCharSequence(theString)` — an App-local adapter class
+// flows into a CharSequence slot, it inserts `new dotkt$StringCharSequence(theString)` — an App-local adapter class
 // this pass ALSO injects, modeled on the proven user `class S : CharSequence` shape (String-backed length/get/
 // subSequence delegating to get_Length/get_Chars/Substring). Five sites — a call's CharSequence-typed arg (covers an
 // extension receiver, which is arg[0] + sig[0], AND an ordinary CharSequence param), a return into a CharSequence
 // return type, a store into a CharSequence-typed local, and an `as CharSequence` cast. It wraps ONLY when the value is
 // POSITIVELY a bare String (const string literal, a String-typed local/param read, a String cast, or a String-returning
-// call) — never when the value is already a <>dotkt_CharSequence (StringBuilder / a user CharSequence / another
+// call) — never when the value is already a dotkt$CharSequence (StringBuilder / a user CharSequence / another
 // wrapper), so it is purely additive: genuine intra-assembly polymorphism (`val cs: CharSequence = "abc"; cs.length`)
 // now works, and no existing statically-String-receiver path (kotc's STRING_OPS lowering, which dispatches on the
 // String directly) is touched.
 //
-// WHY app-LOCAL (not a stdlib class): the synthetic `<>dotkt_CharSequence` is emitted PER-ASSEMBLY — the app defines
+// WHY app-LOCAL (not a stdlib class): the synthetic `dotkt$CharSequence` is emitted PER-ASSEMBLY — the app defines
 // its OWN copy, distinct from the one in the rt stdlib dll. A stdlib adapter would implement the rt-dll copy, which the
-// app's interface dispatch (`callvirt <app>::<>dotkt_CharSequence::get_length`) can't find on it -> EntryPointNotFound.
+// app's interface dispatch (`callvirt <app>::dotkt$CharSequence::get_length`) can't find on it -> EntryPointNotFound.
 // So the adapter MUST implement the app's own synthetic -> it is injected into the app assembly, exactly where kotc
 // injects the synthetic interface. (This same per-assembly boundary is why calling a *stdlib* CharSequence-extension
 // with an app value is a SEPARATE, deeper blocker for the retire-B follow-up — see docs/master-task-inventory.md 4-A.)
 //
 // APP builds ONLY (gated on attributeTopLevelOwner at the call site — DOTKT_STDLIB_COMPILE unset), so the ref/rt stdlib
 // self-builds stay byte-identical. Runs AFTER MemberCallSubstitution (its emitted `new` is never re-substituted — the
-// adapter is not @ClrTypeAlias) and BEFORE BirTypeLowering (so it still sees the kotlin.* / @<>dotkt_CharSequence type
+// adapter is not @ClrTypeAlias) and BEFORE BirTypeLowering (so it still sees the kotlin.* / @dotkt$CharSequence type
 // vocabulary; the injected type's kotlin.* signature tokens and the wrap node's `type`/`argTypes` are lowered
 // afterwards — the injected method bodies are already in CLR-call form, exactly as kotc emits them for `class S`).
 // CROSS-MODULE DEFAULT-ARGUMENT SPLICE. A call that OMITS a defaulted argument reaches bir2cir with fewer args than
@@ -2655,7 +2685,7 @@ static class DefaultArgSplice
 
 // CHARSEQUENCE -> System.String (docs/design-charsequence-clr-string.md, the 3-point model). `kotlin.CharSequence` is
 // a JVM-shaped polymorphic char view with no faithful .NET equivalent; on the CLR DotKt models it as `string` (an
-// immutable snapshot). kotc emits it as the synthetic monomorphic interface `<>dotkt_CharSequence` in every type
+// immutable snapshot). kotc emits it as the synthetic monomorphic interface `dotkt$CharSequence` in every type
 // position. In a "pure" APP assembly (no user `class S : CharSequence` — verified by the driver's hasUserCharSeqImpl)
 // this pass collapses that synthetic to `System.String`:
 //   ① a CharSequence-typed param / return / local / field DECLARATION -> System.String (via kotlin.String, which the
@@ -2672,7 +2702,7 @@ static class DefaultArgSplice
 // stdlib rebuild + a cross-assembly call-site coercion and is a documented follow-up — NOT done here.
 static class CharSeqStringLowering
 {
-    const string CharSeq = "<>dotkt_CharSequence";
+    const string CharSeq = "dotkt$CharSequence";
     // Monotonic counter for unique subSequence receiver/start spill-temp names (BUG-4 single-eval rewrite).
     static int _subSeqTmp;
     static readonly HashSet<string> StringTokens = new(StringComparer.Ordinal)
@@ -2680,8 +2710,8 @@ static class CharSeqStringLowering
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
-    // Strip a leading `nullable:`/`array:` modifier then a `@` (this-assembly-emitted) marker, so `@<>dotkt_CharSequence`
-    // / `nullable:<>dotkt_CharSequence` compare by bare identity.
+    // Strip a leading `nullable:`/`array:` modifier then a `@` (this-assembly-emitted) marker, so `@dotkt$CharSequence`
+    // / `nullable:dotkt$CharSequence` compare by bare identity.
     static string Bare(string t)
     {
         if (t == null) return null;
@@ -2752,10 +2782,10 @@ static class CharSeqStringLowering
     }
 
     static HashSet<string> _localFns = new(StringComparer.Ordinal);
-    // Lambda/method names used as a `newDelegate` target whose funcType carries a `<>dotkt_CharSequence` PARAM position.
+    // Lambda/method names used as a `newDelegate` target whose funcType carries a `dotkt$CharSequence` PARAM position.
     // Such a method is a delegate body invoked by a (stdlib or app-local) higher-order caller, which passes a GENUINE
-    // `<>dotkt_CharSequence` value into that slot — e.g. `CharSequence.windowed(size){…}` calls `transform(subSequence(…))`
-    // and `subSequence` returns a real `<>dotkt_StringCharSequence`, NOT a `System.String`. CharSeqStringLowering never
+    // `dotkt$CharSequence` value into that slot — e.g. `CharSequence.windowed(size){…}` calls `transform(subSequence(…))`
+    // and `subSequence` returns a real `dotkt$StringCharSequence`, NOT a `System.String`. CharSeqStringLowering never
     // lowers a `funcType` token (it must keep matching the stdlib's `Func<CharSequence,R>` generic sig), so if we ALSO
     // collapsed the target lambda's own CharSequence param to `string` its member reads would be emitted as
     // `System.String.get_Length/get_Chars` and run against a non-String object -> garbage (a value-type `R` transform
@@ -2770,7 +2800,7 @@ static class CharSeqStringLowering
         return Walk(root, new Env());
     }
 
-    // Collect the `newDelegate`/`delegateInvoke` target method names whose funcType names `<>dotkt_CharSequence` in a
+    // Collect the `newDelegate`/`delegateInvoke` target method names whose funcType names `dotkt$CharSequence` in a
     // PARAM position (i.e. an argument slot the caller supplies — `func:<ret>:<arg0>,<arg1>,…`). The funcType's leading
     // segment is the RETURN (a CharSequence return is handled by the return-coercion path, not this exemption).
     static HashSet<string> CollectCharSeqDelegateTargets(JsonNode root)
@@ -2825,7 +2855,7 @@ static class CharSeqStringLowering
         {
             // A delegate-target lambda keeps its signature matching the (un-lowered) funcType — do not collapse its
             // CharSequence params/reads to String. Leave the whole subtree verbatim (its member reads stay virtual
-            // interface calls that resolve on the real <>dotkt_CharSequence the caller passes in).
+            // interface calls that resolve on the real dotkt$CharSequence the caller passes in).
             if (obj["k"] == null && Str(obj["name"]) is string dn && _delegateTargets.Contains(dn))
                 return obj.DeepClone();
             var childEnv = env.WithDecl(obj);
@@ -2927,7 +2957,7 @@ static class CharSeqStringLowering
     }
 
     // `cs.length` -> System.String.Length; `cs[i]` (get) -> get_Chars; `cs.subSequence(a,b)` -> Substring(a, b-a).
-    // Structurally identical to the <>dotkt_StringCharSequence adapter's proven bodies. Returns null for an
+    // Structurally identical to the dotkt$StringCharSequence adapter's proven bodies. Returns null for an
     // unrecognized member (leave as-is).
     static JsonObject RewriteMemberRead(JsonObject node)
     {
@@ -3040,8 +3070,8 @@ static class CharSeqStringLowering
 
 static class StringCharSequenceBridge
 {
-    const string CharSeq = "<>dotkt_CharSequence";
-    const string Adapter = "<>dotkt_StringCharSequence";
+    const string CharSeq = "dotkt$CharSequence";
+    const string Adapter = "dotkt$StringCharSequence";
     static readonly HashSet<string> StringTokens = new(StringComparer.Ordinal)
         { "kotlin.String", "System.String", "string" };
 
@@ -3054,37 +3084,37 @@ static class StringCharSequenceBridge
     // this-assembly marker is dropped — bir2cir/ilemit derive local-vs-referenced from the FQN via `_types`.)
     const string AdapterTypeJson = """
     {
-      "name": "<>dotkt_StringCharSequence",
-      "kind": "class", "abstract": false, "vis": "public", "base": null,
-      "interfaces": [{"t":"fqn","name":"<>dotkt_CharSequence"}],
+      "name": "dotkt$StringCharSequence",
+      "kind": "class", "generated": true, "abstract": false, "vis": "public", "base": null,
+      "interfaces": [{"t":"fqn","name":"dotkt$CharSequence"}],
       "fields": [{"name": "value", "type": {"t":"fqn","name":"kotlin.String"}, "vis": "internal"}],
       "ctors": [{
         "params": [{"name": "value", "type": {"t":"fqn","name":"kotlin.String"}}],
         "baseArgs": null, "thisArgs": null, "vis": "public",
-        "body": [{"k": "setField", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "recv": {"k": "this"}, "name": "value", "value": {"k": "local", "name": "value"}}]
+        "body": [{"k": "setField", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value", "value": {"k": "local", "name": "value"}}]
       }],
       "methods": [
         {"name": "get", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public", "mods": {"operator": true},
          "params": [{"name": "index", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"kotlin.Char"},
          "body": [{"k": "return", "value": {"k": "clrInstance", "type": {"t":"fqn","name":"System.String"}, "method": "get_Chars", "argTypes": [{"t":"fqn","name":"System.Int32"}], "ret": {"t":"fqn","name":"System.Char"},
-           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
+           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
            "args": [{"k": "local", "name": "index"}]}}], "attrs": []},
         {"name": "subSequence", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
-         "params": [{"name": "startIndex", "type": {"t":"fqn","name":"kotlin.Int"}}, {"name": "endIndex", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"<>dotkt_CharSequence"},
-         "body": [{"k": "return", "value": {"k": "new", "type": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "argTypes": [{"t":"fqn","name":"kotlin.String"}],
+         "params": [{"name": "startIndex", "type": {"t":"fqn","name":"kotlin.Int"}}, {"name": "endIndex", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"dotkt$CharSequence"},
+         "body": [{"k": "return", "value": {"k": "new", "type": {"t":"fqn","name":"dotkt$StringCharSequence"}, "argTypes": [{"t":"fqn","name":"kotlin.String"}],
            "args": [{"k": "clrInstance", "type": {"t":"fqn","name":"System.String"}, "method": "Substring", "argTypes": [{"t":"fqn","name":"System.Int32"}, {"t":"fqn","name":"System.Int32"}], "ret": {"t":"fqn","name":"System.String"},
-             "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
+             "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
              "args": [{"k": "local", "name": "startIndex"}, {"k": "binOp", "op": "-", "lhs": {"k": "local", "name": "endIndex"}, "rhs": {"k": "local", "name": "startIndex"}}]}]}}], "attrs": []},
         {"name": "get_value", "static": false, "override": false, "virtual": false, "abstract": false, "objectOverride": false, "vis": "public",
          "params": [], "ret": {"t":"fqn","name":"kotlin.String"},
-         "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]},
+         "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]},
         {"name": "get_length", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
          "params": [], "ret": {"t":"fqn","name":"kotlin.Int"},
          "body": [{"k": "return", "value": {"k": "clrPropGet", "type": {"t":"fqn","name":"System.String"}, "name": "Length", "ret": {"t":"fqn","name":"System.Int32"}, "static": false,
-           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []}}}]},
+           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []}}}]},
         {"name": "ToString", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": true, "vis": "public",
          "params": [], "ret": {"t":"fqn","name":"kotlin.String"},
-         "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"<>dotkt_StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]}
+         "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]}
       ],
       "properties": [
         {"name": "value", "type": {"t":"fqn","name":"kotlin.String"}, "get": "get_value", "set": null},
@@ -3237,7 +3267,7 @@ static class StringCharSequenceBridge
     };
     static bool IsStringTokT(TypeNode t) => t is TypeNode.Fqn { Args: null } f && StringTokens.Contains(f.Name);
 
-    // (e): `as CharSequence` on a static String -> REPLACE the (would-be InvalidCast) `castclass <>dotkt_CharSequence`
+    // (e): `as CharSequence` on a static String -> REPLACE the (would-be InvalidCast) `castclass dotkt$CharSequence`
     // with the materializing adapter. A non-statically-String cast (an `Any?`->CharSequence runtime check) is left as
     // the plain cast — a runtime-type-check adapter helper for that is a follow-up (see docs 【4-A】).
     static JsonNode WrapCast(JsonObject node, Env env)
@@ -3284,7 +3314,7 @@ static class StringCharSequenceBridge
     static bool IsStringTok(string t) => Bare(t) is string b && StringTokens.Contains(b);
     static bool IsCharSeqSlot(string t) => Bare(t) == CharSeq;
 
-    // Strip a leading `nullable:` then `@` (the this-assembly-emitted marker) so `@<>dotkt_CharSequence` /
+    // Strip a leading `nullable:` then `@` (the this-assembly-emitted marker) so `@dotkt$CharSequence` /
     // `nullable:kotlin.String` compare by their bare identity.
     static string Bare(string t)
     {
@@ -3470,7 +3500,7 @@ static class NullableGenericReturnErasure
                 foreach (var m in ms2)
                     if (m is JsonObject mo) RetypeErasedGetterCalls(mo["body"], getters);
             // Force the value->object box at each CALL to an erased setter. ilemit cannot read the param types off a
-            // TypeBuilder-re-anchored generic self-call (`set_nextItem` on `<>dotkt_obj146[gp:T]`), so its arg-coercion
+            // TypeBuilder-re-anchored generic self-call (`set_nextItem` on `dotkt_obj146[gp:T]`), so its arg-coercion
             // silently skips the box: a `gp:T` value arg lands on the stack unboxed where the now-`object` param wants a
             // reference -> InvalidProgram in calcNext. Wrapping the arg in an explicit `cast`->object boxes it from the
             // SOURCE type (ilemit's cast emitter boxes a value/generic-param source), independent of param-type lookup.
@@ -4814,7 +4844,7 @@ static class MemberCallSubstitution
         // value type), so a member call on the omitted class must route to the BCL value type's CompareTo. This is the
         // bir2cir home of the former kotc primitive-compareTo lowering (layer purity): kotc emits the plain
         // `callInstance kotlin.Int.compareTo`; the primitive->BCL knowledge lives here. Placed BEFORE Rule 3 because a
-        // primitive that carries a rule-3 body (Char) would otherwise route to its `<>dotkt_ClrH_kotlin_Char` helper —
+        // primitive that carries a rule-3 body (Char) would otherwise route to its `dotkt$ClrH_kotlin_Char` helper —
         // WRONG (and self-recursive inside that helper's own body). The 8 signed/bool/char primitives only.
         if (instance && member == "compareTo" && args.Count == 1 && PrimitiveCompareToBcl(ownerFqn) is string primBcl)
             return new JsonObject
@@ -4829,10 +4859,10 @@ static class MemberCallSubstitution
             return Constrainify(ClrCallNode(node, clrOwner, intrinsic, member, args, instance, refs.MemberByrefPositions(ownerFqn, member, args.Count)), node, refs, ctx, ownerToken);
 
         // Rule 3: a concrete member of a CLR-bound CLASS with NO @ClrIntrinsic carries a real Kotlin body, which
-        // AliasHelperHoist lifts to the static helper `<>dotkt_ClrH_<owner>` (driven by the SAME class binding that brought us here).
+        // AliasHelperHoist lifts to the static helper `dotkt$ClrH_<owner>` (driven by the SAME class binding that brought us here).
         // `IsRule3Member` (ref.dll: the member is concrete + intrinsic-less) is the signal to hoist it; the helper
         // is emitted into the same runtime assembly. NEVER for an INTERFACE owner: an @ClrTypeAlias interface's members
-        // are abstract in source (no helper is emitted for it — confirmed: every emitted <>dotkt_ClrH_* is a class), so
+        // are abstract in source (no helper is emitted for it — confirmed: every emitted dotkt$ClrH_* is a class), so
         // its abstract collection members (isEmpty/contains/iterator/...) need the ClrCollectionDefaults routing (Rule 5), not
         // a non-existent helper. (The ref.dll mis-reports these as non-abstract, so IsRule3Member alone false-positives.)
         if (kind != "interface" && refs.IsRule3Member(ownerFqn, member))
@@ -5357,9 +5387,9 @@ static class MemberCallSubstitution
         return call;
     }
 
-    // A synthetic-CharSequence (`<>dotkt_CharSequence`) value flowing as an ARGUMENT into a substituted BCL call has NO
+    // A synthetic-CharSequence (`dotkt$CharSequence`) value flowing as an ARGUMENT into a substituted BCL call has NO
     // BCL overload: `Appendable.append(CharSequence)` binds to `System.Text.StringBuilder.Append`, and ilemit — finding
-    // no `Append(<>dotkt_CharSequence)` slot — mis-selects `Append(String)` and marshals the interface reference as a raw
+    // no `Append(dotkt$CharSequence)` slot — mis-selects `Append(String)` and marshals the interface reference as a raw
     // string pointer, corrupting memory ("Destination is too short" / AccessViolationException inside joinTo/
     // joinToString). The CLR has no representation for kotc's monomorphic CharSequence interface at a BCL boundary, so any
     // CharSequence reaching one must be snapshot to System.String (its `.toString()` content). Convert the arg to a
@@ -5383,8 +5413,8 @@ static class MemberCallSubstitution
     }
 
     // True iff an argType slot (a legacy sig STRING or a structured Fqn) denotes kotc's synthetic monomorphic
-    // `<>dotkt_CharSequence` interface (tolerating a `nullable:`/`@` decoration). The `<>dotkt_StringCharSequence`
-    // adapter deliberately does NOT match — its token has no `<>dotkt_CharSequence` substring.
+    // `dotkt$CharSequence` interface (tolerating a `nullable:`/`@` decoration). The `dotkt$StringCharSequence`
+    // adapter deliberately does NOT match — its token has no `dotkt$CharSequence` substring.
     static bool IsSyntheticCharSeqToken(JsonNode slot)
     {
         var name = slot switch
@@ -5392,10 +5422,10 @@ static class MemberCallSubstitution
             JsonValue v when v.TryGetValue<string>(out var s) => s,
             _ => (TypeJson.Read(slot) as TypeNode.Fqn)?.Name,
         };
-        return name != null && name.Contains("<>dotkt_CharSequence", StringComparison.Ordinal);
+        return name != null && name.Contains("dotkt$CharSequence", StringComparison.Ordinal);
     }
 
-    // Rule-3: route to `<>dotkt_ClrH_<owner>.<member>(recv?, args..)`. The receiver is threaded as the helper's
+    // Rule-3: route to `dotkt$ClrH_<owner>.<member>(recv?, args..)`. The receiver is threaded as the helper's
     // first argument (the hoisted static's `__self`); type args are carried through when present.
     //
     // GENERIC alias owner: the hoisted helper declares the alias CLASS's type params FIRST, then the method's own
@@ -5633,7 +5663,7 @@ static class DeclarationRename
                     {
                         // SKIP the BCL-slot rename when the call targets a rule-3 member on a @ClrTypeAlias CLASS
                         // owner (an intrinsic-less concrete override carrying a real body that AliasHelperHoist lifts
-                        // into a <>dotkt_ClrH_* helper — String.compareTo's ordinal body must NOT resolve to the
+                        // into a dotkt$ClrH_* helper — String.compareTo's ordinal body must NOT resolve to the
                         // culture-sensitive System.String.CompareTo slot). Leaving it the Kotlin name lets
                         // MemberCallSubstitution's Rule 3 route it to that helper. Mirrors Rule 3's own gate exactly:
                         // a CLR-bound NON-interface owner whose member is rule-3. (An INTERFACE owner is excluded —
@@ -5777,14 +5807,14 @@ static class MemberStrip
     }
 }
 
-// RULE-3 HOIST (ALL CLR-bound alias classes). kotc no longer synthesizes the `<>dotkt_ClrH_<owner>` helper for ANY
+// RULE-3 HOIST (ALL CLR-bound alias classes). kotc no longer synthesizes the `dotkt$ClrH_<owner>` helper for ANY
 // @ClrTypeAlias class whose concrete intrinsic-less members carry real bodies — the alias-only files (kotlin.String's
 // subSequence, plus kotlin.Boolean/kotlin.Char operator stubs) AND the MIXED files (StringBuilder/UInt/collections/
 // Regex). kotc emits each such alias class as a PLAIN BIR type; this pass reads the ref.dll @ClrTypeAlias index, hoists
 // those rule-3 members into the static helper (the dispatch `this` becomes a leading `__self` param), and DROPS the
 // original alias type def — it must NEVER reach ilemit as a real CLR type (its equals(Any?)/toString()/length members
 // would clash with System.String/System.Object). The rule-3 CALL routing in MemberCallSubstitution already targets
-// `<>dotkt_ClrH_<owner>.<member>(recv, ..)` by name, so emitting the helper here closes the loop. This is the SOLE home
+// `dotkt$ClrH_<owner>.<member>(recv, ..)` by name, so emitting the helper here closes the loop. This is the SOLE home
 // of rule-3 helper synthesis. Runs only in substitute/app builds (never ref).
 static class AliasHelperHoist
 {
@@ -5848,7 +5878,7 @@ static class AliasHelperHoist
             // A property accessor (`get_`/`set_`) is normally a `clrPropGet`/`clrPropSet` on the BCL type, NOT a hoisted
             // helper — so blanket-skip it. EXCEPTION: a rule-3 accessor whose body binds to a BCL *method* (e.g. Regex's
             // `val pattern get() = toString()` — the BCL Regex has no `Pattern` property, only `ToString()`). Such an
-            // accessor MUST be hoisted so `re.pattern` routes to `<>dotkt_ClrH_Regex.get_pattern(recv)`. But hoist it ONLY
+            // accessor MUST be hoisted so `re.pattern` routes to `dotkt$ClrH_Regex.get_pattern(recv)`. But hoist it ONLY
             // when the body reads NO backing field: a rule-3 accessor that reads `{"k":"field"}` (another alias's real
             // backing field) would NRE ilemit's ResolveField (no such field on the BCL type) — those stay clrPropGet/Set.
             if ((mn.StartsWith("get_", StringComparison.Ordinal) || mn.StartsWith("set_", StringComparison.Ordinal))
@@ -5862,6 +5892,8 @@ static class AliasHelperHoist
         {
             ["name"] = ReferenceMetadataIndex.HelperTypeName(fqn),
             ["kind"] = "class",
+            // #68: the rule-3 static helper is compiler-generated — flag it so ilemit stamps [CompilerGenerated].
+            ["generated"] = true,
             ["abstract"] = false,
             ["vis"] = "public",
             ["base"] = null,

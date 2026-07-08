@@ -186,17 +186,21 @@ sealed partial class Emitter
                 {
                     var name = t.GetProperty("name").GetString();
                     var kind = t.GetProperty("kind").GetString();
-                    // Shared synthetic types (`<>dotkt_Result`/`KProperty`/`CharSequence`/…) are emitted
+                    // #68: `generated:true` is the STRUCTURAL compiler-generated flag (a #37-freeze win over the retired
+                    // `name.StartsWith("dotkt$")` string-sniff). kotc/bir2cir stamp it on every synthetic type def
+                    // (closures, ref cells, KProperty(Impl), CharSequence, ClrH helpers, lifted anon/local classes).
+                    var generated = t.TryGetProperty("generated", out var genEl) && genEl.GetBoolean();
+                    // Shared synthetic types (`dotkt$KProperty`/`dotkt$CharSequence`/…) are emitted
                     // identically by EVERY file that uses them; in a multi-file assembly they'd redefine the same name
                     // and collide in `_types` (orphaning a TypeBuilder -> Save crash). They're structurally identical,
                     // so the first definition serves all references — skip the duplicates. (Per-file-DISTINCT synthetics
-                    // — closures, ref cells, seq SMs — are now uniquely named by BirEmitter, so they never land here.)
-                    if (name.StartsWith("<>dotkt_") && _types.ContainsKey(name)) continue;
+                    // — closures, ref cells, seq SMs — are uniquely named by BirEmitter, so they never land here.)
+                    if (generated && _types.ContainsKey(name)) continue;
                     // Canonicalization: a shared synthetic ALREADY defined (public) by a REFERENCED assembly (the rt
                     // stdlib dll) is REFERENCED, not re-emitted here — else the app's copy is a DISTINCT CLR type from
                     // the rt dll's, so a value crossing the app<->rt boundary (a stdlib CharSequence-extension receiving
                     // an app value) fails interface dispatch (EntryPointNotFound). Skipping the local definition routes
-                    // every `@<>dotkt_X` reference through MapType/FindMethod/AddInterfaceImplementation -> ResolveType,
+                    // every `@dotkt$X` reference through MapType/FindMethod/AddInterfaceImplementation -> ResolveType,
                     // which resolves it as the external canonical type in the --ref'd assembly. Scoped to the
                     // verified-safe set (CharSequence); the other shared synthetics (Result/KProperty) still
                     // re-emit per-assembly until each is verified cross-assembly. Self-correcting:
@@ -235,11 +239,10 @@ sealed partial class Emitter
                     var simpleName = nested && name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
                     var metaName = arity > 0 ? simpleName + "`" + arity : simpleName;
                     var tb = nested ? _types[niEl.GetString()].TB.DefineNestedType(metaName, attrs) : _mod.DefineType(metaName, attrs);
-                    // Compiler-generated synthetic types (`<>dotkt_*`: KProperty, Result, …) get
-                    // [CompilerGenerated] (and can't collide with user types — the `<>` prefix isn't source-legal).
-                    if (name.StartsWith("<>dotkt_"))
-                        tb.SetCustomAttribute(new CustomAttributeBuilder(
-                            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+                    // #68: a `generated:true` type (KProperty/CharSequence/closure/ref-cell/ClrH/lifted-anon) gets
+                    // [CompilerGenerated] — the STANDARD generated signal, read from the structured flag (no `dotkt$`
+                    // name-sniff). facadegen skips these purely by the attribute; the `dotkt_` name prevents source collision.
+                    if (generated) StampCompilerGenerated(tb);
                     var nti = new TypeInfo
                     {
                         TB = tb,
@@ -423,11 +426,11 @@ sealed partial class Emitter
                     // The reverse GetEnumerator bridge fires below on a `clr:`/`clrg:` collection interface (the form
                     // bir2cir lowers Kotlin Set/MutableCollection/List/... to in every runnable build). ilemit holds NO
                     // Kotlin-collection-name knowledge — the Kotlin↔CLR identity was consumed upstream.
-                    // A canonicalized shared synthetic (`<>dotkt_CharSequence`) this app REFERENCES from the rt stdlib
+                    // A canonicalized shared synthetic (`dotkt$CharSequence`) this app REFERENCES from the rt stdlib
                     // dll — NOT re-emitted here, so absent from `_types` — is an EXTERNAL interface: bind the class's
                     // overrides to it by reflection, exactly like a `clr:` interface, so the interface slots are wired
                     // explicitly rather than relying on an implicit name/sig match a canonicalized supertype must not
-                    // depend on. (Covers both a user `class S : CharSequence` and the injected `<>dotkt_StringCharSequence`.)
+                    // depend on. (Covers both a user `class S : CharSequence` and the injected `dotkt$StringCharSequence`.)
                     // Checked on the RAW spec (a canonical synthetic interface spec is the bare name), so a `clr:`/`clrg:`
                     // spec is NOT ParseOwner'd here — doing so eagerly mis-strips a `clrg:` self-ref interface (crash).
                     bool externalSynthIface = CanonicalSynthetics.Contains(specName)
@@ -592,9 +595,10 @@ sealed partial class Emitter
                         dim = match;
                     }
                     var iret = reanchor ? SubstituteIfaceArgs(im.ReturnType, itype.GetGenericArguments()) : im.ReturnType;
-                    var bridge = ti.TB.DefineMethod("<>dotkt_dimimpl$" + im.Name + "$" + (_covarBridge++),
+                    var bridge = ti.TB.DefineMethod("dotkt$dimimpl$" + im.Name + "$" + (_covarBridge++),
                         MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
                         iret, ips);
+                    StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
                     var bil = bridge.GetILGenerator();
                     bil.Emit(OpCodes.Ldarg_0);
                     for (int i = 0; i < ips.Length; i++) bil.Emit(OpCodes.Ldarg, i + 1);
@@ -1283,9 +1287,10 @@ sealed partial class Emitter
     {
         var paramTypes = imDef.GetProperty("params").EnumerateArray()
             .Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
-        var bridge = ti.TB.DefineMethod("<>dotkt_covar$" + name + "$" + (_covarBridge++),
+        var bridge = ti.TB.DefineMethod("dotkt$covar$" + name + "$" + (_covarBridge++),
             MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
             ifaceRet, paramTypes);
+        StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
         var il = bridge.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
         for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
@@ -1313,9 +1318,10 @@ sealed partial class Emitter
             if (dim.Attributes.HasFlag(MethodAttributes.Abstract)) continue;   // need an actual DEFAULT (bodied) method
             Type ifaceRet; try { ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void); } catch { return; }
             Type[] paramTypes; try { paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray(); } catch { return; }
-            var bridge = ti.TB.DefineMethod("<>dotkt_dimfwd$" + (_covarBridge++),
+            var bridge = ti.TB.DefineMethod("dotkt$dimfwd$" + (_covarBridge++),
                 MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
                 ifaceRet, paramTypes);
+            StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
             var il = bridge.GetILGenerator();
             il.Emit(OpCodes.Ldarg_0);
             for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
@@ -1339,7 +1345,7 @@ sealed partial class Emitter
     }
 
     // Read an interface/base entry as a Fqn: a structured node, or a legacy STRING (a canonical synthetic like
-    // `<>dotkt_CharSequence`, or a clr:/@-prefixed spec) wrapped as a bare Fqn (whose name routes through the string
+    // `dotkt$CharSequence`, or a clr:/@-prefixed spec) wrapped as a bare Fqn (whose name routes through the string
     // resolvers). null for a non-Fqn structured node.
     static DotKt.Bir.TypeNode.Fqn ReadFqn(JsonElement e) =>
         e.ValueKind == JsonValueKind.String ? new DotKt.Bir.TypeNode.Fqn(e.GetString())
@@ -2110,7 +2116,7 @@ sealed partial class Emitter
             if (ext == null) return null;
             // A referenced file-class can carry several overloads that share name AND arity but differ in PARAM TYPES —
             // e.g. the stdlib's String-face `StringsKt.substring(String,int,int)` vs its CharSequence-face
-            // `substring(<>dotkt_CharSequence,int,int)`, or `trim(String)` vs `trim(<>dotkt_CharSequence)`. Arity alone
+            // `substring(dotkt$CharSequence,int,int)`, or `trim(String)` vs `trim(dotkt$CharSequence)`. Arity alone
             // then picks arbitrarily (reflection order) -> the wrong body runs (a String passed where the CharSequence
             // interface is expected -> EntryPointNotFound). Resolve by the FULL `sig` first (the same signature-keyed
             // disambiguation the in-`_types` path does via MethodsBySig); fall back to the arity pick on any miss.
@@ -2285,7 +2291,7 @@ sealed partial class Emitter
     }
 
     // Sig-aware overload pick on a REFERENCED file-class: several methods can share name+arity but differ in PARAM
-    // TYPES (a String-face vs a `<>dotkt_CharSequence`-face stdlib extension). Map each `sig` token to its Type and
+    // TYPES (a String-face vs a `dotkt$CharSequence`-face stdlib extension). Map each `sig` token to its Type and
     // require an EXACT full match against a reflected overload's parameters; return the UNIQUE match, or null on a
     // miss/ambiguity so the caller falls back to the arity pick (never a regression — this only ADDS disambiguation).
     // A token that MapType can't resolve here (an unbound `gp:T`, a not-yet-emitted type) yields no match -> fall back.
@@ -2942,10 +2948,21 @@ sealed partial class Emitter
     // crossing the app<->rt boundary keeps ONE CLR identity. CharSequence first; extend as each synthetic is verified.
     // KProperty(+Impl) verified 2026-07-02: MONOMORPHIC (one shape — get_name/ctor(string) — everywhere), and Map
     // delegation (`val x by map`) passes the app's KPropertyImpl into the rt's
-    // `MapAccessorsKt.getValue(map, thisRef, <>dotkt_KProperty)` — a distinct per-assembly copy EntryPointNotFound-s
+    // `MapAccessorsKt.getValue(map, thisRef, dotkt$KProperty)` — a distinct per-assembly copy EntryPointNotFound-s
     // on `get_name`. Both names skip together (Impl's iface/method sigs reference the canonical interface).
     static readonly HashSet<string> CanonicalSynthetics = new(StringComparer.Ordinal)
-        { "<>dotkt_CharSequence", "<>dotkt_KProperty", "<>dotkt_KPropertyImpl" };
+        { "dotkt$CharSequence", "dotkt$KProperty", "dotkt$KPropertyImpl" };
+    // #68: stamp the STANDARD [System.Runtime.CompilerServices.CompilerGenerated] on a compiler-generated type — the
+    // generated signal read from the `generated:true` BIR flag (and applied to ilemit's OWN synthetics too), so facadegen
+    // skips generated types by attribute rather than by `dotkt$` name-sniffing.
+    internal static void StampCompilerGenerated(TypeBuilder tb) =>
+        tb.SetCustomAttribute(new CustomAttributeBuilder(
+            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+    // #68: same stamp for an ilemit-authored generated METHOD (the covar/dim* variance-bridge synthetics, the reverse-
+    // enumerator adapter's own methods) — one consistent `dotkt$` + [CompilerGenerated] marking for every synthetic member.
+    internal static void StampCompilerGenerated(MethodBuilder mb) =>
+        mb.SetCustomAttribute(new CustomAttributeBuilder(
+            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
     // True when `name` is already defined by a REFERENCED (--ref, Assembly.LoadFrom'd) assembly. The module under
     // construction is a PersistedAssemblyBuilder (not a loaded AppDomain assembly), so it never self-matches.
     static bool ResolvesExternally(string name) =>
@@ -3200,7 +3217,7 @@ sealed partial class Emitter
     // Does a candidate overload's parameter accept the resolved arg type? A null (un-resolvable) arg or an open generic
     // param binds anything. `object` accepts every ref (and boxed value). Two reference types: accept only if PROVABLY
     // assignable — an emitted TypeBuilder arg makes IsAssignableFrom throw OR return false; either way it is not provably
-    // assignable to a concrete BCL class (only to `object`), so we reject, steering a `<>dotkt_CharSequence` to
+    // assignable to a concrete BCL class (only to `object`), so we reject, steering a `dotkt$CharSequence` to
     // `Append(object)` (ToStrings) rather than `Append(String)` (reinterprets the object -> corruption). A value-type is
     // matched by identity (no implicit numeric widening in the fallback pick).
     static bool ParamAcceptsArg(Type param, Type arg)
@@ -3264,11 +3281,11 @@ sealed partial class Emitter
             // Fall back to name + arity — e.g. a generic-parameter arg type (`Add(T)` on `Collection<int>`) that
             // doesn't name a plain .NET type; on the constructed type GetMethods returns the substituted overload.
             // When SEVERAL overloads share the arity (StringBuilder.Append has ~19 one-arg overloads) an arbitrary
-            // FirstOrDefault can pick a param the arg is NOT assignable to — e.g. a non-String `<>dotkt_CharSequence`
+            // FirstOrDefault can pick a param the arg is NOT assignable to — e.g. a non-String `dotkt$CharSequence`
             // into `Append(String)` reinterprets the object as a string -> memory corruption. So, when the arg types
             // resolved, keep only overloads whose every param ACCEPTS the resolved arg (is assignable-from it), then
             // prefer the MOST-SPECIFIC (fewest `object` params): a real String still binds `Append(String)`, while a
-            // synthetic/emitted ref (a `<>dotkt_CharSequence` adapter) binds `Append(object)` which ToStrings it.
+            // synthetic/emitted ref (a `dotkt$CharSequence` adapter) binds `Append(object)` which ToStrings it.
             if (mi == null)
             {
                 var cand = type.GetMethods(flags).Where(m => m.Name == name && m.GetParameters().Length == argSpecs.Count).ToList();
@@ -4051,7 +4068,7 @@ sealed partial class Emitter
         if (other != null)
             foreach (var g in other.Values)
                 if (g.GenericParameterPosition == tv.I) return g;
-        // A type-scope tv with no generic param in scope: a FLAT lifted anon-object (`<>dotkt_objN`) implementing a
+        // A type-scope tv with no generic param in scope: a FLAT lifted anon-object (`dotkt$objN`) implementing a
         // generic interface `Iterator<T>` where T rode the enclosing (lost) generic context — kotc emits it flat, so
         // the CLR view is the monomorphic ERASURE `Iterator<object>` (the same object erasure bir2cir applies to a
         // nullable-generic / Continuation). Falling to object keeps the metadata emittable; the object is used
@@ -4130,9 +4147,9 @@ sealed partial class Emitter
             // A bare constructed-generic `Name[args]` whose open name isn't emitted here (e.g. the `ownerType` of a
             // referenced `kotlin.Result[int]` member call) resolves as a referenced generic (GenericType arity-suffixes).
             // A dot-LESS name not emitted in THIS assembly but present in a REFERENCED (--ref, LoadFrom'd) assembly is a
-            // real external type — a `<>dotkt_*` canonical synthetic (`<>dotkt_CharSequence`) OR a root-package library
+            // real external type — a `dotkt$*` canonical synthetic (`dotkt$CharSequence`) OR a root-package library
             // class (`Vec`/`Lib`/`Pt`, no namespace). Resolve it by reflection, don't fall to object. Before the TYPE flip
-            // these rode the `@<>dotkt_X`/`@Name` emitted-type-hint branch; kotc/bir2cir now emit the bare FQN, so a
+            // these rode the `@dotkt$X`/`@Name` emitted-type-hint branch; kotc/bir2cir now emit the bare FQN, so a
             // dot-less name that ResolvesExternally must route to ResolveType here (mirrors the externalSynthIface path).
             _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('[')) ? GenericType(t)
                  : (t != null && t.Contains('.')) ? ResolveType(t)

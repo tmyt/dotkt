@@ -6,8 +6,8 @@ using System.Text.Json.Nodes;
 // TRY-VALUE OPERAND HOIST (bundle-6 `tryexprop`): CLR eval-order normalization for a value-producing
 // try/catch(/finally) used in an OPERAND slot (`1 + try{..}`, `"x" + try{..}`, `f(try{..})`).
 //
-// kotc already emits the correct value-form: a `valueBlock` whose `stmts` are `[ var <>dotkt_tryvalN;
-// try{ ..setLocal <>dotkt_tryvalN.. } catch{ ..setLocal.. } ]` with `result: local(<>dotkt_tryvalN)`.
+// kotc already emits the correct value-form: a `valueBlock` whose `stmts` are `[ var dotkt_tryvalN;
+// try{ ..setLocal dotkt_tryvalN.. } catch{ ..setLocal.. } ]` with `result: local(dotkt_tryvalN)`.
 // The problem is downstream (ilemit): a `valueBlock` is emitted INLINE — its stmts run in place — but a
 // CLR protected region must be ENTERED WITH AN EMPTY EVALUATION STACK (`leave` clears the stack). When
 // the try-valueBlock sits in a non-first operand slot, the left operand is already pushed, so entering
@@ -17,7 +17,7 @@ using System.Text.Json.Nodes;
 // Kotlin-aware rescheduling). Mirroring the suspend-spill precedent (SuspendColdLowering), we HOIST a
 // try-valueBlock out of the operand position to PRECEDING statements: its `stmts` (the var + the try)
 // become statements of the enclosing statement, and the operand slot is replaced with the result local
-// `{"k":"local","name":"<>dotkt_tryvalN"}`. Left-to-right Kotlin evaluation order is preserved: any
+// `{"k":"local","name":"dotkt_tryvalN"}`. Left-to-right Kotlin evaluation order is preserved: any
 // side-effecting operand evaluated BEFORE a hoisted try is itself spilled to a preceding temp first.
 //
 // A try-valueBlock that is ALREADY at an empty-stack position (the first thing evaluated in its
@@ -185,12 +185,12 @@ static class TryValueOperandHoist
             return ro["result"] is JsonNode r ? r.DeepClone() : resolved;
         }
         if (IsPure(resolved)) return resolved;
-        var tmp = "<>dotkt_hoist" + System.Threading.Interlocked.Increment(ref _tmp);
+        var tmp = "dotkt$hoist" + System.Threading.Interlocked.Increment(ref _tmp);
         pre.Add(new JsonObject { ["k"] = "var", ["name"] = tmp, ["type"] = GuessType(resolved), ["init"] = resolved.DeepClone() });
         return new JsonObject { ["k"] = "local", ["name"] = tmp };
     }
 
-    // Move a try-valueBlock's `stmts` (the `var <>dotkt_tryvalN` + the `try`) into the preceding-statement
+    // Move a try-valueBlock's `stmts` (the `var dotkt_tryvalN` + the `try`) into the preceding-statement
     // buffer; the caller replaces the node with `result` (a `local`).
     static void HoistTryValueBlock(JsonObject o, List<JsonNode> pre)
     {

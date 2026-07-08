@@ -4,7 +4,7 @@
 // IReadOnlyList/IReadOnlyCollection/IEnumerable) must satisfy IEnumerable<T> -> provide `IEnumerator<T> GetEnumerator()`.
 // But it only has a Kotlin `iterator(): Iterator<T>` (hasNext/next), NOT a BCL IEnumerator<T> (MoveNext/Current). We
 // generate, IN IL (Codex-reviewed decision A2 — Kotlin can't express the two distinct `Current` slots), a single generic
-// adapter `<>dotkt_EnumeratorOverKotlinIterator<T>` that wraps the Kotlin iterator, plus a `GetEnumerator()` on each
+// adapter `dotkt$EnumeratorOverKotlinIterator<T>` that wraps the Kotlin iterator, plus a `GetEnumerator()` on each
 // qualifying class. docs/design-clr-stdlib-ref-runtime-split.md "Reverse GetEnumerator bridge".
 using System;
 using System.Collections.Generic;
@@ -13,9 +13,9 @@ using System.Reflection.Emit;
 
 partial class Emitter
 {
-    TypeBuilder _enumAdapterTB;          // the open generic adapter `<>dotkt_EnumeratorOverKotlinIterator`1`
+    TypeBuilder _enumAdapterTB;          // the open generic adapter `dotkt$EnumeratorOverKotlinIterator`1`
     ConstructorBuilder _enumAdapterCtor; // its ctor(Iterator<T>) on the open def
-    const string EnumeratorAdapterName = "<>dotkt_EnumeratorOverKotlinIterator`1"; // referenced from the stdlib dll in app builds
+    const string EnumeratorAdapterName = "dotkt$EnumeratorOverKotlinIterator`1"; // referenced from the stdlib dll in app builds
 
     // Emit the generic adapter type ONCE (after the Kotlin Iterator interface's methods are declared). No-op if the
     // assembly has no kotlin.collections.Iterator (nothing to bridge). NOTE: the "kotlin.collections.Iterator" +
@@ -29,8 +29,9 @@ partial class Emitter
         if (!iterTi.Methods.TryGetValue("hasNext", out var openHasNext)) return;
         if (!iterTi.Methods.TryGetValue("next", out var openNext)) return;
 
-        var tb = _mod.DefineType("<>dotkt_EnumeratorOverKotlinIterator`1",
+        var tb = _mod.DefineType("dotkt$EnumeratorOverKotlinIterator`1",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit);
+        StampCompilerGenerated(tb);   // #68: an ilemit-authored synthetic — flag it so facadegen skips by attribute, not by name
         var T = tb.DefineGenericParameters("T")[0];
 
         var ienumGenDef = typeof(System.Collections.Generic.IEnumerator<>);
@@ -79,9 +80,10 @@ partial class Emitter
         tb.DefineMethodOverride(mCurG, TypeBuilder.GetMethod(ienumT, ienumGenDef.GetMethod("get_Current")));
 
         // object System.Collections.IEnumerator.get_Current()  -- the non-generic slot (boxes a value T)
-        var mCurO = tb.DefineMethod("dotkt_NonGenericCurrent",
+        var mCurO = tb.DefineMethod("dotkt$NonGenericCurrent",
             MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig | MethodAttributes.SpecialName,
             typeof(object), Type.EmptyTypes);
+        StampCompilerGenerated(mCurO);   // #68: ilemit-authored generated member
         var coi = mCurO.GetILGenerator();
         coi.Emit(OpCodes.Ldarg_0); coi.Emit(OpCodes.Ldfld, fCur); coi.Emit(OpCodes.Box, T); coi.Emit(OpCodes.Ret);
         tb.DefineMethodOverride(mCurO, ienum.GetMethod("get_Current"));
@@ -186,9 +188,10 @@ partial class Emitter
 
         // IEnumerator System.Collections.IEnumerable.GetEnumerator() { return this.GetEnumerator(); } (explicit, non-generic)
         var gGenSelf = ti.IsGeneric ? TypeBuilder.GetMethod(selfType, gGen) : (MethodInfo)gGen;
-        var gNon = ti.TB.DefineMethod("dotkt_NonGenericGetEnumerator",
+        var gNon = ti.TB.DefineMethod("dotkt$NonGenericGetEnumerator",
             MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
             typeof(System.Collections.IEnumerator), Type.EmptyTypes);
+        StampCompilerGenerated(gNon);   // #68: ilemit-authored generated member
         var ni = gNon.GetILGenerator();
         ni.Emit(OpCodes.Ldarg_0);
         ni.Emit(OpCodes.Callvirt, gGenSelf);
