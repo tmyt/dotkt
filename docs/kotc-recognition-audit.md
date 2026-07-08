@@ -408,7 +408,21 @@ the clean/dead set.)
 **Verified:** verify-il 242/0, ktproj/differential/roundtrip green, schema 0 violations; byte-identical behavior
 on the collection/map struct-equality + toString + Double/Float total-order + iterator samples.
 
-### Phase 5 — the operator bucket (relocate to bir2cir) — IN PROGRESS
+### Phase 5 — the operator bucket (relocate to bir2cir) — ✅ DONE
+
+**kotc now recognizes ZERO operators.** Arithmetic / bitwise / unary / inc-dec / comparison / equality all
+emit the FAITHFUL IR from kotc (a plain `callInstance kotlin.Int.plus` / a `kotlin.internal.ir` intrinsic
+`callStatic`); a single new bir2cir pass — `PrimitiveOperatorLowering` (runs FIRST, unconditionally in ref +
+app builds) — re-emits the identical `binOp`/`unaryOp`/`conv`/`objEq` nodes, so ilemit is UNCHANGED and every
+gate stays byte-identical (verify-il 243/0, ktproj/differential 194·0/roundtrip green, schema 0 violations).
+Operand VALUE-shaping (value-nullable unwrap + boxed-Any cast) stays in kotc as faithful call-operand coercion
+(`recvExpr` + `argExpr`, the CLR twin of JVM's implicit `intValue()`), NOT operator recognition. The residual
+kotc gates (`COMPARE` names, `name == "EQEQ"`) only IDENTIFY the intrinsic to emit faithfully (with its
+package owner `kotlin.internal.ir` + — for EQEQ — the operands' `argTypes`) and run the kept Phase-4
+structural-equality routings; the operator SYNTHESIS is entirely bir2cir's. `String.plus` → `concat` stays a
+kept language op (audit §2.3), untouched.
+
+
 
 **Class 1 (arithmetic + bitwise + unary MEMBER operators) — ✅ DONE.** kotc's `BINARY` (arithmetic
 `plus`/`minus`/`times`/`div`/`rem` + bitwise `and`/`or`/`xor`/`shl`/`shr`/`ushr`) and `UNARY`

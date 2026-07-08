@@ -48,6 +48,14 @@ static class PrimitiveOperatorLowering
     };
     // The IR-intrinsic marker owner kotc stamps on the comparison/equality intrinsic calls.
     const string IntrinsicOwner = "kotlin.internal.ir";
+    // Value primitives whose `==` is CIL `ceq` (the former kotc PRIMITIVE_EQ_FQ — the SIGNED set + bool + char,
+    // NOT the unsigned inline classes). Any other operand static type (nullable, reference, unsigned) makes `==`
+    // the null-safe `Object.Equals`. bir2cir reads the EQEQ intrinsic's `argTypes` off this set.
+    static readonly HashSet<string> PrimitiveEqFq = new(StringComparer.Ordinal)
+    {
+        "kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte",
+        "kotlin.Double", "kotlin.Float", "kotlin.Boolean", "kotlin.Char",
+    };
 
     public static void Apply(JsonNode root)
     {
@@ -130,8 +138,25 @@ static class PrimitiveOperatorLowering
         var args = o["args"] as JsonArray ?? new JsonArray();
         if (args.Count == 2 && CompareOp.TryGetValue(m, out var cop))
             return new JsonObject { ["k"] = "binOp", ["op"] = cop, ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+        // `==` (EQEQ): structural equality split off the operands' static `argTypes` — BOTH non-null primitives
+        // (PrimitiveEqFq) -> CIL `ceq` (`binOp ==`); else the null-safe `Object.Equals` (`objEq`). This reproduces
+        // kotc's former isPrimitiveEqType decision exactly: a nullable operand's argType is a `{t:nullable}` wrapper
+        // (not a bare Fqn), a reference operand's is a non-primitive Fqn — both fail IsPrimEq -> objEq.
+        if (m == "EQEQ" && args.Count == 2)
+        {
+            var at = o["argTypes"] as JsonArray;
+            var bothPrim = at != null && at.Count == 2 && IsPrimEq(at[0]) && IsPrimEq(at[1]);
+            return bothPrim
+                ? new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() }
+                : new JsonObject { ["k"] = "objEq", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+        }
+        // `===` (EQEQEQ): always identity (`ceq` = `binOp ==`).
+        if (m == "EQEQEQ" && args.Count == 2)
+            return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         return null;
     }
+
+    static bool IsPrimEq(JsonNode t) => TypeJson.Read(t) is TypeNode.Fqn f && PrimitiveEqFq.Contains(f.Name);
 
     static string OwnerFqn(JsonNode t) =>
         TypeJson.Read(t) is TypeNode.Fqn f ? ReferenceMetadataIndex.BareOwnerFqn(f.Name) : null;

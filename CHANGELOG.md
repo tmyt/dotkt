@@ -479,6 +479,14 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   `less`/`lessOrEqual`/`greater`/`greaterOrEqual`, the `<`/`<=`/`>`/`>=` `kotlin.internal.ir` intrinsics) done:
   kotc emits the intrinsic faithfully as a `callStatic owner=kotlin.internal.ir` (the owner marker makes the
   bir2cir match collision-safe vs a user top-level `less`), operands shaped exactly as the retired binOp._
+  _Class 4 (equality `EQEQ`/`EQEQEQ`) done: kotc emits the faithful `kotlin.internal.ir` intrinsic — EQEQ
+  carrying the operands' IR-derived `argTypes` — off which bir2cir re-derives the reference-vs-primitive split
+  (both argTypes primitive-eq → `binOp ==`/ceq, else the null-safe `objEq`/Object.Equals); `===` → identity
+  `binOp ==`. The Kotlin-semantic structural routings (boxed Double/Float total-order `==`, collection
+  structural `==`) STAY in kotc (Phase-4 GENUINE-GAP), checked FIRST to preserve the exact ordering (the
+  primitive fast-path must precede the float total-order route). **kotc now recognizes ZERO operators —
+  arithmetic/bitwise/unary/inc/dec/comparison/equality all synthesize their binOp/unaryOp/conv/objEq in
+  bir2cir's `PrimitiveOperatorLowering`; kotc emits only the faithful IR.**_
 - **Numeric conversions are metadata-driven — `@ClrConv` replaces kotc's `NUMBER_CONV` name-heuristic
   (#52 Phase 0/1).** kotc no longer *recognizes* a numeric conversion: it emits the faithful IR call
   `callInstance kotlin.Double.toInt` and nothing more. A new stdlib marker `@kotlin.clr.ClrConv` (no

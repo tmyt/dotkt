@@ -4049,22 +4049,31 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// mirroring the println / string-template paths — else `"" + list` yields the raw .NET type name. A
 				// NULL operand renders "null" (not an empty append) via the same null-safe stringifier — see concatOperand.
 				return """{"k":"concat","parts":[${concatOperand(operands[0])},${concatOperand(operands[1])}]}"""
-			// `==` (EQEQ): structural — `ceq` for primitives, null-safe `Object.Equals` for String/reference types.
-			// `===` (EQEQEQ): always identity (`ceq`).
+			// `==` (EQEQ) / `===` (EQEQEQ) are `kotlin.internal.ir` COMPILER INTRINSICS. The ceq-vs-Object.Equals SPLIT
+			// (structural `==`: `ceq` for primitives, null-safe `Object.Equals` for reference types; `===`: identity
+			// `ceq`) recognition MOVED to bir2cir (#52 Phase 5 class 4). kotc emits the FAITHFUL intrinsic call with
+			// owner = `kotlin.internal.ir` (collision-safe) and — for EQEQ — the operands' IR-derived static `argTypes`,
+			// off which bir2cir (PrimitiveOperatorLowering) re-derives the split: both argTypes primitive-eq -> `binOp ==`
+			// (ceq), else -> `objEq`. The Kotlin-SEMANTIC structural routings STAY in kotc (Phase-4 GENUINE-GAP): a boxed
+			// Double/Float total-order `==` and a collection structural `==` are checked FIRST (the exact original
+			// ordering — the primitive fast-path must precede floatTotalEqRoute, which would else fire on a direct
+			// primitive Double), so only the terminal ceq/objEq synthesis moved.
 			if (name == "EQEQ" && operands.size == 2) {
-				if (isPrimitiveEqType(operands[0].type) && isPrimitiveEqType(operands[1].type))
-					return """{"k":"binOp","op":"==","lhs":${expr(operands[0])},"rhs":${expr(operands[1])}}"""
-				// A BOXED Double/Float `==` (`Any.equals` on a boxed floating value) uses Kotlin's TOTAL order
-				// (`-0.0 != 0.0`, `NaN == NaN`), not Object.Equals' IEEE-ish `Double.Equals` (`-0.0 == 0.0`). Route to the
-				// stdlib total-order helper when both operands unwrap (through Any/nullable casts) to the SAME floating type.
+				// The faithful EQEQ intrinsic: carries the operands' static types so bir2cir picks ceq (both primitive-eq)
+				// vs Object.Equals. Lazy (a local fun) so `expr` is not evaluated when a route below fires instead.
+				fun eqeq() = """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"EQEQ","argTypes":[${birType(operands[0].type).toJson()},${birType(operands[1].type).toJson()}],"args":[${expr(operands[0])},${expr(operands[1])}]}"""
+				// Primitive fast-path FIRST (byte-identical ordering): both non-null primitives -> bir2cir emits ceq.
+				if (isPrimitiveEqType(operands[0].type) && isPrimitiveEqType(operands[1].type)) return eqeq()
+				// A BOXED Double/Float `==` uses Kotlin's TOTAL order (`-0.0 != 0.0`, `NaN == NaN`), not `Double.Equals`.
 				floatTotalEqRoute(operands[0], operands[1])?.let { return it }
-				// A collection `==` (List/Set/Map) is STRUCTURAL in Kotlin (`.equals` compares elements), but the operands
-				// lower to BCL collections whose Object.Equals is REFERENCE identity — route to the stdlib structural helper.
+				// A collection `==` (List/Set/Map) is STRUCTURAL in Kotlin, but the BCL collection's Object.Equals is
+				// REFERENCE identity — route to the stdlib structural helper.
 				collEqRoute(operands[0], operands[1])?.let { return it }
-				return """{"k":"objEq","lhs":${expr(operands[0])},"rhs":${expr(operands[1])}}"""
+				// Reference `==`: bir2cir emits the null-safe Object.Equals (`objEq`) from the non-primitive argTypes.
+				return eqeq()
 			}
 			if (name == "EQEQEQ" && operands.size == 2)
-				return """{"k":"binOp","op":"==","lhs":${expr(operands[0])},"rhs":${expr(operands[1])}}"""
+				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"EQEQEQ","args":[${expr(operands[0])},${expr(operands[1])}]}"""
 			// Arithmetic/compare lowering applies to the primitive OPERATORS only: a primitive's operator is a MEMBER
 			// (kotlin.Int.plus) and the IR compare intrinsics (kotlin.internal.ir.less/greater/...) are top-level with
 			// plain value params — neither has an EXTENSION receiver. A stdlib EXTENSION that shares the name
