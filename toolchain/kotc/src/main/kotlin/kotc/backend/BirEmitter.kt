@@ -112,11 +112,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// Compiling the stdlib ITSELF: the app-only kotlin.* lowerings (e.g. the Regex BCL binding) must be OFF so the
 	// stdlib uses its OWN kotlin.* definitions (it IS the runtime).
 	internal val stdlibCompile: Boolean get() = System.getenv("DOTKT_STDLIB_COMPILE") != null
-	// #66: kotc emits ONE substitute/strip-INDEPENDENT BIR — it NO LONGER reads DOTKT_STDLIB_SUBSTITUTE or
-	// DOTKT_STRIP_METADATA. The ref/rt divergence (BCL substitution, the kotlin.Comparable-bound + `in`-variance drops,
-	// the metadata strip) is entirely bir2cir's + ilemit's, keyed off those env vars downstream. The stdlib REFERENCE
-	// build and the RUNTIME build now produce BIT-IDENTICAL BIR from a single kotc frontend run.
-	// docs/design-clr-stdlib-ref-runtime-split.md.
+	// kotc emits ONE BIR independent of the ref/rt split. The ref/rt divergence (BCL substitution, the
+	// kotlin.Comparable-bound + `in`-variance drops, the metadata strip) is entirely bir2cir's + ilemit's, keyed off the
+	// `--build-stdlib=metadata|runtime` flag downstream. The stdlib REFERENCE build and the RUNTIME build produce
+	// BIT-IDENTICAL BIR from a single kotc frontend run. docs/design-clr-stdlib-ref-runtime-split.md.
 
 	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
 		// Compiling the stdlib ITSELF (DOTKT_STDLIB_COMPILE): don't fail the whole file on one unsupported construct in
@@ -148,7 +147,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal val valSubst = HashMap<String, String>()
 	// Subset of `valSubst` keys whose substitution ALREADY yields the bare non-null VALUE of a value-type-nullable
 	// (`Int?`) — e.g. a `SAFE_CALL` receiver bound to `Nullable<T>.Value`. The value-nullable unwrap helpers
-	// (valueOperand / coerceValue / argExpr) must NOT re-wrap such a read, else the `.Value` is unwrapped twice
+	// (coerceValue / argExpr) must NOT re-wrap such a read, else the `.Value` is unwrapped twice
 	// (`n?.plus(1)` gave 1 instead of 8). Registered/cleared alongside the corresponding valSubst entry.
 	internal val valSubstUnwrapped = HashSet<String>()
 	// While splicing an inline fun / inlined-lambda body: the SPLICED target's own `return`s must NOT emit as raw
@@ -241,9 +240,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// (@ClrTypeAlias'd by bir2cir to `System.Collections.Generic.IEnumerable<E>`, whose GetEnumerator ilemit's
 	// reverse bridge synthesizes from the class's `iterator()`). A user `class R : Iterable<Int>` supertype, a
 	// `for (x in r)`, and every `it.hasNext()`/`it.next()` all dispatch on that real generic — exactly as `by lazy`
-	// dispatches on real `kotlin.Lazy<T>` (#57). The old per-element `dotkt$KIterator_<elem>`/`KIterable_<elem>`
-	// monomorphization is retired (#58); the real generic interface is used (the BCL is full of them, ilemit emits
-	// the stdlib's own, and `Lazy<T>` proves a value-type arg works).
+	// dispatches on real `kotlin.Lazy<T>` (#57). The real generic interface is used (the BCL is full of them, ilemit
+	// emits the stdlib's own, and `Lazy<T>` proves a value-type arg works).
 	// A custom (non-lazy) delegated property passes a `KProperty<*>` to getValue/setValue. KProperty has no
 	// BCL equivalent (pure binding), so — like Kotlin/JVM's PropertyReferenceImpl — a minimal `dotkt_KProperty`
 	// interface (`name`) + `dotkt_KPropertyImpl(name)` class is synthesized into the user's assembly. #52: kotc emits
@@ -375,10 +373,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return Triple(fq, recv, lambda)
 	}
 
-	// CLR-bound (@ClrTypeAlias) TYPE-STRIP — MOVED to bir2cir (kotc reads NEITHER @ClrTypeAlias NOR @ClrIntrinsic).
+	// CLR-bound (@ClrTypeAlias) TYPE-STRIP is bir2cir's — kotc reads NEITHER @ClrTypeAlias NOR @ClrIntrinsic.
 	// A @ClrTypeAlias class/interface/primitive (kotlin.Int, kotlin.collections.List, kotlin.text.StringBuilder, …) is
-	// substituted to a BCL type at every use and must NOT be emitted as a real CLR type in the rt/app build. kotc no
-	// longer reads the annotation to strip it: it emits EVERY type as ordinary Kotlin, and bir2cir's AliasHelperHoist
+	// substituted to a BCL type at every use and must NOT be emitted as a real CLR type in the rt/app build. kotc emits
+	// EVERY type as ordinary Kotlin, and bir2cir's AliasHelperHoist
 	// (driven by the ref.dll @ClrTypeAlias index) DROPS the alias type def (hoisting a class's rule-3 members into the
 	// dotkt$ClrH_* helper; an interface/object alias is dropped with no helper). The drop is a no-op in the REFERENCE
 	// build (AliasHelperHoist is skipped there), so the ref assembly keeps the pure-Kotlin @ClrTypeAlias shapes verbatim.
@@ -500,8 +498,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
 			// C3b reverse direction: a Kotlin interface extending a @Clr interface (Set : Collection->IReadOnlyCollection).
 			// clrIfaceMemberName reads facadegen .NET-interop metadata ONLY (not @ClrIntrinsic); in the stdlib build
-			// (CLR_TYPES_METADATA="") it is substitute-INDEPENDENT — the BCL override-slot rename (get_size -> get_Count) is
-			// bir2cir's DeclarationRename off the ref.dll @ClrIntrinsic, so kotc emits the plain Kotlin get_size here.
+			// (CLR_TYPES_METADATA="") kotc emits the plain Kotlin get_size here for both ref and rt — the BCL override-slot
+			// rename (get_size -> get_Count) is bir2cir's DeclarationRename off the ref.dll @ClrIntrinsic.
 			val name = clrIfaceMemberName(fn) ?: (prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString())
 			val isSetter = prop != null && fn == prop.setter
 			val ret = if (isSetter) TypeNode.Fqn("kotlin.Unit") else birType(fn.returnType)
@@ -832,11 +830,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return def
 	}
 
-	/** A property accessor with a user-written body (`get() = …` / `set(v) { … }`), not the default field passthrough. */
-	internal fun isCustomAccessor(acc: IrSimpleFunction?): Boolean =
-		acc != null && acc.origin.toString() == "DEFINED" && acc.body != null && acc.overriddenSymbols.isEmpty()
-	internal fun hasCustomAccessor(prop: IrProperty): Boolean = isCustomAccessor(prop.getter) || isCustomAccessor(prop.setter)
-	
 	/** `@ClrField` opt-out: emit this property as a plain (public) CLR FIELD, no accessor/property. Detected by short
 	 *  name so any user-declared `ClrField` annotation triggers it. */
 	internal fun isClrField(p: IrProperty): Boolean =
@@ -847,10 +840,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  ilemit lowers it to a CLR volatile field (`modreq(IsVolatile)` + `volatile.` prefix — the C# `volatile` shape).
 	 *  Matched by the field's OR the property's annotations (the FIELD-targeted annotation can land on either IR node). */
 	internal fun isVolatile(p: IrProperty): Boolean {
-		// `kotlin.jvm.Volatile` is a deprecated typealias for `kotlin.concurrent.Volatile`; a `@kotlin.jvm.Volatile var`
-		// carries the same field-level volatile fact, so match either fully-qualified name.
 		fun hasVol(anns: List<IrConstructorCall>) =
-			anns.any { it.type.classFqName?.asString().let { fq -> fq == "kotlin.concurrent.Volatile" || fq == "kotlin.jvm.Volatile" } }
+			anns.any { it.type.classFqName?.asString() == "kotlin.concurrent.Volatile" }
 		return hasVol(p.annotations) || (p.backingField?.let { hasVol(it.annotations) } ?: false)
 	}
 
@@ -875,8 +866,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// kotlin.AutoCloseable.close()->Dispose is NOT hardcoded here: the @ClrIntrinsic("Dispose") binding on the
 					// ref.dll drives it — kotc emits the plain `close` override name + its `overrides` marker, and bir2cir's
 					// DeclarationRename renames the implementor slot to `Dispose` (layer purity — no BCL slot name in kotc).
-					// CharSequence -> synthetic dotkt$CharSequence: the `length` property getter must be emitted (the
-					// override has a non-empty overriddenSymbols so isCustomAccessor is false). get/subSequence keep names.
+					// CharSequence -> synthetic dotkt$CharSequence: the `length` property getter must be emitted (it is an
+					// override, not a user-written accessor). get/subSequence keep names.
 					"kotlin.CharSequence" -> if (owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
 					// No collection override-slot map (size->get_Count, get->get_Item, iterator->GetEnumerator, add->Add, ...)
 					// here: a `class R : List<T>`/`MutableList<T>` emits the plain Kotlin override name + its `overrides`
@@ -960,9 +951,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// (like a normal method's — method()/ifaceMethod already do). The @ClrIntrinsic is on the property (`@ClrIntrinsic
 		// ("Length") val length`), so read it from the corresponding property. bir2cir consumes it from the get_<name>
 		// accessor (TryMemberIntrinsic / DeclarationRename) to lower a `.length` read to clrPropGet Length. kotc emits ONE
-		// substitute-INDEPENDENT BIR (#66): the accessor attrs ride BOTH the ref and rt BIR identically; the rt build
-		// strips ALL metadata downstream (ilemit under DOTKT_STRIP_METADATA), so the rt.dll never carries the binding —
-		// its call sites are already substituted. App builds (no stdlibCompile) emit no accessor attrs, unchanged.
+		// BIR for both stdlib builds: the accessor attrs ride BOTH the ref and rt BIR identically; the rt build
+		// strips ALL metadata downstream (ilemit under `--build-stdlib=runtime`), so the rt.dll never carries the binding
+		// — its call sites are already substituted. App builds (no stdlibCompile) emit no accessor attrs, unchanged.
 		val propAnns = (acc.correspondingPropertySymbol?.owner ?: acc).annotations
 		val accAttrs = if (stdlibCompile) ""","attrs":[${attrsJson(propAnns)}]""" else ""
 		return """{"name":${str(mname)},"static":false,"override":${clrIface || isOverrideClass},"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
@@ -995,9 +986,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  downstream (its `: System.Attribute` type or an arg type being unresolvable at ilemit), that is a bir2cir/ilemit
 	 *  concern, NOT a reason to re-introduce a kotc filter. */
 	internal fun attrsJson(anns: List<IrConstructorCall>): String {
-		// kotc emits ONE substitute/strip-INDEPENDENT BIR (#66): the roundtrip metadata ([Kotlin*]/[Clr]) rides EVERY
+		// kotc emits ONE BIR for every build: the roundtrip metadata ([Kotlin*]/[Clr]) rides EVERY
 		// build's BIR verbatim — the rt-build metadata strip is downstream (ilemit skips ALL attrs under
-		// DOTKT_STRIP_METADATA, Program.cs:626), so the rt.dll carries none while the ref/app BIR are byte-identical here.
+		// `--build-stdlib=runtime`), so the rt.dll carries none while the ref/app BIR are byte-identical here.
 		return anns.mapNotNull { ann ->
 			val ac = ann.symbol.owner.parent as? IrClass ?: return@mapNotNull null
 			if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
@@ -1203,9 +1194,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// links the REAL generic `kotlin.collections.Iterable<Int>` (bir2cir @ClrTypeAlias'd to
 				// `IEnumerable<int>`; ilemit's reverse bridge synthesizes `GetEnumerator` from the class's `iterator()`),
 				// and an `Iterator<Int>` supertype the real generic `kotlin.collections.Iterator<Int>` (a real emitted
-				// stdlib interface). `for (x in r)` resolves the iterator on that real generic. The old per-element
-				// `dotkt$KIterable/KIterator` monomorphization is retired (#58) — the real generic interface is used
-				// (app builds take the same reverse-bridge path as the substitute build).
+				// stdlib interface). `for (x in r)` resolves the iterator on that real generic — the real generic
+				// interface is used, and every build takes the same reverse-bridge path.
 				val bt = birType(st)
 				val stClass = st.classifierOrNull?.owner as? IrClass
 				when {
@@ -1433,9 +1423,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// interfaces, where the CLR allows variance; on classes it's Kotlin-level only — dropped).
 			val variance = when (tp.variance) {
 				org.jetbrains.kotlin.types.Variance.OUT_VARIANCE -> "out"
-				// `in` (contravariant) is emitted verbatim here in EVERY build (#66). The runtime DROP of `in` (the CLR's
+				// `in` (contravariant) is emitted verbatim here in EVERY build. The runtime DROP of `in` (the CLR's
 				// variance-validity check is stricter than Kotlin's, e.g. Continuation<in T>.resumeWith(Result<out T>)) is
-				// a SUBSTITUTION CONSEQUENCE, moved to bir2cir (StdlibSubstituteTypeParams, rt-build only).
+				// bir2cir's (StdlibSubstituteTypeParams, rt-build only).
 				org.jetbrains.kotlin.types.Variance.IN_VARIANCE -> "in"
 				else -> null
 			}
@@ -1550,8 +1540,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A `@KotlinDefault(index, bir)` on each defaulted param of a qualifying function: `index` = the param's position
 		// in the emitted call (extension receiver first, if any), `bir` = the default expression as a BIR-json STRING (so
 		// bir2cir splices it PRE-lowering; it is opaque to this build's type lowering). Stamped on ALL defaulted params of
-		// a Tier-2-carrying function (uniform splice source). kotc emits ONE substitute/strip-INDEPENDENT BIR (#66): the
-		// attr rides every build; the rt build strips it downstream (ilemit param-attr strip under DOTKT_STRIP_METADATA).
+		// a Tier-2-carrying function (uniform splice source). kotc emits ONE BIR for every build: the attr rides every
+		// build; the rt build strips it downstream (ilemit param-attr strip under `--build-stdlib=runtime`).
 		val emitKotlinDefault = ownerFn != null && carriesKotlinDefault(ownerFn)
 		val extOffset = if (ownerFn?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true) 1 else 0
 		val valueParams = params.filter { isValueParameter(it) }
@@ -1576,7 +1566,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val default = if (isMetadataRepresentableDefault(it)) ""","default":${expr(it.defaultValue!!.expression)}""" else ""
 				// PARAMETER-level annotations -> .NET custom attributes on the emitted parameter (e.g. @ClrRefArgument,
 				// which bir2cir reads from the ref.dll to pass the arg by reference). attrsJson is stripped in the runtime
-				// build (DOTKT_STRIP_METADATA), so param attrs ride only the ref.dll — exactly bir2cir's read surface.
+				// build (`--build-stdlib=runtime`), so param attrs ride only the ref.dll — exactly bir2cir's read surface.
 				val srcAttrs = attrsJson(it.annotations)
 				val kotlinDefault = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
 					val bir = expr(def)   // BIR of the default expression (real IR here — the callee's own build)
@@ -2556,29 +2546,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 	}
 
-	/** Inline `forEach { it -> body }` into an enumerator loop: bind `it` to a unique loop var, splice the body. */
-	internal fun inlineForEach(elemT: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
-		val fn = lambda.function
-		val src = expr(recvExpr)
-		val vname = "__fe${scopeCounter++}"
-		val itParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
-		itParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(vname)}}""" }
-		// forEach's lambda returns Unit; drop the trailing return, keep side-effect statements.
-		val body = (fn.body as? IrBlockBody)?.statements.orEmpty().filter { it !is IrReturn }.joinToString(",") { stmt(it) }
-		itParam?.let { valSubst.remove(it.name.asString()) }
-		return """{"k":"forEachInline","elem":${str(elemT)},"src":$src,"var":${str(vname)},"body":[$body]}"""
-	}
-
-	/** First type argument's BIR type (element type of List<T>/Set<T>/etc.). */
-	internal fun collectionElemType(t: IrType): TypeNode =
-		(t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
-
-	/** A lambda argument's return BIR type (for inferring LINQ result element types). */
-	internal fun lambdaRet(arg: IrExpression?): TypeNode {
-		val fn = (arg as? IrFunctionExpression)?.function
-		return if (fn == null) TypeNode.Fqn("kotlin.Unit") else birType(fn.returnType)
-	}
-
 	/** A `throw`-able exception construction node: a plain `new <KotlinExceptionFQN>(msg?)` on the PURE-KOTLIN
 	 *  exception class (`kotlin.IllegalArgumentException` / `kotlin.IllegalStateException` / …). kotc names NO
 	 *  `System.*` CLR exception type — it emits the Kotlin FQN identity exactly like a user `throw
@@ -3163,9 +3130,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `lastIndexOf`/`subList`/`listIterator()` on a @ClrTypeAlias `kotlin.collections` interface, whose substituted
 		// BCL IReadOnly*/IEnumerable face lacks these slots — is OWNED BY bir2cir Rule 5 (Program.cs ~4979), which routes
 		// them to the rt `ClrIteratorBridge`/`ClrCollectionDefaults` helpers off the ref.dll @ClrTypeAlias metadata. kotc
-		// emits the PLAIN member call (faithful IR); it does NOT name the helper class. The former kotc copies here were
-		// gated on `clrName(declaringClass) != null`, which is null for the jar-sourced stdlib collection interfaces (they
-		// are NOT facadegen-injected) — so they were dead once #5 stopped kotc reading @ClrTypeAlias. Removed (#52 Phase 4).
+		// emits the PLAIN member call (faithful IR); it does NOT name the helper class.
 
 		// A call to a lifted local function -> static call with captured values (incl. enclosing `this`) prepended.
 		localFns[callee]?.let { (lname, caps, tps) ->
@@ -3205,14 +3170,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else """{"k":"enumOrdinal","e":${expr(e)}}"""
 				return """{"k":"binOp","op":"-","lhs":${ord(recv)},"rhs":${ord(arg)}}"""
 			}
-			// #52 Phase 4b: a DIRECT primitive `Double/Float.compareTo(y)` is NO LONGER special-cased here (Kotlin's TOTAL
+			// A DIRECT primitive `Double/Float.compareTo(y)` is not special-cased here (Kotlin's TOTAL
 			// order — `-0.0 < 0.0`, NaN largest, `NaN.compareTo(NaN) == 0` — differs from System.Double.CompareTo). kotc
 			// emits the FAITHFUL member call (falls through to the plain callInstance path -> `kotlin.Double.compareTo`)
 			// and bir2cir recognizes the Double/Float owner and routes to the stdlib clrDoubleCompare/clrFloatCompare
 			// total-order body BEFORE its primitive-compareTo -> System.Double.CompareTo routing. The ENUM branch stays.
 		}
 		// A PRIMITIVE `x.compareTo(y)` and a `kotlin.Comparable.compareTo` (the `<`/`>`/`<=`/`>=` desugaring on a
-		// bounded generic `<T : Comparable<T>>`) are NO LONGER intercepted here (layer purity): kotc emits the PLAIN
+		// bounded generic `<T : Comparable<T>>`) are not intercepted here (layer purity): kotc emits the PLAIN
 		// member call (`callInstance kotlin.Int.compareTo` / `callInstance kotlin.Comparable.compareTo`, carrying the
 		// receiver's static type on the recv node's `retType`/`elem` and the type-param constraints). bir2cir derives the
 		// CLR form — a primitive owner -> `clrInstance System.<Prim>.CompareTo`; a @ClrTypeAlias("System.IComparable")
@@ -3247,14 +3212,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (recvExpr != null && lambda != null) return inlineUse(recvExpr, lambda, birType(call.type))
 		}
 
-		// Collection/array factories (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`/…) are NO LONGER
+		// Collection/array factories (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`/…) are not
 		// recognized here: kotc emits the plain top-level `callStatic kotlin.collections.listOf(...)` (the faithful IR;
 		// the vararg argument itself rides as a `newArray` node). bir2cir reads the `@kotlin.clr.ClrCollectionFactory`
 		// (kind list/set/map) / `@kotlin.clr.ClrArrayFactory` (vararg/sized) marker off each stdlib factory function on
 		// the ref.dll and re-emits the same `{k:newList/newSet/newMap/newArray/newArraySized}` construction node — the
 		// element/key/value types from the call's `typeArgs`, the elements from the vararg arg. The `mapOf(a to b)`
 		// literal-split (and its "do NOT force-split a non-literal Pair" guard — `mapOf(pairVar)` stays a real call)
-		// moved to bir2cir intact. The retired LIST/SET/MAP/ARRAY_FACTORY tables were a kotc name-heuristic.
+		// is bir2cir's.
 
 		// Unsigned<->signed byte-array reinterpret (#53). In a consumer build UByteArray IS System.Byte[] and ByteArray
 		// IS System.SByte[]; the two are freely castclass-compatible at runtime (same 8-bit storage, ECMA reduced-type
@@ -3386,7 +3351,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 		}
 
-		// `a to b` and Pair/Triple/IndexedValue `componentN()` are NOT recognized here (#52 Phase 3): these are real
+		// `a to b` and Pair/Triple/IndexedValue `componentN()` are NOT recognized here: these are real
 		// emitted stdlib types with real members — the infix `to` (body `Pair(this, that)`) and the data-class
 		// component1()/component2()/component3() operators are materialized IR declarations. kotc emits the plain call
 		// (faithful IR) and it resolves against the real stdlib surface; no marker is needed (unlike conv/factories,
@@ -3885,10 +3850,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"callInstance","ownerType":${fqnJson("kotlin.String")},"virtual":false,"recv":${expr(operands[0])},"method":"plus","args":[${expr(operands[1])}]}"""
 			// `==` (EQEQ) / `===` (EQEQEQ) are `kotlin.internal.ir` COMPILER INTRINSICS. ALL of the ceq-vs-Object.Equals
 			// SPLIT + the Kotlin-SEMANTIC structural routings (collection `==`, boxed Double/Float total-order `==`)
-			// recognition lives in bir2cir (#52 Phase 5 / #59): kotc emits ONLY the FAITHFUL intrinsic call with owner =
+			// recognition lives in bir2cir: kotc emits ONLY the FAITHFUL intrinsic call with owner =
 			// `kotlin.internal.ir` (collision-safe). PrimitiveOperatorLowering recovers the operands' SURFACE static type
-			// (prim fast-path -> ceq) and VALUE static type (collection/float helpers, else objEq) via StaticType — the
-			// former argTypes/argValueTypes hints are GONE; the operand expression nodes + the local env carry the types.
+			// (prim fast-path -> ceq) and VALUE static type (collection/float helpers, else objEq) via StaticType; no
+			// argTypes/argValueTypes hints are emitted — the operand expression nodes + the local env carry the types.
 			if (name == "EQEQ" && operands.size == 2)
 				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"EQEQ","args":[${expr(operands[0])},${expr(operands[1])}]}"""
 			if (name == "EQEQEQ" && operands.size == 2)
@@ -3923,24 +3888,24 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					return if (anyTok && otherConcrete) """{"k":"cast","type":${str(tt)},"e":${expr(o)}}""" else expr(o)
 				}
 				// COMPARISON intrinsic (`kotlin.internal.ir.less`/`lessOrEqual`/`greater`/`greaterOrEqual`) recognition
-				// MOVED to bir2cir (#52 Phase 5 class 3): kotc emits the FAITHFUL intrinsic call with owner = its home
+				// is bir2cir's: kotc emits the FAITHFUL intrinsic call with owner = its home
 				// package `kotlin.internal.ir` (collision-safe — a user top-level `less` never has this owner);
-				// PrimitiveOperatorLowering re-emits `{k:binOp, op:<}`. Operands value-shaped exactly as the retired
+				// PrimitiveOperatorLowering re-emits `{k:binOp, op:<}`. Operands are value-shaped exactly as the
 				// binOp, so the CIR is byte-identical. Comparison returns Boolean, so there is no Char-arith conv here.
 				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":${str(name)},"args":[${operand(operands[0], operands[1])},${operand(operands[1], operands[0])}]}"""
 			} }
-			// UNARY (unaryMinus/unaryPlus/not/inv) recognition MOVED to bir2cir (#52 Phase 5): kotc emits the faithful
+			// UNARY (unaryMinus/unaryPlus/not/inv) recognition is bir2cir's: kotc emits the faithful
 			// `callInstance kotlin.Int.unaryMinus()` (0-arg member) and bir2cir re-emits `{k:unaryOp}` from the
 			// PRIMITIVE_OP_FQ owner. The receiver is value-shaped by the general callInstance path (recvExpr).
-			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) recognition MOVED to bir2cir (#52 Phase 5): kotc emits
+			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) recognition is bir2cir's: kotc emits
 			// the faithful `callInstance kotlin.Int.inc()` (0-arg member, receiver value-shaped by recvExpr) and
 			// PrimitiveOperatorLowering re-emits `(recv + 1)`/`(recv - 1)` (the `const 1:kotlin.Int` literal moves there).
-			// Numeric conversion `x.toLong()`/`x.toInt()`/… is NO LONGER recognized here: kotc emits the plain
+			// Numeric conversion `x.toLong()`/`x.toInt()`/… is not recognized here: kotc emits the plain
 			// `callInstance kotlin.Int.toLong` (the faithful IR); bir2cir reads the `@kotlin.clr.ClrConv` marker off the
 			// stdlib primitive's conversion member on the ref.dll and emits the `conv` node from the callee's return type.
 			val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
 			if (fq == "kotlin.io" && (name == "println" || name == "print")) {
-				// #52 Phase 4b: emit the PLAIN top-level callStatic (bir2cir substitutes it to System.Console.Write/WriteLine
+				// Emit the PLAIN top-level callStatic (bir2cir substitutes it to System.Console.Write/WriteLine
 				// from the stdlib @ClrIntrinsic in runtime/stdlib/clr/kotlin/io/ConsoleClr.kt) plus a cast-stripped
 				// `argTypes` HINT per operand. bir2cir wraps a collection/Map arg in clrCollToString/clrMapToString off it
 				// (Kotlin-style `[a, b]`, not .NET's type-name ToString). No CLR console node in kotc. #59: the operand
@@ -4154,7 +4119,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// substitutes them via the IReadOnly*/@ClrIntrinsic supertype, not a kotc-side map), so a `for (e in coll)` would fall
 	// to the Kotlin iterator protocol (coll.iterator()/Iterator.hasNext) -> EntryPointNotFound when an app calls the rt op.
 	// Detect a kotlin.collections iterable here so the for-loop emits forEachInline instead: ilemit's GetEnumerator resolves
-	// through the IEnumerable the IReadOnly* supertype carries. #66: gated on stdlibCompile ALONE (substitute-independent) —
+	// through the IEnumerable the IReadOnly* supertype carries. Gated on stdlibCompile ALONE —
 	// kotc emits ONE BIR for ref+rt; the ref build's forEachInline body is squashed to `throw` by bir2cir RefBodySquash
 	// (never reaching ilemit's GetEnumerator emit), so the ref.dll is unaffected. App builds (no stdlibCompile) keep the
 	// plain Kotlin iterator protocol, unchanged.
@@ -4195,11 +4160,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// member-call dispatch (-> clrInstance), and the supertype all resolve it via the .NET-type (clrg:) path from the
 		// loaded --ref rt -- NOT the _types app-table (which only holds app-emitted types -> KeyNotFound).
 		if ((decl as? IrClass)?.fqNameWhenAvailable?.asString() == "java.util.Comparator") return "kotlin.Comparator"
-		// STDLIB build (DOTKT_STDLIB_COMPILE, both ref and rt): kotc emits PURE Kotlin shapes — no BCL binding here. The
-		// member binding is sourced from the ref.dll by bir2cir; the stdlib build injects NO facadegen metadata
-		// (CLR_TYPES_METADATA=""), so the FIR-injection lookup below is empty anyway. Substitute-INDEPENDENT (#66): both
-		// the ref and rt stdlib build return null here identically. docs/design-clr-stdlib-ref-runtime-split.md.
-		if (stdlibCompile) return null
 		// kotc reads NEITHER @ClrIntrinsic NOR @ClrTypeAlias (Task #5, DONE): the stdlib member binding is sourced from the
 		// ref.dll by bir2cir, so there is NO annotation read here. The ONLY source left is the app-interop FIR-injection
 		// metadata, read off the injected member's resolved IR CallableId (`kotc.frontend.clrInjectedMemberName` — A2 stage 2,
@@ -4273,8 +4233,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			}
 			// A boxed Any operand (an un-narrowed smart-cast, `x is Int && f(x)`) passed to a concrete value-primitive
 			// param -> cast to the param type so the VALUE, not the box, reaches the slot. This is the arg twin of
-			// recvExpr's boxed-Any coercion, and the former operator operand-cast that moved out of kotc (#52 Phase 5):
-			// a relocated primitive operator (`a + b`) now flows its arg through here.
+			// recvExpr's boxed-Any coercion: a primitive operator (`a + b`) lowered by bir2cir flows its arg through here.
 			(birType(param.type) as? TypeNode.Fqn)?.name?.takeIf { it in PRIMITIVE_OP_FQ }?.let { pfq ->
 				if (birType(arg.type) == OBJ) return """{"k":"cast","type":${str(TypeNode.Fqn(pfq))},"e":${expr(arg)}}"""
 			}
@@ -4284,9 +4243,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** Read the RECEIVER of a member call on a value-type primitive as its BARE VALUE: a value-nullable (`Int?`)
 	 *  smart-cast surfaces `Nullable<T>.Value`; a boxed `Any` smart-cast casts to the primitive. The receiver-slot
-	 *  twin of [argExpr]'s value coercion — a member call on `kotlin.Int`/`kotlin.Char`/… (a relocated primitive
+	 *  twin of [argExpr]'s value coercion — a member call on `kotlin.Int`/`kotlin.Char`/… (a primitive
 	 *  operator, `compareTo`, `toString`, …) needs the raw value, not a `Nullable<T>` struct load / a box. A no-op
-	 *  for any non-primitive owner. (The former operator operand-shaping that moved out of kotc — #52 Phase 5.) */
+	 *  for any non-primitive owner. */
 	internal fun recvExpr(recv: IrExpression, ownerType: TypeNode): String {
 		val ownerFq = (ownerType as? TypeNode.Fqn)?.name
 		if (ownerFq == null || ownerFq !in PRIMITIVE_OP_FQ || isPreUnwrappedRead(recv)) return expr(recv)
@@ -4350,12 +4309,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return OBJ
 	}
 
-	/** (keyType, valType) BIR types of a Map<K,V>. */
-	internal fun mapKV(t: IrType): Pair<TypeNode, TypeNode> {
-		val a = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
-		return (a.getOrNull(0) ?: OBJ) to (a.getOrNull(1) ?: OBJ)
-	}
-
 	/** Kotlin nullable VALUE type (`Int?`/`Double?`…) -> the value element identity (`kotlin.Int`…), else null. */
 	internal fun nullableElem(t: IrType): TypeNode? =
 		if (t.isMarkedNullable()) t.classFqName?.asString()?.takeIf { it in PRIMITIVE_EQ_FQ }?.let { TypeNode.Fqn(it) } else null
@@ -4370,14 +4323,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val tgt = useType.classFqName?.asString()?.takeIf { it in PRIMITIVE_EQ_FQ } ?: return null
 		return if (elem is TypeNode.Fqn && tgt == elem.name) elem else null
 	}
-
-	/** Read `o` as its BARE CLR VALUE. A value-type-nullable operand (`Int?` = `Nullable<T>`) that a primitive
-	 *  operator / value slot consumes must surface `Nullable<T>.Value` — a raw `Nullable<T>` struct load is
-	 *  invalid IL / reads garbage (the C1 smart-cast miscompile: `n + 1`, `n > 5` after `if (n != null)`). A
-	 *  smart-cast leaves `o.type` still `Int?` (no IR cast node), so we key off the static value-nullable type. */
-	internal fun valueOperand(o: IrExpression): String =
-		if (isPreUnwrappedRead(o)) expr(o)
-		else nullableElem(o.type)?.let { elem -> """{"k":"nullableValue","elem":${str(elem)},"e":${expr(o)}}""" } ?: expr(o)
 
 	/** Emit `node` coerced into a slot of the EXPECTED type: unwrap a value-type-nullable (`Int?`) to its
 	 *  non-null value (`Int`) when the slot demands the bare value — the CLR twin of the JVM backend's implicit
@@ -4400,10 +4345,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		else -> "public"
 	}
 
-	/** Non-nullable primitive whose `==` is CIL `ceq` (else `==` is structural `Object.Equals`). */
-	internal fun isPrimitiveEqType(t: IrType): Boolean =
-		!t.isMarkedNullable() && t.classFqName?.asString() in PRIMITIVE_EQ_FQ
-
 	/** A Kotlin `Any`-override -> its System.Object method name (`toString`->`ToString`…), else null. */
 	internal fun objectMethodName(fn: IrSimpleFunction): String? {
 		// Only a REAL instance-member override maps to the System.Object name. A top-level / EXTENSION function named
@@ -4423,11 +4364,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 
-	// #59: the cast-stripped static-TYPE HINTS (stripImplicit/stripCast) are RETIRED. kotc emits ONLY the faithful op
-	// + faithful operand expression nodes; bir2cir (StaticType / StaticTypeResolver.cs) recovers each operand's static
-	// type STRUCTURALLY off the emitted node + a local/param type environment — the single uniform source, replacing
-	// the per-operator argTypes/argValueTypes/partTypes/recvType/argType hints for the collection/float/toString/
-	// nullable Kotlin-semantic recognition (those helpers stay; only the recognition moved fully to bir2cir).
+	// kotc emits ONLY the faithful op + faithful operand expression nodes — no cast-stripped static-TYPE HINTS
+	// (stripImplicit/stripCast); bir2cir (StaticType / StaticTypeResolver.cs) recovers each operand's static
+	// type STRUCTURALLY off the emitted node + a local/param type environment — the single uniform source for the
+	// collection/float/toString/nullable Kotlin-semantic recognition (those helpers live in bir2cir).
 
 	// The erased / star-projection / Any? fallback type identity. kotc emits the pure Kotlin FQN `kotlin.Any`;
 	// bir2cir/ilemit resolve it to System.Object. (Replaces the old bare-string `object` shorthand.)
@@ -4548,8 +4488,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// user-class/interface branch below (`@kotlin.properties.ReadWriteProperty[…]`), the REAL generic
 		// stdlib interface — same as `by lazy`'s `kotlin.Lazy<T>`. A delegate field/local typed as this
 		// interface, the value from `Delegates.observable(…)`, and the getValue/setValue dispatch owner then
-		// all agree on one type identity (ilverify-clean). The old `dotkt$RWProperty_<V>` per-value monomorph is
-		// retired; the real generic interface is used (as generic `kotlin.Lazy<T>` works with a value V).
+		// all agree on one type identity (ilverify-clean). The real generic interface is used (as generic
+		// `kotlin.Lazy<T>` works with a value V).
 		// Kotlin function type `(A,B)->R` (kotlin.FunctionN<A,B,R>) and a callable-reference type `KFunctionN<…>`
 		// (the inferred type of `obj::method`/`::foo`) -> an `fn` (Func/Action delegate).
 		val fqn = t.classFqName?.asString()

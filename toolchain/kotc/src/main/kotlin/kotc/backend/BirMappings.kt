@@ -5,11 +5,10 @@ package kotc.backend
 // expr/stmt extension files can reach them by simple name; they are pure data, no emitter state.
 
 // Comparison operator names -> IL comparison symbol (the `<`/`<=`/`>`/`>=` desugarings, which are
-// `kotlin.internal.ir` COMPILER INTRINSICS — top-level, no ref.dll symbol). ARITHMETIC (plus/minus/times/
-// div/rem), BITWISE (and/or/xor/shl/shr/ushr) and UNARY (unaryMinus/unaryPlus/not/inv) operator recognition
-// MOVED to bir2cir (#52 Phase 5): kotc emits the FAITHFUL primitive member call (`callInstance kotlin.Int.plus`
-// / `callInstance kotlin.Int.unaryMinus`) and bir2cir re-emits the binOp/unaryOp. Comparison stays here pending
-// class 3; EQEQ/EQEQEQ (the structural/reference split) stays pending class 4.
+// `kotlin.internal.ir` COMPILER INTRINSICS — top-level, no ref.dll symbol). Comparison stays kotc-lowered here;
+// ARITHMETIC (plus/minus/times/div/rem), BITWISE (and/or/xor/shl/shr/ushr), UNARY (unaryMinus/unaryPlus/not/inv)
+// and EQEQ/EQEQEQ recognition is bir2cir's: kotc emits the FAITHFUL primitive member call (`callInstance
+// kotlin.Int.plus` / `callInstance kotlin.Int.unaryMinus`) and bir2cir re-emits the binOp/unaryOp.
 internal val COMPARE = mapOf(
 	"less" to "<", "lessOrEqual" to "<=", "greater" to ">", "greaterOrEqual" to ">=",
 )
@@ -43,11 +42,11 @@ internal val UNSIGNED_ARRAY_ELEM = mapOf(
 	"kotlin.UByteArray" to "kotlin.UByte", "kotlin.UShortArray" to "kotlin.UShort",
 	"kotlin.UIntArray" to "kotlin.UInt", "kotlin.ULongArray" to "kotlin.ULong",
 )
-// The collection/array factory RECOGNITION name-sets (listOf/setOf/mapOf/arrayOf/intArrayOf/…) are GONE (#52 Phase 2):
+// There is no collection/array factory RECOGNITION name-set (listOf/setOf/mapOf/arrayOf/intArrayOf/…) here:
 // kotc emits the plain top-level factory call (the faithful IR); bir2cir reads the `@kotlin.clr.ClrCollectionFactory`/
 // `@kotlin.clr.ClrArrayFactory` marker off each stdlib factory function on the ref.dll and emits the
-// newList/newSet/newMap/newArray/newArraySized construction node. The name-set heuristic was a kotc CLR-shape decision
-// on specific stdlib symbols — exactly the recognition the 4-layer migration moves to bir2cir.
+// newList/newSet/newMap/newArray/newArraySized construction node. A name-set match here would be a kotc CLR-shape
+// decision on specific stdlib symbols — exactly the recognition that belongs in bir2cir.
 // Primitive array class -> its BCL element type, for lowering the sized constructor `IntArray(size){init}` to a real
 // `new int[size]` + fill loop (a `kotlin.IntArray` object would otherwise be constructed — the wrong representation).
 internal val ARRAY_CLASS_ELEM = mapOf(
@@ -65,11 +64,11 @@ internal val ENUM_REIFIED_INTRINSICS = setOf(
 	"kotlin.enumValues", "kotlin.enumValueOf", "kotlin.enums.enumEntries", "kotlin.enums.enumEntriesIntrinsic",
 )
 
-// Numeric conversions (`3.7.toInt()`, `x.toLong()`, `c.toInt()`) are NO LONGER recognized in kotc: kotc emits the plain
+// Numeric conversions (`3.7.toInt()`, `x.toLong()`, `c.toInt()`) are not recognized in kotc: kotc emits the plain
 // `callInstance kotlin.Double.toInt` (the faithful IR). bir2cir reads the `@kotlin.clr.ClrConv` marker off each stdlib
-// primitive's conversion member on the ref.dll and emits the `conv` node from the callee's return type. The retired
-// name->target map + receiver-type guard were a kotc name-heuristic; the `conv` node itself — a genuine primitive IL op —
-// is still emitted (now bir2cir-produced), and ilemit still selects the conv opcode.
+// primitive's conversion member on the ref.dll and emits the `conv` node from the callee's return type. A name->target
+// map + receiver-type guard here would be a kotc name-heuristic; the `conv` node itself — a genuine primitive IL op —
+// is bir2cir-produced, and ilemit selects the conv opcode.
 
 // Value-type primitives -> BIR element type (for Nullable<T> representation of `T?`).
 internal val PRIMITIVE_EQ_FQ = setOf(
