@@ -134,6 +134,12 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
+            // RANGE FOR-LOOP (#52 Phase 5 "range partial"): kotc emits a FAITHFUL `forRange` (range VALUE + loop var +
+            // Kotlin `rangeType`, NO CLR accessor names/owner). Realize the IntProgression get_first/get_last/get_step
+            // access HERE — the stdlib form keeps `forRange` + injects the accessors (ilemit resolves off `_types`);
+            // the app form rewrites to a cross-module counter loop. Runs FIRST so the produced callInstance / forRange
+            // flow through every downstream pass exactly as the equivalent kotc-emitted forms did (byte-identical IL).
+            RangeForLowering.Apply(bir.Root, !attributeTopLevelOwner);
             // PRIMITIVE OPERATORS (#52 Phase 5): re-emit the binOp/unaryOp kotc used to synthesize for a primitive's
             // arithmetic/bitwise/unary operator (kotc now emits the faithful `callInstance kotlin.Int.plus`). Runs
             // FIRST and UNCONDITIONALLY (ref + app) so every downstream pass sees the old tree shape, and a ref-build

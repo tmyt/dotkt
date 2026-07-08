@@ -196,7 +196,7 @@ origin (kotc's own `<>dotkt_*` closure/delegate/KProperty synthetic types) — i
 | Preconditions 4263–4293 | `TODO`/`error`/`require`/`check`/`requireNotNull`/`checkNotNull`/`CHECK_NOT_NULL`/`noWhenBranch…` | throw / cond / passthrough | library *semantics*; **exception TYPE is emitted as the Kotlin FQN** (`kotlin.IllegalStateException`) and bir2cir aliases it — layer-correct already. Could alternatively run real inline bodies (deeper, low value) |
 | Range `rangeTo`/`rangeUntil` 3560–3578 | `name` + primitive `declaringClass` | `new kotlin.ranges.*Range` (Kotlin FQN) | materializes the **Kotlin** range type; no CLR name |
 | Range `contains` (`x in a..b`) 3583–3596 | `name=="contains"` on a range-call | short-circuit cond | control-flow lowering |
-| Range for-loop 1868–1905 | `IntRange`/`IntProgression`/`Sequence` | `forRange`/counter loop/`forEachInline` | **control-flow shape** (counted vs iterator); the CLR accessor names (`get_first`…) are the one leak — see §Ranges |
+| Range for-loop 1868–1886 | `IntRange`/`IntProgression`/`Sequence` | faithful `forRange` (range value + var + `rangeType`)/`forEachInline` | ✅ **RELOCATED TO bir2cir (#52 Phase 5 "range partial")** — kotc emits a FAITHFUL `forRange` (no CLR accessor names/owner); bir2cir `RangeForLowering` derives `get_first`/`get_last`/`get_step` + the IntProgression owner and picks stdlib-`forRange`-with-accessors vs app-counter-loop by build mode. Loop-shape recognition (`INT_PROGRESSION_FQ`) stays as a pure-Kotlin gate. Byte-identical |
 | Enum `values`/`valueOf`/`name`/`ordinal`/`entries` 3599–3653 | `ENUM_CLASS` kind + name | `enumValues`/`enumParse`/`objMethod`/`enumOrdinal` | **enum-ness is a class-kind language fact**, not stdlib metadata |
 | Reified enum intrinsics 3620–3637 | `ENUM_REIFIED_INTRINSICS` | same enum nodes | reified generics + enum-ness = language |
 | `Function.invoke` 3423/3683 | `name=="invoke"` on `kotlin.Function*`/`KFunction*` | splice / `delegateInvoke` | delegate/closure lowering (a kept CLR-primitive family per CLAUDE.md) |
@@ -240,7 +240,7 @@ them in isolation (irBuiltIns) is the half-measure; the real fix is relocating t
 | 3641 conv target | `kotlin.Int` | `Char.code` (§2.3) | (c) keep; (d) IR-derive |
 | 4221/4222 conv target | `kotlin.Int`/`kotlin.Char` | Char-arith result typing (§2.3) | (c) keep; (d) derive from `callee.returnType` (already have it) |
 | 4270/4272/4274/4284/4264/4268/132/337/847 exc types | `kotlin.IllegalStateException` / `IllegalArgumentException` / `NotImplementedError` / `UnsupportedOperationException` | precondition helpers (§2.3) | (c) keep — **the Kotlin FQN is the correct identity** (bir2cir @ClrTypeAlias-aliases it); literal is fine, or resolve the symbol via `irBuiltIns`/context |
-| 1885/1895 `get_first`… owner | `kotlin.ranges.IntProgression` | range for-loop (§2.3 / §Ranges) | (c) loop-shape keep; **the accessor owner+names should move to bir2cir/ilemit** |
+| ~~1885/1895 `get_first`… owner~~ | `kotlin.ranges.IntProgression` | range for-loop (§2.3) | ✅ **MOVED to bir2cir (#52 Phase 5 "range partial")** — kotc emits a faithful `forRange`; bir2cir `RangeForLowering` derives the accessor owner+names |
 
 ### 3.3 (C) runtime-helper owners (kotc names a specific stdlib helper class)
 
@@ -487,7 +487,29 @@ marker `kotlin.internal.ir` (the intrinsic's home package) makes the bir2cir mat
 top-level `fun less(a,b)` never carries that owner; and the transient node is rewritten to `binOp` before CIR,
 so ilemit never sees the marker. Byte-identical: verify-il 243/0, all gates green.
 
-_Remaining class: class 4 (equality EQEQ/EQEQEQ)._
+**Range for-loop ("range partial") — ✅ DONE.** kotc's range for-loop lowering leaked CLR accessor names: the
+stdlib-build `forRange` node carried `accessOwner="kotlin.ranges.IntProgression"` + `firstM`/`lastM`/`stepM` =
+`get_first`/`get_last`/`get_step`, and the app-build counter loop emitted `callInstance` nodes to those getters
+(the standing `TODO(refactor, per user 2026-06-28)` at BirEmitter.kt:1877). kotc now emits a FAITHFUL `forRange`
+carrying ONLY the range VALUE expr, the loop var, and the range's own pure-Kotlin type (`rangeType`); a new
+bir2cir pass `RangeForLowering` (runs FIRST in the per-file loop, before every other pass) DERIVES the accessor
+access and dispatches by build mode: stdlib build (`DOTKT_STDLIB_COMPILE` set — IntProgression emitted locally)
+keeps `forRange` and injects `accessOwner`/`get_first`/`get_last`/`get_step` (ilemit resolves off `_types`
+generically); app build (IntProgression only REFERENCED) rewrites to `block{ var __rng = range; for(i =
+__rng.get_first(); i <= __rng.get_last(); i += 1) { body } }` with cross-module getters. The **synthetic-getter
+blocker** noted in the old TODO ("a synthetic callInstance to `get_first` doesn't resolve through ilemit's
+callInstance path — KeyNotFound") is a STDLIB-BUILD-ONLY constraint (the getter is on a type being emitted in THIS
+assembly); it is respected by keeping the stdlib form as the `_types`-resolved `forRange` node — the relocation
+does NOT try to make ilemit resolve a same-assembly synthetic getter. The kotc gate is EXACTLY the union of the
+retired branches (`stdlibCompile ? type∈INT_PROGRESSION_FQ : type==IntRange`), so routing to the remaining plain
+`for` branches (const `1..5`, `rangeTo`/`until`/`downTo`) is unchanged → byte-identical. `INT_PROGRESSION_FQ` stays
+as a pure-Kotlin recognition gate only. **kotc emits ZERO CLR accessor names/owner for ranges** (`grep
+get_first|get_last|get_step|IntProgression toolchain/kotc/src` → gone; INT_PROGRESSION_FQ remains as the gate).
+
+**With Phase 4b + Phase 5 (operators + range) complete, kotc = ZERO CLR recognition — a pure faithful IR→BIR
+transcriber.**
+
+_All operator classes (1–4) + the range partial are done._
 
 **Original plan (for the full bucket):**
 - **Principled target, per the faithful-transcriber rule:** kotc emits the faithful `callInstance`
@@ -500,10 +522,11 @@ _Remaining class: class 4 (equality EQEQ/EQEQEQ)._
   `binOp` boundary, so the boundary-purity win is real but the risk/reward is the worst of any phase. This is a
   **cost** deferral, not a "frontend fact" — do it last, as a dedicated pass, only after Phases 1–4 prove the
   ref.dll-metadata machinery.
-- **Cheap partial within this bucket:** push the **range accessor names** (`get_first`/`get_last`/`get_step`,
-  IntProgression owner in the `forRange` node) down to bir2cir/ilemit — there is already a
-  `TODO(refactor, per user 2026-06-28)` at BirEmitter.kt:1877 saying exactly this (blocked on a synthetic-getter
-  resolution issue).
+- **Cheap partial within this bucket — ✅ DONE:** the **range accessor names** (`get_first`/`get_last`/`get_step`,
+  IntProgression owner in the `forRange`/counter-loop nodes) are pushed down to bir2cir (`RangeForLowering`). kotc
+  emits a faithful `forRange` (range value + var + `rangeType`); bir2cir derives the accessors. The old
+  synthetic-getter blocker is respected (the stdlib form stays the `_types`-resolved `forRange`, not a same-assembly
+  synthetic getter call). See the "Range for-loop" note under Phase 5 above.
 
 ### Genuinely unavoidable (near-zero) — the only true must-stay
 - kotc's **own synthetic types** with no IR origin: the `<>dotkt_*` closure/delegate/`KPropertyImpl`/
@@ -522,8 +545,9 @@ _Remaining class: class 4 (equality EQEQ/EQEQEQ)._
 - Conv: `BirEmitter.kt:4231–4234` (+ `NUMBER_CONV`/`NUMERIC_FQ`).
 - List/Set factory: `3502–3508`. Map factory: `3510–3535`. Array factory: `3545–3553`. arrayOfNulls: `3539–3543`.
 - `to`: `3658–3662`. componentN: `3663–3674`.
-- Range for-loop: `1866–1905` (+ `forRange` node `1881–1885`, accessor TODO `1877`). rangeTo: `3560–3579`.
-  range `contains`: `3583–3596`.
+- Range for-loop: `1866–1886` (faithful `forRange` at `1884–1886`; accessor realization now in bir2cir
+  `RangeForLowering.cs`; plain `for` branches for const `1..5`/`rangeTo`/`until`/`downTo` at `1887–1904`).
+  rangeTo: `3560–3579`. range `contains`: `3583–3596`.
 - Enum: `3599–3653`. Reified enum: `3620–3637`.
 - Preconditions: `4263–4293` (+ `newExc` 132/337/847). Scope: `3485–3489`. use: `3493`. repeat: `4301`.
 - Operators: `4159–4235`. EQEQ/EQEQEQ: `4169–4182`. String.plus: `4162`.

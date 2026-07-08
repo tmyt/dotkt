@@ -463,6 +463,21 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **The range for-loop's CLR accessor knowledge moved out of kotc into bir2cir — kotc now emits ZERO CLR
+  recognition (#52 Phase 5, the "range partial").** kotc's range for-loop lowering used to leak CLR accessor
+  names: the stdlib-build `forRange` node carried `accessOwner="kotlin.ranges.IntProgression"` +
+  `firstM/lastM/stepM="get_first"/"get_last"/"get_step"`, and the app-build counter loop emitted `callInstance`
+  nodes to those getters — the CLR IntProgression realization living in the Kotlin frontend (the standing
+  `TODO(refactor, per user 2026-06-28)`). kotc now emits a FAITHFUL `forRange` carrying only the range VALUE
+  expr, the loop var, and the range's own pure-Kotlin type (`rangeType`); a new bir2cir pass `RangeForLowering`
+  DERIVES the accessor access and picks the realization by build mode — the stdlib build keeps `forRange` and
+  injects `accessOwner`/`get_first`/`get_last`/`get_step` (ilemit resolves them off `_types` generically), the
+  app build rewrites to `block{ var __rng = range; for(i = __rng.get_first(); i <= __rng.get_last(); i += 1) }`
+  with cross-module getters. It runs FIRST in the pipeline so the produced nodes flow through every downstream
+  pass exactly as the old kotc-emitted forms did — byte-identical IL. `INT_PROGRESSION_FQ` stays in kotc ONLY as
+  a pure-Kotlin recognition gate ("these Kotlin types are counted ranges"). **`grep get_first|get_last|get_step|
+  IntProgression toolchain/kotc/src` → the CLR accessor names are gone from kotc. With the operator and range
+  relocations complete, kotc is a pure faithful IR→BIR transcriber holding ZERO CLR recognition.**
 - **Primitive OPERATOR recognition moved out of kotc into bir2cir (#52 Phase 5).** kotc no longer
   recognizes a primitive's operators: it emits the FAITHFUL member call (`callInstance kotlin.Int.plus`,
   `kotlin.Char.unaryMinus`) with its recv/args value-shaped (nullable-unwrap + boxed-Any cast), and a new

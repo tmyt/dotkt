@@ -1870,34 +1870,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
 			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
 		}
-		// `for (i in <Int range VALUE>)` (e.g. `indices`, a range variable) -> a counter loop over the range's
-		// first/last/step. The custom pipeline runs no ForLoopsLowering, so without this it falls to the iterator
-		// protocol, which hits the covariant-return `IntProgression.iterator():IntIterator`. Gated to the stdlib build
-		// (where IntProgression is emitted, so ilemit can resolve get_first/last/step); user apps keep the iterator path.
-		// TODO(refactor, per user 2026-06-28): move the range-access knowledge fully to this CIR layer — emit first/last/
-		// step as ordinary call nodes so ilemit stays Kotlin-agnostic. Blocked: a synthetic callInstance to the property
-		// getter `get_first` doesn't resolve through ilemit's callInstance path (KeyNotFound). For now ilemit reads the
-		// IntProgression accessors directly (user: "当面これでよい"). See [[clr-stdlib-ref-runtime-split]].
-		if (stdlibCompile && source != null && source.type.classFqName?.asString() in INT_PROGRESSION_FQ)
-			// Carry the range-accessor owner + getter names in the NODE so ilemit's forRange stays Kotlin-agnostic (it
-			// resolves `_types[accessOwner].Methods[firstM]` generically, with no hardcoded kotlin.ranges knowledge). The
-			// Kotlin-specific facts live here in the CIR-lowering layer (the frontend may know Kotlin; the IL backend not).
-			return """{"k":"forRange","label":$lbl,"var":${str(loopVar.name.asString())},"elem":${fqnJson("kotlin.Int")},"range":${expr(source)},"accessOwner":"kotlin.ranges.IntProgression","firstM":"get_first","lastM":"get_last","stepM":"get_step","body":[$body]}"""
-		// `for (i in <IntRange VALUE>)` in an APP build (`for (i in list.indices)`, `"hi".indices`, a stored IntRange var).
-		// The stdlib-build forRange above resolves the accessors off ilemit's `_types` (IntProgression is emitted only
-		// there); an app merely REFERENCES it, so instead emit a plain counter loop reading the range's first/last as
-		// ordinary cross-module property getters (verified to resolve). An IntRange is always step 1 ascending, so `<=`/1 is
-		// exact (an empty range has first > last -> the loop body never runs). Spill the range ONCE — `list.indices` is a
-		// side-effecting call, and first/last must read the SAME value. Without this, the for falls to the iterator protocol
-		// and hits `IntIterator.hasNext` (unresolved -> emit-time NotSupported).
-		if (!stdlibCompile && source != null && source.type.classFqName?.asString() == "kotlin.ranges.IntRange") {
-			val rng = "__rng${scopeCounter++}"
-			fun acc(m: String) = """{"k":"callInstance","ownerType":${fqnJson("kotlin.ranges.IntProgression")},"virtual":true,"recv":{"k":"local","name":${str(rng)}},"method":${str(m)},"args":[]}"""
-			return """{"k":"block","body":[{"k":"var","name":${str(rng)},"type":${birType(source.type).toJson()},"init":${expr(source)}},{"k":"for","label":$lbl,"var":${str(loopVar.name.asString())},"from":${acc("get_first")},"to":${acc("get_last")},"cmp":"<=","step":1,"body":[$body]}]}"""
-		}
+		// `for (i in <Int range/progression VALUE>)` (e.g. `indices`, a stored range variable, `1..n step 2`) -> a
+		// FAITHFUL forRange node carrying ONLY the range VALUE expr (`range`), the loop var, and the range's own Kotlin
+		// type (`rangeType`). The custom pipeline runs no ForLoopsLowering, so without this it falls to the iterator
+		// protocol, which hits the covariant-return `IntProgression.iterator():IntIterator` (unresolved -> emit-time
+		// NotSupported). bir2cir (RangeForLowering) OWNS the Kotlin->CLR range realization: it DERIVES the
+		// get_first/get_last/get_step accessor access + the IntProgression owner and picks the local-emitted (stdlib
+		// build, ilemit resolves off `_types`) vs cross-module (app build, ordinary property getters) form. NO CLR
+		// accessor names/owner leave kotc — this is the #52 range relocation (was the `TODO(refactor, per user
+		// 2026-06-28)` here). INT_PROGRESSION_FQ stays ONLY as a pure-Kotlin recognition gate ("these Kotlin types are
+		// counted ranges"); the app build (where IntProgression is only REFERENCED, not emitted) stays limited to
+		// IntRange, matching the prior counter-lowering scope exactly (byte-identical routing to branches below).
+		val rangeFq = source?.type?.classFqName?.asString()
+		if (source != null && (if (stdlibCompile) rangeFq in INT_PROGRESSION_FQ else rangeFq == "kotlin.ranges.IntRange"))
+			return """{"k":"forRange","label":$lbl,"var":${str(loopVar.name.asString())},"range":${expr(source)},"rangeType":${birType(source.type).toJson()},"body":[$body]}"""
 		// `for (i in 1..5)` constant-folds to a `new IntRange(first,last)` (a CONSTRUCTOR, not a rangeTo call) -> emit a
-		// plain counter loop straight from its args, so NO IntRange object reaches ilemit (it stays Kotlin-agnostic; this
-		// is the user-app form of the §1897 forRange, without the IntProgression accessors). Inclusive -> cmp "<=", step 1.
+		// plain counter loop straight from its args, so NO IntRange object reaches ilemit (it stays Kotlin-agnostic;
+		// no faithful `forRange`/range value needed — this is the const-literal fast path). Inclusive -> cmp "<=", step 1.
 		(source as? IrConstructorCall)?.takeIf { it.type.classFqName?.asString() == "kotlin.ranges.IntRange" }?.let { ctor ->
 			val cargs = ctor.arguments.filterNotNull()
 			if (cargs.size == 2)
