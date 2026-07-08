@@ -33,3 +33,8 @@ build/nuget-feed/
 # dotkt.sh / dotkt-keep.sh default output dir (compiled DLLs + runtimeconfig.json) — build artifacts, not source
 dotkt-out/
 .claude/worktrees/
+
+# editor swap/temp files
+*.swp
+*.swo
+*~
