@@ -998,7 +998,7 @@ sealed class ReferenceMetadataIndex
     public bool IsInlineValueClass(string ownerFqn) => _inlineBacking.ContainsKey(ownerFqn);
 
     // A rule-3 hoist candidate: owner.member exists, is concrete (non-abstract) and carries NEITHER @ClrIntrinsic NOR
-    // @ClrProperty, so its real Kotlin body was hoisted by kotc to the static helper `<>dotkt_ClrH_<owner>`. A @ClrProperty
+    // @ClrProperty, so its real Kotlin body is hoisted by bir2cir's AliasHelperHoist to the static helper `<>dotkt_ClrH_<owner>`. A @ClrProperty
     // accessor (setLength/capacity/nativeSetCapacity/ticks) is a BOUND stub — its call substitutes to clrPropGet/clrPropSet
     // (Rule 2p) — so it must NOT hoist its throwing TODO body into the helper (the same exclusion @ClrIntrinsic gets).
     public bool IsRule3Member(string ownerFqn, string memberName) =>
@@ -2359,7 +2359,7 @@ static class BirTypeLowering
 // Three rewrites (mirrors docs/clr-stdlib-intrinsic-audit.md's three binding rules):
 //   1. construction `new T(..)` on a CLR-bound REFERENCE owner T -> `newClr System.X(..)`.
 //   2. member `r.m(..)` / `T.m(..)` where m carries @ClrIntrinsic("Name") -> `clrInstance`/`clrStatic` System.X.Name.
-//   3. member m with NO @ClrIntrinsic but concrete (a real Kotlin body kotc hoisted to `<>dotkt_ClrH_<T>`) ->
+//   3. member m with NO @ClrIntrinsic but concrete (a real Kotlin body AliasHelperHoist lifts to `<>dotkt_ClrH_<T>`) ->
 //      a static call to that helper, with the receiver threaded as the helper's first arg. Gated on the helper
 //      actually being present in the ref.dll (it is for @Clr-bound classes; for @ClrTypeAlias classes once kotc
 //      keys helper emission on @ClrTypeAlias) so we never emit a call to a non-existent helper.
@@ -2369,16 +2369,15 @@ static class BirTypeLowering
 // kotlin.* vocabulary and are lowered by the subsequent BirTypeLowering pass (those keys are in its TypeKeys).
 // GAP A — the for-loop iterator protocol over a referenced (rt-dll) collection. kotc desugars `for (x in xs)` to a
 // `<iterator>` var initialized by the stdlib bridge `kotlin.collections.ClrIteratorBridgeKt.iteratorOverEnumerable`
-// (which RETURNS the real generic `kotlin.collections.Iterator<E>`), then routes hasNext/next to a synthetic
-// monomorphized `<>dotkt_KIterator_<elem>` interface kotc emits into the app — a legacy "IL can't define a generic
-// interface" workaround, now false since the rt dll defines `Iterator`1`. In an APP build that synthetic owner (and
+// (which RETURNS the real generic `kotlin.collections.Iterator<E>`), then routes hasNext/next to that same real
+// generic `kotlin.collections.Iterator<E>` (the rt dll defines `Iterator`1`). In an APP build that owner (and
 // the `@kotlin.collections.Iterator` var type) KeyNotFounds in ilemit's `_types` (they're referenced, not emitted).
 // Re-point BOTH at the real referenced generic `clrg:kotlin.collections.Iterator[E]` so ilemit resolves hasNext/next
 // by reflection against the runtime stdlib — symmetric to how the List local already lowers to IReadOnlyList. The
 // element type comes from the bridge call's typeArgs (still in the source vocabulary; the later type-lowering pass
 // lowers the inner). Scoped per method (the `<iterator>` name is per-loop synthetic); the stdlib self-build is gated
-// OFF at the call site (it emits Iterator itself). The now-unreferenced synthetic interface emits as harmless dead
-// metadata. Producer-side (`class C : Iterator<T>`) is a separate, deeper gap and is intentionally not touched here.
+// OFF at the call site (it emits Iterator itself). Producer-side (`class C : Iterator<T>`) is a separate, deeper gap
+// and is intentionally not touched here.
 static class IteratorConsumerNormalization
 {
     const string Bridge = "kotlin.collections.ClrIteratorBridgeKt";
@@ -2410,11 +2409,10 @@ static class IteratorConsumerNormalization
             // — or the ALREADY-SUBSTITUTED rule-3 helper `<>dotkt_ClrH_kotlin_*`: MemberCallSubstitution runs BEFORE
             // this pass, so a concrete alias receiver's `ArrayList<Int>().iterator()` arrives as a callStatic on the
             // rt helper owner, and its ArrayListIterator likewise implements the REAL Iterator, not the synthetic):
-            // the runtime iterator is an rt-dll type implementing the REAL kotlin.collections.Iterator, never the app's
-            // monomorphized `<>dotkt_KIterator_<elem>` synthetic — so its hasNext/next consumers must be re-pointed
-            // exactly like the bridge case above. A USER-owned init (Countdown.iterator() returning an app-emitted
-            // `object : Iterator<Int>` that implements the synthetic) is deliberately NOT registered — app-internal
-            // producer/consumer stay consistent on the synthetic.
+            // the runtime iterator is an rt-dll type implementing the REAL kotlin.collections.Iterator — so its
+            // hasNext/next consumers must be re-pointed exactly like the bridge case above. A USER-owned init
+            // (Countdown.iterator() returning an app-emitted `object : Iterator<Int>`) is deliberately NOT registered —
+            // app-internal producer/consumer stay consistent on the app-emitted iterator's own type.
             else if (k == "var" && Str(obj["name"]) is string && obj["init"] is JsonObject init2 &&
                 IteratorVarElem(TypeJson.Read(obj["type"])) is (string head, TypeNode elem2) &&
                 (TypeJson.OwnerName(init2["owner"]) ?? TypeJson.OwnerName(init2["ownerType"]) ?? "") is string initOwner &&
@@ -2464,15 +2462,14 @@ static class IteratorConsumerNormalization
                 }
             }
             // A hasNext/next `callInstance` on a Kotlin-iterator owner -> a `clrInstance` on the REAL referenced generic
-            // `kotlin.collections.Iterator<elem>`, where BOTH members are DECLARED. This is required for two owners:
-            //   • the real `kotlin.collections.MutableIterator<elem>` — hasNext/next are INHERITED from Iterator, so a
-            //     callInstance on MutableIterator resolves nowhere (reflection does not walk interface bases) ->
-            //     EntryPointNotFound. Every `for (x in aMutableList)` and `class C : MutableIterable` hits this.
-            //   • the legacy per-element `<>dotkt_KIterator_<elem>` synthetic (addressing a registered iterator local).
+            // `kotlin.collections.Iterator<elem>`, where BOTH members are DECLARED. This is required for the real
+            // `kotlin.collections.MutableIterator<elem>` — hasNext/next are INHERITED from Iterator, so a
+            // callInstance on MutableIterator resolves nowhere (reflection does not walk interface bases) ->
+            // EntryPointNotFound. Every `for (x in aMutableList)` and `class C : MutableIterable` hits this.
             // callInstance routes through ResolveMethod/ParseOwner (an EMITTED-type `_types` lookup that KeyNotFounds on
             // a referenced generic); the CLR-bound member path is `clrInstance` (EmitClrCall), exactly how the substituted
             // IReadOnlyList's get_Item/get_Count resolve. next() returns the element, hasNext() Boolean; argTypes empty.
-            // The element comes from the owner's own type arg (real owner) or the registered local (synthetic owner).
+            // The element comes from the owner's own type arg.
             // `type`/`ret` stay in the source vocabulary — the later type-lowering pass lowers them.
             else if (k == "callInstance" && (Str(obj["method"]) is "hasNext" or "next")
                 && IteratorDispatchElem(TypeJson.Read(obj["ownerType"])) is TypeNode e)
@@ -2526,7 +2523,7 @@ static class IteratorConsumerNormalization
 
 // STRING -> CharSequence adapter bridge. `kotlin.String` is @ClrTypeAlias("System.String") — a SEALED BCL type whose
 // CharSequence face is bound in-place (@ClrIntrinsic Length/get_Chars). `kotlin.CharSequence` has NO BCL equivalent, so
-// kotc synthesizes the monomorphic interface `<>dotkt_CharSequence` (get_length/get/subSequence). A `System.String`
+// bir2cir's SharedSyntheticSynthesis synthesizes the monomorphic interface `<>dotkt_CharSequence` (get_length/get/subSequence). A `System.String`
 // (sealed) cannot implement that interface, so a bare String flowing into a `@<>dotkt_CharSequence` slot crashes
 // (InvalidProgram / InvalidCast). This pass MATERIALIZES the coercion: wherever a value whose STATIC type is String
 // flows into a CharSequence slot, it inserts `new <>dotkt_StringCharSequence(theString)` — an App-local adapter class
@@ -4831,12 +4828,12 @@ static class MemberCallSubstitution
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
             return Constrainify(ClrCallNode(node, clrOwner, intrinsic, member, args, instance, refs.MemberByrefPositions(ownerFqn, member, args.Count)), node, refs, ctx, ownerToken);
 
-        // Rule 3: a concrete member of a CLR-bound CLASS with NO @ClrIntrinsic carries a real Kotlin body, which kotc
-        // hoists to the static helper `<>dotkt_ClrH_<owner>` (driven by the SAME class binding that brought us here).
-        // `IsRule3Member` (ref.dll: the member is concrete + intrinsic-less) is the signal kotc hoisted it; the helper
+        // Rule 3: a concrete member of a CLR-bound CLASS with NO @ClrIntrinsic carries a real Kotlin body, which
+        // AliasHelperHoist lifts to the static helper `<>dotkt_ClrH_<owner>` (driven by the SAME class binding that brought us here).
+        // `IsRule3Member` (ref.dll: the member is concrete + intrinsic-less) is the signal to hoist it; the helper
         // is emitted into the same runtime assembly. NEVER for an INTERFACE owner: an @ClrTypeAlias interface's members
-        // are abstract in source (kotc emits NO helper for it — confirmed: every emitted <>dotkt_ClrH_* is a class), so
-        // its abstract collection members (isEmpty/contains/iterator/...) need kotc's ClrCollectionDefaults routing, not
+        // are abstract in source (no helper is emitted for it — confirmed: every emitted <>dotkt_ClrH_* is a class), so
+        // its abstract collection members (isEmpty/contains/iterator/...) need the ClrCollectionDefaults routing (Rule 5), not
         // a non-existent helper. (The ref.dll mis-reports these as non-abstract, so IsRule3Member alone false-positives.)
         if (kind != "interface" && refs.IsRule3Member(ownerFqn, member))
             return Rule3HelperCall(node, refs, ownerFqnNode, member, args, instance);
@@ -4902,9 +4899,8 @@ static class MemberCallSubstitution
 
         // Rule 5 (collection-interface defaults): the substituted BCL IReadOnly*/I* interfaces lack isEmpty/contains/
         // containsAll/indexOf/lastIndexOf/subList/listIterator/iterator, so an @ClrTypeAlias collection-interface call
-        // routes to the rt's ClrCollectionDefaults / ClrIteratorBridge helpers — the SAME targets kotc's collDefault
-        // path uses (its `clrName(declaringClass) != null` gate is now null for the @ClrTypeAlias collection interfaces,
-        // so it no longer fires; this is the bir2cir home of that Kotlin<->CLR relation). The element type is the
+        // routes to the rt's ClrCollectionDefaults / ClrIteratorBridge helpers — the bir2cir home of that Kotlin<->CLR
+        // relation. The element type is the
         // owner token's first type arg; the helper is generic over it. `kotlin.sequences.Sequence` is ALSO
         // @ClrTypeAlias-ed to IEnumerable (same face) and its sole member `iterator()` vanishes on the BCL interface
         // exactly like the collection interfaces — so route `Sequence.iterator()` through the SAME bridge (the
@@ -5878,7 +5874,7 @@ static class AliasHelperHoist
 
     // An instance member -> a static helper method: prepend a `__self` param typed as the alias owner, rewrite the
     // dispatch `this` to that `__self`, and declare the class type params ahead of the method's own (a generic alias's
-    // helper needs them for `__self`). Mirrors kotc's clrHelperMethod shape so ilemit sees an identical helper.
+    // helper needs them for `__self`). Produces the helper shape ilemit expects (a static method with a `__self` first param).
     static JsonObject HoistMethod(JsonObject m, string aliasToken, JsonArray classTps)
     {
         // A GENERIC alias owner (ArrayList<E>, HashMap<K,V>) must type `__self` as the CONSTRUCTED generic

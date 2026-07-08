@@ -242,8 +242,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// reverse bridge synthesizes from the class's `iterator()`). A user `class R : Iterable<Int>` supertype, a
 	// `for (x in r)`, and every `it.hasNext()`/`it.next()` all dispatch on that real generic — exactly as `by lazy`
 	// dispatches on real `kotlin.Lazy<T>` (#57). The old per-element `<>dotkt_KIterator_<elem>`/`KIterable_<elem>`
-	// monomorphization was a pre-generic-interface workaround ("IL can't define a generic interface" — false: the
-	// BCL is full of them, ilemit emits the stdlib's own, and `Lazy<T>` proves a value-type arg works). Retired (#58).
+	// monomorphization is retired (#58); the real generic interface is used (the BCL is full of them, ilemit emits
+	// the stdlib's own, and `Lazy<T>` proves a value-type arg works).
 	// A custom (non-lazy) delegated property passes a `KProperty<*>` to getValue/setValue. KProperty has no
 	// BCL equivalent (pure binding), so — like Kotlin/JVM's PropertyReferenceImpl — a minimal `<>dotkt_KProperty`
 	// interface (`name`) + `<>dotkt_KPropertyImpl(name)` class is synthesized into the user's assembly. #52: kotc emits
@@ -1203,8 +1203,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// `IEnumerable<int>`; ilemit's reverse bridge synthesizes `GetEnumerator` from the class's `iterator()`),
 				// and an `Iterator<Int>` supertype the real generic `kotlin.collections.Iterator<Int>` (a real emitted
 				// stdlib interface). `for (x in r)` resolves the iterator on that real generic. The old per-element
-				// `<>dotkt_KIterable/KIterator` monomorphization was a false "IL can't define a generic interface"
-				// workaround (#58) — the reverse bridge already handled this in the substitute build; app builds now match.
+				// `<>dotkt_KIterable/KIterator` monomorphization is retired (#58) — the real generic interface is used
+				// (app builds take the same reverse-bridge path as the substitute build).
 				val bt = birType(st)
 				val stClass = st.classifierOrNull?.owner as? IrClass
 				when {
@@ -1705,8 +1705,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Element type = the source's first type arg (e.g. Collection<Int> -> Int), else the loop var's type.
 		// `kotlin.sequences.Sequence` is an enumerable BY KOTLIN SEMANTICS (@ClrTypeAlias(IEnumerable), which bir2cir
 		// expands) — recognize it here by FQN so a CONCRETE-element `for (x in seq)` takes forEachInline (GetEnumerator)
-		// like Iterable, NOT the monomorphized synthetic KIterator the rt SequenceBuilderIterator doesn't implement
-		// (EntryPointNotFound). This is Kotlin-layer knowledge ("this type is for-in enumerable"), independent of
+		// like Iterable (GetEnumerator over the real generic iterator). This is Kotlin-layer knowledge ("this type is
+		// for-in enumerable"), independent of
 		// isStdlibCollectionIterable (stdlib-build only) / clrName (.NET-interop only), both OFF in app builds.
 		// `.toList()` already uses the generic-T CLR-native IEnumerator path; this covers the concrete-element for-in.
 		val forInEnumerable = source != null && ((source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null
@@ -3823,19 +3823,19 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (!fallThrough) when (name) {
 				"hashCode" -> return """{"k":"objMethod","method":"GetHashCode","recv":${expr(dispatchReceiver(call)!!)}}"""
 				"toString" -> if (regularArgs(call).isEmpty()) {
-					// #52 Phase 4b: emit the FAITHFUL objMethod ToString plus a cast-stripped static-type HINT (`recvType`).
-					// bir2cir recognizes a collection/Map receiver off it and routes to the Kotlin-style clrCollToString /
-					// clrMapToString helper (`[a, b]` / `{a=1, b=2}`); else it drops recvType and keeps the raw .NET ToString.
+					// Emit the FAITHFUL objMethod ToString. bir2cir recovers the receiver's static type via StaticType (no
+					// kotc hint) and, for a collection/Map receiver, routes to the Kotlin-style clrCollToString /
+					// clrMapToString helper (`[a, b]` / `{a=1, b=2}`); else it keeps the raw .NET ToString.
 					val recvE = dispatchReceiver(call)!!
 					return """{"k":"objMethod","method":"ToString","recv":${expr(recvE)}}"""
 				}
 				"equals" -> {
 					val recvE = dispatchReceiver(call)!!; val argE = regularArgs(call).first()
-					// #52 Phase 4b: emit the FAITHFUL objMethod Equals plus cast-stripped static-type HINTS (`recvType`,
-					// `argType`). An EXPLICIT `.equals()` on a boxed Double/Float / a collection follows Kotlin's TOTAL order /
-					// STRUCTURAL equality (Object.Equals gives IEEE `(-0.0).equals(0.0)==true` / reference identity), so
-					// bir2cir recognizes those off the hints and routes to the SAME helper the EQEQ path uses; else it drops
-					// the hints and keeps Object.Equals.
+					// Emit the FAITHFUL objMethod Equals. An EXPLICIT `.equals()` on a boxed Double/Float / a collection
+					// follows Kotlin's TOTAL order / STRUCTURAL equality (Object.Equals gives IEEE
+					// `(-0.0).equals(0.0)==true` / reference identity), so bir2cir recovers the receiver/arg static types
+					// via StaticType (no kotc hint) and routes to the SAME helper the EQEQ path uses; else it keeps
+					// Object.Equals.
 					return """{"k":"objMethod","method":"Equals","recv":${expr(recvE)},"arg":${expr(argE)}}"""
 				}
 			}
@@ -4134,8 +4134,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"kotlin.collections.MutableCollection", "kotlin.collections.List", "kotlin.collections.MutableList",
 			"kotlin.collections.Set", "kotlin.collections.MutableSet",
 			// Sequence is @ClrTypeAlias(IEnumerable) — an Iterable peer; a `for (x in seq)` must take the SAME forEachInline
-			// (GetEnumerator) path, else a synthesized monomorphized iterator iface the rt SequenceBuilderIterator doesn't
-			// implement -> runtime EntryPointNotFound.
+			// (GetEnumerator) path as Iterable (it lowers to IEnumerable).
 			"kotlin.sequences.Sequence")
 		val seen = HashSet<String>()
 		fun walk(c: IrClass): Boolean {
@@ -4410,7 +4409,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun fqnJson(name: String): String = TypeNode.Fqn(name).toJson()
 
 	/** True if a structured type contains a type variable (`tv`) anywhere — replaces the `.contains("gp:")` scan.
-	 *  A monomorphized synthetic (KIterator/ReadWriteProperty/…) can't bake a `tv`, so this gates the fall-through. */
+	 *  A non-generic synthetic (`<>dotkt_KProperty`) can't bake a `tv`, so this gates the fall-through. */
 	internal fun hasTv(t: TypeNode): Boolean = when (t) {
 		is TypeNode.Tv -> true
 		is TypeNode.Fqn -> t.args?.any { hasTv(it) } == true
@@ -4519,8 +4518,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// user-class/interface branch below (`@kotlin.properties.ReadWriteProperty[…]`), the REAL generic
 		// stdlib interface — same as `by lazy`'s `kotlin.Lazy<T>`. A delegate field/local typed as this
 		// interface, the value from `Delegates.observable(…)`, and the getValue/setValue dispatch owner then
-		// all agree on one type identity (ilverify-clean). The old `<>dotkt_RWProperty_<V>` per-value monomorph
-		// was a pre-generic-interface workaround, disproven by generic `kotlin.Lazy<T>` working with a value V.
+		// all agree on one type identity (ilverify-clean). The old `<>dotkt_RWProperty_<V>` per-value monomorph is
+		// retired; the real generic interface is used (as generic `kotlin.Lazy<T>` works with a value V).
 		// Kotlin function type `(A,B)->R` (kotlin.FunctionN<A,B,R>) and a callable-reference type `KFunctionN<…>`
 		// (the inferred type of `obj::method`/`::foo`) -> an `fn` (Func/Action delegate).
 		val fqn = t.classFqName?.asString()

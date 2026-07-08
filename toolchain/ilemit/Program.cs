@@ -186,7 +186,7 @@ sealed partial class Emitter
                 {
                     var name = t.GetProperty("name").GetString();
                     var kind = t.GetProperty("kind").GetString();
-                    // Shared synthetic types (`<>dotkt_Result`/`KProperty`/`KIterator_*`/`CharSequence`/…) are emitted
+                    // Shared synthetic types (`<>dotkt_Result`/`KProperty`/`CharSequence`/…) are emitted
                     // identically by EVERY file that uses them; in a multi-file assembly they'd redefine the same name
                     // and collide in `_types` (orphaning a TypeBuilder -> Save crash). They're structurally identical,
                     // so the first definition serves all references — skip the duplicates. (Per-file-DISTINCT synthetics
@@ -198,8 +198,8 @@ sealed partial class Emitter
                     // an app value) fails interface dispatch (EntryPointNotFound). Skipping the local definition routes
                     // every `@<>dotkt_X` reference through MapType/FindMethod/AddInterfaceImplementation -> ResolveType,
                     // which resolves it as the external canonical type in the --ref'd assembly. Scoped to the
-                    // verified-safe set (CharSequence); the other shared synthetics (Result/KProperty/KIterator/
-                    // RWProperty_*) still re-emit per-assembly until each is verified cross-assembly. Self-correcting:
+                    // verified-safe set (CharSequence); the other shared synthetics (Result/KProperty) still
+                    // re-emit per-assembly until each is verified cross-assembly. Self-correcting:
                     // only skips when the type ACTUALLY resolves externally, so a --no-stdlib build (or the stdlib's own
                     // ref/rt build, which passes ilemit no --ref) still emits the canonical copy locally.
                     if (CanonicalSynthetics.Contains(name) && ResolvesExternally(name)) continue;
@@ -235,7 +235,7 @@ sealed partial class Emitter
                     var simpleName = nested && name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
                     var metaName = arity > 0 ? simpleName + "`" + arity : simpleName;
                     var tb = nested ? _types[niEl.GetString()].TB.DefineNestedType(metaName, attrs) : _mod.DefineType(metaName, attrs);
-                    // Compiler-generated synthetic types (`<>dotkt_*`: KProperty, Result, KIterator_*, …) get
+                    // Compiler-generated synthetic types (`<>dotkt_*`: KProperty, Result, …) get
                     // [CompilerGenerated] (and can't collide with user types — the `<>` prefix isn't source-legal).
                     if (name.StartsWith("<>dotkt_"))
                         tb.SetCustomAttribute(new CustomAttributeBuilder(
@@ -2940,8 +2940,8 @@ sealed partial class Emitter
     // A shared compiler-synthetic type that, once verified cross-assembly, is emitted ONCE (public) in the rt stdlib
     // dll and REFERENCED by app assemblies instead of re-synthesized per-assembly (canonicalization), so a value
     // crossing the app<->rt boundary keeps ONE CLR identity. CharSequence first; extend as each synthetic is verified.
-    // KProperty(+Impl) verified 2026-07-02: MONOMORPHIC (one shape — get_name/ctor(string) — everywhere, unlike the
-    // per-element KIterator_* family), and Map delegation (`val x by map`) passes the app's KPropertyImpl into the rt's
+    // KProperty(+Impl) verified 2026-07-02: MONOMORPHIC (one shape — get_name/ctor(string) — everywhere), and Map
+    // delegation (`val x by map`) passes the app's KPropertyImpl into the rt's
     // `MapAccessorsKt.getValue(map, thisRef, <>dotkt_KProperty)` — a distinct per-assembly copy EntryPointNotFound-s
     // on `get_name`. Both names skip together (Impl's iface/method sigs reference the canonical interface).
     static readonly HashSet<string> CanonicalSynthetics = new(StringComparer.Ordinal)
