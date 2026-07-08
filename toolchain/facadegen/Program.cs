@@ -929,8 +929,8 @@ static class FacadeGen
     // BINDING INVARIANT (CLAUDE.md §"kotlin.* comes from the JAR, never from facadegen"; docs/ship-tasks.md §0):
     // kotc resolves the ENTIRE Kotlin stdlib (`kotlin.*`) from the frontend JAR on -classpath, which preserves full
     // Kotlin semantics (the Companion-object call sites the stdlib is premised on). facadegen owns the .NET space ONLY
-    // and must NEVER inject a `kotlin.*` symbol — a facadegen-reconstructed `kotlin.*` is semantically degraded AND
-    // DUPLICATES the jar's, which then conflict (overload-resolution ambiguity). Today the operating discipline ("never
+    // and must NEVER inject a `kotlin.*` symbol — a facadegen-reconstructed `kotlin.*` DUPLICATES the jar's, which then
+    // conflict (overload-resolution ambiguity), and re-scanning the whole stdlib is slower than the prebuilt jar. Today the operating discipline ("never
     // --scan-asm the stdlib") already keeps `kotlin.*` out of every seed/closure; this predicate makes the guarantee
     // live IN the owning layer (defense-in-depth, output-neutral) rather than relying only on that discipline plus the
     // downstream `ClrTypeInjection.kt` filter (which covers injected classes/interfaces but NOT top-level functions).

@@ -377,9 +377,9 @@ Box.parse(string)
 Box.empty
 ```
 
-This shape is important for interop and for referenced-assembly consumption because `facadegen` / FIR injection cannot
-reliably reconstruct full Kotlin companion-object semantics from CLR metadata. Consumers should not need a real
-`Box.Companion` declaration merely to call static companion members.
+This shape is important for interop and for referenced-assembly consumption: consumers should not need a real
+`Box.Companion` declaration merely to call static companion members. (FIR injection DOES restore the implicit
+`Type.method` companion call for .NET statics — via the Java shim `setOwnerGenerator` in `kotc/frontend/FirInternals.java`.)
 
 However, a companion object with a meaningful supertype is not just a static namespace. It is a singleton value:
 

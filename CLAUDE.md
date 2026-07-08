@@ -120,14 +120,11 @@ The **authoritative** layer table — including the reference artifact each stag
 > kotc resolves the **entire stdlib (`kotlin.*`)** from the frontend **jar** (`-classpath`), which
 > preserves full Kotlin semantics. facadegen handles the **.NET space ONLY** (`System.*` *and any
 > referenced .NET assembly* — not just System). **NEVER feed the stdlib assembly to
-> `facadegen --scan-asm`.** NOT because facadegen is incapable — current kotc **fully restores
-> facadegen-derived Companion-object semantics** (the implicit `Type.method` call); the old "facadegen
-> can't restore Companion semantics" rationale is **retired (2026-07-08, user-corrected)** and the stdlib
-> could even be supplied via facadegen. The jar is kept for **speed** (no per-build facadegen scan of the
-> whole stdlib) **and to avoid the jar-vs-facadegen DUPLICATION**: a facadegen-reconstructed `kotlin.*`
-> symbol *duplicates* the jar's and the two **conflict** (this session: a non-reified `arrayOf` from
-> facadegen collided with the jar's reified `arrayOf` → `overload resolution ambiguity`). So use ONE
-> source (the jar), never both. The fix for any "stdlib symbol missing/ambiguous in an app build"
+> `facadegen --scan-asm`.** Use ONE source (the jar) for two reasons: (1) a facadegen scan of the stdlib
+> would *duplicate* the jar's `kotlin.*` and the two **conflict** (this session: a non-reified `arrayOf`
+> from facadegen collided with the jar's reified `arrayOf` → `overload resolution ambiguity`); (2) it is
+> **slower** — facadegen re-generating the whole stdlib every build vs reading the prebuilt jar. The fix
+> for any "stdlib symbol missing/ambiguous in an app build"
 > is **the jar**, never a facadegen scan or a `kotlin.*` guard inside facadegen (that's treating the
 > symptom — the root error is passing stdlib.dll to facadegen at all). Removed from the production
 > path `packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets` + `scripts/dotkt.sh` (commit

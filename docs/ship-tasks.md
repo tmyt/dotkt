@@ -21,7 +21,7 @@
 > 重要な不変条件①: **@ClrIntrinsic は ref.dll が出所**で、**bir2cir が消費**する。jar（artifact A）は inline/expect-actual で @ClrIntrinsic を落とすので出所にできない。ilemit に @ClrIntrinsic（や intrinsic ラベル）を渡すのは**明確な誤り**。
 >
 > 重要な不変条件②: **`kotlin.*`（stdlib 全体）は jar から供給する。facadegen 経由で注入しては絶対にならない。** kotc は stdlib 空間を frontend **jar**（`-classpath`）から解決し、jar は Companion object を含む Kotlin 意味論を完全に保持する。facadegen は **.NET 空間専用**（`System.*` + 参照 .NET アセンブリ。System.* に限らない）。
-> - 理由: facadegen は inline/operator/infix を Roundtrip Attribute で復元できるが、**Companion object の暗黙呼び出し（`Type.method`、method が Companion 上）を完全復元できない**（`Type.Companion.method` が要る）。stdlib は Companion object 前提で実装されているため、facadegen 製の `kotlin.*` シンボルは意味論が劣化し、かつ jar のものと**二重化して衝突**する（本セッション実例: facadegen の非reified `arrayOf` が jar の reified `arrayOf` と衝突 → `overload resolution ambiguity`）。
+> - 理由: 供給源は jar 一本に絞る。(1) facadegen で stdlib を scan すると jar の `kotlin.*` と**二重化して衝突**する（本セッション実例: facadegen の非reified `arrayOf` が jar の reified `arrayOf` と衝突 → `overload resolution ambiguity`）。(2) 毎ビルド facadegen が stdlib 全体を gen するのは prebuilt jar を読むより**遅い**。
 > - 直し方: 「アプリビルドで stdlib シンボルが無い/曖昧」の修正は**常に jar**。facadegen 側に `kotlin.*` ガードを足すのは**対症療法で筋が悪い** — 根本は **stdlib.dll を facadegen に `--scan-asm` で渡していること自体**。
 > - 状態: 本番経路 `packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets` + `scripts/dotkt.sh` から除去済（commit `522bdc8`）。`scripts/verify-il.sh` / `scripts/verify-differential.sh` の `--scan-asm` も**除去済み**（2026-07-02、master-task-inventory META 参照）。`[[stdlib-jar-only-not-facadegen]]`
 
