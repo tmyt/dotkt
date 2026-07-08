@@ -108,14 +108,17 @@ need_stdlib_ref; need_stdlib_rt
 # lowering); and the rt dll is dropped beside the emitted assembly so the run resolves it (mirrors verify-il).
 emit_il() {
 	local out="$1" asm="$2"; shift 2
-	local refs=() birs=()
+	local refs=() birs=() usrrefs=()
 	while (( $# )); do
-		if [[ "$1" == --ref ]]; then refs+=(--ref "$2"); shift 2; else birs+=("$1"); shift; fi
+		# A user `--ref X` (a retargeted DotKt library) goes to ilemit AND — A2 (#61) — to bir2cir, which RESOLVES
+		# the facadegen-injected owner FQN against it to bind the .NET call SHAPE (clrStatic/clrInstance/…). Mirrors
+		# verify-il's il_emit: the RUNTIME stdlib (added below) is ilemit-only (bir2cir reads the REFERENCE stdlib).
+		if [[ "$1" == --ref ]]; then refs+=(--ref "$2"); usrrefs+=(--ref "$2"); shift 2; else birs+=("$1"); shift; fi
 	done
 	[[ -f "$STDLIB_RT_DLL" ]] && refs+=(--ref "$STDLIB_RT_DLL")
 	local cir="$out.cir"; rm -rf "$cir"; mkdir -p "$cir"
 	local refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
-	dotnet "$BIR2CIR_DLL" "$cir" "${refarg[@]}" "${birs[@]}" >/dev/null 2>&1 || true
+	dotnet "$BIR2CIR_DLL" "$cir" "${refarg[@]}" ${usrrefs[@]+"${usrrefs[@]}"} "${birs[@]}" >/dev/null 2>&1 || true
 	dotnet "$ILEMIT_DLL" "$out" "$asm" "${refs[@]}" "$cir"/*.cir.json >/dev/null 2>&1 || true
 	[[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$out/" 2>/dev/null || true
 }

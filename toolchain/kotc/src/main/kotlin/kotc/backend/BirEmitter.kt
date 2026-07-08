@@ -2096,7 +2096,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// A genuine `NetType::m` method reference -> a lifted static forwarding to the .NET instance method.
 				// (A kotlin.collections `Iterable::iterator` never reaches here: clrOwner is null for a jar-sourced stdlib
 				// collection interface, so the enumerator-bridge routing lives in bir2cir Rule 5, not this clrOwner!=null path.)
-				val callE = """{"k":"clrInstance","type":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]}"""
+				val callE = """{"k":"callInstance","ownerType":${str(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]}"""
 				val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 				val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
 				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
@@ -3436,9 +3436,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// box/unbox is correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
 				val retH = birType(call.type)
 				return if (name == "get")
-					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrInteropName(callee) ?: "get_Item")},"argTypes":[${birType(a[0].type).toJson()}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
+					"""{"k":"callInstance","ownerType":${str(mt)},"method":${str(clrInteropName(callee) ?: "get_Item")},"argTypes":[${birType(a[0].type).toJson()}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
 				else
-					"""{"k":"clrInstance","type":${str(mt)},"method":${str(clrInteropName(callee) ?: "set_Item")},"argTypes":[${birType(a[0].type).toJson()},${birType(a[1].type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
+					"""{"k":"callInstance","ownerType":${str(mt)},"method":${str(clrInteropName(callee) ?: "set_Item")},"argTypes":[${birType(a[0].type).toJson()},${birType(a[1].type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
 			}
 		}
 
@@ -3499,10 +3499,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// A `suspend` generic .NET-member callee carries the `"suspendCall":true` FACT for bir2cir's deferred
 					// Task/await lowering, exactly like the non-generic call paths (suspendCallTag) — otherwise a generic
 					// .NET-member suspend call would silently drop out of the suspension lowering. (latent ⑤.)
+					// A2 (#61): a PLAIN call by identity carrying the generic FACTS (typeArgs + declared shapeTypes);
+					// bir2cir's NetInteropBinding resolves the owner off the .NET refs and shapes it to clrGenericStatic/
+					// clrGenericInstance (the `typeArgs` presence is the generic signal).
 					return if (isStatic)
-						"""{"k":"clrGenericStatic","type":${clrType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[$argsJson]${suspendCallTag(callee)}}"""
+						"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[$argsJson]${suspendCallTag(callee)}}"""
 					else
-						"""{"k":"clrGenericInstance","type":${memberType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"recv":${expr(recv!!)},"args":[$argsJson]${suspendCallTag(callee)}}"""
+						"""{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"recv":${expr(recv!!)},"args":[$argsJson]${suspendCallTag(callee)}}"""
 				}
 			}
 			val prop = callee.correspondingPropertySymbol?.owner
@@ -3524,14 +3527,29 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val recvJson = if (isStatic) "null" else expr(recv!!)
 				// A restored MEMBER extension property (`class C { val T.p }`): no .NET property exists — it's a
 				// `get_p(__self)`/`set_p(__self, v)` method on the dispatch type, the extension receiver as `__self`.
+				// A2 (#61): a PLAIN instance call by identity; bir2cir's NetInteropBinding finds NO .NET property `p`
+				// (it's a synthetic accessor method) and leaves it as a clrInstance get_p/set_p method call.
 				extensionReceiver(call)?.let { pExt ->
 					return if (callee === prop.setter)
-						"""{"k":"clrInstance","type":${memberType!!.toJson()},"method":${str("set_$pn")},"argTypes":[${birType(pExt.type).toJson()},${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[${expr(pExt)},${expr(regularArgs(call).first())}]}"""
-					else """{"k":"clrInstance","type":${memberType!!.toJson()},"method":${str("get_$pn")},"argTypes":[${birType(pExt.type).toJson()}],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[${expr(pExt)}]}"""
+						"""{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str("set_$pn")},"argTypes":[${birType(pExt.type).toJson()},${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[${expr(pExt)},${expr(regularArgs(call).first())}]}"""
+					else """{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str("get_$pn")},"argTypes":[${birType(pExt.type).toJson()}],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[${expr(pExt)}]}"""
 				}
+				// A2 (#61): a `kotlin.clr.ClrEvent<T>` read is CLR-ONLY vocabulary — a .NET event has no plain-Kotlin
+				// call form (it exposes add_/remove_, not a get_); facadegen injects it purely to typecheck, so kotc
+				// LOWERS it directly to a DEDICATED dialect node `clrEventGet` (the ClrEvent<T> handle) — NOT the
+				// bir2cir-produced `clrPropGet` (which after A2 means a real .NET property). It exists ONLY to feed a
+				// `+=`/`-=`: bir2cir's ClrEventOperatorBinding consumes the `clrEventGet + plusAssign/minusAssign` pair
+				// into an add_/remove_ accessor, so it never reaches ilemit (a bare event read is rejected above). Every
+				// OTHER property is a plain Kotlin-shaped access -> emit the get_/set_ accessor CALL by identity;
+				// NetInteropBinding shapes it to clrPropGet/clrPropSet (a .NET property OR field) off the refs.
+				if (callee.returnType.classFqName?.asString() == "kotlin.clr.ClrEvent") {
+					return """{"k":"clrEventGet","type":${memberType!!.toJson()},"name":${str(pn)},"static":$isStatic,"recv":$recvJson}"""
+				}
+				val propCallKind = if (isStatic) "callStatic" else "callInstance"
+				val propRecvField = if (isStatic) "" else ""","recv":$recvJson"""
 				return if (callee === prop.setter)
-					"""{"k":"clrPropSet","type":${memberType!!.toJson()},"name":${str(pn)},"static":$isStatic,"recv":$recvJson,"value":${expr(regularArgs(call).first())}}"""
-				else """{"k":"clrPropGet","type":${memberType!!.toJson()},"name":${str(pn)},"ret":${birType(callee.returnType).toJson()},"static":$isStatic,"recv":$recvJson}"""
+					"""{"k":"$propCallKind","ownerType":${memberType!!.toJson()},"method":${str("set_$pn")},"argTypes":[${birType(regularArgs(call).first().type).toJson()}]$propRecvField,"args":[${expr(regularArgs(call).first())}]}"""
+				else """{"k":"$propCallKind","ownerType":${memberType!!.toJson()},"method":${str("get_$pn")},"argTypes":[],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[]}"""
 			}
 			val member = clrInteropName(callee) ?: objectMethodName(callee) ?: name
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
@@ -3544,7 +3562,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (member.startsWith("op_") && !isStatic && recv != null) {
 				val allArgs = (listOf(expr(recv)) + regularArgs(call).map { expr(it) }).joinToString(",")
 				val allArgTypes = (listOf(birType(recv.type).toJson()) + regularArgs(call).map { birType(it.type).toJson() }).joinToString(",")
-				return """{"k":"clrStatic","type":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag}"""
+				return """{"k":"callStatic","ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag}"""
 			}
 			// A .NET extension method `static M(this T self, …)` exposed as a Kotlin extension `fun T.m()` on a @Clr
 			// object: it's a STATIC call whose first argument is the extension receiver.
@@ -3552,20 +3570,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (isStatic && extRecv != null) {
 				val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
 				val allArgTypes = (listOf(birType(extRecv.type).toJson()) + regularArgs(call).map { birType(it.type).toJson() }).joinToString(",")
-				return """{"k":"clrStatic","type":${clrType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag}"""
+				return """{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag}"""
 			}
 			// A restored MEMBER extension function (`class C { fun T.f() }`): an INSTANCE method on the dispatch receiver
 			// (C) whose first .NET param `__self` is the extension receiver -> dispatch on `recv`, prepend the receiver.
 			if (!isStatic && extRecv != null && recv != null) {
 				val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
 				val allArgTypes = (listOf(birType(extRecv.type).toJson()) + regularArgs(call).map { birType(it.type).toJson() }).joinToString(",")
-				return """{"k":"clrInstance","type":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag}"""
+				return """{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag}"""
 			}
+			// A2 (#61): a PLAIN static/instance call by the .NET owner's FQN identity; bir2cir's NetInteropBinding
+			// resolves the owner off the .NET refs and shapes it (clrStatic/clrInstance). No .NET-shape decision here.
 			val (cArgs, cArgTypes) = clrCallArgs(call, callee)
 			return if (isStatic)
-				"""{"k":"clrStatic","type":${clrType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag}"""
+				"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag}"""
 			else
-				"""{"k":"clrInstance","type":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag}"""
+				"""{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag}"""
 		}
 
 		// Companion-object member -> a static member of the enclosing class (precedes user-property field access).
@@ -3621,11 +3641,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}}"""
 					}
 					val recv = extensionReceiver(call)
+					// A2 (#61): a top-level EXTENSION property accessor is a static `get_/set_<name>(__self)` METHOD on the
+					// referenced file class (NOT a .NET property) -> emit the plain static call by identity; bir2cir's
+					// NetInteropBinding finds no matching .NET property/field and shapes it back to a clrStatic method call.
 					if (callee === p.setter) {
 						val args = listOfNotNull(recv) + regularArgs(call)
-						return """{"k":"clrStatic","type":${str(fileClass)},"method":${str("set_" + p.name.asString())},"argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
+						return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str("set_" + p.name.asString())},"argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
 					}
-					return """{"k":"clrStatic","type":${str(fileClass)},"method":${str("get_" + p.name.asString())},"argTypes":[${recv?.let { birType(it.type).toJson() } ?: ""}],"ret":${birType(callee.returnType).toJson()},"args":[${recv?.let { expr(it) } ?: ""}]}"""
+					return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str("get_" + p.name.asString())},"argTypes":[${recv?.let { birType(it.type).toJson() } ?: ""}],"ret":${birType(callee.returnType).toJson()},"args":[${recv?.let { expr(it) } ?: ""}]}"""
 				}
 			}
 
@@ -4042,12 +4065,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						// PURE-KOTLIN `birType` identities; bir2cir derives the ilemit `shapes` tokens (see the member path above).
 						val shapeParams = (if (extRecv != null) listOf(callee.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }) else emptyList()) + regularParams(callee)
 						val shapeTypes = shapeParams.joinToString(",") { birType(it.type).toJson() }
-						return """{"k":"clrGenericStatic","type":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
+						// A2 (#61): a PLAIN static call by identity carrying the generic facts (typeArgs + shapeTypes);
+						// bir2cir's NetInteropBinding resolves the file-class owner off the refs and shapes it to clrGenericStatic.
+						return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
 					}
 				}
-				// PLAIN Kotlin return type; a `suspend` callee is flagged by `suspendCallTag` (Task/await lowering deferred).
+				// A2 (#61): a PLAIN static call by identity to the referenced .NET file class; bir2cir's NetInteropBinding
+				// shapes it to clrStatic. A `suspend` callee is flagged by `suspendCallTag` (Task/await lowering deferred).
 				val ret = birType(callee.returnType)
-				return """{"k":"clrStatic","type":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { birType(it.type).toJson() }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
+				return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { birType(it.type).toJson() }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
 			}
 		}
 		// Fill omitted constant default arguments at the call site (IL methods have no default mechanism).

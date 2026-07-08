@@ -463,6 +463,42 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **kotc no longer decides the .NET call SHAPE for facadegen-injected interop — bir2cir binds it off the
+  Reference Assemblies (#61 / A2).** kotc's backend used to read facadegen's `.NET`-marking injection metadata and
+  emit the CLR call shape itself (`clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet`/`clrGeneric*`/indexer/`op_`)
+  for an `import System.X` / referenced-`.NET`-library member call. That is CLR knowledge in the frontend — a
+  deviation from the confirmed layer table (facadegen reads the Reference Assemblies to inject FIR metadata;
+  **bir2cir** reads them to RESOLVE cross-assembly types = where `.NET` binding belongs). Now kotc is
+  **.NET-agnostic**: to it a facadegen-injected library is "a weird Kotlin library with PascalCase packages", so it
+  emits a PLAIN `callStatic`/`callInstance` by the owner's FQN identity carrying only frontend FACTS (static-ness,
+  the `get_X`/`set_X` accessor name, `typeArgs`+`shapeTypes`, the `op_` name with receiver prepended, the extension
+  `__self` prepend, the constructed-generic owner identity). A new bir2cir pass **`NetInteropBinding`** (the 3rd
+  instance of the `ClrEventOperatorBinding`/`KClassMemberBinding` reflect-and-rewrite pattern) resolves the owner
+  FQN against the loaded `.NET` reference assemblies — a long-lived `MetadataLoadContext` on `ReferenceMetadataIndex`
+  with `ResolveNetType(fqn)` (`System.*` resolves from the running framework's reference dir; a user `.NET` lib from
+  its `--ref`) — and REFLECTS the member to bind the CLR shape (a `get_X`/`set_X` over a `.NET` property OR field →
+  `clrPropGet`/`clrPropSet`; an indexer/`op_`/method → `clrStatic`/`clrInstance`; a `typeArgs`-bearing call →
+  `clrGeneric*`). This is the SAME "emit the identity, bind in bir2cir" pattern #52 established for the stdlib off the
+  ref.dll, one axis over (user `.NET` refs instead of the stdlib ref.dll). The CIR is byte-identical (the shape
+  decision merely moved down a layer; il-injstatic verified byte-for-byte). After this, `clrPropGet`/`clrPropSet` are
+  **100% bir2cir-produced** (a real `.NET` property/field). The `.NET` event READ `w.Changed` — CLR-only vocabulary
+  with no plain-Kotlin call form (it exposes `add_`/`remove_`, never a `get_`), so, like `byref`/`ClrRef<T>`, a
+  facadegen-injected synthetic absent from every reference assembly that can't be "resolved + bound" — is lowered by
+  kotc to its OWN dedicated dialect node **`clrEventGet`** (the ClrEvent<T> handle, NOT the shared `clrPropGet`); it
+  exists only to feed a `+=`/`-=`, which bir2cir's `ClrEventOperatorBinding` binds into `add_X`/`remove_X`, so it never
+  reaches ilemit. kotc's BIR thus emits ZERO shared `clr*`-shape nodes — only plain `callStatic`/`callInstance` plus
+  the genuine CLR-only-vocab dialect forms (`@ClrRefArgument` byref annotation, ref-local, `clrEventGet`). ilemit keeps
+  its `--ref` (runtime `Assembly.LoadFrom` for Reflection.Emit token resolution). `NetInteropBinding`'s owner
+  resolution peels `Nullable`/`Oblivious`/`ByRef` wrappers off the owner slot (a `List<Item>?` receiver's owner is
+  `nullable(fqn List<Item>)`) AND accepts a legacy STRING owner token (a referenced file class `LibKt`; the
+  constructed-generic owner) — the original wrapped/string node is preserved verbatim in the `type` slot (byte-identical
+  to the old kotc, which emitted a nullable `type` / a string `type` for a file class). The `Task.await()` marker
+  (`kotlin.clr.CoroutinesKt.await`, a `kotlin.*` owner) is SKIPPED by `NetInteropBinding` (a stdlib owner) and reaches
+  bir2cir's `SuspendColdLowering` as a plain `callStatic`/`callInstance` carrying `suspendCall`+(`typeArgs` for the
+  generic form); the P4 await-marker detection now matches that plain shape BEFORE the generic-suspend-call path (else
+  it mis-routed to a bogus same-assembly cold entry `await$dotkt_suspend`), keying generic-ness on `typeArgs` presence.
+  `scripts/verify-roundtrip.sh`'s `emit_il` forwards the user `--ref` DotKt library to bir2cir too (mirroring
+  `verify-il`'s `il_emit`), so `NetInteropBinding` can resolve the retargeted-library owners.
 - **kotc no longer authors the `<>dotkt_` compiler-generated-name convention (#68).** The `<>` prefix is a
   C#/CLR codegen convention (`<>c__DisplayClass`, `<>d__`); kotc emitting it meant the Kotlin frontend knew a CLR
   naming rule. Now: (a) synthetic type definitions (capturing-lambda closures, heap ref-cells, `KProperty(Impl)`,

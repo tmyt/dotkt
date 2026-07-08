@@ -175,17 +175,26 @@ These read the **.NET space** (facadegen injection metadata / the `kotlin.clr.*`
 boundary rule says the .NET space is exactly what kotc *may* read. **The `kotlin.clr.*` interop-fiction rows
 are (c) keep; the facadegen-injected `clr*`-SHAPE rows are A2/#61 — see the callout.**
 
-> **⚠️ A2 (task #61) — the injected-.NET `clr*`-SHAPE emission is a DEVIATION to RESTORE, not "must-stay."**
-> Reading the injection metadata so a facadegen-injected symbol *resolves / typechecks* is the sanctioned
-> .NET-space read. But kotc's BACKEND *also* reads `clrInjectedDotNetName` (`clrName` 4483–4534) and emits the
-> CLR call SHAPE itself — `clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet` (`BirEmitter.kt:3525–3564`, top-level
-> facade `:4046`). Per the confirmed architecture (CLAUDE.md "Who references the .NET Reference Assemblies";
-> MEMORY `a2-restore-bir2cir-net-binding`), that shape decision belongs in **bir2cir**: kotc must be
-> **.NET-AGNOSTIC** — emit a plain `callStatic`/`callInstance` by the owner's FQN identity — and bir2cir resolves
-> the FQN against the loaded Reference Assemblies and binds the shape, the SAME "emit the identity, bind in bir2cir"
-> pattern #52 established for stdlib off the ref.dll. So the `clrName`/`clrStatic`/top-level-facade rows below are
-> **(c)-keep ONLY for the metadata READ; their shape-emission is DEFERRED-RESTORE (#61)**, not permanently
-> frontend-legit. (The ClrH routing arm was already deleted — #62 / CLEANUP-A1, see §"Genuinely unavoidable"
+> **✅ A2 (task #61) — DONE (2026-07-08): the injected-.NET `clr*`-SHAPE emission moved to bir2cir.** kotc's
+> BACKEND no longer decides the .NET call SHAPE. It still READS the injection metadata (`clrInjectedDotNetName`/
+> `clrInjectedMemberName`/`clrInjectedTopLevelFileClass`, `clrName`) so a facadegen-injected symbol *resolves /
+> typechecks* — the sanctioned .NET-space read — but every injected-.NET member call now emits a PLAIN
+> `callStatic`/`callInstance` by the owner's FQN identity (carrying the frontend FACTS: static-ness, the `get_X`/
+> `set_X` accessor name, `typeArgs`+`shapeTypes`, the `op_` name with receiver prepended, the extension `__self`
+> prepend, and the constructed-generic owner identity from the memberType supertype walk). **bir2cir's new
+> `NetInteropBinding` pass** (Program.cs — the 3rd instance of the ClrEventOperatorBinding/KClassMemberBinding
+> pattern) resolves the owner FQN against the loaded .NET Reference Assemblies (a long-lived `MetadataLoadContext`
+> on `ReferenceMetadataIndex`, `ResolveNetType(fqn)`) and REFLECTS the member to bind the shape —
+> `clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet`/`clrGeneric*` — the SAME "emit the identity, bind in bir2cir"
+> pattern #52 established for the stdlib off the ref.dll. CIR is byte-identical (il-injstatic verified). The
+> **ONE** shape kotc still lowers directly is the `kotlin.clr.ClrEvent<T>` read (`BirEmitter.kt` ClrEvent branch):
+> a .NET event is CLR-ONLY vocabulary with no plain-Kotlin call form (it exposes `add_/remove_`, never a `get_`),
+> so — like `byref` and `ClrRef<T>` — it is a facadegen-injected synthetic that has NO definition in any reference
+> assembly and cannot be "resolved + bound"; kotc lowers it to its OWN dedicated dialect node **`clrEventGet`** (NOT the
+> shared `clrPropGet`, which after A2 is 100% bir2cir-produced = a real .NET property), and bir2cir's
+> `ClrEventOperatorBinding` binds the `clrEventGet + +=/-=` pair into `add_X`/`remove_X` (consumed there, never reaches
+> ilemit). kotc's BIR thus emits ZERO shared `clr*`-shape nodes — only plain `callStatic`/`callInstance` + the dialect forms.
+> (The ClrH routing arm was already deleted — #62 / CLEANUP-A1, see §"Genuinely unavoidable"
 > below.) The one other kotc-purity item — **naming purity** — is now **DONE (#68, 2026-07-08)**: kotc no longer
 > authors the `<>dotkt_` CLR-unspeakability marker. Synthetic type defs carry a structural **`generated:true`** flag
 > (ilemit stamps `[System.Runtime.CompilerServices.CompilerGenerated]` from it — no `<>dotkt_` name-sniff), and the
@@ -201,10 +210,10 @@ are (c) keep; the facadegen-injected `clr*`-SHAPE rows are A2/#61 — see the ca
 | `kotlin.clr.byref` 4538 | byref marker intrinsic | user interop fiction; bir2cir does the actual byref binding |
 | `kotlin.clr.ClrRefArgument` 4545 | stdlib byref-arg marker | kotc only *shapes* addressably; bir2cir decides the byref call |
 | `kotlin.clr.stackBuffer` 3304 | stack-alloc intrinsic | genuine compiler intrinsic (no BCL equivalent) |
-| `kotlin.clr.ClrEvent` 1155/3313 | .NET event fiction | kotc shapes the receiver; bir2cir binds add/remove |
-| `kotlin.clr.ClrRef`/`Span` 4856/4859 | byref/span interop | representation fictions |
+| `kotlin.clr.ClrEvent` (ClrEvent branch) | .NET event fiction | **CLR-only vocab, kotc lowers it (A2-exempt):** an event has no plain-Kotlin call form; kotc emits the receiver as the dedicated dialect node `clrEventGet` (NOT `clrPropGet`), bir2cir's `ClrEventOperatorBinding` binds add/remove |
+| `kotlin.clr.ClrRef`/`Span` 4856/4859 | byref/span interop | representation fictions (CLR-only vocab; kotc lowers, like ClrEvent/byref) |
 | `@ClrField` 980, `@ClrAwait` 1543, `@Volatile` 990 | annotation flags | genuine frontend annotation facts (field modifier / await marker) |
-| top-level file-facade call 4334–4368 (`clrStatic`) | injection meta | the sanctioned round-trip .NET static-call path |
+| top-level file-facade call (now `callStatic` by identity) | injection meta | **A2/#61 DONE:** kotc emits a PLAIN `callStatic` by the file-class FQN identity; bir2cir's `NetInteropBinding` shapes it to `clrStatic` off the refs |
 
 ### 2.3 Frontend LOWERINGS — relocatable-but-deferred (NOT "must-stay")
 

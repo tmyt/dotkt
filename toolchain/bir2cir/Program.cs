@@ -51,6 +51,9 @@ sealed class Pipeline
         var diagnostics = refs.Diagnostics.ToList();
         foreach (var d in diagnostics) Console.Error.WriteLine($"bir2cir: WARNING ref-scan diagnostic: {d}");
         var cirFiles = TransformFiles(birFiles, refs);
+        // Release the long-lived .NET-interop MetadataLoadContext (kept alive across all transform passes for
+        // NetInteropBinding's owner resolution — A2 / #61) now that no pass needs metadata reflection.
+        refs.DisposeNet();
         WriteCirFiles(cirFiles);
 
         var suspend = SuspendShapeAnalysis.Combine(birFiles.Select(f => f.Suspend));
@@ -194,6 +197,17 @@ sealed class Pipeline
             // callInstance reaches MemberCallSubstitution's primitive-compareTo -> System.Double.CompareTo routing, and
             // before any type-erasing pass — so the inner value nodes stay pure kotlin.* and lower normally downstream.
             FaithfulHintRecognition.Apply(bir.Root, refs);
+            // .NET-INTEROP CALL BINDING (A2 / #61): bind a facadegen-injected .NET member call — which kotc now emits as
+            // a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN identity — to its CLR call SHAPE
+            // (clrStatic/clrInstance/clrPropGet/clrPropSet/clrGeneric*), resolved off the loaded .NET reference
+            // assemblies (ReferenceMetadataIndex's long-lived MetadataLoadContext). THIS is where .NET binding belongs
+            // (the Kotlin<->CLR layer); kotc is .NET-agnostic. Runs EARLY — before ShapeSynthesis (so a generic .NET
+            // method's `shapeTypes` is derived) and before every type-erasing / substitution pass — reproducing the flow
+            // that existed when kotc emitted the `clr*` nodes directly. A no-op for a `kotlin.*`/local/unresolvable owner
+            // (the stdlib is bound by MemberCallSubstitution off the ref.dll) and for the three CLR-only-vocab synthetics
+            // kotc lowers itself (ClrEvent<T>/ClrRef<T>/byref — they don't exist in any ref, so they never resolve here).
+            // Non-ref only (the stdlib self-build injects no facadegen .NET interop).
+            if (!_options.RefBuild) NetInteropBinding.Apply(bir.Root, refs);
             // #55 §4 — DERIVE the `clrGeneric*` overload-matcher `shapes` from kotc's pure-Kotlin `shapeTypes` (the
             // DECLARED parameter identities) via the @ClrTypeAlias index. kotc no longer knows the .NET shape names
             // (Int64/SByte/…) — that CLR knowledge lives HERE. Runs FIRST in the per-file loop, before ANY type-erasing
@@ -602,6 +616,19 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _arrayFactoryElemHints = new(StringComparer.Ordinal);// array factory name -> concrete elem FQN (empty-call fallback)
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaults = new(StringComparer.Ordinal); // "owner|name|paramCount" -> (argPos -> default BIR)
 
+    // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the loaded .NET references +
+    // the running framework's reference dir. NetInteropBinding resolves a facadegen-injected owner FQN
+    // ("System.Console", "Kfc.App") to a metadata-only System.Reflection.Type here and reflects its member SHAPE
+    // (static/instance/property/field/indexer/generic) to bind the plain callStatic/callInstance kotc emitted by
+    // identity into the CLR-codegen `clr*` vocabulary. kotc no longer decides the .NET call shape (layer purity —
+    // this is the SAME "emit the identity, bind in bir2cir" pattern as the stdlib ref.dll, one axis over). The MLC is
+    // kept ALIVE for the whole run (Type handles are per-MLC; disposed in Driver.Run) and populated lazily.
+    MetadataLoadContext _netMlc;
+    List<Assembly> _netRefAsms;       // the explicit --ref .NET assemblies (user libs, e.g. Kfc)
+    List<Assembly> _netRuntimeAsms;   // the running framework's reference dir (System.* et al.)
+    readonly Dictionary<string, Type> _netTypeCache = new(StringComparer.Ordinal);
+    bool _netInit;
+
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
     // kotlin.* -> CLR type map already hardcoded in this file). Listed here so member-call / construction
     // substitution works even before kotc preserves the class @ClrTypeAlias attribute on the ref.dll. Only the
@@ -726,6 +753,83 @@ sealed class ReferenceMetadataIndex
         if (_ownerAlias.TryGetValue(fqn, out bcl)) { kind = _ownerKind.GetValueOrDefault(fqn, "class"); return true; }
         bcl = null; kind = null; return false;
     }
+
+    // Resolve a facadegen-injected .NET owner FQN to its metadata-only reflection Type (A2 / #61), or null when the
+    // owner is NOT a reachable .NET type — i.e. a `kotlin.*`/`kotlinx.*`/`dotkt*` stdlib owner (bound by
+    // MemberCallSubstitution off the ref.dll, NOT here), a local app-emitted type, or anything the loaded refs +
+    // framework dir don't contain. `genericArity` lets a constructed generic owner ("System.Collections.Generic.List"
+    // + args) resolve its open definition (`List`1`). Consumed by NetInteropBinding to shape the call. Cached.
+    public Type ResolveNetType(string fqn, int genericArity = 0)
+    {
+        if (string.IsNullOrEmpty(fqn)) return null;
+        // The stdlib's own vocabulary is bound off the ref.dll (@ClrTypeAlias/@ClrIntrinsic) by MemberCallSubstitution,
+        // never reflected as a raw .NET type here — skip it so the two binders never collide. This ALSO skips the three
+        // CLR-only-vocabulary SYNTHETICS facadegen injects purely to make the frontend typecheck — `kotlin.clr.ClrEvent`,
+        // `kotlin.clr.ClrRef`, the `kotlin.clr.byref` marker — which have NO definition in any reference assembly and are
+        // fully lowered by kotc itself (kotc's own dialect extension). They must never be resolved here (they don't
+        // exist); their pre-lowered nodes (an event `clrPropGet`, a ref-passing form) flow through this pass opaquely.
+        if (fqn == "kotlin" || fqn.StartsWith("kotlin.", StringComparison.Ordinal)
+            || fqn.StartsWith("kotlinx.", StringComparison.Ordinal)
+            || fqn.StartsWith("dotkt", StringComparison.Ordinal)) return null;
+        if (_netTypeCache.TryGetValue(fqn, out var cached)) return cached;
+        EnsureNetMlc();
+        Type found = null;
+        if (_netMlc != null)
+        {
+            foreach (var candidate in NetTypeCandidates(fqn, genericArity))
+            {
+                foreach (var asm in _netRefAsms) { found = SafeGetType(asm, candidate); if (found != null) break; }
+                if (found == null)
+                    foreach (var asm in _netRuntimeAsms) { found = SafeGetType(asm, candidate); if (found != null) break; }
+                if (found != null) break;
+            }
+        }
+        _netTypeCache[fqn] = found;
+        return found;
+    }
+
+    // The FQN spellings to probe: the plain name, then the generic-arity backtick form (`List`1`). The exact arity
+    // (from the owner token's type-arg count) is tried first; a small fallback range covers a token that dropped its args.
+    static IEnumerable<string> NetTypeCandidates(string fqn, int genericArity)
+    {
+        yield return fqn;
+        if (genericArity > 0) yield return fqn + "`" + genericArity;
+        for (var k = 1; k <= 8; k++) if (k != genericArity) yield return fqn + "`" + k;
+    }
+
+    static Type SafeGetType(Assembly asm, string fqn) { try { return asm.GetType(fqn, throwOnError: false); } catch { return null; } }
+
+    void EnsureNetMlc()
+    {
+        if (_netInit) return;
+        _netInit = true;
+        try
+        {
+            var runtimeDir = RuntimeEnvironment.GetRuntimeDirectory();
+            var paths = new List<string>(Directory.GetFiles(runtimeDir, "*.dll"));
+            foreach (var a in _assemblies)
+            {
+                var full = Path.GetFullPath(a.Path);
+                paths.Add(full);
+                var dir = Path.GetDirectoryName(full);
+                if (dir != null) paths.AddRange(Directory.GetFiles(dir, "*.dll"));
+            }
+            _netMlc = new MetadataLoadContext(new PathAssemblyResolver(paths.Distinct(StringComparer.Ordinal)));
+            _netRefAsms = new List<Assembly>();
+            foreach (var a in _assemblies)
+            {
+                try { _netRefAsms.Add(_netMlc.LoadFromAssemblyPath(Path.GetFullPath(a.Path))); } catch { }
+            }
+            _netRuntimeAsms = new List<Assembly>();
+            foreach (var p in Directory.GetFiles(runtimeDir, "*.dll"))
+            {
+                try { _netRuntimeAsms.Add(_netMlc.LoadFromAssemblyPath(p)); } catch { }
+            }
+        }
+        catch { _netMlc = null; }
+    }
+
+    public void DisposeNet() { try { _netMlc?.Dispose(); } catch { } _netMlc = null; }
 
     public int OwnerArity(string ownerFqn) => _ownerArity.GetValueOrDefault(ownerFqn, 0);
     public string[] OwnerTypeParamNames(string ownerFqn) => _ownerTypeParams.GetValueOrDefault(ownerFqn);
@@ -4214,11 +4318,13 @@ static class NullableFuncReturnErasure
 // read-only `kotlin.clr.ClrEvent<T>` property (a compile-time fiction — a .NET event is NOT a first-class value), and
 // `w.Changed += handler` resolves through NORMAL Kotlin operator resolution to `w.Changed.plusAssign(handler)`. kotc
 // emits that as the PLAIN operator call `callInstance(ownerType = kotlin.clr.ClrEvent, method = plusAssign/minusAssign,
-// recv = <clrPropGet w Changed>, args = [handler])` — no `add_`/`remove_` naming, no CLR binding. This pass BINDS it:
-// it reads the owner .NET type + event name straight off the clrPropGet member-access node and emits the EXISTING
-// clrEventAdd/clrEventRemove node (ilemit's EmitClrEvent, unchanged) — so the emitted add/remove accessor IL is
-// identical to the old `add_<E>`/`remove_<E>` model. The ClrEvent<T> value + the clrPropGet are consumed here, never
-// emitted (a .NET event isn't materializable). This is the Kotlin<->CLR event relation, which is bir2cir's to own.
+// recv = <clrEventGet w Changed>, args = [handler])` — no `add_`/`remove_` naming, no CLR binding. The event READ
+// `w.Changed` is a DEDICATED kotc-dialect node `clrEventGet` (the ClrEvent<T> handle — a CLR-only-vocab synthetic
+// kotc lowers itself; NOT `clrPropGet`, which after A2/#61 is exclusively a real bir2cir-produced .NET property).
+// This pass BINDS the pair: it reads the owner .NET type + event name straight off the clrEventGet member-access node
+// and emits the EXISTING clrEventAdd/clrEventRemove node (ilemit's EmitClrEvent, unchanged) — so the emitted
+// add/remove accessor IL is identical to the old `add_<E>`/`remove_<E>` model. The ClrEvent<T> value + the clrEventGet
+// are consumed here, never emitted (a .NET event isn't materializable). This is the Kotlin<->CLR event relation, bir2cir's to own.
 static class ClrEventOperatorBinding
 {
     public static JsonNode Apply(JsonNode root) => Walk(root);
@@ -4249,20 +4355,194 @@ static class ClrEventOperatorBinding
         if (TypeJson.OwnerName(node["ownerType"]) != "kotlin.clr.ClrEvent") return null;
         var method = Str(node["method"]);
         if (method != "plusAssign" && method != "minusAssign") return null;
-        // The receiver is the event member-access `w.Changed`, emitted as a clrPropGet carrying the .NET owner type
-        // (`type`), the event name (`name`), and the actual owner value (`recv`). Anything else is not an event op.
-        if (node["recv"] is not JsonObject propGet || Str(propGet["k"]) != "clrPropGet") return null;
+        // The receiver is the event member-access `w.Changed`, emitted by kotc as a `clrEventGet` carrying the .NET
+        // owner type (`type`), the event name (`name`), and the actual owner value (`recv`). Anything else is not an event op.
+        if (node["recv"] is not JsonObject eventGet || Str(eventGet["k"]) != "clrEventGet") return null;
         if (node["args"] is not JsonArray args || args.Count != 1) return null;
-        var isStatic = (propGet["static"] as JsonValue)?.GetValue<bool>() ?? false;
+        var isStatic = (eventGet["static"] as JsonValue)?.GetValue<bool>() ?? false;
         return new JsonObject
         {
             ["k"] = method == "plusAssign" ? "clrEventAdd" : "clrEventRemove",
-            ["type"] = propGet["type"]?.DeepClone(),
-            ["event"] = propGet["name"]?.DeepClone(),
+            ["type"] = eventGet["type"]?.DeepClone(),
+            ["event"] = eventGet["name"]?.DeepClone(),
             ["static"] = isStatic,
-            ["recv"] = isStatic ? null : propGet["recv"]?.DeepClone(),
+            ["recv"] = isStatic ? null : eventGet["recv"]?.DeepClone(),
             ["handler"] = args[0]?.DeepClone(),
         };
+    }
+}
+
+// .NET-INTEROP CALL BINDING (A2 / #61): the Kotlin<->CLR binding for a facadegen-injected .NET member call. kotc
+// emits a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN IDENTITY (`callStatic Kfc.App.get_Count`,
+// `callInstance System.Text.StringBuilder.Append`) carrying only frontend FACTS — static-ness (callStatic vs
+// callInstance), the accessor name (`get_X`/`set_X`), `typeArgs`, the `op_` name with the receiver already
+// prepended, the constructed-generic owner IDENTITY (memberType supertype walk) — and does NOT decide the .NET call
+// SHAPE. THIS pass resolves the owner FQN against the loaded .NET reference assemblies (ReferenceMetadataIndex's
+// long-lived MetadataLoadContext) and, when it IS a reachable .NET type, reflects the member to bind the shape:
+// static/instance method -> `clrStatic`/`clrInstance`; a `get_X`/`set_X` naming a .NET property OR field ->
+// `clrPropGet`/`clrPropSet`; a generic method (`typeArgs` present) -> `clrGenericStatic`/`clrGenericInstance`; an
+// indexer (`get_Item`/`set_Item`, an indexed property) or a synthetic member-extension accessor (no matching
+// property/field) stays a plain instance method call. A `kotlin.*`/local/unresolvable owner is left untouched (the
+// stdlib is bound by MemberCallSubstitution off the ref.dll; a local type is emitted here). CLR-ONLY vocabulary that
+// has no plain-Kotlin form — `.NET events` (ClrEvent<T>), `byref`/`ClrRef<T>` — is NOT emitted as a plain call by
+// kotc (kotc lowers it directly, as facadegen-injected CLR vocab), so it never reaches this pass. Runs BEFORE
+// ClrEventOperatorBinding/KClassMemberBinding/MemberCallSubstitution and before BirTypeLowering, so the shaped `clr*`
+// nodes still carry pure-Kotlin type tokens that the subsequent lowering turns into the CLR forms — the CIR is
+// byte-identical to what kotc used to emit directly (the shape decision merely moved down a layer). Bottom-up walk,
+// mirroring ClrEventOperatorBinding/KClassMemberBinding.
+static class NetInteropBinding
+{
+    static ReferenceMetadataIndex _refs;
+
+    // Mutates IN PLACE (like ShapeSynthesis): this runs in bir2cir's phase-1 per-file region where every pass edits
+    // `bir.Root` in place (BirFile.Root is init-only, not reassignable). The node identity is preserved (its parent link
+    // stays valid); only its `k` + field set change from a plain call to the CLR shape.
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs) { _refs = refs; Walk(root); }
+
+    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+
+    static void Walk(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value);   // children first (bottom-up)
+            Reshape(obj);
+        }
+        else if (node is JsonArray arr)
+        {
+            foreach (var item in arr) if (item != null) Walk(item);
+        }
+    }
+
+    static void Reshape(JsonObject node)
+    {
+        var k = Str(node["k"]);
+        if (k != "callStatic" && k != "callInstance") return;
+        var ownerJson = node["ownerType"];
+        // Peel Nullable/Oblivious/ByRef wrappers to reach the underlying .NET Fqn (a `List<Item>?` receiver's owner is
+        // spelled `nullable(fqn List<Item>)`); the ORIGINAL wrapped node is preserved verbatim in the `type` slot below
+        // (ilemit unwraps nullability when resolving the owner — byte-identical to the old kotc `clrInstance.type`).
+        var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
+        if (ownerFqnNode == null) return;
+        var bare = ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name);
+        var netType = _refs.ResolveNetType(bare, ownerFqnNode.Args?.Length ?? 0);
+        if (netType == null) return;   // not a reachable .NET-interop owner -> leave for the other binders
+
+        var isStatic = k == "callStatic";
+        var method = Str(node["method"]);
+        var hasTypeArgs = node["typeArgs"] is JsonArray ta && ta.Count > 0;
+
+        // Detach every current field (removing a key from a JsonObject detaches its value) so it can be re-added in the
+        // CLR-shape order — byte-identical to what kotc used to emit directly, only the shape decision moved here.
+        var v = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        foreach (var key in node.Select(kv => kv.Key).ToList()) { var val = node[key]; node.Remove(key); v[key] = val; }
+        JsonNode Take(string key) => v.TryGetValue(key, out var x) ? x : null;
+        var owner = Take("ownerType");
+        var args = Take("args") as JsonArray ?? new JsonArray();
+
+        // GENERIC .NET method: the presence of `typeArgs` (a frontend fact) is the signal. ilemit MakeGenericMethods it;
+        // ShapeSynthesis (which runs right after this pass) derives the overload-matcher `shapes` from `shapeTypes`.
+        if (hasTypeArgs)
+        {
+            node["k"] = isStatic ? "clrGenericStatic" : "clrGenericInstance";
+            node["type"] = owner;
+            node["method"] = method;
+            node["typeArgs"] = Take("typeArgs");
+            node["shapeTypes"] = Take("shapeTypes") ?? new JsonArray();
+            if (!isStatic) node["recv"] = Take("recv");
+            node["args"] = args;
+            if (Take("suspendCall") is JsonNode sc1) node["suspendCall"] = sc1;
+            return;
+        }
+
+        // PROPERTY / FIELD accessor: a `get_X`/`set_X` that names a real .NET property (non-indexed) or field ->
+        // clrPropGet/clrPropSet (ilemit emits the accessor call or an ldsfld/ldfld for a field-backed one). A `get_X`
+        // that names NEITHER (a hand-written `get_`-prefixed method, an indexer `get_Item`, a synthetic
+        // member-extension accessor) falls through to the plain method path below — exactly as kotc emitted before.
+        if (method != null && (method.StartsWith("get_", StringComparison.Ordinal) || method.StartsWith("set_", StringComparison.Ordinal))
+            && method.Length > 4 && MemberIsPropertyOrField(netType, method.Substring(4)))
+        {
+            var propName = method.Substring(4);
+            if (method.StartsWith("get_", StringComparison.Ordinal))
+            {
+                node["k"] = "clrPropGet";
+                node["type"] = owner;
+                node["name"] = propName;
+                node["ret"] = Take("ret");
+                node["static"] = isStatic;
+                node["recv"] = isStatic ? null : Take("recv");
+                return;
+            }
+            node["k"] = "clrPropSet";
+            node["type"] = owner;
+            node["name"] = propName;
+            node["static"] = isStatic;
+            node["recv"] = isStatic ? null : Take("recv");
+            JsonNode value = null;
+            if (args.Count > 0) { value = args[0]; args.RemoveAt(0); }   // detach args[0] from the (already-detached) array
+            node["value"] = value;
+            return;
+        }
+
+        // PLAIN static/instance method (incl. indexer get_Item/set_Item, op_*, member-extension synthetic accessor).
+        node["k"] = isStatic ? "clrStatic" : "clrInstance";
+        node["type"] = owner;
+        node["method"] = method;
+        node["argTypes"] = Take("argTypes") ?? new JsonArray();
+        node["ret"] = Take("ret");
+        if (!isStatic) node["recv"] = Take("recv");
+        node["args"] = args;
+        if (Take("suspendCall") is JsonNode sc2) node["suspendCall"] = sc2;
+    }
+
+    // Peel Nullable/Oblivious/ByRef wrappers off an owner type slot to reach the underlying .NET Fqn (name + type-args),
+    // so a `List<Item>?`/`T!`/byref receiver resolves its open .NET definition. Also accepts a LEGACY STRING owner token
+    // (kotc emits some owners — a referenced file class `LibKt`, the await marker `kotlin.clr.CoroutinesKt` — as a bare
+    // string, not a structured `{t:fqn}` node); it carries no structured args (a method-generic's args live in
+    // `typeArgs`). null when there is no Fqn underneath.
+    static TypeNode.Fqn UnwrapFqn(JsonNode ownerJson)
+    {
+        if (ownerJson is JsonValue sv && sv.TryGetValue<string>(out var s) && s != null)
+            return new TypeNode.Fqn(s);
+        var t = TypeJson.Read(ownerJson);
+        while (true)
+            switch (t)
+            {
+                case TypeNode.Fqn f: return f;
+                case TypeNode.Nullable nu: t = nu.Of; break;
+                case TypeNode.Oblivious ob: t = ob.Of; break;
+                case TypeNode.ByRef br: t = br.Of; break;
+                default: return null;
+            }
+    }
+
+    // True iff the .NET type (or a base/interface) declares a NON-indexed property OR a field of this name — the two
+    // members kotc's clrPropGet/clrPropSet covers (a property accessor, or a static/instance field read as ldsfld/ldfld).
+    // An INDEXER (an indexed property, e.g. "Item") is excluded (it stays a plain get_Item/set_Item method call).
+    static bool MemberIsPropertyOrField(Type type, string name)
+    {
+        const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        var seen = new HashSet<Type>();
+        var stack = new Stack<Type>();
+        stack.Push(type);
+        while (stack.Count > 0)
+        {
+            var cur = stack.Pop();
+            if (cur == null || !seen.Add(cur)) continue;
+            try
+            {
+                foreach (var p in cur.GetProperties(Flags))
+                    if (p.Name == name && p.GetIndexParameters().Length == 0) return true;
+                foreach (var fi in cur.GetFields(Flags))
+                    if (fi.Name == name) return true;
+            }
+            catch { /* metadata-load edge on a malformed member table — treat as no match */ }
+            Type baseType = null; try { baseType = cur.BaseType; } catch { }
+            if (baseType != null) stack.Push(baseType);
+            try { foreach (var i in cur.GetInterfaces()) stack.Push(i); } catch { }
+        }
+        return false;
     }
 }
 

@@ -53,7 +53,7 @@ STR_OK = {
 # enforced value/type-arg slots.
 CLR_OWNER_KINDS = {
     "clrStatic", "clrInstance", "clrGenericStatic", "clrGenericInstance",
-    "clrPropGet", "clrPropSet", "clrStaticField", "clrEventAdd", "clrEventRemove", "constrainedCall",
+    "clrPropGet", "clrPropSet", "clrStaticField", "clrEventGet", "clrEventAdd", "clrEventRemove", "constrainedCall",
 }
 # Keys that legitimately hold an ARRAY containing bare strings: only the type-PARAMETER
 # name-declaration shorthand (typeParams may be ["T"] instead of [{name:"T"}]). A type-param
@@ -95,6 +95,10 @@ KINDS = {
     "tupleItem", "unsupportedExpr",
     "stackAlloc", "stackGet", "stackSet", "stackAsSpan",
     "byrefOf", "byrefLoad", "byrefStore",
+    # kotc-dialect CLR-only-vocab: a .NET event READ (`w.Changed`), the ClrEvent<T> handle. Emitted by kotc (a .NET
+    # event has no plain-Kotlin call form), consumed by bir2cir ClrEventOperatorBinding with the +=/-= into
+    # clrEventAdd/Remove — never reaches ilemit/CIR. (byref/ClrRef are the other two CLR-only-vocab forms.)
+    "clrEventGet",
     # --- CLR-lowered (bir2cir → CIR) ---
     "newClr", "clrInstance", "clrStatic", "clrGenericStatic", "clrGenericInstance",
     "clrPropGet", "clrPropSet", "clrStaticField", "clrEventAdd", "clrEventRemove",

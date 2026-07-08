@@ -1358,11 +1358,18 @@ static class SuspendColdLowering
                     if (o["body"] is JsonArray vbBody) foreach (var s in vbBody) EmitStmt(s, outp);
                     return o["result"] != null ? Rewrite(o["result"], outp) : NullConst(TypeJson.Read(o["type"]) ?? AnyTn);
                 }
+                // bundle-6 P4 REVERSE bridge — the Task.await() marker (kotlin.clr.CoroutinesKt.await, suspendCall).
+                // A2 (#61): kotc emits it as a PLAIN callStatic/callInstance by identity; its kotlin.* owner is SKIPPED by
+                // NetInteropBinding (a stdlib owner), so it reaches here unshaped, the owner in `ownerType`. It MUST be
+                // caught BEFORE the generic callStatic/callInstance suspendCall path below — else it routes to a bogus
+                // same-assembly cold entry `await$dotkt_suspend` (unresolved). The generic-vs-non-generic split is the
+                // `typeArgs` presence (was the `clrGenericStatic` k). (`type` covers the pre-A2 clr* form for safety.)
+                if (Bool(o["suspendCall"]) && Str(o["method"]) == "await"
+                    && (Str(o["type"]) ?? TypeJson.OwnerName(o["ownerType"])) == AwaitMarkerOwner
+                    && k is "callStatic" or "callInstance" or "clrStatic" or "clrGenericStatic")
+                    return EmitAwaitPoint(o, outp);
                 if ((k == "callStatic" || k == "callInstance") && Bool(o["suspendCall"]))
                     return EmitSuspensionPoint(o, outp);
-                if ((k == "clrStatic" || k == "clrGenericStatic") && Bool(o["suspendCall"])
-                    && Str(o["type"]) == AwaitMarkerOwner && Str(o["method"]) == "await")
-                    return EmitAwaitPoint(o, outp);
                 // BUG 1 (cross-module suspend consume): kotc emits a suspend call to a CROSS-ASSEMBLY (referenced)
                 // suspend fun in the `clr*` vocabulary — `clrStatic`/`clrInstance` on the referenced file-class/owner,
                 // `clrGenericStatic`/`clrGenericInstance` for a generic one — NOT `callStatic`/`callInstance`. Such a
@@ -1910,7 +1917,9 @@ static class SuspendColdLowering
         // reference, so the field spill/copy is safe (Codex-confirmed).
         JsonNode EmitAwaitPoint(JsonObject awaitNode, List<JsonNode> outp)
         {
-            var generic = Str(awaitNode["k"]) == "clrGenericStatic";
+            // A2 (#61): generic await is now signaled by `typeArgs` presence (kotc emits a plain callStatic carrying the
+            // type-arg fact), not the pre-A2 `clrGenericStatic` k-tag.
+            var generic = awaitNode["typeArgs"] is JsonArray ga && ga.Count > 0;
             TypeNode resultTok = UnitTn, taskType, awaiterType;
             if (generic)
             {

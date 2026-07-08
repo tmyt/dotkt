@@ -91,6 +91,19 @@ il_emit() { # <name> <ildir> <asm> <birdir> [extra ilemit args...]
 	# bir2cir reads the REFERENCE stdlib for the @ClrTypeAlias/@ClrIntrinsic labels: app-build collection/
 	# StringBuilder/Regex type tokens and member calls lower from it (bir2cir is the single substitution home).
 	local refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
+	# A2 (#61): bir2cir binds a facadegen-injected .NET member call to its CLR shape by RESOLVING the owner FQN
+	# against the loaded .NET reference assemblies (its long-lived MetadataLoadContext), so it needs the SAME
+	# app .NET refs ilemit gets — the sample's own runtime.cs dll etc. Forward every extra `--ref` (in "$@")
+	# to bir2cir too, EXCEPT the RUNTIME stdlib (bir2cir reads the REFERENCE stdlib, added above). System.* owners
+	# resolve from the running framework's reference dir with no explicit --ref.
+	local il_args=("$@") ai=0
+	while (( ai < ${#il_args[@]} )); do
+		if [[ "${il_args[ai]}" == "--ref" ]]; then
+			local r="${il_args[ai+1]}"
+			[[ "$r" != "$STDLIB_RT_DLL" ]] && refarg+=(--ref "$r")
+			ai=$((ai+2))
+		else ai=$((ai+1)); fi
+	done
 	dotnet "$BIR2CIR_DLL" "$cirdir" "${refarg[@]}" "$birdir"/*.bir.json >/dev/null 2>&1 || return 1
 	dotnet "$ILEMIT_DLL" "$ildir" "$asm" "$@" "$cirdir"/*.cir.json >/dev/null 2>&1
 }
