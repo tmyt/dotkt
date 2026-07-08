@@ -15,6 +15,7 @@ partial class Emitter
 {
     TypeBuilder _enumAdapterTB;          // the open generic adapter `<>dotkt_EnumeratorOverKotlinIterator`1`
     ConstructorBuilder _enumAdapterCtor; // its ctor(Iterator<T>) on the open def
+    const string EnumeratorAdapterName = "<>dotkt_EnumeratorOverKotlinIterator`1"; // referenced from the stdlib dll in app builds
 
     // Emit the generic adapter type ONCE (after the Kotlin Iterator interface's methods are declared). No-op if the
     // assembly has no kotlin.collections.Iterator (nothing to bridge). NOTE: the "kotlin.collections.Iterator" +
@@ -127,7 +128,15 @@ partial class Emitter
     bool GenerateGetEnumeratorIfNeeded(TypeInfo ti, Type itype)
     {
         if (ti.Methods.ContainsKey("GetEnumerator")) return true;       // already generated (idempotent across interfaces)
-        if (_enumAdapterTB == null) return false;                       // no Kotlin Iterator in this assembly
+        // The adapter is emitted LOCALLY only in the assembly that emits kotlin.collections.Iterator (the stdlib rt
+        // build). In an APP assembly it is a REFERENCED public generic type in DotKt.Stdlib.dll — resolve it so an app
+        // class implementing Iterable<E> (bir2cir-lowered to IEnumerable<E>) still gets a synthesized GetEnumerator (#58).
+        Type externalAdapterOpen = null;
+        if (_enumAdapterTB == null)
+        {
+            externalAdapterOpen = ResolvesExternally(EnumeratorAdapterName) ? ResolveType(EnumeratorAdapterName) : null;
+            if (externalAdapterOpen == null) return false;              // no Kotlin Iterator adapter available anywhere
+        }
         if (!itype.IsGenericType || !EnumerableDerived.Contains(itype.GetGenericTypeDefinition())) return false;
         if (!ti.Methods.TryGetValue("iterator", out var iterMethod)) return false;   // nothing to wrap
 
@@ -138,8 +147,22 @@ partial class Emitter
         var selfType = ti.IsGeneric ? ti.TB.MakeGenericType(ti.TB.GetGenericArguments()) : (Type)ti.TB;
         var iterCall = ti.IsGeneric ? TypeBuilder.GetMethod(selfType, iterMethod) : (MethodInfo)iterMethod;
 
-        var adapterClosed = _enumAdapterTB.MakeGenericType(elemType);                 // adapter<E>
-        var adapterCtor = TypeBuilder.GetConstructor(adapterClosed, _enumAdapterCtor);
+        // adapter<E> + its ctor(Iterator<E>). Local build: the adapter is our TypeBuilder (TypeBuilder.GetConstructor
+        // re-anchors the ConstructorBuilder). App build: it is a referenced runtime type — MakeGenericType, then reflect
+        // the (single) ctor for a concrete element, or TypeBuilder.GetConstructor when the element is a class type param.
+        Type adapterClosed; ConstructorInfo adapterCtor;
+        if (_enumAdapterTB != null)
+        {
+            adapterClosed = _enumAdapterTB.MakeGenericType(elemType);
+            adapterCtor = TypeBuilder.GetConstructor(adapterClosed, _enumAdapterCtor);
+        }
+        else
+        {
+            adapterClosed = externalAdapterOpen.MakeGenericType(elemType);
+            adapterCtor = ContainsTypeBuilder(elemType)
+                ? TypeBuilder.GetConstructor(adapterClosed, externalAdapterOpen.GetConstructors()[0])
+                : adapterClosed.GetConstructors()[0];
+        }
         var ienumElem = typeof(System.Collections.Generic.IEnumerator<>).MakeGenericType(elemType);
         var ienumerableGenDef = typeof(System.Collections.Generic.IEnumerable<>);
         var ienumerableElem = ienumerableGenDef.MakeGenericType(elemType);

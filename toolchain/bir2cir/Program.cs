@@ -2435,15 +2435,19 @@ static class IteratorConsumerNormalization
                 map[vn3] = elem3;
                 obj["type"] = IterType(elem3);
             }
-            // A hasNext/next `callInstance` whose synthetic owner addresses one of those iterator locals -> a
-            // `clrInstance` on the real referenced generic interface. callInstance routes through ResolveMethod/
-            // ParseOwner (an EMITTED-type `_types` lookup that KeyNotFounds on a clrg: owner); the CLR-bound member path
-            // is `clrInstance` (EmitClrCall), exactly how the substituted IReadOnlyList's get_Item/get_Count resolve.
-            // next() returns the element, hasNext() returns Boolean; argTypes are empty. `type`/`ret` stay in the source
-            // vocabulary — the later type-lowering pass lowers them.
-            else if (k == "callInstance" && TypeJson.OwnerName(obj["ownerType"]) is string owner &&
-                owner.StartsWith(SynthPrefix, StringComparison.Ordinal) && obj["recv"] is JsonObject recv &&
-                Str(recv["k"]) == "local" && Str(recv["name"]) is string rn && map.TryGetValue(rn, out var e))
+            // A hasNext/next `callInstance` on a Kotlin-iterator owner -> a `clrInstance` on the REAL referenced generic
+            // `kotlin.collections.Iterator<elem>`, where BOTH members are DECLARED. This is required for two owners:
+            //   • the real `kotlin.collections.MutableIterator<elem>` — hasNext/next are INHERITED from Iterator, so a
+            //     callInstance on MutableIterator resolves nowhere (reflection does not walk interface bases) ->
+            //     EntryPointNotFound. Every `for (x in aMutableList)` and `class C : MutableIterable` hits this.
+            //   • the legacy per-element `<>dotkt_KIterator_<elem>` synthetic (addressing a registered iterator local).
+            // callInstance routes through ResolveMethod/ParseOwner (an EMITTED-type `_types` lookup that KeyNotFounds on
+            // a referenced generic); the CLR-bound member path is `clrInstance` (EmitClrCall), exactly how the substituted
+            // IReadOnlyList's get_Item/get_Count resolve. next() returns the element, hasNext() Boolean; argTypes empty.
+            // The element comes from the owner's own type arg (real owner) or the registered local (synthetic owner).
+            // `type`/`ret` stay in the source vocabulary — the later type-lowering pass lowers them.
+            else if (k == "callInstance" && (Str(obj["method"]) is "hasNext" or "next")
+                && IteratorDispatchElem(TypeJson.Read(obj["ownerType"]), obj["recv"], map) is TypeNode e)
             {
                 var method = Str(obj["method"]);
                 obj["k"] = "clrInstance";
@@ -2478,6 +2482,21 @@ static class IteratorConsumerNormalization
         if (vt is TypeNode.Fqn { Args: { Length: 1 } args } f
             && f.Name is "kotlin.collections.Iterator" or "kotlin.collections.MutableIterator")
             return (f.Name, args[0]);
+        return null;
+    }
+
+    // The element type for a hasNext/next dispatch whose owner should be normalized to `kotlin.collections.Iterator<E>`:
+    // a real `kotlin.collections.(Mutable)Iterator<E>` owner yields E from its own type arg; a legacy synthetic
+    // `<>dotkt_KIterator_` owner yields the element of the registered iterator local (`recv`). Null = do not rewrite.
+    static TypeNode IteratorDispatchElem(TypeNode owner, JsonNode recv, Dictionary<string, TypeNode> map)
+    {
+        if (owner is TypeNode.Fqn { Args: { Length: 1 } a } f
+            && f.Name is "kotlin.collections.Iterator" or "kotlin.collections.MutableIterator")
+            return a[0];
+        if (owner is TypeNode.Fqn { Name: { } n } && n.StartsWith(SynthPrefix, StringComparison.Ordinal)
+            && recv is JsonObject r && Str(r["k"]) == "local" && Str(r["name"]) is string rn
+            && map.TryGetValue(rn, out var e))
+            return e;
         return null;
     }
 }

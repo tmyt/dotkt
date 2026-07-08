@@ -463,6 +463,26 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **The `<>dotkt_KIterator_<elem>`/`<>dotkt_KIterable_<elem>` iterator-protocol monomorphization is retired — user
+  `Iterable`/`Iterator` value-type-element classes use the real generic (#58).** kotc used to compiler-synthesize a
+  per-concrete-element non-generic interface (`<>dotkt_KIterator_int`, `<>dotkt_KIterable_int`) for a user
+  `class R : Iterable<Int>`/`Iterator<Int>`, on the false premise "IL can't define a generic interface". It can (the
+  BCL is full of generic interfaces; ilemit emits the stdlib's own; the substitute stdlib build already used the real
+  generic here). Retired, mirroring #57's `ReadWriteProperty` retirement: a user `class R : Iterable<Int>` now links
+  the **real generic `kotlin.collections.Iterable<Int>`** (bir2cir `@ClrTypeAlias`-lowered to
+  `System.Collections.Generic.IEnumerable<int>`), `Iterator<Int>` the real emitted stdlib `kotlin.collections.Iterator<Int>`,
+  and every `for (x in r)` / `it.hasNext()`/`it.next()` dispatches on that real generic. Three supporting pieces:
+  (a) kotc deletes `iteratorElemIface`/`iterableElemIface`/`kIteratorName`/`kIterableName`/`iterableIfaces` + the
+  synthetic-def emission + all three consumer sites; (b) **ilemit**'s reverse GetEnumerator bridge, previously able to
+  synthesize `GetEnumerator` only when `kotlin.collections.Iterator` was emitted in the SAME assembly (the stdlib rt
+  build), now also resolves the shared public adapter `<>dotkt_EnumeratorOverKotlinIterator\`1` from the **referenced**
+  `DotKt.Stdlib.dll`, so an app class implementing `IEnumerable<int>` gets its `GetEnumerator` — else `TypeLoadException`;
+  (c) **bir2cir**'s `IteratorConsumerNormalization` now normalizes a `hasNext`/`next` dispatch on the real
+  `kotlin.collections.(Mutable)Iterator<E>` owner (not only the legacy synthetic) to a `clrInstance` on the base
+  `Iterator<E>` where both members are DECLARED — required because `MutableIterator` only ADDS `remove`, so its
+  inherited `hasNext`/`next` resolve nowhere as a `callInstance` (every `for (x in aMutableList)` hits this). The
+  `<>dotkt_CharSequence` adapter is untouched — `kotlin.CharSequence` has no faithful BCL equivalent, a genuine
+  reason distinct from the false generic-interface premise. Output runs correctly and is ilverify-clean.
 - **`Delegates.observable`/`vetoable`/`notNull` now resolve to the real stdlib — kotc's `synthDelegate`
   vestige + the `ReadWriteProperty` monomorphization are deleted (#57).** kotc used to intercept
   `kotlin.properties.Delegates.observable/vetoable/notNull` and compiler-synthesize a per-value-type delegate

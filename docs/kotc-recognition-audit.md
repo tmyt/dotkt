@@ -545,7 +545,18 @@ _All operator classes (1–4) + the range partial + String.plus are done._
 - kotc's **own synthetic types** with no IR origin: the `<>dotkt_*` closure/`KPropertyImpl`/
   `CharSequence`-adapter family. (The `<>dotkt_*Delegate_<V>` **delegate classes** and the `<>dotkt_RWProperty_<V>`
   monomorphized interface are **gone** — #57 retired them; `Delegates.*` uses the real stdlib + real generic
-  `ReadWriteProperty`. The `<>dotkt_KProperty`/`KPropertyImpl` property-reference pair stays.)
+  `ReadWriteProperty`. The `<>dotkt_KIterator_<elem>`/`<>dotkt_KIterable_<elem>` **iterator-protocol**
+  monomorphization is **gone too** — #58 retired it: a user `class R : Iterable<Int>`/`Iterator<Int>` (concrete
+  value-type element) now links the REAL generic `kotlin.collections.Iterable<Int>` (bir2cir `@ClrTypeAlias`'d to
+  `System.Collections.Generic.IEnumerable<int>`; ilemit's reverse GetEnumerator bridge — extended to resolve the
+  shared adapter from the referenced stdlib dll in app assemblies — synthesizes `GetEnumerator` from `iterator()`)
+  / `kotlin.collections.Iterator<Int>` (a real emitted stdlib interface), and every `for (x in r)` /
+  `it.hasNext()`/`it.next()` dispatches on that real generic (bir2cir `IteratorConsumerNormalization` normalizes
+  the dispatch to `clrInstance` on the base `Iterator<Int>`, covering the inherited-member `MutableIterator` case).
+  Its premise ("IL can't define a generic interface") was false — the reverse bridge already used the real generic
+  in the substitute build; app builds now match. The `<>dotkt_KProperty`/`KPropertyImpl` property-reference pair
+  and the `<>dotkt_CharSequence` adapter stay — the latter has NO faithful BCL equivalent, a DIFFERENT (genuine)
+  reason, not the false generic-interface premise.)
   These are CLR-representation inventions for closures/property-references that
   CLAUDE.md keeps in the "delegate/closure family" bucket; their FQN literals (`<>dotkt_*`) are not `kotlin.*`
   and name a type kotc itself defines, so they are outside the "hardcoded `kotlin.*` literal" metric. Even these

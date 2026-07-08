@@ -239,10 +239,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// local + element type), so `buf[i]`/`buf[i]=v`/`buf.size` rewrite to stack ops while the block is spliced.
 	internal class StackBufInfo(val ptrName: String, val lenName: String, val elemT: TypeNode)
 	internal val stackBufSubst = java.util.IdentityHashMap<IrValueDeclaration, StackBufInfo>()
-	// Synthetic monomorphized interfaces for the Kotlin iterator protocol. IL can't define a generic
-	// interface yet, so per concrete element type we emit a non-generic `KIterator_<elem>` with
-	// `hasNext():bool` / `next():<elem>` (Codex-advised monomorphization). elemBir -> interface name.
-	internal val iterIfaces = LinkedHashMap<String, String>()
+	// The Kotlin iterator protocol (`(Mutable)Iterator/Iterable<E>`) is NOT monomorphized: kotc emits the REAL
+	// generic identity — `kotlin.collections.Iterator<E>` (a real emitted stdlib interface) / `Iterable<E>`
+	// (@ClrTypeAlias'd by bir2cir to `System.Collections.Generic.IEnumerable<E>`, whose GetEnumerator ilemit's
+	// reverse bridge synthesizes from the class's `iterator()`). A user `class R : Iterable<Int>` supertype, a
+	// `for (x in r)`, and every `it.hasNext()`/`it.next()` all dispatch on that real generic — exactly as `by lazy`
+	// dispatches on real `kotlin.Lazy<T>` (#57). The old per-element `<>dotkt_KIterator_<elem>`/`KIterable_<elem>`
+	// monomorphization was a pre-generic-interface workaround ("IL can't define a generic interface" — false: the
+	// BCL is full of them, ilemit emits the stdlib's own, and `Lazy<T>` proves a value-type arg works). Retired (#58).
 	// A custom (non-lazy) delegated property passes a `KProperty<*>` to getValue/setValue. KProperty has no
 	// BCL equivalent (pure binding), so — like Kotlin/JVM's PropertyReferenceImpl — we compiler-generate a
 	// minimal `KProperty` interface (`name`) + `KPropertyImpl(name)` class into the user's assembly.
@@ -308,36 +312,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return listOf(iface, impl)
 	}
 
-	internal fun kIteratorName(elem: TypeNode): String =
-		iterIfaces.getOrPut(elem.toJson()) { "<>dotkt_KIterator_" + mangle(elem) }
-
-	/** `kotlin.collections.(Mutable)Iterator<E>` -> the monomorphized synthetic interface name, else null. */
-	internal fun iteratorElemIface(t: IrType): String? {
-		val fq = t.classFqName?.asString() ?: return null
-		if (fq != "kotlin.collections.Iterator" && fq != "kotlin.collections.MutableIterator") return null
-		val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()
-			?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: OBJ
-		// An element that CONTAINS a type variable can't be a monomorphized synthetic — it would bake an unresolvable
-		// `tv`. Don't register/emit one; birType maps it to the CLR-native generic IEnumerator instead.
-		if (hasTv(elem)) return null
-		return kIteratorName(elem)
-	}
-
-	// `kotlin.collections.(Mutable)Iterable<E>` -> a monomorphized synthetic interface `<>dotkt_KIterable_<elem>`
-	// with `operator fun iterator(): KIterator_<elem>` (same IL-can't-define-generic-interface workaround as
-	// Iterator). Lets a user `class R : Iterable<T>` link a real supertype and a `for (x in r)` resolve its iterator.
-	internal val iterableIfaces = LinkedHashMap<String, String>()
-	internal fun kIterableName(elem: TypeNode): String =
-		iterableIfaces.getOrPut(elem.toJson()) { kIteratorName(elem); "<>dotkt_KIterable_" + mangle(elem) }
-	internal fun iterableElemIface(t: IrType): String? {
-		val fq = t.classFqName?.asString() ?: return null
-		if (fq != "kotlin.collections.Iterable" && fq != "kotlin.collections.MutableIterable") return null
-		val elem = (t as? IrSimpleType)?.arguments?.firstOrNull()
-			?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: OBJ
-		if (hasTv(elem)) return null   // element contains a type variable -> CLR-native IEnumerable, no synthetic
-		return kIterableName(elem)
-	}
-
 	// kotlin.CharSequence has no faithful .NET equivalent (it's a read-only INDEXED polymorphic char view — neither
 	// IEnumerable<char>, char[], nor IReadOnlyList<char> fits, and String doesn't implement any of them as a common
 	// supertype). So a user `class S : CharSequence` gets a synthetic monomorphized interface `<>dotkt_CharSequence`
@@ -355,18 +329,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// A `kotlin.properties.Read(Write)Property<T,V>`-typed delegate is NOT monomorphized: kotc emits the REAL
 	// generic stdlib interface identity (like `by lazy`'s `kotlin.Lazy<T>`), so delegate field/local types,
 	// the `Delegates.observable(…)` value, and the getValue/setValue dispatch owner share one type (ilverify-clean).
-
-	/** BIR defs for every synthesized Kotlin-iterator interface seen while emitting this file. The map key
-	 *  `elemJson` is already the element type's structured JSON. */
-	internal fun iteratorIfaceDefs(): List<String> = iterIfaces.entries.map { (elemJson, name) ->
-		val hasNext = """{"name":"hasNext","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":${fqnJson("kotlin.Boolean")},"body":[]}"""
-		val next = """{"name":"next","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":$elemJson,"body":[]}"""
-		"""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$hasNext,$next]}"""
-	} + iterableIfaces.entries.map { (elemJson, name) ->
-		// `KIterable_<elem>` -> `iterator(): KIterator_<elem>` (registered under the same elemJson key).
-		val iter = """{"name":"iterator","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":${fqnJson(iterIfaces[elemJson]!!)},"body":[]}"""
-		"""{"name":${str(name)},"kind":"interface","base":null,"fields":[],"ctors":[],"methods":[$iter]}"""
-	}
 
 	// heap ref-cell: local `var`s captured-and-mutated by a (non-inline) closure / object / local class are promoted
 	// to a shared `<>dotkt_Ref<T>{ var v }` so the mutation is visible across the capture boundary. Per top-level
@@ -437,7 +399,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// de-duplicated by ilemit, but lifted `__lambdaN` are file-class methods that are NOT — so the duplication is
 		// real metadata bloat and a correctness hazard.
 		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear()
-		iterIfaces.clear(); iterableIfaces.clear()
 		usesCharSeq = false; needsKProperty = false
 		// The `@ClrAwait` await intrinsic (`fun <T> Task<T>.await(): T`) is never emitted as a real method —
 		// a suspend call site is flagged with `"suspendCall":true` and lowered by the deferred downstream layer. Skip it.
@@ -539,7 +500,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// The CLR-bound (@ClrTypeAlias) classes are already in `typeDefs` (they flow through `classes` like any other
 		// type — kotc no longer strips them). bir2cir's AliasHelperHoist drops each alias type def and, for a class,
 		// hoists its rule-3 members into the <>dotkt_ClrH_<owner> static helper. kotc synthesizes NO helper itself.
-		val types = (typeDefs + liftedTypes + iteratorIfaceDefs() + charSeqIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
+		val types = (typeDefs + liftedTypes + charSeqIfaceDefs() + kPropertyDefs() + refDefs()).joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types]}"""
 	}
 
@@ -1238,32 +1199,26 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				(if (enclArgs.isNotEmpty()) TypeNode.Fqn(typeName(it), enclArgs) else TypeNode.Fqn(typeName(it))).toJson()
 			}
 		} ?: "null"
-		// Stdlib interface supertypes (Iterator, Read(Write)Property) -> their monomorphized synthetic interfaces;
+		// Stdlib interface supertypes (Iterator, Iterable, Read(Write)Property) -> the REAL generic identity;
 		// a user generic interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
 		val ifaces = klass.superTypes
 			.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
 			.mapNotNull { st ->
 				// A stdlib interface birType maps to .NET (Continuation, Comparable, Comparator, AutoCloseable, …) ->
-				// its clr:/clrg: spec; the Kotlin iterator/iterable protocol -> a synthetic interface; a user generic
-				// interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
-				// The Kotlin iterator/iterable protocol -> a synthetic monomorphized interface, checked BEFORE birType:
-				// `Iterable<T>` as a parameter type lowers to IEnumerable<T> (birType), but as a user class SUPERTYPE it
-				// must stay the synthetic KIterable — implementing IEnumerable<T> would demand a synthesized GetEnumerator
-				// (the producing-side bridge, separate work). `for (x in r)` over the synthetic interface still works.
-				// In the RUNTIME (substitute) build the synthetic monomorphized KIterable/KIterator are obsolete: the
-				// reverse bridge synthesizes GetEnumerator, so an Iterable supertype can be the real @Clr IEnumerable<E>
-				// (birType -> clrg:), and an Iterator supertype the real generic kotlin.collections.Iterator<E> (which the
-				// adapter wraps). Using the real interfaces keeps the producing + consuming sides type-compatible.
-				val synthIter = if (stdlibSubstitute) null else (iteratorElemIface(st) ?: iterableElemIface(st))
-				if (synthIter != null) fqnJson(synthIter)
-				else {
-					val bt = birType(st)
-					val stClass = st.classifierOrNull?.owner as? IrClass
-					when {
-						bt is TypeNode.Fn -> null
-						stClass?.let { clrName(it) } != null -> bt.toJson()
-						else -> charSeqIface(st)?.let { fqnJson(it) } ?: stClass?.let { ownerSpec(it, st).toJson() }
-					}
+				// its clr:/clrg: spec; a user generic interface `Container<Int>` -> the constructed spec `Container[int]`
+				// (ownerSpec). The Kotlin iterator/iterable protocol is NOT special-cased: a user `class R : Iterable<Int>`
+				// links the REAL generic `kotlin.collections.Iterable<Int>` (bir2cir @ClrTypeAlias'd to
+				// `IEnumerable<int>`; ilemit's reverse bridge synthesizes `GetEnumerator` from the class's `iterator()`),
+				// and an `Iterator<Int>` supertype the real generic `kotlin.collections.Iterator<Int>` (a real emitted
+				// stdlib interface). `for (x in r)` resolves the iterator on that real generic. The old per-element
+				// `<>dotkt_KIterable/KIterator` monomorphization was a false "IL can't define a generic interface"
+				// workaround (#58) — the reverse bridge already handled this in the substitute build; app builds now match.
+				val bt = birType(st)
+				val stClass = st.classifierOrNull?.owner as? IrClass
+				when {
+					bt is TypeNode.Fn -> null
+					stClass?.let { clrName(it) } != null -> bt.toJson()
+					else -> charSeqIface(st)?.let { fqnJson(it) } ?: stClass?.let { ownerSpec(it, st).toJson() }
 				}
 			}
 			.joinToString(",")
@@ -4184,11 +4139,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		}
 		// Instance method on a user class, or a sibling top-level call.
 		return if (recv != null) {
-			// `it.hasNext()`/`it.next()` on a Kotlin iterator, `xs.iterator()` on a Kotlin iterable -> dispatch on the
-			// monomorphized synthetic interface (KIterator_<elem> / KIterable_<elem>).
-			(iteratorElemIface(recv.type) ?: iterableElemIface(recv.type))?.let { ifaceName ->
-				return """{"k":"callInstance","ownerType":${fqnJson(ifaceName)},"virtual":true,"recv":${expr(recv)},"method":${str(name)},"args":[$args]}"""
-			}
+			// `it.hasNext()`/`it.next()` on a Kotlin iterator, `xs.iterator()` on a Kotlin iterable dispatch on the REAL
+			// generic identity via ownerSpec below (`kotlin.collections.Iterator[int]` / `Iterable[int]`) — bir2cir
+			// substitutes/normalizes them (no monomorphized synthetic; #58).
 			val ownerStr = ownerSpec(declaringClass, recv.type)
 			val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
 			// A call to an override of a .NET-mapped interface member (e.g. a user Continuation's resumeWith) uses
@@ -4667,12 +4620,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"kotlin.Double", "kotlin.Float", "kotlin.Boolean", "kotlin.Char", "kotlin.String",
 			"kotlin.UInt", "kotlin.ULong", "kotlin.UByte", "kotlin.UShort" -> return TypeNode.Fqn(kfq)
 		}
-		// A (Mutable)Iterator<E>/Iterable<E> whose ELEMENT is a type parameter (gp:E) can't be a monomorphized synthetic:
-		// the synthetic interface `<>dotkt_KIterator_gp_E` would bake `gp:E` into a NON-generic type, so `next(): gp:E` has
-		// no `E` to resolve at emit (the keystone bug blocking a generic `class HashSet<E>`'s `iterator(): MutableIterator<E>`
-		// and `AbstractCollection<E>`). Map straight to the CLR-native generic IEnumerator<E>/IEnumerable<E> instead — which
-		// is the right target anyway (roadmap step 3, the IEnumerable<->Iterator read-as). Concrete elements keep the
-		// monomorphized synthetic below (the IL-can't-define-a-generic-interface workaround for user iterator classes).
+		// A (Mutable)Iterator<E>/Iterable<E> — for ANY element E, type-parameter (`gp:E`) or concrete (`int`) alike —
+		// maps to the REAL generic identity via the FQN path below: `kotlin.collections.Iterator[E]` (a real emitted
+		// stdlib interface) / `Iterable[E]` (bir2cir @ClrTypeAlias'd to `System.Collections.Generic.IEnumerable<E>`).
+		// No per-element monomorphized synthetic is produced (#58 retired it; the reverse GetEnumerator bridge in ilemit
+		// and the real generic Iterator interface handle the IEnumerable<->Iterator read-as, roadmap step 3).
 		val klass = t.classifierOrNull?.owner as? IrClass
 		// A @Clr / FIR-injected .NET type ("clr:System.Text.StringBuilder"); a constructed generic .NET type
 		// (`Collection<Int>`) carries its concrete args as `clrg:<openName>[int]`.
