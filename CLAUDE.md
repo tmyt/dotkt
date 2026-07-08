@@ -120,16 +120,19 @@ The **authoritative** layer table — including the reference artifact each stag
 > kotc resolves the **entire stdlib (`kotlin.*`)** from the frontend **jar** (`-classpath`), which
 > preserves full Kotlin semantics. facadegen handles the **.NET space ONLY** (`System.*` *and any
 > referenced .NET assembly* — not just System). **NEVER feed the stdlib assembly to
-> `facadegen --scan-asm`.** facadegen can restore inline/operator/infix from the Roundtrip attributes
-> but **cannot** restore the implicit **Companion-object** call (`Type.method`), and the stdlib is
-> implemented *premised on* Companion objects — so a facadegen-reconstructed `kotlin.*` symbol is
-> semantically degraded AND it *duplicates* the jar's, which then **conflict** (this session: a
-> non-reified `arrayOf` from facadegen collided with the jar's reified `arrayOf` →
-> `overload resolution ambiguity`). The fix for any "stdlib symbol missing/ambiguous in an app build"
+> `facadegen --scan-asm`.** NOT because facadegen is incapable — current kotc **fully restores
+> facadegen-derived Companion-object semantics** (the implicit `Type.method` call); the old "facadegen
+> can't restore Companion semantics" rationale is **retired (2026-07-08, user-corrected)** and the stdlib
+> could even be supplied via facadegen. The jar is kept for **speed** (no per-build facadegen scan of the
+> whole stdlib) **and to avoid the jar-vs-facadegen DUPLICATION**: a facadegen-reconstructed `kotlin.*`
+> symbol *duplicates* the jar's and the two **conflict** (this session: a non-reified `arrayOf` from
+> facadegen collided with the jar's reified `arrayOf` → `overload resolution ambiguity`). So use ONE
+> source (the jar), never both. The fix for any "stdlib symbol missing/ambiguous in an app build"
 > is **the jar**, never a facadegen scan or a `kotlin.*` guard inside facadegen (that's treating the
 > symptom — the root error is passing stdlib.dll to facadegen at all). Removed from the production
 > path `packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets` + `scripts/dotkt.sh` (commit
-> `522bdc8`); **still TODO in `scripts/verify-il.sh` + `scripts/verify-differential.sh`.**
+> `522bdc8`) **and from `scripts/verify-il.sh` + `scripts/verify-differential.sh` (DONE — no stdlib
+> `--scan-asm` remains; kotlin.* is on the frontend jar `-classpath`).**
 
 | Module | Owns | Must NOT contain |
 |--------|------|------------------|
