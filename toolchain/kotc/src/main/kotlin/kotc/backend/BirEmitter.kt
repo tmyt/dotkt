@@ -4110,9 +4110,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// UNARY (unaryMinus/unaryPlus/not/inv) recognition MOVED to bir2cir (#52 Phase 5): kotc emits the faithful
 			// `callInstance kotlin.Int.unaryMinus()` (0-arg member) and bir2cir re-emits `{k:unaryOp}` from the
 			// PRIMITIVE_OP_FQ owner. The receiver is value-shaped by the general callInstance path (recvExpr).
-			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) -> `(i + 1)`/`(i - 1)`.
-			if (name == "inc" && operands.size == 1 && primOperand(operands[0])) return """{"k":"binOp","op":"+","lhs":${valueOperand(operands[0])},"rhs":{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}}"""
-			if (name == "dec" && operands.size == 1 && primOperand(operands[0])) return """{"k":"binOp","op":"-","lhs":${valueOperand(operands[0])},"rhs":{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}}"""
+			// `i.inc()`/`i.dec()` (the `i++`/`i--` desugaring) recognition MOVED to bir2cir (#52 Phase 5): kotc emits
+			// the faithful `callInstance kotlin.Int.inc()` (0-arg member, receiver value-shaped by recvExpr) and
+			// PrimitiveOperatorLowering re-emits `(recv + 1)`/`(recv - 1)` (the `const 1:kotlin.Int` literal moves there).
 			// Numeric conversion `x.toLong()`/`x.toInt()`/… is NO LONGER recognized here: kotc emits the plain
 			// `callInstance kotlin.Int.toLong` (the faithful IR); bir2cir reads the `@kotlin.clr.ClrConv` marker off the
 			// stdlib primitive's conversion member on the ref.dll and emits the `conv` node from the callee's return type.

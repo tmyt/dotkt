@@ -424,7 +424,13 @@ too — a ref-build ctor field-init / base-arg is not body-squashed, so a surviv
 kotlin.Int.inv` (bodyless builtin, no ref.dll symbol) would reach ilemit as an unresolvable method call;
 the OLD kotc emitted `unaryOp` (a raw IL op, no method lookup) in every build.
 
-_Remaining classes: class 2 (inc/dec), class 3 (comparison intrinsics), class 4 (equality EQEQ/EQEQEQ)._
+**Class 2 (inc/dec) — ✅ DONE.** kotc's `inc`/`dec` lowering (the `i++`/`i--` desugaring) is REMOVED: kotc
+emits the faithful `callInstance kotlin.Int.inc()` (0-arg member, receiver value-shaped by recvExpr) and
+`PrimitiveOperatorLowering` re-emits `(recv + 1)`/`(recv - 1)` — the `const 1:kotlin.Int` literal (typed
+`kotlin.Int` for every primitive, matching the retired kotc literal) moved to bir2cir with it. Byte-identical:
+verify-il 243/0, all gates green.
+
+_Remaining classes: class 3 (comparison intrinsics), class 4 (equality EQEQ/EQEQEQ)._
 
 **Original plan (for the full bucket):**
 - **Principled target, per the faithful-transcriber rule:** kotc emits the faithful `callInstance`

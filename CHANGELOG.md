@@ -474,7 +474,8 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   body-squash, type lowering, suspend) expects — and, crucially, a reference-build ctor field-init / base-arg
   (which is not body-squashed) carries a raw IL op rather than an unresolvable call to the bodyless builtin
   `kotlin.Int.inv`. _Class 1 (arithmetic `plus`/`minus`/`times`/`div`/`rem`, bitwise `and`/`or`/`xor`/`shl`/
-  `shr`/`ushr`, unary `unaryMinus`/`unaryPlus`/`not`/`inv`) done._
+  `shr`/`ushr`, unary `unaryMinus`/`unaryPlus`/`not`/`inv`) done._ _Class 2 (`inc`/`dec`, the `i++`/`i--`
+  desugaring) done — the `const 1:kotlin.Int` literal moved to bir2cir with it._
 - **Numeric conversions are metadata-driven — `@ClrConv` replaces kotc's `NUMBER_CONV` name-heuristic
   (#52 Phase 0/1).** kotc no longer *recognizes* a numeric conversion: it emits the faithful IR call
   `callInstance kotlin.Double.toInt` and nothing more. A new stdlib marker `@kotlin.clr.ClrConv` (no
