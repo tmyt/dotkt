@@ -120,6 +120,16 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **A star-projected collection over a value-type element (`is Map<*,*>` / `List<*>` / `Iterable<*>` / `Collection<*>`
+  on a `Dictionary<int,int>` / `List<int>`) no longer throws `InvalidCastException` (#60).** After `if (g is Map<*,*>)`,
+  the smart-cast `g` erased to `Map<Any?,Any?>` — the CLR generic `IDictionary<object,object>`; because CLR reified
+  generics are INVARIANT, a `Dictionary<int,int>` does NOT implement it, so the `castclass` threw (the JVM erases both
+  to `Map`, hiding it). bir2cir now lowers a star-projected/`Any`-erased collection **cast** to the NON-generic BCL
+  interface (`System.Collections.IDictionary`/`IList`/`ICollection`/`IEnumerable`), which every value-type-arg BCL
+  collection implements — mirroring the existing `is`-test lowering. `println` of such an erased value routes to the
+  stdlib's `clrElemToString(Any?)`, which renders `{1=2}` / `[10, 20, 30]` via the non-generic facades; `.size`
+  re-points onto the non-generic `ICollection.Count` and `[i]` onto `IList.get_Item`. Gate: `cases/il-starproj`
+  (ilverify-clean). All lowering is in bir2cir (the Kotlin↔CLR layer); no kotc/ilemit change.
 - **`!!` on a value-type nullable (`Int?`/`Long?`/`Double?`/`Byte?`…) now emits verifiable IL and throws on null (#56).**
   kotc lowered the `CHECK_NOT_NULL` intrinsic (`v!!`) to a bare pass-through, leaving the `System.Nullable<X>` **struct**
   on the stack where the use site consumes the bare value: `n!! + 1` produced an `InvalidProgramException`, `n!!.toLong()`

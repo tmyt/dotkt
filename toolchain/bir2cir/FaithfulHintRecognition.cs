@@ -25,10 +25,39 @@ static class FaithfulHints
     // Owner FQNs of the (unchanged) stdlib helpers.
     const string CollDefaults = "kotlin.collections.ClrCollectionDefaultsKt";
     const string MapDefaults = "kotlin.collections.ClrMapDefaultsKt";
+    const string NestedToString = "kotlin.collections.ClrNestedToStringKt";
     const string Numbers = "kotlin.NumbersKt";
     const string Library = "kotlin.LibraryKt";
 
     public enum CollKind { Map, Set, Coll }
+
+    // The known collection/map @ClrTypeAlias FQNs whose STAR-projection / `Any?`-erasure has no usable generic BCL form
+    // (invariant + reified on the CLR — a value-type-arg `Dictionary<int,int>` is NOT an `IDictionary<object,object>`).
+    static readonly HashSet<string> StarProjectableColls = new(StringComparer.Ordinal)
+    {
+        "kotlin.collections.Collection", "kotlin.collections.MutableCollection",
+        "kotlin.collections.List", "kotlin.collections.MutableList",
+        "kotlin.collections.Set", "kotlin.collections.MutableSet",
+        "kotlin.collections.Iterable", "kotlin.collections.MutableIterable",
+        "kotlin.collections.Map", "kotlin.collections.MutableMap",
+    };
+
+    // True for a star-projected / `Any(?)`-erased collection SURFACE type (`Map<*,*>` / `List<*>` / an explicit
+    // `as Map<Any?,Any?>`): a known collection alias whose every type-arg is `object`/`Any` (possibly nullable-wrapped).
+    // Such a value can only be rendered non-generically — route it to clrElemToString(Any?), not the generic helpers.
+    public static bool IsStarProjectedColl(TypeNode t)
+    {
+        if (Unwrap(t) is not TypeNode.Fqn f || f.Args is not { } args || args.Length == 0) return false;
+        return StarProjectableColls.Contains(f.Name) && args.All(IsObjectArg);
+    }
+
+    static bool IsObjectArg(TypeNode a) => a switch
+    {
+        TypeNode.Nullable n => IsObjectArg(n.Of),
+        TypeNode.Oblivious o => IsObjectArg(o.Of),
+        TypeNode.Fqn { Args: null, Name: "object" or "kotlin.Any" } => true,
+        _ => false,
+    };
 
     // A collection HINT type -> (kind, type-args). Unwraps a nullable wrapper first (the receiver may be `List<Int>?`),
     // then requires a `kotlin.collections.*` Fqn. name contains "Map" -> Map; else contains "Set" -> Set; else contains
@@ -94,6 +123,12 @@ static class FaithfulHints
     // Null-safe `Any?.toString()` (renders null as "null") on kotlin.LibraryKt (NO type-args).
     public static JsonObject LibraryToString(JsonNode op) =>
         Helper(Library, "toString", new JsonArray { op.DeepClone() }, null);
+
+    // Runtime-erased Kotlin renderer `clrElemToString(x: Any?)`: detects a collection/map at RUNTIME via the non-generic
+    // BCL facades (ICollection/IDictionary) and renders `[a, b]` / `{k=v}`, else plain `toString()`. The star-projected /
+    // `Any`-erased path (a value-type dict smart-cast to `Map<*,*>`) has no bindable generic helper, so it routes here.
+    public static JsonObject ElemToString(JsonNode op) =>
+        Helper(NestedToString, "clrElemToString", new JsonArray { op.DeepClone() }, null);
 
     static JsonObject Helper(string owner, string method, JsonArray args, JsonArray typeArgs)
     {
@@ -213,7 +248,14 @@ static class FaithfulHintRecognition
         if (method != "println" && method != "print") return o;
         if (o["args"] is JsonArray args)
             for (var i = 0; i < args.Count; i++)
-                if (StaticType.Value(args[i], scope) is TypeNode t && FaithfulHints.ClassifyColl(t) is { } c)
+                // A star-projected / `Any`-erased collection cast (a `Map<*,*>` smart-cast, an `as List<*>`): its SURFACE
+                // (cast-target) type is the collection, but its VALUE peels to the erased `Any` local — so the generic
+                // clrCollToString/clrMapToString below can't bind (no value-type covariance on the CLR). Route to
+                // clrElemToString(Any?), which detects the collection at runtime via the non-generic BCL facades. The
+                // cast node is kept (StarProjectionLowering re-points it to the non-generic interface, assignable to Any?).
+                if (FaithfulHints.IsStarProjectedColl(StaticType.Surface(args[i], scope)))
+                    args[i] = FaithfulHints.ElemToString(args[i]);
+                else if (StaticType.Value(args[i], scope) is TypeNode t && FaithfulHints.ClassifyColl(t) is { } c)
                     args[i] = FaithfulHints.CollToString(FaithfulHints.StripAnyCast(args[i]), c.kind, c.args);
         return o;
     }

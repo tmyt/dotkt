@@ -23,11 +23,23 @@ static class NestedCollectionCountLowering
     {
         if (node is JsonObject o)
         {
-            if (Str(o["k"]) == "clrPropGet" && Str(o["name"]) == "Count"
-                && o["recv"] is JsonNode recv && HasNestedCollectionArg(TypeJson.Read(o["type"])))
+            if (Str(o["k"]) == "clrPropGet" && Str(o["name"]) == "Count" && o["recv"] is JsonNode recv)
             {
-                o["type"] = TypeJson.Fqn("System.Collections.ICollection");
-                o["recv"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Collections.ICollection"), ["e"] = recv.DeepClone() };
+                if (HasNestedCollectionArg(TypeJson.Read(o["type"])))
+                {
+                    o["type"] = TypeJson.Fqn("System.Collections.ICollection");
+                    o["recv"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Collections.ICollection"), ["e"] = recv.DeepClone() };
+                }
+                // Star-projected / `Any`-erased receiver: StarProjectionLowering already re-pointed the receiver `cast`
+                // at a NON-generic BCL collection interface (`IList`/`IDictionary`/`ICollection`), but the `.size` accessor
+                // was bound (by MemberCallSubstitution) to the GENERIC `IReadOnly*<object>.Count`, unimplemented by a
+                // value-type-arg collection -> EntryPointNotFound for `List<int>`. Re-point Count at the non-generic
+                // `System.Collections.ICollection` (which IList/IDictionary/ICollection all inherit) on the same cast.
+                else if (recv is JsonObject rc && Str(rc["k"]) == "cast" && IsNonGenericBclCollection(TypeJson.Read(rc["type"])))
+                {
+                    o["type"] = TypeJson.Fqn("System.Collections.ICollection");
+                    rc["type"] = TypeJson.Fqn("System.Collections.ICollection");
+                }
             }
             foreach (var kv in o) if (kv.Value != null) Apply(kv.Value);
         }
@@ -45,6 +57,11 @@ static class NestedCollectionCountLowering
 
     static bool IsBclCollection(TypeNode.Fqn f) =>
         f.Name.StartsWith("System.Collections.", System.StringComparison.Ordinal);
+
+    // A NON-generic BCL collection interface that inherits `System.Collections.ICollection.Count` (the star-projected
+    // receiver StarProjectionLowering produced). IEnumerable is excluded — it has no Count.
+    static bool IsNonGenericBclCollection(TypeNode t) => t is TypeNode.Fqn { Args: null } f
+        && f.Name is "System.Collections.ICollection" or "System.Collections.IList" or "System.Collections.IDictionary";
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
 }

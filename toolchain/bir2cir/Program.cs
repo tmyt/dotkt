@@ -4069,8 +4069,18 @@ static class StarProjectionLowering
         if (TypeJson.Read(slot) is not TypeNode.Fqn f) return false;
         if (!NonGenericIface.TryGetValue(f.Name, out iface)) return false;
         if (f.Args == null) return true;                            // raw / bare collection alias
-        return f.Args.All(a => a is TypeNode.Fqn { Args: null, Name: "object" or "kotlin.Any" });
+        return f.Args.All(IsObjectArg);
     }
+
+    // A star-projection/erased type arg: `object`/`kotlin.Any`, possibly nullable/oblivious-wrapped (`Map<*,*>` projects
+    // each arg to `Any?`, i.e. `{t:nullable,of:kotlin.Any}` post-#48). Unwrap the wrappers before the bare-name check.
+    static bool IsObjectArg(TypeNode a) => a switch
+    {
+        TypeNode.Nullable n => IsObjectArg(n.Of),
+        TypeNode.Oblivious o => IsObjectArg(o.Of),
+        TypeNode.Fqn { Args: null, Name: "object" or "kotlin.Any" } => true,
+        _ => false,
+    };
 
     public static void Apply(JsonNode node)
     {
@@ -4095,6 +4105,13 @@ static class StarProjectionLowering
             // Standalone star-projection `is`-test -> the non-generic interface (always safe: a boolean shape test).
             if (Str(obj["k"]) == "isInst" && IsStarCollection(obj["type"], out var ng))
                 obj["type"] = TypeJson.Fqn(ng);
+            // Standalone star-projection `cast` (a smart-cast value flowing on, e.g. into `println(Any?)`, or an
+            // explicit `as Map<*,*>`) -> the non-generic interface. Its generic form (`IDictionary<object,object>`) is
+            // INVARIANT + reified on the CLR, so a value-type-arg `Dictionary<int,int>` does NOT implement it ->
+            // castclass InvalidCast (the JVM erases both to `Map`, hiding it). The non-generic `IDictionary` it DOES
+            // implement covariantly, and a `<*>` value can only be used non-generically anyway. Mirrors the isInst branch.
+            if (Str(obj["k"]) == "cast" && IsStarCollection(obj["type"], out var castNg))
+                obj["type"] = TypeJson.Fqn(castNg);
             foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value);
         }
         else if (node is JsonArray arr)
@@ -4124,14 +4141,15 @@ static class StarProjectionLowering
                 };
             case "iterator":
                 // `.iterator()` -> IEnumerable.GetEnumerator (non-generic IEnumerator; Current is object == Any).
-                return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IEnumerable"), ["method"] = "GetEnumerator", ["argTypes"] = new JsonArray(), ["ret"] = TypeJson.Fqn("System.Collections.IEnumerator"), ["recv"] = CastTo("System.Collections.IEnumerable") };
+                return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IEnumerable"), ["method"] = "GetEnumerator", ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = TypeJson.Fqn("System.Collections.IEnumerator"), ["recv"] = CastTo("System.Collections.IEnumerable") };
             case "get":
             case "get_Item":
-                // `list[i]` -> IList.get_Item(int) (returns object == Any).
-                if (args == null || args.Count < 1) return null;
+                // `list[i]` -> IList.get_Item(int) (returns object == Any). (A `map[key]` read is early-bound to the
+                // generic MapsKt.get extension before this pass, so it does not arrive here.)
+                if (args == null || args.Count < 1 || iface != "System.Collections.IList") return null;
                 return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IList"), ["method"] = "get_Item", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32") }, ["ret"] = TypeJson.Fqn("System.Object"), ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
             case "contains":
-                // `list.contains(e)` -> IList.Contains(object) (only IList carries a non-generic Contains).
+                // `list.contains(e)` -> IList.Contains(object) (only the non-generic IList carries a Contains).
                 if (args == null || args.Count < 1 || iface != "System.Collections.IList") return null;
                 return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IList"), ["method"] = "Contains", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") }, ["ret"] = TypeJson.Fqn("System.Boolean"), ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
             default:

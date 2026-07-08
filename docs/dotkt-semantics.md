@@ -61,6 +61,15 @@ reproduce it.* (Memory `clr-not-jvm-discard-jvmisms`.)
   - Dropping it *removes* the JVM constraint: a consumer can pass a **non-reified** type parameter
     (`fun <U> bar() = foo<U>()` is fine on the CLR, an error on the JVM).
   - There is **no `@Metadata`/reified attribute** to round-trip.
+- **Corollary — a star-projected collection (`Map<*,*>` / `List<*>` / `Iterable<*>` / `Collection<*>`) binds to the
+  NON-generic BCL interface, because reified generics are INVARIANT.** On the JVM `x is Map<*,*>` and a subsequent
+  `x as Map<*,*>` erase to a raw `Map`, so a `Dictionary<int,int>` passes trivially. On the CLR the star projection
+  erases to `Map<Any?,Any?>` = the generic `IDictionary<object,object>`, which a `Dictionary<int,int>` does **not**
+  implement (no value-type covariance) — a naive `castclass`/`isinst` to it fails. So DotKt lowers a star-projected
+  `is`/`as` (and `.size`/`[i]`) to the **non-generic** `System.Collections.IDictionary`/`IList`/`ICollection`/
+  `IEnumerable`, which every value-type-arg BCL collection implements; `println` of such an erased value renders via
+  the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
+  invariance that forces §5c (`Map`/`MutableMap` both → `IDictionary<K,V>`). #60.
 - Deep dive: §3 (inline), `docs/design-il-generics.md`, memory `function-inlining-spike`.
 
 ## 2b. `tailrec` IS tail-call optimized — deep tail recursion runs in constant stack (matches Kotlin/JVM)
