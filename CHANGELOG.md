@@ -487,6 +487,25 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   primitive fast-path must precede the float total-order route). **kotc now recognizes ZERO operators —
   arithmetic/bitwise/unary/inc/dec/comparison/equality all synthesize their binOp/unaryOp/conv/objEq in
   bir2cir's `PrimitiveOperatorLowering`; kotc emits only the faithful IR.**_
+- **The last kotc CLR recognition — collection/Map `toString`, structural `==`, Double/Float total-order,
+  null-safe stringify — moved to bir2cir (#52 Phase 4b).** kotc used to pattern-match the operand STATIC
+  TYPE (through IR casts) to route these Kotlin-SEMANTIC operations to stdlib helpers by hardcoded FQN
+  (`ClrCollectionDefaultsKt`/`ClrMapDefaultsKt`/`NumbersKt`/`LibraryKt`). It now emits the FAITHFUL op
+  (`objMethod ToString`/`Equals`, `concat` with parts, `callStatic EQEQ`, `println`/`print`, `callInstance
+  compareTo`) carrying a TRANSIENT, IR-derived, cast-stripped static-TYPE hint (`recvType`/`argType`/
+  `argValueTypes`/`argTypes`/`partTypes` — faithful type transcription, NOT a helper name). bir2cir does
+  ALL the recognition off those hints — a new pass `FaithfulHintRecognition` plus an extended
+  `PrimitiveOperatorLowering` EQEQ arm — reproducing the EXACT SAME helper `callStatic` node kotc used to
+  synthesize, then STRIPPING every consumed hint so the CIR is clean. The helper bodies are unchanged; only
+  the RECOGNITION moved (relocation, mechanism-(b)). Collection/Map `toString` → `clr{Coll,Map}ToString`
+  (`[a, b]`/`{a=1, b=2}`, vs raw .NET type-name ToString); structural `==` on List/Set/Map →
+  `clr{Coll,Set,Map}StructEquals` (vs BCL reference `Object.Equals`); Double/Float `compareTo`/boxed `==` →
+  `NumbersKt.clr{Double,Float}{Compare,Equals}` (Kotlin total order `-0.0<0.0`/`NaN==NaN`, vs IEEE
+  `System.Double`); null-safe template/`+` operand → `LibraryKt.toString` (null → `"null"`). The EQEQ split
+  keeps its exact precedence: primitive fast-path (surface `argTypes`) first, then collection struct-eq /
+  float total-order (cast-stripped `argValueTypes`), then reference `objEq`. Byte-identical (verify-il
+  243/0, all gates green). **kotc now recognizes ZERO CLR-shaped stdlib symbols — it is a pure faithful
+  IR→BIR transcriber.**
 - **Numeric conversions are metadata-driven — `@ClrConv` replaces kotc's `NUMBER_CONV` name-heuristic
   (#52 Phase 0/1).** kotc no longer *recognizes* a numeric conversion: it emits the faithful IR call
   `callInstance kotlin.Double.toInt` and nothing more. A new stdlib marker `@kotlin.clr.ClrConv` (no

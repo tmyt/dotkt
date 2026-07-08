@@ -3363,15 +3363,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else """{"k":"enumOrdinal","e":${expr(e)}}"""
 				return """{"k":"binOp","op":"-","lhs":${ord(recv)},"rhs":${ord(arg)}}"""
 			}
-			// A DIRECT primitive `Double/Float.compareTo(y)` — Kotlin contracts a TOTAL order (`-0.0 < 0.0`, NaN largest,
-			// `NaN.compareTo(NaN) == 0`) that System.Double.CompareTo does NOT match (`(-0.0).CompareTo(0.0) == 0`). Route
-			// it to the stdlib total-order body. Direct `<`/`>`/`<=`/`>=` on Doubles are UNAFFECTED — they desugar to the
-			// IEEE compare intrinsics (kotlin.internal.ir.less/…), not to this member (so il-nancmp stays IEEE-green).
-			val cmpFq = recv?.type?.classFqName?.asString()
-			if (recv != null && arg != null && recv.type.isMarkedNullable().not() && (cmpFq == "kotlin.Double" || cmpFq == "kotlin.Float")) {
-				val helper = if (cmpFq == "kotlin.Double") "clrDoubleCompare" else "clrFloatCompare"
-				return """{"k":"callStatic","owner":${fqnJson("kotlin.NumbersKt")},"method":"$helper","args":[${expr(recv)},${expr(arg)}]}"""
-			}
+			// #52 Phase 4b: a DIRECT primitive `Double/Float.compareTo(y)` is NO LONGER special-cased here (Kotlin's TOTAL
+			// order — `-0.0 < 0.0`, NaN largest, `NaN.compareTo(NaN) == 0` — differs from System.Double.CompareTo). kotc
+			// emits the FAITHFUL member call (falls through to the plain callInstance path -> `kotlin.Double.compareTo`)
+			// and bir2cir recognizes the Double/Float owner and routes to the stdlib clrDoubleCompare/clrFloatCompare
+			// total-order body BEFORE its primitive-compareTo -> System.Double.CompareTo routing. The ENUM branch stays.
 		}
 		// A PRIMITIVE `x.compareTo(y)` and a `kotlin.Comparable.compareTo` (the `<`/`>`/`<=`/`>=` desugaring on a
 		// bounded generic `<T : Comparable<T>>`) are NO LONGER intercepted here (layer purity): kotc emits the PLAIN
@@ -3993,7 +3989,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Kotlin universal methods (hashCode/toString/equals) on a builtin receiver. The System.Object slot is correct
 		// ONLY for a GENUINE universal call — one whose receiver TYPE does not declare its OWN routable override:
 		//  - the resolved callee is the inherited kotlin.Any member (a fake override): Int/Long/Char/Boolean.hashCode,
-		//    or a bare List/Set/Map.toString (routed Kotlin-style via collToStringRoute below), or Any/generic; and
+		//    or a bare List/Set/Map.toString (emitted as objMethod ToString with a `recvType` hint; bir2cir routes it
+		//    Kotlin-style), or Any/generic; and
 		//  - a PRIMITIVE value type's toString/equals — those are declared but bodyless (no Kotlin body to hoist, no
 		//    @ClrIntrinsic), so bir2cir has nothing to route to and the BCL value type's ToString/Equals IS correct.
 		// When the receiver TYPE declares its OWN routable override — String's polynomial hashCode / Double|Float's
@@ -4017,20 +4014,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (!fallThrough) when (name) {
 				"hashCode" -> return """{"k":"objMethod","method":"GetHashCode","recv":${expr(dispatchReceiver(call)!!)}}"""
 				"toString" -> if (regularArgs(call).isEmpty()) {
-					// An explicit `list.toString()`/`map.toString()` prints Kotlin-style (`[a, b]` / `{a=1, b=2}`), mirroring
-					// the println path — route via the stdlib helper rather than the raw .NET type-name ToString.
-					collToStringRoute(dispatchReceiver(call)!!)?.let { return it }
-					return """{"k":"objMethod","method":"ToString","recv":${expr(dispatchReceiver(call)!!)}}"""
+					// #52 Phase 4b: emit the FAITHFUL objMethod ToString plus a cast-stripped static-type HINT (`recvType`).
+					// bir2cir recognizes a collection/Map receiver off it and routes to the Kotlin-style clrCollToString /
+					// clrMapToString helper (`[a, b]` / `{a=1, b=2}`); else it drops recvType and keeps the raw .NET ToString.
+					val recvE = dispatchReceiver(call)!!
+					return """{"k":"objMethod","method":"ToString","recv":${expr(recvE)},"recvType":${stripImplicit(recvE).toJson()}}"""
 				}
 				"equals" -> {
 					val recvE = dispatchReceiver(call)!!; val argE = regularArgs(call).first()
-					// An EXPLICIT `.equals()` on a boxed Double/Float / a collection follows Kotlin's TOTAL order /
-					// STRUCTURAL equality, exactly like the `==` operator (§5a) — Object.Equals would give IEEE
-					// (`(-0.0).equals(0.0)` == true) / reference identity (`listOf(1).equals(listOf(1))` == false). Route
-					// through the SAME stdlib helpers the EQEQ path uses; a plain object (both routes null) keeps Object.Equals.
-					floatTotalEqRoute(recvE, argE)?.let { return it }
-					collEqRoute(recvE, argE)?.let { return it }
-					return """{"k":"objMethod","method":"Equals","recv":${expr(recvE)},"arg":${expr(argE)}}"""
+					// #52 Phase 4b: emit the FAITHFUL objMethod Equals plus cast-stripped static-type HINTS (`recvType`,
+					// `argType`). An EXPLICIT `.equals()` on a boxed Double/Float / a collection follows Kotlin's TOTAL order /
+					// STRUCTURAL equality (Object.Equals gives IEEE `(-0.0).equals(0.0)==true` / reference identity), so
+					// bir2cir recognizes those off the hints and routes to the SAME helper the EQEQ path uses; else it drops
+					// the hints and keeps Object.Equals.
+					return """{"k":"objMethod","method":"Equals","recv":${expr(recvE)},"arg":${expr(argE)},"recvType":${stripCast(recvE).toJson()},"argType":${stripCast(argE).toJson()}}"""
 				}
 			}
 		}
@@ -4045,31 +4042,30 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val operands = call.arguments.filterNotNull()
 			// `String + x` is concatenation, not numeric add.
 			if (name == "plus" && declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.String" && operands.size == 2)
-				// A collection/Map operand of a String `+` concat prints Kotlin-style (route via the stdlib helper),
-				// mirroring the println / string-template paths — else `"" + list` yields the raw .NET type name. A
-				// NULL operand renders "null" (not an empty append) via the same null-safe stringifier — see concatOperand.
-				return """{"k":"concat","parts":[${concatOperand(operands[0])},${concatOperand(operands[1])}]}"""
+				// #52 Phase 4b: emit the FAITHFUL concat plus cast-stripped static-type HINTS (`partTypes`). bir2cir wraps a
+				// collection/Map part in clrCollToString/clrMapToString (Kotlin-style `[a, b]`) and a NULLABLE part in
+				// LibraryKt.toString (null -> "null"), then drops partTypes; else `"" + list` would yield the raw .NET name.
+				return """{"k":"concat","parts":[${expr(operands[0])},${expr(operands[1])}],"partTypes":[${stripImplicit(operands[0]).toJson()},${stripImplicit(operands[1]).toJson()}]}"""
 			// `==` (EQEQ) / `===` (EQEQEQ) are `kotlin.internal.ir` COMPILER INTRINSICS. The ceq-vs-Object.Equals SPLIT
 			// (structural `==`: `ceq` for primitives, null-safe `Object.Equals` for reference types; `===`: identity
 			// `ceq`) recognition MOVED to bir2cir (#52 Phase 5 class 4). kotc emits the FAITHFUL intrinsic call with
 			// owner = `kotlin.internal.ir` (collision-safe) and — for EQEQ — the operands' IR-derived static `argTypes`,
 			// off which bir2cir (PrimitiveOperatorLowering) re-derives the split: both argTypes primitive-eq -> `binOp ==`
-			// (ceq), else -> `objEq`. The Kotlin-SEMANTIC structural routings STAY in kotc (Phase-4 GENUINE-GAP): a boxed
-			// Double/Float total-order `==` and a collection structural `==` are checked FIRST (the exact original
-			// ordering — the primitive fast-path must precede floatTotalEqRoute, which would else fire on a direct
-			// primitive Double), so only the terminal ceq/objEq synthesis moved.
+			// (ceq), else -> `objEq`. #52 Phase 4b: the Kotlin-SEMANTIC structural routings (a boxed Double/Float
+			// total-order `==` and a collection structural `==`) ALSO moved to bir2cir — kotc now carries a second,
+			// cast-stripped `argValueTypes` hint off which bir2cir recognizes them; only the primitive fast-path check
+			// (both non-null primitives -> ceq, unchanged and FIRST) stays here, purely as a comment for the reader.
 			if (name == "EQEQ" && operands.size == 2) {
-				// The faithful EQEQ intrinsic: carries the operands' static types so bir2cir picks ceq (both primitive-eq)
-				// vs Object.Equals. Lazy (a local fun) so `expr` is not evaluated when a route below fires instead.
-				fun eqeq() = """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"EQEQ","argTypes":[${birType(operands[0].type).toJson()},${birType(operands[1].type).toJson()}],"args":[${expr(operands[0])},${expr(operands[1])}]}"""
+				// #52 Phase 4b: the FAITHFUL EQEQ intrinsic carries TWO type hints. Surface `argTypes` (the operands'
+				// declared static types) drive bir2cir's prim/ref split (both primitive-eq -> ceq; else Object.Equals).
+				// The new cast-stripped `argValueTypes` drive its Kotlin-SEMANTIC recognition — a boxed Double/Float
+				// total-order `==` (`-0.0 != 0.0`, `NaN == NaN`) and a collection structural `==` (List/Set/Map) — which
+				// USED to be routed here by floatTotalEqRoute/collEqRoute (now moved to bir2cir). Same node in every case.
+				fun eqeq() = """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"EQEQ","argTypes":[${birType(operands[0].type).toJson()},${birType(operands[1].type).toJson()}],"argValueTypes":[${stripCast(operands[0]).toJson()},${stripCast(operands[1]).toJson()}],"args":[${expr(operands[0])},${expr(operands[1])}]}"""
 				// Primitive fast-path FIRST (byte-identical ordering): both non-null primitives -> bir2cir emits ceq.
 				if (isPrimitiveEqType(operands[0].type) && isPrimitiveEqType(operands[1].type)) return eqeq()
-				// A BOXED Double/Float `==` uses Kotlin's TOTAL order (`-0.0 != 0.0`, `NaN == NaN`), not `Double.Equals`.
-				floatTotalEqRoute(operands[0], operands[1])?.let { return it }
-				// A collection `==` (List/Set/Map) is STRUCTURAL in Kotlin, but the BCL collection's Object.Equals is
-				// REFERENCE identity — route to the stdlib structural helper.
-				collEqRoute(operands[0], operands[1])?.let { return it }
-				// Reference `==`: bir2cir emits the null-safe Object.Equals (`objEq`) from the non-primitive argTypes.
+				// Reference / boxed-float / collection `==`: bir2cir picks Object.Equals / float-equals / struct-eq off
+				// the surface argTypes + argValueTypes carried on the SAME faithful node.
 				return eqeq()
 			}
 			if (name == "EQEQEQ" && operands.size == 2)
@@ -4121,13 +4117,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// stdlib primitive's conversion member on the ref.dll and emits the `conv` node from the callee's return type.
 			val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
 			if (fq == "kotlin.io" && (name == "println" || name == "print")) {
-				// A collection operand prints Kotlin-style `[a, b]`, not .NET's type-name ToString -> route via clrCollToString.
-				// (Kotlin toString semantics — it calls a stdlib helper, NOT a CLR member; kept.) The println/print call
-				// ITSELF is emitted as a PLAIN top-level fun call: bir2cir substitutes it to System.Console.Write/WriteLine
-				// from the stdlib @ClrIntrinsic (runtime/stdlib/clr/kotlin/io/ConsoleClr.kt). No hardcoded CLR console node
-				// in kotc — that CLR knowledge lives in the stdlib binding + bir2cir's MemberCallSubstitution.
-				val argJson = operands.joinToString(",") { op -> collToStringRoute(op) ?: expr(op) }
-				return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)},"args":[$argJson]}"""
+				// #52 Phase 4b: emit the PLAIN top-level callStatic (bir2cir substitutes it to System.Console.Write/WriteLine
+				// from the stdlib @ClrIntrinsic in runtime/stdlib/clr/kotlin/io/ConsoleClr.kt) plus a cast-stripped
+				// `argTypes` HINT per operand. bir2cir wraps a collection/Map arg in clrCollToString/clrMapToString off it
+				// (Kotlin-style `[a, b]`, not .NET's type-name ToString), then drops argTypes. No CLR console node in kotc.
+				val argJson = operands.joinToString(",") { expr(it) }
+				val argTypesJson = operands.joinToString(",") { stripImplicit(it).toJson() }
+				return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)},"argTypes":[$argTypesJson],"args":[$argJson]}"""
 			}
 			// `readLine()` is NOT lowered: the CLR stdlib exposes readln()/readlnOrNull() (readlnOrNull is @ClrIntrinsic-bound
 			// to System.Console.ReadLine in ConsoleClr.kt). There is no `kotlin.io.readLine` symbol in the frontend jar.
@@ -4600,105 +4596,23 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 
-	// Kotlin-style toString routing for a collection/Map operand. A `List`/`Set`/`Collection`/`Map`-typed value
-	// prints via the stdlib helper (`clrCollToString` -> `[a, b]` / `clrMapToString` -> `{a=1, b=2}`) instead of the
-	// raw .NET `System.Collections.Generic.Dictionary`2[...]` / `List`1[...]` type-name ToString. Static-type-driven
-	// (NOT a runtime `is Map<*,*>` test — unreliable for @ClrTypeAlias-lowered BCL collections). Returns the routed
-	// callStatic JSON, or null when `op` is not a collection/Map static type (the caller emits `op` as-is). Shared by
-	// the println/print path AND the string-template / explicit-`toString()` / string-`plus`-concat paths so a
-	// `"$map"` / `"" + list` prints Kotlin-style, mirroring `println(map)`.
-	internal fun collToStringRoute(op0: IrExpression): String? {
-		// `list.toString()` resolves to the `kotlin.Any.toString` fake override, so the receiver arrives wrapped in an
-		// IMPLICIT_CAST to `kotlin.Any` — look THROUGH it to recover the collection/Map static type, then emit the value
-		// off the UNWRAPPED node (`expr(op)`), dropping the redundant Any cast. Templates/`plus` operands are un-wrapped.
-		var op = op0
-		while (op is IrTypeOperatorCall && op.operator == IrTypeOperator.IMPLICIT_CAST) op = op.argument
-		val rfq = op.type.classFqName?.asString() ?: return null
-		if (!rfq.startsWith("kotlin.collections.")) return null
-		// Map is NOT a Collection, so it needs its own branch (two type args).
-		if (rfq.contains("Map")) {
-			val ta = (op.type as? IrSimpleType)?.arguments
-			fun arg(i: Int) = ta?.getOrNull(i)?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
-			return """{"k":"callStatic","owner":${fqnJson("kotlin.collections.ClrMapDefaultsKt")},"method":"clrMapToString","args":[${expr(op)}],"typeArgs":[${str(arg(0))},${str(arg(1))}]}"""
-		}
-		if (rfq.contains("List") || rfq.contains("Set") || rfq.endsWith("Collection")) {
-			val elem = (op.type as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
-			return """{"k":"callStatic","owner":${fqnJson("kotlin.collections.ClrCollectionDefaultsKt")},"method":"clrCollToString","args":[${expr(op)}],"typeArgs":[${str(elem)}]}"""
-		}
-		return null
+	// #52 Phase 4b: cast-stripped static-TYPE HINTS for bir2cir's collection/float/toString recognition. Transient
+	// (bir2cir strips them before CIR), IR-derived, FAITHFUL — the pure-kotlin.* `birType` of the operand's static type
+	// with any surface cast peeled off. kotc no longer names the ClrCollectionDefaultsKt/ClrMapDefaultsKt/NumbersKt/
+	// LibraryKt helper FQNs; it emits the faithful op WITH the cast (bir2cir strips it) plus one of these hints, off
+	// which bir2cir reproduces the exact helper callStatic nodes. Both PRESERVE nullability + generic args.
+	//   stripImplicit — walk through IMPLICIT_CAST only (a `list.toString()` receiver / template operand arrives boxed
+	//     to kotlin.Any via an IMPLICIT_CAST fake-override; peel it to recover the collection/Map static type).
+	//   stripCast — walk through CAST and IMPLICIT_CAST (an explicit `x as Any` boxed Double/Float `==`/`.equals()`).
+	internal fun stripImplicit(e: IrExpression): TypeNode {
+		var x = e
+		while (x is IrTypeOperatorCall && x.operator == IrTypeOperator.IMPLICIT_CAST) x = x.argument
+		return birType(x.type)
 	}
-
-	// The underlying non-nullable Double/Float value of an operand that is a (possibly Any-boxed) floating value: look
-	// THROUGH CAST/IMPLICIT_CAST wrappers (`x as Any`) and return (FQN, unwrapped-expr) when the underlying static type is
-	// a non-nullable kotlin.Double/kotlin.Float. A bare primitive operand is handled by the isPrimitiveEqType path (never
-	// reaches here); a genuinely Any-typed value with no cast does not unwrap (falls back to Object.Equals).
-	private fun floatingUnwrap(e: IrExpression): Pair<String, IrExpression>? {
+	internal fun stripCast(e: IrExpression): TypeNode {
 		var x = e
 		while (x is IrTypeOperatorCall && (x.operator == IrTypeOperator.CAST || x.operator == IrTypeOperator.IMPLICIT_CAST)) x = x.argument
-		val fq = x.type.classFqName?.asString()
-		return if (!x.type.isMarkedNullable() && (fq == "kotlin.Double" || fq == "kotlin.Float")) fq!! to x else null
-	}
-
-	// Kotlin total-order equality routing for a BOXED `==` whose operands are (Any-boxed) floating values of the SAME
-	// type — routes to the stdlib `clrDoubleEquals`/`clrFloatEquals` (`-0.0 != 0.0`, `NaN == NaN`). Returns null otherwise
-	// (the caller emits the ordinary Object.Equals objEq). The raw Double/Float values are passed (unwrapped from the box).
-	internal fun floatTotalEqRoute(l: IrExpression, r: IrExpression): String? {
-		val a = floatingUnwrap(l) ?: return null
-		val b = floatingUnwrap(r) ?: return null
-		if (a.first != b.first) return null
-		val helper = if (a.first == "kotlin.Double") "clrDoubleEquals" else "clrFloatEquals"
-		return """{"k":"callStatic","owner":${fqnJson("kotlin.NumbersKt")},"method":"$helper","args":[${expr(a.second)},${expr(b.second)}]}"""
-	}
-
-	// Kotlin STRUCTURAL equality routing for a collection `==`. Kotlin `==` on List/Set/Map compares elements (via the
-	// AbstractList/Set/Map.equals bodies), but those values lower to BCL collections whose Object.Equals is REFERENCE
-	// identity — so route to a stdlib structural helper (mirrors collToStringRoute). Static-type-driven off BOTH operands:
-	// List/Collection -> ordered elementwise (clrCollStructEquals); Set -> unordered (clrSetStructEquals); Map -> entrywise
-	// (clrMapStructEquals). Both operands must be the SAME collection kind (Kotlin `listOf(1) == setOf(1)` is false). A
-	// nullable operand is fine — the helpers are null-safe. Returns null when either operand is not that collection kind.
-	internal fun collEqRoute(l: IrExpression, r: IrExpression): String? {
-		fun unwrap(e: IrExpression): IrExpression {
-			var x = e
-			while (x is IrTypeOperatorCall && (x.operator == IrTypeOperator.CAST || x.operator == IrTypeOperator.IMPLICIT_CAST)) x = x.argument
-			return x
-		}
-		val lu = unwrap(l); val ru = unwrap(r)
-		val lfq = lu.type.classFqName?.asString() ?: return null
-		val rfq = ru.type.classFqName?.asString() ?: return null
-		if (!lfq.startsWith("kotlin.collections.") || !rfq.startsWith("kotlin.collections.")) return null
-		fun kind(fq: String): String? = when {
-			fq.contains("Map") -> "Map"
-			fq.contains("Set") -> "Set"
-			fq.contains("List") || fq.endsWith("Collection") -> "Coll"
-			else -> null
-		}
-		val lk = kind(lfq) ?: return null
-		if (lk != kind(rfq)) return null
-		// The generic helpers need the collection's element (List/Set) or key+value (Map) type args, exactly as
-		// collToStringRoute passes them — the receiver's own args, so a `List<int32>` binds `T=int32` (no boxing).
-		fun ta(op: IrExpression, i: Int) = (op.type as? IrSimpleType)?.arguments?.getOrNull(i)
-			?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
-		return when (lk) {
-			"Map" -> """{"k":"callStatic","owner":${fqnJson("kotlin.collections.ClrMapDefaultsKt")},"method":"clrMapStructEquals","args":[${expr(lu)},${expr(ru)}],"typeArgs":[${str(ta(lu, 0))},${str(ta(lu, 1))}]}"""
-			"Set" -> """{"k":"callStatic","owner":${fqnJson("kotlin.collections.ClrCollectionDefaultsKt")},"method":"clrSetStructEquals","args":[${expr(lu)},${expr(ru)}],"typeArgs":[${str(ta(lu, 0))}]}"""
-			else -> """{"k":"callStatic","owner":${fqnJson("kotlin.collections.ClrCollectionDefaultsKt")},"method":"clrCollStructEquals","args":[${expr(lu)},${expr(ru)}],"typeArgs":[${str(ta(lu, 0))}]}"""
-		}
-	}
-
-	// Kotlin null-rendering for a string-template / concat operand. Kotlin renders a NULL interpolated value as the
-	// string "null" (JVM: StringBuilder.append(Any?)/String.valueOf -> "null"), but a bare CLR String.Concat /
-	// StringBuilder.Append of a null reference yields "" — so `"$x"` for a null `Any?` would print empty, inconsistent
-	// with `x.toString()` (which is already null-safe). A NULLABLE operand is therefore routed through the stdlib
-	// null-safe stringifier `Any?.toString()` (kotlin.LibraryKt.toString = `this?.toString() ?: "null"`) BEFORE it is
-	// concatenated: null -> "null", non-null -> its toString. A collection/Map operand keeps its Kotlin-style
-	// clrCollToString/clrMapToString routing (checked first); a non-null operand and a literal string part are emitted
-	// as-is (ilemit's concat calls ToString on a non-null value). This is a Kotlin-language rendering rule (pure Kotlin
-	// FQN symbol, no CLR knowledge) shared by the template, explicit `+`, and String.plus concat paths.
-	internal fun concatOperand(op: IrExpression): String {
-		collToStringRoute(op)?.let { return it }
-		if (op.type.isMarkedNullable())
-			return """{"k":"callStatic","owner":${fqnJson("kotlin.LibraryKt")},"method":"toString","args":[${expr(op)}]}"""
-		return expr(op)
+		return birType(x.type)
 	}
 
 	// The erased / star-projection / Any? fallback type identity. kotc emits the pure Kotlin FQN `kotlin.Any`;

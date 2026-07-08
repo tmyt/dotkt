@@ -138,17 +138,44 @@ static class PrimitiveOperatorLowering
         var args = o["args"] as JsonArray ?? new JsonArray();
         if (args.Count == 2 && CompareOp.TryGetValue(m, out var cop))
             return new JsonObject { ["k"] = "binOp", ["op"] = cop, ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
-        // `==` (EQEQ): structural equality split off the operands' static `argTypes` — BOTH non-null primitives
-        // (PrimitiveEqFq) -> CIL `ceq` (`binOp ==`); else the null-safe `Object.Equals` (`objEq`). This reproduces
-        // kotc's former isPrimitiveEqType decision exactly: a nullable operand's argType is a `{t:nullable}` wrapper
-        // (not a bare Fqn), a reference operand's is a non-primitive Fqn — both fail IsPrimEq -> objEq.
+        // `==` (EQEQ): structural equality recognized off TWO operand hints — the surface `argTypes` (declared static
+        // types) drive the prim/ref split; the cast-stripped `argValueTypes` drive the Kotlin-SEMANTIC recognition
+        // (collection structural `==`, Double/Float total-order `==`) that kotc's former collEqRoute/floatTotalEqRoute
+        // did. Order reproduces kotc's precedence exactly:
+        //   1. BOTH argTypes non-null primitives (PrimitiveEqFq) -> CIL `ceq` (`binOp ==`). [direct primitive, incl direct Double]
+        //   2. else BOTH argValueTypes the SAME collection kind -> the struct-eq helper (`listOf(1)==setOf(1)` differs in kind -> falls through).
+        //   3. else BOTH argValueTypes a non-null Double / non-null Float -> the float-equals helper.
+        //   4. else the null-safe `Object.Equals` (`objEq`).
+        // Operands passed to the collection/float HELPER are cast-stripped (an IMPLICIT_CAST-to-Any renders as a `cast`
+        // node — matching kotc's former collEqRoute/floatTotalEqRoute `expr(unwrapped)`). The primitive fast-path AND the
+        // `objEq` fallback keep the ORIGINAL operands (kotc's former reference EQEQ emitted `expr(operands[i])`, NOT
+        // unwrapped — stripping the Any-box off a boxed value operand `anyVal == 1` would feed a raw value to
+        // Object.Equals -> invalid IL).
         if (m == "EQEQ" && args.Count == 2)
         {
             var at = o["argTypes"] as JsonArray;
             var bothPrim = at != null && at.Count == 2 && IsPrimEq(at[0]) && IsPrimEq(at[1]);
-            return bothPrim
-                ? new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() }
-                : new JsonObject { ["k"] = "objEq", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+            if (bothPrim)
+                return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+            if (o["argValueTypes"] is JsonArray avt && avt.Count == 2)
+            {
+                var lt = TypeJson.Read(avt[0]);
+                var rt = TypeJson.Read(avt[1]);
+                var lc = lt != null ? FaithfulHints.ClassifyColl(lt) : null;
+                var rc = rt != null ? FaithfulHints.ClassifyColl(rt) : null;
+                var lu = FaithfulHints.StripAnyCast(args[0]);
+                var ru = FaithfulHints.StripAnyCast(args[1]);
+                if (lc is { } lk && rc is { } rk && lk.kind == rk.kind)
+                    return FaithfulHints.StructEquals(lu, ru, lk.kind, lk.args);
+                if (lt != null && rt != null)
+                {
+                    if (FaithfulHints.IsNonNullFqn(lt, "kotlin.Double") && FaithfulHints.IsNonNullFqn(rt, "kotlin.Double"))
+                        return FaithfulHints.FloatCall("clrDoubleEquals", lu, ru);
+                    if (FaithfulHints.IsNonNullFqn(lt, "kotlin.Float") && FaithfulHints.IsNonNullFqn(rt, "kotlin.Float"))
+                        return FaithfulHints.FloatCall("clrFloatEquals", lu, ru);
+                }
+            }
+            return new JsonObject { ["k"] = "objEq", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         }
         // `===` (EQEQEQ): always identity (`ceq` = `binOp ==`).
         if (m == "EQEQEQ" && args.Count == 2)

@@ -139,6 +139,15 @@ sealed class Pipeline
             // FIRST and UNCONDITIONALLY (ref + app) so every downstream pass sees the old tree shape, and a ref-build
             // ctor field-init / base-arg (not body-squashed) carries a raw IL op, not an unresolvable builtin call.
             PrimitiveOperatorLowering.Apply(bir.Root);
+            // FAITHFUL-HINT RECOGNITION (#52 Phase 4b): kotc emits the faithful op (`objMethod ToString/Equals`, `concat`,
+            // `callStatic println/print`, Double/Float `callInstance compareTo`) + a transient cast-stripped static-type
+            // HINT; bir2cir recognizes the collection/Map/Double/Float/null types off the hint and reproduces the SAME
+            // stdlib-helper `callStatic` node kotc used to emit (clrCollToString/clrMapToString/clrCollStructEquals/
+            // clrDoubleCompare/LibraryKt.toString…), then STRIPS the hint. (The EQEQ family is handled by
+            // PrimitiveOperatorLowering above.) Runs SECOND — right after the primitive-op restore, before the compareTo
+            // callInstance reaches MemberCallSubstitution's primitive-compareTo -> System.Double.CompareTo routing, and
+            // before any type-erasing pass — so the inner value nodes stay pure kotlin.* and lower normally downstream.
+            FaithfulHintRecognition.Apply(bir.Root);
             // #55 §4 — DERIVE the `clrGeneric*` overload-matcher `shapes` from kotc's pure-Kotlin `shapeTypes` (the
             // DECLARED parameter identities) via the @ClrTypeAlias index. kotc no longer knows the .NET shape names
             // (Int64/SByte/…) — that CLR knowledge lives HERE. Runs FIRST in the per-file loop, before ANY type-erasing

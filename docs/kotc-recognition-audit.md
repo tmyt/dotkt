@@ -207,7 +207,7 @@ origin (kotc's own `<>dotkt_*` closure/delegate/KProperty synthetic types) — i
 | Array `get`/`set` 3695–3701 | `isOperator` + `isArrayType` | `arrayGet`/`arraySet` | CLR array indexing is a primitive IL op |
 | `Delegates.observable/vetoable/notNull` 3432–3438 | `declaringClass=="kotlin.properties.Delegates"` + name | synth delegate class | property-delegation protocol (frontend); **(a) migratable only if stdlib ships real delegate impls** — deferred, medium risk |
 | ~~Collection-default bridges (`iterator`/`isEmpty`/`contains`/`listIterator`)~~ | name + `clrName(declaringClass)!=null` + `kotlin.collections` | callStatic into `ClrIteratorBridgeKt`/`ClrCollectionDefaultsKt` | ✅ **DELETED (#52 Phase 4)** — dead code; bir2cir Rule 5 owns the routing (gate was null for jar-sourced stdlib interfaces) |
-| collection toString/equals routing `collToStringRoute`/`floatTotalEqRoute`/`collEqRoute`/`concatOperand`, `compareTo` Double/Float | static collection/float type | callStatic into `ClrCollectionDefaultsKt`/`ClrMapDefaultsKt`/`NumbersKt`/`LibraryKt` | **GENUINE-GAP, KEPT (#52 Phase 4)** — Kotlin structural-`==` / `[a, b]` toString / Double-Float total order / null-safe stringify; raw BCL runtime object has no Kotlin override → no real body resolves it (see Part 4 Phase 4) |
+| collection toString/equals routing `collToStringRoute`/`floatTotalEqRoute`/`collEqRoute`/`concatOperand`, `compareTo` Double/Float | static collection/float type | callStatic into `ClrCollectionDefaultsKt`/`ClrMapDefaultsKt`/`NumbersKt`/`LibraryKt` | ✅ **RELOCATED TO bir2cir (#52 Phase 4b)** — kotc emits the faithful op + a cast-stripped static-type hint; bir2cir (`FaithfulHintRecognition` + the extended `PrimitiveOperatorLowering` EQEQ arm) recognizes the type and reproduces the SAME helper call. The recognition moved (mechanism-(b)); the helpers stay. (Was Phase-4 GENUINE-GAP; see Part 4 Phase 4b) |
 
 ---
 
@@ -407,6 +407,41 @@ the clean/dead set.)
 
 **Verified:** verify-il 242/0, ktproj/differential/roundtrip green, schema 0 violations; byte-identical behavior
 on the collection/map struct-equality + toString + Double/Float total-order + iterator samples.
+
+### Phase 4b — relocate the GENUINE-GAP routings to bir2cir (NOT the collection-MODEL rework) — ✅ DONE
+
+**User decision (2026-07-08):** do NOT do the collection-MODEL rework (make `listOf` produce a Kotlin
+`AbstractCollection`-derived type so real `toString`/`equals` bodies dispatch — the cardinal-rule-purest fix, but
+it pays a "weird cost": a dual Kotlin-type + BCL-interface collection re-implementation). Instead **bir2cir OWNS
+the `kotlin.collections.List` CLR realization** — including routing `toString`/structural-`==`/total-order to the
+helpers. This is a **relocation** (kotc→bir2cir), the user-established valid resolution: bir2cir is ALLOWED CLR
+knowledge; the helper stays as the mechanism, only the RECOGNITION moves (mechanism-(b), §3.3). It is the natural
+extension of the Phase-5 machinery — bir2cir already substitutes `List`→`IReadOnlyList` + emits `newList` and
+(Phase 5) gets `EQEQ` with `argTypes`.
+
+**Mechanism.** kotc STOPS routing and emits the FAITHFUL op plus a TRANSIENT, IR-derived, **cast-stripped
+static-type hint** (faithful type transcription — NOT a helper name). bir2cir does ALL the recognition off the
+hint and reproduces the EXACT SAME helper `callStatic`, then STRIPS the hint (CIR is clean; final IL
+byte-identical). The hints:
+
+| kotc faithful op | hint field(s) | bir2cir recognition → helper |
+|---|---|---|
+| `objMethod ToString` (explicit `x.toString()`) | `recvType` | collection recvType → `clr{Coll,Map}ToString` |
+| `objMethod Equals` (explicit `x.equals(y)`) | `recvType`+`argType` | same-kind collection → struct-eq; Double/Float → `clr{Double,Float}Equals` |
+| `callStatic println/print` | `argTypes` | collection arg → wrap in `clr{Coll,Map}ToString` |
+| `concat` (template + `String.plus`) | `partTypes` | collection part → collToString; else nullable part → `LibraryKt.toString` |
+| `callStatic EQEQ` | surface `argTypes` + cast-stripped `argValueTypes` | prim fast-path (argTypes) → ceq; else same-kind coll (argValueTypes) → struct-eq; else Double/Float → float-eq; else `objEq` |
+| `callInstance kotlin.Double/Float.compareTo` | (owner is the hint) | → `NumbersKt.clr{Double,Float}Compare` (before the primitive `System.Double.CompareTo` routing) |
+
+kotc's `collToStringRoute`/`floatingUnwrap`/`floatTotalEqRoute`/`collEqRoute`/`concatOperand` and the `compareTo`
+Double/Float special-case are DELETED; kotc names ZERO of the four helper FQNs. bir2cir: new file
+`FaithfulHintRecognition.cs` (the ToString/Equals/println/concat/compareTo sites) + the extended EQEQ arm in
+`PrimitiveOperatorLowering.cs`, both run EARLY (before `MemberCallSubstitution`/factory/`BirTypeLowering`).
+**Precedence preserved exactly** (prim fast-path before float/coll; collToString before null-safe). The `objEq`
+fallback and the primitive fast-path keep the ORIGINAL (un-stripped) operands — only the collection/float helper
+gets the cast-stripped operand (matching kotc's former `expr(unwrapped)`); stripping the Any-box off a boxed value
+operand into `Object.Equals` would be invalid IL. **After Phase 4b (+ range), kotc = ZERO CLR recognition — a
+pure faithful IR→BIR transcriber.**
 
 ### Phase 5 — the operator bucket (relocate to bir2cir) — ✅ DONE
 
