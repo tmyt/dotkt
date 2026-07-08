@@ -596,6 +596,18 @@ compareTo). ilemit unchanged; byte-identical (all 9 helper families still fire i
   fact and bir2cir owns the CLR-representation synthesis, the last, smallest residue closed.
 - **Interop reads** (`kotlin.clr.*`, facadegen injection, `@Volatile`/`@ClrField`/`@ClrAwait`): the sanctioned
   .NET-space / annotation-flag reads. Legitimate by the boundary rule (kotc *may* read the .NET space).
+- **ClrH routing arm — DELETED (CLEANUP-A1, 2026-07-08).** Inside the member-call `if (clrType != null)` interop
+  block, a vestigial "Rule 3" arm routed a concrete non-abstract member to the `<>dotkt_ClrH_<Class>` static hoist
+  helper via `clrHelperName`. It was **reasoned-dead**: `clrType != null` requires `clrInteropName`, which resolves
+  **only** facadegen-injection metadata (an .NET owner with **no** Kotlin bodies to hoist); stdlib `@ClrTypeAlias`
+  classes — the real source of rule-3 Kotlin-body members — resolve to `clrInteropName == null`, fall through to the
+  plain `kotlin.*` member-call path, and their ClrH is synthesized+routed **entirely by bir2cir's `AliasHelperHoist`**.
+  The arm, its `injectedOwner` gate (which existed only to keep injected types out of the hoist), and `clrHelperName`
+  + its doc-comment were removed; a call in that position now falls straight through to the `clrStatic`/`clrInstance`
+  member-shape dispatch. Confirmed by grep (nothing else in kotc references `clrHelperName`/`dotkt_ClrH` except one
+  bir2cir-describing comment) and by BIR sanity (il-injstatic, a pure `System.*` call, and a stdlib StringBuilder
+  `append`/`reverse`/`length` sample all emit **zero** kotc `<>dotkt_ClrH_`; StringBuilder members route as plain
+  `callInstance`). Codex independently confirmed the arm has no reachable trigger.
 
 ---
 

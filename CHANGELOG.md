@@ -463,6 +463,16 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **kotc's vestigial `<>dotkt_ClrH_` rule-3 routing arm deleted (verify-by-deletion).** The member-call
+  emitter's `if (clrType != null)` interop block carried a dead "Rule 3" arm that routed a concrete member to
+  a `<>dotkt_ClrH_<Class>` static hoist helper via `clrHelperName`. Since kotc reads **no** `@Clr` annotation,
+  `clrType != null` requires a facadegen-injected .NET owner (which has no Kotlin bodies to hoist), and stdlib
+  `@ClrTypeAlias` classes — the real source of rule-3 members — resolve to `clrInteropName == null` and fall
+  through to the plain `kotlin.*` member-call path, where bir2cir's `AliasHelperHoist` synthesizes and routes
+  the ClrH helper entirely on its own. The arm therefore had no reachable trigger. Removed the arm, its
+  now-unused `injectedOwner` gate, and `clrHelperName` + doc-comment; nothing else in kotc references either.
+  Sanity-verified: il-injstatic, a pure `System.*` call, and a stdlib StringBuilder `append`/`reverse`/`length`
+  sample all emit **zero** kotc `<>dotkt_ClrH_` (StringBuilder members route as plain `callInstance`).
 - **kotc's last operator/faithful-hint TYPE HINTS retired — bir2cir recovers operand static types itself
   (#59, the final #52 purity step).** kotc used to attach a per-site operand-static-type HINT so bir2cir
   could re-derive the collection/Double/Float/nullable Kotlin-semantic split it could not read off a bare
