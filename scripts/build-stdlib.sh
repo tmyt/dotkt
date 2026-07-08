@@ -57,10 +57,10 @@ if (( do_emit )); then
 	#     squashed to `throw`) -> ilemit -> retarget. Self-contained (no runtime ref).
 	rm -rf "$REF_CIR" "$REF_DLL"; mkdir -p "$REF_CIR" "$REF_DLL"
 	info "REF: bir2cir -> CIR"
-	DOTKT_STDLIB_COMPILE=1 dotnet "$BIR2CIR_DLL" "$REF_CIR" "$BIR"/*.bir.json 2>"$REF_OUT/bir2cir.err" || true
+	dotnet "$BIR2CIR_DLL" "$REF_CIR" --build-stdlib=metadata "$BIR"/*.bir.json 2>"$REF_OUT/bir2cir.err" || true
 	echo "REF CIR files: $(ls "$REF_CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "REF: ilemit -> DotKt.Private.Stdlib.dll"
-	{ DOTKT_STDLIB_COMPILE=1 dotnet "$ILEMIT_DLL" "$REF_DLL" DotKt.Private.Stdlib "$REF_CIR"/*.cir.json 2>"$REF_OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$REF_DLL" DotKt.Private.Stdlib --build-stdlib=metadata "$REF_CIR"/*.cir.json 2>"$REF_OUT/ilemit.err" || true; } | tail -2
 	grep -vE '^\s+at ' "$REF_OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3 || true
 	[[ -f "$REF_DLL/DotKt.Private.Stdlib.dll" ]] || die "DotKt.Private.Stdlib.dll was not emitted (see $REF_OUT/ilemit.err)"
 	need_tool retarget
@@ -75,10 +75,10 @@ if (( do_emit )); then
 	rm -rf "$RT_CIR" "$RT_DLL"; mkdir -p "$RT_CIR" "$RT_DLL"
 	refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
 	info "RT: bir2cir (substitute) -> CIR"
-	{ DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITUTE=1 DOTKT_STRIP_METADATA=1 dotnet "$BIR2CIR_DLL" "$RT_CIR" "${refarg[@]}" "$BIR"/*.bir.json 2>"$RT_OUT/bir2cir.err" || true; } | tail -1
+	{ dotnet "$BIR2CIR_DLL" "$RT_CIR" "${refarg[@]}" --build-stdlib=runtime "$BIR"/*.bir.json 2>"$RT_OUT/bir2cir.err" || true; } | tail -1
 	echo "RT CIR files: $(ls "$RT_CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "RT: ilemit (substitute) -> DotKt.Stdlib.dll"
-	{ DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITUTE=1 DOTKT_STRIP_METADATA=1 dotnet "$ILEMIT_DLL" "$RT_DLL" DotKt.Stdlib "$RT_CIR"/*.cir.json 2>"$RT_OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$RT_DLL" DotKt.Stdlib --build-stdlib=runtime "$RT_CIR"/*.cir.json 2>"$RT_OUT/ilemit.err" || true; } | tail -2
 	grep -vE '^\s+at ' "$RT_OUT/ilemit.err" | grep -iE 'exception|error|unresolved|no matching|not found|cannot' | head -3 || true
 	[[ -f "$RT_DLL/DotKt.Stdlib.dll" ]] || die "DotKt.Stdlib.dll was not emitted (see $RT_OUT/ilemit.err)"
 	info "*** DotKt.Stdlib.dll emitted ***"

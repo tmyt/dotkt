@@ -185,7 +185,7 @@ taxonomy is archived at `docs/archive/bir2cir-migration-inventory.md`.)
 > referenced .NET type, select the primitive IL opcode, construct the generic, look up an in-assembly
 > emitted type. The whole `@`/`clr:`/`clrg:`/shorthand vocabulary lives **below** the kotc boundary.
 > **Primitive substitution is mode-gated and owned by bir2cir:** in the **reference** build
-> (`DOTKT_STDLIB_COMPILE=1`, no `SUBSTITUTE`) a primitive STAYS `kotlin.Int` (the ref is pure-Kotlin
+> (bir2cir `--build-stdlib=metadata`) a primitive STAYS `kotlin.Int` (the ref is pure-Kotlin
 > metadata; its method bodies are meant to be squashed to `throw NotImplementedException`, so a bare-value
 > `kotlin.Int` never reaches arithmetic/box IL); in **every other** build (rt, app — anything non-ref)
 > `kotlin.Int` lowers to the CLR primitive. The CompatBir/`--native-cir` dual-track is **removed** (2026-06-30):

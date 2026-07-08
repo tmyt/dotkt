@@ -126,6 +126,28 @@ twice (`DOTKT_STDLIB_COMPILE=1` vs `DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITU
   surface* is unaffected (only anonymous gensym numbering — `__lam`/`__local`/`<>dotkt_obj`/CFG-label ids — shifts, which
   is semantically irrelevant; the rt.dll built by consuming that ref.dll is byte-identical).
 
+### #69 (2026-07-09): ONE CLI flag `--build-stdlib=metadata|runtime` replaces the env-var soup
+The stdlib-build mode used to be selected by a soup of environment variables read independently in bir2cir AND ilemit
+(`DOTKT_STDLIB_COMPILE` + `DOTKT_STDLIB_SUBSTITUTE` + `DOTKT_STRIP_METADATA`). Both now take a single CLI flag
+`--build-stdlib=metadata|runtime` (absent = an app build), and their env-var reads are RETIRED. Pure flag-source swap —
+the branches, mode values, and emitted metadata are UNCHANGED, so the ref+rt dlls are byte-identical (modulo the
+non-deterministic PE timestamp + MVID GUID). The mapping:
+
+| mode | flag | bir2cir | ilemit |
+|---|---|---|---|
+| app | *(absent)* | substitute ON, attrs kept, body emit | no strip, no stub |
+| reference | `--build-stdlib=metadata` | substitute OFF (`RefBuild`), body → `throw` (`RefBodySquash`) | `_stdlibStub` on |
+| runtime | `--build-stdlib=runtime` | substitute ON + rt type-param drops (`StdlibSubstituteTypeParams`) | `_stdlibStub` on, `_stripMetadata` on (drops NRT/[Kotlin*]/[KotlinInline] + all attrs) |
+
+- bir2cir: `DriverOptions.StdlibMode` (`App`/`Metadata`/`Runtime`); `RefBuild`/`SubstituteStdlibBuild` derive from it.
+- ilemit: `Emitter.BuildStdlibMode`; `_stdlibStub = mode != App`, `_stripMetadata = mode == Runtime`. The metadata
+  GENERATION/strip logic is UNCHANGED (still stamps [Kotlin*]/NRT and skips them under `_stripMetadata`); only the
+  boolean's SOURCE moved from the env var to the flag. (Relocating the strip DECISION fully into bir2cir — so ilemit
+  stamps whatever the CIR carries dumbly — is a separate deferred task, NOT #69.)
+- kotc still reads `DOTKT_STDLIB_COMPILE` (its own `stdlibCompile` gate); the build scripts keep setting it on the kotc
+  invocation ONLY. `DOTKT_STDLIB_SUBSTITUTE`/`DOTKT_STRIP_METADATA` are dead everywhere (no reader) and removed from the
+  scripts.
+
 **Unified build:** `scripts/build-stdlib.sh` runs kotc ONCE → a shared cacheable BIR → then the ref emit (bir2cir
 refBuild + ilemit + retarget) and the rt emit (bir2cir substitute reading the just-built ref.dll + ilemit + strip). It
 supersedes the two separate `build-stdlib-{ref,rt}.sh` (each ran its own kotc); the emitted dlls are byte-identical

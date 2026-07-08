@@ -463,6 +463,15 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **The stdlib-build mode is now ONE CLI flag `--build-stdlib=metadata|runtime`, not an env-var soup (#69).**
+  bir2cir and ilemit each used to read a tangle of environment variables (`DOTKT_STDLIB_COMPILE` +
+  `DOTKT_STDLIB_SUBSTITUTE` + `DOTKT_STRIP_METADATA`) to select the reference/runtime/app build. Both now take a single
+  `--build-stdlib` flag (absent = an app build); bir2cir maps it to `DriverOptions.StdlibMode` and ilemit to
+  `Emitter.BuildStdlibMode` (`_stdlibStub = mode != App`, `_stripMetadata = mode == Runtime`). The three env vars are
+  RETIRED from both tools (only kotc keeps its own `DOTKT_STDLIB_COMPILE` gate, set on the kotc invocation alone). Pure
+  flag-source swap — every branch, mode value, and emitted byte is unchanged, so `DotKt.Private.Stdlib.dll` +
+  `DotKt.Stdlib.dll` are byte-identical (modulo the non-deterministic PE timestamp + MVID GUID). The build scripts
+  (`build-stdlib.sh` + `build-stdlib-{ref,rt}.sh`) pass the flag to both tools instead of exporting the env vars.
 - **kotc no longer decides the .NET call SHAPE for facadegen-injected interop — bir2cir binds it off the
   Reference Assemblies (#61 / A2).** kotc's backend used to read facadegen's `.NET`-marking injection metadata and
   emit the CLR call shape itself (`clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet`/`clrGeneric*`/indexer/`op_`)

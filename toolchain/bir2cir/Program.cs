@@ -140,10 +140,10 @@ sealed class Pipeline
             CollectLocalValueTypes(b.Root, localValueTypeFqns);
         // The combined value-type oracle: ref.dll struct/enum + foundational primitives, OR a local enum/struct.
         Func<string, bool> isValueFqn = name => refs.IsValueTypeFqn(name) || localValueTypeFqns.Contains(name);
-        // Attribute referenced top-level stdlib funs to their file-class owner only in an APP build: the stdlib self-
-        // build (DOTKT_STDLIB_COMPILE set) defines them locally, so owner=null is correct there. The reference build
-        // never runs MemberCallSubstitution at all (see the RefBuild gate below).
-        var attributeTopLevelOwner = Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") == null;
+        // Attribute referenced top-level stdlib funs to their file-class owner only in an APP build: a stdlib self-
+        // build (`--build-stdlib=metadata|runtime`) defines them locally, so owner=null is correct there. The reference
+        // build never runs MemberCallSubstitution at all (see the RefBuild gate below).
+        var attributeTopLevelOwner = _options.StdlibMode == BuildStdlibMode.App;
 
         // Does THIS assembly declare a user `class S : CharSequence` (a type whose `interfaces` names the synthetic
         // `dotkt$CharSequence`)? If so, CharSequence must stay the polymorphic synthetic ASSEMBLY-WIDE: a
@@ -526,23 +526,25 @@ sealed class Pipeline
     }
 }
 
-sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IReadOnlyList<string> Inputs)
-{
-    // The lowering mode is a property of the BUILD, not a CLI flag. The pure-Kotlin REFERENCE stdlib surface
-    // (DOTKT_STDLIB_COMPILE set AND DOTKT_STDLIB_SUBSTITUTE unset) keeps kotlin.* type tokens verbatim; EVERY
-    // other invocation — the runtime stdlib build and all app builds — lowers kotlin.* to the CLR vocabulary.
-    // The build scripts export these env vars.
-    public bool RefBuild =>
-        Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") != null &&
-        Environment.GetEnvironmentVariable("DOTKT_STDLIB_SUBSTITUTE") == null;
+// The three semantic build modes, selected by the single `--build-stdlib` CLI flag (absent = an app build). These
+// REPLACE the old env-var soup (DOTKT_STDLIB_COMPILE + DOTKT_STDLIB_SUBSTITUTE): metadata = COMPILE-set/SUBSTITUTE-unset,
+// runtime = COMPILE-set/SUBSTITUTE-set, app = COMPILE-unset. (The fourth raw env combination — COMPILE-unset yet
+// SUBSTITUTE-set — was never a real mode; the flag makes it unrepresentable.)
+enum BuildStdlibMode { App, Metadata, Runtime }
 
-    // The RUNTIME stdlib build (DOTKT_STDLIB_COMPILE + DOTKT_STDLIB_SUBSTITUTE) — NOT an app build. Since #66 kotc emits
+sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IReadOnlyList<string> Inputs, BuildStdlibMode StdlibMode)
+{
+    // The pure-Kotlin REFERENCE stdlib surface (`--build-stdlib=metadata` -> DotKt.Private.Stdlib.dll) keeps kotlin.*
+    // type tokens verbatim and squashes bodies to a throw; EVERY other invocation — the runtime stdlib build and all
+    // app builds — lowers kotlin.* to the CLR vocabulary.
+    public bool RefBuild => StdlibMode == BuildStdlibMode.Metadata;
+
+    // The RUNTIME stdlib build (`--build-stdlib=runtime` -> DotKt.Stdlib.dll) — NOT an app build. Since #66 kotc emits
     // one substitute-independent BIR, the rt-only type-param drops (kotlin.Comparable bound / `in` variance) that kotc
-    // used to do live here (StdlibSubstituteTypeParams). App builds (no STDLIB_COMPILE) keep those, substituting the
-    // Comparable bound to System.IComparable — so this must be the stdlib-substitute build ONLY.
-    public bool SubstituteStdlibBuild =>
-        Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") != null &&
-        Environment.GetEnvironmentVariable("DOTKT_STDLIB_SUBSTITUTE") != null;
+    // used to do live here (StdlibSubstituteTypeParams). App builds keep those, substituting the Comparable bound to
+    // System.IComparable — so this is the stdlib-runtime build ONLY. (The @Clr*/NRT/[Kotlin*] metadata strip stays in
+    // ilemit, gated on the SAME `--build-stdlib=runtime` flag passed to ilemit — see ilemit's _stripMetadata.)
+    public bool SubstituteStdlibBuild => StdlibMode == BuildStdlibMode.Runtime;
 
     public static DriverOptions Parse(string[] args)
     {
@@ -552,6 +554,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IRe
         var outDir = args[0];
         var refs = new List<string>();
         var inputs = new List<string>();
+        var mode = BuildStdlibMode.App;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -562,7 +565,15 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IRe
                     break;
                 case "--ref":
                     throw new UsageException("bir2cir: --ref requires a DLL path");
+                case "--build-stdlib=metadata":
+                    mode = BuildStdlibMode.Metadata;
+                    break;
+                case "--build-stdlib=runtime":
+                    mode = BuildStdlibMode.Runtime;
+                    break;
                 default:
+                    if (args[i].StartsWith("--build-stdlib", StringComparison.Ordinal))
+                        throw new UsageException($"bir2cir: --build-stdlib requires 'metadata' or 'runtime' (got '{args[i]}')");
                     if (args[i].StartsWith("--", StringComparison.Ordinal))
                         throw new UsageException($"bir2cir: unknown option '{args[i]}'");
                     inputs.Add(args[i]);
@@ -573,7 +584,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> References, IRe
         if (inputs.Count == 0)
             throw new UsageException("bir2cir: no BIR input files");
 
-        return new DriverOptions(outDir, refs, inputs);
+        return new DriverOptions(outDir, refs, inputs, mode);
     }
 }
 
@@ -1949,8 +1960,8 @@ sealed record SuspendFunctionShape(
 // bir2cir's single, sole transform. Rewrites the Kotlin type vocabulary in a BIR-shaped JSON tree into the
 // CLR-codegen vocabulary ilemit consumes, producing a BIR-SHAPED CIR (same node shape; only type strings change).
 //
-// Mode gate (a property of the build, exported as env by the build scripts):
-//   refBuild = DOTKT_STDLIB_COMPILE set AND DOTKT_STDLIB_SUBSTITUTE unset  -> the pure-Kotlin REFERENCE surface.
+// Mode gate (a property of the build, selected by the `--build-stdlib` CLI flag):
+//   refBuild = StdlibMode == Metadata (`--build-stdlib=metadata`)  -> the pure-Kotlin REFERENCE surface.
 // In the REFERENCE build a kotlin.* primitive token is kept VERBATIM (pure-Kotlin metadata; the bare FQN
 // "kotlin.Int" stays "kotlin.Int"); the rewrite is a pure passthrough. In EVERY other build (the runtime stdlib,
 // and all app builds) a bare kotlin.* primitive lowers to its CLR token (kotlin.Int -> int, ...).
@@ -2678,7 +2689,7 @@ static class IteratorConsumerNormalization
 // injects the synthetic interface. (This same per-assembly boundary is why calling a *stdlib* CharSequence-extension
 // with an app value is a SEPARATE, deeper blocker for the retire-B follow-up — see docs/master-task-inventory.md 4-A.)
 //
-// APP builds ONLY (gated on attributeTopLevelOwner at the call site — DOTKT_STDLIB_COMPILE unset), so the ref/rt stdlib
+// APP builds ONLY (gated on attributeTopLevelOwner at the call site — StdlibMode == App), so the ref/rt stdlib
 // self-builds stay byte-identical. Runs AFTER MemberCallSubstitution (its emitted `new` is never re-substituted — the
 // adapter is not @ClrTypeAlias) and BEFORE BirTypeLowering (so it still sees the kotlin.* / @dotkt$CharSequence type
 // vocabulary; the injected type's kotlin.* signature tokens and the wrap node's `type`/`argTypes` are lowered
@@ -4606,7 +4617,7 @@ static class MemberCallSubstitution
     // defined here is a candidate for referenced-stdlib owner attribution. Single-threaded per run, so static is fine.
     static IReadOnlySet<string> _localTopLevelFns = new HashSet<string>(StringComparer.Ordinal);
     // Whether to attribute referenced top-level stdlib funs to their file-class owner (APP build only; OFF for the
-    // stdlib self-build, where every such fun is local — see DOTKT_STDLIB_COMPILE gate at the call site in the Driver).
+    // stdlib self-build, where every such fun is local — see the StdlibMode == App gate at the call site in the Driver).
     static bool _attributeTopLevelOwner;
 
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,

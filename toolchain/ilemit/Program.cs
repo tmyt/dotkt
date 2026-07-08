@@ -15,21 +15,27 @@ static class IlEmit
 {
     static int Main(string[] args)
     {
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> [--ref <dll>]... <file.bir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> [--build-stdlib=metadata|runtime] [--ref <dll>]... <file.bir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);
         // `--ref <dll>`: preload an external .NET assembly (e.g. a coroutine runtime, a framework like Avalonia)
         // so its types resolve at emit time; the runtime dll must sit beside the emitted assembly to run.
+        // `--build-stdlib=metadata|runtime`: the stdlib self-build mode (the SAME flag bir2cir parses). It drives two
+        // knobs: StdlibStub (either mode — stub un-emittable methods instead of aborting) and _stripMetadata (runtime
+        // only — drop roundtrip metadata). Absent = an app build. Retires DOTKT_STDLIB_COMPILE / DOTKT_STRIP_METADATA.
         var bir = new List<string>();
+        var mode = Emitter.BuildStdlibMode.App;
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
             if (rest[i] == "--ref" && i + 1 < rest.Count) { var rp = Path.GetFullPath(rest[++i]); Emitter.T($"ref: {rp}"); try { Assembly.LoadFrom(rp); } catch { } }
+            else if (rest[i] == "--build-stdlib=metadata") mode = Emitter.BuildStdlibMode.Metadata;
+            else if (rest[i] == "--build-stdlib=runtime") mode = Emitter.BuildStdlibMode.Runtime;
             else bir.Add(rest[i]);
         }
         var files = bir.Select(LoadInputDocument).ToList();
-        new Emitter(outDir, asmName).EmitAssembly(MergeByFileClass(files));
+        new Emitter(outDir, asmName, mode).EmitAssembly(MergeByFileClass(files));
         return 0;
     }
 
@@ -94,9 +100,10 @@ sealed partial class Emitter
     readonly string _outDir;
     readonly string _asmName;
     // Strip ALL roundtrip metadata ([Kotlin*]/[KotlinInline]/NRT + the attr class defs) — the [KotlinInline] BIR payloads
-    // are ~73.8% of the size. ORTHOGONAL to substitution (DOTKT_STDLIB_SUBSTITUTE): ONLY the stdlib RUNTIME sets this;
-    // a USER LIBRARY is substituted but KEEPS its attributes (round-trip consumable AS KOTLIN). (Per user.)
-    readonly bool _stripMetadata = Environment.GetEnvironmentVariable("DOTKT_STRIP_METADATA") != null;
+    // are ~73.8% of the size. TRUE for the stdlib RUNTIME build (`--build-stdlib=runtime`); a USER LIBRARY (no flag) is
+    // substituted but KEEPS its attributes (round-trip consumable AS KOTLIN). Sourced from the `--build-stdlib` CLI flag,
+    // the SAME flag bir2cir parses (retires the old DOTKT_STRIP_METADATA env var); only the boolean SOURCE changed.
+    readonly bool _stripMetadata;
     readonly Dictionary<string, TypeInfo> _types = new();
     readonly Dictionary<string, TypeBuilder> _syntheticDelegates = new();
     readonly Dictionary<TypeBuilder, ConstructorBuilder> _syntheticDelegateCtors = new();
@@ -148,7 +155,15 @@ sealed partial class Emitter
     Dictionary<string, GenericTypeParameterBuilder> _curTypeParams;
     Dictionary<string, GenericTypeParameterBuilder> _curMethodParams;
 
-    public Emitter(string outDir, string asmName) { _outDir = outDir; _asmName = asmName; }
+    // The stdlib self-build mode, from `--build-stdlib` (mirrors bir2cir's BuildStdlibMode; separate assembly).
+    public enum BuildStdlibMode { App, Metadata, Runtime }
+
+    public Emitter(string outDir, string asmName, BuildStdlibMode mode = BuildStdlibMode.App)
+    {
+        _outDir = outDir; _asmName = asmName;
+        _stripMetadata = mode == BuildStdlibMode.Runtime;   // runtime stdlib build drops roundtrip metadata
+        _stdlibStub = mode != BuildStdlibMode.App;           // either stdlib build stubs un-emittable methods
+    }
 
     public void EmitAssembly(List<JsonElement> files)
     {
@@ -1028,7 +1043,7 @@ sealed partial class Emitter
             // state-machine form; bir2cir deliberately leaves their DEFINITIONS un-lowered "for the ilemit throw-stub"
             // (SuspendColdLowering.cs), transforming only their CALL SITES. Their bodies are effectively dead (no real
             // caller survives), so a throwing stub is the correct emission. Keep it, unchanged.
-            if (StdlibStub) { EmitThrowStub(mb, "suspend (reference stub)"); return; }
+            if (_stdlibStub) { EmitThrowStub(mb, "suspend (reference stub)"); return; }
             // In an APP build there are no such primitives — every suspend fn is a real coroutine that bir2cir must
             // lower. Reaching here is therefore a bir2cir transform MISS (a disqualified/un-lowered suspend shape). Fail
             // LOUD at emit time — naming the method — instead of silently emitting a throwing stub that surfaces as a
@@ -1683,9 +1698,10 @@ sealed partial class Emitter
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
     // `retType`/`paramTypes` give the SUBSTITUTED (concrete) signature, since the instantiation's own reflection
     // still reports `!!0` (and throws pre-bake) — needed so value args to `object`/concrete params get boxed.
-    // Set by build-stdlib-ref.sh: while compiling the pure-kotlin stdlib, methods the backend can't yet emit are
-    // stubbed (throw) instead of aborting the whole assembly — the "= TODO()" stdlib still emits and loads.
-    static readonly bool StdlibStub = Environment.GetEnvironmentVariable("DOTKT_STDLIB_COMPILE") == "1";
+    // Set by `--build-stdlib=metadata|runtime` (either stdlib self-build): while compiling the pure-kotlin stdlib,
+    // methods the backend can't yet emit are stubbed (throw) instead of aborting the whole assembly — the "= TODO()"
+    // stdlib still emits and loads. Retires the DOTKT_STDLIB_COMPILE env read (now the same `--build-stdlib` flag).
+    readonly bool _stdlibStub;
 
     // Emit a body that just throws — stubs a method the backend can't yet emit during the stdlib build.
     void EmitThrowStub(MethodBuilder mb, string feature)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the stdlib REFERENCE assembly (DotKt.Private.Stdlib.dll): compile the real pure-Kotlin stdlib
-# (libraries/stdlib/{common,src,unsigned}/src + the clr/ actuals) in ref mode (DOTKT_STDLIB_COMPILE=1, no
-# SUBSTITUTE — @Clr stays metadata) to BIR, then with --emit bir2cir -> ilemit -> retarget. The ref is
+# (libraries/stdlib/{common,src,unsigned}/src + the clr/ actuals) in ref mode (bir2cir/ilemit
+# `--build-stdlib=metadata`, no SUBSTITUTE — @Clr stays metadata) to BIR, then with --emit bir2cir -> ilemit -> retarget. The ref is
 # compile-time only (bir2cir's --ref, sourcing the @ClrTypeAlias/@ClrIntrinsic labels), never loaded at
 # runtime — fully substituted away at app-emit; the shipping RUNTIME assembly is DotKt.Stdlib.dll
 # (build-stdlib-rt.sh). The 'Private' name marks it as an internal reference face, not an external
@@ -51,10 +51,10 @@ if (( do_emit )); then
 	need_tool bir2cir; need_tool ilemit
 	rm -rf "$CIR" "$DLL"; mkdir -p "$CIR" "$DLL"
 	info "bir2cir -> CIR (ref mode)"
-	DOTKT_STDLIB_COMPILE=1 dotnet "$BIR2CIR_DLL" "$CIR" "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true
+	dotnet "$BIR2CIR_DLL" "$CIR" --build-stdlib=metadata "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true
 	echo "CIR files: $(ls "$CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "ilemit(CIR) -> DotKt.Private.Stdlib.dll"
-	{ DOTKT_STDLIB_COMPILE=1 dotnet "$ILEMIT_DLL" "$DLL" DotKt.Private.Stdlib "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Private.Stdlib --build-stdlib=metadata "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
 	grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3 || true
 	[[ -f "$DLL/DotKt.Private.Stdlib.dll" ]] || die "DotKt.Private.Stdlib.dll was not emitted (see $OUT/ilemit.err)"
 	# Retarget: the emitted dll references the IMPLEMENTATION core (System.Private.CoreLib); repoint those refs at

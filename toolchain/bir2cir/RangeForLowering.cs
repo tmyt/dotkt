@@ -9,7 +9,7 @@ using DotKt.Bir;
 // knowledge belongs): the IntProgression accessor getters (get_first/get_last/get_step) + the owner FQN are DERIVED
 // here. Two forms, dispatched by build mode:
 //
-//   stdlib build (DOTKT_STDLIB_COMPILE set — ref + rt): IntProgression is emitted LOCALLY, so keep the `forRange` and
+//   stdlib build (StdlibMode != App — ref + rt): IntProgression is emitted LOCALLY, so keep the `forRange` and
 //     inject accessOwner/firstM/lastM/stepM. ilemit's forRange resolves `_types[accessOwner].Methods[firstM]`
 //     generically, holding NO hardcoded kotlin.ranges knowledge in the IL backend.
 //

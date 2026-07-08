@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 // #66 — kotc emits ONE substitute-INDEPENDENT BIR: the stdlib REFERENCE and RUNTIME builds get BIT-IDENTICAL type
 // params (the pure-Kotlin shape, keeping a `kotlin.Comparable` upper bound and `in` declaration-site variance). The
 // ref/rt divergence for those two is a SUBSTITUTION CONSEQUENCE, so it lives HERE — the RUNTIME stdlib build only
-// (DOTKT_STDLIB_COMPILE + DOTKT_STDLIB_SUBSTITUTE). It reproduces exactly what BirEmitter.typeParamsJson used to do
+// (`--build-stdlib=runtime`, `SubstituteStdlibBuild`). It reproduces exactly what BirEmitter.typeParamsJson used to do
 // under `stdlibSubstitute`:
 //
 //   (1) DROP a `kotlin.Comparable<…>` upper bound. A substituted BCL primitive (Int32) does NOT implement

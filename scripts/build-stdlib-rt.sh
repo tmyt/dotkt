@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the stdlib RUNTIME assembly (DotKt.Stdlib.dll — the ref/runtime split's impl side). Same sources
-# as build-stdlib-ref.sh, but in SUBSTITUTE mode (DOTKT_STDLIB_SUBSTITUTE=1): the @Clr bindings are
-# ACTIVE, so @Clr-bound TYPES resolve to the BCL and are NOT emitted (no clash with the ref's pure-Kotlin
+# as build-stdlib-ref.sh, but in SUBSTITUTE mode (bir2cir/ilemit `--build-stdlib=runtime`): the @Clr bindings
+# are ACTIVE, so @Clr-bound TYPES resolve to the BCL and are NOT emitted (no clash with the ref's pure-Kotlin
 # shapes) while the stdlib FUNCTIONS (listOf/map/filter/asList) are emitted with substituted signatures.
 # bir2cir reads the REFERENCE assembly (build-stdlib-ref.sh — must exist first) for the @ClrTypeAlias/
 # @ClrIntrinsic call-substitution labels. Inputs: libraries/stdlib sources + kotc + bir2cir/ilemit dlls +
@@ -39,7 +39,7 @@ FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compil
 
 info "SUBSTITUTE-mode kotc: ${#STDLIB_COMMON[@]}+${#STDLIB_SRC[@]}+${#STDLIB_UNSIGNED[@]}+${#STDLIB_CLR[@]} stdlib files -> BIR (@Clr ACTIVE)"
 # kotc exits nonzero when there are frontend errors; this script's job is to REPORT them, so tolerate it.
-DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITUTE=1 DOTKT_STRIP_METADATA=1 CLR_TYPES_METADATA="" "$KOTC" \
+DOTKT_STDLIB_COMPILE=1 CLR_TYPES_METADATA="" "$KOTC" \
 	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
 	"${FLAGS[@]}" -d "$BIR" 2>"$OUT/kotc.err" || true
 bir_count="$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)"
@@ -53,9 +53,9 @@ if (( do_emit )); then
 	# bir2cir reads the REFERENCE assembly for the @ClrTypeAlias/@ClrIntrinsic call-substitution labels
 	# (member calls on CLR-bound owners -> plain BCL calls). Must exist — build the ref first.
 	refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
-	{ DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITUTE=1 DOTKT_STRIP_METADATA=1 dotnet "$BIR2CIR_DLL" "$CIR" "${refarg[@]}" "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true; } | tail -1
+	{ dotnet "$BIR2CIR_DLL" "$CIR" "${refarg[@]}" --build-stdlib=runtime "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true; } | tail -1
 	info "ilemit (substitute) -> DotKt.Stdlib.dll"
-	{ DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITUTE=1 DOTKT_STRIP_METADATA=1 dotnet "$ILEMIT_DLL" "$DLL" DotKt.Stdlib "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Stdlib --build-stdlib=runtime "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
 	# Report (but do not fail on) interesting emitter noise; the REAL success signal is the dll below.
 	grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|error|unresolved|no matching|not found|cannot' | head -3 || true
 	[[ -f "$DLL/DotKt.Stdlib.dll" ]] || die "DotKt.Stdlib.dll was not emitted (see $OUT/ilemit.err)"
