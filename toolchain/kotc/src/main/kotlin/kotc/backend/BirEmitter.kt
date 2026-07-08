@@ -4029,12 +4029,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 		if (isBuiltin) {
 			val operands = call.arguments.filterNotNull()
-			// `String + x` is concatenation, not numeric add.
+			// `String + x` (concatenation, not numeric add). #52 Phase 5: emit the FAITHFUL `callInstance
+			// kotlin.String.plus` (a plain 2-operand member call) — the `String.plus -> concat` MEMBER recognition is
+			// bir2cir's now (PrimitiveOperatorLowering re-emits the `concat`, exactly like the relocated arithmetic
+			// operators). The cast-stripped `partTypes` hint (the SAME the string-template path carries) travels along so
+			// bir2cir's Phase-4b part routing still wraps a collection/Map part in clrCollToString/clrMapToString and a
+			// NULLABLE part in LibraryKt.toString; the declared param type (Any?) cannot recover it, so it is a real hint.
 			if (name == "plus" && declaringClass?.fqNameWhenAvailable?.asString() == "kotlin.String" && operands.size == 2)
-				// #52 Phase 4b: emit the FAITHFUL concat plus cast-stripped static-type HINTS (`partTypes`). bir2cir wraps a
-				// collection/Map part in clrCollToString/clrMapToString (Kotlin-style `[a, b]`) and a NULLABLE part in
-				// LibraryKt.toString (null -> "null"), then drops partTypes; else `"" + list` would yield the raw .NET name.
-				return """{"k":"concat","parts":[${expr(operands[0])},${expr(operands[1])}],"partTypes":[${stripImplicit(operands[0]).toJson()},${stripImplicit(operands[1]).toJson()}]}"""
+				return """{"k":"callInstance","ownerType":${fqnJson("kotlin.String")},"virtual":false,"recv":${expr(operands[0])},"method":"plus","args":[${expr(operands[1])}],"partTypes":[${stripImplicit(operands[0]).toJson()},${stripImplicit(operands[1]).toJson()}]}"""
 			// `==` (EQEQ) / `===` (EQEQEQ) are `kotlin.internal.ir` COMPILER INTRINSICS. The ceq-vs-Object.Equals SPLIT
 			// (structural `==`: `ceq` for primitives, null-safe `Object.Equals` for reference types; `===`: identity
 			// `ceq`) recognition MOVED to bir2cir (#52 Phase 5 class 4). kotc emits the FAITHFUL intrinsic call with

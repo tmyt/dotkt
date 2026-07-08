@@ -502,6 +502,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   primitive fast-path must precede the float total-order route). **kotc now recognizes ZERO operators —
   arithmetic/bitwise/unary/inc/dec/comparison/equality all synthesize their binOp/unaryOp/conv/objEq in
   bir2cir's `PrimitiveOperatorLowering`; kotc emits only the faithful IR.**_
+- **`String.plus` (member concat) recognition moved out of kotc into bir2cir (#52 Phase 5 — the last
+  operator-recognition residual).** kotc no longer recognizes `"a" + b` (`kotlin.String.plus`) as a `concat`:
+  it emits the FAITHFUL `callInstance kotlin.String.plus(a, b)` (a plain 2-operand member call) carrying the
+  same cast-stripped `partTypes` hint the string-template path already carries (the stripped static operand
+  types — List / nullable — are not recoverable from the declared param type `Any?`, so the hint is genuine).
+  `PrimitiveOperatorLowering.Lower` recognizes `ownerType==kotlin.String && method=="plus" && args==1` and
+  re-emits the identical 2-part `concat` node; `FaithfulHintRecognition` then consumes `partTypes` exactly as
+  for a template concat (collection part → `clrCollToString`, nullable part → `LibraryKt.toString`). The
+  string-TEMPLATE path (`IrStringConcatenation` → `concat`) is untouched — emitting a concat from the template
+  IR is faithful transcription (concat IS the template's meaning), not member recognition. Byte-identical:
+  nested `"a" + "b" + "c"` lowers bottom-up, and `"x" + listOf(1,2,3)` still renders `[1, 2, 3]`. **kotc now
+  recognizes ZERO operators — member operators (`String.plus`) included.**
 - **The last kotc CLR recognition — collection/Map `toString`, structural `==`, Double/Float total-order,
   null-safe stringify — moved to bir2cir (#52 Phase 4b).** kotc used to pattern-match the operand STATIC
   TYPE (through IR casts) to route these Kotlin-SEMANTIC operations to stdlib helpers by hardcoded FQN

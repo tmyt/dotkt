@@ -202,7 +202,7 @@ origin (kotc's own `<>dotkt_*` closure/delegate/KProperty synthetic types) — i
 | `Function.invoke` 3423/3683 | `name=="invoke"` on `kotlin.Function*`/`KFunction*` | splice / `delegateInvoke` | delegate/closure lowering (a kept CLR-primitive family per CLAUDE.md) |
 | `code`/`name`/`ordinal` on Char/enum 3639–3653 | property name + receiver kind | `conv`/`objMethod`/field | primitive/enum representation |
 | Char arithmetic result typing 4219–4223 | `leftChar` + return FQN | `conv` | Kotlin's Char op return-typing rule |
-| `String.plus` concat 4162 | `name=="plus"` + `kotlin.String` | `concat` | string-concat is a language op |
+| ~~`String.plus` concat 4162~~ | `name=="plus"` + `kotlin.String` | `concat` | ✅ **RELOCATED TO bir2cir (#52 Phase 5)** — kotc emits the FAITHFUL `callInstance kotlin.String.plus(a,b)` (+ the same cast-stripped `partTypes` hint the string-template path carries); `PrimitiveOperatorLowering.Lower` recognizes `ownerType==kotlin.String && method==plus && args==1` and re-emits the identical 2-part `concat`; FaithfulHintRecognition then consumes `partTypes` unchanged. Byte-identical. (Was "language op"; the corrected discipline — default RELOCATE, no "special-op" excuse — applied since `kotlin.String.plus` is a real stdlib member) |
 | `compareTo` Double/Float total order 3443–3461, enum 3447–3452 | receiver type/kind | stdlib helper call / `binOp` | Kotlin total-order semantics (differs from `System.Double.CompareTo`) — routes to a stdlib helper, layer-ok |
 | Array `get`/`set` 3695–3701 | `isOperator` + `isArrayType` | `arrayGet`/`arraySet` | CLR array indexing is a primitive IL op |
 | `Delegates.observable/vetoable/notNull` 3432–3438 | `declaringClass=="kotlin.properties.Delegates"` + name | synth delegate class | property-delegation protocol (frontend); **(a) migratable only if stdlib ships real delegate impls** — deferred, medium risk |
@@ -454,8 +454,8 @@ Operand VALUE-shaping (value-nullable unwrap + boxed-Any cast) stays in kotc as 
 (`recvExpr` + `argExpr`, the CLR twin of JVM's implicit `intValue()`), NOT operator recognition. The residual
 kotc gates (`COMPARE` names, `name == "EQEQ"`) only IDENTIFY the intrinsic to emit faithfully (with its
 package owner `kotlin.internal.ir` + — for EQEQ — the operands' `argTypes`) and run the kept Phase-4
-structural-equality routings; the operator SYNTHESIS is entirely bir2cir's. `String.plus` → `concat` stays a
-kept language op (audit §2.3), untouched.
+structural-equality routings; the operator SYNTHESIS is entirely bir2cir's. `String.plus` → `concat` is now
+**also relocated** (see "String.plus" below) — kotc recognizes ZERO operators, member operators included.
 
 
 
@@ -509,7 +509,20 @@ get_first|get_last|get_step|IntProgression toolchain/kotc/src` → gone; INT_PRO
 **With Phase 4b + Phase 5 (operators + range) complete, kotc = ZERO CLR recognition — a pure faithful IR→BIR
 transcriber.**
 
-_All operator classes (1–4) + the range partial are done._
+**String.plus (member concat operator) — ✅ DONE.** The last operator-recognition residual. kotc's
+`name=="plus"` + `kotlin.String` → `concat` recognition (BirEmitter.kt, the `String + x` site) is REMOVED: kotc
+emits the FAITHFUL `callInstance kotlin.String.plus(a, b)` (a plain 2-operand member call), carrying the SAME
+cast-stripped `partTypes` hint the string-template path already carries (the stripped static operand types —
+List/nullable — are NOT recoverable from the declared param type `Any?`, so the hint is genuine). A new arm in
+`PrimitiveOperatorLowering.Lower` recognizes `ownerType==kotlin.String && method=="plus" && args.Count==1` and
+re-emits the identical 2-part `concat` node kotc used to synthesize; `FaithfulHintRecognition` (runs NEXT)
+consumes `partTypes` exactly as for a template concat (collection part → clrCollToString, nullable part →
+LibraryKt.toString). The STRING-TEMPLATE path (`IrStringConcatenation` → `concat`) is UNTOUCHED — that is
+faithful transcription (concat IS the template's meaning), not member recognition. Byte-identical: nested `"a"
++ "b" + "c"` lowers bottom-up (inner call → concat first, then outer), and `"x" + listOf(1,2,3)` still routes
+through the Phase-4b collection stringifier (verified `[1, 2, 3]`, not the raw .NET name).
+
+_All operator classes (1–4) + the range partial + String.plus are done._
 
 **Original plan (for the full bucket):**
 - **Principled target, per the faithful-transcriber rule:** kotc emits the faithful `callInstance`
@@ -550,7 +563,8 @@ _All operator classes (1–4) + the range partial are done._
   rangeTo: `3560–3579`. range `contains`: `3583–3596`.
 - Enum: `3599–3653`. Reified enum: `3620–3637`.
 - Preconditions: `4263–4293` (+ `newExc` 132/337/847). Scope: `3485–3489`. use: `3493`. repeat: `4301`.
-- Operators: `4159–4235`. EQEQ/EQEQEQ: `4169–4182`. String.plus: `4162`.
+- Operators: `4159–4235`. EQEQ/EQEQEQ: `4169–4182`. String.plus: ✅ RELOCATED to bir2cir (#52 Phase 5) —
+  kotc emits the faithful `callInstance kotlin.String.plus`; `PrimitiveOperatorLowering` re-emits the `concat`.
 - Delegates.observable/vetoable/notNull: `3432–3438`.
 - Collection bridges (iterator/defaults/listIterator + lifted `iterator` mref): ✅ DELETED (#52 Phase 4) —
   routing owned by bir2cir Rule 5 (`Program.cs`).

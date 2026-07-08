@@ -6,8 +6,10 @@ using DotKt.Bir;
 
 // PRIMITIVE OPERATOR LOWERING (#52 Phase 5): recognize the primitive value-type OPERATORS that kotc used to
 // lower itself (its retired BINARY/UNARY tables) and re-emit the SAME `binOp`/`unaryOp` nodes — so ilemit is
-// UNCHANGED and the CIR stays byte-identical. kotc now emits the FAITHFUL member call (`callInstance
-// kotlin.Int.plus`, `kotlin.Char.unaryMinus`, `kotlin.Int.inc`); its recv/args are already value-shaped by
+// UNCHANGED and the CIR stays byte-identical. Also recognizes `kotlin.String.plus` (the last operator-recognition
+// residual) and re-emits the `concat` node kotc used to synthesize (the string-`+` member call). kotc now emits
+// the FAITHFUL member call (`callInstance kotlin.Int.plus`, `kotlin.Char.unaryMinus`, `kotlin.Int.inc`,
+// `kotlin.String.plus`); its recv/args are already value-shaped by
 // kotc (recvExpr/argExpr — nullable-unwrap + boxed-Any cast). The primitive-op GATE and the IL-op selection are
 // the Kotlin<->CLR relation, so they live HERE now, keyed off the pure-Kotlin owner FQN.
 //
@@ -95,9 +97,24 @@ static class PrimitiveOperatorLowering
         var k = (o["k"] as JsonValue)?.GetValue<string>();
         if (k == "callStatic") return LowerIntrinsic(o);
         if (k != "callInstance") return null;
-        if (OwnerFqn(o["ownerType"]) is not string ownerFqn || !PrimitiveOpFq.Contains(ownerFqn)) return null;
+        if (OwnerFqn(o["ownerType"]) is not string ownerFqn) return null;
         if ((o["method"] as JsonValue)?.GetValue<string>() is not string member) return null;
         var args = o["args"] as JsonArray ?? new JsonArray();
+
+        // String concatenation (`a + b`, receiver `kotlin.String`) — the MEMBER recognition kotc used to do (#52
+        // Phase 5). kotc now emits the FAITHFUL `callInstance kotlin.String.plus(a, b)` + a cast-stripped `partTypes`
+        // hint (the SAME the string-template path carries); re-emit the identical 2-part `concat` node kotc used to
+        // synthesize. FaithfulHintRecognition (runs NEXT) then consumes `partTypes` exactly as for a string template —
+        // the Phase-4b part routing (collection -> clrCollToString, nullable -> LibraryKt.toString) is unchanged.
+        if (ownerFqn == "kotlin.String" && member == "plus" && args.Count == 1)
+            return new JsonObject
+            {
+                ["k"] = "concat",
+                ["parts"] = new JsonArray { o["recv"]?.DeepClone(), args[0]?.DeepClone() },
+                ["partTypes"] = (o["partTypes"] as JsonArray)?.DeepClone(),
+            };
+
+        if (!PrimitiveOpFq.Contains(ownerFqn)) return null;
 
         if (args.Count == 1 && ArithOp.TryGetValue(member, out var aop))
         {
