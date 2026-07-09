@@ -203,6 +203,12 @@ sealed class Pipeline
             // callInstance reaches MemberCallSubstitution's primitive-compareTo -> System.Double.CompareTo routing, and
             // before any type-erasing pass — so the inner value nodes stay pure kotlin.* and lower normally downstream.
             FaithfulHintRecognition.Apply(bir.Root, refs);
+            // CHAR.CODE + FUNCTION.INVOKE (#73 Phase 2b-2): two single-node recognitions kotc used to do — `c.code`
+            // (faithful `callStatic get_code(Char)`) -> `{k:conv, to:kotlin.Int}`, and `f(x)` (faithful `callInstance
+            // kotlin.FunctionN.invoke`) -> `{k:delegateInvoke}`. Runs EARLY (before NetInteropBinding / the suspend
+            // + closure passes that CONSUME delegateInvoke / any type-erasing pass) and UNCONDITIONALLY (ref + app),
+            // reproducing the flow that existed when kotc emitted conv/delegateInvoke directly.
+            CharCodeInvokeLowering.Apply(bir.Root, refs);
             // .NET-INTEROP CALL BINDING (A2 / #61): bind a facadegen-injected .NET member call — which kotc now emits as
             // a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN identity — to its CLR call SHAPE
             // (clrStatic/clrInstance/clrPropGet/clrPropSet/clrGeneric*), resolved off the loaded .NET reference

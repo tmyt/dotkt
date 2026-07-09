@@ -3315,11 +3315,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					else """{"k":"enumValues","type":${str(tok)}}"""
 			}
 		}
-		// `c.code` (Char -> Int code point) -> the char value as an int.
-		if (callee.correspondingPropertySymbol?.owner?.name?.asString() == "code")
-			(dispatchReceiver(call) ?: extensionReceiver(call))?.takeIf { it.type.classFqName?.asString() == "kotlin.Char" }?.let { c ->
-				return """{"k":"conv","to":${fqnJson("kotlin.Int")},"e":${expr(c)}}"""
-			}
+		// `c.code` (Char -> Int code point) is NOT recognized here: kotc emits the FAITHFUL top-level extension-property
+		// getter call `callStatic owner:null method:get_code sig:[kotlin.Char] args:[<char>]` (the plain Kotlin fact) via
+		// the general property path. bir2cir's CharCodeInvokeLowering re-emits the `{k:conv, to:kotlin.Int}` node (a
+		// genuine primitive IL op — the char value AS an int, distinct from `.toInt()`'s @ClrConv) off that faithful
+		// call, resolving `get_code`->kotlin.CharCodeKt against the ref.dll. The Kotlin<->CLR relation lives in bir2cir.
 		// c.name -> ToString() (enum name); c.ordinal -> (int)c.  Rich enum -> the __name/__ordinal fields.
 		dispatchReceiver(call)?.takeIf { (it.type.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.ENUM_CLASS }?.let { rc ->
 			val rec = (rc.type.classifierOrNull?.owner as? IrClass)
@@ -3345,15 +3345,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// stdlib call. Reading a ref object as a KeyValuePair struct would reinterpret memory -> garbage values (and
 		// KeyValuePair is CLR knowledge the layer rules forbid inside kotc).
 
-		// Invoking a function-typed value `f(x)` -> delegate `Invoke` (Func/Action). Includes a callable-reference
-		// value `(c::method)(x)` whose static type is `KFunctionN` (also a delegate at the CLR level).
-		if (name == "invoke" && declaringClass?.fqNameWhenAvailable?.asString().let { it?.startsWith("kotlin.Function") == true || it?.startsWith("kotlin.reflect.KFunction") == true }) {
-			val recv = dispatchReceiver(call)
-			if (recv != null) {
-				val a = regularArgs(call)
-				return """{"k":"delegateInvoke","funcType":${birType(recv.type).toJson()},"recv":${expr(recv)},"args":[${a.joinToString(",") { expr(it) }}]}"""
-			}
-		}
+		// Invoking a function-typed value `f(x)` -> delegate `Invoke` (Func/Action) is NOT recognized here: kotc emits
+		// the FAITHFUL `callInstance ownerType:kotlin.FunctionN[..]/kotlin.reflect.KFunctionN[..] method:invoke` member
+		// call (the plain Kotlin fact) via the general instance-call path. bir2cir's CharCodeInvokeLowering re-emits the
+		// `{k:delegateInvoke}` node off that faithful call — deriving `funcType` from the FunctionN owner's type args
+		// (params = args[..n-1], ret = args[n]). A function-typed value IS a delegate at the CLR level; that Kotlin<->CLR
+		// relation lives in bir2cir. (Includes a callable-reference value `(c::method)(x)` whose type is `KFunctionN`.)
 		// MutableList/MutableCollection mutation members (`add`/`remove`/`clear`/`removeAt`) -> the BCL List<T>
 		// instance method. Kotlin collections lower to System.Collections.Generic.List<T>; these are instance calls,
 		// not collection extension ops (the real stdlib `map`/`filter`/`mapTo` bodies — which build an ArrayList via
