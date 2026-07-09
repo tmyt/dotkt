@@ -72,8 +72,11 @@ import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
 import org.jetbrains.kotlin.ir.types.isBoxedArray
+import org.jetbrains.kotlin.ir.types.isPrimitiveType
+import org.jetbrains.kotlin.ir.types.isUnsignedType
 import org.jetbrains.kotlin.ir.util.isPrimitiveArray
 import org.jetbrains.kotlin.ir.util.isUnsignedArray
+import org.jetbrains.kotlin.ir.util.defaultType
 import org.jetbrains.kotlin.ir.types.makeNotNull
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.IrFileEntry
@@ -3022,7 +3025,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val branches = node.branches.map { b -> Triple((b.condition as? IrConst)?.value == true, b.condition, expr(b.result)) }
 		val nullBranch = branches.any { isEmittedNullConst(it.third) }
 		val bt = birType(node.type)
-		val elem: TypeNode? = if (bt is TypeNode.Nullable) null else (bt as? TypeNode.Fqn)?.takeIf { it.name in PRIMITIVE_EQ_FQ }
+		val elem: TypeNode? = if (bt is TypeNode.Nullable) null else (bt as? TypeNode.Fqn)?.takeIf { node.type.isValuePrimitive() }
 		val ty = (if (nullBranch && elem != null) TypeNode.Nullable(elem) else bt).toJson()
 		var acc = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
 		for ((isElse, cond, result) in branches.asReversed()) {
@@ -3791,7 +3794,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// universal method, so it must keep the System.Object slot (falling through would emit a call to the
 			// non-existent `kotlin.Any.toString` and NRE). Hence the explicit kotlin.Any exclusion beside isFakeOverride.
 			val declaresOwn = !callee.isFakeOverride && declaringClass?.fqNameWhenAvailable?.asString() != "kotlin.Any"
-			val primitive = dispatchReceiver(call)!!.type.classFqName?.asString() in PRIMITIVE_OP_FQ
+			val primitive = dispatchReceiver(call)!!.type.isPrimitiveOrUnsigned()
 			val fallThrough = when (name) {
 				"hashCode" -> declaresOwn                      // Int/Long/Char/Boolean inherit Any.hashCode → stays objMethod
 				"toString", "equals" -> declaresOwn && !primitive
@@ -4028,7 +4031,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// -- lives on the BCL interface FindMethod skips). ilemit gates on the owner-interface so non-collection misses
 			// still throw. See ilemit EmitDynamicCall.
 			val dynRet = ""","dynRet":${birType(call.type).toJson()}"""
-			"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${recvExpr(recv, ownerStr)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}}"""
+			"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${recvExpr(recv, ownerStr, declaringClass?.defaultType)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}}"""
 		} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}}"""
 	}
 
@@ -4185,9 +4188,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A boxed Any operand (an un-narrowed smart-cast, `x is Int && f(x)`) passed to a concrete value-primitive
 			// param -> cast to the param type so the VALUE, not the box, reaches the slot. This is the arg twin of
 			// recvExpr's boxed-Any coercion: a primitive operator (`a + b`) lowered by bir2cir flows its arg through here.
-			(birType(param.type) as? TypeNode.Fqn)?.name?.takeIf { it in PRIMITIVE_OP_FQ }?.let { pfq ->
-				if (birType(arg.type) == OBJ) return """{"k":"cast","type":${str(TypeNode.Fqn(pfq))},"e":${expr(arg)}}"""
-			}
+			if (param.type.isPrimitiveOrUnsigned() && birType(arg.type) == OBJ)
+				return """{"k":"cast","type":${str(birType(param.type))},"e":${expr(arg)}}"""
 		}
 		return expr(arg)
 	}
@@ -4197,9 +4199,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  twin of [argExpr]'s value coercion — a member call on `kotlin.Int`/`kotlin.Char`/… (a primitive
 	 *  operator, `compareTo`, `toString`, …) needs the raw value, not a `Nullable<T>` struct load / a box. A no-op
 	 *  for any non-primitive owner. */
-	internal fun recvExpr(recv: IrExpression, ownerType: TypeNode): String {
-		val ownerFq = (ownerType as? TypeNode.Fqn)?.name
-		if (ownerFq == null || ownerFq !in PRIMITIVE_OP_FQ || isPreUnwrappedRead(recv)) return expr(recv)
+	internal fun recvExpr(recv: IrExpression, ownerType: TypeNode, ownerIr: IrType?): String {
+		// The owner's value-primitive-ness is read from the IR (`ownerIr` = the member's declaring class, or the
+		// receiver's own type when the receiver was boxed to Any) — no kotlin.* primitive FQN table.
+		val ownerPrim = ownerIr?.isPrimitiveOrUnsigned() == true || recv.type.isPrimitiveOrUnsigned()
+		if (!ownerPrim || isPreUnwrappedRead(recv)) return expr(recv)
 		nullableElem(recv.type)?.let { elem -> return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(recv)}}""" }
 		if (birType(recv.type) == OBJ) return """{"k":"cast","type":${str(ownerType)},"e":${expr(recv)}}"""
 		return expr(recv)
@@ -4250,6 +4254,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun isArrayType(t: IrType): Boolean =
 		t.isBoxedArray || t.isPrimitiveArray() || (!stdlibCompile && t.isUnsignedArray())
 
+	/** A value-type primitive (`kotlin.Int`/`Char`/`Boolean`/…, the 8 the CLR represents as a struct) — read from
+	 *  the IR type system (`isPrimitiveType`), NOT a kotlin.* FQN table. Nullability-agnostic. */
+	internal fun IrType.isValuePrimitive(): Boolean = makeNotNull().isPrimitiveType()
+	/** A value-type primitive OR an unsigned inline-class primitive (`kotlin.UInt`/…) — the set whose operators
+	 *  lower to raw CIL / whose receiver+args need value coercion. Read from the IR, not a FQN table. */
+	internal fun IrType.isPrimitiveOrUnsigned(): Boolean = makeNotNull().let { it.isPrimitiveType() || it.isUnsignedType() }
+
 	/** The element type of a REFERENCE `Array<T>` or an unsigned specialized array. NOT called for a signed
 	 *  primitive array — bir2cir DERIVES that element off the faithful `kotlin.IntArray` identity. */
 	internal fun arrayElemType(t: IrType): TypeNode {
@@ -4262,7 +4273,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	/** Kotlin nullable VALUE type (`Int?`/`Double?`…) -> the value element identity (`kotlin.Int`…), else null. */
 	internal fun nullableElem(t: IrType): TypeNode? =
-		if (t.isMarkedNullable()) t.classFqName?.asString()?.takeIf { it in PRIMITIVE_EQ_FQ }?.let { TypeNode.Fqn(it) } else null
+		if (t.isMarkedNullable() && t.isValuePrimitive()) t.classFqName?.asString()?.let { TypeNode.Fqn(it) } else null
 
 	/** A value-type-nullable source (`Int?` = `Nullable<T>` on the CLR) narrowed/cast to its NON-null value
 	 *  (`Int`) must read `Nullable<T>.get_Value` — a bare load / `unbox.any` over a `Nullable<T>` STRUCT reads
@@ -4271,7 +4282,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun nullableValueUnwrapElem(srcType: IrType, useType: IrType): TypeNode? {
 		val elem = nullableElem(srcType) ?: return null          // source is Int?/Long?/Double?…
 		if (useType.isMarkedNullable()) return null              // target is still nullable -> no unwrap
-		val tgt = useType.classFqName?.asString()?.takeIf { it in PRIMITIVE_EQ_FQ } ?: return null
+		val tgt = useType.classFqName?.asString()?.takeIf { useType.isValuePrimitive() } ?: return null
 		return if (elem is TypeNode.Fqn && tgt == elem.name) elem else null
 	}
 

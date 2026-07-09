@@ -213,7 +213,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
 		// `x as? T` -> null on mismatch. Reference T: `isinst T` (null or ref). Value T: `T?` (Nullable<T>).
 		IrTypeOperator.SAFE_CAST -> {
-			val velem = node.typeOperand.classFqName?.asString()?.takeIf { it in PRIMITIVE_EQ_FQ }?.let { TypeNode.Fqn(it) }
+			val velem = node.typeOperand.takeIf { it.isValuePrimitive() }?.classFqName?.asString()?.let { TypeNode.Fqn(it) }
 			if (velem != null) """{"k":"safeCastValue","elem":${velem.toJson()},"e":${expr(node.argument)}}"""
 			else """{"k":"isInstRef","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
 		}

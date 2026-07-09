@@ -57,17 +57,10 @@ internal val ENUM_REIFIED_INTRINSICS = setOf(
 // map + receiver-type guard here would be a kotc name-heuristic; the `conv` node itself — a genuine primitive IL op —
 // is bir2cir-produced, and ilemit selects the conv opcode.
 
-// Value-type primitives -> BIR element type (for Nullable<T> representation of `T?`).
-internal val PRIMITIVE_EQ_FQ = setOf(
-	"kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte",
-	"kotlin.Double", "kotlin.Float", "kotlin.Boolean", "kotlin.Char",
-)
-
-// Kotlin types whose values ARE CLR primitives (the signed/bool/char primitives + the unsigned inline classes,
-// which lower to native CLR unsigned primitives; unsigned arithmetic is already frontend-lowered to plain ops).
-// ONLY these may have their operators lowered to raw CIL bin/un ops — any other kotlin.* owner (a VALUE CLASS
-// like kotlin.time.Duration) keeps its member operator as a real method call.
-internal val PRIMITIVE_OP_FQ = PRIMITIVE_EQ_FQ + setOf("kotlin.UInt", "kotlin.ULong", "kotlin.UByte", "kotlin.UShort")
+// No value-type-primitive FQN sets here (was PRIMITIVE_EQ_FQ / PRIMITIVE_OP_FQ): "is this a value-type primitive"
+// (for the `T?`→Nullable<T> element / the raw-CIL operator + value-coercion gate) is read from the IR type system
+// via `IrType.isValuePrimitive()` (= isPrimitiveType) / `isPrimitiveOrUnsigned()` (= isPrimitiveType||isUnsignedType)
+// in BirEmitter — the frontend already knows, so kotc does NOT re-hardcode the kotlin.* list.
 
 // No kotlin.* -> System.* exception map here: that CLR knowledge belongs in bir2cir. The
 // stdlib's exception classes carry `@kotlin.clr.ClrTypeAlias("System.X")`, and bir2cir reads that off the ref.dll
