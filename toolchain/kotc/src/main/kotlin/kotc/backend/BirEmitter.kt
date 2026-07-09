@@ -3344,20 +3344,25 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `clrInstance System.String.get_Chars` off the ref.dll — the Kotlin<->CLR relation lives in bir2cir, not kotc.
 			// kotlin.* List/Map indexing `list[i]`/`m[k]` is NOT intercepted: in FIR it's already an operator call to
 			// `get`/`set` — fall through to the ordinary call path so it emits as a real kotlin.* `get`/`set` call.
-			// Injected .NET indexer `c[i]` / `c[i] = v` -> get_Item / set_Item on the constructed .NET type. The
-			// receiver's type carries the element type arg (`Collection<Int>`), so the constructed `clrg:...[int]`
-			// resolves the substituted accessor.
+			// Injected .NET indexer `c[i]` / `c[i] = v` -> the DEFAULT INDEXED PROPERTY of the constructed .NET type.
+			// kotc emits the FAITHFUL Kotlin get/set operator identity (`method:"get"/"set"`) plus an index marker
+			// (`"prop":"index-get"/"index-set"`, extending step 3's accessor-KIND mechanism); it does NOT bake the CLR
+			// slot name. bir2cir's NetInteropBinding reflects the .NET type's default indexed property off the refs (its
+			// DefaultMember / `[IndexerName]` name) -> its `get_`/`set_` accessor method, emitting the plain `clrInstance`
+			// call — byte-identical to the old hardcoded `get_Item`/`set_Item` for the standard case, but correct for a
+			// custom-named indexer. The receiver's type carries the element type arg (`Collection<Int>`), so the
+			// constructed `clrg:...[int]` resolves the substituted accessor.
 			val ixOwner = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
 			if (recv != null && ixOwner != null && clrInteropName(ixOwner) != null) {
 				val mt = birType(recv.type); val a = regularArgs(call)
-				// get_Item returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T): ilemit then
-				// hands back gp:T (matching the stack), so the value<->collection boundary
-				// box/unbox is correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
+				// The get accessor returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T):
+				// ilemit then hands back gp:T (matching the stack), so the value<->collection boundary box/unbox is
+				// correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
 				val retH = birType(call.type)
 				return if (name == "get")
-					"""{"k":"callInstance","ownerType":${str(mt)},"method":${str(clrInteropName(callee) ?: "get_Item")},"argTypes":[${birType(a[0].type).toJson()}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
+					"""{"k":"callInstance","ownerType":${str(mt)},"method":"get","prop":"index-get","argTypes":[${birType(a[0].type).toJson()}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
 				else
-					"""{"k":"callInstance","ownerType":${str(mt)},"method":${str(clrInteropName(callee) ?: "set_Item")},"argTypes":[${birType(a[0].type).toJson()},${birType(a[1].type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
+					"""{"k":"callInstance","ownerType":${str(mt)},"method":"set","prop":"index-set","argTypes":[${birType(a[0].type).toJson()},${birType(a[1].type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
 			}
 		}
 

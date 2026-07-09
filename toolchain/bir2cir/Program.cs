@@ -4575,7 +4575,18 @@ static class NetInteropBinding
         // produces); otherwise (a synthetic member-extension / top-level-extension accessor with no matching .NET member)
         // reconstruct the `get_`/`set_<name>` plain method call and fall through — byte-identical to the old kotc emission.
         var propKind = Str(Take("prop"));
-        if (propKind == "get" || propKind == "set")
+        // .NET DEFAULT INDEXED PROPERTY (A2 step 4): kotc emits the faithful Kotlin get/set operator identity
+        // (`method:"get"/"set"`) + an index marker; it does NOT bake the `get_Item`/`set_Item` slot (WRONG for a custom
+        // `[IndexerName]`). Resolve the .NET type's default indexed property off the refs (its DefaultMember/[IndexerName]
+        // name) -> its `get_`/`set_` accessor method, then fall through to the PLAIN clrInstance method path — an indexer
+        // is an INDEXED property, so MemberIsPropertyOrField excludes it and it stays a method call, byte-identical to the
+        // old hardcoded `get_Item`/`set_Item` for the standard case.
+        if (propKind == "index-get" || propKind == "index-set")
+        {
+            var isIxSet = propKind == "index-set";
+            method = DefaultIndexerAccessor(netType, isIxSet) ?? (isIxSet ? "set_Item" : "get_Item");
+        }
+        else if (propKind == "get" || propKind == "set")
         {
             var isSet = propKind == "set";
             if (method != null && MemberIsPropertyOrField(netType, method))
@@ -4708,6 +4719,52 @@ static class NetInteropBinding
     {
         try { return type.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(m => m.Name == name); }
         catch { return false; }
+    }
+
+    // The .NET DEFAULT INDEXED PROPERTY's `get_`/`set_` accessor slot name (A2 step 4). kotc's old hardcode was always
+    // `get_Item`/`set_Item`; reflecting the type's `DefaultMemberAttribute` (which `[IndexerName("X")]` sets) honors a
+    // custom-named indexer (e.g. `get_Chars`). Walks the type + bases + interfaces; prefers the indexed property whose
+    // name matches the DefaultMember, else any indexed property. Returns the accessor MethodInfo.Name, or null if none.
+    static string DefaultIndexerAccessor(Type type, bool isSet)
+    {
+        const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        var seen = new HashSet<Type>();
+        var stack = new Stack<Type>();
+        stack.Push(type);
+        while (stack.Count > 0)
+        {
+            var cur = stack.Pop();
+            if (cur == null || !seen.Add(cur)) continue;
+            string defaultMember = null;
+            try
+            {
+                var dm = cur.GetCustomAttributesData()
+                    .FirstOrDefault(a => a.AttributeType.FullName == "System.Reflection.DefaultMemberAttribute");
+                if (dm != null && dm.ConstructorArguments.Count > 0) defaultMember = dm.ConstructorArguments[0].Value as string;
+            }
+            catch { }
+            try
+            {
+                PropertyInfo chosen = null;
+                foreach (var p in cur.GetProperties(Flags))
+                {
+                    if (p.GetIndexParameters().Length == 0) continue;   // not an indexer
+                    if (defaultMember != null && p.Name == defaultMember) { chosen = p; break; }
+                    chosen ??= p;
+                }
+                if (chosen != null)
+                {
+                    var acc = isSet ? chosen.SetMethod : chosen.GetMethod;
+                    if (acc != null) return acc.Name;
+                }
+            }
+            catch { /* metadata-load edge on a malformed member table — keep walking */ }
+            Type baseType = null; try { baseType = cur.BaseType; } catch { }
+            if (baseType != null) stack.Push(baseType);
+            try { foreach (var i in cur.GetInterfaces()) stack.Push(i); } catch { }
+        }
+        return null;
     }
 
     // True iff the .NET type (or a base/interface) declares a NON-indexed property OR a field of this name — the two
