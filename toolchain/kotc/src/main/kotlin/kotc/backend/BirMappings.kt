@@ -24,14 +24,9 @@ package kotc.backend
 // kotc emits a plain call to the stdlib Char fun; bir2cir substitutes it from
 // CharClr.kt's @ClrIntrinsic("System.Char.IsDigit"/"System.Char.ToUpperInvariant"/…) FQ bindings on the ref.dll.
 
-// The SIGNED primitive array FQNs — a RECOGNITION set only (no element mapping). kotc emits the faithful
-// `kotlin.IntArray` FQN identity as the type token and recognizes these to emit the array intrinsics
-// (arrayGet/arraySet/arrayLen/forArray); bir2cir DECOMPOSES the identity to `Array(elem)` and DERIVES the
-// intrinsic `elem` + the sized-ctor construction off it (the representation decision is bir2cir's).
-internal val PRIMITIVE_ARRAY_FQ = setOf(
-	"kotlin.IntArray", "kotlin.LongArray", "kotlin.DoubleArray", "kotlin.FloatArray",
-	"kotlin.BooleanArray", "kotlin.CharArray", "kotlin.ByteArray", "kotlin.ShortArray",
-)
+// No SIGNED-primitive-array recognition SET here: kotc reads array-ness from the IR type system
+// (`isPrimitiveArray()`) and emits the type's OWN faithful FQN identity — no kotlin.* array table. bir2cir
+// DECOMPOSES the identity to `Array(elem)` + DERIVES the intrinsic `elem` + the sized-ctor construction.
 // The UNSIGNED specialized arrays (#53). Unlike the signed arrays above (Kotlin builtins with no source body), these
 // are library value classes (`UByteArray(storage: ByteArray)`) — so this native-array lowering applies ONLY in app/rt
 // consumer builds (`!stdlibCompile`); the stdlib's OWN compile keeps them as the emitted value class so UByteArray.kt /

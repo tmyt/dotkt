@@ -71,6 +71,9 @@ import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
+import org.jetbrains.kotlin.ir.types.isBoxedArray
+import org.jetbrains.kotlin.ir.util.isPrimitiveArray
+import org.jetbrains.kotlin.ir.util.isUnsignedArray
 import org.jetbrains.kotlin.ir.types.makeNotNull
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.IrFileEntry
@@ -4242,11 +4245,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** True if `t` is an array kotc emits array intrinsics (arrayGet/arraySet/arrayLen/forArray) for: a reference
-	 *  `Array<T>`, a signed primitive array, or (consumer builds only, #53) an unsigned specialized array. */
-	internal fun isArrayType(t: IrType): Boolean {
-		val fq = t.classFqName?.asString()
-		return fq == "kotlin.Array" || fq in PRIMITIVE_ARRAY_FQ || (!stdlibCompile && fq in UNSIGNED_ARRAY_ELEM)
-	}
+	 *  `Array<T>`, a signed primitive array, or (consumer builds only, #53) an unsigned specialized array. Array-ness
+	 *  is read from the IR type system (`isBoxedArray`/`isPrimitiveArray`/`isUnsignedArray`), NOT a kotlin.* FQN table. */
+	internal fun isArrayType(t: IrType): Boolean =
+		t.isBoxedArray || t.isPrimitiveArray() || (!stdlibCompile && t.isUnsignedArray())
 
 	/** The element type of a REFERENCE `Array<T>` or an unsigned specialized array. NOT called for a signed
 	 *  primitive array — bir2cir DERIVES that element off the faithful `kotlin.IntArray` identity. */
@@ -4385,15 +4387,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (t.classFqName?.asString() == "kotlin.clr.Span")
 			return TypeNode.Fqn("System.Span", listOf(argType(t, 0) ?: OBJ))
 		// A reference array `kotlin.Array<E>` -> `TypeNode.Array(<E>)` (the element rides its own faithful identity).
-		val fqArr = t.classFqName?.asString()
-		if (fqArr == "kotlin.Array") return TypeNode.Array(arrayElemType(t))
-		// A SIGNED primitive array (`kotlin.IntArray`/…) -> the FAITHFUL FQN identity; deciding "IntArray IS an array
-		// of Int" is a REPRESENTATION decision that belongs in bir2cir (it decomposes this token to `Array(elem)`).
-		// The array intrinsics (arrayGet/arraySet/forArray) + the sized ctor are likewise bir2cir-derived off it.
-		if (fqArr in PRIMITIVE_ARRAY_FQ) return TypeNode.Fqn(fqArr!!)
+		if (t.isBoxedArray) return TypeNode.Array(arrayElemType(t))
+		// A SIGNED primitive array (`kotlin.IntArray`/…) -> the FAITHFUL FQN identity (the type's OWN FQN, read from
+		// the IR — not a kotlin.* table); deciding "IntArray IS an array of Int" is a REPRESENTATION decision that
+		// belongs in bir2cir (it decomposes this token to `Array(elem)`). The array intrinsics (arrayGet/arraySet/
+		// forArray) + the sized ctor are likewise bir2cir-derived off it.
+		if (t.isPrimitiveArray()) return TypeNode.Fqn(t.classFqName!!.asString())
 		// Unsigned specialized arrays (#53) stay decomposed in kotc: the value-class-vs-native element is
 		// `stdlibCompile`-gated (a UByteArray is the emitted value class in the stdlib's own build).
-		if (!stdlibCompile && fqArr in UNSIGNED_ARRAY_ELEM) return TypeNode.Array(arrayElemType(t))
+		if (!stdlibCompile && t.isUnsignedArray()) return TypeNode.Array(arrayElemType(t))
 		val fqp = t.classFqName?.asString()
 		// kotlin.text.Regex stays its bare `kotlin.*` FQN here (falls through to the user-class `@kotlin.text.Regex`
 		// path below); bir2cir substitutes it to System.Text.RegularExpressions.Regex off the stdlib's @ClrTypeAlias
