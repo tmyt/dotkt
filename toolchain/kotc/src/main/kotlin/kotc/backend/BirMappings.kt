@@ -4,14 +4,12 @@ package kotc.backend
 // collection ops -> their .NET equivalents, primitive/exception type maps). Lifted out of BirEmitter so the
 // expr/stmt extension files can reach them by simple name; they are pure data, no emitter state.
 
-// Comparison operator names -> IL comparison symbol (the `<`/`<=`/`>`/`>=` desugarings, which are
-// `kotlin.internal.ir` COMPILER INTRINSICS — top-level, no ref.dll symbol). Comparison stays kotc-lowered here;
-// ARITHMETIC (plus/minus/times/div/rem), BITWISE (and/or/xor/shl/shr/ushr), UNARY (unaryMinus/unaryPlus/not/inv)
-// and EQEQ/EQEQEQ recognition is bir2cir's: kotc emits the FAITHFUL primitive member call (`callInstance
-// kotlin.Int.plus` / `callInstance kotlin.Int.unaryMinus`) and bir2cir re-emits the binOp/unaryOp.
-internal val COMPARE = mapOf(
-	"less" to "<", "lessOrEqual" to "<=", "greater" to ">", "greaterOrEqual" to ">=",
-)
+// No COMPARE name->symbol map here. The `<`/`<=`/`>`/`>=` desugarings are `kotlin.internal.ir` COMPILER
+// INTRINSICS (top-level `less`/`lessOrEqual`/`greater`/`greaterOrEqual`, no ref.dll symbol); like EQEQ/EQEQEQ and
+// the ARITHMETIC/BITWISE/UNARY operators, their recognition is bir2cir's. kotc emits the FAITHFUL intrinsic call
+// (`callStatic owner=kotlin.internal.ir method=less`, collision-safe vs a user top-level `less`) and bir2cir's
+// PrimitiveOperatorLowering re-emits the `binOp` with the operand shaping (primitive gating, nullable-primitive
+// unwrap, boxed-Any -> concrete cast).
 
 // No kotlin.math.* -> System.Math.* map here: that CLR knowledge lives in bir2cir. kotc emits a plain call to the
 // stdlib math fun; bir2cir substitutes it from MathClr.kt's @ClrIntrinsic bindings on the ref.dll (System.Math.*
@@ -26,12 +24,13 @@ internal val COMPARE = mapOf(
 // kotc emits a plain call to the stdlib Char fun; bir2cir substitutes it from
 // CharClr.kt's @ClrIntrinsic("System.Char.IsDigit"/"System.Char.ToUpperInvariant"/…) FQ bindings on the ref.dll.
 
-// Kotlin FQN identity of a primitive array's element (kotc emits the Kotlin FQN; bir2cir lowers to the CLR
-// primitive, ilemit picks the opcode). NO `int`/`long` shorthand — that CLR-resolution vocabulary is gone.
-internal val PRIMITIVE_ARRAY_ELEM = mapOf(
-	"kotlin.IntArray" to "kotlin.Int", "kotlin.LongArray" to "kotlin.Long", "kotlin.DoubleArray" to "kotlin.Double",
-	"kotlin.FloatArray" to "kotlin.Float", "kotlin.BooleanArray" to "kotlin.Boolean", "kotlin.CharArray" to "kotlin.Char",
-	"kotlin.ByteArray" to "kotlin.Byte", "kotlin.ShortArray" to "kotlin.Short",
+// The SIGNED primitive array FQNs — a RECOGNITION set only (no element mapping). kotc emits the faithful
+// `kotlin.IntArray` FQN identity as the type token and recognizes these to emit the array intrinsics
+// (arrayGet/arraySet/arrayLen/forArray); bir2cir DECOMPOSES the identity to `Array(elem)` and DERIVES the
+// intrinsic `elem` + the sized-ctor construction off it (the representation decision is bir2cir's).
+internal val PRIMITIVE_ARRAY_FQ = setOf(
+	"kotlin.IntArray", "kotlin.LongArray", "kotlin.DoubleArray", "kotlin.FloatArray",
+	"kotlin.BooleanArray", "kotlin.CharArray", "kotlin.ByteArray", "kotlin.ShortArray",
 )
 // The UNSIGNED specialized arrays (#53). Unlike the signed arrays above (Kotlin builtins with no source body), these
 // are library value classes (`UByteArray(storage: ByteArray)`) — so this native-array lowering applies ONLY in app/rt
@@ -47,13 +46,6 @@ internal val UNSIGNED_ARRAY_ELEM = mapOf(
 // `@kotlin.clr.ClrArrayFactory` marker off each stdlib factory function on the ref.dll and emits the
 // newList/newSet/newMap/newArray/newArraySized construction node. A name-set match here would be a kotc CLR-shape
 // decision on specific stdlib symbols — exactly the recognition that belongs in bir2cir.
-// Primitive array class -> its BCL element type, for lowering the sized constructor `IntArray(size){init}` to a real
-// `new int[size]` + fill loop (a `kotlin.IntArray` object would otherwise be constructed — the wrong representation).
-internal val ARRAY_CLASS_ELEM = mapOf(
-	"kotlin.IntArray" to "kotlin.Int", "kotlin.LongArray" to "kotlin.Long", "kotlin.ShortArray" to "kotlin.Short", "kotlin.ByteArray" to "kotlin.Byte",
-	"kotlin.CharArray" to "kotlin.Char", "kotlin.DoubleArray" to "kotlin.Double", "kotlin.FloatArray" to "kotlin.Float", "kotlin.BooleanArray" to "kotlin.Boolean",
-)
-
 // Int-range/-progression types whose for-loop can be counter-lowered (over get_first/get_last/get_step) when the source
 // is a range VALUE (e.g. `for (i in indices)`), avoiding the iterator protocol + its covariant-return iterator.
 internal val INT_PROGRESSION_FQ = setOf("kotlin.ranges.IntRange", "kotlin.ranges.IntProgression")

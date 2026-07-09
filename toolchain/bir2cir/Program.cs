@@ -194,6 +194,12 @@ sealed class Pipeline
             // FIRST and UNCONDITIONALLY (ref + app) so every downstream pass sees the old tree shape, and a ref-build
             // ctor field-init / base-arg (not body-squashed) carries a raw IL op, not an unresolvable builtin call.
             PrimitiveOperatorLowering.Apply(bir.Root, refs);
+            // ARRAY CONSTRUCTION + INTRINSIC ELEMENT (#73 Phase 2b-A): kotc emits the faithful `kotlin.IntArray`
+            // identity — the sized ctor as `new kotlin.IntArray(size, init)`, the arrayGet/arraySet/forArray
+            // intrinsics with NO `elem`. Derive the sized-array construction (newArrayInit/newArraySized) + stamp the
+            // intrinsic element off the array operand's static type. Runs EARLY (before FaithfulHintRecognition /
+            // SuspendColdLowering / BirTypeLowering) so every `elem` consumer sees the stamped element.
+            ArrayConstructionLowering.Apply(bir.Root, refs);
             // FAITHFUL-HINT RECOGNITION (#52 Phase 4b / #59): kotc emits the faithful op (`objMethod ToString/Equals`,
             // `concat`, `callStatic println/print`, Double/Float `callInstance compareTo`) with NO type hint; bir2cir
             // RECOVERS the collection/Map/Double/Float/null operand types via StaticType (StaticTypeResolver.cs) and
@@ -627,6 +633,7 @@ sealed class ReferenceMetadataIndex
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "dotkt$ClrH_*"
     readonly HashSet<string> _restrictsSuspension = new(StringComparer.Ordinal);     // @RestrictsSuspension owners
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, TypeNode> _staticFieldTypes = new(StringComparer.Ordinal); // "owner|field" -> declared type (#73-2b-A: cross-file array-const reads)
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
     readonly Dictionary<string, string> _topLevelIntrinsicsBySig = new(StringComparer.Ordinal); // "name|paramKeys" -> FQ static (overload-disambiguated)
     readonly HashSet<string> _ambiguousTopLevelIntrinsics = new(StringComparer.Ordinal); // names whose overloads bind to DIFFERENT statics (Math vs MathF)
@@ -694,6 +701,7 @@ sealed class ReferenceMetadataIndex
                     _membersByOwner[m.Owner] = list = new List<MemberBinding>();
                 list.Add(m);
             }
+            foreach (var kv in asm.DotKt.StaticFieldTypes) _staticFieldTypes.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.TopLevelIntrinsicsBySig) _topLevelIntrinsicsBySig.TryAdd(kv.Key, kv.Value);
             foreach (var n in asm.DotKt.AmbiguousTopLevelIntrinsics) _ambiguousTopLevelIntrinsics.Add(n);
@@ -1128,6 +1136,11 @@ sealed class ReferenceMetadataIndex
                 ?? list.FirstOrDefault(b => b.Name == name && b.ReturnType != null))?.ReturnType;
     }
 
+    // The declared type of a STATIC field on the ref.dll (a top-level `val` / companion constant, e.g. a cross-file
+    // `charArrayOf(…)` array constant). Used by StaticType (#73-2b-A) to derive an array-const read's element.
+    public TypeNode TryFieldType(string ownerFqn, string name) =>
+        ownerFqn != null && _staticFieldTypes.TryGetValue(ownerFqn + "|" + name, out var t) ? t : null;
+
     // The declared RETURN type of a top-level fun (a `callStatic owner=null`), resolved via its file-class owner then the
     // member's return type. `recvKey` = the call's first sig-param bare owner (disambiguates overloads across file-classes);
     // `argCount` = the sig's total param count (receiver + args), matching the ref.dll static's ParamCount. null if unresolved.
@@ -1249,6 +1262,13 @@ sealed class ReferenceMetadataIndex
                         if (backing != null && InlineFieldConv(backing.FieldType) is string conv)
                             metadata.InlineBacking[ownerFqn] = ("get_" + backing.Name, conv);
                     }
+
+                    // STATIC FIELD types (#73-2b-A): a top-level `val` / companion constant (e.g. a cross-file
+                    // `charArrayOf(…)` array constant) so StaticType can derive an `array-const[i]` read's element
+                    // when the field is defined in ANOTHER file (not in this file's LocalTypes).
+                    foreach (var fi in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
+                        if (TypeNodeOf(fi.FieldType) is TypeNode ft)
+                            metadata.StaticFieldTypes.TryAdd(ownerFqn + "|" + fi.Name, ft);
 
                     foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                     {
@@ -1646,6 +1666,7 @@ sealed class ReferenceDotKtMetadata
     // lambda whose RECEIVER is such a scope (e.g. SequenceScope) gets the RestrictedSuspendLambda SM base (bundle-6 P5).
     public readonly HashSet<string> RestrictsSuspensionTypes = new(StringComparer.Ordinal);
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
+    public readonly Dictionary<string, TypeNode> StaticFieldTypes = new(StringComparer.Ordinal); // "owner|field" -> declared type
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.
     public readonly Dictionary<string, string> TopLevelIntrinsics = new(StringComparer.Ordinal);
@@ -2031,6 +2052,17 @@ static class BirTypeLowering
         ["kotlin.UShort"] = "ushort",
     };
 
+    // A SIGNED primitive array FQN -> its element FQN. kotc emits the faithful `kotlin.IntArray` identity; bir2cir
+    // DECOMPOSES it to `Array(elem)` here (the representation decision) in EVERY build — the element then lowers to
+    // the CLR primitive (app/rt) or stays kotlin.* (ref) like any other type-arg. ArrayConstructionLowering uses the
+    // SAME map to derive the sized ctor + the array intrinsics' element.
+    public static readonly IReadOnlyDictionary<string, string> PrimArrayElem = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["kotlin.IntArray"] = "kotlin.Int", ["kotlin.LongArray"] = "kotlin.Long", ["kotlin.DoubleArray"] = "kotlin.Double",
+        ["kotlin.FloatArray"] = "kotlin.Float", ["kotlin.BooleanArray"] = "kotlin.Boolean", ["kotlin.CharArray"] = "kotlin.Char",
+        ["kotlin.ByteArray"] = "kotlin.Byte", ["kotlin.ShortArray"] = "kotlin.Short",
+    };
+
     // Every JSON key whose string (or string[]) value is a TYPE reference, across signatures, expressions and
     // statements. Lowering must catch a primitive WHEREVER it sits. Identity/data keys
     // that may carry a kotlin.*-looking string but are NOT types (name/value/var/method/id/kind/...) are
@@ -2121,6 +2153,11 @@ static class BirTypeLowering
         {
             case TypeNode.Fqn f:
             {
+                // A SIGNED primitive array (`kotlin.IntArray`) -> `Array(elem)` in EVERY build (ref included): this is
+                // the array REPRESENTATION, not a primitive substitution, so it fires before the refBuild passthrough.
+                // The element then lowers on the recursive call (kotlin.Int -> System.Int32 in app/rt, verbatim in ref).
+                if (f.Args == null && PrimArrayElem.TryGetValue(f.Name, out var arrElemFq))
+                    return new TypeNode.Array(LowerType(new TypeNode.Fqn(arrElemFq), refBuild, force, typeArg: false));
                 // The reference build keeps the pure-Kotlin surface verbatim (no recursion) unless an attribute
                 // blob forces a concrete System.* type.
                 if (!force && refBuild) return f;
@@ -2236,6 +2273,8 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerReturnValued(kv.Value, refBuild, here);   // Unit-in-return -> void (uniform)
                 else if (kv.Key == "funcType")
                     copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
+                else if (kv.Key == "ownerType" || kv.Key == "owner")
+                    copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
                 else if (TypeKeys.Contains(kv.Key))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here);
                 else
@@ -2369,6 +2408,19 @@ static class BirTypeLowering
 
     static string LowerReturnSlot(string s, bool refBuild, bool force) =>
         s == "kotlin.Unit" ? "void" : LowerTypeString(s, refBuild, force);
+
+    // An OWNER slot (`ownerType`/`owner`) value. A primitive-array owner (`intArray.iterator()`) stays the bare
+    // `kotlin.IntArray` FQN — ilemit's ParseOwnerSlot resolves that identity to the CLR array type directly (it
+    // expects a Fqn/string, NOT a decomposed `Array(elem)` node). Decomposing the owner to `Array(int)` here would
+    // hand ilemit an owner node it cannot read. Every OTHER owner (a collection, a user type, a primitive) lowers
+    // normally. Mirrors the pre-#73-2b-A behavior, where kotc emitted the un-lowered `kotlin.IntArray` owner.
+    static JsonNode LowerOwnerValued(JsonNode val, bool refBuild, bool force)
+    {
+        if (IsTypeObject(val) && TypeNode.Parse(val.ToJsonString()) is TypeNode.Fqn f
+            && f.Args == null && PrimArrayElem.ContainsKey(f.Name))
+            return TypeNode.Write(f);   // keep kotlin.IntArray verbatim for ilemit's array-owner resolution
+        return LowerTypeValued(val, refBuild, force);
+    }
 
     // A type-bearing key's value: a scalar type string, an array of type strings (interfaces/argTypes/constraints/
     // typeArgs), or — for a few node shapes — a nested object, which is recursed structurally.

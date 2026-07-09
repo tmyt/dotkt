@@ -167,8 +167,18 @@ static class PrimitiveOperatorLowering
         if (OwnerFqn(o["owner"]) != IntrinsicOwner) return null;
         if ((o["method"] as JsonValue)?.GetValue<string>() is not string m) return null;
         var args = o["args"] as JsonArray ?? new JsonArray();
+        // The comparison intrinsics (`less`/`lessOrEqual`/`greater`/`greaterOrEqual`) -> `{k:binOp, op:<}`. kotc emits
+        // the PLAIN operand expressions; the operand SHAPING that the retired kotc COMPARE block did — a nullable
+        // primitive (`Int?` smart-cast to `Int`) surfaces `Nullable<T>.Value`, a boxed-Any operand casts to the
+        // OTHER operand's concrete type — is reproduced HERE off StaticType (the CLR<->Kotlin relation). Operands
+        // stay byte-identical to the retired binOp.
         if (args.Count == 2 && CompareOp.TryGetValue(m, out var cop))
-            return new JsonObject { ["k"] = "binOp", ["op"] = cop, ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+            return new JsonObject
+            {
+                ["k"] = "binOp", ["op"] = cop,
+                ["lhs"] = ShapeCompareOperand(args[0], args[1], scope),
+                ["rhs"] = ShapeCompareOperand(args[1], args[0], scope),
+            };
         // `==` (EQEQ): structural equality recognized off TWO operand hints — the surface `argTypes` (declared static
         // types) drive the prim/ref split; the cast-stripped `argValueTypes` drive the Kotlin-SEMANTIC recognition
         // (collection structural `==`, Double/Float total-order `==`) that kotc's former collEqRoute/floatTotalEqRoute
@@ -212,6 +222,26 @@ static class PrimitiveOperatorLowering
         if (m == "EQEQEQ" && args.Count == 2)
             return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         return null;
+    }
+
+    // Shape a comparison operand the way the retired kotc COMPARE `operand()` helper did, but off StaticType:
+    //   (1) a value-nullable primitive (`Int?`) -> wrap in `{k:nullableValue, elem, e}` (surface `Nullable<T>.Value`);
+    //       a raw `Nullable<T>` struct load into a compare op is invalid IL / reads garbage (the C1 miscompile).
+    //   (2) a boxed-Any operand (surface `kotlin.Any`, e.g. an un-narrowed smart-cast `x is Int && x > 10`) whose
+    //       OTHER operand pins a concrete type -> cast it to that type so the op sees the value, not the box.
+    // An operand already unwrapped (a `nullableValue` node) surfaces its non-null elem, so (1) never double-wraps.
+    static JsonNode ShapeCompareOperand(JsonNode operand, JsonNode other, BirScope scope)
+    {
+        var s = StaticType.Surface(operand, scope);
+        if (s is TypeNode.Nullable ns && ns.Of is TypeNode.Fqn nf && PrimitiveEqFq.Contains(nf.Name))
+            return new JsonObject { ["k"] = "nullableValue", ["elem"] = TypeNode.Write(ns.Of), ["e"] = operand?.DeepClone() };
+        if (s is TypeNode.Fqn sf && sf.Name == "kotlin.Any")
+        {
+            var os = StaticType.Surface(other, scope);
+            if (os is not null && !(os is TypeNode.Fqn of && of.Name == "kotlin.Any"))
+                return new JsonObject { ["k"] = "cast", ["type"] = TypeNode.Write(os), ["e"] = operand?.DeepClone() };
+        }
+        return operand?.DeepClone();
     }
 
     static string OwnerFqn(JsonNode t) =>

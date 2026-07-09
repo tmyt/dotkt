@@ -91,7 +91,15 @@ static class StaticType
                 if (o["types"] is JsonArray ts) foreach (var t in ts) if (t != null) Walk(t);
             }
         }
-        if (root is JsonObject ro && ro["types"] is JsonArray top) foreach (var t in top) if (t != null) Walk(t);
+        if (root is JsonObject ro)
+        {
+            // The FILE CLASS itself (top-level funs/props live at the root, keyed by `fileClass`, not under `types`):
+            // register it so a top-level `staticField`/`callStatic` on it (e.g. a private `val HEX_DIGITS = charArrayOf(…)`
+            // array constant read as `HexExtensionsKt.HEX_DIGITS[i]`) recovers its declared type here.
+            if ((ro["fileClass"] as JsonValue)?.GetValue<string>() is string fc && (ro["fields"] is JsonArray || ro["methods"] is JsonArray))
+                map[fc] = ro;
+            if (ro["types"] is JsonArray top) foreach (var t in top) if (t != null) Walk(t);
+        }
         return map;
     }
 
@@ -139,7 +147,8 @@ static class StaticType
             case "clrPropGet": return TypeJson.Read(o["ret"]) ?? ResolveFieldType(o);
             case "field" or "lateinitGet" or "staticField": return ResolveFieldType(o);
             case "new" or "newClr": return TypeJson.Read(o["type"]);
-            case "newArray": return TypeJson.Read(o["elem"]) is TypeNode ae ? new TypeNode.Fqn("kotlin.Array", new[] { ae }) : null;
+            case "newArray" or "newArrayInit" or "newArraySized":            // an array factory / sized ctor -> Array<elem>
+                return TypeJson.Read(o["elem"]) is TypeNode ae ? new TypeNode.Fqn("kotlin.Array", new[] { ae }) : null;
             case "arrayGet": return TypeJson.Read(o["elem"]);                 // `a[i]` -> the element type
             case "enumValue": return TypeJson.Read(o["type"]);
             case "safeCastValue": return TypeJson.Read(o["elem"]);           // `x as? V` -> V (value)
@@ -189,9 +198,11 @@ static class StaticType
         if ((o["name"] as JsonValue)?.GetValue<string>() is not string name) return null;
         if (TypeJson.Read(o["ownerType"]) is not TypeNode.Fqn owner) return null;
         var ownerFqn = ReferenceMetadataIndex.BareOwnerFqn(owner.Name);
-        // THIS-assembly emitted type (a user class field) first, then the ref.dll property getter.
+        // THIS-assembly emitted type (a user class field) first, then the ref.dll property getter, then a ref.dll
+        // STATIC field (a cross-file top-level `val` / companion array constant — no getter, a plain field).
         return LocalMemberType(ownerFqn, name)
-            ?? Refs?.TryMemberReturn(ownerFqn, "get_" + name, 0) ?? Refs?.TryMemberReturn(ownerFqn, name, 0);
+            ?? Refs?.TryMemberReturn(ownerFqn, "get_" + name, 0) ?? Refs?.TryMemberReturn(ownerFqn, name, 0)
+            ?? Refs?.TryFieldType(ownerFqn, name);
     }
 
     // The operand's UNDERLYING value type: peel a `cast` (a compiler boxing/narrowing OR explicit `as`; the BIR does

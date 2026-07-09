@@ -143,12 +143,14 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	}
 	is IrConstructorCall -> {
 		val klass = node.symbol.owner.parent as? IrClass
-		// `IntArray(size){init}` / `IntArray(size)` -> a real BCL array (newarr + fill loop), NOT a kotlin.IntArray object.
-		// The GENERIC object array `Array<E>(size){init}` is the same intrinsic: the element is the CLR type of E
-		// (`Array<Any?>` -> object[]), so a concrete E works (a bare type-param E rides its `gp:E` form). Without this it
-		// fell through to a bogus `new kotlin.Array(...)` (wrong-sized array).
-		val arrElem: TypeNode? = ARRAY_CLASS_ELEM[klass?.fqNameWhenAvailable?.asString()]?.let { TypeNode.Fqn(it) }
-			?: if (klass?.fqNameWhenAvailable?.asString() == "kotlin.Array") {
+		// The GENERIC object array `Array<E>(size){init}` / `Array<E>(size)` -> a real BCL array (newarr + fill loop):
+		// the element is the CLR type of E (`Array<Any?>` -> object[]), so a concrete E works (a bare type-param E
+		// rides its `gp:E` form). Without this it fell through to a bogus `new kotlin.Array(...)` (wrong-sized array).
+		// The SIGNED primitive array ctor (`IntArray(size){init}`) is NOT decomposed here: kotc emits the faithful
+		// `new kotlin.IntArray(size, init)` ctor call (the normal-new fall-through below) and bir2cir DERIVES the
+		// newArrayInit/newArraySized construction off the faithful `kotlin.IntArray` identity + its element.
+		val arrElem: TypeNode? =
+			if (klass?.fqNameWhenAvailable?.asString() == "kotlin.Array") {
 				val elemType = (((node.type as? IrSimpleType)?.arguments?.firstOrNull()) as? IrTypeProjection)?.type
 				// Only a CONCRETE element type routes to a real BCL newarr (`Array<Any?>` -> object[]). A bare TYPE-PARAM
 				// element (`Array<T>`) needs reified allocation; routing it here would newarr a `tv` AND make its init

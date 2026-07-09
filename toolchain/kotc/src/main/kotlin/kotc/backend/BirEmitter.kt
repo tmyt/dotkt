@@ -1686,9 +1686,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val source = (iterVar.initializer as? IrCall)?.let { dispatchReceiver(it) ?: extensionReceiver(it) }
 		val body = bodyBlock.statements.drop(1).joinToString(",") { stmt(it) }
 		val lbl = labelJson(whileLoop.label)
-		// `for (x in array)` -> an indexed loop (avoids the kotlin iterator types).
+		// `for (x in array)` -> an indexed loop (avoids the kotlin iterator types). No `elem`: bir2cir derives the
+		// loop-variable element type off the array operand's (now faithful) type.
 		if (source != null && isArrayType(source.type))
-			return """{"k":"forArray","label":$lbl,"var":${str(loopVar.name.asString())},"elem":${arrayElemType(source.type).toJson()},"array":${expr(source)},"body":[$body]}"""
+			return """{"k":"forArray","label":$lbl,"var":${str(loopVar.name.asString())},"array":${expr(source)},"body":[$body]}"""
 		// A `for` over a kotlin.* collection is NOT intercepted: FIR already desugared it to the iterator protocol
 		// (`it = coll.iterator(); while (it.hasNext()) { x = it.next(); … }`). Returning null here lets that block emit
 		// as ordinary kotlin.* calls — no BCL IEnumerator lowering. Only CLR-native shapes (array/range) + injected .NET
@@ -3359,9 +3360,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (callee.isOperator && (name == "get" || name == "set")) {
 			val recv = dispatchReceiver(call)
 			if (recv != null && isArrayType(recv.type)) {
-				val elemT = arrayElemType(recv.type); val a = regularArgs(call)
-				return if (name == "get") """{"k":"arrayGet","elem":${str(elemT)},"array":${expr(recv)},"index":${expr(a[0])}}"""
-				else """{"k":"arraySet","elem":${str(elemT)},"array":${expr(recv)},"index":${expr(a[0])},"value":${expr(a[1])}}"""
+				// No `elem` field: bir2cir DERIVES the element off the array operand's (now faithful) type. kotc emits
+				// only the faithful get/set intrinsic + the array operand.
+				val a = regularArgs(call)
+				return if (name == "get") """{"k":"arrayGet","array":${expr(recv)},"index":${expr(a[0])}}"""
+				else """{"k":"arraySet","array":${expr(recv)},"index":${expr(a[0])},"value":${expr(a[1])}}"""
 			}
 			// String indexing `s[i]` is NOT lowered here: `kotlin.String.get(index)`
 			// carries @ClrIntrinsic("get_Chars") (runtime/stdlib/clr/builtins/String.kt); kotc emits the plain operator
@@ -3834,42 +3837,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"EQEQ","args":[${expr(operands[0])},${expr(operands[1])}]}"""
 			if (name == "EQEQEQ" && operands.size == 2)
 				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"EQEQEQ","args":[${expr(operands[0])},${expr(operands[1])}]}"""
-			// Arithmetic/compare lowering applies to the primitive OPERATORS only: a primitive's operator is a MEMBER
-			// (kotlin.Int.plus) and the IR compare intrinsics (kotlin.internal.ir.less/greater/...) are top-level with
-			// plain value params — neither has an EXTENSION receiver. A stdlib EXTENSION that shares the name
-			// (`Array<T>.plus(element)`, `List.plus`, `CharSequence.plus`…) is a real function call, NOT arithmetic:
-			// lowering it to a CIL add corrupts the receiver reference. Gate on the extension receiver AND on
-			// primitive operand types: a kotlin.* VALUE-CLASS member operator (kotlin.time.Duration.plus/unaryMinus —
-			// `isBuiltin` because the FQN starts with "kotlin") is a REAL method call, not an IL op; raw add/neg on
-			// Duration values produced InvalidProgram inside the rt (LongSaturatedMathKt.saturatingFiniteDiff). An
-			// operand may also be an un-narrowed smart-cast box (Any) — allowed IFF the other operand pins a concrete
-			// primitive (the cast-to-concrete coercion below handles it).
-			fun primOperand(o: IrExpression) = o.type.classFqName?.asString() in PRIMITIVE_OP_FQ
-			fun boxedAny(o: IrExpression) = birType(o.type) == OBJ
-			COMPARE[name]?.let { _ -> if (operands.size == 2 && callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }
-					&& operands.any { primOperand(it) } && operands.all { primOperand(it) || boxedAny(it) }) {
-				// A boxed (Any) operand via an un-narrowed smart-cast (`x is Int && x > 10`) against a primitive:
-				// cast it to the other operand's type so the compare op sees the right value, not the box. Kept, so the
-				// intrinsic's args are BYTE-IDENTICAL to the retired binOp's operands.
-				fun operand(o: IrExpression, other: IrExpression): String {
-					// A value-type-nullable operand (`Int?` smart-cast to `Int` -- `n > 5` after `if (n != null)`)
-					// must surface `Nullable<T>.Value`; a raw `Nullable<T>` struct load into a compare op is
-					// invalid IL / reads garbage (the C1 miscompile). The smart-cast leaves `o.type` still `Int?`.
-					if (!isPreUnwrappedRead(o)) nullableElem(o.type)?.let { elem -> return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(o)}}""" }
-					val ot = birType(o.type); val tt = birType(other.type)
-					// A boxed Any operand renders as the Any token ("object" fallback, or "kotlin.Any" for an explicit Any/Nothing
-					// source type) — cast it to the other (concrete) operand's type so the op sees the value, not the box.
-					val anyTok = ot == OBJ
-					val otherConcrete = tt != OBJ
-					return if (anyTok && otherConcrete) """{"k":"cast","type":${str(tt)},"e":${expr(o)}}""" else expr(o)
-				}
-				// COMPARISON intrinsic (`kotlin.internal.ir.less`/`lessOrEqual`/`greater`/`greaterOrEqual`) recognition
-				// is bir2cir's: kotc emits the FAITHFUL intrinsic call with owner = its home
-				// package `kotlin.internal.ir` (collision-safe — a user top-level `less` never has this owner);
-				// PrimitiveOperatorLowering re-emits `{k:binOp, op:<}`. Operands are value-shaped exactly as the
-				// binOp, so the CIR is byte-identical. Comparison returns Boolean, so there is no Char-arith conv here.
-				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":${str(name)},"args":[${operand(operands[0], operands[1])},${operand(operands[1], operands[0])}]}"""
-			} }
+			// The IR comparison intrinsics (`kotlin.internal.ir.less`/`lessOrEqual`/`greater`/`greaterOrEqual` — the
+			// `<`/`<=`/`>`/`>=` desugarings, top-level with plain value params). Recognition + operand shaping is
+			// bir2cir's: kotc emits ONLY the FAITHFUL intrinsic call with owner = its home package `kotlin.internal.ir`
+			// (collision-safe — a user top-level `less` is NOT `isBuiltin` and never has this owner), args = the plain
+			// operand expressions. bir2cir's PrimitiveOperatorLowering re-emits `{k:binOp, op:<}` and does the operand
+			// shaping (primitive gating, nullable-primitive `Nullable<T>.Value` unwrap, boxed-Any -> concrete cast) via
+			// StaticType — exactly like EQEQ/EQEQEQ above. The Kotlin<->CLR relation lives there, not in kotc.
+			if (name in setOf("less", "lessOrEqual", "greater", "greaterOrEqual") && operands.size == 2
+					&& callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver })
+				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":${str(name)},"args":[${expr(operands[0])},${expr(operands[1])}]}"""
 			// UNARY (unaryMinus/unaryPlus/not/inv) recognition is bir2cir's: kotc emits the faithful
 			// `callInstance kotlin.Int.unaryMinus()` (0-arg member) and bir2cir re-emits `{k:unaryOp}` from the
 			// PRIMITIVE_OP_FQ owner. The receiver is value-shaped by the general callInstance path (recvExpr).
@@ -4264,16 +4241,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		else -> v.toString()
 	}
 
-	/** Kotlin `Array<T>` / primitive arrays -> a BIR `array:<elem>` type (ilemit -> `T[]`). */
+	/** True if `t` is an array kotc emits array intrinsics (arrayGet/arraySet/arrayLen/forArray) for: a reference
+	 *  `Array<T>`, a signed primitive array, or (consumer builds only, #53) an unsigned specialized array. */
 	internal fun isArrayType(t: IrType): Boolean {
 		val fq = t.classFqName?.asString()
-		// Unsigned specialized arrays are native only in consumer builds (#53) — see UNSIGNED_ARRAY_ELEM.
-		return fq == "kotlin.Array" || fq in PRIMITIVE_ARRAY_ELEM || (!stdlibCompile && fq in UNSIGNED_ARRAY_ELEM)
+		return fq == "kotlin.Array" || fq in PRIMITIVE_ARRAY_FQ || (!stdlibCompile && fq in UNSIGNED_ARRAY_ELEM)
 	}
 
+	/** The element type of a REFERENCE `Array<T>` or an unsigned specialized array. NOT called for a signed
+	 *  primitive array — bir2cir DERIVES that element off the faithful `kotlin.IntArray` identity. */
 	internal fun arrayElemType(t: IrType): TypeNode {
 		val fq = t.classFqName?.asString()
-		PRIMITIVE_ARRAY_ELEM[fq]?.let { return TypeNode.Fqn(it) }
 		if (!stdlibCompile) UNSIGNED_ARRAY_ELEM[fq]?.let { return TypeNode.Fqn(it) }
 		if (fq == "kotlin.Array")
 			return (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
@@ -4406,7 +4384,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// The intrinsic `kotlin.clr.Span<T>` -> the real `System.Span<T>`.
 		if (t.classFqName?.asString() == "kotlin.clr.Span")
 			return TypeNode.Fqn("System.Span", listOf(argType(t, 0) ?: OBJ))
-		if (isArrayType(t)) return TypeNode.Array(arrayElemType(t))
+		// A reference array `kotlin.Array<E>` -> `TypeNode.Array(<E>)` (the element rides its own faithful identity).
+		val fqArr = t.classFqName?.asString()
+		if (fqArr == "kotlin.Array") return TypeNode.Array(arrayElemType(t))
+		// A SIGNED primitive array (`kotlin.IntArray`/…) -> the FAITHFUL FQN identity; deciding "IntArray IS an array
+		// of Int" is a REPRESENTATION decision that belongs in bir2cir (it decomposes this token to `Array(elem)`).
+		// The array intrinsics (arrayGet/arraySet/forArray) + the sized ctor are likewise bir2cir-derived off it.
+		if (fqArr in PRIMITIVE_ARRAY_FQ) return TypeNode.Fqn(fqArr!!)
+		// Unsigned specialized arrays (#53) stay decomposed in kotc: the value-class-vs-native element is
+		// `stdlibCompile`-gated (a UByteArray is the emitted value class in the stdlib's own build).
+		if (!stdlibCompile && fqArr in UNSIGNED_ARRAY_ELEM) return TypeNode.Array(arrayElemType(t))
 		val fqp = t.classFqName?.asString()
 		// kotlin.text.Regex stays its bare `kotlin.*` FQN here (falls through to the user-class `@kotlin.text.Regex`
 		// path below); bir2cir substitutes it to System.Text.RegularExpressions.Regex off the stdlib's @ClrTypeAlias
