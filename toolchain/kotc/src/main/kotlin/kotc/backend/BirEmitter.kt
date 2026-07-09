@@ -2063,7 +2063,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (clrOwner != null && !hasExt) {
 			val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }
 			val argTypes = regs.joinToString(",") { birType(it.type).toJson() }
-			val member = clrName(fn) ?: objectMethodName(fn) ?: fn.name.asString()
+			val member = objectMethodName(fn) ?: fn.name.asString()
 			val virtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT
 			if (boundRecv != null)
 				return """{"k":"newBoundClrDelegate","clrType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}}"""
@@ -3405,7 +3405,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 				if (targs.all { it != null }) {
 					val taJson = targs.joinToString(",") { birType(it!!).toJson() }
-					val member = clrInteropName(callee) ?: objectMethodName(callee) ?: name
+					val member = objectMethodName(callee) ?: name
 					// A generic MEMBER extension (`class C { fun <R> T.f() }`): the `__self` receiver is the .NET method's
 					// first param -> prepend its value + shape so by-shape overload resolution and the call line up.
 					val gExt = if (!isStatic) extensionReceiver(call) else null
@@ -3470,19 +3470,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					"""{"k":"$propCallKind","ownerType":${memberType!!.toJson()},"method":${str("set_$pn")},"argTypes":[${birType(regularArgs(call).first().type).toJson()}]$propRecvField,"args":[${expr(regularArgs(call).first())}]}"""
 				else """{"k":"$propCallKind","ownerType":${memberType!!.toJson()},"method":${str("get_$pn")},"argTypes":[],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[]}"""
 			}
-			val member = clrInteropName(callee) ?: objectMethodName(callee) ?: name
+			val member = objectMethodName(callee) ?: name
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
 			// kotc emits the PLAIN Kotlin return type; a `suspend` callee is marked by `suspendTag` only (the Task/await
 			// lowering is a deferred downstream layer). No coroutine ABI (Task<T>) is baked here.
 			val ret = birType(callee.returnType).toJson()
 			val suspendTag = suspendCallTag(callee)
-			// A .NET operator/conversion (`op_Addition`/`op_Equality`/`op_Implicit`…) is a STATIC method; a Kotlin
-			// `operator fun` models it as an instance member, so prepend the receiver as the first argument.
-			if (member.startsWith("op_") && !isStatic && recv != null) {
-				val allArgs = (listOf(expr(recv)) + regularArgs(call).map { expr(it) }).joinToString(",")
-				val allArgTypes = (listOf(birType(recv.type).toJson()) + regularArgs(call).map { birType(it.type).toJson() }).joinToString(",")
-				return """{"k":"callStatic","ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag}"""
-			}
+			// A .NET operator (`Vec2 + Vec2` -> op_Addition) is emitted here as the PLAIN Kotlin operator identity
+			// (`callInstance method="plus" recv:<a> args:[<b>]`); bir2cir's NetInteropBinding resolves the owner off
+			// the .NET refs, confirms the CLR type declares the `op_X` static, and reshapes it to a `clrStatic op_X`
+			// with the receiver prepended. No `op_` naming / receiver-prepend here (layer purity — CLR knowledge is bir2cir's).
 			// A .NET extension method `static M(this T self, …)` exposed as a Kotlin extension `fun T.m()` on a @Clr
 			// object: it's a STATIC call whose first argument is the extension receiver.
 			val extRecv = extensionReceiver(call)

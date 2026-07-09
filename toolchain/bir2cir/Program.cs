@@ -4597,7 +4597,34 @@ static class NetInteropBinding
             return;
         }
 
-        // PLAIN static/instance method (incl. indexer get_Item/set_Item, op_*, member-extension synthetic accessor).
+        // .NET OPERATOR: kotc emits a .NET-type operator (`Vec2 + Vec2`, `-a`) as the PLAIN Kotlin operator identity
+        // (`callInstance method="plus" recv:<a> args:[<b>]`) — it does NOT know the CLR `op_X` slot (layer purity).
+        // Reconstruct the .NET static operator off the refs: map the Kotlin operator name to its `op_X` slot, confirm the
+        // CLR type declares that `op_X` as a `public static` method (DON'T rewrite a Kotlin `plus` on a non-operator .NET
+        // type), and emit `clrStatic op_X` with the receiver PREPENDED as the first arg (binary: [recv, arg]; unary
+        // unaryMinus/unaryPlus/inc/dec: [recv] only). This is the exact node kotc used to emit directly (callStatic op_X,
+        // receiver already prepended) -> byte-identical CIR. The receiver's type is the declaring .NET type = the owner,
+        // mirroring kotc's old `birType(recv.type)` for argTypes[0].
+        if (!isStatic && method != null && OperatorToNet.TryGetValue(method, out var opNet)
+            && DeclaresPublicStaticMethod(netType, opNet))
+        {
+            var recv = Take("recv");
+            var argTypes0 = Take("argTypes") as JsonArray ?? new JsonArray();
+            var newArgTypes = new JsonArray { owner.DeepClone() };
+            while (argTypes0.Count > 0) { var at = argTypes0[0]; argTypes0.RemoveAt(0); newArgTypes.Add(at); }
+            var newArgs = new JsonArray { recv };
+            while (args.Count > 0) { var a = args[0]; args.RemoveAt(0); newArgs.Add(a); }
+            node["k"] = "clrStatic";
+            node["type"] = owner;
+            node["method"] = opNet;
+            node["argTypes"] = newArgTypes;
+            node["ret"] = Take("ret");
+            node["args"] = newArgs;
+            if (Take("suspendCall") is JsonNode scOp) node["suspendCall"] = scOp;
+            return;
+        }
+
+        // PLAIN static/instance method (incl. indexer get_Item/set_Item, member-extension synthetic accessor).
         node["k"] = isStatic ? "clrStatic" : "clrInstance";
         node["type"] = owner;
         node["method"] = method;
@@ -4627,6 +4654,23 @@ static class NetInteropBinding
                 case TypeNode.ByRef br: t = br.Of; break;
                 default: return null;
             }
+    }
+
+    // The INVERSE of facadegen's OPERATOR_NAMES (facadegen Program.cs): a Kotlin `operator fun` name -> the .NET `op_X`
+    // static-method slot. kotc emits the Kotlin identity; this pass reconstructs the .NET operator off the refs.
+    static readonly Dictionary<string, string> OperatorToNet = new(StringComparer.Ordinal)
+    {
+        ["plus"] = "op_Addition", ["minus"] = "op_Subtraction", ["times"] = "op_Multiply", ["div"] = "op_Division",
+        ["rem"] = "op_Modulus", ["unaryMinus"] = "op_UnaryNegation", ["unaryPlus"] = "op_UnaryPlus",
+        ["inc"] = "op_Increment", ["dec"] = "op_Decrement",
+    };
+
+    // True iff the .NET type declares `name` as a public static method (a `op_X` operator is a public static special
+    // method on the declaring type). Guards against rewriting a Kotlin `plus` on a .NET type that has no such operator.
+    static bool DeclaresPublicStaticMethod(Type type, string name)
+    {
+        try { return type.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(m => m.Name == name); }
+        catch { return false; }
     }
 
     // True iff the .NET type (or a base/interface) declares a NON-indexed property OR a field of this name — the two
