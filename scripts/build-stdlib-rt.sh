@@ -35,13 +35,14 @@ need_kotc
 rm -rf "$BIR" "$CIR" "$DLL"; mkdir -p "$BIR" "$CIR" "$DLL"
 
 collect_stdlib_sources
+stdlib_fragment_args
 FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters -Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN)
 
 info "SUBSTITUTE-mode kotc: ${#STDLIB_COMMON[@]}+${#STDLIB_SRC[@]}+${#STDLIB_UNSIGNED[@]}+${#STDLIB_CLR[@]} stdlib files -> BIR (@Clr ACTIVE)"
 # kotc exits nonzero when there are frontend errors; this script's job is to REPORT them, so tolerate it.
 DOTKT_STDLIB_COMPILE=1 CLR_TYPES_METADATA="" "$KOTC" \
 	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
-	"${FLAGS[@]}" -d "$BIR" 2>"$OUT/kotc.err" || true
+	"${FLAGS[@]}" "${STDLIB_FRAGMENT_ARGS[@]}" -d "$BIR" 2>"$OUT/kotc.err" || true
 bir_count="$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)"
 echo "frontend errors: $(grep -c ': error:' "$OUT/kotc.err")   BIR files: $bir_count"
 grep ': error:' "$OUT/kotc.err" | sed -E 's/^.*: error: //; s/'"'"'[^'"'"']*'"'"'/X/g; s/[0-9]+/N/g' | sort | uniq -c | sort -rn | head -10 || true

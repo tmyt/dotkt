@@ -1,17 +1,17 @@
 package kotc
 
 import kotc.pipeline.ClrCliPipeline
-import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
+import org.jetbrains.kotlin.cli.common.arguments.K2MetadataCompilerArguments
 import org.jetbrains.kotlin.cli.common.arguments.parseCommandLineArguments
 import org.jetbrains.kotlin.cli.common.messages.MessageRenderer
 import org.jetbrains.kotlin.cli.common.messages.PrintingMessageCollector
 import org.jetbrains.kotlin.config.Services
-import org.jetbrains.kotlin.platform.jvm.JvmPlatforms
+import org.jetbrains.kotlin.platform.CommonPlatforms
 import org.jetbrains.kotlin.util.PerformanceManagerImpl
 
 /**
- * CLI entry. We accept standard kotlinc JVM arguments (-classpath, -d, source roots, ...) so the
- * reused frontend resolves against a real stdlib jar without any custom argument plumbing.
+ * CLI entry. We accept the subset of kotlinc-style arguments used by the scripts (-classpath, -d,
+ * source roots, ...) and run the common metadata frontend against KLIB dependencies.
  */
 fun main(args: Array<String>) {
 	// `--scan-imports --output <file> <src.kt>...` — a pre-compile subcommand that extracts the .NET-injectable
@@ -21,18 +21,12 @@ fun main(args: Array<String>) {
 		kotc.tools.ImportScan.run(args)
 		return
 	}
-	val arguments = parseCommandLineArguments<K2JVMCompilerArguments>(args.toList())
-	// Enable expect/actual matching so a library's commonMain + a CLR `actual` source set compile together as one
-	// flat module (the pragmatic minimum for building multiplatform libraries — no HMPP/klib). Harmless for single-
-	// platform code. See docs/design-coroutines-clr.md §13a (resolution 4).
+	val normalizedArgs = args.filterNot { it == "-no-stdlib" }
+	val arguments = parseCommandLineArguments<K2MetadataCompilerArguments>(normalizedArgs)
 	arguments.multiPlatform = true
-	val collector = PrintingMessageCollector(
-		System.err,
-		MessageRenderer.PLAIN_RELATIVE_PATHS,
-		arguments.verbose,
-	)
-	val perfManager = PerformanceManagerImpl(JvmPlatforms.defaultJvmPlatform, "Kotlin/CLR compiler")
-
+	arguments.metadataKlib = true
+	val collector = PrintingMessageCollector(System.err, MessageRenderer.PLAIN_RELATIVE_PATHS, arguments.verbose)
+	val perfManager = PerformanceManagerImpl(CommonPlatforms.defaultCommonPlatform, "Kotlin/CLR compiler")
 	val exitCode = ClrCliPipeline(perfManager).execute(arguments, Services.EMPTY, collector)
 	System.err.println("kotc finished: $exitCode")
 	// Propagate the compiler's exit code to the process, so a COMPILATION_ERROR (e.g. an unsupported construct

@@ -2,7 +2,7 @@
 # Build the FOUR DotKt NuGet packages into the local feed (build/nuget-feed):
 #   DotKt.Sdk       — the MSBuild SDK (Sdk.props/targets; implicit refs to Toolchain + Stdlib)
 #   DotKt.Toolchain — the compiler: kotc + bir2cir + ilemit + facadegen + retarget + the CLR frontend
-#                     stdlib jar + the COMPILE-TIME stdlib reference assembly (tools/stdlib/DotKt.Private.Stdlib.dll)
+#                     stdlib KLIB + the COMPILE-TIME stdlib reference assembly (tools/stdlib/DotKt.Private.Stdlib.dll)
 #   DotKt.Stdlib    — the RUNTIME stdlib assembly (lib/net10.0/DotKt.Stdlib.dll, copy-local)
 #   DotKt.Templates — `dotnet new` templates
 # (There is no separate runtime package.) Version is single-sourced in
@@ -32,10 +32,9 @@ dotnet build "$ROOT/toolchain/bir2cir"   -c Release -o "$ROOT/build/bir2cir-bin"
 dotnet build "$ROOT/toolchain/facadegen" -c Release -o "$ROOT/build/facadegen-bin" -v q --nologo
 dotnet build "$ROOT/toolchain/retarget"  -c Release -o "$ROOT/build/retarget-bin"  -v q --nologo
 
-# The CLR FRONTEND stdlib jar (kotc -classpath): built FROM our CLR stdlib sources, REPLACING the JVM kotlin-stdlib.jar
-# whose java.util.* typealiases leaked into the frontend. Consumes the kotc install lib/*.jar produced by installDist.
-info "ensure CLR frontend stdlib jar"
-[[ -f "$FE_JAR" ]] || bash "$ROOT/scripts/build-stdlib-jar.sh"
+# The CLR FRONTEND stdlib KLIB (kotc -classpath): built FROM our CLR stdlib sources for the common frontend.
+info "ensure CLR frontend stdlib klib"
+[[ -e "$FE_KLIB" ]] || bash "$ROOT/scripts/build-stdlib-klib.sh"
 
 # The CLR stdlib dll pair — REQUIRED package contents (the shipped DotKt.Toolchain.targets needs both: the ref feeds
 # bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution, the rt is the app's copy-local runtime). Build if missing;
@@ -49,7 +48,7 @@ info "ensure CLR stdlib (ref + rt)"
 info "assemble DotKt.Toolchain/tools"
 TC="$ROOT/packaging/DotKt.Toolchain/tools"; rm -rf "$TC"; mkdir -p "$TC"
 cp -r "$ROOT/toolchain/kotc/build/install/kotc" "$TC/kotc"
-cp "$FE_JAR" "$TC/kotlin-stdlib-clr-frontend.jar"
+cp -r "$FE_KLIB" "$TC/kotlin-stdlib-clr-frontend.klib"
 cp -r "$ROOT/build/ilemit-bin"    "$TC/ilemit"
 cp -r "$ROOT/build/bir2cir-bin"   "$TC/bir2cir"
 cp -r "$ROOT/build/facadegen-bin" "$TC/facadegen"
