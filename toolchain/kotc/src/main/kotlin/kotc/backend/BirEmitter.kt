@@ -3252,29 +3252,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return expr(arg)
 		}
 
-		// Primitive range operators are declared as Kotlin builtins, but CLR primitives have no instance methods.
-		// Materialize the stdlib range classes directly for value-position ranges; structured for-loops are handled
-		// in birForLoop.
-		if (name == "rangeTo" || name == "rangeUntil") {
-			val cls = declaringClass?.fqNameWhenAvailable?.asString()
-			val recv = dispatchReceiver(call)
-			val end = regularArgs(call).firstOrNull()
-			if (recv != null && end != null) {
-				val rangeType = when (cls) {
-					"kotlin.Byte", "kotlin.Short", "kotlin.Int" -> "kotlin.ranges.IntRange"
-					"kotlin.Long" -> "kotlin.ranges.LongRange"
-					"kotlin.Char" -> "kotlin.ranges.CharRange"
-					else -> null
-				}
-				if (rangeType != null) {
-					val endExpr = if (name == "rangeUntil") {
-						val one = if (cls == "kotlin.Long") """{"k":"const","type":${fqnJson("kotlin.Long")},"value":1}""" else """{"k":"const","type":${fqnJson("kotlin.Int")},"value":1}"""
-						"""{"k":"binOp","op":"-","lhs":${expr(end)},"rhs":$one}"""
-					} else expr(end)
-					return """{"k":"new","type":${fqnJson(rangeType)},"args":[${expr(recv)},$endExpr]}"""
-				}
-			}
-		}
+		// Value-position primitive `rangeTo`/`rangeUntil` (`a..b` / `a..<b`) is NOT lowered here. kotc emits the
+		// FAITHFUL `callInstance kotlin.Int.rangeTo(b)` member call (CLR primitives have no instance methods, but that
+		// is a CLR fact); bir2cir (RangeConstructionLowering) MATERIALIZES the stdlib range class — `new IntRange/
+		// LongRange/CharRange`, applying the `-1` half-open arithmetic for rangeUntil. Structured for-loops are still
+		// counter-lowered in birForLoop (they intercept the range at the IR level before this member call is emitted).
 
 		// `x in a..b` (range membership) -> `(x >= a && x <op> b)` via a short-circuit cond. `x` is bound ONCE
 		// (bindOnce): rendering it into both comparison legs re-evaluated a side-effecting `x` twice.

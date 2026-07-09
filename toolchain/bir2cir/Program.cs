@@ -183,6 +183,12 @@ sealed class Pipeline
             // the app form rewrites to a cross-module counter loop. Runs FIRST so the produced callInstance / forRange
             // flow through every downstream pass exactly as the equivalent kotc-emitted forms did (byte-identical IL).
             RangeForLowering.Apply(bir.Root, !attributeTopLevelOwner);
+            // VALUE-POSITION RANGE CONSTRUCTION (#73 Phase 2b-1): kotc emits the FAITHFUL `callInstance
+            // kotlin.Int.rangeTo(b)` for `a..b` / `a..<b`; materialize the stdlib `new IntRange/LongRange/CharRange`
+            // HERE (the Kotlin<->CLR realization). Runs before MemberCallSubstitution (whose Rule-4 gate would refuse
+            // the unbound `kotlin.Int.rangeTo`) so the recv/arg nodes flow through every downstream pass as the
+            // equivalent kotc-emitted `new` did (byte-identical).
+            RangeConstructionLowering.Apply(bir.Root);
             // PRIMITIVE OPERATORS (#52 Phase 5): re-emit the binOp/unaryOp kotc used to synthesize for a primitive's
             // arithmetic/bitwise/unary operator (kotc now emits the faithful `callInstance kotlin.Int.plus`). Runs
             // FIRST and UNCONDITIONALLY (ref + app) so every downstream pass sees the old tree shape, and a ref-build
