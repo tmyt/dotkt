@@ -23,7 +23,9 @@ ILEMIT_DLL="$ROOT/build/ilemit-bin/ilemit.dll"
 BIR2CIR_DLL="$ROOT/build/bir2cir-bin/bir2cir.dll"
 FACADEGEN_DLL="$ROOT/build/facadegen-bin/facadegen.dll"
 RETARGET_DLL="$ROOT/build/retarget-bin/retarget.dll"
-FE_JAR="$ROOT/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar"
+FE_KLIB="$ROOT/build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib"
+# Backward-compatible variable name for scripts that still talk about the old frontend jar.
+FE_JAR="$FE_KLIB"
 STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
 STDLIB_RT_DLL="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
 
@@ -72,9 +74,10 @@ need_tool() { # <name> — ensure build/<name>-bin/<name>.dll exists (ilemit|bir
 build_tool() { # <name> — UNCONDITIONAL build (the verify gates use this: they must test the CURRENT sources)
 	dotnet build "$ROOT/toolchain/$1" -c Release -o "$ROOT/build/$1-bin" -v q --nologo >/dev/null
 }
-need_fe_jar() { # the CLR frontend stdlib jar (kotc -classpath input); consumes the kotc install's lib jars
-	[[ -f "$FE_JAR" ]] || { info "building CLR frontend stdlib jar" >&2; bash "$ROOT/scripts/build-stdlib-jar.sh" >/dev/null 2>&1; }
+need_fe_klib() { # the CLR frontend stdlib KLIB (kotc -classpath input); consumes the kotc install's lib jars
+	[[ -e "$FE_KLIB" ]] || { info "building CLR frontend stdlib klib" >&2; bash "$ROOT/scripts/build-stdlib-klib.sh" >/dev/null 2>&1; }
 }
+need_fe_jar() { need_fe_klib; }
 need_stdlib_ref() { [[ -f "$STDLIB_REF_DLL" ]] || { info "building stdlib REFERENCE dll" >&2; bash "$ROOT/scripts/build-stdlib-ref.sh" --emit >/dev/null 2>&1; }; }
 need_stdlib_rt()  { [[ -f "$STDLIB_RT_DLL"  ]] || { info "building stdlib RUNTIME dll"   >&2; bash "$ROOT/scripts/build-stdlib-rt.sh"  --emit >/dev/null 2>&1; }; }
 
@@ -88,6 +91,16 @@ collect_stdlib_sources() {
 	mapfile -t STDLIB_CLR      < <(find "$ROOT/libraries/stdlib/clr" -name '*.kt')
 	local all=("${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}")
 	STDLIB_COMMON_CSV="$(IFS=,; echo "${all[*]}")"
+}
+stdlib_fragment_args() {
+	STDLIB_FRAGMENT_ARGS=(-Xfragments=common,clr -Xfragment-refines=clr:common)
+	local f
+	for f in "${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}"; do
+		STDLIB_FRAGMENT_ARGS+=("-Xfragment-sources=common:$f")
+	done
+	for f in "${STDLIB_CLR[@]}"; do
+		STDLIB_FRAGMENT_ARGS+=("-Xfragment-sources=clr:$f")
+	done
 }
 # The stdlib compile's opt-ins + frontend flags (identical for the ref and rt builds).
 STDLIB_OPTIN="-opt-in=kotlin.ExperimentalUnsignedTypes,kotlin.experimental.ExperimentalTypeInference,kotlin.contracts.ExperimentalContracts,kotlin.ExperimentalMultiplatform,kotlin.ExperimentalStdlibApi,kotlin.ExperimentalSubclassOptIn,kotlin.io.encoding.ExperimentalEncodingApi,kotlin.time.ExperimentalTime,kotlin.uuid.ExperimentalUuidApi"

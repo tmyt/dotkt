@@ -1,11 +1,13 @@
 package kotc.backend
 
 import org.jetbrains.kotlin.cli.common.ExitCode
+import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.pipeline.CheckCompilationErrors
 import org.jetbrains.kotlin.cli.pipeline.PipelineArtifactWithExitCode
 import org.jetbrains.kotlin.cli.pipeline.PipelinePhase
-import org.jetbrains.kotlin.cli.pipeline.jvm.JvmFir2IrPipelineArtifact
+import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.JVMConfigurationKeys
+import org.jetbrains.kotlin.fir.pipeline.Fir2IrActualizedResult
 import org.jetbrains.kotlin.ir.util.dump
 import java.io.File
 
@@ -20,19 +22,25 @@ class ClrBackendArtifact(override val exitCode: ExitCode) : PipelineArtifactWith
  * that `tools/ilemit` turns into CIL. (The retired C#-text backend was removed; BIR -> ilemit is the sole
  * shipping path. See docs/csharp-retirement-design.md.)
  */
-object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArtifact>(
+object ClrBackendPhase : PipelinePhase<kotc.pipeline.ClrFir2IrPipelineArtifact, ClrBackendArtifact>(
 	name = "ClrBackendPhase",
 	postActions = setOf(CheckCompilationErrors.CheckDiagnosticCollector),
 ) {
-	override fun executePhase(input: JvmFir2IrPipelineArtifact): ClrBackendArtifact {
-		val moduleFragment = input.result.irModuleFragment
-		val outputDir = input.configuration.get(JVMConfigurationKeys.OUTPUT_DIRECTORY)
+	override fun executePhase(input: kotc.pipeline.ClrFir2IrPipelineArtifact): ClrBackendArtifact {
+		return emit(input.result, input.configuration)
+	}
+}
+
+private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfiguration): ClrBackendArtifact {
+		val moduleFragment = result.irModuleFragment
+		val outputDir = configuration?.get(JVMConfigurationKeys.OUTPUT_DIRECTORY)
+			?: configuration?.get(CLIConfigurationKeys.METADATA_DESTINATION_DIRECTORY)
 			?: File("build/clr-out").also { it.mkdirs() }
 		outputDir.mkdirs()
 
 		File(outputDir, "KIR@Raw.txt").writeText(moduleFragment.dump())
 
-		val messageCollector = input.configuration.get(
+		val messageCollector = configuration?.get(
 			org.jetbrains.kotlin.config.CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
 		val bir = BirEmitter(messageCollector)
 		// The BIR file name is derived from the source file's BASENAME — but the stdlib has several same-named files in
@@ -65,5 +73,4 @@ object ClrBackendPhase : PipelinePhase<JvmFir2IrPipelineArtifact, ClrBackendArti
 		// An unsupported construct was reported (with source location), or a file crashed -> fail the compile here, so the
 		// build stops with a clear diagnostic instead of producing BIR that crashes ilemit downstream.
 		return ClrBackendArtifact(if (bir.hadError || crashed) ExitCode.COMPILATION_ERROR else ExitCode.OK)
-	}
 }

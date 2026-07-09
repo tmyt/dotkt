@@ -53,6 +53,9 @@ public actual interface List<out E> : Collection<E> {
     public actual fun listIterator(): ListIterator<E>
     public actual fun listIterator(index: Int): ListIterator<E>
     public actual fun subList(fromIndex: Int, toIndex: Int): List<E>
+    public fun getFirst(): @UnsafeVariance E? = if (isEmpty()) throw NoSuchElementException("List is empty.") else get(0)
+    public fun getLast(): @UnsafeVariance E? = if (isEmpty()) throw NoSuchElementException("List is empty.") else get(size - 1)
+    public fun reversed(): MutableList<@UnsafeVariance E?>? = toMutableList().asReversed() as MutableList<E?>?
 }
 
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IList")
@@ -71,6 +74,12 @@ public actual interface MutableList<E> : List<E>, MutableCollection<E> {
     actual override fun listIterator(index: Int): MutableListIterator<E>
     actual override fun subList(fromIndex: Int, toIndex: Int): MutableList<E>
     actual override fun iterator(): MutableIterator<E>
+    public fun addFirst(p0: E): Unit = add(0, p0)
+    public fun addLast(p0: E): Unit {
+        add(p0)
+    }
+    public fun removeFirst(): E = if (isEmpty()) throw NoSuchElementException("List is empty.") else removeAt(0)
+    public fun removeLast(): E = if (isEmpty()) throw NoSuchElementException("List is empty.") else removeAt(size - 1)
 }
 
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IReadOnlyCollection")

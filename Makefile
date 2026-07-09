@@ -4,7 +4,7 @@
 # each stage's env gates / flags; this file only sequences them and adds incremental file targets).
 # The artifact DAG:
 #
-#   kotc ──┬────────────────────────────────► stdlib-jar (frontend jar, kotc -classpath)
+#   kotc ──┬────────────────────────────────► stdlib-klib (frontend KLIB, kotc -classpath)
 #          ├─ ilemit/bir2cir/facadegen/retarget
 #          └────────────► stdlib-ref ──► stdlib-rt ──► pack (4 NuGet packages -> build/nuget-feed)
 #
@@ -23,7 +23,7 @@ SHELL := /bin/bash
 KOTC       := toolchain/kotc/build/install/kotc/bin/kotc
 TOOLS      := ilemit bir2cir facadegen retarget
 TOOL_DLLS  := $(foreach t,$(TOOLS),build/$(t)-bin/$(t).dll)
-FE_JAR     := build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar
+FE_KLIB    := build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib
 STDLIB_REF := build/clr-stdlib/dll/DotKt.Private.Stdlib.dll
 STDLIB_RT  := build/clr-stdlib-rt/dll/DotKt.Stdlib.dll
 FEED       := build/nuget-feed
@@ -38,7 +38,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 # ==================================================================================================
 # Aggregate targets
 # ==================================================================================================
-.PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-jar stdlib-ref stdlib-rt pack \
+.PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-jar stdlib-ref stdlib-rt pack \
         verify verify-il verify-ktproj verify-roundtrip verify-differential verify-widedelegates \
         dev facades clean clean-tools clean-stdlib clean-pack help
 
@@ -63,11 +63,12 @@ endef
 $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 
 # ---- stdlib (jar + ref + rt); see CLAUDE.md "Building the CLR stdlib" -----------------------------
-stdlib: stdlib-jar stdlib-ref stdlib-rt ## the CLR stdlib: frontend jar + reference dll + runtime dll
+stdlib: stdlib-klib stdlib-ref stdlib-rt ## the CLR stdlib: frontend KLIB + reference dll + runtime dll
 
-stdlib-jar: $(FE_JAR) ## kotlin-stdlib-clr-frontend.jar (kotc -classpath input)
-$(FE_JAR): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-jar.sh
-	bash scripts/build-stdlib-jar.sh
+stdlib-klib: $(FE_KLIB) ## kotlin-stdlib-clr-frontend.klib (kotc -classpath input)
+stdlib-jar: stdlib-klib ## compatibility alias for the retired frontend jar target
+$(FE_KLIB): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-klib.sh
+	bash scripts/build-stdlib-klib.sh
 
 # The stdlib dlls depend on the emitter tools via their SOURCES (real change signal) plus ORDER-ONLY
 # deps on the dlls (existence). Depending on the dll mtimes directly would spuriously retrigger these

@@ -9,10 +9,8 @@
 
     <!-- Tool locations: the in-repo source builds (the shared pipeline reads these $(DotKt*) vars). -->
     <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(KotlinClrRoot)/toolchain/kotc/build/install/kotc/bin/kotc</DotKtCompiler>
-    <!-- kotc -classpath: the CLR FRONTEND jar built FROM our CLR stdlib sources (scripts/build-stdlib-jar.sh),
-         REPLACING the JVM kotlin-stdlib.jar whose java.util.* typealiases leaked into the frontend. kotlin.* resolves
-         from THIS jar (full Kotlin semantics), never from facadegen. Same input scripts/verify-il.sh + dotkt.sh use. -->
-    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/build/clr-stdlib-frontend-jvm/kotlin-stdlib-clr-frontend.jar</DotKtStdlib>
+    <!-- kotc -classpath: the CLR FRONTEND KLIB built FROM our CLR stdlib sources for the common frontend. -->
+    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(KotlinClrRoot)/build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib</DotKtStdlib>
     <DotKtFacadeGen Condition="'$(DotKtFacadeGen)' == ''">$(KotlinClrRoot)/build/facadegen-bin/facadegen.dll</DotKtFacadeGen>
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(KotlinClrRoot)/build/bir2cir-bin/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
@@ -85,12 +83,11 @@
     <Message Importance="high" Text="kotlin/clr: building retarget (first run)..." />
     <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/retarget&quot; -c Release -o &quot;$(KotlinClrRoot)/build/retarget-bin&quot; -v q --nologo" />
   </Target>
-  <!-- The CLR frontend stdlib jar (kotc -classpath): build once from our CLR stdlib sources if missing. This is the
-       input that replaces the JVM kotlin-stdlib.jar; the shipping SDK ships it inside DotKt.Toolchain. -->
-  <Target Name="EnsureKotlinClrFrontendJar" BeforeTargets="DotKtInjectTypes"
-          Condition="!Exists('$(DotKtStdlib)') and Exists('$(KotlinClrRoot)/scripts/build-stdlib-jar.sh')">
-    <Message Importance="high" Text="kotlin/clr: building CLR frontend stdlib jar (first run)..." />
-    <Exec Command="bash &quot;$(KotlinClrRoot)/scripts/build-stdlib-jar.sh&quot;" WorkingDirectory="$(KotlinClrRoot)" />
+  <!-- The CLR frontend stdlib KLIB (kotc -classpath): build once from our CLR stdlib sources if missing. -->
+  <Target Name="EnsureKotlinClrFrontendKlib" BeforeTargets="DotKtInjectTypes"
+          Condition="!Exists('$(DotKtStdlib)') and Exists('$(KotlinClrRoot)/scripts/build-stdlib-klib.sh')">
+    <Message Importance="high" Text="kotlin/clr: building CLR frontend stdlib KLIB (first run)..." />
+    <Exec Command="bash &quot;$(KotlinClrRoot)/scripts/build-stdlib-klib.sh&quot;" WorkingDirectory="$(KotlinClrRoot)" />
   </Target>
 
   <!-- The CLR stdlib ref/rt assemblies are the canonical CACHED builds (scripts/build-stdlib-{ref,rt}.sh in emit
