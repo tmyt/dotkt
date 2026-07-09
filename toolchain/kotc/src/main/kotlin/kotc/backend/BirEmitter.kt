@@ -3442,16 +3442,21 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						locationOf(call))
 					return """{"k":"unsupportedExpr","of":"clr-event-read-outside-subscription: ${prop.name.asString()}"}"""
 				}
-				val pn = clrInteropName(prop) ?: prop.name.asString()
+				// A2 step 3: the property's OWN Kotlin name IS the .NET slot identity (facadegen injects the member under
+				// its .NET name), so kotc reads NO CLR name here — it emits the bare property name + the accessor KIND
+				// (`"prop":"get"/"set"`, a frontend fact from correspondingPropertySymbol). bir2cir's NetInteropBinding
+				// applies the .NET `get_`/`set_` accessor convention off the refs.
+				val pn = prop.name.asString()
 				val recvJson = if (isStatic) "null" else expr(recv!!)
 				// A restored MEMBER extension property (`class C { val T.p }`): no .NET property exists — it's a
 				// `get_p(__self)`/`set_p(__self, v)` method on the dispatch type, the extension receiver as `__self`.
-				// A2 (#61): a PLAIN instance call by identity; bir2cir's NetInteropBinding finds NO .NET property `p`
-				// (it's a synthetic accessor method) and leaves it as a clrInstance get_p/set_p method call.
+				// A2 (#61): a PLAIN instance call by identity carrying the accessor KIND; bir2cir's NetInteropBinding
+				// finds NO .NET property `p` (it's a synthetic accessor method) and applies the convention -> a clrInstance
+				// get_p/set_p method call.
 				extensionReceiver(call)?.let { pExt ->
 					return if (callee === prop.setter)
-						"""{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str("set_$pn")},"argTypes":[${birType(pExt.type).toJson()},${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[${expr(pExt)},${expr(regularArgs(call).first())}]}"""
-					else """{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str("get_$pn")},"argTypes":[${birType(pExt.type).toJson()}],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[${expr(pExt)}]}"""
+						"""{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set","argTypes":[${birType(pExt.type).toJson()},${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[${expr(pExt)},${expr(regularArgs(call).first())}]}"""
+					else """{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[${birType(pExt.type).toJson()}],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[${expr(pExt)}]}"""
 				}
 				// A2 (#61): a `kotlin.clr.ClrEvent<T>` read is CLR-ONLY vocabulary — a .NET event has no plain-Kotlin
 				// call form (it exposes add_/remove_, not a get_); facadegen injects it purely to typecheck, so kotc
@@ -3467,8 +3472,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val propCallKind = if (isStatic) "callStatic" else "callInstance"
 				val propRecvField = if (isStatic) "" else ""","recv":$recvJson"""
 				return if (callee === prop.setter)
-					"""{"k":"$propCallKind","ownerType":${memberType!!.toJson()},"method":${str("set_$pn")},"argTypes":[${birType(regularArgs(call).first().type).toJson()}]$propRecvField,"args":[${expr(regularArgs(call).first())}]}"""
-				else """{"k":"$propCallKind","ownerType":${memberType!!.toJson()},"method":${str("get_$pn")},"argTypes":[],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[]}"""
+					"""{"k":"$propCallKind","ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}]$propRecvField,"args":[${expr(regularArgs(call).first())}]}"""
+				else """{"k":"$propCallKind","ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[]}"""
 			}
 			val member = objectMethodName(callee) ?: name
 			val argsJson = regularArgs(call).joinToString(",") { expr(it) }
@@ -3557,14 +3562,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 						else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}}"""
 					}
 					val recv = extensionReceiver(call)
-					// A2 (#61): a top-level EXTENSION property accessor is a static `get_/set_<name>(__self)` METHOD on the
-					// referenced file class (NOT a .NET property) -> emit the plain static call by identity; bir2cir's
-					// NetInteropBinding finds no matching .NET property/field and shapes it back to a clrStatic method call.
+					// A2 (#61 / step 3): a top-level EXTENSION property accessor is a static `get_/set_<name>(__self)` METHOD
+					// on the referenced file class (NOT a .NET property) -> emit the plain static call by identity carrying
+					// the accessor KIND; bir2cir's NetInteropBinding finds no matching .NET property/field and applies the
+					// `get_`/`set_` convention -> a clrStatic method call.
 					if (callee === p.setter) {
 						val args = listOfNotNull(recv) + regularArgs(call)
-						return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str("set_" + p.name.asString())},"argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
+						return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
 					}
-					return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str("get_" + p.name.asString())},"argTypes":[${recv?.let { birType(it.type).toJson() } ?: ""}],"ret":${birType(callee.returnType).toJson()},"args":[${recv?.let { expr(it) } ?: ""}]}"""
+					return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"get","argTypes":[${recv?.let { birType(it.type).toJson() } ?: ""}],"ret":${birType(callee.returnType).toJson()},"args":[${recv?.let { expr(it) } ?: ""}]}"""
 				}
 			}
 

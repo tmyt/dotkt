@@ -34,6 +34,9 @@ STR_OK = {
     "value",                                    # const literal / attribute-arg scalar
     "vis", "variance", "kind",                  # visibility / variance / decl-kind enums
     "member", "method", "get", "set", "event",  # member/accessor/event NAME references (reflection/override — §2.2.1)
+    "prop",                                     # callInstance/callStatic accessor KIND ("get"/"set") — a BIR-only frontend
+                                                # fact (A2 step 3); bir2cir consumes it into clrPropGet/clrPropSet, so it
+                                                # never survives to CIR. An enum-ish marker, not a type slot.
     "local",                                    # a byref*/delegate node's local-VARIABLE-NAME reference
     "attr", "nestedIn",                         # attribute-type name / enclosing-type name (owner-FQN island — §2.2.1)
     "fileClass", "fileClassFQN", "pkg",         # file-class / package identifiers

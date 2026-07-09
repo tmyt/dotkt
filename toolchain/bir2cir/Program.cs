@@ -4568,6 +4568,43 @@ static class NetInteropBinding
             return;
         }
 
+        // PROPERTY ACCESSOR by the frontend get/set KIND (A2 step 3): kotc emits the BARE property NAME + a
+        // `"prop":"get"/"set"` marker (the accessor KIND — a frontend fact from correspondingPropertySymbol), NOT the
+        // `get_`/`set_` .NET accessor slot. bir2cir APPLIES the .NET accessor convention off the refs: a real non-indexed
+        // .NET property/field of that bare name -> clrPropGet/clrPropSet (the SAME node the legacy get_-prefix path
+        // produces); otherwise (a synthetic member-extension / top-level-extension accessor with no matching .NET member)
+        // reconstruct the `get_`/`set_<name>` plain method call and fall through — byte-identical to the old kotc emission.
+        var propKind = Str(Take("prop"));
+        if (propKind == "get" || propKind == "set")
+        {
+            var isSet = propKind == "set";
+            if (method != null && MemberIsPropertyOrField(netType, method))
+            {
+                if (!isSet)
+                {
+                    node["k"] = "clrPropGet";
+                    node["type"] = owner;
+                    node["name"] = method;
+                    node["ret"] = Take("ret");
+                    node["static"] = isStatic;
+                    node["recv"] = isStatic ? null : Take("recv");
+                    return;
+                }
+                node["k"] = "clrPropSet";
+                node["type"] = owner;
+                node["name"] = method;
+                node["static"] = isStatic;
+                node["recv"] = isStatic ? null : Take("recv");
+                JsonNode setVal = null;
+                if (args.Count > 0) { setVal = args[0]; args.RemoveAt(0); }
+                node["value"] = setVal;
+                return;
+            }
+            // No matching .NET property/field -> a synthetic accessor METHOD: apply the get_/set_ convention and fall
+            // through to the plain instance/static method path (byte-identical to the old kotc-baked get_/set_<name>).
+            method = (isSet ? "set_" : "get_") + method;
+        }
+
         // PROPERTY / FIELD accessor: a `get_X`/`set_X` that names a real .NET property (non-indexed) or field ->
         // clrPropGet/clrPropSet (ilemit emits the accessor call or an ldsfld/ldfld for a field-backed one). A `get_X`
         // that names NEITHER (a hand-written `get_`-prefixed method, an indexer `get_Item`, a synthetic
