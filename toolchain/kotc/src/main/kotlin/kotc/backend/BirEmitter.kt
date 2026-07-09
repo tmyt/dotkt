@@ -878,10 +878,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					// CharSequence -> synthetic dotkt$CharSequence: the `length` property getter must be emitted (it is an
 					// override, not a user-written accessor). get/subSequence keep names.
 					"kotlin.CharSequence" -> if (owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
-					// No collection override-slot map (size->get_Count, get->get_Item, iterator->GetEnumerator, add->Add, ...)
-					// here: a `class R : List<T>`/`MutableList<T>` emits the plain Kotlin override name + its `overrides`
-					// marker, and bir2cir's DeclarationRename renames the implementor slot from the ref.dll @ClrIntrinsic
-					// bindings on Collections.kt (layer purity — no BCL slot name in kotc).
+					// A `class R : List<T>`/`MutableList<T>` override emits the plain Kotlin override name + its `overrides`
+					// marker; bir2cir's DeclarationRename renames the implementor slot from the ref.dll @ClrIntrinsic
+					// bindings on Collections.kt. WHY kotc holds no BCL slot names (size->get_Count, get->get_Item,
+					// iterator->GetEnumerator, add->Add, …): the Kotlin<->CLR member binding is bir2cir's (layer purity).
 					else -> null
 				}
 			}
@@ -4095,9 +4095,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return null
 			}
 			lookup(prop)?.let { return it }
-			// No collection property slot map (size->Count, keys->Keys, values->Values, entries->Entries) belongs here: the
-			// stdlib collection interfaces carry those @ClrIntrinsic bindings (Collections.kt), so a `coll.size` etc. emits
-			// a plain kotlin.collections member call that bir2cir substitutes off the ref.dll (layer purity — no BCL name here).
+			// A `coll.size`/`.keys`/`.values`/`.entries` emits a plain kotlin.collections member call; bir2cir substitutes
+			// it off the ref.dll @ClrIntrinsic bindings on the stdlib collection interfaces (Collections.kt). WHY the BCL
+			// slot names (size->Count, keys->Keys, values->Values, entries->Entries) are NOT in kotc: that binding is bir2cir's.
 		}
 		(decl as? IrSimpleFunction)?.takeIf { it.correspondingPropertySymbol == null }?.let { fn ->
 			fun lookupFn(m: IrSimpleFunction): String? {
@@ -4109,10 +4109,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return null
 			}
 			lookupFn(fn)?.let { return it }
-			// No collection method slot map (get->get_Item, set->set_Item, iterator->GetEnumerator, add->Add,
-			// remove->Remove, contains->Contains, containsKey->ContainsKey, clear->Clear) belongs here: the stdlib collection
-			// interfaces carry the @ClrIntrinsic bindings (Collections.kt), so a `coll.add(x)`/`list[i]` emits a plain
-			// kotlin.collections member call that bir2cir substitutes off the ref.dll (layer purity — no BCL name here).
+			// A `coll.add(x)`/`list[i]` emits a plain kotlin.collections member call; bir2cir substitutes it off the ref.dll
+			// @ClrIntrinsic bindings on the stdlib collection interfaces (Collections.kt). WHY the BCL slot names
+			// (get->get_Item, set->set_Item, iterator->GetEnumerator, add->Add, remove->Remove, contains->Contains,
+			// containsKey->ContainsKey, clear->Clear) are NOT in kotc: that binding is bir2cir's.
 			// kotlin.text.StringBuilder members (append/insert/toString/get/clear) are NOT slot-named here: the stdlib
 			// StringBuilder carries @ClrTypeAlias("System.Text.StringBuilder") with each member @ClrIntrinsic-bound
 			// (Append/Insert/ToString/get_Chars/Clear). kotc emits the plain kotlin.text.StringBuilder member call and
@@ -4449,8 +4449,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A (Mutable)Iterator<E>/Iterable<E> — for ANY element E, type-parameter (`gp:E`) or concrete (`int`) alike —
 		// maps to the REAL generic identity via the FQN path below: `kotlin.collections.Iterator[E]` (a real emitted
 		// stdlib interface) / `Iterable[E]` (bir2cir @ClrTypeAlias'd to `System.Collections.Generic.IEnumerable<E>`).
-		// No per-element monomorphized synthetic is produced (#58 retired it; the reverse GetEnumerator bridge in ilemit
-		// and the real generic Iterator interface handle the IEnumerable<->Iterator read-as, roadmap step 3).
+		// kotc produces no per-element monomorphized synthetic: the reverse GetEnumerator bridge in ilemit + the real
+		// generic Iterator interface handle the IEnumerable<->Iterator read-as (roadmap step 3).
 		val klass = t.classifierOrNull?.owner as? IrClass
 		// A @Clr / FIR-injected .NET type ("clr:System.Text.StringBuilder"); a constructed generic .NET type
 		// (`Collection<Int>`) carries its concrete args as `clrg:<openName>[int]`.

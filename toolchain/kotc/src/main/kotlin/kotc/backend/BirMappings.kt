@@ -1,68 +1,20 @@
 package kotc.backend
 
-// Kotlin -> .NET name/shape mapping tables used across the BIR emitter (operators, kotlin.math / kotlin.text /
-// collection ops -> their .NET equivalents, primitive/exception type maps). Lifted out of BirEmitter so the
-// expr/stmt extension files can reach them by simple name; they are pure data, no emitter state.
-
-// No COMPARE name->symbol map here. The `<`/`<=`/`>`/`>=` desugarings are `kotlin.internal.ir` COMPILER
-// INTRINSICS (top-level `less`/`lessOrEqual`/`greater`/`greaterOrEqual`, no ref.dll symbol); like EQEQ/EQEQEQ and
-// the ARITHMETIC/BITWISE/UNARY operators, their recognition is bir2cir's. kotc emits the FAITHFUL intrinsic call
-// (`callStatic owner=kotlin.internal.ir method=less`, collision-safe vs a user top-level `less`) and bir2cir's
-// PrimitiveOperatorLowering re-emits the `binOp` with the operand shaping (primitive gating, nullable-primitive
-// unwrap, boxed-Any -> concrete cast).
-
-// No kotlin.math.* -> System.Math.* map here: that CLR knowledge lives in bir2cir. kotc emits a plain call to the
-// stdlib math fun; bir2cir substitutes it from MathClr.kt's @ClrIntrinsic bindings on the ref.dll (System.Math.*
-// for Double/Int/Long, System.MathF.* for Float).
-
-// No `kotlin.text` String-op -> System.String member-name map (STRING_OPS) here: those ops run as pure-Kotlin stdlib
-// bodies (or bir2cir substitution off the ref.dll) — no BCL member name in kotc.
-// Only `reversed` STAYS kotc-lowered (strReversed) pending a `StringBuilder(CharSequence)`-ctor stdlib fix (a separate node,
-// never in this map).
-
-// No Char-ops map (isDigit/isLetter/uppercaseChar/… -> System.Char statics) here: that CLR knowledge lives in bir2cir.
-// kotc emits a plain call to the stdlib Char fun; bir2cir substitutes it from
-// CharClr.kt's @ClrIntrinsic("System.Char.IsDigit"/"System.Char.ToUpperInvariant"/…) FQ bindings on the ref.dll.
-
-// No SIGNED-primitive-array recognition SET here: kotc reads array-ness from the IR type system
-// (`isPrimitiveArray()`) and emits the type's OWN faithful FQN identity — no kotlin.* array table. bir2cir
-// DECOMPOSES the identity to `Array(elem)` + DERIVES the intrinsic `elem` + the sized-ctor construction.
-// The UNSIGNED specialized arrays (#53). Unlike the signed arrays above (Kotlin builtins with no source body), these
-// are library value classes (`UByteArray(storage: ByteArray)`) — so this native-array lowering applies ONLY in app/rt
-// consumer builds (`!stdlibCompile`); the stdlib's OWN compile keeps them as the emitted value class so UByteArray.kt /
-// _UArrays.kt compile against a real `storage`. Element = the unsigned scalar (bir2cir lowers kotlin.UByte -> `ubyte`,
-// ilemit -> System.Byte[]). Mirrors how kotlin.UInt stays a value class in the ref build but lowers to native `uint` elsewhere.
+// The last Kotlin->.NET mapping still living in kotc: the unsigned specialized arrays. Every other table that was
+// once here is GONE from kotc — array/primitive-ness is now read from the IR type system (isPrimitiveArray /
+// isPrimitiveType), and the CLR binding of every stdlib symbol (operators, math/text/char ops, factories, conv,
+// exceptions, ranges, enum intrinsics) is bir2cir's: kotc emits the faithful call/type by identity and bir2cir
+// recognizes it in the CIR + binds it off the ref.dll @Clr* metadata.
+//
+// WHY unsigned STILL needs a kotc map (the one exception): a signed `IntArray` is a Kotlin builtin with no source
+// body, so it is uniformly native `int[]` and needs no table. A `UByteArray` is instead a stdlib VALUE CLASS
+// (`UByteArray(private val storage: ByteArray)`), so its representation is BUILD-MODE-dependent — the stdlib's OWN
+// build must emit the value class (so `UByteArray.kt` / `_UArrays.kt` compile against a real `storage` field),
+// while a consumer build lowers it to native `Byte[]`. This element map drives that consumer-only (`!stdlibCompile`)
+// native lowering: element = the unsigned scalar (bir2cir lowers kotlin.UByte -> `ubyte`, ilemit -> System.Byte[]).
+// It dissolves once unsigned is unified to native like signed (#76: @ClrTypeAlias UByteArray->native + a
+// storage-free stdlib source), after which this file is deleted.
 internal val UNSIGNED_ARRAY_ELEM = mapOf(
 	"kotlin.UByteArray" to "kotlin.UByte", "kotlin.UShortArray" to "kotlin.UShort",
 	"kotlin.UIntArray" to "kotlin.UInt", "kotlin.ULongArray" to "kotlin.ULong",
 )
-// There is no collection/array factory RECOGNITION name-set (listOf/setOf/mapOf/arrayOf/intArrayOf/…) here:
-// kotc emits the plain top-level factory call (the faithful IR); bir2cir reads the `@kotlin.clr.ClrCollectionFactory`/
-// `@kotlin.clr.ClrArrayFactory` marker off each stdlib factory function on the ref.dll and emits the
-// newList/newSet/newMap/newArray/newArraySized construction node. A name-set match here would be a kotc CLR-shape
-// decision on specific stdlib symbols — exactly the recognition that belongs in bir2cir.
-// No Int-range/-progression RECOGNITION set here: kotc emits a faithful `forIn`/`forEachInline`
-// carrying the source + its runtime type token (`srcType`); bir2cir's ForInLowering classifies a counted range (IntRange,
-// or IntProgression in a stdlib self-build) -> forRange, a non-range enumerable -> forEachInline, else the iterator
-// `fallback`. "This for-loop source is a counted range" is a Kotlin<->CLR relation, so it lives in bir2cir, not kotc.
-
-// No top-level reified enum-intrinsic RECOGNITION set here: kotc emits the FAITHFUL top-level call (owner:null,
-// the callee's own bare name — enumValues / enumValueOf / enumEntries / enumEntriesIntrinsic) as the plain Kotlin
-// fact; bir2cir's EnumIntrinsicLowering recognizes those callee names and re-emits the values()/valueOf() split
-// (rich enum) or the semantic enum-values / enum-parse node (basic/generic-param).
-
-// Numeric conversions (`3.7.toInt()`, `x.toLong()`, `c.toInt()`) are not recognized in kotc: kotc emits the plain
-// `callInstance kotlin.Double.toInt` (the faithful IR). bir2cir reads the `@kotlin.clr.ClrConv` marker off each stdlib
-// primitive's conversion member on the ref.dll and emits the `conv` node from the callee's return type. A name->target
-// map + receiver-type guard here would be a kotc name-heuristic; the `conv` node itself — a genuine primitive IL op —
-// is bir2cir-produced, and ilemit selects the conv opcode.
-
-// No value-type-primitive FQN sets here (was PRIMITIVE_EQ_FQ / PRIMITIVE_OP_FQ): "is this a value-type primitive"
-// (for the `T?`→Nullable<T> element / the raw-CIL operator + value-coercion gate) is read from the IR type system
-// via `IrType.isValuePrimitive()` (= isPrimitiveType) / `isPrimitiveOrUnsigned()` (= isPrimitiveType||isUnsignedType)
-// in BirEmitter — the frontend already knows, so kotc does NOT re-hardcode the kotlin.* list.
-
-// No kotlin.* -> System.* exception map here: that CLR knowledge belongs in bir2cir. The
-// stdlib's exception classes carry `@kotlin.clr.ClrTypeAlias("System.X")`, and bir2cir reads that off the ref.dll
-// to lower throw/catch/supertype/construction (the same @ClrTypeAlias path that lowers the collections). kotc emits
-// the bare `kotlin.*Exception` FQN and nothing more. See MEMORY `exception-map-to-clrtypealias`.
