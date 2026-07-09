@@ -416,7 +416,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// stdlib types are origin DEFINED in the stdlib build and thus kept; in an app build they come from the -classpath
 		// jar and are not re-declared here at all.)
 		val userDefined: (IrClass) -> Boolean = { it.origin.toString() == "DEFINED" }
-		val classes = file.declarations.filterIsInstance<IrClass>().filter { it.kind == ClassKind.CLASS && userDefined(it) && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") }
+		// The 4 unsigned specialized array value classes (`UByteArray`/`UShortArray`/`UIntArray`/`ULongArray`) live in
+		// the stdlib source (libraries/stdlib/unsigned/src), so unlike the signed `IntArray` builtins they reach kotc —
+		// but as of #76 they are a native CLR array family EXACTLY like `IntArray` (kotc emits the faithful FQN, bir2cir
+		// decomposes to `Array(elem)`). A native array is NEVER emitted as a type, so filter their class definitions out
+		// in ALL builds (read the IR predicate off the class's defaultType, not an FQN set).
+		val classes = file.declarations.filterIsInstance<IrClass>().filter {
+			it.kind == ClassKind.CLASS && userDefined(it) && it.name.asString() !in setOf("ClrRef", "StackBuffer", "Span") && !it.defaultType.isUnsignedArray()
+		}
 		// `object Foo { ... }` (non-companion) -> a singleton class with a static `INSTANCE` field; `IrGetObjectValue`
 		// loads it. The shared-state-via-`object` case (feedback item 10). Companion/anonymous objects are handled
 		// elsewhere; .NET-injected `object`s (Math, …) are static call sites, not user singletons.
@@ -3199,13 +3206,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// literal-split (and its "do NOT force-split a non-literal Pair" guard — `mapOf(pairVar)` stays a real call)
 		// is bir2cir's.
 
-		// Unsigned<->signed byte-array reinterpret (#53). In a consumer build UByteArray IS System.Byte[] and ByteArray
-		// IS System.SByte[]; the two are freely castclass-compatible at runtime (same 8-bit storage, ECMA reduced-type
-		// array compatibility). So `UByteArray.toByteArray()` / `ByteArray.toUByteArray()` — the stdlib's @InlineOnly
-		// `storage.copyOf()` extensions, whose value-class `storage` does NOT exist on a native array — lower to a plain
-		// array cast (a reinterpret VIEW, not a defensive copy; noted in dotkt-semantics). Guarded on the EXACT receiver
-		// array identity so the Collection<Byte>/Array<out Byte> overloads of the same names are untouched.
-		if (!stdlibCompile && (name == "toByteArray" || name == "toUByteArray")) {
+		// Unsigned<->signed byte-array reinterpret (#76). UByteArray IS System.Byte[] and ByteArray IS System.SByte[]
+		// (native in ALL builds now); the two are freely castclass-compatible at runtime (same 8-bit storage, ECMA
+		// reduced-type array compatibility). So `UByteArray.toByteArray()` / `ByteArray.toUByteArray()` — the stdlib's
+		// @InlineOnly `storage.copyOf()` extensions, whose value-class `storage` does NOT exist on a native array —
+		// lower to a plain array cast (a reinterpret VIEW, not a defensive copy; noted in dotkt-semantics). Guarded on
+		// the EXACT receiver array identity so the Collection<Byte>/Array<out Byte> overloads of the same names are untouched.
+		if (name == "toByteArray" || name == "toUByteArray") {
 			val er = extensionReceiver(call)
 			val erFq = er?.type?.classFqName?.asString()
 			if (name == "toByteArray" && erFq == "kotlin.UByteArray")
@@ -4163,10 +4170,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/** True if `t` is an array kotc emits array intrinsics (arrayGet/arraySet/arrayLen/forArray) for: a reference
-	 *  `Array<T>`, a signed primitive array, or (consumer builds only, #53) an unsigned specialized array. Array-ness
-	 *  is read from the IR type system (`isBoxedArray`/`isPrimitiveArray`/`isUnsignedArray`), NOT a kotlin.* FQN table. */
+	 *  `Array<T>`, a signed primitive array, or an unsigned specialized array (`UByteArray`/…, #76 — native like
+	 *  signed, in ALL builds). Array-ness is read from the IR type system
+	 *  (`isBoxedArray`/`isPrimitiveArray`/`isUnsignedArray`), NOT a kotlin.* FQN table. */
 	internal fun isArrayType(t: IrType): Boolean =
-		t.isBoxedArray || t.isPrimitiveArray() || (!stdlibCompile && t.isUnsignedArray())
+		t.isBoxedArray || t.isPrimitiveArray() || t.isUnsignedArray()
 
 	/** A value-type primitive (`kotlin.Int`/`Char`/`Boolean`/…, the 8 the CLR represents as a struct) — read from
 	 *  the IR type system (`isPrimitiveType`), NOT a kotlin.* FQN table. Nullability-agnostic. */
@@ -4175,11 +4183,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *  lower to raw CIL / whose receiver+args need value coercion. Read from the IR, not a FQN table. */
 	internal fun IrType.isPrimitiveOrUnsigned(): Boolean = makeNotNull().let { it.isPrimitiveType() || it.isUnsignedType() }
 
-	/** The element type of a REFERENCE `Array<T>` or an unsigned specialized array. NOT called for a signed
-	 *  primitive array — bir2cir DERIVES that element off the faithful `kotlin.IntArray` identity. */
+	/** The element type of a REFERENCE `Array<T>`. NOT called for a signed OR unsigned specialized primitive array —
+	 *  bir2cir DERIVES that element off the faithful `kotlin.IntArray`/`kotlin.UByteArray`/… identity. */
 	internal fun arrayElemType(t: IrType): TypeNode {
 		val fq = t.classFqName?.asString()
-		if (!stdlibCompile) UNSIGNED_ARRAY_ELEM[fq]?.let { return TypeNode.Fqn(it) }
 		if (fq == "kotlin.Array")
 			return (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
 		return OBJ
@@ -4313,14 +4320,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return TypeNode.Fqn("System.Span", listOf(argType(t, 0) ?: OBJ))
 		// A reference array `kotlin.Array<E>` -> `TypeNode.Array(<E>)` (the element rides its own faithful identity).
 		if (t.isBoxedArray) return TypeNode.Array(arrayElemType(t))
-		// A SIGNED primitive array (`kotlin.IntArray`/…) -> the FAITHFUL FQN identity (the type's OWN FQN, read from
-		// the IR — not a kotlin.* table); deciding "IntArray IS an array of Int" is a REPRESENTATION decision that
-		// belongs in bir2cir (it decomposes this token to `Array(elem)`). The array intrinsics (arrayGet/arraySet/
-		// forArray) + the sized ctor are likewise bir2cir-derived off it.
-		if (t.isPrimitiveArray()) return TypeNode.Fqn(t.classFqName!!.asString())
-		// Unsigned specialized arrays (#53) stay decomposed in kotc: the value-class-vs-native element is
-		// `stdlibCompile`-gated (a UByteArray is the emitted value class in the stdlib's own build).
-		if (!stdlibCompile && t.isUnsignedArray()) return TypeNode.Array(arrayElemType(t))
+		// A SIGNED primitive array (`kotlin.IntArray`/…) OR an unsigned specialized array (`kotlin.UByteArray`/…, #76)
+		// -> the FAITHFUL FQN identity (the type's OWN FQN, read from the IR — not a kotlin.* table); deciding
+		// "IntArray/UByteArray IS an array of Int/UByte" is a REPRESENTATION decision that belongs in bir2cir (it
+		// decomposes this token to `Array(elem)`). The array intrinsics (arrayGet/arraySet/forArray) + the sized ctor
+		// are likewise bir2cir-derived off it. Unsigned mirrors signed exactly, in ALL builds (no build-mode gate).
+		if (t.isPrimitiveArray() || t.isUnsignedArray()) return TypeNode.Fqn(t.classFqName!!.asString())
 		val fqp = t.classFqName?.asString()
 		// kotlin.text.Regex stays its bare `kotlin.*` FQN here (falls through to the user-class `@kotlin.text.Regex`
 		// path below); bir2cir substitutes it to System.Text.RegularExpressions.Regex off the stdlib's @ClrTypeAlias

@@ -2072,15 +2072,22 @@ static class BirTypeLowering
         ["kotlin.UShort"] = "ushort",
     };
 
-    // A SIGNED primitive array FQN -> its element FQN. kotc emits the faithful `kotlin.IntArray` identity; bir2cir
-    // DECOMPOSES it to `Array(elem)` here (the representation decision) in EVERY build — the element then lowers to
-    // the CLR primitive (app/rt) or stays kotlin.* (ref) like any other type-arg. ArrayConstructionLowering uses the
-    // SAME map to derive the sized ctor + the array intrinsics' element.
+    // A specialized primitive array FQN -> its element FQN. kotc emits the faithful `kotlin.IntArray` /
+    // `kotlin.UIntArray` identity (like signed IntArray, #76 unified the unsigned set to the same faithful shape —
+    // no value-class decomposition in kotc); bir2cir DECOMPOSES it to `Array(elem)` here (the representation
+    // decision) in EVERY build — the element then lowers to the CLR primitive (app/rt: Int->System.Int32,
+    // UByte->System.Byte) or stays kotlin.* (ref) like any other type-arg. ArrayConstructionLowering uses the SAME
+    // map to derive the sized ctor + the array intrinsics' element.
     public static readonly IReadOnlyDictionary<string, string> PrimArrayElem = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["kotlin.IntArray"] = "kotlin.Int", ["kotlin.LongArray"] = "kotlin.Long", ["kotlin.DoubleArray"] = "kotlin.Double",
         ["kotlin.FloatArray"] = "kotlin.Float", ["kotlin.BooleanArray"] = "kotlin.Boolean", ["kotlin.CharArray"] = "kotlin.Char",
         ["kotlin.ByteArray"] = "kotlin.Byte", ["kotlin.ShortArray"] = "kotlin.Short",
+        // #76: the unsigned specialized arrays lower to the UNSIGNED native array (byte[]/ushort[]/uint[]/ulong[]),
+        // uniformly with signed. Their value-class `.storage` backing (the SIGNED array) + the wrap-ctor over a
+        // signed array are erased to a same-underlying-primitive reinterpret cast in MemberCallSubstitution.
+        ["kotlin.UByteArray"] = "kotlin.UByte", ["kotlin.UShortArray"] = "kotlin.UShort",
+        ["kotlin.UIntArray"] = "kotlin.UInt", ["kotlin.ULongArray"] = "kotlin.ULong",
     };
 
     // Every JSON key whose string (or string[]) value is a TYPE reference, across signatures, expressions and
@@ -4884,6 +4891,23 @@ static class MemberCallSubstitution
     // stdlib self-build, where every such fun is local — see the StdlibMode == App gate at the call site in the Driver).
     static bool _attributeTopLevelOwner;
 
+    // #76: the four unsigned specialized array value classes -> their SIGNED backing-array element FQN. kotc emits
+    // `kotlin.U*Array` as a faithful array identity (like signed IntArray) and STOPS emitting/decomposing the value
+    // class; bir2cir OWNS both the native representation (via PrimArrayElem -> the UNSIGNED native array byte[]/uint[]/
+    // ...) AND the value-class `.storage` erasure. The backing field `storage` is declared as the SIGNED array
+    // (UByteArray.storage : ByteArray = sbyte[], UIntArray.storage : IntArray = int[], ...). Since same-size same-
+    // underlying-primitive arrays are assignment-compatible (ECMA-335 array-element-compatible-with — byte[]<->sbyte[],
+    // ushort[]<->short[], uint[]<->int[], ulong[]<->long[]), a `storage` read is a runtime-valid reinterpret cast of
+    // the receiver to the signed array, and the wrap-ctor(storage: SignedArray) is the inverse reinterpret to the
+    // unsigned native array — NOT a real field access / construction. These nodes appear ONLY in the runtime-stdlib
+    // self-build (consumer code never touches `.storage`); the ref build squashes bodies so it needs nothing here, and
+    // MemberCallSubstitution runs on the !RefBuild path only.
+    static readonly IReadOnlyDictionary<string, string> UnsignedArraySignedElem = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["kotlin.UByteArray"] = "kotlin.Byte", ["kotlin.UShortArray"] = "kotlin.Short",
+        ["kotlin.UIntArray"] = "kotlin.Int", ["kotlin.ULongArray"] = "kotlin.Long",
+    };
+
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner)
     {
@@ -5017,6 +5041,7 @@ static class MemberCallSubstitution
             "callInstance" => TransformCall(node, refs, instance: true, ctx) ?? node,
             "callStatic" => TransformCall(node, refs, instance: false, ctx) ?? node,
             "staticField" => TransformStaticField(node, refs) ?? node,
+            "field" => TransformStorageField(node) ?? node,
             _ => node,
         };
     }
@@ -5026,6 +5051,25 @@ static class MemberCallSubstitution
     // companion INSTANCE field, but the substituted BCL type (System.String) has none — the substitution erases the
     // companion's runtime representation. kotc flattens a plain companion, so the companion-extension `__self`
     // param is a plain `object` whose value is never used: lower the load to a null object const.
+    // #76 EDIT 2 — the unsigned-array value-class `.storage` erasure. kotc emits a read of the SIGNED backing array
+    // as a field node `{k:field, name:"storage", ownerType:kotlin.U*Array, recv:R}` (IrGetField). Since kotlin.U*Array
+    // now lowers to the UNSIGNED native array (byte[]/uint[]/ushort[]/ulong[]) and `storage` is the SIGNED array
+    // (sbyte[]/int[]/short[]/long[]), the read collapses to a same-underlying-primitive REINTERPRET cast of the
+    // receiver to the signed array type — NOT a `ldfld storage` (System.Byte[] has no `storage` field). This is a
+    // distinct branch from the scalar inline-erasure (`get_data()` -> `{k:conv}`): a conv to an array is nonsensical.
+    static JsonNode TransformStorageField(JsonObject node)
+    {
+        if ((node["name"] as JsonValue)?.GetValue<string>() != "storage") return null;
+        var owner = TypeJson.OwnerName(node["ownerType"]);
+        if (owner == null || !UnsignedArraySignedElem.TryGetValue(owner, out var signedElem)) return null;
+        return new JsonObject
+        {
+            ["k"] = "cast",
+            ["type"] = TypeJson.Write(new TypeNode.Array(new TypeNode.Fqn(signedElem))),
+            ["e"] = node["recv"]?.DeepClone(),
+        };
+    }
+
     static JsonNode TransformStaticField(JsonObject node, ReferenceMetadataIndex refs)
     {
         if ((node["name"] as JsonValue)?.GetValue<string>() != "INSTANCE") return null;
@@ -5040,6 +5084,24 @@ static class MemberCallSubstitution
     static JsonNode TransformNew(JsonObject node, ReferenceMetadataIndex refs)
     {
         if (TypeJson.Read(node["type"]) is not TypeNode.Fqn ownerFqn) return null;
+
+        // #76 EDIT 3 — the unsigned-array WRAP-CTOR erasure (inverse of the `.storage` reinterpret). The @PublishedApi
+        // `constructor(storage: SignedArray)` wraps a signed array into the unsigned specialized array (e.g.
+        // `UIntArray(storage.sliceArray(indices))`). Since kotlin.U*Array lowers to the UNSIGNED native array and the
+        // arg is the SIGNED native array, the wrap is a same-underlying-primitive REINTERPRET cast to the unsigned
+        // array type, NOT a real construction. The SIZED `constructor(size: Int)` was already turned into newArraySized
+        // by ArrayConstructionLowering (which defers ONLY the array-arg wrap-ctor), so any surviving 1-arg
+        // `new kotlin.U*Array` here is the wrap-ctor. Element = the UNSIGNED element (PrimArrayElem: UByteArray->UByte).
+        if (UnsignedArraySignedElem.ContainsKey(ownerFqn.Name)
+            && BirTypeLowering.PrimArrayElem.TryGetValue(ownerFqn.Name, out var unsElem)
+            && node["args"] is JsonArray wrapArgs && wrapArgs.Count == 1)
+            return new JsonObject
+            {
+                ["k"] = "cast",
+                ["type"] = TypeJson.Write(new TypeNode.Array(new TypeNode.Fqn(unsElem))),
+                ["e"] = wrapArgs[0].DeepClone(),
+            };
+
         if (!refs.TryResolveClrOwner(ownerFqn.Name, out var bcl, out var kind)) return null;
 
         // Inline-class CONSTRUCTION erasure (the BOX, mirror of the `.data` unbox collapse): an @JvmInline value class
@@ -5298,6 +5360,19 @@ static class MemberCallSubstitution
             }
             return null;
         }
+
+        // #76 EDIT 2 (defensive) — a `get_storage()` accessor call on an unsigned-array value class, should kotc emit
+        // the backing-field read as a property getter callInstance rather than a raw `{k:field}`. Same erasure as
+        // TransformStorageField: reinterpret the receiver to the SIGNED array. Handled BEFORE the CLR-owner gate below
+        // (kotlin.U*Array is not @ClrTypeAlias-bound, so it would otherwise return null unresolved).
+        if (instance && (node["method"] as JsonValue)?.GetValue<string>() == "get_storage"
+            && UnsignedArraySignedElem.TryGetValue(ownerToken, out var storageSignedElem))
+            return new JsonObject
+            {
+                ["k"] = "cast",
+                ["type"] = TypeJson.Write(new TypeNode.Array(new TypeNode.Fqn(storageSignedElem))),
+                ["e"] = node["recv"]?.DeepClone(),
+            };
 
         // Rule 2p-inherited (property-accessor override chain): a `.message`/`.cause` read dispatches through a subclass
         // receiver whose STATIC owner is either a USER class (`AppErr : Exception`) — not CLR-bound at all — or a

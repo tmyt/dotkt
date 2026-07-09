@@ -15,7 +15,7 @@ import kotlin.jvm.*
 @JvmInline
 public value class UByteArray
 @PublishedApi
-internal constructor(@PublishedApi internal val storage: ByteArray) : Collection<UByte> {
+internal constructor(@PublishedApi internal val storage: ByteArray) {
 
     /** Creates a new array of the specified [size], with all elements initialized to zero. */
     public constructor(size: Int) : this(ByteArray(size))
@@ -39,26 +39,16 @@ internal constructor(@PublishedApi internal val storage: ByteArray) : Collection
     }
 
     /** Returns the number of elements in the array. */
-    public override val size: Int get() = storage.size
+    public val size: Int get() = storage.size
 
     /** Creates an iterator over the elements of the array. */
-    public override operator fun iterator(): kotlin.collections.Iterator<UByte> = Iterator(storage)
+    public operator fun iterator(): kotlin.collections.Iterator<UByte> = Iterator(storage)
 
     private class Iterator(private val array: ByteArray) : kotlin.collections.Iterator<UByte> {
         private var index = 0
         override fun hasNext() = index < array.size
         override fun next() = if (index < array.size) array[index++].toUByte() else throw NoSuchElementException(index.toString())
     }
-
-    override fun contains(element: UByte): Boolean {
-        return storage.contains(element.toByte())
-    }
-
-    override fun containsAll(elements: Collection<UByte>): Boolean {
-        return (elements as Collection<*>).all { it is UByte && storage.contains(it.toByte()) }
-    }
-
-    override fun isEmpty(): Boolean = this.storage.size == 0
 }
 
 /**

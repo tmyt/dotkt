@@ -15,7 +15,7 @@ import kotlin.jvm.*
 @JvmInline
 public value class UShortArray
 @PublishedApi
-internal constructor(@PublishedApi internal val storage: ShortArray) : Collection<UShort> {
+internal constructor(@PublishedApi internal val storage: ShortArray) {
 
     /** Creates a new array of the specified [size], with all elements initialized to zero. */
     public constructor(size: Int) : this(ShortArray(size))
@@ -39,26 +39,16 @@ internal constructor(@PublishedApi internal val storage: ShortArray) : Collectio
     }
 
     /** Returns the number of elements in the array. */
-    public override val size: Int get() = storage.size
+    public val size: Int get() = storage.size
 
     /** Creates an iterator over the elements of the array. */
-    public override operator fun iterator(): kotlin.collections.Iterator<UShort> = Iterator(storage)
+    public operator fun iterator(): kotlin.collections.Iterator<UShort> = Iterator(storage)
 
     private class Iterator(private val array: ShortArray) : kotlin.collections.Iterator<UShort> {
         private var index = 0
         override fun hasNext() = index < array.size
         override fun next() = if (index < array.size) array[index++].toUShort() else throw NoSuchElementException(index.toString())
     }
-
-    override fun contains(element: UShort): Boolean {
-        return storage.contains(element.toShort())
-    }
-
-    override fun containsAll(elements: Collection<UShort>): Boolean {
-        return (elements as Collection<*>).all { it is UShort && storage.contains(it.toShort()) }
-    }
-
-    override fun isEmpty(): Boolean = this.storage.size == 0
 }
 
 /**

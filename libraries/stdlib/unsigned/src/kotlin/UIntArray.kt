@@ -15,7 +15,7 @@ import kotlin.jvm.*
 @JvmInline
 public value class UIntArray
 @PublishedApi
-internal constructor(@PublishedApi internal val storage: IntArray) : Collection<UInt> {
+internal constructor(@PublishedApi internal val storage: IntArray) {
 
     /** Creates a new array of the specified [size], with all elements initialized to zero. */
     public constructor(size: Int) : this(IntArray(size))
@@ -39,26 +39,16 @@ internal constructor(@PublishedApi internal val storage: IntArray) : Collection<
     }
 
     /** Returns the number of elements in the array. */
-    public override val size: Int get() = storage.size
+    public val size: Int get() = storage.size
 
     /** Creates an iterator over the elements of the array. */
-    public override operator fun iterator(): kotlin.collections.Iterator<UInt> = Iterator(storage)
+    public operator fun iterator(): kotlin.collections.Iterator<UInt> = Iterator(storage)
 
     private class Iterator(private val array: IntArray) : kotlin.collections.Iterator<UInt> {
         private var index = 0
         override fun hasNext() = index < array.size
         override fun next() = if (index < array.size) array[index++].toUInt() else throw NoSuchElementException(index.toString())
     }
-
-    override fun contains(element: UInt): Boolean {
-        return storage.contains(element.toInt())
-    }
-
-    override fun containsAll(elements: Collection<UInt>): Boolean {
-        return (elements as Collection<*>).all { it is UInt && storage.contains(it.toInt()) }
-    }
-
-    override fun isEmpty(): Boolean = this.storage.size == 0
 }
 
 /**

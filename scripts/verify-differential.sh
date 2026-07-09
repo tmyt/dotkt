@@ -52,6 +52,12 @@ need_fe_jar; need_stdlib_ref; need_stdlib_rt
 # 2026-07-02 stdlib subtree bump cde8afd are FIXED — maxOrNull overload-select, sumOf func-return-type
 # overload disambiguation, and the groupBy/associate* Map dual-rep variance realignment — and pruned.)
 declare -A XFAIL_DIFF=(
+	# Pre-existing (NOT a #76 regression — proven by git-stash: crashes identically on the pre-#76 toolchain).
+	# A `for (x in Color.values())` / `Color.entries` loop directly over an enum values/entries array: the
+	# forArray node reaches ilemit with NO `elem` (EmitStmt forArray GetProperty("elem") KeyNotFound) because
+	# bir2cir's StaticType doesn't derive the element of an enumValues / E.values() node. Tracked as #77(1);
+	# prune this entry when #77 lands.
+	[m-a8]="#77(1) enum values()/entries direct-for-loop forArray has no elem (pre-existing, bir2cir StaticType gap)"
 )
 
 # Pure-Kotlin samples only (no @Clr / injected .NET types — those can't run on the JVM). Each name is a

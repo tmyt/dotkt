@@ -87,7 +87,16 @@ static class ArrayConstructionLowering
             if (args.Count == 2)
                 return new JsonObject { ["k"] = "newArrayInit", ["elem"] = TypeNode.Write(elem), ["size"] = args[0]?.DeepClone(), ["init"] = args[1]?.DeepClone() };
             if (args.Count == 1)
+            {
+                // #76 UNSIGNED-ARRAY WRAP-CTOR: the @PublishedApi `constructor(storage: SignedArray)` takes the SIGNED
+                // backing array (kotlin.ByteArray/...), NOT an Int size. Distinguish it from the sized `constructor(size:
+                // Int)` by the DECLARED ctor param type — an array-typed arg is the wrap-ctor, which is a same-underlying
+                // reinterpret (handled by MemberCallSubstitution.TransformNew, non-ref only), not a `newArraySized`.
+                // Defer (return null: keep the `new` node) so it never becomes a nonsensical sized array of an array.
+                if (o["argTypes"] is JsonArray ats && ats.Count == 1 && TypeJson.Read(ats[0]) is TypeNode at && IsArrayTypeNode(at))
+                    return null;
                 return new JsonObject { ["k"] = "newArraySized", ["elem"] = TypeNode.Write(elem), ["size"] = args[0]?.DeepClone() };
+            }
             return null;
         }
         if ((k == "arrayGet" || k == "arraySet") && o["elem"] == null && DeriveArrayElem(o["array"], scope) is TypeNode ge)
@@ -125,4 +134,16 @@ static class ArrayConstructionLowering
     };
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
+
+    // Whether a declared type token names an array: a structured `Array`, a specialized primitive array identity
+    // (`kotlin.ByteArray` — a signed backing array of an unsigned value class, or any signed specialized array), or a
+    // reference `kotlin.Array<E>`. Used to distinguish an unsigned array's wrap-ctor(storage: SignedArray) from its
+    // sized ctor(size: Int).
+    static bool IsArrayTypeNode(TypeNode t) => t switch
+    {
+        TypeNode.Array => true,
+        TypeNode.Fqn f when f.Args == null && BirTypeLowering.PrimArrayElem.ContainsKey(f.Name) => true,
+        TypeNode.Fqn { Name: "kotlin.Array" } => true,
+        _ => false,
+    };
 }

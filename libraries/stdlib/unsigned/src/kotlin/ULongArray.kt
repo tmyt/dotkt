@@ -15,7 +15,7 @@ import kotlin.jvm.*
 @JvmInline
 public value class ULongArray
 @PublishedApi
-internal constructor(@PublishedApi internal val storage: LongArray) : Collection<ULong> {
+internal constructor(@PublishedApi internal val storage: LongArray) {
 
     /** Creates a new array of the specified [size], with all elements initialized to zero. */
     public constructor(size: Int) : this(LongArray(size))
@@ -39,26 +39,16 @@ internal constructor(@PublishedApi internal val storage: LongArray) : Collection
     }
 
     /** Returns the number of elements in the array. */
-    public override val size: Int get() = storage.size
+    public val size: Int get() = storage.size
 
     /** Creates an iterator over the elements of the array. */
-    public override operator fun iterator(): kotlin.collections.Iterator<ULong> = Iterator(storage)
+    public operator fun iterator(): kotlin.collections.Iterator<ULong> = Iterator(storage)
 
     private class Iterator(private val array: LongArray) : kotlin.collections.Iterator<ULong> {
         private var index = 0
         override fun hasNext() = index < array.size
         override fun next() = if (index < array.size) array[index++].toULong() else throw NoSuchElementException(index.toString())
     }
-
-    override fun contains(element: ULong): Boolean {
-        return storage.contains(element.toLong())
-    }
-
-    override fun containsAll(elements: Collection<ULong>): Boolean {
-        return (elements as Collection<*>).all { it is ULong && storage.contains(it.toLong()) }
-    }
-
-    override fun isEmpty(): Boolean = this.storage.size == 0
 }
 
 /**
