@@ -68,7 +68,7 @@ private class ClrTypeParam(val name: String, val variance: String? = null, val b
 // `infix`/`operator`/`suspend`/`inline`/`ext` = Kotlin modifiers restored from the `mods` object. For a `suspend` fun
 // the returnType is already the unwrapped result T (facadegen unwrapped the emitted Task<T>).
 private class ClrMethod(val name: String, val returnType: TypeNode, val open: Boolean, val abstract: Boolean, val protected: Boolean, val params: List<ClrParam>, val typeParams: List<ClrTypeParam> = emptyList(),
-	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false, val clrName: String? = null)
+	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false)
 // A restored top-level Kotlin function: its package, the .NET file-facade class to call, and the function itself.
 private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
 // N5: one file-class candidate for a top-level CallableId (`.NET file class` + the value-param arity range it covers).
@@ -84,7 +84,7 @@ internal val UNSIGNED_KOTLIN_TYPES = setOf(
 )
 // A top-level property: `receiver` (a TypeNode) present => an EXTENSION property (`val T.p`); null => a plain top-level prop.
 private class ClrTopLevelProp(val pkg: FqName, val fileClassDotNet: String, val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode?)
-private class ClrProperty(val name: String, val type: TypeNode, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean, val clrName: String? = null)
+private class ClrProperty(val name: String, val type: TypeNode, val mutable: Boolean, val open: Boolean, val abstract: Boolean, val protected: Boolean)
 // A MEMBER extension property (`class C { val T.p }`): restored as a member property of C with an extension receiver.
 private class ClrMemberExtProp(val name: String, val type: TypeNode, val mutable: Boolean, val receiver: TypeNode, val protected: Boolean)
 private class ClrEvent(val name: String, val handlerReturn: TypeNode, val handlerParams: List<ClrParam>)
@@ -130,14 +130,10 @@ private val ClrType.hasStatics: Boolean get() = staticMethods.isNotEmpty() || st
  */
 internal fun clrInjectedDotNetName(classId: ClassId): String? = ClrMetadataHolder.dotNetNameByClassId[classId]
 
-/**
- * A2 keystone (interop-no-registry, stage 2): the backend reads an injected .NET MEMBER's slot name off its resolved IR
- * `CallableId` (declaring-class `ClassId` + member name) through this accessor — facadegen's metadata keyed by that same
- * structural identity. Non-null only where
- * the .NET slot name DIVERGES from the Kotlin member name (a .NET operator method: `plus` -> `op_Addition`); null for a
- * member whose Kotlin name already IS its .NET name, and for any non-injected (user Kotlin / stdlib) member.
- */
-internal fun clrInjectedMemberName(callableId: CallableId): String? = ClrMetadataHolder.memberClrNameByCallableId[callableId]
+// A2 step 5 (interop member-slot -> bir2cir): the backend no longer reads an injected .NET MEMBER's slot name here. A
+// Kotlin member overriding a facadegen-injected .NET interface/base binds its slot in bir2cir's DeclarationRename, which
+// reflects the owner .NET Type off the refs (a method -> its name; a property accessor -> get_/set_ + the .NET property
+// name; facadegen injects the Kotlin identity EQUAL to the .NET name). So there is no member-name accessor / metadata map.
 
 /**
  * A2 keystone (interop-no-registry, stage 3): the backend reads a restored DotKt TOP-LEVEL function's .NET file-facade
@@ -178,8 +174,8 @@ internal fun clrInjectedTopLevelPropFileClass(callableId: CallableId): String? =
  * Loads the .NET type metadata to inject, once per process. The path comes from `CLR_TYPES_METADATA`
  * (set by the build / MSBuild / verify harness). Absent or empty => inject nothing, so compilations
  * that don't opt in are completely unaffected. The backend reads each injected type's .NET name off its
- * IR `ClassId` via [clrInjectedDotNetName] and each injected member's .NET slot name off its IR `CallableId`
- * via [clrInjectedMemberName] — keyed structurally off the resolved IR identity. A .NET EVENT no longer needs any
+ * IR `ClassId` via [clrInjectedDotNetName]. A member's .NET slot name is NOT resolved here — bir2cir's DeclarationRename
+ * reflects it off the refs (A2 step 5). A .NET EVENT no longer needs any
  * side-channel at all: it is surfaced as a `ClrEvent<T>` property and subscribed via `+=`/`-=`, which bir2cir binds
  * to the add/remove accessor. All interop facts are keyed off the resolved IR identity — no name-keyed side-channel.
  */
@@ -232,12 +228,12 @@ private object ClrMetadataHolder {
 		val mods = modsOf(o["mods"]); val vis = o["vis"] as? String ?: "public"
 		return ClrMethod(o["name"] as String, typeOf(o["ret"]), "open" in mods, "abstract" in mods, vis == "protected",
 			readParams(o["params"]), readTypeParams(o["typeParams"]),
-			"infix" in mods, "operator" in mods, "suspend" in mods, "inline" in mods, "ext" in mods, o["clrName"] as? String)
+			"infix" in mods, "operator" in mods, "suspend" in mods, "inline" in mods, "ext" in mods)
 	}
 	@Suppress("UNCHECKED_CAST")
 	private fun readProp(o: Map<String, Any?>): ClrProperty {
 		val mods = modsOf(o["mods"]); val vis = o["vis"] as? String ?: "public"
-		return ClrProperty(o["name"] as String, typeOf(o["type"]), o["rw"] == true, "open" in mods, "abstract" in mods, vis == "protected", o["clrName"] as? String)
+		return ClrProperty(o["name"] as String, typeOf(o["type"]), o["rw"] == true, "open" in mods, "abstract" in mods, vis == "protected")
 	}
 	@Suppress("UNCHECKED_CAST")
 	private fun readEvent(o: Map<String, Any?>): ClrEvent =
@@ -294,23 +290,8 @@ private object ClrMetadataHolder {
 	// (`Task\`1` -> Kotlin `Task1`) genuinely diverges from the ClassId simple name, so it must be carried (facadegen's
 	// fact), not re-derived from the ClassId string — hence this metadata read rather than `classId.asString()` alone.
 	val dotNetNameByClassId: Map<ClassId, String> by lazy { byClassId.mapValues { it.value.dotNetName.substringBefore('`') } }
-	// A2 keystone (interop-no-registry stage 2): the backend's clrName reads an injected MEMBER's .NET slot name off its
-	// resolved IR identity — its `CallableId` (declaring-class `ClassId` + member name). This is facadegen's own metadata keyed by that same structural
-	// CallableId; the value is the member's TRUE .NET slot name where it DIVERGES from the Kotlin name — the live case is a
-	// .NET operator method (`plus` -> `op_Addition`, `unaryMinus` -> `op_UnaryNegation`) and accessor-renamed members. The
-	// declaring-class ClassId is built exactly as `byClassId` builds a type's ClassId (`ns`/`kotlinName`), so it matches the
-	// injected FIR/IR member's `CallableId`. Keyed off ALL `module.types`: a
-	// @Clr-bound stdlib type's member never actually reaches this lookup (kotlin.* comes from the JAR; the ref.meta is never
-	// fed as CLR_TYPES_METADATA to an app build), but including it is harmless.
-	val memberClrNameByCallableId: Map<CallableId, String> by lazy {
-		buildMap {
-			for (t in module?.types.orEmpty()) {
-				val classId = ClassId(FqName(namespaceOf(t.dotNetName)), Name.identifier(t.kotlinName))
-				for (p in t.properties) p.clrName?.let { put(CallableId(classId, Name.identifier(p.name)), it) }
-				for (m in t.methods) m.clrName?.let { put(CallableId(classId, Name.identifier(m.name)), it) }
-			}
-		}
-	}
+		// (A2 step 5: the injected-MEMBER .NET-slot-name map is GONE -- a member's slot is resolved in bir2cir's
+		// DeclarationRename by reflecting the owner .NET Type off the refs, not from a kotc-side metadata map.)
 	// A2 keystone (interop-no-registry stage 3): a restored DotKt top-level function's .NET file-facade class keyed by its
 	// resolved IR `CallableId` (`package`/name — exactly the CallableId the injector builds in `topLevelByCallable`, so it
 	// matches the resolved Fir2Ir callee). Because FIR already resolved every call to a UNIQUE callee, there is a single

@@ -4770,7 +4770,7 @@ static class NetInteropBinding
     // True iff the .NET type (or a base/interface) declares a NON-indexed property OR a field of this name — the two
     // members kotc's clrPropGet/clrPropSet covers (a property accessor, or a static/instance field read as ldsfld/ldfld).
     // An INDEXER (an indexed property, e.g. "Item") is excluded (it stays a plain get_Item/set_Item method call).
-    static bool MemberIsPropertyOrField(Type type, string name)
+    internal static bool MemberIsPropertyOrField(Type type, string name)
     {
         const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
             | BindingFlags.Static | BindingFlags.DeclaredOnly;
@@ -4789,6 +4789,30 @@ static class NetInteropBinding
                     if (fi.Name == name) return true;
             }
             catch { /* metadata-load edge on a malformed member table — treat as no match */ }
+            Type baseType = null; try { baseType = cur.BaseType; } catch { }
+            if (baseType != null) stack.Push(baseType);
+            try { foreach (var i in cur.GetInterfaces()) stack.Push(i); } catch { }
+        }
+        return false;
+    }
+
+    // True iff the .NET type (or a base/interface) declares a method of this name (any arity), public OR protected —
+    // a Kotlin class can override a PROTECTED VIRTUAL .NET member (the WinUI OnLaunched pattern: `override fun Tag()`
+    // over a protected `Base.Tag`). Used by DeclarationRename's facadegen-override slot resolution (A2 step 5) to
+    // confirm a Kotlin override binds a REAL .NET method before it keeps the identity slot — facadegen injects the
+    // Kotlin method identity EQUAL to the .NET name. NonPublic covers the protected/family case.
+    internal static bool DeclaresPublicMethodNamed(Type type, string name)
+    {
+        const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+        var seen = new HashSet<Type>();
+        var stack = new Stack<Type>();
+        stack.Push(type);
+        while (stack.Count > 0)
+        {
+            var cur = stack.Pop();
+            if (cur == null || !seen.Add(cur)) continue;
+            try { if (cur.GetMethods(Flags).Any(m => m.Name == name)) return true; }
+            catch { /* metadata-load edge — keep walking */ }
             Type baseType = null; try { baseType = cur.BaseType; } catch { }
             if (baseType != null) stack.Push(baseType);
             try { foreach (var i in cur.GetInterfaces()) stack.Push(i); } catch { }
@@ -6246,6 +6270,18 @@ static class DeclarationRename
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             if (refs.TryMemberIntrinsicExact(owner, "get_" + member, 0, out var intr)) return intr;
         }
+        // FACADEGEN-INJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type (not a
+        // stdlib ref.dll alias). facadegen injects the Kotlin property identity EQUAL to the .NET property name, so the
+        // bare property slot IS `member` (the caller re-applies get_/set_). Confirm the .NET type declares a property/
+        // field of that name so a hand-named override isn't misresolved.
+        foreach (var o in ovs)
+        {
+            if (o is not JsonObject oo) continue;
+            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
+            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
+            if (refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(owner)) is Type nt
+                && NetInteropBinding.MemberIsPropertyOrField(nt, member)) return member;
+        }
         return null;
     }
 
@@ -6272,6 +6308,29 @@ static class DeclarationRename
             var lookupName = isAccessor ? "get_" + member : member;
             if (!refs.TryMemberIntrinsicExact(owner, lookupName, isAccessor ? 0 : arity, out var intr)) continue;
             return kind switch { "getter" => "get_" + intr, "setter" => "set_" + intr, _ => intr };
+        }
+        // FACADEGEN-INJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type off the
+        // refs (NOT a stdlib ref.dll alias — ResolveNetType skips kotlin.*/kotlinx.*/dotkt* and every local type). A
+        // Kotlin class implementing/overriding such a member binds the .NET slot HERE (kotc no longer bakes it). Because
+        // facadegen injects the Kotlin member identity EQUAL to the .NET name, the slot is the identity: a method ->
+        // `member`; a property accessor -> get_/set_ + the .NET property name (confirmed to be a real .NET property/
+        // field). This reproduces exactly what kotc's get_/set_+name / method-name fallback already emits (so it is a
+        // no-op rename for a name-matching override), but routes the resolution through bir2cir + restores the
+        // override:true/vis:public flags the Walk caller stamps for a CLR-bound member declaration.
+        foreach (var o in ovs)
+        {
+            if (o is not JsonObject oo) continue;
+            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
+            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
+            var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
+            if (refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(owner)) is not Type nt) continue;
+            var isAccessor = kind is "getter" or "setter";
+            if (isAccessor)
+            {
+                if (!NetInteropBinding.MemberIsPropertyOrField(nt, member)) continue;
+                return (kind == "getter" ? "get_" : "set_") + member;
+            }
+            if (NetInteropBinding.DeclaresPublicMethodNamed(nt, member)) return member;
         }
         return null;
     }

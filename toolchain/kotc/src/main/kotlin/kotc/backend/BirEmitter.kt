@@ -857,34 +857,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** `,"volatile":true` field-flag fragment (empty when not volatile). */
 	internal fun volatileFieldFlag(p: IrProperty): String = if (isVolatile(p)) ""","volatile":true""" else ""
 
-	/** Emit a custom property accessor as a `get_<prop>`/`set_<prop>` method (the `field` identifier -> the backing field). */
-	// Considers the function itself AND any member it overrides — so it maps both a user override of a .NET-mapped
-	// iface member AND a direct call on an iface-typed value (e.g. `cs.length` where cs: CharSequence).
+	/** kotc's OWN synthetic `dotkt$CharSequence`: its `length` property getter is emitted as the `get_length` slot (an
+	 *  override of the synthetic interface slot, NOT a user-written accessor). This is kotc's own type synthesis, not
+	 *  facadegen .NET interop — so its name stays here. EVERY other override-slot name is now resolved by bir2cir's
+	 *  DeclarationRename off the `overrides` marker + the refs: a facadegen-injected .NET interface/base member (owner
+	 *  FQN -> a real .NET Type) and a stdlib @ClrTypeAlias/@ClrIntrinsic member (Collections.kt: size->get_Count,
+	 *  get->get_Item, iterator->GetEnumerator; kotlin.AutoCloseable.close->Dispose) alike. kotc emits the PLAIN Kotlin
+	 *  override name (+ its `get_`/`set_` accessor convention) and the `overrides` marker; the Kotlin<->CLR member
+	 *  binding is bir2cir's (layer purity — no BCL slot name, no `@ClrIntrinsic`/injected-member-slot read here). */
 	internal fun clrIfaceMemberName(fn: IrSimpleFunction): String? =
 		(sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).firstNotNullOfOrNull { owner ->
-			// A facadegen-injected .NET interface member -> its BCL slot from the injected member's IR CallableId (clrName
-			// reads facadegen's metadata, NOT @ClrIntrinsic — kotc no longer reads it): a METHOD = its .NET slot name; a
-			// PROPERTY accessor = get_/set_ + the .NET property name. A Kotlin class implementing an injected .NET interface binds its
-			// members to those BCL slots. (Collection interfaces are @ClrTypeAlias/@ClrIntrinsic — bir2cir's DeclarationRename
-			// handles their override slots from the ref.dll, so they no longer route through here.)
-			val ovProp = owner.correspondingPropertySymbol?.owner
-			val clrM = if (ovProp != null) clrName(ovProp)?.let { (if (owner === ovProp.getter) "get_" else "set_") + it } else clrName(owner)
-			clrM ?: run {
-				val ifaceFq = (owner.parent as? IrClass)?.fqNameWhenAvailable?.asString()
-				when (ifaceFq) {
-					// kotlin.AutoCloseable.close()->Dispose is NOT hardcoded here: the @ClrIntrinsic("Dispose") binding on the
-					// ref.dll drives it — kotc emits the plain `close` override name + its `overrides` marker, and bir2cir's
-					// DeclarationRename renames the implementor slot to `Dispose` (layer purity — no BCL slot name in kotc).
-					// CharSequence -> synthetic dotkt$CharSequence: the `length` property getter must be emitted (it is an
-					// override, not a user-written accessor). get/subSequence keep names.
-					"kotlin.CharSequence" -> if (owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
-					// A `class R : List<T>`/`MutableList<T>` override emits the plain Kotlin override name + its `overrides`
-					// marker; bir2cir's DeclarationRename renames the implementor slot from the ref.dll @ClrIntrinsic
-					// bindings on Collections.kt. WHY kotc holds no BCL slot names (size->get_Count, get->get_Item,
-					// iterator->GetEnumerator, add->Add, …): the Kotlin<->CLR member binding is bir2cir's (layer purity).
-					else -> null
-				}
-			}
+			if ((owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.CharSequence"
+				&& owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
 		}
 
 	/** STEP-1 (kotc->bir2cir clrName migration) — a PURE-KOTLIN override marker for an emitted member: the transitive
@@ -1503,8 +1487,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (clrOwnerClass.kind == ClassKind.INTERFACE) return null
 		val clrOwner = clrName(clrOwnerClass)!!
 		val isGetter = acc == prop.getter
-		val netName = clrName(prop) ?: prop.name.asString()
-		val emitName = (if (isGetter) "get_" else "set_") + netName
+		// The accessor slot is `get_`/`set_` + the property's Kotlin name — which, for a facadegen-injected .NET base,
+		// IS the .NET property name (facadegen injects the member under its .NET identity). kotc no longer reads a member
+		// slot name (that resolution is bir2cir's); the type-origin (`clrOwnerClass`) resolution above stays kotc's.
+		val emitName = (if (isGetter) "get_" else "set_") + prop.name.asString()
 		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		val ps = acc.parameters.filter { it.kind == IrParameterKind.Regular }
 			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
@@ -3115,7 +3101,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// A top-level fun annotated @ClrIntrinsic is NOT bound to a STATIC/INSTANCE .NET call here: that
 		// @ClrIntrinsic-driven member-call SUBSTITUTION belongs to bir2cir (sourced from the ref.dll), NOT kotc.
 		// kotc emits the PLAIN Kotlin top-level call (the clrStatic file-class path below for injected .NET top-level
-		// funs is metadata-driven and stays). See [clrInteropName] / CLAUDE.md "kotc reads
+		// funs is metadata-driven and stays). See [clrName] / CLAUDE.md "kotc reads
 		// NEITHER @ClrIntrinsic NOR @ClrTypeAlias".
 
 		// NOTE: collection-interface member routing — `iterator()`/`isEmpty`/`contains`/`containsAll`/`indexOf`/
@@ -3353,7 +3339,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// custom-named indexer. The receiver's type carries the element type arg (`Collection<Int>`), so the
 			// constructed `clrg:...[int]` resolves the substituted accessor.
 			val ixOwner = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
-			if (recv != null && ixOwner != null && clrInteropName(ixOwner) != null) {
+			if (recv != null && ixOwner != null && clrName(ixOwner) != null) {
 				val mt = birType(recv.type); val a = regularArgs(call)
 				// The get accessor returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T):
 				// ilemit then hands back gp:T (matching the stack), so the value<->collection boundary box/unbox is
@@ -3369,14 +3355,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// BCL interop: a call whose declaring class is a .NET type (`@Clr` or injected) resolves to a real .NET
 		// member. An INHERITED .NET member (e.g. `appError.Message`) is a fake-override whose `parent` is the
 		// Kotlin subclass, so resolve through the fake override to find the real .NET declaring type.
-		// clrInteropName (NOT clrName): a `kotlin.*` stdlib owner carrying @ClrIntrinsic resolves to null here, so its
-		// member call FALLS THROUGH to the plain Kotlin member-call path below (bir2cir substitutes it from the ref.dll).
-		// Only a genuine .NET interop owner (facadegen-injected, resolved off its IR ClassId) keeps a non-null clrType.
-		val clrTypeName = declaringClass?.let { clrInteropName(it) }
-			?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrInteropName(it) }
+		// clrName resolves the .NET TYPE name only: a `kotlin.*` stdlib owner resolves to null here, so its member call
+		// FALLS THROUGH to the plain Kotlin member-call path below (bir2cir substitutes it from the ref.dll). Only a
+		// genuine .NET interop owner (facadegen-injected, resolved off its IR ClassId) keeps a non-null clrType.
+		val clrTypeName = declaringClass?.let { clrName(it) }
+			?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrName(it) }
 			// A synthesized companion of an injected .NET type holds its STATIC members (`App.Start`) -> a static call
 			// on the .NET type itself.
-			?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrInteropName(it) }
+			?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrName(it) }
 		val clrType = clrTypeName?.let { TypeNode.Fqn(it) }
 		if (clrType != null) {
 			val recv = dispatchReceiver(call)
@@ -3390,7 +3376,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val declClass = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
 			val memberType = when {
 				isStatic || recv == null -> clrType
-				recvClass != null && clrInteropName(recvClass) != null -> birType(recv.type)
+				recvClass != null && clrName(recvClass) != null -> birType(recv.type)
 				// A type-PARAM receiver (`destination: C` where `C : MutableCollection<T>`, e.g. filterTo's body) has no
 				// recvClass -> use the type param's @Clr-bound BOUND with its args (clrg:ICollection[T]), not the raw
 				// clrName (System.Collections.Generic.ICollection without `1 -> ResolveType fails).
@@ -4037,11 +4023,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/**
-	 * The .NET name for a type/member of an S5 FIR-injected .NET type (synthesized into FIR without annotations): read off
-	 * the injected symbol's RESOLVED IR identity — the type's `ClassId` (`kotc.frontend.clrInjectedDotNetName`) / the
-	 * member's `CallableId` (`kotc.frontend.clrInjectedMemberName`), each a structural projection of facadegen's metadata
-	 * (A2 interop-no-registry, stages 1-2 — no injector-populated name-keyed side-table). The backend must resolve these so
-	 * injected types are real .NET types (otherwise they leak in as user classes and their members mis-route as fields).
+	 * The .NET TYPE name for an S5 FIR-injected .NET type (synthesized into FIR without annotations): read off the injected
+	 * symbol's RESOLVED IR identity — the type's `ClassId` (`kotc.frontend.clrInjectedDotNetName`), a structural projection
+	 * of facadegen's metadata (A2 interop-no-registry, stage 1 — no injector-populated name-keyed side-table). The backend
+	 * must resolve this so injected types are real .NET types (otherwise they leak in as user classes). MEMBER slot names
+	 * are NOT resolved here — that is bir2cir's DeclarationRename off the `overrides` marker + the refs (A2 step 5).
 	 */
 	// In the STDLIB BUILD (stdlibCompile — BOTH ref and rt), collection member calls stay plain kotlin.* (bir2cir
 	// substitutes them via the IReadOnly*/@ClrIntrinsic supertype, not a kotc-side map), so a `for (e in coll)` would fall
@@ -4069,63 +4055,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		return (t.classifierOrNull?.owner as? IrClass)?.let(::walk) ?: false
 	}
 
-	/** Member-CALL routing must NOT substitute from the stdlib's own `@ClrIntrinsic` annotation: that
-	 *  substitution (a `kotlin.*` member call -> a BCL member) is bir2cir's job, sourced from the ref.dll. kotc emits a
-	 *  PLAIN Kotlin member call. So the call-routing sites read [clrInteropName], which resolves ONLY the genuine .NET
-	 *  interop sources (the facadegen-injected type/member metadata, read off the injected symbol's IR ClassId/CallableId,
-	 *  + the `java.util.Comparator` alias) and DELIBERATELY ignores the `@ClrIntrinsic` annotation. No collection/StringBuilder
-	 *  member slot maps live here — bir2cir substitutes those calls off the ref.dll @ClrIntrinsic
-	 *  (layer purity). The annotation source is already absent in every build: the stdlib build (`CLR_TYPES_METADATA=""`)
-	 *  injects NOTHING, and an app build
-	 *  resolves the stdlib from the jar, which drops `@ClrIntrinsic`. So [clrInteropName] is now IDENTICAL to [clrName]
-	 *  (nothing here reads `@ClrIntrinsic`); it survives as a distinct
-	 *  name only to mark a call-routing site. (@ClrTypeAlias type-stripping is bir2cir's, not kotc's.) */
-	internal fun clrInteropName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? = clrName(decl)
-
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
+		// TYPE IDENTITY ONLY. kotc no longer resolves any MEMBER slot name here: a facadegen-injected .NET member's slot
+		// AND a stdlib @ClrTypeAlias/@ClrIntrinsic member's slot are BOTH resolved by bir2cir's DeclarationRename off the
+		// `overrides` marker + the refs (A2 / #61 step 5). This accessor now yields only the .NET TYPE name for an
+		// injected .NET type (read off its IR `ClassId`) — used for type-origin decisions (a `newClr`, a `clr:`/`clrg:`
+		// owner token, the `byrefBackingField`/delegate/for-in origin tests), never a member slot.
 		// The JVM kotlin-stdlib aliases `Comparator = java.util.Comparator`; an app compiled against that jar sees the
 		// java.util name. Treat it as OUR rt `kotlin.Comparator` (a real CLR interface in the rt), so birType, the
 		// member-call dispatch (-> clrInstance), and the supertype all resolve it via the .NET-type (clrg:) path from the
 		// loaded --ref rt -- NOT the _types app-table (which only holds app-emitted types -> KeyNotFound).
 		if ((decl as? IrClass)?.fqNameWhenAvailable?.asString() == "java.util.Comparator") return "kotlin.Comparator"
-		// kotc reads NEITHER @ClrIntrinsic NOR @ClrTypeAlias (Task #5, DONE): the stdlib member binding is sourced from the
-		// ref.dll by bir2cir, so there is NO annotation read here. The ONLY source left is the app-interop FIR-injection
-		// metadata, read off the injected member's resolved IR CallableId (`kotc.frontend.clrInjectedMemberName` — A2 stage 2,
-		// no name-keyed side-table); there are no app-build collection/StringBuilder slot maps below (bir2cir
-		// substitutes those off the ref.dll @ClrIntrinsic — layer purity).
-		(decl as? IrProperty)?.let { prop ->
-			fun lookup(p: IrProperty): String? {
-				// A2 stage 2: read the injected member's .NET slot name off its resolved IR CallableId (declaring-class
-				// ClassId + name).
-				(p.parent as? IrClass)?.classId?.let { CallableId(it, p.name) }
-					?.let { kotc.frontend.clrInjectedMemberName(it) }?.let { return it }
-				for (ov in p.overriddenSymbols) lookup(ov.owner)?.let { return it }
-				return null
-			}
-			lookup(prop)?.let { return it }
-			// A `coll.size`/`.keys`/`.values`/`.entries` emits a plain kotlin.collections member call; bir2cir substitutes
-			// it off the ref.dll @ClrIntrinsic bindings on the stdlib collection interfaces (Collections.kt). WHY the BCL
-			// slot names (size->Count, keys->Keys, values->Values, entries->Entries) are NOT in kotc: that binding is bir2cir's.
-		}
-		(decl as? IrSimpleFunction)?.takeIf { it.correspondingPropertySymbol == null }?.let { fn ->
-			fun lookupFn(m: IrSimpleFunction): String? {
-				// A2 stage 2: read the injected member's .NET slot name off its resolved IR CallableId (declaring-class
-				// ClassId + name).
-				(m.parent as? IrClass)?.classId?.let { CallableId(it, m.name) }
-					?.let { kotc.frontend.clrInjectedMemberName(it) }?.let { return it }
-				for (ov in m.overriddenSymbols) lookupFn(ov.owner)?.let { return it }
-				return null
-			}
-			lookupFn(fn)?.let { return it }
-			// A `coll.add(x)`/`list[i]` emits a plain kotlin.collections member call; bir2cir substitutes it off the ref.dll
-			// @ClrIntrinsic bindings on the stdlib collection interfaces (Collections.kt). WHY the BCL slot names
-			// (get->get_Item, set->set_Item, iterator->GetEnumerator, add->Add, remove->Remove, contains->Contains,
-			// containsKey->ContainsKey, clear->Clear) are NOT in kotc: that binding is bir2cir's.
-			// kotlin.text.StringBuilder members (append/insert/toString/get/clear) are NOT slot-named here: the stdlib
-			// StringBuilder carries @ClrTypeAlias("System.Text.StringBuilder") with each member @ClrIntrinsic-bound
-			// (Append/Insert/ToString/get_Chars/Clear). kotc emits the plain kotlin.text.StringBuilder member call and
-			// bir2cir's MemberCallSubstitution rewrites it off the ref.dll (layer purity — no BCL member name in kotc).
-		}
 		// A2 stage 1: the injected .NET type's .NET name is read straight off its IR `ClassId` (structural resolved
 		// identity) against facadegen's metadata.
 		return (decl as? IrClass)?.classId?.let { kotc.frontend.clrInjectedDotNetName(it) }
