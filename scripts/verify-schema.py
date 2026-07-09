@@ -87,7 +87,7 @@ KINDS = {
     "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
     "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
     "if", "cond2", "while", "label", "goto", "brIf", "break", "continue",
-    "for", "forRange", "forArray", "forEachInline", "try",
+    "for", "forRange", "forArray", "forEachInline", "forIn", "try",
     # field-write family — the setField/setFieldExpr/staticFieldSet merge (§2.5) is "[finalize in impl]", so all
     # three remain LIVE kinds until that lands.
     "setFieldExpr", "staticFieldSet",

@@ -236,7 +236,7 @@
         "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
         "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
         "if", "cond2", "label", "goto", "brIf", "break", "continue",
-        "forRange", "forArray", "forEachInline", "try"
+        "forRange", "forArray", "forEachInline", "forIn", "try"
       ],
       "$comment": "Representative kotc-emit set. The AUTHORITATIVE frozen kind set (the union of every kind the toolchain emits across a full fresh build, incl. the CLR-lowered `clr*`, coroutine-lowered `co*`, structured `for`, and the not-yet-merged `setFieldExpr`/`staticFieldSet` field-write variants) lives in the m6 validator's KINDS (scripts/verify-schema.py; regenerate with --dump-kinds). The validator rejects any k outside it. (cond = ternary expression; if = statement.)"
     },

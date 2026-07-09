@@ -160,6 +160,11 @@ sealed class Pipeline
         // MapVarianceRealign needs the callee's declared type-param order to map a sig's `gp:NAME` to its typeArg index.
         var calleeTypeParams = MapVarianceRealign.CollectCalleeTypeParams(birFiles.Select(f => f.Root));
 
+        // The local RICH-enum type names (a `kind:"class"` decl carrying the faithful `enumRich:true` marker), across
+        // ALL input files: EnumIntrinsicLowering lowers `enumValues<RichEnum>()` to the synthesized static values()
+        // (not the System.Enum-reflection semantic node — a rich enum is a plain singleton class).
+        var localRichEnums = EnumIntrinsicLowering.CollectRichEnums(birFiles.Select(f => f.Root));
+
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the transformability fixpoint spans all files).
@@ -177,6 +182,13 @@ sealed class Pipeline
             // body that references KProperty is in `types` when SharedSyntheticSynthesis scans for it.
             ClosureSynthesis.Apply(bir.Root);
             SharedSyntheticSynthesis.Apply(bir.Root);
+            // FOR-LOOP SOURCE CLASSIFICATION (#73): kotc emits a faithful `forIn`/`forEachInline` carrying the source's
+            // runtime type token (`srcType`) — it no longer decides range-vs-collection (that needs the kotlin.ranges
+            // FQN, a Kotlin<->CLR relation). Dispatch it: a counted range -> `forRange` (realized by RangeForLowering
+            // next); a non-range enumerable -> `forEachInline`; anything else -> the iterator `fallback`. Runs BEFORE
+            // RangeForLowering / RangeConstructionLowering / SequenceForEachLowering so the produced forms flow through
+            // every downstream pass exactly as the equivalent kotc-emitted forms did.
+            ForInLowering.Apply(bir.Root, !attributeTopLevelOwner);
             // RANGE FOR-LOOP (#52 Phase 5 "range partial"): kotc emits a FAITHFUL `forRange` (range VALUE + loop var +
             // Kotlin `rangeType`, NO CLR accessor names/owner). Realize the IntProgression get_first/get_last/get_step
             // access HERE — the stdlib form keeps `forRange` + injects the accessors (ilemit resolves off `_types`);
@@ -215,6 +227,14 @@ sealed class Pipeline
             // + closure passes that CONSUME delegateInvoke / any type-erasing pass) and UNCONDITIONALLY (ref + app),
             // reproducing the flow that existed when kotc emitted conv/delegateInvoke directly.
             CharCodeInvokeLowering.Apply(bir.Root, refs);
+            // ENUM REIFIED INTRINSICS (#73): kotc emits the faithful top-level `callStatic owner:null method:enumValues
+            // typeArgs:[T]` for `enumValues<T>()`/`enumValueOf<T>()`/`enums.enumEntries<T>()`/`enumEntriesIntrinsic<T>()`.
+            // Re-emit the same BIR vocabulary — rich enum -> static values()/valueOf(), basic/generic-param -> semantic
+            // enumValues/enumParse — deriving rich-vs-basic from the enum's emitted shape (local `enumRich:true`). Runs
+            // EARLY (with the other faithful recognitions) so the produced nodes flow through every downstream pass as
+            // kotc's retired call-site interception did. entries family: App-build sites only (stdlib self-build keeps
+            // the filler body — see EnumIntrinsicLowering).
+            EnumIntrinsicLowering.Apply(bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner);
             // .NET-INTEROP CALL BINDING (A2 / #61): bind a facadegen-injected .NET member call — which kotc now emits as
             // a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN identity — to its CLR call SHAPE
             // (clrStatic/clrInstance/clrPropGet/clrPropSet/clrGeneric*), resolved off the loaded .NET reference

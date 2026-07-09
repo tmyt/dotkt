@@ -715,7 +715,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val voBody = """{"k":"if","branches":[$voBranches,{"else":true,"body":[{"k":"exprStmt","expr":$voThrow}]}]}"""
 		val valueOfM = """{"name":"valueOf","static":true,"override":false,"virtual":false,"vis":"public","params":[{"name":"name","type":${fqnJson("kotlin.String")}}],"ret":${fqnJson(name)},"body":[$voBody]}"""
 		val methods = (userMethods + propAccessors + listOf(toStr, valuesM, valueOfM)).joinToString(",")
-		val baseDef = """{"name":${str(name)},"kind":"class","abstract":$baseAbstract,"vis":${str(visOf(ec))},"base":null,"interfaces":[],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods],"properties":[$propsList]}"""
+		// `enumRich:true` — a FAITHFUL "this class originated from a Kotlin enum" fact (not a CLR-shape decision), so
+		// bir2cir's EnumIntrinsicLowering can lower `enumValues<ThisEnum>()` to the synthesized static values()/valueOf()
+		// rather than the System.Enum-reflection semantic node (a rich enum is a plain class, invisible to that reflection).
+		val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(visOf(ec))},"base":null,"interfaces":[],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods],"properties":[$propsList]}"""
 		// Emit the base enum class first, then each per-entry subclass.
 		return (listOf(baseDef) + subDefs).joinToString(",")
 	}
@@ -1696,59 +1699,41 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// loop-variable element type off the array operand's (now faithful) type.
 		if (source != null && isArrayType(source.type))
 			return """{"k":"forArray","label":$lbl,"var":${str(loopVar.name.asString())},"array":${expr(source)},"body":[$body]}"""
-		// A `for` over a kotlin.* collection is NOT intercepted: FIR already desugared it to the iterator protocol
-		// (`it = coll.iterator(); while (it.hasNext()) { x = it.next(); … }`). Returning null here lets that block emit
-		// as ordinary kotlin.* calls — no BCL IEnumerator lowering. Only CLR-native shapes (array/range) + injected .NET
-		// enumerables stay special-cased.
-		// `for (x in dotNetEnumerable)` -> enumerate any .NET IEnumerable<T> (@Clr type) via GetEnumerator
-		// (forEachInline). This runs only after the frontend has resolved an iterator operation from source/stdlib
-		// declarations; the FIR injector no longer synthesizes Kotlin's iterator protocol for .NET types.
-		// Element type = the source's first type arg (e.g. Collection<Int> -> Int), else the loop var's type.
-		// `kotlin.sequences.Sequence` is an enumerable BY KOTLIN SEMANTICS (@ClrTypeAlias(IEnumerable), which bir2cir
-		// expands) — recognize it here by FQN so a CONCRETE-element `for (x in seq)` takes forEachInline (GetEnumerator)
-		// like Iterable (GetEnumerator over the real generic iterator). This is Kotlin-layer knowledge ("this type is
-		// for-in enumerable"), independent of
-		// isStdlibCollectionIterable (stdlib-build only) / clrName (.NET-interop only), both OFF in app builds.
-		// `.toList()` already uses the generic-T CLR-native IEnumerator path; this covers the concrete-element for-in.
+		// NON-array for-loops: kotc no longer classifies the source as a counted RANGE vs a collection — that needs the
+		// `kotlin.ranges.*` FQN, a Kotlin<->CLR relation that belongs in bir2cir. kotc emits the FAITHFUL source + its
+		// runtime type token (`srcType`) and lets bir2cir's ForInLowering dispatch: a counted range (IntRange, or
+		// IntProgression in a stdlib self-build) -> `forRange`; a .NET/Sequence/stdlib-collection enumerable ->
+		// `forEachInline`; anything else -> the `fallback` (the FIR-desugared iterator-protocol block emitted below —
+		// what kotc used to emit by returning null). NO `kotlin.ranges` FQN leaves kotc.
+		//
+		// `a downTo b` stays a direct counter `for` (genuine IR-structural: the OPERATOR NAME gives cmp/step, no type
+		// FQN) — but ONLY in a consumer build. In a stdlib self-build IntProgression is emitted locally, so downTo
+		// flows through forEachInline -> bir2cir forRange (get_step) exactly as before. `rangeTo`/`until` are NOT
+		// direct-lowered: ilemit's `for` re-evaluates the `to` bound each iteration (unsafe for a side-effecting
+		// bound), so they take the side-effect-safe forRange via the srcType path below.
+		if (source != null && !stdlibCompile && (source as? IrCall)?.symbol?.owner?.name?.asString() == "downTo") {
+			val ops = source.arguments.filterNotNull()
+			if (ops.size == 2)
+				return """{"k":"for","label":$lbl,"var":${str(loopVar.name.asString())},"from":${expr(ops[0])},"to":${expr(ops[1])},"cmp":">=","step":-1,"body":[$body]}"""
+		}
+		// A .NET IEnumerable<T> (@Clr type), a kotlin.sequences.Sequence, or (stdlib self-build only) a kotlin.*
+		// collection -> enumerate via GetEnumerator (forEachInline). Element = the source's first type arg, else the
+		// loop var's type. `srcType` rides along so bir2cir can redirect a stdlib-build range (IntRange/IntProgression,
+		// which IS stdlib-iterable) to forRange; a non-range enumerable keeps forEachInline (bir2cir strips srcType).
 		val forInEnumerable = source != null && ((source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null
 			|| isStdlibCollectionIterable(source.type) || source.type.classFqName?.asString() == "kotlin.sequences.Sequence")
-		if (source != null && source.type.classFqName?.asString() != "kotlin.ranges.IntRange" && source.type.classFqName?.asString() !in INT_PROGRESSION_FQ && forInEnumerable) {
+		if (source != null && forInEnumerable) {
 			val elem = (source.type as? IrSimpleType)?.arguments?.firstOrNull()
 				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
-			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"var":${str(loopVar.name.asString())},"body":[$body]}"""
+			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"srcType":${birType(source.type).toJson()},"var":${str(loopVar.name.asString())},"body":[$body]}"""
 		}
-		// `for (i in <Int range/progression VALUE>)` (e.g. `indices`, a stored range variable, `1..n step 2`) -> a
-		// FAITHFUL forRange node carrying ONLY the range VALUE expr (`range`), the loop var, and the range's own Kotlin
-		// type (`rangeType`). The custom pipeline runs no ForLoopsLowering, so without this it falls to the iterator
-		// protocol, which hits the covariant-return `IntProgression.iterator():IntIterator` (unresolved -> emit-time
-		// NotSupported). bir2cir (RangeForLowering) OWNS the Kotlin->CLR range realization: it DERIVES the
-		// get_first/get_last/get_step accessor access + the IntProgression owner and picks the local-emitted (stdlib
-		// build, ilemit resolves off `_types`) vs cross-module (app build, ordinary property getters) form. NO CLR
-		// accessor names/owner leave kotc — this is the #52 range relocation (was the `TODO(refactor, per user
-		// 2026-06-28)` here). INT_PROGRESSION_FQ stays ONLY as a pure-Kotlin recognition gate ("these Kotlin types are
-		// counted ranges"); the app build (where IntProgression is only REFERENCED, not emitted) stays limited to
-		// IntRange, matching the prior counter-lowering scope exactly (byte-identical routing to branches below).
-		val rangeFq = source?.type?.classFqName?.asString()
-		if (source != null && (if (stdlibCompile) rangeFq in INT_PROGRESSION_FQ else rangeFq == "kotlin.ranges.IntRange"))
-			return """{"k":"forRange","label":$lbl,"var":${str(loopVar.name.asString())},"range":${expr(source)},"rangeType":${birType(source.type).toJson()},"body":[$body]}"""
-		// `for (i in 1..5)` constant-folds to a `new IntRange(first,last)` (a CONSTRUCTOR, not a rangeTo call) -> emit a
-		// plain counter loop straight from its args, so NO IntRange object reaches ilemit (it stays Kotlin-agnostic;
-		// no faithful `forRange`/range value needed — this is the const-literal fast path). Inclusive -> cmp "<=", step 1.
-		(source as? IrConstructorCall)?.takeIf { it.type.classFqName?.asString() == "kotlin.ranges.IntRange" }?.let { ctor ->
-			val cargs = ctor.arguments.filterNotNull()
-			if (cargs.size == 2)
-				return """{"k":"for","label":$lbl,"var":${str(loopVar.name.asString())},"from":${expr(cargs[0])},"to":${expr(cargs[1])},"cmp":"<=","step":1,"body":[$body]}"""
-		}
-		val range = source as? IrCall ?: return null
-		val ops = range.arguments.filterNotNull()
-		if (ops.size != 2) return null
-		val (cmp, step) = when (range.symbol.owner.name.asString()) {
-			"rangeTo" -> "<=" to 1
-			"until", "rangeUntil" -> "<" to 1
-			"downTo" -> ">=" to -1
-			else -> return null
-		}
-		return """{"k":"for","label":$lbl,"var":${str(loopVar.name.asString())},"from":${expr(ops[0])},"to":${expr(ops[1])},"cmp":${str(cmp)},"step":$step,"body":[$body]}"""
+		// Any other recovered source (a range VALUE like `indices`/a stored `IntRange`, a `rangeTo`/`until` operator, or
+		// a plain kotlin.* collection in a consumer build) -> a faithful `forIn` carrying the source + its type token +
+		// the loop body, plus the `fallback` = the FIR-desugared iterator-protocol block (what kotc used to emit by
+		// returning null here). bir2cir's ForInLowering picks forRange (counted range) or the fallback (everything else).
+		if (source != null)
+			return """{"k":"forIn","label":$lbl,"var":${str(loopVar.name.asString())},"src":${expr(source)},"srcType":${birType(source.type).toJson()},"body":[$body],"fallback":{"k":"block","body":[${block.statements.joinToString(",") { stmt(it) }}]}}"""
+		return null
 	}
 
 	internal fun tryStmt(node: IrTry): String {
@@ -3295,33 +3280,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"enumValues","type":${str(et)}}"""
 			if (name == "valueOf") return """{"k":"enumParse","type":${str(et)},"arg":${expr(regularArgs(call).first())}}"""
 		}
-		// Top-level reified enum intrinsics: `enumValues<T>()` / `enumValueOf<T>(name)` / `enumEntries<T>()` /
-		// `enumEntriesIntrinsic<T>()`. On the CLR every type arg is REIFIED (real generics), so these lower at the
-		// call site exactly like `T.values()` / `T.valueOf(name)` above — a Kotlin-level equivalence, same BIR
-		// vocabulary. A CONCRETE enum type arg reuses the rich/basic split (rich -> the synthesized static
-		// values()/valueOf(); basic -> the semantic enumValues/enumParse nodes). A GENERIC-PARAM type arg emits the
-		// semantic node with the param token (`gp:T`) — runtime-resolvable for BASIC enums only (a rich enum is a
-		// plain class invisible to System.Enum reflection; documented gap). The entries family is NOT intercepted
-		// under stdlibCompile: the rt-emitted `enumEntries<T>` body would return `T[]` where its declared return is
-		// the `EnumEntries<T>` interface (invalid IL); its TODO body stays and call sites are intercepted instead.
-		if (calleeFq in ENUM_REIFIED_INTRINSICS && call.typeArguments.size == 1) {
-			val isValueOf = calleeFq == "kotlin.enumValueOf"
-			val isEntries = calleeFq == "kotlin.enums.enumEntries" || calleeFq == "kotlin.enums.enumEntriesIntrinsic"
-			val args = regularArgs(call)
-			if (args.size == (if (isValueOf) 1 else 0) && !(isEntries && stdlibCompile)) {
-				val ta = call.typeArguments[0]
-				val klass = (ta?.classifierOrNull?.owner as? IrClass)?.takeIf { it.kind == ClassKind.ENUM_CLASS }
-				if (klass != null && isRichEnum(klass)) {
-					return if (isValueOf)
-						"""{"k":"callStatic","owner":${fqnJson(klass.name.asString())},"method":"valueOf","args":[${expr(args[0])}]}"""
-					else """{"k":"callStatic","owner":${fqnJson(klass.name.asString())},"method":"values","args":[]}"""
-				}
-				val tok = ta?.let { birType(it) }
-				if (tok != null)
-					return if (isValueOf) """{"k":"enumParse","type":${str(tok)},"arg":${expr(args[0])}}"""
-					else """{"k":"enumValues","type":${str(tok)}}"""
-			}
-		}
+		// The top-level reified enum intrinsics `enumValues<T>()` / `enumValueOf<T>(name)` / `enumEntries<T>()`
+		// / `enumEntriesIntrinsic<T>()` are NOT recognized here: kotc emits the FAITHFUL top-level call
+		// `callStatic owner:null method:<the callee's bare name> typeArgs:[T] args:[…]` (the plain Kotlin fact) via the
+		// general call path. bir2cir's EnumIntrinsicLowering re-emits the same BIR vocabulary — a rich enum's synthesized static
+		// `values()`/`valueOf()`, or the semantic `enumValues`/`enumParse` node for a basic/generic-param T — deriving
+		// rich-vs-basic from the enum type's emitted shape (a local rich enum carries `enumRich:true`). "This call is
+		// enumValues" is a Kotlin<->CLR relation, so it lives in bir2cir. (The `.name`/`.ordinal` handling below asks
+		// the IR — `ClassKind.ENUM_CLASS` — not an FQN table, so it stays here.)
 		// `c.code` (Char -> Int code point) is NOT recognized here: kotc emits the FAITHFUL top-level extension-property
 		// getter call `callStatic owner:null method:get_code sig:[kotlin.Char] args:[<char>]` (the plain Kotlin fact) via
 		// the general property path. bir2cir's CharCodeInvokeLowering re-emits the `{k:conv, to:kotlin.Int}` node (a

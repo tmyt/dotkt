@@ -41,15 +41,15 @@ internal val UNSIGNED_ARRAY_ELEM = mapOf(
 // `@kotlin.clr.ClrArrayFactory` marker off each stdlib factory function on the ref.dll and emits the
 // newList/newSet/newMap/newArray/newArraySized construction node. A name-set match here would be a kotc CLR-shape
 // decision on specific stdlib symbols — exactly the recognition that belongs in bir2cir.
-// Int-range/-progression types whose for-loop can be counter-lowered (over get_first/get_last/get_step) when the source
-// is a range VALUE (e.g. `for (i in indices)`), avoiding the iterator protocol + its covariant-return iterator.
-internal val INT_PROGRESSION_FQ = setOf("kotlin.ranges.IntRange", "kotlin.ranges.IntProgression")
+// No Int-range/-progression RECOGNITION set here: kotc emits a faithful `forIn`/`forEachInline`
+// carrying the source + its runtime type token (`srcType`); bir2cir's ForInLowering classifies a counted range (IntRange,
+// or IntProgression in a stdlib self-build) -> forRange, a non-range enumerable -> forEachInline, else the iterator
+// `fallback`. "This for-loop source is a counted range" is a Kotlin<->CLR relation, so it lives in bir2cir, not kotc.
 
-// Top-level reified enum intrinsics, lowered at the call site to the same BIR nodes as `T.values()`/`T.valueOf()`
-// (all type args are reified on the CLR). See the interception block in BirEmitter's call lowering.
-internal val ENUM_REIFIED_INTRINSICS = setOf(
-	"kotlin.enumValues", "kotlin.enumValueOf", "kotlin.enums.enumEntries", "kotlin.enums.enumEntriesIntrinsic",
-)
+// No top-level reified enum-intrinsic RECOGNITION set here: kotc emits the FAITHFUL top-level call (owner:null,
+// the callee's own bare name — enumValues / enumValueOf / enumEntries / enumEntriesIntrinsic) as the plain Kotlin
+// fact; bir2cir's EnumIntrinsicLowering recognizes those callee names and re-emits the values()/valueOf() split
+// (rich enum) or the semantic enum-values / enum-parse node (basic/generic-param).
 
 // Numeric conversions (`3.7.toInt()`, `x.toLong()`, `c.toInt()`) are not recognized in kotc: kotc emits the plain
 // `callInstance kotlin.Double.toInt` (the faithful IR). bir2cir reads the `@kotlin.clr.ClrConv` marker off each stdlib
