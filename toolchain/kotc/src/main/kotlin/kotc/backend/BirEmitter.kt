@@ -3516,13 +3516,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str("set_" + prop.name.asString())}${overloadSigField(callee)},"args":[${args.joinToString(",") { expr(it) }}]}"""
 				} else
 					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str("get_" + prop.name.asString())}${overloadSigField(callee)},"args":[${expr(ext)}]${retHint(false, call.type)}}"""
+				// A companion COMPUTED property (`val X.Companion.foo: T get() = ...`, no backing field) -> a static
+				// call by the property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78; the SAME
+				// A2 convention already used for the restored top-level property, `pn`/`"prop"` above) — NOT the
+				// baked `get_`/`set_` slot name. kotc does not know whether the enclosing class is CLR-bound (a
+				// stdlib @ClrTypeAlias owner) or plain Kotlin; bir2cir's MemberCallSubstitution reads the stdlib
+				// @ClrProperty/@ClrIntrinsic metadata off the ref.dll by this bare name and shapes the .NET
+				// accessor, falling back to kotc's own get_/set_<name> declaration convention when no binding exists.
 				return if (callee === prop.setter)
 					if (prop.backingField == null)
-						"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str("set_" + prop.name.asString())},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
+						"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"set","args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
 					else
 						"""{"k":"staticFieldSet","ownerType":${fqnJson(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 				else if (prop.backingField == null)
-					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str("get_" + prop.name.asString())},"args":[]${retHint(false, call.type)}}"""
+					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get","args":[]${retHint(false, call.type)}}"""
 				else """{"k":"staticField","ownerType":${fqnJson(enclosing)},"name":${str(prop.name.asString())}}"""
 			}
 			// A generic companion fun (`Result.Companion.success<T>`) carries its resolved type args — without them

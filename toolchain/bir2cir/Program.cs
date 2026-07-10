@@ -5465,12 +5465,32 @@ static class MemberCallSubstitution
             return CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable",
                 OwnerElemArg(ownerFqnNode), itArgs);
 
-        if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind)) return null;
+        if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind))
+        {
+            // #78: a companion STATIC property-accessor call (the "owner"-keyed stdlib axis) whose enclosing type
+            // carries NO @ClrTypeAlias binding at all — the overwhelmingly common case (an ordinary user or stdlib
+            // companion computed property with no CLR binding). kotc emits the bare property IDENTITY + a
+            // `"prop":"get"/"set"` marker instead of baking the accessor slot name (mirrors the instance-axis A2
+            // convention kotc already uses elsewhere); reconstruct kotc's OWN get_/set_<name> declaration-side
+            // convention (the CLR property model — every property's accessor is CIL-named that way regardless of
+            // CLR-boundness) so the call still resolves to the real emitted accessor, byte-identical to the
+            // pre-#78 baked emission. The marker itself is stripped either way — it is not BIR/CIR vocabulary.
+            if (!instance && (node["prop"] as JsonValue)?.GetValue<string>() is ("get" or "set") and var uProp
+                && (node["method"] as JsonValue)?.GetValue<string>() is string uMember)
+            {
+                node.Remove("prop");
+                node["method"] = (uProp == "set" ? "set_" : "get_") + uMember;
+            }
+            return null;
+        }
 
         var member = (node["method"] as JsonValue)?.GetValue<string>();
         if (string.IsNullOrEmpty(member)) return null;
         var ownerFqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
         var args = node["args"] as JsonArray ?? new JsonArray();
+        // #78: the STATIC property-accessor marker for a call whose owner IS CLR-bound — carried down to Rule 2p
+        // (below) so the explicit @ClrProperty binding is tried on the static axis too, not just instance.
+        var staticPropMarker = !instance ? (node["prop"] as JsonValue)?.GetValue<string>() : null;
 
         // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,
         // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit `{k:conv, to:<callee return type>, e:<receiver>}`, the
@@ -5495,9 +5515,17 @@ static class MemberCallSubstitution
         // Rule 2p (explicit PROPERTY accessor): the member carries @ClrProperty(access, name) -> route EXPLICITLY to
         // clrPropGet(name) [READ] / clrPropSet(name) [WRITE] on the BCL owner, from the stated access role — NOT the old
         // get_/set_ intrinsic-string-prefix sniff. Handled before Rule 2/3 so a @ClrProperty stub (setLength/capacity/
-        // ticks) is neither routed as a plain method nor hoisted as a rule-3 body.
-        if (instance && refs.TryMemberProperty(ownerFqn, member, args.Count, out var pAccess, out var pName))
+        // ticks) is neither routed as a plain method nor hoisted as a rule-3 body. #78: also tried on the STATIC axis
+        // (a companion computed property carrying the `"prop":"get"/"set"` marker) — a @ClrProperty binding is keyed
+        // purely by owner+bare-name+argcount, with no instance/static distinction of its own.
+        if ((instance || staticPropMarker is "get" or "set") && refs.TryMemberProperty(ownerFqn, member, args.Count, out var pAccess, out var pName))
             return ClrPropNode(node, clrOwner, pName, pAccess, member, args);
+        // #78: the static-axis marker found no @ClrProperty binding — probe a bare @ClrIntrinsic under the SAME bare
+        // name (Rule 2, reached again unconditionally below) before Rule 3/4 ever see this bare name; when NEITHER
+        // binds, reconstruct kotc's own get_/set_<name> declaration-side convention (byte-identical to the pre-#78
+        // baked emission) so every rule below proceeds exactly as it did before this call carried a marker at all.
+        if (staticPropMarker is "get" or "set" && !refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out _))
+            node["method"] = member = (staticPropMarker == "set" ? "set_" : "get_") + member;
 
         // PRE-Rule-2 semantic override: MutableCollection.add is @ClrIntrinsic("Add") (the binding drives the
         // implementor-side DeclarationRename), but the CALL semantics diverge — Kotlin `add` returns the
