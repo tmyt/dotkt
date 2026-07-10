@@ -120,6 +120,25 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **#73 Wave 1: three more CLR-representation decisions moved out of kotc into bir2cir.** Each deletes a
+  kotc branch that baked a CLR fact and re-homes the derivation in the Kotlin↔CLR layer:
+  - **`kotlin.clr.Span<T>` (M11).** kotc's `birType` no longer maps it to the literal `System.Span` (the last
+    naked `System.*` name in kotc); it emits the faithful `kotlin.clr.Span<T>` identity and bir2cir's
+    `BirTypeLowering.LowerType` substitutes it to `System.Span<T>` in every build (placed before the
+    ref-build passthrough so the substitution is uniform), like every other alias.
+  - **`ieee754equals` (M8).** kotc emits the faithful `kotlin.internal.ir`-owned intrinsic call (a sibling of
+    `EQEQ`/`less`/…), and bir2cir's `PrimitiveOperatorLowering.LowerIntrinsic` re-emits the ordered IEEE-754
+    `binOp ==` — previously kotc lowered it to `binOp ==` directly while the rest of the family had already moved.
+  - **`UByteArray.toByteArray()` / `ByteArray.toUByteArray()` reinterpret (M9, #76 residue).** kotc emits the
+    faithful top-level extension call; bir2cir's `FaithfulHintRecognition` recognizes it off the receiver's
+    recovered static type and re-emits the same reinterpret `cast` (a VIEW, not a copy). The "UByteArray IS
+    byte[]" fact no longer lives in kotc.
+  - **`String.reversed()` (M10) stays lowered this wave** — a concrete blocker: the real stdlib path
+    `CharSequence.reversed() = StringBuilder(this).reverse()` needs a `StringBuilder(CharSequence)` ctor, but
+    `System.Text.StringBuilder` has no ctor accepting a CharSequence (only `String`/`Int32`, Codex-confirmed),
+    so the @ClrTypeAlias ctor cannot be bound 1:1 and the compiled rt body throws `InvalidProgram`. Closing it
+    needs a separate bir2cir CharSequence→String ctor-arg coercion feature.
+
 - **`@JvmInline value class` (and any other `kotlin.jvm.*` name used unqualified) resolves again
   after the klib migration (#80).** Switching kotc's app/stdlib frontends from the JVM-platform
   pipeline to the Common/Native-platform metadata pipeline (`MetadataFrontendPipelinePhase` /

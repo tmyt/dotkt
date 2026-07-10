@@ -3303,20 +3303,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// literal-split (and its "do NOT force-split a non-literal Pair" guard — `mapOf(pairVar)` stays a real call)
 		// is bir2cir's.
 
-		// Unsigned<->signed byte-array reinterpret (#76). UByteArray IS System.Byte[] and ByteArray IS System.SByte[]
-		// (native in ALL builds now); the two are freely castclass-compatible at runtime (same 8-bit storage, ECMA
-		// reduced-type array compatibility). So `UByteArray.toByteArray()` / `ByteArray.toUByteArray()` — the stdlib's
-		// @InlineOnly `storage.copyOf()` extensions, whose value-class `storage` does NOT exist on a native array —
-		// lower to a plain array cast (a reinterpret VIEW, not a defensive copy; noted in dotkt-semantics). Guarded on
-		// the EXACT receiver array identity so the Collection<Byte>/Array<out Byte> overloads of the same names are untouched.
-		if (name == "toByteArray" || name == "toUByteArray") {
-			val er = extensionReceiver(call)
-			val erFq = er?.type?.classFqName?.asString()
-			if (name == "toByteArray" && erFq == "kotlin.UByteArray")
-				return """{"k":"cast","type":${TypeNode.Array(TypeNode.Fqn("kotlin.Byte")).toJson()},"e":${expr(er)}}"""
-			if (name == "toUByteArray" && erFq == "kotlin.ByteArray")
-				return """{"k":"cast","type":${TypeNode.Array(TypeNode.Fqn("kotlin.UByte")).toJson()},"e":${expr(er)}}"""
-		}
+		// Unsigned<->signed byte-array reinterpret (#76) — `UByteArray.toByteArray()` / `ByteArray.toUByteArray()` — is
+		// NOT lowered here: it is a CLR-representation fact ("UByteArray IS byte[]"), so kotc emits the FAITHFUL top-level
+		// extension call and bir2cir re-emits the reinterpret `cast` keyed on the resolved receiver identity
+		// (FaithfulHintRecognition, M9). The Kotlin<->CLR relation lives there, not in kotc.
 
 		// `e!!` (not-null assertion). A value-type-nullable operand (`Int?` = `Nullable<T>`) MUST unwrap via
 		// HasValue/Value and throw NPE on null: a bare pass-through leaves a `Nullable<T>` STRUCT where the use
@@ -3966,9 +3956,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null},"else":${throwExpr(newExc("kotlin.IllegalArgumentException", "\"Failed requirement\""))}}"""
 			if (calleeFq == "kotlin.check")
 				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null},"else":${throwExpr(newExc("kotlin.IllegalStateException", "\"Check failed\""))}}"""
+			// `ieee754equals` is a `kotlin.internal.ir` COMPILER INTRINSIC, a sibling of EQEQ/EQEQEQ/less/... — kotc
+			// emits ONLY the FAITHFUL intrinsic call with owner = `kotlin.internal.ir` (collision-safe); bir2cir's
+			// PrimitiveOperatorLowering re-emits the `binOp ==` (the ordered IEEE-754 comparison). The Kotlin<->CLR
+			// relation lives there, not in kotc.
 			if (name == "ieee754equals" && regularArgs(call).size == 2) {
 				val a = regularArgs(call)
-				return """{"k":"binOp","op":"==","lhs":${expr(a[0])},"rhs":${expr(a[1])}}"""
+				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"ieee754equals","args":[${expr(a[0])},${expr(a[1])}]}"""
 			}
 			// requireNotNull(x)/checkNotNull(x) -> evaluate once; throw if null, else the (non-null) value.
 			if (calleeFq == "kotlin.requireNotNull" || calleeFq == "kotlin.checkNotNull") {
@@ -4014,6 +4008,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// (below), pending a stdlib `StringBuilder(CharSequence)`-ctor fix.
 			if (fq == "kotlin.text") {
 				// `s.reversed()` -> new string(Reverse(s).ToArray()) (STAYS lowered: stdlib `StringBuilder(CharSequence)` bug).
+				// M10 (#73): the real stdlib path is `CharSequence.reversed() = StringBuilder(this).reverse()`, but
+				// System.Text.StringBuilder has NO ctor accepting a CharSequence (only String/Int32, Codex-confirmed), so
+				// the @ClrTypeAlias ctor cannot be bound 1:1 — the compiled rt body throws InvalidProgram. Deleting this
+				// branch needs a bir2cir CharSequence->String ctor-arg coercion (a separable feature), so it stays for now.
 				if (name == "reversed") (extensionReceiver(call) ?: dispatchReceiver(call))?.takeIf { it.type.classFqName?.asString() == "kotlin.String" }?.let { recv ->
 					return """{"k":"strReversed","s":${expr(recv)}}"""
 				}
@@ -4387,9 +4385,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// The intrinsic `kotlin.clr.ClrRef<T>` -> `byRef T` (a managed reference).
 		if (t.classFqName?.asString() == "kotlin.clr.ClrRef")
 			return TypeNode.ByRef(argType(t, 0) ?: OBJ)
-		// The intrinsic `kotlin.clr.Span<T>` -> the real `System.Span<T>`.
+		// The intrinsic `kotlin.clr.Span<T>` -> the FAITHFUL `kotlin.clr.Span<T>` identity. Substituting it to the
+		// real `System.Span<T>` is a CLR-representation decision (the last naked `System.*` name in kotc), so bir2cir
+		// owns it (LowerType), exactly like every other @ClrTypeAlias / primitive substitution.
 		if (t.classFqName?.asString() == "kotlin.clr.Span")
-			return TypeNode.Fqn("System.Span", listOf(argType(t, 0) ?: OBJ))
+			return TypeNode.Fqn("kotlin.clr.Span", listOf(argType(t, 0) ?: OBJ))
 		// A reference array `kotlin.Array<E>` -> `TypeNode.Array(<E>)` (the element rides its own faithful identity).
 		if (t.isBoxedArray) return TypeNode.Array(arrayElemType(t))
 		// A SIGNED primitive array (`kotlin.IntArray`/…) OR an unsigned specialized array (`kotlin.UByteArray`/…, #76)

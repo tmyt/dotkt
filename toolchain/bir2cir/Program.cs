@@ -256,7 +256,7 @@ sealed class Pipeline
             // PrimitiveOperatorLowering above.) Runs SECOND — right after the primitive-op restore, before the compareTo
             // callInstance reaches MemberCallSubstitution's primitive-compareTo -> System.Double.CompareTo routing, and
             // before any type-erasing pass — so the inner value nodes stay pure kotlin.* and lower normally downstream.
-            FaithfulHintRecognition.Apply(bir.Root, refs);
+            FaithfulHintRecognition.Apply(bir.Root, refs, localTopLevelFns);
             // CHAR.CODE + FUNCTION.INVOKE (#73 Phase 2b-2): two single-node recognitions kotc used to do — `c.code`
             // (faithful `callStatic get_code(Char)`) -> `{k:conv, to:kotlin.Int}`, and `f(x)` (faithful `callInstance
             // kotlin.FunctionN.invoke`) -> `{k:delegateInvoke}`. Runs EARLY (before NetInteropBinding / the suspend
@@ -2213,6 +2213,13 @@ static class BirTypeLowering
                 // The element then lowers on the recursive call (kotlin.Int -> System.Int32 in app/rt, verbatim in ref).
                 if (f.Args == null && PrimArrayElem.TryGetValue(f.Name, out var arrElemFq))
                     return new TypeNode.Array(LowerType(new TypeNode.Fqn(arrElemFq), refBuild, force, typeArg: false));
+                // `kotlin.clr.Span<T>` -> the real `System.Span<T>` in EVERY build (ref included). A synthetic interop
+                // marker with NO ref.dll @ClrTypeAlias definition; kotc emits the FAITHFUL `kotlin.clr.Span` identity
+                // and bir2cir OWNS the BCL substitution (M11 — the last naked `System.*` name left in kotc). Placed
+                // before the refBuild passthrough so the ref build substitutes it too, matching the former kotc birType
+                // (which emitted `System.Span` unconditionally); the element lowers like any generic type-arg.
+                if (f.Name == "kotlin.clr.Span" && f.Args != null)
+                    return new TypeNode.Fqn("System.Span", f.Args.Select(a => LowerType(a, refBuild, force, typeArg: true)).ToArray());
                 // The reference build keeps the pure-Kotlin surface verbatim (no recursion) unless an attribute
                 // blob forces a concrete System.* type.
                 if (!force && refBuild) return f;

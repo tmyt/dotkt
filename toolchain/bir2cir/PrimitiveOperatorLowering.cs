@@ -221,6 +221,10 @@ static class PrimitiveOperatorLowering
         // `===` (EQEQEQ): always identity (`ceq` = `binOp ==`).
         if (m == "EQEQEQ" && args.Count == 2)
             return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
+        // `ieee754equals`: the ordered IEEE-754 float/double comparison (`-0.0 == 0.0`, `NaN != NaN`) -> raw CIL
+        // `ceq` (`binOp ==`). Operands are already value-shaped by kotc; byte-identical to the former kotc lowering.
+        if (m == "ieee754equals" && args.Count == 2)
+            return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         return null;
     }
 

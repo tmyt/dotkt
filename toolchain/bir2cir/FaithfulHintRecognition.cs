@@ -158,10 +158,15 @@ static class FaithfulHints
 
 static class FaithfulHintRecognition
 {
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null)
+    // This assembly's own top-level fun names — so the M9 reinterpret recognition can DEFER to a user fun that shadows
+    // `toByteArray`/`toUByteArray` (matching the old kotc gate, which fired only for the stdlib EXTENSION).
+    static IReadOnlySet<string> _localTopLevelFns = new HashSet<string>(StringComparer.Ordinal);
+
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null, IReadOnlySet<string> localTopLevelFns = null)
     {
         StaticType.Refs = refs;
         StaticType.LocalTypes = StaticType.CollectTypes(root);
+        _localTopLevelFns = localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal);
         Walk(root, BirScope.Empty);
     }
 
@@ -203,11 +208,53 @@ static class FaithfulHintRecognition
     static JsonNode Transform(JsonObject o, BirScope scope) => (o["k"] as JsonValue)?.GetValue<string>() switch
     {
         "objMethod" => TransformObjMethod(o, scope),
-        "callStatic" => TransformPrintln(o, scope),
+        "callStatic" => TransformCallStatic(o, scope),
         "concat" => TransformConcat(o, scope),
         "callInstance" => TransformCompareTo(o),
         _ => o,
     };
+
+    // A top-level `callStatic owner=null`: try the unsigned<->signed byte-array reinterpret recognition (M9) first,
+    // else the println/print collection-arg wrap.
+    static JsonNode TransformCallStatic(JsonObject o, BirScope scope)
+    {
+        if (TransformUnsignedByteArrayReinterpret(o, scope) is JsonNode r && !ReferenceEquals(r, o)) return r;
+        return TransformPrintln(o, scope);
+    }
+
+    // M9 (#76 residue): `UByteArray.toByteArray()` / `ByteArray.toUByteArray()`. UByteArray IS a native byte[] and
+    // ByteArray IS a native sbyte[]; the two are freely castclass-compatible (same 8-bit storage, ECMA reduced-type
+    // array compatibility), so the stdlib's @InlineOnly `storage.copyOf()` extension (whose value-class `storage` has
+    // no native form) lowers to a plain array REINTERPRET cast — a VIEW, not a defensive copy (noted in
+    // dotkt-semantics). kotc now emits the FAITHFUL top-level extension call (`callStatic owner=null method=toByteArray
+    // args=[recv]`, no CLR knowledge); bir2cir recognizes it off the receiver's recovered static type and re-emits the
+    // SAME `cast` node kotc used to synthesize (byte-identical). Guarded on the EXACT receiver array identity so the
+    // Collection<Byte>/Array<out Byte> overloads of the same names are untouched.
+    static JsonNode TransformUnsignedByteArrayReinterpret(JsonObject o, BirScope scope)
+    {
+        // Only the plain stdlib-extension shape (`owner=null`, no `ownerType`): an `ownerType`-keyed callStatic is a
+        // facadegen .NET interop static (e.g. a user `SomeType.toByteArray(...)`), never the stdlib reinterpret.
+        if (o["owner"] != null || o["ownerType"] != null) return o;
+        var method = (o["method"] as JsonValue)?.GetValue<string>();
+        var (need, elem) = method switch
+        {
+            "toByteArray" => ("kotlin.UByteArray", "kotlin.Byte"),
+            "toUByteArray" => ("kotlin.ByteArray", "kotlin.UByte"),
+            _ => (null, null),
+        };
+        if (need == null) return o;
+        // A user top-level fun in THIS assembly that shadows the name -> defer (the old kotc gate fired only for the
+        // stdlib EXTENSION; a same-named user fun kept its own body).
+        if (_localTopLevelFns.Contains(method)) return o;
+        if (o["args"] is not JsonArray args || args.Count != 1) return o;
+        if (StaticType.Surface(args[0], scope) is not TypeNode.Fqn rf || rf.Name != need) return o;
+        return new JsonObject
+        {
+            ["k"] = "cast",
+            ["type"] = TypeNode.Write(new TypeNode.Array(new TypeNode.Fqn(elem))),
+            ["e"] = args[0]?.DeepClone(),
+        };
+    }
 
     // `objMethod ToString`: a collection/Map receiver (StaticType.Value of `recv`) -> clrCollToString/clrMapToString
     // (Kotlin `[a, b]`); else keep the plain .NET ToString. `objMethod Equals`: SAME collection kind -> struct-eq
