@@ -636,6 +636,21 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   batch by a byte-identical BIR-corpus `diff` over the stdlib emit + 154 verify-il inputs (1495 `*.bir.json`, empty
   diff every batch) and end-to-end by the full gate (verify-il 251/0 / -differential ALL-MATCH / -roundtrip / -ktproj /
   -schema). Design: `docs/design-kotc-decompose-41.md`.
+- **ilemit `Program.cs` decomposed into 8 cohesive sibling files (#41, the last half) — a purely mechanical,
+  verify-by-refactor carve-out.** The 4226-line `Program.cs` is now a ~172-line driver + core-state file (`static
+  class IlEmit` = `Main`/`MergeByFileClass`/`LoadInputDocument`, plus the `Emitter` overview comment, all core
+  instance fields, `Trace`/`T`, `BuildStdlibMode`, the ctor and `EffectiveTps`); the rest moved verbatim into eight
+  `sealed partial class Emitter` siblings — `Emitter.Types` / `Emitter.Delegates` / `Emitter.Resolve` /
+  `Emitter.ClrInterop` / `Emitter.Operators` / `Emitter.InlineSplice` / `Emitter.Bodies` / `Emitter.Assembly` —
+  joining the existing `Expressions`/`Statements`/`Metadata`/`CompilerServices`/`ReverseBridge` split. No behavior
+  change: every member moved whole (never split), all shared state reachable within the one partial class (fields
+  stay in `Program.cs` except the five per-cluster sets the plan relocates), no overload dropped (MapType×3,
+  FuncType×2, ResolveMethod×2, StampCompilerGenerated×2 all preserved). The cross-module inline-splice path
+  (`EmitInlineSplice`/`EmitSplicedStmts` + its four `_inline*` fields) is quarantined into `Emitter.InlineSplice.cs`
+  with a header enumerating the four external touchpoints #75 step-3 deletes with it. IL/PE bytes are not diffable,
+  so verification is behavioral: gated per batch by verify-il (the inline-splice batch also by verify-roundtrip) and
+  end-to-end by the full gate (verify-il 251/0 / -differential ALL-MATCH / -roundtrip / -ktproj / -schema). Design:
+  `docs/design-ilemit-decompose-41.md`.
 - **bir2cir `Program.cs` decomposed into 21 per-pass files (#41) — a purely mechanical, verify-by-refactor
   carve-out.** The 7007-line `Program.cs` is now a ~705-line driver-only file (`Bir2Cir`/`Main`, the `Pipeline`
   pass driver with its per-pass ordering + call-site gate comments, `BuildStdlibMode`/`DriverOptions`/`BirFile`/
