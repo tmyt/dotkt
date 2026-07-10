@@ -151,12 +151,11 @@ static class StaticType
                 return TypeJson.Read(o["elem"]) is TypeNode ae ? new TypeNode.Fqn("kotlin.Array", new[] { ae }) : null;
             case "arrayGet": return TypeJson.Read(o["elem"]);                 // `a[i]` -> the element type
             case "enumValue": return TypeJson.Read(o["type"]);
-            // `enumValues<T>()`/`T.entries` (basic/generic-param enum) -> Array<T>. `type` carries EITHER encoding:
-            // the structured Type (EnumIntrinsicLowering's top-level `enumValues<T>()` re-emission, which clones the
-            // typeArg node verbatim) OR kotc's legacy bare `"@Name"` STRING (BirEmitter's direct `Color.values()`/
-            // `.entries` member-call recognition, kept as-is — see BirEmitter.kt ~3263). Strip the `@` for the latter.
+            // `enumValues<T>()`/`T.entries` (basic/generic-param enum) -> Array<T>. `type` is the structured enum Type,
+            // from BOTH producers: EnumIntrinsicLowering's top-level `enumValues<T>()` re-emission and kotc's direct
+            // `Color.values()`/`.entries` recognition (both clone the FAITHFUL FQN node; #73 M3 retired the `@Name` string).
             case "enumValues":
-                return EnumElemType(o["type"]) is TypeNode eet ? new TypeNode.Fqn("kotlin.Array", new[] { eet }) : null;
+                return TypeJson.Read(o["type"]) is TypeNode eet ? new TypeNode.Fqn("kotlin.Array", new[] { eet }) : null;
             case "safeCastValue": return TypeJson.Read(o["elem"]);           // `x as? V` -> V (value)
             case "concat": return new TypeNode.Fqn("kotlin.String");         // a template/`+` concat is always String
             case "isInst" or "isInstRef" or "objEq": return new TypeNode.Fqn("kotlin.Boolean");
@@ -195,16 +194,6 @@ static class StaticType
         }
         // owner=null: a top-level fun — resolve via its file-class owner from the ref.dll.
         return o["owner"] is null ? Refs?.TryTopLevelReturn(method, recvKey, argCount) : null;
-    }
-
-    // An `enumValues.type` slot's element type: the structured Type when present, else kotc's legacy bare `"@Name"`
-    // string (strip the `@` marker to the bare enum FQN). null for neither shape.
-    static TypeNode EnumElemType(JsonNode typeSlot)
-    {
-        if (TypeJson.Read(typeSlot) is TypeNode t) return t;
-        if (typeSlot is JsonValue v && v.TryGetValue<string>(out var s) && s != null)
-            return new TypeNode.Fqn(s.StartsWith("@", StringComparison.Ordinal) ? s.Substring(1) : s);
-        return null;
     }
 
     // A field / property read without a type slot: resolve the property GETTER's declared return type (`get_<name>`,

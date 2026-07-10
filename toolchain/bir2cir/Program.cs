@@ -218,6 +218,14 @@ sealed class Pipeline
             // the app form rewrites to a cross-module counter loop. Runs FIRST so the produced callInstance / forRange
             // flow through every downstream pass exactly as the equivalent kotc-emitted forms did (byte-identical IL).
             RangeForLowering.Apply(bir.Root, !attributeTopLevelOwner);
+            // RANGE MEMBERSHIP (#73 M2): kotc emits the FAITHFUL `contains` member call for `x in a..b` (by identity,
+            // NO comparison synthesis — its old bare-name lowering MISCOMPILED a user rangeTo/contains type). Lower the
+            // membership to the short-circuit `(x >= a && x <op> b)` fast path FQN-keyed — only for a stdlib primitive
+            // range (`kotlin.ranges.{Int,Long,Char}Range` contains over an un-materialized `rangeTo`/`until`/`rangeUntil`).
+            // Runs BEFORE RangeConstructionLowering (which would else materialize the recv rangeTo into `new IntRange`)
+            // so the recv still carries the inline bounds; the produced binOp/cond flows through every downstream pass
+            // exactly as kotc's retired membership lowering did (byte-identical).
+            RangeMembershipLowering.Apply(bir.Root, localTopLevelFns, attributeTopLevelOwner);
             // VALUE-POSITION RANGE CONSTRUCTION (#73 Phase 2b-1): kotc emits the FAITHFUL `callInstance
             // kotlin.Int.rangeTo(b)` for `a..b` / `a..<b`; materialize the stdlib `new IntRange/LongRange/CharRange`
             // HERE (the Kotlin<->CLR realization). Runs before MemberCallSubstitution (whose Rule-4 gate would refuse

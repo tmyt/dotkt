@@ -3330,35 +3330,28 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// LongRange/CharRange`, applying the `-1` half-open arithmetic for rangeUntil. Structured for-loops are still
 		// counter-lowered in birForLoop (they intercept the range at the IR level before this member call is emitted).
 
-		// `x in a..b` (range membership) -> `(x >= a && x <op> b)` via a short-circuit cond. `x` is bound ONCE
-		// (bindOnce): rendering it into both comparison legs re-evaluated a side-effecting `x` twice.
-		if (name == "contains") {
-			val range = dispatchReceiver(call) as? IrCall
-			val value = regularArgs(call).firstOrNull()
-			if (range != null && value != null) {
-				val ops = range.arguments.filterNotNull()
-				val cmp = when (range.symbol.owner.name.asString()) { "rangeTo" -> "<="; "until", "rangeUntil" -> "<"; else -> null }
-				if (cmp != null && ops.size == 2) {
-					val (xVar, x) = bindOnce(value, value.type, "__in")
-					val lo = expr(ops[0]); val hi = expr(ops[1])
-					val core = """{"k":"cond","cond":{"k":"binOp","op":">=","lhs":$x,"rhs":$lo},"then":{"k":"binOp","op":${str(cmp)},"lhs":$x,"rhs":$hi},"else":{"k":"const","type":${fqnJson("kotlin.Boolean")},"value":false}}"""
-					return if (xVar == null) core else """{"k":"valueBlock","stmts":[$xVar],"result":$core}"""
-				}
-			}
-		}
+		// `x in a..b` (range membership) is NOT lowered here. kotc emits the FAITHFUL `contains` member call on the
+		// range receiver (`callInstance <range>.contains(x)`) by identity — NO comparison synthesis and NO FQN gate,
+		// so a USER type with `operator fun rangeTo`+`contains` stays a real method dispatch (the bare-name lowering
+		// here MISCOMPILED it to primitive comparisons). bir2cir (RangeMembershipLowering) lowers `x in a..b` /
+		// `x in a until b` to the short-circuit `(x >= a && x <op> b)` fast path FQN-keyed — only when the range is an
+		// un-materialized primitive `kotlin.<Prim>.rangeTo/rangeUntil` — binding `x` ONCE (a side-effecting operand
+		// must not run in both comparison legs). The Kotlin<->CLR range relation lives in bir2cir.
 
 		// Enum rich API: Color.values()/entries -> Enum.GetValues<T>(); Color.valueOf(s) -> Enum.Parse<T>(s).
 		(callee.parent as? IrClass)?.takeIf { it.kind == ClassKind.ENUM_CLASS }?.let { ec ->
-			val et = "@" + ec.name.asString()
 			// Rich enum -> the synthesized static values()/valueOf() methods on the class.
 			if (isRichEnum(ec)) {
 				if (name == "values" || callee.correspondingPropertySymbol?.owner?.name?.asString() == "entries")
 					return """{"k":"callStatic","owner":${fqnJson(ec.name.asString())},"method":"values","args":[]}"""
 				if (name == "valueOf") return """{"k":"callStatic","owner":${fqnJson(ec.name.asString())},"method":"valueOf","args":[${expr(regularArgs(call).first())}]}"""
 			}
+			// Basic enum -> the semantic enumValues/enumParse node carrying the enum's FAITHFUL FQN identity (a
+			// structured Type, never the banned `@Name` type-token). bir2cir/ilemit resolve it to the local enum type,
+			// exactly as the reified `enumValues<T>()` path does (EnumIntrinsicLowering re-emits the same node shape).
 			if (name == "values" || callee.correspondingPropertySymbol?.owner?.name?.asString() == "entries")
-				return """{"k":"enumValues","type":${str(et)}}"""
-			if (name == "valueOf") return """{"k":"enumParse","type":${str(et)},"arg":${expr(regularArgs(call).first())}}"""
+				return """{"k":"enumValues","type":${fqnJson(ec.name.asString())}}"""
+			if (name == "valueOf") return """{"k":"enumParse","type":${fqnJson(ec.name.asString())},"arg":${expr(regularArgs(call).first())}}"""
 		}
 		// The top-level reified enum intrinsics `enumValues<T>()` / `enumValueOf<T>(name)` / `enumEntries<T>()`
 		// / `enumEntriesIntrinsic<T>()` are NOT recognized here: kotc emits the FAITHFUL top-level call

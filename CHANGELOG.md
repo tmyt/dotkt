@@ -139,6 +139,23 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
     so the @ClrTypeAlias ctor cannot be bound 1:1 and the compiled rt body throws `InvalidProgram`. Closing it
     needs a separate bir2cir CharSequence→String ctor-arg coercion feature.
 
+- **#73 Wave 2: two more kotc CLR/stdlib decisions moved into bir2cir.**
+  - **Direct enum `values()`/`entries`/`valueOf()` (M3) — kills the last banned `@Name` type-token in kotc.**
+    kotc's direct (non-reified) enum-intrinsic path emitted the legacy `"@Color"` type-token STRING in its
+    `enumValues`/`enumParse` nodes (`val et = "@" + ec.name`); it now emits the FAITHFUL structured FQN identity,
+    exactly like the reified `enumValues<T>()` path (bir2cir's `EnumIntrinsicLowering`). No `"@" +` type-token
+    construction remains anywhere in kotc. bir2cir's `StaticTypeResolver` dropped its now-dead `@Name`-string
+    fallback (both producers emit the structured Type).
+  - **Range membership `x in a..b` (M2) — a live user-type miscompile fix + a move.** kotc lowered `x in a..b` /
+    `x in a until b` to `>=`/`<`/`<=` comparisons keyed on the BARE names `contains`+`rangeTo`/`until`/`rangeUntil`
+    with NO FQN gate, so a USER type with `operator fun rangeTo`+`contains` was MISCOMPILED to primitive
+    comparisons. kotc now emits the faithful `contains` member call by identity; the new bir2cir
+    `RangeMembershipLowering` re-emits the short-circuit `(x >= a && x <op> b)` fast path FQN-keyed — only for a
+    stdlib primitive range (`kotlin.ranges.{Int,Long,Char}Range` contains over an un-materialized
+    `rangeTo`/`until`/`rangeUntil`) — binding the subject once so a side-effecting operand runs a single time. A
+    user rangeTo/contains type now dispatches its real `contains()` (new gate `cases/il-userrange`, also in the
+    differential oracle).
+
 - **`@JvmInline value class` (and any other `kotlin.jvm.*` name used unqualified) resolves again
   after the klib migration (#80).** Switching kotc's app/stdlib frontends from the JVM-platform
   pipeline to the Common/Native-platform metadata pipeline (`MetadataFrontendPipelinePhase` /
