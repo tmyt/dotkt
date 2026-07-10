@@ -509,12 +509,29 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **kotc is now fully build-mode-agnostic: the `DOTKT_STDLIB_COMPILE` env var and the `stdlibCompile` field are
+  DELETED, and the last three stdlib-only decisions moved DOWN to bir2cir (#72).** kotc used to branch on
+  `DOTKT_STDLIB_COMPILE` in six places; each was either a CLR-representation decision that belonged in the
+  Kotlin↔CLR layer or a build-mode gate that is properly keyed off `-Xstdlib-compilation`. Now: (1) a for-loop over a
+  stdlib collection is emitted by kotc as a faithful `forIn` (source + `srcType` + element type + iterator `fallback`)
+  and **bir2cir's `ForInLowering` turns it into a `forEachInline` (GetEnumerator)** in a stdlib self-build — the
+  supertype walk kotc did over the IR hierarchy is reconstructed from the BIR type defs (so `ArrayList : MutableList`
+  still matches); without it the rt.dll collection ops would enumerate via `iterator()`/`hasNext` and an app call would
+  hit `EntryPointNotFound`. (2) `for (i in a downTo b)` is likewise classified in `ForInLowering` — FQN-keyed off the
+  progression `srcType` + the stdlib `downTo` call identity (a user `infix downTo` no longer miscompiles) — and lowered
+  to a counted `for` with side-effect-safe temp bounds (fixing the per-iteration re-eval of the `to` bound). (3) a decl
+  whose signature mentions a >16-parameter function type (the `context()` overloads in package `kotlin`) has no
+  `System.Func`/`Action`, so a new bir2cir `HighArityFunctionFilter` drops it (stdlib) / rejects it (app), running
+  before `ClosureSynthesis` so no orphan closure types are synthesized. Property-accessor annotations are now emitted
+  unconditionally (the same no-filter pass-through as plain methods); `unsupported()` is a uniform hard error (the two
+  `.NET`-method callable-reference stubs in `Indent.kt` were rewritten as lambdas); and the frontend-pipeline select in
+  `ClrCliPipeline` re-keys off `arguments.stdlibCompilation`. `DOTKT_STDLIB_COMPILE` is gone from every tool and script.
 - **The stdlib-build mode is now ONE CLI flag `--build-stdlib=metadata|runtime`, not an env-var soup (#69).**
   bir2cir and ilemit each used to read a tangle of environment variables (`DOTKT_STDLIB_COMPILE` +
   `DOTKT_STDLIB_SUBSTITUTE` + `DOTKT_STRIP_METADATA`) to select the reference/runtime/app build. Both now take a single
   `--build-stdlib` flag (absent = an app build); bir2cir maps it to `DriverOptions.StdlibMode` and ilemit to
   `Emitter.BuildStdlibMode` (`_stdlibStub = mode != App`, `_stripMetadata = mode == Runtime`). The three env vars are
-  RETIRED from both tools (only kotc keeps its own `DOTKT_STDLIB_COMPILE` gate, set on the kotc invocation alone). Pure
+  RETIRED from both tools (kotc kept its own `DOTKT_STDLIB_COMPILE` gate at the time; that too is now gone — see #72). Pure
   flag-source swap — every branch, mode value, and emitted byte is unchanged, so `DotKt.Private.Stdlib.dll` +
   `DotKt.Stdlib.dll` are byte-identical (modulo the non-deterministic PE timestamp + MVID GUID). The build scripts
   (`build-stdlib.sh` + `build-stdlib-{ref,rt}.sh`) pass the flag to both tools instead of exporting the env vars.

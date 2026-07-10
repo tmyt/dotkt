@@ -39,7 +39,7 @@ FLAGS=(-no-stdlib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compil
 
 info "kotc: ${#STDLIB_COMMON[@]} common + ${#STDLIB_SRC[@]} src + ${#STDLIB_UNSIGNED[@]} unsigned + ${#STDLIB_CLR[@]} clr -> BIR (ref mode)"
 # kotc exits nonzero when there are frontend errors; this script's job is to REPORT them, so tolerate it.
-DOTKT_STDLIB_COMPILE=1 CLR_TYPES_METADATA="" "$KOTC" \
+CLR_TYPES_METADATA="" "$KOTC" \
 	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
 	"${FLAGS[@]}" "${STDLIB_FRAGMENT_ARGS[@]}" -d "$BIR" 2>"$OUT/kotc.err" || true
 bir_count="$(ls "$BIR"/*.bir.json 2>/dev/null | wc -l)"

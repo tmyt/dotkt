@@ -116,24 +116,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * BIR node. The build fails (hadError), so this placeholder never reaches ilemit. `what` names the construct;
 	 * `detail` is a plain-language explanation of why / what to do — NOT the word "deferred".
 	 */
-	// Compiling the stdlib ITSELF: the app-only kotlin.* lowerings (e.g. the Regex BCL binding) must be OFF so the
-	// stdlib uses its OWN kotlin.* definitions (it IS the runtime).
-	internal val stdlibCompile: Boolean get() = System.getenv("DOTKT_STDLIB_COMPILE") != null
 	// kotc emits ONE BIR independent of the ref/rt split. The ref/rt divergence (BCL substitution, the
 	// kotlin.Comparable-bound + `in`-variance drops, the metadata strip) is entirely bir2cir's + ilemit's, keyed off the
 	// `--build-stdlib=metadata|runtime` flag downstream. The stdlib REFERENCE build and the RUNTIME build produce
 	// BIT-IDENTICAL BIR from a single kotc frontend run. docs/design-clr-stdlib-ref-runtime-split.md.
 
 	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
-		// Compiling the stdlib ITSELF (DOTKT_STDLIB_COMPILE): don't fail the whole file on one unsupported construct in
-		// one op's body — emit a THROWING stub (a `throw NotSupportedException("[DOTKT-STDLIB] …")`) and warn. The op
-		// is left a compiler lowering (the op keeps its lowering), so the stub is never actually called; this lets
-		// the supported ops in the same file compile while the few backend-gap ops (object-expr-captures-T, …) wait.
-		if (System.getenv("DOTKT_STDLIB_COMPILE") != null) {
-			messageCollector?.report(CompilerMessageSeverity.WARNING,
-				"[DOTKT-STDLIB] stubbed (not migrated, keep its lowering): $what — $detail", locationOf(node))
-			return throwExpr(newExc("kotlin.UnsupportedOperationException", str("[DOTKT-STDLIB] not lowered: $what")))
-		}
 		hadError = true
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
 			"the .NET backend does not support $what yet: $detail", locationOf(node))
@@ -405,7 +393,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// those are the library's to provide, not ours to re-emit (a re-emitted stub has no real body -> invalid IL).
 		val functions = file.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.origin.toString() == "DEFINED" && !isAwaitIntrinsic(it) && clrName(it) == null && it.name.asString() !in setOf("byref", "stackBuffer") }
-			.filterNot { skipStdlibHighArityFunctionType(it) }
 		// `ClrRef<T>` is an intrinsic managed-reference marker (erased on the argument path) -> never emitted as a class.
 		// @ClrTypeAlias classes (collections/StringBuilder/unsigned/primitives/String/…) are emitted here as ORDINARY
 		// types; bir2cir's AliasHelperHoist drops them (and hoists a class's rule-3 members). kotc no longer strips them.
@@ -538,7 +525,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
-			.filterNot { skipStdlibHighArityFunctionType(it) }
 			// equals/hashCode/toString are inherited from Any into every Kotlin interface (fake overrides). On the CLR
 			// System.Object already provides Equals/GetHashCode/ToString, so emitting them as interface members creates
 			// abstract slots no implementer fills (the lowercase Kotlin name never binds Object's) -> TypeLoadException.
@@ -580,27 +566,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// [KotlinSealed]; a plain CLR interface loses both).
 		val funSealed = classModsJson(fnIface = iface.isFun, sealed = iface.modality == Modality.SEALED)
 		return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn$funSealed${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods],"properties":[$ifaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
-	}
-
-	internal fun skipStdlibHighArityFunctionType(fn: IrSimpleFunction): Boolean {
-		if (System.getenv("DOTKT_STDLIB_COMPILE") == null) return false
-		val arity = highArityFunctionParameterCount(fn.returnType)
-			?: fn.parameters.firstNotNullOfOrNull { highArityFunctionParameterCount(it.type) }
-			?: return false
-		messageCollector?.report(CompilerMessageSeverity.WARNING,
-			"[DOTKT-STDLIB] skipped ${fn.name.asString()}: function type with $arity parameters exceeds System.Func/Action's 16-parameter limit", locationOf(fn))
-		return true
-	}
-
-	internal fun highArityFunctionParameterCount(t: IrType): Int? {
-		val fqn = t.classFqName?.asString()
-		val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
-		if (fqn != null && (fqn.startsWith("kotlin.Function") || fqn.startsWith("kotlin.reflect.KFunction") ||
-				fqn.startsWith("kotlin.coroutines.SuspendFunction")) && args.size > 1) {
-			val parameterCount = args.size - 1
-			if (parameterCount > 16) return parameterCount
-		}
-		return args.firstNotNullOfOrNull { highArityFunctionParameterCount(it) }
 	}
 
 	/** A Kotlin `enum class` -> a real .NET enum (ilemit DefineEnum + literals). */
@@ -671,7 +636,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val hasPerEntry = entries.any { it.correspondingClass != null }
 		val absMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.correspondingPropertySymbol == null && it.body == null && it.modality == Modality.ABSTRACT }
-			.filterNot { skipStdlibHighArityFunctionType(it) }
 		val baseAbstract = hasPerEntry || absMethods.isNotEmpty()
 		// base ctor must be callable from the entry subclasses -> protected (was private for the flat form).
 		val ctor = """{"params":[$ctorParams],"baseArgs":null,"thisArgs":null,"vis":${str(if (hasPerEntry) "protected" else "private")},"body":[$ctorBody]}"""
@@ -699,7 +663,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// methods: concrete user methods + abstract member decls + ToString + values() + valueOf().
 		val userMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.origin.toString() == "DEFINED" && it.correspondingPropertySymbol == null && it.body != null }
-			.filterNot { skipStdlibHighArityFunctionType(it) }
 			.map { method(it, static = false) } +
 			absMethods.map { m -> """{"name":${str(m.name.asString())},"static":false,"override":false,"virtual":true,"abstract":true,"vis":"public","params":[${paramsJsonList(m.parameters).joinToString(",")}],"ret":${birType(m.returnType).toJson()},"body":[]}""" }
 		val sf = { e: IrEnumEntry -> """{"k":"staticField","ownerType":${fqnJson(name)},"name":${str(e.name.asString())}}""" }
@@ -735,7 +698,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun enumEntrySubclass(subName: String, baseName: String, cc: IrClass, userArgs: List<String>): String {
 		val overrides = cc.declarations.filterIsInstance<IrSimpleFunction>()
 			.filter { it.body != null && it.correspondingPropertySymbol == null }
-			.filterNot { skipStdlibHighArityFunctionType(it) }
 			.joinToString(",") { method(it, static = false) }
 		val baseArgs = (listOf("""{"k":"local","name":"__name"}""", """{"k":"local","name":"__ordinal"}""") + userArgs).joinToString(",")
 		val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null,"vis":"public","body":[]}"""
@@ -939,15 +901,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val virtual = clrIface || acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty()
 		val vis = if (clrIface) "public" else visOf(acc)
 		val isAbstract = acc.modality == Modality.ABSTRACT && acc.body == null
-		// STDLIB BUILD: emit the PROPERTY's @ClrIntrinsic onto its accessor method so the ref.dll carries the binding
-		// (like a normal method's — method()/ifaceMethod already do). The @ClrIntrinsic is on the property (`@ClrIntrinsic
-		// ("Length") val length`), so read it from the corresponding property. bir2cir consumes it from the get_<name>
-		// accessor (TryMemberIntrinsic / DeclarationRename) to lower a `.length` read to clrPropGet Length. kotc emits ONE
-		// BIR for both stdlib builds: the accessor attrs ride BOTH the ref and rt BIR identically; the rt build
-		// strips ALL metadata downstream (ilemit under `--build-stdlib=runtime`), so the rt.dll never carries the binding
-		// — its call sites are already substituted. App builds (no stdlibCompile) emit no accessor attrs, unchanged.
+		// Emit the PROPERTY's annotations (e.g. @ClrIntrinsic) onto its accessor method — the SAME unconditional
+		// pass-through method()/ifaceMethod already do for plain methods (kotc does not filter/select annotations;
+		// attrsJson doctrine). The @ClrIntrinsic is on the property (`@ClrIntrinsic("Length") val length`), so read it
+		// from the corresponding property. bir2cir consumes it from the get_<name> accessor (TryMemberIntrinsic /
+		// DeclarationRename) to lower a `.length` read to clrPropGet Length. In a stdlib build the ref.dll carries the
+		// binding; the rt build strips ALL metadata downstream (ilemit under `--build-stdlib=runtime`) so the rt.dll
+		// never carries it. In an app build these attrs simply ride the accessor as ordinary metadata.
 		val propAnns = (acc.correspondingPropertySymbol?.owner ?: acc).annotations
-		val accAttrs = if (stdlibCompile) ""","attrs":[${attrsJson(propAnns)}]""" else ""
+		val accAttrs = ""","attrs":[${attrsJson(propAnns)}]"""
 		return """{"name":${str(mname)},"static":false,"override":${clrIface || isOverrideClass},"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 	}
 
@@ -1112,12 +1074,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// Include `abstract fun`s (body == null): they emit as CLR abstract methods so subclass overrides bind
 			// and a base-typed call (`shape.area()`) resolves to the slot.
 			.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && (it.body != null || it.modality == Modality.ABSTRACT) }
-			.filterNot { skipStdlibHighArityFunctionType(it) }
 			.map { method(it, static = false) }
 		// Companion methods -> static methods of the enclosing class.
 		val statMethods = companion?.declarations?.filterIsInstance<IrSimpleFunction>()
 			?.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && it.body != null }
-			?.filterNot { skipStdlibHighArityFunctionType(it) }
 			?.map { method(it, static = true) }.orEmpty()
 		val companionAccessors = companion?.declarations?.filterIsInstance<IrProperty>()
 			?.filter { it.backingField == null }
@@ -1684,40 +1644,35 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// loop-variable element type off the array operand's (now faithful) type.
 		if (source != null && isArrayType(source.type))
 			return """{"k":"forArray","label":$lbl,"var":${str(loopVar.name.asString())},"array":${expr(source)},"body":[$body]}"""
-		// NON-array for-loops: kotc no longer classifies the source as a counted RANGE vs a collection — that needs the
-		// `kotlin.ranges.*` FQN, a Kotlin<->CLR relation that belongs in bir2cir. kotc emits the FAITHFUL source + its
-		// runtime type token (`srcType`) and lets bir2cir's ForInLowering dispatch: a counted range (IntRange, or
-		// IntProgression in a stdlib self-build) -> `forRange`; a .NET/Sequence/stdlib-collection enumerable ->
-		// `forEachInline`; anything else -> the `fallback` (the FIR-desugared iterator-protocol block emitted below —
-		// what kotc used to emit by returning null). NO `kotlin.ranges` FQN leaves kotc.
+		// NON-array for-loops: kotc no longer classifies the source as a counted RANGE, an `a downTo b` counter, or a
+		// stdlib collection — those decisions each need a `kotlin.ranges.*`/`kotlin.collections.*` FQN or the `downTo`
+		// operator identity resolved against the stdlib, a Kotlin<->CLR relation that belongs in bir2cir. kotc emits
+		// the FAITHFUL source + its runtime type token (`srcType`) + the element type (`elem`, a pure Kotlin loop-var
+		// fact) and lets bir2cir's ForInLowering dispatch: a counted range (IntRange, or IntProgression in a stdlib
+		// self-build) -> `forRange`; an `a downTo b` in a consumer build -> a counted `for`; a .NET/Sequence
+		// enumerable, or a stdlib collection in a stdlib self-build -> `forEachInline`; anything else -> the `fallback`
+		// (the FIR-desugared iterator-protocol block emitted below). NO `kotlin.ranges`/`kotlin.collections` FQN or
+		// `downTo` classification leaves kotc.
 		//
-		// `a downTo b` stays a direct counter `for` (genuine IR-structural: the OPERATOR NAME gives cmp/step, no type
-		// FQN) — but ONLY in a consumer build. In a stdlib self-build IntProgression is emitted locally, so downTo
-		// flows through forEachInline -> bir2cir forRange (get_step) exactly as before. `rangeTo`/`until` are NOT
-		// direct-lowered: ilemit's `for` re-evaluates the `to` bound each iteration (unsafe for a side-effecting
-		// bound), so they take the side-effect-safe forRange via the srcType path below.
-		if (source != null && !stdlibCompile && (source as? IrCall)?.symbol?.owner?.name?.asString() == "downTo") {
-			val ops = source.arguments.filterNotNull()
-			if (ops.size == 2)
-				return """{"k":"for","label":$lbl,"var":${str(loopVar.name.asString())},"from":${expr(ops[0])},"to":${expr(ops[1])},"cmp":">=","step":-1,"body":[$body]}"""
-		}
-		// A .NET IEnumerable<T> (@Clr type), a kotlin.sequences.Sequence, or (stdlib self-build only) a kotlin.*
-		// collection -> enumerate via GetEnumerator (forEachInline). Element = the source's first type arg, else the
-		// loop var's type. `srcType` rides along so bir2cir can redirect a stdlib-build range (IntRange/IntProgression,
+		// `elem` = the source's first type arg, else the loop var's type — the SAME value the forEachInline path needs;
+		// bir2cir reads it verbatim when it turns a stdlib-collection `forIn` into `forEachInline`.
+		val elem = (source?.type as? IrSimpleType)?.arguments?.firstOrNull()
+			?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
+		// A .NET IEnumerable<T> (@Clr type) or a kotlin.sequences.Sequence -> enumerate via GetEnumerator
+		// (forEachInline). `srcType` rides along so bir2cir can redirect a stdlib-build range (IntRange/IntProgression,
 		// which IS stdlib-iterable) to forRange; a non-range enumerable keeps forEachInline (bir2cir strips srcType).
 		val forInEnumerable = source != null && ((source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null
-			|| isStdlibCollectionIterable(source.type) || source.type.classFqName?.asString() == "kotlin.sequences.Sequence")
+			|| source.type.classFqName?.asString() == "kotlin.sequences.Sequence")
 		if (source != null && forInEnumerable) {
-			val elem = (source.type as? IrSimpleType)?.arguments?.firstOrNull()
-				?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
 			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"srcType":${birType(source.type).toJson()},"var":${str(loopVar.name.asString())},"body":[$body]}"""
 		}
-		// Any other recovered source (a range VALUE like `indices`/a stored `IntRange`, a `rangeTo`/`until` operator, or
-		// a plain kotlin.* collection in a consumer build) -> a faithful `forIn` carrying the source + its type token +
-		// the loop body, plus the `fallback` = the FIR-desugared iterator-protocol block (what kotc used to emit by
-		// returning null here). bir2cir's ForInLowering picks forRange (counted range) or the fallback (everything else).
+		// Any other recovered source (a range VALUE like `indices`/a stored `IntRange`, a `rangeTo`/`until`/`downTo`
+		// operator, or a plain kotlin.* collection) -> a faithful `forIn` carrying the source + its type token + the
+		// element type + the loop body, plus the `fallback` = the FIR-desugared iterator-protocol block (what kotc used
+		// to emit by returning null here). bir2cir's ForInLowering picks forRange (counted range), a counted `for`
+		// (consumer-build downTo), forEachInline (stdlib-build collection), or the fallback (everything else).
 		if (source != null)
-			return """{"k":"forIn","label":$lbl,"var":${str(loopVar.name.asString())},"src":${expr(source)},"srcType":${birType(source.type).toJson()},"body":[$body],"fallback":{"k":"block","body":[${block.statements.joinToString(",") { stmt(it) }}]}}"""
+			return """{"k":"forIn","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"srcType":${birType(source.type).toJson()},"var":${str(loopVar.name.asString())},"body":[$body],"fallback":{"k":"block","body":[${block.statements.joinToString(",") { stmt(it) }}]}}"""
 		return null
 	}
 
@@ -4184,32 +4139,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 * must resolve this so injected types are real .NET types (otherwise they leak in as user classes). MEMBER slot names
 	 * are NOT resolved here — that is bir2cir's DeclarationRename off the `overrides` marker + the refs (A2 step 5).
 	 */
-	// In the STDLIB BUILD (stdlibCompile — BOTH ref and rt), collection member calls stay plain kotlin.* (bir2cir
-	// substitutes them via the IReadOnly*/@ClrIntrinsic supertype, not a kotc-side map), so a `for (e in coll)` would fall
-	// to the Kotlin iterator protocol (coll.iterator()/Iterator.hasNext) -> EntryPointNotFound when an app calls the rt op.
-	// Detect a kotlin.collections iterable here so the for-loop emits forEachInline instead: ilemit's GetEnumerator resolves
-	// through the IEnumerable the IReadOnly* supertype carries. Gated on stdlibCompile ALONE —
-	// kotc emits ONE BIR for ref+rt; the ref build's forEachInline body is squashed to `throw` by bir2cir RefBodySquash
-	// (never reaching ilemit's GetEnumerator emit), so the ref.dll is unaffected. App builds (no stdlibCompile) keep the
-	// plain Kotlin iterator protocol, unchanged.
-	private fun isStdlibCollectionIterable(t: org.jetbrains.kotlin.ir.types.IrType): Boolean {
-		if (!stdlibCompile) return false
-		val collFqs = setOf("kotlin.collections.Iterable", "kotlin.collections.MutableIterable", "kotlin.collections.Collection",
-			"kotlin.collections.MutableCollection", "kotlin.collections.List", "kotlin.collections.MutableList",
-			"kotlin.collections.Set", "kotlin.collections.MutableSet",
-			// Sequence is @ClrTypeAlias(IEnumerable) — an Iterable peer; a `for (x in seq)` must take the SAME forEachInline
-			// (GetEnumerator) path as Iterable (it lowers to IEnumerable).
-			"kotlin.sequences.Sequence")
-		val seen = HashSet<String>()
-		fun walk(c: IrClass): Boolean {
-			val fq = c.fqNameWhenAvailable?.asString() ?: return false
-			if (!seen.add(fq)) return false
-			if (fq in collFqs) return true
-			return c.superTypes.any { st -> (st.classifierOrNull?.owner as? IrClass)?.let(::walk) == true }
-		}
-		return (t.classifierOrNull?.owner as? IrClass)?.let(::walk) ?: false
-	}
-
 	internal fun clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): String? {
 		// TYPE IDENTITY ONLY. kotc no longer resolves any MEMBER slot name here: a facadegen-injected .NET member's slot
 		// AND a stdlib @ClrTypeAlias/@ClrIntrinsic member's slot are BOTH resolved by bir2cir's DeclarationRename off the

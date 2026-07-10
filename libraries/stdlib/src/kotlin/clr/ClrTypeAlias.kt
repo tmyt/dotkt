@@ -3,9 +3,9 @@
 // the TYPE-substitute role, split out of @ClrIntrinsic so the two concerns are separate:
 //   - @ClrTypeAlias  on a CLASS   -> type-identity substitute  (kotlin.Int -> System.Int32, Iterable -> IEnumerable<T>)
 //   - @ClrIntrinsic  on a MEMBER  -> call substitute           (List.size -> get_Count, String.format -> String.Format)
-// kotc recognizes it by the FQN `kotlin.clr.ClrTypeAlias`. Like @ClrIntrinsic it is gated: the REFERENCE assembly
-// (DOTKT_STDLIB_COMPILE without SUBSTITUTE) keeps the class AND the attribute for round-trip metadata; the runtime/app
-// assemblies substitute it away. Primitives (Int/Long/Byte/Short/Float/Double/Char/Boolean) carry it so the runtime
+// bir2cir consumes it from the stdlib ref.dll by the FQN `kotlin.clr.ClrTypeAlias`. Like @ClrIntrinsic it is gated: the
+// REFERENCE assembly (bir2cir `--build-stdlib=metadata`) keeps the class AND the attribute for round-trip metadata; the
+// runtime/app assemblies substitute it away. Primitives (Int/Long/Byte/Short/Float/Double/Char/Boolean) carry it so the runtime
 // typealias-strip is annotation-driven instead of a hard-coded compiler list.
 //
 // This marker lives in a COMMON source set (not the platform `clr/` set) on purpose: the unsigned value classes

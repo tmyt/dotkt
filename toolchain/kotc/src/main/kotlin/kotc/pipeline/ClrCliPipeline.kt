@@ -145,7 +145,10 @@ class ClrCliPipeline(
 					ClrStdlibFrontendPipelinePhase then
 					ClrMetadataKlibFir2IrPhase then
 					ClrMetadataKlibSerializerPhase
-			System.getenv("DOTKT_STDLIB_COMPILE") != null ->
+			// Compiling the CLR stdlib ITSELF (`-Xstdlib-compilation`): the fragment-actualized common+clr source
+			// frontend (stdlib self-build needs real bodies the frontend klib does not carry). Checked AFTER the
+			// klib branch — `build-stdlib-klib.sh` also passes `-Xstdlib-compilation`, so the klib build must win.
+			arguments.stdlibCompilation ->
 				ClrMetadataConfigurationPipelinePhase then
 					ClrStdlibFrontendPipelinePhase then
 					ClrCommonFir2IrPipelinePhase then

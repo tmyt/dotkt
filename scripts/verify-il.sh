@@ -83,7 +83,7 @@ mismatch() { # <expected> <actual> — fill reason/detail for an output comparis
 build_tool ilemit
 # bir2cir: the canonical kotc -> bir2cir -> ilemit pipeline. kotc emits bare kotlin.* FQNs for source-type
 # primitives at EVERY position; bir2cir lowers them to the CLR-codegen vocabulary ilemit consumes. App builds run
-# in substitute/app mode (no DOTKT_STDLIB_COMPILE), so kotlin.* primitives lower (kotlin.Int -> int, ...).
+# in substitute/app mode (not a `-Xstdlib-compilation` self-build), so kotlin.* primitives lower (kotlin.Int -> int, ...).
 build_tool bir2cir
 # Lower a sample's BIR -> CIR (bir2cir), then emit IL (ilemit). A bir2cir failure folds into the ilemit-error bucket.
 il_emit() { # <name> <ildir> <asm> <birdir> [extra ilemit args...]

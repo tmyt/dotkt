@@ -23,7 +23,7 @@ static class IlEmit
         // so its types resolve at emit time; the runtime dll must sit beside the emitted assembly to run.
         // `--build-stdlib=metadata|runtime`: the stdlib self-build mode (the SAME flag bir2cir parses). It drives two
         // knobs: StdlibStub (either mode — stub un-emittable methods instead of aborting) and _stripMetadata (runtime
-        // only — drop roundtrip metadata). Absent = an app build. Retires DOTKT_STDLIB_COMPILE / DOTKT_STRIP_METADATA.
+        // only — drop roundtrip metadata). Absent = an app build. (Superseded the old stdlib-build/strip env vars.)
         var bir = new List<string>();
         var mode = Emitter.BuildStdlibMode.App;
         var rest = args.Skip(2).ToList();
@@ -1700,7 +1700,7 @@ sealed partial class Emitter
     // still reports `!!0` (and throws pre-bake) — needed so value args to `object`/concrete params get boxed.
     // Set by `--build-stdlib=metadata|runtime` (either stdlib self-build): while compiling the pure-kotlin stdlib,
     // methods the backend can't yet emit are stubbed (throw) instead of aborting the whole assembly — the "= TODO()"
-    // stdlib still emits and loads. Retires the DOTKT_STDLIB_COMPILE env read (now the same `--build-stdlib` flag).
+    // stdlib still emits and loads. Driven by the `--build-stdlib` flag (superseded the old stdlib-build env read).
     readonly bool _stdlibStub;
 
     // Emit a body that just throws — stubs a method the backend can't yet emit during the stdlib build.

@@ -16,7 +16,7 @@ Read `CLAUDE.md`, `docs/ship-tasks.md` §0–§2, `docs/design-clr-stdlib-ref-ru
 - The stdlib emits as pure `kotlin.*` shapes + `@Clr`/`@ClrIntrinsic` metadata, carried as-is into the assembly. Two builds from the SAME sources:
   - **ref** (`DotKt.Private.Stdlib.dll`) — compile-time only, keeps `@Clr` metadata, fully substituted away at app-emit. This is bir2cir's source of `@ClrIntrinsic`.
   - **runtime** (`DotKt.Stdlib.dll`) — the shipping implementation.
-- Under `DOTKT_STDLIB_COMPILE` the foundational BCL maps + synthetics must be **OFF** (so the stdlib uses its own `kotlin.*` types) — `clr-stdlib-grand-strategy`.
+- In a stdlib self-build (`-Xstdlib-compilation` / bir2cir `--build-stdlib`) the foundational BCL maps + synthetics must be **OFF** (so the stdlib uses its own `kotlin.*` types) — `clr-stdlib-grand-strategy`.
 
 **Boundary rule:** you do not change the compiler. If an op "needs" a compiler change to work, the binding is wrong — fix the binding here.
 

@@ -144,9 +144,11 @@ non-deterministic PE timestamp + MVID GUID). The mapping:
   GENERATION/strip logic is UNCHANGED (still stamps [Kotlin*]/NRT and skips them under `_stripMetadata`); only the
   boolean's SOURCE moved from the env var to the flag. (Relocating the strip DECISION fully into bir2cir — so ilemit
   stamps whatever the CIR carries dumbly — is a separate deferred task, NOT #69.)
-- kotc still reads `DOTKT_STDLIB_COMPILE` (its own `stdlibCompile` gate); the build scripts keep setting it on the kotc
-  invocation ONLY. `DOTKT_STDLIB_SUBSTITUTE`/`DOTKT_STRIP_METADATA` are dead everywhere (no reader) and removed from the
-  scripts.
+- kotc no longer reads any stdlib-compile env var: as of #72 the `stdlibCompile` field and `DOTKT_STDLIB_COMPILE` are
+  deleted, and the only genuine build-mode distinction (the stdlib-vs-app frontend select) re-keys off
+  `arguments.stdlibCompilation` (the `-Xstdlib-compilation` flag the build scripts already pass). The former
+  CLR-representation branches moved down to bir2cir. `DOTKT_STDLIB_SUBSTITUTE`/`DOTKT_STRIP_METADATA` are likewise dead
+  everywhere (no reader) and removed from the scripts.
 
 **Unified build:** `scripts/build-stdlib.sh` runs kotc ONCE → a shared cacheable BIR → then the ref emit (bir2cir
 refBuild + ilemit + retarget) and the rt emit (bir2cir substitute reading the just-built ref.dll + ilemit + strip). It

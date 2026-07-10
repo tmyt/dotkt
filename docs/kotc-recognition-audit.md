@@ -534,7 +534,7 @@ stdlib-build `forRange` node carried `accessOwner="kotlin.ranges.IntProgression"
 (the standing `TODO(refactor, per user 2026-06-28)` at BirEmitter.kt:1877). kotc now emits a FAITHFUL `forRange`
 carrying ONLY the range VALUE expr, the loop var, and the range's own pure-Kotlin type (`rangeType`); a new
 bir2cir pass `RangeForLowering` (runs FIRST in the per-file loop, before every other pass) DERIVES the accessor
-access and dispatches by build mode: stdlib build (`DOTKT_STDLIB_COMPILE` set — IntProgression emitted locally)
+access and dispatches by build mode: stdlib build (bir2cir `--build-stdlib` — IntProgression emitted locally)
 keeps `forRange` and injects `accessOwner`/`get_first`/`get_last`/`get_step` (ilemit resolves off `_types`
 generically); app build (IntProgression only REFERENCED) rewrites to `block{ var __rng = range; for(i =
 __rng.get_first(); i <= __rng.get_last(); i += 1) { body } }` with cross-module getters. The **synthetic-getter

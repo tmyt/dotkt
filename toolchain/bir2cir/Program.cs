@@ -131,6 +131,24 @@ sealed class Pipeline
                 foreach (var t in ts)
                     if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
                         localTypeFqns.Add(tn);
+        // The DIRECT supertypes (base + interfaces, by FQN) of each type DECLARED in this compilation, aggregated
+        // across all input files. ForInLowering walks it to decide whether a stdlib self-build for-loop source is a
+        // kotlin.collections iterable (a concrete subtype such as ArrayList : MutableList matches even though its own
+        // FQN is not a collection interface) — the supertype walk kotc's retired isStdlibCollectionIterable did over
+        // the IR hierarchy, reconstructed here from the BIR type defs.
+        var typeSupers = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var b in birFiles)
+            if (b.Root is JsonObject ro && ro["types"] is JsonArray ts)
+                foreach (var t in ts)
+                    if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
+                    {
+                        var sup = new List<string>();
+                        if (to["base"] is JsonNode bn && TypeJson.Read(bn) is TypeNode.Fqn bf) sup.Add(bf.Name);
+                        if (to["interfaces"] is JsonArray ifs)
+                            foreach (var iface in ifs)
+                                if (iface is JsonNode inode && TypeJson.Read(inode) is TypeNode.Fqn iff) sup.Add(iff.Name);
+                        typeSupers[tn] = sup;
+                    }
         // The LOCAL VALUE-type FQNs declared in this compilation (kotc emits `kind:"enum"` for a real CLR enum,
         // `kind:"struct"` for a value type). These are value types not present on the ref.dll, so the struct-ness
         // ORACLE must know them — a nullable local enum `E?` is `Nullable<E>`, not a bare reference. Collected across
@@ -180,6 +198,11 @@ sealed class Pipeline
             // charSeqIfaceDefs / kPropertyDefs / refDefs used to be — and, crucially, before Phase-1.5
             // SuspendColdLowering builds its `closures` lookup from `types`. ClosureSynthesis first so a closure invoke
             // body that references KProperty is in `types` when SharedSyntheticSynthesis scans for it.
+            // HIGH-ARITY FUNCTION-TYPE DECL FILTER (#72): drop (stdlib) / reject (app) any decl whose signature mentions
+            // a function type with >16 params — no System.Func/Action exists for it. Runs BEFORE ClosureSynthesis so a
+            // dropped body's lambdas are never synthesized into orphan closure types (moved here from kotc, which now
+            // emits every decl faithfully; the Func/Action 16-cap is a CLR-representation fact).
+            HighArityFunctionFilter.Apply(bir.Root, _options.StdlibMode);
             ClosureSynthesis.Apply(bir.Root);
             SharedSyntheticSynthesis.Apply(bir.Root);
             // FOR-LOOP SOURCE CLASSIFICATION (#73): kotc emits a faithful `forIn`/`forEachInline` carrying the source's
@@ -188,7 +211,7 @@ sealed class Pipeline
             // next); a non-range enumerable -> `forEachInline`; anything else -> the iterator `fallback`. Runs BEFORE
             // RangeForLowering / RangeConstructionLowering / SequenceForEachLowering so the produced forms flow through
             // every downstream pass exactly as the equivalent kotc-emitted forms did.
-            ForInLowering.Apply(bir.Root, !attributeTopLevelOwner);
+            ForInLowering.Apply(bir.Root, !attributeTopLevelOwner, typeSupers, localTopLevelFns);
             // RANGE FOR-LOOP (#52 Phase 5 "range partial"): kotc emits a FAITHFUL `forRange` (range VALUE + loop var +
             // Kotlin `rangeType`, NO CLR accessor names/owner). Realize the IntProgression get_first/get_last/get_step
             // access HERE — the stdlib form keeps `forRange` + injects the accessors (ilemit resolves off `_types`);
@@ -570,7 +593,7 @@ sealed class Pipeline
 }
 
 // The three semantic build modes, selected by the single `--build-stdlib` CLI flag (absent = an app build). These
-// REPLACE the old env-var soup (DOTKT_STDLIB_COMPILE + DOTKT_STDLIB_SUBSTITUTE): metadata = COMPILE-set/SUBSTITUTE-unset,
+// REPLACE the old env-var soup (the stdlib-build + substitute env flags): metadata = COMPILE-set/SUBSTITUTE-unset,
 // runtime = COMPILE-set/SUBSTITUTE-set, app = COMPILE-unset. (The fourth raw env combination — COMPILE-unset yet
 // SUBSTITUTE-set — was never a real mode; the flag makes it unrepresentable.)
 enum BuildStdlibMode { App, Metadata, Runtime }
