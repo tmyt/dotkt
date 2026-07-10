@@ -624,6 +624,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **kotc `BirEmitter.kt` decomposed into 6 cohesive sibling files (#41) — a purely mechanical, verify-by-refactor
+  carve-out.** The 4633-line `BirEmitter.kt` is now a ~547-line core (class decl + ctor, the whole run-scoped
+  mutable-state block, diagnostics, the type-naming quartet, ref-cell machinery, `scopeCall`, `newExc`/`throwExpr`,
+  and `emitFile`); the rest moved verbatim into six `internal fun BirEmitter.<name>(…)` extension siblings in
+  `kotc.backend` — `BirEmitterTypes` / `BirEmitterControlFlow` / `BirEmitterDeclarations` / `BirEmitterLifts` /
+  `BirEmitterInline` / `BirEmitterCalls` — mirroring the existing `BirEmitterExpressions`/`Statements` split. No
+  behavior change: every function moved whole (`call()` and its ~970 lines intact — never split), all shared state
+  stays on the class reached via the receiver (no counter reset/param-ification), the nine `private` members handled
+  per plan (five widened `private`→`internal` around `call()`, the rest file-private in their destination). Gated per
+  batch by a byte-identical BIR-corpus `diff` over the stdlib emit + 154 verify-il inputs (1495 `*.bir.json`, empty
+  diff every batch) and end-to-end by the full gate (verify-il 251/0 / -differential ALL-MATCH / -roundtrip / -ktproj /
+  -schema). Design: `docs/design-kotc-decompose-41.md`.
 - **bir2cir `Program.cs` decomposed into 21 per-pass files (#41) — a purely mechanical, verify-by-refactor
   carve-out.** The 7007-line `Program.cs` is now a ~705-line driver-only file (`Bir2Cir`/`Main`, the `Pipeline`
   pass driver with its per-pass ordering + call-site gate comments, `BuildStdlibMode`/`DriverOptions`/`BirFile`/
