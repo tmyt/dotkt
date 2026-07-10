@@ -120,6 +120,25 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **#73 Wave 8: the System.Object slot names (M5) and the bound .NET method-ref delegate (M4.4) moved out of
+  kotc into bir2cir — kotc now emits ZERO BCL member names.** kotc stopped baking the CLR slot names
+  `ToString`/`GetHashCode`/`Equals` (its `objectMethodName` helper became the pure-Kotlin boolean predicate
+  `isAnySlotMethod`); it emits the Kotlin names `toString`/`hashCode`/`equals` plus two pure-Kotlin facts — the
+  existing `objectOverride:true` on a `kotlin.Any`-override declaration, and a new `anySlot:true` on a CALL whose
+  callee is such an override. A single new bir2cir pass, `ObjectSlotRename`, runs FIRST in the per-file loop and
+  UNCONDITIONALLY (ref + rt + app — matching kotc's former unconditional rename, so the ref.dll's decl names and
+  the emitted-name-keyed member index stay byte-identical), mapping the Kotlin name → the BCL slot on decls
+  (keyed on `objectOverride`), on `objMethod` nodes (by bare name), and on any call carrying `anySlot` (keyed on
+  the flag, kind-agnostic). Placing it first keeps every downstream pass (FaithfulHintRecognition's
+  collection-`ToString` recognition, EnumMemberBinding, MemberStrip's bound-stub match, NetInteropBinding,
+  DeclarationRename, ilemit) byte-identical. This also fixed two latent, previously-broken sites — a Kotlin-owner
+  bound/unbound method reference to an override (`obj::toString` / `UserClass::toString`) had emitted the lowercase
+  name against a decl slot renamed to the BCL name (a FindMethod miss); tagging them with `anySlot` renames both in
+  lockstep. **M4.4:** a BOUND method reference on a facadegen-injected .NET owner (`netObj::m`) — kotc's last
+  .NET-shape decision for method refs — now emits the neutral `newBoundDelegate` carrying the owner identity;
+  bir2cir's `NetInteropBinding.ReshapeBoundDelegate` shapes it to the CLR `newBoundClrDelegate` when the owner
+  resolves to a .NET type off the refs (a Kotlin/local owner stays a plain `newBoundDelegate`). (The unbound
+  `NetType::m` lift was already reshaped by #61's NetInteropBinding.)
 - **#73 Wave 1: three more CLR-representation decisions moved out of kotc into bir2cir.** Each deletes a
   kotc branch that baked a CLR fact and re-homes the derivation in the Kotlin↔CLR layer:
   - **`kotlin.clr.Span<T>` (M11).** kotc's `birType` no longer maps it to the literal `System.Span` (the last

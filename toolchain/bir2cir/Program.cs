@@ -203,6 +203,12 @@ sealed class Pipeline
             // dropped body's lambdas are never synthesized into orphan closure types (moved here from kotc, which now
             // emits every decl faithfully; the Func/Action 16-cap is a CLR-representation fact).
             HighArityFunctionFilter.Apply(bir.Root, _options.StdlibMode);
+            // OBJECT-SLOT RENAME (#73 M5): restore the System.Object BCL slot names (ToString/GetHashCode/Equals) that
+            // kotc stopped emitting — it now emits the Kotlin names (toString/hashCode/equals) + the pure-Kotlin facts
+            // `objectOverride:true` (decl) / `anySlot:true` (call). Runs FIRST and UNCONDITIONALLY (ref + rt + app): the
+            // former kotc rename was unconditional, so the ref.dll decl names + emitted-name-keyed member index must stay
+            // byte-identical; placing it first lets every downstream pass see the same BCL-spelled trees as before.
+            ObjectSlotRename.Apply(bir.Root);
             // PRECONDITION / ERROR FAMILY (#73 M6): kotc emits the FAITHFUL top-level call (require/check/error/TODO/
             // requireNotNull/checkNotNull as `callStatic owner:null`, noWhenBranchMatchedException as the faithful
             // `kotlin.internal.ir` intrinsic). These @InlineOnly helpers have NO rt.dll body, so bir2cir SYNTHESIZES the
@@ -272,8 +278,9 @@ sealed class Pipeline
             // Runs EARLY (before FaithfulHintRecognition / SuspendColdLowering / BirTypeLowering) so every `elem`
             // consumer sees the stamped element.
             ArrayConstructionLowering.Apply(bir.Root, refs);
-            // FAITHFUL-HINT RECOGNITION (#52 Phase 4b / #59): kotc emits the faithful op (`objMethod ToString/Equals`,
-            // `concat`, `callStatic println/print`, Double/Float `callInstance compareTo`) with NO type hint; bir2cir
+            // FAITHFUL-HINT RECOGNITION (#52 Phase 4b / #59): kotc emits the faithful op (`objMethod` toString/equals —
+            // BCL-restored to ToString/Equals by ObjectSlotRename above, `concat`, `callStatic println/print`, Double/Float
+            // `callInstance compareTo`) with NO type hint; bir2cir
             // RECOVERS the collection/Map/Double/Float/null operand types via StaticType (StaticTypeResolver.cs) and
             // reproduces the SAME stdlib-helper `callStatic` node kotc used to emit (clrCollToString/clrMapToString/
             // clrCollStructEquals/clrDoubleCompare/LibraryKt.toString…). (The EQEQ family is handled by
@@ -4621,6 +4628,12 @@ static class NetInteropBinding
         // which reshaped unconditionally. A member the refs can't see (a non-.NET owner, or a name absent from the .NET
         // type) never resolves here -> the plain `field`/`setField` is left for ilemit's own handler.
         if (k == "field" || k == "setField") { ReshapeField(node, write: k == "setField"); return; }
+        // #73 M4.4: a BOUND method reference `netObj::m`. kotc emits a NEUTRAL `newBoundDelegate` (the same kind it uses
+        // for a Kotlin-owner bound ref) carrying the owner FQN identity + argTypes; bir2cir decides the SHAPE. When the
+        // owner resolves to a .NET type off the refs -> the CLR bound-delegate dialect node `newBoundClrDelegate` (ilemit
+        // binds the target by reflection). A Kotlin/local owner never resolves here -> the plain `newBoundDelegate` is
+        // left for ilemit's own FindMethod-based handler. Byte-identical to kotc's former newBoundClrDelegate emit.
+        if (k == "newBoundDelegate") { ReshapeBoundDelegate(node); return; }
         if (k != "callStatic" && k != "callInstance") return;
         var ownerJson = node["ownerType"];
         // Peel Nullable/Oblivious/ByRef wrappers to reach the underlying .NET Fqn (a `List<Item>?` receiver's owner is
@@ -4796,6 +4809,35 @@ static class NetInteropBinding
         node["static"] = false;
         node["recv"] = Take("recv");
         if (write) node["value"] = Take("value");
+    }
+
+    // #73 M4.4 — reshape a BOUND method-ref `newBoundDelegate` on a facadegen-injected .NET owner to the CLR
+    // `newBoundClrDelegate` dialect node (ilemit resolves the target by reflection over the .NET type). Resolves the
+    // owner off the refs (skips kotlin.*/local owners — those stay a plain newBoundDelegate ilemit binds via FindMethod).
+    // The field set + order mirror kotc's former newBoundClrDelegate emission exactly (clrType from the owner identity,
+    // method/argTypes/virtual/recv/funcType carried verbatim — including the method already Object-slot-renamed upstream).
+    static void ReshapeBoundDelegate(JsonObject node)
+    {
+        // Only the .NET-bound producer (BirEmitter method-ref, clrOwner branch) carries `argTypes`; the Kotlin-owner
+        // bound ref emits NONE. Gate on it so a cross-module Kotlin owner (a ProjectReference lib loaded via --ref,
+        // which ResolveNetType WOULD resolve) is never mis-reshaped into a newBoundClrDelegate claiming `argTypes:[]`
+        // — it stays the plain newBoundDelegate ilemit binds by FindMethod, exactly as before Wave 8.
+        if (node["argTypes"] == null) return;
+        var ownerJson = node["ownerType"];
+        var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
+        if (ownerFqnNode == null) return;
+        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name), ownerFqnNode.Args?.Length ?? 0);
+        if (netType == null) return;   // a Kotlin/local owner -> leave the plain newBoundDelegate for ilemit's handler
+        var v = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        foreach (var key in node.Select(kv => kv.Key).ToList()) { var val = node[key]; node.Remove(key); v[key] = val; }
+        JsonNode Take(string key) => v.TryGetValue(key, out var x) ? x : null;
+        node["k"] = "newBoundClrDelegate";
+        node["clrType"] = Take("ownerType");
+        node["method"] = Take("method");
+        node["argTypes"] = Take("argTypes") ?? new JsonArray();
+        node["virtual"] = Take("virtual");
+        node["recv"] = Take("recv");
+        node["funcType"] = Take("funcType");
     }
 
     // Peel Nullable/Oblivious/ByRef wrappers off an owner type slot to reach the underlying .NET Fqn (name + type-args),
