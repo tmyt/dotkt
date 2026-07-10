@@ -223,6 +223,12 @@ sealed class Pipeline
             // agnostic over the lambda's newClosure/newDelegate form. Runs BEFORE ClosureSynthesis so the action closure
             // (moved into the hoist var) is synthesized there exactly once, and before MemberCallSubstitution.
             RepeatInlineLowering.Apply(bir.Root, localTopLevelFns, attributeTopLevelOwner);
+            // INLINE SPLICE (#75): kotc emits a `callInline` node for an inline stdlib fn whose lambda body it carries
+            // UN-CLOSURED in the caller's scope (so a NON-LOCAL `return` survives as the caller's return). Wrap that body
+            // in the structural lowering the callee stands for (`repeat` -> the counted loop) with the body SPLICED, not
+            // delegate-invoked — restoring the non-local return #73 M7's delegate form dropped. Runs here (before
+            // ClosureSynthesis, like RepeatInlineLowering) so nested closures inside the spliced body are synthesized once.
+            InlineSplice.Apply(bir.Root);
             ClosureSynthesis.Apply(bir.Root);
             SharedSyntheticSynthesis.Apply(bir.Root);
             // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's

@@ -2231,6 +2231,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val recvInit = expr(recvExpr)   // emit the receiver expression before binding `it`/`this`
 		val recvParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 		val itParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
+		// Save/restore (not remove) any prior binding of these names: a nested scope/let reusing the same param name
+		// (`it`) must RESTORE the outer binding on exit, else statements AFTER this splice read a phantom local.
+		val recvName = recvParam?.name?.asString(); val itName = itParam?.name?.asString()
+		val hadRecv = recvName != null && valSubst.containsKey(recvName); val savedRecv = recvName?.let { valSubst[it] }
+		val hadIt = itName != null && valSubst.containsKey(itName); val savedIt = itName?.let { valSubst[it] }
 		recvParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(vname)}}""" }
 		itParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(vname)}}""" }
 		val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
@@ -2249,9 +2254,51 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else -> { last?.let { init.add(stmt(it)) }; """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""" }
 			}
 		}
-		recvParam?.let { valSubst.remove(it.name.asString()) }
-		itParam?.let { valSubst.remove(it.name.asString()) }
+		recvName?.let { if (hadRecv) valSubst[it] = savedRecv!! else valSubst.remove(it) }
+		itName?.let { if (hadIt) valSubst[it] = savedIt!! else valSubst.remove(it) }
 		return """{"k":"valueBlock","stmts":[${init.joinToString(",")}],"result":$result}"""
+	}
+
+	/**
+	 * `repeat(n) { i -> body }` -> SPLICE the lambda body UN-CLOSURED into the caller (#75). Because the body is
+	 * emitted inline (not a delegate), a bare `return` inside it targets the ENCLOSING fn and stays a plain
+	 * `{k:return}` = a NON-LOCAL return (the fidelity #73/M7's delegate loop dropped). A `return@repeat` targets the
+	 * lambda fn and routes through `inlineReturnSubst` to a `goto <end>`. The index param resolves to the fresh loop
+	 * var. kotc carries the count + spliced body in a `callInline` node; bir2cir's InlineSplice wraps it in the counted
+	 * loop. This is pure Kotlin-language inlining — no CLR knowledge.
+	 */
+	internal fun inlineRepeat(call: IrCall): String {
+		val args = regularArgs(call)
+		val countArg = args[0]
+		val lambda = args[1] as IrFunctionExpression
+		val fn = lambda.function
+		val idxParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
+		val loopVar = "__repIdx${scopeCounter++}"
+		// Emit the count BEFORE binding the index param (mirrors inlineScope's recvInit): the count is arg 0, evaluated
+		// in the caller's scope, and could reference an outer binding that shares the index param's NAME (nested
+		// `repeat(it){…}` / `forEach{ repeat(it){…} }`) — binding first would shadow it away.
+		// Emit the count through argExpr against the callee's DECLARED first param (`times: Int`) — the SAME coercion the
+		// old plain-call arg path applied: a value-type-nullable (`Int?`) count unwraps `Nullable<T>.Value` and an
+		// un-narrowed boxed-`Any` smart-cast casts to the primitive, so a bare `int` reaches the loop bound (mirrors
+		// RepeatInlineLowering's use of the declared `sig[0]`). argExpr is a no-op when the arg already matches.
+		val timesParam = regularParams(call.symbol.owner).firstOrNull()
+		val countJson = argExpr(countArg, timesParam)
+		val countTypeJson = (if (timesParam != null) birType(timesParam.type) else birType(countArg.type)).toJson()
+		// Save/restore the index-param binding (name-keyed): a nested repeat/scope reusing the same param name (`it`)
+		// must not permanently clobber our outer binding for statements AFTER this call.
+		val idxName = idxParam?.name?.asString()
+		val savedIdx = idxName?.let { if (valSubst.containsKey(it)) valSubst[it] else null }
+		val hadIdx = idxName != null && valSubst.containsKey(idxName)
+		idxName?.let { valSubst[it] = """{"k":"local","name":${str(loopVar)}}""" }
+		val end = cfgFresh()
+		val saved = inlineReturnSubst[fn.symbol]
+		inlineReturnSubst[fn.symbol] = null to end
+		val pre = ArrayList<String>()
+		bodyStatements(fn.body).forEach { pre.add(stmt(it)) }
+		if (saved != null) inlineReturnSubst[fn.symbol] = saved else inlineReturnSubst.remove(fn.symbol)
+		idxName?.let { if (hadIdx) valSubst[it] = savedIdx!! else valSubst.remove(it) }
+		pre.add("""{"k":"label","id":$end}""")
+		return """{"k":"callInline","callee":"kotlin.repeat","count":$countJson,"countType":$countTypeJson,"var":${str(loopVar)},"body":[${pre.joinToString(",")}]}"""
 	}
 
 	/** `r.use { block }` -> a value-block: `var r; var res; try { res = block(r) } finally { r.Dispose() }; res`. */
@@ -2260,6 +2307,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val uname = "__use${scopeCounter++}"; val rname = "__useRes${scopeCounter++}"
 		val recvInit = expr(recvExpr)
 		val itParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
+		// Save/restore (not remove) any prior binding of `it`: a `use{}` nested inside another `it`-scope must RESTORE
+		// the outer binding on exit, else statements after the splice read a phantom local.
+		val itName = itParam?.name?.asString()
+		val hadIt = itName != null && valSubst.containsKey(itName); val savedIt = itName?.let { valSubst[it] }
 		itParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(uname)}}""" }
 		val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
 		// kotc now emits the Kotlin FQN for source types, so a Unit-returning block's type is "kotlin.Unit"
@@ -2272,7 +2323,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			is IrExpression -> if (!unit) tryBody.add("""{"k":"setLocal","name":${str(rname)},"value":${expr(last)}}""") else tryBody.add("""{"k":"exprStmt","expr":${expr(last)}}""")
 			else -> last?.let { tryBody.add(stmt(it)) }
 		}
-		itParam?.let { valSubst.remove(it.name.asString()) }
+		itName?.let { if (hadIt) valSubst[it] = savedIt!! else valSubst.remove(it) }
 		// The `use{}` try/finally structure is a language lowering that stays in kotc, but the `close()` call in the finally
 		// is a PLAIN Kotlin member call on the kotlin.AutoCloseable receiver — bir2cir substitutes it to
 		// System.IDisposable.Dispose() off the @ClrTypeAlias/@ClrIntrinsic("Dispose") binding (layer purity — no BCL name
@@ -3348,6 +3399,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (recvExpr != null && lambda != null) return inlineUse(recvExpr, lambda, birType(call.type))
 		}
 
+		// `repeat(n) { i -> body }` -> SPLICE the lambda body (non-local return survives). kotc carries the un-closured
+		// body in a `callInline` node; bir2cir InlineSplice wraps it in the counted loop (#75). Only a LITERAL lambda is
+		// spliced; a callable-ref/other shape falls through to the plain callStatic (bir2cir RepeatInlineLowering, delegate).
+		if (calleeFq == "kotlin.repeat" && callee.isInline && regularArgs(call).size == 2
+			&& regularArgs(call).getOrNull(1) is IrFunctionExpression) {
+			return inlineRepeat(call)
+		}
+
 		// Collection/array factories (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`/…) are not
 		// recognized here: kotc emits the plain top-level `callStatic kotlin.collections.listOf(...)` (the faithful IR;
 		// the vararg argument itself rides as a `newArray` node). bir2cir reads the `@kotlin.clr.ClrCollectionFactory`
@@ -4021,9 +4080,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// plain call and the real stdlib body runs. This is also MORE correct than Math.Min for floats: Kotlin's coerce
 			// uses `<`/`>` (total-ordering / NaN-propagating) semantics that differ from System.Math.Min/Max on NaN.
 			// (No @ClrIntrinsic needed: the pure body IS the binding — the top-preferred "emit the real body" outcome.)
-			// `repeat(n) { i -> body }` is NOT inlined here: kotc emits the plain top-level call
-			// (`callStatic owner:null method:repeat args:[n, <newClosure for the lambda>]`) and bir2cir re-emits the
-			// `repeatInline` counter loop from the callee identity. The inline lowering lives there, not in kotc.
+			// `repeat(n) { i -> body }` with a LITERAL lambda IS spliced in kotc (above, near the scope-functions block):
+			// the body rides UN-CLOSURED in a `callInline` node so a bare `return` stays a NON-LOCAL return (#75). Only a
+			// non-literal shape (callable-ref/other) reaches here and falls through to the plain top-level call, which
+			// bir2cir's RepeatInlineLowering re-emits as a delegate counter loop.
 			// `kotlin.math.*` is NOT lowered here. kotc emits a plain call to the stdlib fun (owner=null callStatic /
 			// an extension instance for Double.pow); bir2cir's MemberCallSubstitution reads MathClr.kt's @ClrIntrinsic
 			// bindings off the ref.dll and substitutes System.Math.* / System.MathF.* — the CLR relation lives there, not

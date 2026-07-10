@@ -624,6 +624,16 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **Inline unification (#75), first slice — non-local `return` through `repeat(n){}` restored via a spliced inline
+  body.** kotc now recognizes a literal-lambda `repeat(n){ … }`, splices the lambda body UN-CLOSURED into a new
+  `callInline` BIR node (carried in the caller's scope, so a bare `return` inside stays a plain `return` = the
+  caller's return, and a `return@repeat` routes to a `goto` = `continue`), and bir2cir's new `InlineSplice` pass wraps
+  that body in the counted loop (`repeatInline`) with the body SPLICED rather than delegate-invoked. This restores the
+  non-local return that #73 M7's delegate-invoke loop dropped (recorded then as a limitation): `repeat` is an `inline`
+  fun, so a non-local return from its lambda is legal Kotlin. Gate: `cases/il-repeatnlr` (non-local return +
+  `return@repeat` + capture + implicit `it`). The `callInline` node + `InlineSplice` pass are the reusable
+  infrastructure the remaining #75 stages (scope functions / `use{}` / same- and cross-module inline) extend.
+
 - **The A2 tail — the remaining .NET SHAPE decisions for facadegen-injected owners moved from kotc to bir2cir (#73,
   audit item M4: newClr / field-property / clrOverride), plus the `strReversed` stdlib fix (M10).** #61 moved the
   .NET CALL family; M4 completes it for the SHAPES it left behind. kotc now emits the plain Kotlin-identity node — a

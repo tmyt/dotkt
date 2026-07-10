@@ -119,12 +119,17 @@ This is the single most surprising deviation, so it gets the most detail.
 - Pitfall (verified, do NOT do this): marking an injected body-less function `inline` *without* carrying the body lets
   the frontend accept a non-local return but leaves nothing to splice → `InvalidProgramException` at runtime (worse
   than the clean compile error). `inline` restoration and the carried body are a package deal.
-- **`repeat(n) { … }` does NOT honor a non-local `return`.** The stdlib `repeat` is `@InlineOnly` (no rt.dll body), so
-  its counter loop is re-synthesized in `bir2cir` (`RepeatInlineLowering`) — but by then kotc has already closured the
-  `action` lambda, so the loop INVOKES it as a delegate rather than splicing it. `n` is evaluated once, the index runs
-  `0..n-1`, and the action runs each iteration, but a non-local `return` inside `repeat { … return … }` returns from the
-  action, not the enclosing function. Use a `for (i in 0 until n)` loop when a non-local return is needed. (Other inline
-  lambdas — `let`/`also`/`with`/user same-module inline — still splice and DO honor non-local return, per above.)
+- **`repeat(n) { … }` honors a non-local `return`** (#75). For a literal-lambda `repeat`, kotc splices the lambda body
+  UN-CLOSURED into a `callInline` BIR node (carried in the caller's scope); `bir2cir`'s `InlineSplice` pass wraps that
+  body in the counted loop (`repeatInline`) with the body SPLICED, not delegate-invoked. `n` is evaluated once, the index
+  runs `0..n-1`, a non-local `return` inside `repeat { … return … }` returns from the enclosing function, and a
+  `return@repeat` acts as `continue`. (A non-literal action — e.g. `repeat(n, ::fn)` — still falls through to the
+  delegate loop `RepeatInlineLowering`, which does not honor a non-local return; but Kotlin only permits a non-literal
+  argument for a `noinline` param, and `repeat`'s action is not `noinline`, so this shape is a callable reference only.)
+  - **Edge (loud, not silent):** a `return@repeat` inside a `try`/`finally` in the repeat body branches out of the
+    protected region (`goto`, not `leave`) → `ilverify`/JIT rejects it. This is the general inline-splice hazard (it also
+    affects a mid-body `return` in a user same-module inline fn), not specific to `repeat`; use a `for` loop if you need a
+    labeled early-exit out of a `try` inside the loop.
 
 ## 4. `suspend fun` = an async `Task<T>` function; hot, not cold
 

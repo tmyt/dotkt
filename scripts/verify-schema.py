@@ -49,6 +49,8 @@ STR_OK = {
     # design"; NOT a document value-type slot). The dedicated owner keys are always owner-role, so allow-listing
     # them cannot mask a value-type leak (a value type is never keyed `owner`/`ownerType`/`clrOverride`).
     "owner",                                    # callStatic owner
+    "callee",                                   # callInline (#75): the inline fn's Kotlin FQN identity ("kotlin.repeat"),
+                                                # a dispatch key consumed by bir2cir InlineSplice — never survives to CIR
     "ownerType",                                # callInstance/field/setField/staticField owner
     "clrOverride",                              # the CLR base type whose member a method overrides (override-target owner)
 }
@@ -91,7 +93,7 @@ KINDS = {
     "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
     "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
     "if", "cond2", "while", "label", "goto", "brIf", "break", "continue",
-    "for", "forRange", "forArray", "forEachInline", "forIn", "repeatInline", "try",
+    "for", "forRange", "forArray", "forEachInline", "forIn", "repeatInline", "callInline", "try",
     # field-write family — the setField/setFieldExpr/staticFieldSet merge (§2.5) is "[finalize in impl]", so all
     # three remain LIVE kinds until that lands.
     "setFieldExpr", "staticFieldSet",

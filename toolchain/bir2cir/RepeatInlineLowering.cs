@@ -3,10 +3,12 @@ using System.Threading;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// TOP-LEVEL `repeat(n) { i -> … }` INLINE LOOP (#73 M7). kotc emits the FAITHFUL `callStatic owner:null method:repeat
-// args:[<n>, <action>]` — it no longer recognizes `repeat` nor synthesizes the counter loop. This @InlineOnly stdlib
-// helper has NO rt.dll body, so bir2cir re-emits the counted loop (n evaluated ONCE, index 0..n-1) that invokes the
-// action once per iteration:
+// TOP-LEVEL `repeat(n, <action>)` INLINE LOOP — the NON-LITERAL-lambda fallback (#73 M7 / #75). A LITERAL-lambda
+// `repeat(n){…}` is now spliced by kotc into a `callInline` node and lowered by InlineSplice (which honors a non-local
+// `return`); this pass handles only the residual shape where the action is NOT a lambda literal — e.g. `repeat(n, ::fn)`,
+// a callable reference kotc emits as a `callStatic owner:null method:repeat args:[<n>, <action>]` with the action as a
+// `newClosure`/`newDelegate`. This @InlineOnly stdlib helper has NO rt.dll body, so bir2cir re-emits the counted loop
+// (n evaluated ONCE, index 0..n-1) that invokes the action once per iteration:
 //
 //   repeat(n) { i -> body }  ->  { var __repc = <action>; repeatInline __rep in 0..<n>-1 { __repc.invoke(__rep) } }
 //
@@ -18,9 +20,9 @@ using DotKt.Bir;
 // arg-0-before-arg-1 order); `repeatInline` (ilemit Emitter.Statements/Expressions) re-reads that local.
 //
 // LIMITATION (recorded in docs/dotkt-semantics.md): because the action is invoked as a delegate rather than spliced,
-// a NON-LOCAL `return` inside `repeat { … return … }` (legal because `repeat` is `inline`) does NOT return from the
-// enclosing function — the recognition now lives BELOW the frontend, where kotc has already closured the lambda, so the
-// inline-splice needed for a non-local return is no longer available. Use a `for` loop when a non-local return is wanted.
+// a NON-LOCAL `return` through this fallback does NOT return from the enclosing function. This only affects the
+// non-literal (callable-reference) action; a literal-lambda `repeat{…}` splices via InlineSplice and DOES honor a
+// non-local return. A non-literal argument to `repeat` is only a callable reference (its param is not `noinline`).
 //
 // The action's function type is read off the call's `sig[1]` (the declared `(Int)->Unit` — always concrete for repeat),
 // used both as the hoist var's type and the delegateInvoke `funcType`. Gate: `owner:null method:repeat`, 2 args, and
