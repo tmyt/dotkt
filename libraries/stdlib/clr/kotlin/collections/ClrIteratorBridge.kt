@@ -42,3 +42,31 @@ internal class KotlinIteratorOverEnumerator<out T>(private val e: ClrEnumerator<
  *  because the default body is Kotlin, rule 3 hoists it to a static helper automatically. */
 public fun <T> iteratorOverEnumerable(self: ClrEnumerable<T>): Iterator<T> =
     KotlinIteratorOverEnumerator(self.GetEnumerator())
+
+/** The RAW (non-generic `System.Collections.IEnumerator`) twin of [KotlinIteratorOverEnumerator] — #74b(ii): a
+ *  star-projected/erased collection (`Collection<*>`/`Map<*,*>`) only implements the NON-generic BCL enumerable
+ *  facade (`ClrRawEnumerable`/`ClrRawEnumerator`, ClrNestedToString.kt), never a reified `IEnumerable<object>` —
+ *  so StarProjectionLowering's `.iterator()` binding must wrap THIS enumerator, not the generic one above, while
+ *  still producing a genuine `Iterator<Any?>` (so the ordinary hasNext/next consumer dispatch — which re-points
+ *  at the REAL referenced `kotlin.collections.Iterator<E>` — resolves against an object that actually implements it). */
+internal class KotlinIteratorOverRawEnumerator(private val e: ClrRawEnumerator) : Iterator<Any?> {
+    private var state: Int = 0   // 0 = unknown, 1 = has current buffered, 2 = done
+    override fun hasNext(): Boolean {
+        if (state == 1) return true
+        if (state == 2) return false
+        return if (e.MoveNext()) { state = 1; true } else { state = 2; false }
+    }
+    override fun next(): Any? {
+        if (!hasNext()) throw NoSuchElementException()
+        state = 0
+        return e.current()
+    }
+}
+
+/** Wrap a RAW (non-generic) BCL enumerable as a Kotlin `Iterator<Any?>` — the star-projected/erased-collection
+ *  `.iterator()` target (#74b(ii)). Every substituted collection implements the non-generic `System.Collections
+ *  .IEnumerable` facade regardless of its erased element type; `self` is typed `Any` (not the `internal
+ *  ClrRawEnumerable` alias directly — a PUBLIC function may not expose an internal parameter type, the same
+ *  reason `clrElemToString`/`clrMapGet` cast internally instead of taking the raw facade as their param). */
+public fun iteratorOverRawEnumerable(self: Any): Iterator<Any?> =
+    KotlinIteratorOverRawEnumerator((self as ClrRawEnumerable).GetEnumerator())

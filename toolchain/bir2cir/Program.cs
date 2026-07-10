@@ -206,11 +206,24 @@ sealed class Pipeline
             // FIRST and UNCONDITIONALLY (ref + app) so every downstream pass sees the old tree shape, and a ref-build
             // ctor field-init / base-arg (not body-squashed) carries a raw IL op, not an unresolvable builtin call.
             PrimitiveOperatorLowering.Apply(bir.Root, refs);
+            // ENUM REIFIED INTRINSICS (#73): kotc emits the faithful top-level `callStatic owner:null method:enumValues
+            // typeArgs:[T]` for `enumValues<T>()`/`enumValueOf<T>()`/`enums.enumEntries<T>()`/`enumEntriesIntrinsic<T>()`.
+            // Re-emit the same BIR vocabulary — rich enum -> static values()/valueOf(), basic/generic-param -> semantic
+            // enumValues/enumParse — deriving rich-vs-basic from the enum's emitted shape (local `enumRich:true`). Runs
+            // BEFORE ArrayConstructionLowering (#77): a `for (x in enumValues<Color>())` / `.entries` for-loop wraps
+            // this call in a `forArray` whose element ArrayConstructionLowering derives via StaticType off the ALREADY-
+            // lowered `enumValues`/rich-`values()` node — so the reified top-level intrinsic must already be in its
+            // final semantic shape when elem-derivation runs, exactly as kotc's retired call-site interception order
+            // implied. entries family: App-build sites only (stdlib self-build keeps the filler body — see
+            // EnumIntrinsicLowering).
+            EnumIntrinsicLowering.Apply(bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner);
             // ARRAY CONSTRUCTION + INTRINSIC ELEMENT (#73 Phase 2b-A): kotc emits the faithful `kotlin.IntArray`
             // identity — the sized ctor as `new kotlin.IntArray(size, init)`, the arrayGet/arraySet/forArray
             // intrinsics with NO `elem`. Derive the sized-array construction (newArrayInit/newArraySized) + stamp the
-            // intrinsic element off the array operand's static type. Runs EARLY (before FaithfulHintRecognition /
-            // SuspendColdLowering / BirTypeLowering) so every `elem` consumer sees the stamped element.
+            // intrinsic element off the array operand's static type — including a basic/generic-param `enumValues`
+            // array (StaticType.Surface's `enumValues` case, #77) now that the pass above has already produced it.
+            // Runs EARLY (before FaithfulHintRecognition / SuspendColdLowering / BirTypeLowering) so every `elem`
+            // consumer sees the stamped element.
             ArrayConstructionLowering.Apply(bir.Root, refs);
             // FAITHFUL-HINT RECOGNITION (#52 Phase 4b / #59): kotc emits the faithful op (`objMethod ToString/Equals`,
             // `concat`, `callStatic println/print`, Double/Float `callInstance compareTo`) with NO type hint; bir2cir
@@ -227,14 +240,6 @@ sealed class Pipeline
             // + closure passes that CONSUME delegateInvoke / any type-erasing pass) and UNCONDITIONALLY (ref + app),
             // reproducing the flow that existed when kotc emitted conv/delegateInvoke directly.
             CharCodeInvokeLowering.Apply(bir.Root, refs);
-            // ENUM REIFIED INTRINSICS (#73): kotc emits the faithful top-level `callStatic owner:null method:enumValues
-            // typeArgs:[T]` for `enumValues<T>()`/`enumValueOf<T>()`/`enums.enumEntries<T>()`/`enumEntriesIntrinsic<T>()`.
-            // Re-emit the same BIR vocabulary — rich enum -> static values()/valueOf(), basic/generic-param -> semantic
-            // enumValues/enumParse — deriving rich-vs-basic from the enum's emitted shape (local `enumRich:true`). Runs
-            // EARLY (with the other faithful recognitions) so the produced nodes flow through every downstream pass as
-            // kotc's retired call-site interception did. entries family: App-build sites only (stdlib self-build keeps
-            // the filler body — see EnumIntrinsicLowering).
-            EnumIntrinsicLowering.Apply(bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner);
             // .NET-INTEROP CALL BINDING (A2 / #61): bind a facadegen-injected .NET member call — which kotc now emits as
             // a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN identity — to its CLR call SHAPE
             // (clrStatic/clrInstance/clrPropGet/clrPropSet/clrGeneric*), resolved off the loaded .NET reference
@@ -4231,18 +4236,35 @@ static class StarProjectionLowering
                     ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 0 },
                 };
             case "iterator":
-                // `.iterator()` -> IEnumerable.GetEnumerator (non-generic IEnumerator; Current is object == Any).
-                return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IEnumerable"), ["method"] = "GetEnumerator", ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = TypeJson.Fqn("System.Collections.IEnumerator"), ["recv"] = CastTo("System.Collections.IEnumerable") };
+                // `.iterator()` -> the rt bridge `ClrIteratorBridgeKt.iteratorOverRawEnumerable` (#74b(ii)), NOT a raw
+                // `IEnumerable.GetEnumerator()` clrInstance: the consumer var this call initializes stays declared
+                // `kotlin.collections.Iterator<Any?>` (StarProjectionLowering never touches that decl slot), and
+                // IteratorConsumerNormalization re-points its hasNext/next dispatch at the REAL referenced generic
+                // `kotlin.collections.Iterator<E>` interface — Kotlin's `hasNext` is idempotent while `MoveNext` is
+                // NOT, so a raw IEnumerator can never correctly BACK that dispatch directly. The bridge's
+                // `KotlinIteratorOverRawEnumerator` DOES implement the real `Iterator<Any?>`, closing the gap: the
+                // owner FQN starts with "kotlin." so IteratorConsumerNormalization's existing re-typing recognizes it
+                // exactly like the generic `iteratorOverEnumerable` bridge.
+                return new JsonObject { ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrIteratorBridgeKt"), ["method"] = "iteratorOverRawEnumerable", ["args"] = new JsonArray { CastTo("System.Collections.IEnumerable") }, ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.Iterator", new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) })) };
             case "get":
             case "get_Item":
-                // `list[i]` -> IList.get_Item(int) (returns object == Any). (A `map[key]` read is early-bound to the
-                // generic MapsKt.get extension before this pass, so it does not arrive here.)
-                if (args == null || args.Count < 1 || iface != "System.Collections.IList") return null;
-                return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IList"), ["method"] = "get_Item", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32") }, ["ret"] = TypeJson.Fqn("System.Object"), ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
+                // `list[i]` -> IList.get_Item(int) (returns object == Any); `map[key]` -> IDictionary.get_Item(object)
+                // (#74a — null-on-missing, matching Kotlin `Map.get`'s null-on-missing exactly; both are returned
+                // object == Any(?)).
+                if (args == null || args.Count < 1) return null;
+                if (iface == "System.Collections.IList")
+                    return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IList"), ["method"] = "get_Item", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32") }, ["ret"] = TypeJson.Fqn("System.Object"), ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
+                if (iface == "System.Collections.IDictionary")
+                    return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IDictionary"), ["method"] = "get_Item", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") }, ["ret"] = TypeJson.Fqn("System.Object"), ["recv"] = CastTo("System.Collections.IDictionary"), ["args"] = new JsonArray { args[0].DeepClone() } };
+                return null;
             case "contains":
                 // `list.contains(e)` -> IList.Contains(object) (only the non-generic IList carries a Contains).
                 if (args == null || args.Count < 1 || iface != "System.Collections.IList") return null;
                 return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IList"), ["method"] = "Contains", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") }, ["ret"] = TypeJson.Fqn("System.Boolean"), ["recv"] = CastTo("System.Collections.IList"), ["args"] = new JsonArray { args[0].DeepClone() } };
+            case "containsKey":
+                // `map.containsKey(k)` -> IDictionary.Contains(object) (#74a).
+                if (args == null || args.Count < 1 || iface != "System.Collections.IDictionary") return null;
+                return new JsonObject { ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IDictionary"), ["method"] = "Contains", ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") }, ["ret"] = TypeJson.Fqn("System.Boolean"), ["recv"] = CastTo("System.Collections.IDictionary"), ["args"] = new JsonArray { args[0].DeepClone() } };
             default:
                 return null;
         }
@@ -4908,6 +4930,16 @@ static class MemberCallSubstitution
         ["kotlin.UIntArray"] = "kotlin.Int", ["kotlin.ULongArray"] = "kotlin.Long",
     };
 
+    // A star-projection/erased type-arg token: `object`/`kotlin.Any`, possibly nullable/oblivious-wrapped (a star K/V
+    // projects to `Any?`, i.e. `{t:nullable,of:kotlin.Any}` post-#48). Used by the Map<*,*> extension guard (#74a).
+    static bool IsErasedAny(TypeNode t) => t switch
+    {
+        TypeNode.Nullable n => IsErasedAny(n.Of),
+        TypeNode.Oblivious o => IsErasedAny(o.Of),
+        TypeNode.Fqn { Args: null, Name: "object" or "kotlin.Any" } => true,
+        _ => false,
+    };
+
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner)
     {
@@ -5327,6 +5359,30 @@ static class MemberCallSubstitution
             if (TryFactorySubst(node, refs, fn) is JsonNode factoryNode) return factoryNode;
             var args0 = node["args"] as JsonArray ?? new JsonArray();
             var sigParts0 = SplitSig(node);
+            // STAR-PROJECTED Map<*,*> cross-module extension (#74a): `m[key]`/`m.containsKey(key)` on a star-projected
+            // `Map<*,*>` receiver is NOT dispatched as the Map interface MEMBER (a star receiver's `K`-typed param
+            // isn't a viable member-call argument) — Kotlin instead resolves the top-level `@kotlin.internal.
+            // OnlyInputTypes` extension `Map<out K,V>.get`/`.containsKey` (Maps.kt). That extension is `@InlineOnly`
+            // but is NOT actually inlined cross-module (the frontend klib carries no IR bodies for it), so it arrives
+            // HERE as a genuine generic top-level call instantiated K=V=`object`/`Any?` (the star erasure). Its
+            // compiled body re-casts internally to the covariance-safe non-generic `IDictionary` facade
+            // (`ClrRawDictionary`), but the CALL BOUNDARY's own formal param — `Map<K,V>` = the INVARIANT generic
+            // `IDictionary<object,object>` at this instantiation — throws InvalidCastException first (the real
+            // receiver's runtime type, e.g. `Dictionary<String,Int>`, is not assignable to it). Recognize this
+            // exact shape and emit the non-generic `IDictionary.get_Item`/`.Contains` call directly (its indexer is
+            // null-on-missing, matching Kotlin `Map.get`'s null-on-missing exactly) — bypassing the generic route.
+            if ((fn == "get" || fn == "containsKey") && args0.Count == 2 && sigParts0.Count >= 1
+                && sigParts0[0] is TypeNode.Fqn { Name: "kotlin.collections.Map" or "kotlin.collections.MutableMap" }
+                && node["typeArgs"] is JsonArray starTypeArgs && starTypeArgs.Count >= 1
+                && starTypeArgs.All(t => IsErasedAny(TypeJson.Read(t))))
+                return new JsonObject
+                {
+                    ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
+                    ["method"] = fn == "get" ? "get_Item" : "Contains",
+                    ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") },
+                    ["ret"] = TypeJson.Fqn(fn == "get" ? "System.Object" : "System.Boolean"),
+                    ["recv"] = args0[0]?.DeepClone(), ["args"] = new JsonArray { args0[1]?.DeepClone() },
+                };
             // A top-level @ClrIntrinsic bound to a FQ BCL static. Resolve the EXACT overload by the call's full
             // ParamKey signature first (sqrt/abs/pow -> System.Math.* for Double/Int/Long but System.MathF.* for
             // Float; a non-intrinsic sibling like Double.pow(Int) MISSES here). Fall back to the name-only map only for
@@ -5523,6 +5579,25 @@ static class MemberCallSubstitution
         if (instance && kind == "interface" &&
             (ownerFqn == "kotlin.collections.Map" || ownerFqn == "kotlin.collections.MutableMap"))
         {
+            // STAR-PROJECTED Map<*,*> (#74a): `get`/`containsKey` on an ALL-erased Map/MutableMap owner would
+            // otherwise route to the generic ClrMapDefaultsKt.clrMapGet/clrMapContainsKey helper below, whose FORMAL
+            // param is `Map<K,V>` = the INVARIANT generic `IDictionary<object,object>` at this K=V=object
+            // instantiation. The real receiver's runtime type (e.g. `Dictionary<String,Int>`) is NOT assignable to
+            // that generic instantiation (CLR generics are reified + invariant) even though the helper's BODY
+            // immediately re-casts to the covariance-safe NON-generic `IDictionary` facade (`ClrRawDictionary`) —
+            // the call BOUNDARY itself throws InvalidCastException before the body ever runs. Skip the generic
+            // helper entirely and emit the non-generic call directly: `IDictionary.get_Item`/`.Contains` (both
+            // implemented by every `Dictionary<K,V>` regardless of K/V — `IDictionary<K,V> : IDictionary`, so no
+            // recv cast is needed). `IDictionary`'s indexer is null-on-missing, matching Kotlin `Map.get` exactly.
+            if (FaithfulHints.IsStarProjectedColl(ownerFqnNode) && args.Count >= 1 && member is "get" or "containsKey")
+                return new JsonObject
+                {
+                    ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
+                    ["method"] = member == "get" ? "get_Item" : "Contains",
+                    ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") },
+                    ["ret"] = TypeJson.Fqn(member == "get" ? "System.Object" : "System.Boolean"),
+                    ["recv"] = node["recv"]?.DeepClone(), ["args"] = new JsonArray { args[0].DeepClone() },
+                };
             var mutable = ownerFqn == "kotlin.collections.MutableMap";
             var helper = (member, args.Count, mutable) switch
             {

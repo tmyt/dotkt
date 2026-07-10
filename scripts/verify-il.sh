@@ -215,6 +215,10 @@ il_check xfaceimpl XFace "$ROOT/cases/il-xfaceimpl" "1"   # cross-file + namespa
 il_check genhof XHof "$ROOT/cases/il-genhof/app.kt" "$(printf '1\n2\n3')"   # generic fn: (T)->Unit over List<T> (TypeBuilderInstantiation.GetMethod regression)
 il_check genclosure GenClo "$ROOT/cases/il-genclosure/app.kt" "$(printf '1\nfn:2\n3\n4\nret:5\nlf:6')"   # closure in a generic fn capturing T-typed values (generic closure class regression)
 il_check enum  Enum  "$ROOT/cases/il-enum"   "$(printf 'red\ngreen\nblue')"
+# enumintr (#77): a BASIC (non-rich) enum's top-level reified `enumValues<T>()`/`enumValueOf<T>()` intrinsics — index
+# + `.size` + a for-loop (the `forArray` elem-derivation gap StaticType.Surface's `enumValues` case fixes) + a
+# reified-generic-inline callee (`pick<T>`) instantiating the same intrinsic post-inline.
+il_check enumintr EnumIntr "$ROOT/cases/il-enumintr/app.kt" "$(printf 'GREEN\n3\n2\nRED\nGREEN\nBLUE\nBLUE')"
 # m2 / mi1 consume BCL types via `import System.X` (System.Math, System.Text.StringBuilder) -> the facadegen import
 # scan (il_check_imports), NOT a bare il_check (which injects nothing, so the import would not resolve). No runtime.cs.
 il_check_imports m2  M2    "$ROOT/cases/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"

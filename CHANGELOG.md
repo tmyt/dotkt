@@ -142,6 +142,30 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   stdlib's `clrElemToString(Any?)`, which renders `{1=2}` / `[10, 20, 30]` via the non-generic facades; `.size`
   re-points onto the non-generic `ICollection.Count` and `[i]` onto `IList.get_Item`. Gate: `cases/il-starproj`
   (ilverify-clean). All lowering is in bir2cir (the Kotlin↔CLR layer); no kotc/ilemit change.
+- **A basic (non-rich) enum's top-level reified `enumValues<T>()`/`.entries` for-loop no longer crashes ilemit
+  (#77).** `for (x in enumValues<Color>())` / `for (c in Color.entries)` wraps the `enumValues` node in a `forArray`
+  with no `elem` — bir2cir's static-type recovery (`StaticType.Surface`) had a case for a singular `enumValue` but
+  none for the plural array-producing `enumValues`, so `elem` derivation returned null and ilemit's `forArray`
+  emission KeyNotFound'd on the missing property. Added the `enumValues` case (handling both the structured
+  top-level-intrinsic encoding and kotc's legacy `"@Name"` string form for a direct `Color.values()`/`.entries`
+  member read), and reordered `EnumIntrinsicLowering` to run BEFORE `ArrayConstructionLowering` so the reified
+  top-level intrinsics are already in their final semantic shape when element-derivation runs. Gate:
+  `cases/il-enumintr` (index/`.size`/`enumValueOf`/for-loop/reified-inline-fn instantiation).
+- **`Map<*,*>`'s `get`/`containsKey` (and any `Collection<*>`/`Map<*,*>` for-loop / explicit `.iterator()`) no
+  longer throws `InvalidCastException`/`EntryPointNotFoundException` on a star-projected receiver (#74).**
+  `m[key]`/`m.containsKey(k)` on a `Map<*,*>` resolves (Kotlin `@OnlyInputTypes` overload rule) to the stdlib's
+  cross-module `Maps.kt` extension — not the `Map` interface member — and since that extension is `@InlineOnly`
+  but not actually inlined cross-module, it arrives at bir2cir as a generic top-level call instantiated
+  `K=V=object`; its generic `IDictionary<object,object>` call-boundary param rejects the receiver's real
+  (invariant, reified) runtime type before the extension's own covariance-safe body ever runs. bir2cir now
+  recognizes this exact shape and emits the non-generic `IDictionary.get_Item`/`.Contains` call directly (its
+  indexer is null-on-missing, matching Kotlin `Map.get` exactly) — same fix applied to `StarProjectionLowering`'s
+  member-call routing for completeness. Separately, a `for`/explicit-`.iterator()` over an `(x as Collection<*>)`
+  cast dispatched a typed `IEnumerable<object>`/generic `Iterator<object>` a value-type-element runtime collection
+  doesn't implement; `.iterator()` now routes through a new rt bridge (`iteratorOverRawEnumerable`, a
+  `KotlinIteratorOverEnumerator` twin over the non-generic `IEnumerator`) that produces a genuine `Iterator<Any?>`,
+  and `SequenceForEachLowering`'s non-generic `IEnumerable`/`IEnumerator` for-loop rewrite now also fires for a
+  star-projected/erased collection cast (previously Sequence-only). All bir2cir-side; one new rt stdlib helper.
 - **`!!` on a value-type nullable (`Int?`/`Long?`/`Double?`/`Byte?`…) now emits verifiable IL and throws on null (#56).**
   kotc lowered the `CHECK_NOT_NULL` intrinsic (`v!!`) to a bare pass-through, leaving the `System.Nullable<X>` **struct**
   on the stack where the use site consumes the bare value: `n!! + 1` produced an `InvalidProgramException`, `n!!.toLong()`

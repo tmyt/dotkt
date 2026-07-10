@@ -101,12 +101,29 @@ static class SequenceForEachLowering
         fe["body"] = new JsonArray { enumVar, whileStmt };
     }
 
-    // True iff the src expression's static type is `kotlin.sequences.Sequence` (the erased-anon-object Sequence case).
+    // The non-generic BCL interfaces StarProjectionLowering rewrites a star-projected/erased collection `cast` onto
+    // (#74b) — a `for`-loop source landing here already wearing one of these needs the SAME non-generic dispatch a
+    // Sequence does (its underlying runtime value, e.g. a `List<int>`, has no typed `IEnumerable<object>` slot).
+    static readonly HashSet<string> NonGenericIfaces = new(System.StringComparer.Ordinal)
+    {
+        "System.Collections.ICollection", "System.Collections.IList",
+        "System.Collections.IEnumerable", "System.Collections.IDictionary",
+    };
+
+    // True iff the src expression's static type is `kotlin.sequences.Sequence` (the erased-anon-object Sequence
+    // case), OR (#74b) it is a `cast` to a star-projected/erased collection — either ALREADY rewritten to a
+    // non-generic BCL interface by StarProjectionLowering (Phase 1, runs BEFORE this pass — #74b(i)) or
+    // (defensively, in case ordering ever changes) still the raw star-projected `kotlin.collections.*` alias.
     static bool IsSequenceTyped(JsonObject src)
     {
         foreach (var key in new[] { "ret", "dynRet", "type" })
             if (src[key] is JsonNode n && Unwrap(TypeJson.Read(n)) is TypeNode.Fqn f && f.Name == "kotlin.sequences.Sequence")
                 return true;
+        if (Str(src["k"]) == "cast" && TypeJson.Read(src["type"]) is TypeNode castType)
+        {
+            if (castType is TypeNode.Fqn { Args: null } cf && NonGenericIfaces.Contains(cf.Name)) return true;
+            if (FaithfulHints.IsStarProjectedColl(castType)) return true;
+        }
         return false;
     }
 

@@ -52,12 +52,6 @@ need_fe_jar; need_stdlib_ref; need_stdlib_rt
 # 2026-07-02 stdlib subtree bump cde8afd are FIXED — maxOrNull overload-select, sumOf func-return-type
 # overload disambiguation, and the groupBy/associate* Map dual-rep variance realignment — and pruned.)
 declare -A XFAIL_DIFF=(
-	# Pre-existing (NOT a #76 regression — proven by git-stash: crashes identically on the pre-#76 toolchain).
-	# A `for (x in Color.values())` / `Color.entries` loop directly over an enum values/entries array: the
-	# forArray node reaches ilemit with NO `elem` (EmitStmt forArray GetProperty("elem") KeyNotFound) because
-	# bir2cir's StaticType doesn't derive the element of an enumValues / E.values() node. Tracked as #77(1);
-	# prune this entry when #77 lands.
-	[m-a8]="#77(1) enum values()/entries direct-for-loop forArray has no elem (pre-existing, bir2cir StaticType gap)"
 )
 
 # Pure-Kotlin samples only (no @Clr / injected .NET types — those can't run on the JVM). Each name is a
@@ -79,7 +73,7 @@ il-seq il-char il-sort il-funref il-getclass il-localdeleg il-langfeat il-mapdes
 il-arr il-blank il-bymap il-bytearg il-charminus il-charseq il-charseqs il-charseqx il-chunk il-closure il-cmpord il-coerce il-coll il-coll2 il-coll3 il-collrealkt il-colstr il-comparable il-comparator il-cp il-ctor il-customexc il-deleg il-deleg2 il-digittoint il-dsl il-duration il-emptymap il-enum il-enumbody il-enumrich il-exc il-excmap il-exprbody il-ext il-for il-genbase il-genclosure il-gencolladd il-genctor il-generic il-generic2 il-generic3 il-generic4 il-generic5 il-generic6 il-genhof il-genstatic il-gfac il-groupvalues il-hashset2 il-iface il-inline il-inline2 il-inner il-interpnull il-iscoll il-iter il-iterable il-lambda il-langtail il-lazy il-loopjump il-math il-mapfilter il-mapforin il-mapgen il-mapof1 il-maptostr il-mfclosure il-mflambda il-mutcoll il-mutset il-nan il-nancmp il-nested il-nestedstr il-nestedtry il-ntostr il-null il-nulltostr il-object il-objexpr il-objgen il-op il-ops il-overload il-overrideprop il-pair il-printlnnull il-rangein il-regex il-regexgroups il-regexreplace il-reqnn il-result il-rwp il-safecallnv il-samcmp il-scope il-seqfilter il-setlocalbox il-smartcast il-str il-strnum il-strops il-subseq il-substr il-throwexpr il-tryexprop il-trynullable il-unsigned il-use il-valclass il-vis il-volatile il-whensubj il-xfaceimpl il-xinline il-xprop \
 il-nullableprim il-boxgen il-mathabs il-radix il-strhash il-pairtostr il-extprop il-defargs il-defargs2 il-negzero il-listeq il-indices il-pairnest il-mapmerge \
 il-genmax il-listplus il-divmin il-nestlam il-genseq2 il-cwindowed il-cwindowedv il-eachcount il-groupby2 il-mapvalues il-indicesv \
-il-triple il-typealias il-atomics il-tailrec il-copydef il-equalscall"
+il-triple il-typealias il-atomics il-tailrec il-copydef il-equalscall il-enumintr"
 # COV2/COV3/COV4 (kcc review §2B, 2026-07-06): il-atomics (kotlin.concurrent.atomics — the @ClrRefArgument
 # Interlocked byref binding; API restricted to the released 2.2.0 surface so the JVM oracle resolves it),
 # il-typealias (typealias over stdlib generic / function type / user class across a fn boundary), il-triple
