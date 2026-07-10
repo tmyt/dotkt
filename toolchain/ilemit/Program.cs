@@ -203,9 +203,9 @@ sealed partial class Emitter
                     var kind = t.GetProperty("kind").GetString();
                     // #68: `generated:true` is the STRUCTURAL compiler-generated flag (a #37-freeze win over the retired
                     // `name.StartsWith("dotkt$")` string-sniff). kotc/bir2cir stamp it on every synthetic type def
-                    // (closures, ref cells, KProperty(Impl), CharSequence, ClrH helpers, lifted anon/local classes).
+                    // (closures, ref cells, CharSequence, ClrH helpers, lifted anon/local/property-reference classes).
                     var generated = t.TryGetProperty("generated", out var genEl) && genEl.GetBoolean();
-                    // Shared synthetic types (`dotkt$KProperty`/`dotkt$CharSequence`/…) are emitted
+                    // Shared synthetic types (`dotkt$CharSequence`/…) are emitted
                     // identically by EVERY file that uses them; in a multi-file assembly they'd redefine the same name
                     // and collide in `_types` (orphaning a TypeBuilder -> Save crash). They're structurally identical,
                     // so the first definition serves all references — skip the duplicates. (Per-file-DISTINCT synthetics
@@ -2963,12 +2963,11 @@ sealed partial class Emitter
     // A shared compiler-synthetic type that, once verified cross-assembly, is emitted ONCE (public) in the rt stdlib
     // dll and REFERENCED by app assemblies instead of re-synthesized per-assembly (canonicalization), so a value
     // crossing the app<->rt boundary keeps ONE CLR identity. CharSequence first; extend as each synthetic is verified.
-    // KProperty(+Impl) verified 2026-07-02: MONOMORPHIC (one shape — get_name/ctor(string) — everywhere), and Map
-    // delegation (`val x by map`) passes the app's KPropertyImpl into the rt's
-    // `MapAccessorsKt.getValue(map, thisRef, dotkt$KProperty)` — a distinct per-assembly copy EntryPointNotFound-s
-    // on `get_name`. Both names skip together (Impl's iface/method sigs reference the canonical interface).
+    // (`dotkt$KProperty`/`dotkt$KPropertyImpl` — formerly listed here — are RETIRED, #70: `kotlin.reflect.KProperty*`
+    // is now a REAL rt-stdlib interface and `kotlin.reflect.ClrPropertyStub` a REAL rt-stdlib class, both referenced
+    // — not re-synthesized per-assembly — so no canonicalization is needed for either.)
     static readonly HashSet<string> CanonicalSynthetics = new(StringComparer.Ordinal)
-        { "dotkt$CharSequence", "dotkt$KProperty", "dotkt$KPropertyImpl" };
+        { "dotkt$CharSequence" };
     // #68: stamp the STANDARD [System.Runtime.CompilerServices.CompilerGenerated] on a compiler-generated type — the
     // generated signal read from the `generated:true` BIR flag (and applied to ilemit's OWN synthetics too), so facadegen
     // skips generated types by attribute rather than by `dotkt$` name-sniffing.

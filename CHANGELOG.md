@@ -1053,6 +1053,21 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   (the CLR property model: every emitted property accessor is CIL-named that way regardless of
   CLR-boundness), so the byte-identical output is preserved for the common (unbound) case. Verified via
   a companion computed val/var (get_/set_ fallback CIR unchanged) and the schema gate.
+- **`kotlin.reflect.KProperty0`/`KMutableProperty0`/`KProperty1`/`KMutableProperty1` are now REAL emitted
+  stdlib interfaces, not the compiler's `dotkt$KProperty(+Impl)` synthetic (#70).** The klib migration
+  made these interfaces (`KPropertyClr.kt`) real CLR types in `DotKt.Stdlib.dll`, leaving the old
+  synthetic a redundant parallel identity. A genuine callable reference (`::x`, `obj::p`, `Type::p`) now
+  lowers (kotc's `propertyRef`) to a lifted class — mirroring `samConversion` — that implements the REAL
+  `KProperty0`/`KMutableProperty0`/`KProperty1`/`KMutableProperty1` (including the interface's own
+  fake-overridden `invoke()`, so `(::x)()` and passing `::x` to a `KProperty0<T>`-typed parameter both
+  work); v1 covers a top-level property, and a member property either BOUND (`obj::p`, receiver captured
+  in a field) or UNBOUND (`Type::p`, receiver is the `get`/`set`'s own leading param) — an
+  extension-receiver property reference (`KProperty2`) is a clean deferral. A delegated property's
+  compiler-synthesized `getValue`/`setValue`/`provideDelegate` argument — which only ever needs `.name`
+  — now materializes a real (but minimal) `kotlin.reflect.ClrPropertyStub` instead. `dotkt$KProperty` /
+  `dotkt$KPropertyImpl` are deleted from all three layers (kotc's `birType`/`birTypeDeleg` KProperty
+  special-casing, bir2cir's `SharedSyntheticSynthesis`, ilemit's `CanonicalSynthetics`) in the same
+  change — no dual-track.
 
 ### Tooling, build & gates
 

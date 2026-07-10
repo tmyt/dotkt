@@ -2491,7 +2491,7 @@ static class BirTypeLowering
     {
         // Function types are structured `fn` nodes now (#37 #49): the `func:`/`sfunc:` STRING type token is retired,
         // so this string resolver never receives one. It survives only for the bare-FQN + CLR-shorthand LEAF slots
-        // that kotc/bir2cir still emit as strings (synthetic interface names like `dotkt$KProperty`, the injected
+        // that kotc/bir2cir still emit as strings (synthetic interface names like `dotkt$CharSequence`, the injected
         // StringCharSequenceBridge adapter's `kotlin.String` slots) — resolved by the kotlin.* map / LowerLeaf below.
         var t = raw.Trim();
         // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers

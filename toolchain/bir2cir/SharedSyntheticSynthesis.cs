@@ -4,21 +4,23 @@ using System.Text.Json.Nodes;
 
 // #52 (kotc-purity): SYNTHESIZE the remaining fixed-shape CLR-representation synthetic TYPES here, in the Kotlin<->CLR
 // layer, instead of in the kotc frontend. kotc emits only the FACTS (a use-site reference / a `refTypes` registry);
-// this pass assembles the actual TYPE definitions and injects them into the file `types`. Three producers move:
+// this pass assembles the actual TYPE definitions and injects them into the file `types`. Two producers move:
 //
 //   • dotkt$CharSequence  — the monomorphic interface (get_length/get/subSequence) a `class S : CharSequence` or a
 //     CharSequence-typed slot needs (kotlin.CharSequence has no faithful .NET supertype). Emitted into any file that
 //     REFERENCES the identity, mirroring kotc's old per-file `usesCharSeq` trigger (ilemit dedups per assembly and
 //     canonicalizes to the rt stdlib's copy when it resolves externally).
-//   • dotkt$KProperty(+Impl) — the minimal KProperty reflection stub (`name`) a `::prop` / delegated-property use
-//     lowers to (a pure binding, #57). Both defs are emitted together into any file that references either identity.
 //   • dotkt_<scope>_Ref_<elem> — the monomorphized heap cell `class …{ var v }` promoting a captured-and-mutated
 //     local. Assembled from the file's `refTypes` registry ({name, element-type}); the element type is unrecoverable
 //     from the use-site `field .v` nodes alone, so kotc carries it as the registry fact.
 //
-// Runs in the Phase-1 per-file loop, AFTER ClosureSynthesis (a closure's invoke body may reference KProperty, so its
-// class must already be in `types` to be scanned) and before type lowering. Unconditional (ref/rt/app): kotc emits
-// these facts in every build, exactly as its old charSeqIfaceDefs/kPropertyDefs/refDefs ran regardless of build.
+// (`dotkt$KProperty(+Impl)` — formerly synthesized here too — is RETIRED, #70: `kotlin.reflect.KProperty*` is now a
+// REAL emitted stdlib interface, and kotc's `propertyRef`/`kPropertyStub` materialize real implementations of it
+// directly via the ordinary `liftedTypes`/`new` machinery, like any other lifted class — no bir2cir synthesis needed.)
+//
+// Runs in the Phase-1 per-file loop, AFTER ClosureSynthesis (a closure's invoke body may reference CharSequence, so
+// its class must already be in `types` to be scanned) and before type lowering. Unconditional (ref/rt/app): kotc
+// emits these facts in every build, exactly as its old charSeqIfaceDefs/refDefs ran regardless of build.
 static class SharedSyntheticSynthesis
 {
     // #68: `dotkt$…` names use Kotlin's OWN unspeakable marker `$` (the string-template char; normal Kotlin source cannot
@@ -26,8 +28,6 @@ static class SharedSyntheticSynthesis
     // (kotc emits it, bir2cir synthesizes it, ilemit emits it verbatim). Every def carries `generated:true`; ilemit reads
     // that flag to stamp [System.Runtime.CompilerServices.CompilerGenerated].
     public const string CharSeq = "dotkt$CharSequence";
-    const string KProp = "dotkt$KProperty";
-    const string KPropImpl = "dotkt$KPropertyImpl";
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
@@ -58,13 +58,6 @@ static class SharedSyntheticSynthesis
 
         if (referenced.Contains(CharSeq) && present.Add(CharSeq))
             types.Add(JsonNode.Parse(CharSeqDef));
-        // KProperty + Impl travel together (Impl implements the interface; a delegated-property call passes an Impl into
-        // the rt's getValue(…, dotkt$KProperty)). Emit both whenever either identity is referenced.
-        if ((referenced.Contains(KProp) || referenced.Contains(KPropImpl)))
-        {
-            if (present.Add(KProp)) types.Add(JsonNode.Parse(KPropertyDef));
-            if (present.Add(KPropImpl)) types.Add(JsonNode.Parse(KPropertyImplDef));
-        }
     }
 
     // Recursively record any string value equal to one of the tracked synthetic names (a type node's `name`, an
@@ -80,7 +73,7 @@ static class SharedSyntheticSynthesis
                 foreach (var it in a) CollectRefs(it, acc);
                 break;
             case JsonValue v when v.TryGetValue<string>(out var s):
-                if (s == CharSeq || s == KProp || s == KPropImpl) acc.Add(s);
+                if (s == CharSeq) acc.Add(s);
                 break;
         }
     }
@@ -126,24 +119,12 @@ static class SharedSyntheticSynthesis
         };
     }
 
-    // Fixed-shape defs transcribed verbatim from kotc's retired charSeqIfaceDefs() / kPropertyDefs().
+    // Fixed-shape def transcribed verbatim from kotc's retired charSeqIfaceDefs().
     const string CharSeqDef = """
     {"name":"dotkt$CharSequence","kind":"interface","generated":true,"base":null,"fields":[],"ctors":[],"methods":[
       {"name":"get_length","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"body":[]},
       {"name":"get","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[{"name":"index","type":{"t":"fqn","name":"kotlin.Int"}}],"ret":{"t":"fqn","name":"kotlin.Char"},"body":[]},
       {"name":"subSequence","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[{"name":"startIndex","type":{"t":"fqn","name":"kotlin.Int"}},{"name":"endIndex","type":{"t":"fqn","name":"kotlin.Int"}}],"ret":{"t":"fqn","name":"dotkt$CharSequence"},"body":[]}
-    ]}
-    """;
-
-    const string KPropertyDef = """
-    {"name":"dotkt$KProperty","kind":"interface","generated":true,"base":null,"fields":[],"ctors":[],"methods":[
-      {"name":"get_name","static":false,"override":false,"virtual":false,"objectOverride":false,"vis":"public","params":[],"ret":{"t":"fqn","name":"kotlin.String"},"body":[]}
-    ]}
-    """;
-
-    const string KPropertyImplDef = """
-    {"name":"dotkt$KPropertyImpl","kind":"class","generated":true,"vis":"public","base":null,"interfaces":[{"t":"fqn","name":"dotkt$KProperty"}],"fields":[{"name":"name","type":{"t":"fqn","name":"kotlin.String"}}],"ctors":[{"params":[{"name":"name","type":{"t":"fqn","name":"kotlin.String"}}],"baseArgs":null,"thisArgs":null,"vis":"public","body":[{"k":"setField","ownerType":{"t":"fqn","name":"dotkt$KPropertyImpl"},"recv":{"k":"this"},"name":"name","value":{"k":"local","name":"name"}}]}],"methods":[
-      {"name":"get_name","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":{"t":"fqn","name":"kotlin.String"},"body":[{"k":"return","value":{"k":"field","ownerType":{"t":"fqn","name":"dotkt$KPropertyImpl"},"recv":{"k":"this"},"name":"name"}}]}
     ]}
     """;
 }

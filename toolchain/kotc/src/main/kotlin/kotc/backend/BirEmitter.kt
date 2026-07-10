@@ -59,6 +59,7 @@ import org.jetbrains.kotlin.ir.types.IrTypeProjection
 import org.jetbrains.kotlin.ir.expressions.IrWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
+import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
@@ -248,10 +249,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// `for (x in r)`, and every `it.hasNext()`/`it.next()` all dispatch on that real generic — exactly as `by lazy`
 	// dispatches on real `kotlin.Lazy<T>` (#57). The real generic interface is used (the BCL is full of them, ilemit
 	// emits the stdlib's own, and `Lazy<T>` proves a value-type arg works).
-	// A custom (non-lazy) delegated property passes a `KProperty<*>` to getValue/setValue. KProperty has no
-	// BCL equivalent (pure binding), so — like Kotlin/JVM's PropertyReferenceImpl — a minimal `dotkt_KProperty`
-	// interface (`name`) + `dotkt_KPropertyImpl(name)` class is synthesized into the user's assembly. #52: kotc emits
-	// only the use-site references (the FACT); bir2cir's SharedSyntheticSynthesis owns the TYPE definitions.
+	// A custom (non-lazy) delegated property passes a `KProperty<*>` to getValue/setValue. `kotlin.reflect.KProperty`
+	// is now a REAL emitted stdlib interface (klib migration, #70) — the accessor's compiler-synthesized argument
+	// materializes as `kotlin.reflect.ClrPropertyStub` (a real rt-stdlib name-only impl: `.name` + empty
+	// `.annotations`, never get()/set()/invoke()), and a genuine `::prop` callable reference materializes a real
+	// KProperty0/KMutableProperty0/KProperty1/KMutableProperty1 implementation (kotc's `propertyRef`, a lifted
+	// class like `samConversion`'s). No more `dotkt$KProperty` synthetic identity.
 
 	/** A user/anon class's emitted name (anon "<no name provided>" -> its synthetic lifted name). */
 	// A user type's .NET name = its Kotlin package projected as the .NET namespace (`alpha.Box`), so classes with the
@@ -302,10 +305,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun companionObjectTypeName(comp: IrClass): String =
 		typeName(comp.parent as IrClass) + "." + comp.name.asString() + "CompanionObject"
 
-	// #52 (kotc-purity): the compiler-generated `dotkt_KProperty` interface + `dotkt_KPropertyImpl` class (a pure
-	// binding, #57) is a CLR-representation synthetic. kotc emits ONLY the FACT — a `new dotkt_KPropertyImpl(name)`
-	// / a `callInstance dotkt_KProperty.get_name` at each `::prop` / delegate use site. bir2cir's
-	// SharedSyntheticSynthesis owns the two fixed-shape TYPE definitions, injecting them into any referencing file.
+	// #70: `kotlin.reflect.KProperty*` is a REAL emitted stdlib interface (KPropertyClr.kt), not a kotc synthetic —
+	// `kPropertyStub`/`propertyRef` below materialize real implementations of it directly (no bir2cir-synthesized
+	// type; the interface + its impls all live in the stdlib jar/ref/rt like any other real Kotlin type).
 
 	// kotlin.CharSequence has no faithful .NET equivalent (it's a read-only INDEXED polymorphic char view — neither
 	// IEnumerable<char>, char[], nor IReadOnlyList<char> fits, and String doesn't implement any of them as a common
@@ -2074,6 +2076,131 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/**
+	 * The materialization of a delegate accessor's compiler-synthesized `KProperty` argument (a `getValue`/
+	 * `setValue`/`provideDelegate` 2nd arg, IR origin `PROPERTY_REFERENCE_FOR_DELEGATE`) -> `new
+	 * kotlin.reflect.ClrPropertyStub(name)`, the REAL emitted stdlib name-only impl of `KProperty<Any?>`
+	 * (KCallable.name + KAnnotatedElement.annotations). Kotlin's own delegate convention only ever reads `.name`
+	 * off this argument in ordinary bodies — never get()/set()/invoke() — so this cheap stub (not the full
+	 * `propertyRef` lift below) is always correct for it. Replaces the retired `dotkt$KPropertyImpl` synthetic.
+	 */
+	internal fun kPropertyStub(name: String): String =
+		"""{"k":"new","type":${TypeNode.Fqn("kotlin.reflect.ClrPropertyStub", listOf(OBJ)).toJson()},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(name)}}]}"""
+
+	/**
+	 * A genuine callable reference to a property (`::x`, `obj::p`, `Type::p`) -> a lifted class implementing the
+	 * REAL emitted stdlib `kotlin.reflect.KProperty0`/`KMutableProperty0`/`KProperty1`/`KMutableProperty1<…>`
+	 * interface (mirrors `samConversion`: a KProperty interface has no faithful .NET delegate representation, so
+	 * this is a lifted CLASS via `new`, not a `newDelegate`). `node.type` already carries FIR's resolved interface
+	 * identity + its (possibly generic) V/T arguments — reused verbatim as both the `interfaces` entry and the
+	 * get/set param types, so a captured enclosing generic (`Box<T>::value`) resolves through the SAME `birType`/
+	 * `typeArgSubst` machinery any other reference does (no separate remap here).
+	 *
+	 * v1 scope: a TOP-LEVEL property (`::x`), or a MEMBER property either BOUND (`obj::p`, receiver captured in a
+	 * field) or UNBOUND (`Type::p`, receiver becomes the `get`/`set`'s own leading param) — mirrors `functionRef`'s
+	 * ctor-ref/bound/unbound split. An EXTENSION-receiver property reference (`KProperty2`), a `lateinit var`, and
+	 * a `@ClrField`/.NET-interface-overriding property are clean deferrals (their access shape differs from the
+	 * plain get_/set_ accessor convention used below). The compiler-synthesized KProperty argument of a delegate's
+	 * getValue/setValue/provideDelegate is NOT this path — those call sites materialize `kPropertyStub` directly
+	 * without going through `expr()`/this dispatch; the origin check below is a defensive fallback only.
+	 */
+	internal fun propertyRef(node: IrPropertyReference): String {
+		if (node.origin == IrStatementOrigin.PROPERTY_REFERENCE_FOR_DELEGATE)
+			return kPropertyStub(node.symbol.owner.name.asString())
+		if (propRefExtensionReceiver(node) != null)
+			return unsupported(node, "this property reference",
+				"an extension-receiver property reference (KProperty2) has no supported lowering yet")
+		val prop = node.symbol.owner
+		if (prop.isLateinit || isClrField(prop))
+			return unsupported(node, "this property reference",
+				"a lateinit/@ClrField property reference has no supported lowering yet")
+		val getterFn = node.getter?.owner ?: prop.getter
+			?: return unsupported(node, "this property reference", "the referenced property has no getter")
+		if (clrIfaceMemberName(getterFn) != null)
+			return unsupported(node, "this property reference",
+				"a property overriding a .NET-mapped interface member has no supported lowering yet")
+		val setterFn = if (prop.isVar) (node.setter?.owner ?: prop.setter) else null
+		val declClass = getterFn.parent as? IrClass
+		val name = prop.name.asString()
+		val boundRecv = propRefDispatchReceiver(node)
+
+		val ifaceSpec = birType(node.type) as? TypeNode.Fqn
+			?: return unsupported(node, "this property reference",
+				"its inferred type was not a KProperty/KMutableProperty interface")
+		val ifaceArgs = ifaceSpec.args.orEmpty()
+		val arity0 = ifaceSpec.name == "kotlin.reflect.KProperty0" || ifaceSpec.name == "kotlin.reflect.KMutableProperty0"
+		val vType = ifaceArgs.lastOrNull() ?: OBJ
+		val recvTypeNode = ifaceArgs.getOrNull(0).takeIf { !arity0 }   // KProperty1/KMutableProperty1's T (unbound only)
+
+		val bound = declClass != null && arity0 && boundRecv != null
+		val unbound = declClass != null && !arity0
+		val cname = "dotkt\$${synthScope}\$PropRef${closureCounter++}"
+
+		fun recvExprIn(): String = when {
+			bound -> """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
+			unbound -> """{"k":"local","name":"receiver"}"""
+			else -> """{"k":"this"}"""
+		}
+		val memberOwner: TypeNode = when {
+			bound -> ownerSpec(declClass, boundRecv!!.type)
+			unbound -> recvTypeNode ?: OBJ
+			else -> OBJ
+		}
+		fun accessorCall(isSetter: Boolean, extraArg: String?): String {
+			val fn = if (isSetter) setterFn!! else getterFn
+			val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
+			val args = listOfNotNull(extraArg).joinToString(",")
+			val method = str((if (isSetter) "set_" else "get_") + name)
+			return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":$method,"args":[$args]}"""
+		}
+
+		val readBody: String = if (declClass == null) {
+			// Top-level property: mirrors the ordinary top-level property-read path (a plain val/var is a static
+			// field; a computed one — no backing field — is a get_<name>() static).
+			val owner = fileClassOf(prop)
+			if (prop.backingField == null)
+				"""{"k":"return","value":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("get_$name")},"args":[]}}"""
+			else """{"k":"return","value":{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(name)}}}"""
+		} else """{"k":"return","value":${accessorCall(false, null)}}"""
+		val readParams = if (unbound) """{"name":"receiver","type":${str(recvTypeNode ?: OBJ)}}""" else ""
+		val getMethod = """{"name":"get","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]}"""
+		// KProperty0/KProperty1's declared supertype `() -> V`/`(T) -> V` gives them a REAL fake-overridden `invoke`
+		// abstract member (confirmed in the compiled BIR: `interfaces` drops the FunctionN supertype — a Kotlin
+		// function type has no faithful CLR interface base — but the interface's OWN `methods` still carries the
+		// fake override AS ITS OWN abstract slot). So the lifted class must implement it too, same body as `get`
+		// (mirrors JVM's `PropertyReferenceImpl.invoke() = get()`).
+		val invokeMethod = """{"name":"invoke","static":false,"override":true,"virtual":true,"params":[$readParams],"ret":${str(vType)},"body":[$readBody]}"""
+
+		val setMethod: String? = setterFn?.let {
+			val setBody = if (declClass == null) {
+				val owner = fileClassOf(prop)
+				if (prop.backingField == null)
+					"""{"k":"exprStmt","expr":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("set_$name")},"args":[{"k":"local","name":"value"}]}}"""
+				else """{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(name)},"value":{"k":"local","name":"value"}}}"""
+			} else """{"k":"exprStmt","expr":${accessorCall(true, """{"k":"local","name":"value"}""")}}"""
+			val setParams = (if (unbound) """{"name":"receiver","type":${str(recvTypeNode ?: OBJ)}},""" else "") +
+				"""{"name":"value","type":${str(vType)}}"""
+			"""{"name":"set","static":false,"override":true,"virtual":true,"params":[$setParams],"ret":${str(TypeNode.Fqn("kotlin.Unit"))},"body":[$setBody]}"""
+		}
+
+		val nameMethod = """{"name":"get_name","static":false,"override":true,"virtual":true,"params":[],"ret":${str(TypeNode.Fqn("kotlin.String"))},"body":[{"k":"return","value":{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(name)}}}]}"""
+		val annotationsRet = TypeNode.Fqn("kotlin.collections.List", listOf(TypeNode.Fqn("kotlin.Annotation")))
+		val annotationsMethod = """{"name":"get_annotations","static":false,"override":true,"virtual":true,"params":[],"ret":${str(annotationsRet)},"body":[{"k":"return","value":{"k":"callStatic","owner":null,"method":"emptyList","typeArgs":[${str(TypeNode.Fqn("kotlin.Annotation"))}],"args":[]}}]}"""
+
+		val recvFieldType = if (bound) birType(boundRecv!!.type) else null
+		val fields = if (bound) """{"name":"__recv","type":${str(recvFieldType!!)}}""" else ""
+		val ctorParams = if (bound) """{"name":"__recv","type":${str(recvFieldType!!)}}""" else ""
+		val ctorBody = if (bound) """{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv","value":{"k":"local","name":"__recv"}}""" else ""
+
+		val freeTps = freeTypeParams(listOf(node.type) + listOfNotNull(boundRecv?.type))
+		val methods = listOfNotNull(getMethod, invokeMethod, setMethod, nameMethod, annotationsMethod).joinToString(",")
+		liftedTypes.add("""{"name":${str(cname)},"kind":"class","generated":true${typeParamsJson(freeTps)},"base":null,"interfaces":[${ifaceSpec.toJson()}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":null,"body":[$ctorBody]}],"methods":[$methods]}""")
+
+		val classType = if (freeTps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, freeTps.map { tvOf(it) })
+		val ctorArgs = if (bound) expr(boundRecv!!) else ""
+		return """{"k":"new","type":${classType.toJson()},"args":[$ctorArgs]}"""
+	}
+
+	/**
 	 * Inline a scope function `recv.let/run/with/apply/also { ... }` to a value-block: bind the receiver to
 	 * a unique local, rewrite `it`/`this` to it, then yield the lambda's last expression (let/run/with) or
 	 * the receiver (apply/also). No delegate — the lambda body is spliced in directly.
@@ -2635,13 +2762,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/**
-	 * Like `birType`, but erases `KProperty` to Any for delegate (Func/Action) signatures. A synthetic type
-	 * (TypeBuilder) used as a generic argument to a BCL delegate triggers a Reflection.Emit limitation;
-	 * `Delegates.observable`'s callback takes a `KProperty` it almost always ignores, so erasing it sidesteps it.
+	 * Like `birType`, for a delegate (Func/Action) signature slot. `KProperty*` is NO LONGER erased to Any here
+	 * (#70): it is a REAL emitted stdlib interface now (KPropertyClr.kt), not a `dotkt$KProperty` synthetic
+	 * TypeBuilder, so a `Delegates.observable`/`vetoable` callback's `(KProperty<*>, T, T) -> Unit` param carries
+	 * its real generic identity like any other stdlib interface in a Func/Action slot.
 	 */
 	internal fun birTypeDeleg(t: IrType): TypeNode {
-		val fq = t.classFqName?.asString()
-		if (fq != null && (fq.startsWith("kotlin.reflect.KProperty") || fq.startsWith("kotlin.reflect.KMutableProperty"))) return OBJ
 		// A Unit PARAM must be the real Unit VALUE identity, not `void` (a void param is invalid metadata); the RETURN
 		// context special-cases Unit before calling this. The @/referenced-Unit decision is now bir2cir's.
 		if (t.isUnit()) return TypeNode.Fqn("kotlin.Unit")
@@ -2816,6 +2942,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return null
 		val idx = params.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
 		return if (idx in 0 until call.arguments.size) call.arguments[idx] else null
+	}
+
+	/** Same index-by-parameter-kind approach as [dispatchReceiver]/[extensionReceiver], for an `IrPropertyReference`
+	 *  (which has no callee `IrFunction` of its own — the getter's parameter SHAPE is used to index its `arguments`).
+	 *  `IrMemberAccessExpression.dispatchReceiver`/`.extensionReceiver` (the convenience getters) are ERROR-level
+	 *  deprecated in this compiler version, so kotc never calls them directly, here or on an `IrCall`. */
+	internal fun propRefDispatchReceiver(node: IrPropertyReference): IrExpression? {
+		val params = (node.getter?.owner ?: node.setter?.owner)?.parameters ?: return null
+		val idx = params.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
+		return if (idx in 0 until node.arguments.size) node.arguments[idx] else null
+	}
+
+	internal fun propRefExtensionReceiver(node: IrPropertyReference): IrExpression? {
+		val params = (node.getter?.owner ?: node.setter?.owner)?.parameters ?: return null
+		val idx = params.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+		return if (idx in 0 until node.arguments.size) node.arguments[idx] else null
 	}
 
 	/**
@@ -3080,7 +3222,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else -> null to false
 			}
 			if (owner != null) {
-				val kprop = """{"k":"new","type":${fqnJson("dotkt\$KPropertyImpl")},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(ldp.name.asString())}}]}"""
+				val kprop = kPropertyStub(ldp.name.asString())
 				val nullRef = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
 				return if (callee === ldp.setter)
 					"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$dlocal,"method":"setValue","args":[$nullRef,$kprop,${expr(regularArgs(call).first())}]}"""
@@ -3122,6 +3264,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (name == "invoke") (dispatchReceiver(call) as? IrGetValue)?.symbol?.owner?.let { recv ->
 			inlineLambdas[recv]?.let { return spliceLambdaCall(it, call) }
 		}
+		// `(::x)()` (invoking a property-reference VALUE inline) needs NO special handling here: KProperty0/
+		// KProperty1's declared `() -> V`/`(T) -> V` supertype gives them a REAL fake-overridden `invoke` abstract
+		// member declared directly ON the interface itself (confirmed in the compiled BIR — typeDef's own
+		// interfaces-collection drops the FunctionN supertype off ANY interface def, `bt is TypeNode.Fn -> null`,
+		// but the fake override still lands in the interface's OWN `methods`). So a call's resolved `declaringClass`
+		// for `invoke` on a KProperty0/1-typed receiver is KProperty0/1 itself, never Function0/1 — the ordinary
+		// member-call path below emits a plain `callInstance ownerType:kotlin.reflect.KProperty0/1[…] method:invoke`,
+		// which `propertyRef`'s lifted class implements directly (mirrors JVM's `PropertyReferenceImpl.invoke() =
+		// get()`). bir2cir's CharCodeInvokeLowering only rewrites an `ownerType:kotlin.Function.../KFunction...`
+		// call, so it never touches this one.
 		// (2) A call to a USER `inline fun` that takes a lambda arg -> splice its body (real inlining). stdlib inline
 		//     bodies are absent from our IR, so only user inline funs (body present) inline; others fall through.
 		if (callee.isInline && callee.body != null && hasLambdaArg(call)) return inlineCall(call)
@@ -3643,12 +3795,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// kotlin.* collection/map `.size` is NOT intercepted: it's a real `size` property — fall through to the
 			// ordinary property read so it emits as a kotlin.* `get_size` call.
 		}
-		// `kProperty.name` -> the compiler-generated KProperty.get_name().
-		if (property?.name?.asString() == "name" &&
-			declaringClass?.fqNameWhenAvailable?.asString()?.startsWith("kotlin.reflect.KProperty") == true) {
-			val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
-			return """{"k":"callInstance","ownerType":${fqnJson("dotkt\$KProperty")},"virtual":true,"recv":$recv,"method":"get_name","args":[]}"""
-		}
+		// `kProperty.name` is NOT intercepted here (#70): `kotlin.reflect.KProperty*`/`KCallable.name` is a REAL
+		// emitted stdlib interface member now (kotc's `propertyRef`/`kPropertyStub` materialize real implementations
+		// of it) — it falls through to the ordinary member-property-read path below, emitting the SAME
+		// `callInstance ownerType:kotlin.reflect.KProperty(/KCallable) method:get_name` shape this used to hand-roll,
+		// just with the real FQN instead of the retired `dotkt$KProperty` synthetic.
 		// Delegated property access. `by lazy`: `obj.x` -> `obj.x$delegate.value` (a plain `kotlin.Lazy<T>::get_value`
 		// read; see the lazy case below), dropping thisRef/KProperty. Custom (duck-typed) delegate: route to its
 		// getValue/setValue, passing thisRef and a materialized `KProperty` (compiler-generated). Stdlib-interface
@@ -3687,7 +3838,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				else -> null to false
 			}
 			if (delegate != null && owner != null) {
-				val kprop = """{"k":"new","type":${fqnJson("dotkt\$KPropertyImpl")},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(property.name.asString())}}]}"""
+				val kprop = kPropertyStub(property.name.asString())
 				// callvirt: getValue/setValue is virtual (interface impl) or final (duck-typed) — callvirt fits both.
 				return if (callee === property.setter)
 					"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"setValue","args":[$recv,$kprop,${expr(regularArgs(call).first())}]}"""
@@ -3706,7 +3857,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val target = bodyCall.symbol.owner
 				if (delegate == null || target.parent is IrClass) return@run
 				if (target.name.asString() != "getValue" && target.name.asString() != "setValue") return@run
-				val kprop = """{"k":"new","type":${fqnJson("dotkt\$KPropertyImpl")},"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(property.name.asString())}}]}"""
+				val kprop = kPropertyStub(property.name.asString())
 				val ta = typeArgsJson(bodyCall)
 				val setArg = if (callee === property.setter) ",${expr(regularArgs(call).first())}" else ""
 				return """{"k":"callStatic","owner":null,"method":${str(target.name.asString())}${overloadSigField(target)}$ta${retHintStr(ta.isNotEmpty(), birType(callee.returnType))},"args":[$delegate,$recv,$kprop$setArg]}"""
@@ -4355,9 +4506,12 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// through to the user-class/interface branch below (`@kotlin.Lazy[…]`). It is NOT aliased to System.Lazy:
 		// that CLR type is SEALED, so a Kotlin class could not implement it, and the alias was pure CLR knowledge
 		// that must not live in kotc (layer purity — cf. coerce/isBlank pure-body migration).
-		// kotlin.reflect.KProperty* (delegated-property metadata) -> the synthetic compiler-generated `KProperty`.
-		if (fqp != null && (fqp.startsWith("kotlin.reflect.KProperty") || fqp.startsWith("kotlin.reflect.KMutableProperty")))
-			return TypeNode.Fqn("dotkt\$KProperty")
+		// kotlin.reflect.KProperty0/KMutableProperty0/KProperty1/KMutableProperty1 (a `::prop` callable reference's
+		// type, and the compiler-synthesized KProperty argument of a delegate's getValue/setValue) are REAL emitted
+		// stdlib interfaces (KPropertyClr.kt) — falls through to the user-class/interface branch below
+		// (`kotlin.reflect.KProperty0[…]` etc.), the SAME real-generic-stdlib-interface path as `kotlin.Lazy<T>` above.
+		// kotc's `propertyRef`/`kPropertyStub` materialize REAL implementations of these interfaces (#70) — no more
+		// synthetic `dotkt$KProperty` name-bag identity here.
 		// kotlin.properties.Read(Write)Property<T,V> is NOT monomorphized: it falls through to the
 		// user-class/interface branch below (`@kotlin.properties.ReadWriteProperty[…]`), the REAL generic
 		// stdlib interface — same as `by lazy`'s `kotlin.Lazy<T>`. A delegate field/local typed as this
