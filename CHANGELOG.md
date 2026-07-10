@@ -562,6 +562,22 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **Companion & top-level EXTENSION/COMPUTED property accessors no longer bake the `get_`/`set_` slot name at the
+  cross-module CALL site (#81, audit item M12).** Extending the #78 convention (bare property IDENTITY +
+  `"prop":"get"/"set"` marker) to its three sibling sites — companion extension property, top-level extension property
+  (C7), and top-level plain computed property — kotc now emits the faithful Kotlin identity and bir2cir shapes the
+  accessor (or substitutes an `@ClrProperty`/`@ClrIntrinsic` binding off the ref.dll). bir2cir's `ClrPropNode` is now
+  argcount-aware on the static axis: the marker fixes the get/set direction and a leading `__self` extension-receiver
+  arg (`get` = `[__self]`, `set` = `[__self, value]`) becomes the .NET receiver, with the WRITE value taken past it.
+  A ref-build-only `PropertyMarkerReconstruct` pass reconstructs the marker (the ref surface has no bindings to
+  substitute), and `CharCodeInvokeLowering` matches the new `code`/`prop:get` shape for `Char.code`.
+- **A computed companion property whose cross-module deserialized stub carries a phantom backing field no longer
+  misroutes to a static-field access (#82).** `KTypeProjection.Companion.STAR` (`val STAR get() = star`) reported a
+  spurious `backingField != null` (the FIR `hasBackingField` rule fires for any bodyless custom getter), so kotc read
+  it as `staticField STAR` → ilemit "static field STAR not found". kotc now discriminates via the deserialized FIR
+  accessor kind (`Fir2IrLazyProperty.fir.getter is FirDefaultPropertyGetter`) — reliable where the getter origin
+  cannot (a metadata stub keeps `IR_EXTERNAL_DECLARATION_STUB` on both default and custom accessors) — gated at the
+  companion computed call site only (`statFields` sees source IR, ground truth). Gate case `cases/il-kstar`.
 - **kotc is now fully build-mode-agnostic: the `DOTKT_STDLIB_COMPILE` env var and the `stdlibCompile` field are
   DELETED, and the last three stdlib-only decisions moved DOWN to bir2cir (#72).** kotc used to branch on
   `DOTKT_STDLIB_COMPILE` in six places; each was either a CLR-representation decision that belonged in the

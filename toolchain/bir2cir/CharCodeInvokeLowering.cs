@@ -7,12 +7,13 @@ using DotKt.Bir;
 // CHAR.CODE + FUNCTION.INVOKE LOWERING (#73 Phase 2b-2): two single-node Kotlin<->CLR recognitions relocated out of
 // kotc (BirEmitter) so kotc emits ONLY the faithful Kotlin fact and bir2cir realizes the CLR node.
 //
-//  (1) `c.code` (Char -> Int code point). kotc emits the FAITHFUL top-level extension-property getter call
-//      `callStatic owner:null method:get_code sig:[kotlin.Char] args:[<char>]` (a plain member call to the stdlib
-//      `val Char.code: Int` in kotlin.CharCodeKt). This pass re-emits the `{k:conv, to:kotlin.Int, e:<char>}` node
-//      kotc used to synthesize — the char value AS an int (a genuine primitive IL op), distinct from `.toInt()`'s
-//      @ClrConv routing. Recognized by the accessor name + the Char receiver in `sig`; the owner (kotlin.CharCodeKt)
-//      + Int return are confirmed against the ref.dll when available.
+//  (1) `c.code` (Char -> Int code point). kotc emits the FAITHFUL top-level extension-property getter call by the
+//      property's BARE identity + a `"prop":"get"` accessor-KIND marker (#81; the same convention every top-level
+//      extension-property accessor now uses): `callStatic owner:null method:code prop:get sig:[kotlin.Char]
+//      args:[<char>]` (the stdlib `val Char.code: Int` in kotlin.CharCodeKt). This pass re-emits the `{k:conv,
+//      to:kotlin.Int, e:<char>}` node kotc used to synthesize — the char value AS an int (a genuine primitive IL
+//      op), distinct from `.toInt()`'s @ClrConv routing. Recognized by the bare name + the `get` marker + the Char
+//      receiver in `sig`; the owner (kotlin.CharCodeKt) + Int return are confirmed against the ref.dll when available.
 //
 //  (2) `f(x)` invoking a function-typed value. kotc emits the FAITHFUL `callInstance ownerType:kotlin.FunctionN[..]`
 //      (or `kotlin.reflect.KFunctionN[..]`) `method:invoke recv:<f> args:[..]` member call. This pass re-emits the
@@ -57,13 +58,17 @@ static class CharCodeInvokeLowering
         return null;
     }
 
-    // `callStatic owner:null method:get_code sig:[kotlin.Char] args:[<char>]` -> `{k:conv, to:kotlin.Int, e:<char>}`.
+    // `callStatic owner:null method:code prop:get sig:[kotlin.Char] args:[<char>]` -> `{k:conv, to:kotlin.Int, e:<char>}`.
     static JsonNode LowerCharCode(JsonObject o, ReferenceMetadataIndex refs)
     {
         // Only a TOP-LEVEL call (`owner:null`, no `ownerType`); a member/.NET call carries `ownerType`.
         if (o.ContainsKey("ownerType")) return null;
         if (!o.ContainsKey("owner") || o["owner"] != null) return null;
-        if ((o["method"] as JsonValue)?.GetValue<string>() != "get_code") return null;
+        // #81: the getter arrives as the bare property identity `code` + a `"prop":"get"` accessor-KIND marker (it
+        // no longer bakes the `get_code` slot name). Match the marker shape BEFORE MemberCallSubstitution reconstructs
+        // the get_/set_ accessor name (this pass runs earlier); the ref lookup below still keys the accessor `get_code`.
+        if ((o["method"] as JsonValue)?.GetValue<string>() != "code"
+            || (o["prop"] as JsonValue)?.GetValue<string>() != "get") return null;
         if (o["args"] is not JsonArray args || args.Count != 1) return null;
         // The extension receiver is `sig[0]` — must be kotlin.Char (the sole `.code` extension property is on Char).
         if (o["sig"] is not JsonArray sig || sig.Count < 1

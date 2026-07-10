@@ -378,7 +378,7 @@ sealed class Pipeline
             // BCL-member knowledge lives HERE (the Kotlin<->CLR layer), never in the kotc frontend (layer purity, mirrors
             // the exception-map / annotation-base migrations). Non-ref only: the ref stdlib keeps KClass pure Kotlin.
             if (!_options.RefBuild) hoisted = KClassMemberBinding.Apply(hoisted);
-            var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
+            var substituted = _options.RefBuild ? PropertyMarkerReconstruct.Apply(hoisted) : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
@@ -5390,6 +5390,18 @@ static class MemberCallSubstitution
             //                       sig type is the receiver type; the rest are the method args.
             var fn = (node["method"] as JsonValue)?.GetValue<string>();
             if (instance || string.IsNullOrEmpty(fn)) return null;
+            // #81: a top-level EXTENSION-property accessor (C7: `val List<T>.lastIndex`, `val Int.absoluteValue`)
+            // carries the bare property IDENTITY + a `"prop":"get"/"set"` marker instead of a baked `get_`/`set_`
+            // slot name (extending the #78 static-axis convention to the owner-null extension axis). There is no
+            // bare-name ext-property binding index, so reconstruct kotc's OWN `get_`/`set_<name>` accessor
+            // convention BEFORE every owner-null resolver below (`TryExtMemberIntrinsic` keyed `get_lastIndex|recv|
+            // count`, `TryResolveTopLevelStatic` keyed `get_lastIndex`) — byte-identical to the pre-#81 baked emission.
+            if ((node["prop"] as JsonValue)?.GetValue<string>() is ("get" or "set") and var tlProp)
+            {
+                node.Remove("prop");
+                fn = (tlProp == "set" ? "set_" : "get_") + fn;
+                node["method"] = fn;
+            }
             // Collection/array FACTORY (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`): a
             // @ClrCollectionFactory/@ClrArrayFactory marker on the ref.dll top-level fun -> re-emit the
             // newList/newSet/newMap/newArray/newArraySized CONSTRUCTION node (the recognition kotc used to do via its
@@ -5531,6 +5543,7 @@ static class MemberCallSubstitution
         // #78: the STATIC property-accessor marker for a call whose owner IS CLR-bound — carried down to Rule 2p
         // (below) so the explicit @ClrProperty binding is tried on the static axis too, not just instance.
         var staticPropMarker = !instance ? (node["prop"] as JsonValue)?.GetValue<string>() : null;
+        if (staticPropMarker != null) node.Remove("prop");   // the marker is not BIR/CIR vocabulary — consumed here
 
         // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,
         // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit `{k:conv, to:<callee return type>, e:<receiver>}`, the
@@ -5559,7 +5572,7 @@ static class MemberCallSubstitution
         // (a companion computed property carrying the `"prop":"get"/"set"` marker) — a @ClrProperty binding is keyed
         // purely by owner+bare-name+argcount, with no instance/static distinction of its own.
         if ((instance || staticPropMarker is "get" or "set") && refs.TryMemberProperty(ownerFqn, member, args.Count, out var pAccess, out var pName))
-            return ClrPropNode(node, clrOwner, pName, pAccess, member, args);
+            return ClrPropNode(node, clrOwner, pName, pAccess, member, args, staticPropMarker);
         // #78: the static-axis marker found no @ClrProperty binding — probe a bare @ClrIntrinsic under the SAME bare
         // name (Rule 2, reached again unconditionally below) before Rule 3/4 ever see this bare name; when NEITHER
         // binds, reconstruct kotc's own get_/set_<name> declaration-side convention (byte-identical to the pre-#78
@@ -6077,26 +6090,41 @@ static class MemberCallSubstitution
     // accessor (trigger ①), where `prop` may arrive as the full BCL accessor name kotc emits for a CLR-bound property
     // (Rule 4: `get_Count`) — strip a leading get_/set_ so the clrProp `name` is the bare property. `access` = READ/WRITE
     // flags; when BOTH are set (a var property) the accessor member prefix (`set_` -> write) or arg count (1 = write)
-    // picks the direction. WRITE takes the single value arg; READ carries the return type.
-    static JsonNode ClrPropNode(JsonObject node, TypeNode clrOwner, string prop, int access, string member, JsonArray args)
+    // picks the direction. WRITE takes the single value arg; READ carries the return type. On the STATIC axis a non-null
+    // `propMarker` ("get"/"set", #78/#81) OVERRIDES the arg-count heuristic (it encodes the accessor kind explicitly),
+    // and a leading `__self` extension-receiver arg makes the accessor an INSTANCE property on __self (WRITE value = args[^1]).
+    static JsonNode ClrPropNode(JsonObject node, TypeNode clrOwner, string prop, int access, string member, JsonArray args, string propMarker = null)
     {
         if (prop.StartsWith("get_", StringComparison.Ordinal) || prop.StartsWith("set_", StringComparison.Ordinal))
             prop = prop[4..];
         var wantRead = (access & ClrPropRead) != 0;
         var wantWrite = (access & ClrPropWrite) != 0;
-        var write = wantRead && wantWrite
-            ? (member.StartsWith("set_", StringComparison.Ordinal) || args.Count == 1)
-            : wantWrite;
+        // #81: the STATIC-axis `"prop":"get"/"set"` marker encodes the accessor KIND explicitly — trust it over the
+        // `args.Count == 1` heuristic, which mis-reads an EXTENSION getter's lone `__self` arg (count 1) as a WRITE.
+        // The heuristic stays for the instance axis (no marker), where args are pure value args.
+        var write = propMarker is "get" or "set"
+            ? propMarker == "set"
+            : wantRead && wantWrite
+                ? (member.StartsWith("set_", StringComparison.Ordinal) || args.Count == 1)
+                : wantWrite;
+        // #81: a STATIC EXTENSION property accessor prepends its extension receiver as the LEADING arg (getter
+        // `[__self]`; setter `[__self, value]`) rather than in node["recv"]. Detect it by arg count past the
+        // direction the marker fixed (getter with 1 arg / setter with 2 args carries a `__self`) — it becomes the
+        // .NET receiver, so the accessor is an INSTANCE property on `__self`, not a static.
+        var extRecv = propMarker is "get" or "set" && args.Count > (write ? 1 : 0) ? args[0] : null;
         var pg = new JsonObject
         {
             ["k"] = write ? "clrPropSet" : "clrPropGet",
             ["type"] = TypeJson.Write(clrOwner),
             ["name"] = prop,
-            ["static"] = false,
-            ["recv"] = node["recv"]?.DeepClone(),
+            // A marker-bound static computed property (no __self) is a genuine STATIC accessor; an extension binds
+            // on __self (instance); the instance axis (no marker) stays instance.
+            ["static"] = propMarker != null && extRecv == null,
+            ["recv"] = (extRecv ?? node["recv"])?.DeepClone(),
         };
         if (!write && RetToken(node) is JsonNode ret) pg["ret"] = ret;
-        if (write && args.Count >= 1) pg["value"] = args[0].DeepClone();
+        // WRITE value = the LAST arg (past a leading `__self` on the extension axis); args[0] on the instance/plain axis.
+        if (write && args.Count >= 1) pg["value"] = (extRecv != null ? args[^1] : args[0]).DeepClone();
         return pg;
     }
 

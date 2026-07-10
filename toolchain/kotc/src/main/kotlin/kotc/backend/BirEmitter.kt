@@ -805,6 +805,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun isClrField(p: IrProperty): Boolean =
 		p.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrField" }
 
+	// #82: whether an IrProperty is backed by a REAL static field vs a COMPUTED property whose cross-module
+	// deserialized stub carries a phantom backingField. Source IR: backingField is ground truth. A metadata
+	// (Fir2IrLazyProperty) stub: trust the deserialized FIR accessor kind — Fir2IrLazyProperty materializes a
+	// spurious IrField for any bodyless custom getter, and keeps IR_EXTERNAL_DECLARATION_STUB origin on BOTH
+	// default and custom accessors, so getter.origin cannot discriminate; FirDefaultPropertyGetter can.
+	private fun hasRealStaticField(prop: IrProperty): Boolean {
+		(prop as? org.jetbrains.kotlin.fir.lazy.Fir2IrLazyProperty)?.fir?.let { fir ->
+			return fir.getter == null || fir.getter is org.jetbrains.kotlin.fir.declarations.impl.FirDefaultPropertyGetter
+		}
+		return prop.backingField != null
+	}
+
 	/** `@kotlin.concurrent.Volatile` on a `var`'s backing field: a pure Kotlin-language fact (like `suspend`/
 	 *  `@Synchronized`, NOT a `@Clr*` binding). Emit a `"volatile":true` FIELD flag; bir2cir threads it through and
 	 *  ilemit lowers it to a CLR volatile field (`modreq(IsVolatile)` + `volatile.` prefix — the C# `volatile` shape).
@@ -3586,15 +3598,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// A companion EXTENSION property (`val Int.seconds` on Duration.Companion) is NEVER a static field —
 				// extension properties have no backing field (a cross-module deserialized stub may claim one; trusting
 				// it dropped the receiver entirely: `2.seconds` emitted a bare `staticField Duration.seconds`, and the
-				// in-module getter path emitted `get_milliseconds` with `"args":[]`). Mirror the top-level-property
-				// branch: the static get_/set_<name>(__self, ...) on the enclosing class with the receiver as the
-				// leading arg; `sig` picks the right overload (get_seconds(Int|Long|Double)).
+				// in-module getter path emitted `get_milliseconds` with `"args":[]`). Emit a static call by the
+				// property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81) on the enclosing class
+				// with the receiver as the leading arg; `sig` picks the right overload (seconds(Int|Long|Double)).
+				// bir2cir shapes the .NET accessor from the stdlib @ClrProperty/@ClrIntrinsic metadata, falling back to
+				// kotc's own get_/set_<name> declaration convention when no binding exists.
 				val ext = extensionReceiver(call)
 				if (ext != null) return if (callee === prop.setter) {
 					val args = listOf(ext) + regularArgs(call)
-					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str("set_" + prop.name.asString())}${overloadSigField(callee)},"args":[${args.joinToString(",") { expr(it) }}]}"""
+					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[${args.joinToString(",") { expr(it) }}]}"""
 				} else
-					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str("get_" + prop.name.asString())}${overloadSigField(callee)},"args":[${expr(ext)}]${retHint(false, call.type)}}"""
+					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[${expr(ext)}]${retHint(false, call.type)}}"""
 				// A companion COMPUTED property (`val X.Companion.foo: T get() = ...`, no backing field) -> a static
 				// call by the property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78; the SAME
 				// A2 convention already used for the restored top-level property, `pn`/`"prop"` above) — NOT the
@@ -3603,11 +3617,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				// @ClrProperty/@ClrIntrinsic metadata off the ref.dll by this bare name and shapes the .NET
 				// accessor, falling back to kotc's own get_/set_<name> declaration convention when no binding exists.
 				return if (callee === prop.setter)
-					if (prop.backingField == null)
+					if (!hasRealStaticField(prop))
 						"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"set","args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
 					else
 						"""{"k":"staticFieldSet","ownerType":${fqnJson(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
-				else if (prop.backingField == null)
+				else if (!hasRealStaticField(prop))
 					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get","args":[]${retHint(false, call.type)}}"""
 				else """{"k":"staticField","ownerType":${fqnJson(enclosing)},"name":${str(prop.name.asString())}}"""
 			}
@@ -3655,34 +3669,40 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			if (declaringClass == null) {
 				val ext = extensionReceiver(call)
 				// C7: a TOP-LEVEL EXTENSION property (`val List<T>.lastIndex`, `val Int.absoluteValue`, `val
-				// CharSequence.indices`) has NO real static field — its value is a get_/set_<name>(__self) static whose
-				// leading arg is the extension receiver. Route it EXACTLY like a top-level extension FUNCTION: owner=null,
-				// so bir2cir attributes it to the ref.dll file class in a cross-module app build (and a same-module sibling
-				// stays owner-less for ilemit's FindStatic). `sig` disambiguates a same-name overload by receiver type.
-				// A cross-module DESERIALIZED stub can spuriously report a backing field, so an extension property must
-				// NEVER fall to the static-field read below — that dropped the receiver and looked up `<CurrentFileKt>.
-				// <name>` as a field (the C7 `field AppKt.lastIndex not found` crash).
+				// CharSequence.indices`) has NO real static field — its value is an accessor emitted by the property's
+				// OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81) whose leading arg is the extension
+				// receiver. Route it EXACTLY like a top-level extension FUNCTION: owner=null, so bir2cir attributes it to
+				// the ref.dll file class in a cross-module app build (and a same-module sibling stays owner-less for
+				// ilemit's FindStatic). bir2cir shapes the .NET accessor from the stdlib binding metadata, falling back to
+				// kotc's get_/set_<name> declaration convention when none exists. `sig` disambiguates a same-name overload
+				// by receiver type. A cross-module DESERIALIZED stub can spuriously report a backing field, so an
+				// extension property must NEVER fall to the static-field read below — that dropped the receiver and looked
+				// up `<CurrentFileKt>.<name>` as a field (the C7 `field AppKt.lastIndex not found` crash).
 				if (ext != null) {
-					// A GENERIC extension property (`val List<T>.lastIndex`/`.indices`) has a generic get_<name>[T] static —
+					// A GENERIC extension property (`val List<T>.lastIndex`/`.indices`) has a generic <name>[T] accessor —
 					// carry the resolved type args (+ a retType hint) so ilemit MakeGenericMethods it; without them the call
 					// hits the uninstantiated generic method ("type is not fully instantiated"). Mirrors the generic
 					// extension-FUNCTION path. A non-generic getter (Int.absoluteValue, CharSequence.lastIndex) emits no ta.
 					val ta = typeArgsJson(call)
 					return if (callee === p.setter) {
 						val args = listOf(ext) + regularArgs(call)
-						"""{"k":"callStatic","owner":null,"method":${str("set_" + p.name.asString())}${overloadSigField(callee)}$ta,"args":[${args.joinToString(",") { expr(it) }}]}"""
+						"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"args":[${args.joinToString(",") { expr(it) }}]}"""
 					} else
-						"""{"k":"callStatic","owner":null,"method":${str("get_" + p.name.asString())}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), birType(call.type))},"args":[${expr(ext)}]}"""
+						"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), birType(call.type))},"args":[${expr(ext)}]}"""
 				}
 				// A plain top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING
 				// file's class. Use the property's own file, NOT the file currently being emitted — else a cross-file
 				// reference looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
 				val owner = fileClassOf(p)
 				if (p.backingField == null)
+					// A COMPUTED top-level property (`val foo: T get() = ...`, no backing field) -> a static call by the
+					// property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81), NOT the baked
+					// get_/set_ slot name. bir2cir shapes the .NET accessor from the stdlib binding metadata, falling back
+					// to kotc's get_/set_<name> declaration convention when none exists.
 					return if (callee === p.setter)
-						"""{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("set_" + p.name.asString())},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
+						"""{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(p.name.asString())},"prop":"set","args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
 					else
-						"""{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("get_" + p.name.asString())},"args":[]${retHint(false, call.type)}}"""
+						"""{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(p.name.asString())},"prop":"get","args":[]${retHint(false, call.type)}}"""
 				return if (callee === p.setter)
 					"""{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 				else """{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())}}"""
