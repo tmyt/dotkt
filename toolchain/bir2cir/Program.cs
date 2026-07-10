@@ -205,13 +205,15 @@ sealed class Pipeline
             HighArityFunctionFilter.Apply(bir.Root, _options.StdlibMode);
             ClosureSynthesis.Apply(bir.Root);
             SharedSyntheticSynthesis.Apply(bir.Root);
-            // FOR-LOOP SOURCE CLASSIFICATION (#73): kotc emits a faithful `forIn`/`forEachInline` carrying the source's
-            // runtime type token (`srcType`) — it no longer decides range-vs-collection (that needs the kotlin.ranges
-            // FQN, a Kotlin<->CLR relation). Dispatch it: a counted range -> `forRange` (realized by RangeForLowering
-            // next); a non-range enumerable -> `forEachInline`; anything else -> the iterator `fallback`. Runs BEFORE
-            // RangeForLowering / RangeConstructionLowering / SequenceForEachLowering so the produced forms flow through
-            // every downstream pass exactly as the equivalent kotc-emitted forms did.
-            ForInLowering.Apply(bir.Root, !attributeTopLevelOwner, typeSupers, localTopLevelFns);
+            // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's
+            // runtime type token (`srcType`) for every non-array source — it no longer decides range-vs-collection nor
+            // the .NET/Sequence-enumerable case (each needs the kotlin.ranges FQN or a `@Clr`/.NET-type resolution off
+            // the refs, a Kotlin<->CLR relation). Dispatch it: a counted range -> `forRange` (realized by
+            // RangeForLowering next); a `kotlin.sequences.Sequence`/.NET-enumerable/stdlib-collection -> `forEachInline`
+            // (GetEnumerator); anything else -> the iterator `fallback`. Runs BEFORE RangeForLowering /
+            // RangeConstructionLowering / SequenceForEachLowering so the produced forms flow through every downstream
+            // pass exactly as the equivalent kotc-emitted forms did.
+            ForInLowering.Apply(bir.Root, !attributeTopLevelOwner, typeSupers, localTopLevelFns, refs);
             // RANGE FOR-LOOP (#52 Phase 5 "range partial"): kotc emits a FAITHFUL `forRange` (range VALUE + loop var +
             // Kotlin `rangeType`, NO CLR accessor names/owner). Realize the IntProgression get_first/get_last/get_step
             // access HERE — the stdlib form keeps `forRange` + injects the accessors (ilemit resolves off `_types`);

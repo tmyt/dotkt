@@ -139,6 +139,23 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
     so the @ClrTypeAlias ctor cannot be bound 1:1 and the compiled rt body throws `InvalidProgram`. Closing it
     needs a separate bir2cir CharSequence→String ctor-arg coercion feature.
 
+- **#73 Wave 3: the for-in `forEachInline` gate (M1) moved from kotc into bir2cir — the last CLR-representation
+  decision in kotc's loop family.** kotc's for-in emission carried a residual `forInEnumerable` gate: it chose the
+  `forEachInline` (GetEnumerator) loop shape when the source's static type was a facadegen-injected .NET type
+  (`clrName(src) != null`) OR exactly `kotlin.sequences.Sequence` — a CLR-representation decision keyed on
+  `@Clr`/.NET-type knowledge. kotc now emits ONE faithful `forIn{src,srcType,elem,body,fallback}` for EVERY
+  non-array source (no `clrName`/`Sequence` classification leaves kotc), and bir2cir's `ForInLowering` gained the
+  dispatch arm: a `forIn` whose `srcType` is `kotlin.sequences.Sequence` OR resolves to a referenced .NET type
+  (`ReferenceMetadataIndex.ResolveNetType != null` — the faithful equivalent of the old `clrName` test, since it
+  returns null for every `kotlin.*`/`kotlinx.*`/`dotkt*`/app-local FQN and non-null exactly for a reachable .NET
+  type) becomes a `forEachInline`, in ALL builds. Without it a Sequence/.NET source would fall to the Kotlin
+  iterator protocol and a consumer would hit `EntryPointNotFound`. The kotc-emitted-`forEachInline` handling in
+  `ForInLowering` (and its `srcType`-strip) is deleted — kotc no longer produces `forEachInline` at all. Proven
+  transparent on the stdlib self-build: the rt-build CIR is byte-identical to before modulo global compiler-counter
+  renumbering (the faithful `forIn` now carries the FIR-desugared `fallback`, whose desugaring bumps the shared
+  `__inl`/`__inlRet`/`__lam`/label counters that bir2cir then discards when it selects `forEachInline`) — every
+  `forEachInline`/`forRange`/iterator site preserved in count and structure.
+
 - **#73 Wave 2: two more kotc CLR/stdlib decisions moved into bir2cir.**
   - **Direct enum `values()`/`entries`/`valueOf()` (M3) — kills the last banned `@Name` type-token in kotc.**
     kotc's direct (non-reified) enum-intrinsic path emitted the legacy `"@Color"` type-token STRING in its

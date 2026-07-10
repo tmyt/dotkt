@@ -1644,33 +1644,22 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// loop-variable element type off the array operand's (now faithful) type.
 		if (source != null && isArrayType(source.type))
 			return """{"k":"forArray","label":$lbl,"var":${str(loopVar.name.asString())},"array":${expr(source)},"body":[$body]}"""
-		// NON-array for-loops: kotc no longer classifies the source as a counted RANGE, an `a downTo b` counter, or a
-		// stdlib collection — those decisions each need a `kotlin.ranges.*`/`kotlin.collections.*` FQN or the `downTo`
-		// operator identity resolved against the stdlib, a Kotlin<->CLR relation that belongs in bir2cir. kotc emits
-		// the FAITHFUL source + its runtime type token (`srcType`) + the element type (`elem`, a pure Kotlin loop-var
-		// fact) and lets bir2cir's ForInLowering dispatch: a counted range (IntRange, or IntProgression in a stdlib
-		// self-build) -> `forRange`; an `a downTo b` in a consumer build -> a counted `for`; a .NET/Sequence
-		// enumerable, or a stdlib collection in a stdlib self-build -> `forEachInline`; anything else -> the `fallback`
-		// (the FIR-desugared iterator-protocol block emitted below). NO `kotlin.ranges`/`kotlin.collections` FQN or
-		// `downTo` classification leaves kotc.
+		// NON-array for-loops: kotc no longer classifies the source at all — whether it is a counted RANGE, an
+		// `a downTo b` counter, a stdlib collection, a `kotlin.sequences.Sequence`, or a facadegen-injected .NET
+		// enumerable are each a `kotlin.ranges.*`/`kotlin.collections.*` FQN, a `downTo` operator identity, or a
+		// .NET-type / `@Clr` resolution against the reference assemblies — a Kotlin<->CLR relation that belongs in
+		// bir2cir. kotc emits ONE faithful `forIn` for EVERY non-array source: the FAITHFUL source + its runtime type
+		// token (`srcType`) + the element type (`elem`, a pure Kotlin loop-var fact) + the loop body, plus the
+		// `fallback` = the FIR-desugared iterator-protocol block (what kotc used to emit by returning null here).
+		// bir2cir's ForInLowering dispatches it: a counted range (IntRange, or IntProgression in a stdlib self-build)
+		// -> `forRange`; an `a downTo b` in a consumer build -> a counted `for`; a `kotlin.sequences.Sequence` or a
+		// .NET enumerable (any build), or a stdlib collection in a stdlib self-build -> `forEachInline` (GetEnumerator);
+		// anything else -> the `fallback`. NO CLR/stdlib classification leaves kotc.
 		//
-		// `elem` = the source's first type arg, else the loop var's type — the SAME value the forEachInline path needs;
-		// bir2cir reads it verbatim when it turns a stdlib-collection `forIn` into `forEachInline`.
+		// `elem` = the source's first type arg, else the loop var's type — bir2cir reads it verbatim when it turns a
+		// `forIn` into `forEachInline`.
 		val elem = (source?.type as? IrSimpleType)?.arguments?.firstOrNull()
 			?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
-		// A .NET IEnumerable<T> (@Clr type) or a kotlin.sequences.Sequence -> enumerate via GetEnumerator
-		// (forEachInline). `srcType` rides along so bir2cir can redirect a stdlib-build range (IntRange/IntProgression,
-		// which IS stdlib-iterable) to forRange; a non-range enumerable keeps forEachInline (bir2cir strips srcType).
-		val forInEnumerable = source != null && ((source.type.classifierOrNull?.owner as? IrClass)?.let { clrName(it) } != null
-			|| source.type.classFqName?.asString() == "kotlin.sequences.Sequence")
-		if (source != null && forInEnumerable) {
-			return """{"k":"forEachInline","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"srcType":${birType(source.type).toJson()},"var":${str(loopVar.name.asString())},"body":[$body]}"""
-		}
-		// Any other recovered source (a range VALUE like `indices`/a stored `IntRange`, a `rangeTo`/`until`/`downTo`
-		// operator, or a plain kotlin.* collection) -> a faithful `forIn` carrying the source + its type token + the
-		// element type + the loop body, plus the `fallback` = the FIR-desugared iterator-protocol block (what kotc used
-		// to emit by returning null here). bir2cir's ForInLowering picks forRange (counted range), a counted `for`
-		// (consumer-build downTo), forEachInline (stdlib-build collection), or the fallback (everything else).
 		if (source != null)
 			return """{"k":"forIn","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"srcType":${birType(source.type).toJson()},"var":${str(loopVar.name.asString())},"body":[$body],"fallback":{"k":"block","body":[${block.statements.joinToString(",") { stmt(it) }}]}}"""
 		return null

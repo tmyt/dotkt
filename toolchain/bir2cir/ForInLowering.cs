@@ -4,23 +4,29 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// FOR-LOOP SOURCE CLASSIFICATION (#73/#72). kotc no longer decides whether a for-loop source is a counted RANGE, an
-// `a downTo b` counter, or a stdlib collection — those each need the `kotlin.ranges.*`/`kotlin.collections.*` FQN or
-// the `downTo` operator identity resolved against the stdlib, a Kotlin<->CLR relation that lives HERE. kotc emits:
+// FOR-LOOP SOURCE CLASSIFICATION (#73/#72/#73-w3). kotc no longer decides ANYTHING about a non-array for-loop source
+// — whether it is a counted RANGE, an `a downTo b` counter, a stdlib collection, a `kotlin.sequences.Sequence`, or a
+// facadegen-injected .NET enumerable are each a `kotlin.ranges.*`/`kotlin.collections.*` FQN, a `downTo` operator
+// identity, or a `@Clr`/.NET-type resolution against the reference assemblies — a Kotlin<->CLR relation that lives
+// HERE. kotc emits ONE faithful node for every non-array source:
 //
-//   forIn{elem, src, srcType, var, body, fallback}   — any recovered non-array source
-//   forEachInline{elem, src, srcType, var, body}     — a .NET/Sequence enumerable
+//   forIn{elem, src, srcType, var, body, fallback}
 //
 // carrying the source's runtime TYPE TOKEN (`srcType`) + the element type (`elem`). This pass dispatches on it:
 //
 //   forIn whose srcType is a counted range (IntRange always; IntProgression in a stdlib self-build) -> `forRange`.
 //   forIn whose src is a stdlib `a downTo b` (consumer build) -> a counted `for` (>=, step -1) with temp bounds.
-//   forIn whose srcType is a stdlib collection (stdlib self-build) -> `forEachInline` (GetEnumerator). Without this the
-//     rt.dll collection ops would enumerate via the Kotlin iterator protocol (iterator()/hasNext) and an app calling
-//     the op hits EntryPointNotFound. Recognized by a supertype walk over the compilation's own type defs (a concrete
-//     stdlib subtype such as ArrayList : MutableList matches even though its own FQN is not a collection interface).
+//   forIn whose srcType is `kotlin.sequences.Sequence` OR resolves to a referenced .NET type (any build) -> a
+//     `forEachInline` (GetEnumerator). This is the exact set kotc's retired `forInEnumerable` gate routed
+//     (`clrName(src) != null` — a facadegen-injected .NET enumerable — OR the source's static type being exactly
+//     `kotlin.sequences.Sequence`), moved here (#73-w3) because it is a CLR-representation decision keyed on
+//     `@Clr`/.NET-type knowledge. Without it a .NET/Sequence source would fall to the Kotlin iterator protocol
+//     (iterator()/hasNext) and a consumer calling it hits EntryPointNotFound.
+//   forIn whose srcType is a stdlib collection (stdlib self-build) -> `forEachInline` (GetEnumerator). Recognized by a
+//     supertype walk over the compilation's own type defs (a concrete stdlib subtype such as ArrayList : MutableList
+//     matches even though its own FQN is not a collection interface); a concrete `Sequence`-implementing class arrives
+//     as a forIn and resolves through this walk (Sequence is in CollectionFqns).
 //   forIn otherwise -> the `fallback` block (the FIR-desugared iterator protocol kotc used to emit by returning null).
-//   forEachInline whose srcType is a counted range -> `forRange`; otherwise stays forEachInline (srcType stripped).
 //
 // Runs FIRST in the per-file loop (before RangeForLowering / RangeConstructionLowering / SequenceForEachLowering) so
 // the produced forms flow through every downstream pass exactly as the equivalent kotc-emitted forms did — byte-
@@ -33,10 +39,10 @@ static class ForInLowering
 
     // The iterable FQNs whose for-loop enumerates via GetEnumerator (IEnumerable) in a stdlib self-build — the exact
     // set kotc's retired isStdlibCollectionIterable walked. A source whose static type is EXACTLY
-    // `kotlin.sequences.Sequence` already reaches this pass as a kotc-classified `forEachInline`, but a CONCRETE
-    // Sequence-implementing class (a `DropTakeSequence` etc.) arrives as a `forIn` and must resolve to Sequence
-    // through the supertype walk — so Sequence is in the set too (it never matches a real forIn in an app build, which
-    // does not run this walk).
+    // `kotlin.sequences.Sequence` is caught earlier by IsNetOrSequenceEnumerable (string-keyed, all builds), but a
+    // CONCRETE Sequence-implementing class (a `DropTakeSequence` etc.) arrives as a `forIn` with its own FQN and must
+    // resolve to Sequence through this supertype walk — so Sequence is in the set too (it never matches a real forIn
+    // in an app build, which does not run this walk).
     static readonly HashSet<string> CollectionFqns = new(StringComparer.Ordinal)
     {
         "kotlin.collections.Iterable", "kotlin.collections.MutableIterable",
@@ -58,40 +64,48 @@ static class ForInLowering
     };
 
     public static void Apply(JsonNode root, bool stdlibBuild, IReadOnlyDictionary<string, List<string>> typeSupers,
-        HashSet<string> localTopLevelFns) => Walk(root, stdlibBuild, typeSupers, localTopLevelFns);
+        HashSet<string> localTopLevelFns, ReferenceMetadataIndex refs) => Walk(root, stdlibBuild, typeSupers, localTopLevelFns, refs);
 
     static void Walk(JsonNode node, bool stdlibBuild, IReadOnlyDictionary<string, List<string>> typeSupers,
-        HashSet<string> localTopLevelFns)
+        HashSet<string> localTopLevelFns, ReferenceMetadataIndex refs)
     {
         switch (node)
         {
             case JsonObject obj:
-                Rewrite(obj, stdlibBuild, typeSupers, localTopLevelFns);
-                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, stdlibBuild, typeSupers, localTopLevelFns);
+                Rewrite(obj, stdlibBuild, typeSupers, localTopLevelFns, refs);
+                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, stdlibBuild, typeSupers, localTopLevelFns, refs);
                 break;
             case JsonArray arr:
-                foreach (var it in arr) if (it != null) Walk(it, stdlibBuild, typeSupers, localTopLevelFns);
+                foreach (var it in arr) if (it != null) Walk(it, stdlibBuild, typeSupers, localTopLevelFns, refs);
                 break;
         }
     }
 
     static void Rewrite(JsonObject o, bool stdlibBuild, IReadOnlyDictionary<string, List<string>> typeSupers,
-        HashSet<string> localTopLevelFns)
+        HashSet<string> localTopLevelFns, ReferenceMetadataIndex refs)
     {
-        var k = Str(o["k"]);
-        if (k == "forIn")
-        {
-            if (IsCountedRange(o["srcType"], stdlibBuild)) ReplaceWith(o, BuildForRange(o, o["src"]));
-            else if (!stdlibBuild && TryBuildDownTo(o, localTopLevelFns) is JsonObject dt) ReplaceWith(o, dt);
-            else if (stdlibBuild && IsStdlibCollection(o["srcType"], typeSupers)) ReplaceWith(o, BuildForEachInline(o));
-            else if (o["fallback"] is JsonObject fb) ReplaceWith(o, fb);
-            return;
-        }
-        if (k == "forEachInline" && o["srcType"] is JsonNode)
-        {
-            if (IsCountedRange(o["srcType"], stdlibBuild)) ReplaceWith(o, BuildForRange(o, o["src"]));
-            else o.Remove("srcType");   // a genuine .NET/Sequence enumerable — drop the transient hint, keep forEachInline
-        }
+        if (Str(o["k"]) != "forIn") return;
+        if (IsCountedRange(o["srcType"], stdlibBuild)) ReplaceWith(o, BuildForRange(o, o["src"]));
+        else if (!stdlibBuild && TryBuildDownTo(o, localTopLevelFns) is JsonObject dt) ReplaceWith(o, dt);
+        else if (IsNetOrSequenceEnumerable(o["srcType"], refs)) ReplaceWith(o, BuildForEachInline(o));
+        else if (stdlibBuild && IsStdlibCollection(o["srcType"], typeSupers)) ReplaceWith(o, BuildForEachInline(o));
+        else if (o["fallback"] is JsonObject fb) ReplaceWith(o, fb);
+    }
+
+    // The kotc-retired `forInEnumerable` gate, moved here (#73-w3): a for-loop source enumerates via GetEnumerator
+    // (`forEachInline`) when its static type is EXACTLY `kotlin.sequences.Sequence`, OR it resolves to a referenced
+    // .NET type (a facadegen-injected `@Clr` owner — the faithful equivalent of kotc's old `clrName(src) != null`,
+    // since ResolveNetType returns null for every kotlin.*/kotlinx.*/dotkt*/app-local FQN and non-null exactly for a
+    // reachable .NET type). Applies in ALL builds (the gate was build-agnostic). A concrete `Sequence`-implementing
+    // class is NOT matched here (its FQN is not `Sequence`) — it reaches `forEachInline` via the stdlib supertype walk.
+    static bool IsNetOrSequenceEnumerable(JsonNode srcType, ReferenceMetadataIndex refs)
+    {
+        var t = TypeJson.Read(srcType);
+        while (t is TypeNode.Nullable nu) t = nu.Of;   // a for-in source is non-null in valid Kotlin; unwrap defensively
+        if (t is not TypeNode.Fqn f) return false;
+        var fqn = ReferenceMetadataIndex.BareOwnerFqn(f.Name);
+        if (fqn == "kotlin.sequences.Sequence") return true;
+        return refs != null && refs.ResolveNetType(fqn, f.Args?.Length ?? 0) != null;
     }
 
     // A counted range whose for-loop is realized as a get_first/get_last counter: IntRange in any build; IntProgression
