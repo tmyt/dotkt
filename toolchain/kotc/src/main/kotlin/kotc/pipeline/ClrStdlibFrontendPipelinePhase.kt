@@ -73,6 +73,7 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 			fileBelongsToModuleForPsi,
 		)
 		val outputs = sessionsWithSources.map { (session, files) ->
+			installKotlinJvmDefaultImport(session)
 			resolveAndCheckFir(session, session.buildFirFromKtFiles(files), diagnosticsReporter)
 		}
 		outputs.runPlatformCheckers(diagnosticsReporter)

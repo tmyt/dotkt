@@ -34,6 +34,4 @@ public actual interface CharSequence {
      * @param endIndex the end index (exclusive).
      */
     public actual fun subSequence(startIndex: Int, endIndex: Int): CharSequence
-
-    public fun isEmpty(): Boolean = length == 0
 }

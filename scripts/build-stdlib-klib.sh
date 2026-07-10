@@ -20,23 +20,37 @@ done
 
 need_kotc
 cd "$ROOT"
-LIBCP="$(echo toolchain/kotc/build/install/kotc/lib/*.jar | tr ' ' ':')"
 OUT="$ROOT/build/clr-stdlib-frontend-klib"
 KLIB="$FE_KLIB"
 rm -rf "$OUT"; mkdir -p "$OUT"
 
-mapfile -t COMMON   < <(find libraries/stdlib/common/src -name '*.kt')
-mapfile -t SRC      < <(find libraries/stdlib/src -name '*.kt')
-mapfile -t UNSIGNED < <(find libraries/stdlib/unsigned/src -name '*.kt')
+# The frontend KLIB must carry the ACTUALIZED clr fragment (libraries/stdlib/clr/), not just the
+# common/expect sources: without it, every kotlin.* builtin an app resolves from the klib is an
+# unactualized `expect` (no @ClrTypeAlias/@ClrIntrinsic metadata, no compiled const value) — see
+# task #80. Reuses the SAME common+clr HMPP-fragment mechanism as build-stdlib-rt.sh
+# (collect_stdlib_sources + stdlib_fragment_args in lib.sh): common = expect/impl multiplatform
+# sources, clr = the actual CLR builtins/platform actuals that refine it.
+#
+# This runs kotc's OWN binary (DOTKT_BUILD_KLIB=1), NOT the stock `KotlinMetadataCompiler` CLI class:
+# the stock class's HMPP configuration updater explicitly REJECTS -Xfragments during metadata
+# compilation ("HMPP module structure should not be passed during metadata compilation" — verified
+# empirically), and even where a stock phase *would* accept fragments (the newer pipeline-based
+# MetadataKlibSerializerPhase) it hardcodes `constValueProvider = null`, so const val initializers
+# never carry a compiled value into the klib. kotc's ClrMetadataKlibFir2IrPhase +
+# ClrMetadataKlibSerializerPhase (toolchain/kotc/.../pipeline/ClrMetadataKlibPipeline.kt) run Fir2Ir
+# first (which const-folds the whole actualized module as a side effect) and wire that real
+# ConstValueProviderImpl into the serializer instead.
+collect_stdlib_sources
+stdlib_fragment_args
 
-COMMON_SOURCES=("${COMMON[@]}" "${SRC[@]}" "${UNSIGNED[@]}")
-COMMON_CSV="$(IFS=,; echo "${COMMON_SOURCES[*]}")"
+info "frontend klib sources: ${#STDLIB_COMMON[@]}+${#STDLIB_SRC[@]}+${#STDLIB_UNSIGNED[@]} common + ${#STDLIB_CLR[@]} clr"
+DOTKT_BUILD_KLIB=1 "$KOTC" \
+	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
+	-Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters \
+	-Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN \
+	"${STDLIB_FRAGMENT_ARGS[@]}" \
+	-d "$KLIB" 2>"$OUT/kotc.err" || true
+grep ': error:' "$OUT/kotc.err" | sed -E 's/^.*: error: //' | sort | uniq -c | sort -rn | head -10 || true
 
-java -cp "$LIBCP" org.jetbrains.kotlin.cli.metadata.KotlinMetadataCompiler \
-	"${COMMON[@]}" "${SRC[@]}" "${UNSIGNED[@]}" \
-	-Xmetadata-klib -Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters \
-	-Xmulti-platform -Xcommon-sources="$COMMON_CSV" $STDLIB_OPTIN \
-	-d "$KLIB"
-
-[[ -e "$KLIB" ]] || die "expected KLIB at $KLIB"
+[[ -e "$KLIB" ]] || die "expected KLIB at $KLIB (see $OUT/kotc.err)"
 info "frontend klib: $KLIB ($(du -sh "$KLIB" | awk '{print $1}'))"

@@ -59,16 +59,16 @@ static class MapVarianceRealign
         }
     }
 
-    public static void Apply(JsonNode root, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams)
+    public static void Apply(JsonNode root, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject o) return;
-        ProcessMethods(o["methods"], calleeTypeParams);
+        ProcessMethods(o["methods"], calleeTypeParams, refs);
         if (o["types"] is JsonArray types)
             foreach (var t in types)
-                if (t != null) Apply(t, calleeTypeParams);
+                if (t != null) Apply(t, calleeTypeParams, refs);
     }
 
-    static void ProcessMethods(JsonNode methods, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams)
+    static void ProcessMethods(JsonNode methods, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams, ReferenceMetadataIndex refs)
     {
         if (methods is not JsonArray arr) return;
         foreach (var m in arr)
@@ -94,7 +94,7 @@ static class MapVarianceRealign
             {
                 GatherLocals(body, env, aliases);
                 if (constraints.Count > 0) RealignVarTypes(body, env, aliases, constraints);
-                Walk(body, env, calleeTypeParams, aliases, constraints);
+                Walk(body, env, calleeTypeParams, aliases, constraints, refs);
             }
         }
     }
@@ -153,7 +153,7 @@ static class MapVarianceRealign
     }
 
     static void Walk(JsonNode node, Dictionary<string, TypeNode> env, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams,
-        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<int, TypeNode> constraints)
+        IReadOnlyDictionary<string, string> aliases, IReadOnlyDictionary<int, TypeNode> constraints, ReferenceMetadataIndex refs)
     {
         if (node is JsonObject o)
         {
@@ -162,13 +162,61 @@ static class MapVarianceRealign
                 Realign(o, env, calleeTypeParams);
             if (k == "callInstance")
                 OwnerVarianceRealign(o, env, aliases, constraints);
+            if (k == "new")
+                RealignFactoryCtorArgTypes(o, refs);
             foreach (var kv in o)
-                if (kv.Value != null) Walk(kv.Value, env, calleeTypeParams, aliases, constraints);
+                if (kv.Value != null) Walk(kv.Value, env, calleeTypeParams, aliases, constraints, refs);
         }
         else if (node is JsonArray a)
             foreach (var it in a)
-                if (it != null) Walk(it, env, calleeTypeParams, aliases, constraints);
+                if (it != null) Walk(it, env, calleeTypeParams, aliases, constraints, refs);
     }
+
+    // CONSTRUCTION-ARGUMENT covariance realign (il-bymap regression, klib migration #80): a collection-factory
+    // LITERAL (`mapOf(...)`/`listOf(...)`/`setOf(...)`) passed directly as a `new` node's argument infers its OWN
+    // typeArgs from the literal's element/pair VALUES (Kotlin's lower-bound inference — e.g. `mapOf("k1" to
+    // "Alice", "k2" to 30)` with String/Int values infers `V = Comparable<Any>`, the tightest common supertype of
+    // the two value literals), which can be NARROWER than the constructor's declared parameter type when the
+    // target slot's Kotlin type is wider (`User(data: Map<String, Any?>)`). Kotlin accepts this with NO cast —
+    // `Map`/`List`/`Set` are declaration-site covariant (`out V`) — but MemberCallSubstitution's `TryFactorySubst`
+    // builds the literal's runtime `Dictionary<K,V>`/`List<E>`/`HashSet<E>` straight off those narrower typeArgs,
+    // and the CLR's generic collection instantiations are INVARIANT: passing a `Dictionary<string,IComparable>`
+    // where `IDictionary<string,object>` is expected is unverifiable (ilverify StackUnexpected — the ctor argument
+    // slot never reconciles the two). Realign the factory call's `typeArgs` to the constructor's declared
+    // `argTypes` slot HERE, before MemberCallSubstitution builds the literal, so it is constructed at the WIDE
+    // type Kotlin already type-checked the assignment against — the same "realign to the actually-intended type"
+    // move as `Realign`/`OwnerVarianceRealign` above, just sourced from the ENCLOSING slot instead of a callee
+    // constraint. BIR-space (Kotlin FQNs) — runs before type lowering + MemberCallSubstitution.
+    static void RealignFactoryCtorArgTypes(JsonObject newNode, ReferenceMetadataIndex refs)
+    {
+        if (newNode["argTypes"] is not JsonArray declaredArgTypes) return;
+        if (newNode["args"] is not JsonArray args) return;
+        var n = Math.Min(declaredArgTypes.Count, args.Count);
+        for (var i = 0; i < n; i++)
+        {
+            if (args[i] is not JsonObject call || Str(call["k"]) != "callStatic") continue;
+            if (Str(call["method"]) is not string fn || refs.CollectionFactoryKind(fn) is not string kind) continue;
+            if (call["typeArgs"] is not JsonArray callTypeArgs || callTypeArgs.Count == 0) continue;
+            if (TypeJson.Read(declaredArgTypes[i]) is not TypeNode declared) continue;
+            if (UnwrapNullableOblivious(declared) is not TypeNode.Fqn { Args: { } declArgs }) continue;
+            var expected = kind == "map" ? 2 : 1;                       // map -> [K,V]; list/set -> [E]
+            if (declArgs.Length != expected || callTypeArgs.Count != expected) continue;
+            for (var j = 0; j < expected; j++)
+            {
+                var cur = TypeJson.Read(callTypeArgs[j]);
+                if (cur != declArgs[j]) callTypeArgs[j] = TypeJson.Write(declArgs[j]);
+            }
+        }
+    }
+
+    // Strip BOTH nullability wrappers (`nullable`/`oblivious`) off a declared slot type before matching it against
+    // the factory call's own Fqn — a `Map<String,Any?>?` param is a `Nullable(Fqn(Map,[...]))` at this layer.
+    static TypeNode UnwrapNullableOblivious(TypeNode t) => t switch
+    {
+        TypeNode.Nullable n => UnwrapNullableOblivious(n.Of),
+        TypeNode.Oblivious ob => UnwrapNullableOblivious(ob.Of),
+        _ => t,
+    };
 
     // Undo the use-site `in`/`out` variance over-approximation baked into an INLINED Map member call: recover the
     // receiver's PRECISE static type from its type-param bound (`M : MutableMap<K,…>`) and realign each over-approximated

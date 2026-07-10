@@ -294,7 +294,7 @@ sealed class Pipeline
             // at `ContainsKey`. Realign each such typeArg to the actual argument's concrete type-argument. BIR-space,
             // before MemberCallSubstitution + type lowering; non-ref only. A no-op when the arg already agrees (genuine
             // `<Any>` calls) or the callee isn't a local input (an app never re-lowers a referenced stdlib body).
-            if (!_options.RefBuild) MapVarianceRealign.Apply(bir.Root, calleeTypeParams);
+            if (!_options.RefBuild) MapVarianceRealign.Apply(bir.Root, calleeTypeParams, refs);
             // CALL substitution (substitute/app builds only): a member call / construction whose OWNER is a CLR-bound
             // type in the ref.dll (@ClrTypeAlias, or the legacy class-level @ClrIntrinsic) is rewritten to a plain BCL
             // call/new. This is the bir2cir home of what kotc's clrName() member routing used to do — sourced from the

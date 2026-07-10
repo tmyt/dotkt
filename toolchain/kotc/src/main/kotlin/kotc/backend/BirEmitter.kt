@@ -508,16 +508,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	internal fun interfaceDef(iface: IrClass): String {
-		fun jvmSequencedCompatSlot(fn: IrSimpleFunction): Boolean {
-			val owner = (fn.parent as? IrClass)?.fqNameWhenAvailable?.asString()
-			val name = fn.name.asString()
-			return when (owner) {
-				"kotlin.CharSequence" -> name == "isEmpty"
-				"kotlin.collections.List", "kotlin.collections.MutableList", "kotlin.enums.EnumEntries" ->
-					name in setOf("getFirst", "getLast", "reversed", "addFirst", "addLast", "removeFirst", "removeLast")
-				else -> false
-			}
-		}
 		fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
 			// C3b reverse direction: a Kotlin interface extending a @Clr interface (Set : Collection->IReadOnlyCollection).
 			// clrIfaceMemberName reads facadegen .NET-interop metadata ONLY (not @ClrIntrinsic); in the stdlib build
@@ -532,7 +522,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// A Kotlin interface method with a DEFAULT implementation (a body, not abstract) -> carry that body so ilemit
 			// emits a CLR default interface method; an implementer that doesn't override it then INHERITS the default
 			// instead of failing to load ("does not have an implementation", e.g. CoroutineContext.plus, ClosedRange.contains).
-			val hasDefault = fn.body != null && fn.modality != Modality.ABSTRACT && !jvmSequencedCompatSlot(fn)
+			val hasDefault = fn.body != null && fn.modality != Modality.ABSTRACT
 			val body = if (hasDefault) (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } else ""
 			// A generic interface method (`fun <E> get(...)`, `<R> fold(...)`) must carry its own type params, else
 			// `gp:E`/`gp:R` in its signature is unresolvable at emit (CoroutineContext / ContinuationInterceptor / …).
@@ -556,7 +546,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// NOT be re-emitted as an abstract slot here — that shadows the inherited DIM, so concrete implementers
 			// (EmptyMap/MapWithDefaultImpl) "do not have an implementation". Abstract fake-overrides (no body anywhere, the
 			// C3a size/get case) are KEPT (resolveFakeOverride has no body), so the BCL member binding still emits.
-			.filterNot { it.isFakeOverride && it.resolveFakeOverride()?.body != null && !jvmSequencedCompatSlot(it) }
+			.filterNot { it.isFakeOverride && it.resolveFakeOverride()?.body != null }
 			.map { ifaceMethod(it) }
 		val propMethods = iface.declarations.filterIsInstance<IrProperty>()
 			.flatMap { p -> listOfNotNull(p.getter?.let { ifaceMethod(it, p) }, p.setter?.let { ifaceMethod(it, p) }) }

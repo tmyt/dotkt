@@ -119,7 +119,7 @@ public class ArrayDeque<E> : AbstractMutableList<E> {
     /**
      * Prepends the specified [element] to this deque.
      */
-    public override fun addFirst(element: E) {
+    public fun addFirst(element: E) {
         registerModification()
         ensureCapacity(size + 1)
 
@@ -131,7 +131,7 @@ public class ArrayDeque<E> : AbstractMutableList<E> {
     /**
      * Appends the specified [element] to this deque.
      */
-    public override fun addLast(element: E) {
+    public fun addLast(element: E) {
         registerModification()
         ensureCapacity(size + 1)
 
@@ -142,7 +142,7 @@ public class ArrayDeque<E> : AbstractMutableList<E> {
     /**
      * Removes the first element from this deque and returns that removed element, or throws [NoSuchElementException] if this deque is empty.
      */
-    public override fun removeFirst(): E {
+    public fun removeFirst(): E {
         if (isEmpty()) throw NoSuchElementException("ArrayDeque is empty.")
         registerModification()
 
@@ -161,7 +161,7 @@ public class ArrayDeque<E> : AbstractMutableList<E> {
     /**
      * Removes the last element from this deque and returns that removed element, or throws [NoSuchElementException] if this deque is empty.
      */
-    public override fun removeLast(): E {
+    public fun removeLast(): E {
         if (isEmpty()) throw NoSuchElementException("ArrayDeque is empty.")
         registerModification()
 

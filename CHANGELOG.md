@@ -120,6 +120,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **`@JvmInline value class` (and any other `kotlin.jvm.*` name used unqualified) resolves again
+  after the klib migration (#80).** Switching kotc's app/stdlib frontends from the JVM-platform
+  pipeline to the Common/Native-platform metadata pipeline (`MetadataFrontendPipelinePhase` /
+  `prepareNativeSessions`) dropped `kotlin.jvm.*` from the FIR session's default imports — only the
+  JVM platform's `DefaultImportProvider` adds it, and Common/Native's don't need it upstream (no
+  `kotlin.jvm.*` on those real platforms). kotc now re-registers the FIR session's
+  `FirDefaultImportProviderHolder` with a provider that adds `kotlin.jvm.*` on top of the
+  platform's own default imports, right after each session is built and before any FIR resolution
+  reads it (`kotc.pipeline.installKotlinJvmDefaultImport`, wired into both
+  `ClrStdlibFrontendPipelinePhase` and the new `ClrAppFrontendPipelinePhase`, a fork of stock
+  `MetadataFrontendPipelinePhase` needed only to get hold of the `FirSession` before resolution runs).
+  Gate: `cases/il-valclass` (`@JvmInline value class Money(val cents: Int)`, verify-il `valcls`).
 - **A star-projected collection over a value-type element (`is Map<*,*>` / `List<*>` / `Iterable<*>` / `Collection<*>`
   on a `Dictionary<int,int>` / `List<int>`) no longer throws `InvalidCastException` (#60).** After `if (g is Map<*,*>)`,
   the smart-cast `g` erased to `Map<Any?,Any?>` — the CLR generic `IDictionary<object,object>`; because CLR reified

@@ -18,14 +18,15 @@ import org.jetbrains.kotlin.cli.pipeline.CheckCompilationErrors
 import org.jetbrains.kotlin.cli.pipeline.ConfigurationUpdater
 import org.jetbrains.kotlin.cli.pipeline.ConfigurationPipelineArtifact
 import org.jetbrains.kotlin.cli.pipeline.Fir2IrPipelineArtifact
+import org.jetbrains.kotlin.cli.pipeline.PipelineContext
 import org.jetbrains.kotlin.cli.pipeline.PipelinePhase
 import org.jetbrains.kotlin.cli.pipeline.PerformanceNotifications
 import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifact
-import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelinePhase
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.moduleName
+import org.jetbrains.kotlin.config.phaser.CompilerPhase
 import org.jetbrains.kotlin.fir.backend.Fir2IrConfiguration
 import org.jetbrains.kotlin.fir.backend.Fir2IrExtensions
 import org.jetbrains.kotlin.fir.backend.Fir2IrVisibilityConverter
@@ -122,23 +123,38 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 /**
  * Kotlin/CLR compiler driver.
  *
- * We reuse the official common metadata frontend, run FIR2IR explicitly for KLIB/common
- * dependencies, and swap only the final backend phase for our own.
+ * We reuse the official common metadata frontend construction (`prepareMetadataSessions` /
+ * `prepareNativeSessions`, both public CLI API), run FIR2IR explicitly for KLIB/common
+ * dependencies, and swap only the final backend phase for our own. [ClrAppFrontendPipelinePhase]
+ * forks the thin CLI glue around `prepareMetadataSessions` (not Kotlin-core session-construction
+ * logic) solely to install `kotlin.jvm.*` as a default import before any FIR resolution runs — see
+ * `ClrDefaultImports.kt`.
  */
 class ClrCliPipeline(
 	override val defaultPerformanceManager: PerformanceManager,
 ) : AbstractCliPipeline<K2MetadataCompilerArguments>() {
-	override fun createCompoundPhase(arguments: K2MetadataCompilerArguments) =
-		if (System.getenv("DOTKT_STDLIB_COMPILE") != null) {
-			ClrMetadataConfigurationPipelinePhase then
-				ClrStdlibFrontendPipelinePhase then
-				ClrCommonFir2IrPipelinePhase then
-				ClrBackendPhase
-		} else {
-			ClrMetadataConfigurationPipelinePhase then
-				ClrPluginRegistrationPhase then
-				MetadataFrontendPipelinePhase then
-				ClrCommonFir2IrPipelinePhase then
-				ClrBackendPhase
+	override fun createCompoundPhase(
+		arguments: K2MetadataCompilerArguments,
+	): CompilerPhase<PipelineContext, ArgumentsPipelineArtifact<K2MetadataCompilerArguments>, *> =
+		when {
+			// Build the CLR frontend stdlib KLIB itself: common+clr fragment-actualized FIR -> Fir2Ir (for
+			// real constant folding) -> metadata klib. See ClrMetadataKlibPipeline.kt for why this needs its
+			// own serializer rather than the stock MetadataKlibSerializerPhase.
+			System.getenv("DOTKT_BUILD_KLIB") != null ->
+				ClrMetadataConfigurationPipelinePhase then
+					ClrStdlibFrontendPipelinePhase then
+					ClrMetadataKlibFir2IrPhase then
+					ClrMetadataKlibSerializerPhase
+			System.getenv("DOTKT_STDLIB_COMPILE") != null ->
+				ClrMetadataConfigurationPipelinePhase then
+					ClrStdlibFrontendPipelinePhase then
+					ClrCommonFir2IrPipelinePhase then
+					ClrBackendPhase
+			else ->
+				ClrMetadataConfigurationPipelinePhase then
+					ClrPluginRegistrationPhase then
+					ClrAppFrontendPipelinePhase then
+					ClrCommonFir2IrPipelinePhase then
+					ClrBackendPhase
 		}
 }
