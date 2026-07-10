@@ -1874,10 +1874,18 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	/**
-	 * A callable reference `::foo` -> a delegate bound to the referenced function. v1 scope: a top-level/static
-	 * function reference (no receiver, no bound args) reuses the lambda `newDelegate` path — top-level funs are
-	 * emitted as static file-class methods, so `FindStatic(name)` resolves the `ldftn` target. Bound-instance
-	 * (`obj::method`), member, and constructor references are deferred (clean `unsupportedExpr`).
+	 * A callable reference `::foo` -> a delegate bound to the referenced function. Handled: a top-level/static
+	 * function reference (no receiver — reuses the lambda `newDelegate` path over the static file-class method), a
+	 * constructor reference (`::Ctor`/`::NetType` -> a lifted static factory), a bound-instance reference
+	 * (`obj::method` -> `newBoundDelegate`), an UNBOUND member reference (`Class::method` -> a lifted static
+	 * `__mref(self, args)`), a .NET method reference (bound/unbound), and — G8 — an UNBOUND top-level
+	 * EXTENSION-function reference (`String::isNotBlank`, `Type::extFn`): a lifted static forwarder whose BODY is the
+	 * faithful extension call (the `callStatic owner:null` shape the direct top-level ext-call path emits in `call()`),
+	 * bound as a delegate. The forwarder is
+	 * needed (not a bare `ldftn`) because stdlib exts are @ClrIntrinsic/@InlineOnly with no rt.dll body — the CALL
+	 * node gives bir2cir something to substitute. DEFERRED (clean `unsupported`, each with its concrete blocker): a
+	 * BOUND extension reference (`expr::extFn` — a closed static delegate is not ilverify-clean), a suspend reference
+	 * (needs the coroutine SM), and a .NET-method deferral case.
 	 */
 	internal fun functionRef(node: IrFunctionReference): String {
 		// `::Ctor` (constructor reference) -> a lifted static factory `__ctorref_N(args) = new T(args)`, bound as a
@@ -1919,6 +1927,86 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `::topLevelFun` — no receiver: a delegate over the static file-class method (FindStatic resolves it).
 		if (dispatchIdx < 0 && !hasExt)
 			return """{"k":"newDelegate","method":${str(fn.name.asString())},"funcType":${funcTypeOf(fn).toJson()}}"""
+		// `Type::extFn` — an EXTENSION-function reference (G8). The delegate's target is a lifted static forwarder whose
+		// BODY is the faithful extension CALL — the SAME shape a DIRECT call to this callee would emit (`owner:null` for a
+		// stdlib/this-module ext, `ownerType:fileClass` for a referenced-assembly facade ext), NOT a bare `ldftn` of the
+		// stdlib fn: stdlib exts (`isNotBlank`, …) are @ClrIntrinsic/@InlineOnly with no rt.dll body, so bir2cir needs a
+		// CALL node to substitute. The forwarder params + the delegate funcType come from `birType(node.type)` — the
+		// CALL-SITE-resolved `KFunctionN<P1..Pn,R>` (receiver first, then regulars), NOT `funcTypeOf(fn)`: a
+		// `String::isNotBlank` reference resolves the receiver to `String` at the call site, though `isNotBlank` is
+		// DECLARED on `CharSequence` — using the declared type would emit `Func<CharSequence,bool>` for an expected
+		// `Func<string,bool>`.
+		if (hasExt) {
+			val extIdx = fn.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+			val boundExt = if (extIdx >= 0) node.arguments.getOrNull(extIdx) else null
+			// A suspend ext reference (KSuspendFunctionN) needs the coroutine state-machine lowering — separate machinery.
+			if (fn.isSuspend)
+				return unsupported(node, "a suspend function reference",
+					"a suspend callable reference needs the coroutine state-machine lowering (KSuspendFunction), not yet wired")
+			// BOUND (`expr::extFn`): binding the receiver as the static forwarder's first arg is NOT ilverify-clean —
+			// ECMA-335 II.14.6 requires `ldnull` for a static delegate target (Codex-confirmed). It needs a capture-class
+			// lift (a lifted closure class with a `__recv` field forwarding to the ext fn) or a new ilemit
+			// `newBoundStaticDelegate` node; zero in-tree occurrences to validate against, so deferred.
+			if (boundExt != null)
+				return unsupported(node, "a bound extension-function reference (`expr::extFn`)",
+					"a closed static ext-forwarder delegate is not ilverify-clean (ECMA-335 II.14.6 wants ldnull); needs a capture-class lift")
+			// A MEMBER extension (`class C { fun T.f() }`, dispatch + ext receiver) is not expressible as a callable
+			// reference in Kotlin, so `dispatchIdx >= 0 && hasExt` cannot occur; deferred defensively.
+			if (dispatchIdx >= 0)
+				return unsupported(node, "a member extension-function reference",
+					"a member extension function cannot be referenced as a callable in Kotlin")
+			// UNBOUND top-level `fun T.f(args)` -> a lifted static `__mref(__self, __a1..) = f(__self, __a1..)`.
+			val fnType = birType(node.type) as? TypeNode.Fn
+				?: return unsupported(node, "this extension-function reference",
+					"its inferred type was not a resolvable KFunction type")
+			val selfT = fnType.params.firstOrNull()
+				?: return unsupported(node, "this extension-function reference",
+					"the reference's inferred type carries no receiver parameter")
+			val regTypes = fnType.params.drop(1)
+			val lname = "__mref${lambdaCounter++}"
+			val psJson = (listOf("""{"name":"__self","type":${selfT.toJson()}}""") +
+				regTypes.mapIndexed { i, t -> """{"name":${str("__a${i + 1}")},"type":${t.toJson()}}""" }).joinToString(",")
+			val callArgs = (listOf("""{"k":"local","name":"__self"}""") +
+				regTypes.indices.map { """{"k":"local","name":${str("__a${it + 1}")}}""" }).joinToString(",")
+			// The reference's OWN instantiated type args (a generic ext `List<T>::foo` referenced as `List<Int>::foo`) ->
+			// the inner call's `typeArgs` so bir2cir/ilemit MakeGenericMethod. Empty for `isNotBlank`/`indentWidth`.
+			val refTps = fn.typeParameters
+			val refTaArgs = refTps.indices.map { node.typeArguments.getOrNull(it) }
+			val hasRefTa = refTps.isNotEmpty() && refTaArgs.all { it != null }
+			val refTa = if (!hasRefTa) "" else ""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
+			val retT = fnType.ret
+			val retVoid = retT == TypeNode.Fqn("kotlin.Unit")   // the SUBSTITUTED return (fn's own T may resolve to Unit)
+			// The inner call MUST mirror the DIRECT top-level ext-call shape for this same callee, so bir2cir attributes
+			// the forwarded call identically to a direct one. A callee restored from a referenced-assembly [KotlinFile]
+			// facade (`body == null` + an injected file class) emits the `ownerType:fileClass` identity (mirrors the
+			// injected-facade ext-call gate in `call()`); every other top-level ext (stdlib-from-klib, this-module) emits
+			// the plain `owner:null` shape (the direct top-level ext-call `callStatic owner:null` in `call()`).
+			val injectedFileClass = if (fn.body == null)
+				(fn.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.let {
+					kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, fn.name), regularParams(fn).size)
+				} else null
+			val callE = if (injectedFileClass != null) {
+				// `__self` = the ext receiver, so it heads both the args and the shape/argTypes (matches the injected
+				// top-level ext-call branch in `call()`; declared param types are used for the facade signature lookup).
+				val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
+				val declShapeTypes = (listOf(extRecvParam) + regularParams(fn)).joinToString(",") { birType(it.type).toJson() }
+				if (hasRefTa)
+					"""{"k":"callStatic","ownerType":${str(injectedFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
+				else
+					"""{"k":"callStatic","ownerType":${str(injectedFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
+			} else {
+				"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]}"""
+			}
+			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
+			// freeTypeParams over node.type's SUBSTITUTED args (not the declared fn params — same call-site-type trap):
+			// picks up only genuine ENCLOSING-context type vars (a `fun <E> …` scope), never the ext fn's OWN T (already
+			// substituted away in node.type). The lifted static must be generic over those enclosing vars.
+			val nodeTypeArgs = (node.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }.orEmpty()
+			val freeTps = freeTypeParams(nodeTypeArgs)
+			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
+			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${retT.toJson()},"body":[$body]}""")
+			return """{"k":"newDelegate","method":${str(lname)},"funcType":${fnType.toJson()}$typeArgs}"""
+		}
 		// `obj::method` — a bound instance reference: a delegate whose target is the bound receiver. Only USER
 		// classes (the method resolves via FindMethod); .NET-method / extension / unbound refs are deferred.
 		val boundRecv = if (dispatchIdx >= 0 && !hasExt) node.arguments.getOrNull(dispatchIdx) else null
@@ -2012,7 +2100,14 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun propertyRef(node: IrPropertyReference): String {
 		if (node.origin == IrStatementOrigin.PROPERTY_REFERENCE_FOR_DELEGATE)
 			return kPropertyStub(node.symbol.owner.name.asString())
-		if (propRefExtensionReceiver(node) != null)
+		// An extension-receiver property reference (`String::someExtProp`, KProperty2) has no supported lowering yet.
+		// Test the accessor's PARAMETER SHAPE, not the bound ARGUMENT: a bound-argument test is null for an UNBOUND
+		// top-level ext-property ref (no receiver argument present), so it would slip past this guard and emit a
+		// 0-arg `callStatic get_<name>` for an interface slot that actually needs `get(receiver)` (a param-count-
+		// mismatched override -> TypeLoad/miscompile). The getter/setter parameter list carries the ext receiver
+		// regardless of whether the reference is bound.
+		val extAccessor = node.getter?.owner ?: node.setter?.owner
+		if (extAccessor?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true)
 			return unsupported(node, "this property reference",
 				"an extension-receiver property reference (KProperty2) has no supported lowering yet")
 		val prop = node.symbol.owner
@@ -2022,10 +2117,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val getterFn = node.getter?.owner ?: prop.getter
 			?: return unsupported(node, "this property reference", "the referenced property has no getter")
 		// A reference to a property DIRECTLY overriding kotlin.CharSequence.length is a clean deferral: its accessor
-		// binds the synthesized dotkt_CharSequence interface slot (get_length), whose lift-through has no supported
-		// lowering yet (that completion is G8/callable-ref scope, not this wave — preserve today's diagnostic). Walks
-		// only the direct override chain (non-transitive, matching the retired clrIfaceMemberName helper): a
-		// `class B : A` where `A : CharSequence` re-overrides through A, so `B::length` takes the plain lift.
+		// binds the .NET-mapped interface slot (get_length routes to System.String's get_Length via bir2cir), whose
+		// lift-through the plain get_/set_ accessor convention below cannot faithfully name — the blocker is the
+		// interface-slot rename, owned by bir2cir, not a shape kotc can emit here. Walks only the direct override
+		// chain (non-transitive, matching the retired clrIfaceMemberName helper): a `class B : A` where
+		// `A : CharSequence` re-overrides through A, so `B::length` takes the plain lift.
 		val overridesCharSeqLength = (sequenceOf(getterFn) + getterFn.overriddenSymbols.asSequence().map { it.owner }).any { owner ->
 			(owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.CharSequence"
 				&& owner.correspondingPropertySymbol?.owner?.name?.asString() == "length"
@@ -2870,12 +2966,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun propRefDispatchReceiver(node: IrPropertyReference): IrExpression? {
 		val params = (node.getter?.owner ?: node.setter?.owner)?.parameters ?: return null
 		val idx = params.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
-		return if (idx in 0 until node.arguments.size) node.arguments[idx] else null
-	}
-
-	internal fun propRefExtensionReceiver(node: IrPropertyReference): IrExpression? {
-		val params = (node.getter?.owner ?: node.setter?.owner)?.parameters ?: return null
-		val idx = params.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
 		return if (idx in 0 until node.arguments.size) node.arguments[idx] else null
 	}
 

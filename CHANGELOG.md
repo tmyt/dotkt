@@ -120,6 +120,22 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **#73 Wave 9 (G8): unbound extension-function callable references (`String::isNotBlank`,
+  `String::indentWidth`, `Type::extFn`) now work.** Previously ANY extension-function reference fell
+  through to `unsupportedExpr` in kotc's `functionRef`; the stdlib `Indent.kt` masked this by lambda-wrapping
+  (`{ it.isNotBlank() }`). kotc now lifts a static forwarder whose BODY is the faithful extension call
+  (`callStatic owner:null method:<name> args:[__self, …]`), then binds a `newDelegate` over it — bir2cir
+  then substitutes/binds that inner call like any other (so `String::isNotBlank` resolves to the BCL
+  @ClrIntrinsic). The forwarder's param types + the delegate funcType are derived from the CALL-SITE-resolved
+  `KFunctionN` type (`birType(node.type)`), not the declared receiver, so a `String::isNotBlank` reference
+  binds `Func<string,bool>` even though `isNotBlank` is declared on `CharSequence`. `Indent.kt` is reverted to
+  the natural `.filter(String::isNotBlank)` / `.map(String::indentWidth)` (upstream-identical), proving the
+  gap is closed. Also fixes a latent `propertyRef` miscompile: the extension-receiver guard tested the bound
+  ARGUMENT (null for an unbound top-level ext-property ref), letting `String::extProp` slip past all guards and
+  emit a param-count-mismatched 0-arg accessor override; the guard now tests the accessor's parameter SHAPE.
+  Bound extension-fn refs, KProperty2 (member-ext), lateinit/@ClrField/CharSequence.length property refs stay
+  clean deferrals (a closed static-forwarder delegate is not ilverify-clean per ECMA-335 II.14.6; the rest have
+  no in-tree demand). New sample `cases/il-extfunref`.
 - **#73 Wave 8: the System.Object slot names (M5) and the bound .NET method-ref delegate (M4.4) moved out of
   kotc into bir2cir — kotc now emits ZERO BCL member names.** kotc stopped baking the CLR slot names
   `ToString`/`GetHashCode`/`Equals` (its `objectMethodName` helper became the pure-Kotlin boolean predicate
