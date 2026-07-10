@@ -3942,22 +3942,24 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// dead against the CLR frontend jar anyway — that jar has no `kotlin.text.String.Companion.format`, so the
 			// symbol is unresolved before the backend ever runs. Making `String.format` work is a stdlib concern (bind a
 			// `String.Companion.format(String, vararg Any?)` @ClrIntrinsic("System.String.Format")), NOT a kotc lowering.
-			// Exhaustive-when synthetic else / uninitialized property -> throw (the branch is unreachable).
-			// kotc names ONLY the KOTLIN exception FQN (a pure Kotlin fact); bir2cir substitutes it to the BCL type via
-			// the ref.dll @ClrTypeAlias (IllegalArgumentException -> System.ArgumentException, IllegalStateException ->
-			// System.InvalidOperationException). exhaustive-when synthetic-else / uninitialized-property -> IllegalState.
-			if (name == "noWhenBranchMatchedException" || name == "throwUninitializedPropertyAccessException")
-				return throwExpr(newExc("kotlin.IllegalStateException", str(name)))
-			// Precondition / error helpers (top-level kotlin.* functions). TODO() throws NotImplementedError (a real
-			// emitted Kotlin exception, NOT CLR-aliased — see Standard.kt), constructed with its standard default
-			// message (the 1-arg ctor, so no cross-module default-value gap); error()/check() throw IllegalStateException.
-			if (calleeFq == "kotlin.TODO") return throwExpr(newExc("kotlin.NotImplementedError", str("An operation is not implemented.")))
-			if (calleeFq == "kotlin.error")
-				return throwExpr("""{"k":"new","type":${fqnJson("kotlin.IllegalStateException")},"argTypes":[${fqnJson("kotlin.String")}],"args":[${regularArgs(call).firstOrNull()?.let { expr(it) } ?: """{"k":"const","type":${fqnJson("kotlin.String")},"value":"error"}"""}]}""")
-			if (calleeFq == "kotlin.require")
-				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null},"else":${throwExpr(newExc("kotlin.IllegalArgumentException", "\"Failed requirement\""))}}"""
-			if (calleeFq == "kotlin.check")
-				return """{"k":"cond","cond":${expr(regularArgs(call).first())},"then":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null},"else":${throwExpr(newExc("kotlin.IllegalStateException", "\"Check failed\""))}}"""
+			// `noWhenBranchMatchedException` / `throwUninitializedPropertyAccessException` are COMPILER INTRINSICS (the
+			// exhaustive-when synthetic-else / uninitialized-property-access throws), siblings of ieee754equals/EQEQ/... —
+			// kotc emits ONLY the FAITHFUL intrinsic call with owner = the callee's real resolved parent FQN
+			// (collision-safe). bir2cir re-emits the throw (Kotlin IllegalStateException, substituted to the BCL type via
+			// the ref.dll @ClrTypeAlias). The recognition + throw synthesis is bir2cir's, not kotc's.
+			// NOTE: on THIS (CLR) pipeline only `noWhenBranchMatchedException` actually reaches here (top-level, owner
+			// `kotlin.internal.ir`); a `lateinit` access lowers to a dedicated `lateinitGet` node earlier, so
+			// `throwUninitializedPropertyAccessException` is never produced — its name-branch is defensive.
+			if (name == "noWhenBranchMatchedException" || name == "throwUninitializedPropertyAccessException") {
+				// FAITHFUL owner = the callee's real resolved parent FQN (the home package for the top-level intrinsic;
+				// the enclosing class if a member-form callee ever appears). The final literal is an unreachable
+				// last-resort default, not a preferred guess — the resolved FQN always wins ahead of it.
+				val intrinsicOwner = declaringClass?.fqNameWhenAvailable?.asString()
+					?: pkgFqName
+					?: callee.fqNameWhenAvailable?.asString()?.substringBeforeLast('.', "")?.takeIf { it.isNotEmpty() }
+					?: "kotlin.internal.ir"
+				return """{"k":"callStatic","owner":${fqnJson(intrinsicOwner)},"method":${str(name)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
+			}
 			// `ieee754equals` is a `kotlin.internal.ir` COMPILER INTRINSIC, a sibling of EQEQ/EQEQEQ/less/... — kotc
 			// emits ONLY the FAITHFUL intrinsic call with owner = `kotlin.internal.ir` (collision-safe); bir2cir's
 			// PrimitiveOperatorLowering re-emits the `binOp ==` (the ordered IEEE-754 comparison). The Kotlin<->CLR
@@ -3966,39 +3968,20 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				val a = regularArgs(call)
 				return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"ieee754equals","args":[${expr(a[0])},${expr(a[1])}]}"""
 			}
-			// requireNotNull(x)/checkNotNull(x) -> evaluate once; throw if null, else the (non-null) value.
-			if (calleeFq == "kotlin.requireNotNull" || calleeFq == "kotlin.checkNotNull") {
-				val arg = regularArgs(call).first()
-				val nv = "__rn${scopeCounter++}"
-				// Kotlin: requireNotNull throws IllegalArgumentException, checkNotNull throws IllegalStateException.
-				val excType = if (calleeFq == "kotlin.requireNotNull") "kotlin.IllegalArgumentException" else "kotlin.IllegalStateException"
-				val velem = nullableElem(arg.type)
-				val nvLoc = """{"k":"local","name":${str(nv)}}"""
-				return if (velem != null) {
-					// value-nullable T?: HasValue ? Value : throw.
-					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(velem).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${velem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${velem.toJson()},"e":$nvLoc},"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
-				} else {
-					"""{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${birType(arg.type).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}}},"then":$nvLoc,"else":${throwExpr(newExc(excType, "\"Required value was null\""))}}}"""
-				}
-			}
+			// The top-level precondition / error helpers (`kotlin.TODO`/`error`/`require`/`check`/`requireNotNull`/
+			// `checkNotNull`) are NOT intercepted here: kotc lets them fall through to the general top-level call path
+			// (`callStatic owner:null method:<name> args:[...]`). They are @InlineOnly (no rt.dll body), so bir2cir
+			// recognizes them by callee name and synthesizes the throw / condition (as an expression where needed) —
+			// the Kotlin-semantic lowering lives there, not in kotc.
 			// `coerceAtMost`/`coerceAtLeast`/`coerceIn` are NOT lowered here (layer purity).
 			// System.Math.Min/Max/Clamp would be a BCL name in kotc (a layer violation). The stdlib
 			// `_Ranges.kt` funcs are pure Kotlin with correct bodies (`if (this < min) min else this`), so kotc now emits a
 			// plain call and the real stdlib body runs. This is also MORE correct than Math.Min for floats: Kotlin's coerce
 			// uses `<`/`>` (total-ordering / NaN-propagating) semantics that differ from System.Math.Min/Max on NaN.
 			// (No @ClrIntrinsic needed: the pure body IS the binding — the top-preferred "emit the real body" outcome.)
-			// repeat(n) { i -> body } -> an inline counter loop (no closure; body uses enclosing locals).
-			if (calleeFq == "kotlin.repeat") {
-				val n = regularArgs(call).getOrNull(0); val lam = regularArgs(call).getOrNull(1) as? IrFunctionExpression
-				if (n != null && lam != null) {
-					val vname = "__rep${scopeCounter++}"
-					val itParam = lam.function.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
-					itParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(vname)}}""" }
-					val body = (lam.function.body as? IrBlockBody)?.statements.orEmpty().filter { it !is IrReturn }.joinToString(",") { stmt(it) }
-					itParam?.let { valSubst.remove(it.name.asString()) }
-					return """{"k":"repeatInline","var":${str(vname)},"count":${expr(n)},"body":[$body]}"""
-				}
-			}
+			// `repeat(n) { i -> body }` is NOT inlined here: kotc emits the plain top-level call
+			// (`callStatic owner:null method:repeat args:[n, <newClosure for the lambda>]`) and bir2cir re-emits the
+			// `repeatInline` counter loop from the callee identity. The inline lowering lives there, not in kotc.
 			// `kotlin.math.*` is NOT lowered here. kotc emits a plain call to the stdlib fun (owner=null callStatic /
 			// an extension instance for Double.pow); bir2cir's MemberCallSubstitution reads MathClr.kt's @ClrIntrinsic
 			// bindings off the ref.dll and substitutes System.Math.* / System.MathF.* — the CLR relation lives there, not

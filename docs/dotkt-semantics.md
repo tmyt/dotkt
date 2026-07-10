@@ -119,6 +119,12 @@ This is the single most surprising deviation, so it gets the most detail.
 - Pitfall (verified, do NOT do this): marking an injected body-less function `inline` *without* carrying the body lets
   the frontend accept a non-local return but leaves nothing to splice → `InvalidProgramException` at runtime (worse
   than the clean compile error). `inline` restoration and the carried body are a package deal.
+- **`repeat(n) { … }` does NOT honor a non-local `return`.** The stdlib `repeat` is `@InlineOnly` (no rt.dll body), so
+  its counter loop is re-synthesized in `bir2cir` (`RepeatInlineLowering`) — but by then kotc has already closured the
+  `action` lambda, so the loop INVOKES it as a delegate rather than splicing it. `n` is evaluated once, the index runs
+  `0..n-1`, and the action runs each iteration, but a non-local `return` inside `repeat { … return … }` returns from the
+  action, not the enclosing function. Use a `for (i in 0 until n)` loop when a non-local return is needed. (Other inline
+  lambdas — `let`/`also`/`with`/user same-module inline — still splice and DO honor non-local return, per above.)
 
 ## 4. `suspend fun` = an async `Task<T>` function; hot, not cold
 

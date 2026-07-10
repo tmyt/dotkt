@@ -562,6 +562,19 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **The precondition/error helper family and the top-level `repeat(n){}` inline loop no longer bake their lowering in
+  kotc — the recognition + synthesis moved to bir2cir (#73, audit items M6/M7).** kotc emitted the throw/condition for
+  `require`/`check`/`error`/`TODO`/`requireNotNull`/`checkNotNull` (and the `kotlin.internal.ir.noWhenBranchMatchedException`
+  intrinsic), and the counter loop for `repeat`, directly at the call site — stdlib-symbol semantics baked into the
+  frontend. kotc now emits the FAITHFUL call (`callStatic owner:null method:<name>`, the intrinsic re-emitted like
+  `ieee754equals`) and two new bir2cir passes synthesize the semantics FQN-keyed: `PreconditionLowering` re-emits the
+  exact `cond`/`throwExpr`/`valueBlock` CIR (bare Kotlin exception FQNs; the BCL mapping stays downstream off the ref.dll
+  `@ClrTypeAlias`; `requireNotNull`/`checkNotNull` keep the value-nullable `Nullable<T>` vs objEq split via the call's
+  `typeArgs`), and `RepeatInlineLowering` re-emits the counted `repeatInline` (n once, index 0..n-1) invoking the action
+  delegate — shape-agnostic over the lambda's `newClosure`/`newDelegate` form. These are @InlineOnly helpers with no
+  rt.dll body, so bir2cir is the layer that must synthesize. Both passes run before `ClosureSynthesis`, gate on a Boolean
+  first param / function-typed action, and skip user top-level shadows (app build) — a user `require`/`repeat` is never
+  miscompiled. New gate sample `cases/il-precond`.
 - **Companion & top-level EXTENSION/COMPUTED property accessors no longer bake the `get_`/`set_` slot name at the
   cross-module CALL site (#81, audit item M12).** Extending the #78 convention (bare property IDENTITY +
   `"prop":"get"/"set"` marker) to its three sibling sites — companion extension property, top-level extension property

@@ -203,6 +203,20 @@ sealed class Pipeline
             // dropped body's lambdas are never synthesized into orphan closure types (moved here from kotc, which now
             // emits every decl faithfully; the Func/Action 16-cap is a CLR-representation fact).
             HighArityFunctionFilter.Apply(bir.Root, _options.StdlibMode);
+            // PRECONDITION / ERROR FAMILY (#73 M6): kotc emits the FAITHFUL top-level call (require/check/error/TODO/
+            // requireNotNull/checkNotNull as `callStatic owner:null`, noWhenBranchMatchedException as the faithful
+            // `kotlin.internal.ir` intrinsic). These @InlineOnly helpers have NO rt.dll body, so bir2cir SYNTHESIZES the
+            // throw/condition FQN-keyed — the exact cond/throwExpr/valueBlock CIR kotc used to emit over bare Kotlin
+            // exception FQNs (the IllegalArgumentException->System.ArgumentException BCL mapping happens downstream off
+            // the ref.dll @ClrTypeAlias). Runs BEFORE ClosureSynthesis so a discarded `require(cond){ lazyMessage }`
+            // closure is never synthesized into an orphan type, and before MemberCallSubstitution (which would else
+            // 0-candidate the bodiless helper).
+            PreconditionLowering.Apply(bir.Root, localTopLevelFns, attributeTopLevelOwner);
+            // TOP-LEVEL `repeat(n){}` INLINE LOOP (#73 M7): kotc emits the FAITHFUL `callStatic owner:null method:repeat
+            // args:[n, <lambda>]`. Re-emit the counted loop (n once, index 0..n-1) invoking the action delegate — shape-
+            // agnostic over the lambda's newClosure/newDelegate form. Runs BEFORE ClosureSynthesis so the action closure
+            // (moved into the hoist var) is synthesized there exactly once, and before MemberCallSubstitution.
+            RepeatInlineLowering.Apply(bir.Root, localTopLevelFns, attributeTopLevelOwner);
             ClosureSynthesis.Apply(bir.Root);
             SharedSyntheticSynthesis.Apply(bir.Root);
             // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's
