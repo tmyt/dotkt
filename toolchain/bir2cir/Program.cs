@@ -4613,6 +4613,14 @@ static class NetInteropBinding
     static void Reshape(JsonObject node)
     {
         var k = Str(node["k"]);
+        // #73 M4-b: a FIELD read/write on a facadegen-injected .NET owner. kotc emits a plain `field`/`setField` by the
+        // .NET-FQN identity (no shape decision); the .NET member SHAPE is bound HERE — the same axis #61 used for calls.
+        // A `field`/`setField` whose owner resolves to a .NET type declaring a property OR field of that name (both, via
+        // MemberIsPropertyOrField) -> clrPropGet/clrPropSet, whose EmitClrPropGet/Set is struct-receiver-safe + inlines a
+        // const field (unlike the plain-field external Ldfld/Callvirt route) — matching the old kotc clrPropGet parity,
+        // which reshaped unconditionally. A member the refs can't see (a non-.NET owner, or a name absent from the .NET
+        // type) never resolves here -> the plain `field`/`setField` is left for ilemit's own handler.
+        if (k == "field" || k == "setField") { ReshapeField(node, write: k == "setField"); return; }
         if (k != "callStatic" && k != "callInstance") return;
         var ownerJson = node["ownerType"];
         // Peel Nullable/Oblivious/ByRef wrappers to reach the underlying .NET Fqn (a `List<Item>?` receiver's owner is
@@ -4764,6 +4772,30 @@ static class NetInteropBinding
         if (!isStatic) node["recv"] = Take("recv");
         node["args"] = args;
         if (Take("suspendCall") is JsonNode sc2) node["suspendCall"] = sc2;
+    }
+
+    // #73 M4-b — bind a `field`/`setField` on a facadegen-injected .NET owner to clrPropGet/clrPropSet. Resolves the
+    // owner off the refs (skips kotlin.*/local owners); a name that is a real .NET property OR field (MemberIsProperty-
+    // OrField matches both) is reshaped — EmitClrPropGet/Set falls through property -> get_ accessor -> field, so it
+    // serves a genuine field too (with const-inlining + struct-safe receiver). A name the refs can't see stays plain.
+    static void ReshapeField(JsonObject node, bool write)
+    {
+        var ownerJson = node["ownerType"];
+        var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
+        if (ownerFqnNode == null) return;
+        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name), ownerFqnNode.Args?.Length ?? 0);
+        if (netType == null) return;
+        var name = Str(node["name"]);
+        if (name == null || !MemberIsPropertyOrField(netType, name)) return;
+        var v = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        foreach (var key in node.Select(kv => kv.Key).ToList()) { var val = node[key]; node.Remove(key); v[key] = val; }
+        JsonNode Take(string key) => v.TryGetValue(key, out var x) ? x : null;
+        node["k"] = write ? "clrPropSet" : "clrPropGet";
+        node["type"] = Take("ownerType");
+        node["name"] = Take("name");
+        node["static"] = false;
+        node["recv"] = Take("recv");
+        if (write) node["value"] = Take("value");
     }
 
     // Peel Nullable/Oblivious/ByRef wrappers off an owner type slot to reach the underlying .NET Fqn (name + type-args),
@@ -5188,7 +5220,20 @@ static class MemberCallSubstitution
                 ["e"] = wrapArgs[0].DeepClone(),
             };
 
-        if (!refs.TryResolveClrOwner(ownerFqn.Name, out var bcl, out var kind)) return null;
+        var viaAlias = refs.TryResolveClrOwner(ownerFqn.Name, out var bcl, out var kind);
+        if (!viaAlias)
+        {
+            // FACADEGEN-INJECTED .NET owner (A2 tail / #73 M4 newClr): kotc emits a plain `new` by the .NET-FQN
+            // identity (it no longer decides the ctor SHAPE); the newClr decision moves HERE, resolved off the loaded
+            // refs — the exact axis NetInteropBinding uses for an injected .NET CALL. Keep the .NET-FQN name verbatim
+            // (an arity-qualified `Task`1`/nested `Outer+Inner` injected name diverges from its Kotlin ClassId name, so
+            // it must ride through unchanged — do NOT re-derive it from a Kotlin type token). No struct/enum skip: a
+            // .NET struct ctor is a valid `newobj`, and kotc emitted newClr for an injected struct too (parity). Also
+            // catches a REFERENCED Kotlin library class (`new mylib.W(..)`, ktproj-pr) whose dll is on the refs — the
+            // same axis #61 established for its CALLs; ilemit's EmitClrNew resolves it identically.
+            if (refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0) == null) return null;
+            bcl = ownerFqn.Name; kind = "class";
+        }
 
         // Inline-class CONSTRUCTION erasure (the BOX, mirror of the `.data` unbox collapse): an @JvmInline value class
         // erases to its single backing field's primitive CLR form, so `new UByte(arg)` IS `arg` (no System.Byte(byte)
@@ -5222,13 +5267,49 @@ static class MemberCallSubstitution
             node["argTypes"] = new JsonArray { dat[0].DeepClone() };
         }
 
+        var newClrArgTypes = CtorArgTypes(node, args, refs, ownerFqn.Name);
+        var newClrArgs = (JsonArray)args.DeepClone();
+        // M10 coercion applies ONLY to an @ClrTypeAlias owner (the alias route). A BCL type can never declare a
+        // `kotlin.CharSequence`/`dotkt$CharSequence` ctor param, and a REFERENCED KOTLIN library class reached through
+        // the injected-owner fallback (`new mylib.W(cs: CharSequence)`) DOES — coercing there would corrupt its real
+        // `dotkt$CharSequence` param (its compiled ctor takes the adapter, not String). The M10 target
+        // `kotlin.text.StringBuilder` is a @ClrTypeAlias, so it always resolves via the alias route.
+        if (viaAlias) CoerceCharSequenceCtorArgs(newClrArgs, newClrArgTypes);
         return new JsonObject
         {
             ["k"] = "newClr",
             ["type"] = TypeJson.Write(typeNode),
-            ["argTypes"] = CtorArgTypes(node, args, refs, ownerFqn.Name),
-            ["args"] = args.DeepClone(),
+            ["argTypes"] = newClrArgTypes,
+            ["args"] = newClrArgs,
         };
+    }
+
+    // M10 (#73) — the CharSequence -> String ctor-argument coercion. A ctor param typed CharSequence (the stdlib's
+    // `StringBuilder(content: CharSequence)`, lowered to the synthetic `dotkt$CharSequence`) matches NO BCL constructor
+    // — System.Text.StringBuilder takes only `(string)`/`(int)` (Codex-confirmed), so the newClr's arity fallback
+    // mis-binds and ilemit throws InvalidProgram. Coerce each such argument to String via the null-safe, virtual
+    // `kotlin.LibraryKt.toString(object)` (the SAME node CharSeqStringLowering.CoerceOrNull emits) and retarget its
+    // argType to kotlin.String, so the `StringBuilder(String)` overload binds by exact GetConstructor. This lets the
+    // real stdlib `CharSequence.reversed() = StringBuilder(this).reverse()` compile — retiring kotc's `strReversed`.
+    static void CoerceCharSequenceCtorArgs(JsonArray args, JsonArray argTypes)
+    {
+        for (var i = 0; i < argTypes.Count && i < args.Count; i++)
+        {
+            var t = TypeJson.Read(argTypes[i]);
+            while (t is TypeNode.Nullable nn) t = nn.Of;
+            var name = (t as TypeNode.Fqn)?.Name;
+            if (name != SharedSyntheticSynthesis.CharSeq && name != "kotlin.CharSequence") continue;
+            var orig = args[i].DeepClone();
+            args[i] = new JsonObject
+            {
+                ["k"] = "callStatic",
+                ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"),
+                ["method"] = "toString",
+                ["sig"] = new JsonArray { TypeJson.Fqn("object") },
+                ["args"] = new JsonArray { orig },
+            };
+            argTypes[i] = TypeJson.Fqn("kotlin.String");
+        }
     }
 
     // The newClr's ctor-overload key. kotc emits the ctor's DECLARED param types on the `new` node's `argTypes`, but they
@@ -6508,6 +6589,14 @@ static class DeclarationRename
                         {
                             if (obj.ContainsKey("override")) obj["override"] = true;
                             if (obj.ContainsKey("vis")) obj["vis"] = "public";
+                            // #73 M4-c: an accessor overriding a facadegen-injected .NET base CLASS virtual property
+                            // needs the `clrOverride` field so ilemit's DefineMethodOverride reuses the base slot (an
+                            // INTERFACE member binds by name at type-load, so it needs no clrOverride). kotc emits ONLY
+                            // the plain override method + its `overrides` marker (its `clrAccessorMethod` producer was
+                            // retired in #73 M4); this is the SOLE source of the clrOverride field, derived off the refs.
+                            // The guard is defensive (no kotc producer remains to double-stamp).
+                            if (!obj.ContainsKey("clrOverride") && ResolveNetClassOwner(ovs, refs) is string clrBase)
+                                obj["clrOverride"] = clrBase;
                         }
                     }
                 }
@@ -6516,6 +6605,25 @@ static class DeclarationRename
         }
         else if (node is JsonArray arr)
             foreach (var it in arr) if (it != null) Walk(it, refs, inIface);
+    }
+
+    // #73 M4-c — the .NET base CLASS owner FQN in an accessor's override closure (a virtual property whose declaring
+    // .NET type is a real CLASS, not an interface/struct), else null. Used to stamp `clrOverride` so ilemit's
+    // DefineMethodOverride binds the base virtual slot. Resolves off the refs (ResolveNetType skips kotlin.*/local
+    // owners) and confirms the .NET type declares the property, mirroring ResolveSlot's facadegen fallback.
+    static string ResolveNetClassOwner(JsonArray ovs, ReferenceMetadataIndex refs)
+    {
+        foreach (var o in ovs)
+        {
+            if (o is not JsonObject oo) continue;
+            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
+            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
+            var bare = ReferenceMetadataIndex.BareOwnerFqn(owner);
+            if (refs.ResolveNetType(bare) is not Type nt || !nt.IsClass) continue;   // IsClass excludes interface + struct
+            if (!NetInteropBinding.MemberIsPropertyOrField(nt, member)) continue;
+            return bare;
+        }
+        return null;
     }
 
     // The BARE property intrinsic ("Count") for a property record's override closure: the @ClrIntrinsic is on the

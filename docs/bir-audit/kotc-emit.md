@@ -35,7 +35,7 @@ The top level of every `*.bir.json` is a **file object** (one per Kotlin source 
 | `class` w/ `annotation:true` | user `annotation class` → plain class + `"annotation":true` flag; **`base:null`** (bir2cir derives `: System.Attribute`) | `BirEmitter.kt:1103` |
 
 **Member schemas** (not `"k"` nodes; appear inside `methods`/`ctors`/`fields`/`properties`):
-- **method**: `name,static,override,virtual,abstract,objectOverride,vis,typeParams?,infix?,operator?,inline?,retNullable?,suspend?,resultType?,params,ret,body,attrs,overrides?,clrOverride?` — `BirEmitter.kt:1461` (regular), `:660` (suspend), `:1618` (clr-iface override).
+- **method**: `name,static,override,virtual,abstract,objectOverride,vis,typeParams?,infix?,operator?,inline?,retNullable?,suspend?,resultType?,params,ret,body,attrs,overrides?` — `BirEmitter.kt:1461` (regular), `:660` (suspend). A .NET-base-class virtual-property override (`override val Message`) is a plain accessor with the `overrides` marker; bir2cir's DeclarationRename derives `clrOverride` from that marker (kotc emits no `clrOverride`).
 - **param**: `name,type,vararg?,nullable?,default?,attrs?` — `BirEmitter.kt:1692`.
 - **ctor**: `params,baseArgs,thisArgs,vis,body` — `BirEmitter.kt:1390`.
 - **field**: `name,type,static?,init?,nullable?` — e.g. `BirEmitter.kt:822`.
@@ -53,7 +53,6 @@ The top level of every `*.bir.json` is a **file object** (one per Kotlin source 
 | `,"default":<expr>` (param) | Tier-1 metadata-representable default | `:1681` |
 | `,"overrides":[{owner,member,kind,arity}]` | override closure (bir2cir resolves intrinsics) | `overridesJson` `:1017` |
 | `,"attrs":[…]` | annotations → .NET custom attributes | `attrsJson` `:1106` |
-| `,"clrOverride":<clrOwner>` | method overrides an injected .NET member | `:1618` |
 | `,"nullable":true` (var/field, gp:) | nullable type-param local/field → bir2cir erases to `object` | `nullableGpFieldFlag` `:1138` |
 
 ---

@@ -569,15 +569,6 @@ sealed partial class Emitter
                 return EmitNativeClrEnumParse(e);
             }
             case "objMethod": return EmitObjMethod(e);
-            case "strReversed":
-            {
-                // `s.reversed()` -> new string(Enumerable.Reverse(s).ToArray()).
-                EmitExpr(e.GetProperty("s"));
-                _il.Emit(OpCodes.Call, typeof(System.Linq.Enumerable).GetMethods().First(m => m.Name == "Reverse" && m.GetParameters().Length == 1).MakeGenericMethod(typeof(char)));
-                _il.Emit(OpCodes.Call, typeof(System.Linq.Enumerable).GetMethods().First(m => m.Name == "ToArray" && m.GetParameters().Length == 1).MakeGenericMethod(typeof(char)));
-                _il.Emit(OpCodes.Newobj, typeof(string).GetConstructor(new[] { typeof(char[]) }));
-                return typeof(string);
-            }
             case "newMap":
             {
                 // `mapOf(k to v, …)` -> new Dictionary<K,V> { [k]=v, … } via set_Item.

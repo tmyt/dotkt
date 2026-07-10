@@ -114,7 +114,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		val clr = ownerClass?.let { clrName(it) }
 		val recvJson = node.receiver?.let { expr(it) } ?: """{"k":"this"}"""
 		if (clr != null)
-			"""{"k":"clrPropSet","type":${str(clr)},"name":${str(node.symbol.owner.name.asString())},"static":false,"recv":$recvJson,"value":${expr(node.value)}}"""
+			"""{"k":"setField","ownerType":${fqnJson(clr)},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
 		else
 			"""{"k":"setField","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
 	}

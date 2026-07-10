@@ -1079,16 +1079,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 					p.getter?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
 					p.setter?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
 			}.orEmpty()
-		// Property accessors that override a .NET base virtual property -> emitted as get_/set_ override methods.
-		// A `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited via a base's interface) is NOT a real
-		// property — skip it (see isClrEventProperty), else we emit an accessor over the un-emittable ClrEvent type.
-		val clrAccessors = klass.declarations.filterIsInstance<IrProperty>()
-			.filterNot { isClrEventProperty(it) }
-			.flatMap { p -> listOfNotNull(clrAccessorMethod(p, p.getter), clrAccessorMethod(p, p.setter)) }
 		// User custom accessors (`get() = …`/`set(v){…}`) -> get_/set_ methods (the access site routes through them).
 		// A property optimizes to a plain field; but one implementing a KOTLIN INTERFACE property must emit a get_/set_
 		// METHOD to bind the interface slot (property-accessor analog of the method-side overridesIface fix; e.g.
-		// ComparableRange.start over ClosedRange.start). See design-clr-property-model.md.
+		// ComparableRange.start over ClosedRange.start). See design-clr-property-model.md. This is ALSO the sole producer
+		// of accessors that OVERRIDE a .NET base-CLASS virtual property (`override val Message` over System.Exception):
+		// accessorMethod emits the plain get_/set_ + the `overrides` marker, and bir2cir's DeclarationRename derives the
+		// `clrOverride` field from that marker (kotc emits no clrOverride — A2 / #73 M4.3).
 		fun ovIface(a: IrSimpleFunction) = a.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
 		// A FAKE-OVERRIDE property whose implementation is INHERITED FROM A BASE CLASS (`name` in `Sq : Shape("sq")`)
 		// has accessors with NO body — emitting them produced an empty-bodied get_name (ilverify ReturnMissing,
@@ -1114,7 +1111,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val setName = if (emitsSet(p)) str("set_" + p.name.asString()) else "null"
 			"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()},"get":${str(getName)},"set":$setName${overridesJson(p.getter!!)}}"""
 		}
-		val methods = (instMethods + statMethods + companionAccessors + clrAccessors + userAccessors).joinToString(",")
+		val methods = (instMethods + statMethods + companionAccessors + userAccessors).joinToString(",")
 		// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
 		// type spec (via birType) that ilemit resolves by reflection; a Kotlin-user base stays a bare type name.
 		val baseJson = base?.let {
@@ -1417,36 +1414,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 
 	internal fun isValueParameter(p: IrValueParameter): Boolean =
 		p.kind == IrParameterKind.Regular || p.kind == IrParameterKind.Context
-
-	/**
-	 * A property accessor that OVERRIDES a .NET base virtual property (e.g. `override val Message` over
-	 * `System.Exception.Message`) -> a `get_<Name>`/`set_<Name>` method that reuses the base virtual slot
-	 * (ilemit marks it Virtual + DefineMethodOverride against the .NET getter). Normal Kotlin properties stay
-	 * field-modeled; only .NET-overriding accessors with a body need this. Returns null otherwise.
-	 */
-	internal fun clrAccessorMethod(prop: IrProperty, acc: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction?): String? {
-		acc ?: return null
-		if (acc.body == null) return null
-		// The accessor overrides a member whose (real) declaring type is a .NET type.
-		// Only a .NET base CLASS virtual property uses clrOverride. A @Clr INTERFACE property (Collection.size) goes via
-		// userAccessors emitting the plain `get_size` + the `overrides` marker; bir2cir's DeclarationRename binds the
-		// interface slot (get_size -> get_Count) off the ref.dll @ClrIntrinsic, not a generic clrOverride.
-		val clrOwnerClass = acc.overriddenSymbols.asSequence()
-			.map { it.owner }.mapNotNull { (if (it.isFakeOverride) it.resolveFakeOverride() else it)?.parent as? IrClass }
-			.firstOrNull { clrName(it) != null } ?: return null
-		if (clrOwnerClass.kind == ClassKind.INTERFACE) return null
-		val clrOwner = clrName(clrOwnerClass)!!
-		val isGetter = acc == prop.getter
-		// The accessor slot is `get_`/`set_` + the property's Kotlin name — which, for a facadegen-injected .NET base,
-		// IS the .NET property name (facadegen injects the member under its .NET identity). kotc no longer reads a member
-		// slot name (that resolution is bir2cir's); the type-origin (`clrOwnerClass`) resolution above stays kotc's.
-		val emitName = (if (isGetter) "get_" else "set_") + prop.name.asString()
-		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-		val ps = acc.parameters.filter { it.kind == IrParameterKind.Regular }
-			.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
-		val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
-		return """{"name":${str(emitName)},"static":false,"override":true,"virtual":true,"objectOverride":false,"clrOverride":${str(clrOwner)},"vis":"public","params":[$ps],"ret":${str(ret)},"body":[$body]}"""
-	}
 
 	/** THE 2-TIER default-argument test (docs/dotkt-semantics.md): can the parameter's OWN CLR type carry its default as
 	 *  a `[DefaultParameterValue]` constant? TRUE (Tier 1) — a primitive/char/bool const on its primitive param, a String
@@ -1928,14 +1895,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
 				return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, ps.map { birTypeDeleg(it.type) }).toJson()}$typeArgs}"""
 			}
-			// `::NetType` — a lifted factory `__ctorref(args) = new NetType(args)` (newClr), bound as a delegate.
+			// `::NetType` — a lifted factory `__ctorref(args) = new NetType(args)`, bound as a delegate. kotc emits a
+			// plain `new` carrying the .NET-FQN identity; bir2cir TransformNew reshapes it to `newClr` off the refs.
 			if (klass != null) {
 				val ps = ctor.parameters.filter { it.kind == IrParameterKind.Regular }
 				val lname = "__ctorref${lambdaCounter++}"
 				val psJson = ps.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
 				val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 				val retT = birType(ctor.returnType)
-				val newE = """{"k":"newClr","type":${fqnJson(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { birType(it.type).toJson() }}],"args":[$argsJson]}"""
+				val newE = """{"k":"new","type":${fqnJson(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { birType(it.type).toJson() }}],"args":[$argsJson]}"""
 				val freeTps = freeTypeParams(ps.map { it.type } + listOf(ctor.returnType))
 				val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 				liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]}""")
@@ -3905,7 +3873,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// Numeric conversion `x.toLong()`/`x.toInt()`/… is not recognized here: kotc emits the plain
 			// `callInstance kotlin.Int.toLong` (the faithful IR); bir2cir reads the `@kotlin.clr.ClrConv` marker off the
 			// stdlib primitive's conversion member on the ref.dll and emits the `conv` node from the callee's return type.
-			val fq = (callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.packageFqName?.asString()
 			// `println(...)`/`print(...)` are NOT recognized here: kotc emits the plain top-level `callStatic owner:null`
 			// via the general call path, and bir2cir substitutes it to System.Console.Write/WriteLine off the stdlib
 			// @ClrIntrinsic (runtime/stdlib/clr/kotlin/io/ConsoleClr.kt) and wraps a collection/Map arg in
@@ -3970,20 +3937,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// `kotlin.text` String ops are NOT name-lowered in kotc: kotc emits a plain call; bir2cir attributes it to
 			// StringsKt and the StringCharSequenceBridge (run on the RT stdlib build too) coerces the String receiver/args
 			// into the `dotkt$CharSequence` adapter so the CharSequence-extension body runs (contains/indexOf/startsWith/
-			// endsWith/split/substring/isEmpty/isNotEmpty/uppercase/lowercase/isBlank/etc.). Only `reversed` STAYS lowered
-			// (below), pending a stdlib `StringBuilder(CharSequence)`-ctor fix.
-			if (fq == "kotlin.text") {
-				// `s.reversed()` -> new string(Reverse(s).ToArray()) (STAYS lowered: stdlib `StringBuilder(CharSequence)` bug).
-				// M10 (#73): the real stdlib path is `CharSequence.reversed() = StringBuilder(this).reverse()`, but
-				// System.Text.StringBuilder has NO ctor accepting a CharSequence (only String/Int32, Codex-confirmed), so
-				// the @ClrTypeAlias ctor cannot be bound 1:1 — the compiled rt body throws InvalidProgram. Deleting this
-				// branch needs a bir2cir CharSequence->String ctor-arg coercion (a separable feature), so it stays for now.
-				if (name == "reversed") (extensionReceiver(call) ?: dispatchReceiver(call))?.takeIf { it.type.classFqName?.asString() == "kotlin.String" }?.let { recv ->
-					return """{"k":"strReversed","s":${expr(recv)}}"""
-				}
-				// Every other `kotlin.text` op (trim/trimStart/trimEnd/padStart/padEnd/replace/isBlank/etc.) falls through to
-				// the plain-call path above: its pure-Kotlin stdlib body runs (no BCL member name in kotc). No CLR lowering here.
-			}
+			// endsWith/split/substring/isEmpty/isNotEmpty/uppercase/lowercase/isBlank/reversed/etc.). `reversed` is a plain
+			// call too: the real stdlib `CharSequence.reversed() = StringBuilder(this).reverse()` runs — bir2cir's TransformNew
+			// coerces the CharSequence ctor arg to String so `StringBuilder(String)` binds. No CLR lowering in kotc.
 		}
 
 		// DotKt round-trip: a call to a top-level function restored from a [KotlinFile] facade in a referenced
@@ -4107,8 +4063,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// TYPE IDENTITY ONLY. kotc no longer resolves any MEMBER slot name here: a facadegen-injected .NET member's slot
 		// AND a stdlib @ClrTypeAlias/@ClrIntrinsic member's slot are BOTH resolved by bir2cir's DeclarationRename off the
 		// `overrides` marker + the refs (A2 / #61 step 5). This accessor now yields only the .NET TYPE name for an
-		// injected .NET type (read off its IR `ClassId`) — used for type-origin decisions (a `newClr`, a `clr:`/`clrg:`
-		// owner token, the `byrefBackingField`/delegate/for-in origin tests), never a member slot.
+		// injected .NET type (read off its IR `ClassId`) — used for type-origin decisions (routing a ctor to a plain
+		// `new` / a field to a plain `field` on a .NET owner, the `byrefBackingField`/delegate/for-in origin tests),
+		// never a member slot. bir2cir reshapes those plain nodes to their CLR forms off the refs.
 		// A2 stage 1: the injected .NET type's .NET name is read straight off its IR `ClassId` (structural resolved
 		// identity) against facadegen's metadata.
 		return (decl as? IrClass)?.classId?.let { kotc.frontend.clrInjectedDotNetName(it) }

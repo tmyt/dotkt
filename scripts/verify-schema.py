@@ -87,15 +87,15 @@ KINDS = {
     "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
     "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
     "newBoundDelegate", "newBoundClrDelegate",
-    "enumValue", "enumOrdinal", "default", "defaultArg", "classRef", "console",
+    "enumValue", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "console",
     "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
     "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
     "if", "cond2", "while", "label", "goto", "brIf", "break", "continue",
-    "for", "forRange", "forArray", "forEachInline", "forIn", "try",
+    "for", "forRange", "forArray", "forEachInline", "forIn", "repeatInline", "try",
     # field-write family — the setField/setFieldExpr/staticFieldSet merge (§2.5) is "[finalize in impl]", so all
     # three remain LIVE kinds until that lands.
     "setFieldExpr", "staticFieldSet",
-    "lateinitGet", "getType", "safeCastValue", "constrainedCall", "spreadConcat", "strReversed",
+    "lateinitGet", "getType", "safeCastValue", "constrainedCall", "spreadConcat",
     "tupleItem", "unsupportedExpr",
     "stackAlloc", "stackGet", "stackSet", "stackAsSpan",
     "byrefOf", "byrefLoad", "byrefStore",

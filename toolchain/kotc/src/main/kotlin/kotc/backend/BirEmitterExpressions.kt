@@ -134,7 +134,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// in kotc). A direct backing-FIELD read reaching here is only kotlin.Throwable's own generated getter body in the
 		// stdlib ref build, where `message` is a real field — the plain `field` path below serves it.
 		if (clr != null)
-			"""{"k":"clrPropGet","type":${str(clr)},"name":${str(fldName)},"ret":${birType(node.type).toJson()},"static":false,"recv":$recvJson}"""
+			"""{"k":"field","ownerType":${fqnJson(clr)},"recv":$recvJson,"name":${str(fldName)}}"""
 		// A `lateinit var` backing-field read -> throw if still uninitialized (null) — proper lateinit semantics.
 		else if (node.symbol.owner.correspondingPropertySymbol?.owner?.isLateinit == true)
 			"""{"k":"lateinitGet","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(fldName)}}"""
@@ -174,7 +174,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// A builtin-exception ctor (`throw IllegalStateException(msg)`) is NOT mapped here: it emits a plain `new
 		// @kotlin.IllegalStateException` and bir2cir rewrites it to `newClr System.X` off the stdlib's @ClrTypeAlias.
 		if (clr != null)
-			"""{"k":"newClr","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
+			"""{"k":"new","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${filledArgExprs(node).joinToString(",") { expr(it) }}]}"""
 		else {
 			// An inner-class ctor takes the enclosing instance (its dispatch receiver) as a leading arg.
 			val outerArg = if (klass?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
@@ -183,7 +183,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val args = (listOfNotNull(outerArg) + capArgs + filledArgExprs(node).map { expr(it) }).joinToString(",")
 			// The resolved ctor's regular-parameter STATIC TYPES, as pure Kotlin FQNs (bir2cir/ilemit derive the CLR
 			// forms — kotc emits identity, not resolution). This lets a `new` of a type with overloaded constructors
-			// resolve by SIGNATURE, not by arg count alone (mirrors `newClr`, which carries `argTypes`). Only the ctor's
+			// resolve by SIGNATURE, not by arg count alone (mirrors the .NET-owner `new` branch above, which carries `argTypes`). Only the ctor's
 			// OWN params are described — prepended enclosing/capture args are not — so a consumer uses these only when
 			// their count lines up with the emitted args (in-assembly types stay arity-resolved).
 			val ctorArgTypes = node.symbol.owner.parameters

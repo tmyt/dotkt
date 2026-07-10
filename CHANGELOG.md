@@ -589,6 +589,24 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **The A2 tail — the remaining .NET SHAPE decisions for facadegen-injected owners moved from kotc to bir2cir (#73,
+  audit item M4: newClr / field-property / clrOverride), plus the `strReversed` stdlib fix (M10).** #61 moved the
+  .NET CALL family; M4 completes it for the SHAPES it left behind. kotc now emits the plain Kotlin-identity node — a
+  `new` (not `newClr`), a `field`/`setField` (not `clrPropGet`/`clrPropSet`), and a plain override accessor carrying
+  only its `overrides` marker (not a `clrOverride` field) — keeping the .NET-FQN identity `clrName()` yields in the
+  type/owner slot (never the Kotlin ClassId name, which diverges from the .NET name for arity-qualified/nested
+  injections). bir2cir derives the .NET shape off the loaded reference assemblies: `TransformNew` reshapes a `new` on
+  an injected owner (resolved via `ResolveNetType`) to `newClr`; `NetInteropBinding.ReshapeField` binds a `field`/
+  `setField` on a .NET owner to `clrPropGet`/`clrPropSet` (ilemit's `EmitClrPropGet/Set` is struct-receiver-safe and
+  const-field-inlining, unlike the plain-field external Ldfld route); `DeclarationRename` stamps `clrOverride` when an
+  accessor's `overrides` marker resolves to a real .NET base CLASS (this also RETIRES `clrAccessorMethod`, whose
+  output duplicated the `userAccessors` accessor — the latent double `get_Message` in `il-netbase2` is now a single
+  method). `clrOverride`/`newBoundClrDelegate`/`clrEventGet` stay as ilemit/bir2cir vocabulary (dedicated node kinds,
+  not demoted). **M10:** kotc's `strReversed` lowering is deleted; `"x".reversed()` now runs the real stdlib
+  `CharSequence.reversed() = StringBuilder(this).reverse()` (a pure-Kotlin index-swap) — a new `TransformNew`
+  coercion wraps a CharSequence ctor argument in the null-safe `kotlin.LibraryKt.toString(object)` so
+  `StringBuilder(CharSequence)` binds to the BCL `StringBuilder(String)` ctor (System.Text.StringBuilder has no
+  CharSequence ctor). Gate green: verify-il 249/0, differential 196/0, roundtrip + ktproj all pass.
 - **The precondition/error helper family and the top-level `repeat(n){}` inline loop no longer bake their lowering in
   kotc — the recognition + synthesis moved to bir2cir (#73, audit items M6/M7).** kotc emitted the throw/condition for
   `require`/`check`/`error`/`TODO`/`requireNotNull`/`checkNotNull` (and the `kotlin.internal.ir.noWhenBranchMatchedException`
