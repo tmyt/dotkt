@@ -11,6 +11,7 @@ sealed class ReferenceMetadataIndex
 {
     const string KotlinFileClassAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
+    const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string JvmInlineAttr = "kotlin.jvm.JvmInline";
     const string RestrictsSuspensionAttr = "kotlin.coroutines.RestrictsSuspension";
     // [KotlinFunction(flags)] flag word (mirrors ilemit Program.cs pass 4 / facadegen): Infix=1, Operator=2, Suspend=4.
@@ -43,6 +44,11 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _arrayFactories = new(StringComparer.Ordinal);       // @ClrArrayFactory fun name -> "vararg"/"sized"
     readonly Dictionary<string, string> _arrayFactoryElemHints = new(StringComparer.Ordinal);// array factory name -> concrete elem FQN (empty-call fallback)
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaults = new(StringComparer.Ordinal); // "owner|name|paramCount" -> (argPos -> default BIR)
+    // [KotlinInline] raw-BIR payloads (#71/#75 S1): "owner|name|pc|ga" -> the decoded carrier JSON (the raw pre-lowering
+    // decl facts InlineBirStash stashed). Read cross-module by InlineSplice to splice an injected inline fn's body at the
+    // call site (so it re-lowers in THIS app's context). owner = the .NET type FullName (file-facade class); pc/ga = the
+    // reflected GetParameters/GetGenericArguments counts (parity with InlineBirStash's params.Count / typeParams.Count).
+    readonly Dictionary<string, string> _inlinePayloads = new(StringComparer.Ordinal);
 
     // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the loaded .NET references +
     // the running framework's reference dir. NetInteropBinding resolves a facadegen-injected owner FQN
@@ -116,7 +122,22 @@ sealed class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.CollectionFactories) _collectionFactories.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ArrayFactories) _arrayFactories.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ArrayFactoryElemHints) _arrayFactoryElemHints.TryAdd(kv.Key, kv.Value);
+            // D6: poison across assemblies too — a repeat key (or an already-poisoned null) stays null.
+            foreach (var kv in asm.DotKt.InlinePayloads)
+                _inlinePayloads[kv.Key] = (_inlinePayloads.ContainsKey(kv.Key) || kv.Value == null) ? null : kv.Value;
         }
+    }
+
+    // The raw-BIR [KotlinInline] payload for a cross-module inline fn (owner|name|pc|ga), decoded to its JSON node — or
+    // null when the referenced assembly carries no (or an unreadable / pre-S1-shaped) [KotlinInline] for that overload.
+    // Consumed by InlineSplice to splice the injected body at the call site. `owner` = callInline.owner (file-facade FQN).
+    public JsonNode TryReadInlineBir(string owner, string name, int pc, int ga)
+    {
+        if (owner == null || name == null) return null;
+        // A missing key OR a POISONED (null) value (D6: an owner|name|pc|ga overload collision) yields no payload -> the
+        // splicer falls back to the plain call rather than splicing a wrong-typed body.
+        if (!_inlinePayloads.TryGetValue($"{owner}|{name}|{pc}|{ga}", out var json) || json == null) return null;
+        try { return JsonNode.Parse(json); } catch { return null; }
     }
 
     // The @ClrCollectionFactory kind ("list"/"set"/"map") for a top-level fun NAME, or null when the fun is not a
@@ -705,6 +726,26 @@ sealed class ReferenceMetadataIndex
                             isConv,
                             convTo,
                             TypeNodeOf(method.ReturnType)));
+                        // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
+                        // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this injected inline
+                        // fn's body at a cross-module call site. A malformed / pre-S1-shaped payload is swallowed (no
+                        // cross-module splice for it -> the splicer's plain-call fallback). ga = generic arity.
+                        var inlineCad = method.GetCustomAttributesData().FirstOrDefault(c => c.AttributeType.FullName == KotlinInlineAttr);
+                        if (inlineCad != null && inlineCad.ConstructorArguments.Count == 2)
+                        {
+                            try
+                            {
+                                var ver = (string)inlineCad.ConstructorArguments[0].Value!;
+                                var content = ReadByteArrayArg(inlineCad.ConstructorArguments[1]);
+                                var json = DotKt.Bir.BirCarrier.DecodeBody(ver, content).ToJsonString();
+                                var ikey = ownerFqn + "|" + method.Name + "|" + method.GetParameters().Length + "|" + method.GetGenericArguments().Length;
+                                // D6: POISON an owner|name|pc|ga collision (overloads that differ only by full signature —
+                                // IntArray/LongArray.forEach on one facade) to null -> the resolver falls back, never splices
+                                // a wrong-typed body. (Real fix in S3: widen the key with the first-param type token.)
+                                metadata.InlinePayloads[ikey] = metadata.InlinePayloads.ContainsKey(ikey) ? null : json;
+                            }
+                            catch { /* unreadable / pre-S1 payload — fall back to the plain call at splice time */ }
+                        }
                         // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
                         //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.
                         //   bare "Name"      -> a member on an EXTENSION receiver (`Array<T>.nativeClone()` ->
@@ -776,6 +817,20 @@ sealed class ReferenceMetadataIndex
         {
             metadata.Diagnostics.Add($"{Path.GetFileName(reference)}: subst scan failed: {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    // A reflected byte[] ctor argument materializes under MetadataLoadContext as an IReadOnlyList<CustomAttributeTypedArgument>
+    // (each element's .Value a boxed byte), not a byte[] — reify it (mirrors ilemit Emitter.CompilerServices.ReadByteArrayArg).
+    static byte[] ReadByteArrayArg(CustomAttributeTypedArgument a)
+    {
+        if (a.Value is byte[] b) return b;
+        if (a.Value is IReadOnlyList<CustomAttributeTypedArgument> arr)
+        {
+            var r = new byte[arr.Count];
+            for (int i = 0; i < arr.Count; i++) r[i] = (byte)arr[i].Value!;
+            return r;
+        }
+        throw new FormatException("carrier content is not a byte[]");
     }
 
     static bool HasAttribute(IList<CustomAttributeData> attrs, string fullName) =>
@@ -1064,6 +1119,8 @@ sealed class ReferenceDotKtMetadata
     // lambda whose RECEIVER is such a scope (e.g. SequenceScope) gets the RestrictedSuspendLambda SM base (bundle-6 P5).
     public readonly HashSet<string> RestrictsSuspensionTypes = new(StringComparer.Ordinal);
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
+    // [KotlinInline] raw-BIR payloads (#71/#75 S1): "owner|name|pc|ga" -> decoded carrier JSON (the raw decl facts).
+    public readonly Dictionary<string, string> InlinePayloads = new(StringComparer.Ordinal);
     public readonly Dictionary<string, TypeNode> StaticFieldTypes = new(StringComparer.Ordinal); // "owner|field" -> declared type
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.

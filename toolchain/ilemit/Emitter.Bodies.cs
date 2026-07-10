@@ -493,7 +493,6 @@ sealed partial class Emitter
                 break;
             }
             case "this":
-                if (_inlineThis.Count > 0) { _il.Emit(OpCodes.Ldloc, _inlineThis.Peek()); return; }   // spliced extension receiver
                 _il.Emit(OpCodes.Ldarg_0);
                 return;
             case "field":

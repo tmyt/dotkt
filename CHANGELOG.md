@@ -624,6 +624,21 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **Cross-module inline splicing re-homed from ilemit to bir2cir, on a RAW-BIR `[KotlinInline]` carrier (#71/#75 S1).**
+  ilemit no longer splices inline bodies and no longer builds the `[KotlinInline]` payload from post-lowering CIR. A new
+  bir2cir pass `InlineBirStash` runs FIRST (before any lowering) and captures every `inline` method's RAW pre-lowering
+  facts `{v,fqn,owner,recv,typeParams,params,ret,body}` into one opaque base64 string `inlineBir`; ilemit stamps that
+  verbatim as the `[KotlinInline(version,bytes)]` carrier (`Emitter.Metadata.ApplyKotlinInline` / `Emitter.Assembly.cs`).
+  kotc emits a generic `callInline` node (replacing `inlineSplice`) carrying the call's bindings + a `fallback` plain
+  call; bir2cir `InlineSplice` resolves the callee's raw body (cross-module from `[KotlinInline]` off the `--ref`'d
+  assembly via `ReferenceMetadataIndex.TryReadInlineBir`, same-module from `InlineBirStash`'s index) and SPLICES it at
+  BIR level — positional type-param substitution (`tv{scope:method,i}` → the call's `typeArgs[i]`), receiver/value
+  params bound to fresh temps, each lambda-param `invoke` replaced by the carried caller-scope lambda body (freshened per
+  invocation), origin returns routed to a result-local + end-label, a bare non-local `return` kept as the caller's
+  return — into a value-producing `valueBlock`. Because `InlineSplice` runs before all lowering, the spliced raw body
+  re-lowers IN THE APP's context (`@ClrIntrinsic` binds against the app ref.dll, generics resolve with call-site type
+  args, reified is free on CLR) — the fix the old post-lowering ilemit splice could never do. Deleted from ilemit:
+  `Emitter.InlineSplice.cs` (`EmitInlineSplice`/`EmitSplicedStmts`) + its 4 touchpoints + the `inlineSplice` CIR node.
 - **kotc `BirEmitter.kt` decomposed into 6 cohesive sibling files (#41) — a purely mechanical, verify-by-refactor
   carve-out.** The 4633-line `BirEmitter.kt` is now a ~547-line core (class decl + ctor, the whole run-scoped
   mutable-state block, diagnostics, the type-naming quartet, ref-cell machinery, `scopeCall`, `newExc`/`throwExpr`,

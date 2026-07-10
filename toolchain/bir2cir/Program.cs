@@ -183,6 +183,14 @@ sealed class Pipeline
         // (not the System.Enum-reflection semantic node — a rich enum is a plain singleton class).
         var localRichEnums = EnumIntrinsicLowering.CollectRichEnums(birFiles.Select(f => f.Root));
 
+        // INLINE-BIR STASH (#71/#75 S1): BEFORE any lowering pass runs, capture every `mods.inline` method's RAW
+        // pre-lowering body into an OPAQUE `inlineBir` base64 string (ilemit stamps it verbatim as the raw-BIR
+        // [KotlinInline] carrier) + an in-memory `owner|name|pc|ga -> raw decl` index (dormant same-module infra).
+        // Runs across ALL files here so the index spans the compilation, and so every downstream walker sees the
+        // captured body already inert (a JsonValue string) — RefBodySquash then squashes only the executable `body`.
+        InlineBirStash.Reset();
+        foreach (var b in birFiles) InlineBirStash.Stash(b.Root);
+
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the transformability fixpoint spans all files).
@@ -223,12 +231,13 @@ sealed class Pipeline
             // agnostic over the lambda's newClosure/newDelegate form. Runs BEFORE ClosureSynthesis so the action closure
             // (moved into the hoist var) is synthesized there exactly once, and before MemberCallSubstitution.
             RepeatInlineLowering.Apply(bir.Root, localTopLevelFns, attributeTopLevelOwner);
-            // INLINE SPLICE (#75): kotc emits a `callInline` node for an inline stdlib fn whose lambda body it carries
-            // UN-CLOSURED in the caller's scope (so a NON-LOCAL `return` survives as the caller's return). Wrap that body
-            // in the structural lowering the callee stands for (`repeat` -> the counted loop) with the body SPLICED, not
-            // delegate-invoked — restoring the non-local return #73 M7's delegate form dropped. Runs here (before
-            // ClosureSynthesis, like RepeatInlineLowering) so nested closures inside the spliced body are synthesized once.
-            InlineSplice.Apply(bir.Root);
+            // INLINE SPLICE (#71/#75): kotc emits a `callInline` node for an inline fn whose lambda body must live inline
+            // at the call site (a NON-LOCAL `return`/suspend through the lambda). `kotlin.repeat` -> the counted loop; the
+            // GENERIC cross-module arm RESOLVES the callee's RAW BIR body ([KotlinInline] off `refs`, or InlineBirStash's
+            // same-module index) and SPLICES it (positional tv-subst, temp-bound params, lambda-invoke splicing, routed
+            // returns, hygiene) into a value-producing valueBlock — which then re-lowers IN THIS app's context. Runs here
+            // (before ClosureSynthesis, like RepeatInlineLowering) so nested closures in the spliced body synthesize once.
+            InlineSplice.Apply(bir.Root, refs);
             ClosureSynthesis.Apply(bir.Root);
             SharedSyntheticSynthesis.Apply(bir.Root);
             // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's

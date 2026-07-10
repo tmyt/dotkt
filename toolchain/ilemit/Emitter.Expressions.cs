@@ -77,8 +77,6 @@ sealed partial class Emitter
             case "local":
             {
                 var name = e.GetProperty("name").GetString();
-                // Inside a cross-module inline splice, a callee param reference emits the bound arg/value instead.
-                if (_inlineSubst.TryGetValue(name, out var sub)) return EmitExpr(sub);
                 if (_locals.TryGetValue(name, out var l)) { _il.Emit(OpCodes.Ldloc, l); return l.LocalType; }
                 if (_args.TryGetValue(name, out var a)) { _il.Emit(OpCodes.Ldarg, a); return _argTypes[name]; }
                 throw new NotSupportedException("load unknown var " + name);
@@ -677,19 +675,6 @@ sealed partial class Emitter
             }
             case "delegateInvoke":
             {
-                // A splice's invocation of a lambda PARAM -> inline the caller's lambda body (binding its param to the
-                // invoke arg) right here, so a non-local `return` in it returns from THIS (the caller's) method.
-                var recv0 = e.GetProperty("recv");
-                if (recv0.TryGetProperty("k", out var rk) && rk.GetString() == "local"
-                    && _inlineLambdas.TryGetValue(recv0.GetProperty("name").GetString(), out var lam))
-                {
-                    var iargs = e.GetProperty("args").EnumerateArray().ToList();
-                    var had = _inlineSubst.TryGetValue(lam.lamParam, out var prev);
-                    if (iargs.Count > 0) _inlineSubst[lam.lamParam] = iargs[0];   // bind the lambda's param to the invoke arg
-                    EmitSplicedStmts(lam.body);
-                    if (had) _inlineSubst[lam.lamParam] = prev; else _inlineSubst.Remove(lam.lamParam);
-                    return typeof(void);
-                }
                 var ftNode = e.GetProperty("funcType");
                 var ft = MapType(ftNode);
                 EmitExpr(e.GetProperty("recv"));
@@ -713,7 +698,6 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Callvirt, InvokeOf(ft));
                 return FuncRetType(ftNode);
             }
-            case "inlineSplice": return EmitInlineSplice(e);
             case "newClosure":
             {
                 // Capturing lambda: `new Closure(captures)` then bind its `invoke` instance method as a delegate.

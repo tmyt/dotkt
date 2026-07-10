@@ -1154,36 +1154,18 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// off the resolved callee by `suspendCallTag(callee)` below.
 		(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
 			?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name), regularParams(callee).size) }?.let { fileClass ->
-			// A cross-module `inline fun` taking a lambda (body==null here = injected stub) -> splice its carried
-			// [KotlinInline] body at this call site (the only way a non-local `return` through the lambda works).
-			// Splice ONLY a non-extension inline-with-lambda (the receiver-less scope/util fns); an EXTENSION inline
-			// op (count/filter/let/also) instead CALLs its now-correctly-routed rt method (the ref splice body uses the
-			// Kotlin iterator protocol -> unresolved under substitution, but the rt body iterates via the fixed
-			// forEachInline). Non-local returns through an ext-inline lambda were already call-only pre-session.
+			// A cross-module `inline fun` taking a lambda (body==null here = injected stub) -> emit a generic
+			// `callInline` node carrying the call bindings + a `fallback` plain call. bir2cir OWNS the splice
+			// (it re-lowers the carried body in the app context, so a non-local `return` through the lambda works).
+			// Gate ONLY a non-extension inline-with-lambda (the receiver-less scope/util fns); an EXTENSION inline
+			// op (count/filter/let/also) instead falls through to a plain CALL of its now-correctly-routed rt method
+			// (the ref splice body uses the Kotlin iterator protocol -> unresolved under substitution, but the rt body
+			// iterates via the fixed forEachInline). The `extRecv == null` gate is UNCHANGED (widening it is a later slice).
 			if (callee.isInline && hasLambdaArg(call) && extRecv == null) return inlineSpliceCall(call, fileClass)
-			// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
-			val a = listOfNotNull(extRecv) + filledArgExprs(call)   // fill omitted default args (trailing/named-middle/reordered)
-			// A GENERIC top-level fun (e.g. a `reified` inline restored as a generic method) -> a generic static
-			// call carrying the type args, so ilemit MakeGenericMethods it (the reified `typeof(T)`/`is T` body
-			// then sees the concrete type). CLR generics are reified, so no inlining is needed across assemblies.
-			if (callee.typeParameters.isNotEmpty()) {
-				val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
-				if (targs.all { it != null }) {
-					val taJson = targs.joinToString(",") { birType(it!!).toJson() }
-					// `shapeTypes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
-					// fun's `__self` receiver type is included — else bir2cir's by-shape overload pick finds 0 params.
-					// PURE-KOTLIN `birType` identities; bir2cir derives the ilemit `shapes` tokens (see the member path above).
-					val shapeParams = (if (extRecv != null) listOf(callee.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }) else emptyList()) + regularParams(callee)
-					val shapeTypes = shapeParams.joinToString(",") { birType(it.type).toJson() }
-					// A2 (#61): a PLAIN static call by identity carrying the generic facts (typeArgs + shapeTypes);
-					// bir2cir's NetInteropBinding resolves the file-class owner off the refs and shapes it to clrGenericStatic.
-					return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
-				}
-			}
-			// A2 (#61): a PLAIN static call by identity to the referenced .NET file class; bir2cir's NetInteropBinding
-			// shapes it to clrStatic. A `suspend` callee is flagged by `suspendCallTag` (Task/await lowering deferred).
-			val ret = birType(callee.returnType)
-			return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { birType(it.type).toJson() }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
+			// PLAIN static call by identity to the referenced .NET file class (bir2cir's NetInteropBinding shapes it
+			// to clrStatic / clrGenericStatic). This SAME node is also the `fallback` slot of a `callInline` node,
+			// so the shared `plainInjectedTopLevelCall` helper keeps them byte-identical.
+			return plainInjectedTopLevelCall(call, callee, fileClass, name, extRecv)
 		}
 	}
 	// Fill omitted constant default arguments at the call site (IL methods have no default mechanism).
@@ -1226,6 +1208,38 @@ internal fun BirEmitter.call(call: IrCall): String {
 		val dynRet = ""","dynRet":${birType(call.type).toJson()}"""
 		"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${recvExpr(recv, ownerStr, declaringClass?.defaultType)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}$anySlotTag}"""
 	} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}}"""
+}
+
+/**
+ * The PLAIN `callStatic` node for a call to a top-level function restored from a `[KotlinFile]` facade on a
+ * referenced assembly (owner = the .NET file-facade type; bir2cir's NetInteropBinding shapes it to
+ * clrStatic / clrGenericStatic). Shared by BOTH the fall-through path AND `inlineSpliceCall`'s `fallback` slot,
+ * so a `callInline` fallback is byte-identical to what kotc emits when the cross-module-inline gate does not fire.
+ */
+internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimpleFunction, fileClass: String, name: String, extRecv: IrExpression?): String {
+	// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.
+	val a = listOfNotNull(extRecv) + filledArgExprs(call)   // fill omitted default args (trailing/named-middle/reordered)
+	// A GENERIC top-level fun (e.g. a `reified` inline restored as a generic method) -> a generic static
+	// call carrying the type args, so ilemit MakeGenericMethods it (the reified `typeof(T)`/`is T` body
+	// then sees the concrete type). CLR generics are reified, so no inlining is needed across assemblies.
+	if (callee.typeParameters.isNotEmpty()) {
+		val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
+		if (targs.all { it != null }) {
+			val taJson = targs.joinToString(",") { birType(it!!).toJson() }
+			// `shapeTypes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
+			// fun's `__self` receiver type is included — else bir2cir's by-shape overload pick finds 0 params.
+			// PURE-KOTLIN `birType` identities; bir2cir derives the ilemit `shapes` tokens (see the member path above).
+			val shapeParams = (if (extRecv != null) listOf(callee.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }) else emptyList()) + regularParams(callee)
+			val shapeTypes = shapeParams.joinToString(",") { birType(it.type).toJson() }
+			// A2 (#61): a PLAIN static call by identity carrying the generic facts (typeArgs + shapeTypes);
+			// bir2cir's NetInteropBinding resolves the file-class owner off the refs and shapes it to clrGenericStatic.
+			return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
+		}
+	}
+	// A2 (#61): a PLAIN static call by identity to the referenced .NET file class; bir2cir's NetInteropBinding
+	// shapes it to clrStatic. A `suspend` callee is flagged by `suspendCallTag` (Task/await lowering deferred).
+	val ret = birType(callee.returnType)
+	return """{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(name)},"argTypes":[${a.joinToString(",") { birType(it.type).toJson() }}],"ret":${str(ret)},"args":[${a.joinToString(",") { expr(it) }}]${suspendCallTag(callee)}}"""
 }
 
 /**

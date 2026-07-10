@@ -539,8 +539,11 @@ sealed partial class Emitter
                     var name = m.GetProperty("name").GetString();
                     if (!ti.MethodsBySig.TryGetValue(SigKey(name, m), out var mb) && !ti.Methods.TryGetValue(name, out mb)) continue;
                     if (kf != 0) ApplyKotlinFunction(mb, kf);
-                    // [KotlinInline(body)]: carry this inline+lambda fn's BIR (params + body) so a consumer can splice it.
-                    if (inl) ApplyKotlinInline(mb, "{\"params\":" + m.GetProperty("params").GetRawText() + ",\"body\":" + m.GetProperty("body").GetRawText() + "}");
+                    // [KotlinInline(content)]: carry this inline+lambda fn's RAW BIR verbatim so a consumer (bir2cir) can
+                    // splice it. bir2cir stamps the base64 carrier on the decl as `inlineBir`; ilemit passes it through
+                    // untouched. Absent `inlineBir` = non-inline or rt-build-stripped -> do NOT stamp [KotlinInline].
+                    if (inl && m.TryGetProperty("inlineBir", out var ib) && ib.ValueKind == JsonValueKind.String)
+                        ApplyKotlinInline(mb, ib.GetString());
                     // Return-position metadata rides the return parameter (position 0). Define it ONCE (a second
                     // DefineParameter(0) would be a duplicate builder) and stamp every present fact: [Nullable(...)] for a
                     // nullable return (nested byte-array form wins over the scalar), [KotlinSuspendFunctionType] for a

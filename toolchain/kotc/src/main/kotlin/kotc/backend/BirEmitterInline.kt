@@ -394,30 +394,52 @@ internal fun <T> BirEmitter.withTypeArgScope(scope: BirEmitter.TypeArgScope?, bl
 	}
 }
 
-/** CROSS-MODULE inline splice: a call to an injected `inline fun` (its body lives in [KotlinInline] on the
- *  referenced assembly, read by ilemit at splice time). We carry the call's bindings — each regular param's arg
- *  value, or for a lambda param the lambda's param name + body (emitted in the CALLER's scope, so a non-local
- *  `return` in it becomes the caller's return). ilemit substitutes these into the carried body. */
+/** CROSS-MODULE inline: a call to an injected `inline fun` taking a lambda (its `[KotlinInline]` body lives on the
+ *  referenced assembly). kotc emits a GENERIC `callInline` node carrying the call bindings — the type args, one entry
+ *  per regular param (a literal lambda as an `inlineLambda` carrier, else the arg expr) — plus a `fallback` = the plain
+ *  call kotc would otherwise emit. bir2cir OWNS the splice: it re-lowers the carried body in the app context (so it
+ *  binds against app types) and drops/keeps the `fallback` on splice success/failure. S1: the DISPATCH GATE is
+ *  unchanged (gated on `extRecv == null` at the call site), so `recvs` is an empty reserved slot. */
 internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): String {
 	val callee = call.symbol.owner
+	val name = callee.name.asString()
+	val extRecv = extensionReceiver(call)   // null in S1 (the call-site gate guarantees it); reserved for a later slice
 	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
 	val args = regularArgs(call)
-	val bindings = params.mapIndexed { i, p ->
-		val arg = args.getOrNull(i)
-		if (arg is IrFunctionExpression) {
-			val lamParam = arg.function.parameters.firstOrNull { it.kind == IrParameterKind.Regular }?.name?.asString() ?: "it"
-			val body = bodyStatements(arg.function.body).joinToString(",") { stmt(it) }
-			"""{"name":${str(p.name.asString())},"lambdaParam":${str(lamParam)},"lambdaBody":[$body]}"""
-		} else """{"name":${str(p.name.asString())},"value":${arg?.let { expr(it) } ?: "null"}}"""
-	}.joinToString(",")
-	// An EXTENSION inline fun's body references the receiver via `this`; carry it so EmitInlineSplice can substitute it
-	// (the body's `this` -> this bound value). Non-extension splices omit it (unchanged).
-	val thisJson = extensionReceiver(call)?.let { ""","thisValue":${expr(it)}""" } ?: ""
 	// Disambiguate the file-facade overload (forEach/count/... exist for Iterable/Array/CharSequence): the .NET method's
-	// param count = regular params + the receiver-as-__self, and its generic arity = the fn's type params.
-	val pc = params.size + (if (extensionReceiver(call) != null) 1 else 0)
+	// param count = regular params + the receiver-as-__self, and its generic arity = the fn's type params. SAME as the
+	// retired inlineSplice node's pc/ga.
+	val pc = params.size + (if (extRecv != null) 1 else 0)
 	val ga = callee.typeParameters.size
-	return """{"k":"inlineSplice","type":${str(fileClass)},"method":${str(callee.name.asString())},"pc":$pc,"ga":$ga,"bindings":[$bindings]$thisJson}"""
+	// One type-arg entry per callee type param (a null/star projection -> object, mirroring inlineCall).
+	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
+		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
+	}
+	// One entry per REGULAR param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr.
+	val argsJson = params.indices.joinToString(",") { i ->
+		val arg = args.getOrNull(i)
+		if (arg is IrFunctionExpression) emitInlineLambdaCarrier(arg)
+		else if (arg != null) expr(arg)
+		else "null"
+	}
+	val retType = birType(callee.returnType).toJson()
+	// The fall-through plain call (byte-identical to the un-gated path): bir2cir swaps it in on any splice failure.
+	val fallback = plainInjectedTopLevelCall(call, callee, fileClass, name, extRecv)
+	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${str(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":{},"args":[$argsJson],"retType":$retType,"fallback":$fallback}"""
+}
+
+/** An `inlineLambda` carrier for a literal lambda arg of a cross-module inline call: the lambda's OWN regular params
+ *  (name+type, bound by bir2cir at splice time) plus its body emitted IN THE CALLER'S SCOPE. `spliceBodyWithReturns`
+ *  routes a labeled `return@callee` (target = the lambda fn symbol) through a result-local + end-label; a bare NON-LOCAL
+ *  `return` (target = the enclosing caller) stays a plain `{"k":"return"}` — the caller's return, the point of inlining. */
+internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): String {
+	val fn = lambda.function
+	val paramsJson = fn.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { p ->
+		"""{"name":${str(p.name.asString())},"type":${birType(p.type).toJson()}}"""
+	}
+	val body = ArrayList<String>()
+	val result = spliceBodyWithReturns(fn, fn.returnType.isUnit(), body)
+	return """{"k":"inlineLambda","params":[$paramsJson],"body":[${body.joinToString(",")}],"result":$result}"""
 }
 
 /** Splice an invoked inlined lambda `f(args)`: bind its params to the invoke args, then splice its body. */

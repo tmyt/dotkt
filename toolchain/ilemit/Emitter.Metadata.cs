@@ -40,12 +40,14 @@ sealed partial class Emitter
         fb.SetCustomAttribute(new CustomAttributeBuilder(_kReadOnlyAttr.GetConstructor(Type.EmptyTypes), new object[0]));
     }
 
-    // [KotlinInline(version, content)] — the inline+lambda fn's BIR body, for cross-module splicing. Rides the versioned,
-    // codec-agnostic carrier envelope (spec §0): `version` = "bir-json/1" today, `content` = the codec-encoded body.
-    void ApplyKotlinInline(MethodBuilder mb, string body)
+    // [KotlinInline(version, content)] — the inline+lambda fn's RAW BIR body, for cross-module splicing. Rides the
+    // versioned, codec-agnostic carrier envelope (spec §0): `version` = "bir-json/1", `content` = the codec-encoded
+    // body. bir2cir stashes this on the method decl as the base64 `inlineBir` string (BirCarrier.EncodeBody at stash
+    // time); ilemit stamps it VERBATIM — it no longer re-derives the carrier from the post-lowering params+body CIR.
+    void ApplyKotlinInline(MethodBuilder mb, string inlineBir)
     {
         EnsureKotlinAttrs();
-        byte[] content = DotKt.Bir.BirCarrier.EncodeBody(DotKt.Bir.BirCarrier.JsonV1, System.Text.Json.Nodes.JsonNode.Parse(body)!);
+        byte[] content = Convert.FromBase64String(inlineBir);
         mb.SetCustomAttribute(new CustomAttributeBuilder(
             _kInlineAttr.GetConstructor(new[] { typeof(string), typeof(byte[]) }),
             new object[] { DotKt.Bir.BirCarrier.JsonV1, content }));
