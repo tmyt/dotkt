@@ -53,8 +53,8 @@ public actual interface List<out E> : Collection<E> {
     public actual fun listIterator(): ListIterator<E>
     public actual fun listIterator(index: Int): ListIterator<E>
     public actual fun subList(fromIndex: Int, toIndex: Int): List<E>
-    // getFirst/getLast/reversed are SYNTHESIZED onto List by kotc's SequencedCollectionInjector (a FIR fake-override),
-    // so every implementer inherits them uniformly; declaring them here too would double-declare + clash.
+    // getFirst/getLast/reversed are intentionally absent — stock Kotlin's common List has no such members (they are
+    // JVM java.util.SequencedCollection additions only). Matches upstream; ArrayDeque declares its own standalone ones.
 }
 
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IList")
@@ -73,8 +73,8 @@ public actual interface MutableList<E> : List<E>, MutableCollection<E> {
     actual override fun listIterator(index: Int): MutableListIterator<E>
     actual override fun subList(fromIndex: Int, toIndex: Int): MutableList<E>
     actual override fun iterator(): MutableIterator<E>
-    // addFirst/addLast/removeFirst/removeLast are SYNTHESIZED onto MutableList by kotc's SequencedCollectionInjector
-    // (a FIR fake-override); declaring them here too would double-declare + clash (EnumEntriesList).
+    // addFirst/addLast/removeFirst/removeLast are intentionally absent — stock Kotlin's common MutableList has no such
+    // members (JVM java.util.SequencedCollection additions only). Matches upstream; ArrayDeque declares its own.
 }
 
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IReadOnlyCollection")

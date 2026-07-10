@@ -536,7 +536,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			return """{"name":${str(name)},"static":false,"override":false,"virtual":true${typeParamsJson(fn.typeParameters)},"params":[${paramsJson(fn.parameters)}],"ret":${str(ret)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 		}
 		val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
-			.filterNot { it.signatureMentionsJava() }
 			.filterNot { skipStdlibHighArityFunctionType(it) }
 			// equals/hashCode/toString are inherited from Any into every Kotlin interface (fake overrides). On the CLR
 			// System.Object already provides Equals/GetHashCode/ToString, so emitting them as interface members creates
@@ -579,15 +578,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// [KotlinSealed]; a plain CLR interface loses both).
 		val funSealed = classModsJson(fnIface = iface.isFun, sealed = iface.modality == Modality.SEALED)
 		return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn$funSealed${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods],"properties":[$ifaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
-	}
-
-	internal fun IrSimpleFunction.signatureMentionsJava(): Boolean =
-		typeMentionsJava(returnType) || parameters.any { it.kind == IrParameterKind.Regular && typeMentionsJava(it.type) }
-
-	internal fun typeMentionsJava(t: IrType): Boolean {
-		val fq = t.classFqName?.asString()
-		if (fq != null && fq.startsWith("java.")) return true
-		return (t as? IrSimpleType)?.arguments.orEmpty().any { (it as? IrTypeProjection)?.type?.let(::typeMentionsJava) == true }
 	}
 
 	internal fun skipStdlibHighArityFunctionType(fn: IrSimpleFunction): Boolean {
@@ -1276,20 +1266,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	internal fun method(fn: IrSimpleFunction, static: Boolean): String {
-		fun jvmSequencedCompatOverride(): Boolean {
-			val name = fn.name.asString()
-			if (name !in setOf("getFirst", "getLast", "reversed", "addFirst", "addLast", "removeFirst", "removeLast")) return false
-			fun reachesSequencedInterface(f: IrSimpleFunction): Boolean =
-				f.overriddenSymbols.any {
-					val owner = it.owner
-					(owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() in setOf(
-					"kotlin.collections.List",
-					"kotlin.collections.MutableList",
-					"kotlin.enums.EnumEntries",
-					) || reachesSequencedInterface(owner)
-				}
-			return reachesSequencedInterface(fn)
-		}
 		// An override of a CLASS or ENUM_CLASS member (the latter: a per-entry enum body overriding an abstract enum
 		// member) reuses the base virtual slot. (Interface members bind by name/signature, handled elsewhere.)
 		val isOverride = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS } }
@@ -1297,9 +1273,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// slot — even when it is Kotlin-`final` (final override -> CLR `virtual final` = sealed). Otherwise the type
 		// fails to load with "must be virtual to implement a method on an interface or super type" (e.g. Enum.compareTo,
 		// the primitive Iterator.next).
-		val sequencedCompatOverride = jvmSequencedCompatOverride()
-		val overridesIface = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE } && !sequencedCompatOverride
-		val isVirtual = !sequencedCompatOverride && (fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT || clrIfaceMemberName(fn) != null || overridesIface)
+		val overridesIface = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
+		val isVirtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT || clrIfaceMemberName(fn) != null || overridesIface
 		// An extension function `fun T.f()` -> static method whose first param `__self` is the receiver;
 		// body references to the receiver resolve to `__self` (via valSubst).
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
@@ -4083,11 +4058,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `overrides` marker + the refs (A2 / #61 step 5). This accessor now yields only the .NET TYPE name for an
 		// injected .NET type (read off its IR `ClassId`) — used for type-origin decisions (a `newClr`, a `clr:`/`clrg:`
 		// owner token, the `byrefBackingField`/delegate/for-in origin tests), never a member slot.
-		// The JVM kotlin-stdlib aliases `Comparator = java.util.Comparator`; an app compiled against that jar sees the
-		// java.util name. Treat it as OUR rt `kotlin.Comparator` (a real CLR interface in the rt), so birType, the
-		// member-call dispatch (-> clrInstance), and the supertype all resolve it via the .NET-type (clrg:) path from the
-		// loaded --ref rt -- NOT the _types app-table (which only holds app-emitted types -> KeyNotFound).
-		if ((decl as? IrClass)?.fqNameWhenAvailable?.asString() == "java.util.Comparator") return "kotlin.Comparator"
 		// A2 stage 1: the injected .NET type's .NET name is read straight off its IR `ClassId` (structural resolved
 		// identity) against facadegen's metadata.
 		return (decl as? IrClass)?.classId?.let { kotc.frontend.clrInjectedDotNetName(it) }
@@ -4349,14 +4319,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// CLR realization (ClrMatchResult over a System...Match); it must NOT be aliased to System...Match here — doing so
 		// made `ClrMatchResult : MatchResult` try to implement a CLASS as an interface (TypeLoadException). A MatchResult
 		// reference resolves as a referenced stdlib type (ilemit's MapType referenced-type fallback).
-		// The JVM kotlin-stdlib.jar aliases `kotlin.Comparator = java.util.Comparator`, so app code compiled against that
-		// jar leaks the java.util name. Collapse it to OUR kotlin.Comparator, which in a ref/rt app is a REFERENCED rt
-		// type (loaded via --ref), NOT app-emitted -- so it must be the `clrg:` ref form (ilemit resolves clrg: from the
-		// loaded assemblies; the bare/@ form goes to _types and KeyNotFounds). This reroutes supertype, value-type, and
-		// member-call (c.compare -> clrInstance) through ilemit's .NET-type path.
-		if (fqp == "java.util.Comparator") {
-			return TypeNode.Fqn("kotlin.Comparator", listOf(argType(t, 0) ?: OBJ))
-		}
 		// Kotlin throwables stay their bare `kotlin.*` FQN here (emitted as `@kotlin.IllegalArgumentException`, etc. via
 		// the user-class fall-through below); bir2cir lowers them to the BCL base off the stdlib's @ClrTypeAlias on each
 		// exception class (metadata-driven). A custom `class E : Exception(msg)`
