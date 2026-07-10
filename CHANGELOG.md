@@ -624,7 +624,15 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
-- **Inline unification (#75), first slice — non-local `return` through `repeat(n){}` restored via a spliced inline
+- **bir2cir `Program.cs` decomposed into 21 per-pass files (#41) — a purely mechanical, verify-by-refactor
+  carve-out.** The 7007-line `Program.cs` is now a ~705-line driver-only file (`Bir2Cir`/`Main`, the `Pipeline`
+  pass driver with its per-pass ordering + call-site gate comments, `BuildStdlibMode`/`DriverOptions`/`BirFile`/
+  `CirFile`/`JsonOptions`/`UsageException`); each pass and the shared `ReferenceMetadataIndex`/`BirTypeLowering`
+  infrastructure moved verbatim (header comment + run-scoped static state intact) into a same-named sibling file,
+  mirroring the 33 already-extracted passes. No behavior change: every class moved whole (no class split, no
+  static field param-ified), gated per batch by a byte-identical CIR-corpus `diff` over the stdlib (both ref and
+  runtime modes) plus 254 app BIR inputs, and end-to-end by the full gate (verify-il / -differential / -roundtrip /
+  -ktproj / -schema). — non-local `return` through `repeat(n){}` restored via a spliced inline
   body.** kotc now recognizes a literal-lambda `repeat(n){ … }`, splices the lambda body UN-CLOSURED into a new
   `callInline` BIR node (carried in the caller's scope, so a bare `return` inside stays a plain `return` = the
   caller's return, and a `return@repeat` routes to a `goto` = `continue`), and bir2cir's new `InlineSplice` pass wraps
