@@ -139,6 +139,33 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
     so the @ClrTypeAlias ctor cannot be bound 1:1 and the compiled rt body throws `InvalidProgram`. Closing it
     needs a separate bir2cir CharSequence→String ctor-arg coercion feature.
 
+- **#73 Wave 6: one MOVE (M13) after empirical investigation + three verify-by-deletion dead-code removals
+  (D1/D2/D3) from the kotc residual audit.** Full stdlib BIR byte-diff + verify-il/differential/roundtrip/ktproj
+  all green:
+  - **M13 Pair/Triple/IndexedValue `.first`/`.second`/`.third`/`.index`/`.value` (MOVED).** kotc emitted these as
+    raw `field` reads, baking a false "these props are plain fields" layout assumption. Investigation: those stdlib
+    backing fields are emitted `internal` (accessor-routed), so a cross-assembly raw field read never binds — the read
+    only worked because ilemit's field handler re-routes an external-owner field to its `get_<name>` accessor. Deleted
+    the special-case → the ordinary member-property read emits the faithful `get_first`/`get_index`/… call (`call`
+    instead of `callvirt` on the final getter; ilverify-clean, byte-better).
+  - **M13 `EnumEntries.size` → `arrayLen` (reclassified GENUINE, audit G9).** NOT a layout hack: `EnumClass.entries`
+    is lowered by kotc to an `enumValues` node = a real `E[]` CLR array, so `.size` MUST be `arrayLen`. Coupled to the
+    still-in-kotc direct-entries producer (the un-landed half of M3); moves with it, not before.
+  - **D1 `clrIfaceMemberName` (DELETED).** It only ever returned `"get_length"` for kotlin.CharSequence.length —
+    identical to the `get_`+name default at every consumer. Deleting it flips only `override:true→false` on the
+    CharSequence.length accessor (virtual/vis preserved; the `overrides` marker + ilemit `DefineMethodOverride` bind the
+    interface slot by name/signature), verified inert. The `method()`/`samConversion`/method-call-path consumers were
+    dead (accessors never reach them); the propertyRef `MyCs::length` deferral was a live behavior gate and is preserved
+    inline. Deleted the stale `resumeWith→ResumeWith` comments (the function never did that).
+  - **D2 `charSeqIface` (DELETED).** An identity map `kotlin.CharSequence`→same FQN. All consumers fall through to the
+    general path, which returns the same bare `kotlin.CharSequence` (non-generic, no clrName). Stdlib BIR byte-diff = zero.
+  - **D3 propertyRef `get_annotations` (CONSOLIDATED).** The lifted `KProperty0/1` class now extends the real stdlib
+    `kotlin.reflect.ClrPropertyStub<V>(name)`, inheriting `name`+`annotations` instead of hand-rolling a bare-name
+    `emptyList` call. `ClrPropertyStub` is made `open` (the lift's base; zero IL diff — ilemit does not seal
+    Kotlin-final) with a KDoc that documents both its uses. Verified across bound/mutable/unbound + value/reference/
+    app-class/generic-`tv` `V`; `cases/il-propref` gains generic-context + app-class references to guard the
+    base-with-baseArgs shape.
+
 - **#73 Wave 3: the for-in `forEachInline` gate (M1) moved from kotc into bir2cir — the last CLR-representation
   decision in kotc's loop family.** kotc's for-in emission carried a residual `forInEnumerable` gate: it chose the
   `forEachInline` (GetEnumerator) loop shape when the source's static type was a facadegen-injected .NET type

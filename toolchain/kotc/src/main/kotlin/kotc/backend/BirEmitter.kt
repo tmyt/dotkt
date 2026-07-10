@@ -305,9 +305,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	// a `class S : CharSequence`, or a CharSequence-typed param/local/return) — NO CLR synthetic name, NO `<>` marker.
 	// bir2cir SUBSTITUTES `kotlin.CharSequence` -> its synthesized `dotkt_CharSequence` interface (SharedSyntheticSynthesis
 	// owns the fixed-shape TYPE definition), exactly as it substitutes `kotlin.String` -> `System.String`.
-	internal fun charSeqIface(t: IrType): String? =
-		if (t.classFqName?.asString() == "kotlin.CharSequence") "kotlin.CharSequence" else null
-
 	// A `kotlin.properties.Read(Write)Property<T,V>`-typed delegate is NOT monomorphized: kotc emits the REAL
 	// generic stdlib interface identity (like `by lazy`'s `kotlin.Lazy<T>`), so delegate field/local types,
 	// the `Delegates.observable(…)` value, and the getValue/setValue dispatch owner share one type (ilverify-clean).
@@ -499,10 +496,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	internal fun interfaceDef(iface: IrClass): String {
 		fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
 			// C3b reverse direction: a Kotlin interface extending a @Clr interface (Set : Collection->IReadOnlyCollection).
-			// clrIfaceMemberName reads facadegen .NET-interop metadata ONLY (not @ClrIntrinsic); in the stdlib build
-			// (CLR_TYPES_METADATA="") kotc emits the plain Kotlin get_size here for both ref and rt — the BCL override-slot
-			// rename (get_size -> get_Count) is bir2cir's DeclarationRename off the ref.dll @ClrIntrinsic.
-			val name = clrIfaceMemberName(fn) ?: (prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString())
+			// kotc emits the plain Kotlin `get_size` here for both ref and rt — the BCL override-slot rename
+			// (get_size -> get_Count) is bir2cir's DeclarationRename off the ref.dll @ClrIntrinsic.
+			val name = prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString()
 			val isSetter = prop != null && fn == prop.setter
 			val ret = if (isSetter) TypeNode.Fqn("kotlin.Unit") else birType(fn.returnType)
 			// Return nullability (`fun <E> get(key): E?`) now rides the `ret` type node itself (`{t:nullable,of:tv}` from
@@ -830,20 +826,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	/** `,"volatile":true` field-flag fragment (empty when not volatile). */
 	internal fun volatileFieldFlag(p: IrProperty): String = if (isVolatile(p)) ""","volatile":true""" else ""
 
-	/** kotc's OWN synthetic `dotkt$CharSequence`: its `length` property getter is emitted as the `get_length` slot (an
-	 *  override of the synthetic interface slot, NOT a user-written accessor). This is kotc's own type synthesis, not
-	 *  facadegen .NET interop — so its name stays here. EVERY other override-slot name is now resolved by bir2cir's
-	 *  DeclarationRename off the `overrides` marker + the refs: a facadegen-injected .NET interface/base member (owner
-	 *  FQN -> a real .NET Type) and a stdlib @ClrTypeAlias/@ClrIntrinsic member (Collections.kt: size->get_Count,
-	 *  get->get_Item, iterator->GetEnumerator; kotlin.AutoCloseable.close->Dispose) alike. kotc emits the PLAIN Kotlin
-	 *  override name (+ its `get_`/`set_` accessor convention) and the `overrides` marker; the Kotlin<->CLR member
-	 *  binding is bir2cir's (layer purity — no BCL slot name, no `@ClrIntrinsic`/injected-member-slot read here). */
-	internal fun clrIfaceMemberName(fn: IrSimpleFunction): String? =
-		(sequenceOf(fn) + fn.overriddenSymbols.asSequence().map { it.owner }).firstNotNullOfOrNull { owner ->
-			if ((owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.CharSequence"
-				&& owner.correspondingPropertySymbol?.owner?.name?.asString() == "length") "get_length" else null
-		}
-
 	/** STEP-1 (kotc->bir2cir clrName migration) — a PURE-KOTLIN override marker for an emitted member: the transitive
 	 *  closure of interface/base members it overrides, each as {owner FQN, Kotlin member name, kind, arity}. NO CLR
 	 *  knowledge (no @ClrIntrinsic read, no BCL name). bir2cir (Step 2) consumes this + the ref.dll @ClrIntrinsic to
@@ -890,7 +872,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	}
 
 	internal fun accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
-		val mname = clrIfaceMemberName(acc) ?: (if (isGetter) "get_" else "set_") + propName
+		val mname = (if (isGetter) "get_" else "set_") + propName
 		// A MEMBER extension property (`class C { val T.p get() }`) has BOTH a dispatch and an extension receiver -> the
 		// extension receiver rides a leading `__self` param (mirrors a member extension function); body refs to it
 		// resolve via selfSubst (by identity, so it isn't confused with the dispatch `<this>`).
@@ -902,7 +884,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val body = (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 		if (extRecv != null) selfSubst.remove(extRecv)
 		val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
-		val clrIface = clrIfaceMemberName(acc) != null
 		// An `override val/var` whose accessor overrides a base CLASS/ENUM_CLASS accessor must REUSE that base virtual
 		// slot (`override`, not a fresh NewSlot) — EXACTLY like an overriding method (see method()'s `isOverride`).
 		// Otherwise a concrete subclass leaves the base's abstract accessor slot unfilled -> TypeLoadException at load
@@ -910,8 +891,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// Interface members bind by name/signature (ilemit's DefineMethodOverride pass) so they don't need this flag;
 		// use the accessor's OWN overriddenSymbols (a setter that ADDS to a base `val` has none -> stays a NewSlot).
 		val isOverrideClass = acc.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS } }
-		val virtual = clrIface || acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty()
-		val vis = if (clrIface) "public" else visOf(acc)
+		val virtual = acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty()
+		val vis = visOf(acc)
 		val isAbstract = acc.modality == Modality.ABSTRACT && acc.body == null
 		// Emit the PROPERTY's annotations (e.g. @ClrIntrinsic) onto its accessor method — the SAME unconditional
 		// pass-through method()/ifaceMethod already do for plain methods (kotc does not filter/select annotations;
@@ -922,7 +903,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// never carries it. In an app build these attrs simply ride the accessor as ordinary metadata.
 		val propAnns = (acc.correspondingPropertySymbol?.owner ?: acc).annotations
 		val accAttrs = ""","attrs":[${attrsJson(propAnns)}]"""
-		return """{"name":${str(mname)},"static":false,"override":${clrIface || isOverrideClass},"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
+		return """{"name":${str(mname)},"static":false,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 	}
 
 	/** A user `annotation class Ann(val v: Int, …)` -> a plain BIR class carrying the pure-Kotlin `"annotation":true`
@@ -1129,8 +1110,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// the get_/set_ methods, so a C#/reflection consumer sees a property. (Full "every property -> CLR property +
 		// @ClrField opt-out" is the next phase; field-backed props keep their backing field for now.)
 		val propsList = klass.declarations.filterIsInstance<IrProperty>().filter { emitsGet(it) }.joinToString(",") { p ->
-			val getName = clrIfaceMemberName(p.getter!!) ?: "get_" + p.name.asString()
-			val setName = if (emitsSet(p)) str(clrIfaceMemberName(p.setter!!) ?: "set_" + p.name.asString()) else "null"
+			val getName = "get_" + p.name.asString()
+			val setName = if (emitsSet(p)) str("set_" + p.name.asString()) else "null"
 			"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()},"get":${str(getName)},"set":$setName${overridesJson(p.getter!!)}}"""
 		}
 		val methods = (instMethods + statMethods + companionAccessors + clrAccessors + userAccessors).joinToString(",")
@@ -1165,7 +1146,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				when {
 					bt is TypeNode.Fn -> null
 					stClass?.let { clrName(it) } != null -> bt.toJson()
-					else -> charSeqIface(st)?.let { fqnJson(it) } ?: stClass?.let { ownerSpec(it, st).toJson() }
+					else -> stClass?.let { ownerSpec(it, st).toJson() }
 				}
 			}
 			.joinToString(",")
@@ -1248,7 +1229,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// fails to load with "must be virtual to implement a method on an interface or super type" (e.g. Enum.compareTo,
 		// the primitive Iterator.next).
 		val overridesIface = fn.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
-		val isVirtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT || clrIfaceMemberName(fn) != null || overridesIface
+		val isVirtual = fn.modality == Modality.OPEN || fn.modality == Modality.ABSTRACT || overridesIface
 		// An extension function `fun T.f()` -> static method whose first param `__self` is the receiver;
 		// body references to the receiver resolve to `__self` (via valSubst).
 		val extRecv = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
@@ -1280,16 +1261,15 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// `override fun toString()/equals()/hashCode()` -> System.Object.ToString/Equals/GetHashCode so that
 		// CLR virtual dispatch (Console.WriteLine, structural `==`) finds the override.
 		val objName = objectMethodName(fn)
-		val clrIfaceName = clrIfaceMemberName(fn)   // e.g. resumeWith -> ResumeWith when implementing Continuation<T>
-		val emitName = clrIfaceName ?: objName ?: fn.name.asString()
-		val isOvr = isOverride || objName != null || clrIfaceName != null
+		val emitName = objName ?: fn.name.asString()
+		val isOvr = isOverride || objName != null
 		// Object-overrides / interface members must stay public for virtual dispatch.
 		// A PRIVATE TOP-LEVEL fun is FILE-private in Kotlin, but kotc's emission splits a file across CLR types
 		// (the XKt file class + the file's classes), so CLR `private` under-approximates it: a same-file class
 		// calling the helper threw MethodAccessException at run (Duration..cctor -> DurationKt.durationOfMillis).
 		// Emit `internal` — the tightest CLR visibility that preserves same-file access (the same reasoning that
 		// makes routed property backing fields internal). Class members keep their real visibility.
-		val vis = if (objName != null || clrIfaceName != null) "public"
+		val vis = if (objName != null) "public"
 			else visOf(fn).let { if (it == "private" && fn.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment) "internal" else it }
 		val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
 		// Kotlin modifiers with no .NET analog -> stamped as [KotlinFunction] by ilemit so a consuming Kotlin module
@@ -1413,8 +1393,6 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 */
 	internal fun ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode {
 		klass ?: return TypeNode.Fqn("?")
-		// CharSequence (declaring class of a call on a CharSequence-typed value) -> the synthetic interface name.
-		if (klass.fqNameWhenAvailable?.asString() == "kotlin.CharSequence") return TypeNode.Fqn("kotlin.CharSequence")
 		val name = typeName(klass)
 		// An `inner class` re-declares its enclosing type params; construct it WITH them (as `tv`). See innerEnclosingTypeParams.
 		val enclArgs = innerEnclosingTypeParams(klass).map { tvOf(it) }
@@ -1451,7 +1429,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		if (acc.body == null) return null
 		// The accessor overrides a member whose (real) declaring type is a .NET type.
 		// Only a .NET base CLASS virtual property uses clrOverride. A @Clr INTERFACE property (Collection.size) goes via
-		// userAccessors + clrIfaceMemberName (-> get_Count), binding the interface slot rather than a generic clrOverride.
+		// userAccessors emitting the plain `get_size` + the `overrides` marker; bir2cir's DeclarationRename binds the
+		// interface slot (get_size -> get_Count) off the ref.dll @ClrIntrinsic, not a generic clrOverride.
 		val clrOwnerClass = acc.overriddenSymbols.asSequence()
 			.map { it.owner }.mapNotNull { (if (it.isFakeOverride) it.resolveFakeOverride() else it)?.parent as? IrClass }
 			.firstOrNull { clrName(it) != null } ?: return null
@@ -1901,7 +1880,7 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val fn = lamExpr.function
 		val sam = ifaceClass.declarations.filterIsInstance<IrSimpleFunction>()
 			.singleOrNull { it.modality == org.jetbrains.kotlin.descriptors.Modality.ABSTRACT } ?: return expr(node.argument)
-		val samName = clrIfaceMemberName(sam) ?: sam.name.asString()
+		val samName = sam.name.asString()
 		val ret = birType(fn.returnType)
 		val captures = capturedVars(fn, includeThis = true)
 		val cname = "dotkt\$${synthScope}\$Sam${closureCounter++}"
@@ -2053,9 +2032,10 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 	 *
 	 * v1 scope: a TOP-LEVEL property (`::x`), or a MEMBER property either BOUND (`obj::p`, receiver captured in a
 	 * field) or UNBOUND (`Type::p`, receiver becomes the `get`/`set`'s own leading param) — mirrors `functionRef`'s
-	 * ctor-ref/bound/unbound split. An EXTENSION-receiver property reference (`KProperty2`), a `lateinit var`, and
-	 * a `@ClrField`/.NET-interface-overriding property are clean deferrals (their access shape differs from the
-	 * plain get_/set_ accessor convention used below). The compiler-synthesized KProperty argument of a delegate's
+	 * ctor-ref/bound/unbound split. An EXTENSION-receiver property reference (`KProperty2`), a `lateinit var`, a
+	 * `@ClrField` property, and a property overriding a .NET-mapped interface member (kotlin.CharSequence.length) are
+	 * clean deferrals (their access shape differs from the plain get_/set_ accessor convention used below). The
+	 * compiler-synthesized KProperty argument of a delegate's
 	 * getValue/setValue/provideDelegate is NOT this path — those call sites materialize `kPropertyStub` directly
 	 * without going through `expr()`/this dispatch; the origin check below is a defensive fallback only.
 	 */
@@ -2071,7 +2051,16 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 				"a lateinit/@ClrField property reference has no supported lowering yet")
 		val getterFn = node.getter?.owner ?: prop.getter
 			?: return unsupported(node, "this property reference", "the referenced property has no getter")
-		if (clrIfaceMemberName(getterFn) != null)
+		// A reference to a property DIRECTLY overriding kotlin.CharSequence.length is a clean deferral: its accessor
+		// binds the synthesized dotkt_CharSequence interface slot (get_length), whose lift-through has no supported
+		// lowering yet (that completion is G8/callable-ref scope, not this wave — preserve today's diagnostic). Walks
+		// only the direct override chain (non-transitive, matching the retired clrIfaceMemberName helper): a
+		// `class B : A` where `A : CharSequence` re-overrides through A, so `B::length` takes the plain lift.
+		val overridesCharSeqLength = (sequenceOf(getterFn) + getterFn.overriddenSymbols.asSequence().map { it.owner }).any { owner ->
+			(owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.CharSequence"
+				&& owner.correspondingPropertySymbol?.owner?.name?.asString() == "length"
+		}
+		if (overridesCharSeqLength)
 			return unsupported(node, "this property reference",
 				"a property overriding a .NET-mapped interface member has no supported lowering yet")
 		val setterFn = if (prop.isVar) (node.setter?.owner ?: prop.setter) else null
@@ -2138,9 +2127,13 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			"""{"name":"set","static":false,"override":true,"virtual":true,"params":[$setParams],"ret":${str(TypeNode.Fqn("kotlin.Unit"))},"body":[$setBody]}"""
 		}
 
-		val nameMethod = """{"name":"get_name","static":false,"override":true,"virtual":true,"params":[],"ret":${str(TypeNode.Fqn("kotlin.String"))},"body":[{"k":"return","value":{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(name)}}}]}"""
-		val annotationsRet = TypeNode.Fqn("kotlin.collections.List", listOf(TypeNode.Fqn("kotlin.Annotation")))
-		val annotationsMethod = """{"name":"get_annotations","static":false,"override":true,"virtual":true,"params":[],"ret":${str(annotationsRet)},"body":[{"k":"return","value":{"k":"callStatic","owner":null,"method":"emptyList","typeArgs":[${str(TypeNode.Fqn("kotlin.Annotation"))}],"args":[]}}]}"""
+		// KCallable.name + KAnnotatedElement.annotations are NOT re-synthesized here: the lifted class extends the real
+		// stdlib `kotlin.reflect.ClrPropertyStub<V>(name)` (which provides `name` + `annotations get()=emptyList()`),
+		// so it only implements the KProperty0/1 slots ClrPropertyStub lacks (get/set/invoke). Consolidates onto the
+		// stdlib impl instead of duplicating a bare-name `emptyList` call. The lift already implements KProperty<V> via
+		// its KProperty0/1 interface, so the ClrPropertyStub<V>:KProperty<V> base is a CLR-legal diamond.
+		val stubBase = TypeNode.Fqn("kotlin.reflect.ClrPropertyStub", listOf(vType))
+		val stubBaseArg = """{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(name)}}"""
 
 		val recvFieldType = if (bound) birType(boundRecv!!.type) else null
 		val fields = if (bound) """{"name":"__recv","type":${str(recvFieldType!!)}}""" else ""
@@ -2148,8 +2141,8 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		val ctorBody = if (bound) """{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv","value":{"k":"local","name":"__recv"}}""" else ""
 
 		val freeTps = freeTypeParams(listOf(node.type) + listOfNotNull(boundRecv?.type))
-		val methods = listOfNotNull(getMethod, invokeMethod, setMethod, nameMethod, annotationsMethod).joinToString(",")
-		liftedTypes.add("""{"name":${str(cname)},"kind":"class","generated":true${typeParamsJson(freeTps)},"base":null,"interfaces":[${ifaceSpec.toJson()}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":null,"body":[$ctorBody]}],"methods":[$methods]}""")
+		val methods = listOfNotNull(getMethod, invokeMethod, setMethod).joinToString(",")
+		liftedTypes.add("""{"name":${str(cname)},"kind":"class","generated":true${typeParamsJson(freeTps)},"base":${stubBase.toJson()},"interfaces":[${ifaceSpec.toJson()}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":[$stubBaseArg],"body":[$ctorBody]}],"methods":[$methods]}""")
 
 		val classType = if (freeTps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, freeTps.map { tvOf(it) })
 		val ctorArgs = if (bound) expr(boundRecv!!) else ""
@@ -3714,23 +3707,11 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// CLR binding (String.length -> System.String.Length) is stdlib `@ClrIntrinsic("Length")` metadata, applied
 		// by bir2cir's MemberCallSubstitution (the sibling `String.get`->`get_Chars` was cleaned the same way). kotc
 		// carries NO CLR knowledge here (layer boundary — CLAUDE.md §"kotc reads NEITHER @ClrIntrinsic…").
-		// Pair/Triple `.first`/`.second`/`.third` -> stdlib class fields.
-		(callee.correspondingPropertySymbol?.owner)?.let { p ->
-			val pfq = (callee.parent as? IrClass)?.fqNameWhenAvailable?.asString()
-			if (pfq == "kotlin.Pair" || pfq == "kotlin.Triple") {
-				val field = p.name.asString().takeIf { it in setOf("first", "second", "third") }
-				if (field != null) dispatchReceiver(call)?.let { r ->
-					return """{"k":"field","ownerType":${birType(r.type).toJson()},"recv":${expr(r)},"name":${str(field)}}"""
-				}
-			}
-			// `IndexedValue.index`/`.value` -> stdlib class fields.
-			if (pfq == "kotlin.collections.IndexedValue") {
-				val field = p.name.asString().takeIf { it in setOf("index", "value") }
-				if (field != null) dispatchReceiver(call)?.let { r ->
-					return """{"k":"field","ownerType":${birType(r.type).toJson()},"recv":${expr(r)},"name":${str(field)}}"""
-				}
-			}
-		}
+		// Pair/Triple `.first`/`.second`/`.third` and IndexedValue `.index`/`.value` are NOT intercepted: they are real
+		// `kotlin.Pair`/`kotlin.Triple`/`kotlin.collections.IndexedValue` property reads — fall through to the ordinary
+		// member-property-read path so they emit as `get_first`/`get_index`/... accessor calls. Their stdlib backing
+		// fields are accessor-routed (internal), so a raw cross-assembly field read never binds directly; the faithful
+		// property call is what ilemit already resolves (its external-owner field node re-routes to the getter anyway).
 
 		// Property get/set on a user class -> field access.
 		val property = callee.correspondingPropertySymbol?.owner
@@ -3817,17 +3798,17 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			val recv = recvExpr?.let { expr(it) } ?: """{"k":"this"}"""
 			val ownerStr = ownerSpec(declaringClass, recvExpr?.type)
 			val owner = str(ownerStr)
-			// A property with a custom accessor — OR one overriding a .NET/synthetic-mapped iface property (e.g.
-			// CharSequence.length -> get_length) — routes through the get_/set_ method, not the backing field.
-			val ifaceAcc = clrIfaceMemberName(callee)
+			// A property with a custom accessor — OR one overriding an interface property (e.g. CharSequence.length) —
+			// routes through the get_/set_ method, not the backing field. The Kotlin<->CLR slot-name binding (get_length
+			// -> the synthetic dotkt_CharSequence slot / a @ClrIntrinsic member) is bir2cir's, off the `overrides` marker.
 			if (!property.isLateinit && !isClrField(property)) {   // route through get_/set_ accessor (CLR property model); @ClrField reads/writes the plain field
 				val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
 				// A MEMBER extension property (`class C { val T.p get() }`): dispatch on the enclosing C, but its `get_p`/
 				// `set_p` method takes the extension receiver as a leading `__self` arg -> prepend it.
 				val pExt = extensionReceiver(call)?.let { expr(it) }
 				return if (callee === property.setter)
-					"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "set_" + property.name.asString())},"args":[${listOfNotNull(pExt, expr(regularArgs(call).first())).joinToString(",")}]${overridesJson(callee)}}"""
-				else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(ifaceAcc ?: "get_" + property.name.asString())},"args":[${pExt ?: ""}]${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}${overridesJson(callee)}}"""
+					"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("set_" + property.name.asString())},"args":[${listOfNotNull(pExt, expr(regularArgs(call).first())).joinToString(",")}]${overridesJson(callee)}}"""
+				else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("get_" + property.name.asString())},"args":[${pExt ?: ""}]${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}${overridesJson(callee)}}"""
 			}
 			return if (callee === property.setter)
 				"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
@@ -4076,9 +4057,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 			// substitutes/normalizes them (no monomorphized synthetic; #58).
 			val ownerStr = ownerSpec(declaringClass, recv.type)
 			val virtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
-			// A call to an override of a .NET-mapped interface member (e.g. a user Continuation's resumeWith) uses
-			// the .NET member name (ResumeWith), matching what the class emitted.
-			val mname = clrIfaceMemberName(callee) ?: objectMethodName(callee) ?: name
+			// An override of kotlin.Any's universal method (toString/equals/hashCode) uses the System.Object slot name
+			// (matching what the class emitted); the Kotlin<->CLR name binding for any other interface member is bir2cir's.
+			val mname = objectMethodName(callee) ?: name
 			// Carry the return type so ilemit can fall back to dynamic dispatch if static resolution fails AND the owner
 			// implements a BCL clrg: interface (a substituted Kotlin collection whose member -- get_Item, iterator, addAll
 			// -- lives on the BCL interface FindMethod skips). ilemit gates on the owner-interface so non-collection misses
@@ -4400,8 +4381,9 @@ class BirEmitter(private val messageCollector: MessageCollector? = null) {
 		// through to the user-class `@kotlin.AutoCloseable` path below); bir2cir substitutes it to System.IDisposable off
 		// the stdlib's @ClrTypeAlias binding (layer purity — no CLR type name in kotc). The `close()->Dispose` member
 		// rename + the `use{}` finally call are likewise metadata-driven (@ClrIntrinsic("Dispose")).
-		// kotlin.CharSequence -> a synthetic interface (no faithful .NET equivalent). See charSeqIface.
-		charSeqIface(t)?.let { return TypeNode.Fqn(it) }
+		// kotlin.CharSequence stays its plain `kotlin.CharSequence` FQN identity (the general interface branch below emits
+		// the same bare Fqn — it is non-generic with no clrName); bir2cir SUBSTITUTES it to the synthesized
+		// `dotkt_CharSequence` interface (no faithful .NET equivalent), exactly as it substitutes `kotlin.String`.
 		// A function type as a value (e.g. a `(P)->R` parameter): `kotlin.FunctionN` -> `fn` (Func/Action shape). A
 		// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) sets `fn.suspend=true` — the SAME delegate
 		// shape carrying the suspend FACT (which the newSuspendLambda SM builder needs). bir2cir ERASES a suspend `fn`
