@@ -126,7 +126,7 @@ The pipeline is split so each stage owns exactly one concern. **Put new logic in
 it** — do not smear CLR knowledge into the frontend or Kotlin knowledge into the emitter.
 
 The **authoritative** layer table — including the reference artifact each stage reads
-(facadegen ← CLR dll, kotc ← stdlib.jar, bir2cir ← stdlib.ref.dll, ilemit ← stdlib.rt.dll) and the
+(facadegen ← CLR dll, kotc ← stdlib.klib, bir2cir ← stdlib.ref.dll, ilemit ← stdlib.rt.dll) and the
 **`@ClrIntrinsic` invariant** (sourced from ref.dll, consumed by bir2cir, **never passed to ilemit**)
 — is **`docs/ship-tasks.md` §0**. The summary below must not drift from it.
 

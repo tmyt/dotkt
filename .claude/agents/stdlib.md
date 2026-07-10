@@ -65,7 +65,7 @@ Almost every `actual` should end up with an `@kotlin.clr.ClrIntrinsic` binding. 
 ## Build & test (the THREE canonical scripts)
 - `./scripts/build-stdlib-ref.sh --emit` — ref assembly (omit `--emit` for fast frontend+BIR triage; reports FE errors + top error kinds)
 - `./scripts/build-stdlib-rt.sh --emit` — runtime assembly
-- `./scripts/build-stdlib-jar.sh` — the frontend jar (replaces `kotlin-stdlib.jar`, kills the `java.util.*` typealias leak; all 5 steps must run, step 5 `jar uf` the `.kotlin_builtins` is easy to forget)
+- `./scripts/build-stdlib-klib.sh` — the frontend metadata klib (`kotlin-stdlib-clr-frontend.klib`, kotc's `-classpath` input; replaces the retired JVM `kotlin-stdlib.jar`, killing the `java.util.*` typealias leak). No `--emit` — a klib has no IL.
 - ⚠️ **STALE / do NOT use:** `build-dotkt-stdlib.sh` (old `runtime/DotKt.Stdlib/src`; **dangerous** — `rm`s the cached dll then crashes, breaking every .ktproj/verify build — `dont-run-build-dotkt-stdlib-directly`) and `build-stdlib.sh`.
 
 ## Reporting back

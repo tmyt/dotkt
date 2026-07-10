@@ -41,14 +41,14 @@ The authoritative layer table and invariants are `docs/ship-tasks.md` §0 and
 | Layer | Reads | Owns | Must NOT contain |
 |---|---|---|---|
 | facadegen | CLR dll | .NET→kotlin metadata, round-trip semantics | `@ClrIntrinsic` binding; any `kotlin.*` injection |
-| kotc | stdlib.jar + facadegen meta | source → FIR → BIR, symbol resolution | **any CLR/BCL knowledge** (names, slots, `clr:`/`clrg:`/primitive-shorthand type tokens) |
+| kotc | stdlib.klib + facadegen meta | source → FIR → BIR, symbol resolution | **any CLR/BCL knowledge** (names, slots, `clr:`/`clrg:`/primitive-shorthand type tokens) |
 | bir2cir | stdlib.ref.dll | BIR → CIR; inline/type-substitute/suspend lowering; consumes `@ClrIntrinsic`/`@ClrTypeAlias`/`@ClrProperty` | passing `@ClrIntrinsic` (or any intrinsic label) into CIR |
 | ilemit | stdlib.rt.dll | CIR → CIL, ilverify-clean | **any Kotlin knowledge** |
 | stdlib (`libraries/stdlib/`) | — | pure-Kotlin `kotlin.*` + `@Clr*` bindings | compiler special-casing on its behalf |
 
 Binding invariants every finding is judged against:
 1. `@ClrIntrinsic`: sourced from ref.dll → consumed by bir2cir → **never reaches ilemit**.
-2. `kotlin.*` comes from the frontend **jar**, never from facadegen `--scan-asm`.
+2. `kotlin.*` comes from the frontend **klib**, never from facadegen `--scan-asm`.
 3. The cardinal rule: a stdlib problem is fixed **stdlib-side**, never by a compiler
    special-case/denylist/stub. A kotc hardcode that shadows a working stdlib actual is itself a bug.
 4. NO compat shims / dual-track paths — legacy code kept "just in case" is a finding, not a courtesy.
@@ -64,7 +64,7 @@ Binding invariants every finding is judged against:
    unless the tracking itself is in scope).
 3. **Clean-rebuild the stdlib before trusting any gate**: `rm -rf build/clr-stdlib*`, then
    `./scripts/build-stdlib-ref.sh --emit`, `./scripts/build-stdlib-rt.sh --emit`,
-   `./scripts/build-stdlib-jar.sh`. A cached dll masks bir2cir/kotc regressions
+   `./scripts/build-stdlib-klib.sh`. A cached dll masks bir2cir/kotc regressions
    (MEMORY `build-cache-masks-stdlib-regressions`).
 4. **Run the gates solo and quiescent.** Concurrent builds churn the shared `build/` tree and
    produce false-RED `FileLoadError` on interop samples (2026-07-05 incident). If a gate reddens,

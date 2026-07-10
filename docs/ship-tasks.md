@@ -16,15 +16,15 @@
 | ステージ | 参照する成果物 | 責務 |
 |---|---|---|
 | **facadegen** | CLR DLL を読む | CLR DLL → kotlin metadata 生成。Roundtrip Attribute で TopLevelFunction/inline を復元。`System.Int32→kotlin.Int` の型読み替え。**@ClrIntrinsic のバインドはしない**（シンボル面のみ生成）。 |
-| **kotc** | **stdlib.jar**（stdlib 空間）+ facadegen meta（.NET 空間） | ユーザソース → FIR → **BIR**。シンボル解決のみ。**CLR を知らない**。 |
+| **kotc** | **stdlib.klib**（stdlib 空間）+ facadegen meta（.NET 空間） | ユーザソース → FIR → **BIR**。シンボル解決のみ。**CLR を知らない**。 |
 | **bir2cir** | **stdlib.ref.dll**（= DotKt.Private.Stdlib.dll、全 attribute 保持） | BIR → CIR。inline lowering / **type substitute** / suspend lowering。**@ClrIntrinsic はここで「何に substitute するか」のラベルとして消費し、CIR には出力しない**（plain な BCL 呼び出しを emit）。 |
 | **ilemit** | **stdlib.rt.dll**（= DotKt.Stdlib.dll、実装） | CIR → IL。**Kotlin を知らない**。 |
 
-> 重要な不変条件①: **@ClrIntrinsic は ref.dll が出所**で、**bir2cir が消費**する。jar（artifact A）は inline/expect-actual で @ClrIntrinsic を落とすので出所にできない。ilemit に @ClrIntrinsic（や intrinsic ラベル）を渡すのは**明確な誤り**。
+> 重要な不変条件①: **@ClrIntrinsic は ref.dll が出所**で、**bir2cir が消費**する。klib（artifact A）は inline/expect-actual で @ClrIntrinsic を落とすので出所にできない。ilemit に @ClrIntrinsic（や intrinsic ラベル）を渡すのは**明確な誤り**。
 >
-> 重要な不変条件②: **`kotlin.*`（stdlib 全体）は jar から供給する。facadegen 経由で注入しては絶対にならない。** kotc は stdlib 空間を frontend **jar**（`-classpath`）から解決し、jar は Companion object を含む Kotlin 意味論を完全に保持する。facadegen は **.NET 空間専用**（`System.*` + 参照 .NET アセンブリ。System.* に限らない）。
-> - 理由: 供給源は jar 一本に絞る。(1) facadegen で stdlib を scan すると jar の `kotlin.*` と**二重化して衝突**する（本セッション実例: facadegen の非reified `arrayOf` が jar の reified `arrayOf` と衝突 → `overload resolution ambiguity`）。(2) 毎ビルド facadegen が stdlib 全体を gen するのは prebuilt jar を読むより**遅い**。
-> - 直し方: 「アプリビルドで stdlib シンボルが無い/曖昧」の修正は**常に jar**。facadegen 側に `kotlin.*` ガードを足すのは**対症療法で筋が悪い** — 根本は **stdlib.dll を facadegen に `--scan-asm` で渡していること自体**。
+> 重要な不変条件②: **`kotlin.*`（stdlib 全体）は klib から供給する。facadegen 経由で注入しては絶対にならない。** kotc は stdlib 空間を frontend **klib**（`-classpath`）から解決し、klib は Companion object を含む Kotlin 意味論を完全に保持する。facadegen は **.NET 空間専用**（`System.*` + 参照 .NET アセンブリ。System.* に限らない）。
+> - 理由: 供給源は klib 一本に絞る。(1) facadegen で stdlib を scan すると klib の `kotlin.*` と**二重化して衝突**する（本セッション実例: facadegen の非reified `arrayOf` が klib の reified `arrayOf` と衝突 → `overload resolution ambiguity`）。(2) 毎ビルド facadegen が stdlib 全体を gen するのは prebuilt klib を読むより**遅い**。
+> - 直し方: 「アプリビルドで stdlib シンボルが無い/曖昧」の修正は**常に klib**。facadegen 側に `kotlin.*` ガードを足すのは**対症療法で筋が悪い** — 根本は **stdlib.dll を facadegen に `--scan-asm` で渡していること自体**。
 > - 状態: 本番経路 `packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets` + `scripts/dotkt.sh` から除去済（commit `522bdc8`）。`scripts/verify-il.sh` / `scripts/verify-differential.sh` の `--scan-asm` も**除去済み**（2026-07-02、master-task-inventory META 参照）。`[[stdlib-jar-only-not-facadegen]]`
 
 ---
@@ -35,7 +35,7 @@
 
 - **#1 stdlib 全 Projection** — ✅ 実質完了（監査で「~363 未束縛」は約 3.8 倍の過大計上と判明。実態 1481 actuals /
   93.5% bound-or-implemented。残＝coroutine intrinsics 等、inventory 【2】）。
-- **#2 stdlib.jar 生成** — ✅ `scripts/build-stdlib-jar.sh` として本番化（`kotlin-stdlib-clr-frontend.jar`）。
+- **#2 stdlib.klib 生成** — ✅ `scripts/build-stdlib-klib.sh` として本番化（`kotlin-stdlib-clr-frontend.klib`。旧 JVM frontend jar は #67 で退役）。
 - **#3 三参照コード生成** — ✅ **bir2cir `MemberCallSubstitution` が ref.dll の `@ClrIntrinsic`/`@ClrTypeAlias`/
   `@ClrProperty` を消費して substitute**（本書が指摘した「kotc 側に居る」欠陥は解消 — kotc の `clrName`/`annClr`
   読み取りは削除済み）。

@@ -11,14 +11,14 @@ hope.
 ```
 .NET dll ──facadegen──► kotlin metadata ─┐
                                           ├─ kotc ──► BIR ── bir2cir ──► CIR ── ilemit ──► CIL
-   user .kt + stdlib.jar ────────────────┘            (reads        (reads        (reads
-                                                       stdlib.jar)   ref.dll)      rt.dll)
+   user .kt + stdlib.klib ───────────────┘            (reads        (reads        (reads
+                                                       stdlib.klib)  ref.dll)      rt.dll)
 ```
 
 | Agent | Layer | Reads | Owns | Must NOT contain |
 |-------|-------|-------|------|------------------|
 | **facadegen** | .NET → kotlin metadata | CLR dll | symbol surface + round-trip semantics + `System.Int32→kotlin.Int` | `@ClrIntrinsic` binding |
-| **kotc** | FIR → BIR | stdlib.jar + facadegen meta | symbol resolution → BIR | any CLR knowledge |
+| **kotc** | FIR → BIR | stdlib.klib + facadegen meta | symbol resolution → BIR | any CLR knowledge |
 | **bir2cir** | BIR → CIR | stdlib.ref.dll | inline/type-substitute/suspend lowering; **consumes** `@ClrIntrinsic` | passing `@ClrIntrinsic` to CIR/ilemit |
 | **ilemit** | CIR → CIL | stdlib.rt.dll | CIL codegen, ilverify-clean | any Kotlin knowledge |
 | **stdlib** | the `kotlin.*` library | — | `@Clr`/`@ClrIntrinsic` bindings in `runtime/stdlib/` | compiler special-casing |

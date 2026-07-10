@@ -4,22 +4,6 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// CALL SUBSTITUTION. The bir2cir home of what kotc's clrName() member routing used to do: a member call /
-// construction whose OWNER is a CLR-bound type in the ref.dll is rewritten to a plain BCL call/new that ilemit
-// resolves against the runtime BCL. Sourced ENTIRELY from the ref.dll's @ClrTypeAlias (owner identity) and
-// @ClrIntrinsic (member name) labels — ilemit receives only `System.X.Member`, never a kotlin.* label.
-//
-// Three rewrites (mirrors docs/clr-stdlib-intrinsic-audit.md's three binding rules):
-//   1. construction `new T(..)` on a CLR-bound REFERENCE owner T -> `newClr System.X(..)`.
-//   2. member `r.m(..)` / `T.m(..)` where m carries @ClrIntrinsic("Name") -> `clrInstance`/`clrStatic` System.X.Name.
-//   3. member m with NO @ClrIntrinsic but concrete (a real Kotlin body AliasHelperHoist lifts to `dotkt$ClrH_<T>`) ->
-//      a static call to that helper, with the receiver threaded as the helper's first arg. Gated on the helper
-//      actually being present in the ref.dll (it is for @Clr-bound classes; for @ClrTypeAlias classes once kotc
-//      keys helper emission on @ClrTypeAlias) so we never emit a call to a non-existent helper.
-//
-// Runs ONLY in the substitute/app build (never the pure-Kotlin reference build) and BEFORE type lowering, so it
-// sees the kotlin.* owners. The emitted clr* nodes carry already-BCL `type` tokens; their argTypes/ret stay in the
-// kotlin.* vocabulary and are lowered by the subsequent BirTypeLowering pass (those keys are in its TypeKeys).
 // GAP A — the for-loop iterator protocol over a referenced (rt-dll) collection. kotc desugars `for (x in xs)` to a
 // `<iterator>` var initialized by the stdlib bridge `kotlin.collections.ClrIteratorBridgeKt.iteratorOverEnumerable`
 // (which RETURNS the real generic `kotlin.collections.Iterator<E>`), then routes hasNext/next to that same real

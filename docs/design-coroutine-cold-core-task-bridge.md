@@ -9,7 +9,7 @@ The short version:
 - Kotlin-facing coroutine bodies should be cold, Continuation-based computations.
 - CLR-facing `suspend fun` exports should remain hot `Task<T>` / `Task` methods.
 - `.NET Task -> Kotlin suspend` interop should be a CLR platform extension (`Task.await`) supplied outside the
-  frontend stdlib jar.
+  frontend stdlib klib.
 - `Task`, `Sequence`, `IAsyncEnumerable`, and future kotlinx builders should be adapters/sinks over a shared
   coroutine core, not the core representation itself.
 
@@ -147,7 +147,7 @@ fault propagation.
 
 ## 5. Where `Task.await` lives
 
-`Task.await` should not be compiled into the frontend stdlib jar. The jar should remain the pure Kotlin stdlib surface
+`Task.await` should not be compiled into the frontend stdlib klib. The klib should remain the pure Kotlin stdlib surface
 and should not contain `System.Threading.Tasks.Task`.
 
 Instead:
@@ -170,7 +170,7 @@ stdlib.ref.dll / stdlib.rt.dll
 This keeps the split:
 
 ```text
-stdlib jar:
+stdlib klib:
   kotlin.* pure frontend symbols
 
 facadegen metadata:
@@ -372,7 +372,7 @@ ilemit:
 - Public CLR ABI for `suspend fun` remains `Task<T>` / `Task`.
 - Kotlin coroutine core is Continuation-based and cold until started by a caller/builder/bridge.
 - Kotlin code should call internal continuation bodies for suspend calls.
-- `Task.await` is a CLR platform extension, not a pure stdlib jar API.
+- `Task.await` is a CLR platform extension, not a pure stdlib klib API.
 - CLR delegate interop performs explicit conversion between Kotlin suspend function values and Task-returning delegates.
 - `Sequence` and `IAsyncEnumerable` are cold multi-shot adapters, not Task-shaped coroutines.
 - Builder/sink selection should be explicit: known stdlib/kotlinx builders or marker metadata, not receiver-name

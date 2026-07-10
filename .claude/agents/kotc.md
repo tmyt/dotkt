@@ -13,10 +13,10 @@ You run as a **pair with Fable**. For any non-trivial design fork, root-cause di
 Read `CLAUDE.md` and `docs/ship-tasks.md` §0 before acting. Your layer's contract is defined there and is **binding** — an implementation that violates it is a bug.
 
 ## Your layer — and the boundary you must not cross
-- **Reads:** `stdlib.jar` (the stdlib symbol space) + facadegen metadata (the .NET symbol space).
+- **Reads:** the frontend `stdlib.klib` (the stdlib symbol space) + facadegen metadata (the .NET symbol space).
 - **Produces:** BIR. **Symbol resolution only.**
 - **kotc does NOT know about the CLR.** The target architecture is that kotc does **zero lowering**.
-- The CLR-specific lowering currently in `BirEmitter` (netType maps, math-map, primitive→System.X, `@ClrIntrinsic`→clrStatic at BirEmitter.kt:~3183) is **legacy being migrated OUT to bir2cir**. When you touch it, the direction is **REMOVE it / move it toward bir2cir — never grow it.**
+- The CLR-specific lowering currently in `BirEmitter` (netType maps, math-map, primitive→System.X, `@ClrIntrinsic`→clrStatic in the `BirEmitter*` split, e.g. `BirEmitterCalls.kt` — re-locate by name) is **legacy being migrated OUT to bir2cir**. When you touch it, the direction is **REMOVE it / move it toward bir2cir — never grow it.**
 
 **Boundary rule:** if a fix would require reading .NET/CLR metadata (a ref dll, `@Clr`/`@ClrIntrinsic` labels, BCL shapes) or deciding "what does this map to on the CLR", **STOP** — that belongs to **bir2cir**. Report it as a bir2cir task with the precise BIR symptom; do not implement CLR knowledge here. (`isNaN` expect/actual is the canonical example: the fix is bir2cir, not kotc.)
 

@@ -67,7 +67,7 @@ assembly.)
 - The `@ClrIntrinsic` annotation + `clrName` -> becomes the SOURCE of the `[Clr]` metadata (just emit it as an attribute under
   stdlib-compile instead of binding).
 - The iterator bridge (`ClrIteratorBridge.kt`) + the `iterator()` compiler lowering -> the runtime stdlib.
-- C3a (clrIfaceMemberName reads the overridden @ClrIntrinsic member's BCL name) + the ilemit generic-self-call / TypeBuilder
+- C3a (an overridden interface member binds to its @ClrIntrinsic BCL name) + the ilemit generic-self-call / TypeBuilder
   Instantiation robustness fixes -> the runtime build.
 
 ## Open design points (Codex consult pending)
@@ -115,7 +115,7 @@ twice (`DOTKT_STDLIB_COMPILE=1` vs `DOTKT_STDLIB_COMPILE=1 DOTKT_STDLIB_SUBSTITU
 
 - **Metadata strip** — kotc no longer strips `[Kotlin*]/[Clr]` attrs, `@KotlinDefault`, or property-accessor attrs
   under `DOTKT_STRIP_METADATA`; they ride EVERY build's BIR verbatim. The rt build strips them downstream (ilemit skips
-  ALL declaration/param/type attrs under `_stripMetadata`, `ilemit/Program.cs:626`). rt.dll unchanged.
+  ALL declaration/param/type attrs under `_stripMetadata` — in `Emitter.Metadata.cs`, re-locate by name). rt.dll unchanged.
 - **`kotlin.Comparable` upper-bound drop** + **`in` declaration-site variance drop** (a substituted BCL primitive has no
   Comparable bound; the CLR variance-validity check is stricter than Kotlin's) — moved to **bir2cir**
   (`StdlibSubstituteTypeParams.cs`, gated on the substitute stdlib build, run BEFORE `BirTypeLowering` so the constraint
@@ -231,7 +231,7 @@ the runtime build + bounded C3b.
 ### Current overall state (this session)
 DONE+committed: design (architecture, Q1-Q5, fork A), step 1 (ref [Clr] metadata, verified), step 2A (type substitution,
 verified at meta level). Plus reusable: @ClrIntrinsic mechanism (class/member/rollup/top-level/extension), iterator bridge +
-iterator() lowering, C3a (clrIfaceMemberName @ClrIntrinsic), and ilemit robustness (generic self-calls, TypeBuilderInstantiation,
+iterator() lowering, C3a (interface-member BCL-name binding via @ClrIntrinsic), and ilemit robustness (generic self-calls, TypeBuilderInstantiation,
 clrg: arity). The pivot is on a clear, validated track with no remaining UNKNOWN difficulty — the rest is the same
 substitution pattern extended to members + the app/runtime build wiring.
 

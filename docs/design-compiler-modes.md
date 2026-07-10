@@ -6,7 +6,7 @@
 
 - toolchain = **facadegen / kotc / bir2cir / ilemit**。
 - **出力モードを持つのは bir2cir のみ**（`ref.dll` / `rt.dll` / `app` の 3 モード）。他 3 ステージはモード不変。
-- frontend jar（`kotlin-clr-stdlib.jar`）は kotc/K2 の stdlib ビルドで別途生成する成果物（[[artifact-emission-policy]] の artifact A）であり、bir2cir のモードではない（§2）。
+- frontend klib（`kotlin-stdlib-clr-frontend.klib`）は kotc の metadata pipeline（`build-stdlib-klib.sh`）で別途生成する成果物（[[artifact-emission-policy]] の artifact A）であり、bir2cir のモードではない（§2）。旧 JVM frontend jar は #67 で退役。
 
 ---
 
@@ -31,7 +31,7 @@
 - **Kotlin 意味論を素直に BIR へ出力する**。過去 FIR→BIR で一部のメソッド呼び出しを LINQ 等へ Lowering していたが、これは**古い実装で誤り**。
 - `@ClrIntrinsic` のような **CLR 固有 Attribute は、Kotlin から見れば単なる Attribute**。解決せず**直接 BIR へ出力**するのが正しい。
 - このレイヤーは **出力先（CLR）の事情を知らない**ものとして設計・実装する。
-- frontend metadata には **`kotlin-clr-stdlib.jar`（CLR コンパイラ向け）** を使う。従来の JVM 向け `kotlin-stdlib.jar` は `java.util.*` など **java 依存空間を巻き込む**ため使わない（下流への java 空間流出を防ぐ）。
+- frontend metadata には **`kotlin-stdlib-clr-frontend.klib`（CLR コンパイラ向け）** を使う。従来の JVM 向け `kotlin-stdlib.jar` は `java.util.*` など **java 依存空間を巻き込む**ため使わない（下流への java 空間流出を防ぐ）。
 
 ---
 

@@ -43,8 +43,8 @@ both retired and removed.)
 ## The stdlib is real Kotlin, compiled for the CLR
 
 `runtime/stdlib/` holds the Kotlin standard library built as a genuine CLR assembly — not a
-hand-written compiler mapping. It ships as three artifacts: a **frontend jar**
-(`kotlin-stdlib-clr-frontend.jar`, what kotc resolves `kotlin.*` against), a **reference dll**
+hand-written compiler mapping. It ships as three artifacts: a **frontend klib**
+(`kotlin-stdlib-clr-frontend.klib`, what kotc resolves `kotlin.*` against), a **reference dll**
 (`DotKt.Private.Stdlib.dll`, compile-time metadata carrying the `@Clr*` bindings), and the
 shipping **runtime dll** (`DotKt.Stdlib.dll`). Where a Kotlin type *is* a BCL type
 (`List`→BCL list interfaces, `Map`→`IDictionary`, `StringBuilder`, exceptions, …) the binding is
@@ -118,7 +118,7 @@ Building the CLR stdlib (three artifacts — see `CLAUDE.md` for details):
 ```bash
 ./scripts/build-stdlib-ref.sh --emit   # reference dll (DotKt.Private.Stdlib.dll)
 ./scripts/build-stdlib-rt.sh --emit    # runtime dll  (DotKt.Stdlib.dll)
-./scripts/build-stdlib-jar.sh          # frontend jar (kotlin-stdlib-clr-frontend.jar)
+./scripts/build-stdlib-klib.sh         # frontend klib (kotlin-stdlib-clr-frontend.klib)
 ```
 
 ### Build a project with MSBuild / `.ktproj`

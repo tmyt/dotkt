@@ -11,7 +11,7 @@ For the (historical) native-CIR-era operational notes, see [archive/bir2cir-hand
 The pipeline is **four** layers with strict responsibilities (see [ship-tasks.md](ship-tasks.md) §0):
 
 - **facadegen** — reads a CLR DLL and generates kotlin metadata for SYMBOL RESOLUTION (restores TopLevelFunction/inline/infix/operator from the Roundtrip Attributes; does the `System.Int32 -> kotlin.Int` type re-mapping). It does NOT resolve `@ClrIntrinsic` bindings.
-- **kotc** (`toolchain/kotc`) — user source -> FIR -> **BIR**. Symbol resolution uses `stdlib.jar` (the stdlib space) + the facadegen-generated meta (the .NET space). kotc does NOT know CLR; BIR preserves Kotlin semantic structure and metadata (Kotlin-level types, a `kotlin.math.sqrt` call). It must not decide CLR projection, inline bodies, suspend state machines, or physical CLR member references.
+- **kotc** (`toolchain/kotc`) — user source -> FIR -> **BIR**. Symbol resolution uses `stdlib.klib` (the stdlib space) + the facadegen-generated meta (the .NET space). kotc does NOT know CLR; BIR preserves Kotlin semantic structure and metadata (Kotlin-level types, a `kotlin.math.sqrt` call). It must not decide CLR projection, inline bodies, suspend state machines, or physical CLR member references.
 - **bir2cir** (`toolchain/bir2cir`) — **BIR -> CIR**, the first CLR-semantic lowering stage. It consumes BIR plus referenced-assembly metadata and produces CLR-resolved CIR. The Kotlin<->CLR mapping lives HERE: `kotlin.Int -> System.Int32`, `@ClrIntrinsic` resolution, the math-map, primitive/array mapping, byref, suspend lowering, inline lowering.
 - **ilemit** (`toolchain/ilemit`) — **CIR -> IL**, emits already-lowered CIR with minimal policy. It knows ONLY the CLR representation; it does NOT know Kotlin.
 
@@ -21,7 +21,7 @@ The pipeline is **four** layers with strict responsibilities (see [ship-tasks.md
 
 Each stage references a DISTINCT stdlib artifact ([design-clr-stdlib-ref-runtime-split.md](design-clr-stdlib-ref-runtime-split.md), and the per-artifact emission policy):
 
-- **kotc** references `stdlib.jar` (the DotKt frontend metadata jar).
+- **kotc** references `stdlib.klib` (the DotKt frontend metadata klib).
 - **bir2cir** references `DotKt.Private.Stdlib.dll` (the **ref.dll** — pure `kotlin.*`, keeps ALL attributes incl. `@ClrIntrinsic`). This is the SOURCE of `@ClrIntrinsic`.
 - **ilemit** references `DotKt.Stdlib.dll` (the **rt.dll** — runtime impls, metadata stripped).
 

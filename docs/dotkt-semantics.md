@@ -264,13 +264,13 @@ stringification above):
   `StringBuilder` after passing it as a `CharSequence` and observing the change through the parameter) is
   **NOT supported**. It is honest because it is declared, not hidden.
 - The one construct that keeps a synthetic interface: a user-declared **`class S : CharSequence`**. Sealed
-  `System.String` cannot be a supertype, so such a class implements a synthetic monomorphic `<>dotkt_CharSequence`
+  `System.String` cannot be a supertype, so such a class implements a synthetic monomorphic `dotkt$CharSequence`
   interface, and an assembly that declares one keeps `CharSequence` polymorphic assembly-wide (so a
   `show(cs: CharSequence) = cs.length` still dispatches to the user impl). Passing a user `S` into a *different*
   assembly's `CharSequence` (= `string`) slot still snapshots it via `.toString()`.
 - Design + layer plan: `docs/design-charsequence-clr-string.md`. Implemented in bir2cir (`CharSeqStringLowering`,
   app builds without a user implementer). The **stdlib's own** CharSequence-extension signatures are not yet lowered to
-  `string` (a follow-up needing a stdlib rebuild); they still route through the `<>dotkt_CharSequence` adapter bridge.
+  `string` (a follow-up needing a stdlib rebuild); they still route through the `dotkt$CharSequence` adapter bridge.
 
 ## 5c. `Map`/`MutableMap` BOTH erase to `IDictionary<K,V>` — read-only-ness is frontend-enforced
 

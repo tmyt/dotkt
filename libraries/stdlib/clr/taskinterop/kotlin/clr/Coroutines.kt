@@ -1,5 +1,5 @@
-// clr/taskinterop/: jar-EXCLUDED, CLR-build-ONLY (design note §5 — the frontend jar stays the pure
-// Kotlin surface; build-stdlib-jar.sh skips this dir, build-stdlib-{ref,rt}.sh compile it).
+// clr/taskinterop/: the CLR platform Task bridge (design note §5). Lives under libraries/stdlib/clr/,
+// so all three stdlib builds compile it (collect_stdlib_sources in lib.sh feeds klib/ref/rt alike).
 //
 // The core kotlin.clr coroutine surface is JUST `await` (docs/design-coroutine-cold-core-task-bridge.md
 // §13, user 2026-07-03). `blockOn`/`delay` were DROPPED from the stdlib — they are kotlinx/Track-2

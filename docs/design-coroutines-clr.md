@@ -494,9 +494,10 @@ remaining T5 work (T4 unblocked the Result param type; this casing piece is sepa
 A user `class C : Continuation<Int>` now compiles and runs (cases/il-kcont2 → 42 / boom), closing the §13j gap
 (user Continuation impls). What it took, all general "Kotlin class implements a .NET-mapped interface" machinery:
 - class supertype list maps kotlin.coroutines.Continuation -> `clrg:DotKt.Coroutines.Continuation[int]` (was bare).
-- Kotlin members bind to the .NET PascalCase slots via `clrIfaceMemberName`: `resumeWith`->`ResumeWith`,
-  `context` getter -> `get_Context`; applied at method/accessor emission AND the call site; the accessor is emitted
-  even though it `override`s (isCustomAccessor excludes overrides).
+- Kotlin members bind to the .NET PascalCase slots by name (`resumeWith`->`ResumeWith`, `context` getter ->
+  `get_Context`); the interface slot is bound by name/signature (`overrides` marker + ilemit `DefineMethodOverride`)
+  at method/accessor emission AND the call site; the accessor is emitted even though it `override`s (isCustomAccessor
+  excludes overrides).
 - type maps: `kotlin.coroutines.CoroutineContext`/`EmptyCoroutineContext` -> `DotKt.Coroutines.CoroutineContext`;
   the `EmptyCoroutineContext` object value -> a `clrStaticField` load of `.Instance` (new ilemit expr kind).
 - ilemit: the interface-impl site, the interface-linking (DefineMethodOverride by .NET name via reflection), and

@@ -803,20 +803,21 @@ has landed: **A5/A6** (named-BCL + primitive-op recognition) → bir2cir `Primit
 `RW-`/`ROProperty` monomorphizations are **RETIRED** (#57/#58 — the real generic `kotlin.collections.Iterable<T>` /
 `ReadWriteProperty<Any?,V>` are used now; the "IL can't define a generic interface" premise was FALSE); **A9**
 fun-interface direct `@Clr` read removed; **A3's ClrH routing arm DELETED** (#62 / CLEANUP-A1 — it was reasoned-dead).
-The synthetic-type *definitions* (closure / `<>dotkt_CharSequence` / KProperty / ref-cell) moved kotc→bir2cir (#52);
+The synthetic-type *definitions* (closure / `dotkt$CharSequence` / KProperty / ref-cell) moved kotc→bir2cir (#52);
 the remaining kotc **structural** lowerings (closure / anon-object / SAM / ref-cell / KProperty + the
-`<>dotkt_CharSequence` synthetic) are genuine frontend facts and **STAY**.
+`dotkt$CharSequence` synthetic) are genuine frontend facts and **STAY**.
 
-**Two genuine residuals remain (both deferred, neither gates 1.0):**
+**Two residuals were tracked (neither gates 1.0); one remains:**
 - **A2 = task #61 — RESTORE the intended design (NOT "add purity").** kotc STILL special-cases facadegen-**injected**
   .NET types: its backend reads `clrInjectedDotNetName`/`clrInjectedMemberName` and emits the CLR call SHAPE itself —
-  `clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet` (`BirEmitter.kt:3525-3564`, top-level facade `:4046`). Per the
+  `clrStatic`/`clrInstance`/`clrPropGet`/`clrPropSet` (`BirEmitterTypes.kt`, the `clrInjectedDotNetName`/
+  `clrInjectedMemberName` reads — re-locate by name). Per the
   confirmed architecture (CLAUDE.md "Who references the .NET Reference Assemblies"; MEMORY
   `a2-restore-bir2cir-net-binding`), this is a **DEVIATION**, not purity-polish: kotc must be **.NET-AGNOSTIC** —
   emit a plain `callStatic`/`callInstance` by the owner's FQN identity — and **bir2cir** resolves that FQN against the
   loaded Reference Assemblies and binds the shape, exactly as #52 did for stdlib off the ref.dll. (The 2026-07-05
   "interop-no-registry" work deleted the 4 lookup registries but did **not** move the shape decision — that is #61.)
-- **Naming purity** — the `generated:true` flag / `<>dotkt_CharSequence`-style synthetic naming residue. Cosmetic.
+- **Naming purity** — ✅ **DONE (#68, 2026-07-08):** kotc authors `dotkt$…` names + a `generated:true` STRUCTURAL flag (ilemit stamps `[System.Runtime.CompilerServices.CompilerGenerated]` from it); the `<>dotkt_` CLR-marker convention is gone.
 
 ## 【7】 1.0 ship gate  *(non-code / production)*
 Sources: `remaining-tasks.md F`, `archive/research-roadmap.md Track P/X`.

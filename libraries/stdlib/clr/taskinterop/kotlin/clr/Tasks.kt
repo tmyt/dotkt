@@ -1,6 +1,6 @@
-// clr/taskinterop/: jar-EXCLUDED, CLR-build-ONLY (design note §5 — the frontend jar stays the pure
-// Kotlin surface; build-stdlib-jar.sh skips this dir, build-stdlib-{ref,rt}.sh compile it; frontend
-// resolution for consumers rides kotc's kotlin.clr injection seam, bundle-6 P2).
+// clr/taskinterop/: the CLR platform Task bridge (design note §5). Lives under libraries/stdlib/clr/,
+// so all three stdlib builds compile it (collect_stdlib_sources in lib.sh feeds klib/ref/rt alike);
+// frontend resolution for consumers rides kotc's kotlin.clr injection seam (bundle-6 P2).
 //
 // The stdlib Task-family alias classes (bundle-6 P1, names locked by
 // docs/design-coroutine-cold-core-task-bridge.md §11): `Task0` binds the non-generic
