@@ -21,10 +21,10 @@
     <Message Importance="high" Text="DotKt: scanning .NET imports from @(KotlinCompile->Count()) .kt file(s) (PSI parser)" />
     <Exec Command="&quot;$(DotKtCompiler)&quot; --scan-imports --output &quot;$(DotKtImportList)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ')" />
     <!-- 2. Reflect over the imported (+ explicit <DotKtImport>) types -> FIR-injection metadata for the .NET space ONLY.
-         The stdlib (kotlin.*) is deliberately NOT scanned here: kotc resolves it from the JAR (-classpath), which
+         The stdlib (kotlin.*) is deliberately NOT scanned here: kotc resolves it from the KLIB (-classpath), which
          carries the full Kotlin semantics — Companion objects (the stdlib is implemented premised on them), inline,
          operator, infix — that facadegen cannot fully restore. Feeding stdlib.dll to facadegen produced degraded and
-         DUPLICATE kotlin.* symbols (e.g. a non-reified arrayOf colliding with the jar's reified one -> ambiguity). -->
+         DUPLICATE kotlin.* symbols (e.g. a non-reified arrayOf colliding with the klib's reified one -> ambiguity). -->
     <Message Importance="high" Text="DotKt: resolving .NET types (import list + @(DotKtImport))" />
     <Exec Command="dotnet &quot;$(DotKtFacadeGen)&quot; --meta &quot;$(DotKtTypeMeta)&quot; --refs &quot;@(ReferencePath->'%(FullPath)', ';')&quot; @(DotKtImport->'%(Identity)', ' ') --import-list &quot;$(DotKtImportList)&quot;" />
   </Target>

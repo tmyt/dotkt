@@ -1037,6 +1037,22 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   now carries the well-known ECMA PublicKeyToken `b03f5f7f11d50a3a` (a PKT-less ref failed a C#
   `<Reference>` bind); and two stale facadegen comments (`clrgen` package, `func:<ret>:<arg>` grammar)
   are corrected. No metadata-output change beyond dropping the dead `Nullable\`1` injection.
+- **A companion computed property's .NET accessor shape moves from kotc to bir2cir's stdlib
+  `@ClrProperty`/`@ClrIntrinsic` path (#78, A2-adjacent).** A companion object's computed property
+  (`val X.Companion.foo: T get() = ...`, no backing field) used to have its accessor call baked as a
+  literal `"get_"+name`/`"set_"+name` string at the kotc call site — a CLR-shape decision on the
+  stdlib `owner`-keyed axis (`MemberCallSubstitution`, distinct from the facadegen `ownerType`-keyed
+  `NetInteropBinding` axis A2 already covers). Baking the slot name also made the property
+  UNBINDABLE: bir2cir's Rule 2p (`@ClrProperty`) lookup is keyed on the member's bare Kotlin name and
+  was gated to the instance axis only, so a future `@ClrProperty`/`@ClrIntrinsic`-bound companion
+  static property could never route to its real .NET member. kotc now emits the plain identity (bare
+  property name) plus a `"prop":"get"/"set"` marker, mirroring the A2 convention; bir2cir's Rule 2p is
+  extended to the static axis (keyed purely by owner+name+argcount, with no instance/static
+  distinction of its own), followed by a bare `@ClrIntrinsic` probe under the same name, and — when
+  neither binds — a fallback reconstructs kotc's own `get_`/`set_`+name declaration-side convention
+  (the CLR property model: every emitted property accessor is CIL-named that way regardless of
+  CLR-boundness), so the byte-identical output is preserved for the common (unbound) case. Verified via
+  a companion computed val/var (get_/set_ fallback CIR unchanged) and the schema gate.
 
 ### Tooling, build & gates
 
@@ -1057,6 +1073,15 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 - **frontend stdlib jar** (`kotlin-stdlib-clr-frontend.jar`) replaces the JVM `kotlin-stdlib.jar` as kotc's
   `-classpath`, killing the `java.util.*` typealias leak; its `.kotlin_builtins` are generated from our own
   sources.
+- **Build adoption for the klib stdlib-frontend migration (#67, follow-up to #80):** the frontend jar above
+  is itself now retired — `scripts/build-stdlib-jar.sh` deleted, and the `FE_JAR`/`need_fe_jar`
+  backward-compat aliasing in `scripts/lib.sh` removed in favor of naming the klib directly
+  (`FE_KLIB`/`need_fe_klib`) everywhere it's consumed (`dotkt.sh`, `verify-il.sh`, `verify-differential.sh`,
+  `verify-roundtrip.sh`, `verify-wide-delegates.sh`). The Makefile's `stdlib-jar` compatibility-alias target
+  is gone too, and `clean-stdlib` now wipes the klib output dir instead of the old jar one. Canonical stdlib
+  build is `build-stdlib-{klib,ref,rt}.sh`, in that order (`make stdlib` runs all three). Also deleted
+  `scripts/dotkt-keep.sh`, a tracked-but-unreferenced duplicate of `dotkt.sh` (same file, minus its
+  `mktemp` cleanup trap) dating back to `dotkt.sh`'s introduction.
 - **Gate-hygiene fixes (final-review 2026-07-05):** closed the `verify-differential` `empty==empty`
   false-MATCH hole (a MATCH now requires BOTH the jvm oracle and the clr side to have produced real,
   non-empty output — two compile/run failures no longer silently pass as a MATCH); removed a stale

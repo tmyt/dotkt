@@ -24,8 +24,6 @@ BIR2CIR_DLL="$ROOT/build/bir2cir-bin/bir2cir.dll"
 FACADEGEN_DLL="$ROOT/build/facadegen-bin/facadegen.dll"
 RETARGET_DLL="$ROOT/build/retarget-bin/retarget.dll"
 FE_KLIB="$ROOT/build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib"
-# Backward-compatible variable name for scripts that still talk about the old frontend jar.
-FE_JAR="$FE_KLIB"
 STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
 STDLIB_RT_DLL="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
 
@@ -77,7 +75,6 @@ build_tool() { # <name> — UNCONDITIONAL build (the verify gates use this: they
 need_fe_klib() { # the CLR frontend stdlib KLIB (kotc -classpath input); consumes the kotc install's lib jars
 	[[ -e "$FE_KLIB" ]] || { info "building CLR frontend stdlib klib" >&2; bash "$ROOT/scripts/build-stdlib-klib.sh" >/dev/null 2>&1; }
 }
-need_fe_jar() { need_fe_klib; }
 need_stdlib_ref() { [[ -f "$STDLIB_REF_DLL" ]] || { info "building stdlib REFERENCE dll" >&2; bash "$ROOT/scripts/build-stdlib-ref.sh" --emit >/dev/null 2>&1; }; }
 need_stdlib_rt()  { [[ -f "$STDLIB_RT_DLL"  ]] || { info "building stdlib RUNTIME dll"   >&2; bash "$ROOT/scripts/build-stdlib-rt.sh"  --emit >/dev/null 2>&1; }; }
 

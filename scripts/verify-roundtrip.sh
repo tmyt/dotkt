@@ -77,15 +77,15 @@ run_app() {
 	fi
 }
 
-# kotc resolves the stdlib (kotlin.*) from the CLR FRONTEND JAR (scripts/build-stdlib-jar.sh), REPLACING the
-# JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). (legacy coroutines jar dropped 2026-07-03: the
-# consumer drives suspend funs via the test-harness dotkt.support.blockOn — see write_coharness.)
-CP="$FE_JAR"
+# kotc resolves the stdlib (kotlin.*) from the CLR FRONTEND KLIB (scripts/build-stdlib-klib.sh). (legacy
+# coroutines jar dropped 2026-07-03: the consumer drives suspend funs via the test-harness
+# dotkt.support.blockOn — see write_coharness.)
+CP="$FE_KLIB"
 
 # Build the toolchain once (UNCONDITIONALLY — the gate tests the current sources).
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$KOTC"
-need_fe_jar
+need_fe_klib
 build_tool ilemit; build_tool facadegen; build_tool retarget
 REFPACK="$(ls -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/*/ref/net10.0 2>/dev/null | sort -V | tail -1)"
 REFS="$(ls "$REFPACK"/*.dll | tr '\n' ';')"
@@ -95,7 +95,7 @@ REFS="$(ls "$REFPACK"/*.dll | tr '\n' ';')"
 # consumer can't resolve the library). Harmless for the non-suspend sections (they reference no stdlib type).
 REFS="$REFS$STDLIB_RT_DLL;"
 
-# kotc emits bare kotlin.* type tokens (the frontend jar resolves the stdlib to our real kotlin.* declarations); bir2cir
+# kotc emits bare kotlin.* type tokens (the frontend klib resolves the stdlib to our real kotlin.* declarations); bir2cir
 # lowers them to the CLR-codegen vocabulary ilemit consumes. So route every emit through bir2cir (mirrors verify-il) —
 # feeding BIR straight to ilemit would leave kotlin.* tokens un-lowered ("cannot resolve .NET type kotlin.String"). The
 # REFERENCE stdlib supplies bir2cir's @ClrTypeAlias labels (built once if missing; the roundtrip types are pure-Kotlin).

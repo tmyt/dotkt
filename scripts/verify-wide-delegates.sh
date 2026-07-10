@@ -24,13 +24,13 @@ OUT="$ROOT/build/wide-delegates"
 rm -rf "$OUT"; mkdir -p "$OUT/bir" "$OUT/cir" "$OUT/il"
 
 # Unconditional tool builds: the gate tests the CURRENT sources. Stdlib artifact roles mirror verify-il:
-# the frontend JAR is kotc's -classpath (kotlin.* comes from the jar, never facadegen), the REFERENCE
+# the frontend KLIB is kotc's -classpath (kotlin.* comes from the klib, never facadegen), the REFERENCE
 # dll feeds bir2cir's @Clr labels, the RUNTIME dll backs println at run time.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 build_tool ilemit; build_tool bir2cir; build_tool facadegen
-need_fe_jar; need_stdlib_ref; need_stdlib_rt
+need_fe_klib; need_stdlib_ref; need_stdlib_rt
 
-"$KOTC" "$ROOT/cases/il-widedeleg" -no-stdlib -classpath "$FE_JAR" -d "$OUT/bir" >/dev/null 2>&1 \
+"$KOTC" "$ROOT/cases/il-widedeleg" -no-stdlib -classpath "$FE_KLIB" -d "$OUT/bir" >/dev/null 2>&1 \
 	|| die "kotc failed on cases/il-widedeleg"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --ref "$STDLIB_REF_DLL" "$OUT/bir"/*.bir.json >/dev/null 2>&1 \
 	|| die "bir2cir failed"

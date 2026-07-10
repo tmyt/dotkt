@@ -40,12 +40,12 @@ CCP="$EMB:$STDLIBJ:$REFLECT:$SCRIPT:$ANNOT:$COROUTINES"   # classpath to RUN the
 # path against real Kotlin semantics. Build the toolchain once (UNCONDITIONALLY — the gate tests current sources).
 build_tool ilemit; build_tool bir2cir
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
-# The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR on the clr side's -classpath,
-# REPLACING the JVM kotlin-stdlib.jar (the JVM oracle above keeps the JVM jar — it IS the oracle).
+# The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND KLIB on the clr side's -classpath
+# (the JVM oracle above keeps the separate JVM kotlin-stdlib.jar — it IS the oracle, a different thing).
 # bir2cir then reads the REFERENCE assembly for the @Clr labels, and ilemit references the RUNTIME
 # assembly so a stdlib op resolves to its real Kotlin body — exactly the canonical ref/rt stdlib that
-# dotkt.sh / verify-il use. kotlin.* comes from the jar, never a facadegen reconstruction.
-need_fe_jar; need_stdlib_ref; need_stdlib_rt
+# dotkt.sh / verify-il use. kotlin.* comes from the klib, never a facadegen reconstruction.
+need_fe_klib; need_stdlib_ref; need_stdlib_rt
 
 # The XFAIL baseline — MACHINE-READABLE (DIFFing sample -> reason), same mechanism as verify-il's
 # XFAIL_RUN. The coroutine names mirror verify-il's run-XFAILs. (The m-b6/m-b9/m-b10 entries from the
@@ -117,10 +117,10 @@ for s in $PURE; do
 	    jout="/tmp/diff-jvm-$s"; rm -rf "$jout"; mkdir -p "$jout"
 	    "$JAVA" -cp "$CCP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler "$src"/*.kt -no-stdlib -classpath "$STDLIBJ" -d "$jout" >/dev/null 2>&1 || true
 	    jvm="$("$JAVA" -cp "$jout:$STDLIBJ" "$jvmmain" 2>/dev/null || true)"
-	    # (b) kotlin/clr via the SHIPPING IL backend: kotc (frontend jar) -> BIR -> bir2cir -> CIR -> ilemit -> dll, run.
+	    # (b) kotlin/clr via the SHIPPING IL backend: kotc (frontend klib) -> BIR -> bir2cir -> CIR -> ilemit -> dll, run.
 	    cout="$ROOT/build/diff-clr-$s"; rm -rf "$cout"; mkdir -p "$cout"
 	    ccir="$ROOT/build/diff-cir-$s"; rm -rf "$ccir"; mkdir -p "$ccir"
-	    "$KOTC" $src -no-stdlib -classpath "$FE_JAR" -d $cout >/dev/null 2>&1 || true
+	    "$KOTC" $src -no-stdlib -classpath "$FE_KLIB" -d $cout >/dev/null 2>&1 || true
 	    refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && refarg=(--ref "$STDLIB_REF_DLL")
 	    dotnet "$BIR2CIR_DLL" "$ccir" "${refarg[@]}" "$cout"/*.bir.json >/dev/null 2>&1 || true
 	    dotnet "$ILEMIT_DLL" "$cout" "$mainclass" --ref "$STDLIB_RT_DLL" "$ccir"/*.cir.json >/dev/null 2>&1 || true

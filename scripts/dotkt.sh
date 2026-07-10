@@ -52,11 +52,10 @@ done
 
 # --- bootstrap the toolchain if missing -------------------------------------------------------------
 need_kotc; need_tool ilemit; need_tool bir2cir; need_tool facadegen
-# kotc -classpath: the CLR FRONTEND jar built FROM our CLR stdlib sources, REPLACING the JVM
-# kotlin-stdlib.jar whose java.util.* typealiases leaked into the frontend (e.g. kotlin.Comparator =
-# java.util.Comparator). kotlin.* resolves from THIS jar (full Kotlin semantics), never from facadegen
-# --scan-asm — the binding verify-il invariant.
-need_fe_jar
+# kotc -classpath: the CLR FRONTEND klib built FROM our CLR stdlib sources (scripts/build-stdlib-klib.sh).
+# kotlin.* resolves from THIS klib (full Kotlin semantics), never from facadegen --scan-asm — the
+# binding verify-il invariant.
+need_fe_klib
 # The CLR stdlib ref/rt assemblies are the canonical CACHED builds (scripts/build-stdlib-{ref,rt}.sh
 # --emit). Do NOT auto-rebuild them here: the runtime emit is the slow, blocker-prone path; a cached
 # green pair is what we want.
@@ -68,7 +67,7 @@ fi
 
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 bir="$work/bir"; cir="$work/cir"; mkdir -p "$bir" "$cir" "$out_dir"
-cp="$FE_JAR"
+cp="$FE_KLIB"
 
 # Reference assemblies. Mirroring verify-il, the two backend stages take DIFFERENT stdlib refs: bir2cir
 # reads the @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets

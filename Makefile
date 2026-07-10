@@ -9,7 +9,7 @@
 #          └────────────► stdlib-ref ──► stdlib-rt ──► pack (4 NuGet packages -> build/nuget-feed)
 #
 # Output paths are LOAD-BEARING (dotkt.sh, verify-*.sh, cases/KotlinClr.targets hard-reference
-# build/<tool>-bin, build/clr-stdlib*/dll, build/clr-stdlib-frontend-jvm) — do not rename them here.
+# build/<tool>-bin, build/clr-stdlib*/dll, build/clr-stdlib-frontend-klib) — do not rename them here.
 #
 #   make help          # this listing (the default goal)
 #   make all           # one-shot: toolchain -> stdlib -> pack
@@ -38,7 +38,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 # ==================================================================================================
 # Aggregate targets
 # ==================================================================================================
-.PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-jar stdlib-ref stdlib-rt pack \
+.PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
         verify verify-il verify-ktproj verify-roundtrip verify-differential verify-widedelegates \
         dev facades clean clean-tools clean-stdlib clean-pack help
 
@@ -62,11 +62,10 @@ build/$(1)-bin/$(1).dll: $$(call tool_src,$(1))
 endef
 $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 
-# ---- stdlib (jar + ref + rt); see CLAUDE.md "Building the CLR stdlib" -----------------------------
+# ---- stdlib (klib + ref + rt); see CLAUDE.md "Building the CLR stdlib" -----------------------------
 stdlib: stdlib-klib stdlib-ref stdlib-rt ## the CLR stdlib: frontend KLIB + reference dll + runtime dll
 
 stdlib-klib: $(FE_KLIB) ## kotlin-stdlib-clr-frontend.klib (kotc -classpath input)
-stdlib-jar: stdlib-klib ## compatibility alias for the retired frontend jar target
 $(FE_KLIB): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-klib.sh
 	bash scripts/build-stdlib-klib.sh
 
@@ -137,8 +136,8 @@ clean: clean-tools clean-stdlib clean-pack ## everything below
 clean-tools: ## the built tools (kotc install + build/<tool>-bin)
 	rm -rf $(foreach t,$(TOOLS),build/$(t)-bin) toolchain/kotc/build/install
 
-clean-stdlib: ## the built stdlib artifacts (jar + ref + rt)
-	rm -rf build/clr-stdlib build/clr-stdlib-rt build/clr-stdlib-frontend-jvm
+clean-stdlib: ## the built stdlib artifacts (klib + ref + rt)
+	rm -rf build/clr-stdlib build/clr-stdlib-rt build/clr-stdlib-frontend-klib
 
 clean-pack: ## the NuGet feed + the assembled package staging dirs
 	rm -rf $(FEED) packaging/DotKt.Toolchain/tools packaging/DotKt.Stdlib/lib \

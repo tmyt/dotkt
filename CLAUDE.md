@@ -88,25 +88,34 @@ the fast dev wrapper over the same pipeline (`-h` for options: `--exe`, `--no-st
 `--ref <dll>`).
 
 **Building the CLR stdlib** — the real pure-Kotlin stdlib under `libraries/stdlib/`. **These THREE
-scripts are the current, canonical build** (other stdlib scripts are STALE — see the warning):
+scripts are the current, canonical build** (`make stdlib` runs all three, in order; other stdlib
+scripts are STALE or experimental — see the warning):
 
+- `./scripts/build-stdlib-klib.sh` — the **frontend KLIB** (`kotlin-stdlib-clr-frontend.klib`), kotc's
+  `-classpath` input for the common/metadata frontend. Runs kotc's own `DOTKT_BUILD_KLIB=1` metadata
+  pipeline (`ClrMetadataKlibFir2IrPhase`/`ClrMetadataKlibSerializerPhase`) over the actualized
+  common+clr stdlib sources, so the klib carries real `@ClrTypeAlias`/`@ClrIntrinsic` metadata and
+  compiled const values — not bare `expect` declarations. This **superseded and retired** the old JVM
+  frontend jar (`build-stdlib-jar.sh`, built with the stock K2JVMCompiler) — see MEMORY
+  `frontend-stdlib-jar-plan` for the retired jar's history; the live plan is task #80 / the klib
+  migration commit `3dd24ac`.
 - `./scripts/build-stdlib-ref.sh --emit` — the **reference** assembly (`DotKt.Private.Stdlib.dll`;
   compile-time only, keeps `@Clr` metadata, substituted away at app-emit).
 - `./scripts/build-stdlib-rt.sh --emit` — the shipping **runtime** assembly (`DotKt.Stdlib.dll`).
-- `./scripts/build-stdlib-jar.sh` — the **frontend jar** (`kotlin-stdlib-clr-frontend.jar`)
-  that replaces `kotlin-stdlib.jar` as kotc's `-classpath` input, killing the `java.util.*` typealias
-  leak. It generates all 8 `.kotlin_builtins` **from our own sources** via `-Xoutput-builtins-metadata`
-  (the old `jar uf` injection of a JVM kotlin-stdlib's `.kotlin_builtins` is GONE — it dragged JVM
-  semantics into the frontend). The `kotlin.coroutines` package-fragment marker
-  `libraries/stdlib/clr/builtins/Coroutines.kt` is what keeps that flag from crashing ("builtins must
-  span ALL builtin pkgs"). Backs up nothing — it `rm -rf`s its output dir, so back up the working jar first.
-- `--emit` makes the first two actually run `ilemit` (without it: frontend + BIR only, for fast triage).
-- Why the split: the **ref/runtime split** — `docs/design-clr-stdlib-ref-runtime-split.md`,
-  MEMORY `clr-stdlib-ref-runtime-split`; the frontend jar — MEMORY `frontend-stdlib-jar-plan`.
+- `--emit` makes `build-stdlib-{ref,rt}.sh` actually run `ilemit` (without it: frontend + BIR only,
+  for fast triage). `build-stdlib-klib.sh` has no `--emit` flag — a klib has no IL to emit.
+- Why the ref/runtime split: `docs/design-clr-stdlib-ref-runtime-split.md`, MEMORY
+  `clr-stdlib-ref-runtime-split`.
 
-> ✅ **REMOVED (2026-07-02):** the stale `scripts/build-dotkt-stdlib.sh` and `scripts/build-stdlib.sh` (they built the
-> OLD stdlib and referenced the now-deleted `DotKt.Runtime`) are DELETED. The canonical stdlib build is the three
-> `build-stdlib-*.sh` scripts above; there is no longer a dangerous "rm the cached dll" footgun to avoid.
+> ✅ **REMOVED (2026-07-10, #67):** `scripts/build-stdlib-jar.sh` (the JVM frontend jar, superseded by
+> the klib above) is DELETED, along with the `FE_JAR`/`need_fe_jar` backward-compat aliasing in
+> `scripts/lib.sh` — every script now names the klib directly (`FE_KLIB`/`need_fe_klib`).
+>
+> `scripts/build-stdlib.sh` (a #66 experiment: ONE shared-BIR kotc run feeding BOTH the ref and rt
+> emits, instead of `build-stdlib-{ref,rt}.sh` each running their own kotc) still exists but is **not**
+> part of the canonical path above and is not wired into the Makefile — `build-stdlib-{ref,rt}.sh` each
+> still run their own kotc invocation. Consolidating onto the shared-BIR script is an open follow-up,
+> not yet done.
 
 Toolchain: JDK is auto-provisioned by Gradle; **.NET SDK 10 required**. Kotlin/IR APIs are
 **pinned to 2.2.0** (internal/unstable — intentionally not tracking newer versions).
@@ -136,19 +145,19 @@ The **authoritative** layer table — including the reference artifact each stag
 > MEMORY `a2-restore-bir2cir-net-binding`), not the design.
 
 > ### BINDING INVARIANT — `kotlin.*` comes from the JAR, never from facadegen
-> kotc resolves the **entire stdlib (`kotlin.*`)** from the frontend **jar** (`-classpath`), which
-> preserves full Kotlin semantics. facadegen handles the **.NET space ONLY** (`System.*` *and any
-> referenced .NET assembly* — not just System). **NEVER feed the stdlib assembly to
-> `facadegen --scan-asm`.** Use ONE source (the jar) for two reasons: (1) a facadegen scan of the stdlib
-> would *duplicate* the jar's `kotlin.*` and the two **conflict** (this session: a non-reified `arrayOf`
-> from facadegen collided with the jar's reified `arrayOf` → `overload resolution ambiguity`); (2) it is
-> **slower** — facadegen re-generating the whole stdlib every build vs reading the prebuilt jar. The fix
-> for any "stdlib symbol missing/ambiguous in an app build"
-> is **the jar**, never a facadegen scan or a `kotlin.*` guard inside facadegen (that's treating the
-> symptom — the root error is passing stdlib.dll to facadegen at all). Removed from the production
-> path `packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets` + `scripts/dotkt.sh` (commit
-> `522bdc8`) **and from `scripts/verify-il.sh` + `scripts/verify-differential.sh` (DONE — no stdlib
-> `--scan-asm` remains; kotlin.* is on the frontend jar `-classpath`).**
+> kotc resolves the **entire stdlib (`kotlin.*`)** from the frontend **KLIB** (`-classpath`; formerly a
+> JVM-built jar, retired 2026-07-10 — see "Building the CLR stdlib" above), which preserves full Kotlin
+> semantics. facadegen handles the **.NET space ONLY** (`System.*` *and any referenced .NET assembly* —
+> not just System). **NEVER feed the stdlib assembly to `facadegen --scan-asm`.** Use ONE source (the
+> klib) for two reasons: (1) a facadegen scan of the stdlib would *duplicate* the klib's `kotlin.*` and
+> the two **conflict** (this session: a non-reified `arrayOf` from facadegen collided with the jar's
+> reified `arrayOf` → `overload resolution ambiguity`); (2) it is **slower** — facadegen re-generating
+> the whole stdlib every build vs reading the prebuilt klib. The fix for any "stdlib symbol
+> missing/ambiguous in an app build" is **the klib**, never a facadegen scan or a `kotlin.*` guard
+> inside facadegen (that's treating the symptom — the root error is passing stdlib.dll to facadegen at
+> all). Removed from the production path `packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets` +
+> `scripts/dotkt.sh` (commit `522bdc8`) **and from `scripts/verify-il.sh` + `scripts/verify-differential.sh`
+> (DONE — no stdlib `--scan-asm` remains; kotlin.* is on the frontend klib `-classpath`).**
 
 | Module | Owns | Must NOT contain |
 |--------|------|------------------|

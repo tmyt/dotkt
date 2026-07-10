@@ -34,18 +34,19 @@ declare -A XFAIL_RUN=(
 declare -A XFAIL_ILVERIFY=(
 )
 
-# The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND JAR (scripts/build-stdlib-jar.sh) on
-# -classpath, REPLACING the JVM kotlin-stdlib.jar (which leaked java.util.* typealiases). This preserves
-# full Kotlin semantics and is the BINDING invariant: kotlin.* comes from the JAR, never from facadegen
-# --scan-asm. (legacy coroutines jar dropped 2026-07-03: the stdlib cold-core surface is kotlin.clr.await ONLY;
-# blockOn/delay were dropped from the stdlib and re-homed to the test harness — cases/*/harness.kt = dotkt.support.)
-CP="$FE_JAR"
+# The CLR stdlib (kotlin.*) is supplied to kotc via the FRONTEND KLIB (scripts/build-stdlib-klib.sh) on
+# -classpath, REPLACING the old JVM frontend jar (which itself replaced the JVM kotlin-stdlib.jar that
+# leaked java.util.* typealiases). This preserves full Kotlin semantics and is the BINDING invariant:
+# kotlin.* comes from the KLIB, never from facadegen --scan-asm. (legacy coroutines jar dropped
+# 2026-07-03: the stdlib cold-core surface is kotlin.clr.await ONLY; blockOn/delay were dropped from the
+# stdlib and re-homed to the test harness — cases/*/harness.kt = dotkt.support.)
+CP="$FE_KLIB"
 
 # Build the compiler launcher ONCE (a plain Java app). Per-sample invokes then cost ~2s of JVM startup
 # instead of ~9s for `gradlew --no-daemon :kotc:run`.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$KOTC"
-need_fe_jar
+need_fe_klib
 
 # Result records (one per sample) + the refdll handoff to the ilverify phase live here.
 RESULTS="$ROOT/build/verify-il"
@@ -167,7 +168,7 @@ il_check() { # <name> <asm> <srcArg> <expected> [metadataFile]
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"
 		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
 		# The case's .NET-space facade metadata (EXCMETA/COLLMETA/... — System.* injection) ONLY, if any. The stdlib
-		# (kotlin.*) is supplied to kotc by the frontend JAR on -classpath, NOT facadegen. --ref the runtime
+		# (kotlin.*) is supplied to kotc by the frontend KLIB on -classpath, NOT facadegen. --ref the runtime
 		# DotKt.Stdlib.dll so a stdlib op (getOrElse, ...) resolves to its real Kotlin body instead of a retired lowering.
 		if ! CLR_TYPES_METADATA="${meta:-}" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
 			reason="compile error"; exit 0; fi
