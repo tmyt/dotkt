@@ -109,7 +109,7 @@ verify-ktproj: ## MSBuild / .ktproj end-to-end
 verify-roundtrip: ## Kotlin<->CLR round-trip (consume a DotKt dll as Kotlin)
 	bash scripts/verify-roundtrip.sh
 
-verify-differential: ## direct-IL differential vs the C# oracle
+verify-differential: ## direct-IL differential vs the kotlin/jvm oracle
 	bash scripts/verify-differential.sh
 
 verify-widedelegates: ## >16-arg function types (KFunc/KAction synthesis)

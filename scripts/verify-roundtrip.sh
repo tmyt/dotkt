@@ -394,9 +394,9 @@ run_app gactual "$GG/appil/KApp.dll"
 check_output roundtrip-generic "$gexpected" "$gactual" "user generics in every position × operator/infix/extension/suspend/nullable/default/vararg"
 
 # ----- HIGHER-ORDER generics: a function-type parameter whose ARG/RETURN is a generic user type (`(Box<U>)->Box<V>`) -----
-# The metadata type grammar is recursive (bracketed: `func:[generic:Box[V],generic:Box[U]]`), so a generic user type
-# nests inside a lambda parameter — top-level / member / extension / infix / operator / inline all carry it. (Before,
-# the flat `func:<ret>:<args>` grammar couldn't nest `generic:` and dropped the whole lambda to `Any?`, killing inference.)
+# The metadata type grammar is a recursive structured type-node tree (an `fn` node's `ret`/`params` are themselves type
+# nodes), so a generic user type — an `fqn` node with `args` — nests inside a lambda parameter: top-level / member /
+# extension / infix / operator / inline all carry it.
 HF="$ROOT/build/roundtrip-generic-hof"; rm -rf "$HF"; mkdir -p "$HF/lib" "$HF/app" "$HF/libbir" "$HF/libil" "$HF/appbir" "$HF/appil"
 cat > "$HF/lib/lib.kt" <<'EOF'
 class Box<T>(val value: T) { fun get(): T = value }
@@ -563,9 +563,10 @@ check_output roundtrip-defargs "$daexpected" "$daactual" "default args: trailing
 # ----- SUSPEND FUNCTION-TYPE round-trip (H2): a `suspend (…) -> T` PARAMETER survives re-consumption -----
 # A library exports `fun runBlock(block: suspend () -> Int)` — bir2cir erases the CLR parameter SLOT to `object` (a
 # suspend-lambda VALUE is a Continuation state-machine, not a Func), so WITHOUT the position metadata the consumer
-# would see a plain `Any?` and a passed lambda could NOT call a suspend function. ilemit stamps the parameter with
-# [KotlinSuspendFunctionType("sfunc:kotlin.Int:")]; facadegen reads it back as the `sfunc:[Int]` meta token;
-# ClrTypeInjection restores `block` as `kotlin.coroutines.SuspendFunction0<Int>`. PROOF that suspend survives: the
+# would see a plain `Any?` and a passed lambda could NOT call a suspend function. bir2cir records the pre-erasure `fn`
+# shape (suspend:true) and generates a carrier-encoded [KotlinSuspendFunctionType(version, bytes)] on the parameter;
+# ilemit stamps it dumbly; facadegen reads the `fn` node back and ClrTypeInjection restores `block` as a suspend
+# function type (`kotlin.coroutines.SuspendFunction0<Int>`). PROOF that suspend survives: the
 # consumer's `runBlock { addAsync(...) }` lambda BODY calls `addAsync` (itself a suspend fun) — which only compiles
 # if `block` is a suspend function type (else "suspend function called from non-suspend context"), and only runs if
 # the suspend lambda is driven as a state machine. (A suspend fn-type in a RETURN/property/field position is wired in
@@ -616,7 +617,7 @@ check_output roundtrip-suspendfn "$sfexpected" "$sfactual" "a suspend (…) -> T
 # value everywhere (previously only method/ctor/accessor bodies were walked, so a static field initializer's
 # value-position node reached ilemit -> `NotSupportedException: expr suspendLambdaNew`).
 #   - RETURN position is proven cross-module directly: the app calls the LIB's `makeBlock()` (its restored
-#     `suspend () -> Int` return type comes back via facadegen `tlfun makeBlock sfunc:[Int]`) and DRIVES it.
+#     `suspend () -> Int` return type comes back via facadegen's structured meta — a `fn` node with suspend:true) and DRIVES it.
 #   - PROPERTY + FIELD positions are proven by the LIB storing the suspend lambda in a top-level `val` and an
 #     instance `val`, then DRIVING each via `runBlock` inside restorable functions `runProp()`/`runField()`
 #     the app invokes. (kotc emits a top-level `val` as a plain static FIELD, which facadegen does not restore
