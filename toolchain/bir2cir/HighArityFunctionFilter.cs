@@ -3,13 +3,14 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// HIGH-ARITY FUNCTION-TYPE DECL FILTER (#72, moved from kotc). System.Func/Action cap at 16 parameters, so a Kotlin
-// declaration whose signature mentions a function type with >16 parameters (the 6 `context()` overloads in package
-// `kotlin`, file Context.kt, arity 17-22) or a KFunction17+ has no CLR delegate to bind — a CLR-representation fact, so the decision
-// lives HERE, not in kotc (which emits every decl faithfully). In a stdlib self-build the offending decls are DROPPED
-// with a warning (they were never emittable — the same silent skip kotc's retired skipStdlibHighArityFunctionType did);
-// in an app build a >16-param function type is a hard error (there is no valid emission). Runs at the head of the
-// per-file loop, BEFORE ClosureSynthesis, so a dropped body's lambdas are never synthesized into orphan closure types.
+// HIGH-ARITY FUNCTION-TYPE DECL FILTER (#72, moved from kotc). System.Func/Action cap at 16 parameters, but a Kotlin
+// function VALUE can be wider — ilemit SYNTHESIZES a module-local delegate DotKt.Runtime.CompilerServices.KFunc`N /
+// KAction`N for it (Emitter.Delegates.cs; exercised by verify-wide-delegates). So an APP build LEAVES a >16-param
+// function type ALONE — it emits fine via the synthesized delegate. This filter's sole job is the STDLIB self-build,
+// where the 6 `context()` overloads (package `kotlin`, Context.kt, arity 17-22) are genuinely not emittable and are
+// DROPPED with a warning (the same silent skip kotc's retired skipStdlibHighArityFunctionType did). Runs at the head of
+// the per-file loop, BEFORE ClosureSynthesis, so a dropped body's lambdas are never synthesized into orphan closure
+// types. (#97: the former app-mode hard error was a #72 over-reach — it broke the KFunc/KAction synthesis; removed.)
 static class HighArityFunctionFilter
 {
     public static void Apply(JsonNode root, BuildStdlibMode mode)
@@ -38,10 +39,9 @@ static class HighArityFunctionFilter
             if (methods[i] is not JsonObject m) continue;
             int arity = MethodHighArityFn(m);
             if (arity <= 16) continue;
+            // App build: leave it — ilemit synthesizes KFunc`N/KAction`N for the wide function value (#97).
+            if (mode == BuildStdlibMode.App) continue;
             var name = (m["name"] as JsonValue)?.GetValue<string>() ?? "<anonymous>";
-            if (mode == BuildStdlibMode.App)
-                throw new InvalidOperationException(
-                    $"bir2cir: function '{name}' uses a function type with {arity} parameters, which has no System.Func/Action on the CLR");
             Console.Error.WriteLine(
                 $"bir2cir: WARNING [DOTKT-STDLIB] skipped {name}: function type with {arity} parameters exceeds System.Func/Action's 16-parameter limit");
             methods.RemoveAt(i);
