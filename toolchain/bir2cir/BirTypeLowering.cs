@@ -254,6 +254,10 @@ static class BirTypeLowering
                 // inner in EVERY build — a CLR reference is nullable in IL regardless, and its `?` was already emitted as
                 // an NRT byte by the decl walk. NEVER produce `Nullable<referenceType>` (ilemit's MapNullable asserts the
                 // inner is a value type, in the ref build too). Decided on the SEMANTIC inner via the struct-ness oracle.
+                // Only VALUE inners reach here (so `typeArg` is moot): bir2cir's ReferenceNullableStrip (Program.cs) removes
+                // every reference-`T?` wrapper — INCLUDING nested type-args — BEFORE this pass, so a nullable collection
+                // type-arg (`Map<K, List<V>?>`) already had its `?` stripped and collapses via the bare-List path (Root-V).
+                // (This is why the #100/H3 "propagate typeArg through Nullable" idea was a no-op — the smuggle can't occur here.)
                 var lowered = LowerType(n.Of, refBuild, force, typeArg: false);
                 return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
             }
@@ -309,7 +313,10 @@ static class BirTypeLowering
             // ROOT-V DEPTH: a collection-CONSTRUCTION node's element/value type key is a generic type-argument of the
             // built collection (depth >= 1), so it collapses like a `typeArgs` element — the literal `listOf(listOf(…))`
             // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). newArray's `elem` is
-            // NOT collapsed (CLR arrays are covariant in a reference element).
+            // NOT collapsed — arrays are held uncollapsed on BOTH sides (the `Array` type case + newArray here) so they
+            // stay mutually consistent. (This is NOT array covariance: `IList<int>[]` is in fact NOT assignable to
+            // `IReadOnlyList<int>[]` — the element interfaces are unrelated; a concrete-element store into a readonly
+            // element array works only by the runtime value implementing that element interface.)
             var nodeK = (obj["k"] as JsonValue)?.GetValue<string>();
             var collCtor = nodeK is "newList" or "newSet" or "newMap";
             var copy = new JsonObject();

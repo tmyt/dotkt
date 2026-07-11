@@ -308,11 +308,12 @@ sealed partial class Emitter
         // generic param; castclass would JIT-crash a value instantiation.
         else if (got == typeof(object) && (target.IsValueType || target.IsGenericParameter))
             _il.Emit(OpCodes.Unbox_Any, target);
-        // A mutable-collection interface VALUE stored into its READONLY sibling local/field slot (same T): the same
-        // arg-position variance-collapse reconciliation as EmitArg, one store-site over — a `for`/destructuring
-        // element `var it: List<Int> = iterator.next()` where next() statically yields IList<int32> stored into the
-        // IReadOnlyList<int32> local (chunk/collops2). castclass to the closed readonly interface (see IsMutableToReadOnlyView).
-        else if (IsMutableToReadOnlyView(got, target))
+        // A collapsed-variance collection-interface VALUE stored into its SIBLING local/field slot (same T, either
+        // direction): the same arg-position variance-collapse reconciliation as EmitArg, one store-site over — a
+        // `for`/destructuring element `var it: List<Int> = iterator.next()` where next() statically yields IList<int32>
+        // stored into the IReadOnlyList<int32> local (chunk/collops2, forward), or a readonly value stored into a
+        // collapsed mutable slot (reverse). castclass to the closed sibling interface (see IsCollectionViewSeam).
+        else if (IsCollectionViewSeam(got, target))
             _il.Emit(OpCodes.Castclass, target);
     }
 
@@ -492,14 +493,15 @@ sealed partial class Emitter
             }
         }
         var declared = RetOr(e, actual);
-        // The resolved method actually returns a MUTABLE collection interface (Pair.component1() -> IList<T>,
-        // Map.Entry.get_value() -> IList<V>) but bir2cir typed the call RESULT as the READONLY sibling view (ret/dynRet
-        // = IReadOnlyList<T>/IReadOnlyCollection<T>, the Kotlin `List`/`Collection` face) after the arg-position variance
-        // collapse. The stack holds the mutable interface; without reconciliation ilemit would track the readonly type
-        // while the stack carries the mutable one -> a downstream store/receiver/arg trusts the wrong type and the raw
-        // value fails ilverify (StackUnexpected). Emit the runtime-checked downcast so the tracked type and the actual
-        // stack slot agree at the source. Same variance-collapse family as EmitArg/EmitStoreCoerced (IsMutableToReadOnlyView).
-        if (IsMutableToReadOnlyView(actual, declared)) _il.Emit(OpCodes.Castclass, declared);
+        // The resolved method's actual return type and bir2cir's declared call-RESULT view disagree across a collapsed-
+        // variance collection seam. FORWARD: the method returns a MUTABLE interface (Pair.component1() -> IList<T>,
+        // Map.Entry.get_value() -> IList<V>) but bir2cir typed the call RESULT as the READONLY sibling (ret/dynRet =
+        // IReadOnlyList<T>/IReadOnlyCollection<T>). REVERSE: the nested-literal collapse (BirTypeLowering's `listOf(listOf(
+        // …))` builds `List<IList<T>>`) makes an inner call's declared `ret` the collapsed IList<T> while the resolved
+        // method's actual type is the readonly IReadOnlyList<T>. Either way the tracked type and the stack slot diverge;
+        // without reconciliation a downstream store/receiver/arg trusts the wrong type -> ilverify StackUnexpected. Emit
+        // the runtime-checked downcast so they agree at the source. Same family as EmitArg/EmitStoreCoerced (IsCollectionViewSeam).
+        if (IsCollectionViewSeam(actual, declared)) _il.Emit(OpCodes.Castclass, declared);
         return declared;
     }
 
@@ -649,25 +651,37 @@ sealed partial class Emitter
         // param (passing `T` to a `T` slot flows the value as-is at the instantiation).
         if (NeedsBoxToRef(got) && !want.IsValueType && !want.IsGenericParameter)
             _il.Emit(OpCodes.Box, got);
-        // A mutable-collection interface VALUE (IList<T>/ICollection<T>) flowing into its READONLY sibling SLOT
-        // (IReadOnlyList<T>/IReadOnlyCollection<T>, same element T): the mutable interface does NOT derive from the
-        // readonly one in the BCL type lattice, so the raw flow is StackUnexpected — insert the runtime-checked
-        // downcast. castclass to a closed interface is always verifiable (never the value-type-generic JIT hazard) and
-        // succeeds at runtime because the concrete value (stdlib List<T>/HashSet<T>, or a user mutable collection that
-        // also lists the readonly face — see the interface-emit path) implements all faces. Scoped to exactly this
-        // family so any OTHER arg/slot mismatch still surfaces as it does today (this is pure CLR structural
-        // reconciliation of an arg-position variance collapse bir2cir already decided — no Kotlin knowledge).
-        else if (IsMutableToReadOnlyView(got, want))
+        // A collapsed-variance collection-interface VALUE flowing into its SIBLING arg SLOT (same element T, either
+        // direction): the two sibling interfaces do NOT derive from each other in the BCL type lattice, so the raw flow
+        // is StackUnexpected — insert the runtime-checked downcast. FORWARD (IList/ICollection -> IReadOnly*) is the
+        // destructuring/for seam; REVERSE (IReadOnly* -> IList/ICollection) is the #100 H1 case: a readonly-faced value
+        // (`make(): List<Int>` -> IReadOnlyList) into a collapsed MUTABLE type-arg slot (a `Pair` ctor / map-setter arg
+        // whose V collapsed to IList<int>). castclass to a closed interface is always verifiable (never the value-type-
+        // generic JIT hazard) and succeeds at runtime because the concrete value (stdlib List<T>/HashSet<T>, or a user
+        // mutable collection that also lists the readonly face) implements all faces. Scoped to exactly this family so
+        // any OTHER arg/slot mismatch still surfaces (pure CLR reconciliation of bir2cir's collapse — no Kotlin knowledge).
+        else if (IsCollectionViewSeam(got, want))
             _il.Emit(OpCodes.Castclass, want);
     }
 
-    // True exactly for the sanctioned mutable-collection-interface -> readonly-sibling-interface arg seams with an
-    // identical single element type: IList<T>->IReadOnlyList<T>, IList<T>->IReadOnlyCollection<T>,
-    // ICollection<T>->IReadOnlyCollection<T>. Directional: an IReadOnlyList<T> slot accepts ONLY IList<T> (a bare
-    // ICollection value promises no indexer, so ICollection<T>->IReadOnlyList<T> is a genuine upstream error and must
-    // NOT be masked). `got`/`want` are reference interface types by construction of the predicate, so no explicit
-    // reference-type check is needed; T may be a concrete type, an emitted TypeBuilder, or a generic parameter.
-    static bool IsMutableToReadOnlyView(Type got, Type want)
+    // True exactly for the sanctioned COLLAPSED-VARIANCE collection-interface seams (EITHER direction) with an
+    // identical single element type. bir2cir's Root-V collapse can put a MUTABLE face where a readonly sibling is
+    // expected OR a READONLY face where the collapsed mutable sibling is expected; both are pure CLR structural
+    // reconciliations of a variance collapse bir2cir already decided (no Kotlin knowledge). Sanctioned rows (got -> want):
+    //   FORWARD (mutable -> readonly): IList->IReadOnlyList, IList->IReadOnlyCollection, ICollection->IReadOnlyCollection.
+    //   REVERSE (readonly -> mutable): IReadOnlyList->IList, IReadOnlyList->ICollection, IReadOnlyCollection->ICollection.
+    // DIRECTIONAL exclusions (each the transpose of the other; MUST return false so a genuine upstream error still
+    // surfaces): ICollection->IReadOnlyList and IReadOnlyCollection->IList — a bare (readonly-)collection promises no
+    // indexer, so masking it would hide a real bug. Also NOT matched (real BCL derivations / identity — no cast
+    // needed): IList->ICollection, IReadOnlyList->IReadOnlyCollection, got==want. No IDictionary rows (Map collapses to
+    // IDictionary at head — no seam). `got`/`want` are reference interface types by construction of the predicate, so
+    // no explicit reference-type check is needed; T may be a concrete type, an emitted TypeBuilder, or a generic param.
+    // RUNTIME CONTRACT: the FORWARD casts are statically guaranteed (mutable BCL/user collections list the readonly
+    // faces — the interface-emit path); the REVERSE casts succeed only because the stdlib collection backing
+    // (List<T>/HashSet<T>/T[]) implements every mutable face — a foreign value implementing ONLY the readonly Kotlin
+    // face flowing into a collapsed mutable slot would throw InvalidCastException at the seam (fail-loud, and it is
+    // bir2cir's collapse decision, not ilemit's — tracked interop follow-up, out of scope here).
+    static bool IsCollectionViewSeam(Type got, Type want)
     {
         if (got == null || want == null) return false;
         if (!got.IsGenericType || got.IsGenericTypeDefinition) return false;
@@ -681,6 +695,10 @@ sealed partial class Emitter
             return gd == typeof(System.Collections.Generic.IList<>);
         if (wd == typeof(System.Collections.Generic.IReadOnlyCollection<>))
             return gd == typeof(System.Collections.Generic.IList<>) || gd == typeof(System.Collections.Generic.ICollection<>);
+        if (wd == typeof(System.Collections.Generic.IList<>))
+            return gd == typeof(System.Collections.Generic.IReadOnlyList<>);
+        if (wd == typeof(System.Collections.Generic.ICollection<>))
+            return gd == typeof(System.Collections.Generic.IReadOnlyList<>) || gd == typeof(System.Collections.Generic.IReadOnlyCollection<>);
         return false;
     }
 
@@ -717,11 +735,13 @@ sealed partial class Emitter
         else if (got != _methodRetType && !got.IsValueType && !got.IsGenericParameter
                  && (_methodRetType.IsValueType || _methodRetType.IsGenericParameter))
             _il.Emit(OpCodes.Unbox_Any, _methodRetType);
-        // The method-return-statement twin of EmitArg/EmitStoreCoerced/CoerceReturn: a mutable-collection interface
-        // VALUE (an interface-typed local, e.g. `val m = mutableListOf<Int>()` -> IList<int32>) returned where the
-        // method declares the READONLY sibling (`fun f(): List<Int>` -> IReadOnlyList<int32>) — the same variance-collapse
-        // seam at the `return`, distinct from CoerceReturn (which reconciles a CALL RESULT, not a return statement).
-        else if (IsMutableToReadOnlyView(got, _methodRetType))
+        // The method-return-statement twin of EmitArg/EmitStoreCoerced/CoerceReturn: a collapsed-variance collection
+        // interface VALUE returned where the method declares its SIBLING (same T), distinct from CoerceReturn (which
+        // reconciles a CALL RESULT, not a return statement). FORWARD: a mutable local (`val m = mutableListOf<Int>()` ->
+        // IList<int32>) returned from `fun f(): List<Int>` -> IReadOnlyList<int32>. REVERSE fires only when _methodRetType
+        // is a top-level IList/ICollection whose type was SUBSTITUTED from a collapsed typeArg (e.g. a synthesized
+        // closure/SAM `invoke` whose result `R` collapsed) — correct-by-symmetry, and the predicate can't fire on anything else.
+        else if (IsCollectionViewSeam(got, _methodRetType))
             _il.Emit(OpCodes.Castclass, _methodRetType);
     }
 
