@@ -308,6 +308,12 @@ sealed partial class Emitter
         // generic param; castclass would JIT-crash a value instantiation.
         else if (got == typeof(object) && (target.IsValueType || target.IsGenericParameter))
             _il.Emit(OpCodes.Unbox_Any, target);
+        // A mutable-collection interface VALUE stored into its READONLY sibling local/field slot (same T): the same
+        // arg-position variance-collapse reconciliation as EmitArg, one store-site over — a `for`/destructuring
+        // element `var it: List<Int> = iterator.next()` where next() statically yields IList<int32> stored into the
+        // IReadOnlyList<int32> local (chunk/collops2). castclass to the closed readonly interface (see IsMutableToReadOnlyView).
+        else if (IsMutableToReadOnlyView(got, target))
+            _il.Emit(OpCodes.Castclass, target);
     }
 
     // The value-parameter type of a property setter, when retrievable: a TypeBuilder-anchored accessor
@@ -485,7 +491,16 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Castclass, want); return want;
             }
         }
-        return RetOr(e, actual);
+        var declared = RetOr(e, actual);
+        // The resolved method actually returns a MUTABLE collection interface (Pair.component1() -> IList<T>,
+        // Map.Entry.get_value() -> IList<V>) but bir2cir typed the call RESULT as the READONLY sibling view (ret/dynRet
+        // = IReadOnlyList<T>/IReadOnlyCollection<T>, the Kotlin `List`/`Collection` face) after the arg-position variance
+        // collapse. The stack holds the mutable interface; without reconciliation ilemit would track the readonly type
+        // while the stack carries the mutable one -> a downstream store/receiver/arg trusts the wrong type and the raw
+        // value fails ilverify (StackUnexpected). Emit the runtime-checked downcast so the tracked type and the actual
+        // stack slot agree at the source. Same variance-collapse family as EmitArg/EmitStoreCoerced (IsMutableToReadOnlyView).
+        if (IsMutableToReadOnlyView(actual, declared)) _il.Emit(OpCodes.Castclass, declared);
+        return declared;
     }
 
     // Resolve a method on a (possibly generic) interface. When the instantiation carries a TypeBuilder/generic
@@ -634,6 +649,39 @@ sealed partial class Emitter
         // param (passing `T` to a `T` slot flows the value as-is at the instantiation).
         if (NeedsBoxToRef(got) && !want.IsValueType && !want.IsGenericParameter)
             _il.Emit(OpCodes.Box, got);
+        // A mutable-collection interface VALUE (IList<T>/ICollection<T>) flowing into its READONLY sibling SLOT
+        // (IReadOnlyList<T>/IReadOnlyCollection<T>, same element T): the mutable interface does NOT derive from the
+        // readonly one in the BCL type lattice, so the raw flow is StackUnexpected — insert the runtime-checked
+        // downcast. castclass to a closed interface is always verifiable (never the value-type-generic JIT hazard) and
+        // succeeds at runtime because the concrete value (stdlib List<T>/HashSet<T>, or a user mutable collection that
+        // also lists the readonly face — see the interface-emit path) implements all faces. Scoped to exactly this
+        // family so any OTHER arg/slot mismatch still surfaces as it does today (this is pure CLR structural
+        // reconciliation of an arg-position variance collapse bir2cir already decided — no Kotlin knowledge).
+        else if (IsMutableToReadOnlyView(got, want))
+            _il.Emit(OpCodes.Castclass, want);
+    }
+
+    // True exactly for the sanctioned mutable-collection-interface -> readonly-sibling-interface arg seams with an
+    // identical single element type: IList<T>->IReadOnlyList<T>, IList<T>->IReadOnlyCollection<T>,
+    // ICollection<T>->IReadOnlyCollection<T>. Directional: an IReadOnlyList<T> slot accepts ONLY IList<T> (a bare
+    // ICollection value promises no indexer, so ICollection<T>->IReadOnlyList<T> is a genuine upstream error and must
+    // NOT be masked). `got`/`want` are reference interface types by construction of the predicate, so no explicit
+    // reference-type check is needed; T may be a concrete type, an emitted TypeBuilder, or a generic parameter.
+    static bool IsMutableToReadOnlyView(Type got, Type want)
+    {
+        if (got == null || want == null) return false;
+        if (!got.IsGenericType || got.IsGenericTypeDefinition) return false;
+        if (!want.IsGenericType || want.IsGenericTypeDefinition) return false;
+        var ga = got.GetGenericArguments();
+        var wa = want.GetGenericArguments();
+        if (ga.Length != 1 || wa.Length != 1 || ga[0] != wa[0]) return false;
+        var gd = got.GetGenericTypeDefinition();
+        var wd = want.GetGenericTypeDefinition();
+        if (wd == typeof(System.Collections.Generic.IReadOnlyList<>))
+            return gd == typeof(System.Collections.Generic.IList<>);
+        if (wd == typeof(System.Collections.Generic.IReadOnlyCollection<>))
+            return gd == typeof(System.Collections.Generic.IList<>) || gd == typeof(System.Collections.Generic.ICollection<>);
+        return false;
     }
 
     // Coerce a just-emitted return VALUE (static type `got`, on the stack) to the declared method return type.
@@ -669,6 +717,12 @@ sealed partial class Emitter
         else if (got != _methodRetType && !got.IsValueType && !got.IsGenericParameter
                  && (_methodRetType.IsValueType || _methodRetType.IsGenericParameter))
             _il.Emit(OpCodes.Unbox_Any, _methodRetType);
+        // The method-return-statement twin of EmitArg/EmitStoreCoerced/CoerceReturn: a mutable-collection interface
+        // VALUE (an interface-typed local, e.g. `val m = mutableListOf<Int>()` -> IList<int32>) returned where the
+        // method declares the READONLY sibling (`fun f(): List<Int>` -> IReadOnlyList<int32>) — the same variance-collapse
+        // seam at the `return`, distinct from CoerceReturn (which reconciles a CALL RESULT, not a return statement).
+        else if (IsMutableToReadOnlyView(got, _methodRetType))
+            _il.Emit(OpCodes.Castclass, _methodRetType);
     }
 
     // Args for a user method/ctor, boxing value types passed to reference (e.g. `object`/`Any`) params.

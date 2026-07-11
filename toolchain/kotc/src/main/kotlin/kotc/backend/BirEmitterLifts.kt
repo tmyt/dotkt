@@ -165,12 +165,12 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson],"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 }
 
-/** SHADOW the lambda's own regular params in `valSubst` while emitting its body: an enclosing splice
- *  (inlineRepeat / an inline-lambda carrier) may have bound the SAME name (e.g. `it`) to an outer local.
- *  A lifted lambda's params are its OWN method params — `IrGetValue` resolves them by NAME through `valSubst`
- *  (BirEmitterExpressions), so a stale outer binding would make the body reference a foreign local that is not in
- *  the lifted method's scope (`load unknown var __repIdx*` at ilemit). Removing them yields the correct bare
- *  `{"k":"local","name":<param>}`. Saved + restored, mirroring `emitInlineLambdaCarrier` / `spliceLambdaCall`. */
+/** SHADOW the lambda's own regular params in `valSubst` while emitting its body: an enclosing lambda carrier
+ *  may have bound the SAME name (e.g. `it`) to an outer local. A lifted lambda's params are its OWN method
+ *  params — `IrGetValue` resolves them by NAME through `valSubst` (BirEmitterExpressions), so a stale outer
+ *  binding would make the body reference a foreign local that is not in the lifted method's scope (`load unknown
+ *  var` at ilemit). Removing them yields the correct bare `{"k":"local","name":<param>}`. Saved + restored,
+ *  mirroring `emitInlineLambdaCarrier`. */
 private inline fun <T> BirEmitter.withLambdaParamShadow(fn: IrSimpleFunction, block: () -> T): T {
 	val names = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { it.name.asString() }
 	val saved = names.associateWith { valSubst[it] }
@@ -270,10 +270,16 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	val ctorBody = capPairs.joinToString(",") { (_, fname) -> """{"k":"setField","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)},"value":{"k":"local","name":${str(fname)}}}""" }
 	val ifaceSpec = ownerSpec(ifaceClass, funIface) ?: birType(funIface)
 	val freeTps = freeTypeParams(listOf(funIface) + capPairs.map { it.first.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
-	liftedTypes.add("""{"name":${str(cname)},"kind":"class","generated":true${typeParamsJson(freeTps)},"base":null,"interfaces":[${str(ifaceSpec)}],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$samMethod]}""")
+	// #52/#75: the SAM shim class travels as a `synthClass` FACT ON the `newSam` node — NOT `liftedTypes.add`'d as a
+	// sibling type. A sibling type stays in the ORIGIN file; when this `newSam` rides in an inline fn's [KotlinInline]
+	// payload and is spliced into a CONSUMING file (cross-module compareBy/comparator), only the fn body travels, so the
+	// SAM class must be self-carried on the node. bir2cir's ClosureSynthesis assembles it into the consuming file (with
+	// name-dedup) and strips `synthClass` — exactly as it does for `lambda()`'s `newClosure` synthClass. Same-file (no
+	// splice): ClosureSynthesis synthesizes the SAME class into this file, so a non-spliced `newSam` is unchanged.
+	val synthClass = """{"name":${str(cname)},"kind":"class","generated":true${typeParamsJson(freeTps)},"base":null,"interfaces":[${str(ifaceSpec)}],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$samMethod]}"""
 	val capExprs = captures.joinToString(",") { capValueExpr(it) }
 	val tArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-	return """{"k":"newSam","samType":${fqnJson(cname)},"captures":[$capExprs]$tArgs}"""
+	return """{"k":"newSam","samType":${fqnJson(cname)},"captures":[$capExprs]$tArgs,"synthClass":$synthClass}"""
 }
 
 /**
@@ -681,11 +687,14 @@ internal fun BirEmitter.captureFieldName(d: IrValueDeclaration): String =
 
 /** A capture's value at the `new` site (in the enclosing context): the outer `this`, or an outer local. */
 internal fun BirEmitter.capValueExpr(d: IrValueDeclaration): String =
-	// Evaluate the capture VALUE in the enclosing context: honor an active substitution (e.g. an intrinsic
-	// block's `c` bound to the coroutine's own continuation, or an outer capture field) before falling back.
-	// `valSubst` is checked next so a captured inline parameter (a crossinline/noinline lambda bound to a
-	// `__inl<N>` delegate local) is captured by its substituted local, mirroring IrGetValue's resolution order.
-	captureSubst[d] ?: valSubst[d.name.asString()]
+	// Evaluate the capture VALUE in the enclosing context, mirroring `exprInner`'s IrGetValue resolution ORDER:
+	// captureSubst (an outer closure field / intrinsic-block binding), then `selfSubst` (an EXTENSION receiver bound to
+	// its `__self`/`__recv` — an inline-lambda carrier RENAMES its ext receiver via selfSubst, so a lifted local fn /
+	// nested closure that captures that receiver must pick up the SAME renamed local, NOT the raw `$this$<fn>` IR name;
+	// without this a `buildString { … appendTwoDigits(x) … }` carrier passed `$this$buildString` verbatim while its
+	// param was `__recvN` -> ilemit "load unknown var $this$buildString"), then `valSubst`, then the `<this>`/local
+	// fallback. selfSubst/captureSubst are IDENTITY-keyed (the receiver by symbol, not name).
+	captureSubst[d] ?: selfSubst[d] ?: valSubst[d.name.asString()]
 		?: if (d.name.asString() == "<this>") """{"k":"this"}""" else """{"k":"local","name":${str(d.name.asString())}}"""
 
 /**

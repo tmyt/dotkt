@@ -24,6 +24,11 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
     readonly Dictionary<string, int> _ownerArity = new(StringComparer.Ordinal);      // Kotlin FQN -> generic arity
     readonly Dictionary<string, string[]> _ownerTypeParams = new(StringComparer.Ordinal); // Kotlin FQN -> generic param names
+    // Per owner-FQN, the declared param type names of its (first/sole) constructor — used to adapt a static-String arg
+    // flowing into a CharSequence ctor param of a SPLICED anonymous stdlib object (`dotkt$obj*`, e.g. the anonymous
+    // Grouping from `CharSequence.groupingBy` whose ctor captures the receiver as `kotlin.CharSequence`). The spliced
+    // `new dotkt$obj*(...)` node carries no argTypes, so the CharSequence-slot knowledge comes only from here.
+    readonly Dictionary<string, string[]> _ownerCtorParams = new(StringComparer.Ordinal);
     // Per owner-FQN, the CLR generic-parameter CONSTRAINT class of each flattened type-param position:
     // "struct" (NotNullableValueTypeConstraint), "class" (ReferenceTypeConstraint), or "unconstrained". Drives the
     // struct-ness ORACLE for a type variable (#37/#48 nullability fold): a struct-constrained `T?` is `Nullable<T>`,
@@ -44,16 +49,20 @@ sealed class ReferenceMetadataIndex
     readonly Dictionary<string, string> _arrayFactories = new(StringComparer.Ordinal);       // @ClrArrayFactory fun name -> "vararg"/"sized"
     readonly Dictionary<string, string> _arrayFactoryElemHints = new(StringComparer.Ordinal);// array factory name -> concrete elem FQN (empty-call fallback)
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaults = new(StringComparer.Ordinal); // "owner|name|paramCount" -> (argPos -> default BIR)
-    // [KotlinInline] raw-BIR payloads (#71/#75 S1): "owner|name|pc|ga" -> the decoded carrier JSON (the raw pre-lowering
-    // decl facts InlineBirStash stashed). Read cross-module by InlineSplice to splice an injected inline fn's body at the
-    // call site (so it re-lowers in THIS app's context). owner = the .NET type FullName (file-facade class); pc/ga = the
-    // reflected GetParameters/GetGenericArguments counts (parity with InlineBirStash's params.Count / typeParams.Count).
-    readonly Dictionary<string, string> _inlinePayloads = new(StringComparer.Ordinal);
-    // Reverse index for OWNER-LESS callInline (S3): "name|pc|ga" -> the file-class owner that hosts this inline fn. kotc
-    // cannot name the stdlib file class (facadegen supplies no `kotlin.*` metadata — the whole stdlib rides the klib), so
-    // a scope-fn/@InlineOnly callInline carries owner=null; InlineSplice resolves it HERE (Kotlin<->CLR: which .NET type
-    // hosts the fun). POISONED (null) on a cross-owner name|pc|ga collision -> the splicer falls back to the plain call.
-    readonly Dictionary<string, string> _inlineOwnerByNPG = new(StringComparer.Ordinal);
+    // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the CANDIDATE decoded carrier JSONs (one per overload
+    // sharing that key; the raw pre-lowering decl facts InlineBirStash stashed). Read cross-module by InlineSplice, which
+    // picks the UNIQUE candidate matching the call's `paramSig` (§4.2), then splices its body at the call site (so it
+    // re-lowers in THIS app's context). owner = the .NET type FullName (file-facade class); pc/ga = the reflected
+    // GetParameters/GetGenericArguments counts (parity with InlineBirStash's params.Count / typeParams.Count).
+    readonly Dictionary<string, List<string>> _inlinePayloads = new(StringComparer.Ordinal);
+    // OWNER-LESS callInline index (S3, §4.2 #75 S4b): "name|pc|ga" -> the CANDIDATE payload JSONs across EVERY `kotlin.*`
+    // file-class hosting that shape. kotc cannot name the stdlib file class (facadegen supplies no `kotlin.*` metadata — the
+    // whole stdlib rides the klib), so a scope-fn/@InlineOnly callInline carries owner=null. Since the bare `name|pc|ga`
+    // collides across owners (Iterable/Array/IntArray/CharSequence `filter`/`map`/`forEach` etc.), the owner canNOT be picked
+    // by the key alone — InlineSplice gathers ALL candidates here and picks the UNIQUE one whose declared params match the
+    // call's `paramSig`; the winning payload's own `owner` field names the host. Restricted to `kotlin.*` so a user-lib
+    // inline fn sharing a name|pc|ga cannot leak in.
+    readonly Dictionary<string, List<string>> _ownerlessInlineCandidates = new(StringComparer.Ordinal);
 
     // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the loaded .NET references +
     // the running framework's reference dir. NetInteropBinding resolves a facadegen-injected owner FQN
@@ -101,6 +110,7 @@ sealed class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.TypeKinds) _ownerKind[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
+            foreach (var kv in asm.DotKt.CtorParamTypes) _ownerCtorParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamConstraints) _ownerTypeParamConstraints[kv.Key] = kv.Value;
             foreach (var h in asm.DotKt.HelperTypes) _helperTypes.Add(h);
             foreach (var s in asm.DotKt.RestrictsSuspensionTypes) _restrictsSuspension.Add(s);
@@ -127,43 +137,50 @@ sealed class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.CollectionFactories) _collectionFactories.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ArrayFactories) _arrayFactories.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ArrayFactoryElemHints) _arrayFactoryElemHints.TryAdd(kv.Key, kv.Value);
-            // D6: poison across assemblies too — a repeat key (or an already-poisoned null) stays null.
+            // §4.2 (#75 S4b): merge candidate lists across assemblies — every overload sharing owner|name|pc|ga is kept; the
+            // call site disambiguates by paramSig. (No poisoning: structural selection replaces the recv0-key collision.)
             foreach (var kv in asm.DotKt.InlinePayloads)
-                _inlinePayloads[kv.Key] = (_inlinePayloads.ContainsKey(kv.Key) || kv.Value == null) ? null : kv.Value;
+            {
+                if (!_inlinePayloads.TryGetValue(kv.Key, out var lst)) _inlinePayloads[kv.Key] = lst = new List<string>();
+                lst.AddRange(kv.Value);
+            }
         }
-        // Build the owner-less reverse index (S3). Key owner|name|pc|ga|recv0 -> name|pc|ga|recv0; the value is the owner.
-        // A cross-owner collision (two file classes both hosting a `foo|2|2|kotlin.String`) poisons the entry to null so
-        // an owner-less callInline for that shape fails loud rather than binding a wrong owner.
-        foreach (var key in _inlinePayloads.Keys)
+        // Build the owner-less candidate index (S3, §4.2): "name|pc|ga" -> the candidate payload JSONs across every `kotlin.*`
+        // file-class hosting that shape. The owner is NOT resolvable from the bare key (it collides across owners) — the call
+        // site selects by paramSig and reads the winner's own `owner` field. Restricted to `kotlin.*` (kotc emits owner-less
+        // ONLY for the klib stdlib; a user-lib inline fn is always owner-ful) so a user `T.use(block)` cannot leak in.
+        foreach (var (key, jsons) in _inlinePayloads)
         {
             var bar = key.IndexOf('|');
             if (bar < 0) continue;
-            var owner = key[..bar];
-            // Owner-less callInline is DEFINITIONALLY a `kotlin.*` @InlineOnly stdlib fn (kotc's inlineSpliceCallOwnerless
-            // is gated to those). Restrict the reverse index to the stdlib namespace so a USER-lib inline fn that happens
-            // to share a bare name|pc|ga|recv0 (e.g. a user `T.use(block)`) can neither poison the stdlib entry nor
-            // (when the stdlib key is absent) bind a wrong owner for a `kotlin.let`/`kotlin.io.use` call.
-            if (!owner.StartsWith("kotlin.", StringComparison.Ordinal)) continue;
-            var npg = key[(bar + 1)..];   // name|pc|ga|recv0
-            _inlineOwnerByNPG[npg] = (_inlineOwnerByNPG.TryGetValue(npg, out var prev) && prev != owner) ? null : owner;
+            if (!key.AsSpan(0, bar).StartsWith("kotlin.")) continue;
+            var npg = key[(bar + 1)..];   // name|pc|ga
+            if (!_ownerlessInlineCandidates.TryGetValue(npg, out var lst)) _ownerlessInlineCandidates[npg] = lst = new List<string>();
+            lst.AddRange(jsons);
         }
     }
 
-    // Resolve the file-class owner for an OWNER-LESS callInline (S3), keyed name|pc|ga|recv0. Null when unknown or a
-    // poisoned cross-owner collision -> InlineSplice fails loud.
-    public string TryResolveInlineOwner(string name, int pc, int ga, string recv0) =>
-        name != null && _inlineOwnerByNPG.TryGetValue($"{name}|{pc}|{ga}|{recv0}", out var owner) ? owner : null;
-
-    // The raw-BIR [KotlinInline] payload for a cross-module inline fn (owner|name|pc|ga|recv0), decoded to its JSON node —
-    // or null when the referenced assembly carries no (or an unreadable / pre-S1-shaped) [KotlinInline] for that overload.
-    // Consumed by InlineSplice to splice the injected body at the call site. `owner` = callInline.owner (file-facade FQN).
-    public JsonNode TryReadInlineBir(string owner, string name, int pc, int ga, string recv0)
+    // The CANDIDATE raw-BIR [KotlinInline] payloads for an OWNER-FUL cross-module inline fn (owner|name|pc|ga), each decoded to
+    // its JSON object — the overloads sharing that key. Empty/null when the referenced assembly carries no (or only unreadable
+    // / pre-S1-shaped) [KotlinInline] for that shape. InlineSplice picks the UNIQUE one matching the call's paramSig.
+    public List<JsonObject> InlineCandidates(string owner, string name, int pc, int ga)
     {
         if (owner == null || name == null) return null;
-        // A missing key OR a POISONED (null) value (a residual same-recv0 overload collision) yields no payload -> the
-        // splicer fails loud rather than splicing a wrong-typed body.
-        if (!_inlinePayloads.TryGetValue($"{owner}|{name}|{pc}|{ga}|{recv0}", out var json) || json == null) return null;
-        try { return JsonNode.Parse(json); } catch { return null; }
+        return ParseCandidates(_inlinePayloads.GetValueOrDefault($"{owner}|{name}|{pc}|{ga}"));
+    }
+
+    // The CANDIDATE payloads for an OWNER-LESS callInline (S3): every `kotlin.*` overload hosting name|pc|ga, across owners.
+    // InlineSplice selects the unique paramSig match; the winner's own `owner` field names the host file class.
+    public List<JsonObject> OwnerlessInlineCandidates(string name, int pc, int ga) =>
+        name == null ? null : ParseCandidates(_ownerlessInlineCandidates.GetValueOrDefault($"{name}|{pc}|{ga}"));
+
+    static List<JsonObject> ParseCandidates(List<string> jsons)
+    {
+        if (jsons == null || jsons.Count == 0) return null;
+        var list = new List<JsonObject>(jsons.Count);
+        foreach (var j in jsons)
+            try { if (JsonNode.Parse(j) is JsonObject jo) list.Add(jo); } catch { /* unreadable payload — skip candidate */ }
+        return list.Count > 0 ? list : null;
     }
 
     // The @ClrCollectionFactory kind ("list"/"set"/"map") for a top-level fun NAME, or null when the fun is not a
@@ -309,6 +326,9 @@ sealed class ReferenceMetadataIndex
 
     public int OwnerArity(string ownerFqn) => _ownerArity.GetValueOrDefault(ownerFqn, 0);
     public string[] OwnerTypeParamNames(string ownerFqn) => _ownerTypeParams.GetValueOrDefault(ownerFqn);
+    // The declared param type names of the owner's (sole/first) constructor, or null. Keyed by the arity-stripped
+    // Kotlin FQN (`dotkt$obj90`, not `dotkt$obj90``1`), matching the CIR `new` node's bare type token.
+    public string[] OwnerCtorParamTypeNames(string ownerFqn) => _ownerCtorParams.GetValueOrDefault(ownerFqn);
 
     // The struct-ness ORACLE (#37/#48 nullability fold). True iff a CONCRETE Kotlin/CLR type FQN is a VALUE type
     // (a foundational primitive, or a ref.dll struct/enum). A value `T?` is `System.Nullable<T>` (keeps its wrapper);
@@ -695,6 +715,17 @@ sealed class ReferenceMetadataIndex
                     }
                     var classAlias = ClrAliasOf(type.GetCustomAttributesData());
                     if (classAlias != null) metadata.Aliases[ownerFqn] = classAlias;
+                    // A SPLICED anonymous object (`dotkt$obj*`) captures its enclosing inline fn's receiver/free vars as
+                    // ctor params. Record that (sole) ctor's param types so the StringCharSequenceBridge can adapter-wrap
+                    // a static-String arg flowing into a `kotlin.CharSequence` capture slot (the spliced `new` carries no
+                    // argTypes). Scoped to `dotkt$obj*` — the exact single-ctor case — so no multi-overload BCL/stdlib
+                    // type is indexed (where "first ctor" would be ambiguous).
+                    if (ownerFqn.StartsWith("dotkt$obj", StringComparison.Ordinal))
+                    {
+                        var ctor = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).FirstOrDefault();
+                        if (ctor != null)
+                            metadata.CtorParamTypes[ownerFqn] = ctor.GetParameters().Select(p => TypeName(p.ParameterType)).ToArray();
+                    }
                     if (ownerFqn.StartsWith("dotkt$ClrH_", StringComparison.Ordinal)) metadata.HelperTypes.Add(ownerFqn);
                     if (HasAttribute(type.GetCustomAttributesData(), RestrictsSuspensionAttr)) metadata.RestrictsSuspensionTypes.Add(ownerFqn);
                     var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
@@ -765,15 +796,14 @@ sealed class ReferenceMetadataIndex
                                 var content = ReadByteArrayArg(inlineCad.ConstructorArguments[1]);
                                 var decoded = DotKt.Bir.BirCarrier.DecodeBody(ver, content);
                                 var json = decoded.ToJsonString();
-                                // §4.2 (#75 S4a): key `owner|name|pc|ga|recv0`. recv0 comes from the DECODED PAYLOAD's own
-                                // `params[0].type` (a Kotlin FQN) — the SAME source kotc/InlineBirStash read — so the three
-                                // key-producing sites agree. pc/ga still come from the .NET method (the payload counts them
-                                // identically: an extension receiver rides as a leading `__self` param).
-                                var recv0 = InlineBirStash.Recv0Of((decoded as JsonObject)?["params"] as JsonArray);
-                                var ikey = ownerFqn + "|" + method.Name + "|" + method.GetParameters().Length + "|" + method.GetGenericArguments().Length + "|" + recv0;
-                                // D6: a RESIDUAL collision AFTER recv0 widening (a genuine same-recv0 overload) poisons to
-                                // null -> the splicer fails loud on that key (the fallback slot is gone under #95).
-                                metadata.InlinePayloads[ikey] = metadata.InlinePayloads.ContainsKey(ikey) ? null : json;
+                                // §4.2 (#75 S4b): key `owner|name|pc|ga` -> a LIST of candidate overload payloads. pc/ga come
+                                // from the .NET method (the payload counts them identically: an extension receiver rides as a
+                                // leading `__self` param). InlineSplice picks the UNIQUE candidate whose decoded `params[i].type`
+                                // structurally matches the call's paramSig — the decoded params are kotc-emitted decl nodes, so
+                                // they equal the callInline's paramSig exactly (both from `birType(param.type)`).
+                                var ikey = ownerFqn + "|" + method.Name + "|" + method.GetParameters().Length + "|" + method.GetGenericArguments().Length;
+                                if (!metadata.InlinePayloads.TryGetValue(ikey, out var ilst)) metadata.InlinePayloads[ikey] = ilst = new List<string>();
+                                ilst.Add(json);
                             }
                             catch { /* unreadable / pre-S1 payload — no cross-module splice; the engine fails loud at splice time */ }
                         }
@@ -1144,14 +1174,15 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
+    public readonly Dictionary<string, string[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> (first) ctor param type names
     public readonly Dictionary<string, string[]> TypeParamConstraints = new(StringComparer.Ordinal); // ownerFqn -> per-param "struct"/"class"/"unconstrained"
     public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "dotkt$ClrH_*" rule-3 helpers
     // Types carrying @kotlin.coroutines.RestrictsSuspension (BINARY-retained, so present on the ref.dll). A suspend
     // lambda whose RECEIVER is such a scope (e.g. SequenceScope) gets the RestrictedSuspendLambda SM base (bundle-6 P5).
     public readonly HashSet<string> RestrictsSuspensionTypes = new(StringComparer.Ordinal);
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
-    // [KotlinInline] raw-BIR payloads (#71/#75 S1): "owner|name|pc|ga" -> decoded carrier JSON (the raw decl facts).
-    public readonly Dictionary<string, string> InlinePayloads = new(StringComparer.Ordinal);
+    // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the candidate decoded carrier JSONs (one per overload).
+    public readonly Dictionary<string, List<string>> InlinePayloads = new(StringComparer.Ordinal);
     public readonly Dictionary<string, TypeNode> StaticFieldTypes = new(StringComparer.Ordinal); // "owner|field" -> declared type
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.

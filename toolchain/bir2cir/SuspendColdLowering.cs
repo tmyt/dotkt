@@ -108,51 +108,16 @@ static class SuspendColdLowering
     // Structured declaration modifier (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).
     static bool Mod(JsonObject decl, string key) => decl["mods"] is JsonObject m && Bool(m[key]);
 
-    // The inline `suspendCoroutineUninterceptedOrReturn { c -> … }` intrinsic marker. kotc's IR inliner has
-    // already run when this reaches bir2cir: the `@InlineOnly inline` intrinsic's fake body (a bare
-    // `throw NotImplementedError("Implementation of suspendCoroutineUninterceptedOrReturn is intrinsic")`)
-    // survives as the `valueBlock` RESULT, and its `{ c -> … }` block is materialized as a separate closure
-    // class captured into a dead `var __inlN` in the block's stmts. We recognize such a block here and lower it
-    // to a real cold suspension point — inlining the closure's invoke body, binding `c` to the SM. This is kotc's
-    // live emitSuspendIntrinsic/coSelfCont (BirEmitter.kt:1669-1688) re-expressed over the cold SM.
-    //
-    // DETECTION (see IsSuspendIntrinsicBlock — the SINGLE recognizer; every call routes through it):
-    //  (1) PREFERRED — a stable `suspendIntrinsic:true` flag on the valueBlock. kotc does NOT emit this tag today;
-    //      it SHOULD (a one-line marker on the lowered intrinsic block would retire the fragile string sniff). The
-    //      recognizer already reads it, so the day kotc stamps it the string path below becomes dead weight.
-    //  (2) FALLBACK — the intrinsic's fake `throw <exc>(<SuspendIntrinsicMarker>)` result string. Fragile (couples to
-    //      a stdlib message), but the ONLY marker available until kotc emits (1): the frontend never invokes `block`,
-    //      so no `suspendCall` tag exists on the intrinsic call itself. The fake body is the inliner's residue of
-    //      `libraries/stdlib/src/kotlin/coroutines/intrinsics/Intrinsics.kt:43`
-    //      (`throw NotImplementedError("Implementation of suspendCoroutineUninterceptedOrReturn is intrinsic")`).
-    //      HARDENED: we no longer couple to the exact thrown TYPE NAME (`kotlin.NotImplementedError`) — an earlier
-    //      exception-alias/substitution pass (kotc's exception map, or a future @ClrTypeAlias) could rewrite it to
-    //      `System.NotImplementedException` and silently break the match. The marker STRING is globally unique
-    //      (no user code throws it), so the `throwExpr`+`new`+marker-const shape alone is a safe discriminator.
-    const string SuspendIntrinsicMarker = "suspendCoroutineUninterceptedOrReturn is intrinsic";
-    const string SuspendIntrinsicFlag = "suspendIntrinsic";
-
-    // Is this a `valueBlock` that is the lowered `suspendCoroutineUninterceptedOrReturn` intrinsic? Such a block
-    // IS a suspension point (its embedded closure is the suspension body), NOT an ordinary lambda value. The
-    // SINGLE, centralized recognizer — prefers the stable flag (1), falls back to the (type-name-independent)
-    // message string (2).
-    static bool IsSuspendIntrinsicBlock(JsonNode node)
-    {
-        if (node is not JsonObject o || Str(o["k"]) != "valueBlock") return false;
-        if (Bool(o[SuspendIntrinsicFlag])) return true;                                 // (1) stable tag
-        if (o["result"] is not JsonObject res || Str(res["k"]) != "throwExpr") return false;
-        if (res["value"] is not JsonObject nw || Str(nw["k"]) != "new") return false;   // any exc type (alias-safe)
-        return nw["args"] is JsonArray a && a.Count >= 1 && a[0] is JsonObject c0     // (2) message-string fallback
-            && Str(c0["k"]) == "const" && (Str(c0["value"])?.Contains(SuspendIntrinsicMarker) ?? false);
-    }
-
-    // F2 — the CROSS-MODULE suspendCoroutine shape. Our compiler does NOT inline @InlineOnly cross-module,
-    // so an APP calling `suspendCoroutine { … }` / `suspendCoroutineUninterceptedOrReturn { … }` does NOT get
-    // the same-module `valueBlock`+`NotImplementedError` intrinsic block above — instead kotc emits a plain
-    // `callStatic <name>(<newClosure|newDelegate>) suspendCall:true`, owner:null (top-level intrinsic), the
-    // block materialized as a closure class (capturing) or a top-level `__lambdaN` (non-capturing). This IS a
-    // suspension point — recognized here, lowered by EmitSuspendCoroutineCall (which reconstructs the wrapper's
-    // SafeContinuation body / the unintercepted block, since the un-inlined wrapper body is unavailable).
+    // F2 — the SOLE `suspendCoroutine`/`suspendCoroutineUninterceptedOrReturn` recognizer, FQN-based on the plain
+    // call. Our compiler does NOT inline these @InlineOnly intrinsics at the call site (cross-module never; same-module
+    // no longer either — kotc's same-module source-splice + the `suspendIntrinsic` valueBlock stamp were retired in
+    // #75 S4b), so in EVERY build (app cross-module AND stdlib self-build same-module) kotc emits a plain
+    // `callStatic <name>(<newClosure|newDelegate>) suspendCall:true`, owner:null (top-level intrinsic) OR the resolved
+    // stdlib file-class, the block materialized as a closure class (capturing) or a top-level `__lambdaN`
+    // (non-capturing). This IS a suspension point — recognized here, lowered by EmitSuspendCoroutineCall (which
+    // reconstructs the wrapper's SafeContinuation body / the unintercepted block, since the un-inlined wrapper body is
+    // unavailable). The recognizer is purely STRUCTURAL (k/suspendCall/method/owner/arg-shape) — no module-boundary
+    // gate — so it fires identically same-module and cross-module.
     // The two suspendCoroutine intrinsics and their stdlib file-class owners. kotc emits `owner:null`; an earlier
     // bir2cir pass (call-owner resolution) fills in the file class — so a match is `owner == null` (unresolved) OR the
     // exact stdlib owner (a user-defined same-name function in a DIFFERENT owner is thus never mistaken for these).
@@ -183,16 +148,6 @@ static class SuspendColdLowering
     static bool IsSuspendValueCall(JsonObject o) =>
         Str(o["k"]) == "callInstance" && Bool(o["suspendCall"]) && Str(o["method"]) == "invoke"
         && (BareOwner(TypeJson.OwnerName(o["ownerType"]))?.StartsWith(SuspendFunctionPrefix, StringComparison.Ordinal) ?? false);
-
-    // The `newClosure` (the `{ c -> … }` block) buried in an intrinsic block's stmts (a `var __inlN` init).
-    static JsonObject IntrinsicClosureNew(JsonObject block)
-    {
-        if (block["stmts"] is JsonArray a)
-            foreach (var s in a)
-                if (s is JsonObject so && so["init"] is JsonObject init && Str(init["k"]) == "newClosure")
-                    return init;
-        return null;
-    }
 
     // A suspend fun's identity: Owner=null for a top-level file-class static, else the enclosing class FQN. Sig
     // is the joined param-type list — it discriminates OVERLOADS that share (Owner, Name) (e.g. SequenceScope
@@ -579,12 +534,9 @@ static class SuspendColdLowering
             case JsonObject o:
             {
                 var k = Str(o["k"]);
-                // The inline `suspendCoroutineUninterceptedOrReturn { c -> … }` intrinsic (a valueBlock whose
-                // result is the fake NotImplementedError throw) IS a supported cold suspension point — do NOT
-                // descend into its embedded newClosure (which would trip the LambdaKinds refusal below).
-                if (IsSuspendIntrinsicBlock(o)) return true;
-                // F2 — a cross-module suspendCoroutine call IS a supported cold suspension point; do NOT descend
-                // into its embedded newClosure/newDelegate block arg (which would trip the LambdaKinds refusal).
+                // F2 — a suspendCoroutine/suspendCoroutineUninterceptedOrReturn call IS a supported cold suspension
+                // point; do NOT descend into its embedded newClosure/newDelegate block arg (which would trip the
+                // LambdaKinds refusal below).
                 if (IsSuspendCoroutineCall(o)) return true;
                 // GAP 2 — a `newSuspendLambda` VALUE built inside a suspend fun (e.g. a member `suspend fun go() =
                 // run1 { … }` that constructs a `this`-capturing suspend lambda and drives it via a suspend-value
@@ -673,8 +625,9 @@ static class SuspendColdLowering
         switch (node)
         {
             case JsonObject o:
+                // A suspendCoroutine/suspendCoroutineUninterceptedOrReturn call (F2) is a plain `callStatic
+                // suspendCall:true`, already caught by the check above — no separate marker needed.
                 if (o.ContainsKey("suspendCall") && Bool(o["suspendCall"])) return true;
-                if (IsSuspendIntrinsicBlock(o)) return true;   // the inline suspendCoroutine intrinsic IS a suspension
                 foreach (var kv in o) if (kv.Value != null && HasSuspension(kv.Value)) return true;
                 return false;
             case JsonArray a:
@@ -1014,7 +967,8 @@ static class SuspendColdLowering
                 if (n is JsonObject o)
                 {
                     var k = Str(o["k"]);
-                    if (IsSuspendIntrinsicBlock(o)) return;
+                    // Skip nested lambda/closure subtrees (incl. the F2 suspendCoroutine call's newClosure/newDelegate
+                    // block arg) — they own their own scope, handled separately.
                     if (k != null && LambdaKinds.Contains(k)) return;
                     if (k == "var" && Str(o["name"]) is string vn)
                     {
@@ -1064,8 +1018,7 @@ static class SuspendColdLowering
                 if (n is JsonArray a) { foreach (var it in a) if (it != null) Visit(it); return; }
                 if (n is not JsonObject o) return;
                 var k = Str(o["k"]);
-                if (IsSuspendIntrinsicBlock(o)) return;             // nested suspension owns its own scope
-                if (k != null && LambdaKinds.Contains(k)) return;   // nested lambda/closure -> separate SM
+                if (k != null && LambdaKinds.Contains(k)) return;   // nested lambda/closure (incl. F2 block arg) -> separate SM
                 switch (k)
                 {
                     case "var":
@@ -1114,9 +1067,8 @@ static class SuspendColdLowering
             {
                 case JsonObject o:
                     var k = Str(o["k"]);
-                    // The intrinsic block's `var __inlN` (the dead materialized closure) is inlined away, not
-                    // spilled — do NOT collect it as an SM field.
-                    if (IsSuspendIntrinsicBlock(o)) return;
+                    // Nested lambda/closure subtrees (incl. the F2 suspendCoroutine block arg) own their own scope —
+                    // their captures resolve via capMap, not as SM fields.
                     if (k != null && LambdaKinds.Contains(k)) return;
                     if (k == "var" && !inHandler)
                         AddField(Str(o["name"]), TypeJson.Read(o["type"]));
@@ -1310,9 +1262,10 @@ static class SuspendColdLowering
             if (node is JsonObject o)
             {
                 var k = Str(o["k"]);
-                // `smSelf`: the state-machine's OWN identity (`this` in invokeSuspend). Introduced by the intrinsic
-                // inliner for the `c`/continuation binding — it must survive the `this`->`$this` member rewrite
-                // (a captured `this` means the ENCLOSING receiver -> $this; `c` means the SM itself).
+                // `smSelf`: the state-machine's OWN identity (`this` in invokeSuspend). Introduced by the F2
+                // suspendCoroutine inliner (EmitSuspendCoroutineCall) for the `c`/continuation binding — it must survive
+                // the `this`->`$this` member rewrite (a captured `this` means the ENCLOSING receiver -> $this; `c` means
+                // the SM itself).
                 if (k == "smSelf") return new JsonObject { ["k"] = "this" };
                 if (k == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
                     return FieldOf(ln, FieldType(ln));
@@ -1340,8 +1293,6 @@ static class SuspendColdLowering
                 // which would wrongly denote the SM here rather than the captured enclosing instance.
                 if (k == "newSuspendLambda")
                     return RewriteSuspendLambdaNew(o);
-                if (IsSuspendIntrinsicBlock(o))
-                    return EmitIntrinsicSuspension(o, outp);
                 if (IsSuspendCoroutineCall(o))
                     return EmitSuspendCoroutineCall(o, outp);
                 // #11 — a `valueBlock` whose stmts/result span a suspension (e.g. an INLINE scope function
@@ -1619,95 +1570,9 @@ static class SuspendColdLowering
             return FieldOf(field, retTok);
         }
 
-        // The inline `suspendCoroutineUninterceptedOrReturn { c -> stmts; tail }` intrinsic, lowered to a real cold
-        // suspension point (kotc's emitSuspendIntrinsic/coSelfCont over the cold SM — BirEmitter.kt:1669-1688):
-        //   <inlined closure stmts, with `c`->this(SM) and captures->fields>
-        //   this.label = state
-        //   result = <tail>                          // the block's return value (e.g. COROUTINE_SUSPENDED)
-        //   if (result !== COROUTINE_SUSPENDED) goto resumeLabel      // synchronous fast path
-        //   return COROUTINE_SUSPENDED
-        //   resumeLabel: throwOnFailure(result); __aw = (T)result     // resumed value (or the sync tail)
-        // The block receives THIS coroutine's own continuation as `c` — and the SM IS a Continuation, so `c` binds
-        // to the SM itself (`smSelf`, surviving the this->$this member rewrite). Captured `this` means the ENCLOSING
-        // receiver, so it rewrites to `$this`. For `yield` the tail is a literal COROUTINE_SUSPENDED and the result
-        // is Unit (discarded); the general form supports a synchronous value too.
-        JsonNode EmitIntrinsicSuspension(JsonObject block, List<JsonNode> outp)
-        {
-            var newClosure = IntrinsicClosureNew(block);
-            var closureType = newClosure == null ? null : TypeJson.OwnerName(newClosure["closureType"]);
-            if (closureType == null || !_closures.TryGetValue(closureType, out var closureCls))
-            {
-                // Failure posture (LOUD): the suspendCoroutineUninterceptedOrReturn body is UNRESOLVABLE — its
-                // `{ c -> … }` closure class was not found in the compilation. Emitting a bare unconditional
-                // `return COROUTINE_SUSPENDED` here would compile to a coroutine that suspends PERMANENTLY (a silent
-                // runtime hang), turning a routing miss into a distant symptom. Fail at TRANSFORM time instead so the
-                // mis-routing is visible: either the closure class was dropped upstream, or the recognizer matched a
-                // non-intrinsic block. (A genuinely valid intrinsic always carries a resolvable closure class.)
-                throw new InvalidOperationException(
-                    $"unresolved suspendCoroutineUninterceptedOrReturn closure in '{(_ownerClass ?? _fileClass)}.{_name}' " +
-                    $"(closureType={closureType ?? "<none>"}): the intrinsic's `{{ c -> … }}` closure class is not in the " +
-                    "compilation — refusing to emit a permanently-suspending coroutine");
-            }
-
-            var invoke = (closureCls["methods"] as JsonArray)?.OfType<JsonObject>()
-                .FirstOrDefault(m => Str(m["name"]) == "invoke");
-            var cParam = (invoke?["params"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault() is JsonObject cp
-                ? Str(cp["name"]) : null;
-
-            // capture[i] binds closure field[i] (declaration order). A field read in the invoke body ->
-            // the corresponding capture expression (later rewritten: a captured `this` -> $this).
-            var capMap = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
-            if (closureCls["fields"] is JsonArray flds && newClosure["captures"] is JsonArray caps)
-                for (var i = 0; i < flds.Count && i < caps.Count; i++)
-                    if (flds[i] is JsonObject fo && Str(fo["name"]) is string fn)
-                        capMap[fn] = caps[i];
-
-            var invBody = invoke?["body"] as JsonArray ?? new JsonArray();
-            // Split the invoke body: everything but the final `return` is a pre-statement; the return VALUE is the tail.
-            JsonNode tail = Suspended();
-            var pre = new List<JsonNode>();
-            for (var i = 0; i < invBody.Count; i++)
-            {
-                if (i == invBody.Count - 1 && invBody[i] is JsonObject last && Str(last["k"]) == "return")
-                    tail = last["value"] ?? NullConst(AnyTn);
-                else
-                    pre.Add(invBody[i]);
-            }
-
-            var retTok = TypeJson.Read(block["type"]) ?? AnyTn;
-            if (IsUnitTn(retTok)) retTok = AnyTn;
-            var state = ++_state;
-            var resumeLabel = NextLabel();
-            RegisterResume(state, resumeLabel);
-            var field = "__aw$" + state;
-            AddFieldTyped(field, retTok);
-
-            // Inlined pre-statements (c->smSelf, captures->exprs), then rewritten (smSelf->this, captures' this->$this).
-            foreach (var s in pre)
-                EmitStmt(SubstClosure(s, capMap, cParam, closureType), outp);
-
-            outp.Add(SetField("label", IntConst(state)));
-            outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = "result",
-                ["value"] = Rewrite(SubstClosure(tail, capMap, cParam, closureType), outp) });
-            outp.Add(BrIf(new JsonObject
-            {
-                ["k"] = "objEq",
-                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "result" },
-                ["rhs"] = Suspended(),
-            }, false, resumeLabel));
-            if (_needSuspendGuard) outp.Add(SetField(SuspendingField, BoolConst(true)));   // BUG 1: mark the suspend-return
-            outp.Add(Ret(Suspended()));
-            outp.Add(Label(resumeLabel));
-            outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ThrowOnFailure() });
-            outp.Add(SetField(field, IsAnyTn(retTok)
-                ? new JsonObject { ["k"] = "local", ["name"] = "result" }
-                : new JsonObject { ["k"] = "cast", ["type"] = Tw(retTok), ["e"] = new JsonObject { ["k"] = "local", ["name"] = "result" } }));
-            return FieldOf(field, retTok);
-        }
-
-        // F2 — a CROSS-MODULE `suspendCoroutine { … }` / `suspendCoroutineUninterceptedOrReturn { … }` call, lowered to
-        // a real cold suspension point. Our compiler does NOT inline @InlineOnly cross-module, so (unlike the same-module
-        // valueBlock intrinsic that EmitIntrinsicSuspension handles) the app carries a plain
+        // F2 — a `suspendCoroutine { … }` / `suspendCoroutineUninterceptedOrReturn { … }` call, lowered to a real cold
+        // suspension point. Our compiler does NOT inline these @InlineOnly intrinsics at the call site (cross-module
+        // never; same-module no longer either since #75 S4b), so in EVERY build kotc carries a plain
         // `callStatic <name>(<newClosure|newDelegate>)`, its wrapper body NOT inlined. We reconstruct it here:
         //   suspendCoroutine (block returns Unit, wraps a SafeContinuation):
         //     this.__safe = newSafeContinuation((Continuation)this)   // buffers a synchronous resume
@@ -1823,8 +1688,10 @@ static class SuspendColdLowering
             return (body, cParam, capMap, closureType);
         }
 
-        // As SubstClosure, but binds the continuation param to an ARBITRARY expression (the SafeContinuation field for
-        // the wrapper; `smSelf` for the unintercepted form) rather than always `smSelf`.
+        // Substitute an F2 block-lambda body for inlining: a field read of the closure's own captured field -> its
+        // capture expression; the `c`/continuation param -> `cBinding` (the SafeContinuation field for the wrapper,
+        // `smSelf` for the unintercepted form). Produces a tree still in the ENCLOSING method's vocabulary, which
+        // Rewrite/EmitStmt then lower (smSelf->this, captured this->$this).
         JsonNode SubstBlock(JsonNode node, Dictionary<string, JsonNode> capMap, string cParam, JsonNode cBinding, string closureType)
         {
             if (node is JsonObject o)
@@ -1858,32 +1725,6 @@ static class SuspendColdLowering
             ["name"] = name,
             ["ret"] = Tw(type),
         };
-
-        // Substitute a closure-class invoke body for inlining: a field read of the closure's own captured field ->
-        // its capture expression; the `c`/continuation param -> `smSelf` (the SM itself). Produces a tree still in
-        // the ENCLOSING method's vocabulary, which Rewrite/EmitStmt then lower (smSelf->this, captured this->$this).
-        JsonNode SubstClosure(JsonNode node, Dictionary<string, JsonNode> capMap, string cParam, string closureType)
-        {
-            if (node is JsonObject o)
-            {
-                var k = Str(o["k"]);
-                if (k == "field" && TypeJson.OwnerName(o["ownerType"]) == closureType && Str(o["name"]) is string fn
-                    && capMap.TryGetValue(fn, out var cap))
-                    return cap.DeepClone();
-                if (k == "local" && cParam != null && Str(o["name"]) == cParam)
-                    return new JsonObject { ["k"] = "smSelf" };
-                var copy = new JsonObject();
-                foreach (var kv in o) copy[kv.Key] = kv.Value == null ? null : SubstClosure(kv.Value, capMap, cParam, closureType);
-                return copy;
-            }
-            if (node is JsonArray a)
-            {
-                var copy = new JsonArray();
-                foreach (var it in a) copy.Add(it == null ? null : SubstClosure(it, capMap, cParam, closureType));
-                return copy;
-            }
-            return node?.DeepClone();
-        }
 
         void RegisterResume(int state, int resumeLabel)
         {

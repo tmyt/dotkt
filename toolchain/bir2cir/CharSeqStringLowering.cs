@@ -180,10 +180,19 @@ static class CharSeqStringLowering
             if (obj["k"] == null && Str(obj["name"]) is string dn && _delegateTargets.Contains(dn))
                 return obj.DeepClone();
             var childEnv = env.WithDecl(obj);
+            // A valueBlock's `stmts` locals scope into its sibling `result` (see StringCharSequenceBridge.Walk) — thread
+            // them so a coercion/lowering site in `result` resolves a String local declared in stmts.
+            var resultEnv = childEnv;
+            if (Str(obj["k"]) == "valueBlock" && obj["stmts"] is JsonArray sarr)
+                foreach (var s in sarr)
+                    if (s is JsonObject so && Str(so["k"]) == "var" && Str(so["name"]) is string sn
+                        && TypeJson.Read(so["type"]) is TypeNode st)
+                        resultEnv = resultEnv.WithVar(sn, IsCharSeqT(st) ? StringTn : st);
             var copy = new JsonObject();
             foreach (var kv in obj)
                 copy[kv.Key] = kv.Value is JsonArray arr ? WalkArray(arr, childEnv)
-                             : kv.Value == null ? null : Walk(kv.Value, childEnv);
+                             : kv.Value == null ? null
+                             : Walk(kv.Value, kv.Key == "result" ? resultEnv : childEnv);
             return Transform(copy, env);
         }
         if (node is JsonArray topArr) return WalkArray(topArr, env);

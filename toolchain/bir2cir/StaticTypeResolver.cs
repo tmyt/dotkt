@@ -161,6 +161,17 @@ static class StaticType
             case "isInst" or "isInstRef" or "objEq": return new TypeNode.Fqn("kotlin.Boolean");
             // An expression-level ternary (`if`-expr / elvis / when-expr) -> its branch type.
             case "cond": return Surface(o["then"], scope) ?? Surface(o["else"], scope);
+            // A spliced inline call becomes a `valueBlock {stmts, result}` (InlineSplice) — its static type is the RESULT's,
+            // resolved with the block's OWN `var`s in scope (e.g. an `apply`-splice's result is `{k:local,__self}` declared
+            // in its stmts). Without this, a member call on a spliced value (`buildString{}.…`, a spliced map access) can't
+            // recover its receiver type and mis-lowers (e.g. `.toString()` stays the un-mapped `objMethod toString`).
+            case "valueBlock":
+            {
+                var inner = scope.Child();
+                foreach (var arr in new[] { o["stmts"] as JsonArray, o["body"] as JsonArray })
+                    if (arr != null) foreach (var st in arr) if (st is JsonObject so) inner.Declare(so);
+                return TypeJson.Read(o["type"]) ?? Surface(o["result"], inner);
+            }
             // A LOWERED primitive operator (PrimitiveOperatorLowering runs before the hint passes) — recover its RESULT
             // type, matching kotc's former `birType(op.type)` where `op` was the un-lowered `x.plus(y)`/`-x` member call.
             case "unaryOp":

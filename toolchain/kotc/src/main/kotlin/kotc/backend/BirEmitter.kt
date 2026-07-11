@@ -165,10 +165,6 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null) {
 	// CFG block-IR (E-0.5): file-global unique label ids (never reset) so ids never collide across methods/lambdas.
 	internal var cfgLabelN = 0
 	internal fun cfgFresh(): Int = cfgLabelN++
-	// Inlining ([[function-inlining-spike]]): lambda params currently being inlined -> the lambda passed for them.
-	internal val inlineLambdas = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrValueDeclaration, IrFunctionExpression>()
-	internal data class TypeArgScope(val keys: List<IrTypeParameter>, val old: Map<IrTypeParameter, TypeNode?>, val had: Set<IrTypeParameter>)
-	internal val inlineLambdaTypeScopes = java.util.IdentityHashMap<IrFunctionExpression, TypeArgScope>()
 	internal var inlCounter = 0
 	internal var scopeCounter = 0
 	internal var fileClass = ""   // current file's static class name (for top-level property access)

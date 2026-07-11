@@ -120,6 +120,35 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **Inline unification (#75) is complete — one splice engine for every `inline fun`.** kotc's three
+  historical inline mechanisms (`inlineCall` body-visible, the cross-module `[KotlinInline]` splice, and the
+  `SCOPE_FUNCTIONS`/`inlineUse` hardcode) collapse into a **single downstream bir2cir splice**. kotc now emits a
+  plain `callInline` by identity for every inline fn under a clean **2-axis rule** — splice ⟺ `isInline &&
+  hasLambdaArg (a non-`noinline` function-typed argument) && !suspendCoroutineIntrinsic`; a `noinline` lambda
+  becomes a real delegate; a lambda-less inline is a plain call (the JIT inlines it). bir2cir owns the whole
+  splice (overload selection by full param-sig, capture/`__outer`/`__self` materialization, closure synthesis,
+  `tv{scope:type}` substitution from a new `dispatchTypeArgs` carry, fail-loud guards on every descriptor-skew
+  path). `SCOPE_FUNCTIONS`/`inlineScope`/`inlineUse` are removed.
+- **bir2cir: nested collection type-arguments collapse to their invariant CLR sibling (the Root-V fix).**
+  At generic-argument depth ≥ 1, `kotlin.collections.List`→`IList`, `Collection`/`Set`→`ICollection` (the head
+  keeps the covariant read-only alias) — so a concrete `Dictionary<K, List<V>>` (e.g. a `groupBy` result)
+  inhabits a `Map<K, List<V>>` slot, which the previous read-only-sibling lowering made an uninhabitable
+  invariant slot (`mapValues`/`chunk`/`collops2` `ilverify` `StackUnexpected`). Extends §5c's head Map-collapse
+  to the value/element positions; see `docs/dotkt-semantics.md` §5c-bis for the deliberate verify-only gaps.
+
+- **ilemit: a mutable-collection interface value flowing into its read-only sibling slot is reconciled
+  with a `castclass`.** After bir2cir's arg-position variance collapse (at generic-argument depth ≥ 1,
+  Kotlin `List`→`IList`, `Collection`/`Set`→`ICollection`), a value whose static face is `IList<T>` /
+  `ICollection<T>` can reach a slot typed as the read-only sibling `IReadOnlyList<T>` / `IReadOnlyCollection<T>`
+  (same element `T`) — the two do not derive from each other in the CLR, so the raw flow failed `ilverify`
+  (`StackUnexpected`). ilemit now emits the runtime-checked `castclass` at every value-source/consumer site of
+  this exact family (call-return, method-return, local/field store, and argument), which always verifies (a
+  closed interface cast) and succeeds at runtime because the concrete value implements all faces. Fixes the
+  `chunk` / `collops2` / `mapvalues` head-position seams (`for`/destructuring element stores, `Pair.componentN()`
+  / `Map.Entry.value` reads typed as the read-only view). A user class implementing `MutableList` /
+  `MutableCollection` / `MutableSet` now also lists the read-only sibling interface so such a value can be
+  passed into a read-only slot. Purely CLR structural reconciliation — no Kotlin knowledge in ilemit.
+
 - **ilemit: a value-position `when`/ternary (`cond`) typed `kotlin.Unit` whose arms produce `void`
   no longer emits invalid IL.** When one arm of a Unit-typed conditional yields a value (a `valueBlock`
   loading a Unit local) while sibling arms are void (`x.close()`, `println(...)`, a value-producing

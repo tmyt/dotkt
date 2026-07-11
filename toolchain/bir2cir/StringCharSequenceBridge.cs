@@ -65,6 +65,9 @@ static class StringCharSequenceBridge
     // ilemit's `_types`). Fresh per process; app builds only. `_fired` tracks whether the file just walked wrapped.
     static bool _adapterEmitted;
     static bool _fired;
+    // The ref.dll index — consulted ONLY to read a spliced anonymous object's (`dotkt$obj*`) ctor param types, so a
+    // static-String arg flowing into its `CharSequence` capture slot is adapter-wrapped (WrapNewCtorArgs). Null-safe.
+    static ReferenceMetadataIndex _refs;
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
@@ -96,8 +99,9 @@ static class StringCharSequenceBridge
         }
     }
 
-    public static JsonNode Apply(JsonNode root)
+    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs = null)
     {
+        _refs = refs;
         _fired = false;
         var walked = Walk(root, new Env());
         // Emit the app-local adapter type into this file's `types` if a wrap fired here and no other file already got
@@ -117,10 +121,21 @@ static class StringCharSequenceBridge
         if (node is JsonObject obj)
         {
             var childEnv = env.WithDecl(obj);
+            // A valueBlock's `stmts` declare locals that scope into its sibling `result` (a spliced inline body is a
+            // valueBlock: `var it = element; result = first(it)`). The generic per-key walk would visit `result` with
+            // only childEnv, so a String local declared in stmts stays invisible to a wrap site in result -> a raw
+            // String flows into a CharSequence-ext arg unwrapped. Thread the stmts' var decls into the result env.
+            var resultEnv = childEnv;
+            if (Str(obj["k"]) == "valueBlock" && obj["stmts"] is JsonArray sarr)
+                foreach (var s in sarr)
+                    if (s is JsonObject so && Str(so["k"]) == "var" && Str(so["name"]) is string sn
+                        && TypeJson.Read(so["type"]) is TypeNode st)
+                        resultEnv = resultEnv.WithVar(sn, st);
             var copy = new JsonObject();
             foreach (var kv in obj)
                 copy[kv.Key] = kv.Value is JsonArray arr ? WalkArray(arr, childEnv)
-                             : kv.Value == null ? null : Walk(kv.Value, childEnv);
+                             : kv.Value == null ? null
+                             : Walk(kv.Value, kv.Key == "result" ? resultEnv : childEnv);
             return Transform(copy, env);   // this node's own coercion sites use its ENCLOSING env
         }
         if (node is JsonArray topArr) return WalkArray(topArr, env);
@@ -154,6 +169,9 @@ static class StringCharSequenceBridge
             case "callInstance":
                 WrapCallArgs(node, env);
                 return node;
+            case "new":
+                WrapNewCtorArgs(node, env);
+                return node;
             case "var":
                 WrapVarInit(node, env);
                 return node;
@@ -176,6 +194,26 @@ static class StringCharSequenceBridge
         var n = Math.Min(sig.Count, args.Count);
         for (var i = 0; i < n; i++)
             if (TypeJson.Read(sig[i]) is TypeNode tn && IsCharSeqT(tn) && args[i] is JsonNode a && IsStaticString(a, env))
+                args[i] = WrapAdapter(a);
+    }
+
+    // (f): a static-String arg flowing into a SPLICED anonymous object's (`dotkt$obj*`) `CharSequence` ctor slot. A
+    // spliced `new dotkt$obj90(receiver, keySelector)` (the anonymous Grouping from `CharSequence.groupingBy`) captures
+    // the receiver as `kotlin.CharSequence`, but the spliced node carries no argTypes and CharSeqStringLowering already
+    // collapsed the receiver var to `System.String` — so the raw String reaches obj90's `get_length()` and NREs. The
+    // ctor param types come from the ref.dll (_refs); wrap each static-String arg whose ctor slot is CharSequence.
+    static void WrapNewCtorArgs(JsonObject node, Env env)
+    {
+        if (_refs == null || node["args"] is not JsonArray args) return;
+        if (TypeJson.Read(node["type"]) is not TypeNode.Fqn tf
+            || !tf.Name.StartsWith("dotkt$obj", StringComparison.Ordinal)) return;
+        var ctorParams = _refs.OwnerCtorParamTypeNames(tf.Name);
+        // Require an EXACT arity match: a positional skew (a synthetic `__outer` present on one side only) would align the
+        // CharSequence-slot check against the wrong argument and wrap a genuine value. Skip rather than risk it.
+        if (ctorParams == null || ctorParams.Length != args.Count) return;
+        for (var i = 0; i < args.Count; i++)
+            if ((IsCharSeqSlot(ctorParams[i]) || Bare(ctorParams[i]) == "kotlin.CharSequence")
+                && args[i] is JsonNode a && IsStaticString(a, env))
                 args[i] = WrapAdapter(a);
     }
 

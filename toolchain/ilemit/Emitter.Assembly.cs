@@ -175,6 +175,8 @@ sealed partial class Emitter
                 }
             }
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
+            {
+                var declaredIfaces = new List<Type>();
                 foreach (var i in ifs.EnumerateArray())
                 {
                     if (ReadFqn(i) is not DotKt.Bir.TypeNode.Fqn iFqn) continue;
@@ -184,7 +186,18 @@ sealed partial class Emitter
                     if (!_types.ContainsKey(iFqn.Name)) itype = MapType(iFqn);
                     else { var (open, constructed) = ParseOwnerT(iFqn); itype = constructed ?? (Type)_types[open].TB; }
                     ti.TB.AddInterfaceImplementation(itype);
+                    declaredIfaces.Add(itype);
                 }
+                // (#75) A user class implementing an invariant MUTABLE collection interface (MutableList/MutableCollection/
+                // MutableSet -> IList<T>/ICollection<T>/ISet<T>) must ALSO list the READONLY sibling
+                // (IReadOnlyList<T>/IReadOnlyCollection<T>) so the arg-position ref->ref castclass (EmitArg) is TOTAL:
+                // a user mutable-collection value can then be passed into a readonly slot. BCL List/HashSet already list
+                // both faces; a user class may declare only the mutable face. The readonly members (get_Item/Count/
+                // GetEnumerator) are satisfied implicitly by the mutable face's already-wired public virtual methods, so
+                // no extra override wiring is needed. Skip a sibling already present in the declared interface list.
+                foreach (var sib in declaredIfaces.SelectMany(ReadonlyCollectionSiblings).Distinct())
+                    if (!declaredIfaces.Contains(sib)) ti.TB.AddInterfaceImplementation(sib);
+            }
         }
         _curTypeParams = null;
 
@@ -572,6 +585,23 @@ sealed partial class Emitter
         T("save: writing PE");
         Save(ab, entry);
         T("save: done");
+    }
+
+    // (#75) The READONLY sibling interface(s) a mutable-collection interface must also expose so a value implementing
+    // only the mutable face can be castclass'd into a readonly slot: IList<T>->IReadOnlyList<T>,
+    // ICollection<T>/ISet<T>->IReadOnlyCollection<T>. (IReadOnlyList<T> derives from IReadOnlyCollection<T>, so listing
+    // the former is enough for a list.) All members are satisfied implicitly by the mutable face's methods.
+    static IEnumerable<Type> ReadonlyCollectionSiblings(Type itype)
+    {
+        if (itype == null || !itype.IsGenericType || itype.IsGenericTypeDefinition) yield break;
+        var args = itype.GetGenericArguments();
+        if (args.Length != 1) yield break;
+        var t = args[0];
+        var gd = itype.GetGenericTypeDefinition();
+        if (gd == typeof(System.Collections.Generic.IList<>))
+            yield return typeof(System.Collections.Generic.IReadOnlyList<>).MakeGenericType(t);
+        else if (gd == typeof(System.Collections.Generic.ICollection<>) || gd == typeof(System.Collections.Generic.ISet<>))
+            yield return typeof(System.Collections.Generic.IReadOnlyCollection<>).MakeGenericType(t);
     }
 
     IEnumerable<TypeInfo> Ordered()

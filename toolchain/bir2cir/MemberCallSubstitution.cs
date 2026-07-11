@@ -723,7 +723,16 @@ static class MemberCallSubstitution
         // `callInstance kotlin.Int.compareTo`; the primitive->BCL knowledge lives here. Placed BEFORE Rule 3 because a
         // primitive that carries a rule-3 body (Char) would otherwise route to its `dotkt$ClrH_kotlin_Char` helper —
         // WRONG (and self-recursive inside that helper's own body). The 8 signed/bool/char primitives only.
-        if (instance && member == "compareTo" && args.Count == 1 && PrimitiveCompareToBcl(ownerFqn) is string primBcl)
+        // The receiver arm ALSO covers a spliced generic `T : Comparable<T>` body whose R concretized to a primitive
+        // (maxByOrNull's `maxValue < v`, maxValue: R->System.Int32): the declared owner is the aliased `kotlin.Comparable`
+        // (so the owner arm misses), and the fallthrough `IComparable<object>.CompareTo` dispatch is INVALID on an unboxed
+        // value type — a native SIGSEGV (Int32 implements IComparable<Int32>/IComparable, never IComparable<object>).
+        // Constrainify only rescues a TYPE-VARIABLE receiver; a CONCRETE primitive receiver must bind the struct's own
+        // CompareTo(prim) here.
+        if (instance && member == "compareTo" && args.Count == 1
+            && (CompareToBclTarget(ownerFqn)
+                ?? (node["recv"] is JsonObject cmpRecv && RecvStaticType(cmpRecv, ctx, true) is TypeNode.Fqn rf
+                    ? CompareToBclTarget(rf.Name) : null)) is string primBcl)
             return new JsonObject
             {
                 ["k"] = "clrInstance", ["type"] = TypeJson.Fqn(primBcl), ["method"] = "CompareTo",
@@ -956,18 +965,19 @@ static class MemberCallSubstitution
         return null;
     }
 
-    // The BCL value type whose `CompareTo` a boxed kotlin.<Prim> primitive's `compareTo` routes to (mirrors the former
-    // kotc primitive-compareTo lowering). null for a non-primitive owner.
-    static string PrimitiveCompareToBcl(string ownerFqn) => ownerFqn switch
+    // The BCL value type whose `CompareTo` a primitive `compareTo` routes to (mirrors the former kotc primitive-compareTo
+    // lowering). Accepts every spelling a compareTo owner OR a concrete receiver static type may carry at this pass:
+    // the boxed kotlin.<Prim>, the already-lowered System.<Prim>, and the primitive shorthand. null for a non-primitive.
+    static string CompareToBclTarget(string name) => name switch
     {
-        "kotlin.Int" => "System.Int32",
-        "kotlin.Long" => "System.Int64",
-        "kotlin.Byte" => "System.SByte",
-        "kotlin.Short" => "System.Int16",
-        "kotlin.Float" => "System.Single",
-        "kotlin.Double" => "System.Double",
-        "kotlin.Char" => "System.Char",
-        "kotlin.Boolean" => "System.Boolean",
+        "kotlin.Int" or "System.Int32" or "int" => "System.Int32",
+        "kotlin.Long" or "System.Int64" or "long" => "System.Int64",
+        "kotlin.Byte" or "System.SByte" or "sbyte" => "System.SByte",
+        "kotlin.Short" or "System.Int16" or "short" => "System.Int16",
+        "kotlin.Float" or "System.Single" or "float" => "System.Single",
+        "kotlin.Double" or "System.Double" or "double" => "System.Double",
+        "kotlin.Char" or "System.Char" or "char" => "System.Char",
+        "kotlin.Boolean" or "System.Boolean" or "bool" => "System.Boolean",
         _ => null,
     };
 

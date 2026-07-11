@@ -859,10 +859,14 @@ internal fun BirEmitter.classModsJson(fnIface: Boolean = false, sealed: Boolean 
 	return if (flags.isEmpty()) "" else ""","mods":{${flags.joinToString(",")}}"""
 }
 
-/** An `inline fun` with at least one (inlinable) lambda parameter — the only inline shape whose body must travel
- *  for cross-module consumption (lambda-less inline funs degrade to ordinary calls; the JIT inlines those). */
+/** An `inline fun` with at least one function-typed parameter (AXIS ①: `Fn`, INCLUDING `noinline` AND `crossinline`)
+ *  — the inline shape whose body must travel for cross-module consumption, so it carries its `[KotlinInline]` inlineBir
+ *  payload. Matches `callNeedsSplice`'s AXIS-① trigger: ANY lambda arg splices the fn, so its body (which references
+ *  EVERY function param — a noinline one as a delegate temp, a normal/crossinline one via a spliced carrier) must be
+ *  available. The per-arg carrier-vs-delegate split (AXIS ②) is decided in the emitters, not here. Lambda-less inline
+ *  funs degrade to ordinary calls (the JIT inlines those). */
 internal fun BirEmitter.isInlineWithLambda(fn: IrSimpleFunction): Boolean =
-	fn.isInline && fn.parameters.any { it.kind == IrParameterKind.Regular && !it.isNoinline && birType(it.type) is TypeNode.Fn }
+	fn.isInline && fn.parameters.any { it.kind == IrParameterKind.Regular && birType(it.type) is TypeNode.Fn }
 
 // ===== Coroutine SUSPEND FACTS (kotc emits facts only; ALL coroutine lowering is bir2cir's) =====
 // kotc does NO coroutine lowering. A `suspend fun`/lambda body emits PLAINLY: decls carry `"suspend":true`

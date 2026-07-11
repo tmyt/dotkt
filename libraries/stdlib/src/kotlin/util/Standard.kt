@@ -12,12 +12,10 @@ import kotlin.contracts.*
 /**
  * An exception is thrown to indicate that a method body remains to be implemented.
  */
-// NOTE: NotImplementedError is deliberately NOT @ClrTypeAlias-bound to System.NotImplementedException. bir2cir's cold
-// suspend lowering identifies the `suspendCoroutineUninterceptedOrReturn` intrinsic marker by matching a literal
-// `new kotlin.NotImplementedError(...)` node (SuspendColdLowering.IsSuspendIntrinsicBlock); aliasing this class would
-// make MemberCallSubstitution rewrite that `new` to a `clrNew System.NotImplementedException` BEFORE the suspend pass
-// runs, so the marker would no longer be recognized and every `sequence{}`/`yield` cold entry would go un-lowered.
-// It stays a real emitted Kotlin class; a `TODO()` throws it directly (kotc emits `new kotlin.NotImplementedError`).
+// NOTE: NotImplementedError is deliberately NOT @ClrTypeAlias-bound to System.NotImplementedException. It stays a real
+// emitted Kotlin class because `TODO()` throws it (bir2cir PreconditionLowering lowers TODO() -> `new
+// kotlin.NotImplementedError(...)`) and Kotlin semantics make it an observable `Error` subtype a caller can catch by
+// that exact type — binding it away would change the thrown type. It stays a plain emitted class with a real body.
 public class NotImplementedError(message: String = "An operation is not implemented.") : Error(message)
 
 /**

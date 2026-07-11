@@ -309,6 +309,32 @@ Consequences (deliberate, declared):
   String, V>` and fine under JVM erasure) `castclass`-fails on the CLR, because that value is an
   `IDictionary<object,V>`. Use a `Map<String, …>`-typed map for `by`-delegation.
 
+## 5c-bis. Nested collection type-arguments collapse to their INVARIANT CLR sibling (`List`→`IList` at depth ≥ 1)
+
+§5c's head-position Map collapse has a general cause: CLR generics are **invariant**, and the read-only
+interface does not derive from its mutable sibling (`IList<T>` does **not** inherit `IReadOnlyList<T>`;
+`ICollection<T>` not `IReadOnlyCollection<T>`). At the top level (**head**) DotKt keeps the covariant read-only
+alias — so `val xs: List<Number> = listOfInts` stays verifiable via CLR interface covariance. But **inside a
+generic type argument** the covariance is unusable: `groupBy` returns a concrete `Dictionary<K, List<V>>` (a
+*mutable* list in the value slot), which inhabits no instantiation of a `Map<K, List<V>>` slot lowered with the
+read-only sibling in the value position (invariant `IDictionary<K, IReadOnlyList<V>>`). So bir2cir **collapses
+each read-only collection FQN to its invariant sibling whenever it appears at generic-argument depth ≥ 1**:
+`List`→`IList`, `Collection`/`Set`→`ICollection` inside any type argument (and in `newList`/`newMap`/`newSet`
+element keys and call/ctor type-args); the head keeps the covariant alias. Then `Map<K, List<V>>` lowers to
+`IDictionary<K, IList<V>>` and the concrete `Dictionary` inhabits it. Where a head-position read-only value then
+meets a collapsed mutable slot (or vice-versa), ilemit reconciles with a runtime-checked `castclass` (always
+verifiable — a closed interface cast — and succeeds because stdlib collection values implement every face).
+
+Known deliberate gaps (all **verify-only / run-correct** for stdlib-backed values, tracked as follow-ups):
+- A **user class implementing ONLY the read-only face** (`class X : List<T>` with no mutable sibling) cannot be
+  stored into a nested collapsed `IList` slot — the `castclass` throws at runtime. stdlib/BCL collections
+  implement all faces, so this bites only hand-rolled read-only-only user collections.
+- A **foreign C#-supplied `IList`-only collection** flowing into a read-only slot likewise throws at the
+  reconciling `castclass` (interop collections are outside the current stdlib-value assumption).
+- A **nested covariant upcast** (`val b: List<List<Any>> = a` where `a: List<List<String>>`) is verify-only
+  dirty — the collapse trades the (previously CLR-granted, rarely-used) nested covariance for the far more
+  common concrete-into-slot verifiability. It runs correctly.
+
 ## 5d. `Appendable` is `System.Text.StringBuilder`
 
 `kotlin.text.Appendable` is a JVM-ism (`java.lang.Appendable`) with **no distinct .NET representation** —

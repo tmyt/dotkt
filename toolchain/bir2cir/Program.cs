@@ -238,6 +238,13 @@ sealed class Pipeline
             // returns, hygiene) into a value-producing valueBlock — which then re-lowers IN THIS app's context. Runs here
             // (before ClosureSynthesis, like RepeatInlineLowering) so nested closures in the spliced body synthesize once.
             InlineSplice.Apply(bir.Root, refs);
+            // RE-NORMALIZE the just-spliced RAW payload bodies: InlineSplice runs AFTER ObjectSlotRename (219), so a
+            // cross-module inline body carries kotc's raw `objMethod toString`/`hashCode`/`equals` (and `anySlot` calls)
+            // un-renamed — ilemit's EmitObjMethod keys on the BCL spelling (`ToString`), so an un-renamed `toString`
+            // silently drops the call (the receiver flows through -> a wrong-type cast). ObjectSlotRename is idempotent
+            // (already-BCL names + already-stripped `anySlot` are no-ops), so a second whole-tree pass only fixes the
+            // spliced-in nodes. (#75: splice-all made this live — e.g. `buildString{}` losing its `.toString()`.)
+            ObjectSlotRename.Apply(bir.Root);
             ClosureSynthesis.Apply(bir.Root);
             SharedSyntheticSynthesis.Apply(bir.Root);
             // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's
@@ -444,7 +451,7 @@ sealed class Pipeline
             // declares a user CharSequence implementer (hasUserCharSeqImpl) — those keep the synthetic verbatim.
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
                 substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns);
-            if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted);
+            if (!_options.RefBuild) substituted = StringCharSequenceBridge.Apply(substituted, refs);
             // CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (IndexOutOfBoundsException)` @ClrTypeAlias-es to a
             // SINGLE .NET type, but .NET index ops throw TWO distinct ones (List.get_Item -> ArgumentOutOfRangeException,
             // array -> IndexOutOfRangeException). Expand each such clause into two clauses covering BOTH so the Kotlin

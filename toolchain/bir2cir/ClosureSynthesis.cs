@@ -46,7 +46,14 @@ static class ClosureSynthesis
         {
             var ts = file["types"] as JsonArray;
             if (ts == null) { ts = new JsonArray(); file["types"] = ts; }
-            foreach (var nt in newTypes) ts.Add(nt);
+            // Dedup by name: a cross-module SPLICED `newSam`/`newClosure` synthClass carries a FIXED origin name (e.g.
+            // `dotkt$…$Sam102`) that can recur when the same inline fn is spliced at multiple sites — append each unique
+            // synthesized type once (a duplicate type name is a hard ilemit error).
+            var have = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var t in ts) if (t is JsonObject to && Str(to["name"]) is string tn) have.Add(tn);
+            foreach (var nt in newTypes)
+                if (nt is JsonObject no && Str(no["name"]) is string nn && !have.Add(nn)) continue;
+                else ts.Add(nt);
         }
     }
 
@@ -62,7 +69,22 @@ static class ClosureSynthesis
                     if (sc["body"] is JsonNode body) Walk(body, newTypes);
                     newTypes.Add(BuildClosureClass(sc));
                     o.Remove("synthClass");
-                    return;   // children already walked (captures/body); nothing else to descend into here
+                    return;   // the invoke `body` (above) was recursed for NESTED closures; return WITHOUT descending into
+                              // this node's other children (the just-removed synthClass; the capture-value exprs are leaf reads)
+                }
+                // A `newSam` carrying an embedded `synthClass` (the fun-interface class): a CROSS-MODULE SPLICED `newSam`
+                // (e.g. `compareBy{}`'s Comparator) references a `dotkt$…$SamN` class that lives in the ORIGIN/stdlib file,
+                // not the consuming file — so kotc travels the class WITH the node (like newClosure) and we synthesize it
+                // HERE. The synthClass is a FULL class def (implements the interface + the SAM override); walk its method
+                // bodies for nested closures first (bottom-up), then append it. Dedup is handled at append time (a fixed
+                // origin name can recur across splices).
+                if (Str(o["k"]) == "newSam" && o["synthClass"] is JsonObject scSam)
+                {
+                    if (scSam["methods"] is JsonArray sms)
+                        foreach (var m in sms) if (m is JsonObject mo && mo["body"] is JsonNode mb) Walk(mb, newTypes);
+                    newTypes.Add(scSam.DeepClone());
+                    o.Remove("synthClass");
+                    return;
                 }
                 foreach (var kv in o.ToList())
                     if (kv.Value != null) Walk(kv.Value, newTypes);

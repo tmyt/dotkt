@@ -232,7 +232,7 @@ public actual class HashMap<K, V> : MutableMap<K, V> {
         }
         return null
     }
-    actual override fun putAll(from: Map<out K, V>) = clrMapPutAll(this, from)
+    actual override fun putAll(from: Map<out K, V>) = clrMapPutAll<K, V>(this, from)
     @kotlin.clr.ClrIntrinsic("Clear")
     actual override fun clear() { TODO("clr binding should be implemented") }
 
@@ -294,7 +294,7 @@ public actual class LinkedHashMap<K, V> : MutableMap<K, V> {
         }
         return null
     }
-    actual override fun putAll(from: Map<out K, V>) = clrMapPutAll(this, from)
+    actual override fun putAll(from: Map<out K, V>) = clrMapPutAll<K, V>(this, from)
     @kotlin.clr.ClrIntrinsic("Clear")
     actual override fun clear() { TODO("clr binding should be implemented") }
 

@@ -94,7 +94,12 @@ sealed partial class Emitter
                 {
                     EmitExpr(e.GetProperty("recv"));
                     _il.Emit(OpCodes.Callvirt, getter);
-                    return RetOr(e, getter.ReturnType);
+                    // Property-read twin of the CoerceReturn seam (`pair.first` vs the destructuring `component1()`): the
+                    // getter actually returns the mutable interface (IList<T>) while bir2cir's `ret` declares the readonly
+                    // view (IReadOnlyList<T>). Reconcile the stack to the declared view with a castclass.
+                    var prDeclared = RetOr(e, getter.ReturnType);
+                    if (IsMutableToReadOnlyView(getter.ReturnType, prDeclared)) _il.Emit(OpCodes.Castclass, prDeclared);
+                    return prDeclared;
                 }
                 EmitExpr(e.GetProperty("recv"));
                 var fb = ResolveField(fon, fnm, out var ft);

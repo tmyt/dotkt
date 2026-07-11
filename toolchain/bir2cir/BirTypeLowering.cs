@@ -138,6 +138,20 @@ static class BirTypeLowering
 
     static string AliasBcl(string fqn) => _aliases.TryGetValue(fqn, out var bcl) ? bcl : null;
 
+    // ARG-POSITION VARIANCE COLLAPSE (Root V): the INVARIANT BCL sibling of each covariant readonly collection interface,
+    // used ONLY at generic-arg depth >= 1 (see LowerType) where the covariant alias is unrescuable against a concrete
+    // invariant value — `IList<T>` does NOT inherit `IReadOnlyList<T>`, so `Dictionary<K,IList<V>>` inhabits no
+    // `IDictionary<K,IReadOnlyList<V>>` (invariant). The concrete BCL type inhabits these exactly: List<T>/HashSet<T>
+    // implement IList<T>/ICollection<T>. (Iterable->IEnumerable is covariant, no collapse; Map/MutableMap already
+    // collapse to IDictionary at head.) HEAD-position seams (a head IList<T> value into a readonly IReadOnlyList<T> slot)
+    // are closed by ilemit's EmitArg ref->ref castclass companion — this is a coordinator-orchestrated cross-layer change.
+    static readonly IReadOnlyDictionary<string, string> InvariantSibling = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["kotlin.collections.List"] = "System.Collections.Generic.IList",
+        ["kotlin.collections.Collection"] = "System.Collections.Generic.ICollection",
+        ["kotlin.collections.Set"] = "System.Collections.Generic.ICollection",
+    };
+
     // Whether the INNER of a `{t:nullable}` node is a value type — evaluated on the SEMANTIC (pre-lowering) inner so a
     // struct/enum/primitive FQN is recognized before it is rewritten to a CLR shorthand / BCL name. A generic
     // application, function type, array, byRef, or type variable is treated as a reference (stripped). A value FQN
@@ -216,6 +230,13 @@ static class BirTypeLowering
                     // no value type is IComparable<object>). A concrete arg keeps the generic form.
                     if (bcl == "System.IComparable" && loweredArgs.Length == 1 && IsObjectish(loweredArgs[0]))
                         return new TypeNode.Fqn("System.IComparable");
+                    // ARG-POSITION VARIANCE COLLAPSE (Root V): at generic-arg depth >= 1 (typeArg), a covariant readonly
+                    // collection interface -> its INVARIANT sibling, so a concrete invariant value inhabits the nested
+                    // slot EXACTLY. The HEAD (depth-0) keeps the covariant alias; the head-position seam it leaves is
+                    // closed by ilemit's EmitArg ref->ref castclass. RefBuild is `kotlin.*` verbatim (line 191); `!refBuild`
+                    // also spares a `force` attribute-blob.
+                    if (typeArg && !refBuild && InvariantSibling.TryGetValue(f.Name, out var inv))
+                        return new TypeNode.Fqn(inv, loweredArgs);
                     return new TypeNode.Fqn(bcl, loweredArgs);
                 }
                 return new TypeNode.Fqn(f.Name, loweredArgs);
@@ -285,6 +306,12 @@ static class BirTypeLowering
         if (node is JsonObject obj)
         {
             var here = force || IsAttributeClass(obj);
+            // ROOT-V DEPTH: a collection-CONSTRUCTION node's element/value type key is a generic type-argument of the
+            // built collection (depth >= 1), so it collapses like a `typeArgs` element — the literal `listOf(listOf(…))`
+            // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). newArray's `elem` is
+            // NOT collapsed (CLR arrays are covariant in a reference element).
+            var nodeK = (obj["k"] as JsonValue)?.GetValue<string>();
+            var collCtor = nodeK is "newList" or "newSet" or "newMap";
             var copy = new JsonObject();
             foreach (var kv in obj)
             {
@@ -303,6 +330,8 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
                 else if (kv.Key == "ownerType" || kv.Key == "owner")
                     copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
+                else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType"))
+                    copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: true);   // Root V: depth>=1 positions collapse
                 else if (TypeKeys.Contains(kv.Key))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here);
                 else
@@ -452,10 +481,14 @@ static class BirTypeLowering
 
     // A type-bearing key's value: a scalar type string, an array of type strings (interfaces/argTypes/constraints/
     // typeArgs), or — for a few node shapes — a nested object, which is recursed structurally.
-    static JsonNode LowerTypeValued(JsonNode val, bool refBuild, bool force)
+    // `typeArg` = this value sits at generic-argument DEPTH (a call/ctor `typeArgs` list element, or a collection-
+    // construction element/value key on newList/newSet/newMap), so its element HEADS collapse per the Root-V rule.
+    // Default false: a `type`/`ret`/`argTypes`/`sig`/`base` head is depth-0 (keeps covariant); only its NESTED Args
+    // collapse via LowerType's own `typeArg:true` recursion.
+    static JsonNode LowerTypeValued(JsonNode val, bool refBuild, bool force, bool typeArg = false)
     {
         if (IsTypeObject(val))
-            return LowerTypeObject(val, refBuild, force, typeArg: false);
+            return LowerTypeObject(val, refBuild, force, typeArg);
 
         if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
             return JsonValue.Create(LowerTypeString(s, refBuild, force));
@@ -466,7 +499,7 @@ static class BirTypeLowering
             foreach (var item in arr)
             {
                 if (item != null && IsTypeObject(item))
-                    copy.Add(LowerTypeObject(item, refBuild, force, typeArg: false));
+                    copy.Add(LowerTypeObject(item, refBuild, force, typeArg));
                 else if (item is JsonValue iv && iv.TryGetValue<string>(out var its))
                     copy.Add(JsonValue.Create(LowerTypeString(its, refBuild, force)));
                 else

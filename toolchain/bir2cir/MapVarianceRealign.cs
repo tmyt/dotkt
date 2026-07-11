@@ -19,7 +19,7 @@ static class MapVarianceRealign
 {
     // The invariant BCL collection generics (their @ClrTypeAlias Kotlin FQNs). Type params here do NOT lift via CLR
     // variance — unlike List/Collection/Iterable (`IReadOnly*<out T>` covariant), which stay untouched.
-    static readonly HashSet<string> InvariantCollections = new(StringComparer.Ordinal)
+    public static readonly HashSet<string> InvariantCollections = new(StringComparer.Ordinal)
     {
         "kotlin.collections.Map", "kotlin.collections.MutableMap",
         "kotlin.collections.HashMap", "kotlin.collections.LinkedHashMap",
