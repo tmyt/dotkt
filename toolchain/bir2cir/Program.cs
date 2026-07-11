@@ -564,11 +564,36 @@ sealed class Pipeline
             // only the body STATEMENTS change. This is what makes it safe for a bare-value kotlin.* primitive kept
             // verbatim in the ref to appear in a signature without any real body ever emitting arithmetic/box/conv IL.
             if (_options.RefBuild) RefBodySquash.Squash(lowered);
+            // ROUNDTRIP METADATA (#71 S2): GENERATE every [Kotlin*]/[Nullable]/[NullableContext] attribute as ordinary
+            // CIR `attrs`/`retAttrs` entries (ilemit then only STAMPS them via its generic BuildCab path — no Kotlin
+            // knowledge left in ilemit). Runs on the fully-lowered decls so the materialized facts (nullableFlags,
+            // suspendFnType, inlineBir, mods, suspendBridge, readOnly) are all present. SKIPPED in the runtime build
+            // (`!SubstituteStdlibBuild`) — the gate that REPLACES ilemit's deleted `_stripMetadata`. Placed after
+            // RefBodySquash so the squash (bodies only) does not disturb the stamped attrs. The 9 attribute-class DEFS
+            // are emitted ONCE below (SynthDefsFile), not per-file.
+            if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
+            // RUNTIME build: strip every applied user annotation (kotc's kotlin.Deprecated/SinceKotlin/InlineOnly/…) —
+            // the job ilemit's deleted `_stripMetadata` did. DotKt.Stdlib.dll is the shipping runtime assembly (never
+            // metadata-read); keep it lean, matching the old strip.
+            else RoundtripMetadata.StripRuntimeAttrs(lowered);
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
             // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
             // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.
             if (!_options.RefBuild && IsEmptyCir(lowered)) continue;
             files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
+        }
+
+        // #71 S2: emit the 9 embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
+        // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).
+        // ilemit defines them like any type (no EnsureKotlinAttrs). Ref + app only — the runtime build stamps nothing.
+        if (!_options.SubstituteStdlibBuild)
+        {
+            const string synthName = "000-dotkt-roundtrip-attrs.cir.json";
+            // A real source file must never map to the reserved synthetic name — the two CirFiles would clobber on disk
+            // and every Kotlin stamp would then silently vanish (its attr class absent -> BuildCab skips).
+            if (files.Any(f => f.OutputName == synthName))
+                throw new InvalidOperationException($"bir2cir: reserved synthetic CIR name '{synthName}' collides with an input file");
+            files.Insert(0, new CirFile(synthName, RoundtripMetadata.SynthDefsFile().ToJsonString(JsonOptions.Indented)));
         }
 
         return files;

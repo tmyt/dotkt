@@ -21,10 +21,9 @@ sealed partial class Emitter
         // so refs become System.Runtime — a large, contained refactor (every typeof(Bcl) -> mlc lookup). Tracked #50.
         var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName), typeof(object).Assembly);
         _mod = ab.DefineDynamicModule(_asmName);
-        // Embed the DotKt.Runtime.CompilerServices.* metadata attribute types into this module up front (so they exist
-        // before any type/member that stamps one). No --ref DotKt.Runtime needed to resolve them. Skipped in the runtime
-        // (substitute) build — no [Kotlin*] is stamped there, so the attr CLASS defs would just be dead weight.
-        if (!_stripMetadata) EnsureKotlinAttrs();
+        // #71 S2: the DotKt.Runtime.CompilerServices.* + System.Runtime.CompilerServices.Nullable{,Context} attribute
+        // CLASSES are now ordinary CIR type decls (bir2cir's synthetic `000-dotkt-roundtrip-attrs` file); pass 1 below
+        // defines them like any type. No EnsureKotlinAttrs.
 
         // Pass 1: DefineType for every file-static-class and every user class.
         foreach (var file in files)
@@ -91,6 +90,9 @@ sealed partial class Emitter
                     // An `abstract`/`sealed`(Kotlin) class -> a CLR abstract class (cannot be instantiated; may hold
                     // abstract members). Kotlin `sealed` is also abstract at the CLR level.
                     if (!isIface && t.TryGetProperty("abstract", out var clsAbs) && clsAbs.GetBoolean()) attrs |= TypeAttributes.Abstract;
+                    // `final:true` -> TypeAttributes.Sealed (CLR-final, not Kotlin `sealed`). bir2cir sets it on the
+                    // round-trip attribute-class defs (#71 S2), matching the old embedded `NotPublic | Sealed | Class`.
+                    if (!isIface && t.TryGetProperty("final", out var clsFin) && clsFin.GetBoolean()) attrs |= TypeAttributes.Sealed;
                     // A generic type's CLR metadata name carries its arity (`Box`1`) — Reflection.Emit does NOT append
                     // it, and a cross-assembly consumer resolves the type by that standard name (`GetType("Box`1")`).
                     // The `_types` registry key stays the bare BIR name (`Box`), so same-assembly references are intact.
@@ -204,8 +206,7 @@ sealed partial class Emitter
                         var tlFb = f.TryGetProperty("volatile", out var tlVol) && tlVol.GetBoolean()
                                 ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), tlType, tlAttrs)
                                 : ti.TB.DefineField(f.GetProperty("name").GetString(), tlType, tlAttrs);
-                        // H2: a `suspend (…) -> T`-typed top-level property's backing field carries the pre-erasure shape.
-                        if (f.TryGetProperty("suspendFnType", out var tlSf)) ApplySuspendFnType(tlFb, tlSf.GetRawText());
+                        StampMemberAttrs(tlFb.SetCustomAttribute, f);   // [KotlinReadOnly]/[KotlinSuspendFunctionType]/… (bir2cir-generated)
                         ti.Fields[f.GetProperty("name").GetString()] = tlFb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: true);
@@ -232,10 +233,7 @@ sealed partial class Emitter
                         var fb = f.TryGetProperty("volatile", out var vol) && vol.GetBoolean()
                             ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), ftype, fattrs)
                             : ti.TB.DefineField(f.GetProperty("name").GetString(), ftype, fattrs);
-                        // A not-publicly-settable property's backing field -> [KotlinReadOnly] (consumer restores it as `val`).
-                        if (f.TryGetProperty("readOnly", out var ro) && ro.GetBoolean()) ApplyKotlinReadOnly(fb);
-                        // H2: a `suspend (…) -> T`-typed field/property backing field carries the pre-erasure shape.
-                        if (f.TryGetProperty("suspendFnType", out var fSf)) ApplySuspendFnType(fb, fSf.GetRawText());
+                        StampMemberAttrs(fb.SetCustomAttribute, f);   // [KotlinReadOnly]/[KotlinSuspendFunctionType]/… (bir2cir-generated)
                         ti.Fields[f.GetProperty("name").GetString()] = fb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: false);
@@ -248,8 +246,7 @@ sealed partial class Emitter
                         var pb = ti.TB.DefineProperty(p.GetProperty("name").GetString(), PropertyAttributes.None, MapType(p.GetProperty("type")), null);
                         if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(g.GetString(), out var gm)) pb.SetGetMethod(gm);
                         if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(s.GetString(), out var sm)) pb.SetSetMethod(sm);
-                        // H2: a `val/var x: suspend (…) -> T` property carries the pre-erasure `sfunc:` shape (its CLR type is object).
-                        if (p.TryGetProperty("suspendFnType", out var pSf)) ApplySuspendFnType(pb, pSf.GetRawText());
+                        StampMemberAttrs(pb.SetCustomAttribute, p);   // [KotlinSuspendFunctionType]/… (bir2cir-generated)
                     }
                 EnsureCtorsDefined(ti);
             }
@@ -486,74 +483,34 @@ sealed partial class Emitter
         // synthesized `: System.Attribute` class already exists). Args are compile-time constants.
         foreach (var ti in _types.Values)
         {
-            if (_stripMetadata) continue;   // runtime build: strip ALL roundtrip metadata (NRT, [Kotlin*], [KotlinInline])
-            // [NullableContext(1)] — the per-type NRT default: every reference-type position is non-null unless it
-            // carries its own [Nullable(2)]. So a consuming Kotlin (or C#) module sees DotKt's non-null `String` as
-            // non-null and `String?` as nullable, through .NET's standard nullable-reference metadata.
-            if (ti.TB != null) ApplyNullableContext(ti.TB);
-            if (ti.Def.TryGetProperty("attrs", out var tattrs))
+            // #71 S2: EVERY attribute here — user annotations AND the Kotlin round-trip metadata ([NullableContext]/
+            // [KotlinFileClass]/[KotlinFunInterface]/[KotlinSealed] on the type; [KotlinFunction]/[KotlinInline] on
+            // methods; [Nullable]/[KotlinSuspendFunctionType] in return position) — is an ordinary CIR `attrs`/`retAttrs`
+            // entry that bir2cir (RoundtripMetadata) generated. ilemit only STAMPS them dumbly through BuildCab; the
+            // Kotlin-semantic DECISION (which modifier -> which attribute) lives in bir2cir. A runtime-build CIR carries
+            // none (the pass is skipped there), so there is nothing to strip.
+            if (ti.TB != null && ti.Def.TryGetProperty("attrs", out var tattrs))
                 foreach (var a in tattrs.EnumerateArray()) { var cab = BuildCab(a); if (cab != null) ti.TB.SetCustomAttribute(cab); }
             if (ti.Def.TryGetProperty("methods", out var ms))
                 foreach (var m in ms.EnumerateArray())
                 {
-                    if (!(m.TryGetProperty("attrs", out var mattrs) && mattrs.GetArrayLength() > 0)) continue;
+                    bool hasA = m.TryGetProperty("attrs", out var mattrs) && mattrs.ValueKind == JsonValueKind.Array && mattrs.GetArrayLength() > 0;
+                    bool hasR = m.TryGetProperty("retAttrs", out var rattrs) && rattrs.ValueKind == JsonValueKind.Array && rattrs.GetArrayLength() > 0;
+                    if (!hasA && !hasR) continue;
                     // Resolve the target MethodBuilder by SIGNATURE first (MethodsBySig), name-only second — overloaded
                     // methods (sin(Double)+sin(Float), append(...), println(...)) share a name, so a name-only lookup
                     // collides on the last-declared overload: every def's attrs land on that ONE builder while the other
                     // overloads get NONE (this dropped @ClrIntrinsic from all-but-last overloads in the ref.dll, which
-                    // bir2cir reads as its binding source). Mirror the Kotlin-metadata path below.
+                    // bir2cir reads as its binding source).
                     var mname = m.GetProperty("name").GetString();
                     if (!ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var mb) && !ti.Methods.TryGetValue(mname, out mb)) continue;
-                    foreach (var a in mattrs.EnumerateArray()) { var cab = BuildCab(a); if (cab != null) mb.SetCustomAttribute(cab); }
-                }
-            // DotKt metadata: stamp Kotlin modifiers with no .NET analog so a consuming Kotlin module can restore
-            // them. [KotlinFileClass] on a file-facade class -> its statics are top-level fns; [KotlinFunction(flags)] on
-            // methods carrying infix/operator/suspend. The attribute types are SYNTHESIZED per-assembly (embedded
-            // internal) by DefineEmbeddedAttr (Emitter.CompilerServices.cs) — NOT loaded from DotKt.Runtime.
-            if (ti.IsFileClass) ApplyKotlinFileClass(ti.TB);
-            // Class-nature markers: a `fun interface` (SAM) lowers to a plain CLR interface, and a `sealed` class/
-            // interface lowers to a CLR abstract-class/interface — both lose the Kotlin nature. Stamp a marker so a
-            // re-consuming Kotlin module can restore it (facadegen reads them back; a C# consumer ignores them).
-            if (ti.TB != null && ModFlag(ti.Def, "fun")) ApplyKotlinFunInterface(ti.TB);
-            if (ti.TB != null && ModFlag(ti.Def, "sealed")) ApplyKotlinSealed(ti.TB);
-            if (ti.Def.TryGetProperty("methods", out var kms))
-                foreach (var m in kms.EnumerateArray())
-                {
-                    int kf = 0;
-                    if (ModFlag(m, "infix")) kf |= 1;       // KotlinFunctionFlags.Infix
-                    if (ModFlag(m, "operator")) kf |= 2;    // .Operator
-                    if (ModFlag(m, "suspend")) kf |= 4;     // .Suspend
-                    // The bir2cir-synthesized public Task<R> bridge (bundle-6 P4): a plain `Task`-returning method that
-                    // IS the Kotlin `suspend fun`'s CLR ABI. Stamp it Suspend so a round-tripping consumer (kcc/facadegen)
-                    // restores `suspend fun f(...)` — its suspend CALLS then lower to the `f$dotkt_suspend` cold entry.
-                    if (m.TryGetProperty("suspendBridge", out var sb) && sb.GetBoolean()) kf |= 4;   // .Suspend
-                    bool inl = ModFlag(m, "inline");
-                    // Return nullability (#37/#48): rides the Type node ONLY. bir2cir ALWAYS supplies the flattened NRT
-                    // byte walk in `retNullableFlags` ([1,2] = outer non-null, inner nullable) for every reference-nullable
-                    // return — the scalar decl-level `"retNullable"` flag (and the old param-`nullable`-derived nmask) are
-                    // retired. Param nullability is stamped separately in DefineParamNames from `nullableFlags`.
-                    byte[] retFlags = m.TryGetProperty("retNullableFlags", out var rnf) && rnf.ValueKind == JsonValueKind.Array ? ReadNullableFlags(rnf) : null;
-                    // H2: a `suspend (…) -> T` RETURN type — bir2cir carries the pre-erasure `sfunc:` shape in `retSuspendFnType`.
-                    string retSuspendFn = m.TryGetProperty("retSuspendFnType", out var rsf) ? rsf.GetRawText() : null;
-                    if (kf == 0 && !inl && retFlags == null && string.IsNullOrEmpty(retSuspendFn)) continue;
-                    var name = m.GetProperty("name").GetString();
-                    if (!ti.MethodsBySig.TryGetValue(SigKey(name, m), out var mb) && !ti.Methods.TryGetValue(name, out mb)) continue;
-                    if (kf != 0) ApplyKotlinFunction(mb, kf);
-                    // [KotlinInline(content)]: carry this inline+lambda fn's RAW BIR verbatim so a consumer (bir2cir) can
-                    // splice it. bir2cir stamps the base64 carrier on the decl as `inlineBir`; ilemit passes it through
-                    // untouched. Absent `inlineBir` = non-inline or rt-build-stripped -> do NOT stamp [KotlinInline].
-                    if (inl && m.TryGetProperty("inlineBir", out var ib) && ib.ValueKind == JsonValueKind.String)
-                        ApplyKotlinInline(mb, ib.GetString());
-                    // Return-position metadata rides the return parameter (position 0). Define it ONCE (a second
-                    // DefineParameter(0) would be a duplicate builder) and stamp every present fact: [Nullable(...)] for a
-                    // nullable return (nested byte-array form wins over the scalar), [KotlinSuspendFunctionType] for a
-                    // suspend fn-type return. The type's [NullableContext(1)] is the non-null default, so only the nullable
-                    // positions need an override.
-                    if (retFlags != null || !string.IsNullOrEmpty(retSuspendFn))
+                    if (hasA)
+                        foreach (var a in mattrs.EnumerateArray()) { var cab = BuildCab(a); if (cab != null) mb.SetCustomAttribute(cab); }
+                    // Return-position attrs ride the return parameter (position 0), defined once.
+                    if (hasR)
                     {
                         var retPb = mb.DefineParameter(0, ParameterAttributes.None, null);
-                        if (retFlags != null) ApplyNullable(retPb, retFlags);
-                        if (!string.IsNullOrEmpty(retSuspendFn)) ApplySuspendFnType(retPb, retSuspendFn);
+                        foreach (var a in rattrs.EnumerateArray()) { var cab = BuildCab(a); if (cab != null) retPb.SetCustomAttribute(cab); }
                     }
                 }
         }
@@ -703,8 +660,9 @@ sealed partial class Emitter
 
         // NOTE: ilemit no longer rewrites a `suspend fun`'s signature to `Task<T>`. The cold-core coroutine lowering
         // (bir2cir, bundle-6) already arrives here as ordinary CIR: the public `Task<T>` bridge is its OWN method
-        // carrying `suspendBridge:true` (stamped `[KotlinFunction(Suspend)]` below), and the cold entry / state-machine
-        // class are plain methods/types. A leftover `"suspend":true` method falls through to the normal signature path;
+        // carrying `suspendBridge:true` (from which bir2cir RoundtripMetadata generates the `[KotlinFunction(Suspend)]`
+        // attr, #71 S2), and the cold entry / state-machine class are plain methods/types. A leftover `"suspend":true`
+        // method falls through to the normal signature path;
         // at body time it emits a throwing stub in a STDLIB build (expected — the coroutine primitives have no SM form)
         // but is an emit-time ERROR in an app build (a bir2cir transform miss — see EmitMethodBody's suspend guard).
 

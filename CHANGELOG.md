@@ -624,6 +624,23 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Compiler architecture (4-layer / layer purity)
 
+- **All Kotlin round-trip metadata GENERATION moved from ilemit into bir2cir; ilemit is now Kotlin-metadata-FREE (#71
+  S2).** ilemit no longer synthesizes the embedded attribute classes or DECIDES which Kotlin modifier maps to which
+  attribute — a new bir2cir pass `RoundtripMetadata` GENERATES every `[KotlinFunction]`/`[KotlinFileClass]`/
+  `[KotlinFunInterface]`/`[KotlinSealed]`/`[KotlinReadOnly]`/`[KotlinInline]`/`[KotlinSuspendFunctionType]` and the
+  standard `[Nullable]`/`[NullableContext]` NRT attributes as ordinary CIR `attrs`/`retAttrs` entries, plus the 9
+  attribute-class definitions (`internal sealed : System.Attribute`) as ordinary CIR type decls in a dedicated synthetic
+  file. ilemit only STAMPS them dumbly through its generic `BuildCab`/`ConstArgValue` path (extended with a `bytes`
+  base64 arg kind and an exact-ctor-type pick that disambiguates the dual-ctor `NullableAttribute`). Deleted from ilemit:
+  `Emitter.CompilerServices.cs` (EnsureKotlinAttrs / DefineEmbeddedAttr), every `ApplyKotlin*`/`ApplyNullable*`/
+  `ApplySuspendFnType`, `DecodeCarrier`/`ReadByteArrayArg`/`ReadNullableFlags`, and the `_stripMetadata` runtime-strip
+  gate — bir2cir now both GENERATES the round-trip metadata (ref + app builds) and STRIPS kotc's verbatim user
+  annotations (runtime build, `RoundtripMetadata.StripRuntimeAttrs`), so a runtime-build CIR reaches ilemit already
+  attribute-free. Behavior-neutral for the metadata surface: an attribute dump of `DotKt.Private.Stdlib.dll` (the
+  reference assembly facadegen reads) and a sample user dll is byte-identical before/after. The runtime assembly
+  `DotKt.Stdlib.dll` is now genuinely round-trip-metadata-free as designed (the old build leaked `[Nullable]`/
+  `[KotlinReadOnly]`/`[KotlinSuspendFunctionType]` via un-gated declare-time stamps — never consumed, now gone).
+
 - **Cross-module inline splicing re-homed from ilemit to bir2cir, on a RAW-BIR `[KotlinInline]` carrier (#71/#75 S1).**
   ilemit no longer splices inline bodies and no longer builds the `[KotlinInline]` payload from post-lowering CIR. A new
   bir2cir pass `InlineBirStash` runs FIRST (before any lowering) and captures every `inline` method's RAW pre-lowering

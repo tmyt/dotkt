@@ -49,6 +49,10 @@ STR_OK = {
                                                  # (base64(BirCarrier.EncodeBody(raw decl))) bir2cir InlineBirStash stamps on
                                                  # an inline method decl; ilemit emits it verbatim as the carrier bytes. A
                                                  # metadata payload, NOT a type slot (§3 opaque, like smName/closureName).
+    "bytes",                                     # #71 S2: a base64 attribute-arg VALUE (RoundtripMetadata) — the carrier
+                                                 # payload for [KotlinInline]/[KotlinSuspendFunctionType] and the nested
+                                                 # NullableAttribute(byte[]) form; ilemit's ConstArgValue decodes it to a
+                                                 # real byte[] fixed argument. An opaque payload, NOT a type slot.
     # OWNER-FQN string islands (§2.2.1 — a type IDENTITY used as a resolution key, "owner stays string by m1
     # design"; NOT a document value-type slot). The dedicated owner keys are always owner-role, so allow-listing
     # them cannot mask a value-type leak (a value type is never keyed `owner`/`ownerType`/`clrOverride`).

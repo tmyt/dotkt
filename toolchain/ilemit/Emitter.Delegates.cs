@@ -9,6 +9,23 @@ using System.Text.Json;
 // Synthetic delegate types + Kotlin function-type (FunctionN/Action) resolution.
 sealed partial class Emitter
 {
+    // The embedded round-trip attribute namespace (#71 S2: the attribute CLASSES are now ordinary CIR type decls
+    // emitted by bir2cir; this const only names the synthetic-delegate metadata namespace below).
+    const string CompilerServicesNs = "DotKt.Runtime.CompilerServices.";
+
+    // ilemit AUTHORS its own synthetic high-arity delegate types; mark each [KotlinFunction(0)] (a plain function
+    // type — no infix/operator/suspend) so facadegen restores it as a Kotlin function type. This is ilemit stamping
+    // its OWN emitted member (analogous to StampCompilerGenerated), NOT round-trip generation over user code: the
+    // attribute CLASS is the ordinary CIR-defined `KotlinFunctionAttribute` in `_types` (bir2cir emits it, #71 S2),
+    // whose (int) ctor is resolved generically. Absent (a --no-stdlib or runtime build that emits no attr class) -> skip.
+    void StampKotlinFunctionZero(TypeBuilder tb)
+    {
+        if (!_types.TryGetValue(CompilerServicesNs + "KotlinFunctionAttribute", out var ti)) return;
+        EnsureCtorsDefined(ti);
+        if (ti.Ctors.Count == 0) return;
+        tb.SetCustomAttribute(new CustomAttributeBuilder(ti.Ctors[0], new object[] { 0 }));
+    }
+
     readonly Dictionary<string, TypeBuilder> _syntheticDelegates = new();
 
     readonly Dictionary<TypeBuilder, ConstructorBuilder> _syntheticDelegateCtors = new();
@@ -99,8 +116,7 @@ sealed partial class Emitter
             typeof(MulticastDelegate));
         tb.SetCustomAttribute(new CustomAttributeBuilder(
             typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
-        tb.SetCustomAttribute(new CustomAttributeBuilder(
-            _kFuncAttr.GetConstructor(new[] { typeof(int) }), new object[] { 0 }));
+        StampKotlinFunctionZero(tb);
 
         var names = Enumerable.Range(1, arity).Select(i => i == arity && returnsValue ? "TResult" : "T" + i).ToArray();
         var gps = tb.DefineGenericParameters(names);

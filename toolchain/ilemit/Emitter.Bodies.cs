@@ -166,9 +166,11 @@ sealed partial class Emitter
         int i = isStatic ? 0 : 1; // arg0 = this for instance methods
         foreach (var p in m.GetProperty("params").EnumerateArray())
         {
-            var pn = p.GetProperty("name").GetString();
-            _argTypes[pn] = MapType(p.GetProperty("type"));
-            _args[pn] = i++;
+            // A nameless param (the round-trip attribute-class ctors, #71 S2 — no Param row) is unreferenceable by
+            // body IL anyway; skip its arg-map entry but still advance the arg index.
+            var pn = p.TryGetProperty("name", out var nn) ? nn.GetString() : null;
+            if (!string.IsNullOrEmpty(pn)) { _argTypes[pn] = MapType(p.GetProperty("type")); _args[pn] = i; }
+            i++;
         }
     }
 
