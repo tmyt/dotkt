@@ -120,6 +120,15 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **ilemit: a value-position `when`/ternary (`cond`) typed `kotlin.Unit` whose arms produce `void`
+  no longer emits invalid IL.** When one arm of a Unit-typed conditional yields a value (a `valueBlock`
+  loading a Unit local) while sibling arms are void (`x.close()`, `println(...)`, a value-producing
+  `try` over void arms), the void arms pushed nothing — so the branches merged at the cond-end with
+  inconsistent eval-stack depth (ilverify `PathStackDepth` / `StackUnderflow`, `InvalidProgramException`
+  at JIT). `EmitBranchCoerced` now reconciles a void arm to the cond's result type (reference → `ldnull`;
+  value/generic-param → `default(T)`) so every path leaves exactly one value. Pure CIL stack-depth
+  reconciliation; surfaced by the `use{}`/`closeFinally` inline splice but independent of scope functions.
+
 - **#73 Wave 9 (G8): unbound extension-function callable references (`String::isNotBlank`,
   `String::indentWidth`, `Type::extFn`) now work.** Previously ANY extension-function reference fell
   through to `unsupportedExpr` in kotc's `functionRef`; the stdlib `Indent.kt` masked this by lambda-wrapping
@@ -656,6 +665,21 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   re-lowers IN THE APP's context (`@ClrIntrinsic` binds against the app ref.dll, generics resolve with call-site type
   args, reified is free on CLR) — the fix the old post-lowering ilemit splice could never do. Deleted from ilemit:
   `Emitter.InlineSplice.cs` (`EmitInlineSplice`/`EmitSplicedStmts`) + its 4 touchpoints + the `inlineSplice` CIR node.
+- **Scope functions (`let`/`run`/`with`/`apply`/`also`) and `use{}` retired from kotc hardcodes into the generic
+  `callInline` → bir2cir `InlineSplice` engine (#71/#75 S3).** kotc's mechanism-3 — the `SCOPE_FUNCTIONS` FQN set +
+  `inlineScope`/`inlineUse`/`scopeCall` hand-inliners (and the now-dead `containsSuspend`/`isSuspensionCall`) — is
+  DELETED. A call to an `@kotlin.internal.InlineOnly` cross-module inline fn taking a lambda now emits an OWNER-LESS
+  `callInline` (kotc cannot name the stdlib file class — the whole stdlib rides the klib, facadegen supplies no
+  `kotlin.*` metadata); bir2cir resolves the hosting file class from the ref.dll (`TryResolveInlineOwner`, a
+  name|pc|ga → owner reverse index over the `[KotlinInline]` payloads, poisoned on collision) and splices the real
+  ref.dll body — so `use{}` gets its genuine `try/finally` + `closeFinally` fidelity, and `with(x){ this.f() }` binds
+  the lambda's extension receiver (kotc now LIFTS a `T.()->R` lambda's receiver as a leading carrier param; the splice
+  binds it positionally, since the stdlib `block.invoke(recv)` passes the receiver as arg[0]). kotc's `visOf` promotes a
+  `@PublishedApi internal` decl to `public` (matching Kotlin/JVM) so the spliced `use{}` body's cross-assembly
+  `closeFinally` call binds; ilemit gains two IL-correctness fixes the spliced `use{}` needs — a `goto` that exits a
+  protected region now emits `leave` (runs the intervening `finally`), and the return-scan descends into expression
+  positions (a non-local `return` nested in a spliced `valueBlock`). bir2cir `InlineSplice` fails loud rather than
+  silently dropping a `suspendCall` carried in a discarded lambda body on fallback.
 - **kotc `BirEmitter.kt` decomposed into 6 cohesive sibling files (#41) — a purely mechanical, verify-by-refactor
   carve-out.** The 4633-line `BirEmitter.kt` is now a ~547-line core (class decl + ctor, the whole run-scoped
   mutable-state block, diagnostics, the type-naming quartet, ref-cell machinery, `scopeCall`, `newExc`/`throwExpr`,

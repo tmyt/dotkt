@@ -63,9 +63,10 @@ static class InlineSplice
     static void Rewrite(JsonObject o, int depth)
     {
         if (Str(o["k"]) != "callInline") return;
-        // Discriminate by FIELD SHAPE, not callee-FQN: the GENERIC S1 node carries `owner` (+ `fallback`); the
-        // specialized `kotlin.repeat` node carries `count`/`var`/`body` and no `owner` (kotc inlineRepeat).
-        if (o.ContainsKey("owner")) { RewriteGeneric(o, depth); return; }
+        // Discriminate by FIELD SHAPE, not callee-FQN: the GENERIC node carries `pc`/`ga` (+ `fallback`, and an `owner`
+        // that is a file-class string for a facadegen-injected user fn OR JSON-null for a stdlib scope-fn/@InlineOnly fn
+        // whose owner bir2cir resolves); the specialized `kotlin.repeat` node carries `count`/`var`/`body` and no `pc`.
+        if (o.ContainsKey("pc")) { RewriteGeneric(o, depth); return; }
         RewriteRepeat(o);
     }
 
@@ -79,7 +80,13 @@ static class InlineSplice
         int pc = Int(o["pc"]);
         int ga = Int(o["ga"]);
 
+        // OWNER-LESS callInline (S3 stdlib scope-fn/@InlineOnly arm): kotc emits owner=null for a `kotlin.*` inline fn (it
+        // cannot name the stdlib file class — the whole stdlib rides the klib, facadegen supplies no `kotlin.*` metadata).
+        // Resolve the hosting file class from the ref.dll here (which .NET type hosts the fun = a Kotlin<->CLR relation).
+        if (owner == null) owner = _refs?.TryResolveInlineOwner(name, pc, ga);
+
         if (depth > 32) { Fallback(o, owner, name, pc, ga, "inline splice depth > 32 (recursive-inline data corruption)"); return; }
+        if (owner == null) { Fallback(o, owner, name, pc, ga, "owner-less callInline: no ref.dll file class hosts this inline fn (or a poisoned collision)"); return; }
 
         // RESOLVE: same-module stash index (dormant in S1), then cross-module ref.dll [KotlinInline]. A POISONED
         // same-module entry (null = an owner|name|pc|ga overload collision) is skipped -> cross-module -> fallback.
@@ -180,6 +187,15 @@ static class InlineSplice
 
     static void Fallback(JsonObject o, string owner, string name, int pc, int ga, string reason)
     {
+        // F5 (fail-loud): the plain-call fallback re-emits every arg, but the carried `inlineLambda` BODIES become a
+        // non-suspend delegate. A `suspendCall` inside a DISCARDED carrier body has no recovery (SuspendColdLowering
+        // never sees the awaited call -> the coroutine miscompiles far downstream), so refuse. Scan ONLY the carriers:
+        // a `suspendCall` in a plain (non-lambda) arg rides the fallback callStatic verbatim at caller level, where it
+        // lowers correctly — throwing on that would be a false positive.
+        if (o["args"] is JsonArray fargs
+            && fargs.Any(a => a is JsonObject ao && Str(ao["k"]) == "inlineLambda" && ContainsSuspendCall(ao)))
+            throw new NotSupportedException($"inline splice: cannot fall back for {owner}.{name} (pc={pc} ga={ga}): {reason} — "
+                + "a discarded lambda body contains a suspend call; the plain (non-suspend) fallback would drop it. Fix the splice shape.");
         Console.Error.WriteLine($"bir2cir: inline splice fallback for {owner}.{name} (pc={pc} ga={ga}): {reason} — "
             + "emitting the plain call; a non-local return through a lambda arg will NOT return from the caller");
         if (o["fallback"] is not JsonNode fb)
@@ -496,6 +512,19 @@ static class InlineSplice
             foreach (var kv in o) if (kv.Value != null) SubstTvIn(kv.Value, typeArgs, ga);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) SubstTvIn(c, typeArgs, ga);
+    }
+
+    // Any node carrying the kotc `"suspendCall":true` fact (a suspend call site awaiting a downstream Task/await
+    // lowering). Used by Fallback to refuse dropping a carried suspend body into a non-suspend plain call.
+    static bool ContainsSuspendCall(JsonNode node)
+    {
+        if (node is JsonObject o)
+        {
+            if (o["suspendCall"] is JsonValue sv && sv.TryGetValue<bool>(out var b) && b) return true;
+            foreach (var kv in o) if (kv.Value != null && ContainsSuspendCall(kv.Value)) return true;
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null && ContainsSuspendCall(c)) return true;
+        return false;
     }
 
     static bool HasNode(JsonNode node, params string[] kinds)

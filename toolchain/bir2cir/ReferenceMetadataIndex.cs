@@ -49,6 +49,11 @@ sealed class ReferenceMetadataIndex
     // call site (so it re-lowers in THIS app's context). owner = the .NET type FullName (file-facade class); pc/ga = the
     // reflected GetParameters/GetGenericArguments counts (parity with InlineBirStash's params.Count / typeParams.Count).
     readonly Dictionary<string, string> _inlinePayloads = new(StringComparer.Ordinal);
+    // Reverse index for OWNER-LESS callInline (S3): "name|pc|ga" -> the file-class owner that hosts this inline fn. kotc
+    // cannot name the stdlib file class (facadegen supplies no `kotlin.*` metadata — the whole stdlib rides the klib), so
+    // a scope-fn/@InlineOnly callInline carries owner=null; InlineSplice resolves it HERE (Kotlin<->CLR: which .NET type
+    // hosts the fun). POISONED (null) on a cross-owner name|pc|ga collision -> the splicer falls back to the plain call.
+    readonly Dictionary<string, string> _inlineOwnerByNPG = new(StringComparer.Ordinal);
 
     // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the loaded .NET references +
     // the running framework's reference dir. NetInteropBinding resolves a facadegen-injected owner FQN
@@ -126,7 +131,28 @@ sealed class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.InlinePayloads)
                 _inlinePayloads[kv.Key] = (_inlinePayloads.ContainsKey(kv.Key) || kv.Value == null) ? null : kv.Value;
         }
+        // Build the owner-less reverse index (S3). Key owner|name|pc|ga -> name|pc|ga; the value is the owner. A cross-
+        // owner collision (two file classes both hosting a `foo|2|2`) poisons the entry to null so an owner-less callInline
+        // for that shape falls back rather than binding a wrong owner.
+        foreach (var key in _inlinePayloads.Keys)
+        {
+            var bar = key.IndexOf('|');
+            if (bar < 0) continue;
+            var owner = key[..bar];
+            // Owner-less callInline is DEFINITIONALLY a `kotlin.*` @InlineOnly stdlib fn (kotc's inlineSpliceCallOwnerless
+            // is gated to those). Restrict the reverse index to the stdlib namespace so a USER-lib inline fn that happens
+            // to share a bare name|pc|ga (e.g. a user `T.use(block)` -> `use|2|2`) can neither poison the stdlib entry nor
+            // (when the stdlib key is absent) bind a wrong owner for a `kotlin.let`/`kotlin.io.use` call.
+            if (!owner.StartsWith("kotlin.", StringComparison.Ordinal)) continue;
+            var npg = key[(bar + 1)..];
+            _inlineOwnerByNPG[npg] = (_inlineOwnerByNPG.TryGetValue(npg, out var prev) && prev != owner) ? null : owner;
+        }
     }
+
+    // Resolve the file-class owner for an OWNER-LESS callInline (S3), keyed name|pc|ga. Null when unknown or a poisoned
+    // cross-owner collision -> InlineSplice falls back to the plain call.
+    public string TryResolveInlineOwner(string name, int pc, int ga) =>
+        name != null && _inlineOwnerByNPG.TryGetValue($"{name}|{pc}|{ga}", out var owner) ? owner : null;
 
     // The raw-BIR [KotlinInline] payload for a cross-module inline fn (owner|name|pc|ga), decoded to its JSON node — or
     // null when the referenced assembly carries no (or an unreadable / pre-S1-shaped) [KotlinInline] for that overload.

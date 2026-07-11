@@ -165,6 +165,21 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson],"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare],"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 }
 
+/** SHADOW the lambda's own regular params in `valSubst` while emitting its body: an enclosing splice
+ *  (inlineRepeat / an inline-lambda carrier) may have bound the SAME name (e.g. `it`) to an outer local.
+ *  A lifted lambda's params are its OWN method params — `IrGetValue` resolves them by NAME through `valSubst`
+ *  (BirEmitterExpressions), so a stale outer binding would make the body reference a foreign local that is not in
+ *  the lifted method's scope (`load unknown var __repIdx*` at ilemit). Removing them yields the correct bare
+ *  `{"k":"local","name":<param>}`. Saved + restored, mirroring `emitInlineLambdaCarrier` / `spliceLambdaCall`. */
+private inline fun <T> BirEmitter.withLambdaParamShadow(fn: IrSimpleFunction, block: () -> T): T {
+	val names = fn.parameters.filter { it.kind == IrParameterKind.Regular }.map { it.name.asString() }
+	val saved = names.associateWith { valSubst[it] }
+	names.forEach { valSubst.remove(it) }
+	try { return block() } finally {
+		saved.forEach { (n, prev) -> if (prev != null) valSubst[n] = prev else valSubst.remove(n) }
+	}
+}
+
 internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 	val fn = node.function
 	// A `suspend` lambda LITERAL -> a `newSuspendLambda` node: bir2cir turns it into a SuspendLambda state machine
@@ -185,7 +200,7 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 		val freeTps = freeTypeParams(fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 		val typeParams = typeParamsJson(freeTps)
 		run {
-			val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+			val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 			liftedMethods.add("""{"name":${str(lname)},"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters)}],"ret":${str(ret)},"body":[$body]}""")
 		}
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
@@ -204,7 +219,7 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 	capPairs.forEach { (decl, fname) ->
 		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 	}
-	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+	val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 	// The closure must be GENERIC over any enclosing type parameters it captures (reified CLR generics — a `gp:T`
@@ -270,9 +285,11 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
  * EXTENSION-function reference (`String::isNotBlank`, `Type::extFn`): a lifted static forwarder whose BODY is the
  * faithful extension call (the `callStatic owner:null` shape the direct top-level ext-call path emits in `call()`),
  * bound as a delegate. The forwarder is
- * needed (not a bare `ldftn`) because stdlib exts are @ClrIntrinsic/@InlineOnly with no rt.dll body — the CALL
- * node gives bir2cir something to substitute. DEFERRED (clean `unsupported`, each with its concrete blocker): a
- * BOUND extension reference (`expr::extFn` — a closed static delegate is not ilverify-clean), a suspend reference
+ * needed (not a bare `ldftn`) because a @ClrIntrinsic stdlib ext has no real rt.dll body (bir2cir substitutes it
+ * to a BCL call) — the CALL node gives bir2cir something to substitute. (Plain @InlineOnly funs without @ClrIntrinsic
+ * DO get real rt.dll bodies; @ClrIntrinsic is the body-removing discriminator.) DEFERRED (clean `unsupported`, each
+ * with its concrete blocker): a BOUND extension reference (`expr::extFn` — a closed static delegate is not
+ * ilverify-clean), a suspend reference
  * (needs the coroutine SM), and a .NET-method deferral case.
  */
 internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
@@ -318,7 +335,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// `Type::extFn` — an EXTENSION-function reference (G8). The delegate's target is a lifted static forwarder whose
 	// BODY is the faithful extension CALL — the SAME shape a DIRECT call to this callee would emit (`owner:null` for a
 	// stdlib/this-module ext, `ownerType:fileClass` for a referenced-assembly facade ext), NOT a bare `ldftn` of the
-	// stdlib fn: stdlib exts (`isNotBlank`, …) are @ClrIntrinsic/@InlineOnly with no rt.dll body, so bir2cir needs a
+	// stdlib fn: a @ClrIntrinsic stdlib ext (`isNotBlank`, …) has no real rt.dll body (bir2cir substitutes it), so bir2cir needs a
 	// CALL node to substitute. The forwarder params + the delegate funcType come from `birType(node.type)` — the
 	// CALL-SITE-resolved `KFunctionN<P1..Pn,R>` (receiver first, then regulars), NOT `funcTypeOf(fn)`: a
 	// `String::isNotBlank` reference resolves the receiver to `String` at the call site, though `isNotBlank` is

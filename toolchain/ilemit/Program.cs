@@ -119,8 +119,9 @@ sealed partial class Emitter
     readonly Dictionary<string, Type> _argTypes = new();
     readonly Dictionary<string, LocalBuilder> _locals = new();
     readonly Dictionary<MethodInfo, Type[]> _mparams = new();   // declared param types per method (for call-site boxing)
-    // active try blocks: a `return` inside stores to the result local and leaves to the end label.
-    readonly Stack<(LocalBuilder result, Label end)> _tryStack = new();
+    // active try blocks: a `return` inside stores to the result local and leaves to the end label. `labels` = the
+    // CFG-`label` ids declared physically inside this protected region, so a `goto` that exits it emits `leave` not `br`.
+    readonly Stack<(LocalBuilder result, Label end, HashSet<int> labels)> _tryStack = new();
     // active loops: break/continue target the innermost (or the one matching the Kotlin label).
     readonly List<(string label, Label cont, Label brk)> _loops = new();
     // CFG block-IR labels: `label`/`goto`/`brIf` (E-0.5). Forward references need every label defined up-front,

@@ -94,8 +94,12 @@ sealed partial class Emitter
                 bool hasRet = StmtsHaveReturn(bodyArr) || catchesArr.EnumerateArray().Any(c => StmtsHaveReturn(c.GetProperty("body")));
                 LocalBuilder result = (_methodRetType != typeof(void) && hasRet) ? _il.DeclareLocal(_methodRetType) : null;
                 Label retLabel = _il.DefineLabel();
+                // The CFG labels declared inside this region: a `goto` targeting a label NOT in this set exits the
+                // protected region and MUST emit `leave`, not `br` (see the `goto` case).
+                var regionLabels = new HashSet<int>();
+                CollectLabelIds(s, regionLabels);
                 _il.BeginExceptionBlock();
-                _tryStack.Push((result, retLabel));
+                _tryStack.Push((result, retLabel, regionLabels));
                 foreach (var b in bodyArr.EnumerateArray()) EmitStmt(b);
                 foreach (var c in catchesArr.EnumerateArray())
                 {
@@ -295,11 +299,41 @@ sealed partial class Emitter
             case "continue": { var (cont, _) = TargetLoop(s); _il.Emit(OpCodes.Br, cont); break; }
             // CFG block-IR (E-0.5): a basic-block boundary and (un)conditional branches. See docs/design-il-cfg.md.
             case "label": _il.MarkLabel(_cfgLabels[s.GetProperty("id").GetInt32()]); break;
-            case "goto": _il.Emit(OpCodes.Br, _cfgLabels[s.GetProperty("id").GetInt32()]); break;
-            case "brIf":
-                EmitExpr(s.GetProperty("cond"));
-                _il.Emit(s.GetProperty("on").GetBoolean() ? OpCodes.Brtrue : OpCodes.Brfalse, _cfgLabels[s.GetProperty("id").GetInt32()]);
+            case "goto":
+            {
+                // A `goto` whose target label lies OUTSIDE the innermost open protected region must be `leave`, not
+                // `br`: a plain branch out of a try is invalid IL (ilverify BranchOutOfTry; InvalidProgramException at
+                // JIT). `leave` also runs the intervening finally on the way out. A statement-position goto has an
+                // empty eval stack, so `leave` (which empties the stack) is always safe here. (bir2cir routes an
+                // inline-spliced in-try non-local return to `setLocal res; goto <end-after-try>` — this is that exit.)
+                var gid = s.GetProperty("id").GetInt32();
+                bool exitsTry = _tryStack.Count > 0 && !_tryStack.Peek().labels.Contains(gid);
+                _il.Emit(exitsTry ? OpCodes.Leave : OpCodes.Br, _cfgLabels[gid]);
                 break;
+            }
+            case "brIf":
+            {
+                var bid = s.GetProperty("id").GetInt32();
+                var on = s.GetProperty("on").GetBoolean();
+                if (_tryStack.Count > 0 && !_tryStack.Peek().labels.Contains(bid))
+                {
+                    // Same protected-region rule as `goto`: a conditional branch OUT of a try is invalid IL, but there
+                    // is no conditional `leave`. Invert the test to skip PAST an unconditional leave: `br<!on> skip;
+                    // leave target; skip:` — fall through to the leave only when the branch condition actually holds.
+                    // (SuspendColdLowering emits brIf state-machine CFG inside bodies that also carry `try` nodes.)
+                    var skip = _il.DefineLabel();
+                    EmitExpr(s.GetProperty("cond"));
+                    _il.Emit(on ? OpCodes.Brfalse : OpCodes.Brtrue, skip);
+                    _il.Emit(OpCodes.Leave, _cfgLabels[bid]);
+                    _il.MarkLabel(skip);
+                }
+                else
+                {
+                    EmitExpr(s.GetProperty("cond"));
+                    _il.Emit(on ? OpCodes.Brtrue : OpCodes.Brfalse, _cfgLabels[bid]);
+                }
+                break;
+            }
             case "unsupportedStmt": throw new NotSupportedException("the .NET backend does not support this Kotlin construct: " + s.GetProperty("of").GetString());
             default: throw new NotSupportedException("stmt " + s.GetProperty("k").GetString());
         }

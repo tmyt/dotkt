@@ -292,6 +292,20 @@ sealed partial class Emitter
     Type EmitBranchCoerced(JsonElement node, Type want)
     {
         var got = EmitNullableCoerced(node, want);
+        // A VOID-producing branch (a statement-like arm: `x.close()`/`println(...)`/a Unit `const void`, or a
+        // value-producing `try` whose arms are void) under a VALUE-producing conditional — a `kotlin.Unit`-typed
+        // `when` in expression position, whose OTHER arms push one value (e.g. a `valueBlock` yielding a Unit local).
+        // This arm pushes NOTHING, so the branches merge at the cond-end with inconsistent stack depth (ilverify
+        // PathStackDepth / StackUnderflow; InvalidProgramException at JIT). Push a default of `want` so every path
+        // leaves exactly one value. Pure stack-depth reconciliation — no Kotlin semantics (Unit resolves to a plain
+        // reference type here, and sibling Unit arms already push an uninitialized-local reference).
+        if (got == typeof(void) && want != null && want != typeof(void))
+        {
+            if (want.IsValueType || want.IsGenericParameter)
+            { var d = _il.DeclareLocal(want); _il.Emit(OpCodes.Ldloca, d); _il.Emit(OpCodes.Initobj, want); _il.Emit(OpCodes.Ldloc, d); }
+            else _il.Emit(OpCodes.Ldnull);
+            return want;
+        }
         if (want != null && got != null && !got.IsValueType && !got.IsGenericParameter && got != want
             && (want.IsValueType || want.IsGenericParameter)) { _il.Emit(OpCodes.Unbox_Any, want); return want; }
         return got;

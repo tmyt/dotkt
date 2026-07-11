@@ -362,10 +362,17 @@ internal fun BirEmitter.coerceValue(node: IrExpression, expected: IrType): Strin
 internal fun BirEmitter.isPreUnwrappedRead(o: IrExpression): Boolean =
 	o is IrGetValue && o.symbol.owner.name.asString() in valSubstUnwrapped
 
-/** Kotlin visibility -> BIR access keyword (public/private/internal/protected). */
+/** Kotlin visibility -> BIR access keyword (public/private/internal/protected). A `@kotlin.PublishedApi internal`
+ *  declaration emits as PUBLIC: it is part of the inline-published surface, so a cross-assembly spliced inline body
+ *  (e.g. use{}'s `closeFinally`, `Uuid.toLongs`'s `get_mostSignificantBits`) must be able to bind it — CLR-internal
+ *  would be a MethodAccessException at run. @PublishedApi's targets are CLASS/CONSTRUCTOR/FUNCTION/PROPERTY (never
+ *  the accessor), so for a property accessor read the annotation off its corresponding property. */
 internal fun BirEmitter.visOf(d: IrDeclarationWithVisibility): String = when (d.visibility.delegate) {
 	Visibilities.Private, Visibilities.PrivateToThis -> "private"
-	Visibilities.Internal -> "internal"
+	Visibilities.Internal -> {
+		val annHost = (d as? IrSimpleFunction)?.correspondingPropertySymbol?.owner ?: d
+		if (annHost.annotations.any { it.type.classFqName?.asString() == "kotlin.PublishedApi" }) "public" else "internal"
+	}
 	Visibilities.Protected -> "protected"
 	else -> "public"
 }

@@ -22,7 +22,6 @@ import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrDelegatingConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrClassReference
 import org.jetbrains.kotlin.ir.expressions.IrEnumConstructorCall
-import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrExpressionBody
 import org.jetbrains.kotlin.ir.declarations.IrEnumEntry
 import org.jetbrains.kotlin.ir.expressions.IrGetEnumValue
@@ -359,20 +358,6 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null) {
 			}
 		})
 		return out
-	}
-
-	internal val SCOPE_FUNCTIONS = setOf("kotlin.let", "kotlin.run", "kotlin.with", "kotlin.apply", "kotlin.also")
-
-	/** A scope-function call (`with(c){…}`, `c.let/run/apply/also {…}`) -> (fqName, receiver, lambda). These are INLINE,
-	 *  so a suspension in the lambda body is the ENCLOSING coroutine's — `containsSuspend` descends into it for the fact. */
-	internal fun scopeCall(e: org.jetbrains.kotlin.ir.IrElement?): Triple<String, IrExpression, IrFunctionExpression>? {
-		val call = e as? IrCall ?: return null
-		val fq = call.symbol.owner.fqNameWhenAvailable?.asString() ?: return null
-		if (fq !in SCOPE_FUNCTIONS) return null
-		val isWith = fq == "kotlin.with"
-		val recv = (if (isWith) regularArgs(call).getOrNull(0) else extensionReceiver(call)) ?: return null
-		val lambda = (if (isWith) regularArgs(call).getOrNull(1) else regularArgs(call).getOrNull(0)) as? IrFunctionExpression ?: return null
-		return Triple(fq, recv, lambda)
 	}
 
 	// CLR-bound (@ClrTypeAlias) TYPE-STRIP is bir2cir's — kotc reads NEITHER @ClrTypeAlias NOR @ClrIntrinsic.

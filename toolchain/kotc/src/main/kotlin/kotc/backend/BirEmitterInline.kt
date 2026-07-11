@@ -87,50 +87,6 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
 /**
- * Inline a scope function `recv.let/run/with/apply/also { ... }` to a value-block: bind the receiver to
- * a unique local, rewrite `it`/`this` to it, then yield the lambda's last expression (let/run/with) or
- * the receiver (apply/also). No delegate — the lambda body is spliced in directly.
- */
-internal fun BirEmitter.inlineScope(fq: String, recvExpr: IrExpression, lambda: IrFunctionExpression): String {
-	val fn = lambda.function
-	// A suspending call inside an INLINE scope-function lambda used as a sub-expression (e.g. an expression body
-	// `= with(lib){ b.fetch() }`, or `c.apply{ s() }.x`) inlines to a value-block whose stmts/result span a
-	// suspension. kotc emits that value-block VERBATIM (the suspend call keeps its `"suspendCall"` tag); the
-	// downstream coroutine lowering (bir2cir SuspendColdLowering) flattens the value-block and segments the
-	// suspension as an ordinary suspension point. kotc holds NO coroutine knowledge here (#11).
-	val vname = "__scope${scopeCounter++}"
-	val recvInit = expr(recvExpr)   // emit the receiver expression before binding `it`/`this`
-	val recvParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-	val itParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
-	// Save/restore (not remove) any prior binding of these names: a nested scope/let reusing the same param name
-	// (`it`) must RESTORE the outer binding on exit, else statements AFTER this splice read a phantom local.
-	val recvName = recvParam?.name?.asString(); val itName = itParam?.name?.asString()
-	val hadRecv = recvName != null && valSubst.containsKey(recvName); val savedRecv = recvName?.let { valSubst[it] }
-	val hadIt = itName != null && valSubst.containsKey(itName); val savedIt = itName?.let { valSubst[it] }
-	recvParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(vname)}}""" }
-	itParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(vname)}}""" }
-	val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
-	val returnsRecv = fq == "kotlin.apply" || fq == "kotlin.also"
-	val init = ArrayList<String>()
-	init.add("""{"k":"var","name":${str(vname)},"type":${birType(recvExpr.type).toJson()},"init":$recvInit}""")
-	val result: String
-	if (returnsRecv) {
-		stmts.forEach { if (it !is IrReturn) init.add(stmt(it)) }   // body is side-effects; Unit returns dropped
-		result = """{"k":"local","name":${str(vname)}}"""
-	} else {
-		stmts.dropLast(1).forEach { init.add(stmt(it)) }
-		result = when (val last = stmts.lastOrNull()) {
-			is IrReturn -> expr(last.value)
-			is IrExpression -> expr(last)
-			else -> { last?.let { init.add(stmt(it)) }; """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""" }
-		}
-	}
-	recvName?.let { if (hadRecv) valSubst[it] = savedRecv!! else valSubst.remove(it) }
-	itName?.let { if (hadIt) valSubst[it] = savedIt!! else valSubst.remove(it) }
-	return """{"k":"valueBlock","stmts":[${init.joinToString(",")}],"result":$result}"""
-}
-
-/**
  * `repeat(n) { i -> body }` -> SPLICE the lambda body UN-CLOSURED into the caller (#75). Because the body is
  * emitted inline (not a delegate), a bare `return` inside it targets the ENCLOSING fn and stays a plain
  * `{k:return}` = a NON-LOCAL return (the fidelity #73/M7's delegate loop dropped). A `return@repeat` targets the
@@ -145,7 +101,7 @@ internal fun BirEmitter.inlineRepeat(call: IrCall): String {
 	val fn = lambda.function
 	val idxParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
 	val loopVar = "__repIdx${scopeCounter++}"
-	// Emit the count BEFORE binding the index param (mirrors inlineScope's recvInit): the count is arg 0, evaluated
+	// Emit the count BEFORE binding the index param: the count is arg 0, evaluated
 	// in the caller's scope, and could reference an outer binding that shares the index param's NAME (nested
 	// `repeat(it){…}` / `forEach{ repeat(it){…} }`) — binding first would shadow it away.
 	// Emit the count through argExpr against the callee's DECLARED first param (`times: Int`) — the SAME coercion the
@@ -172,42 +128,13 @@ internal fun BirEmitter.inlineRepeat(call: IrCall): String {
 	return """{"k":"callInline","callee":"kotlin.repeat","count":$countJson,"countType":$countTypeJson,"var":${str(loopVar)},"body":[${pre.joinToString(",")}]}"""
 }
 
-/** `r.use { block }` -> a value-block: `var r; var res; try { res = block(r) } finally { r.Dispose() }; res`. */
-internal fun BirEmitter.inlineUse(recvExpr: IrExpression, lambda: IrFunctionExpression, retType: TypeNode): String {
-	val fn = lambda.function
-	val uname = "__use${scopeCounter++}"; val rname = "__useRes${scopeCounter++}"
-	val recvInit = expr(recvExpr)
-	val itParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.Regular }
-	// Save/restore (not remove) any prior binding of `it`: a `use{}` nested inside another `it`-scope must RESTORE
-	// the outer binding on exit, else statements after the splice read a phantom local.
-	val itName = itParam?.name?.asString()
-	val hadIt = itName != null && valSubst.containsKey(itName); val savedIt = itName?.let { valSubst[it] }
-	itParam?.let { valSubst[it.name.asString()] = """{"k":"local","name":${str(uname)}}""" }
-	val stmts = (fn.body as? IrBlockBody)?.statements.orEmpty()
-	// kotc now emits the Kotlin FQN for source types, so a Unit-returning block's type is "kotlin.Unit"
-	// (bir2cir lowers it to void). Accept the residual "void" shorthand too (synthetic/already-lowered rets).
-	val unit = retType == TypeNode.Fqn("kotlin.Unit")
-	val tryBody = ArrayList<String>()
-	stmts.dropLast(1).forEach { tryBody.add(stmt(it)) }
-	when (val last = stmts.lastOrNull()) {
-		is IrReturn -> if (!unit) tryBody.add("""{"k":"setLocal","name":${str(rname)},"value":${expr(last.value)}}""") else last.value.takeIf { !it.type.isUnit() }?.let { tryBody.add("""{"k":"exprStmt","expr":${expr(it)}}""") }
-		is IrExpression -> if (!unit) tryBody.add("""{"k":"setLocal","name":${str(rname)},"value":${expr(last)}}""") else tryBody.add("""{"k":"exprStmt","expr":${expr(last)}}""")
-		else -> last?.let { tryBody.add(stmt(it)) }
-	}
-	itName?.let { if (hadIt) valSubst[it] = savedIt!! else valSubst.remove(it) }
-	// The `use{}` try/finally structure is a language lowering that stays in kotc, but the `close()` call in the finally
-	// is a PLAIN Kotlin member call on the kotlin.AutoCloseable receiver — bir2cir substitutes it to
-	// System.IDisposable.Dispose() off the @ClrTypeAlias/@ClrIntrinsic("Dispose") binding (layer purity — no BCL name
-	// in kotc). `use`'s signature (`T : AutoCloseable?`) guarantees the owner is kotlin.AutoCloseable.
-	val dispose = """{"k":"exprStmt","expr":{"k":"callInstance","ownerType":${fqnJson("kotlin.AutoCloseable")},"method":"close","virtual":true,"recv":{"k":"local","name":${str(uname)}},"args":[]}}"""
-	val tryNode = """{"k":"try","type":${fqnJson("kotlin.Unit")},"body":[${tryBody.joinToString(",")}],"catches":[],"finally":[$dispose]}"""
-	val init = ArrayList<String>()
-	init.add("""{"k":"var","name":${str(uname)},"type":${birType(recvExpr.type).toJson()},"init":$recvInit}""")
-	if (!unit) init.add("""{"k":"var","name":${str(rname)},"type":${retType.toJson()}}""")
-	init.add(tryNode)
-	val result = if (unit) """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""" else """{"k":"local","name":${str(rname)}}"""
-	return """{"k":"valueBlock","stmts":[${init.joinToString(",")}],"result":$result}"""
-}
+/** A `@kotlin.internal.InlineOnly` callee: an inline fun with no callable body on the JVM/CLR (its ONLY
+ *  materialization is the spliced call site). The @InlineOnly cross-module inline+lambda funs — the scope
+ *  functions (let/run/with/apply/also) and use{} — are routed through the generic owner-less `callInline`
+ *  node (bir2cir splices their [KotlinInline] raw-BIR payloads off the ref.dll). Read straight off the
+ *  klib callee's IR annotations (the klib preserves @InlineOnly). */
+internal fun BirEmitter.isInlineOnly(callee: IrSimpleFunction): Boolean =
+	callee.annotations.any { it.type.classFqName?.asString() == "kotlin.internal.InlineOnly" }
 
 internal fun BirEmitter.hasLambdaArg(call: IrCall): Boolean = regularArgs(call).any {
 	it is IrFunctionExpression || ((it as? IrGetValue)?.symbol?.owner?.let { owner -> inlineLambdas.containsKey(owner) } == true)
@@ -398,12 +325,13 @@ internal fun <T> BirEmitter.withTypeArgScope(scope: BirEmitter.TypeArgScope?, bl
  *  referenced assembly). kotc emits a GENERIC `callInline` node carrying the call bindings — the type args, one entry
  *  per regular param (a literal lambda as an `inlineLambda` carrier, else the arg expr) — plus a `fallback` = the plain
  *  call kotc would otherwise emit. bir2cir OWNS the splice: it re-lowers the carried body in the app context (so it
- *  binds against app types) and drops/keeps the `fallback` on splice success/failure. S1: the DISPATCH GATE is
- *  unchanged (gated on `extRecv == null` at the call site), so `recvs` is an empty reserved slot. */
+ *  binds against app types) and drops/keeps the `fallback` on splice success/failure. This facadegen path is gated at
+ *  the call site on `extRecv == null` (its receiver shape is untested — a receiver call takes the owner-less path
+ *  instead), so `recvs` is always empty here. */
 internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): String {
 	val callee = call.symbol.owner
 	val name = callee.name.asString()
-	val extRecv = extensionReceiver(call)   // null in S1 (the call-site gate guarantees it); reserved for a later slice
+	val extRecv = extensionReceiver(call)   // null here — the call-site gate guarantees it
 	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
 	val args = regularArgs(call)
 	// Disambiguate the file-facade overload (forEach/count/... exist for Iterable/Array/CharSequence): the .NET method's
@@ -428,18 +356,90 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${str(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":{},"args":[$argsJson],"retType":$retType,"fallback":$fallback}"""
 }
 
-/** An `inlineLambda` carrier for a literal lambda arg of a cross-module inline call: the lambda's OWN regular params
+/** An `inlineLambda` carrier for a literal lambda arg of a cross-module inline call: the lambda's OWN params
  *  (name+type, bound by bir2cir at splice time) plus its body emitted IN THE CALLER'S SCOPE. `spliceBodyWithReturns`
  *  routes a labeled `return@callee` (target = the lambda fn symbol) through a result-local + end-label; a bare NON-LOCAL
- *  `return` (target = the enclosing caller) stays a plain `{"k":"return"}` — the caller's return, the point of inlining. */
+ *  `return` (target = the enclosing caller) stays a plain `{"k":"return"}` — the caller's return, the point of inlining.
+ *
+ *  A RECEIVER lambda (`T.()->R`, from run/with/apply) carries its extension receiver as a LEADING carrier param:
+ *  bir2cir binds it to invoke arg[0] (the stdlib scope-fn body passes the receiver as the invoke's first arg). The
+ *  IR receiver name is the anonymous `<this>` (not emittable), so mint a FRESH name and bind the ext param's
+ *  `this`-refs to it via `selfSubst` for the body emission (restored after). Without this a receiver lambda's
+ *  `this`/implicit-member refs would fall through to the CALLER's `{"k":"this"}` and dangle. */
 internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): String {
 	val fn = lambda.function
-	val paramsJson = fn.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { p ->
+	val extParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+	val freshRecv = extParam?.let { "__recv${inlCounter++}" }
+	val hadSelf = extParam != null && selfSubst.containsKey(extParam)
+	val savedSelf = extParam?.let { selfSubst[it] }
+	if (extParam != null) selfSubst[extParam] = """{"k":"local","name":${str(freshRecv!!)}}"""
+	val leading = if (extParam != null) listOf("""{"name":${str(freshRecv!!)},"type":${birType(extParam.type).toJson()}}""") else emptyList()
+	val regularParams = fn.parameters.filter { it.kind == IrParameterKind.Regular }
+	val regularJson = regularParams.map { p ->
 		"""{"name":${str(p.name.asString())},"type":${birType(p.type).toJson()}}"""
 	}
+	val paramsJson = (leading + regularJson).joinToString(",")
+	// SHADOW the lambda's own regular params in `valSubst` while emitting its body: an enclosing splice
+	// (inlineRepeat / another lambda carrier) may have bound the SAME name (e.g. `it`) to an outer local. Without
+	// removing it here, the body's ref to this lambda's param would resolve to the OUTER binding — the carrier param
+	// is named correctly but the body dangles on a foreign local (`load unknown var __repIdx*`). Emitting them as
+	// BARE `{"k":"local","name":<param>}` refs lets bir2cir bind the carrier param. (The ext-receiver already does
+	// this via `selfSubst`.) Saved + restored around the body emission, mirroring `spliceLambdaCall`.
+	val shadowed = regularParams.map { it.name.asString() }.associateWith { valSubst[it] }
+	shadowed.keys.forEach { valSubst.remove(it) }
 	val body = ArrayList<String>()
+	// The `selfSubst[extParam]` binding above (restored just below) is the guarantee that the receiver's `this`/
+	// implicit-member refs resolve to `freshRecv`, not a dangling `{"k":"this"}` — no post-hoc string guard needed.
 	val result = spliceBodyWithReturns(fn, fn.returnType.isUnit(), body)
+	shadowed.forEach { (name, prev) -> if (prev != null) valSubst[name] = prev else valSubst.remove(name) }
+	if (extParam != null) { if (hadSelf) selfSubst[extParam] = savedSelf!! else selfSubst.remove(extParam) }
 	return """{"k":"inlineLambda","params":[$paramsJson],"body":[${body.joinToString(",")}],"result":$result}"""
+}
+
+/** CROSS-MODULE inline of an `@kotlin.internal.InlineOnly` stdlib scope/util fn (let/run/with/apply/also/use) whose
+ *  `[KotlinInline]` raw-BIR body lives on the ref.dll. Unlike `inlineSpliceCall`, kotc CANNOT name the hosting file
+ *  class — the whole stdlib rides the klib, facadegen supplies no `kotlin.*` metadata — so the node is OWNER-LESS:
+ *  bir2cir resolves the hosting file class from the ref.dll `[KotlinInline]` index by `callee|pc|ga`. An extension
+ *  receiver (let/run/apply/also/use) rides in `recvs.extension`; `with`'s receiver is a REGULAR param and rides as a
+ *  plain arg. The `fallback` = the plain owner-less `callStatic` kotc would emit un-spliced; bir2cir swaps it in on any
+ *  splice failure (the rt.dll carries a real body for these funcs, so the fallback is a safe if NLR-losing plain call). */
+internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpression?): String {
+	val callee = call.symbol.owner
+	val name = callee.name.asString()
+	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
+	val args = regularArgs(call)
+	// The .NET method param count = regular params + the receiver-as-__self; generic arity = the fn's type params.
+	// Matches the ref.dll payload key owner|name|pc|ga.
+	val pc = params.size + (if (extRecv != null) 1 else 0)
+	val ga = callee.typeParameters.size
+	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
+		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
+	}
+	// Render the extension receiver ONCE and share the string between `recvs` and the `fallback` — emitting it twice
+	// would re-run `expr` (re-registering its lifted lambdas/closures, and 2^N-exploding a chained `a.let{}.let{}`).
+	val extRecvJson = extRecv?.let { expr(it) }
+	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
+	// One entry per REGULAR param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr
+	// (for `with`, the receiver is regular param[0] and rides as a plain expr; the lambda is param[1]).
+	val argsJson = params.indices.joinToString(",") { i ->
+		val arg = args.getOrNull(i)
+		if (arg is IrFunctionExpression) emitInlineLambdaCarrier(arg)
+		else if (arg != null) expr(arg)
+		else "null"
+	}
+	val retType = birType(callee.returnType).toJson()
+	val fallback = plainOwnerlessTopLevelCall(call, callee, name, extRecvJson)
+	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":null,"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"fallback":$fallback}"""
+}
+
+/** The PLAIN owner-less `callStatic` a receiver-less/extension top-level fun would emit un-spliced (byte-identical to
+ *  the general fall-through in `emitCall`: an extension receiver rides as the first arg). Used as the `fallback` slot
+ *  of an owner-less `callInline` for the stdlib scope/util fns (owner=null: they resolve from the klib, not facadegen). */
+internal fun BirEmitter.plainOwnerlessTopLevelCall(call: IrCall, callee: IrSimpleFunction, name: String, extRecvJson: String?): String {
+	val ta = typeArgsJson(call)
+	val effRet = birType(call.type)
+	val all = (listOfNotNull(extRecvJson) + filledArgs(call)).joinToString(",")
+	return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]${suspendCallTag(callee)}}"""
 }
 
 /** Splice an invoked inlined lambda `f(args)`: bind its params to the invoke args, then splice its body. */
@@ -507,7 +507,23 @@ internal fun BirEmitter.hasEarlyReturn(body: org.jetbrains.kotlin.ir.IrElement?,
  */
 internal fun BirEmitter.spliceBodyWithReturns(target: IrSimpleFunction, unit: Boolean, pre: MutableList<String>): String {
 	val stmts = bodyStatements(target.body)
-	if (!hasEarlyReturn(target.body, target.symbol)) return spliceBody(stmts, unit, pre)
+	if (!hasEarlyReturn(target.body, target.symbol)) {
+		// Unit fast path: the spliced fn's OWN implicit tail `return@lambda Unit` (returnTargetSymbol == target.symbol)
+		// must be FOLDED into the Unit value — drop a plain Unit ref, evaluate a side-effecting value as an exprStmt —
+		// NOT emitted as a bare `{"k":"return"}`. `spliceBody(unit=true)` would emit it raw via `stmt(IrReturn)` (no
+		// inlineReturnSubst on this fast path), and bir2cir treats a bare `{"k":"return"}` as a CALLER non-local return
+		// → a spurious `ret` in the caller frame (the `7.apply { }` line silently dropped). A tail return targeting the
+		// ENCLOSING CALLER (returnTargetSymbol != target.symbol) is a real NLR and stays raw via `spliceBody`.
+		if (unit) {
+			val last = stmts.lastOrNull()
+			if (last is IrReturn && last.returnTargetSymbol == target.symbol) {
+				stmts.dropLast(1).forEach { pre.add(stmt(it)) }
+				if (last.value !is IrGetObjectValue) pre.add("""{"k":"exprStmt","expr":${expr(last.value)}}""")
+				return """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
+			}
+		}
+		return spliceBody(stmts, unit, pre)
+	}
 	val res = if (unit) null else "__inlRet${inlCounter++}"
 	val end = cfgFresh()
 	res?.let {

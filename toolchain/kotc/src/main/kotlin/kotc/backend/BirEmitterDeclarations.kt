@@ -16,21 +16,17 @@ import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.expressions.IrBlock
 import org.jetbrains.kotlin.ir.expressions.IrBlockBody
-import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrConst
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrDelegatingConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrClassReference
 import org.jetbrains.kotlin.ir.expressions.IrEnumConstructorCall
-import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrExpressionBody
 import org.jetbrains.kotlin.ir.declarations.IrEnumEntry
 import org.jetbrains.kotlin.ir.expressions.IrGetEnumValue
 import org.jetbrains.kotlin.ir.expressions.IrGetField
 import org.jetbrains.kotlin.ir.expressions.IrGetObjectValue
-import org.jetbrains.kotlin.ir.expressions.IrGetValue
 import org.jetbrains.kotlin.ir.expressions.IrInstanceInitializerCall
-import org.jetbrains.kotlin.ir.expressions.IrReturn
 import org.jetbrains.kotlin.ir.expressions.IrSetField
 import org.jetbrains.kotlin.ir.expressions.IrSetValue
 import org.jetbrains.kotlin.ir.expressions.IrStringConcatenation
@@ -43,7 +39,6 @@ import org.jetbrains.kotlin.ir.expressions.IrComposite
 import org.jetbrains.kotlin.ir.expressions.IrDoWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.expressions.IrSpreadElement
-import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
 import org.jetbrains.kotlin.ir.expressions.IrPropertyReference
 import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
 import org.jetbrains.kotlin.ir.expressions.IrGetClass
@@ -51,9 +46,6 @@ import org.jetbrains.kotlin.ir.declarations.IrLocalDelegatedProperty
 import org.jetbrains.kotlin.ir.declarations.IrValueDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrValueParameter
 import org.jetbrains.kotlin.ir.IrElement
-import org.jetbrains.kotlin.ir.visitors.IrVisitorVoid
-import org.jetbrains.kotlin.ir.visitors.acceptVoid
-import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
 import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.IrTypeProjection
 import org.jetbrains.kotlin.ir.expressions.IrWhileLoop
@@ -876,33 +868,10 @@ internal fun BirEmitter.isInlineWithLambda(fn: IrSimpleFunction): Boolean =
 // kotc does NO coroutine lowering. A `suspend fun`/lambda body emits PLAINLY: decls carry `"suspend":true`
 // (+ `resultType`), suspend call sites carry `"suspendCall":true`, and a suspend lambda emits `newSuspendLambda`.
 // bir2cir consumes those facts to build the `ContinuationImpl` state machine + the public `Task<T>` bridge; kotc
-// bakes NO coroutine ABI. The helpers below (isAwaitIntrinsic / isSuspensionCall / containsSuspend) are the ONLY
-// coroutine code left in kotc, and they exist purely to DRIVE the fact emission (skip the await intrinsic method,
-// tag suspend calls).
+// bakes NO coroutine ABI. `isAwaitIntrinsic` is the ONLY coroutine helper left in kotc — it skips the await
+// intrinsic method from emission (the suspend-call tag itself is emitted by `suspendCallTag` on the call node).
 internal fun BirEmitter.isAwaitIntrinsic(fn: IrSimpleFunction): Boolean =
 	fn.annotations.any { it.type.classFqName?.shortName()?.asString() == "ClrAwait" }
-
-/** A suspension point: any call to a suspend function (the `.await()` intrinsic or a direct suspend call). */
-internal fun BirEmitter.isSuspensionCall(e: org.jetbrains.kotlin.ir.IrElement?): Boolean =
-	e is IrCall && e.symbol.owner.isSuspend
-
-internal fun BirEmitter.containsSuspend(e: org.jetbrains.kotlin.ir.IrElement): Boolean {
-	var found = false
-	e.acceptVoid(object : IrVisitorVoid() {
-		override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
-			if (found) return
-			// A scope function (`with`/`run`/`let`/`apply`/`also`) is INLINE -> a suspension in its lambda IS the
-			// enclosing coroutine's. Descend into the lambda body (the receiver/other children are visited normally).
-			scopeCall(element)?.let { (_, _, lambda) -> lambda.function.body?.let { if (containsSuspend(it)) { found = true; return } } }
-			if (found) return
-			// A non-inline nested lambda / local fun is a SEPARATE coroutine — its suspensions aren't the enclosing one's.
-			if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
-			if (isSuspensionCall(element)) { found = true; return }
-			element.acceptChildrenVoid(this)
-		}
-	})
-	return found
-}
 
 /**
  * `,"typeParams":[...]` for a generic class/interface/method (empty when non-generic). An unconstrained param

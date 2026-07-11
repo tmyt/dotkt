@@ -179,22 +179,42 @@ sealed partial class Emitter
     // `try` needs a dedicated return label + trailing ret.
     static bool StmtsHaveReturn(JsonElement arr)
     {
-        foreach (var s in arr.EnumerateArray()) if (StmtHasReturn(s)) return true;
+        foreach (var s in arr.EnumerateArray()) if (NodeHasReturn(s)) return true;
         return false;
     }
 
-    static bool StmtHasReturn(JsonElement s)
+    // Does this node's physical subtree contain a `return`/`returnExpr` anywhere? A full structural walk: after an
+    // inline splice a return can hide in ANY expression slot — a `use{}`/`run{}` non-local return in
+    // `setLocal.value -> valueBlock.stmts` (or a valueBlock `result`), an elvis `?: return` in an if `cond`, a call
+    // arg, etc. Both statement `return` and expression-position `returnExpr` count: each stores to the try's result
+    // local and `leave`s to its end label (Statements.cs:59 / Expressions.cs:610), so BOTH must drive the result-local
+    // allocation + return-label marking — miss either and the leave targets an unmarked label (a bake failure). No CIR
+    // node embeds ANOTHER method's body (newClosure/newDelegate reference their lifted method by NAME; the invoke body
+    // travels as BIR `synthClass` and is stripped before CIR), so this walk never crosses a function boundary.
+    static bool NodeHasReturn(JsonElement n)
     {
-        if (s.GetProperty("k").GetString() == "return") return true;
-        foreach (var key in new[] { "body", "finally" })
-            if (s.TryGetProperty(key, out var b) && b.ValueKind == JsonValueKind.Array && StmtsHaveReturn(b)) return true;
-        if (s.TryGetProperty("branches", out var brs))
-            foreach (var br in brs.EnumerateArray())
-                if (br.TryGetProperty("body", out var bb) && StmtsHaveReturn(bb)) return true;
-        if (s.TryGetProperty("catches", out var cs))
-            foreach (var c in cs.EnumerateArray())
-                if (StmtsHaveReturn(c.GetProperty("body"))) return true;
+        if (n.ValueKind == JsonValueKind.Object)
+        {
+            if (n.TryGetProperty("k", out var k) && k.GetString() is "return" or "returnExpr") return true;
+            foreach (var p in n.EnumerateObject()) if (NodeHasReturn(p.Value)) return true;
+        }
+        else if (n.ValueKind == JsonValueKind.Array)
+            foreach (var x in n.EnumerateArray()) if (NodeHasReturn(x)) return true;
         return false;
+    }
+
+    // The CFG-`label` ids physically declared within a subtree — a `try`'s region label-set, used to decide whether
+    // a `goto` leaves the protected region (→ must be `leave`, not `br`). Mirrors PrescanCfgLabels' structural walk.
+    static void CollectLabelIds(JsonElement node, HashSet<int> into)
+    {
+        if (node.ValueKind == JsonValueKind.Object)
+        {
+            if (node.TryGetProperty("k", out var k) && k.GetString() == "label")
+                into.Add(node.GetProperty("id").GetInt32());
+            foreach (var p in node.EnumerateObject()) CollectLabelIds(p.Value, into);
+        }
+        else if (node.ValueKind == JsonValueKind.Array)
+            foreach (var x in node.EnumerateArray()) CollectLabelIds(x, into);
     }
 
     // Does this statement list ALWAYS return/throw (no fall-through)? Used to decide if a `try`'s fall-through path

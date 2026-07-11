@@ -431,20 +431,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// (`Name`/`FullName`). The `System.Type` knowledge (which BCL member a KClass member maps to) is a Kotlin<->CLR
 	// relation and lives in bir2cir, not in this frontend.
 
-	// Scope functions (let/run/with/apply/also) -> inline to a value-block (no delegate; mirrors the C# IIFE).
-	if (calleeFq in SCOPE_FUNCTIONS) {
-		val isWith = calleeFq == "kotlin.with"
-		val recvExpr = if (isWith) regularArgs(call).getOrNull(0) else extensionReceiver(call)
-		val lambda = (if (isWith) regularArgs(call).getOrNull(1) else regularArgs(call).getOrNull(0)) as? IrFunctionExpression
-		if (recvExpr != null && lambda != null) return inlineScope(calleeFq!!, recvExpr, lambda)
-	}
-	// `r.use { block }` (Closeable/AutoCloseable) -> `try { block(r) } finally { r.close()/Dispose() }`, returning
-	// the block's value. The CLR analogue of C# `using` (close -> IDisposable.Dispose). T : (Auto)Closeable.
-	if (calleeFq == "kotlin.io.use" || calleeFq == "kotlin.use") {
-		val recvExpr = extensionReceiver(call)
-		val lambda = regularArgs(call).getOrNull(0) as? IrFunctionExpression
-		if (recvExpr != null && lambda != null) return inlineUse(recvExpr, lambda, birType(call.type))
-	}
+	// The scope functions (let/run/with/apply/also) and use{} are @kotlin.internal.InlineOnly cross-module
+	// inline+lambda funs: they route through the generic owner-less `callInline` node at the injected-top-level
+	// dispatch below (bir2cir splices their [KotlinInline] raw-BIR payloads off the ref.dll) — NOT special-cased here.
 
 	// `repeat(n) { i -> body }` -> SPLICE the lambda body (non-local return survives). kotc carries the un-closured
 	// body in a `callInline` node; bir2cir InlineSplice wraps it in the counted loop (#75). Only a LITERAL lambda is
@@ -1117,17 +1106,19 @@ internal fun BirEmitter.call(call: IrCall): String {
 			return """{"k":"callStatic","owner":${fqnJson("kotlin.internal.ir")},"method":"ieee754equals","args":[${expr(a[0])},${expr(a[1])}]}"""
 		}
 		// The top-level precondition / error helpers (`kotlin.TODO`/`error`/`require`/`check`/`requireNotNull`/
-		// `checkNotNull`) are NOT intercepted here: kotc lets them fall through to the general top-level call path
-		// (`callStatic owner:null method:<name> args:[...]`). They are @InlineOnly (no rt.dll body), so bir2cir
-		// recognizes them by callee name and synthesizes the throw / condition (as an expression where needed) —
-		// the Kotlin-semantic lowering lives there, not in kotc.
+		// `checkNotNull`) are NOT special-cased here. The no-lambda overloads fall through to the general top-level
+		// call path (`callStatic owner:null method:<name> args:[...]`); bir2cir recognizes them by callee name and
+		// synthesizes the throw / condition. The lambda-taking overloads (`require(c){msg}` etc.) are @InlineOnly
+		// inline+lambda funs, so they route through the owner-less `callInline` node below (like the scope fns) and
+		// bir2cir splices their real body off the ref.dll [KotlinInline] payload (or swaps in the plain `fallback`).
+		// Either way the Kotlin-semantic lowering lives in bir2cir, not kotc.
 		// `coerceAtMost`/`coerceAtLeast`/`coerceIn` are NOT lowered here (layer purity).
 		// System.Math.Min/Max/Clamp would be a BCL name in kotc (a layer violation). The stdlib
 		// `_Ranges.kt` funcs are pure Kotlin with correct bodies (`if (this < min) min else this`), so kotc now emits a
 		// plain call and the real stdlib body runs. This is also MORE correct than Math.Min for floats: Kotlin's coerce
 		// uses `<`/`>` (total-ordering / NaN-propagating) semantics that differ from System.Math.Min/Max on NaN.
 		// (No @ClrIntrinsic needed: the pure body IS the binding — the top-preferred "emit the real body" outcome.)
-		// `repeat(n) { i -> body }` with a LITERAL lambda IS spliced in kotc (above, near the scope-functions block):
+		// `repeat(n) { i -> body }` with a LITERAL lambda IS spliced in kotc (its own dedicated `inlineRepeat` path):
 		// the body rides UN-CLOSURED in a `callInline` node so a bare `return` stays a NON-LOCAL return (#75). Only a
 		// non-literal shape (callable-ref/other) reaches here and falls through to the plain top-level call, which
 		// bir2cir's RepeatInlineLowering re-emits as a delegate counter loop.
@@ -1154,19 +1145,27 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// off the resolved callee by `suspendCallTag(callee)` below.
 		(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
 			?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name), regularParams(callee).size) }?.let { fileClass ->
-			// A cross-module `inline fun` taking a lambda (body==null here = injected stub) -> emit a generic
-			// `callInline` node carrying the call bindings + a `fallback` plain call. bir2cir OWNS the splice
-			// (it re-lowers the carried body in the app context, so a non-local `return` through the lambda works).
-			// Gate ONLY a non-extension inline-with-lambda (the receiver-less scope/util fns); an EXTENSION inline
-			// op (count/filter/let/also) instead falls through to a plain CALL of its now-correctly-routed rt method
-			// (the ref splice body uses the Kotlin iterator protocol -> unresolved under substitution, but the rt body
-			// iterates via the fixed forEachInline). The `extRecv == null` gate is UNCHANGED (widening it is a later slice).
+			// A FACADEGEN-INJECTED cross-module `inline fun` taking a lambda (a referenced .NET/DotKt library's
+			// roundtrip inline fun; body==null here = injected stub) -> emit a generic `callInline` node carrying the
+			// call bindings + a `fallback` plain call. bir2cir OWNS the splice (it re-lowers the carried body in the app
+			// context, so a non-local `return` through the lambda works). This fires ONLY for a facadegen-named
+			// fileClass; the receiver-carrying stdlib scope/util fns have no fileClass and take the owner-less path
+			// below. The `extRecv == null` gate is retained for this facadegen path (its receiver shape is untested).
 			if (callee.isInline && hasLambdaArg(call) && extRecv == null) return inlineSpliceCall(call, fileClass)
 			// PLAIN static call by identity to the referenced .NET file class (bir2cir's NetInteropBinding shapes it
 			// to clrStatic / clrGenericStatic). This SAME node is also the `fallback` slot of a `callInline` node,
 			// so the shared `plainInjectedTopLevelCall` helper keeps them byte-identical.
 			return plainInjectedTopLevelCall(call, callee, fileClass, name, extRecv)
 		}
+		// The stdlib scope/util fns (let/run/with/apply/also/use) have NO facadegen fileClass — the whole stdlib
+		// rides the klib. They are @kotlin.internal.InlineOnly cross-module inline+lambda funs, so route them through
+		// the OWNER-LESS `callInline` node: bir2cir resolves the hosting file class from the ref.dll [KotlinInline]
+		// index and splices the raw-BIR body (an extension receiver rides in `recvs.extension`, `with`'s receiver as a
+		// regular arg). This gate INTENTIONALLY captures the WHOLE @InlineOnly inline+lambda surface — not only the six
+		// scope fns but also `takeIf`/`takeUnless`, the `require`/`check` lambda overloads, `Result` extensions, etc.:
+		// each resolves by (callee|pc|ga) to its ref.dll payload, or degrades to the `fallback` plain call. Collection
+		// ops (forEach/map/filter — NOT @InlineOnly) are unaffected: they stay plain calls.
+		if (callee.isInline && hasLambdaArg(call) && isInlineOnly(callee)) return inlineSpliceCallOwnerless(call, extRecv)
 	}
 	// Fill omitted constant default arguments at the call site (IL methods have no default mechanism).
 	val args = filledArgs(call).joinToString(",")
