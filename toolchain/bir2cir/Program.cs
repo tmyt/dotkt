@@ -551,13 +551,12 @@ sealed class Pipeline
             // hardcoded primitives) wherever it appears as a type token. The struct-ness oracle drives the reference
             // `{t:nullable}` strip (a value `T?` stays `Nullable<T>`; a reference `T?` -> bare + the NRT byte above).
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
-            // `.size` on a collection-OF-collections (groupBy's `Map<K, List<T>>`, whose runtime value is the MUTABLE
-            // `IList<T>` while its STATIC value is `IReadOnlyList<T>`): Count comes via the INVARIANT `ICollection<KVP<K,V>>`,
-            // so the reified generic slot the app dispatches (`...<KVP<int,IReadOnlyList<int>>>`) is absent on the runtime
-            // `Dictionary<int,IList<int>>` -> EntryPointNotFound. Re-point such Count reads at the VARIANCE-IMMUNE
-            // non-generic `System.Collections.ICollection.Count` (every BCL-backed map/list implements it). App build only;
-            // runs AFTER BirTypeLowering so the collection tokens are already the `clrg:System.Collections.*` CLR forms.
-            if (attributeTopLevelOwner) NestedCollectionCountLowering.Apply(lowered);
+            // `.size` (Count) on a STAR-PROJECTED / `Any`-erased collection receiver: StarProjectionLowering already
+            // re-pointed the receiver `cast` at a non-generic BCL collection interface, but MemberCallSubstitution bound
+            // Count to the GENERIC `IReadOnly*<object>.Count`, absent on a value-type-arg collection (`List<int>`)
+            // -> EntryPointNotFound. Re-point such Count reads at the VARIANCE-IMMUNE non-generic
+            // `System.Collections.ICollection.Count`. App build only; runs AFTER MemberCallSubstitution so Count is bound.
+            if (attributeTopLevelOwner) StarProjectionCountLowering.Apply(lowered);
             // Non-generic `System.IComparable` bridge (non-ref builds): a Kotlin `class C : Comparable<C>` lowers to
             // `C : System.IComparable<C>` ONLY, but the CLR dispatch spine for natural ordering goes through the
             // NON-generic `System.IComparable` (compareValues' `as IComparable` + ilemit's constrained-compareTo

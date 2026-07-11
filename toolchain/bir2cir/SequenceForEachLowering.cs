@@ -10,7 +10,7 @@ using DotKt.Bir;
 // `IEnumerable<object>` at runtime. The typed `IEnumerable<string>::GetEnumerator` slot the app then dispatches is
 // therefore absent -> System.EntryPointNotFoundException (cases/il-seqforin).
 //
-// The variance-immune fix (the same non-generic escape hatch NestedCollectionCountLowering / StarProjectionLowering use
+// The variance-immune fix (the same non-generic escape hatch StarProjectionCountLowering / StarProjectionLowering use
 // for reification/variance mismatches): dispatch the enumeration through the NON-generic `System.Collections.IEnumerable`
 // / `IEnumerator` — which EVERY `IEnumerable<T>` implements regardless of the erased element — and cast each
 // `get_Current` (object) to the loop element type. This keeps `elem` for the yielded-value cast (object -> string /
