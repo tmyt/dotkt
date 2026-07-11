@@ -57,12 +57,18 @@ if ! strings "$OUT/il/Wide.dll" | grep -q 'KAction`17'; then
 fi
 
 # Round-trip surface: facadegen must restore the KFunc`18-typed parameter as a Kotlin function type.
+# facadegen reads the delegate's Invoke signature (17 params + Int return) directly, regardless of arity
+# or the [CompilerGenerated] stamp, and emits it as the JSON function-type node `{"t":"fn",...}` in the
+# FIR-injection meta. Assert `accept`'s `cb` param is that fn node with 17 Int params and an Int return.
 REFPACK="$(ls -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/*/ref/net10.0 2>/dev/null | sort -V | tail -1)"
 RUNTIMEPACK="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/* 2>/dev/null | sort -V | tail -1)"
 REFS="$(ls "$REFPACK"/*.dll "$RUNTIMEPACK"/*.dll | tr '\n' ';')$STDLIB_RT_DLL;$OUT/il/Wide.dll"
 dotnet "$FACADEGEN_DLL" --meta "$OUT/wide.meta" --refs "$REFS" WideKt >/dev/null 2>&1 \
 	|| die "facadegen failed"
-if ! grep -q 'tlfun accept Int final cb:func:\[Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int,Int\]' "$OUT/wide.meta"; then
+int='{"t":"fqn","name":"Int"}'
+ints="$int"; for _ in $(seq 2 17); do ints+=",$int"; done
+want="\"name\":\"accept\",\"ret\":$int,\"mods\":{},\"params\":[{\"name\":\"cb\",\"type\":{\"t\":\"fn\",\"suspend\":false,\"ret\":$int,\"params\":[$ints]}}]"
+if ! grep -qF "$want" "$OUT/wide.meta"; then
 	echo "FAIL  facadegen did not restore KFunc\`18 as a Kotlin function type" >&2
 	cat "$OUT/wide.meta" >&2
 	exit 1

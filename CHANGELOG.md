@@ -487,6 +487,16 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### .NET interop
 
+- **Wide synthesized delegates restore as Kotlin function types (#97, facadegen).** For function values
+  wider than `System.Func`/`Action` (which cap at 16 value params + `TResult`), ilemit synthesizes module-local
+  `DotKt.Runtime.CompilerServices.KFunc`N`/`KAction`N` delegates. facadegen already restores a member typed by
+  such a wide delegate as a Kotlin function type `(I1..In)->R`: its `MapT` delegate→`fn` path reads the
+  delegate's `Invoke` signature directly with no arity cap and independent of the `[CompilerGenerated]` stamp
+  (`IsDelegate` walks the base chain to `System.MulticastDelegate`), so `KFunc`18` maps to `(Int×17)->Int`
+  correctly. Fixed `scripts/verify-wide-delegates.sh`: its restore assertion was a stale grep for the retired
+  pre-#37-m4 text meta grammar (`tlfun accept … cb:func:[…]`) and now checks the current structured-JSON `fn`
+  node — closing the facadegen half of #97 (the bir2cir app-throw half landed in `0df45d9`).
+
 - **Strict unsigned-byte mapping: `System.Byte` ⇔ `kotlin.UByte`, `System.Byte[]` ⇔ `UByteArray` (#53).**
   `System.Byte` is unsigned, so it now maps to Kotlin's unsigned `UByte` (and `byte[]` to the specialized
   native `UByteArray`), consistent with the wider unsigned widths (`UInt16↔UShort`, `UInt32↔UInt`,
