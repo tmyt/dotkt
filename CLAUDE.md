@@ -52,6 +52,15 @@
   leaves behind — otherwise debt-repayment mass-produces incorrect comments/docs/dead-code (a whole cleanup pass had to
   reconcile them). And a stale **false** claim must be **DELETED or replaced with the current truth, NEVER annotated**
   ("this used to be true but…") — an annotation still carries the false claim. State what the code does NOW.
+- **Author for AGENT cognition — split files by semantics, keep each small enough to read WHOLE (2026-07-11, user-directed).**
+  This codebase is ~100% agent-implemented, so the file-size limit is not human readability — it is *what an agent can hold
+  in view at once*. An agent editing a monolith only ever greps + reads a window, so it works with **partial vision** and
+  cannot see the file's cross-cutting invariants (shared mutable state, sibling branches) — the exact trap #41 had to unwind
+  (bir2cir/Program.cs had regrown 5740→7007 because new passes were bolted inline). **The rule: one pass/concern per file;
+  when a pass or family grows, give it its OWN file in the SAME change — never grow a monolith.** Extend the established
+  per-file pattern (bir2cir's per-pass `*.cs`, ilemit's `Emitter.*.cs` partial-class parts, kotc's `BirEmitter*.kt`
+  `internal fun BirEmitter.x()` extensions), verify-by-refactor (output byte-identical). A driver/entry file stays; a
+  concern that has outgrown a window does not. (For a NEW project, seed this rule from day one so the monolith never forms.)
 - **Prefer dedicated subagents for tasks, and actively use Codex.** Delegate substantive work to dedicated
   (specialized) subagents rather than doing it inline — the coordinator orchestrates and integrates. Use **Codex**
   for design and investigation, and **instruct every subagent to USE Codex** (not merely note it's "available") —
