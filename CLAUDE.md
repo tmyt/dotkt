@@ -61,6 +61,14 @@
   per-file pattern (bir2cir's per-pass `*.cs`, ilemit's `Emitter.*.cs` partial-class parts, kotc's `BirEmitter*.kt`
   `internal fun BirEmitter.x()` extensions), verify-by-refactor (output byte-identical). A driver/entry file stays; a
   concern that has outgrown a window does not. (For a NEW project, seed this rule from day one so the monolith never forms.)
+- **NEVER run a destructive git op on a file that carries uncommitted work you did not verify is disposable (2026-07-11, user-directed after a real loss).**
+  `git checkout <file>` / `git restore <file>` / `git stash` / `git reset --hard` **silently destroy the working-tree
+  changes** on those paths — and in this repo the working tree almost always holds several agents' un-committed edits at once
+  (one file often mixes an in-flight multi-file feature). To undo ONE hunk, use **`Edit` to write just that hunk back**, never
+  a whole-file checkout. If you truly must checkout/restore, FIRST preserve the tree (`git stash` only after confirming what it
+  captures, or `git diff -- <paths> > /tmp/…patch`) and re-verify `git status` before and after. A stray `git checkout` here
+  wiped a completed specialist-agent's uncommitted file and forced a from-transcript recovery — treat these commands as
+  load-bearing, not casual.
 - **Prefer dedicated subagents for tasks, and actively use Codex.** Delegate substantive work to dedicated
   (specialized) subagents rather than doing it inline — the coordinator orchestrates and integrates. Use **Codex**
   for design and investigation, and **instruct every subagent to USE Codex** (not merely note it's "available") —
