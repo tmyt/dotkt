@@ -79,6 +79,20 @@
   "Codex stalled on stdin" incidents). Also beware: the CLI can block on an interactive self-update prompt on the
   user's terminal — if Codex goes silent across agents, ask the user to check it, and fall back to empirical
   verification meanwhile.
+- **When ≥3 specialist round-trips fail to resolve ONE problem, escalate to a holistic Fable+Opus root-cause pass (2026-07-12, user-directed).**
+  A "round-trip" = dispatch a single-layer specialist → it closes one seam → a NEW seam of the **same root** surfaces.
+  The tell is whack-a-mole: the fault keeps **moving/renaming** (a new IL offset, a new store/pass site of the same
+  class) instead of closing. That is the failure mode of per-layer, reactive, one-symptom-at-a-time fixing — each
+  specialist sees only its own layer and patches the manifestation, not the root. **STOP handing seams to per-layer
+  specialists** and mount a holistic pass: a **Fable** design agent (read-only, **cross-layer** scope) that (a)
+  enumerates the COMPLETE manifestation set up front so you stop discovering seams one at a time, (b) rules
+  root-vs-band-aid, (c) weighs a representation/design-level fix that dissolves the whole family, (d) specs ONE
+  unified fix; then **Opus** (coordinator + specialists) implements it once and gates. Run the holistic Fable pass
+  **in parallel** with any in-flight specialist attempt (Fable is read-only → no build collision; the specialist's
+  gate result is empirical input to the reconcile). **3 is a ceiling, not a quota** — escalate the moment the pattern
+  is clear. This is a STRUCTURAL escalation (holistic cross-layer vs per-layer reactive), NOT merely a model upgrade —
+  the specialists already run Opus. (Origin: the #75 `il-mapvalues` covariance-erasure ilverify loop — 3 seams
+  0x67/0xD3 → 0x14A → 0x232 patched reactively before escalating.)
 
 # Build & test (do NOT guess commands)
 
