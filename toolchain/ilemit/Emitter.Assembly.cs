@@ -553,6 +553,9 @@ sealed partial class Emitter
         foreach (var tb in _syntheticDelegates.Values)
             if (!tb.IsCreated())
                 tb.CreateType();
+        // The Unit-return delegate adapters forward to a void delegate type `ft` (a BCL Action or a synthetic
+        // KAction), so bake them AFTER the synthetic delegates whose signatures they may reference.
+        if (_unitAdapterTB != null && !_unitAdapterTB.IsCreated()) _unitAdapterTB.CreateType();
         // Safety net: any user type Ordered() somehow missed (so Save won't throw "not supported before the type is
         // created"). Repeat until stable, since creating one may be a prerequisite for another.
         for (bool again = true; again;)

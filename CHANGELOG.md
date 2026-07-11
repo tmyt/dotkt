@@ -680,6 +680,31 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   protected region now emits `leave` (runs the intervening `finally`), and the return-scan descends into expression
   positions (a non-local `return` nested in a spliced `valueBlock`). bir2cir `InlineSplice` fails loud rather than
   silently dropping a `suspendCall` carried in a discarded lambda body on fallback.
+- **Inline splicing narrowed by escape analysis + the cross-module engine hardened (#75 S4a / #95).** kotc gains a fresh
+  pure-IR predicate `lambdaNeedsSplice`/`callNeedsSplice` (`BirEmitterInline.kt`): a lambda arg is source-inlined ONLY
+  when compiling it as a separate CLR delegate would change semantics — a non-local `return` whose target is outside the
+  expansion region, a non-local `break`/`continue` to an outer loop, or a suspend call inherited into a non-suspend
+  inline lambda (arm c). The region descends through the literal-lambda args of NESTED inline calls (so `a { b { return
+  } }` correctly splices both — a direct-arg-only predicate would delegate-compile `a` and silently DROP the caller
+  return) and stops at every other function boundary; conservative on any uncertain shape. The two cross-module gates are
+  narrowed to `callNeedsSplice`: the facadegen path keeps its `extRecv == null` guard (and now fails loud on an escaping
+  receiver call rather than dropping it), and the owner-less path DROPS the `@InlineOnly` restriction — closing today's
+  silent app-side `xs.forEach{ return }` non-local-return drop (any body-less inline+lambda callee with an escaping arg
+  now emits an owner-less `callInline`; the non-escaping majority stays a plain delegate call, the LINQ model). The
+  `fallback` slot is DELETED from both cross-module emitters — under #95 a `callInline` is emitted only when a splice is
+  REQUIRED, so a fallback would be a miscompile; the engine now FAILS LOUD (no dual-track). bir2cir `InlineSplice`
+  hardening: (§4.1) a carrier-hygiene fix — `CollectIds` remints only DECLARED-label ids, so a non-local
+  `goto <caller-loop-label>` inside a carrier is left resolving against the caller's live label instead of being
+  dangled/mis-remapped (a silent-miscompile class made live by non-local break/continue); (§4.2) the `[KotlinInline]`
+  overload key widened to `owner|name|pc|ga|recv0` (recv0 = first param's type FQN — splits `Iterable.forEach` from
+  `IntArray.forEach`, computed identically by kotc, `InlineBirStash`, and the ref.dll reader); (§4.3) dispatch-receiver
+  binding for member inline funs; (§4.4) lambda-forwarding — a lambda param passed BY NAME into a nested stdlib-inline
+  call (`filter`→`filterTo(dest, predicate)`) is converted from a plain `callStatic` into a `callInline` carrying the
+  caller's carrier, so the escaping lambda splices where the inner op invokes it; (§4.5) the fallback path replaced by a
+  fail-loud with the full overload key; (§4.6) a cross-module `newDelegate`-in-payload guard. Nine new gate samples
+  (`cases/il-inline-*`) pin the matrix — nested NLR, outer-label delegate+inner splice, non-local break through a
+  carrier, own-label continue on the delegate path, mutable-capture write-through, `filter`→`filterTo` forwarding, and
+  arm-c suspension spliced into a state machine.
 - **kotc `BirEmitter.kt` decomposed into 6 cohesive sibling files (#41) — a purely mechanical, verify-by-refactor
   carve-out.** The 4633-line `BirEmitter.kt` is now a ~547-line core (class decl + ctor, the whole run-scoped
   mutable-state block, diagnostics, the type-naming quartet, ref-cell machinery, `scopeCall`, `newExc`/`throwExpr`,

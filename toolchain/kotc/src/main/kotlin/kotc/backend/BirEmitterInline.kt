@@ -8,6 +8,7 @@ import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
 import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
+import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
@@ -58,7 +59,10 @@ import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.IrTypeProjection
 import org.jetbrains.kotlin.ir.expressions.IrWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrBreak
+import org.jetbrains.kotlin.ir.expressions.IrBreakContinue
 import org.jetbrains.kotlin.ir.expressions.IrContinue
+import org.jetbrains.kotlin.ir.expressions.IrLoop
+import org.jetbrains.kotlin.ir.expressions.IrReturnableBlock
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.name.CallableId
@@ -66,6 +70,7 @@ import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
+import org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
@@ -127,14 +132,6 @@ internal fun BirEmitter.inlineRepeat(call: IrCall): String {
 	pre.add("""{"k":"label","id":$end}""")
 	return """{"k":"callInline","callee":"kotlin.repeat","count":$countJson,"countType":$countTypeJson,"var":${str(loopVar)},"body":[${pre.joinToString(",")}]}"""
 }
-
-/** A `@kotlin.internal.InlineOnly` callee: an inline fun with no callable body on the JVM/CLR (its ONLY
- *  materialization is the spliced call site). The @InlineOnly cross-module inline+lambda funs — the scope
- *  functions (let/run/with/apply/also) and use{} — are routed through the generic owner-less `callInline`
- *  node (bir2cir splices their [KotlinInline] raw-BIR payloads off the ref.dll). Read straight off the
- *  klib callee's IR annotations (the klib preserves @InlineOnly). */
-internal fun BirEmitter.isInlineOnly(callee: IrSimpleFunction): Boolean =
-	callee.annotations.any { it.type.classFqName?.asString() == "kotlin.internal.InlineOnly" }
 
 internal fun BirEmitter.hasLambdaArg(call: IrCall): Boolean = regularArgs(call).any {
 	it is IrFunctionExpression || ((it as? IrGetValue)?.symbol?.owner?.let { owner -> inlineLambdas.containsKey(owner) } == true)
@@ -321,13 +318,13 @@ internal fun <T> BirEmitter.withTypeArgScope(scope: BirEmitter.TypeArgScope?, bl
 	}
 }
 
-/** CROSS-MODULE inline: a call to an injected `inline fun` taking a lambda (its `[KotlinInline]` body lives on the
- *  referenced assembly). kotc emits a GENERIC `callInline` node carrying the call bindings — the type args, one entry
- *  per regular param (a literal lambda as an `inlineLambda` carrier, else the arg expr) — plus a `fallback` = the plain
- *  call kotc would otherwise emit. bir2cir OWNS the splice: it re-lowers the carried body in the app context (so it
- *  binds against app types) and drops/keeps the `fallback` on splice success/failure. This facadegen path is gated at
- *  the call site on `extRecv == null` (its receiver shape is untested — a receiver call takes the owner-less path
- *  instead), so `recvs` is always empty here. */
+/** CROSS-MODULE inline: a call to an injected `inline fun` whose lambda arg escapes (its `[KotlinInline]` body lives
+ *  on the referenced assembly). kotc emits a GENERIC `callInline` node carrying the call bindings — the type args, one
+ *  entry per regular param (a literal lambda as an `inlineLambda` carrier, else the arg expr). bir2cir OWNS the splice:
+ *  it re-lowers the carried body in the app context (so it binds against app types). Under #95 a `callInline` is emitted
+ *  ONLY when a splice is REQUIRED, so there is NO `fallback` slot — the engine fails loud if it cannot splice. This
+ *  facadegen path is gated at the call site on `extRecv == null` (its receiver shape is untested — a receiver call
+ *  takes the owner-less path instead), so `recvs` is always empty here. */
 internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): String {
 	val callee = call.symbol.owner
 	val name = callee.name.asString()
@@ -351,9 +348,23 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 		else "null"
 	}
 	val retType = birType(callee.returnType).toJson()
-	// The fall-through plain call (byte-identical to the un-gated path): bir2cir swaps it in on any splice failure.
-	val fallback = plainInjectedTopLevelCall(call, callee, fileClass, name, extRecv)
-	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${str(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":{},"args":[$argsJson],"retType":$retType,"fallback":$fallback}"""
+	// The §4.2 overload-key disambiguator: recv0 = the FQN of the callee's FIRST payload-order param type — the
+	// extension-receiver type (it rides as the leading `__self`, so `pc` already counts it) else the first regular
+	// param type; "-" when there is no such param or its birType is not a plain Fqn. Computed from the DECLARED callee
+	// (not the call args) so it matches the ref.dll [KotlinInline] payload's `params[0].type` — bir2cir keys the lookup
+	// on owner|name|pc|ga|recv0 (splits Iterable.forEach vs IntArray.forEach).
+	val recv0 = recv0Of(callee)
+	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${str(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":{},"args":[$argsJson],"retType":$retType,"recv0":${str(recv0)}}"""
+}
+
+/** recv0 (#95 §4.2): the FQN name of the callee's FIRST payload-order param type — the extension-receiver type (the
+ *  leading `__self`) else the first regular param type — or "-" when there is none / its birType is not a plain Fqn.
+ *  Must equal the FQN of the SAME first payload param the DECLARATION emits, so bir2cir's payload-side recv0 (read
+ *  from `params[0].type`) and the call-side key agree; a bare type-variable receiver yields "-" on both sides. */
+internal fun BirEmitter.recv0Of(callee: IrSimpleFunction): String {
+	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+	val firstPT = extParam?.type ?: regularParams(callee).firstOrNull()?.type
+	return (firstPT?.let { birType(it) } as? TypeNode.Fqn)?.name ?: "-"
 }
 
 /** An `inlineLambda` carrier for a literal lambda arg of a cross-module inline call: the lambda's OWN params
@@ -396,13 +407,14 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 	return """{"k":"inlineLambda","params":[$paramsJson],"body":[${body.joinToString(",")}],"result":$result}"""
 }
 
-/** CROSS-MODULE inline of an `@kotlin.internal.InlineOnly` stdlib scope/util fn (let/run/with/apply/also/use) whose
- *  `[KotlinInline]` raw-BIR body lives on the ref.dll. Unlike `inlineSpliceCall`, kotc CANNOT name the hosting file
- *  class — the whole stdlib rides the klib, facadegen supplies no `kotlin.*` metadata — so the node is OWNER-LESS:
- *  bir2cir resolves the hosting file class from the ref.dll `[KotlinInline]` index by `callee|pc|ga`. An extension
- *  receiver (let/run/apply/also/use) rides in `recvs.extension`; `with`'s receiver is a REGULAR param and rides as a
- *  plain arg. The `fallback` = the plain owner-less `callStatic` kotc would emit un-spliced; bir2cir swaps it in on any
- *  splice failure (the rt.dll carries a real body for these funcs, so the fallback is a safe if NLR-losing plain call). */
+/** CROSS-MODULE inline of ANY klib stdlib inline+lambda fn whose lambda arg escapes — the scope/util fns
+ *  (let/run/with/apply/also/use), collection ops (forEach/map/filter), takeIf/takeUnless, etc. — whose `[KotlinInline]`
+ *  raw-BIR body lives on the ref.dll. Unlike `inlineSpliceCall`, kotc CANNOT name the hosting file class — the whole
+ *  stdlib rides the klib, facadegen supplies no `kotlin.*` metadata — so the node is OWNER-LESS: bir2cir resolves the
+ *  hosting file class from the ref.dll `[KotlinInline]` index keyed `owner(null)|name|pc|ga|recv0`. An extension
+ *  receiver rides in `recvs.extension`; `with`'s receiver is a REGULAR param and rides as a plain arg. Under #95 a
+ *  `callInline` is emitted ONLY when a splice is REQUIRED (an escaping lambda arg), so there is NO `fallback` slot —
+ *  the engine fails loud if it cannot splice. */
 internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpression?): String {
 	val callee = call.symbol.owner
 	val name = callee.name.asString()
@@ -415,8 +427,6 @@ internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpre
 	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
 		(call.typeArguments.getOrNull(i)?.let { birType(it) } ?: OBJ).toJson()
 	}
-	// Render the extension receiver ONCE and share the string between `recvs` and the `fallback` — emitting it twice
-	// would re-run `expr` (re-registering its lifted lambdas/closures, and 2^N-exploding a chained `a.let{}.let{}`).
 	val extRecvJson = extRecv?.let { expr(it) }
 	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
 	// One entry per REGULAR param, in order: a literal lambda -> an `inlineLambda` carrier; any other arg -> its expr
@@ -428,18 +438,11 @@ internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpre
 		else "null"
 	}
 	val retType = birType(callee.returnType).toJson()
-	val fallback = plainOwnerlessTopLevelCall(call, callee, name, extRecvJson)
-	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":null,"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"fallback":$fallback}"""
-}
-
-/** The PLAIN owner-less `callStatic` a receiver-less/extension top-level fun would emit un-spliced (byte-identical to
- *  the general fall-through in `emitCall`: an extension receiver rides as the first arg). Used as the `fallback` slot
- *  of an owner-less `callInline` for the stdlib scope/util fns (owner=null: they resolve from the klib, not facadegen). */
-internal fun BirEmitter.plainOwnerlessTopLevelCall(call: IrCall, callee: IrSimpleFunction, name: String, extRecvJson: String?): String {
-	val ta = typeArgsJson(call)
-	val effRet = birType(call.type)
-	val all = (listOfNotNull(extRecvJson) + filledArgs(call)).joinToString(",")
-	return """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$all]${suspendCallTag(callee)}}"""
+	// The §4.2 overload-key disambiguator (see `recv0Of`): the FQN of the callee's first payload-order param type —
+	// the extension-receiver type (carried in `recvs.extension`, and counted in `pc` as the leading `__self`) else the
+	// first regular param type; "-" otherwise. Keyed with owner(null)|name|pc|ga|recv0 against the ref.dll payload.
+	val recv0 = recv0Of(callee)
+	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":null,"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"recv0":${str(recv0)}}"""
 }
 
 /** Splice an invoked inlined lambda `f(args)`: bind its params to the invoke args, then splice its body. */
@@ -494,6 +497,95 @@ internal fun BirEmitter.hasEarlyReturn(body: org.jetbrains.kotlin.ir.IrElement?,
 		if (found) return true
 	}
 	return false
+}
+
+/** TRUE iff compiling [lambda] as a separate CLR method (a delegate) would change semantics (#75 S4 / #95 §1).
+ *  PURE IR read — no valSubst/selfSubst/inlineLambdas/counter mutation (the gates run mid-expression-emission and
+ *  expr re-entry is not idempotent). Scans the lambda's expansion REGION = its own body + (recursively) the bodies of
+ *  literal lambdas passed as non-noinline/non-crossinline Regular args to NESTED INLINE calls (they expand with the
+ *  root). Three escape arms: (a) an IrReturn whose target ∉ the region's fn-symbol set (seeded with the lambda's OWN
+ *  fn, so `return@own`/the implicit tail return is LOCAL); (b) an IrBreak/IrContinue whose loop ∉ the region's loop
+ *  set; (c) a suspend CALL while the root lambda is NOT suspend-typed. STOP at every other function boundary
+ *  (non-inline-arg lambda / noinline / crossinline / local fun / accessor / object literal — their exits are their own
+ *  by frontend rules). Over-descending is SOUND (false-positive = code size); the ONLY false-negative source is
+ *  skipping a descend into a lambda that expands inline with the root — on ANY doubt, DESCEND. */
+internal fun BirEmitter.lambdaNeedsSplice(lambda: IrFunctionExpression): Boolean {
+	val regionFns = HashSet<IrReturnTargetSymbol>()
+	val regionLoops = HashSet<IrLoop>()
+	var escape = false
+	fun scanFn(fn: IrSimpleFunction, suspendCovered: Boolean) {
+		regionFns.add(fn.symbol)                          // seed / extend BEFORE walking the body
+		fn.body?.acceptVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: IrElement) {
+				if (escape) return
+				when (element) {
+					is IrReturn -> {
+						if (element.returnTargetSymbol !in regionFns) { escape = true; return }
+						element.acceptChildrenVoid(this)         // the return VALUE can nest an escape
+					}
+					is IrBreakContinue ->                        // IrBreak + IrContinue
+						if (element.loop !in regionLoops) { escape = true }
+					is IrLoop -> {                               // IrWhileLoop + IrDoWhileLoop
+						regionLoops.add(element)                  // BEFORE descending: breaks inside see it
+						element.acceptChildrenVoid(this)
+					}
+					is IrCall -> {
+						val callee = element.symbol.owner
+						if (!suspendCovered && callee.isSuspend) { escape = true; return }
+						val inline = callee.isInline
+						val ps = callee.parameters
+						for (i in element.arguments.indices) {
+							val arg = element.arguments[i] ?: continue
+							val p = ps.getOrNull(i)
+							val lit = unwrapLambdaLiteral(arg)
+							// A literal lambda passed to an inline callee's non-noinline/non-crossinline Regular param
+							// expands with the region -> descend into it; anything else is a boundary (walk it as an
+							// ordinary expr — its own lambdas STOP the scan below).
+							if (inline && lit != null &&
+								(p == null || p.kind != IrParameterKind.Regular ||
+								 (!p.isNoinline && !p.isCrossinline))) {
+								val f = lit.function
+								scanFn(f, suspendCovered || f.isSuspend)
+							} else arg.acceptVoid(this)
+						}
+					}
+					is IrFunctionExpression -> return   // boundary: non-inline-arg / noinline / crossinline lambda
+					is IrFunction -> return             // boundary: local fun / accessor
+					is IrClass -> return                // boundary: object literal / local class
+					is IrReturnableBlock -> { escape = true; return }   // conservative: unexpected post-inliner shape
+					else -> element.acceptChildrenVoid(this)
+				}
+			}
+		})
+	}
+	scanFn(lambda.function, lambda.function.isSuspend)
+	return escape
+}
+
+/** Peel the wrapper around a lambda literal arg: a bare IrFunctionExpression, or one inside an IrTypeOperatorCall
+ *  (suspend-conversion / implicit-cast). Anything else is not a splice-descendable literal. */
+private fun unwrapLambdaLiteral(e: IrExpression): IrFunctionExpression? = when (e) {
+	is IrFunctionExpression -> e
+	is IrTypeOperatorCall -> e.argument as? IrFunctionExpression
+	else -> null
+}
+
+/** The call-site gate (#95 §1): TRUE iff [call]'s inline callee is passed a splice-requiring lambda in a
+ *  non-noinline/non-crossinline Regular slot. Index-aligned `callee.parameters[i] ↔ call.arguments[i]` — NOT
+ *  `regularParams(callee).zip(regularArgs(call))`: `regularArgs` drops null defaulted-arg slots, so a defaulted arg
+ *  BEFORE the lambda would misalign the zip and pair the lambda with a wrong param's noinline/crossinline flags
+ *  (a false negative). A null slot (omitted default) is simply skipped. Matching a BARE `IrFunctionExpression` (not the
+ *  `unwrapLambdaLiteral` peel used mid-region) is complete here: the only argument-position wrapper fir2ir emits is a
+ *  SAM_CONVERSION, and a SAM-converted lambda is not an inlinable param (no NLR possible) — it can never need a splice. */
+internal fun BirEmitter.callNeedsSplice(call: IrCall): Boolean {
+	val callee = call.symbol.owner
+	if (!callee.isInline) return false
+	val ps = callee.parameters
+	return call.arguments.withIndex().any { (i, a) ->
+		val p = ps.getOrNull(i) ?: return@any false
+		p.kind == IrParameterKind.Regular && !p.isNoinline && !p.isCrossinline &&
+			(a as? IrFunctionExpression)?.let { lambdaNeedsSplice(it) } == true
+	}
 }
 
 /**

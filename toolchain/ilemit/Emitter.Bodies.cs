@@ -612,13 +612,16 @@ sealed partial class Emitter
         // Mirrors the event path; covers custom delegates (ApplicationInitializationCallback, ThreadStart) and BCL
         // Func/Action alike. Scoped to literal lambdas (newDelegate/newClosure) so stored delegate/Func values keep
         // their existing pass-through path.
-        // Scoped to a FULLY-CONCRETE target delegate: when `want` is a REFERENCED delegate (`KFunc`) instantiated with a
-        // TypeBuilder/generic-param arg, DelegateCtor's TypeBuilder.GetConstructor path can't build it ("must contain a
-        // TypeBuilder as a generic argument"); the lambda then self-builds its own (assembly-local synthetic) delegate
-        // from `funcType` via the normal EmitExpr path below — the pre-existing behavior. A concrete `want` (e.g.
-        // MapsKt.mapValues's KFunc over referenced Map.Entry/int) still rewraps into the exact callee delegate.
-        if (typeof(System.Delegate).IsAssignableFrom(want) && want != typeof(System.Delegate) && want != typeof(System.MulticastDelegate)
-            && !ContainsTypeBuilder(want)
+        // Skip the rewrap only for a target the rewrap CANNOT build: (a) a synthetic assembly-local delegate
+        // (`KFunc`/`KAction`, whose generic DEFINITION is a TypeBuilder) — the lambda's own self-build from `funcType`
+        // already yields the identical type, so a rewrap is redundant; (b) a `want` still mentioning an OPEN generic
+        // PARAMETER (no concrete ctor to bind). A BAKED-definition delegate (BCL `Func`/`Action`, a referenced .NET
+        // delegate) whose only builder-ness is a TypeBuilder CLASS type-arg (`Func<Res,int>`, Res a user class being
+        // emitted) IS rewrappable — DelegateCtor/InvokeOf bridge it via TypeBuilder.GetX — so it must rewrap, else the
+        // self-built `KFunc` mismatches the callee's BCL `Func` (ilverify StackUnexpected — the S4a `use { it.read() }`).
+        // A concrete `want` (e.g. MapsKt.mapValues's KFunc over referenced Map.Entry/int) also still rewraps.
+        if (IsDelegateType(want) && want != typeof(System.Delegate) && want != typeof(System.MulticastDelegate)
+            && !IsTypeBuilderBackedGeneric(want) && !ContainsGenericParameter(want)
             && a.TryGetProperty("k", out var dk) && (dk.GetString() == "newDelegate" || dk.GetString() == "newClosure"))
         {
             EmitHandlerAsDelegate(a, want);

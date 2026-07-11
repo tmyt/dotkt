@@ -650,7 +650,22 @@ sealed partial class Emitter
     void EmitHandlerAsDelegate(JsonElement h, Type want)
     {
         var ctor = DelegateCtor(want);
-        switch (h.GetProperty("k").GetString())
+        // The delegate's Invoke return type: when it is a real (non-void) type while the lambda's NATURAL delegate is
+        // void-returning (a Unit body maps to void), binding the void method-pointer into the ctor is not verifiable
+        // -> self-build the natural void delegate and wrap it in a Unit-return adapter. InvokeRetOf (not want.GetMethod/
+        // InvokeOf) so a TypeBuilder-arg `want` (`Func<Res,Unit>`) yields the CLOSED return type (`kotlin.Unit`) — a
+        // by-name lookup throws and InvokeOf's ReturnType comes back unsubstituted.
+        var invokeRet = InvokeRetOf(want);
+        var k = h.GetProperty("k").GetString();
+        if (invokeRet != typeof(void) && (k == "newDelegate" || k == "newClosure")
+            && FuncRetType(h.GetProperty("funcType")) == typeof(void))
+        {
+            var ft = EmitExpr(h);                             // the lambda's natural void delegate, on the stack
+            _il.Emit(OpCodes.Ldftn, UnitWrapAdapter(ft, invokeRet, FuncArgTypes(h.GetProperty("funcType")).ToArray()));
+            _il.Emit(OpCodes.Newobj, ctor);
+            return;
+        }
+        switch (k)
         {
             case "newDelegate":
                 _il.Emit(OpCodes.Ldnull);

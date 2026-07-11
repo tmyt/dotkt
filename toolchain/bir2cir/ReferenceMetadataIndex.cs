@@ -131,9 +131,9 @@ sealed class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.InlinePayloads)
                 _inlinePayloads[kv.Key] = (_inlinePayloads.ContainsKey(kv.Key) || kv.Value == null) ? null : kv.Value;
         }
-        // Build the owner-less reverse index (S3). Key owner|name|pc|ga -> name|pc|ga; the value is the owner. A cross-
-        // owner collision (two file classes both hosting a `foo|2|2`) poisons the entry to null so an owner-less callInline
-        // for that shape falls back rather than binding a wrong owner.
+        // Build the owner-less reverse index (S3). Key owner|name|pc|ga|recv0 -> name|pc|ga|recv0; the value is the owner.
+        // A cross-owner collision (two file classes both hosting a `foo|2|2|kotlin.String`) poisons the entry to null so
+        // an owner-less callInline for that shape fails loud rather than binding a wrong owner.
         foreach (var key in _inlinePayloads.Keys)
         {
             var bar = key.IndexOf('|');
@@ -141,28 +141,28 @@ sealed class ReferenceMetadataIndex
             var owner = key[..bar];
             // Owner-less callInline is DEFINITIONALLY a `kotlin.*` @InlineOnly stdlib fn (kotc's inlineSpliceCallOwnerless
             // is gated to those). Restrict the reverse index to the stdlib namespace so a USER-lib inline fn that happens
-            // to share a bare name|pc|ga (e.g. a user `T.use(block)` -> `use|2|2`) can neither poison the stdlib entry nor
+            // to share a bare name|pc|ga|recv0 (e.g. a user `T.use(block)`) can neither poison the stdlib entry nor
             // (when the stdlib key is absent) bind a wrong owner for a `kotlin.let`/`kotlin.io.use` call.
             if (!owner.StartsWith("kotlin.", StringComparison.Ordinal)) continue;
-            var npg = key[(bar + 1)..];
+            var npg = key[(bar + 1)..];   // name|pc|ga|recv0
             _inlineOwnerByNPG[npg] = (_inlineOwnerByNPG.TryGetValue(npg, out var prev) && prev != owner) ? null : owner;
         }
     }
 
-    // Resolve the file-class owner for an OWNER-LESS callInline (S3), keyed name|pc|ga. Null when unknown or a poisoned
-    // cross-owner collision -> InlineSplice falls back to the plain call.
-    public string TryResolveInlineOwner(string name, int pc, int ga) =>
-        name != null && _inlineOwnerByNPG.TryGetValue($"{name}|{pc}|{ga}", out var owner) ? owner : null;
+    // Resolve the file-class owner for an OWNER-LESS callInline (S3), keyed name|pc|ga|recv0. Null when unknown or a
+    // poisoned cross-owner collision -> InlineSplice fails loud.
+    public string TryResolveInlineOwner(string name, int pc, int ga, string recv0) =>
+        name != null && _inlineOwnerByNPG.TryGetValue($"{name}|{pc}|{ga}|{recv0}", out var owner) ? owner : null;
 
-    // The raw-BIR [KotlinInline] payload for a cross-module inline fn (owner|name|pc|ga), decoded to its JSON node — or
-    // null when the referenced assembly carries no (or an unreadable / pre-S1-shaped) [KotlinInline] for that overload.
+    // The raw-BIR [KotlinInline] payload for a cross-module inline fn (owner|name|pc|ga|recv0), decoded to its JSON node —
+    // or null when the referenced assembly carries no (or an unreadable / pre-S1-shaped) [KotlinInline] for that overload.
     // Consumed by InlineSplice to splice the injected body at the call site. `owner` = callInline.owner (file-facade FQN).
-    public JsonNode TryReadInlineBir(string owner, string name, int pc, int ga)
+    public JsonNode TryReadInlineBir(string owner, string name, int pc, int ga, string recv0)
     {
         if (owner == null || name == null) return null;
-        // A missing key OR a POISONED (null) value (D6: an owner|name|pc|ga overload collision) yields no payload -> the
-        // splicer falls back to the plain call rather than splicing a wrong-typed body.
-        if (!_inlinePayloads.TryGetValue($"{owner}|{name}|{pc}|{ga}", out var json) || json == null) return null;
+        // A missing key OR a POISONED (null) value (a residual same-recv0 overload collision) yields no payload -> the
+        // splicer fails loud rather than splicing a wrong-typed body.
+        if (!_inlinePayloads.TryGetValue($"{owner}|{name}|{pc}|{ga}|{recv0}", out var json) || json == null) return null;
         try { return JsonNode.Parse(json); } catch { return null; }
     }
 
@@ -763,14 +763,19 @@ sealed class ReferenceMetadataIndex
                             {
                                 var ver = (string)inlineCad.ConstructorArguments[0].Value!;
                                 var content = ReadByteArrayArg(inlineCad.ConstructorArguments[1]);
-                                var json = DotKt.Bir.BirCarrier.DecodeBody(ver, content).ToJsonString();
-                                var ikey = ownerFqn + "|" + method.Name + "|" + method.GetParameters().Length + "|" + method.GetGenericArguments().Length;
-                                // D6: POISON an owner|name|pc|ga collision (overloads that differ only by full signature —
-                                // IntArray/LongArray.forEach on one facade) to null -> the resolver falls back, never splices
-                                // a wrong-typed body. (Real fix in S3: widen the key with the first-param type token.)
+                                var decoded = DotKt.Bir.BirCarrier.DecodeBody(ver, content);
+                                var json = decoded.ToJsonString();
+                                // §4.2 (#75 S4a): key `owner|name|pc|ga|recv0`. recv0 comes from the DECODED PAYLOAD's own
+                                // `params[0].type` (a Kotlin FQN) — the SAME source kotc/InlineBirStash read — so the three
+                                // key-producing sites agree. pc/ga still come from the .NET method (the payload counts them
+                                // identically: an extension receiver rides as a leading `__self` param).
+                                var recv0 = InlineBirStash.Recv0Of((decoded as JsonObject)?["params"] as JsonArray);
+                                var ikey = ownerFqn + "|" + method.Name + "|" + method.GetParameters().Length + "|" + method.GetGenericArguments().Length + "|" + recv0;
+                                // D6: a RESIDUAL collision AFTER recv0 widening (a genuine same-recv0 overload) poisons to
+                                // null -> the splicer fails loud on that key (the fallback slot is gone under #95).
                                 metadata.InlinePayloads[ikey] = metadata.InlinePayloads.ContainsKey(ikey) ? null : json;
                             }
-                            catch { /* unreadable / pre-S1 payload — fall back to the plain call at splice time */ }
+                            catch { /* unreadable / pre-S1 payload — no cross-module splice; the engine fails loud at splice time */ }
                         }
                         // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
                         //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.

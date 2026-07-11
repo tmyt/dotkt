@@ -26,6 +26,56 @@ sealed partial class Emitter
         tb.SetCustomAttribute(new CustomAttributeBuilder(ti.Ctors[0], new object[] { 0 }));
     }
 
+    // --- Unit-return delegate adapters (task #75 S4a) ---
+    // A lifted lambda for a `() -> Unit` / `(T) -> Unit` body is emitted returning `void` (a Unit result maps to
+    // void), yet a scope-function's target delegate is `Func<...,Unit>` whose `Invoke` returns the REAL `kotlin.Unit`
+    // type. Binding the void method-pointer into that ctor is not delegate-compatible (ilverify [DelegateCtor]:
+    // "Unrecognized arguments"). Reconcile by building the lambda's NATURAL void delegate (`Action<...>`, via the
+    // ordinary newDelegate/newClosure self-build) and wrapping it in a synthetic static adapter that invokes it and
+    // returns `Unit.INSTANCE`. Wrapping the void DELEGATE (not the raw target) is what keeps the adapter well-scoped:
+    // a capturing lambda in a generic function is a GENERIC closure `Closure<T>` whose `invoke` a direct adapter could
+    // only name by dragging the enclosing method's `T` into this non-generic holder — impossible; the void delegate
+    // absorbs that genericity, so the adapter names only the (concrete/BCL) delegate type. Fires ONLY on the
+    // void-lifted-vs-non-void-delegate mismatch; a genuine `Action` (void Invoke) / matching-return `Func` binds directly.
+    TypeBuilder _unitAdapterTB;
+
+    int _unitAdapterCounter;
+
+    TypeBuilder UnitAdapterHolder()
+    {
+        if (_unitAdapterTB != null) return _unitAdapterTB;
+        _unitAdapterTB = _mod.DefineType(CompilerServicesNs + "UnitDelegateAdapters",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
+            typeof(object));
+        _unitAdapterTB.SetCustomAttribute(new CustomAttributeBuilder(
+            typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute).GetConstructor(Type.EmptyTypes), new object[0]));
+        return _unitAdapterTB;
+    }
+
+    // `static Unit A(<voidDelegate> d, <params>) { d.Invoke(<params>); return Unit.INSTANCE; }` — the void delegate `ft`
+    // is bound as the delegate ctor's target (a closed static delegate), the remaining signature matching the Unit
+    // delegate's Invoke. `invokeRet` is that Invoke return type (must carry a static `INSTANCE` singleton — `kotlin.Unit`);
+    // `paramTypes` are the delegate's parameter types (identical for the void and the Unit delegate — only the return
+    // differs), forwarded straight through.
+    MethodInfo UnitWrapAdapter(Type ft, Type invokeRet, Type[] paramTypes)
+    {
+        // `invokeRet` is a referenced (baked) `kotlin.Unit` in an app/rt build -> its static INSTANCE reflects directly.
+        // (Were the rt-stdlib itself to ever bind such a delegate while `kotlin.Unit` is still a TypeBuilder, this GetField
+        // would throw a loud NotSupportedException rather than mis-emit — no gate hits it; add a `_types` lookup if it does.)
+        var instF = invokeRet.GetField("INSTANCE", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new NotSupportedException($"cannot reconcile a void lambda into a delegate returning {invokeRet} (no static INSTANCE singleton)");
+        var pTypes = new[] { ft }.Concat(paramTypes).ToArray();
+        var mb = UnitAdapterHolder().DefineMethod("Unit$" + (_unitAdapterCounter++),
+            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig,
+            invokeRet, pTypes);
+        var il = mb.GetILGenerator();
+        for (int i = 0; i < pTypes.Length; i++) il.Emit(OpCodes.Ldarg, i);
+        il.Emit(OpCodes.Callvirt, InvokeOf(ft));
+        il.Emit(OpCodes.Ldsfld, instF);
+        il.Emit(OpCodes.Ret);
+        return mb;
+    }
+
     readonly Dictionary<string, TypeBuilder> _syntheticDelegates = new();
 
     readonly Dictionary<TypeBuilder, ConstructorBuilder> _syntheticDelegateCtors = new();
@@ -54,6 +104,21 @@ sealed partial class Emitter
         if (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
             return TypeBuilder.GetMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
         return ft.GetMethod("Invoke");
+    }
+
+    // The delegate's Invoke RETURN type, resolved WITHOUT a by-name member lookup on the instantiation — which throws
+    // NotSupportedException on a `TypeBuilderInstantiation` (`Func<Res,int>`, Res a user TypeBuilder) and returns the
+    // UNSUBSTITUTED `TResult` off a `MethodOnTypeBuilderInstantiation` (both documented Reflection.Emit unreliabilities).
+    // Read the definition's Invoke return, then positionally substitute an open return type-param with the closed arg.
+    // Both callers (the delegate-arg rewrap — guard-guaranteed closed — and the concrete-runtime event delegates) pass a
+    // closed `ft`, so the substituted result is a concrete type; a def whose Invoke returns a type constructed over a
+    // param would come back open, but that only feeds the Unit-adapter trigger, where it is rightly not `kotlin.Unit`.
+    Type InvokeRetOf(Type ft)
+    {
+        if (!IsGenericInst(ft)) return ft.GetMethod("Invoke")?.ReturnType ?? typeof(void);
+        var r = ft.GetGenericTypeDefinition().GetMethod("Invoke").ReturnType;
+        return r.IsGenericParameter && r.GenericParameterPosition < ft.GetGenericArguments().Length
+            ? ft.GetGenericArguments()[r.GenericParameterPosition] : r;
     }
 
     // The RETURN .NET type from a `func:<ret>:<args>` string — carried by the BIR, so we never reflect the

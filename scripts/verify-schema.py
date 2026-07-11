@@ -60,6 +60,9 @@ STR_OK = {
                                                 # JSON-null for the S3 owner-less stdlib scope-fn arm, bir2cir resolves it)
     "callee",                                   # callInline (#75): the inline fn's Kotlin FQN identity ("kotlin.repeat"),
                                                 # a dispatch key consumed by bir2cir InlineSplice — never survives to CIR
+    "recv0",                                    # callInline (#75 S4a §4.2): the callee's first-param type FQN, a bare-FQN
+                                                # OVERLOAD-KEY disambiguator (owner|name|pc|ga|recv0) — a resolution key
+                                                # consumed by bir2cir InlineSplice, NOT a document value-type slot; never CIR
     "ownerType",                                # callInstance/field/setField/staticField owner
     "clrOverride",                              # the CLR base type whose member a method overrides (override-target owner)
 }

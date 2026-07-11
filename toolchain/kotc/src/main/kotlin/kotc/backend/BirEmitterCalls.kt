@@ -1108,9 +1108,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// The top-level precondition / error helpers (`kotlin.TODO`/`error`/`require`/`check`/`requireNotNull`/
 		// `checkNotNull`) are NOT special-cased here. The no-lambda overloads fall through to the general top-level
 		// call path (`callStatic owner:null method:<name> args:[...]`); bir2cir recognizes them by callee name and
-		// synthesizes the throw / condition. The lambda-taking overloads (`require(c){msg}` etc.) are @InlineOnly
-		// inline+lambda funs, so they route through the owner-less `callInline` node below (like the scope fns) and
-		// bir2cir splices their real body off the ref.dll [KotlinInline] payload (or swaps in the plain `fallback`).
+		// synthesizes the throw / condition. The lambda-taking overloads (`require(c){msg}` etc.) route through the
+		// owner-less `callInline` node below ONLY when their lambda arg escapes (`callNeedsSplice`); a non-escaping
+		// message lambda (the common case) falls through to the plain call, and bir2cir runs the real body.
 		// Either way the Kotlin-semantic lowering lives in bir2cir, not kotc.
 		// `coerceAtMost`/`coerceAtLeast`/`coerceIn` are NOT lowered here (layer purity).
 		// System.Math.Min/Max/Clamp would be a BCL name in kotc (a layer violation). The stdlib
@@ -1145,27 +1145,39 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// off the resolved callee by `suspendCallTag(callee)` below.
 		(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
 			?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name), regularParams(callee).size) }?.let { fileClass ->
-			// A FACADEGEN-INJECTED cross-module `inline fun` taking a lambda (a referenced .NET/DotKt library's
-			// roundtrip inline fun; body==null here = injected stub) -> emit a generic `callInline` node carrying the
-			// call bindings + a `fallback` plain call. bir2cir OWNS the splice (it re-lowers the carried body in the app
-			// context, so a non-local `return` through the lambda works). This fires ONLY for a facadegen-named
-			// fileClass; the receiver-carrying stdlib scope/util fns have no fileClass and take the owner-less path
-			// below. The `extRecv == null` gate is retained for this facadegen path (its receiver shape is untested).
-			if (callee.isInline && hasLambdaArg(call) && extRecv == null) return inlineSpliceCall(call, fileClass)
+			// A FACADEGEN-INJECTED cross-module `inline fun` whose lambda arg has a NON-LOCAL EXIT (or inherited
+			// suspension) — `callNeedsSplice` (#95 §1) — MUST be source-inlined: emit a generic `callInline` node
+			// carrying the call bindings; bir2cir OWNS the splice (it re-lowers the carried body in the app context,
+			// so a non-local `return`/`break`/suspend through the lambda works). A non-escaping lambda arg is NOT
+			// gated here — it falls through to the plain call below, where the callee is a real generic method taking
+			// a delegate (the JIT inlines it — the LINQ model). This fires ONLY for a facadegen-named fileClass; the
+			// receiver-carrying stdlib scope/util fns have no fileClass and take the owner-less path below. The
+			// `extRecv == null` gate is retained for this facadegen path (its receiver shape is untested).
+			if (callNeedsSplice(call)) {
+					// An escaping lambda arg REQUIRES a splice. This facadegen path's extension-receiver shape is
+					// untested, so a RECEIVER call must NOT fall through to the plain delegate call below (the NLR would
+					// become the closure's own return — a silent miscompile). Fail loud per #95 rather than degrade.
+					if (extRecv != null) return unsupported(call,
+						"a cross-module inline call with an escaping lambda AND an extension receiver",
+						"the facadegen receiver-splice shape is not yet implemented")
+					return inlineSpliceCall(call, fileClass)
+				}
 			// PLAIN static call by identity to the referenced .NET file class (bir2cir's NetInteropBinding shapes it
-			// to clrStatic / clrGenericStatic). This SAME node is also the `fallback` slot of a `callInline` node,
-			// so the shared `plainInjectedTopLevelCall` helper keeps them byte-identical.
+			// to clrStatic / clrGenericStatic). This is the fall-through for a NON-escaping inline+lambda call (the
+			// callee is a real generic method taking a delegate) as well as every non-inline top-level fun.
 			return plainInjectedTopLevelCall(call, callee, fileClass, name, extRecv)
 		}
-		// The stdlib scope/util fns (let/run/with/apply/also/use) have NO facadegen fileClass — the whole stdlib
-		// rides the klib. They are @kotlin.internal.InlineOnly cross-module inline+lambda funs, so route them through
-		// the OWNER-LESS `callInline` node: bir2cir resolves the hosting file class from the ref.dll [KotlinInline]
-		// index and splices the raw-BIR body (an extension receiver rides in `recvs.extension`, `with`'s receiver as a
-		// regular arg). This gate INTENTIONALLY captures the WHOLE @InlineOnly inline+lambda surface — not only the six
-		// scope fns but also `takeIf`/`takeUnless`, the `require`/`check` lambda overloads, `Result` extensions, etc.:
-		// each resolves by (callee|pc|ga) to its ref.dll payload, or degrades to the `fallback` plain call. Collection
-		// ops (forEach/map/filter — NOT @InlineOnly) are unaffected: they stay plain calls.
-		if (callee.isInline && hasLambdaArg(call) && isInlineOnly(callee)) return inlineSpliceCallOwnerless(call, extRecv)
+		// Any OTHER cross-module inline+lambda fun with no facadegen fileClass — the whole stdlib rides the klib, so
+		// scope/util fns (let/run/with/apply/also/use), collection ops (forEach/map/filter), takeIf/takeUnless,
+		// require/check, Result extensions, etc. all land here. Gate purely on `callNeedsSplice`: ONLY when a lambda
+		// arg has a NON-LOCAL EXIT (or inherited suspension) do we emit the OWNER-LESS `callInline` node — bir2cir
+		// resolves the hosting file class from the ref.dll [KotlinInline] index (keyed owner|name|pc|ga|recv0) and
+		// splices the raw-BIR body (an extension receiver rides in `recvs.extension`, `with`'s receiver as a regular
+		// arg). There is NO @InlineOnly restriction: a plain `xs.forEach { return }` (NOT @InlineOnly) is exactly the
+		// escaping case that MUST splice, and gating on @InlineOnly silently dropped its non-local return. The
+		// non-escaping majority (`forEach { println(it) }`) is NOT gated here — it falls through to the plain
+		// callStatic below, and the callee's real generic body (delegate-taking) runs = status quo.
+		if (callNeedsSplice(call)) return inlineSpliceCallOwnerless(call, extRecv)
 	}
 	// Fill omitted constant default arguments at the call site (IL methods have no default mechanism).
 	val args = filledArgs(call).joinToString(",")
@@ -1212,8 +1224,8 @@ internal fun BirEmitter.call(call: IrCall): String {
 /**
  * The PLAIN `callStatic` node for a call to a top-level function restored from a `[KotlinFile]` facade on a
  * referenced assembly (owner = the .NET file-facade type; bir2cir's NetInteropBinding shapes it to
- * clrStatic / clrGenericStatic). Shared by BOTH the fall-through path AND `inlineSpliceCall`'s `fallback` slot,
- * so a `callInline` fallback is byte-identical to what kotc emits when the cross-module-inline gate does not fire.
+ * clrStatic / clrGenericStatic). This is the fall-through for a non-escaping facadegen inline+lambda call (the
+ * callee is a real generic method taking a delegate) as well as every ordinary non-inline top-level fun.
  */
 internal fun BirEmitter.plainInjectedTopLevelCall(call: IrCall, callee: IrSimpleFunction, fileClass: String, name: String, extRecv: IrExpression?): String {
 	// An extension fun: its receiver is the .NET method's first param (`__self`), so prepend it to the args.

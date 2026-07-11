@@ -25,7 +25,8 @@ using DotKt.Bir;
 // temp), the callee's own returns routed to a result-local + end-label, a bare non-local `return` kept verbatim (= the
 // caller's return). HYGIENE is mandatory (payload label ids come from the ORIGIN file's dense-from-0 counter, so they
 // collide with the consuming file): fresh SEQUENTIAL cfg ids above the file max, per-clone, and a per-splice local
-// prefix. On any unsupported shape we swap in kotc's carried `fallback` (the plain call) and log loudly.
+// prefix. On any unsupported shape we FAIL LOUD (#95/§4.5: kotc emits a callInline only when a splice is REQUIRED, so
+// there is no fallback — an un-spliceable shape is a hard miscompile, not a degradable plain call).
 //
 // Runs at the same phase-1 position RepeatInlineLowering did (before ClosureSynthesis so any nested closure in the
 // spliced body is synthesized once, before MemberCallSubstitution). Unconditional (ref + rt + app).
@@ -63,7 +64,7 @@ static class InlineSplice
     static void Rewrite(JsonObject o, int depth)
     {
         if (Str(o["k"]) != "callInline") return;
-        // Discriminate by FIELD SHAPE, not callee-FQN: the GENERIC node carries `pc`/`ga` (+ `fallback`, and an `owner`
+        // Discriminate by FIELD SHAPE, not callee-FQN: the GENERIC node carries `pc`/`ga` (+ `recv0`, and an `owner`
         // that is a file-class string for a facadegen-injected user fn OR JSON-null for a stdlib scope-fn/@InlineOnly fn
         // whose owner bir2cir resolves); the specialized `kotlin.repeat` node carries `count`/`var`/`body` and no `pc`.
         if (o.ContainsKey("pc")) { RewriteGeneric(o, depth); return; }
@@ -79,40 +80,43 @@ static class InlineSplice
         var name = callee != null && callee.Contains('.') ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
         int pc = Int(o["pc"]);
         int ga = Int(o["ga"]);
+        var recv0 = Str(o["recv0"]) ?? "-";   // §4.2 overload-key disambiguator (kotc carries the callee's first-param FQN)
 
         // OWNER-LESS callInline (S3 stdlib scope-fn/@InlineOnly arm): kotc emits owner=null for a `kotlin.*` inline fn (it
         // cannot name the stdlib file class — the whole stdlib rides the klib, facadegen supplies no `kotlin.*` metadata).
         // Resolve the hosting file class from the ref.dll here (which .NET type hosts the fun = a Kotlin<->CLR relation).
-        if (owner == null) owner = _refs?.TryResolveInlineOwner(name, pc, ga);
+        if (owner == null) owner = _refs?.TryResolveInlineOwner(name, pc, ga, recv0);
 
-        if (depth > 32) { Fallback(o, owner, name, pc, ga, "inline splice depth > 32 (recursive-inline data corruption)"); return; }
-        if (owner == null) { Fallback(o, owner, name, pc, ga, "owner-less callInline: no ref.dll file class hosts this inline fn (or a poisoned collision)"); return; }
+        if (depth > 32) { FailLoud(o, owner, name, pc, ga, recv0, "inline splice depth > 32 (recursive-inline data corruption)"); return; }
+        if (owner == null) { FailLoud(o, owner, name, pc, ga, recv0, "owner-less callInline: no ref.dll file class hosts this inline fn (or a poisoned collision)"); return; }
 
-        // RESOLVE: same-module stash index (dormant in S1), then cross-module ref.dll [KotlinInline]. A POISONED
-        // same-module entry (null = an owner|name|pc|ga overload collision) is skipped -> cross-module -> fallback.
+        // RESOLVE: same-module stash index, then cross-module ref.dll [KotlinInline]. A POISONED entry (null = a residual
+        // same-recv0 overload collision) is skipped -> cross-module -> fail loud. `sameModule` gates the §4.6 newDelegate
+        // guard: an origin-file __lambdaN delegate is legal to splice within its own file, dangling across a ref.dll edge.
         JsonObject payload = null;
-        if (InlineBirStash.Index.TryGetValue($"{owner}|{name}|{pc}|{ga}", out var idx) && idx != null)
-            payload = (JsonObject)idx.DeepClone();
-        else if (_refs?.TryReadInlineBir(owner, name, pc, ga) is JsonObject cross)
+        bool sameModule = false;
+        if (InlineBirStash.Index.TryGetValue($"{owner}|{name}|{pc}|{ga}|{recv0}", out var idx) && idx != null)
+        { payload = (JsonObject)idx.DeepClone(); sameModule = true; }
+        else if (_refs?.TryReadInlineBir(owner, name, pc, ga, recv0) is JsonObject cross)
             payload = (JsonObject)cross.DeepClone();
 
-        // GUARD SCAN -> fallback (leave the plain call, log the semantic cost). The splice is applied ONLY to shapes it
-        // is proven to lower correctly; any shape it does not fully handle (a callee-body return in expression position,
-        // a lambda param aliased/forwarded rather than directly invoked, a missing default arg, an extension receiver
-        // not yet carried) falls back to kotc's plain call — safe except it drops a non-local return, which those shapes
-        // do not exercise in the S1 corpus. o is untouched until step 7, so a mid-stream Fallback is sound.
-        if (payload == null) { Fallback(o, owner, name, pc, ga, "no [KotlinInline] payload found"); return; }
-        if (Int(payload["v"]) != 1) { Fallback(o, owner, name, pc, ga, "stale [KotlinInline] payload (pre-raw-BIR)"); return; }
-        if (Str(payload["recv"]) == "dispatch") { Fallback(o, owner, name, pc, ga, "dispatch (member) inline — deferred to S4"); return; }
+        // GUARD SCAN -> FAIL LOUD (#95/§4.5): under the narrowed kotc gates a callInline is emitted ONLY when a splice is
+        // REQUIRED (an escaping lambda arg), so the fallback slot is gone and every un-handled shape is a hard miscompile,
+        // not a silently-degradable plain call. o is untouched until step 7, so a mid-stream FailLoud is sound.
+        if (payload == null) { FailLoud(o, owner, name, pc, ga, recv0, "no [KotlinInline] payload found"); return; }
+        if (Int(payload["v"]) != 1) { FailLoud(o, owner, name, pc, ga, recv0, "stale [KotlinInline] payload (pre-raw-BIR)"); return; }
         var pParams = payload["params"] as JsonArray ?? new JsonArray();
         var pBody = payload["body"] as JsonArray;
-        if (pBody == null) { Fallback(o, owner, name, pc, ga, "payload has no body"); return; }
+        if (pBody == null) { FailLoud(o, owner, name, pc, ga, recv0, "payload has no body"); return; }
         var typeArgs = o["typeArgs"] as JsonArray ?? new JsonArray();
-        if (typeArgs.Count < ga) { Fallback(o, owner, name, pc, ga, "fewer typeArgs than generic arity"); return; }
-        if (ga > 0 && HasNode(pBody, "newClosure", "newDelegate")) { Fallback(o, owner, name, pc, ga, "generic × lifted closure — deferred"); return; }
+        if (typeArgs.Count < ga) { FailLoud(o, owner, name, pc, ga, recv0, "fewer typeArgs than generic arity"); return; }
+        // §4.6: a payload `newDelegate` is a capture-less nested lambda lifted to the ORIGIN file's __lambdaN class; that
+        // type token dangles when spliced into another file. Legal same-module (the class is in this file); across a
+        // ref.dll edge it is a hard error (engine-side zero-capture synthesis is a future follow-up, never a kotc hack).
+        if (!sameModule && HasNode(pBody, "newDelegate")) { FailLoud(o, owner, name, pc, ga, recv0, "cross-module payload carries a newDelegate (origin-file __lambdaN) — dangles when spliced (§4.6)"); return; }
         // D1: a callee-body return in EXPRESSION position (`x ?: return v`) is a distinct kind whose routing is not yet
-        // implemented — splicing it verbatim would emit a raw caller-frame `ret` with the callee's value. Fall back.
-        if (HasNodeNonClosure(pBody, "returnExpr")) { Fallback(o, owner, name, pc, ga, "callee-body returnExpr (expression-position return) — deferred"); return; }
+        // implemented — splicing it verbatim would emit a raw caller-frame `ret` with the callee's value. Fail loud.
+        if (HasNodeNonClosure(pBody, "returnExpr")) { FailLoud(o, owner, name, pc, ga, recv0, "callee-body returnExpr (expression-position return) — not yet routed"); return; }
 
         var pRet = payload["ret"]?.DeepClone();
 
@@ -140,6 +144,22 @@ static class InlineSplice
         bool ext = Str(payload["recv"]) == "extensionParam";
         var recvs = o["recvs"] as JsonObject;
 
+        // §4.3 — DISPATCH RECEIVER (member inline fn): the payload's `this` refs are the callee's dispatch receiver, not
+        // the CALLER's `this`. Bind kotc's carried `recvs.dispatch` to a fresh temp and rewrite the payload body's own
+        // `{k:this}` (not descending into nested closures/type-defs — their `this` is their own). Dormant until kotc wires
+        // the cross-module member-inline gate (S4b), but required-and-fail-loud when a `dispatch` payload does resolve.
+        if (Str(payload["recv"]) == "dispatch")
+        {
+            if (recvs?["dispatch"] is not JsonNode disp)
+            { FailLoud(o, owner, name, pc, ga, recv0, "dispatch (member) inline but no recvs.dispatch carried"); return; }
+            string thisTemp = prefix + "this";
+            // owner = the enclosing type name for a member payload (InlineBirStash keys members under the type), so it is
+            // the dispatch receiver's declared type.
+            stmts.Add(new JsonObject { ["k"] = "var", ["name"] = thisTemp, ["type"] = TypeJson.Fqn(owner), ["init"] = disp.DeepClone() });
+            RewriteThis(pBody, thisTemp);
+            RewriteThis(result, thisTemp);
+        }
+
         for (int i = 0; i < pParams.Count; i++)
         {
             if (pParams[i] is not JsonObject p) continue;
@@ -153,12 +173,18 @@ static class InlineSplice
 
             if (argNode is JsonObject ao && Str(ao["k"]) == "inlineLambda")
             {
-                lambdaMap[pn] = ao;   // spliced at its invoke sites (step 6), no temp
+                // M1 hygiene: key lambdaMap by the PREFIXED param name (and rewrite the payload's refs to it via `subst`),
+                // so the key is splice-local and cannot collide with a caller-CAPTURED var of the SAME name (e.g. a user
+                // local `transform` free-referenced inside the escaping lambda) that gets spliced into the payload at STEP
+                // 6 — which would otherwise mis-forward/mis-detect it. The carrier's own captured refs stay unprefixed.
+                string lname = prefix + pn;
+                lambdaMap[lname] = ao;   // spliced at its invoke sites (step 6) / forwarded (§4.4), no temp
+                subst[pn] = new JsonObject { ["k"] = "local", ["name"] = lname };
                 continue;
             }
             // D7/D9: a null arg is a DEFAULTED param (kotc emits literal `null`) or an un-carried extension receiver, not
-            // a Unit value — binding Unit-null to a typed param is garbage. Fall back (the plain call handles defaults).
-            if (argNode == null) { Fallback(o, owner, name, pc, ga, ext && i == 0 ? "extension receiver not carried" : $"missing (defaulted) arg for param {pn}"); return; }
+            // a Unit value — binding Unit-null to a typed param is garbage. Fail loud (no fallback under #95).
+            if (argNode == null) { FailLoud(o, owner, name, pc, ga, recv0, ext && i == 0 ? "extension receiver not carried" : $"missing (defaulted) arg for param {pn}"); return; }
             string temp = prefix + pn;
             stmts.Add(new JsonObject { ["k"] = "var", ["name"] = temp, ["type"] = ptype?.DeepClone(), ["init"] = argNode.DeepClone() });
             subst[pn] = new JsonObject { ["k"] = "local", ["name"] = temp };
@@ -170,12 +196,19 @@ static class InlineSplice
         SpliceLambdaInvokes(pBody, lambdaMap);
         SpliceLambdaInvokes(result, lambdaMap);   // D2: the folded `result` may itself BE the invoke (`= action(x)`)
 
-        // D3: any lambda-param reference that was NOT a direct `invoke` (aliased `val f = action`, forwarded to a nested
-        // callInline) is now a dangling local with no binding — fall back rather than emit an unresolved-local miscompile.
-        if (HasLocalIn(pBody, lambdaMap.Keys) || HasLocalIn(result, lambdaMap.Keys))
-        { Fallback(o, owner, name, pc, ga, "lambda param aliased/forwarded (not directly invoked) — deferred"); return; }
+        // §4.4(i) — FORWARDING: a lambda param passed BY NAME into a NESTED stdlib-inline call (`map` forwards `transform`
+        // to the plain `callStatic mapTo(dest, transform)`) is not a direct invoke here — convert that nested call into a
+        // callInline carrying the caller's carrier, so STEP 8's fixpoint splices it where mapTo invokes `transform`.
+        ForwardLambdaArgs(pBody, lambdaMap);
+        ForwardLambdaArgs(result, lambdaMap);
 
-        // STEP 7 — assemble the value-producing valueBlock, swap it in-place, drop the fallback.
+        // D3 remainder: any lambda-param ref still NOT a direct invoke nor a nested-callInline forward (an aliased
+        // `val f = action` then `f()`, not present in the stdlib) is a dangling local — fail loud (no fallback under #95;
+        // §4.4(ii) engine-side newClosure materialization is the future path, never a silent miscompile).
+        if (HasLocalIn(pBody, lambdaMap.Keys) || HasLocalIn(result, lambdaMap.Keys))
+        { FailLoud(o, owner, name, pc, ga, recv0, "lambda param aliased/forwarded to a non-callInline position (not directly invoked) — not yet materialized (§4.4ii)"); return; }
+
+        // STEP 7 — assemble the value-producing valueBlock, swap it in-place.
         foreach (var st in pBody) if (st != null) stmts.Add(st.DeepClone());
         var repl = new JsonObject { ["k"] = "valueBlock", ["stmts"] = stmts, ["result"] = result };
         foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
@@ -185,24 +218,108 @@ static class InlineSplice
         Walk(o, depth + 1);
     }
 
-    static void Fallback(JsonObject o, string owner, string name, int pc, int ga, string reason)
+    // §4.5 FAIL LOUD (#95): kotc emits a callInline ONLY when the splice is REQUIRED (an escaping lambda arg via
+    // callNeedsSplice), so the old plain-call fallback slot is DELETED — any shape the engine cannot splice is a hard
+    // miscompile (a dropped non-local return / trapped suspension), never a silently-degradable plain call. Throw with the
+    // full overload key + reason so the failing call site is identifiable.
+    static void FailLoud(JsonObject o, string owner, string name, int pc, int ga, string recv0, string reason) =>
+        throw new NotSupportedException(
+            $"inline splice: cannot splice {owner}.{name} (pc={pc} ga={ga} recv0={recv0}): {reason} — "
+            + "under #95 a callInline is emitted only when a splice is required, so there is no fallback; fix the splice shape or the kotc gate.");
+
+    // §4.3 — rewrite a member-inline payload's own `{k:this}` to a bound dispatch-receiver temp. Does NOT descend into a
+    // nested closure / lifted delegate / type-def (their `this` is their own — same boundary the return router respects).
+    static void RewriteThis(JsonNode node, string thisTemp)
     {
-        // F5 (fail-loud): the plain-call fallback re-emits every arg, but the carried `inlineLambda` BODIES become a
-        // non-suspend delegate. A `suspendCall` inside a DISCARDED carrier body has no recovery (SuspendColdLowering
-        // never sees the awaited call -> the coroutine miscompiles far downstream), so refuse. Scan ONLY the carriers:
-        // a `suspendCall` in a plain (non-lambda) arg rides the fallback callStatic verbatim at caller level, where it
-        // lowers correctly — throwing on that would be a false positive.
-        if (o["args"] is JsonArray fargs
-            && fargs.Any(a => a is JsonObject ao && Str(ao["k"]) == "inlineLambda" && ContainsSuspendCall(ao)))
-            throw new NotSupportedException($"inline splice: cannot fall back for {owner}.{name} (pc={pc} ga={ga}): {reason} — "
-                + "a discarded lambda body contains a suspend call; the plain (non-suspend) fallback would drop it. Fix the splice shape.");
-        Console.Error.WriteLine($"bir2cir: inline splice fallback for {owner}.{name} (pc={pc} ga={ga}): {reason} — "
-            + "emitting the plain call; a non-local return through a lambda arg will NOT return from the caller");
-        if (o["fallback"] is not JsonNode fb)
-            throw new NotSupportedException($"inline splice: no fallback for {owner}.{name} ({reason})");
-        var f = fb.DeepClone();
+        if (node is JsonObject o)
+        {
+            if (IsClosureBoundary(o) || Str(o["k"]) == "typeDef") return;
+            if (Str(o["k"]) == "this")
+            {
+                foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
+                o["k"] = "local";
+                o["name"] = thisTemp;
+                return;
+            }
+            foreach (var kv in o) if (kv.Value != null) RewriteThis(kv.Value, thisTemp);
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null) RewriteThis(c, thisTemp);
+    }
+
+    // §4.4(i) — FORWARDING: a lambda param passed BY NAME into a NESTED call that is itself a stdlib inline fn. stdlib
+    // `map`'s raw payload is `return mapTo(__self, ArrayList(...), transform)` — a PLAIN owner-less `callStatic` to the
+    // inline `mapTo`, `transform` forwarded by name (_Collections.kt:1559, verified against the ref.dll payload). Because
+    // the caller's lambda ESCAPES, `mapTo` must ALSO be spliced, so we CONVERT that callStatic into an owner-less
+    // `callInline` (recvs.extension + regular args, the forwarded lambda local -> the caller's carrier) and let STEP 8's
+    // fixpoint splice it where `mapTo` invokes `transform`. An already-formed nested `callInline` arg is handled directly.
+    // A forward we cannot resolve to a stdlib inline fn is LEFT as-is -> the D3-remainder fail-loud (never a silent drop).
+    static void ForwardLambdaArgs(JsonNode node, Dictionary<string, JsonObject> lambdaMap)
+    {
+        if (lambdaMap.Count == 0 || node == null) return;
+        if (node is JsonObject o)
+        {
+            var k = Str(o["k"]);
+            // (braces MANDATORY: without them the `else if` dangles onto the inner for-loop `if` and never runs.)
+            if (k == "callInline" && o["args"] is JsonArray cargs)
+            {
+                for (int i = 0; i < cargs.Count; i++)
+                    if (cargs[i] is JsonObject ao && Str(ao["k"]) == "local"
+                        && Str(ao["name"]) is string ln && lambdaMap.TryGetValue(ln, out var lam))
+                        cargs[i] = lam.DeepClone();
+            }
+            else if (k == "callStatic" && o["owner"] is not JsonObject && Str(o["owner"]) == null
+                     && o["args"] is JsonArray sargs
+                     && sargs.Any(a => a is JsonObject so && Str(so["k"]) == "local" && Str(so["name"]) is string n && lambdaMap.ContainsKey(n)))
+                TryForwardCallStatic(o, lambdaMap);
+            foreach (var kv in o) if (kv.Value != null) ForwardLambdaArgs(kv.Value, lambdaMap);
+        }
+        else if (node is JsonArray a) foreach (var c in a) if (c != null) ForwardLambdaArgs(c, lambdaMap);
+    }
+
+    // Convert an owner-less `callStatic` to a stdlib inline fn (that a lambda param is forwarded into) into an owner-less
+    // `callInline`, mirroring kotc's inlineSpliceCallOwnerless shape so RewriteGeneric can splice it at the fixpoint. pc =
+    // arg count, ga = typeArg count, recv0 = FQN of sig[0] — the SAME overload key the ref.dll payload is stored under. An
+    // extension callee (recv==extensionParam) takes args[0] as recvs.extension; the remaining args become regular args,
+    // with a forwarded lambda local swapped for the caller's carrier.
+    static void TryForwardCallStatic(JsonObject o, Dictionary<string, JsonObject> lambdaMap)
+    {
+        var name = Str(o["method"]);
+        var sargs = o["args"] as JsonArray;
+        if (name == null || sargs == null) return;
+        var sig = o["sig"] as JsonArray;
+        var typeArgs = o["typeArgs"] as JsonArray;
+        int pc = sargs.Count;
+        int ga = typeArgs?.Count ?? 0;
+        string recv0 = sig != null && sig.Count > 0 && sig[0] is JsonObject s0 && Str(s0["t"]) == "fqn" && Str(s0["name"]) is string fq ? fq : "-";
+        var owner = _refs?.TryResolveInlineOwner(name, pc, ga, recv0);
+        if (owner == null || _refs?.TryReadInlineBir(owner, name, pc, ga, recv0) is not JsonObject payload) return;  // not a resolvable inline fn -> leave; D3-remainder fails loud
+        var recv = Str(payload["recv"]);
+
+        var recvs = new JsonObject();
+        var callArgs = new JsonArray();
+        int start = 0;
+        if (recv == "extensionParam") { recvs["extension"] = sargs[0]?.DeepClone(); start = 1; }
+        for (int i = start; i < sargs.Count; i++)
+        {
+            if (sargs[i] is JsonObject ao && Str(ao["k"]) == "local" && Str(ao["name"]) is string ln && lambdaMap.TryGetValue(ln, out var lam))
+                callArgs.Add(lam.DeepClone());
+            else callArgs.Add(sargs[i]?.DeepClone());
+        }
+        var repl = new JsonObject
+        {
+            ["k"] = "callInline",
+            ["callee"] = name,
+            ["owner"] = null,
+            ["pc"] = pc,
+            ["ga"] = ga,
+            ["recv0"] = recv0,
+            ["typeArgs"] = typeArgs?.DeepClone() ?? new JsonArray(),
+            ["recvs"] = recvs,
+            ["args"] = callArgs,
+            ["retType"] = o["ret"]?.DeepClone(),
+        };
         foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
-        if (f is JsonObject fo) foreach (var kv in fo) o[kv.Key] = kv.Value?.DeepClone();
+        foreach (var kv in repl) o[kv.Key] = kv.Value?.DeepClone();
     }
 
     // Splice invocations of a lambda param: `{k:callInstance, method:invoke, recv:{k:local,name:<lamParam>}}` where
@@ -388,8 +505,8 @@ static class InlineSplice
 
     // ---- hygiene helpers -------------------------------------------------------------------------------------------
 
-    // Fresh SEQUENTIAL cfg ids for the DISTINCT ids of the id-carrying kinds (label/goto/brIf). The Joint variant maps
-    // the ids of MULTIPLE roots through ONE map (a carrier's `body` + `result` cross-reference each other's labels).
+    // Fresh SEQUENTIAL cfg ids for the DISTINCT ids of the DECLARED labels only (§4.1). The Joint variant maps the ids of
+    // MULTIPLE roots through ONE map (a carrier's `body` + `result` cross-reference each other's labels).
     static void FreshenLabels(JsonNode node) => FreshenLabelsJoint(node);
 
     static void FreshenLabelsJoint(params JsonNode[] roots)
@@ -401,17 +518,26 @@ static class InlineSplice
         foreach (var r in roots) if (r != null) ApplyIds(r, map);
     }
 
+    // §4.1 HYGIENE (silent-miscompile fix): collect ONLY `label`-declared ids. A carrier body can carry a non-local
+    // `{k:goto,id:<caller-loop-label>}` (arm-b break/continue, #95 traffic) whose matching `{k:label}` lives OUTSIDE this
+    // region, in the surrounding function. If we re-minted that goto's id (as the old `label||goto||brIf` collect did) it
+    // would dangle — and worse, a later same-file splice could mint the same fresh id for an unrelated label, silently
+    // branching to a foreign program point. Collecting only labels leaves an out-of-region goto untouched (ApplyIds's
+    // TryGetValue guard skips it) so it keeps resolving against the caller's live label.
     static void CollectIds(JsonNode nn, Dictionary<int, int> map)
     {
         if (nn is JsonObject o)
         {
             var k = Str(o["k"]);
-            if ((k == "label" || k == "goto" || k == "brIf") && o["id"] is JsonValue) map.TryAdd(Int(o["id"]), 0);
+            if (k == "label" && o["id"] is JsonValue) map.TryAdd(Int(o["id"]), 0);
             foreach (var kv in o) if (kv.Value != null) CollectIds(kv.Value, map);
         }
         else if (nn is JsonArray a) foreach (var c in a) if (c != null) CollectIds(c, map);
     }
 
+    // Remap label/goto/brIf ids — but ONLY when the id is in the map (i.e. a label DECLARED in this freshened region;
+    // §4.1). A goto/brIf targeting an out-of-region (caller) label is NOT in the map and passes through untouched. Do NOT
+    // "simplify" this into an unconditional remap: that reintroduces the dangling-goto miscompile.
     static void ApplyIds(JsonNode nn, Dictionary<int, int> map)
     {
         if (nn is JsonObject o)
@@ -514,19 +640,6 @@ static class InlineSplice
         else if (node is JsonArray a) foreach (var c in a) if (c != null) SubstTvIn(c, typeArgs, ga);
     }
 
-    // Any node carrying the kotc `"suspendCall":true` fact (a suspend call site awaiting a downstream Task/await
-    // lowering). Used by Fallback to refuse dropping a carried suspend body into a non-suspend plain call.
-    static bool ContainsSuspendCall(JsonNode node)
-    {
-        if (node is JsonObject o)
-        {
-            if (o["suspendCall"] is JsonValue sv && sv.TryGetValue<bool>(out var b) && b) return true;
-            foreach (var kv in o) if (kv.Value != null && ContainsSuspendCall(kv.Value)) return true;
-        }
-        else if (node is JsonArray a) foreach (var c in a) if (c != null && ContainsSuspendCall(c)) return true;
-        return false;
-    }
-
     static bool HasNode(JsonNode node, params string[] kinds)
     {
         if (node is JsonObject o)
@@ -569,6 +682,9 @@ static class InlineSplice
         return Rec(node);
     }
 
+    // Seeds _nextLabelId (Apply entry). Scans label||goto||brIf DELIBERATELY WIDE (asymmetric with CollectIds's label-only
+    // §4.1 narrowing): _nextLabelId must stay strictly above EVERY id in the file so a freshly-minted label can never
+    // collide with a caller-loop label that a non-local goto still points at.
     static int MaxLabelId(JsonNode node)
     {
         int max = -1;

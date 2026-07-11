@@ -221,6 +221,29 @@ sealed partial class Emitter
         return t.GetGenericTypeDefinition().MakeGenericType(args);
     }
 
+    // Recursively replace the generic-parameter references in `from` (a method's OPEN type params) with the concrete
+    // `to` (its call-site type args), reaching NESTED positions (a `Func<T,R>` param -> `Func<Res,int>`). Matches by
+    // reference identity (reliable for a reflected method's own params) AND by method-scoped position (a
+    // MethodBuilderInstantiation may hand back normalized param objects that are not reference-equal). Element/generic
+    // structure is rebuilt; a non-generic leaf and a TYPE-scoped param are returned unchanged.
+    static Type SubstituteMethodArgs(Type t, Type[] from, Type[] to)
+    {
+        for (int i = 0; i < from.Length && i < to.Length; i++) if (ReferenceEquals(t, from[i])) return to[i];
+        if (t.IsGenericParameter)
+            return t.DeclaringMethod != null && t.GenericParameterPosition < to.Length ? to[t.GenericParameterPosition] : t;
+        if (t.HasElementType)
+        {
+            var e = SubstituteMethodArgs(t.GetElementType(), from, to);
+            if (ReferenceEquals(e, t.GetElementType())) return t;
+            return t.IsArray ? (t.GetArrayRank() == 1 ? e.MakeArrayType() : e.MakeArrayType(t.GetArrayRank()))
+                : t.IsByRef ? e.MakeByRefType() : t.IsPointer ? e.MakePointerType() : t;
+        }
+        var ga = t.GetGenericArguments();
+        if (ga.Length == 0) return t;
+        var subd = ga.Select(a => SubstituteMethodArgs(a, from, to)).ToArray();
+        return subd.SequenceEqual(ga) ? t : t.GetGenericTypeDefinition().MakeGenericType(subd);
+    }
+
     // Overload disambiguation for interface-slot wiring: does a body method's declared param type satisfy the
     // interface method's (substituted) param type? Reference/Type equality first; builders vs runtime
     // instantiations of the same shape compare by name (TypeBuilderInstantiation instances are not reference-equal
@@ -363,8 +386,18 @@ sealed partial class Emitter
             if (ps == null && inst is not MethodBuilder
                 && (inst.DeclaringType is not { IsGenericType: true } idt || !IsTbInstantiation(idt)))
             {
-                retType = inst.ReturnType;
-                paramTypes = inst.GetParameters().Select(p => p.ParameterType).ToArray();
+                // When `inst` is a MethodBuilderInstantiation (an external generic method instantiated over a
+                // TypeBuilder arg — `AutoCloseableKt.use<Res,R>`, Res a user class being emitted), its GetParameters()/
+                // ReturnType come back with the method's type params UNSUBSTITUTED (open `Func<T,R>`). Substitute them
+                // to the concrete `targs` so a nested delegate param (`Func<T,R>` -> `Func<Res,int>`) is a rewrap
+                // target — else the block arg is emitted against the open param and self-built as a mismatched KFunc
+                // (ilverify StackUnexpected). A runtime instantiation already yields concrete members -> no-op.
+                // Substitute over the OPEN reflected method `m` — its param generic-params ARE reference-equal to
+                // `m.GetGenericArguments()`, so SubstituteMethodArgs matches them reliably. `inst.GetParameters()` may
+                // hand back normalized param objects with a null DeclaringMethod, defeating the positional fallback.
+                var openGps = m.GetGenericArguments();
+                retType = SubstituteMethodArgs(m.ReturnType, openGps, targs);
+                paramTypes = m.GetParameters().Select(p => SubstituteMethodArgs(p.ParameterType, openGps, targs)).ToArray();
             }
             return inst;
         }
@@ -831,6 +864,35 @@ sealed partial class Emitter
 
     static bool IsTypeBuilderBackedGeneric(Type t) =>
         IsGenericInst(t) && t.GetGenericTypeDefinition() is TypeBuilder;
+
+    // Is `t` a delegate type? A TypeBuilderInstantiation of a BAKED generic delegate (`Func<Res,int>`, Res a user
+    // TypeBuilder) reports `typeof(Delegate).IsAssignableFrom` UNRELIABLY (its base chain is not resolvable pre-bake),
+    // so fall back to testing its baked generic DEFINITION (`System.Func`2`). A synthetic (TypeBuilder-def) delegate
+    // stays on the direct assignability check (its own MulticastDelegate base is set at DefineType).
+    static bool IsDelegateType(Type t)
+    {
+        if (typeof(System.Delegate).IsAssignableFrom(t)) return true;
+        // Guard HasElementType/IsGenericParameter BEFORE probing generics: an array/byref/pointer (a Reflection.Emit
+        // SymbolType) or a generic-param `want` (a) is never a delegate and (b) throws NotSupportedException on
+        // GetGenericArguments (the base-Type default) — the same traversal quirk ContainsTypeBuilder guards. The old
+        // direct-assignability-first guard never hit this because it short-circuited on non-delegates.
+        if (t.HasElementType || t.IsGenericParameter) return false;
+        return IsGenericInst(t) && t.GetGenericTypeDefinition() is { } def && def is not TypeBuilder
+            && typeof(System.Delegate).IsAssignableFrom(def);
+    }
+
+    // A subset of ContainsTypeBuilder: only an OPEN generic PARAMETER (`!T`), NOT a concrete TypeBuilder CLASS arg.
+    // The delegate-arg rewrap (EmitArg case 4) can build a target delegate whose type-arg is a user TypeBuilder class
+    // (`Func<Res,int>` — DelegateCtor/InvokeOf bridge it via TypeBuilder.GetX), but NOT one still mentioning an open
+    // generic param (no concrete ctor to bind); this predicate distinguishes the two so the guard rewraps the former.
+    static bool ContainsGenericParameter(Type t)
+    {
+        if (t.IsGenericParameter) return true;
+        if (t.HasElementType) return ContainsGenericParameter(t.GetElementType());
+        if (!t.IsGenericParameter && t.GetGenericArguments().Length > 0)
+            foreach (var a in t.GetGenericArguments()) if (ContainsGenericParameter(a)) return true;
+        return false;
+    }
 
     // ---- BCL interop (@Clr) via reflection ----
     // A shared compiler-synthetic type that, once verified cross-assembly, is emitted ONCE (public) in the rt stdlib
