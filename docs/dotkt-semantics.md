@@ -213,8 +213,11 @@ encoding, which the JIT honors and which a single-threaded run cannot itself obs
 
 ## 5. Primitive stringification is CLR-native (not Kotlin/JVM cosmetics)
 
-- A DotKt program IS a .NET program, so it follows the **host's** conventions: `println(true)` → `True` (not `true`),
-  `println(4.0)` → `4` (not `4.0`). Kotlin's `true`/`4.0` are JVM/JS inherited cosmetics, not language essence.
+- Kotlin does **not specify** the string form of `Boolean`/`Double` (only the *source literals* are `true`/`false`);
+  `toString()`/`println` rendering is unspecified-behavior. A DotKt program IS a .NET program, so it picks the
+  **.NET-native** rendering: `println(true)` → `True` (not the JVM's `true`), `println(4.0)` → `4` (not `4.0`). This
+  is a *choice within unspecified behavior*, not a deviation from the Kotlin language — the JVM's `true`/`4.0` are
+  themselves just `java.lang.Boolean`/`Double.toString` implementation details, not language essence.
 - The JVM differential harness (`verify-differential.sh`) normalizes these cosmetic differences and checks the logic.
 - Memory `clr-native-primitive-formatting`.
 - **`String.format` exists on DotKt as platform API (like the JVM has its own; Native/JS have none), but uses the
