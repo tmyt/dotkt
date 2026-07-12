@@ -154,6 +154,32 @@ sealed partial class Emitter
                     // Prefer a SIGNATURE match off the node's `argTypes` (kotc emits the resolved ctor's param types) so
                     // an overloaded external type resolves correctly; fall back to the first same-arity ctor.
                     var ext = constructed ?? ResolveType(open);
+                    // An external generic instantiated over a FREE emitted type param (`AtomicReference<T>` where T is
+                    // the enclosing method's type var) is a TypeBuilderInstantiation: its `.GetConstructor(s)` throw
+                    // "does not support resolving members". Resolve the ctor on the OPEN definition (by declared-arg
+                    // signature, else arity) and re-anchor onto the instantiation via the static TypeBuilder.GetConstructor
+                    // — the exact mirror of EmitClrNew's IsTbInstantiation branch (which only fires for facadegen `clrNew`
+                    // System.* types; a stdlib `kotlin.*` generic arrives here as a plain `new`).
+                    if (IsTbInstantiation(ext))
+                    {
+                        var openDef = ext.GetGenericTypeDefinition();
+                        var newArgc = nargs.GetArrayLength();
+                        // argTypes describes the ctor's OWN params (kotc omits it, or prepends enclosing/capture args, for
+                        // some `new` shapes) — use it only when its cardinality lines up (mirrors NewCtorBySig), else a
+                        // null-filled array so PickOpenCtor never indexes out of range and degrades to the first same-arity ctor.
+                        var rawArgTypes = e.TryGetProperty("argTypes", out var atEl) && atEl.ValueKind == JsonValueKind.Array
+                            ? atEl.EnumerateArray().Select(a => { try { return ClrRef(a); } catch { return (Type)null; } }).ToArray()
+                            : System.Array.Empty<Type>();
+                        var newArgTypes = rawArgTypes.Length == newArgc ? rawArgTypes : new Type[newArgc];
+                        ConstructorInfo openCtor = null;
+                        if (newArgTypes.All(t => t != null))
+                            try { openCtor = openDef.GetConstructor(newArgTypes); } catch (ArgumentException) { }
+                        openCtor ??= PickOpenCtor(openDef, newArgTypes, newArgc)
+                            ?? throw new NotSupportedException($"no matching ctor on the open def of {ext.FullName} with {newArgc} arg(s)");
+                        EmitArgs(nargs, openCtor.GetParameters());
+                        _il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(ext, openCtor));
+                        return ext;
+                    }
                     var ctorE = NewCtorBySig(ext, e, nargs.GetArrayLength())
                         ?? ext.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == nargs.GetArrayLength());
                     // Emit the ctor args against the RESOLVED ctor's SUBSTITUTED param types (a constructed-generic

@@ -7,6 +7,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Constructing an external generic type over a FREE type variable now emits via `TypeBuilder.GetConstructor`
+  instead of crashing at emit (`#123`).** `AtomicRef(AtomicReference(v))` in `fun <T> atomic(v: T): AtomicRef<T>`
+  — where `AtomicReference<T>` is a stdlib `kotlin.*` generic instantiated over the enclosing function's free
+  method type-var — failed with `ilemit: … [new]: TypeBuilder generic instantiation does not support resolving
+  members`. Such an instantiation is a `TypeBuilderInstantiation`, on which `.GetConstructors()` throws; the
+  external branch of the `new` emitter called it directly, unlike `EmitClrNew` (which already re-anchored). The
+  branch now resolves the constructor on the open generic definition and re-anchors it onto the instantiation via
+  the static `TypeBuilder.GetConstructor` (mirroring `EmitClrNew`'s `IsTbInstantiation` handling), including the
+  nested case where a constructor argument is itself a generic instantiated over the same free `T`. Surfaced by
+  the kotlinx.coroutines CLR port's `atomic()` helper (previously worked around with a construct-at-concrete +
+  cast). Regression sample: `cases/il-genextnew`.
+
 - **An inline collection-factory argument of a `new` inside a generic function now emits `List.Add(T)`, not
   `List.Add(T[])` (`#122`).** `Holder(mutableListOf(x))` in `fun <T> mkHolder(x: T): Holder<T>` (and
   `ArrayList(mutableListOf(x)).size`) threw `InvalidProgramException` at runtime — the vararg array was left
