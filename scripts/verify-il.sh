@@ -220,6 +220,12 @@ il_check enum  Enum  "$ROOT/cases/il-enum"   "$(printf 'red\ngreen\nblue')"
 # + `.size` + a for-loop (the `forArray` elem-derivation gap StaticType.Surface's `enumValues` case fixes) + a
 # reified-generic-inline callee (`pick<T>`) instantiating the same intrinsic post-inline.
 il_check enumintr EnumIntr "$ROOT/cases/il-enumintr/app.kt" "$(printf 'GREEN\n3\n2\nRED\nGREEN\nBLUE\nBLUE')"
+# enumtostr (#90): a BASIC enum lowers to a CLR value-type `enum` that INHERITS ToString/Equals/GetHashCode from
+# System.Enum (declares none). Exercises the inherited-member family (explicit .toString(), println(Any?), string
+# concat, ==, equals, compareTo) — bir2cir EnumMemberBinding must rebind each to an `objMethod` (box + Object slot),
+# not a `callInstance E.ToString` (which dead-ends "method E.ToString not found" in ilemit). Two files (enum.kt decl +
+# app.kt use) so the gate also covers the MODULE-WIDE (cross-file) basic-enum collection.
+il_check enumtostr EnumToStr "$ROOT/cases/il-enumtostr" "$(printf 'A\nB\nC\nFalse\nTrue\n-2')"
 # m2 / mi1 consume BCL types via `import System.X` (System.Math, System.Text.StringBuilder) -> the facadegen import
 # scan (il_check_imports), NOT a bare il_check (which injects nothing, so the import would not resolve). No runtime.cs.
 il_check_imports m2  M2    "$ROOT/cases/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"

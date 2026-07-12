@@ -183,6 +183,11 @@ sealed class Pipeline
         // (not the System.Enum-reflection semantic node — a rich enum is a plain singleton class).
         var localRichEnums = EnumIntrinsicLowering.CollectRichEnums(birFiles.Select(f => f.Root));
 
+        // The local BASIC (value-type, `kind:"enum"`) enum type names across ALL files — EnumMemberBinding rebinds a
+        // `System.Enum`-inherited Object-slot call (`E.A.toString()`) on such an owner to an `objMethod`. Must be
+        // module-wide (not per-file): the call site can be in a different .bir.json than the enum declaration.
+        var localBasicEnums = EnumMemberBinding.CollectBasicEnums(birFiles.Select(f => f.Root));
+
         // INLINE-BIR STASH (#71/#75 S1): BEFORE any lowering pass runs, capture every `mods.inline` method's RAW
         // pre-lowering body into an OPAQUE `inlineBir` base64 string (ilemit stamps it verbatim as the raw-BIR
         // [KotlinInline] carrier) + an in-memory `owner|name|pc|ga -> raw decl` index (dormant same-module infra).
@@ -349,7 +354,7 @@ sealed class Pipeline
             // GENERIC-ENUM member binding (C2): `e.name` on a `T : Enum<T>` receiver -> `System.Enum.ToString()`
             // (kotc lowers a CONCRETE enum receiver directly, but a generic `gp:T` receiver falls through to a
             // `callInstance kotlin.Enum.get_name` that TypeLoadExceptions — `kotlin.Enum` lives only in the stdlib).
-            if (!_options.RefBuild) EnumMemberBinding.Apply(bir.Root);
+            if (!_options.RefBuild) EnumMemberBinding.Apply(bir.Root, localBasicEnums);
             // NULLABLE-GENERIC-RETURN erasure (ALL builds, so ref.dll + rt.dll signatures agree): a Kotlin method
             // declaring a nullable generic-parameter return (`fun <T> …(): T?`) has its nullability erased by kotc to
             // a bare `gp:T` return (Nullable<T> is inexpressible for an unconstrained T). That is CORRECT for a

@@ -304,6 +304,17 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   member read), and reordered `EnumIntrinsicLowering` to run BEFORE `ArrayConstructionLowering` so the reified
   top-level intrinsics are already in their final semantic shape when element-derivation runs. Gate:
   `cases/il-enumintr` (index/`.size`/`enumValueOf`/for-loop/reified-inline-fn instantiation).
+- **A basic (non-rich) enum's `.toString()`/`.hashCode()`/`.equals()` no longer crash ilemit (#90).** A BASIC
+  `enum class` (constants only) lowers to a CLR value-type `enum` that INHERITS `ToString`/`GetHashCode`/`Equals`
+  from `System.Enum` and declares none of its own. kotc emits `callInstance ownerType=E method=toString anySlot:true`
+  (static receiver = the concrete enum); `ObjectSlotRename` renames the method to `ToString` but keeps owner `E`, so
+  ilemit's `FindMethod("E","ToString")` dead-ended ("method E.ToString not found"). bir2cir's `EnumMemberBinding` now
+  collects locally-declared value-type enums (`kind:"enum"`) module-wide (across every `.bir.json`, so a call site in a
+  different file from the `enum class` declaration is covered) and rebinds each such Object-slot call to an `objMethod`
+  (box the value-type receiver + `callvirt` the `System.Object` virtual slot; `System.Enum`'s override supplies the
+  constant name / value-equality / hash), moving `Equals`'s argument into the `arg` slot ilemit reads. This shares
+  the same box-then-Object-slot mechanism as the pre-existing generic-`Enum<T>`-receiver path. Gate:
+  `cases/il-enumtostr` (`.toString()`, `println(Any?)`, string concat, `==`, `.equals()`, `.compareTo()`).
 - **`Map<*,*>`'s `get`/`containsKey` (and any `Collection<*>`/`Map<*,*>` for-loop / explicit `.iterator()`) no
   longer throws `InvalidCastException`/`EntryPointNotFoundException` on a star-projected receiver (#74).**
   `m[key]`/`m.containsKey(k)` on a `Map<*,*>` resolves (Kotlin `@OnlyInputTypes` overload rule) to the stdlib's
