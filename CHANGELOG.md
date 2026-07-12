@@ -7,6 +7,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **`RootContinuation.trySetCanceled()` now forwards the originating `CancellationToken` (`#116`).** When a suspend
+  body's `Task<T>` bridge cancels (an `OperationCanceledException` reaches `RootContinuation.resumeWith`), it completed
+  the TCS via `trySetCanceled()` with no argument, dropping the token — whereas .NET's `AsyncTaskMethodBuilder` passes
+  `TrySetCanceled(oce.CancellationToken)` so the canceled Task carries the token that raised it. The stdlib Task bridge
+  now binds `System.OperationCanceledException.CancellationToken` (a new value-type `CancellationToken` alias) and the
+  `TaskCompletionSource<T>.TrySetCanceled(CancellationToken)` overload, and forwards the token. Token-fidelity polish
+  only — `IsCanceled`/Cancel semantics (`#86`/`#109`) are unchanged; covered by the existing `il-cocancel` gate.
+
 - **Kotlin frontend bumped 2.2.0 → 2.4.0** (`#111`), behavior-preserving: `verify-il` 265/239,
   `verify-ktproj` 13/13, `verify-differential` MATCH 203 / DIFF 0 — identical to the pre-bump baseline.
   Both halves landed: the compiler dependency (`kotlin-compiler-embeddable` 2.4.0, adopting upstream's

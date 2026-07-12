@@ -50,8 +50,20 @@ public class Task<T> {
  * (`TrySetCanceled`) rather than a FAULTED one (#86 P0). A subtype of [RuntimeException] so a `Throwable`
  * `is`-checks against it; the alias maps the type identity straight to the BCL exception.
  */
+/**
+ * `System.Threading.CancellationToken` — the token that signalled a cancellation. A value-type (struct) alias,
+ * carried opaquely from an [OperationCanceledException] to `TaskCompletionSource.TrySetCanceled(token)` so the
+ * CANCELED Task preserves the originating token (#116, matching AsyncTaskMethodBuilder's fidelity).
+ */
+@ClrTypeAlias("System.Threading.CancellationToken")
+public class CancellationToken
+
 @ClrTypeAlias("System.OperationCanceledException")
-public class OperationCanceledException : RuntimeException()
+public class OperationCanceledException : RuntimeException() {
+    /** `OperationCanceledException.CancellationToken` — the token whose cancellation raised this exception. */
+    @ClrProperty(READ, "CancellationToken")
+    public val cancellationToken: CancellationToken get() = TODO("clr binding should be implemented")
+}
 
 /** `System.Threading.Tasks.TaskCompletionSource<TResult>` — the sink the coroutine Task bridge completes. */
 @ClrTypeAlias("System.Threading.Tasks.TaskCompletionSource")
@@ -68,4 +80,11 @@ public class TaskCompletionSource<T> {
     /** `TaskCompletionSource<T>.TrySetCanceled()` — completes the Task in the CANCELED state (#86 P0). */
     @ClrIntrinsic("TrySetCanceled")
     public fun trySetCanceled(): Boolean = TODO("clr binding should be implemented")
+
+    /**
+     * `TaskCompletionSource<T>.TrySetCanceled(CancellationToken)` — completes the Task in the CANCELED state,
+     * associating the originating [token] (the canceled Task then carries it, matching .NET's async builder) (#116).
+     */
+    @ClrIntrinsic("TrySetCanceled")
+    public fun trySetCanceled(token: CancellationToken): Boolean = TODO("clr binding should be implemented")
 }

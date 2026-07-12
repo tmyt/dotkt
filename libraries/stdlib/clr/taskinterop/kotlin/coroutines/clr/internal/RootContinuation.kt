@@ -31,7 +31,9 @@ public class RootContinuation<T>(
             exception == null -> tcs.trySetResult(result.value as T)
             // .NET fidelity: a CANCELLED result completes the Task as CANCELED (IsCanceled == true, await
             // rethrows the OCE cleanly), NOT FAULTED — matching TaskCompletionSource convention (#86 P0).
-            exception is OperationCanceledException -> tcs.trySetCanceled()
+            // Pass the OCE's originating CancellationToken through (as AsyncTaskMethodBuilder does), so the
+            // canceled Task carries the token that raised it (#116).
+            exception is OperationCanceledException -> tcs.trySetCanceled(exception.cancellationToken)
             else -> tcs.trySetException(exception)
         }
     }
