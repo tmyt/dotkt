@@ -39,6 +39,13 @@ kt() {
 kt ktproj "cases/ktproj/hello.ktproj" \
 	"$(printf 'Hello, Visual Studio, from a .ktproj!\nsum 1..5 = 15')"
 
+# MPP (#119): a multiplatform .ktproj — common/ carries the `expect class Greeter`, clr/ the `actual` + entry.
+# <DotKtMultiplatform>true</DotKtMultiplatform> makes the shared targets tag common/ sources with -Xcommon-sources
+# (+ -Xmulti-platform -Xexpect-actual-classes), so kotc's app pipeline does the common→platform module split and the
+# actual resolves. The only gate coverage of the MPP source-set path through MSBuild.
+kt ktproj-mpp "cases/ktproj-mpp/hello-mpp.ktproj" \
+	"Hello from the CLR actual"
+
 # The README-advertised pure-IL starter project (README:139 points users at cases/ktproj-il/): a two-file
 # .ktproj (App.kt with `fun main` + a Greeter class) built entirely on the IL backend via ../KotlinClr.targets.
 # Wired here (COV6, 2026-07-06) so the user-facing sample can't rot unverified — it previously had NO gate.
@@ -112,6 +119,7 @@ kt ktproj-refrt-pr "cases/ktproj-refrt-pr/app/App.ktproj" \
 
 # Clean each sample's build output.
 rm -rf "$ROOT"/cases/ktproj/bin "$ROOT"/cases/ktproj/obj \
+       "$ROOT"/cases/ktproj-mpp/bin "$ROOT"/cases/ktproj-mpp/obj \
        "$ROOT"/cases/ktproj-il/bin "$ROOT"/cases/ktproj-il/obj \
        "$ROOT"/cases/ktproj-roundtrip/*/bin "$ROOT"/cases/ktproj-roundtrip/*/obj \
        "$ROOT"/cases/ktproj-applib/*/bin "$ROOT"/cases/ktproj-applib/*/obj \

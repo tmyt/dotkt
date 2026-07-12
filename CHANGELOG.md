@@ -22,6 +22,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   multi-session output — the stdlib self-build uses the same two tail phases. MPP smoke test:
   `bash experiments/mpp-greeter/build.sh` → `Hello from the CLR actual`.
 
+- **A real `.ktproj` can now build a multiplatform (common `expect` + CLR `actual`) project (`#119`, MSBuild half).**
+  Opt in with `<DotKtMultiplatform>true</DotKtMultiplatform>`: the shared pipeline
+  (`packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets`) then tags sources under a `common/` directory as the
+  common source set — matching both the greeter experiment's layout and Kotlin's `commonMain` convention (or list them
+  explicitly via `<DotKtCommon Include="…"/>`) — and adds `-Xcommon-sources="…" -Xmulti-platform -Xexpect-actual-classes`
+  to the kotc invocation (the exact flags `experiments/mpp-greeter/build.sh` proved). All sources still pass
+  positionally; `-Xcommon-sources` only marks which are common. With the property unset `DotKtCommon` is empty and the
+  compile is byte-identical to a non-MPP project, so existing `.ktproj` are unaffected. New gate sample
+  `cases/ktproj-mpp/` (common `expect class Greeter` + clr `actual` + entry) wired into `scripts/verify-ktproj.sh`,
+  asserting `Hello from the CLR actual`. Productization follow-up: package a distinct `DotKt.Sdk.Mpp` SDK that imports
+  the base SDK and layers this on (composition, like `Microsoft.NET.Sdk.Web`); this property-gated slice ships it
+  inertly in the shared targets meanwhile.
+
 - **Constructing an external generic type over a FREE type variable now emits via `TypeBuilder.GetConstructor`
   instead of crashing at emit (`#123`).** `AtomicRef(AtomicReference(v))` in `fun <T> atomic(v: T): AtomicRef<T>`
   — where `AtomicReference<T>` is a stdlib `kotlin.*` generic instantiated over the enclosing function's free

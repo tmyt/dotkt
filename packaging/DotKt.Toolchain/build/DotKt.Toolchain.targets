@@ -11,6 +11,21 @@
     <DotKtImportList>$(BaseIntermediateOutputPath)dotkt-clrimports.txt</DotKtImportList>
   </PropertyGroup>
 
+  <!-- MPP (#119): opt-in multiplatform (common `expect` + CLR `actual`) for an ordinary user project.
+       When <DotKtMultiplatform>true</DotKtMultiplatform>, sources under a `common/` directory are the
+       common (expect-carrying, platform-agnostic) fragment — matching both the greeter experiment's
+       layout and Kotlin's commonMain convention — and everything else is the CLR platform (actual)
+       fragment. A project may instead list common sources explicitly via <DotKtCommon Include="..."/>;
+       that takes precedence over the convention glob. When DotKtCommon ends up empty the compile is a
+       plain single-fragment build — byte-identical to a non-MPP project (the flags below are never added).
+       PACKAGING FOLLOW-UP: the design (task #119) calls for a distinct `DotKt.Sdk.Mpp` SDK that imports
+       the base SDK and layers this on (composition, like Microsoft.NET.Sdk.Web). This property-gated slice
+       lives in the shared pipeline so it is inert for every existing project; standing up the separate SDK
+       package is the productization follow-up. -->
+  <ItemGroup Condition="'$(DotKtMultiplatform)' == 'true' and '@(DotKtCommon)' == ''">
+    <DotKtCommon Include="common/**/*.kt" />
+  </ItemGroup>
+
   <!-- C-2: import-driven, façade-FREE .NET type injection. The .kt sources' imports are extracted with the real
        Kotlin parser (PSI) and those .NET types injected straight into FIR (no .kt produced). @(ReferencePath)
        (BCL + PackageReference/Reference) makes any referenced assembly's types injectable. -->
@@ -34,9 +49,16 @@
           Inputs="@(KotlinCompile)" Outputs="$(DotKtOut)/.stamp">
     <MakeDir Directories="$(DotKtOut)" />
     <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
+    <!-- MPP (#119): when common sources are present, mark them with -Xcommon-sources and enable the common→platform
+         module split (-Xmulti-platform) + cross-module expect/actual (-Xexpect-actual-classes) — the exact
+         invocation experiments/mpp-greeter/build.sh proved. All sources still pass POSITIONALLY (in @(KotlinCompile));
+         -Xcommon-sources only tags which of them are common. Empty DotKtCommon => empty flags => unchanged compile. -->
+    <PropertyGroup Condition="'@(DotKtCommon)' != ''">
+      <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;@(DotKtCommon->'%(FullPath)', ',')&quot;</DotKtMppFlags>
+    </PropertyGroup>
     <!-- $(DotKtKotcOptions): extra raw kotc flags a project may pass through (e.g. compiling the stdlib ITSELF needs
          -Xallow-kotlin-package -opt-in=... ). Space-separated; appended verbatim to the compile command. -->
-    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(DotKtStdlib)&quot; -d &quot;$(DotKtOut)&quot; $(DotKtKotcOptions)"
+    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(DotKtStdlib)&quot; -d &quot;$(DotKtOut)&quot; $(DotKtMppFlags) $(DotKtKotcOptions)"
           EnvironmentVariables="CLR_TYPES_METADATA=$(DotKtTypeMeta)" />
     <Touch Files="$(DotKtOut)/.stamp" AlwaysCreate="true" />
   </Target>
