@@ -6,11 +6,13 @@
 //   tcs = TaskCompletionSource<T>(); root = RootContinuation(tcs); r = f$dotkt_suspend(args, root)
 //   if (r !== COROUTINE_SUSPENDED) complete tcs with r; return tcs.task
 // and when the body suspends, the eventual resume lands here and completes the TCS: success ->
-// TrySetResult, failure -> TrySetException. Public: instantiated by generated code in APP assemblies.
+// TrySetResult, a CANCELLED failure (OperationCanceledException) -> TrySetCanceled (a CANCELED Task, .NET
+// convention), any other failure -> TrySetException. Public: instantiated by generated code in APP assemblies.
 @file:Suppress("UNCHECKED_CAST")
 
 package kotlin.coroutines.clr.internal
 
+import kotlin.clr.OperationCanceledException
 import kotlin.clr.TaskCompletionSource
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
@@ -25,10 +27,12 @@ public class RootContinuation<T>(
 
     public override fun resumeWith(result: Result<T>) {
         val exception = result.exceptionOrNull()
-        if (exception != null) {
-            tcs.trySetException(exception)
-        } else {
-            tcs.trySetResult(result.value as T)
+        when {
+            exception == null -> tcs.trySetResult(result.value as T)
+            // .NET fidelity: a CANCELLED result completes the Task as CANCELED (IsCanceled == true, await
+            // rethrows the OCE cleanly), NOT FAULTED — matching TaskCompletionSource convention (#86 P0).
+            exception is OperationCanceledException -> tcs.trySetCanceled()
+            else -> tcs.trySetException(exception)
         }
     }
 }

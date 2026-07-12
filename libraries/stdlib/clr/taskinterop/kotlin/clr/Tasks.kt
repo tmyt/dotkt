@@ -31,10 +31,27 @@ public class Task<T> {
     @ClrProperty(READ, "IsCompleted")
     public val isCompleted: Boolean get() = TODO("clr binding should be implemented")
 
+    /** `Task.IsCanceled` — true when the Task completed via cancellation (TrySetCanceled), not a fault. */
+    @ClrProperty(READ, "IsCanceled")
+    public val isCanceled: Boolean get() = TODO("clr binding should be implemented")
+
+    /** `Task.IsFaulted` — true when the Task completed with an unhandled exception (TrySetException). */
+    @ClrProperty(READ, "IsFaulted")
+    public val isFaulted: Boolean get() = TODO("clr binding should be implemented")
+
     /** `Task<TResult>.Result` — BLOCKS until completion; faults surface as `AggregateException` (BCL semantics). */
     @ClrProperty(READ, "Result")
     public val result: T get() = TODO("clr binding should be implemented")
 }
+
+/**
+ * `System.OperationCanceledException` — the BCL cancellation signal (awaiting a canceled Task rethrows it).
+ * Surfaced so the Task bridge (`RootContinuation`) can special-case a cancelled result to a CANCELED Task
+ * (`TrySetCanceled`) rather than a FAULTED one (#86 P0). A subtype of [RuntimeException] so a `Throwable`
+ * `is`-checks against it; the alias maps the type identity straight to the BCL exception.
+ */
+@ClrTypeAlias("System.OperationCanceledException")
+public class OperationCanceledException : RuntimeException()
 
 /** `System.Threading.Tasks.TaskCompletionSource<TResult>` — the sink the coroutine Task bridge completes. */
 @ClrTypeAlias("System.Threading.Tasks.TaskCompletionSource")
@@ -47,4 +64,8 @@ public class TaskCompletionSource<T> {
 
     @ClrIntrinsic("TrySetException")
     public fun trySetException(exception: Throwable): Boolean = TODO("clr binding should be implemented")
+
+    /** `TaskCompletionSource<T>.TrySetCanceled()` — completes the Task in the CANCELED state (#86 P0). */
+    @ClrIntrinsic("TrySetCanceled")
+    public fun trySetCanceled(): Boolean = TODO("clr binding should be implemented")
 }
