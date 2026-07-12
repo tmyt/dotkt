@@ -128,7 +128,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		"""{"name":${str(n)},"type":${birType(p.getter!!.returnType).toJson()},"get":${str("get_$n")},"set":$setName}"""
 	}
 	// A nested interface (`TimeSource.WithComparableMarks`) -> a real CLR nested type of its enclosing class/interface.
-	val nestedIn = emittedNestedParent(iface)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null }
+	val nestedIn = emittedNestedParent(iface)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && !isExternalNetType(it) }
 		?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
 	val ifaces = iface.superTypes
 		.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
@@ -137,7 +137,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 			val stClass = st.classifierOrNull?.owner as? IrClass
 			when {
 				bt is TypeNode.Fn -> null
-				stClass?.let { clrName(it) } != null -> bt.toJson()
+				stClass != null && isExternalNetType(stClass) -> bt.toJson()
 				else -> stClass?.let { ownerSpec(it, st).toJson() }
 			}
 		}
@@ -153,7 +153,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 internal fun BirEmitter.enumDef(e: IrClass): String {
 	val entries = e.declarations.filterIsInstance<IrEnumEntry>()
 		.mapIndexed { i, ent -> """{"name":${str(ent.name.asString())},"ordinal":$i}""" }
-	val nestedIn = emittedNestedParent(e)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null }
+	val nestedIn = emittedNestedParent(e)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && !isExternalNetType(it) }
 		?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
 	return """{"name":${str(typeName(e))},"kind":"enum"$nestedIn,"entries":[${entries.joinToString(",")}]}"""
 }
@@ -289,7 +289,7 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 internal fun BirEmitter.nestedClasses(c: IrClass): List<IrClass> {
 	val out = ArrayList<IrClass>()
 	c.declarations.filterIsInstance<IrClass>()
-		.filter { !it.isCompanion && clrName(it) == null && it.name.asString() != "<no name provided>" }
+		.filter { !it.isCompanion && !isExternalNetType(it) && it.name.asString() != "<no name provided>" }
 		.forEach {
 			if (it.kind == ClassKind.CLASS && !it.isInner) out.add(it)
 			out.addAll(nestedClasses(it))
@@ -302,7 +302,7 @@ internal fun BirEmitter.nestedClasses(c: IrClass): List<IrClass> {
 internal fun BirEmitter.nestedObjects(c: IrClass): List<IrClass> {
 	val out = ArrayList<IrClass>()
 	c.declarations.filterIsInstance<IrClass>()
-		.filter { !it.isCompanion && clrName(it) == null && it.name.asString() != "<no name provided>" }
+		.filter { !it.isCompanion && !isExternalNetType(it) && it.name.asString() != "<no name provided>" }
 		.forEach {
 			if (it.kind == ClassKind.OBJECT) out.add(it)
 			out.addAll(nestedObjects(it))
@@ -315,7 +315,7 @@ internal fun BirEmitter.nestedObjects(c: IrClass): List<IrClass> {
 internal fun BirEmitter.nestedEnums(c: IrClass): List<IrClass> {
 	val out = ArrayList<IrClass>()
 	c.declarations.filterIsInstance<IrClass>()
-		.filter { clrName(it) == null && it.name.asString() != "<no name provided>" }
+		.filter { !isExternalNetType(it) && it.name.asString() != "<no name provided>" }
 		.forEach { if (it.kind == ClassKind.ENUM_CLASS) out.add(it); out.addAll(nestedEnums(it)) }
 	return out
 }
@@ -325,7 +325,7 @@ internal fun BirEmitter.nestedEnums(c: IrClass): List<IrClass> {
 internal fun BirEmitter.nestedInterfaces(c: IrClass): List<IrClass> {
 	val out = ArrayList<IrClass>()
 	c.declarations.filterIsInstance<IrClass>()
-		.filter { clrName(it) == null && it.name.asString() != "<no name provided>" }
+		.filter { !isExternalNetType(it) && it.name.asString() != "<no name provided>" }
 		.forEach { if (it.kind == ClassKind.INTERFACE) out.add(it); out.addAll(nestedInterfaces(it)) }
 	return out
 }
@@ -334,7 +334,7 @@ internal fun BirEmitter.nestedInterfaces(c: IrClass): List<IrClass> {
 internal fun BirEmitter.innerClasses(c: IrClass): List<IrClass> {
 	val out = ArrayList<IrClass>()
 	c.declarations.filterIsInstance<IrClass>()
-		.filter { it.kind == ClassKind.CLASS && !it.isCompanion && clrName(it) == null && it.name.asString() != "<no name provided>" }
+		.filter { it.kind == ClassKind.CLASS && !it.isCompanion && !isExternalNetType(it) && it.name.asString() != "<no name provided>" }
 		.forEach { if (it.isInner) out.add(it); out.addAll(innerClasses(it)) }
 	return out
 }
@@ -425,7 +425,7 @@ internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: 
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
 	val name = (if (isGetter) "get_" else "set_") + propName
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
-	return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public"${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)},"body":[$body]}"""
+	return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public"${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${funModsJson(acc)},"body":[$body]}"""
 }
 
 internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
@@ -460,7 +460,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	// never carries it. In an app build these attrs simply ride the accessor as ordinary metadata.
 	val propAnns = (acc.correspondingPropertySymbol?.owner ?: acc).annotations
 	val accAttrs = ""","attrs":[${attrsJson(propAnns)}]"""
-	return """{"name":${str(mname)},"static":false,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
+	return """{"name":${str(mname)},"static":false,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 }
 
 /** A user `annotation class Ann(val v: Int, …)` -> a plain BIR class carrying the pure-Kotlin `"annotation":true`
@@ -671,7 +671,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		// IDENTITY: an inner-class base carries the enclosing args (`tv`) so the nested generic base is INSTANTIATED;
 		// a non-inner generic base stays the OPEN name — ilemit walks the base chain by bare name and instantiates the
 		// open generic base with this type's params positionally at SetParent. (bir2cir substitutes stdlib bases.)
-		if (clrName(it) != null) birType(baseType!!).toJson()
+		if (isExternalNetType(it)) birType(baseType!!).toJson()
 		else {
 			val enclArgs = innerEnclosingTypeParams(it).map { tp -> tvOf(tp) }
 			(if (enclArgs.isNotEmpty()) TypeNode.Fqn(typeName(it), enclArgs) else TypeNode.Fqn(typeName(it))).toJson()
@@ -694,7 +694,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 			val stClass = st.classifierOrNull?.owner as? IrClass
 			when {
 				bt is TypeNode.Fn -> null
-				stClass?.let { clrName(it) } != null -> bt.toJson()
+				stClass != null && isExternalNetType(stClass) -> bt.toJson()
 				else -> stClass?.let { ownerSpec(it, st).toJson() }
 			}
 		}
@@ -709,7 +709,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// nested type lives inside a generic enclosing TypeBuilder, and the nested type's signatures reference the
 	// enclosing params via the enclosing builder. Inner classes already re-declare those params (innerEnclosing-
 	// TypeParams), so flattening loses nothing; the type keeps its dotted name so references still resolve.
-	val nestedIn = emittedNestedParent(klass)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && clrName(it) == null && !anonNames.containsKey(klass) && it.typeParameters.isEmpty() }
+	val nestedIn = emittedNestedParent(klass)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && !isExternalNetType(it) && !anonNames.containsKey(klass) && it.typeParameters.isEmpty() }
 		?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
 	// Round-trip: a Kotlin `sealed` class lowers to a CLR abstract class (loses the sealed modality) — carry the fact
 	// so a re-consuming Kotlin module restores `sealed` (ilemit stamps [KotlinSealed]).
@@ -841,6 +841,11 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean): String {
 internal fun BirEmitter.funModsJson(fn: IrSimpleFunction, inline: Boolean = false): String {
 	val flags = buildList {
 		if (inline) add(""""inline":true""")
+		// `inlineOnly` = the `@kotlin.internal.InlineOnly` FACT translated to a flag — ilemit stamps
+		// [MethodImpl(AggressiveInlining)] off it. This is a pure annotation read-translation, SEPARATE from `inline`
+		// (isInlineWithLambda, the load-bearing [KotlinInline] splice signal bir2cir keys on, which stays narrow); it is
+		// NOT keyed on general `isInline`.
+		if (fn.annotations.any { it.type.classFqName?.asString() == "kotlin.internal.InlineOnly" }) add(""""inlineOnly":true""")
 		if (fn.isInfix) add(""""infix":true""")
 		if (fn.isOperator) add(""""operator":true""")
 		if (fn.isSuspend) add(""""suspend":true""")

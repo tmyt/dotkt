@@ -127,11 +127,23 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   now skips a null `init`: an init-less static field needs no `.cctor` store (it defaults to null, and a
   read routes through the existing `lateinitGet` not-initialized check, throwing before assignment).
   Only a member `lateinit var` had worked before. (`cases/il-toplateinit`.)
-- **Kotlin `inline` functions are stamped `[MethodImpl(AggressiveInlining)]` on the emitted method (#98).**
-  An `inline` fn is still emitted as a real method (a cross-module `[KotlinInline]` carrier / a plain
-  call target); on the CLR `inline` is a JIT courtesy, so ilemit now translates the `mods.inline` flag to
-  the `AggressiveInlining` implementation-flag hint — exactly what C# emits. Pure metadata, no behavior
-  change (the JIT ignores the hint for a too-large method).
+- **`@kotlin.internal.InlineOnly` functions are stamped `[MethodImpl(AggressiveInlining)]` on the emitted method (#98).**
+  An `@InlineOnly` fn (the scope functions `let`/`run`/`with`/`apply`/`also`/`takeIf`, `TODO`, `repeat`, …)
+  is still emitted as a real method; on the CLR the closest translation of "inline this" is the JIT
+  `AggressiveInlining` hint. kotc reads the `kotlin.internal.InlineOnly` annotation and emits a new
+  `mods.inlineOnly` flag (a pure annotation read-translation, SEPARATE from `mods.inline`, which stays the
+  narrow cross-module `[KotlinInline]` splice signal); ilemit stamps the implementation-flag off it —
+  exactly what C# emits. Pure metadata, no behavior change (the JIT ignores the hint for a too-large method);
+  a plain non-`@InlineOnly` fn (e.g. `joinToString`) is not stamped.
+
+- **`expr::extFn` — a BOUND extension-function reference now compiles (#91).** `val f = "hi"::shout; f()`
+  previously raised a clean "not supported" error: a closed static delegate over the ext forwarder is not
+  ilverify-clean (ECMA-335 wants `ldnull` as a static-method delegate target). kotc now lifts a CAPTURE CLASS,
+  exactly a capturing lambda `{ args -> expr.extFn(args) }`: a synth closure with a `__recv` field holding the
+  receiver (evaluated ONCE, eagerly, at reference-creation time), whose INSTANCE `invoke(args)` forwards to
+  `extFn(__recv, args)`. It reuses the existing `newClosure` path, so the delegate binds over the closure's
+  instance method (`ldftn instance` + `newobj` — verifiable). Works for receiver-only refs, refs with extra
+  args, `Unit`-returning refs, and referenced-assembly facade exts. (`cases/il-boundextref`.)
 
 - **Top-level / companion `val`/`var` with a custom accessor + backing field now invokes the accessor (#89).**
   A top-level or companion property that had BOTH a backing field (an initializer) AND a custom
@@ -707,6 +719,13 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   own `hashCode` — a compiler-layer follow-up, not a stdlib change.
 
 ### Compiler architecture (4-layer / layer purity)
+
+- **kotc `clrName()` split into an origin-gate `isExternalNetType()` + the FQN emitter `clrName()` (#93).** The one
+  accessor served two purposes — a boolean "is this a facadegen-injected .NET type?" gate (~20 call sites that only
+  tested truthiness) and .NET-FQN identity emission (~10 sites that consumed the returned string). The truthiness sites
+  now call the intent-named `isExternalNetType()` (defined as `clrName(decl) != null`); `clrName()` is reserved for the
+  FQN-emission sites. Pure clarity refactor, verified byte-identical: the full stdlib BIR corpus (251 files) is
+  unchanged by the split.
 
 - **All Kotlin round-trip metadata GENERATION moved from ilemit into bir2cir; ilemit is now Kotlin-metadata-FREE (#71
   S2).** ilemit no longer synthesizes the embedded attribute classes or DECIDES which Kotlin modifier maps to which

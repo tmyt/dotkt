@@ -320,7 +320,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// `by Delegates.observable(…)`) -> the REAL generic stdlib interface (mirrors `by lazy` on real
 		// `kotlin.Lazy<T>`), binding to the actual emitted stdlib getValue/setValue.
 		val (owner, ownerGeneric) = when {
-			delegateClass != null && clrName(delegateClass) == null &&
+			delegateClass != null && !isExternalNetType(delegateClass) &&
 				delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true -> str(typeName(delegateClass)) to false
 			dvFq == "kotlin.properties.ReadWriteProperty" || dvFq == "kotlin.properties.ReadOnlyProperty" -> {
 				val os = ownerSpec(delegateClass, dvar.type)
@@ -574,7 +574,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// custom-named indexer. The receiver's type carries the element type arg (`Collection<Int>`), so the
 		// constructed `clrg:...[int]` resolves the substituted accessor.
 		val ixOwner = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
-		if (recv != null && ixOwner != null && clrName(ixOwner) != null) {
+		if (recv != null && ixOwner != null && isExternalNetType(ixOwner)) {
 			val mt = birType(recv.type); val a = regularArgs(call)
 			// The get accessor returning a generic param (`IList<T>.get` -> T) reports the SUBSTITUTED ret (gp:T):
 			// ilemit then hands back gp:T (matching the stack), so the value<->collection boundary box/unbox is
@@ -611,7 +611,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		val declClass = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass
 		val memberType = when {
 			isStatic || recv == null -> clrType
-			recvClass != null && clrName(recvClass) != null -> birType(recv.type)
+			recvClass != null && isExternalNetType(recvClass) -> birType(recv.type)
 			// A type-PARAM receiver (`destination: C` where `C : MutableCollection<T>`, e.g. filterTo's body) has no
 			// recvClass -> use the type param's @Clr-bound BOUND with its args (clrg:ICollection[T]), not the raw
 			// clrName (System.Collections.Generic.ICollection without `1 -> ResolveType fails).
@@ -918,7 +918,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// emitted stdlib `ObservableProperty`/`NotNullVar`, which implements the real generic interface, so
 		// the call binds to the actual stdlib getValue/setValue — no compiler-synthesized delegate class.
 		val delegateClass = bf?.type?.classifierOrNull?.owner as? IrClass
-		val isUserDelegate = delegateClass != null && clrName(delegateClass) == null &&
+		val isUserDelegate = delegateClass != null && !isExternalNetType(delegateClass) &&
 			delegateClass.fqNameWhenAvailable?.asString()?.startsWith("kotlin") != true
 		val bfFq = bf?.type?.classFqName?.asString()
 		val (owner, ownerGeneric) = when {
@@ -1347,7 +1347,7 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	val prop = callee.correspondingPropertySymbol?.owner ?: return null
 	if (callee !== prop.getter) return null
 	val cls = callee.parent as? IrClass ?: return null
-	if (clrName(cls) != null) return null
+	if (isExternalNetType(cls)) return null
 	if (prop.backingField == null || prop.isDelegated || prop.isLateinit || isClrField(prop)) return null
 	val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
 	val owner = ownerSpec(cls, dispatchReceiver(call)?.type).toJson()

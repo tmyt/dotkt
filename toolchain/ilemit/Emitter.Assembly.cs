@@ -752,13 +752,11 @@ sealed partial class Emitter
                         ?? baseT.GetMethod(name);
             if (baseM != null) ti.TB.DefineMethodOverride(mb, baseM);
         }
-        // A Kotlin `inline` fn is still emitted as a real method (a lambda-less inline emits a plain method; an
-        // inline-with-lambda method is the cross-module [KotlinInline] carrier body). On the CLR `inline` is a
-        // courtesy, not a splice contract, so translate it to a [MethodImpl(AggressiveInlining)] hint on the emitted
-        // method — exactly what C# emits for `[MethodImpl(MethodImplOptions.AggressiveInlining)]`. Pure metadata, no
-        // behavior change; the JIT ignores the hint for a too-large method, so there is no bloat risk. Skip abstract
-        // slots (no body to inline). `mods.inline` is the sole signal CIR carries; ilemit adds no Kotlin knowledge.
-        if (ModFlag(m, "inline") && (attrs & MethodAttributes.Abstract) == 0)
+        // Kotlin's `@kotlin.internal.InlineOnly` says "this fn is meant to be inlined, not called as a method". The direct
+        // CLR translation is a [MethodImpl(AggressiveInlining)] hint on the emitted method. kotc reads the annotation and
+        // emits `mods.inlineOnly`; ilemit stamps the flag. Pure metadata, no behavior change; the JIT ignores the hint for
+        // a too-large method. Skip abstract slots (no body to inline). ilemit adds no Kotlin knowledge — it stamps a flag.
+        if (ModFlag(m, "inlineOnly") && (attrs & MethodAttributes.Abstract) == 0)
             mb.SetImplementationFlags(mb.GetMethodImplementationFlags() | MethodImplAttributes.AggressiveInlining);
     }
 

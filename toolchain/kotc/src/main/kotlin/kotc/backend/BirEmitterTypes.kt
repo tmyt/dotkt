@@ -423,6 +423,13 @@ internal fun BirEmitter.clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnn
 	return (decl as? IrClass)?.classId?.let { kotc.frontend.clrInjectedDotNetName(it) }
 }
 
+/** Boolean ORIGIN-GATE: is `decl` a facadegen-injected .NET/CLR type (vs a pure-Kotlin/stdlib type)? The truthiness
+ *  half of [clrName] — call sites that only test "is this a .NET owner?" (routing a ctor to a plain `new`, a field to a
+ *  plain `field`, excluding a .NET owner from a user-class path) use THIS; only sites that EMIT the .NET FQN identity
+ *  keep [clrName] for its returned string. */
+internal fun BirEmitter.isExternalNetType(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): Boolean =
+	clrName(decl) != null
+
 /** JSON for a structured type in a node template — `str(typeNode)` emits the `{t:…}` object (no quotes).
  *  An overload of `str(String)` so every `"type":${str(x)}` site works whether x is a name or a Type. */
 internal fun BirEmitter.str(t: TypeNode): String = t.toJson()

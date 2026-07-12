@@ -303,7 +303,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// delegate (delegates can't bind a ctor directly). `Func<…,UserType>` now resolves via DelegateCtor.
 	(node.symbol.owner as? IrConstructor)?.let { ctor ->
 		val klass = ctor.parent as? IrClass
-		if (klass != null && clrName(klass) == null) {
+		if (klass != null && !isExternalNetType(klass)) {
 			val ps = ctor.parameters.filter { it.kind == IrParameterKind.Regular }
 			val lname = "__ctorref${lambdaCounter++}"
 			val psJson = ps.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
@@ -354,13 +354,16 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		if (fn.isSuspend)
 			return unsupported(node, "a suspend function reference",
 				"a suspend callable reference needs the coroutine state-machine lowering (KSuspendFunction), not yet wired")
-		// BOUND (`expr::extFn`): binding the receiver as the static forwarder's first arg is NOT ilverify-clean —
-		// ECMA-335 II.14.6 requires `ldnull` for a static delegate target (Codex-confirmed). It needs a capture-class
-		// lift (a lifted closure class with a `__recv` field forwarding to the ext fn) or a new ilemit
-		// `newBoundStaticDelegate` node; zero in-tree occurrences to validate against, so deferred.
-		if (boundExt != null)
-			return unsupported(node, "a bound extension-function reference (`expr::extFn`)",
-				"a closed static ext-forwarder delegate is not ilverify-clean (ECMA-335 II.14.6 wants ldnull); needs a capture-class lift")
+		// BOUND (`expr::extFn`): a closed static delegate over the ext forwarder is NOT ilverify-clean (ECMA-335 wants
+		// `ldnull` for a static-method delegate target). Lift a CAPTURE CLASS — exactly a capturing lambda
+		// `{ args -> expr.extFn(args) }`: a synth closure with a `__recv` field holding the receiver (evaluated ONCE,
+		// eagerly, at reference-creation time), whose INSTANCE `invoke(args)` forwards to `extFn(__recv, args)`. Reuses
+		// the `newClosure` path (bir2cir's ClosureSynthesis assembles the class; ilemit binds the delegate over the
+		// instance `invoke` via `ldftn instance` + `newobj` — ilverify-clean, Codex-confirmed).
+		// `dispatchIdx < 0` keeps this BELOW the member-extension guard: a (currently inexpressible) bound member ext
+		// (dispatch + ext) must fall through to `unsupported`, not misroute to an `owner:null` forwarder ignoring dispatch.
+		if (boundExt != null && dispatchIdx < 0)
+			return boundExtFnRef(node, fn, boundExt)
 		// A MEMBER extension (`class C { fun T.f() }`, dispatch + ext receiver) is not expressible as a callable
 		// reference in Kotlin, so `dispatchIdx >= 0 && hasExt` cannot occur; deferred defensively.
 		if (dispatchIdx >= 0)
@@ -422,13 +425,13 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// classes (the method resolves via FindMethod); .NET-method / extension / unbound refs are deferred.
 	val boundRecv = if (dispatchIdx >= 0 && !hasExt) node.arguments.getOrNull(dispatchIdx) else null
 	val ownerClass = fn.parent as? IrClass
-	if (boundRecv != null && ownerClass != null && clrName(ownerClass) == null) {
+	if (boundRecv != null && ownerClass != null && !isExternalNetType(ownerClass)) {
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 		return """{"k":"newBoundDelegate","ownerType":${fqnJson(typeName(ownerClass))},"method":${str(fn.name.asString())},"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${funcTypeOf(fn).toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
 	}
 	// `Class::method` (UNbound) -> a lifted static `__mref(self, args) = self.method(args)`; the receiver
 	// becomes the delegate's first parameter. User classes only (`Func<UserType,…>` resolves via DelegateCtor).
-	if (dispatchIdx >= 0 && boundRecv == null && !hasExt && ownerClass != null && clrName(ownerClass) == null) {
+	if (dispatchIdx >= 0 && boundRecv == null && !hasExt && ownerClass != null && !isExternalNetType(ownerClass)) {
 		val selfT = birType(fn.parameters[dispatchIdx].type)
 		val ps = fn.parameters.filter { it.kind == IrParameterKind.Regular }
 		val lname = "__mref${lambdaCounter++}"
@@ -477,6 +480,63 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	}
 	return unsupported(node, "a method reference to a .NET method (`::${fn.name}`)",
 		"wrap the call in a lambda instead, e.g. `{ a -> x.${fn.name}(a) }`")
+}
+
+/**
+ * A BOUND extension-function reference `expr::extFn` -> a CAPTURE-CLASS lift, identical to a capturing lambda
+ * `{ args -> expr.extFn(args) }`. A closed static delegate over the ext forwarder is not ilverify-clean (ECMA-335 wants
+ * `ldnull` as a static-method delegate target), so we synthesize a closure with a single `__recv` field holding the
+ * eagerly-evaluated receiver, whose INSTANCE `invoke(args)` forwards to `extFn(__recv, args)` — the SAME `newClosure`
+ * shape `lambda()` emits for a capturing lambda (bir2cir's ClosureSynthesis assembles the class; ilemit binds the
+ * delegate over the instance method: `ldftn instance invoke` + `newobj Func` — verifiable). The forwarding CALL mirrors
+ * the UNBOUND ext-forwarder's inner call exactly (owner:null stdlib/this-module ext, or ownerType:fileClass for a
+ * referenced-assembly facade ext), so bir2cir attributes it identically to a direct top-level ext call.
+ */
+internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFunction, boundExt: IrExpression): String {
+	val fnType = birType(node.type) as? TypeNode.Fn
+		?: return unsupported(node, "this bound extension-function reference",
+			"its inferred type was not a resolvable KFunction type")
+	// The bound type carries only the REMAINING args (the receiver is already bound), so `fnType.params` = the delegate's
+	// params = the `invoke` method's params. The captured receiver's field type comes from the receiver expression.
+	val selfT = birType(boundExt.type)
+	val regTypes = fnType.params
+	val retT = fnType.ret
+	val retVoid = retT == TypeNode.Fqn("kotlin.Unit")
+	val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
+	val invokeParams = regTypes.mapIndexed { i, t -> """{"name":${str("__a${i + 1}")},"type":${t.toJson()}}""" }.joinToString(",")
+	val recvArg = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
+	val callArgs = (listOf(recvArg) + regTypes.indices.map { """{"k":"local","name":${str("__a${it + 1}")}}""" }).joinToString(",")
+	// The reference's OWN instantiated type args (a generic ext referenced as `expr::foo<Int>`) -> the inner call's
+	// `typeArgs` so bir2cir/ilemit MakeGenericMethod (mirrors the unbound branch).
+	val refTps = fn.typeParameters
+	val refTaArgs = refTps.indices.map { node.typeArguments.getOrNull(it) }
+	val hasRefTa = refTps.isNotEmpty() && refTaArgs.all { it != null }
+	val refTa = if (!hasRefTa) "" else ""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
+	// The forwarding call MUST mirror the DIRECT top-level ext-call shape for this same callee (see the UNBOUND branch):
+	// a referenced-assembly facade ext (body==null + injected file class) emits `ownerType:fileClass`; every other
+	// top-level ext emits the plain `owner:null` shape. Only the receiver arg differs (`this.__recv` vs `__self`).
+	val injectedFileClass = if (fn.body == null)
+		(fn.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.let {
+			kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, fn.name), regularParams(fn).size)
+		} else null
+	val callE = if (injectedFileClass != null) {
+		val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }
+		val declShapeTypes = (listOf(extRecvParam) + regularParams(fn)).joinToString(",") { birType(it.type).toJson() }
+		if (hasRefTa)
+			"""{"k":"callStatic","ownerType":${str(injectedFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]}"""
+		else
+			"""{"k":"callStatic","ownerType":${str(injectedFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$callArgs]}"""
+	} else {
+		"""{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$callArgs]}"""
+	}
+	val forwardBody = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
+	// The closure must be GENERIC over any enclosing type params referenced by the captured receiver or the invoke
+	// signature (reified CLR generics) — mirrors `lambda()`'s freeTps over capture+param+ret types.
+	val nodeTypeArgs = (node.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }.orEmpty()
+	val freeTps = freeTypeParams(listOf(boundExt.type) + nodeTypeArgs)
+	val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
+	val synthClass = """{"name":${str(cname)},"fields":[{"name":"__recv","type":${str(selfT)}}],"params":[$invokeParams],"ret":${str(retT)},"body":[$forwardBody]${typeParamsJson(freeTps)}}"""
+	return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[${expr(boundExt)}],"method":"invoke","funcType":${str(fnType)}$typeArgs,"synthClass":$synthClass}"""
 }
 
 /**
