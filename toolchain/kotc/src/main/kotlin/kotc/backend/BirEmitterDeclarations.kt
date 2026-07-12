@@ -797,7 +797,7 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean): String {
 	// collectTailRecursionCalls. Restored after the body so a nested/sibling fn is unaffected.
 	val savedTailrec = tailrecCtx
 	val tailrecStart: Int? = if (fn.isTailrec) {
-		val tc = collectTailRecursionCalls(fn) { false }.ir
+		val tc = collectTailRecursionCalls(fn, { false }, { false }).ir
 		if (tc.isNotEmpty()) cfgFresh().also { tailrecCtx = BirEmitter.TailrecCtx(tc, it, fn) } else null
 	} else null
 	val bodyStmts = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }

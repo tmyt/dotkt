@@ -298,7 +298,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// A `<get-x>`/`<set-x>` call for a LOCAL delegated property -> access on the delegate local (thisRef=null,
 	// no enclosing instance). `by lazy`: the local's `.Value`; custom delegate: getValue/setValue(null, KProperty).
 	localDelegates[callee]?.let { ldp ->
-		val dvar = ldp.delegate
+		val dvar = ldp.delegate!!
 		val dlocal = """{"k":"local","name":${str(dvar.name.asString())}}"""
 		val elem = birType(ldp.getter.returnType)
 		// A `ClrRef<T>` delegate (byref local): getValue/setValue inline to ldobj/stobj through the managed pointer.

@@ -1,5 +1,5 @@
 @file:Suppress("DEPRECATION")
-@file:OptIn(org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi::class)
+@file:OptIn(org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi::class, org.jetbrains.kotlin.K1Deprecation::class)
 
 package kotc.pipeline
 
@@ -7,6 +7,7 @@ import kotc.frontend.ClrCompilerPluginRegistrar
 import org.jetbrains.kotlin.KtPsiSourceFile
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.common.checkKotlinPackageUsageForPsi
+import org.jetbrains.kotlin.cli.common.diagnosticsCollector
 import org.jetbrains.kotlin.cli.common.fileBelongsToModuleForPsi
 import org.jetbrains.kotlin.cli.common.fir.FirDiagnosticsCompilerResultsReporter
 import org.jetbrains.kotlin.cli.common.isCommonSourceForPsi
@@ -23,12 +24,13 @@ import org.jetbrains.kotlin.cli.pipeline.PerformanceNotifications
 import org.jetbrains.kotlin.cli.pipeline.PipelinePhase
 import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifact
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
+import org.jetbrains.kotlin.compiler.plugin.getCompilerExtensions
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.messageCollector
 import org.jetbrains.kotlin.config.moduleName
 import org.jetbrains.kotlin.fir.DependencyListForCliModule
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
-import org.jetbrains.kotlin.fir.pipeline.FirResult
+import org.jetbrains.kotlin.fir.pipeline.AllModulesFrontendOutput
 import org.jetbrains.kotlin.fir.pipeline.buildFirFromKtFiles
 import org.jetbrains.kotlin.fir.pipeline.resolveAndCheckFir
 import org.jetbrains.kotlin.fir.pipeline.runPlatformCheckers
@@ -40,7 +42,8 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 	postActions = setOf(PerformanceNotifications.AnalysisFinished, CheckCompilationErrors.CheckDiagnosticCollector),
 ) {
 	override fun executePhase(input: ConfigurationPipelineArtifact): MetadataFrontendPipelineArtifact {
-		val (configuration, diagnosticsReporter, rootDisposable) = input
+		val (configuration, rootDisposable) = input
+		val diagnosticsReporter = configuration.diagnosticsCollector
 		configuration.add(CompilerPluginRegistrar.COMPILER_PLUGIN_REGISTRARS, ClrCompilerPluginRegistrar())
 		val rootModuleName = Name.special("<${configuration.moduleName!!}>")
 		val libraryList = DependencyListForCliModule.build(rootModuleName) {
@@ -60,7 +63,7 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 		for (ktFile in ktFiles) {
 			AnalyzerWithCompilerReport.reportSyntaxErrors(ktFile, diagnosticsReporter)
 		}
-		val extensionRegistrars = FirExtensionRegistrar.Companion.getInstances(environment.project)
+		val extensionRegistrars = configuration.getCompilerExtensions(FirExtensionRegistrar)
 		val sessionsWithSources = prepareNativeSessions(
 			ktFiles,
 			configuration,
@@ -84,9 +87,8 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 			configuration.getBoolean(CLIConfigurationKeys.RENDER_DIAGNOSTIC_INTERNAL_NAME),
 		)
 		return MetadataFrontendPipelineArtifact(
-			FirResult(outputs),
+			AllModulesFrontendOutput(outputs),
 			configuration,
-			diagnosticsReporter,
 			ktFiles.map { KtPsiSourceFile(it) },
 		)
 	}

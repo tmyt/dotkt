@@ -24,7 +24,6 @@ fun main(args: Array<String>) {
 	val normalizedArgs = args.filterNot { it == "-no-stdlib" }
 	val arguments = parseCommandLineArguments<K2MetadataCompilerArguments>(normalizedArgs)
 	arguments.multiPlatform = true
-	arguments.metadataKlib = true
 	val collector = PrintingMessageCollector(System.err, MessageRenderer.PLAIN_RELATIVE_PATHS, arguments.verbose)
 	val perfManager = PerformanceManagerImpl(CommonPlatforms.defaultCommonPlatform, "Kotlin/CLR compiler")
 	val exitCode = ClrCliPipeline(perfManager).execute(arguments, Services.EMPTY, collector)

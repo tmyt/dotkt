@@ -23,10 +23,10 @@ done
 JAVA=/usr/lib/jvm/java-21-openjdk-amd64/bin/java
 [[ -x "$JAVA" ]] || JAVA="${JAVA_HOME:+$JAVA_HOME/bin/java}"
 [[ -x "$JAVA" ]] || JAVA="$(command -v java)"
-STDLIBJ="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.2.0.jar' | head -1)"
-EMB="$(find "$HOME/.gradle" -name 'kotlin-compiler-embeddable-2.2.0.jar' | head -1)"
+STDLIBJ="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2.4.0.jar' | head -1)"
+EMB="$(find "$HOME/.gradle" -name 'kotlin-compiler-embeddable-2.4.0.jar' | head -1)"
 REFLECT="$(find "$HOME/.gradle/caches" -name 'kotlin-reflect-*.jar' | head -1)"
-SCRIPT="$(find "$HOME/.gradle/caches" -name 'kotlin-script-runtime-2.2.0.jar' | head -1)"
+SCRIPT="$(find "$HOME/.gradle/caches" -name 'kotlin-script-runtime-2.4.0.jar' | head -1)"
 ANNOT="$(find "$HOME/.gradle/caches" -path '*org.jetbrains/annotations*' -name 'annotations-*.jar' | head -1)"
 # kotlin-compiler-embeddable 2.2.0 has an EXTERNAL runtime dep on kotlinx-coroutines-core (its IntelliJ
 # CoreApplicationEnvironment refs kotlinx.coroutines.CoroutineScope, which is NOT shaded under

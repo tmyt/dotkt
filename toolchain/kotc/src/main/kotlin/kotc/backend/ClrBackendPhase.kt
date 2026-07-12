@@ -3,6 +3,7 @@ package kotc.backend
 import org.jetbrains.kotlin.cli.common.ExitCode
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.pipeline.CheckCompilationErrors
+import org.jetbrains.kotlin.cli.pipeline.PipelineArtifact
 import org.jetbrains.kotlin.cli.pipeline.PipelineArtifactWithExitCode
 import org.jetbrains.kotlin.cli.pipeline.PipelinePhase
 import org.jetbrains.kotlin.config.CompilerConfiguration
@@ -12,7 +13,14 @@ import org.jetbrains.kotlin.ir.util.dump
 import java.io.File
 
 /** Final artifact of the CLR pipeline. Carries the process exit code. */
-class ClrBackendArtifact(override val exitCode: ExitCode) : PipelineArtifactWithExitCode()
+class ClrBackendArtifact(
+	override val exitCode: ExitCode,
+	override val configuration: CompilerConfiguration,
+) : PipelineArtifactWithExitCode() {
+	@OptIn(PipelineArtifact.CliPipelineInternals::class)
+	override fun withCompilerConfiguration(newConfiguration: CompilerConfiguration): ClrBackendArtifact =
+		ClrBackendArtifact(exitCode, newConfiguration)
+}
 
 /**
  * The one phase we own. Everything before it (Configuration / Frontend / Fir2Ir) is the stock
@@ -72,5 +80,5 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 
 		// An unsupported construct was reported (with source location), or a file crashed -> fail the compile here, so the
 		// build stops with a clear diagnostic instead of producing BIR that crashes ilemit downstream.
-		return ClrBackendArtifact(if (bir.hadError || crashed) ExitCode.COMPILATION_ERROR else ExitCode.OK)
+		return ClrBackendArtifact(if (bir.hadError || crashed) ExitCode.COMPILATION_ERROR else ExitCode.OK, configuration)
 }
