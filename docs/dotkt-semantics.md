@@ -338,6 +338,35 @@ Known deliberate gaps (all **verify-only / run-correct** for stdlib-backed value
   dirty — the collapse trades the (previously CLR-granted, rarely-used) nested covariance for the far more
   common concrete-into-slot verifiability. It runs correctly.
 
+## 5c-ter. Two residual covariance gaps left DURABLE after the Root-V collapse (accepted, not fixed)
+
+The #75/#100 Root-V collapse (§5c-bis) closed nested **value**-covariance for `List`/`Collection`/`Set`. Two
+covariance seams it did **not** address are deliberately accepted as durable limitations (task #102) — both are
+narrow, and closing either would add per-call reconciliation for an idiom that is rare or already run-correct.
+
+- **`Map<out K, V>` key-covariance (the "Root-K" seam).** `Map` is declared `Map<K, out V>`: values are
+  declaration-site covariant (and collapse via §5c-bis), but **keys are invariant**, exactly as CLR
+  `IDictionary<K,V>` (§5c) is. A *use-site key projection* `Map<out K, V>` therefore appears in the stdlib's
+  copy/merge signatures — `MutableMap.putAll(from: Map<out K, V>)`, `Map<K,V> + Map<out K, V>`,
+  `HashMap(src)` — and lets a source map with a **narrower key type** feed a wider-`K` destination. On the CLR that
+  is `IDictionary<Dog,V>` flowing into an `IDictionary<Animal,V>` slot, which the invariant generic cannot express.
+  bir2cir's `MapVarianceRealign` already **undoes the frontend's `in`/`out` → `kotlin.Any` over-approximation**
+  (restoring the concrete type inside inlined stdlib bodies, and the star-projected `Map<*,*>` `get`/`containsKey`
+  route to the non-generic `IDictionary` facade — §5c) so the *common* case (identical key type, or value widening)
+  is verifiable and run-correct. What stays open is only the case where a user **genuinely widens the KEY type**
+  across a `putAll`/`plus`/copy-ctor boundary. Reachability: uncommon but not exotic — you hit it only by merging a
+  `Map<Sub, V>` into a `Map<Super, V>`-typed target; same-key merges (the overwhelming majority) never touch it.
+  **Disposition: documented, not fixed** — key invariance matches CLR `IDictionary`, so there is no covariant
+  sibling to collapse to; use a target-key-typed source map when merging.
+- **The ~46 internal `IList`↔`IReadOnlyList` view seams inside the shipped runtime stdlib (`DotKt.Stdlib.dll`).**
+  These are the head-vs-nested face mismatches (§5c-bis) as they occur **inside stdlib bodies** — a head-position
+  read-only value meeting a collapsed mutable slot, or its exact transpose. They are **reconciled at emit** by
+  ilemit's `IsCollectionViewSeam` `castclass` (bidirectional since #100 H1) and are **not user-observable**: every
+  stdlib/BCL-backed collection implements all faces, so the closed-interface cast always succeeds. The only way to
+  surface an `InvalidCastException` is the already-documented §5c-bis edge — a hand-rolled **read-only-only** user
+  collection or a foreign **`IList`-only** C# collection crossing such a slot. **Disposition: internal + reconciled,
+  documented, not fixed** — they are body-level emit artifacts, not an exported ABI shape.
+
 ## 5d. `Appendable` is `System.Text.StringBuilder`
 
 `kotlin.text.Appendable` is a JVM-ism (`java.lang.Appendable`) with **no distinct .NET representation** —

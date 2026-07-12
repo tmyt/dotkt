@@ -135,6 +135,15 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **Two residual generics-covariance seams documented as durable/accepted (#102).** After the #75/#100
+  Root-V nested-collection collapse, two covariance gaps are deliberately left as accepted limitations and
+  recorded in `docs/dotkt-semantics.md` §5c-ter: (1) the `Map<out K, V>` **key-covariance** ("Root-K") seam —
+  reachable only when a user genuinely widens a map's KEY type across a `putAll`/`plus`/copy-ctor boundary
+  (same-key merges and value widening are already verifiable via `MapVarianceRealign`); CLR `IDictionary` is
+  key-invariant so there is no covariant sibling to collapse to. (2) the ~46 internal `IList`↔`IReadOnlyList`
+  view seams inside `DotKt.Stdlib.dll` — reconciled at emit by ilemit's bidirectional `IsCollectionViewSeam`
+  `castclass` and **not user-observable** (stdlib/BCL collections implement every face). Documentation-only; no
+  code change.
 - **Top-level `lateinit var` of a reference type no longer crashes ilemit (#104).** A top-level
   `lateinit var s: String` maps to an initializer-less static field, whose CIR carries `"init": null`
   (key present, JSON-null value). ilemit's static-field-initializer pass (`.cctor`) matched the key's
