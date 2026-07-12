@@ -138,7 +138,7 @@ public fun <T : Any> setOfNotNull(vararg elements: T?): Set<T> {
  */
 @SinceKotlin("1.6")
 @kotlin.internal.InlineOnly
-@Suppress("LEAKED_IN_PLACE_LAMBDA", "WRONG_INVOCATION_KIND")
+@Suppress("LEAKED_IN_PLACE_LAMBDA", "WRONG_INVOCATION_KIND", "DEPRECATION")
 public inline fun <E> buildSet(@BuilderInference builderAction: MutableSet<E>.() -> Unit): Set<E> {
     contract { callsInPlace(builderAction, InvocationKind.EXACTLY_ONCE) }
     return buildSetInternal(builderAction)
@@ -164,11 +164,11 @@ internal expect inline fun <E> buildSetInternal(builderAction: MutableSet<E>.() 
  *
  * @throws IllegalArgumentException if the given [capacity] is negative.
  *
- * @sample samples.collections.Builders.Sets.buildSetSample
+ * @sample samples.collections.Builders.Sets.buildSetSampleWithCapacity
  */
 @SinceKotlin("1.6")
 @kotlin.internal.InlineOnly
-@Suppress("LEAKED_IN_PLACE_LAMBDA", "WRONG_INVOCATION_KIND")
+@Suppress("LEAKED_IN_PLACE_LAMBDA", "WRONG_INVOCATION_KIND", "DEPRECATION")
 public inline fun <E> buildSet(capacity: Int, @BuilderInference builderAction: MutableSet<E>.() -> Unit): Set<E> {
     contract { callsInPlace(builderAction, InvocationKind.EXACTLY_ONCE) }
     return buildSetInternal(capacity, builderAction)

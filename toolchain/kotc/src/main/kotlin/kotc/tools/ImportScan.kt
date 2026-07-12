@@ -1,3 +1,5 @@
+@file:OptIn(org.jetbrains.kotlin.K1Deprecation::class, org.jetbrains.kotlin.config.CompilerConfiguration.Internals::class)
+
 package kotc.tools
 
 import java.io.File

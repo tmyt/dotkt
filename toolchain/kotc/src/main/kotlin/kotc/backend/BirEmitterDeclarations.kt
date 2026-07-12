@@ -712,8 +712,10 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	val nestedIn = emittedNestedParent(klass)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && !isExternalNetType(it) && !anonNames.containsKey(klass) && it.typeParameters.isEmpty() }
 		?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
 	// Round-trip: a Kotlin `sealed` class lowers to a CLR abstract class (loses the sealed modality) — carry the fact
-	// so a re-consuming Kotlin module restores `sealed` (ilemit stamps [KotlinSealed]).
-	val sealedFlag = classModsJson(sealed = klass.modality == Modality.SEALED)
+	// so a re-consuming Kotlin module restores `sealed` (ilemit stamps [KotlinSealed]). `value` (inline class) is
+	// likewise carried as a mod — the 2.4.0 frontend no longer surfaces its `@JvmInline` annotation, so this modifier
+	// is bir2cir's sole value-class signal for the erase-to-underlying lowering (see classModsJson).
+	val sealedFlag = classModsJson(sealed = klass.modality == Modality.SEALED, value = klass.isValue)
 	// typeParams = the anon/class's own params PLUS the captured enclosing params (scanned + installed at the top).
 	val ownTpsJson = typeParamsJson(ownTps).removePrefix(""","typeParams":[""").removeSuffix("]")
 	val extraJson = capturedTpParams.joinToString(",") { str(it.name.asString()) }
@@ -797,7 +799,7 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean): String {
 	// collectTailRecursionCalls. Restored after the body so a nested/sibling fn is unaffected.
 	val savedTailrec = tailrecCtx
 	val tailrecStart: Int? = if (fn.isTailrec) {
-		val tc = collectTailRecursionCalls(fn) { false }.ir
+		val tc = collectTailRecursionCalls(fn, { false }, { false }).ir
 		if (tc.isNotEmpty()) cfgFresh().also { tailrecCtx = BirEmitter.TailrecCtx(tc, it, fn) } else null
 	} else null
 	val bodyStmts = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
@@ -858,12 +860,18 @@ internal fun BirEmitter.resultTypeJson(fn: IrSimpleFunction): String =
 	if (fn.isSuspend) ""","suspendRet":${birType(fn.returnType).toJson()}""" else ""
 
 /** Structured class-modifier object (spec §2.1): `"mods":{name:true,…}` for class-nature Kotlin facts
- *  (`fun`-interface, `sealed`, `annotation`, …) — only the set flags, absent = not set. */
-internal fun BirEmitter.classModsJson(fnIface: Boolean = false, sealed: Boolean = false, annotation: Boolean = false): String {
+ *  (`fun`-interface, `sealed`, `annotation`, `value`, …) — only the set flags, absent = not set.
+ *  `value` = a Kotlin `value`/inline class (`IrClass.isValue`). It USED to reach bir2cir via the
+ *  `@kotlin.jvm.JvmInline` class annotation, but the 2.4.0 frontend no longer materializes that
+ *  (OptionalExpectation `expect` annotation with no non-JVM actual) on kotc's metadata/native sessions —
+ *  so the value-class fact must be carried as this pure-Kotlin modifier instead. bir2cir keys single-field
+ *  value-class erasure off it (it owns the single-vs-multi-field lowering decision). */
+internal fun BirEmitter.classModsJson(fnIface: Boolean = false, sealed: Boolean = false, annotation: Boolean = false, value: Boolean = false): String {
 	val flags = buildList {
 		if (annotation) add(""""annotation":true""")
 		if (fnIface) add(""""fun":true""")
 		if (sealed) add(""""sealed":true""")
+		if (value) add(""""value":true""")
 	}
 	return if (flags.isEmpty()) "" else ""","mods":{${flags.joinToString(",")}}"""
 }

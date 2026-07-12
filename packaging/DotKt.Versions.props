@@ -11,7 +11,7 @@
 <Project>
   <PropertyGroup>
     <DotKtVersionPrefix>0.9.4</DotKtVersionPrefix>
-    <DotKtKotlinVersion>2.2.0</DotKtKotlinVersion>
+    <DotKtKotlinVersion>2.4.0</DotKtKotlinVersion>
     <Version>$(DotKtVersionPrefix)+kotlin-$(DotKtKotlinVersion)</Version>
     <InformationalVersion>$(DotKtVersionPrefix)+kotlin-$(DotKtKotlinVersion)</InformationalVersion>
     <PackageTags>kotlin clr dotnet kotlin-$(DotKtKotlinVersion)</PackageTags>

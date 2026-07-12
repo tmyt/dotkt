@@ -6,6 +6,7 @@
 package kotlin.js
 
 import kotlin.annotation.AnnotationTarget.*
+import kotlin.internal.UsedFromCompilerGeneratedCode
 import kotlin.reflect.KClass
 
 /**
@@ -16,6 +17,17 @@ import kotlin.reflect.KClass
 @Target(CLASS, FUNCTION, PROPERTY, CONSTRUCTOR, PROPERTY_GETTER, PROPERTY_SETTER)
 @OptionalExpectation
 public expect annotation class JsName(val name: String)
+
+/**
+ * Declare access to a declaration by a well-known Symbol in JavaScript.
+ *
+ * See [additional information about well-known Symbols](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol#well-known_symbols)
+ */
+@ExperimentalStdlibApi
+@Target(FUNCTION)
+@SinceKotlin("2.3")
+@OptionalExpectation
+public expect annotation class JsSymbol(val name: String)
 
 /**
  * Marks experimental [JsFileName] annotation.
@@ -109,16 +121,39 @@ public annotation class ExperimentalJsStatic
 @SinceKotlin("1.4")
 @OptionalExpectation
 public expect annotation class JsExport() {
-    /*
-    * The annotation prevents exporting the annotated member of an exported class.
-    * This annotation is experimental, meaning that the restrictions mentioned above are subject to change.
-    */
+    /**
+     * This annotation prevents the annotated member of an exported class from being exported.
+     * It is experimental, meaning the restrictions described above are subject to change.
+     */
     @ExperimentalJsExport
     @Retention(AnnotationRetention.BINARY)
     @Target(CLASS, PROPERTY, FUNCTION, CONSTRUCTOR)
     @SinceKotlin("1.8")
     @OptionalExpectation
     public annotation class Ignore()
+
+    /**
+     * This annotation indicates that the exported declaration should be exported as `default` on the JS platform.
+     *
+     * In ES modules, the annotated declaration is available as the `default` export.
+     * In CommonJS, UMD, and plain modules, the annotated declaration is available under the name `default`.
+     *
+     * This annotation is experimental, meaning that the restrictions described above are subject to change.
+     *
+     * Note: If the annotation is applied multiple times across the project, the behavior depends on the compilation granularity.
+     * 
+     * - **Whole-program compilation**: If multiple libraries apply the annotation, it results in a runtime error.
+     * - **Per-module compilation**: Conflicts across dependencies (like in `whole-program` mode) are resolved.
+     *   However, a runtime error occurs if the annotation is applied multiple times within a single module.
+     * - **Per-file compilation**: This mode resolves the issues present in `whole-program` and `per-module` modes.
+     *   However, a new issue arises if `@JsExport.Default` is applied multiple times within the same file.
+     */
+    @ExperimentalJsExport
+    @Retention(AnnotationRetention.BINARY)
+    @Target(CLASS, PROPERTY, FUNCTION)
+    @SinceKotlin("2.3")
+    @OptionalExpectation
+    public annotation class Default()
 }
 
 
@@ -165,6 +200,15 @@ public annotation class ExperimentalJsReflectionCreateInstance
 public annotation class ExperimentalJsCollectionsApi
 
 /**
+ * The annotation is needed for annotating class declarations and type alias which are used inside exported declarations, but
+ * doesn't contain @JsExport annotation
+ * This information is used for generating special tagged types inside d.ts files, for more strict usage of implicitly exported entities
+ */
+@Target(AnnotationTarget.CLASS)
+@UsedFromCompilerGeneratedCode
+internal annotation class JsImplicitExport(val couldBeConvertedToExplicitExport: Boolean)
+
+/**
  * Specifies that an additional static method is generated from the annotated companion object member if it's a function.
  * If the member is a property, additional static getter/setter methods are generated.
  */
@@ -175,3 +219,34 @@ public annotation class ExperimentalJsCollectionsApi
 @OptionalExpectation
 @SinceKotlin("2.0")
 public expect annotation class JsStatic()
+
+/**
+ * Marks the experimental JsNoRuntime annotation.
+ *
+ * Note that behavior of these annotations will likely be changed in the future.
+ *
+ * Usages of such annotations will be reported as warnings unless an explicit opt-in with
+ * the [OptIn] annotation, e.g. `@OptIn(ExperimentalJsNoRuntime::class)`,
+ * or with the `-opt-in=kotlin.js.ExperimentalJsNoRuntime` compiler option is given.
+ */
+@RequiresOptIn(level = RequiresOptIn.Level.WARNING)
+@MustBeDocumented
+@Retention(AnnotationRetention.BINARY)
+@SinceKotlin("2.3") // TODO(KT-84002): bump to 2.4 alongside @JsNoRuntime version change
+public annotation class ExperimentalJsNoRuntime
+
+/**
+ * Marks an interface that is not going to be used at runtime on the JS platform.
+ *
+ * Interfaces annotated with `@JsNoRuntime` cannot be used in `is` checks, `as` casts,
+ * or with class references on the JS platform. Such interfaces can be actualized on JS as `external interface`.
+ *
+ * This annotation is available in common code and is JS-specific via [OptionalExpectation].
+ */
+@ExperimentalJsNoRuntime
+@Retention(AnnotationRetention.BINARY)
+@Target(CLASS)
+@MustBeDocumented
+@OptionalExpectation
+@SinceKotlin("2.4")
+public expect annotation class JsNoRuntime()

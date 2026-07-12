@@ -2,7 +2,7 @@
  * Copyright 2010-2025 JetBrains s.r.o. and Kotlin Programming Language contributors.
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
-
+@file:kotlin.internal.JvmBuiltin
 package kotlin
 
 /**
@@ -34,5 +34,5 @@ public annotation class IgnorableReturnValue
  * or deprecation cycle. This, in particular, concerns annotation's target list.
  */
 @Target(AnnotationTarget.FILE, AnnotationTarget.CLASS)
-@SinceKotlin("2.2")
-public annotation class MustUseReturnValue
+@SinceKotlin("2.3")
+public annotation class MustUseReturnValues

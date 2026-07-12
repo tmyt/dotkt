@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Toolchain
+
+- **Kotlin frontend bumped 2.2.0 → 2.4.0** (`#111`), behavior-preserving: `verify-il` 265/239,
+  `verify-ktproj` 13/13, `verify-differential` MATCH 203 / DIFF 0 — identical to the pre-bump baseline.
+  Both halves landed: the compiler dependency (`kotlin-compiler-embeddable` 2.4.0, adopting upstream's
+  `Fir2KlibMetadataSerializer` for const baking now that `constValueProvider` is gone; value-class fact
+  carried via a `mods.value` BIR flag + `[KotlinValueAttribute]` roundtrip marker since 2.4.0 stopped
+  materializing `@JvmInline` in non-JVM sessions; an identity-cast / double-`nullableValue` ilemit fix)
+  AND the matching stdlib SOURCE refresh (per-file 3-way merge to v2.4.0, 3 new Uuid actuals). The
+  reusable procedure is `docs/kotlin-frontend-bump-playbook.md`. One latent value-type-array-nullability
+  compiler bug surfaced by 2.4.0's `Array.toList()` rewrite is worked around stdlib-side and tracked
+  (`arrayOfNulls<value-type>` allocates `T[]` not `Nullable<T>[]`).
+
 ## 0.9.4 — 2026-07-12
 
 0.9.4 carries the 4-layer compiler migration to completion, lands a full coroutine engine,

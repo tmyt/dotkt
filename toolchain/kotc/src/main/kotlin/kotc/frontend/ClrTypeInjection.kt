@@ -1066,6 +1066,7 @@ class ClrFirExtensionRegistrar : FirExtensionRegistrar() {
  * registrar. Wired into [kotc.pipeline.ClrCliPipeline] via `COMPILER_PLUGIN_REGISTRARS`.
  */
 class ClrCompilerPluginRegistrar : CompilerPluginRegistrar() {
+	override val pluginId: String = "kotc.clr"
 	override val supportsK2: Boolean = true
 	override fun ExtensionStorage.registerExtensions(configuration: CompilerConfiguration) {
 		FirExtensionRegistrarAdapter.registerExtension(ClrFirExtensionRegistrar())

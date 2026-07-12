@@ -103,7 +103,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 	is IrLocalDelegatedProperty -> {
 		localDelegates[node.getter] = node
 		node.setter?.let { localDelegates[it] = node }
-		stmt(node.delegate)
+		stmt(node.delegate!!)
 	}
 	// A ref-cell var write `x = e` -> `x.v = e` (through the shared heap cell, via the capture field inside a closure).
 	is IrSetValue -> if (isRefCell(node.symbol.owner))

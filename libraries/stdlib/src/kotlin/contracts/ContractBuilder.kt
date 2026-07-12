@@ -1,4 +1,4 @@
-/*
+ /*
  * Copyright 2010-2018 JetBrains s.r.o. and Kotlin Programming Language contributors.
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
@@ -88,8 +88,6 @@ public interface ContractBuilder {
      * 2. _(optionally)_ the function [lambda] is invoked the number of times specified by the [kind] parameter,
      *  see the [InvocationKind] enum for possible values.
      *
-     * A function declaring the `callsInPlace` effect must be _inline_.
-     *
      */
     /* @sample samples.contracts.callsInPlaceAtMostOnceContract
     * @sample samples.contracts.callsInPlaceAtLeastOnceContract
@@ -110,6 +108,7 @@ public interface ContractBuilder {
      */
     @ExperimentalExtendedContracts
     @ContractsDsl
+    @SinceKotlin("2.2") // Technically 2.2.20
     public infix fun Boolean.implies(value: ReturnsNotNull)
 
     /**
@@ -120,7 +119,43 @@ public interface ContractBuilder {
      */
     @ExperimentalExtendedContracts
     @ContractsDsl
+    @SinceKotlin("2.2") // Technically 2.2.20
     public infix fun <R> Boolean.holdsIn(lambda: Function<R>): HoldsIn
+
+    /**
+     * Specifies that the function returns the result of the invocation of the function parameter [lambda].
+     *
+     * This information is currently used by the Kotlin's return value checker and instructs it
+     * to look inside [lambda] to decide whether function with contract is ignorable.
+     *
+     * If the functional parameter result is returned only in one of the possible execution paths (i.e., in [InvocationKind.AT_MOST_ONCE] situation),
+     * contract still should mention it. If the function accepts multiple functional parameters, the contract may be specified several times
+     * and should list all potential invocations from all execution paths.
+     *
+     * For example:
+     * ```kotlin
+     * inline fun <T, R> T.selector(condition: (T) -> Boolean?, a: (T) -> R, b: (T) -> R): R? {
+     *     contract {
+     *         callsInPlace(a, InvocationKind.AT_MOST_ONCE)
+     *         callsInPlace(b, InvocationKind.AT_MOST_ONCE)
+     *         returnsResultOf(a)
+     *         returnsResultOf(b)
+     *     }
+     *     return when (condition(this)) {
+     *         true -> a(this)
+     *         false -> b(this)
+     *         null -> null
+     *     }
+     * }
+     * ```
+     * `a` and `b` are mentioned in the `returnsResultOf` contract because each of them is returned from the function in at least one of the paths.
+     * `condition` is not mentioned in the contract because it is not returned from the function on all the paths.
+     *
+     * This contract is experimental, and it is allowed to use it only with the 'Return value checker' feature enabled.
+     */
+    @ContractsDsl
+    @SinceKotlin("2.4")
+    public fun <R> returnsResultOf(lambda: Function<R>)
 }
 
 /**

@@ -494,12 +494,18 @@ sealed partial class Emitter
                 // `castclass` is INVALID for a VALUE-type instantiation (the JIT rejects `castclass int` ->
                 // InvalidProgram). `unbox.any` is the universal cast: unbox for value types, castclass for reference
                 // types, and resolves a generic param correctly at JIT -- exactly what C# emits for `(T)objExpr`.
-                // A VALUE/GENERIC source flowing into a REFERENCE target must be boxed first (castclass on an
-                // unboxed !!T / struct is invalid IL) -- `(x: T) as IComparable` in compareValues.
                 var castSrc = EmitExpr(e.GetProperty("e"));
                 var t = MapType(e.GetProperty("type"));
+                // IDENTITY cast (source already IS the target, e.g. `(element: T) as T`): the stack already holds `t`.
+                // Emitting `unbox.any !!T` here would read an ALREADY-UNBOXED `!!T` value as a boxed-object pointer ->
+                // NullReferenceException at runtime. Nothing to do -- just report the type.
+                if (castSrc == t) return t;
                 var toRef = !(t.IsValueType || t.IsGenericParameter);
-                if (toRef && NeedsBoxToRef(castSrc)) _il.Emit(OpCodes.Box, castSrc);
+                // A VALUE/GENERIC source flowing into ANY target that isn't already itself must be boxed first: an
+                // unboxed !!T / struct feeding `castclass` (ref target) is invalid IL, and feeding `unbox.any` (value /
+                // generic target) reads a raw value as a boxed-obj pointer. Box independently of the target kind --
+                // e.g. `(x: T) as IComparable` in compareValues, or a value flowing into a differing generic slot.
+                if (NeedsBoxToRef(castSrc)) _il.Emit(OpCodes.Box, castSrc);
                 _il.Emit(toRef ? OpCodes.Castclass : OpCodes.Unbox_Any, t);
                 return t;
             }

@@ -98,6 +98,6 @@ Kotlin metadata: Kotlin callers can omit the argument; C# callers must pass it e
 - **Context parameters/receivers** (`-Xcontext-parameters` is rejected).
 - Consuming a DotKt dll **back as Kotlin** loses some declaration facts: `enum class`-ness,
   `object` singleton sugar, implicit companion access, SAM conversion of a bare lambda — each a
-  pinned-Kotlin-2.2.0 limitation, documented in
+  pinned-Kotlin-2.4.0 limitation, documented in
   [`dotkt-semantics.md` §10](../dotkt-semantics.md).
 - `internal` is assembly-visibility; there is no friend-module (`InternalsVisibleTo`) wiring yet.

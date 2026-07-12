@@ -10,10 +10,8 @@ package kotlin.uuid
 // We therefore fill the buffer with the default `Random` (itself seeded from CLR entropy, see PlatformRandomClr),
 // which yields a valid random (v4) Uuid — functionally correct, though not cryptographically strong.
 @ExperimentalUuidApi
-internal actual fun secureRandomUuid(): Uuid {
-    val randomBytes = ByteArray(Uuid.SIZE_BYTES)
-    kotlin.random.Random.Default.nextBytes(randomBytes)
-    return uuidFromRandomBytes(randomBytes)
+internal actual fun secureRandomBytes(destination: ByteArray) {
+    kotlin.random.Random.Default.nextBytes(destination)
 }
 
 @ExperimentalUuidApi
@@ -41,5 +39,13 @@ internal actual fun uuidParseHexDash(hexDashString: String): Uuid =
     uuidParseHexDashCommonImpl(hexDashString)
 
 @ExperimentalUuidApi
+internal actual fun uuidParseHexDashOrNull(hexDashString: String): Uuid? =
+    uuidParseHexDashOrNullCommonImpl(hexDashString)
+
+@ExperimentalUuidApi
 internal actual fun uuidParseHex(hexString: String): Uuid =
     uuidParseHexCommonImpl(hexString)
+
+@ExperimentalUuidApi
+internal actual fun uuidParseHexOrNull(hexString: String): Uuid? =
+    uuidParseHexOrNullCommonImpl(hexString)
