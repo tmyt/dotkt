@@ -7,6 +7,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **`try { value } catch { null }` in VALUE position on a value-type result now materializes its temp as
+  `Nullable<T>` on the null branch (`#127`, symmetric hardening of `#126`'s ternary value+null-branch join,
+  kotc).** `tryExpr` builds the value-position `try` as a shared temp assigned in each branch, so the temp's
+  DECLARED type IS the join type — the try analogue of `ternary()`'s `cond` type. It now mirrors `#126`: when
+  `birType(node.type)` resolves to a bare non-nullable value Fqn (`isPrimitiveOrUnsigned`, signed + unsigned
+  identically — a join-SHAPE gap) AND a branch (the try body or a catch) yields a bare `null`, the temp is typed
+  `Nullable<T>` so the null branch becomes `HasValue=false` instead of assigning `null` into a bare `int` slot (the
+  raw-`Nullable<T>`/InvalidProgram class). Under the codebase's uniform nullability a genuine null branch already
+  keeps `node.type` nullable (bir2cir preserves the `?` through inline-splice substitution on the stashed JSON), so
+  the gate only arms on the substituted-generic drop-`?` shape and no live repro exists in the current corpus — this
+  is the correct forward-looking mirror (like `#126`'s if/else-join). New `cases/il-tryval` gates the value-type
+  `try{v}catch{null}` join for `Int?`/`Long?`/`Double?` plus the stdlib `toFloatOrNull`/`toDoubleOrNull` bindings
+  (value present + null). Layer-pure: kotc emits the `kotlin.*` FQN + existing node kinds; the `Nullable<T>` CLR
+  representation stays bir2cir/ilemit.
+
 - **Emit diagnostics now point at the originating `File.kt:line`, and a shared IR-sanity gate runs at both the
   bir2cir/CIR boundary and ilemit (`#112`, diagnostics-quality follow-ups of `#84`).** Two additive,
   no-codegen-change pieces:

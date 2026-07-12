@@ -73,7 +73,6 @@ import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
 import org.jetbrains.kotlin.ir.types.isBoxedArray
-import org.jetbrains.kotlin.ir.types.isPrimitiveType
 import org.jetbrains.kotlin.ir.types.isUnsignedType
 import org.jetbrains.kotlin.ir.util.isPrimitiveArray
 import org.jetbrains.kotlin.ir.util.isUnsignedArray
@@ -219,7 +218,32 @@ internal fun BirEmitter.tryExpr(node: IrTry): String {
 	}
 	val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
 	val tryS = """{"k":"try","type":${fqnJson("kotlin.Unit")},"body":[$tryBody],"catches":[$catches]$finally}"""
-	return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tv)},"type":${birType(node.type).toJson()}},$tryS],"result":{"k":"local","name":${str(tv)}}}"""
+	// #127: mirror ternary()'s value+null-branch join tagging onto the try's value-position join. The branches all
+	// assign into the shared temp `tv`, so `tv`'s DECLARED type is this join's type (the ternary analogue is the
+	// `cond` node's `type`). If a branch yields a bare `null` while birType(node.type) resolved to a bare non-nullable
+	// value Fqn — the substituted-generic / stdlib-inline-splice shape that drops the `?` (#56/#126) — `tv` must be
+	// typed Nullable<T> so the null branch materializes as HasValue=false instead of assigning `null` into a bare
+	// `int` slot (the raw-Nullable<T>/InvalidProgram miscompile class). Gated on isPrimitiveOrUnsigned (signed +
+	// unsigned identically — a join-SHAPE gap, not a signedness seam). Under uniform nullability a real null branch
+	// keeps node.type nullable (bt is already Nullable) so this only arms on the drop-`?` shape.
+	val bt = birType(node.type)
+	val elem: TypeNode? = if (bt is TypeNode.Nullable) null else (bt as? TypeNode.Fqn)?.takeIf { node.type.isPrimitiveOrUnsigned() }
+	val nullBranch = elem != null && (branchYieldsNull(node.tryResult) || node.catches.any { branchYieldsNull(it.result) })
+	val tvType = (if (nullBranch) TypeNode.Nullable(elem!!) else bt).toJson()
+	return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(tv)},"type":$tvType},$tryS],"result":{"k":"local","name":${str(tv)}}}"""
+}
+
+/** True iff the value-position result [bodyStmtsAssign] would emit for branch [e] is a bare top-level `null` const —
+ *  the IR analogue of [isEmittedNullConst], computed WITHOUT re-emitting the branch (which would perturb scopeCounter
+ *  and, for a lambda/object-literal tail, double-register a lifted type). Deliberately as NARROW as
+ *  [isEmittedNullConst]: [bodyStmtsAssign] takes exactly ONE block level (`e.statements.lastOrNull()`) and emits
+ *  `setLocal tv = expr(last)`; only a BARE null literal there renders as the top-level `{"k":"const",…null}` that
+ *  ilemit's EmitNullableCoerced materializes as HasValue=false. A valueBlock-wrapped null (from a deeper nested
+ *  block) or a `{"k":"cast",…}` (an IMPLICIT_CAST over the null) is NOT that shape, so it must not arm the widening —
+ *  hence no deeper recursion and no cast unwrap. */
+internal fun BirEmitter.branchYieldsNull(e: IrExpression): Boolean {
+	val last = (if (e is IrBlock) e.statements.lastOrNull() else e) as? IrConst ?: return false
+	return last.value == null
 }
 
 /** Like [bodyStmts], but the branch's final value-expression is assigned to `tv` (a value already throws/returns
