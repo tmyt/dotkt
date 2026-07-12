@@ -24,6 +24,19 @@ Everything left over (implicit `currentCancellationToken()`, auto-inserted check
 bridge param) only has meaning inside structured concurrency (Job/CoroutineScope), which does not exist here
 (kotlinx purged) — so there is no Kotlin-side CT producer to connect to until Track 2.
 
+## Design principle (user, 2026-07-12) — cancellation stays EXPLICIT interop; the compiler embeds NO cancellation dialect
+Auto-insertion (`ThrowIfCancellationRequested()` auto-emitted at suspension points, implicit CT threading, an
+implicit `currentCancellationToken()`) **drags kotlinx/structured-concurrency vocabulary INTO the compiler** — the
+opposite of this project's core (kotc is coroutine-symbol-free / pure binding / "discard JVM-isms on CLR" / the
+`@ClrIntrinsic` "bind by metadata, embed no dialect" philosophy). So the RIGHT model is Case B, permanently: the
+author writes cancellation **explicitly** (declare `ct: CancellationToken` as an ordinary parameter, pass it to
+`Task.Delay(ms, ct)`, call `ct.ThrowIfCancellationRequested()` by hand). **The compiler never knows "cancellation"
+as a concept** — a `CancellationToken` is just a BCL struct value flowing through ordinary interop. This DEMOTES
+P1/P3 below from "deferred to Track 2" to "**design-questionable — reconsider before building at all**": even in
+Track 2, whether to REPRODUCE kotlinx's structured cancellation is itself an open question (consistent with
+discarding JVM-isms, the answer may be "don't"). **P0 is the exception** — it is not a dialect but pure .NET-Task
+fidelity (a cancelled operation yields a Canceled Task), correct independent of any of this.
+
 ## The one thing worth doing NOW — P0 (independent, ~5 lines)
 `RootContinuation.resumeWith` (`RootContinuation.kt:28-30`) maps EVERY exception — including
 `OperationCanceledException` — to `tcs.trySetException(...)` (a Faulted Task). .NET convention: a cancelled
