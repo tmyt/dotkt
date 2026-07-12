@@ -598,6 +598,11 @@ il_check_inject clrimpl ClrImpl "$ROOT/cases/il-clrimpl" "$(printf 'draw:circle\
 # off the injected interface member + fills its slot, so a direct call, an interface-typed upcast dispatch, AND a BCL
 # consumer (List<T>.Sort(IComparer<T>)) all dispatch into the override. (imports System.* -> il_check_imports/facadegen.)
 il_check_imports clrifaceimpl ClrIfaceImpl "$ROOT/cases/il-clrifaceimpl" "$(printf '1\n-3\nz,bb,abcd')"
+# clrifaceimplvt (#128): the VALUE-TYPE sibling — a class implementing a facadegen-injected .NET generic interface
+# instantiated with Int (IComparer<Int>/IEquatable<Int>). The injected `T?` override lowers to `Nullable<int32>` params
+# but the constructed slot wants BARE int32; bir2cir's ValueTypeIfaceSlotBridge synthesizes a bare-signature bridge
+# forwarding to the Nullable method, else TypeLoadException at type load. Direct + interface-upcast + BCL-Sort dispatch.
+il_check_imports clrifaceimplvt ClrIfaceImplVt "$ROOT/cases/il-clrifaceimplvt" "$(printf '2\n-2\nTrue\nFalse\n123')"
 # ixname: a .NET type with a CUSTOM-NAMED indexer via [IndexerName("Cell")] — `g[i]`/`g[i]=v` must bind to
 # get_Cell/set_Cell (read from the type's DefaultMemberAttribute by bir2cir.NetInteropBinding.DefaultIndexerAccessor),
 # not the hardcoded get_Item/set_Item. Regression guard for the custom-indexer-name binding path.

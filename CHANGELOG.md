@@ -7,6 +7,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **A Kotlin class implementing a facadegen-injected .NET generic interface instantiated with a VALUE-TYPE arg no
+  longer miscompiles to a `TypeLoadException` (`#128`, real miscompile surfaced by `#79`'s coverage).** A
+  `class C : IComparer<Int>` fails at type load with `TypeLoadException: Signature of the body and declaration in a
+  method implementation do not match`, while the reference-type sibling (`IComparer<String>`, `cases/il-clrifaceimpl`)
+  works. Root cause: the injected interface member surfaces its unconstrained `T` as `T?`, so the override is written
+  `Compare(x: Int?, y: Int?)` and bir2cir lowers it to params `Nullable<System.Int32>` — but the CONSTRUCTED CLR slot
+  `IComparer<int32>.Compare` uses BARE `int32` (a value type substituted into a .NET generic parameter is bare, never
+  `Nullable<>`; reference types work because `Nullable<String>` == `String` on the CLR). ilemit binds the override to
+  the slot via `DefineMethodOverride` and the `Nullable<int32>` vs `int32` mismatch throws at load. Fix (bir2cir, the
+  Kotlin↔CLR relation): a new pass `ValueTypeIfaceSlotBridge` synthesizes a bridge with the slot's bare-value signature
+  that forwards to the Nullable-param method (ilemit re-wraps each bare arg into `Nullable<T>` at the forwarding call;
+  its interface-slot overload disambiguation then wires the BRIDGE to the slot, leaving the Nullable method as the
+  plain overload the direct call still resolves to — the JVM/Java bridge-method idiom). Tightly scoped: a param/return
+  is bare-ified ONLY when the override declares `Nullable<V>` (post `ReferenceNullableStrip`, a surviving `Nullable<>`
+  implies V is a value type) AND the corresponding .NET slot position is the interface's own unconstrained generic
+  parameter (read off the ref.dll) — so the deliberate value-type-in-type-arg boxing of `Comparable<Int>`/`List<Int>`/
+  `sorted` is untouched, and a genuinely-`int?` slot param stays nullable. New GREEN gate sample
+  `cases/il-clrifaceimplvt` (direct call + interface upcast + BCL `List<Int>.Sort(IComparer<Int>)` dispatch, plus
+  `IEquatable<Int>`). (Layer: bir2cir — override→.NET-slot binding is the Kotlin↔CLR relation's job.)
+
 - **Gate coverage for two correct-by-construction-but-uncovered .NET-interop paths (`#79`).** Two new IL samples,
   both GREEN, close gaps the existing interop-override samples never exercised: (1) `cases/il-clrifaceimpl` — a
   Kotlin class IMPLEMENTING a facadegen-injected .NET generic interface (`System.Collections.Generic.IComparer<String>`);

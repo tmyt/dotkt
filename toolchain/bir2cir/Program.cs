@@ -573,6 +573,12 @@ sealed class Pipeline
             // stdlib body sorting it hits EntryPointNotFound/InvalidCast on `IComparable.CompareTo(object)`. Add the
             // missing interface + a `CompareTo(object)` bridge that casts and forwards to the generic CompareTo.
             if (!_options.RefBuild) ComparableBridgeSynthesis.Apply(lowered);
+            // #128: a Kotlin class implementing a facadegen-injected .NET generic interface instantiated with a
+            // VALUE-TYPE arg (`class C : IComparer<Int>`) declares its override with the injected member's `T?` params,
+            // which lower to `Compare(Nullable<int32>,…)` — but the CONSTRUCTED CLR slot wants BARE `int32`. Synthesize a
+            // bare-value-signature bridge that forwards to the Nullable method so the slot binds (ilemit re-wraps args);
+            // else DefineMethodOverride mismatches the slot -> TypeLoadException. Value-type type-arg positions only.
+            if (!_options.RefBuild) ValueTypeIfaceSlotBridge.Apply(lowered, refs);
             // REFERENCE build only: squash every declaration body to `throw NotImplementedException()` so the ref
             // assembly is metadata-only. Keeps ALL metadata (signatures/types/supertypes/generics/attrs) intact —
             // only the body STATEMENTS change. This is what makes it safe for a bare-value kotlin.* primitive kept
