@@ -111,6 +111,24 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null) {
 	}
 
 	/**
+	 * #112 Phase 2: the DECL-level source position, emitted as an optional `,"pos":{"f":path,"l":line,"c":col}` on a
+	 * declaration node (method/type). It carries the originating `File.kt:line` down BIR → CIR so an ilemit/bir2cir emit
+	 * failure (or a shared IrSanity violation) points at the source declaration instead of a bare `Type.method`
+	 * breadcrumb. OPTIONAL: absent = pre-#112 behavior (a synthetic decl with no source omits it). Values are NUMBERS
+	 * (not a `"file:line:col"` string) so the schema validator's bare-string check is not tripped; `pos.f` is the one
+	 * string, allow-listed in verify-schema.py STR_OK. The leading comma makes it splice into a decl template's tail.
+	 */
+	internal fun posJson(node: IrElement?): String {
+		val loc = locationOf(node) ?: return ""
+		// IrFileEntry.getLineAndColumnNumbers (behind locationOf) yields 0-based line/column here; emit the
+		// user-facing 1-based `File.kt:line` convention (editors, grep -n, compiler errors) so the diagnostic
+		// points at the real source line. line<0 = a file-only location (no offset) -> emit just the path.
+		val line = loc.line
+		return if (line >= 0) ""","pos":{"f":${str(loc.path)},"l":${line + 1},"c":${loc.column + 1}}"""
+			else ""","pos":{"f":${str(loc.path)}}"""
+	}
+
+	/**
 	 * Report an unsupported Kotlin construct as a clear, source-located compile error and return a placeholder
 	 * BIR node. The build fails (hadError), so this placeholder never reaches ilemit. `what` names the construct;
 	 * `detail` is a plain-language explanation of why / what to do — NOT the word "deferred".

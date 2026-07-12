@@ -41,6 +41,8 @@ STR_OK = {
     "local",                                    # a byref*/delegate node's local-VARIABLE-NAME reference
     "attr", "nestedIn",                         # attribute-type name / enclosing-type name (owner-FQN island — §2.2.1)
     "fileClass", "fileClassFQN", "pkg",         # file-class / package identifiers
+    "f",                                        # #112 P2: the decl-level source-position FILE path (pos.{f,l,c});
+                                                # `l`/`c` are ints. A diagnostics-only breadcrumb, NOT a type slot.
     "var",                                      # loop-variable name (for*)
     "accessOwner", "firstM", "lastM", "stepM",  # forRange progression-accessor owner+method-name island (§2.2.1)
     "label",                                    # goto/brIf/label CFG target (opaque string — §3)

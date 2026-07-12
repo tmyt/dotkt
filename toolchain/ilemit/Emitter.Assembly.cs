@@ -555,7 +555,7 @@ sealed partial class Emitter
             // it, `val X: Any = SomeEnum.ENTRY` stored the raw ordinal (int) into an object field as a null ref.
             // #84: the type initializer emits USER initializer expressions (which may carry full CFG), so guard each
             // field's emit with a `.cctor(<field>)` breadcrumb — a throw here names the failing field like a body throw.
-            _ctxType = ti.TB?.Name; _ctxNode = null;
+            _ctxType = ti.TB?.Name; _ctxNode = null; _ctxPos = PosOf(ti.Def);   // #112 P2: type decl's source pos
             foreach (var f in inits)
             {
                 var fname = f.GetProperty("name").GetString();

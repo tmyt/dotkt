@@ -144,8 +144,24 @@ sealed partial class Emitter
     string _ctxType;
     string _ctxMethod;
     string _ctxNode;
+    // #112 Phase 2: the decl's originating `File.kt:line` (from the CIR decl's `pos`), prefixed onto the breadcrumb so
+    // an emit throw reads `ilemit: File.kt:42: Foo.bar [node]: <message>`. Null when the decl carries no `pos`
+    // (a synthetic with no source) -> the breadcrumb degrades to the pre-#112 `Type.method` form.
+    string _ctxPos;
     internal string CurrentDecl =>
-        (_ctxType ?? "?") + "." + (_ctxMethod ?? "?") + (_ctxNode != null ? " [" + _ctxNode + "]" : "");
+        (_ctxPos != null ? _ctxPos + ": " : "")
+        + (_ctxType ?? "?") + "." + (_ctxMethod ?? "?") + (_ctxNode != null ? " [" + _ctxNode + "]" : "");
+
+    // Extract the `File.kt:line` (or bare `File.kt`) from a decl's optional `pos` {f,l,c}; null when absent.
+    static string PosOf(JsonElement decl)
+    {
+        if (decl.ValueKind != JsonValueKind.Object || !decl.TryGetProperty("pos", out var pos) || pos.ValueKind != JsonValueKind.Object) return null;
+        if (!pos.TryGetProperty("f", out var f) || f.ValueKind != JsonValueKind.String) return null;
+        var file = Path.GetFileName(f.GetString());
+        if (pos.TryGetProperty("l", out var l) && l.ValueKind == JsonValueKind.Number && l.TryGetInt32(out var line) && line >= 0)
+            return file + ":" + line;
+        return file;
+    }
 
     // per-method context
     ILGenerator _il;

@@ -11,7 +11,7 @@ sealed partial class Emitter
 {
     void EmitCtorBody(TypeInfo ti, ConstructorBuilder cb, JsonElement c)
     {
-        _ctxType = ti.TB?.Name; _ctxMethod = ".ctor"; _ctxNode = null;   // #84 diagnostic breadcrumb
+        _ctxType = ti.TB?.Name; _ctxMethod = ".ctor"; _ctxNode = null; _ctxPos = PosOf(c);   // #84 breadcrumb + #112 P2 source pos
         _methodRetType = typeof(void);
         _curTypeParams = EffectiveTps(ti); _curMethodParams = null;
         BeginMethod(cb.GetILGenerator(), c, isStatic: false);
@@ -92,7 +92,7 @@ sealed partial class Emitter
         // #84 diagnostic breadcrumb — set BEFORE any read of `m`, so a malformed def (e.g. a missing `name`, the exact
         // bir2cir-bug class #84 targets) is attributed to THIS type, not the previously-emitted method. Refined to the
         // method name once resolved below.
-        _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null;
+        _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null; _ctxPos = PosOf(m);   // #112 P2: decl source pos
         // An abstract method has no IL body (subclasses provide it); GetILGenerator would throw.
         if (m.TryGetProperty("abstract", out var amb) && amb.GetBoolean()) return;
         var mname = m.GetProperty("name").GetString();

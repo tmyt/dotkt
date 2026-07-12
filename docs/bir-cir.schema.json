@@ -166,10 +166,22 @@
         "ctors":      { "type": "array", "items": { "$ref": "#/$defs/ctorDecl" } },
         "methods":    { "type": "array", "items": { "$ref": "#/$defs/funDecl" } },
         "properties": { "type": "array", "items": { "$ref": "#/$defs/propDecl" } },
-        "entries":    { "type": "array", "items": { "type": "object" }, "description": "enum entries" }
+        "entries":    { "type": "array", "items": { "type": "object" }, "description": "enum entries" },
+        "pos":        { "$ref": "#/$defs/pos" }
       },
       "required": ["name", "kind"],
       "additionalProperties": true
+    },
+    "pos": {
+      "type": "object",
+      "$comment": "#112 P2: OPTIONAL decl-level SOURCE POSITION (File.kt:line), threaded kotc -> BIR -> CIR so an ilemit/bir2cir emit failure or a shared IrSanity violation points at the originating declaration. Diagnostics-only; absent = pre-#112 behavior (a synthetic with no source omits it). Numeric l/c so the schema validator's bare-string check is not tripped; pos.f is the one string (verify-schema.py STR_OK).",
+      "properties": {
+        "f": { "type": "string", "description": "source file path (IrFileEntry.name)" },
+        "l": { "type": "integer", "description": "1-based line; absent/-1 when only the file is known" },
+        "c": { "type": "integer", "description": "1-based column" }
+      },
+      "required": ["f"],
+      "additionalProperties": false
     },
     "decl": {
       "oneOf": [ { "$ref": "#/$defs/funDecl" }, { "$ref": "#/$defs/propDecl" }, { "$ref": "#/$defs/fieldDecl" } ]
@@ -188,7 +200,8 @@
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
         "params":     { "type": "array", "items": { "$ref": "#/$defs/param" } },
         "body":       { "type": "array", "items": { "$ref": "#/$defs/node" } },
-        "attrs":      { "type": "array" }
+        "attrs":      { "type": "array" },
+        "pos":        { "$ref": "#/$defs/pos" }
       },
       "required": ["name", "ret"],
       "additionalProperties": true
