@@ -334,18 +334,22 @@ internal fun BirEmitter.arrayElemType(t: IrType): TypeNode {
 	return OBJ
 }
 
-/** Kotlin nullable VALUE type (`Int?`/`Double?`…) -> the value element identity (`kotlin.Int`…), else null. */
+/** Kotlin nullable VALUE type (`Int?`/`Double?`… AND the unsigned inline-classes `UInt?`/`UByte?`/…) -> the value
+ *  element identity (`kotlin.Int`, `kotlin.UInt`…), else null. Unsigned is a value type on the CLR (`Nullable<uint>`),
+ *  so a `UInt?` needs the SAME HasValue/Value unwrap as a signed `Int?` — a bare pass-through leaves a `Nullable<uint>`
+ *  STRUCT where the use site wants the bare value (#118). bir2cir lowers the `kotlin.UInt` elem to `System.UInt32`
+ *  exactly as it does `kotlin.Int` -> `System.Int32` (#76 native-unsigned). */
 internal fun BirEmitter.nullableElem(t: IrType): TypeNode? =
-	if (t.isMarkedNullable() && t.isValuePrimitive()) t.classFqName?.asString()?.let { TypeNode.Fqn(it) } else null
+	if (t.isMarkedNullable() && t.isPrimitiveOrUnsigned()) t.classFqName?.asString()?.let { TypeNode.Fqn(it) } else null
 
 /** A value-type-nullable source (`Int?` = `Nullable<T>` on the CLR) narrowed/cast to its NON-null value
  *  (`Int`) must read `Nullable<T>.get_Value` — a bare load / `unbox.any` over a `Nullable<T>` STRUCT reads
  *  garbage or emits invalid IL (the C1 smart-cast miscompile). Given the SOURCE and required non-null USE/target
  *  type, returns the element to wrap in a `nullableValue` unwrap, else null. */
 internal fun BirEmitter.nullableValueUnwrapElem(srcType: IrType, useType: IrType): TypeNode? {
-	val elem = nullableElem(srcType) ?: return null          // source is Int?/Long?/Double?…
+	val elem = nullableElem(srcType) ?: return null          // source is Int?/Long?/Double?/UInt?…
 	if (useType.isMarkedNullable()) return null              // target is still nullable -> no unwrap
-	val tgt = useType.classFqName?.asString()?.takeIf { useType.isValuePrimitive() } ?: return null
+	val tgt = useType.classFqName?.asString()?.takeIf { useType.isPrimitiveOrUnsigned() } ?: return null
 	return if (elem is TypeNode.Fqn && tgt == elem.name) elem else null
 }
 

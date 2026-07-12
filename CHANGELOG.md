@@ -7,6 +7,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **`!!` (and `requireNotNull`/`checkNotNull`) on an UNSIGNED nullable now unwraps `Nullable<T>.Value` (`#118`).**
+  A not-null assertion on `UInt?`/`UByte?`/`UShort?`/`ULong?` yielded a raw `Nullable<uint>` STRUCT at a use
+  site that consumes the bare value (`u!! + 1u` → `InvalidProgramException`) — the eager null-throw from `#115`
+  worked, but the `.Value` unwrap was missing. Root cause: kotc's `nullableElem` gated on `isPrimitiveType()`,
+  which EXCLUDES the unsigned inline-classes, so an unsigned `!!` (CHECK_NOT_NULL) fell into the reference objEq
+  branch instead of the value-type HasValue/Value branch that signed `Int?` takes (post-`#56`). Unsigned IS a
+  value type on the CLR (`Nullable<uint>`, `#76` native-unsigned), so `nullableElem` now gates on
+  `isPrimitiveOrUnsigned()` and the `kotlin.UInt` elem lowers to `System.UInt32` downstream exactly as
+  `kotlin.Int` → `System.Int32`. The same parity gap in bir2cir's `PreconditionLowering` (its `ValueTypes` set)
+  is fixed in the same change so `requireNotNull(u)`/`checkNotNull(u)` on an unsigned nullable also unwrap.
+  `cases/il-nullbang` extended with the unsigned cases.
+
 - **User-app MPP: a common `expect` + a CLR `actual` now compile through the APP frontend pipeline (`#119`).**
   A user project with `-Xcommon-sources` (marking the common/expect sources) + `-Xmulti-platform` previously
   failed at kotc with `expect and corresponding actual are declared in the same module`: the app frontend

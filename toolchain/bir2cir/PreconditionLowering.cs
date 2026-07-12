@@ -39,13 +39,16 @@ static class PreconditionLowering
 {
     static int _counter;
 
-    // The value-nullable split MUST match kotc's former `nullableElem` = `makeNotNull().isPrimitiveType()`, which is the
-    // 8 primitives ONLY (Kotlin's isPrimitiveType EXCLUDES the unsigned types). An unsigned `UInt?` therefore takes the
-    // reference objEq path here exactly as it did in kotc — strict CIR parity over the (untested) alternative.
+    // The value-nullable split MUST match kotc's `nullableElem` = `makeNotNull().let { isPrimitiveType() ||
+    // isUnsignedType() }` — the 8 primitives PLUS the unsigned inline-classes. Unsigned is a value type on the CLR
+    // (`UInt?` = `Nullable<uint>`, #76 native-unsigned), so `requireNotNull(u: UInt?)` takes the same HasValue/Value
+    // unwrap shape as `Int?` — a bare objEq pass-through would leave a `Nullable<uint>` STRUCT at the use site (#118,
+    // the #56 struct-consumer issue). The `kotlin.UInt` elem lowers to `System.UInt32` downstream exactly as `kotlin.Int`.
     static readonly HashSet<string> ValueTypes = new(System.StringComparer.Ordinal)
     {
         "kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte", "kotlin.Char", "kotlin.Boolean",
         "kotlin.Double", "kotlin.Float",
+        "kotlin.UInt", "kotlin.ULong", "kotlin.UShort", "kotlin.UByte",
     };
 
     public static void Apply(JsonNode node, ISet<string> localTopLevelFns, bool appBuild)

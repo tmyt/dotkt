@@ -486,7 +486,7 @@ il_check typealias TypeAlias "$ROOT/cases/il-typealias" "$(printf 'a,b,c\n3\n12\
 il_check atomics Atomics "$ROOT/cases/il-atomics" "$(printf '11\n11\n16\nTrue\nFalse\n16\n16\n100\n55\n1001\n1001\n1000\n1000\n42')"   # COV2: kotlin.concurrent.atomics AtomicInt/AtomicLong exercising the @ClrRefArgument Interlocked byref binding
 il_check null  Null  "$ROOT/cases/il-null"    "$(printf 'none\nHI\nfallback\nABC\n5')"
 il_check nullableprim NullablePrim "$ROOT/cases/il-nullableprim" "$(printf '7\n107\n8\n8\n14\ngt5\nbig\n7\n-1\n101\n50\nlgt\n2.5\n2.75\ndlt')"
-il_check nullbang NullBang "$ROOT/cases/il-nullbang" "$(printf '5\n6\n5\nnpe\n10\n3.75\n9\nhi\n2\nnpe-discard\nnpe-store')"   # #56/#115: `!!` on value-type (Int?/Long?/Double?/Byte?) unwraps Nullable<T>.Value + throws NPE; reference (String?) `!!` throws NPE EAGERLY even when result is stored/discarded
+il_check nullbang NullBang "$ROOT/cases/il-nullbang" "$(printf '5\n6\n5\nnpe\n10\n3.75\n9\n6\n9\nnpe-u\n5\nnull\n6\n9\nhi\n2\nnpe-discard\nnpe-store')"   # #56/#115/#118: `!!` (and unsigned SAFE_CALL/ELVIS) on value-type (Int?/Long?/Double?/Byte?/UInt?/UByte?) unwraps Nullable<T>.Value + throws NPE; reference (String?) `!!` throws NPE EAGERLY even when result is stored/discarded
 il_check nullv MS1   "$ROOT/cases/m-s1/app.kt" "$(printf 'fallback\npresent\nforced\nlen null = -1\nlen hello = 5')"
 il_check op    OpT   "$ROOT/cases/il-op/app.kt" "$(printf '(4, 6)\n(2, 2)\n(6, 8)\n(-3, -4)\n3\n4\nTrue\nTrue\nFalse\nTrue\n7\n15')"
 il_check dataq Dq    "$ROOT/cases/m-s2/app.kt" "$(printf 'Point(x=3, y=4)\nPoint(x=7, y=9)\nx=3 y=4\na==b: True\na==c: False\nhash eq: True')"

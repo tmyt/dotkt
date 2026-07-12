@@ -475,12 +475,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 		if (velem != null) {
 			return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(velem).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${velem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${velem.toJson()},"e":$nvLoc},"else":$throwNpe}}"""
 		}
-		// reference (or objEq-testable: generic `T?`, unsigned `UInt?`) operand: bind once, `(t != null) ? t
-		// : throw` (value in `then`, mirroring the value-type path above and bir2cir's PreconditionLowering
-		// reference shape). objEq boxes a generic/unsigned local before the null-test, so a HasValue==false
-		// `Nullable<T>` reads as a genuine null and throws. (KNOWN GAP: an unsigned `u!!` yields the raw
-		// `Nullable<uint>` here without a `.Value` unwrap — the #56 struct-consumer issue persists for the
-		// unsigned primitives, which `nullableElem` excludes; tracked separately, not this fix's scope.)
+		// reference (or objEq-testable: generic `T?`) operand: bind once, `(t != null) ? t : throw` (value in
+		// `then`, mirroring the value-type path above and bir2cir's PreconditionLowering reference shape). objEq
+		// boxes a generic local before the null-test, so a HasValue==false `Nullable<T>` reads as a genuine null
+		// and throws. (Unsigned `UInt?`/`UByte?`/... take the value-type HasValue/Value branch ABOVE: #118 -- they
+		// ARE value types on the CLR (`Nullable<uint>`), so `nullableElem` includes them via `isPrimitiveOrUnsigned`;
+		// a bare pass-through would leave a `Nullable<uint>` STRUCT at the use site, the #56 struct-consumer issue.)
 		val nullConst = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
 		return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${birType(arg.type).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":$nullConst}},"then":$nvLoc,"else":$throwNpe}}"""
 	}

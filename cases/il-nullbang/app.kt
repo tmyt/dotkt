@@ -22,6 +22,25 @@ fun main() {
     val b: Byte? = 9
     println(b!!.toInt())    // 9
 
+    // #118: `!!` on an UNSIGNED value-type nullable (`UInt?` = Nullable<uint>) must UNWRAP .Value like the
+    // signed primitives above — a bare pass-through left a Nullable<uint> struct at the use site (InvalidProgram).
+    val u: UInt? = 5u
+    println(u!! + 1u)       // 6
+    val ub: UByte? = 9u
+    println(ub!!.toInt())   // 9
+
+    val uz: UInt? = null
+    try { println(uz!!) } catch (e: NullPointerException) { println("npe-u") }
+
+    // #118: extending the value-nullable routing to unsigned ALSO fixes SAFE_CALL / ELVIS on an unsigned
+    // nullable (same Nullable<uint> HasValue/Value unwrap) — a raw-struct splice there was the same bug class.
+    val us: UInt? = 5u
+    println(us?.toInt())        // 5
+    val un: UInt? = null
+    println(un?.toInt())        // null   (SAFE_CALL yields null when receiver is null)
+    println((us ?: 0u) + 1u)    // 6      (ELVIS present -> unwrapped value)
+    println((un ?: 9u).toInt()) // 9      (ELVIS fallback)
+
     // #115 reference-type `!!`.
     val ok: String? = "hi"
     println(ok!!)           // hi   (non-null reference yields the value)
