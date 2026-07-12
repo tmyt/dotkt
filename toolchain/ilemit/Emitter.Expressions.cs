@@ -214,6 +214,19 @@ sealed partial class Emitter
                 try { m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig); }
                 catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _) && OwnerHasClrInterface(ciOwner.open)) { return EmitDynamicCall(e); }
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
+                // #108 GUARD (defensive, contract-violation only — never fires on valid CIR). This path pushes the
+                // receiver as a plain value/reference (EmitExpr(recv)) then emits call/callvirt on `m` DIRECTLY. Per
+                // ECMA-335 that is verifiable IL ONLY when `m`'s declaring type is a reference type: a value-type
+                // (struct) receiver's `this` is a managed pointer, so it needs an address / unbox + `constrained.` —
+                // the separate `constrainedCall` path, not this one. bir2cir lowers every value-type instance call to
+                // `constrainedCall`, so a `callInstance` resolving to a value-type declaring type is a bir2cir contract
+                // violation. Fail LOUD with a precise breadcrumb (the #84 CirEmitException style) rather than emit an
+                // unverifiable bare receiver. (A generic-parameter *receiver* is also constrainedCall's job, but it is
+                // not detectable from `m` here — its method resolves onto the constraint/interface, a reference type —
+                // so this token-level guard covers only the value-type declaring type it CAN prove.)
+                if (m.DeclaringType is { IsValueType: true })
+                    throw new CirEmitException(CurrentDecl,
+                        $"callInstance receiver is a value-type declaring type '{m.DeclaringType}' (method '{m.Name}'): this emit path pushes a plain receiver with no address/unbox/constrained., which is unverifiable IL — such an instance call must be lowered to 'constrainedCall' in bir2cir", null);
                 EmitExpr(e.GetProperty("recv"));
                 if (m == m0) EmitCallArgs(e.GetProperty("args"), m); else EmitArgsTyped(e.GetProperty("args"), mps, m);
                 _il.Emit(e.GetProperty("virtual").GetBoolean() ? OpCodes.Callvirt : OpCodes.Call, m);

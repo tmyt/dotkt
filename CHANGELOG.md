@@ -7,6 +7,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **ilemit `callInstance` now guards a value-type-receiver contract violation instead of emitting unverifiable IL (`#108`, defensive).**
+  The `callInstance` emit path pushes the receiver as a plain value/reference (`EmitExpr(recv)`) then emits
+  `call`/`callvirt` on the resolved method directly — per ECMA-335 that is verifiable IL only when the method's
+  declaring type is a reference type (a value-type receiver's `this` is a managed pointer, needing an
+  address/`unbox` + `constrained.`, which is the separate `constrainedCall` path). bir2cir lowers every value-type
+  instance call to `constrainedCall`, so nothing valid reaches this path with a value-type declaring type; the guard
+  converts a future bir2cir mis-lowering into a precise ilemit `CirEmitException` breadcrumb (the `#84` style) naming
+  the method + declaring type, rather than a silent miscompile / `BadImageFormat`. Inert on all valid CIR (verify-il
+  unchanged). (Layer: ilemit — a pure CIL-verifiability invariant, no Kotlin knowledge.)
+
 - **`as?` (SAFE_CAST) and the if/else null-branch JOIN on an UNSIGNED value type now route the value-type nullable path (`#126`).**
   Two syntaxes still mis-materialized an unsigned nullable as a boxed reference (`Nullable<uint>` via `isInstRef`)
   instead of the value-type `Nullable<uint>` path — the two sites `#118` did not reach: `x as? UInt` fell into
