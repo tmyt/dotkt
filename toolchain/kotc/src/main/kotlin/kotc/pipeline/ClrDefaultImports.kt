@@ -1,6 +1,7 @@
 package kotc.pipeline
 
 import org.jetbrains.kotlin.fir.FirSession
+import org.jetbrains.kotlin.fir.FirSessionComponent
 import org.jetbrains.kotlin.fir.SessionConfiguration
 import org.jetbrains.kotlin.fir.scopes.FirDefaultImportsProviderHolder
 import org.jetbrains.kotlin.fir.scopes.defaultImportsProvider
@@ -29,7 +30,7 @@ import org.jetbrains.kotlin.resolve.ImportPath
  * The only session-level extensibility point for default imports is the `FirDefaultImportsProviderHolder`
  * session component (a `DefaultImportsProvider` instance) registered once by the session factory in
  * `registerDefaultComponents()`/`registerNativeComponents()`; there is no `FirExtensionRegistrar` hook or
- * `FirSessionConfigurator` API to *append* an import ourselves. `FirSession.register` is a plain,
+ * `FirSessionConfigurator` API to *append* an import ourselves. `FirSession.register` writes an
  * un-immutable array-map slot (`ComponentArrayOwner`/`ArrayMapImpl.set`), so re-registering the same key
  * with a wrapping provider is a safe overwrite -- PROVIDED it happens before any FIR resolution reads it.
  * Verified: the default-import scope (`FirDefaultSimpleImportingScope.simpleImports`, upstream
@@ -37,11 +38,24 @@ import org.jetbrains.kotlin.resolve.ImportPath
  * lazily inside a per-file scope built during import/body resolution -- never at session-construction
  * time -- so calling [installKotlinJvmDefaultImport] right after the session is built (before
  * `resolveAndCheckFir`) is both safe and effective.
+ *
+ * 2.4.0 GOTCHA: `FirDefaultImportsProviderHolder` became a `FirComposableSessionComponent`, and
+ * `FirSession` gained a generic `register(KClass<out T>, value: T)` overload (for `T :
+ * FirComposableSessionComponent<T>`) that COMPOSES with the existing holder instead of overwriting it.
+ * Worse, composition INTERSECTS platform imports (`DefaultImportsProvider.Composed
+ * .platformSpecificDefaultImports` = `reduce { acc, list -> acc.intersect(list) }`), so composing our
+ * `delegate.psdi + kotlin.jvm.*` back with the original `delegate.psdi` yields just `delegate.psdi` --
+ * our addition is silently erased and the whole call becomes a no-op. So we UPCAST the value to
+ * `FirSessionComponent` to force the plain `register(KClass<out FirSessionComponent>, FirSessionComponent)`
+ * overload, which does the array-map OVERWRITE we need.
  */
 @OptIn(SessionConfiguration::class)
 fun installKotlinJvmDefaultImport(session: FirSession) {
 	val delegate = session.defaultImportsProvider
-	session.register(FirDefaultImportsProviderHolder::class, FirDefaultImportsProviderHolder.of(JvmAwareDefaultImportsProvider(delegate)))
+	session.register(
+		FirDefaultImportsProviderHolder::class,
+		FirDefaultImportsProviderHolder.of(JvmAwareDefaultImportsProvider(delegate)) as FirSessionComponent,
+	)
 }
 
 private class JvmAwareDefaultImportsProvider(private val delegate: DefaultImportsProvider) : DefaultImportsProvider() {
