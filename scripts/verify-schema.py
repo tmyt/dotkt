@@ -87,6 +87,7 @@ MOD_KEYS = {
     "inline", "infix", "operator", "tailrec", "external", "ext", "override", "abstract",
     "open", "suspend", "data", "sealed", "inner", "enum", "fun", "annotation", "value",
     "const", "lateinit", "vararg", "noinline", "crossinline",
+    "inlineOnly",                                # #98: @InlineOnly → [MethodImpl(AggressiveInlining)] (ilemit reads mods.inlineOnly)
 }
 VIS = {"public", "private", "protected", "internal"}
 CARRIER_VERSIONS = {"bir-json/1"}
