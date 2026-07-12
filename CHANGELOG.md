@@ -5,6 +5,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.5 — 2026-07-13
+
+0.9.5 bumps the Kotlin frontend to **2.4.0** (compiler + stdlib, behavior-preserving), lands **first-class
+user-app multiplatform (`expect`/`actual`) support** — a `common`+`actual` project compiles to ONE
+fully-actualized CLR dll through the app pipeline, opt-in via `<DotKtMultiplatform>true</DotKtMultiplatform>`
+(design: `docs/design-ktproj-mpp.md`) — and sweeps a broad set of correctness bugs surfaced by the
+kotlinx.coroutines CLR port and gate-coverage work: the **value-type-array-nullability family**
+(`arrayOfNulls`/`copyOfRange`/`plus`/`plusElement`/`copyOf` now allocate `Nullable<T>[]` / runtime-element-type
+arrays correctly), the **unsigned-value-type nullable family** (`!!` / `as?` / `if-else`-join), **inline
+nested-generic arguments** that emitted invalid IL, `new` of an external generic over a free type-variable, a
+**cross-module custom-accessor property that silently returned the raw field**, coroutine cancellation
+fidelity, a bound `CharSequence` extension reference, a facadegen-injected `.NET` enum under a `T : Enum<T>`
+bound, and a Kotlin class implementing a `.NET` generic interface with a value-type argument. Diagnostics now
+point at `File.kt:line` with a shared IR-sanity gate. Every verify gate is green: verify-il 276/242,
+verify-ktproj all-pass (incl. the new MPP sample), verify-schema clean, and the 2.4.0 bump matched the
+JVM-oracle differential.
+
 ### Toolchain
 
 - **`try { value } catch { null }` in VALUE position on a value-type result now materializes its temp as
