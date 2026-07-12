@@ -8,6 +8,8 @@ fun main() {
     println(c is List<*>)               // true
     println(c is Iterable<*>)           // true
     println(m is Map<*, *>)             // true
-    println(5 is Collection<*>)         // false
-    println("hi" is List<*>)            // false
+    val notColl: Any = 5                // Any-typed so the is-check is a runtime test, not a
+    val notList: Any = "hi"             // statically-false one (Kotlin 2.4.0 errors on `5 is Collection<*>`)
+    println(notColl is Collection<*>)   // false
+    println(notList is List<*>)         // false
 }
