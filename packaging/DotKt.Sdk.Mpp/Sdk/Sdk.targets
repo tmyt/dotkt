@@ -1,0 +1,7 @@
+<Project>
+  <!-- Chain the base SDK's targets. The kt->BIR->CIL pipeline itself ships with DotKt.Toolchain
+       (build/DotKt.Toolchain.targets), auto-imported because the base Sdk.props references that package;
+       this file only forwards to the base. Version-less like the props import: the base's version comes from
+       the consumer's global.json `msbuild-sdks` (see Sdk.props). -->
+  <Import Project="Sdk.targets" Sdk="DotKt.Sdk" />
+</Project>

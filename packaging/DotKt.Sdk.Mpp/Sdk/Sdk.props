@@ -1,0 +1,27 @@
+<Project>
+  <!-- DotKt.Sdk.Mpp: a THIN composition SDK. `Sdk="DotKt.Sdk.Mpp"` == `Sdk="DotKt.Sdk"` + MPP on.
+       It imports the base DotKt.Sdk (all the kt->BIR->CIL orchestration + implicit Toolchain/Stdlib refs
+       live there) and layers exactly one thing on top: DotKtMultiplatform=true, which turns on the
+       common/ (expect) vs default-glob (actual) source-set split in the shared DotKt.Toolchain targets
+       (see docs/design-ktproj-mpp.md). Mirrors how Microsoft.NET.Sdk.Web composes over Microsoft.NET.Sdk. -->
+
+  <!-- $(DotKtVersion) versions the base's implicit DotKt.Toolchain/DotKt.Stdlib PackageReferences. The base
+       DotKt.Sdk defaults it to an older value; we set it here (before importing the base) so the whole DotKt
+       package set resolves at one version. A consumer may override it (<DotKtVersion>x.y.z</DotKtVersion>). -->
+  <PropertyGroup>
+    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.5</DotKtVersion>
+  </PropertyGroup>
+
+  <!-- Import the base SDK. This nested import is version-LESS on purpose: the NuGet MSBuild-SDK resolver reads
+       a nested SDK's version ONLY from global.json's `msbuild-sdks` (it ignores an inline `Sdk="Name/Version"`
+       on <Import> and the nuspec <dependency>). So a consuming project pins the base there, e.g.
+         { "msbuild-sdks": { "DotKt.Sdk.Mpp": "x.y.z", "DotKt.Sdk": "x.y.z" } }
+       — the same idiomatic global.json SDK-pinning any custom MSBuild SDK uses. DotKt.Sdk.Mpp.nuspec still
+       declares DotKt.Sdk as a hard dependency so restore fetches the base package into the cache. -->
+  <Import Project="Sdk.props" Sdk="DotKt.Sdk" />
+
+  <PropertyGroup>
+    <!-- The whole value-add of this SDK. A project may still turn it off explicitly. -->
+    <DotKtMultiplatform Condition="'$(DotKtMultiplatform)' == ''">true</DotKtMultiplatform>
+  </PropertyGroup>
+</Project>

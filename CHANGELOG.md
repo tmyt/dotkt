@@ -5,6 +5,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Added
+- **`DotKt.Sdk.Mpp` MSBuild SDK** (#125) — a thin composition SDK for Kotlin-Multiplatform projects:
+  `Sdk="DotKt.Sdk.Mpp"` imports the base `DotKt.Sdk` and turns on `DotKtMultiplatform=true`, so a `common/`
+  (`expect`) + `clr/` (`actual`) project compiles to one fully-actualized CLR dll without hand-setting the property.
+  Packed as the fifth package by `scripts/pack-nuget.sh`; declares a NuGet dependency on `DotKt.Sdk` (same version).
+  Consumers pin the base in `global.json` `msbuild-sdks` (the resolver reads nested-SDK versions only from there).
+  Verified end-to-end against a local `build/nuget-feed` (restore → build → run → "Hello from the CLR actual").
+  See `docs/design-ktproj-mpp.md` §5.
+
 ## 0.9.5 — 2026-07-13
 
 0.9.5 bumps the Kotlin frontend to **2.4.0** (compiler + stdlib, behavior-preserving), lands **first-class

@@ -6,7 +6,7 @@
 #
 #   kotc ──┬────────────────────────────────► stdlib-klib (frontend KLIB, kotc -classpath)
 #          ├─ ilemit/bir2cir/facadegen/retarget
-#          └────────────► stdlib-ref ──► stdlib-rt ──► pack (4 NuGet packages -> build/nuget-feed)
+#          └────────────► stdlib-ref ──► stdlib-rt ──► pack (5 NuGet packages -> build/nuget-feed)
 #
 # Output paths are LOAD-BEARING (dotkt.sh, verify-*.sh, cases/KotlinClr.targets hard-reference
 # build/<tool>-bin, build/clr-stdlib*/dll, build/clr-stdlib-frontend-klib) — do not rename them here.
@@ -42,7 +42,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
         verify verify-il verify-ktproj verify-roundtrip verify-differential verify-widedelegates \
         dev facades clean clean-tools clean-stdlib clean-pack help
 
-all: pack ## one-shot: toolchain -> stdlib -> the 4 NuGet packages in build/nuget-feed
+all: pack ## one-shot: toolchain -> stdlib -> the 5 NuGet packages in build/nuget-feed
 
 toolchain: $(KOTC) $(TOOL_DLLS) ## the compiler toolchain: kotc + ilemit + bir2cir + facadegen + retarget
 
@@ -89,7 +89,7 @@ $(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) scripts/build-stdlib-rt.sh \
 	@test -f "$@" || { echo "make: stdlib-rt did not produce $@ (see build/clr-stdlib-rt/*.err)"; exit 1; }
 
 # ---- packaging -----------------------------------------------------------------------------------
-pack: toolchain stdlib ## the 4 NuGet packages (Sdk/Toolchain/Stdlib/Templates) -> build/nuget-feed
+pack: toolchain stdlib ## the 5 NuGet packages (Sdk/Sdk.Mpp/Toolchain/Stdlib/Templates) -> build/nuget-feed
 	bash scripts/pack-nuget.sh
 
 # ==================================================================================================

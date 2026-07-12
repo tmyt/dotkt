@@ -4,8 +4,9 @@
 > common→platform のモジュール分割を行い（`b793c0f`, #119）、`.ktproj` は `<DotKtMultiplatform>true</DotKtMultiplatform>`
 > でオプトインする（`017a85c`, #119、`packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets`）。動作サンプルは
 > `cases/ktproj-mpp/`（verify-ktproj 全通過）、最小再現は `experiments/mpp-greeter/`。本ドキュメントはその**確定した設計**の
-> 正典。パッケージングは現状 property-gated 方式（0.9.5 のメカニズム）、独立 SDK (`DotKt.Sdk.Mpp`) は追跡中の
-> productization フォローアップ（本文 §5）。
+> 正典。パッケージングは property-gated 方式（0.9.5 のメカニズム）に加え、独立した合成 SDK `DotKt.Sdk.Mpp`
+> が **出荷済み**（`packaging/DotKt.Sdk.Mpp/`、`scripts/pack-nuget.sh` で 5 番目のパッケージとして pack、
+> ローカルフィード restore による E2E スモークテスト済み — 本文 §5）。
 
 Status: **shipped capability + design of record (2026-07-13).** Cross-reference:
 [docs/design-clr-stdlib-ref-runtime-split.md](design-clr-stdlib-ref-runtime-split.md) (the ref/runtime artifact split
@@ -102,7 +103,7 @@ expect-only klib.
 Net: **user MPP library = one rt.dll, fully actualized, consumed downstream as an ordinary DotKt/.NET assembly.** The
 ref.dll + frontend-klib machinery stays a stdlib-bootstrap concern.
 
-## 4. The packaging — property-gated shared targets (current), distinct SDK (intended)
+## 4. The packaging — property-gated shared targets + a distinct composition SDK (both shipped)
 
 **Current (shipped, 0.9.5 mechanism):** the MPP source-set split is opt-in via a property on the *shared* build
 pipeline, `packaging/DotKt.Toolchain/build/DotKt.Toolchain.targets`:
@@ -122,36 +123,49 @@ project. Every existing `.ktproj` is inert under this change (verify-ktproj all-
 This property-gated slice lives in the **shared** pipeline precisely because it is inert for every existing project — it
 carries zero risk to the non-MPP path.
 
-**Intended (productization, tracked follow-up):** a distinct `DotKt.Sdk.Mpp` SDK that a project selects with
-`<Project Sdk="DotKt.Sdk.Mpp/x.y.z">`, which **imports the base `DotKt.Sdk`** and layers MPP on top — auto-setting
-`DotKtMultiplatform=true` and surfacing a first-class `<DotKtCommon>` item — the same composition relationship
-Microsoft ships between `Microsoft.NET.Sdk` and `Microsoft.NET.Sdk.Web`. See §5 for the status and the reason it is
-deferred rather than done in this change.
+**Shipped (productization):** a distinct `DotKt.Sdk.Mpp` SDK that a project selects with
+`<Project Sdk="DotKt.Sdk.Mpp">`, which **imports the base `DotKt.Sdk`** and layers MPP on top — auto-setting
+`DotKtMultiplatform=true` — the same composition relationship Microsoft ships between `Microsoft.NET.Sdk` and
+`Microsoft.NET.Sdk.Web`. See §5 for the SDK's structure and its verification.
 
-## 5. Distinct `DotKt.Sdk.Mpp` SDK — status: tracked productization follow-up (NOT in 0.9.5)
+## 5. Distinct `DotKt.Sdk.Mpp` SDK — shipped
 
-**Disposition: documented as a tracked follow-up; the property-gated approach is the 0.9.5 mechanism.**
+`packaging/DotKt.Sdk.Mpp/` is a **thin composition SDK**: `Sdk="DotKt.Sdk.Mpp"` == `Sdk="DotKt.Sdk"` + MPP on. Four
+small files, mirroring the base SDK's layout:
 
-The *files* for a distinct SDK are small (a `Sdk/Sdk.props` importing `DotKt.Sdk` and setting `DotKtMultiplatform=true`,
-a `Sdk/Sdk.targets`, a `.nuspec`, a `.pack.csproj`, and a pack entry). The **verification story is not**:
+- `Sdk/Sdk.props` — sets `<DotKtMultiplatform>true</DotKtMultiplatform>` (its whole value-add) and `<Import
+  Project="Sdk.props" Sdk="DotKt.Sdk" />` to inherit all the kt→BIR→CIL orchestration + implicit Toolchain/Stdlib refs.
+  It also defaults `$(DotKtVersion)` **before** importing the base, so the base's implicit `DotKt.Toolchain`/`DotKt.Stdlib`
+  PackageReferences resolve at the current DotKt version rather than the base SDK's own stale default.
+- `Sdk/Sdk.targets` — `<Import Project="Sdk.targets" Sdk="DotKt.Sdk" />`.
+- `DotKt.Sdk.Mpp.nuspec` — `packageType MSBuildSdk`, packs `Sdk/**`, and declares a **hard `<dependency>` on
+  `DotKt.Sdk`** (same version) so restore fetches the base package.
+- `DotKt.Sdk.Mpp.pack.csproj` — mirrors the base's pack project (version single-sourced from `DotKt.Versions.props`).
 
-- The packaged SDK layer has **no gate coverage today.** Every `verify-ktproj` sample — including the MPP sample
-  `cases/ktproj-mpp/` — builds through the **in-repo dev entry** (`<Import ../KotlinClr.targets>` + explicit `$(DotKt*)`
-  tool paths), NOT through a NuGet-resolved `Sdk="DotKt.Sdk"`. The base `DotKt.Sdk` package itself is exercised only by
-  `pack-nuget.sh` (build-time) and as `DotKt.Templates` content — never by an end-to-end gate.
-- SDK-to-SDK composition (`<Import Project="Sdk.props" Sdk="DotKt.Sdk" />`) requires NuGet MSBuild-SDK **resolution**
-  against a feed. Verifying `Sdk="DotKt.Sdk.Mpp"` end-to-end therefore requires standing up a **local-feed restore
-  integration harness that does not exist** — a genuinely new pack/test pipeline, not a thin file addition.
+`scripts/pack-nuget.sh` packs it as the **fifth** package into `build/nuget-feed`.
 
-Adding an unverifiable SDK package would ship a productization surface with no gate behind it, against the project's
-"no half-baked public state" rule. The clean, gated slice is the property mechanism, which the MPP sample proves through
-the same pipeline every other `.ktproj` uses. So the distinct SDK is deferred **with a concrete technical blocker** (no
-packaged-SDK gate harness), not on a vibe.
+**The one consumer-facing requirement — `global.json` pins the base.** The NuGet MSBuild-SDK resolver reads a
+**nested** SDK import's version ONLY from `global.json`'s `msbuild-sdks` — it ignores an inline `Sdk="Name/Version"` on
+`<Import>` *and* the nuspec `<dependency>` version. So the `Sdk.props`/`Sdk.targets` imports of the base are
+**version-less**, and a consuming project pins both SDKs in `global.json` (the idiomatic pinning any custom MSBuild SDK
+uses):
 
-**To productize later** (the follow-up): (a) `packaging/DotKt.Sdk.Mpp/` with the four small files above; (b) a fifth
-`dotnet pack` entry in `scripts/pack-nuget.sh` + the Makefile's "4 packages" comment bumped to 5; (c) — the real work —
-a local-feed-restore gate that builds a `Sdk="DotKt.Sdk.Mpp"` project against `build/nuget-feed`, giving the packaged
-SDK layer (base AND MPP) its first end-to-end coverage.
+```json
+{ "msbuild-sdks": { "DotKt.Sdk.Mpp": "x.y.z", "DotKt.Sdk": "x.y.z" } }
+```
+
+**Verification — end-to-end local-feed smoke test (done).** Against `build/nuget-feed` (all 5 packages), a test
+project `<Project Sdk="DotKt.Sdk.Mpp">` with a `common/` `expect` + `clr/` `actual`+entry, pinned via `global.json`,
+**restores → builds → runs → prints `Hello from the CLR actual`**, with bir2cir reporting the two-fragment split
+(`lowered 2 BIR file(s)`). This is the packaged-SDK layer's first real end-to-end coverage (the base `DotKt.Sdk` had
+none — it was exercised only at pack time).
+
+**Remaining gap (honest, small, shared with the base SDK):** the smoke test is a **manual** local-feed run, not yet a
+`verify-*.sh` CI gate. Wiring a standing local-feed-restore gate that builds `Sdk="DotKt.Sdk.Mpp"` (and, transitively,
+`Sdk="DotKt.Sdk"`) against `build/nuget-feed` on every run is a follow-up that would give **both** packaged SDKs their
+first automated coverage. Until then the property-gated slice (`cases/ktproj-mpp/`, via the in-repo dev entry) remains
+the gated proof of the MPP *mechanism*, and the packaged composition is proven by the reproducible manual smoke test
+above.
 
 ## 6. First real consumer — the kotlinx.coroutines port
 
@@ -174,4 +188,6 @@ splat, #123 external-generic `new` over a free type-var) are fixed. See
   the #84 diagnostics work).
 - **#129 — facadegen generic-interface import edges.** Some `.NET` generic-interface imports from a common fragment hit
   facadegen edges; tracked separately.
-- **Distinct `DotKt.Sdk.Mpp` SDK + its local-feed gate** (§5).
+- **A standing local-feed-restore CI gate** for the packaged SDKs. The `DotKt.Sdk.Mpp` SDK itself is shipped and
+  smoke-tested end-to-end (§5); what remains is turning that manual smoke test into a `verify-*.sh` gate — coverage the
+  base `DotKt.Sdk` also lacks.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build the FOUR DotKt NuGet packages into the local feed (build/nuget-feed):
+# Build the FIVE DotKt NuGet packages into the local feed (build/nuget-feed):
 #   DotKt.Sdk       — the MSBuild SDK (Sdk.props/targets; implicit refs to Toolchain + Stdlib)
+#   DotKt.Sdk.Mpp   — thin composition SDK: base DotKt.Sdk + DotKtMultiplatform=true (expect/actual)
 #   DotKt.Toolchain — the compiler: kotc + bir2cir + ilemit + facadegen + retarget + the CLR frontend
 #                     stdlib KLIB + the COMPILE-TIME stdlib reference assembly (tools/stdlib/DotKt.Private.Stdlib.dll)
 #   DotKt.Stdlib    — the RUNTIME stdlib assembly (lib/net10.0/DotKt.Stdlib.dll, copy-local)
@@ -13,7 +14,7 @@ source "$(dirname "$0")/lib.sh"
 usage() {
 	cat <<EOF
 usage: $SCRIPT_NAME
-Packs the 4 DotKt NuGet packages into build/nuget-feed (no flags). -h for this help.
+Packs the 5 DotKt NuGet packages into build/nuget-feed (no flags). -h for this help.
 EOF
 }
 while (( $# )); do
@@ -62,9 +63,10 @@ info "assemble DotKt.Stdlib/lib"
 SL="$ROOT/packaging/DotKt.Stdlib/lib/net10.0"; rm -rf "$ROOT/packaging/DotKt.Stdlib/lib"; mkdir -p "$SL"
 cp "$STDLIB_RT_DLL" "$SL/DotKt.Stdlib.dll"
 
-info "pack DotKt.Toolchain + DotKt.Sdk + DotKt.Stdlib + DotKt.Templates"
+info "pack DotKt.Toolchain + DotKt.Sdk + DotKt.Sdk.Mpp + DotKt.Stdlib + DotKt.Templates"
 dotnet pack "$ROOT/packaging/DotKt.Toolchain/DotKt.Toolchain.pack.csproj" -o "$FEED" -v q --nologo
 dotnet pack "$ROOT/packaging/DotKt.Sdk/DotKt.Sdk.pack.csproj" -o "$FEED" -v q --nologo
+dotnet pack "$ROOT/packaging/DotKt.Sdk.Mpp/DotKt.Sdk.Mpp.pack.csproj" -o "$FEED" -v q --nologo
 dotnet pack "$ROOT/packaging/DotKt.Stdlib/DotKt.Stdlib.pack.csproj" -o "$FEED" -v q --nologo
 dotnet pack "$ROOT/packaging/DotKt.Templates/DotKt.Templates.csproj" -o "$FEED" -v q --nologo
 

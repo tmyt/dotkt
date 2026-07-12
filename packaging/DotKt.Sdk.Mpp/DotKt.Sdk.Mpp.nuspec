@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>DotKt.Sdk.Mpp</id>
+    <version>$version$</version>
+    <authors>DotKt</authors>
+    <description>DotKt MSBuild SDK for multiplatform projects: `Sdk="DotKt.Sdk.Mpp"` is the base DotKt.Sdk with the common/actual source-set split (expect/actual in one CLR compilation) turned on. Imports DotKt.Sdk and sets DotKtMultiplatform=true.</description>
+    <tags>kotlin clr dotnet msbuild sdk multiplatform mpp kotlin-2.4.0</tags>
+    <packageTypes><packageType name="MSBuildSdk" /></packageTypes>
+    <dependencies>
+      <!-- Composition: this SDK imports the base DotKt.Sdk (same version), so restore must pull it in. -->
+      <dependency id="DotKt.Sdk" version="[$version$]" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="Sdk/**" target="Sdk" />
+  </files>
+</package>
