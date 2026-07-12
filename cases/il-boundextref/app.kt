@@ -26,7 +26,13 @@ fun main() {
     val u = "x"::logTo
     u(sb); u(sb)
     println(sb.toString())              // [x][x]
+
+    // #106: a BOUND ref to a CharSequence-declared stdlib ext (`expr::isNotBlank`/`::isBlank`). The String receiver is
+    // captured into the closure's `__recv` field; the forwarder invokes `StringsKt.isNotBlank(this.__recv)` whose param
+    // is the `dotkt$CharSequence` adapter. StringCharSequenceBridge now recognizes the String-typed FIELD read and wraps
+    // it as `dotkt$StringCharSequence`, so the stdlib CharSequence body runs (was: raw String -> ilverify/JIT crash).
+    val nb = "  x "::isNotBlank
+    println(nb())                       // True
+    val bl = "   "::isBlank
+    println(bl())                       // True
 }
-// NOTE: a bound ref to a CharSequence-declared stdlib ext (`"hi"::isNotBlank`) is NOT exercised here — it lowers
-// correctly (the capture-class BIR is right) but crashes downstream in bir2cir/stdlib's CharSequence->String adapter
-// (`dotkt$CharSequence.get_length`), the known dual-representation landmine, independent of the capture-lift.

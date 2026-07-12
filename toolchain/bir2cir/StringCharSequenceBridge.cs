@@ -68,6 +68,12 @@ static class StringCharSequenceBridge
     // The ref.dll index — consulted ONLY to read a spliced anonymous object's (`dotkt$obj*`) ctor param types, so a
     // static-String arg flowing into its `CharSequence` capture slot is adapter-wrapped (WrapNewCtorArgs). Null-safe.
     static ReferenceMetadataIndex _refs;
+    // Per-file (typeFqn -> fieldName -> declared field TYPE) index, built from this file's `types` before the walk.
+    // Lets IsStaticString classify a `{k:field}` read (`this.__recv`) as a static String: a BOUND CharSequence-ext ref
+    // (`s::isNotBlank`) or any capturing lambda that calls a CharSequence extension on a captured String forwards the
+    // receiver as a FIELD read off the synthesized closure class — a form the const/local/cast/concat detection below
+    // could not see, so the String arg reached the stdlib `dotkt$CharSequence` slot un-wrapped -> ilverify/JIT crash.
+    static Dictionary<string, Dictionary<string, TypeNode>> _fieldTypes;
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
@@ -103,6 +109,7 @@ static class StringCharSequenceBridge
     {
         _refs = refs;
         _fired = false;
+        _fieldTypes = CollectFieldTypes(root);
         var walked = Walk(root, new Env());
         // Emit the app-local adapter type into this file's `types` if a wrap fired here and no other file already got
         // it (one per assembly). ilemit resolves a wrap in a sibling file against it via the assembly-wide `_types`.
@@ -114,6 +121,28 @@ static class StringCharSequenceBridge
             _adapterEmitted = true;
         }
         return walked;
+    }
+
+    // Index every DECLARED type's fields (name -> declared type) from this file's `types`. The synthesized closure
+    // classes (bound-ext-ref capture classes, capturing lambdas) are already present here — ClosureSynthesis runs well
+    // before this bridge — so a `this.__recv` field read resolves against the closure's `__recv` field type. Field types
+    // are still the pre-lowering `kotlin.String` identity at this point (BirTypeLowering runs later), which IsStringTokT
+    // recognizes; if CharSeqStringLowering already collapsed a `dotkt$CharSequence` capture field to `kotlin.String`
+    // (the pure-app path), that lowered type is what we read here — so a CharSequence-typed receiver is handled too.
+    static Dictionary<string, Dictionary<string, TypeNode>> CollectFieldTypes(JsonNode root)
+    {
+        var map = new Dictionary<string, Dictionary<string, TypeNode>>(StringComparer.Ordinal);
+        if (root is JsonObject file && file["types"] is JsonArray types)
+            foreach (var t in types)
+                if (t is JsonObject to && Str(to["name"]) is string tn && to["fields"] is JsonArray fs)
+                {
+                    var fm = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+                    foreach (var f in fs)
+                        if (f is JsonObject fo && Str(fo["name"]) is string fn && TypeJson.Read(fo["type"]) is TypeNode ft)
+                            fm[fn] = ft;
+                    map[tn] = fm;
+                }
+        return map;
     }
 
     static JsonNode Walk(JsonNode node, Env env)
@@ -278,6 +307,18 @@ static class StringCharSequenceBridge
             case "const": return IsStringTokT(TypeJson.Read(o["type"]));
             case "local": return Str(o["name"]) is string nm && env.Vars.TryGetValue(nm, out var t) && IsStringTokT(t);
             case "cast": return IsStringTokT(TypeJson.Read(o["type"]));
+            // A field read (`this.__recv` off a synthesized closure capture class) whose DECLARED field type is a bare
+            // String — resolved via the file-local field-type index. Wraps the String into the adapter so a captured
+            // String forwarded into a stdlib CharSequence-ext slot (a bound `s::isNotBlank`, or `{ s.isNotBlank() }`) is
+            // materialized as `dotkt$StringCharSequence`, not passed raw (which fails ilverify / JIT at the call site).
+            // Falls back to the `ret`-hint check (the pre-existing `default:` behavior for a field node carrying a
+            // String `ret` — a `@ClrField` property read on a generic owner instantiated at String) when the index
+            // misses (a cross-file/external/generic owner not in this file's `types`), so no previously-wrapped site regresses.
+            case "field":
+                return (TypeJson.Read(o["ownerType"]) is TypeNode.Fqn owf && _fieldTypes != null
+                        && _fieldTypes.TryGetValue(owf.Name, out var fm) && Str(o["name"]) is string fnm
+                        && fm.TryGetValue(fnm, out var ft2) && IsStringTokT(ft2))
+                    || IsStringTokT(TypeJson.Read(o["ret"]));
             case "this": return false;
             default:
                 // A CLR/Kotlin call node carrying an explicit result type (`ret`/`retType` = System.String).
