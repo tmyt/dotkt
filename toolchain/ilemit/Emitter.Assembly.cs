@@ -532,7 +532,12 @@ sealed partial class Emitter
         foreach (var ti in _types.Values)
         {
             if (ti.IsInterface || !ti.Def.TryGetProperty("fields", out var fs)) continue;
-            var inits = fs.EnumerateArray().Where(f => f.TryGetProperty("init", out _) && f.TryGetProperty("static", out var s) && s.GetBoolean()).ToList();
+            // A `lateinit` (or otherwise initializer-less) static field carries `"init": null` — the key is PRESENT
+            // but its value is JSON null, so a bare TryGetProperty("init", …) sees "has init" and would feed a null
+            // element to EmitStoreCoerced -> EmitExpr (crash). Such a field needs no .cctor store: a static reference
+            // slot defaults to null, and a `lateinit` read goes through the `lateinitGet` not-initialized check. So
+            // only fields with a NON-null init value get a type-initializer store.
+            var inits = fs.EnumerateArray().Where(f => f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null && f.TryGetProperty("static", out var s) && s.GetBoolean()).ToList();
             if (inits.Count == 0) continue;
             _il = ti.TB.DefineTypeInitializer().GetILGenerator();
             _args.Clear(); _argTypes.Clear(); _locals.Clear(); _methodRetType = typeof(void);
@@ -747,6 +752,14 @@ sealed partial class Emitter
                         ?? baseT.GetMethod(name);
             if (baseM != null) ti.TB.DefineMethodOverride(mb, baseM);
         }
+        // A Kotlin `inline` fn is still emitted as a real method (a lambda-less inline emits a plain method; an
+        // inline-with-lambda method is the cross-module [KotlinInline] carrier body). On the CLR `inline` is a
+        // courtesy, not a splice contract, so translate it to a [MethodImpl(AggressiveInlining)] hint on the emitted
+        // method — exactly what C# emits for `[MethodImpl(MethodImplOptions.AggressiveInlining)]`. Pure metadata, no
+        // behavior change; the JIT ignores the hint for a too-large method, so there is no bloat risk. Skip abstract
+        // slots (no body to inline). `mods.inline` is the sole signal CIR carries; ilemit adds no Kotlin knowledge.
+        if (ModFlag(m, "inline") && (attrs & MethodAttributes.Abstract) == 0)
+            mb.SetImplementationFlags(mb.GetMethodImplementationFlags() | MethodImplAttributes.AggressiveInlining);
     }
 
     // Define a type's constructors from its CIR (idempotent). Normally runs in pass 3, but BuildCab pulls it EARLY when

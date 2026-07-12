@@ -120,6 +120,19 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **Top-level `lateinit var` of a reference type no longer crashes ilemit (#104).** A top-level
+  `lateinit var s: String` maps to an initializer-less static field, whose CIR carries `"init": null`
+  (key present, JSON-null value). ilemit's static-field-initializer pass (`.cctor`) matched the key's
+  mere presence and fed the JSON-null element into the store-coercion path, aborting the emit. The pass
+  now skips a null `init`: an init-less static field needs no `.cctor` store (it defaults to null, and a
+  read routes through the existing `lateinitGet` not-initialized check, throwing before assignment).
+  Only a member `lateinit var` had worked before. (`cases/il-toplateinit`.)
+- **Kotlin `inline` functions are stamped `[MethodImpl(AggressiveInlining)]` on the emitted method (#98).**
+  An `inline` fn is still emitted as a real method (a cross-module `[KotlinInline]` carrier / a plain
+  call target); on the CLR `inline` is a JIT courtesy, so ilemit now translates the `mods.inline` flag to
+  the `AggressiveInlining` implementation-flag hint — exactly what C# emits. Pure metadata, no behavior
+  change (the JIT ignores the hint for a too-large method).
+
 - **Top-level / companion `val`/`var` with a custom accessor + backing field now invokes the accessor (#89).**
   A top-level or companion property that had BOTH a backing field (an initializer) AND a custom
   `get()`/`set()` was read/written as a raw static-field load/store, silently skipping the accessor
