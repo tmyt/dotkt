@@ -575,10 +575,8 @@ public actual inline fun BooleanArray.copyOf(newSize: Int): BooleanArray = Boole
 @kotlin.internal.InlineOnly
 public actual inline fun CharArray.copyOf(newSize: Int): CharArray = CharArray(newSize) { if (it < this.size) this[it] else ' ' }
 
-// Generic Array<T> copyOf/copyOfRange/plus: CLR generics are reified, so `arrayOfNulls<T>(n)` in a non-reified
-// generic body lowers to a plain `newarr !T` (kotc's newArraySized) whose runtime element type is EXACT — the
-// TYPE_PARAMETER_AS_REIFIED suppression (file-level) is safe here, unlike the JVM where erasure would yield Object[].
-// This is the CLR replacement for the JVM's `java.util.Arrays.copyOf` reflective re-allocation.
+// copyOf(newSize) HONESTLY returns `Array<T?>` (extra slots are null), so `arrayOfNulls<T>(newSize)` — which returns
+// `Array<T?>` = `Nullable<T>[]` for a value-type T (#113) — is the correct representation, no reinterpret cast.
 @kotlin.internal.InlineOnly
 public actual inline fun <T> Array<T>.copyOf(newSize: Int): Array<T?> {
     val result = arrayOfNulls<T>(newSize)
@@ -587,11 +585,28 @@ public actual inline fun <T> Array<T>.copyOf(newSize: Int): Array<T?> {
     return result
 }
 
-@kotlin.internal.InlineOnly
-public actual inline fun <T> Array<T>.copyOfRange(fromIndex: Int, toIndex: Int): Array<T> {
-    val result = arrayOfNulls<T>(toIndex - fromIndex)
-    for (i in 0 until (toIndex - fromIndex)) result[i] = this[fromIndex + i]
-    return result as Array<T>
+// RUNTIME-ELEMENT-TYPE-PRESERVING sub-range copy (#117). A pure-Kotlin `arrayOfNulls<T>(n) as Array<T>` allocates an
+// `Array<T?>` — `Nullable<T>[]` when inlined at a value-type call site, or an object-erased slot in a non-inline generic
+// body — then REINTERPRET-casts it to a non-null `T[]`: value-type garbage / InvalidCast. A non-null `Array<T>` whose
+// runtime element type equals the RECEIVER's cannot be produced by a `newarr !T`-style Kotlin allocation. So, like the
+// no-arg `copyOf()` (System.Array.Clone), copyOfRange reflects on the receiver's actual runtime array type:
+//   dest = System.Array.CreateInstanceFromArrayType(this.GetType(), length); System.Array.Copy(this, from, dest, 0, len)
+// This is EXACT for Int/Long/Double/Char AND reference T, with no per-element-type special-casing.
+@kotlin.clr.ClrIntrinsic("GetType")                                     // object.GetType() -> the receiver's runtime array Type (e.g. int[])
+private fun Any.nativeGetType(): Any = TODO("clr binding should be implemented")
+
+@kotlin.clr.ClrIntrinsic("System.Array.CreateInstanceFromArrayType")    // (Type arrayType, int length) -> Array; receiver(arrayType) -> arg0 (net10.0)
+private fun Any.nativeCreateArrayLike(length: Int): Any = TODO("clr binding should be implemented")
+
+@kotlin.clr.ClrIntrinsic("System.Array.Copy")                           // Copy(src, srcIndex, dst, dstIndex, length); receiver(src) -> arg0
+private fun <T> Array<T>.nativeArrayCopy(sourceIndex: Int, dest: Array<T>, destIndex: Int, length: Int): Unit = TODO("clr binding should be implemented")
+
+public actual fun <T> Array<T>.copyOfRange(fromIndex: Int, toIndex: Int): Array<T> {
+    val length = toIndex - fromIndex
+    @Suppress("UNCHECKED_CAST")
+    val dest = (this as Any).nativeGetType().nativeCreateArrayLike(length) as Array<T>
+    this.nativeArrayCopy(fromIndex, dest, 0, length)
+    return dest
 }
 
 @kotlin.internal.InlineOnly

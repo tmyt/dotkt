@@ -22,8 +22,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   at the `@ClrArrayFactory` "sized" substitution site (the semantic source: `arrayOfNulls<T>` → `Array<T?>`), so
   `Nullable<T>[]` is allocated uniformly for Int/Long/Double/Char while reference/`String` T stays a bare array. The
   2.4.0 `Array<out T>.toList()` stdlib workaround (element-wise `toMutableList()`) is reverted to upstream
-  `copyOf().asList()`. Gate-covered by `cases/il-arrnull`. (`Array<T>.slice`/`take`/`takeLast` remain broken by a
-  distinct stdlib `copyOfRange` reinterpret-cast bug, tracked separately.)
+  `copyOf().asList()`. Gate-covered by `cases/il-arrnull`. (`Array<T>.slice`/`take`/`takeLast` were fixed in `#117`.)
+- **Fixed `Array<value-type-element>.slice`/`take`/`takeLast` producing garbage (`#117`).** All three route through the
+  stdlib `Array<T>.copyOfRange(from,to): Array<T>`, which was a pure-Kotlin `arrayOfNulls<T>(n) as Array<T>`: for a
+  value-type T that allocates a `Nullable<int>[]` (inline call site) or an object-erased slot (non-inline generic body)
+  and REINTERPRET-casts it to a non-null `int[]` → garbage / InvalidCast. A non-null `Array<T>` whose runtime element
+  type equals the receiver's cannot be produced by a `newarr !T`-style Kotlin allocation, so — like the no-arg `copyOf()`
+  (`System.Array.Clone`) — `copyOfRange` is now a runtime-element-type-preserving native intrinsic: it reflects on the
+  receiver's actual array type via `System.Array.CreateInstanceFromArrayType(this.GetType(), length)` + `System.Array.Copy`
+  (net10.0), exact for Int/Long/Double/Char AND reference T, no per-element-type special-casing. Gate-covered by the new
+  `cases/il-arrslice`. (The sibling `Array<T>.plus`/`plusElement` share the same underlying bir2cir cross-pass erasure
+  bug — object[]-erased local vs `newarr !T` alloc — and are reported for a compiler-side fix, out of this stdlib change.)
 - **Fixed reference-type `x!!` not throwing eagerly (`#115`).** Kotlin's `x!!` throws `NullPointerException`
   IMMEDIATELY when `x` is null, regardless of how the result is used. For a reference operand, kotc emitted a
   bare pass-through, so a null only surfaced as a later `NullReferenceException` at a subsequent dereference
