@@ -317,10 +317,6 @@ internal fun BirEmitter.constJson(c: IrConst): String = when (val v = c.value) {
 internal fun BirEmitter.isArrayType(t: IrType): Boolean =
 	t.isBoxedArray || t.isPrimitiveArray() || t.isUnsignedArray()
 
-/** A value-type primitive (`kotlin.Int`/`Char`/`Boolean`/…, the 8 the CLR represents as a struct) — read from
- *  the IR type system (`isPrimitiveType`), NOT a kotlin.* FQN table. Nullability-agnostic. */
-internal fun IrType.isValuePrimitive(): Boolean = makeNotNull().isPrimitiveType()
-
 /** A value-type primitive OR an unsigned inline-class primitive (`kotlin.UInt`/…) — the set whose operators
  *  lower to raw CIL / whose receiver+args need value coercion. Read from the IR, not a FQN table. */
 internal fun IrType.isPrimitiveOrUnsigned(): Boolean = makeNotNull().let { it.isPrimitiveType() || it.isUnsignedType() }

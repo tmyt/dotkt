@@ -407,7 +407,10 @@ internal fun BirEmitter.ternary(node: IrWhen): String {
 	val branches = node.branches.map { b -> Triple((b.condition as? IrConst)?.value == true, b.condition, expr(b.result)) }
 	val nullBranch = branches.any { isEmittedNullConst(it.third) }
 	val bt = birType(node.type)
-	val elem: TypeNode? = if (bt is TypeNode.Nullable) null else (bt as? TypeNode.Fqn)?.takeIf { node.type.isValuePrimitive() }
+	// #126: an unsigned inline-class (`UInt`/…) join is a value type on the CLR too, so a value+null branch join
+	// whose resolved type is a bare `UInt` must be tagged `nullable:<elem>` exactly like a signed `Int` — mirror
+	// #118's isPrimitiveOrUnsigned so the null branch materializes as `Nullable<uint>`, not a raw reference.
+	val elem: TypeNode? = if (bt is TypeNode.Nullable) null else (bt as? TypeNode.Fqn)?.takeIf { node.type.isPrimitiveOrUnsigned() }
 	val ty = (if (nullBranch && elem != null) TypeNode.Nullable(elem) else bt).toJson()
 	var acc = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
 	for ((isElse, cond, result) in branches.asReversed()) {

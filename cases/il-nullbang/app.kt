@@ -41,6 +41,18 @@ fun main() {
     println((us ?: 0u) + 1u)    // 6      (ELVIS present -> unwrapped value)
     println((un ?: 9u).toInt()) // 9      (ELVIS fallback)
 
+    // #126: an UNSIGNED `as?` (SAFE_CAST) must route through the value-type nullable path (`safeCastValue` ->
+    // Nullable<uint>) like a signed `Int?` — NOT the reference `isInstRef` path (which mis-materializes a boxed
+    // reference where the value-type nullable is expected, the same #118 class). Same for an unsigned if/else-null
+    // join (the ternary null-branch): the join must materialize as Nullable<uint>.
+    val anyU: Any = 5u
+    println((anyU as? UInt)?.toInt())   // 5    (value present -> unwrapped)
+    val anyS: Any = "x"
+    println(anyS as? UInt)              // null (mismatch -> null)
+    val cU = true
+    val juU: UInt? = if (cU) 5u else null
+    println(juU?.toInt())               // 5    (if/else unsigned join present)
+
     // #115 reference-type `!!`.
     val ok: String? = "hi"
     println(ok!!)           // hi   (non-null reference yields the value)

@@ -219,7 +219,10 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
 		// `x as? T` -> null on mismatch. Reference T: `isinst T` (null or ref). Value T: `T?` (Nullable<T>).
 		IrTypeOperator.SAFE_CAST -> {
-			val velem = node.typeOperand.takeIf { it.isValuePrimitive() }?.classFqName?.asString()?.let { TypeNode.Fqn(it) }
+			// A value primitive OR an unsigned inline-class (`UInt`/…, #126) `T` -> the value-type nullable path
+			// (`safeCastValue` = `Nullable<T>`): unsigned is a value type on the CLR, so `x as? UInt` must yield
+			// `Nullable<uint>`, not a boxed reference via `isInstRef` (same #118 class as `!!`/smart-cast).
+			val velem = node.typeOperand.takeIf { it.isPrimitiveOrUnsigned() }?.classFqName?.asString()?.let { TypeNode.Fqn(it) }
 			if (velem != null) """{"k":"safeCastValue","elem":${velem.toJson()},"e":${expr(node.argument)}}"""
 			else """{"k":"isInstRef","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
 		}

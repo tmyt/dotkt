@@ -7,6 +7,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **`as?` (SAFE_CAST) and the if/else null-branch JOIN on an UNSIGNED value type now route the value-type nullable path (`#126`).**
+  Two syntaxes still mis-materialized an unsigned nullable as a boxed reference (`Nullable<uint>` via `isInstRef`)
+  instead of the value-type `Nullable<uint>` path — the two sites `#118` did not reach: `x as? UInt` fell into
+  kotc's reference `isInstRef` branch (signed `Int?` takes `safeCastValue`), and the ternary null-branch join
+  tagged an unsigned value+`null` join with a bare non-nullable type. Both gated on the signed-only
+  `isValuePrimitive()`; they now gate on `isPrimitiveOrUnsigned()` (mirroring `#56`/`#118`), so an unsigned `as?`
+  emits `safeCastValue` and the join is tagged `nullable:<elem>` exactly like a signed `Int`. The now-unused
+  `isValuePrimitive()` helper was deleted. `cases/il-nullbang` extended with the unsigned `as?` and if/else-join
+  cases. (Layer: kotc — unsigned-is-a-value-type is a Kotlin type fact; the `Nullable<T>` representation stays
+  bir2cir/ilemit.)
+
 - **`!!` (and `requireNotNull`/`checkNotNull`) on an UNSIGNED nullable now unwraps `Nullable<T>.Value` (`#118`).**
   A not-null assertion on `UInt?`/`UByte?`/`UShort?`/`ULong?` yielded a raw `Nullable<uint>` STRUCT at a use
   site that consumes the bare value (`u!! + 1u` → `InvalidProgramException`) — the eager null-throw from `#115`
