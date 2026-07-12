@@ -1362,23 +1362,27 @@ internal object FractionalParser {
         callback(index)
         return highPrecisionDigits.toLong() * 1_000_000_000 + lowPrecisionDigits
     }
+}
 
-    private inline fun String.parseDigits(startIndex: Int, maxDigits: Int, callback: (endIndex: Int) -> Unit): Int {
-        var index = startIndex
-        val endIndex = minOf(index + maxDigits, length)
-        var result = 0
-        while (index < endIndex) {
-            val ch = this[index]
-            if (ch !in '0'..'9') break
-            result = result.multiplyBy10() + (ch - '0')
-            index++
-        }
-        repeat(maxDigits - (index - startIndex)) {
-            result = result.multiplyBy10()
-        }
-        callback(index)
-        return result
+// NOTE (CLR): hoisted out of `object FractionalParser` to a top-level file-private extension. The .NET
+// backend does not yet support a same-module MEMBER-extension inline call taking a lambda (the
+// dispatch+extension receiver splice shape); as a plain top-level `String` extension it emits fine —
+// the exact shape the sibling `String.skipWhile` (text/Strings.kt) already uses. Behavior is identical.
+private inline fun String.parseDigits(startIndex: Int, maxDigits: Int, callback: (endIndex: Int) -> Unit): Int {
+    var index = startIndex
+    val endIndex = minOf(index + maxDigits, length)
+    var result = 0
+    while (index < endIndex) {
+        val ch = this[index]
+        if (ch !in '0'..'9') break
+        result = result.multiplyBy10() + (ch - '0')
+        index++
     }
+    repeat(maxDigits - (index - startIndex)) {
+        result = result.multiplyBy10()
+    }
+    callback(index)
+    return result
 }
 
 /**

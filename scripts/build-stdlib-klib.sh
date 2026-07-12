@@ -47,6 +47,7 @@ info "frontend klib sources: ${#STDLIB_COMMON[@]}+${#STDLIB_SRC[@]}+${#STDLIB_UN
 DOTKT_BUILD_KLIB=1 "$KOTC" \
 	"${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}" "${STDLIB_CLR[@]}" \
 	-Xallow-kotlin-package -Xexpect-actual-classes -Xstdlib-compilation -Xcontext-parameters \
+	-Xreturn-value-checker=check -XXLanguage:+UnnamedLocalVariables \
 	-Xcommon-sources="$STDLIB_COMMON_CSV" $STDLIB_OPTIN \
 	"${STDLIB_FRAGMENT_ARGS[@]}" \
 	-d "$KLIB" 2>"$OUT/kotc.err" || true
