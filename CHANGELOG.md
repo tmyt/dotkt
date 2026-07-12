@@ -7,6 +7,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **An inline collection-factory argument of a `new` inside a generic function now emits `List.Add(T)`, not
+  `List.Add(T[])` (`#122`).** `Holder(mutableListOf(x))` in `fun <T> mkHolder(x: T): Holder<T>` (and
+  `ArrayList(mutableListOf(x)).size`) threw `InvalidProgramException` at runtime — the vararg array was left
+  unsplatted. `MapVarianceRealign.RealignFactoryCtorArgTypes` stamped the factory call's `typeArgs` with the
+  constructor's DECLARED param generic arg read RAW (class-scope `tv{type,i}`) instead of instantiating it through
+  the `new` node's OWN type arguments (the method-scope binding), so the downstream splat guard — keyed on tv scope
+  — mismatched and skipped the vararg splat. The declared arg is now substituted through the `new` binding
+  (`tv{type,i}` → `newNode.type.Args[i]`, recursive through nested generics), making the rewrite a correct no-op
+  when the factory already carries the right method-scope tv; an unavailable binding skips the rewrite rather than
+  stamping the unbound class-scope token.
+
 - **`Array<T>.plus`/`.plusElement` on a value-type element now returns the right values (`#120`).** The 3rd
   manifestation of the value-type-array-nullability family (after `#113` `arrayOfNulls` and `#117` `copyOfRange`).
   The pure-Kotlin body `val result = arrayOfNulls<T>(size+1); result[i]=this[i]; result as Array<T>` had its
