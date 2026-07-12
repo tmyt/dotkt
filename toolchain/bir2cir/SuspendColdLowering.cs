@@ -2654,14 +2654,15 @@ static class SuspendColdLowering
         //     var __root = new RootContinuation<R>(__tcs);   // : Continuation<Any> (post ContinuationErasure)
         //     var __r    = COROUTINE_SUSPENDED;               // object
         //     try { __r = f$dotkt_suspend(args..., (Continuation<Any>)__root); }
-        //     catch (e: Throwable) { __tcs.TrySetException(e); __r = COROUTINE_SUSPENDED; }
+        //     catch (e: Throwable) { ((Continuation<Any>)__root).resumeWith(Result.failure(e)); __r = COROUTINE_SUSPENDED; }  // #109: OCE->Cancel via RootContinuation
         //     if (__r !== COROUTINE_SUSPENDED) __tcs.TrySetResult((R)__r);   // sync-completion fast path
         //     return __tcs.Task;
         //   }
         //
         // Sync/async completions are mutually exclusive by the coroutine contract: a non-SUSPENDED cold return means the
         // body completed inline (complete the TCS here); a SUSPENDED return means the eventual resume lands in
-        // RootContinuation.resumeWith, which completes the TCS. A synchronous throw is caught and faults the TCS.
+        // RootContinuation.resumeWith, which completes the TCS. A synchronous throw is caught and routed through the
+        // SAME RootContinuation.resumeWith choke point (via RootResumeFailure, #109) so an OCE Cancels — not Faults — the Task.
         // R = Unit/void is treated uniformly as kotlin.Unit (the cold entry returns null for a Unit body; `(Unit)null`
         // is null, matching what RootContinuation.resumeWith stores for the async Unit path — the two agree). The bridge
         // carries `suspendBridge:true` so ilemit stamps [KotlinFunction(Suspend)] (a re-consuming Kotlin sees `suspend fun`).
@@ -2745,7 +2746,10 @@ static class SuspendColdLowering
                             ["var"] = "__e",
                             ["body"] = new JsonArray
                             {
-                                new JsonObject { ["k"] = "exprStmt", ["expr"] = TcsCall(tcsType, "TrySetException", new TypeNode.Fqn("kotlin.Throwable"), Local("__e")) },
+                                // #109: funnel the sync throw through RootContinuation.resumeWith (OCE->TrySetCanceled
+                                // else TrySetException) — the SAME choke point the async resume path reaches — rather
+                                // than faulting the TCS directly. __r stays SUSPENDED so the sync-completion fast path below is skipped.
+                                new JsonObject { ["k"] = "exprStmt", ["expr"] = RootResumeFailure() },
                                 new JsonObject { ["k"] = "setLocal", ["name"] = "__r", ["value"] = Suspended() },
                             },
                         },
@@ -2885,6 +2889,38 @@ static class SuspendColdLowering
             }
             return call;
         }
+
+        // #109 — route a SYNCHRONOUS bridge throw through the RootContinuation choke point:
+        //   ((Continuation<Any>)__root).resumeWith(Result.failure<Any>(__e))
+        // The cold entry calls `sm.invokeSuspend(null)` DIRECTLY (ColdEntrySm), so a suspension point that throws on
+        // the FIRST pass (e.g. `await` of an already-cancelled Task — IsCompleted true -> GetResult() throws OCE
+        // synchronously) escapes out of the cold entry into the bridge's catch, NOT through BaseContinuationImpl/
+        // RootContinuation. Completing the TCS directly with TrySetException here would FAULT a cancellation (bypassing
+        // #86's OCE->TrySetCanceled). Instead hand the failure to RootContinuation.resumeWith — the SINGLE site that
+        // discriminates `is OperationCanceledException -> trySetCanceled` else `trySetException` — so the SYNC throw
+        // and the ASYNC resume (which reaches RootContinuation via the SM's completion chain) funnel through ONE test.
+        // `Result.failure` is the PUBLIC companion factory (mirrors the `Result.success` in AwaitResumeMethod; the
+        // internal `Result(value)` ctor is cross-assembly-inaccessible). Erased to Result<Any> by ContinuationErasure.
+        JsonObject RootResumeFailure() => new()
+        {
+            ["k"] = "callInstance",
+            ["ownerType"] = ContAny(),
+            ["virtual"] = true,
+            ["recv"] = new JsonObject { ["k"] = "cast", ["type"] = ContAny(), ["e"] = Local("__root") },
+            ["method"] = "resumeWith",
+            ["sig"] = new JsonArray { Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn })) },
+            ["ret"] = Tw(VoidTn),
+            ["args"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["k"] = "callStatic", ["owner"] = Tn("kotlin.Result"), ["method"] = "failure",
+                    ["typeArgs"] = new JsonArray { Tn("kotlin.Any") },
+                    ["args"] = new JsonArray { Local("__e") },
+                    ["ret"] = Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn })),
+                },
+            },
+        };
 
         // A substituted @ClrIntrinsic instance call on the TaskCompletionSource<R> sink (TrySetResult/TrySetException).
         // Emitted post-MemberCallSubstitution, so already in the BCL-owner clrInstance form (result discarded via exprStmt).
