@@ -2,7 +2,7 @@
 
 > kotlin/clr — a compiler that runs **Kotlin on .NET (CLR)**. Reuses the stock Kotlin 2.2.0
 > frontend (Configuration → FIR → Fir2Ir) and replaces only the backend:
-> **Kotlin IR → BirEmitter → BIR(json) → bir2cir → CIR(json) → ilemit → CIL**.
+> **Kotlin IR → BirEmitter → BIR(json) → bir2cir → CIR(json) → ilemit → CIL**. (Frontend on Kotlin 2.4.0 as of #111.)
 > Full overview, layout table, and design notes live in **`README.md`** — read it first.
 >
 > **Current ship scope + confirmed architecture: [`docs/ship-tasks.md`](docs/ship-tasks.md)** — the
@@ -149,7 +149,7 @@ scripts are STALE or experimental — see the warning):
 > not yet done.
 
 Toolchain: JDK is auto-provisioned by Gradle; **.NET SDK 10 required**. Kotlin/IR APIs are
-**pinned to 2.2.0** (internal/unstable — intentionally not tracking newer versions).
+**pinned to 2.4.0** (internal/unstable; bumped from 2.2.0 in #111 — behavior-preserving; see docs/kotlin-frontend-bump-playbook.md).
 
 # Toolchain responsibility (respect the layer boundaries)
 

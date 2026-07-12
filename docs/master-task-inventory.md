@@ -827,10 +827,10 @@ Sources: `remaining-tasks.md F`, `archive/research-roadmap.md Track P/X`.
   deps).
 - Diagnostics quality (source-position messages, a standing `-Xverify-ir`-equivalent gate) · boundary null (platform
   type `T!`) · incremental compilation · perf (compile time + generated code) · VS/VS Code · CI (sample-matrix
-  expansion, Avalonia cache) · version/support policy (Kotlin 2.2.0 pin, TFMs, semver).
+  expansion, Avalonia cache) · version/support policy (Kotlin 2.4.0 pin, TFMs, semver).
 
 ## 【8】 Accepted known limitations  *(NOT tasks)*
-- round-trip **③ fun-interface lambda SAM / ④ enum class** — pinned Kotlin 2.2.0 plugin-FIR-API limits (unfixable
+- round-trip **③ fun-interface lambda SAM / ④ enum class** — pinned Kotlin 2.4.0 plugin-FIR-API limits (unfixable
   without unpinning; documented in `dotkt-semantics.md §10`). *(② companion IMPLICIT access is FIXED — `50c2c9f`;
   ⑥ non-const default is MOSTLY FIXED — receiver-referencing defaults work, only a default reading another value
   parameter remains. See `dotkt-semantics.md §10.4`.)*

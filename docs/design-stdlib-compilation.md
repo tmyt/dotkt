@@ -114,7 +114,7 @@ The residual ~280 (with the jar) / ~1283 (standalone) break down as:
 
 ## Plan (sequencing)
 
-1. ✅ Bootstrap flag channel (`<DotKtKotcOptions>`) + 2.2.0-pinned source.
+1. ✅ Bootstrap flag channel (`<DotKtKotcOptions>`) + 2.4.0-pinned source.
 2. **Drop the `-classpath kotlin-stdlib.jar` crutch for this project** so the platform-layer gaps are explicit (a way to
    suppress the default stdlib classpath for the stdlib project itself — a small targets knob).
 3. **CLR platform-actuals source set** — the 184-`expect` binding table: enumerate the expects, mark which the compiler

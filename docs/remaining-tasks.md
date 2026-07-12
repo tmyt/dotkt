@@ -95,7 +95,7 @@
 - [x] CI ✅（`.github/workflows/verify.yml`＝verify-il + verify-differential + verify-ktproj を push/PR で実行。旧 C# オラクル `verify-all` は引退済みバックエンドのため除去）。残: サンプル行列の継続拡張・ネット依存サンプル（Avalonia）のキャッシュ戦略。**(S–M)**
 - [ ] **ライセンス / 帰属（出荷必須）**: 参考実装（`KotlinForCLR`、Apache-2.0）からの移植部分のライセンス遵守・NOTICE/帰属、kotlin-compiler-embeddable 等依存のライセンス確認、本体ライセンス確定。**(S)**
 - [ ] **利用者ドキュメント**: README からの getting-started、`.ktproj` の書き方、.NET 型の取り込み方（C-2 で一本化した**単一の方法**を説明。使い分けは存在しない形に）、対応/非対応機能一覧。**(M)**
-- [ ] **バージョン / サポート方針**: Kotlin 2.2.0 ピン留めの位置づけ、対応 .NET TFM、semver 方針を明文化。**(S)**
+- [ ] **バージョン / サポート方針**: Kotlin 2.4.0 ピン留めの位置づけ、対応 .NET TFM、semver 方針を明文化。**(S)**
 
 ---
 
