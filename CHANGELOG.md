@@ -156,6 +156,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `object[]`. General body-local reified-array fix, not per-op; rt.dll ILVerify error-set byte-identical to the
   pre-`#120` baseline. New `il-arrplus` gate (value + reference T).
 
+- **`Array<T>.copyOf(newSize)` on a value-type element now returns the right values (`#124`).** The 4th (and final)
+  manifestation of the value-type-array-nullability family — the case `#120` explicitly EXCLUDED, because copyOf(newSize)
+  HONESTLY returns `Array<T?>` (a growing array's extra slots are `null`), not the bare `Array<T>` the plus/copyOfRange
+  reify-back siblings produce. The old body `val result = arrayOfNulls<T>(newSize); result[i]=this[i]; return result`
+  allocated `newarr !T` (an `int[]`) in the generic body — bir2cir's `ReferenceNullableStrip` strips `Nullable(Tv)` on an
+  OPEN type-variable (load-bearing for plus/toTypedArray) — while the return/consumer treats it as `Array<T?>` =
+  `Nullable<int>[]`: `arrayOf(1,2,3).copyOf(5)` read back garbage and `.toList()` threw InvalidCast. Since a generic IL
+  body cannot allocate `Nullable<!!T>[]` statically (no `T : struct` constraint) — and neither could a hypothetical
+  compiler primitive, which would have to emit the same reflection — the fix is stdlib-side (`libraries/stdlib/clr/
+  generated/_ArraysClr.kt`, the value-type sibling of `#117` copyOfRange): copyOf now builds the result by RUNTIME
+  reflection on the receiver's element type via private `@ClrTypeAlias("System.Type")`/`("System.Array")` surfaces —
+  `Nullable<elem>[]` for a value-type elem (`typeof(Nullable<>).MakeGenericType`), `elem[]` for a reference elem —
+  then per-element `Array.SetValue` copies the prefix (CLR nullable boxing lifts a boxed T into a `Nullable<T>` slot;
+  `Array.Copy` does not lift) with a `null` tail from `CreateInstance`'s zero-fill. A `GetUnderlyingType` guard avoids a
+  `Nullable<Nullable<T>>` double-wrap when the receiver is already `Nullable<T>[]`. Exact for Int/Long/Double/Char AND
+  reference/nullable T. New `il-copyofnull` gate (grow null-tail / shrink / prefix read-back; value + reference +
+  already-nullable T).
+
 - **`RootContinuation.trySetCanceled()` now forwards the originating `CancellationToken` (`#116`).** When a suspend
   body's `Task<T>` bridge cancels (an `OperationCanceledException` reaches `RootContinuation.resumeWith`), it completed
   the TCS via `trySetCanceled()` with no argument, dropping the token — whereas .NET's `AsyncTaskMethodBuilder` passes

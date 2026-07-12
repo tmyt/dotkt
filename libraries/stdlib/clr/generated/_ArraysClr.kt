@@ -575,13 +575,53 @@ public actual inline fun BooleanArray.copyOf(newSize: Int): BooleanArray = Boole
 @kotlin.internal.InlineOnly
 public actual inline fun CharArray.copyOf(newSize: Int): CharArray = CharArray(newSize) { if (it < this.size) this[it] else ' ' }
 
-// copyOf(newSize) HONESTLY returns `Array<T?>` (extra slots are null), so `arrayOfNulls<T>(newSize)` — which returns
-// `Array<T?>` = `Nullable<T>[]` for a value-type T (#113) — is the correct representation, no reinterpret cast.
-@kotlin.internal.InlineOnly
-public actual inline fun <T> Array<T>.copyOf(newSize: Int): Array<T?> {
-    val result = arrayOfNulls<T>(newSize)
+// copyOf(newSize) HONESTLY returns `Array<T?>` (extra slots are null). For a value-type T the canonical runtime
+// representation of `Array<T?>` is `Nullable<T>[]` (#113). This GENERIC body cannot allocate `Nullable<!T>[]`
+// statically (there is no `T : struct` constraint), and a plain `arrayOfNulls<T>(newSize)` here collapses to a bare
+// `newarr !T` (an `int[]`) — bir2cir's ReferenceNullableStrip strips `Nullable(Tv)` on an OPEN type-variable, which is
+// LOAD-BEARING for the plus/toTypedArray reify-back siblings but WRONG for this `Array<T?>`-returning site (#124): the
+// `int[]` corrupts on a `Nullable<int>` read and fails the consumer's `as Array<T?>` cast. Unlike plus/copyOfRange,
+// copyOf(newSize) is the only generic-body `arrayOfNulls<T>` site whose result escapes as `Array<T?>`, so it must build
+// the result by RUNTIME reflection on the receiver's element type — the value-type sibling of the no-arg copyOf
+// (Array.Clone) and copyOfRange (#117): allocate `Nullable<elem>[]` for a value-type elem (else `elem[]`) and
+// per-element SetValue the prefix. CLR nullable boxing lifts a boxed T into a `Nullable<T>` slot; `Array.Copy` does NOT
+// lift. The null tail is free — CreateInstance zero-fills (HasValue=false / null ref). Exact for Int/Long/Double/Char
+// AND reference T, no per-element-type special-casing.
+@kotlin.clr.ClrTypeAlias("System.Type")
+private interface DotktType {
+    @kotlin.clr.ClrIntrinsic("GetElementType") fun getElementType(): DotktType
+    @kotlin.clr.ClrIntrinsic("MakeGenericType") fun makeGenericType(typeArguments: Array<DotktType>): DotktType
+    @kotlin.clr.ClrProperty(kotlin.clr.READ, "IsValueType") fun isValueType(): Boolean
+}
+
+@kotlin.clr.ClrTypeAlias("System.Array")
+private interface DotktArray {
+    @kotlin.clr.ClrIntrinsic("SetValue") fun setValue(value: Any?, index: Int): Unit
+}
+
+@kotlin.clr.ClrIntrinsic("GetType")                            // object.GetType() -> the receiver's runtime array Type (e.g. int[])
+private fun Any.dotktRuntimeType(): DotktType = TODO("clr binding should be implemented")
+
+@kotlin.clr.ClrIntrinsic("System.Type.GetType")                // static Type.GetType(string) — resolves the open `System.Nullable`1` from CoreLib
+private fun dotktTypeNamed(name: String): DotktType = TODO("clr binding should be implemented")
+
+@kotlin.clr.ClrIntrinsic("System.Nullable.GetUnderlyingType")  // static; non-null iff `t` is already a `Nullable<X>` (avoid a Nullable<Nullable<X>> double-wrap)
+private fun dotktNullableUnderlying(t: DotktType): DotktType? = TODO("clr binding should be implemented")
+
+// DECLARES `Array<T?>` so the reflectively-allocated array flows to `result`/`return` with NO `as`-cast node: the
+// blanket `Array(Nullable(Tv))` erasure would rewrite a cast target to `object[]`, and a value-type `Nullable<int>[]`
+// is NOT castclass-able to `object[]` (struct-element arrays are not covariant) — an InvalidCast on the fixed path.
+@kotlin.clr.ClrIntrinsic("System.Array.CreateInstance")        // static Array.CreateInstance(Type, int) -> Array
+private fun <T> dotktNewArrayOfType(elementType: DotktType, length: Int): Array<T?> = TODO("clr binding should be implemented")
+
+public actual fun <T> Array<T>.copyOf(newSize: Int): Array<T?> {
+    val elem = (this as Any).dotktRuntimeType().getElementType()
+    val outElem = if (dotktNullableUnderlying(elem) != null) elem                                    // receiver already `Nullable<X>[]`
+                  else if (elem.isValueType()) dotktTypeNamed("System.Nullable`1").makeGenericType(arrayOf(elem))
+                  else elem
+    val result: Array<T?> = dotktNewArrayOfType(outElem, newSize)
     val limit = if (newSize < this.size) newSize else this.size
-    for (i in 0 until limit) result[i] = this[i]
+    for (i in 0 until limit) (result as DotktArray).setValue(this[i], i)
     return result
 }
 
