@@ -59,6 +59,11 @@ static class NullableGenericReturnErasure
         if (o["methods"] is JsonArray msLocals)
             foreach (var m in msLocals)
                 if (m is JsonObject mo) RetypeNullableGpVars(mo["body"]);
+        // #120 REIFIED-ARRAY reify-back idiom. Runs BEFORE the blanket EraseNullableGpAllStrings sweep (Apply, after
+        // ApplyRec) so the kept chain is already bare `!T` when the sweep (a no-op on bare tv) runs. See there.
+        if (o["methods"] is JsonArray msArrays)
+            foreach (var m in msArrays)
+                if (m is JsonObject mo) CollapseReifiedArrayVars(mo);
         // FOREACH-OVER-NULLABLE-GENERIC-SOURCE erasure (bundle-6 BUG-1, value-type filterNotNull). A stdlib method
         // whose extension receiver is `Iterable<T?>` (kotc token `@kotlin.collections.Iterable[nullable:gp:T]`, erased
         // by the EraseNullableGpAllStrings sweep below to `IEnumerable<object>`) iterates it with a `forEachInline`
@@ -411,6 +416,129 @@ static class NullableGenericReturnErasure
                     else if (TypeJson.Read(child) is TypeNode tn) arr[i] = TypeJson.Write(EraseNullableTv(tn));
                     else EraseNullableGpAllStrings(child);
                 }
+                break;
+        }
+    }
+
+    // #120: the "allocate a fresh reified array, fill it, cast it back to a non-null `Array<T>`" idiom —
+    //   val result = arrayOfNulls<T>(n)          // (or `Array(n){...}` -> a newArray* node): a genuine `newarr !T`
+    //   for (...) result[i] = ...
+    //   return result as Array<T>
+    // (`Array<T>.plus`/`plusElement`/`Collection.toTypedArray`). kotc declares `result: Array<T?>` (Array(Nullable(Tv)))
+    // and ArrayConstructionLowering stamps its `arraySet`/`arrayGet` `elem` as Nullable(Tv). The blanket
+    // EraseNullableGpAllStrings sweep would object-erase both to `object[]` / `object`, but the allocation stays
+    // `newarr !T` (MemberCallSubstitution's LOAD-BEARING exact-reified path) and the trailing `result as Array<T>` needs
+    // a real `T[]` — an `object[]` slot / `stelem object` over a reified `T[]` corrupts a value-type instantiation (int
+    // slots read back as garbage; `arrayOf(1,2,3).plus(4)` printed random ints). Collapse this ONE fresh-local chain to
+    // bare `!T` (the var slot, its own `newArray*` elem, and every `arraySet`/`arrayGet` on it) so var-slot / newarr /
+    // stelem / ldelem / cast all agree; the later sweep + ReferenceNullableStrip are then no-ops on it.
+    //
+    // PRODUCER + CONSUMER gated (chain consistency), NOT node-kind — a producer-blind gate reintroduces value-type
+    // miscompiles (#120 review): a var whose init is NOT a direct fresh allocation (a `cond`/param alias — RingBuffer.
+    // toArray's `if (..) copyOf(..) else array as Array<T?>`), or which is NOT consumed by a bare `Array<T>` cast
+    // (`copyOf(newSize)`'s `return result` into its object-erased `Array<T?>` RETURN), genuinely flows an `object[]` and
+    // is LEFT for the blanket sweep to object-erase — keeping `!T` there would `stelem !T` over an `object[]`. Likewise
+    // an `arraySet` on a cast/param operand (terminateCollectionToArray's `(array as Array<T?>)[i] = null`) is untouched:
+    // its operand is not a fresh-local kept var.
+    static void CollapseReifiedArrayVars(JsonObject mo)
+    {
+        if (mo["body"] is not JsonNode body) return;
+        // (1) fresh reified-array locals: init is a direct `newArray*`/`arrayOfNulls`, declared type Array(Nullable(Tv)).
+        var fresh = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        CollectFreshReifiedVars(body, fresh);
+        if (fresh.Count == 0) return;
+        // (2) keep only those consumed by a bare `Array<Tv>` cast (the reify-back idiom) — excludes `copyOf(newSize)`.
+        var kept = new HashSet<string>(StringComparer.Ordinal);
+        CollectBareArrayCastLocals(body, fresh.Keys, kept);
+        if (kept.Count == 0) return;
+        // (3) collapse the kept chain to bare `!T`.
+        foreach (var name in kept)
+        {
+            var v = fresh[name];
+            if (TypeJson.Read(v["type"]) is TypeNode.Array { Elem: TypeNode.Nullable { Of: TypeNode.Tv tv } })
+                v["type"] = TypeJson.Write(new TypeNode.Array(tv));
+            if (v["init"] is JsonObject vi
+                && (vi["k"] as JsonValue)?.GetValue<string>() is "newArray" or "newArraySized" or "newArrayInit"
+                && TypeJson.Read(vi["elem"]) is TypeNode.Nullable { Of: TypeNode.Tv itv })
+                vi["elem"] = TypeJson.Write(itv);
+        }
+        CollapseKeptArrayOps(body, kept);
+    }
+
+    // A body-local `var name: Array<T?>` (Array(Nullable(Tv))) whose init is a genuine `newarr !T` producer — a
+    // `newArray`/`newArraySized`/`newArrayInit` node, or the `arrayOfNulls<T>(size)` factory callStatic (which
+    // MemberCallSubstitution later lowers to `newArraySized`). NOT a `cond` / cast / other call.
+    static void CollectFreshReifiedVars(JsonNode node, Dictionary<string, JsonObject> fresh)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if ((obj["k"] as JsonValue)?.GetValue<string>() == "var"
+                    && (obj["name"] as JsonValue)?.TryGetValue<string>(out var nm) == true
+                    && TypeJson.Read(obj["type"]) is TypeNode.Array { Elem: TypeNode.Nullable { Of: TypeNode.Tv } }
+                    && IsFreshReifiedAlloc(obj["init"]))
+                    fresh[nm] = obj;
+                foreach (var kv in obj) CollectFreshReifiedVars(kv.Value, fresh);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) CollectFreshReifiedVars(it, fresh);
+                break;
+        }
+    }
+
+    static bool IsFreshReifiedAlloc(JsonNode init)
+    {
+        if (init is not JsonObject io) return false;
+        var k = (io["k"] as JsonValue)?.GetValue<string>();
+        if (k is "newArray" or "newArraySized" or "newArrayInit") return true;
+        return k == "callStatic" && (io["method"] as JsonValue)?.GetValue<string>() == "arrayOfNulls";
+    }
+
+    // Names in `candidates` that flow into a bare `cast`->`Array<Tv>` (`result as Array<T>` — the reify-back consumer
+    // that requires a real `T[]`). A fresh reified local with NO such cast (its value is used as `Array<T?>`, e.g.
+    // returned into an object-erased `Array<T?>` return) is excluded — object-erasure is correct for it.
+    static void CollectBareArrayCastLocals(JsonNode node, IEnumerable<string> candidates, HashSet<string> kept)
+    {
+        var cand = candidates as HashSet<string> ?? new HashSet<string>(candidates, StringComparer.Ordinal);
+        void Rec(JsonNode n)
+        {
+            switch (n)
+            {
+                case JsonObject obj:
+                    if ((obj["k"] as JsonValue)?.GetValue<string>() == "cast"
+                        && TypeJson.Read(obj["type"]) is TypeNode.Array { Elem: TypeNode.Tv }
+                        && obj["e"] is JsonObject e
+                        && (e["k"] as JsonValue)?.GetValue<string>() == "local"
+                        && (e["name"] as JsonValue)?.TryGetValue<string>(out var en) == true && cand.Contains(en))
+                        kept.Add(en);
+                    foreach (var kv in obj) Rec(kv.Value);
+                    break;
+                case JsonArray arr:
+                    foreach (var it in arr) Rec(it);
+                    break;
+            }
+        }
+        Rec(node);
+    }
+
+    // Collapse the `elem` of every `arraySet`/`arrayGet` whose array operand is a kept fresh-local (`Nullable(Tv)`->`Tv`),
+    // so the stelem/ldelem token agrees with the now-`!T[]` slot + the `newarr !T` allocation.
+    static void CollapseKeptArrayOps(JsonNode node, HashSet<string> kept)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                var k = (obj["k"] as JsonValue)?.GetValue<string>();
+                if ((k == "arraySet" || k == "arrayGet")
+                    && obj["array"] is JsonObject a
+                    && (a["k"] as JsonValue)?.GetValue<string>() == "local"
+                    && (a["name"] as JsonValue)?.TryGetValue<string>(out var an) == true && kept.Contains(an)
+                    && TypeJson.Read(obj["elem"]) is TypeNode.Nullable { Of: TypeNode.Tv tv })
+                    obj["elem"] = TypeJson.Write(tv);
+                foreach (var kv in obj) CollapseKeptArrayOps(kv.Value, kept);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) CollapseKeptArrayOps(it, kept);
                 break;
         }
     }

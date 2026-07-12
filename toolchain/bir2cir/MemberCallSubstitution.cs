@@ -447,8 +447,13 @@ static class MemberCallSubstitution
                 // `Nullable(value)` but COLLAPSES `Nullable(reference)` AND `Nullable(Tv)` back to the bare inner. So a
                 // reference `T` -> bare `System.String[]`, and an OPEN type-variable `T` (a non-inlined generic body — the
                 // `plus`/two-arg-`arrayOfNulls` actuals) -> bare `newarr !T` (the exact-reified path those bodies' trailing
-                // `as Array<T>` identity casts depend on — LOAD-BEARING, this wrap must stay a no-op there). Skip an
-                // already-nullable typeArg (`arrayOfNulls<Int?>`) to avoid a malformed `Nullable(Nullable)` double-wrap.
+                // `as Array<T>` identity casts depend on — LOAD-BEARING, this wrap must stay a no-op there). Its SIBLING is
+                // NullableGenericReturnErasure.CollapseReifiedArrayVars (#120): for the fresh-local reify-back idiom
+                // (`val result = arrayOfNulls<T>(n); ...; return result as Array<T>` — plus/plusElement/toTypedArray) it
+                // collapses the matching body-local `var result: Array<T?>` SLOT + its `arraySet`/`arrayGet` `elem` to bare
+                // `!T`, so var slot / newarr / stelem / ldelem / cast all agree; an `object[]` slot over this `newarr !T`
+                // would corrupt a value-type instantiation. Skip an already-nullable typeArg (`arrayOfNulls<Int?>`) to
+                // avoid a malformed `Nullable(Nullable)` double-wrap.
                 var elemNode = TypeJson.Read(elemT);
                 var nullableElem = elemNode is TypeNode.Nullable ? elemT.DeepClone() : TypeJson.Write(new TypeNode.Nullable(elemNode));
                 return new JsonObject { ["k"] = "newArraySized", ["elem"] = nullableElem, ["size"] = args[0].DeepClone() };

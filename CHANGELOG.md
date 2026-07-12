@@ -7,6 +7,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **`Array<T>.plus`/`.plusElement` on a value-type element now returns the right values (`#120`).** The 3rd
+  manifestation of the value-type-array-nullability family (after `#113` `arrayOfNulls` and `#117` `copyOfRange`).
+  The pure-Kotlin body `val result = arrayOfNulls<T>(size+1); result[i]=this[i]; result as Array<T>` had its
+  body-local `var result: Array<T?>` slot object-erased to `object[]` while the allocation stayed `newarr !T` and the
+  element stelem became `object` — an `object[]`-typed local over a reified `T[]` whose value slots read back as
+  garbage (`a.plus(4)` on `arrayOf(1,2,3)` printed random ints). `NullableGenericReturnErasure` now collapses the ONE
+  fresh-local "reify-back" chain — `val result = arrayOfNulls<T>(n); ...; return result as Array<T>` — to bare `!T`
+  (the var slot + its `arraySet`/`arrayGet` elems), so var slot / newarr / stelem / ldelem / cast all agree. The gate
+  is PRODUCER + CONSUMER driven (chain consistency), NOT node-kind: a var whose init is not a direct fresh allocation
+  (`RingBuffer.toArray`'s `cond`) or which is not consumed by a bare `Array<T>` cast (`copyOf(newSize)`'s `return
+  result` into its object-erased `Array<T?>`) still object-erases — keeping `!T` there would `stelem !T` over an
+  `object[]`. General body-local reified-array fix, not per-op; rt.dll ILVerify error-set byte-identical to the
+  pre-`#120` baseline. New `il-arrplus` gate (value + reference T).
+
 - **`RootContinuation.trySetCanceled()` now forwards the originating `CancellationToken` (`#116`).** When a suspend
   body's `Task<T>` bridge cancels (an `OperationCanceledException` reaches `RootContinuation.resumeWith`), it completed
   the TCS via `trySetCanceled()` with no argument, dropping the token — whereas .NET's `AsyncTaskMethodBuilder` passes
