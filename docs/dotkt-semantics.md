@@ -736,8 +736,14 @@ type's subtypes are themselves injected into the consumer's session via their `s
    (`[KotlinFunInterface]` → `funinterface` meta → `status.isFun`), so a consumer sees a functional interface and can
    implement it (anonymous `object`). A bare **lambda** still won't SAM-convert — pinned-2.4.0 FIR `computeSamCandidateNames`
    reads `FirRegularClass.declarations` directly, which a generation-extension interface leaves empty (§10.2). **KNOWN /
-   ACCEPTED LIMITATION** on the same basis as #2. (these plugin-FIR round-trip limits were verified on 2.2.0 and are
-   pending re-verification on 2.4.0 — task #114)
+   ACCEPTED LIMITATION** on the same basis as #2. (**re-verified on 2.4.0 — task #114: still limited.** Empirically
+   re-run under the 2.4.0 pin: (a) a bare **lambda** where an injected `fun interface` is expected still does NOT
+   SAM-convert — `argument type mismatch: … but 'Handler' was expected` / `cannot infer type for value parameter` — while
+   the fun-interface *nature* still round-trips (`funInterface:true`) so an anonymous `object : Handler {…}` works; (b) a
+   re-consumed **`enum class`** still restores as an `object` of `val`s (value access `Color.GREEN` compiles, but an
+   exhaustive `when` over it fails `'when' expression must be exhaustive`) — see #4; (c) a re-consumed top-level **`object`
+   singleton** still restores as a plain **`class`** with a static `INSTANCE` field — `Config.member` is `unresolved`,
+   `Config.INSTANCE.member` compiles — see #2. All three are confirmed, not pending.)
 4. **`enum class`** — **NOT FIXED (gap ④).** Blocked at the injection layer: a `FirDeclarationGenerationExtension` (2.4.0)
    cannot synthesize real `FirEnumEntry` declarations, which FIR's exhaustiveness checker requires; the plugin API has no
    enum-entry hook (§10.2). A basic enum still round-trips as an `object` of `val`s (value access works). **KNOWN /
