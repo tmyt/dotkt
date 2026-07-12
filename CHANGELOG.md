@@ -24,6 +24,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   2.4.0 `Array<out T>.toList()` stdlib workaround (element-wise `toMutableList()`) is reverted to upstream
   `copyOf().asList()`. Gate-covered by `cases/il-arrnull`. (`Array<T>.slice`/`take`/`takeLast` remain broken by a
   distinct stdlib `copyOfRange` reinterpret-cast bug, tracked separately.)
+- **Fixed reference-type `x!!` not throwing eagerly (`#115`).** Kotlin's `x!!` throws `NullPointerException`
+  IMMEDIATELY when `x` is null, regardless of how the result is used. For a reference operand, kotc emitted a
+  bare pass-through, so a null only surfaced as a later `NullReferenceException` at a subsequent dereference
+  (wrong exception type + site) and NEVER threw at all when the result was stored (`val y: String = x!!`) or
+  discarded (`x!!` as a statement). kotc now binds the operand to a temp ONCE and null-tests it (objEq-null,
+  mirroring the already-correct value-type-nullable path and bir2cir's `PreconditionLowering` reference shape),
+  throwing `kotlin.NullPointerException` on null — an eager throw is a Kotlin-language fact, not CLR knowledge, so
+  the fix stays in kotc. Gate-covered by the extended `cases/il-nullbang`.
 - **Fixed a cross-module silent miscompile of field-backed properties with a custom accessor (`#103`).**
   A top-level `val x = 41; get() = field + 1` (or a `var` with a custom `set`) consumed from ANOTHER DotKt
   assembly silently returned the raw backing field (41) instead of invoking the getter (42) — the accessor

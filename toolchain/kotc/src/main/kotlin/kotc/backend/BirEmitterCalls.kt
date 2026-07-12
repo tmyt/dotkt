@@ -456,20 +456,33 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// extension call and bir2cir re-emits the reinterpret `cast` keyed on the resolved receiver identity
 	// (FaithfulHintRecognition, M9). The Kotlin<->CLR relation lives there, not in kotc.
 
-	// `e!!` (not-null assertion). A value-type-nullable operand (`Int?` = `Nullable<T>`) MUST unwrap via
-	// HasValue/Value and throw NPE on null: a bare pass-through leaves a `Nullable<T>` STRUCT where the use
-	// site consumes the bare value (`n!! + 1` -> InvalidProgram; `n!!.toLong()` reads garbage) AND silently
-	// skips the null check (`z!!` never throws). Mirrors the requireNotNull/checkNotNull value-nullable path
-	// below, but `!!` throws kotlin.NullPointerException. Reference-nullable stays a pass-through.
+	// `e!!` (not-null assertion). Kotlin `x!!` throws NullPointerException IMMEDIATELY when x is null,
+	// regardless of how the result is used (stored, discarded, or dereferenced). Both operand kinds bind
+	// the operand to a temp ONCE (it may have side effects), null-test it, and throw kotlin.NullPointerException
+	// on null; the non-null value is yielded otherwise. A value-type-nullable operand (`Int?` = `Nullable<T>`)
+	// tests via HasValue and unwraps .Value — a bare pass-through would leave a `Nullable<T>` STRUCT where the
+	// use site consumes the bare value (`n!! + 1` -> InvalidProgram; `n!!.toLong()` reads garbage). A
+	// reference-nullable operand tests via objEq-null (mirrors the requireNotNull/checkNotNull reference path
+	// in bir2cir's PreconditionLowering) — a bare pass-through would let a null surface only as a later
+	// NullReferenceException at a deref (wrong exception type + site) and NEVER throw for a stored/discarded
+	// `x!!`. `!!` throws kotlin.NullPointerException; the precondition helpers throw IllegalArgument/State.
 	if (name == "CHECK_NOT_NULL") {
 		val arg = call.arguments.filterNotNull().first()
 		val velem = nullableElem(arg.type)
+		val nv = "__nn${scopeCounter++}"
+		val nvLoc = """{"k":"local","name":${str(nv)}}"""
+		val throwNpe = throwExpr(newExc("kotlin.NullPointerException", null))
 		if (velem != null) {
-			val nv = "__nn${scopeCounter++}"
-			val nvLoc = """{"k":"local","name":${str(nv)}}"""
-			return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(velem).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${velem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${velem.toJson()},"e":$nvLoc},"else":${throwExpr(newExc("kotlin.NullPointerException", null))}}}"""
+			return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(velem).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"nullableHasValue","elem":${velem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${velem.toJson()},"e":$nvLoc},"else":$throwNpe}}"""
 		}
-		return expr(arg)
+		// reference (or objEq-testable: generic `T?`, unsigned `UInt?`) operand: bind once, `(t != null) ? t
+		// : throw` (value in `then`, mirroring the value-type path above and bir2cir's PreconditionLowering
+		// reference shape). objEq boxes a generic/unsigned local before the null-test, so a HasValue==false
+		// `Nullable<T>` reads as a genuine null and throws. (KNOWN GAP: an unsigned `u!!` yields the raw
+		// `Nullable<uint>` here without a `.Value` unwrap — the #56 struct-consumer issue persists for the
+		// unsigned primitives, which `nullableElem` excludes; tracked separately, not this fix's scope.)
+		val nullConst = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
+		return """{"k":"valueBlock","stmts":[{"k":"var","name":${str(nv)},"type":${birType(arg.type).toJson()},"init":${expr(arg)}}],"result":{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":$nullConst}},"then":$nvLoc,"else":$throwNpe}}"""
 	}
 
 	// Value-position primitive `rangeTo`/`rangeUntil` (`a..b` / `a..<b`) is NOT lowered here. kotc emits the
