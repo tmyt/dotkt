@@ -7,6 +7,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **User-app MPP: a common `expect` + a CLR `actual` now compile through the APP frontend pipeline (`#119`).**
+  A user project with `-Xcommon-sources` (marking the common/expect sources) + `-Xmulti-platform` previously
+  failed at kotc with `expect and corresponding actual are declared in the same module`: the app frontend
+  (`ClrAppFrontendPipelinePhase`) called the stock `prepareMetadataSessions`, which hardcodes
+  `metadataCompilationMode = true` and so forces `SessionConstructionUtils.prepareSessions` down the
+  single-session branch — common + platform sources collapse into ONE `FirModuleData`, so an `expect` and its
+  `actual` share a module. kotc now inlines that public-API body (the same "fork the thin CLI glue" pattern the
+  phase already used) and drives `metadataCompilationMode` off whether any common source is present: with NO
+  common sources the flag stays `true` and the path is byte-identical to the prior single-session app compile
+  (the non-MPP `cases/il-*` samples are unaffected — verify-il green, no NEW-FAIL); with common sources present it
+  flips to `false`, taking the legacy-MPP split (a common module + a platform module that refines it) so
+  expect/actual matches across the boundary. Downstream Fir2Ir actualization + BIR emit already handled the
+  multi-session output — the stdlib self-build uses the same two tail phases. MPP smoke test:
+  `bash experiments/mpp-greeter/build.sh` → `Hello from the CLR actual`.
+
 - **Constructing an external generic type over a FREE type variable now emits via `TypeBuilder.GetConstructor`
   instead of crashing at emit (`#123`).** `AtomicRef(AtomicReference(v))` in `fun <T> atomic(v: T): AtomicRef<T>`
   — where `AtomicReference<T>` is a stdlib `kotlin.*` generic instantiated over the enclosing function's free
