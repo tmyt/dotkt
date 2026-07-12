@@ -7,6 +7,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Gate coverage for two correct-by-construction-but-uncovered .NET-interop paths (`#79`).** Two new IL samples,
+  both GREEN, close gaps the existing interop-override samples never exercised: (1) `cases/il-clrifaceimpl` — a
+  Kotlin class IMPLEMENTING a facadegen-injected .NET generic interface (`System.Collections.Generic.IComparer<String>`);
+  the prior samples only EXTEND a base class (kotc's own `isOverride` stamps `override:true`), whereas the
+  interface-impl path is re-stamped `override:true`/`vis:public` by bir2cir's `DeclarationRename` and its slot filled,
+  so a direct call, an interface-typed upcast dispatch, AND a BCL consumer (`List<T>.Sort(IComparer<T>)`) all dispatch
+  into the override. (2) `cases/il-ixname` — a .NET type with a CUSTOM-NAMED indexer via `[IndexerName("Cell")]`;
+  `g[i]`/`g[i] = v` must bind to `get_Cell`/`set_Cell` (read from the type's `DefaultMemberAttribute` by
+  `bir2cir.NetInteropBinding.DefaultIndexerAccessor`), not the hardcoded `get_Item`/`set_Item`. (Layer: coverage only —
+  no production-code change; both paths already worked, they were just gate-blind.)
+
 - **ilemit `callInstance` now guards a value-type-receiver contract violation instead of emitting unverifiable IL (`#108`, defensive).**
   The `callInstance` emit path pushes the receiver as a plain value/reference (`EmitExpr(recv)`) then emits
   `call`/`callvirt` on the resolved method directly — per ECMA-335 that is verifiable IL only when the method's

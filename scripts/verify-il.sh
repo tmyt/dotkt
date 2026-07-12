@@ -593,6 +593,15 @@ il_check_inject transinj TransInj "$ROOT/cases/il-transinj" "$(printf '1\nw1\n1\
 il_check_inject cbk Cbk "$ROOT/cases/il-cbk" "$(printf '=v42\nran')" PCbk
 il_check_inject clriface ClrIface "$ROOT/cases/il-clriface" "$(printf '2\na')" PIf
 il_check_inject clrimpl ClrImpl "$ROOT/cases/il-clrimpl" "$(printf 'draw:circle\ndraw:square\ncircle')" PImpl
+# clrifaceimpl: a Kotlin class IMPLEMENTING a facadegen-injected .NET generic interface (IComparer<String>) — the other
+# interop-override samples only EXTEND a base class. bir2cir's DeclarationRename re-stamps the override:true/vis:public
+# off the injected interface member + fills its slot, so a direct call, an interface-typed upcast dispatch, AND a BCL
+# consumer (List<T>.Sort(IComparer<T>)) all dispatch into the override. (imports System.* -> il_check_imports/facadegen.)
+il_check_imports clrifaceimpl ClrIfaceImpl "$ROOT/cases/il-clrifaceimpl" "$(printf '1\n-3\nz,bb,abcd')"
+# ixname: a .NET type with a CUSTOM-NAMED indexer via [IndexerName("Cell")] — `g[i]`/`g[i]=v` must bind to
+# get_Cell/set_Cell (read from the type's DefaultMemberAttribute by bir2cir.NetInteropBinding.DefaultIndexerAccessor),
+# not the hardcoded get_Item/set_Item. Regression guard for the custom-indexer-name binding path.
+il_check_inject ixname IxName "$ROOT/cases/il-ixname" "$(printf '10\n30\n99')" IxRt
 il_check_inject clrasm ClrAsm "$ROOT/cases/il-clrasm" "$(printf '2\n2\n2')" PAsm
 il_check_inject selfref SelfRef "$ROOT/cases/il-selfref" "4" PSelf
 il_check_inject genim GenIM "$ROOT/cases/il-genim" "$(printf 'hello\nworld')" PGenIM
