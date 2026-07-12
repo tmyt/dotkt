@@ -249,6 +249,7 @@ public open class Base64 private constructor(
      *
      * @sample samples.io.encoding.Base64Samples.encodeToAppendableSample
      */
+    @IgnorableReturnValue
     public fun <A : Appendable> encodeToAppendable(
         source: ByteArray,
         destination: A,
@@ -397,7 +398,7 @@ public open class Base64 private constructor(
 
         val encodeSize = encodeSize(endIndex - startIndex)
         val destination = ByteArray(encodeSize)
-        encodeIntoByteArrayImpl(source, destination, 0, startIndex, endIndex)
+        val _ = encodeIntoByteArrayImpl(source, destination, 0, startIndex, endIndex)
         return destination
     }
 

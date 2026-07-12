@@ -28,12 +28,14 @@ import kotlin.experimental.ExperimentalTypeInference
  * Here the type argument of the resulting sequence is inferred to `String` from
  * the argument of the [SequenceScope.yield] function, that is called inside the lambda passed to [sequence].
  *
- * Note: this annotation is experimental, see [ExperimentalTypeInference] on how to opt-in for it.
+ * **Note:** This annotation is deprecated and should no longer be used. The compiler automatically enables builder inference for builder calls when needed.
  */
 @Target(VALUE_PARAMETER, FUNCTION, PROPERTY)
 @Retention(AnnotationRetention.BINARY)
 @SinceKotlin("1.3")
 @ExperimentalTypeInference
+@Deprecated("BuilderInference annotation must not be used anymore. Builder inference is enabled automatically for builder calls if needed.")
+@DeprecatedSinceKotlin(warningSince = "2.0", errorSince = "2.5", hiddenSince = "2.6")
 public annotation class BuilderInference
 
 

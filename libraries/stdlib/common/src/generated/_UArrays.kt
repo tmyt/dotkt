@@ -5,6 +5,7 @@
 
 @file:kotlin.jvm.JvmMultifileClass
 @file:kotlin.jvm.JvmName("UArraysKt")
+@file:Suppress("REDUNDANT_CALL_OF_CONVERSION_METHOD")
 @file:kotlin.jvm.JvmPackageName("kotlin.collections.unsigned")
 
 package kotlin.collections
@@ -737,6 +738,8 @@ public inline fun UShortArray.firstOrNull(predicate: (UShort) -> Boolean): UShor
 
 /**
  * Returns an element at the given [index] or the result of calling the [defaultValue] function if the [index] is out of bounds of this array.
+ * 
+ * @sample samples.collections.Arrays.Usage.getOrElse
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -750,6 +753,8 @@ public inline fun UIntArray.getOrElse(index: Int, defaultValue: (Int) -> UInt): 
 
 /**
  * Returns an element at the given [index] or the result of calling the [defaultValue] function if the [index] is out of bounds of this array.
+ * 
+ * @sample samples.collections.Arrays.Usage.getOrElse
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -763,6 +768,8 @@ public inline fun ULongArray.getOrElse(index: Int, defaultValue: (Int) -> ULong)
 
 /**
  * Returns an element at the given [index] or the result of calling the [defaultValue] function if the [index] is out of bounds of this array.
+ * 
+ * @sample samples.collections.Arrays.Usage.getOrElse
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -776,6 +783,8 @@ public inline fun UByteArray.getOrElse(index: Int, defaultValue: (Int) -> UByte)
 
 /**
  * Returns an element at the given [index] or the result of calling the [defaultValue] function if the [index] is out of bounds of this array.
+ * 
+ * @sample samples.collections.Arrays.Usage.getOrElse
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -2027,6 +2036,7 @@ public inline fun UShortArray.filterIndexed(predicate: (index: Int, UShort) -> B
  * @sample samples.collections.Collections.Filtering.filterIndexedTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in UInt>> UIntArray.filterIndexedTo(destination: C, predicate: (index: Int, UInt) -> Boolean): C {
@@ -2044,6 +2054,7 @@ public inline fun <C : MutableCollection<in UInt>> UIntArray.filterIndexedTo(des
  * @sample samples.collections.Collections.Filtering.filterIndexedTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in ULong>> ULongArray.filterIndexedTo(destination: C, predicate: (index: Int, ULong) -> Boolean): C {
@@ -2061,6 +2072,7 @@ public inline fun <C : MutableCollection<in ULong>> ULongArray.filterIndexedTo(d
  * @sample samples.collections.Collections.Filtering.filterIndexedTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in UByte>> UByteArray.filterIndexedTo(destination: C, predicate: (index: Int, UByte) -> Boolean): C {
@@ -2078,6 +2090,7 @@ public inline fun <C : MutableCollection<in UByte>> UByteArray.filterIndexedTo(d
  * @sample samples.collections.Collections.Filtering.filterIndexedTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in UShort>> UShortArray.filterIndexedTo(destination: C, predicate: (index: Int, UShort) -> Boolean): C {
@@ -2141,6 +2154,7 @@ public inline fun UShortArray.filterNot(predicate: (UShort) -> Boolean): List<US
  * @sample samples.collections.Collections.Filtering.filterTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in UInt>> UIntArray.filterNotTo(destination: C, predicate: (UInt) -> Boolean): C {
@@ -2154,6 +2168,7 @@ public inline fun <C : MutableCollection<in UInt>> UIntArray.filterNotTo(destina
  * @sample samples.collections.Collections.Filtering.filterTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in ULong>> ULongArray.filterNotTo(destination: C, predicate: (ULong) -> Boolean): C {
@@ -2167,6 +2182,7 @@ public inline fun <C : MutableCollection<in ULong>> ULongArray.filterNotTo(desti
  * @sample samples.collections.Collections.Filtering.filterTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in UByte>> UByteArray.filterNotTo(destination: C, predicate: (UByte) -> Boolean): C {
@@ -2180,6 +2196,7 @@ public inline fun <C : MutableCollection<in UByte>> UByteArray.filterNotTo(desti
  * @sample samples.collections.Collections.Filtering.filterTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in UShort>> UShortArray.filterNotTo(destination: C, predicate: (UShort) -> Boolean): C {
@@ -2193,6 +2210,7 @@ public inline fun <C : MutableCollection<in UShort>> UShortArray.filterNotTo(des
  * @sample samples.collections.Collections.Filtering.filterTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in UInt>> UIntArray.filterTo(destination: C, predicate: (UInt) -> Boolean): C {
@@ -2206,6 +2224,7 @@ public inline fun <C : MutableCollection<in UInt>> UIntArray.filterTo(destinatio
  * @sample samples.collections.Collections.Filtering.filterTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in ULong>> ULongArray.filterTo(destination: C, predicate: (ULong) -> Boolean): C {
@@ -2219,6 +2238,7 @@ public inline fun <C : MutableCollection<in ULong>> ULongArray.filterTo(destinat
  * @sample samples.collections.Collections.Filtering.filterTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in UByte>> UByteArray.filterTo(destination: C, predicate: (UByte) -> Boolean): C {
@@ -2232,6 +2252,7 @@ public inline fun <C : MutableCollection<in UByte>> UByteArray.filterTo(destinat
  * @sample samples.collections.Collections.Filtering.filterTo
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <C : MutableCollection<in UShort>> UShortArray.filterTo(destination: C, predicate: (UShort) -> Boolean): C {
@@ -2732,6 +2753,486 @@ public inline fun UShortArray.takeWhile(predicate: (UShort) -> Boolean): List<US
 }
 
 /**
+ * Returns `true` if each element in the array is less than or equal
+ * to the following element according to their natural sort order.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially,
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the preceding element is not greater than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedUIntArraySamples.isSorted
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun UIntArray.isSorted(): Boolean {
+    for (i in 1..lastIndex) {
+        if (this[i - 1] > this[i]) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is less than or equal
+ * to the following element according to their natural sort order.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially,
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the preceding element is not greater than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedULongArraySamples.isSorted
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun ULongArray.isSorted(): Boolean {
+    for (i in 1..lastIndex) {
+        if (this[i - 1] > this[i]) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is less than or equal
+ * to the following element according to their natural sort order.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially,
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the preceding element is not greater than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedUByteArraySamples.isSorted
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun UByteArray.isSorted(): Boolean {
+    for (i in 1..lastIndex) {
+        if (this[i - 1] > this[i]) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is less than or equal
+ * to the following element according to their natural sort order.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially,
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the preceding element is not greater than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedUShortArraySamples.isSorted
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun UShortArray.isSorted(): Boolean {
+    for (i in 1..lastIndex) {
+        if (this[i - 1] > this[i]) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array yields a [selector] value
+ * that is less than or equal to the [selector] value of the following element
+ * according to the natural sort order of the selector values.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The [selector] values of adjacent elements are compared sequentially using [compareValues],
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the [selector] value of the preceding element is not greater than that of the following one.
+ * 
+ * If the [selector] returns `null` for an element, the `null` value is treated as less than any non-null value.
+ * 
+ * @sample samples.generated.issorted.IsSortedUIntArraySamples.isSortedBy
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public inline fun <R : Comparable<R>> UIntArray.isSortedBy(selector: (UInt) -> R?): Boolean {
+    if (size < 2) return true
+    var previousValue = selector(this[0])
+    for (i in 1..lastIndex) {
+        val currentValue = selector(this[i])
+        if (compareValues(previousValue, currentValue) > 0) return false
+        previousValue = currentValue
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array yields a [selector] value
+ * that is less than or equal to the [selector] value of the following element
+ * according to the natural sort order of the selector values.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The [selector] values of adjacent elements are compared sequentially using [compareValues],
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the [selector] value of the preceding element is not greater than that of the following one.
+ * 
+ * If the [selector] returns `null` for an element, the `null` value is treated as less than any non-null value.
+ * 
+ * @sample samples.generated.issorted.IsSortedULongArraySamples.isSortedBy
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public inline fun <R : Comparable<R>> ULongArray.isSortedBy(selector: (ULong) -> R?): Boolean {
+    if (size < 2) return true
+    var previousValue = selector(this[0])
+    for (i in 1..lastIndex) {
+        val currentValue = selector(this[i])
+        if (compareValues(previousValue, currentValue) > 0) return false
+        previousValue = currentValue
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array yields a [selector] value
+ * that is less than or equal to the [selector] value of the following element
+ * according to the natural sort order of the selector values.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The [selector] values of adjacent elements are compared sequentially using [compareValues],
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the [selector] value of the preceding element is not greater than that of the following one.
+ * 
+ * If the [selector] returns `null` for an element, the `null` value is treated as less than any non-null value.
+ * 
+ * @sample samples.generated.issorted.IsSortedUByteArraySamples.isSortedBy
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public inline fun <R : Comparable<R>> UByteArray.isSortedBy(selector: (UByte) -> R?): Boolean {
+    if (size < 2) return true
+    var previousValue = selector(this[0])
+    for (i in 1..lastIndex) {
+        val currentValue = selector(this[i])
+        if (compareValues(previousValue, currentValue) > 0) return false
+        previousValue = currentValue
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array yields a [selector] value
+ * that is less than or equal to the [selector] value of the following element
+ * according to the natural sort order of the selector values.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The [selector] values of adjacent elements are compared sequentially using [compareValues],
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the [selector] value of the preceding element is not greater than that of the following one.
+ * 
+ * If the [selector] returns `null` for an element, the `null` value is treated as less than any non-null value.
+ * 
+ * @sample samples.generated.issorted.IsSortedUShortArraySamples.isSortedBy
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public inline fun <R : Comparable<R>> UShortArray.isSortedBy(selector: (UShort) -> R?): Boolean {
+    if (size < 2) return true
+    var previousValue = selector(this[0])
+    for (i in 1..lastIndex) {
+        val currentValue = selector(this[i])
+        if (compareValues(previousValue, currentValue) > 0) return false
+        previousValue = currentValue
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array yields a [selector] value
+ * that is greater than or equal to the [selector] value of the following element
+ * according to the natural sort order of the selector values.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The [selector] values of adjacent elements are compared sequentially using [compareValues],
+ * and the array is considered sorted in descending order if for each pair
+ * of adjacent elements the [selector] value of the preceding element is not less
+ * than that of the following one.
+ * 
+ * If the [selector] returns `null` for an element, the `null` value is treated as less than any non-null value.
+ * 
+ * @sample samples.generated.issorted.IsSortedUIntArraySamples.isSortedByDescending
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public inline fun <R : Comparable<R>> UIntArray.isSortedByDescending(selector: (UInt) -> R?): Boolean {
+    if (size < 2) return true
+    var previousValue = selector(this[0])
+    for (i in 1..lastIndex) {
+        val currentValue = selector(this[i])
+        if (compareValues(previousValue, currentValue) < 0) return false
+        previousValue = currentValue
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array yields a [selector] value
+ * that is greater than or equal to the [selector] value of the following element
+ * according to the natural sort order of the selector values.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The [selector] values of adjacent elements are compared sequentially using [compareValues],
+ * and the array is considered sorted in descending order if for each pair
+ * of adjacent elements the [selector] value of the preceding element is not less
+ * than that of the following one.
+ * 
+ * If the [selector] returns `null` for an element, the `null` value is treated as less than any non-null value.
+ * 
+ * @sample samples.generated.issorted.IsSortedULongArraySamples.isSortedByDescending
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public inline fun <R : Comparable<R>> ULongArray.isSortedByDescending(selector: (ULong) -> R?): Boolean {
+    if (size < 2) return true
+    var previousValue = selector(this[0])
+    for (i in 1..lastIndex) {
+        val currentValue = selector(this[i])
+        if (compareValues(previousValue, currentValue) < 0) return false
+        previousValue = currentValue
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array yields a [selector] value
+ * that is greater than or equal to the [selector] value of the following element
+ * according to the natural sort order of the selector values.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The [selector] values of adjacent elements are compared sequentially using [compareValues],
+ * and the array is considered sorted in descending order if for each pair
+ * of adjacent elements the [selector] value of the preceding element is not less
+ * than that of the following one.
+ * 
+ * If the [selector] returns `null` for an element, the `null` value is treated as less than any non-null value.
+ * 
+ * @sample samples.generated.issorted.IsSortedUByteArraySamples.isSortedByDescending
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public inline fun <R : Comparable<R>> UByteArray.isSortedByDescending(selector: (UByte) -> R?): Boolean {
+    if (size < 2) return true
+    var previousValue = selector(this[0])
+    for (i in 1..lastIndex) {
+        val currentValue = selector(this[i])
+        if (compareValues(previousValue, currentValue) < 0) return false
+        previousValue = currentValue
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array yields a [selector] value
+ * that is greater than or equal to the [selector] value of the following element
+ * according to the natural sort order of the selector values.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The [selector] values of adjacent elements are compared sequentially using [compareValues],
+ * and the array is considered sorted in descending order if for each pair
+ * of adjacent elements the [selector] value of the preceding element is not less
+ * than that of the following one.
+ * 
+ * If the [selector] returns `null` for an element, the `null` value is treated as less than any non-null value.
+ * 
+ * @sample samples.generated.issorted.IsSortedUShortArraySamples.isSortedByDescending
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public inline fun <R : Comparable<R>> UShortArray.isSortedByDescending(selector: (UShort) -> R?): Boolean {
+    if (size < 2) return true
+    var previousValue = selector(this[0])
+    for (i in 1..lastIndex) {
+        val currentValue = selector(this[i])
+        if (compareValues(previousValue, currentValue) < 0) return false
+        previousValue = currentValue
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is greater than or equal
+ * to the following element according to their natural sort order.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially,
+ * and the array is considered sorted in descending order if for each
+ * pair of adjacent elements the preceding element is not less than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedUIntArraySamples.isSortedDescending
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun UIntArray.isSortedDescending(): Boolean {
+    for (i in 1..lastIndex) {
+        if (this[i - 1] < this[i]) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is greater than or equal
+ * to the following element according to their natural sort order.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially,
+ * and the array is considered sorted in descending order if for each
+ * pair of adjacent elements the preceding element is not less than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedULongArraySamples.isSortedDescending
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun ULongArray.isSortedDescending(): Boolean {
+    for (i in 1..lastIndex) {
+        if (this[i - 1] < this[i]) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is greater than or equal
+ * to the following element according to their natural sort order.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially,
+ * and the array is considered sorted in descending order if for each
+ * pair of adjacent elements the preceding element is not less than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedUByteArraySamples.isSortedDescending
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun UByteArray.isSortedDescending(): Boolean {
+    for (i in 1..lastIndex) {
+        if (this[i - 1] < this[i]) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is greater than or equal
+ * to the following element according to their natural sort order.
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially,
+ * and the array is considered sorted in descending order if for each
+ * pair of adjacent elements the preceding element is not less than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedUShortArraySamples.isSortedDescending
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun UShortArray.isSortedDescending(): Boolean {
+    for (i in 1..lastIndex) {
+        if (this[i - 1] < this[i]) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is less than or equal
+ * to the following element according to the specified [comparator].
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially using [Comparator.compare],
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the preceding element is not greater than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedUIntArraySamples.isSortedWith
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun UIntArray.isSortedWith(comparator: Comparator<in UInt>): Boolean {
+    for (i in 1..lastIndex) {
+        if (comparator.compare(this[i - 1], this[i]) > 0) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is less than or equal
+ * to the following element according to the specified [comparator].
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially using [Comparator.compare],
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the preceding element is not greater than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedULongArraySamples.isSortedWith
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun ULongArray.isSortedWith(comparator: Comparator<in ULong>): Boolean {
+    for (i in 1..lastIndex) {
+        if (comparator.compare(this[i - 1], this[i]) > 0) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is less than or equal
+ * to the following element according to the specified [comparator].
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially using [Comparator.compare],
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the preceding element is not greater than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedUByteArraySamples.isSortedWith
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun UByteArray.isSortedWith(comparator: Comparator<in UByte>): Boolean {
+    for (i in 1..lastIndex) {
+        if (comparator.compare(this[i - 1], this[i]) > 0) return false
+    }
+    return true
+}
+
+/**
+ * Returns `true` if each element in the array is less than or equal
+ * to the following element according to the specified [comparator].
+ * 
+ * Returns `true` if the array has fewer than two elements.
+ * 
+ * The elements are compared sequentially using [Comparator.compare],
+ * and the array is considered sorted if for each pair of adjacent elements
+ * the preceding element is not greater than the following one.
+ * 
+ * @sample samples.generated.issorted.IsSortedUShortArraySamples.isSortedWith
+ */
+@SinceKotlin("2.4")
+@ExperimentalUnsignedTypes
+public fun UShortArray.isSortedWith(comparator: Comparator<in UShort>): Boolean {
+    for (i in 1..lastIndex) {
+        if (comparator.compare(this[i - 1], this[i]) > 0) return false
+    }
+    return true
+}
+
+/**
  * Reverses elements in the array in-place.
  */
 @SinceKotlin("1.3")
@@ -3189,8 +3690,6 @@ public fun UShortArray.sortedArrayDescending(): UShortArray {
 
 /**
  * Returns a list of all elements sorted descending according to their natural sort order.
- * 
- * The sort is _stable_. It means that equal elements preserve their order relative to each other after sorting.
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -3200,8 +3699,6 @@ public fun UIntArray.sortedDescending(): List<UInt> {
 
 /**
  * Returns a list of all elements sorted descending according to their natural sort order.
- * 
- * The sort is _stable_. It means that equal elements preserve their order relative to each other after sorting.
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -3211,8 +3708,6 @@ public fun ULongArray.sortedDescending(): List<ULong> {
 
 /**
  * Returns a list of all elements sorted descending according to their natural sort order.
- * 
- * The sort is _stable_. It means that equal elements preserve their order relative to each other after sorting.
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -3222,8 +3717,6 @@ public fun UByteArray.sortedDescending(): List<UByte> {
 
 /**
  * Returns a list of all elements sorted descending according to their natural sort order.
- * 
- * The sort is _stable_. It means that equal elements preserve their order relative to each other after sorting.
  */
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -3544,6 +4037,7 @@ public fun UShortArray?.contentToString(): String {
  * @return the [destination] array.
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun UIntArray.copyInto(destination: UIntArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): UIntArray {
@@ -3568,6 +4062,7 @@ public inline fun UIntArray.copyInto(destination: UIntArray, destinationOffset: 
  * @return the [destination] array.
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun ULongArray.copyInto(destination: ULongArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): ULongArray {
@@ -3592,6 +4087,7 @@ public inline fun ULongArray.copyInto(destination: ULongArray, destinationOffset
  * @return the [destination] array.
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun UByteArray.copyInto(destination: UByteArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): UByteArray {
@@ -3616,6 +4112,7 @@ public inline fun UByteArray.copyInto(destination: UByteArray, destinationOffset
  * @return the [destination] array.
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun UShortArray.copyInto(destination: UShortArray, destinationOffset: Int = 0, startIndex: Int = 0, endIndex: Int = size): UShortArray {
@@ -4580,6 +5077,7 @@ public inline fun <V> UShortArray.associateWith(valueSelector: (UShort) -> V): M
  * @sample samples.collections.Collections.Transformations.associateWithTo
  */
 @SinceKotlin("1.4")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <V, M : MutableMap<in UInt, in V>> UIntArray.associateWithTo(destination: M, valueSelector: (UInt) -> V): M {
@@ -4598,6 +5096,7 @@ public inline fun <V, M : MutableMap<in UInt, in V>> UIntArray.associateWithTo(d
  * @sample samples.collections.Collections.Transformations.associateWithTo
  */
 @SinceKotlin("1.4")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <V, M : MutableMap<in ULong, in V>> ULongArray.associateWithTo(destination: M, valueSelector: (ULong) -> V): M {
@@ -4616,6 +5115,7 @@ public inline fun <V, M : MutableMap<in ULong, in V>> ULongArray.associateWithTo
  * @sample samples.collections.Collections.Transformations.associateWithTo
  */
 @SinceKotlin("1.4")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <V, M : MutableMap<in UByte, in V>> UByteArray.associateWithTo(destination: M, valueSelector: (UByte) -> V): M {
@@ -4634,6 +5134,7 @@ public inline fun <V, M : MutableMap<in UByte, in V>> UByteArray.associateWithTo
  * @sample samples.collections.Collections.Transformations.associateWithTo
  */
 @SinceKotlin("1.4")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <V, M : MutableMap<in UShort, in V>> UShortArray.associateWithTo(destination: M, valueSelector: (UShort) -> V): M {
@@ -4758,6 +5259,7 @@ public inline fun <R> UShortArray.flatMapIndexed(transform: (index: Int, UShort)
 @SinceKotlin("1.4")
 @OptIn(kotlin.experimental.ExperimentalTypeInference::class)
 @OverloadResolutionByLambdaReturnType
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UIntArray.flatMapIndexedTo(destination: C, transform: (index: Int, UInt) -> Iterable<R>): C {
@@ -4776,6 +5278,7 @@ public inline fun <R, C : MutableCollection<in R>> UIntArray.flatMapIndexedTo(de
 @SinceKotlin("1.4")
 @OptIn(kotlin.experimental.ExperimentalTypeInference::class)
 @OverloadResolutionByLambdaReturnType
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> ULongArray.flatMapIndexedTo(destination: C, transform: (index: Int, ULong) -> Iterable<R>): C {
@@ -4794,6 +5297,7 @@ public inline fun <R, C : MutableCollection<in R>> ULongArray.flatMapIndexedTo(d
 @SinceKotlin("1.4")
 @OptIn(kotlin.experimental.ExperimentalTypeInference::class)
 @OverloadResolutionByLambdaReturnType
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UByteArray.flatMapIndexedTo(destination: C, transform: (index: Int, UByte) -> Iterable<R>): C {
@@ -4812,6 +5316,7 @@ public inline fun <R, C : MutableCollection<in R>> UByteArray.flatMapIndexedTo(d
 @SinceKotlin("1.4")
 @OptIn(kotlin.experimental.ExperimentalTypeInference::class)
 @OverloadResolutionByLambdaReturnType
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UShortArray.flatMapIndexedTo(destination: C, transform: (index: Int, UShort) -> Iterable<R>): C {
@@ -4827,6 +5332,7 @@ public inline fun <R, C : MutableCollection<in R>> UShortArray.flatMapIndexedTo(
  * Appends all elements yielded from results of [transform] function being invoked on each element of original array, to the given [destination].
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UIntArray.flatMapTo(destination: C, transform: (UInt) -> Iterable<R>): C {
@@ -4841,6 +5347,7 @@ public inline fun <R, C : MutableCollection<in R>> UIntArray.flatMapTo(destinati
  * Appends all elements yielded from results of [transform] function being invoked on each element of original array, to the given [destination].
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> ULongArray.flatMapTo(destination: C, transform: (ULong) -> Iterable<R>): C {
@@ -4855,6 +5362,7 @@ public inline fun <R, C : MutableCollection<in R>> ULongArray.flatMapTo(destinat
  * Appends all elements yielded from results of [transform] function being invoked on each element of original array, to the given [destination].
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UByteArray.flatMapTo(destination: C, transform: (UByte) -> Iterable<R>): C {
@@ -4869,6 +5377,7 @@ public inline fun <R, C : MutableCollection<in R>> UByteArray.flatMapTo(destinat
  * Appends all elements yielded from results of [transform] function being invoked on each element of original array, to the given [destination].
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UShortArray.flatMapTo(destination: C, transform: (UShort) -> Iterable<R>): C {
@@ -5012,6 +5521,7 @@ public inline fun <K, V> UShortArray.groupBy(keySelector: (UShort) -> K, valueTr
  * @sample samples.collections.Collections.Transformations.groupBy
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <K, M : MutableMap<in K, MutableList<UInt>>> UIntArray.groupByTo(destination: M, keySelector: (UInt) -> K): M {
@@ -5032,6 +5542,7 @@ public inline fun <K, M : MutableMap<in K, MutableList<UInt>>> UIntArray.groupBy
  * @sample samples.collections.Collections.Transformations.groupBy
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <K, M : MutableMap<in K, MutableList<ULong>>> ULongArray.groupByTo(destination: M, keySelector: (ULong) -> K): M {
@@ -5052,6 +5563,7 @@ public inline fun <K, M : MutableMap<in K, MutableList<ULong>>> ULongArray.group
  * @sample samples.collections.Collections.Transformations.groupBy
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <K, M : MutableMap<in K, MutableList<UByte>>> UByteArray.groupByTo(destination: M, keySelector: (UByte) -> K): M {
@@ -5072,6 +5584,7 @@ public inline fun <K, M : MutableMap<in K, MutableList<UByte>>> UByteArray.group
  * @sample samples.collections.Collections.Transformations.groupBy
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <K, M : MutableMap<in K, MutableList<UShort>>> UShortArray.groupByTo(destination: M, keySelector: (UShort) -> K): M {
@@ -5093,6 +5606,7 @@ public inline fun <K, M : MutableMap<in K, MutableList<UShort>>> UShortArray.gro
  * @sample samples.collections.Collections.Transformations.groupByKeysAndValues
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <K, V, M : MutableMap<in K, MutableList<V>>> UIntArray.groupByTo(destination: M, keySelector: (UInt) -> K, valueTransform: (UInt) -> V): M {
@@ -5114,6 +5628,7 @@ public inline fun <K, V, M : MutableMap<in K, MutableList<V>>> UIntArray.groupBy
  * @sample samples.collections.Collections.Transformations.groupByKeysAndValues
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <K, V, M : MutableMap<in K, MutableList<V>>> ULongArray.groupByTo(destination: M, keySelector: (ULong) -> K, valueTransform: (ULong) -> V): M {
@@ -5135,6 +5650,7 @@ public inline fun <K, V, M : MutableMap<in K, MutableList<V>>> ULongArray.groupB
  * @sample samples.collections.Collections.Transformations.groupByKeysAndValues
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <K, V, M : MutableMap<in K, MutableList<V>>> UByteArray.groupByTo(destination: M, keySelector: (UByte) -> K, valueTransform: (UByte) -> V): M {
@@ -5156,6 +5672,7 @@ public inline fun <K, V, M : MutableMap<in K, MutableList<V>>> UByteArray.groupB
  * @sample samples.collections.Collections.Transformations.groupByKeysAndValues
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <K, V, M : MutableMap<in K, MutableList<V>>> UShortArray.groupByTo(destination: M, keySelector: (UShort) -> K, valueTransform: (UShort) -> V): M {
@@ -5278,6 +5795,7 @@ public inline fun <R> UShortArray.mapIndexed(transform: (index: Int, UShort) -> 
  * and returns the result of the transform applied to the element.
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UIntArray.mapIndexedTo(destination: C, transform: (index: Int, UInt) -> R): C {
@@ -5294,6 +5812,7 @@ public inline fun <R, C : MutableCollection<in R>> UIntArray.mapIndexedTo(destin
  * and returns the result of the transform applied to the element.
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> ULongArray.mapIndexedTo(destination: C, transform: (index: Int, ULong) -> R): C {
@@ -5310,6 +5829,7 @@ public inline fun <R, C : MutableCollection<in R>> ULongArray.mapIndexedTo(desti
  * and returns the result of the transform applied to the element.
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UByteArray.mapIndexedTo(destination: C, transform: (index: Int, UByte) -> R): C {
@@ -5326,6 +5846,7 @@ public inline fun <R, C : MutableCollection<in R>> UByteArray.mapIndexedTo(desti
  * and returns the result of the transform applied to the element.
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UShortArray.mapIndexedTo(destination: C, transform: (index: Int, UShort) -> R): C {
@@ -5340,6 +5861,7 @@ public inline fun <R, C : MutableCollection<in R>> UShortArray.mapIndexedTo(dest
  * and appends the results to the given [destination].
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UIntArray.mapTo(destination: C, transform: (UInt) -> R): C {
@@ -5353,6 +5875,7 @@ public inline fun <R, C : MutableCollection<in R>> UIntArray.mapTo(destination: 
  * and appends the results to the given [destination].
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> ULongArray.mapTo(destination: C, transform: (ULong) -> R): C {
@@ -5366,6 +5889,7 @@ public inline fun <R, C : MutableCollection<in R>> ULongArray.mapTo(destination:
  * and appends the results to the given [destination].
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UByteArray.mapTo(destination: C, transform: (UByte) -> R): C {
@@ -5379,6 +5903,7 @@ public inline fun <R, C : MutableCollection<in R>> UByteArray.mapTo(destination:
  * and appends the results to the given [destination].
  */
 @SinceKotlin("1.3")
+@IgnorableReturnValue
 @ExperimentalUnsignedTypes
 @kotlin.internal.InlineOnly
 public inline fun <R, C : MutableCollection<in R>> UShortArray.mapTo(destination: C, transform: (UShort) -> R): C {

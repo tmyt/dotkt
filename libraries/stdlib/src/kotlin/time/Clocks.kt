@@ -6,7 +6,7 @@
 package kotlin.time
 
 /**
- * Creates a [Clock] that uses the [time mark at the moment of creation][TimeMark.markNow] to determine how [far][TimeMark.elapsedNow]
+ * Creates a [Clock] that uses the [time mark at the moment of creation][TimeSource.markNow] to determine how [far][TimeMark.elapsedNow]
  * the [current moment][Clock.now] is from the [origin].
  *
  * This clock stores the [TimeMark] at the moment of creation, so repeatedly creating [Clock]s from the same [TimeSource] results
@@ -15,8 +15,8 @@ package kotlin.time
  *
  * @sample samples.time.Clocks.timeSourceAsClock
  */
-@SinceKotlin("2.2")
-@ExperimentalTime
+@SinceKotlin("2.3")
+@WasExperimental(ExperimentalTime::class)
 @kotlin.jvm.JvmName("fromTimeSource")
 public fun TimeSource.asClock(origin: Instant): Clock = object : Clock {
     private val startMark: TimeMark = markNow()

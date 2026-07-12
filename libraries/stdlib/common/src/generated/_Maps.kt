@@ -5,6 +5,7 @@
 
 @file:kotlin.jvm.JvmMultifileClass
 @file:kotlin.jvm.JvmName("MapsKt")
+@file:Suppress("REDUNDANT_CALL_OF_CONVERSION_METHOD")
 
 package kotlin.collections
 
@@ -93,6 +94,7 @@ public inline fun <K, V, R> Map<out K, V>.flatMap(transform: (Map.Entry<K, V>) -
 /**
  * Appends all elements yielded from results of [transform] function being invoked on each entry of original map, to the given [destination].
  */
+@IgnorableReturnValue
 public inline fun <K, V, R, C : MutableCollection<in R>> Map<out K, V>.flatMapTo(destination: C, transform: (Map.Entry<K, V>) -> Iterable<R>): C {
     for (element in this) {
         val list = transform(element)
@@ -108,6 +110,7 @@ public inline fun <K, V, R, C : MutableCollection<in R>> Map<out K, V>.flatMapTo
 @OptIn(kotlin.experimental.ExperimentalTypeInference::class)
 @OverloadResolutionByLambdaReturnType
 @kotlin.jvm.JvmName("flatMapSequenceTo")
+@IgnorableReturnValue
 public inline fun <K, V, R, C : MutableCollection<in R>> Map<out K, V>.flatMapTo(destination: C, transform: (Map.Entry<K, V>) -> Sequence<R>): C {
     for (element in this) {
         val list = transform(element)
@@ -140,6 +143,7 @@ public inline fun <K, V, R : Any> Map<out K, V>.mapNotNull(transform: (Map.Entry
  * Applies the given [transform] function to each entry in the original map
  * and appends only the non-null results to the given [destination].
  */
+@IgnorableReturnValue
 public inline fun <K, V, R : Any, C : MutableCollection<in R>> Map<out K, V>.mapNotNullTo(destination: C, transform: (Map.Entry<K, V>) -> R?): C {
     forEach { element -> transform(element)?.let { destination.add(it) } }
     return destination
@@ -149,6 +153,7 @@ public inline fun <K, V, R : Any, C : MutableCollection<in R>> Map<out K, V>.map
  * Applies the given [transform] function to each entry of the original map
  * and appends the results to the given [destination].
  */
+@IgnorableReturnValue
 public inline fun <K, V, R, C : MutableCollection<in R>> Map<out K, V>.mapTo(destination: C, transform: (Map.Entry<K, V>) -> R): C {
     for (item in this)
         destination.add(transform(item))

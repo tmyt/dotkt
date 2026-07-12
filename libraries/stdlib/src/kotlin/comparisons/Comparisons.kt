@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2022 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Copyright 2010-2026 JetBrains s.r.o. and Kotlin Programming Language contributors.
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 @file:kotlin.jvm.JvmName("ComparisonsKt")
@@ -70,8 +70,7 @@ public inline fun <T, K> compareValuesBy(a: T, b: T, comparator: Comparator<in K
  * @sample samples.comparisons.Comparisons.compareValues
  */
 public fun <T : Comparable<*>> compareValues(a: T?, b: T?): Int {
-    if (a === b) return 0
-    if (a == null) return -1
+    if (a == null) return if (b == null) 0 else -1
     if (b == null) return 1
 
     // CLR adaptation: the JVM `(a as Comparable<Any>).compareTo(b)` unchecked cast lowers to the
@@ -237,8 +236,7 @@ public infix fun <T> Comparator<T>.thenDescending(comparator: Comparator<in T>):
 public fun <T : Any> nullsFirst(comparator: Comparator<in T>): Comparator<T?> =
     Comparator { a, b ->
         when {
-            a === b -> 0
-            a == null -> -1
+            a == null -> if (b == null) 0 else -1
             b == null -> 1
             else -> comparator.compare(a, b)
         }
@@ -264,8 +262,7 @@ public inline fun <T : Comparable<T>> nullsFirst(): Comparator<T?> = nullsFirst(
 public fun <T : Any> nullsLast(comparator: Comparator<in T>): Comparator<T?> =
     Comparator { a, b ->
         when {
-            a === b -> 0
-            a == null -> 1
+            a == null -> if (b == null) 0 else 1
             b == null -> -1
             else -> comparator.compare(a, b)
         }

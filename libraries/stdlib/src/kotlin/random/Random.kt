@@ -176,6 +176,8 @@ public abstract class Random {
      *
      * Generates a `Double` random value uniformly distributed between 0 (inclusive) and [until] (exclusive).
      *
+     * [until] must be a fininte number otherwise the behavior is unspecified.
+     *
      * @throws IllegalArgumentException if [until] is negative or zero.
      *
      * @sample samples.random.Randoms.nextDoubleFromUntil
@@ -187,7 +189,7 @@ public abstract class Random {
      *
      * Generates a `Double` random value uniformly distributed between the specified [from] (inclusive) and [until] (exclusive) bounds.
      *
-     * [from] and [until] must be finite otherwise the behavior is unspecified.
+     * [from] and [until] must be finite numbers otherwise the behavior is unspecified.
      *
      * @throws IllegalArgumentException if [from] is greater than or equal to [until].
      *
@@ -220,6 +222,7 @@ public abstract class Random {
      *
      * @sample samples.random.Randoms.nextBytes
      */
+    @IgnorableReturnValue
     public open fun nextBytes(array: ByteArray, fromIndex: Int = 0, toIndex: Int = array.size): ByteArray {
         require(fromIndex in 0..array.size && toIndex in 0..array.size) { "fromIndex ($fromIndex) or toIndex ($toIndex) are out of range: 0..${array.size}." }
         require(fromIndex <= toIndex) { "fromIndex ($fromIndex) must be not greater than toIndex ($toIndex)." }
@@ -252,6 +255,7 @@ public abstract class Random {
      *
      * @sample samples.random.Randoms.nextBytes
      */
+    @IgnorableReturnValue
     public open fun nextBytes(array: ByteArray): ByteArray = nextBytes(array, 0, array.size)
 
     /**
@@ -299,6 +303,7 @@ public abstract class Random {
 
         override fun nextFloat(): Float = defaultRandom.nextFloat()
 
+        @IgnorableReturnValue
         override fun nextBytes(array: ByteArray): ByteArray = defaultRandom.nextBytes(array)
         override fun nextBytes(size: Int): ByteArray = defaultRandom.nextBytes(size)
         override fun nextBytes(array: ByteArray, fromIndex: Int, toIndex: Int): ByteArray =
