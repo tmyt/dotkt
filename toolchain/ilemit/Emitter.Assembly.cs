@@ -11,6 +11,11 @@ sealed partial class Emitter
 {
     public void EmitAssembly(List<JsonElement> files)
     {
+        // #84 Phase 4: run the in-process CIR SANITY gate at the CIR boundary, BEFORE any emit — malformed CIR
+        // (undeclared local, dangling goto, missing owner) fails LOUD with a precise `sanity: <invariant>` message
+        // (routed through Phase 1's diagnostic) instead of a cryptic Reflection.Emit crash / silent BadImageFormat.
+        // See Emitter.Sanity.cs. Pure fail-fast validation — no IL effect (a valid CIR is byte-identical after it).
+        CheckCir(files);
         // NOTE (R-1, reverse-interop): the emitted assembly's core type refs point at System.Private.CoreLib (the
         // impl assembly) because BCL types resolve via runtime reflection (typeof/Type.GetType, ~176 sites). A
         // standalone exe runs fine and any .NET host can reflection-load it (samples/il-revinterop), but a C# project

@@ -1488,6 +1488,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   so a throw is re-tagged and `IlEmit.Main` prints a clean one-line `ilemit: <Type>.<method>: <message>`
   (returning 1) instead of a stack dump; the full stack stays available behind `ILEMIT_TRACE`. Pure
   error-path plumbing — a successful emit is byte-identical.
+- **In-process CIR sanity gate before emit (#84 Phase 4).** The offline schema validator checks CIR
+  *shape*; a new in-process pass in ilemit (`Emitter.Sanity.cs`, run at the head of `EmitAssembly` before
+  any codegen) checks *meaning*, so malformed CIR fails LOUD with a precise `ilemit: <Type>.<method>:
+  sanity: <invariant>` message (routed through the Phase-1 diagnostic) instead of a cryptic
+  Reflection.Emit crash / silent `BadImageFormat`. Invariants: every `local`/`setLocal`/`byref` resolves
+  to a declared var/param; every `goto`/`brIf` has a matching `label` (and no duplicate label id);
+  `binOp` has both operands and `cond` has `cond`/`then`/`else`; field-family nodes carry a non-null
+  `ownerType`; a `for` loop's `cmp` is one of `<=`/`<`/`>=` (an unknown one silently miscompiled to an
+  infinite loop). Deliberately conservative — calibrated to never false-positive on the verify-il corpus
+  or the 251-file stdlib rt build; ambiguous invariants (callStatic owner, args-vs-argTypes arity) were
+  dropped rather than risk a false reject. (Shared bir-common home + bir2cir-side call + offline
+  `verify-sanity.py` are noted Phase-4 follow-ups.)
 - **`Makefile` orchestrator** over the canonical scripts (incremental targets `all` / `toolchain` /
   `stdlib{,-jar,-ref,-rt}` / `pack` / `verify*` / `dev`), and a **4-package NuGet structure** (Sdk /
   Toolchain / Stdlib / Templates) that fixes the packaging gap where the shipped SDK carried no stdlib

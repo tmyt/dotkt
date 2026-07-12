@@ -112,7 +112,9 @@ static class IlEmit
 
 // #84 Phase 1: a failure during body emission, tagged with WHICH declaration (`Type.method [node]`) was being
 // emitted. Thrown per-method by EmitAssembly's body-emit guard; caught in IlEmit.Main for a clean one-line message.
-sealed class CirEmitException : Exception
+// Not sealed: #84 Phase 4's CirSanityException derives from it so the SAME `ilemit: <Decl>: <message>` catch in
+// Main handles both (a sanity violation bakes a `sanity: ` prefix into its message).
+class CirEmitException : Exception
 {
     public string Decl { get; }
     public CirEmitException(string decl, string message, Exception inner) : base(message, inner) { Decl = decl; }
