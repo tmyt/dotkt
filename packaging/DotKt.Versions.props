@@ -10,7 +10,7 @@
      build metadata. A controlled folder-feed A/B confirmed metadata installs fine, so it is restored here.) -->
 <Project>
   <PropertyGroup>
-    <DotKtVersionPrefix>0.9.3</DotKtVersionPrefix>
+    <DotKtVersionPrefix>0.9.4</DotKtVersionPrefix>
     <DotKtKotlinVersion>2.2.0</DotKtKotlinVersion>
     <Version>$(DotKtVersionPrefix)+kotlin-$(DotKtKotlinVersion)</Version>
     <InformationalVersion>$(DotKtVersionPrefix)+kotlin-$(DotKtKotlinVersion)</InformationalVersion>

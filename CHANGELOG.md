@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.4 — 2026-07-12
+
 0.9.4 carries the 4-layer compiler migration to completion, lands a full coroutine engine,
 and turns hundreds of mid-migration fixes into a coherent release. Headlines: `suspend` /
 `sequence{}` / `Task.await()` run end-to-end; the compiler's hand-written stdlib lowerings are
