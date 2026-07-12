@@ -70,7 +70,18 @@ sealed partial class Emitter
     {
         var elem = NativeType(e.GetProperty("elem"));
         var nt = typeof(Nullable<>).MakeGenericType(elem);
-        EmitExpr(e.GetProperty("e"));
+        var src = EmitExpr(e.GetProperty("e"));
+        // REDUNDANT unwrap: the source already holds the non-nullable `elem`, not a `Nullable<elem>`. The 2.4.0
+        // frontend emits a nested `nullableValue{ nullableValue{ x } }` for a safe-call member access, so the outer
+        // node lands on an already-unwrapped value. `stloc` of a raw `elem` into a `Nullable<elem>` local would
+        // REINTERPRET its bytes as the {HasValue,value} struct layout -> `.Value` reads garbage (a Char 'x' -> 0).
+        // The stack already holds `elem` -- nothing to do.
+        if (src == elem) return elem;
+        // Any source that is neither the unwrapped `elem` nor the `Nullable<elem>` we expect would be
+        // silently byte-reinterpreted by the `stloc` below. Fail loud so a future frontend shape surfaces
+        // at emit time rather than as another garbage value.
+        if (src != null && src != nt)
+            throw new NotSupportedException($"nullableValue: source {src} is neither {elem} nor {nt}");
         var loc = _il.DeclareLocal(nt);
         _il.Emit(OpCodes.Stloc, loc);
         _il.Emit(OpCodes.Ldloca, loc);
