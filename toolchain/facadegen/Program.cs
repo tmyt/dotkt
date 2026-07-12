@@ -1343,9 +1343,27 @@ static class FacadeGen
             extPropMembers.Add(g.Name); if (setter != null) extPropMembers.Add(setter.Name);
             tlProps.Add(PropObj(pn, RetTypeSfxN(g, t), setter != null, Mods(("ext", true)), "public", null, MapT(gps[0].ParameterType, t)));
         }
+        // #103: a top-level field-backed property with a CUSTOM accessor compiles to a public static FIELD `<name>`
+        // PLUS a separate non-special-name `get_<name>`/`set_<name>` method (the custom accessor body). Detect the
+        // pairing so (a) the accessor methods are NOT surfaced as loose top-level `fun`s and (b) the `prop` below is
+        // marked `customGet`/`customSet` — the consumer must INVOKE the accessor, not read/write the raw static field
+        // (else the custom getter/setter is bypassed cross-module, silently returning the raw field: the #103 miscompile).
+        var staticFieldNames = new HashSet<string>();
+        foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
+            if (f.Name.Length > 0 && f.Name[0] != '<' && f.Name[0] != '$') staticFieldNames.Add(f.Name);
+        var fieldAccessorMembers = new HashSet<string>();
         foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
         {
-            if (m.IsSpecialName || m.Name == "Main" || OBJECT_MEMBERS.Contains(m.Name) || extPropMembers.Contains(m.Name)) continue;
+            if (m.IsSpecialName) continue;
+            var mps = m.GetParameters();
+            if (m.Name.StartsWith("get_") && mps.Length == 0 && staticFieldNames.Contains(m.Name.Substring(4)))
+                fieldAccessorMembers.Add(m.Name);
+            else if (m.Name.StartsWith("set_") && mps.Length == 1 && mps[0].Name != "__self" && staticFieldNames.Contains(m.Name.Substring(4)))
+                fieldAccessorMembers.Add(m.Name);
+        }
+        foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
+        {
+            if (m.IsSpecialName || m.Name == "Main" || OBJECT_MEMBERS.Contains(m.Name) || extPropMembers.Contains(m.Name) || fieldAccessorMembers.Contains(m.Name)) continue;
             if (m.IsGenericMethod && !m.IsGenericMethodDefinition) continue;
             var ps = m.GetParameters();
             var k = KotlinFun(m);
@@ -1379,8 +1397,13 @@ static class FacadeGen
         {
             if (f.Name.Length == 0 || f.Name[0] == '<' || f.Name[0] == '$') continue;
             if (!Supported(f.FieldType) || !seen.Add("tlprop:" + f.Name)) continue;
-            var rw = !(f.IsInitOnly || IsKotlinReadOnly(f));
-            tlProps.Add(PropObj(f.Name, FieldTypeN(f, t), rw, new JsonObject(), "public", null, null));
+            // #103: a sibling `get_<name>`/`set_<name>` (the custom accessor body) marks the prop so the consumer
+            // invokes the accessor rather than the raw field. A custom setter implies `var`; otherwise rw is the
+            // field's mutability (a custom-getter-only `val` keeps its mutable backing field, unchanged from before).
+            var customGet = fieldAccessorMembers.Contains("get_" + f.Name);
+            var customSet = fieldAccessorMembers.Contains("set_" + f.Name);
+            var rw = customSet || !(f.IsInitOnly || IsKotlinReadOnly(f));
+            tlProps.Add(PropObj(f.Name, FieldTypeN(f, t), rw, Mods(("customGet", customGet), ("customSet", customSet)), "public", null, null));
         }
         // A `file` decl: the package (empty = root) + the .NET file-class FQN (where the backend emits the static call).
         var fileObj = new JsonObject { ["pkg"] = string.IsNullOrEmpty(t.Namespace) ? "" : t.Namespace, ["fileClass"] = t.FullName };

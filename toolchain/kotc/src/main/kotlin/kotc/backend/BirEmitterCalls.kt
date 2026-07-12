@@ -783,21 +783,33 @@ internal fun BirEmitter.call(call: IrCall): String {
 
 		// An INJECTED top-level property (from a DotKt assembly) -> the referenced .NET file class holds it. An
 		// EXTENSION property (`val T.p`) surfaces as get_/set_<name>(__self) statics with the extension receiver
-		// passed as `__self`; a plain NON-extension property (`val greeting`) is a plain STATIC FIELD (no accessor
-		// exists), so read -> `staticField` / write -> `staticFieldSet` of that referenced file class (#34b).
+		// passed as `__self`; a plain field-backed NON-extension property (`val greeting`) is a STATIC FIELD, so
+		// read -> `staticField` / write -> `staticFieldSet` of that referenced file class (#34b). BUT a field-backed
+		// property with a CUSTOM accessor (`val x = 41; get() = field + 1`, #103) additionally emits a `get_`/`set_`
+		// method on the file class — reading/writing the raw field would SKIP it (a silent cross-module miscompile).
 		// (body==null = injected stub.)
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
 			// A2 stage 3: read the restored top-level property's .NET file-facade class off its RESOLVED IR
 			// `CallableId` (`package` + name).
-			if (declaringClass == null) (p.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-				?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(CallableId(it.packageFqName, p.name)) }?.let { fileClass ->
+			val callableId = (p.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
+				?.let { CallableId(it.packageFqName, p.name) }
+			if (declaringClass == null) callableId
+				?.let { kotc.frontend.clrInjectedTopLevelPropFileClass(it) }?.let { fileClass ->
 				val isExt = p.getter?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true
 				if (!isExt) {
-					// A plain top-level val/var restored from a referenced DotKt library -> a STATIC FIELD of its .NET
-					// file class. NOT get_/set_ (a plain val/var has no accessor) and NOT `fileClassOf(p)` (the parent is
-					// an IrPackageFragment, so that returns the CURRENT file — the wrong owner). Use the referenced class.
-					return if (callee === p.setter)
-						"""{"k":"staticFieldSet","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+					// #103: a field-backed prop with a CUSTOM getter/setter must INVOKE the accessor (a static
+					// `get_/set_<name>` method on the file class, like the extension-property path below but without a
+					// receiver), NOT read/write the raw static field. bir2cir binds the `prop:get`/`prop:set` marker to
+					// the `get_`/`set_` method by convention. Read/write customness is independent (a `var` may pair a
+					// custom setter with a default getter, or vice versa); a default accessor stays a raw field access.
+					val (customGet, customSet) = callableId?.let { kotc.frontend.clrInjectedTopLevelPropCustomAccessor(it) } ?: (false to false)
+					if (callee === p.setter) {
+						return if (customSet)
+							"""{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"args":[${expr(regularArgs(call).first())}]}"""
+						else """{"k":"staticFieldSet","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+					}
+					return if (customGet)
+						"""{"k":"callStatic","ownerType":${str(fileClass)},"method":${str(p.name.asString())},"prop":"get","argTypes":[],"ret":${birType(callee.returnType).toJson()},"args":[]}"""
 					else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}}"""
 				}
 				val recv = extensionReceiver(call)

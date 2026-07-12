@@ -743,6 +743,63 @@ svexpected="$(printf 'hi\n42\n(1, 2)')"
 run_app svactual "$SV/appil/TlvalApp.dll"
 check_output roundtrip-toplevel-val "$svexpected" "$svactual" "a top-level val/var round-trips: the consumer reads the library's top-level property DIRECTLY (no fn workaround) via the facadegen tlprop meta token"
 
+# ----- CUSTOM-ACCESSOR field-backed property round-trip (#103) -------------------------------------------
+# A field-backed property with a CUSTOM accessor (`val x = 41; get() = field + 1`) compiles to a static/backing FIELD
+# PLUS a `get_/set_<name>` accessor method carrying the custom body. Read/written cross-module, the consumer must INVOKE
+# the accessor, NOT touch the raw field — else the custom getter/setter is silently BYPASSED (the #103 miscompile: a
+# top-level `val topProp get()=field+1` returned the raw 41 instead of 42). #89 fixed the SAME-MODULE shape; this is its
+# cross-module twin: facadegen marks the tlprop `customGet`/`customSet` (Program.cs EmitKotlinFileClass, skipping the
+# loose accessor fun), kotc restores it and routes the read/write through the accessor (BirEmitterCalls injected branch).
+# Covers TOP-LEVEL (the broken case) + companion + member field-backed props, and the independent get/set customness.
+CA="$ROOT/build/roundtrip-customprop"; rm -rf "$CA"; mkdir -p "$CA/lib" "$CA/app" "$CA/libbir" "$CA/libil" "$CA/appbir" "$CA/appil"
+cat > "$CA/lib/lib.kt" <<'EOF'
+package cprop
+val topProp: Int = 41
+    get() = field + 1               // custom getter -> 42, NOT the raw 41
+var topVar: Int = 0
+    set(value) { field = value + 5 } // custom setter: set(10) -> 15 (default getter reads the field)
+var topGetVar: Int = 100
+    get() = field - 1                // custom getter + DEFAULT setter: set(50) then read -> 49
+class Host {
+    val kProp: Int = 7
+        get() = field + 100          // member field-backed val, custom getter -> 107
+    var kVar: Int = 0
+        set(value) { field = value * 2 } // member var, custom setter: set(3) -> 6
+    companion object {
+        val cProp: Int = 10
+            get() = field * 2        // companion field-backed val, custom getter -> 20
+    }
+}
+EOF
+cat > "$CA/app/app.kt" <<'EOF'
+import cprop.topProp
+import cprop.topVar
+import cprop.topGetVar
+import cprop.Host
+fun main() {
+    println(topProp)          // 42 (custom getter, not raw 41)
+    val h = Host()
+    println(h.kProp)          // 107
+    println(Host.cProp)       // 20
+    topVar = 10
+    println(topVar)           // 15 (custom setter)
+    h.kVar = 3
+    println(h.kVar)           // 6 (custom setter)
+    topGetVar = 50
+    println(topGetVar)        // 49 (custom getter, default setter)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$CA/lib" -no-stdlib -classpath "$CP" -d "$CA/libbir" >/dev/null 2>&1 || true
+emit_il "$CA/libil" CpropLib "$CA/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$CA/libil/CpropLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$CA/k.meta" --refs "$REFS$CA/libil/CpropLib.dll" cprop.LibKt cprop.Host >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$CA/k.meta" "$LAUNCHER" "$CA/app" -no-stdlib -classpath "$CP" -d "$CA/appbir" >/dev/null 2>&1 || true
+emit_il "$CA/appil" CpropApp --ref "$CA/libil/CpropLib.dll" "$CA/appbir"/*.bir.json
+cp "$CA/libil/CpropLib.dll" "$CA/appil/" 2>/dev/null || true
+caexpected="$(printf '42\n107\n20\n15\n6\n49')"
+run_app caactual "$CA/appil/CpropApp.dll"
+check_output roundtrip-customprop "$caexpected" "$caactual" "field-backed property with a CUSTOM accessor, consumed cross-module, invokes the getter/setter (not the raw field) — #103; top-level + companion + member, independent get/set customness"
+
 # ----- TRI-STATE NULLABILITY (NRT) round-trip (#48): T / T? restored via the NullableAttribute byte + value Nullable<int> -----
 # #48 unified tri-state nullability (T / T? / T!) with proper NRT emission. The sharp proof that the NullableAttribute
 # byte round-trips faithfully is NOT runtime output (a reference `String?` is bare `String` at the CLR level — null

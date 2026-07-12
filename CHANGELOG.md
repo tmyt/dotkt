@@ -17,6 +17,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   reusable procedure is `docs/kotlin-frontend-bump-playbook.md`. One latent value-type-array-nullability
   compiler bug surfaced by 2.4.0's `Array.toList()` rewrite is worked around stdlib-side and tracked
   (`arrayOfNulls<value-type>` allocates `T[]` not `Nullable<T>[]`).
+- **Fixed a cross-module silent miscompile of field-backed properties with a custom accessor (`#103`).**
+  A top-level `val x = 41; get() = field + 1` (or a `var` with a custom `set`) consumed from ANOTHER DotKt
+  assembly silently returned the raw backing field (41) instead of invoking the getter (42) — the accessor
+  was bypassed. `#89` fixed the same-module shape; this is its cross-module twin. facadegen now detects the
+  field + `get_`/`set_<name>` pairing and marks the top-level `prop` `customGet`/`customSet` (dropping the
+  loose accessor `fun`); kotc restores the flags and routes the cross-module read/write through the accessor
+  instead of the static field. Covered by the new `roundtrip-customprop` gate section (top-level + companion
+  + member, independent get/set customness).
 
 ## 0.9.4 — 2026-07-12
 
