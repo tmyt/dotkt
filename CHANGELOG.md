@@ -1482,6 +1482,12 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Tooling, build & gates
 
+- **ilemit failure diagnostics name the declaration (#84 Phase 1).** ilemit had no error boundary — any
+  emit failure surfaced as a raw unhandled .NET stack trace with no indication of *which* declaration was
+  being emitted. Each method/ctor body emit now carries a breadcrumb (`Type.method [node]`) and is guarded,
+  so a throw is re-tagged and `IlEmit.Main` prints a clean one-line `ilemit: <Type>.<method>: <message>`
+  (returning 1) instead of a stack dump; the full stack stays available behind `ILEMIT_TRACE`. Pure
+  error-path plumbing — a successful emit is byte-identical.
 - **`Makefile` orchestrator** over the canonical scripts (incremental targets `all` / `toolchain` /
   `stdlib{,-jar,-ref,-rt}` / `pack` / `verify*` / `dev`), and a **4-package NuGet structure** (Sdk /
   Toolchain / Stdlib / Templates) that fixes the packaging gap where the shipped SDK carried no stdlib

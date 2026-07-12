@@ -69,7 +69,7 @@ sealed partial class Emitter
 
     Type EmitExpr(JsonElement e)
     {
-        switch (e.GetProperty("k").GetString())
+        switch (_ctxNode = e.GetProperty("k").GetString())   // #84: refine the diagnostic breadcrumb to the node kind
         {
             case "const": return EmitConst(e);
             case "this":

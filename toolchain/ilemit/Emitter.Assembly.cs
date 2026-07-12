@@ -480,16 +480,18 @@ sealed partial class Emitter
         }
         _curTypeParams = null;
 
-        // Pass 4: emit all bodies (every ctor/method signature already exists).
+        // Pass 4: emit all bodies (every ctor/method signature already exists). Each body emit is GUARDED (#84 Phase 1):
+        // a throw is re-tagged with the declaration being emitted (via CurrentDecl) so one bad method names itself in a
+        // clean `ilemit: <Type>.<method>: <message>` line, and the rest are unaffected. Byte-identical on success.
         foreach (var ti in _types.Values)
-            for (int ci = 0; ci < ti.Ctors.Count; ci++) { T($"pass4 ctor body: {ti.TB?.Name}#{ci}"); EmitCtorBody(ti, ti.Ctors[ci], ti.CtorDefs[ci]); }
+            for (int ci = 0; ci < ti.Ctors.Count; ci++) { T($"pass4 ctor body: {ti.TB?.Name}#{ci}"); var cb = ti.Ctors[ci]; var cd = ti.CtorDefs[ci]; GuardBody(() => EmitCtorBody(ti, cb, cd)); }
         foreach (var ti in _types.Values)
             if (!ti.IsEnum)
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray())
                 {
                     // Interfaces: emit an IL body ONLY for default methods (those that carry one); abstract slots have none.
                     if (ti.IsInterface && !(m.TryGetProperty("body", out var ib) && ib.ValueKind == JsonValueKind.Array && ib.GetArrayLength() > 0)) continue;
-                    T($"pass4 method body: {ti.TB?.Name}.{(m.TryGetProperty("name", out var mn) ? mn.GetString() : "?")}"); EmitMethodBody(ti, m);
+                    T($"pass4 method body: {ti.TB?.Name}.{(m.TryGetProperty("name", out var mn) ? mn.GetString() : "?")}"); GuardBody(() => EmitMethodBody(ti, m));
                 }
 
         // User annotations -> .NET custom attributes, applied on the type and its methods (the ctor builder of the
@@ -546,7 +548,16 @@ sealed partial class Emitter
             // Coerce the init value to the field's declared type (box a value-type/enum RHS stored into an
             // `object`/wider reference field) — the SAME shared store coercion the method-body sites use; without
             // it, `val X: Any = SomeEnum.ENTRY` stored the raw ordinal (int) into an object field as a null ref.
-            foreach (var f in inits) { var fb = ti.Fields[f.GetProperty("name").GetString()]; PrescanCfgLabels(f.GetProperty("init")); EmitStoreCoerced(f.GetProperty("init"), fb.FieldType); MaybeVolatile(fb); _il.Emit(OpCodes.Stsfld, fb); }
+            // #84: the type initializer emits USER initializer expressions (which may carry full CFG), so guard each
+            // field's emit with a `.cctor(<field>)` breadcrumb — a throw here names the failing field like a body throw.
+            _ctxType = ti.TB?.Name; _ctxNode = null;
+            foreach (var f in inits)
+            {
+                var fname = f.GetProperty("name").GetString();
+                _ctxMethod = ".cctor(" + fname + ")";
+                var fb = ti.Fields[fname];
+                GuardBody(() => { PrescanCfgLabels(f.GetProperty("init")); EmitStoreCoerced(f.GetProperty("init"), fb.FieldType); MaybeVolatile(fb); _il.Emit(OpCodes.Stsfld, fb); });
+            }
             _il.Emit(OpCodes.Ret);
         }
 
@@ -590,6 +601,16 @@ sealed partial class Emitter
         T("save: writing PE");
         Save(ab, entry);
         T("save: done");
+    }
+
+    // #84 Phase 1: run one body-emit, re-tagging any failure with the declaration being emitted (CurrentDecl). The
+    // breadcrumb (_ctxType/_ctxMethod/_ctxNode) is set at the emit's head, so by the time a resolution throw
+    // propagates here it names the right method. An already-tagged CirEmitException passes through unchanged.
+    void GuardBody(Action emit)
+    {
+        try { emit(); }
+        catch (CirEmitException) { throw; }
+        catch (Exception ex) { throw new CirEmitException(CurrentDecl, ex.Message, ex); }
     }
 
     // (#75) The READONLY sibling interface(s) a mutable-collection interface must also expose so a value implementing

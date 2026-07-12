@@ -34,9 +34,24 @@ static class IlEmit
             else if (rest[i] == "--build-stdlib=runtime") mode = Emitter.BuildStdlibMode.Runtime;
             else bir.Add(rest[i]);
         }
-        var files = bir.Select(LoadInputDocument).ToList();
-        new Emitter(outDir, asmName, mode).EmitAssembly(MergeByFileClass(files));
-        return 0;
+        // #84 Phase 1: give ilemit a diagnostic boundary. On any failure, print a clean one-line
+        // `ilemit: <Type>.<method>: <message>` naming the declaration being emitted (carried by CirEmitException,
+        // thrown per-method in EmitAssembly) instead of a raw unhandled .NET stack trace. ILEMIT_TRACE keeps the
+        // full stack for debugging (rethrow), matching the existing crash-localizer flag (Emitter.Trace).
+        try
+        {
+            var files = bir.Select(LoadInputDocument).ToList();
+            new Emitter(outDir, asmName, mode).EmitAssembly(MergeByFileClass(files));
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            if (Environment.GetEnvironmentVariable("ILEMIT_TRACE") != null) throw;   // full stack for debugging
+            Console.Error.WriteLine(ex is CirEmitException ce
+                ? $"ilemit: {ce.Decl}: {ce.Message}"
+                : $"ilemit: {ex.Message}");
+            return 1;
+        }
     }
 
     // Multiple CIR files can target the SAME file class — a Kotlin multiplatform `expect`/`actual` split (the common
@@ -90,10 +105,18 @@ static class IlEmit
             return JsonDocument.Parse(executable.GetRawText());
 
         throw new InvalidOperationException(
-            $"ilemit: native CIR input '{path}' does not contain cirDraft.executableCir");
+            $"native CIR input '{path}' does not contain cirDraft.executableCir");   // #84: Main adds the `ilemit: ` prefix
     }
 }
 
+
+// #84 Phase 1: a failure during body emission, tagged with WHICH declaration (`Type.method [node]`) was being
+// emitted. Thrown per-method by EmitAssembly's body-emit guard; caught in IlEmit.Main for a clean one-line message.
+sealed class CirEmitException : Exception
+{
+    public string Decl { get; }
+    public CirEmitException(string decl, string message, Exception inner) : base(message, inner) { Decl = decl; }
+}
 
 sealed partial class Emitter
 {
@@ -112,6 +135,15 @@ sealed partial class Emitter
     // step prints (flushed) to stderr, so the LAST line before the crash names the culprit type/method.
     static readonly bool Trace = Environment.GetEnvironmentVariable("ILEMIT_TRACE") != null;
     internal static void T(string m) { if (Trace) { Console.Error.WriteLine("[ilemit] " + m); Console.Error.Flush(); } }
+
+    // #84 Phase 1 diagnostic breadcrumb: the declaration (and current node kind) being emitted, so a throw deep in
+    // resolution surfaces as `ilemit: <Type>.<method> [node]: <message>`. Set at EmitMethodBody/EmitCtorBody head,
+    // refined per node in EmitStmt/EmitExpr. Pure error-path plumbing — no IL effect (a valid emit is byte-identical).
+    string _ctxType;
+    string _ctxMethod;
+    string _ctxNode;
+    internal string CurrentDecl =>
+        (_ctxType ?? "?") + "." + (_ctxMethod ?? "?") + (_ctxNode != null ? " [" + _ctxNode + "]" : "");
 
     // per-method context
     ILGenerator _il;

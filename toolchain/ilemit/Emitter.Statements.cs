@@ -11,7 +11,7 @@ sealed partial class Emitter
 {
     void EmitStmt(JsonElement s)
     {
-        switch (s.GetProperty("k").GetString())
+        switch (_ctxNode = s.GetProperty("k").GetString())   // #84: refine the diagnostic breadcrumb to the node kind
         {
             case "var":
             {

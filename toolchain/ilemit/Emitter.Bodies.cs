@@ -11,6 +11,7 @@ sealed partial class Emitter
 {
     void EmitCtorBody(TypeInfo ti, ConstructorBuilder cb, JsonElement c)
     {
+        _ctxType = ti.TB?.Name; _ctxMethod = ".ctor"; _ctxNode = null;   // #84 diagnostic breadcrumb
         _methodRetType = typeof(void);
         _curTypeParams = EffectiveTps(ti); _curMethodParams = null;
         BeginMethod(cb.GetILGenerator(), c, isStatic: false);
@@ -88,9 +89,14 @@ sealed partial class Emitter
 
     void EmitMethodBody(TypeInfo ti, JsonElement m)
     {
+        // #84 diagnostic breadcrumb — set BEFORE any read of `m`, so a malformed def (e.g. a missing `name`, the exact
+        // bir2cir-bug class #84 targets) is attributed to THIS type, not the previously-emitted method. Refined to the
+        // method name once resolved below.
+        _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null;
         // An abstract method has no IL body (subclasses provide it); GetILGenerator would throw.
         if (m.TryGetProperty("abstract", out var amb) && amb.GetBoolean()) return;
         var mname = m.GetProperty("name").GetString();
+        _ctxMethod = mname;
         // A DUPLICATE (name, params) def was define-phase-mangled to `name$dupN` (see DeclareMethod); body emission
         // walks the same def array in the same order, so consume the occurrences symmetrically — without this, both
         // bodies would be written into ONE MethodBuilder (concatenated IL -> BadImageFormatException).
