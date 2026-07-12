@@ -26,6 +26,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   instead of the static field. Covered by the new `roundtrip-customprop` gate section (top-level + companion
   + member, independent get/set customness).
 
+- **A facadegen-injected .NET enum now satisfies Kotlin's `T : Enum<T>` bound (`#107`).** Code using
+  `enumValues<TheNetEnum>()`, `enumValueOf<TheNetEnum>()`, or a `<T : Enum<T>>` generic function over an
+  imported .NET enum (e.g. `import System.DayOfWeek`) now compiles AND runs. facadegen declares the
+  self-referential `kotlin.Enum<Self>` supertype on an injected .NET `enum` so the frontend accepts the
+  bound; bir2cir (`NetInteropBinding`) binds the inherited Kotlin `Enum` contract on a concrete .NET-enum
+  receiver to the CLR enum semantics — `.name` → `ToString()`, `.ordinal` → the declaration index via
+  `Array.IndexOf(Enum.GetValues(t), value)` (Kotlin-faithful for a sparse/negative/aliased .NET enum, not
+  just the underlying int). The generic-receiver `e.name` is handled by the existing `EnumMemberBinding`.
+  General, metadata-driven — no per-enum special-casing. Covered by the new `cases/il-netenumbound` gate.
+
 ## 0.9.4 — 2026-07-12
 
 0.9.4 carries the 4-layer compiler migration to completion, lands a full coroutine engine,

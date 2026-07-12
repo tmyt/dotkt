@@ -113,6 +113,20 @@ sealed partial class Emitter
 
     Type EmitNativeClrEnumOrdinal(JsonElement e)
     {
+        // A LOCAL value-type enum's ordinal == its underlying value (kotc assigns contiguous 0..n) -> a plain Conv_I4.
+        // A REFERENCED .NET enum (#107 — the node carries the enum `type`) may have sparse/negative/aliased values, so
+        // its Kotlin ordinal (the DECLARATION INDEX) is Array.IndexOf(Enum.GetValues(t), value), NOT the underlying int.
+        if (e.TryGetProperty("type", out var tp))
+        {
+            var et = NativeType(tp);
+            _il.Emit(OpCodes.Ldtoken, et);
+            _il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetTypeFromHandle"));
+            _il.Emit(OpCodes.Call, typeof(Enum).GetMethod("GetValues", new[] { typeof(Type) }));
+            EmitExpr(e.GetProperty("e"));
+            _il.Emit(OpCodes.Box, et);
+            _il.Emit(OpCodes.Call, typeof(Array).GetMethod("IndexOf", new[] { typeof(Array), typeof(object) }));
+            return typeof(int);
+        }
         EmitExpr(e.GetProperty("e"));
         _il.Emit(OpCodes.Conv_I4);
         return typeof(int);

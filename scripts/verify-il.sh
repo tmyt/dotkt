@@ -226,6 +226,11 @@ il_check enumintr EnumIntr "$ROOT/cases/il-enumintr/app.kt" "$(printf 'GREEN\n3\
 # not a `callInstance E.ToString` (which dead-ends "method E.ToString not found" in ilemit). Two files (enum.kt decl +
 # app.kt use) so the gate also covers the MODULE-WIDE (cross-file) basic-enum collection.
 il_check enumtostr EnumToStr "$ROOT/cases/il-enumtostr" "$(printf 'A\nB\nC\nFalse\nTrue\n-2')"
+# netenumbound (#107): a facadegen-injected .NET enum (System.DayOfWeek) satisfies Kotlin's `T : Enum<T>` bound —
+# facadegen declares the self-referential `kotlin.Enum<Self>` supertype so a `<T : Enum<T>>` generic fn / the
+# reified `enumValues<TheNetEnum>()` / `enumValueOf<TheNetEnum>()` intrinsics resolve at the frontend; the backend
+# routes `e.name` (kotlin.Enum member on a .NET-enum-bound type-param) + enumValues/enumValueOf to System.Enum.
+il_check_imports netenumbound NetEnumBound "$ROOT/cases/il-netenumbound" "$(printf 'Friday\n7\n1')"
 # m2 / mi1 consume BCL types via `import System.X` (System.Math, System.Text.StringBuilder) -> the facadegen import
 # scan (il_check_imports), NOT a bare il_check (which injects nothing, so the import would not resolve). No runtime.cs.
 il_check_imports m2  M2    "$ROOT/cases/m2"         "$(printf 'max(3, 7) = 7\nmin(3, 7) = 3\nabs(-9) = 9')"

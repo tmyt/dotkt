@@ -484,6 +484,13 @@ static class FacadeGen
             if (t.IsEnum)
             {
                 typeObj["kind"] = "object"; typeObj["name"] = t.Name; typeObj["dotNet"] = t.FullName;
+                // #107: declare the self-referential `kotlin.Enum<Self>` supertype so an injected .NET enum satisfies a
+                // Kotlin `T : Enum<T>` bound at the frontend (enumValues<TheEnum>() / enumValueOf<TheEnum>() / a generic
+                // `<T : Enum<T>>` fn). DOTTED name so ClrTypeInjection.superClassId resolves it directly to kotlin.Enum
+                // (it does not consult builtinBoundOpen); the self arg is a lazy lookup-tag cone, same shape as
+                // `Money : IComparable<Money>`. No member synthesis needed — name/ordinal/compareTo inherit from kotlin.Enum.
+                supers.Add(Ty(new TN.Fqn("kotlin.Enum", new TN[] { new TN.Fqn(t.Name) })));
+                typeObj["supers"] = supers;
                 foreach (var nm in Enum.GetNames(t))
                     props.Add(PropObj(nm, new TN.Fqn(t.Name), false, new JsonObject(), "public", null, null));
                 typeObj["props"] = props;

@@ -104,6 +104,23 @@ static class NetInteropBinding
             return;
         }
 
+        // .NET ENUM consumed as a Kotlin Enum (#107): a facadegen-injected .NET enum carries a synthetic `kotlin.Enum<Self>`
+        // supertype (facadegen `IsEnum` branch), so kotc resolves the INHERITED Kotlin Enum contract on a CONCRETE
+        // .NET-enum receiver as a plain property-get by IDENTITY (`callInstance ownerType=System.DayOfWeek method=name/
+        // ordinal prop=get`) — but System.Enum declares NEITHER as a .NET property (they'd fall through to a non-existent
+        // `get_name`/`get_ordinal`). Bind them to the CLR enum semantics: `name` -> ToString() (the constant name, the
+        // System.Enum override), `ordinal` -> the DECLARATION INDEX via `enumOrdinal` carrying the enum type (ilemit does
+        // Array.IndexOf(Enum.GetValues(t), value) — Kotlin-faithful even for a sparse/negative/aliased .NET enum). The
+        // GENERIC-receiver case (`e: T`, `T : Enum<T>`, owner kotlin.Enum) is handled separately by EnumMemberBinding.
+        if (!isStatic && IsNetEnum(netType) && Str(v.TryGetValue("prop", out var pj) ? pj : null) == "get"
+            && (method == "name" || method == "ordinal"))
+        {
+            var recv0 = Take("recv");
+            if (method == "name") { node["k"] = "objMethod"; node["method"] = "ToString"; node["recv"] = recv0; }
+            else { node["k"] = "enumOrdinal"; node["e"] = recv0; node["type"] = owner; }
+            return;
+        }
+
         // PROPERTY ACCESSOR by the frontend get/set KIND (A2 step 3): kotc emits the BARE property NAME + a
         // `"prop":"get"/"set"` marker (the accessor KIND — a frontend fact from correspondingPropertySymbol), NOT the
         // `get_`/`set_` .NET accessor slot. bir2cir APPLIES the .NET accessor convention off the refs: a real non-indexed
@@ -301,6 +318,10 @@ static class NetInteropBinding
         ["rem"] = "op_Modulus", ["unaryMinus"] = "op_UnaryNegation", ["unaryPlus"] = "op_UnaryPlus",
         ["inc"] = "op_Increment", ["dec"] = "op_Decrement",
     };
+
+    // True iff the resolved owner is a .NET `enum` type (#107) — its members (name/ordinal) bind to the CLR enum
+    // semantics rather than the plain property-accessor path. IsEnum is available on a MetadataLoadContext type.
+    static bool IsNetEnum(Type type) { try { return type.IsEnum; } catch { return false; } }
 
     // True iff the .NET type declares `name` as a public static method (a `op_X` operator is a public static special
     // method on the declaring type). Guards against rewriting a Kotlin `plus` on a .NET type that has no such operator.
