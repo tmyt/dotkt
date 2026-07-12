@@ -602,6 +602,38 @@ Reading the other direction, consuming **any** .NET assembly:
 enforces neither — exactly how Kotlin/JVM treats un-annotated Java. This avoids the unsound alternative of forcing a
 possibly-null .NET value into a Kotlin non-null type.
 
+### 9a. Platform-type `T!` null-legitimacy — a null flows to the dereference (no eager boundary assertion)
+
+The flexibility of `T!` is a **frontend-only** fact: `facadegen` emits a `TypeNode.Oblivious` for an NRT-oblivious .NET
+member (`NrtByteOf == 0`, `Program.cs:ApplyNrt`), `kotc`'s `ClrTypeInjection.coneOf` maps it to a `ConeFlexibleType(T, T?)`,
+and the frontend **resolves that flexible type to a concrete `T`/`T?` per use** before any BIR is emitted — so
+`bir2cir`/`ilemit` never see a platform type (`TypeNode.Oblivious` is Read-transparently but never emitted, per its
+doc-comment). This settles the null-legitimacy question:
+
+- **No spurious null-check is inserted when a `T!` is used as a non-null `T`.** kotc emits nothing at the implicit
+  boundary — a `T!` value assigned to a `T` local, passed to a `T` parameter, or returned as a declared `T` is a plain
+  copy of the reference. Inserting a check here would *violate* platform-type laxity (the developer has taken
+  responsibility), so its absence is correct, not a gap.
+- **A genuinely-null `T!` therefore flows UNCHECKED until a real dereference**, where the CLR raises
+  **`NullReferenceException`** — the CLR analogue of the JVM's NPE. The throw lands at the **use site** (the member
+  access / call on the null receiver), not at the assignment/parameter/return boundary that first admitted the null.
+- **This is faithful to Kotlin's *language* semantics.** It is exactly the behavior of Kotlin/JVM compiled with
+  `-Xno-call-assertions -Xno-param-assertions` (a supported mode): the null simply flows to the dereference. The JVM's
+  *default* eager `Intrinsics.checkNotNullExpressionValue` / `checkNotNullParameter` boundary assertion — which turns a
+  null platform value into an NPE *at the boundary* with a descriptive message — is an **optional diagnostic/QoL
+  feature, not a language-semantic requirement** (it is disable-able precisely because it is not mandated). DotKt does
+  not reproduce it (there is no JVM null-assertion IR lowering in the `Fir2Ir → ClrBackendPhase` path, §3), so the
+  failure is later (at deref) and its exception is CLR-native (`NullReferenceException`, no Kotlin message) rather than
+  eager and JVM-messaged. Both eventually throw on the same null; the difference is *when* and *which exception type*.
+- **`?.` and smart-casts behave normally.** A safe-call `t?.member` on a `T!` receiver null-gates in the frontend
+  (returns `null`, never throws / never asserts). A flow smart-cast (`if (t != null) t.member`) works: the frontend
+  proves non-null-ness by control flow and picks the lower bound, needing no runtime assertion.
+
+Practical upshot for interop: treat a `T!` from an un-annotated .NET assembly as you would an un-annotated Java value —
+if you use it as non-null and it is actually null, you get a `NullReferenceException` at the point you dereference it,
+not a Kotlin NPE at the point you accepted it. Prefer `T?` + a null check (or `?:`) at the boundary when the .NET API
+can legitimately return null.
+
 ## 9b. `System.Byte` is UNSIGNED — it maps to `kotlin.UByte`, not `kotlin.Byte` (STRICT, #53)
 
 Kotlin's `Byte` is **signed** (−128..127); the CLR's `System.Byte` is **unsigned** (0..255). So the mapping is strict
@@ -753,4 +785,5 @@ residual is the **`object` singleton `.INSTANCE`** round-trip (#2), not implicit
 - An injected .NET class's statics resolve implicitly (`Application.Start(...)`); `.Companion` is optional. §8c.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
 - A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
+- A null platform-type `String!` used as non-null does **not** throw at the boundary — no assertion is inserted; the null flows to the first dereference, where the CLR throws `NullReferenceException` (faithful to Kotlin, = JVM with call/param assertions off). §9a.
 - Re-consuming a DotKt `.dll` as Kotlin now **restores** generic **bounds/interface variance** (gap ①), **`sealed`** (gap ⑤ — modality, cross-module enforcement, exhaustive `when`), and the **`fun interface` nature** (gap ③ — usable, though a bare lambda still won't SAM-convert under the pinned 2.4.0 compiler), and a re-consumed **companion resolves implicitly** (`50c2c9f`); `enum class` and top-level **`object` singletons** still restore as a plain `class` (the `.INSTANCE` singleton sugar is lost). §10.
