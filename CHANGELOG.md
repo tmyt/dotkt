@@ -352,6 +352,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
   constant name / value-equality / hash), moving `Equals`'s argument into the `arg` slot ilemit reads. This shares
   the same box-then-Object-slot mechanism as the pre-existing generic-`Enum<T>`-receiver path. Gate:
   `cases/il-enumtostr` (`.toString()`, `println(Any?)`, string concat, `==`, `.equals()`, `.compareTo()`).
+- **CROSS-ASSEMBLY basic-enum inherited members (#105) confirmed already closed — regression guard added, no code
+  change.** A basic `enum class` declared in a REFERENCED DotKt assembly and `.toString()`/`==`/`.hashCode()`'d by a
+  consumer does NOT hit the #90 `callInstance` gap: kotc emits the inherited-member call by FQN identity
+  (`callInstance owner=palette.Color`), and bir2cir's `NetInteropBinding` resolves that owner off the `--ref` DotKt
+  assembly (A2/#61) one pass BEFORE `EnumMemberBinding`, binding it to a `clrInstance`; ilemit's
+  `EmitClrCall`/`EmitInstanceCall` take the value-type receiver by address and emit `constrained. <Color>; callvirt
+  object::ToString` — valid, ilverify-clean (verified end-to-end: `RED` / `False` / `0`). A klib-external `kotlin.*`
+  enum arrives from kotc already as an `objMethod`, so it too skips the local gap. A candidate
+  `ReferenceMetadataIndex.TypeKinds`-"enum" union into `EnumMemberBinding`'s set was investigated and REJECTED as
+  unreachable dead code (its owner universe is the same MetadataLoadContext `NetInteropBinding` already rebinds). New
+  `verify-roundtrip.sh` `roundtrip-enum` section pins the facadegen-injected-enum -> `NetInteropBinding` `clrInstance`
+  -> `constrained. callvirt` path as a regression guard.
 - **`Map<*,*>`'s `get`/`containsKey` (and any `Collection<*>`/`Map<*,*>` for-loop / explicit `.iterator()`) no
   longer throws `InvalidCastException`/`EntryPointNotFoundException` on a star-projected receiver (#74).**
   `m[key]`/`m.containsKey(k)` on a `Map<*,*>` resolves (Kotlin `@OnlyInputTypes` overload rule) to the stdlib's

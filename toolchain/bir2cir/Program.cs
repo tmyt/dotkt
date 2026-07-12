@@ -185,7 +185,10 @@ sealed class Pipeline
 
         // The local BASIC (value-type, `kind:"enum"`) enum type names across ALL files — EnumMemberBinding rebinds a
         // `System.Enum`-inherited Object-slot call (`E.A.toString()`) on such an owner to an `objMethod`. Must be
-        // module-wide (not per-file): the call site can be in a different .bir.json than the enum declaration.
+        // module-wide (not per-file): the call site can be in a different .bir.json than the enum declaration. Only the
+        // LOCAL enums need it — a CROSS-ASSEMBLY enum's inherited-member call is closed one pass earlier by
+        // NetInteropBinding (facadegen-injected owner -> `clrInstance`, a `constrained. callvirt`), and a klib-external
+        // `kotlin.*` enum arrives from kotc already as an `objMethod`; neither reaches this local `callInstance` gap.
         var localBasicEnums = EnumMemberBinding.CollectBasicEnums(birFiles.Select(f => f.Root));
 
         // INLINE-BIR STASH (#71/#75 S1): BEFORE any lowering pass runs, capture every `mods.inline` method's RAW

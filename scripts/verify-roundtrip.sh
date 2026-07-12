@@ -218,6 +218,43 @@ mk_ok=0; if [[ "$mkactual" == "$mkexpected" && "$rogue_ok" == 0 ]]; then mk_ok=1
 section_result roundtrip-markers "$mk_ok" "fun interface nature; sealed modality+exhaustive-when+cross-module enforcement; enum" \
 	"$(printf -- '--- expected ---\n%s\n--- actual ---\n%s\n--- rogue accepted (want reject): %s ---' "$mkexpected" "$mkactual" "$rogue_ok")"
 
+# ----- CROSS-ASSEMBLY BASIC-ENUM inherited System.Enum members (#105) -----
+# A BASIC (constants-only) `enum class` emits as a CLR value-type enum (deriving System.Enum) that declares no
+# ToString/GetHashCode/Equals of its own — it INHERITS them. #90 fixed the SAME-module case (bir2cir EnumMemberBinding
+# boxes the value-type receiver + callvirt the System.Object slot on a `callInstance` whose LOCAL owner is unresolvable
+# as a .NET type). The CROSS-ASSEMBLY case is closed EARLIER and by a DIFFERENT layer: kotc emits the inherited-member
+# call as a plain `callInstance owner=palette.Color` by FQN identity; bir2cir's NetInteropBinding resolves that owner off
+# the `--ref` DotKt assembly (A2/#61) and binds it to a `clrInstance`; ilemit's EmitClrCall/EmitInstanceCall then take
+# the value-type receiver BY ADDRESS and emit `constrained. <Color>; callvirt object::ToString` — valid, ilverify-clean.
+# So this section is a REGRESSION GUARD for that facadegen-injected-enum -> NetInteropBinding -> constrained-callvirt
+# path (it is not a fail-before/pass-after for any bir2cir enum-set change — the calls never reach EnumMemberBinding).
+# A `.toString()` (RED), an `==` (objEq -> False, CLR System.Boolean.ToString), and a `.hashCode()` (RED = ordinal 0 ->
+# System.Enum hashes the underlying int -> 0) exercise all three inherited slots.
+CE="$ROOT/build/roundtrip-enum"; rm -rf "$CE"; mkdir -p "$CE/lib" "$CE/app" "$CE/libbir" "$CE/libil" "$CE/appbir" "$CE/appil"
+cat > "$CE/lib/lib.kt" <<'EOF'
+package palette
+enum class Color { RED, GREEN }
+EOF
+cat > "$CE/app/app.kt" <<'EOF'
+import palette.Color
+fun main() {
+    println(Color.RED.toString())       // RED   inherited System.Enum.ToString on a value-type receiver
+    println(Color.RED == Color.GREEN)   // False structural equality (CLR System.Boolean.ToString, cf. roundtrip-defargs)
+    println(Color.RED.hashCode())       // 0     inherited System.Enum.GetHashCode (RED underlying int = 0)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$CE/lib" -no-stdlib -classpath "$CP" -d "$CE/libbir" >/dev/null 2>&1 || true
+emit_il "$CE/libil" PaletteLib "$CE/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$CE/libil/PaletteLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+"$LAUNCHER" --scan-imports --output "$CE/imports.txt" "$CE/app"/*.kt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$CE/meta" --refs "$REFS$CE/libil/PaletteLib.dll" --import-list "$CE/imports.txt" >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$CE/meta" "$LAUNCHER" "$CE/app" -no-stdlib -classpath "$CP" -d "$CE/appbir" >/dev/null 2>&1 || true
+emit_il "$CE/appil" PaletteApp --ref "$CE/libil/PaletteLib.dll" "$CE/appbir"/*.bir.json
+cp "$CE/libil/PaletteLib.dll" "$CE/appil/" 2>/dev/null || true
+ceexpected="$(printf 'RED\nFalse\n0')"
+run_app ceactual "$CE/appil/PaletteApp.dll"
+check_output roundtrip-enum "$ceexpected" "$ceactual" "cross-assembly basic-enum inherited System.Enum members (toString/==/hashCode) #105"
+
 R="$ROOT/build/roundtrip"; rm -rf "$R"; mkdir -p "$R/lib" "$R/app" "$R/libbir" "$R/libil" "$R/appbir" "$R/appil"
 
 # The Kotlin LIBRARY: a class with infix/operator/(member)suspend members + top-level (plain + suspend) functions.
