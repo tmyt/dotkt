@@ -179,6 +179,25 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null) {
 		val f = decl.parent as? IrFile ?: return fileClass
 		return fileClassName(f)
 	}
+	// #89: the owning .NET type name of a STATIC backing field — a top-level property's field lives on the file
+	// class (parent is the IrFile, isStatic); a PLAIN companion property's field is emitted static on the ENCLOSING
+	// class (statFields), matching how kotc flattens companion members to enclosing statics. Returns null for a
+	// plain-instance backing field (a normal class or `object` property field — accessed via `this`/INSTANCE) and
+	// for a SUPER-TYPED companion (a lifted concrete singleton whose members stay instance fields, not enclosing
+	// statics). Reached when a property's own custom accessor body reads/writes `field` (an IrGet/SetField).
+	internal fun staticBackingFieldOwner(fld: org.jetbrains.kotlin.ir.declarations.IrField): String? {
+		// A `lateinit` field keeps its own null-checked read/write path (lateinitGet) — never shadow it with a plain
+		// staticField load, even for a top-level/companion lateinit (defensive: its default accessors aren't emitted,
+		// so this is currently unreached, but the ordering must stay lateinit-first if that ever changes). #89.
+		if (fld.correspondingPropertySymbol?.owner?.isLateinit == true) return null
+		val parent = fld.parent
+		return when {
+			parent is IrFile && fld.isStatic -> fileClassName(parent)
+			parent is IrClass && parent.isCompanion && superTypedCompanion(parent.parent as IrClass) == null ->
+				typeName(parent.parent as IrClass)
+			else -> null
+		}
+	}
 	// The `<File>Kt` facade class name, qualified with the file's package as the .NET namespace (so top-level
 	// declarations live in the package's namespace, and two same-named files in different packages don't collide).
 	internal fun fileClassName(f: IrFile): String {
@@ -446,13 +465,17 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null) {
 		superCompanions.forEach { c -> anonNames[c] = companionObjectTypeName(c) }
 		// Emit functions and types first (this lifts lambdas into liftedMethods/liftedTypes), then append them.
 		val fnMethods = functions.map { method(it, static = true) }
-		// A top-level property with NO backing field (an EXTENSION property `val T.p`, or a computed `val p get() = …`)
-		// -> emit its get_/set_<name> as STATIC methods (the receiver, if any, rides `__self`). A backing-field top-level
-		// property stays a static field (above).
-		val topPropAccessors = topProps.filter { it.backingField == null }.flatMap { p ->
+		// A top-level property's get_/set_<name> as STATIC methods (the receiver, if any, rides `__self`) — emitted
+		// only when the accessor is CUSTOM (not the trivial `field` passthrough). Covers a NO-backing-field property
+		// (an EXTENSION property `val T.p`, or a computed `val p get() = …`) AND a backing-field property that ALSO
+		// carries a custom accessor (`val p = 41; get() = field + 1`, #89) — its custom accessor must be emitted so
+		// the read routes through it instead of a raw static-field load. A DEFAULT accessor emits none: the field
+		// (above) is read/written directly. Getter and setter are decided independently (a `var` may pair a default
+		// getter with a custom setter).
+		val topPropAccessors = topProps.flatMap { p ->
 			listOfNotNull(
-				p.getter?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
-				p.setter?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
+				p.getter?.takeIf { fieldRoutedProperty(p) && !hasDefaultGetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
+				p.setter?.takeIf { fieldRoutedProperty(p) && !hasDefaultSetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
 		}
 		// Basic enums -> real CLR enums (int-backed, for .NET interop); rich enums -> plain singleton classes.
 		val (richEnums, basicEnums) = enums.partition { isRichEnum(it) }

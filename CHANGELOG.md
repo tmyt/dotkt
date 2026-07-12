@@ -120,6 +120,18 @@ retired into a real pure-Kotlin standard library; and every verify gate is XFAIL
 
 ### Language & correctness
 
+- **Top-level / companion `val`/`var` with a custom accessor + backing field now invokes the accessor (#89).**
+  A top-level or companion property that had BOTH a backing field (an initializer) AND a custom
+  `get()`/`set()` was read/written as a raw static-field load/store, silently skipping the accessor
+  (`val topProp = 41; get() = field + 1` read 41 instead of 42; a companion `get() = field + 100` read 7
+  instead of 107). kotc now gates the static-field shortcut on the accessor being DEFAULT (the trivial
+  `field` passthrough) — a custom getter routes the read through `get_<name>` and a custom setter routes the
+  write through `set_<name>`, decided independently per accessor (a `var` may pair a default getter with a
+  custom setter). The property's custom accessors are now emitted for backing-field top-level/companion
+  properties too (previously only computed ones got them), and their `field` reference lowers to a
+  `staticField`/`staticFieldSet` of the owning file/enclosing class. Plain `object` properties already
+  honored their accessors and are unchanged.
+
 - **Inline unification (#75) is complete — one splice engine for every `inline fun`.** kotc's three
   historical inline mechanisms (`inlineCall` body-visible, the cross-module `[KotlinInline]` splice, and the
   `SCOPE_FUNCTIONS`/`inlineUse` hardcode) collapse into a **single downstream bir2cir splice**. kotc now emits a

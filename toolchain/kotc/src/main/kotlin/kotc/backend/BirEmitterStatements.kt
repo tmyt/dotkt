@@ -113,7 +113,14 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		val ownerClass = node.symbol.owner.parent as? IrClass
 		val clr = ownerClass?.let { clrName(it) }
 		val recvJson = node.receiver?.let { expr(it) } ?: """{"k":"this"}"""
-		if (clr != null)
+		// #89: a STATIC backing field (top-level property -> file class; companion property -> enclosing class) ->
+		// a `staticFieldSet`, NO receiver. Reached from the property's OWN custom setter body writing `field`.
+		// `staticFieldSet` is a void EXPRESSION node (ilemit EmitExpr), so wrap it as an `exprStmt` in this
+		// statement position (unlike the instance `setField`, which ilemit emits directly as a statement).
+		val staticOwner = staticBackingFieldOwner(node.symbol.owner)
+		if (staticOwner != null)
+			"""{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(staticOwner)},"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}}"""
+		else if (clr != null)
 			"""{"k":"setField","ownerType":${fqnJson(clr)},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
 		else
 			"""{"k":"setField","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""

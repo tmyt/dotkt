@@ -125,15 +125,21 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		"""{"k":"staticField","ownerType":${fqnJson(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
 	is IrBlock -> blockExpr(node)
 	is IrGetField -> {
+		val staticOwner = staticBackingFieldOwner(node.symbol.owner)
 		val ownerClass = node.symbol.owner.parent as? IrClass
 		val clr = ownerClass?.let { clrName(it) }
 		val recvJson = node.receiver?.let { expr(it) } ?: """{"k":"this"}"""
 		val fldName = node.symbol.owner.name.asString()
+		// #89: a STATIC backing field (top-level property -> file class; companion property -> enclosing class) ->
+		// a `staticField` load with NO receiver. Reached from the property's OWN custom accessor body reading
+		// `field`; a plain field-only property is read directly at the call site (BirEmitterCalls).
+		if (staticOwner != null)
+			"""{"k":"staticField","ownerType":${fqnJson(staticOwner)},"name":${str(fldName)}}"""
 		// `Throwable.message`/`.cause` are PLAIN Kotlin properties: an app read is an IrCall(get_message) routed by
 		// bir2cir to clrPropGet System.Exception.Message off the @ClrProperty binding (layer purity — no BCL member name
 		// in kotc). A direct backing-FIELD read reaching here is only kotlin.Throwable's own generated getter body in the
 		// stdlib ref build, where `message` is a real field — the plain `field` path below serves it.
-		if (clr != null)
+		else if (clr != null)
 			"""{"k":"field","ownerType":${fqnJson(clr)},"recv":$recvJson,"name":${str(fldName)}}"""
 		// A `lateinit var` backing-field read -> throw if still uninitialized (null) — proper lateinit semantics.
 		else if (node.symbol.owner.correspondingPropertySymbol?.owner?.isLateinit == true)

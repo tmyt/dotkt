@@ -457,6 +457,10 @@ il_check genseq2 GenSeq2 "$ROOT/cases/il-genseq2" "$(printf '[1, 2, 4]\n[a, ab, 
 il_check refcell RefCell "$ROOT/cases/il-refcell" "$(printf '3\n30\nab\n10')"
 il_check annot Annot "$ROOT/cases/il-annot" "$(printf 'widget#7\n42')"
 il_check props Props "$ROOT/cases/il-props" "$(printf '20\n8\n16\nnot initialized\nready')"
+# computedprop (#89): a top-level/companion `val` with a backing field (initializer) AND a custom getter must
+# CALL get_<name>, not read the raw static field (which skipped the getter -> 41/7 instead of 42/107). The
+# symmetric `var` custom-setter write must CALL set_<name>, not store the raw field. Object property = control.
+il_check computedprop ComputedProp "$ROOT/cases/il-computedprop" "$(printf '42\n107\n20\n15\n6\n49')"
 il_check kstar KStar "$ROOT/cases/il-kstar/app.kt" "*"   # #82: KTypeProjection.STAR computed companion prop routes to get_STAR (not a spurious staticField STAR)
 il_check valcls ValCls "$ROOT/cases/il-valclass" "$(printf '1250\n12\n1250\nff\n1010\nff')"
 il_check ctorref CtorRef "$ROOT/cases/il-ctorref" "$(printf '(1,2)\n(3,4)\n(9,9)')"

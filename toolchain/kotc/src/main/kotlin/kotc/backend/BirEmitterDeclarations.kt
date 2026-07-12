@@ -620,12 +620,16 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	val statMethods = companion?.declarations?.filterIsInstance<IrSimpleFunction>()
 		?.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && it.body != null }
 		?.map { method(it, static = true) }.orEmpty()
+	// A companion property's CUSTOM accessor -> a STATIC get_/set_<name> method on the enclosing class. Emitted
+	// only when the accessor is CUSTOM (not the trivial `field` passthrough): covers a no-backing-field computed
+	// property AND a backing-field property with a custom `get()/set()` (`val kProp = 7; get() = field + 100`,
+	// #89), whose read/write must route through the accessor instead of a raw static-field load. Getter and
+	// setter are decided independently (a `var` may pair a default getter with a custom setter).
 	val companionAccessors = companion?.declarations?.filterIsInstance<IrProperty>()
-		?.filter { it.backingField == null }
 		?.flatMap { p ->
 			listOfNotNull(
-				p.getter?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
-				p.setter?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
+				p.getter?.takeIf { fieldRoutedProperty(p) && !hasDefaultGetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
+				p.setter?.takeIf { fieldRoutedProperty(p) && !hasDefaultSetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
 		}.orEmpty()
 	// User custom accessors (`get() = …`/`set(v){…}`) -> get_/set_ methods (the access site routes through them).
 	// A property optimizes to a plain field; but one implementing a KOTLIN INTERFACE property must emit a get_/set_

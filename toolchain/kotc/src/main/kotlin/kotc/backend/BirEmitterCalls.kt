@@ -758,19 +758,21 @@ internal fun BirEmitter.call(call: IrCall): String {
 				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[${args.joinToString(",") { expr(it) }}]}"""
 			} else
 				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[${expr(ext)}]${retHint(false, call.type)}}"""
-			// A companion COMPUTED property (`val X.Companion.foo: T get() = ...`, no backing field) -> a static
-			// call by the property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78; the SAME
-			// A2 convention already used for the restored top-level property, `pn`/`"prop"` above) — NOT the
-			// baked `get_`/`set_` slot name. kotc does not know whether the enclosing class is CLR-bound (a
+			// A companion COMPUTED property (`val X.Companion.foo: T get() = ...`, no backing field) OR one with a
+			// backing field (initializer) but a CUSTOM accessor (`val foo = 7; get() = field + 100`, #89) -> a
+			// static call by the property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78; the SAME
+			// A2 convention already used for the restored top-level property, `pn`/`"prop"` above) — NOT the baked
+			// `get_`/`set_` slot name and NOT a raw static-field load (that would skip the custom accessor).
+			// kotc does not know whether the enclosing class is CLR-bound (a
 			// stdlib @ClrTypeAlias owner) or plain Kotlin; bir2cir's MemberCallSubstitution reads the stdlib
 			// @ClrProperty/@ClrIntrinsic metadata off the ref.dll by this bare name and shapes the .NET
 			// accessor, falling back to kotc's own get_/set_<name> declaration convention when no binding exists.
 			return if (callee === prop.setter)
-				if (!hasRealStaticField(prop))
+				if (!writesAsStaticField(prop))
 					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"set","args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
 				else
 					"""{"k":"staticFieldSet","ownerType":${fqnJson(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
-			else if (!hasRealStaticField(prop))
+			else if (!readsAsStaticField(prop))
 				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get","args":[]${retHint(false, call.type)}}"""
 			else """{"k":"staticField","ownerType":${fqnJson(enclosing)},"name":${str(prop.name.asString())}}"""
 		}
@@ -843,18 +845,24 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// file's class. Use the property's own file, NOT the file currently being emitted — else a cross-file
 			// reference looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
 			val owner = fileClassOf(p)
-			if (p.backingField == null)
-				// A COMPUTED top-level property (`val foo: T get() = ...`, no backing field) -> a static call by the
-				// property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81), NOT the baked
-				// get_/set_ slot name. bir2cir shapes the .NET accessor from the stdlib binding metadata, falling back
-				// to kotc's get_/set_<name> declaration convention when none exists.
-				return if (callee === p.setter)
+			// A COMPUTED top-level property (`val foo: T get() = ...`, no backing field) OR one that has a backing
+			// field (initializer) but ALSO a CUSTOM accessor (`val foo = 41; get() = field + 1`, #89) -> a static
+			// call by the property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81), NOT the
+			// baked get_/set_ slot name and NOT a raw static-field load (that would skip the custom accessor).
+			// bir2cir shapes the .NET accessor from the stdlib binding metadata, falling back to kotc's
+			// get_/set_<name> declaration convention when none exists. The read/write decisions are independent: a
+			// `var` may pair a default getter (field read) with a custom setter (accessor call), or vice versa.
+			return if (callee === p.setter) {
+				if (!writesAsStaticField(p))
 					"""{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(p.name.asString())},"prop":"set","args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
 				else
+					"""{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+			} else {
+				if (!readsAsStaticField(p))
 					"""{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(p.name.asString())},"prop":"get","args":[]${retHint(false, call.type)}}"""
-			return if (callee === p.setter)
-				"""{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
-			else """{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())}}"""
+				else
+					"""{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())}}"""
+			}
 		}
 	}
 
@@ -1367,3 +1375,47 @@ private fun BirEmitter.hasRealStaticField(prop: IrProperty): Boolean {
 	}
 	return prop.backingField != null
 }
+
+// #89: whether a property's GETTER is DEFAULT (kotc-generated trivial `field` passthrough). A property may
+// have BOTH a real static backing field (an initializer) AND a custom `get() = field + 1` — reading it as a
+// raw static-field load would skip the getter (the bug). So a top-level/companion property is only read as a
+// static field when it has a real field AND a default getter; a custom getter must be invoked. For a
+// same-module source property the accessor origin discriminates; a cross-module Fir2IrLazyProperty stub keeps
+// IR_EXTERNAL_DECLARATION_STUB origin on both kinds, so trust the deserialized FIR accessor kind instead.
+internal fun BirEmitter.hasDefaultGetter(prop: IrProperty): Boolean {
+	(prop as? org.jetbrains.kotlin.fir.lazy.Fir2IrLazyProperty)?.fir?.let { fir ->
+		return fir.getter == null || fir.getter is org.jetbrains.kotlin.fir.declarations.impl.FirDefaultPropertyGetter
+	}
+	val g = prop.getter ?: return true
+	return g.origin == org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin.DEFAULT_PROPERTY_ACCESSOR
+}
+
+// #89 (write side): whether a property's SETTER is DEFAULT. A `var x = init; set(v) { field = v.trim() }` has a
+// real field AND a custom setter — writing it as a raw static-field store would skip the setter. Symmetric to
+// hasDefaultGetter.
+internal fun BirEmitter.hasDefaultSetter(prop: IrProperty): Boolean {
+	(prop as? org.jetbrains.kotlin.fir.lazy.Fir2IrLazyProperty)?.fir?.let { fir ->
+		return fir.setter == null || fir.setter is org.jetbrains.kotlin.fir.declarations.impl.FirDefaultPropertySetter
+	}
+	val s = prop.setter ?: return true
+	return s.origin == org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin.DEFAULT_PROPERTY_ACCESSOR
+}
+
+// #89: a property whose backing field is accessed THROUGH `field`-based get_/set_ accessors — the routing this
+// fix targets. Excludes the canonical non-field-routed kinds (mirrors the member-accessor `emitsGet`/`emitsSet`
+// exclusion set): `const` is frontend-inlined; `lateinit` keeps a raw null-checked field with default accessors;
+// a DELEGATED property's `$delegate` field is NOT the value and its accessor lowering (the @InlineOnly
+// `getValue`/`setValue` inline splice) is resolved only at DIRECT access sites, not inside an emitted accessor
+// body — so #89 leaves delegation on its prior path rather than emit a half-lowered accessor; `@ClrField` is a
+// plain field by opt-in. For an excluded property #89 reduces to the pre-fix rule (static field iff a real field
+// exists); only a genuine `field`-routed property additionally consults accessor-defaultness.
+internal fun BirEmitter.fieldRoutedProperty(prop: IrProperty): Boolean =
+	!prop.isConst && !prop.isLateinit && !prop.isDelegated && !isClrField(prop)
+// #89: a property READ resolves to a raw static-field load only with a real field AND (for a field-routed
+// property) a default getter. An excluded (const/lateinit/delegated/@ClrField) property keeps the pre-fix rule.
+private fun BirEmitter.readsAsStaticField(prop: IrProperty): Boolean =
+	hasRealStaticField(prop) && (!fieldRoutedProperty(prop) || hasDefaultGetter(prop))
+// #89: a property WRITE resolves to a raw static-field store only with a real field AND (for a field-routed
+// property) a default setter.
+private fun BirEmitter.writesAsStaticField(prop: IrProperty): Boolean =
+	hasRealStaticField(prop) && (!fieldRoutedProperty(prop) || hasDefaultSetter(prop))
