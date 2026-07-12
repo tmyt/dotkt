@@ -15,13 +15,13 @@ using DotKt.Bir;
 // retNullableFlags/nullableFlags (DeclNullableFlags), retSuspendFnType/suspendFnType (BirTypeLowering's suspend-fn-type
 // erasure records the pre-erasure shape as this fact), readOnly, and the S1 `inlineBir` carrier string.
 //
-// The 9 attribute-class defs (7 DotKt.Runtime.CompilerServices.* + System.Runtime.CompilerServices.Nullable{,Context})
+// The 10 attribute-class defs (8 DotKt.Runtime.CompilerServices.* + System.Runtime.CompilerServices.Nullable{,Context})
 // are emitted ONCE per assembly as a DEDICATED synthetic CIR file (SynthDefsFile) — `internal sealed : System.Attribute`
 // with base-chaining ctors — so ilemit defines them like any type (no EnsureKotlinAttrs). NullableAttribute carries the
 // csc DUAL ctor: (byte) scalar + (byte[]) nested; the two overloads are disambiguated by BuildCab's runtime-type match.
 //
 // ATTR ORDER (per emitted member) reproduces ilemit's old stamp order verbatim, so a metadata dump stays equivalent:
-//   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?]
+//   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?, KotlinValue?]
 //   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType? ]
 //   param:  [ Nullable?, KotlinSuspendFunctionType?, …user ]
 //   field:  [ KotlinReadOnly?, KotlinSuspendFunctionType?, …user ]
@@ -35,6 +35,7 @@ static class RoundtripMetadata
     const string AKReadOnly     = Ns + "KotlinReadOnlyAttribute";
     const string AKFunInterface = Ns + "KotlinFunInterfaceAttribute";
     const string AKSealed       = Ns + "KotlinSealedAttribute";
+    const string AKValue        = Ns + "KotlinValueAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
     const string ANullableCtx   = ClrNs + "NullableContextAttribute";
@@ -65,6 +66,10 @@ static class RoundtripMetadata
         Prepend(to, ByteMarker(ANullableCtx, 1));                     // [NullableContext(1)]
         if (ModFlag(to, "fun")) Append(to, Marker(AKFunInterface));  // `fun interface` (SAM)
         if (ModFlag(to, "sealed")) Append(to, Marker(AKSealed));     // `sealed` class/interface
+        // `value`/inline class (`IrClass.isValue`). The 2.4.0 frontend no longer materializes @kotlin.jvm.JvmInline
+        // into the IR, so this [KotlinValue] marker is the ROUND-TRIP carrier of value-ness that ReferenceMetadataIndex
+        // reads back off the ref/rt DLL to drive the single-field erase-to-underlying lowering.
+        if (ModFlag(to, "value")) Append(to, Marker(AKValue));       // `value` class (@JvmInline)
         StampMethods(to["methods"]);
         StampFields(to["fields"]);
         StampProps(to["properties"]);
@@ -227,7 +232,7 @@ static class RoundtripMetadata
         obj["mods"] is JsonObject m && (m[name] as JsonValue)?.GetValue<bool>() == true;
 
     // ---------------------------------------------------------------------------------------------------------------
-    // The 9 embedded attribute-class defs, emitted ONCE as a dedicated synthetic CIR file. Each is `internal sealed :
+    // The 10 embedded attribute-class defs, emitted ONCE as a dedicated synthetic CIR file. Each is `internal sealed :
     // System.Attribute` with the same ctor overloads ilemit's DefineEmbeddedAttr{,N} used to synthesize. `final:true`
     // -> TypeAttributes.Sealed (matching the old NotPublic|Sealed|Class). Ctor params carry NO name (a named ctor param
     // would mint Param rows the embedded attrs never had); the empty body chains to Attribute()'s protected ctor.
@@ -242,6 +247,7 @@ static class RoundtripMetadata
             AttrClass(AKReadOnly, Ctor()),
             AttrClass(AKFunInterface, Ctor()),
             AttrClass(AKSealed, Ctor()),
+            AttrClass(AKValue, Ctor()),
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             // NullableAttribute — csc's DUAL ctor: (byte) FIRST, (byte[]) SECOND (declaration order preserved so the
             // MethodDef rows and BuildCab's arity fallback stay deterministic).

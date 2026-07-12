@@ -12,7 +12,10 @@ sealed class ReferenceMetadataIndex
     const string KotlinFileClassAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
-    const string JvmInlineAttr = "kotlin.jvm.JvmInline";
+    // The round-trip marker RoundtripMetadata stamps on every `value`/inline class. It REPLACES the old
+    // `kotlin.jvm.JvmInline` key: the 2.4.0 frontend no longer materializes @JvmInline into the IR (OptionalExpectation
+    // `expect` with no non-JVM actual), so value-ness now rides `mods.value` -> this synthetic attribute on the ref/rt DLL.
+    const string KotlinValueAttr = "DotKt.Runtime.CompilerServices.KotlinValueAttribute";
     const string RestrictsSuspensionAttr = "kotlin.coroutines.RestrictsSuspension";
     // [KotlinFunction(flags)] flag word (mirrors ilemit Program.cs pass 4 / facadegen): Infix=1, Operator=2, Suspend=4.
     const int KotlinFunctionSuspendFlag = 4;
@@ -730,11 +733,15 @@ sealed class ReferenceMetadataIndex
                     if (HasAttribute(type.GetCustomAttributesData(), RestrictsSuspensionAttr)) metadata.RestrictsSuspensionTypes.Add(ownerFqn);
                     var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
 
-                    // @JvmInline value class: its single instance backing field IS the erased value. Record the field
-                    // getter + the field's CLR conv token so a `get_<field>()` call collapses to `conv(<recv>)`.
-                    if (HasAttribute(type.GetCustomAttributesData(), JvmInlineAttr))
+                    // `value`/inline class (marked with [KotlinValue], the 2.4.0 carrier of `mods.value`): its single
+                    // instance backing field IS the erased value. Record the field getter + the field's CLR conv token so a
+                    // `get_<field>()` call collapses to `conv(<recv>)`. NARROWED to EXACTLY ONE instance field — a value
+                    // class has precisely one property/backing field, so requiring a single field picks the correct
+                    // underlying type (and refuses to erase off an arbitrary FirstOrDefault if the shape is unexpected).
+                    if (HasAttribute(type.GetCustomAttributesData(), KotlinValueAttr))
                     {
-                        var backing = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly).FirstOrDefault();
+                        var instanceFields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                        var backing = instanceFields.Length == 1 ? instanceFields[0] : null;
                         if (backing != null && InlineFieldConv(backing.FieldType) is string conv)
                             metadata.InlineBacking[ownerFqn] = ("get_" + backing.Name, conv);
                     }
