@@ -1,7 +1,11 @@
-# #84 — Diagnostics quality: source-position errors + IR sanity gate (PLAN)
+# #84 — Diagnostics quality: source-position errors + IR sanity gate
 
-> Status (2026-07-12): **PLAN ONLY** (user-directed: "#84 は plan だけ"). Implementation deferred. This doc is
-> the phased design to implement later.
+> Status (2026-07-13): **Phases 1, 2, 4 IMPLEMENTED.** Phase 1 (ilemit failure-context breadcrumb) + Phase 4
+> (in-process CIR sanity gate) landed under `#84`; Phase 2 (decl-level `File.kt:line` position, kotc → BIR → CIR →
+> ilemit breadcrumb) and Phase 4's residuals (the SHARED bir-common `IrSanity` run by BOTH bir2cir and ilemit, +
+> the offline `scripts/verify-sanity.py` / `make verify-sanity`) landed under `#112`. Phase 3 (node-level `pos`)
+> remains DEFERRED — decl granularity has proved sufficient. The phase designs below are retained as the rationale
+> record; where they say "NOT built" read the status line above.
 
 ## Current-state findings
 

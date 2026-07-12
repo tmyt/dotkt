@@ -7,6 +7,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Emit diagnostics now point at the originating `File.kt:line`, and a shared IR-sanity gate runs at both the
+  bir2cir/CIR boundary and ilemit (`#112`, diagnostics-quality follow-ups of `#84`).** Two additive,
+  no-codegen-change pieces:
+  - **Phase 2 — decl-level source position.** kotc now stamps an optional `pos {f,l,c}` (1-based `File.kt:line`)
+    on each method/type declaration (via the existing `BirEmitter.locationOf`), threaded BIR → CIR (bir2cir's
+    DOM passes preserve the unknown key). ilemit reads it into its `#84` failure breadcrumb, so an emit throw now
+    reads `ilemit: File.kt:42: Foo.bar [node]: <message>` instead of the bare `Foo.bar` decl name. The field is
+    numeric `l`/`c` (only `pos.f` is a string, allow-listed in `verify-schema.py` STR_OK) so the `#37` types-are-nodes
+    freeze is untouched (`additionalProperties:true` headroom + the one STR_OK edit; `pos` added to
+    `docs/bir-cir.schema.json`). Optional — a synthetic decl with no source omits it (absent = pre-`#112` behavior).
+  - **Phase 4 — shared IR-sanity in bir-common + an offline checker.** The `#84` CIR-sanity invariants (undeclared
+    `local`, dangling `goto`/`brIf`, missing `field` owner, malformed `binOp`/`cond`, bad `for` cmp) moved from the
+    ilemit-local `Emitter.Sanity.cs` into a shared `toolchain/bir-common/IrSanity.cs` (compile-Included by BOTH
+    bir2cir and ilemit); ilemit's file is now a thin adapter. **bir2cir now runs the same checks on the CIR it
+    produces** — the earliest catch, at the bir2cir/CIR boundary — surfacing a malformed CIR as
+    `bir2cir: File.kt:42: Foo.bar: sanity: <invariant>`. A new offline `scripts/verify-sanity.py` (+ `verify-sanity.sh`
+    wrapper, `make verify-sanity`, wired into `make verify`) mirrors the invariants over the post-lowering CIR
+    corpus build-free, exiting non-zero with a `File.kt:line`-attributed message. (Layer: bir-common owns the layer-agnostic
+    invariants; kotc emits the pos; ilemit/bir2cir consume — no valid-sample emission changes.)
+
 - **A Kotlin class implementing a facadegen-injected .NET generic interface instantiated with a VALUE-TYPE arg no
   longer miscompiles to a `TypeLoadException` (`#128`, real miscompile surfaced by `#79`'s coverage).** A
   `class C : IComparer<Int>` fails at type load with `TypeLoadException: Signature of the body and declaration in a

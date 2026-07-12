@@ -54,6 +54,11 @@ sealed class Pipeline
         // Release the long-lived .NET-interop MetadataLoadContext (kept alive across all transform passes for
         // NetInteropBinding's owner resolution — A2 / #61) now that no pass needs metadata reflection.
         refs.DisposeNet();
+        // #112 Phase 4: run the SHARED IR sanity gate on the CIR we just produced — the EARLIEST catch, at the
+        // bir2cir/CIR boundary (ilemit re-runs the SAME bir-common IrSanity at the head of EmitAssembly). A malformed
+        // CIR (undeclared local, dangling goto, missing owner) fails LOUD here with a precise invariant message
+        // instead of surfacing two stages downstream. Pure fail-fast validation — no effect on a valid CIR.
+        CheckCirSanity(cirFiles);
         WriteCirFiles(cirFiles);
 
         var suspend = SuspendShapeAnalysis.Combine(birFiles.Select(f => f.Suspend));
@@ -664,6 +669,22 @@ sealed class Pipeline
                     if (TypeJson.OwnerName(i)?.TrimStart('@') == "dotkt$CharSequence")
                         return true;
         return false;
+    }
+
+    // #112 Phase 4: run the shared bir-common IrSanity over the produced CIR. Parse each CirFile once, hold the
+    // JsonDocuments alive across the check (JsonElement borrows from its document), and surface an IrSanityException
+    // as a plain message that Main's top-level catch renders `bir2cir: <File.kt:line: Decl>: sanity: <invariant>`.
+    static void CheckCirSanity(IReadOnlyList<CirFile> files)
+    {
+        var docs = new List<JsonDocument>();
+        try
+        {
+            var roots = new List<JsonElement>();
+            foreach (var f in files) { var d = JsonDocument.Parse(f.Json); docs.Add(d); roots.Add(d.RootElement); }
+            try { IrSanity.Check(roots); }
+            catch (IrSanityException ex) { throw new InvalidOperationException($"{ex.Decl}: sanity: {ex.Message}"); }
+        }
+        finally { foreach (var d in docs) d.Dispose(); }
     }
 
     void WriteCirFiles(IReadOnlyList<CirFile> files)

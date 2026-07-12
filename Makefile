@@ -95,13 +95,16 @@ pack: toolchain stdlib ## the 4 NuGet packages (Sdk/Toolchain/Stdlib/Templates) 
 # ==================================================================================================
 # Verification gates (the scripts are called VERBATIM; behavior is identical to invoking them)
 # ==================================================================================================
-verify: verify-il verify-schema verify-ktproj verify-roundtrip verify-differential verify-widedelegates ## run ALL gates
+verify: verify-il verify-schema verify-sanity verify-ktproj verify-roundtrip verify-differential verify-widedelegates ## run ALL gates
 
 verify-il: ## the canonical IL gate (compile -> IL -> run -> assert -> ilverify)
 	bash scripts/verify-il.sh
 
 verify-schema: ## the #37 BIR/CIR freeze enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-il
 	bash scripts/verify-schema.sh
+
+verify-sanity: ## the offline IR-sanity gate (#112 P4 — semantic invariants over fresh BIR/CIR); run AFTER verify-il
+	bash scripts/verify-sanity.sh
 
 verify-ktproj: ## MSBuild / .ktproj end-to-end
 	bash scripts/verify-ktproj.sh
