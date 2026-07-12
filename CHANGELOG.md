@@ -14,9 +14,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   carried via a `mods.value` BIR flag + `[KotlinValueAttribute]` roundtrip marker since 2.4.0 stopped
   materializing `@JvmInline` in non-JVM sessions; an identity-cast / double-`nullableValue` ilemit fix)
   AND the matching stdlib SOURCE refresh (per-file 3-way merge to v2.4.0, 3 new Uuid actuals). The
-  reusable procedure is `docs/kotlin-frontend-bump-playbook.md`. One latent value-type-array-nullability
-  compiler bug surfaced by 2.4.0's `Array.toList()` rewrite is worked around stdlib-side and tracked
-  (`arrayOfNulls<value-type>` allocates `T[]` not `Nullable<T>[]`).
+  reusable procedure is `docs/kotlin-frontend-bump-playbook.md`.
+- **Fixed `arrayOfNulls<value-type>` dropping the element nullability (`#113`).** `arrayOfNulls<Int>(3)` returns
+  Kotlin `Array<Int?>`, which on the CLR is `Nullable<int32>[]`, but in chained/inline contexts (e.g. inside the
+  stdlib `copyOf`/`toList` bodies) it allocated a native `int32[]` — the value-type type-argument's nullability was
+  dropped, so a later `copyOf() as Array<Int?>` threw `InvalidCastException`. bir2cir now nullable-wraps the element
+  at the `@ClrArrayFactory` "sized" substitution site (the semantic source: `arrayOfNulls<T>` → `Array<T?>`), so
+  `Nullable<T>[]` is allocated uniformly for Int/Long/Double/Char while reference/`String` T stays a bare array. The
+  2.4.0 `Array<out T>.toList()` stdlib workaround (element-wise `toMutableList()`) is reverted to upstream
+  `copyOf().asList()`. Gate-covered by `cases/il-arrnull`. (`Array<T>.slice`/`take`/`takeLast` remain broken by a
+  distinct stdlib `copyOfRange` reinterpret-cast bug, tracked separately.)
 - **Fixed a cross-module silent miscompile of field-backed properties with a custom accessor (`#103`).**
   A top-level `val x = 41; get() = field + 1` (or a `var` with a custom `set`) consumed from ANOTHER DotKt
   assembly silently returned the raw backing field (41) instead of invoking the getter (42) — the accessor

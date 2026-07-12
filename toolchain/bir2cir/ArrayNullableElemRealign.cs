@@ -4,12 +4,14 @@ using DotKt.Bir;
 
 // ARRAY-ELEMENT NULLABILITY realignment (C2 boxed-primitive dual-representation).
 //
-// kotc emits `arrayOfNulls<Int>(3)` (and `Array<Int?>(n){...}` / an `Array<Int?>` literal) with the array-creation node's
+// A `Array<Int?>(n){...}` constructor / an `Array<Int?>` array LITERAL is emitted with the array-creation node's
 // `elem` set to the NON-null element token (`kotlin.Int`), even though the declaring slot is `Array<Int?>` =
 // `array:nullable:int` = `Nullable<int>[]`. ilemit then `newarr int` (an `int[]`) while element stores emit
 // `stelem Nullable<int>` (8-byte struct into a 4-byte slot) -> memory corruption / SIGSEGV. Realign the creation's
 // `elem` to carry the declared array's `nullable:` element so a genuine `Nullable<int>[]` is allocated and the element
-// stelem/ldelem agree.
+// stelem/ldelem agree. (The `arrayOfNulls<Int>(n)` FACTORY is nullable-wrapped at its source — MemberCallSubstitution's
+// sized-factory branch — since `arrayOfNulls<T>` returns `Array<T?>` regardless of any declaring slot; that runs after
+// this pass, so a factory `newArraySized` never reaches here.)
 //
 // Scope: a `var`/`field` whose declared `type` is `array:nullable:<E>` and whose `init` is a `newArray` /
 // `newArraySized` / `newArrayInit` whose `elem` lacks a `nullable:` (and isn't itself an `array:` — a nested array).

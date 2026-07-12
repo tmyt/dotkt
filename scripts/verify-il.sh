@@ -383,6 +383,7 @@ il_check seqforin SeqForin "$ROOT/cases/il-seqforin" "$(printf 'a\nb')"
 il_check char  Char  "$ROOT/cases/il-char"    "$(printf 'True\nTrue\nTrue\nTrue\nA\nz\nTrue\nTrue\n97\nb')"
 il_check sort  Sort  "$ROOT/cases/il-sort"    "$(printf '9,6,5,4,3,2,1,1\na,dd,bbb,cccc\ncccc,bbb,dd,a')"
 il_check boxgen BoxgenKt "$ROOT/cases/il-boxgen" "$(printf '42\n1\n42\n42\n10\n-1\n[1, 2, 3]\n[3, 2, 1]\n[a, b, c]\n[1, null, 3]\n[5, null, null]\nSUMMER')"   # C2 boxed-primitive dual-representation: getOrPut/getOrElse/compareBy/Array<Int?>/T:Enum<T>
+il_check arrnull Arrnull "$ROOT/cases/il-arrnull" "$(printf '5\nnull\n3\n5\n7\nnull\n[5, null, null]\n100\nnull\nnull\n2.5\nx\nnull\nhi\nnull')"   # #113: arrayOfNulls<T>(n) allocates Nullable<T>[] (value-type nullability preserved) + copyOf() round-trip; general Int/Long/Double/Char/String
 il_check funref Funref "$ROOT/cases/il-funref" "$(printf '2,4,6\n1,4,9,16,25,36\nHi, Kotlin\n105\n107\ncalc100\n203\n42')"
 # G8 (#73 w9): UNBOUND extension-function callable references (`String::isNotBlank`, `String::repeatBy`) -> a lifted
 # static forwarder whose body is the faithful ext call; bir2cir binds/substitutes the inner call (isNotBlank = the

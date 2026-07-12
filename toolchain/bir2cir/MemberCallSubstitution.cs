@@ -440,7 +440,18 @@ static class MemberCallSubstitution
             {
                 var elemT = TypeArgAt(typeArgs, 0);
                 if (elemT == null || args.Count < 1) return null;
-                return new JsonObject { ["k"] = "newArraySized", ["elem"] = elemT.DeepClone(), ["size"] = args[0].DeepClone() };
+                // `arrayOfNulls<T>` returns `Array<T?>` — the element is the NULLABLE form of the type argument, NOT the
+                // bare T. The call's typeArgs[0] is the non-null T (`kotlin.Int`), so wrap it in Nullable so a value-type
+                // element allocates a genuine `Nullable<int>[]` (not a native `int[]`, whose 4-byte slots would corrupt on
+                // `stelem Nullable<int>`). Uniformity comes from ReferenceNullableStrip (runs after substitution): it keeps
+                // `Nullable(value)` but COLLAPSES `Nullable(reference)` AND `Nullable(Tv)` back to the bare inner. So a
+                // reference `T` -> bare `System.String[]`, and an OPEN type-variable `T` (a non-inlined generic body — the
+                // `plus`/two-arg-`arrayOfNulls` actuals) -> bare `newarr !T` (the exact-reified path those bodies' trailing
+                // `as Array<T>` identity casts depend on — LOAD-BEARING, this wrap must stay a no-op there). Skip an
+                // already-nullable typeArg (`arrayOfNulls<Int?>`) to avoid a malformed `Nullable(Nullable)` double-wrap.
+                var elemNode = TypeJson.Read(elemT);
+                var nullableElem = elemNode is TypeNode.Nullable ? elemT.DeepClone() : TypeJson.Write(new TypeNode.Nullable(elemNode));
+                return new JsonObject { ["k"] = "newArraySized", ["elem"] = nullableElem, ["size"] = args[0].DeepClone() };
             }
             // "vararg": arrayOf<T>(...) / intArrayOf(...) -> newArray. kotc emits the vararg as a single `newArray` arg
             // (an EMPTY vararg is dropped -> args=[]). The elem source, in precedence: typeArgs[0] (the generic

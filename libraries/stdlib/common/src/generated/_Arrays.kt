@@ -11318,12 +11318,7 @@ public fun <T> Array<out T>.toList(): List<T> {
     return when (size) {
         0 -> emptyList()
         1 -> listOf(this[0])
-        // CLR adaptation: upstream 2.4.0 uses `copyOf().asList()`, but copyOf()'s `nativeClone() as Array<T>` reified
-        // cast trips a latent compiler bug: arrayOfNulls<Int>(n) allocates Int32[] instead of Nullable<Int32>[]
-        // (value-type nullability dropped at the newArraySized lowering), so the cast to Array<Int?> throws InvalidCast.
-        // Keep the 2.2.0 elementwise body, which never consults the receiver's reified runtime array type.
-        // Revert to upstream once the arrayOfNulls allocation bug is fixed (see coordinator issue).
-        else -> this.toMutableList()
+        else -> this.copyOf().asList()
     }
 }
 
