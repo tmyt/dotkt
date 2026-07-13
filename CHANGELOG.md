@@ -76,14 +76,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   new dotkt$StringCharSequence(v)` (bindOnce: a side-effecting subject is bound to a temp so it runs exactly once) — so the
   slot receives a genuine adapter or a typed null: ilverify-clean and null-preserving. (Gate: `cases/il-nullcs`.)
 
-- **(bir2cir half, blocked on kotc) A generic .NET extension over a value-type constructed-generic receiver miscompiles
-  the receiver (#157).** `class Cell<T>` + `Peek(this Cell<int>)` called on an inferred `val c = Interop.Cell(40)` returned
-  garbage (2) instead of 41: kotc's type inference over a facadegen-injected .NET generic collapses the flexible
-  (`@FlexibleNullability`) value-type arg to `Nullable<Int>`, so the receiver is constructed as `Cell<Nullable<int32>>`
-  while the extension parameter is the layout-distinct `Cell<int32>` — an unverifiable, type-unsafe call reading garbage
-  field bytes. The ROOT is in kotc (`BirEmitterTypes.kt` serializes a flexible `Int!` identically to an explicit `Int?`);
-  `BirTypeLowering` now lowers a `TypeNode.Oblivious` node to the bare inner (the consuming half — inert until kotc emits
-  `Oblivious` for `@FlexibleNullability`). The kotc producer half + gate (`cases/il-genextval`) are pending coordinator routing.
+- **A generic .NET extension over a value-type constructed-generic receiver miscompiled the receiver (#157).** `class Cell<T>`
+  + `Peek(this Cell<int>)` called on an inferred `val c = Interop.Cell(40)` returned garbage (2) instead of 41. Root cause:
+  facadegen faithfully types the un-annotated ctor param `Cell(T v)` as an oblivious type-variable (`T!`), which kotc's
+  `ClrTypeInjection.coneOf` mapped to a `ConeFlexibleType(T, T?)`; a flexible PARAM biases inference of `Cell(40)` toward
+  the strict nullable upper bound `Cell<Int?>` (the `@FlexibleNullability` erased before the backend — it never reaches
+  BIR), so the receiver was constructed as `Cell<Nullable<int32>>` while the extension parameter is the layout-distinct
+  `Cell<int32>` — an unverifiable, type-unsafe call reading garbage field bytes. Fix (kotc, `ClrTypeInjection`): an
+  oblivious type-VARIABLE in an INPUT/value-parameter position resolves to the BARE type variable (`Cell(40)` -> `Cell<Int>`,
+  the value arg reified invariantly, matching the .NET member slot). The resolution is position-scoped: a `[MaybeNull] T`
+  in an OUTPUT (return/getter) position stays flexible, so platform-type null-checkability is preserved (#143,
+  `ThreadLocal<T>.Value`). `oblivious` remains frontend-only — kotc still never emits a `TypeNode.Oblivious` to BIR (the
+  bir2cir `BirTypeLowering` Oblivious->bare-inner case stays a defensive no-op). Gate: `cases/il-genextval`.
 
 - **A delegate type-arg's nullability now survives into the injected Kotlin lambda param/return (#150).** facadegen
   built a delegate's `fn` node (`Action<T>`/`Func<T>`) with a plain `MapT` per type arg — no access to the member's

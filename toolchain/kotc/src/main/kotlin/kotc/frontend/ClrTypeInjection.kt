@@ -737,7 +737,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			// lowered (construction is native newClr) so the missing delegation is harmless.
 			val real = realDefaults(params)   // all-buildable ctor defaults -> real defaults (`Pt(y = 4)` omits x); else required
 			createConstructor(context.owner, ClrGeneratedKey, i == 0, type.baseNoArgCtor) {
-				for (p in params) valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner), hasDefaultValue = real && p.default != null)
+				for (p in params) valueParameter(Name.identifier(p.name), coneOf(p.type, context.owner, paramPos = true), hasDefaultValue = real && p.default != null)
 			}.also { if (real) applyDefaults(it, params) }.symbol
 		}
 	}
@@ -788,8 +788,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 							if (m.infix || m.operator) status { isInfix = m.infix; isOperator = m.operator }   // top-level extension operators
 							if (extRecv != null) extensionReceiverType { tps -> coneOf(extRecv.type, null, tps) }
 							for (p in vps.take(arity))
-								if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), null, tps) }, isVararg = true)
-								else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, null, tps) }, hasDefaultValue = real && p.default != null)
+								if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), null, tps, paramPos = true) }, isVararg = true)
+								else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, null, tps, paramPos = true) }, hasDefaultValue = real && p.default != null)
 						}.also { if (real) applyDefaults(it, vps) }.symbol
 					}
 				}
@@ -847,7 +847,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			return ct.staticMethods.filter { it.name == cn }.map { m ->
 				if (m.typeParams.isEmpty())
 					createMemberFunction(owner, ClrGeneratedKey, callableId.callableName, coneOf(m.returnType, owner)) {
-						for (p in m.params) valueParameter(Name.identifier(p.name), coneOf(p.type, owner))
+						for (p in m.params) valueParameter(Name.identifier(p.name), coneOf(p.type, owner, paramPos = true))
 					}.symbol
 				else
 					// A GENERIC static (`Task.FromResult<TResult>(TResult): Task<TResult>`, `Task.Run<TResult>`): declare the
@@ -860,8 +860,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 						// N3-deep: a GENERIC static's `vararg` param (`Task.WhenAll<T>(params Task<T>[])`) rebuilds as an
 						// `Array<elem>` vararg so it resolves to the real `params Task<T>[]` overload (not `Any?`).
 						for (p in m.params)
-							if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps) }, isVararg = true)
-							else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, owner, tps) })
+							if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps, paramPos = true) }, isVararg = true)
+							else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, owner, tps, paramPos = true) })
 					}.symbol
 			}
 		}
@@ -875,8 +875,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				if (callName == "get") coneOf(ix.valueType, owner) else session.builtinTypes.unitType.coneType) {
 				status { isOperator = true }
 				if (type.open && !type.isObject) modality = Modality.OPEN
-				valueParameter(Name.identifier("index"), coneOf(ix.indexType, owner))
-				if (callName == "set") valueParameter(Name.identifier("value"), coneOf(ix.valueType, owner))
+				valueParameter(Name.identifier("index"), coneOf(ix.indexType, owner, paramPos = true))
+				if (callName == "set") valueParameter(Name.identifier("value"), coneOf(ix.valueType, owner, paramPos = true))
 			}
 			return listOf(fn.symbol)
 		}
@@ -923,8 +923,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					if (m.inline) status { isInline = true }
 					if (extRecv != null) extensionReceiverType(coneOf(extRecv.type, owner))
 					for (p in vps.take(arity))
-						if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), owner), isVararg = true)
-						else valueParameter(Name.identifier(p.name), coneOf(p.type, owner), hasDefaultValue = real && p.default != null)
+						if (p.vararg) valueParameter(Name.identifier(p.name), coneOf(TypeNode.Array(p.type), owner, paramPos = true), isVararg = true)
+						else valueParameter(Name.identifier(p.name), coneOf(p.type, owner, paramPos = true), hasDefaultValue = real && p.default != null)
 				}.also { if (real) applyDefaults(it, vps) }.symbol
 				}
 			} else listOf(
@@ -945,8 +945,8 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					if (extRecv != null) extensionReceiverType { tps -> coneOf(extRecv.type, owner, tps) }
 					// N3-deep: a GENERIC member method's `vararg` param rebuilds as an `Array<elem>` vararg so it resolves.
 					for (p in vps)
-						if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps) }, isVararg = true)
-						else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, owner, tps) }, hasDefaultValue = realDefaults(vps) && p.default != null)
+						if (p.vararg) valueParameter(Name.identifier(p.name), { tps -> coneOf(TypeNode.Array(p.type), owner, tps, paramPos = true) }, isVararg = true)
+						else valueParameter(Name.identifier(p.name), { tps -> coneOf(p.type, owner, tps, paramPos = true) }, hasDefaultValue = realDefaults(vps) && p.default != null)
 				}.also { if (realDefaults(vps)) applyDefaults(it, vps) }.symbol
 			)
 		}
@@ -1141,19 +1141,36 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 
 	/** Resolve a structured TypeNode (spec §1) to a ConeKotlinType. `methodTps` = the enclosing method's declared type
 	 *  parameters, so a `Tv(scope="method", i)` binds to `methodTps[i]`; a `Tv(scope="type", i)` binds to the owner's
-	 *  i-th type parameter. There is NO type-string parsing — every case dispatches on the node kind. */
-	private fun coneOf(node: TypeNode, owner: FirClassSymbol<*>?, methodTps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>? = null): ConeKotlinType {
+	 *  i-th type parameter. There is NO type-string parsing — every case dispatches on the node kind.
+	 *
+	 *  `paramPos` = this cone is being built for a value-PARAMETER (an INPUT) slot, so an oblivious type-VARIABLE
+	 *  (`T!`) collapses to the bare `T` (see the Oblivious case, #157). It propagates through the whole param subtree
+	 *  (`List<T!>`, `(T!)->R`), and is FALSE for return/property/getter (OUTPUT) positions — where an oblivious `T!`
+	 *  stays flexible so the deliberate `[MaybeNull] T` platform-type semantics survive (#143, `ThreadLocal<T>.Value`). */
+	private fun coneOf(node: TypeNode, owner: FirClassSymbol<*>?, methodTps: List<org.jetbrains.kotlin.fir.declarations.FirTypeParameterRef>? = null, paramPos: Boolean = false): ConeKotlinType {
 		val bt = session.builtinTypes
 		return when (node) {
 			// `T?` (nullable) and `T!` (oblivious/flexible platform `(T..T?)` — the frontend decides null-safety per use).
-			is TypeNode.Nullable -> coneOf(node.of, owner, methodTps).withNullability(true, session.typeContext)
+			is TypeNode.Nullable -> coneOf(node.of, owner, methodTps, paramPos).withNullability(true, session.typeContext)
 			is TypeNode.Oblivious -> {
-				val lower = coneOf(node.of, owner, methodTps)
-				val upper = lower.withNullability(true, session.typeContext)
-				if (lower is ConeRigidType && upper is ConeRigidType) ConeFlexibleType(lower, upper, false) else lower
+				// An oblivious wrapper around a bare TYPE-VARIABLE (`T!`) in an INPUT/param position (`paramPos`) resolves
+				// to the BARE type variable — NOT a `ConeFlexibleType(T, T?)` (#157). A type variable carries no inherent
+				// nullability; a `(T..T?)` flexible PARAM would bias inference of `Cell(40)` (over a facadegen-injected
+				// `Cell(T v)`) toward the STRICT nullable upper bound `Cell<Int?>` (its `@FlexibleNullability` erased before
+				// the backend), constructing a `Cell<Nullable<Int32>>` that is layout-incompatible with a
+				// `Peek(this Cell<int>)` slot. A bare `T` infers `Cell<Int>` — the value arg reified invariantly, matching
+				// the .NET member's slot. In an OUTPUT position (return/getter, `!paramPos`), an oblivious `T!` STAYS
+				// flexible so a `[MaybeNull] T` return keeps its platform-type null-checkability (#143). A REFERENCE
+				// oblivious (`String!`) always keeps the flexible form (its nullable-vs-not is a benign NRT attribute).
+				if (paramPos && node.of is TypeNode.Tv) coneOf(node.of, owner, methodTps, paramPos)
+				else {
+					val lower = coneOf(node.of, owner, methodTps, paramPos)
+					val upper = lower.withNullability(true, session.typeContext)
+					if (lower is ConeRigidType && upper is ConeRigidType) ConeFlexibleType(lower, upper, false) else lower
+				}
 			}
 			// A .NET out/ref param / ref return -> the intrinsic `ClrRef<T>`.
-			is TypeNode.ByRef -> clrRefOf(coneOf(node.of, owner, methodTps))
+			is TypeNode.ByRef -> clrRefOf(coneOf(node.of, owner, methodTps, paramPos))
 			// A .NET array -> Kotlin `Array<T>` / a primitive `IntArray`/etc.
 			is TypeNode.Array -> {
 				// A .NET unsigned-element array -> Kotlin's SPECIALIZED unsigned primitive array (#53): System.Byte[]
@@ -1162,15 +1179,15 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				val prim = (node.elem as? TypeNode.Fqn)?.takeIf { it.args == null }?.name?.let { PRIM_ARRAY_ELEM[it] }
 				val cid = if (prim != null) ClassId(FqName("kotlin"), Name.identifier(prim)) else ClassId(FqName("kotlin"), Name.identifier("Array"))
 				val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return bt.nullableAnyType.coneType
-				sym.constructType(if (prim != null) emptyArray() else arrayOf(coneOf(node.elem, owner, methodTps)), false)
+				sym.constructType(if (prim != null) emptyArray() else arrayOf(coneOf(node.elem, owner, methodTps, paramPos)), false)
 			}
 			// A .NET delegate / a `suspend (…) -> T` position -> a Kotlin (suspend) function type, so a lambda binds and
 			// overloads disambiguate. A suspend fn makes a passed lambda a SUSPEND lambda (the H2 round-trip).
 			is TypeNode.Fn ->
 				if (node.recv != null && !node.suspend)
-					coneExtensionFunctionType(coneOf(node.recv, owner, methodTps), node.params.map { coneOf(it, owner, methodTps) }, coneOf(node.ret, owner, methodTps))
-				else if (node.suspend) coneSuspendFunctionType(node.params.map { coneOf(it, owner, methodTps) }, coneOf(node.ret, owner, methodTps))
-				else coneFunctionType(node.params.map { coneOf(it, owner, methodTps) }, coneOf(node.ret, owner, methodTps))
+					coneExtensionFunctionType(coneOf(node.recv, owner, methodTps, paramPos), node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))
+				else if (node.suspend) coneSuspendFunctionType(node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))
+				else coneFunctionType(node.params.map { coneOf(it, owner, methodTps, paramPos) }, coneOf(node.ret, owner, methodTps, paramPos))
 			// A positional type variable: scope "method" -> the method's own type param `methodTps[i]`; scope "type" ->
 			// the owner's i-th type parameter. (The `gp:`-name remap is gone — spec §1.)
 			is TypeNode.Tv -> {
@@ -1201,7 +1218,7 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 				if (sym == null) bt.nullableAnyType.coneType
 				else {
 					@Suppress("UNCHECKED_CAST")
-					val args = (node.args?.map { coneOf(it, owner, methodTps) } ?: emptyList()).toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
+					val args = (node.args?.map { coneOf(it, owner, methodTps, paramPos) } ?: emptyList()).toTypedArray() as Array<org.jetbrains.kotlin.fir.types.ConeTypeProjection>
 					sym.constructType(args, false)
 				}
 			}
