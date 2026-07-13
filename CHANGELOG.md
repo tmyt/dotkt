@@ -53,6 +53,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   new dotkt$StringCharSequence(v)` (bindOnce: a side-effecting subject is bound to a temp so it runs exactly once) — so the
   slot receives a genuine adapter or a typed null: ilverify-clean and null-preserving. (Gate: `cases/il-nullcs`.)
 
+- **(bir2cir half, blocked on kotc) A generic .NET extension over a value-type constructed-generic receiver miscompiles
+  the receiver (#157).** `class Cell<T>` + `Peek(this Cell<int>)` called on an inferred `val c = Interop.Cell(40)` returned
+  garbage (2) instead of 41: kotc's type inference over a facadegen-injected .NET generic collapses the flexible
+  (`@FlexibleNullability`) value-type arg to `Nullable<Int>`, so the receiver is constructed as `Cell<Nullable<int32>>`
+  while the extension parameter is the layout-distinct `Cell<int32>` — an unverifiable, type-unsafe call reading garbage
+  field bytes. The ROOT is in kotc (`BirEmitterTypes.kt` serializes a flexible `Int!` identically to an explicit `Int?`);
+  `BirTypeLowering` now lowers a `TypeNode.Oblivious` node to the bare inner (the consuming half — inert until kotc emits
+  `Oblivious` for `@FlexibleNullability`). The kotc producer half + gate (`cases/il-genextval`) are pending coordinator routing.
+
 - **Two same-name/same-arity top-level extensions on DIFFERENT receiver types (parallel `*Extensions` static classes in
   one namespace) now each bind to their OWN receiver's class — no silent mis-bind to the first candidate (#144).** A
   facadegen-injected C#-origin `[Extension]` method surfaces as a Kotlin top-level extension fun keyed by
