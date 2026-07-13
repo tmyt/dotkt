@@ -134,6 +134,26 @@ sealed partial class Emitter
         BeginMethod(mb.GetILGenerator(), m, isStatic: mb.IsStatic);
         PrescanCfgLabels(m.GetProperty("body"));
         foreach (var s in m.GetProperty("body").EnumerateArray()) EmitStmt(s);
+        EmitTrailingRet();
+    }
+
+    // Append the method's fall-through terminator. For a `void` method a bare `ret` is valid. For a
+    // value-returning method the fall-through is normally UNREACHABLE (every path returns) and ilverify
+    // ignores dead code — but a value-returning INFINITE loop (`while(true){ … return x }`, CFG-lowered
+    // to a `brfalse end` on a constant-true condition) leaves the loop-exit label STATICALLY reachable,
+    // so a bare `ret` with an empty stack trips ilverify ReturnMissing (the JIT runs it fine — the exit
+    // is never taken). Push `default(ret)` first so the terminator is stack-valid whether reachable or
+    // not (it never actually executes). Same value-type/generic-param vs reference split as `case
+    // "default"` (Emitter.Expressions.cs) and the unbox.any rule.
+    void EmitTrailingRet()
+    {
+        var rt = _methodRetType;
+        if (rt != typeof(void))
+        {
+            if (rt.IsValueType || rt.IsGenericParameter)
+            { var loc = _il.DeclareLocal(rt); _il.Emit(OpCodes.Ldloca, loc); _il.Emit(OpCodes.Initobj, rt); _il.Emit(OpCodes.Ldloc, loc); }
+            else _il.Emit(OpCodes.Ldnull);
+        }
         _il.Emit(OpCodes.Ret);
     }
 

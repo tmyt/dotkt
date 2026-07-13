@@ -36,6 +36,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **A value-returning infinite loop (`fun f(): Int { while(true){ … return x } }`) is now ilverify-clean — no
+  spurious `ReturnMissing` (#141).** bir2cir CFG-lowers `while(true)` to a `brfalse end` on a constant-true
+  condition, so the loop-exit label stays STATICALLY reachable. ilemit's method-body emitter unconditionally
+  appended a bare trailing `ret` at method end — valid for a `void` method and for a genuinely-unreachable
+  non-void tail (dead code, ilverify skips it), but the reachable-yet-never-taken infinite-loop tail with an
+  empty stack in a non-void method tripped ilverify `ReturnMissing` (the JIT ran it fine). `EmitMethodBody` now
+  appends `default(ret); ret` (a new `EmitTrailingRet`: `ldloca/initobj/ldloc` for value types and generic
+  params, `ldnull` for reference types — the same split as `case "default"` and the `unbox.any` rule) so the
+  unreachable terminator is stack-valid whether reachable or not; it never actually executes. Seen in atomicfu
+  `loop`/`getAndUpdate`/`updateAndFetch` and a `NativeMutex` inner loop. New gate case `il-infloopret` (run +
+  ilverify).
 - **Two same-name/same-arity top-level extensions on DIFFERENT receiver types (parallel `*Extensions` static classes in
   one namespace) now each bind to their OWN receiver's class — no silent mis-bind to the first candidate (#144).** A
   facadegen-injected C#-origin `[Extension]` method surfaces as a Kotlin top-level extension fun keyed by
