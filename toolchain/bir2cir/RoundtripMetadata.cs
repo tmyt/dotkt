@@ -22,7 +22,7 @@ using DotKt.Bir;
 //
 // ATTR ORDER (per emitted member) reproduces ilemit's old stamp order verbatim, so a metadata dump stays equivalent:
 //   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?, KotlinValue?]
-//   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType? ]
+//   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType?, KotlinNothing? ]
 //   param:  [ Nullable?, KotlinSuspendFunctionType?, …user ]
 //   field:  [ KotlinReadOnly?, KotlinSuspendFunctionType?, …user ]
 static class RoundtripMetadata
@@ -37,6 +37,7 @@ static class RoundtripMetadata
     const string AKSealed       = Ns + "KotlinSealedAttribute";
     const string AKValue        = Ns + "KotlinValueAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
+    const string AKNothing      = Ns + "KotlinNothingAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
     const string ANullableCtx   = ClrNs + "NullableContextAttribute";
 
@@ -100,10 +101,14 @@ static class RoundtripMetadata
         if (ModFlag(mo, "inline") && (mo["inlineBir"] as JsonValue)?.GetValue<string>() is string ib)
             Append(mo, Marker(AKInline, StringArg(BirCarrier.JsonV1), BytesArg(ib)));
 
-        // Return-position attrs ride `retAttrs` (ilemit stamps them on DefineParameter(0)). Order: [Nullable, SuspendFn].
+        // Return-position attrs ride `retAttrs` (ilemit stamps them on DefineParameter(0)). Order: [Nullable, SuspendFn,
+        // Nothing]. [KotlinNothing] (#133 case3) rides the SAME channel; it goes AFTER the [Nullable] byte so a `Nothing?`
+        // return's NRT byte (computed from the pre-erasure type via retNullableFlags, unperturbed here) composes on top —
+        // facadegen reads the marker by presence (HasNothingMarker), order-independent, and the Nullable byte separately.
         var ret = new JsonArray();
         if (mo["retNullableFlags"] is JsonArray rnf && NullableAttr(rnf) is JsonObject rna) ret.Add(rna);
         if (mo["retSuspendFnType"] is JsonNode rsf) ret.Add(SuspendFnAttr(rsf));
+        if ((mo["retNothing"] as JsonValue)?.GetValue<bool>() == true) ret.Add(Marker(AKNothing));
         if (ret.Count > 0) mo["retAttrs"] = ret;
 
         StampParams(mo["params"]);
@@ -249,6 +254,7 @@ static class RoundtripMetadata
             AttrClass(AKSealed, Ctor()),
             AttrClass(AKValue, Ctor()),
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
+            AttrClass(AKNothing, Ctor()),   // #133 case3 — bare marker on a Kotlin `Nothing` return
             // NullableAttribute — csc's DUAL ctor: (byte) FIRST, (byte[]) SECOND (declaration order preserved so the
             // MethodDef rows and BuildCab's arity fallback stay deterministic).
             AttrClass(ANullable, Ctor(Param("System.Byte")), Ctor(Param(ByteArrayType()))),

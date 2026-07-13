@@ -712,7 +712,7 @@ type's subtypes are themselves injected into the consumer's session via their `s
 | **`value`/inline class** (`@JvmInline`) | a **real wrapper class** (never erased, never a struct) | The OPPOSITE of Kotlin/JVM: no inline-class erasure and no name mangling — `Money` is emitted as an ordinary reference class (backing field + property + the synthesized `equals`/`hashCode`/`toString`), i.e. permanently "boxed". Structural equality survives; what is lost is the value-ness itself (identityless-ness is not enforced, no .NET `struct`, and the `value` modifier does not round-trip). The frontend still REQUIRES `@JvmInline` (JVM-frontend checker); the emitted `[kotlin.jvm.JvmInline]` attribute is skipped by ilemit. |
 | **`typealias`** | the expanded type | The alias name is not visible cross-module (it is expanded at use). |
 | **Contracts** (`@ExperimentalContracts`) | — | `callsInPlace`/returns-implies smart-cast facts are gone → consumer loses the smart-casts. |
-| **`Nothing`** (bottom type) | erased to `object` | The bottom-type semantics (unreachable, `List<Nothing>` covariance) have no CLR analog. A `fun f(): Nothing` return currently degrades to `Any?`, so a consumer's `if (c) x else f()` widens instead of keeping `x`'s type. A **return-position** carrier is landing (#133): `facadegen` reads a `[KotlinNothing]` return marker and surfaces `kotlin.Nothing` (`RetTypeSfxN`, DONE) — inert until `bir2cir` stamps the marker (`RoundtripMetadata`) and `kotc`'s `coneOf` resolves the bare `Nothing` node to `bt.nothingType`. Nested occurrences (`List<Nothing>`, parameter positions) stay lost. See the `roundtrip-nothing-return` reproducer. |
+| **`Nothing`** (bottom type) | erased to `object` | The bottom-type semantics (unreachable, `List<Nothing>` covariance) have no CLR analog. **The RETURN position now round-trips (#133, FIXED):** a `fun f(): Nothing` return carries a `[KotlinNothing]` marker — `bir2cir` records the pre-erasure fact (`BirTypeLowering`, alongside the `object` erasure) and stamps the marker (`RoundtripMetadata`), `facadegen` reads it (`RetTypeSfxN`) and surfaces `kotlin.Nothing`, and `kotc`'s `coneOf` resolves the bare `Nothing` node to `bt.nothingType`. So a consumer's `val y: String = if (c) "ok" else f()` keeps `String` instead of widening to `Any?` (`roundtrip-nothing-return`). Nested occurrences (`List<Nothing>`, parameter positions, a `suspend fun`'s Task-wrapped result) stay lost. |
 | **Function types with receiver** (`A.() -> B`) and **suspend function types** | a delegate / `Func<>` | The receiver-vs-argument distinction and the suspend-function-type identity degrade to an ordinary delegate. |
 | **`lateinit`** | a non-null `var` field | The definite-init contract / `isInitialized` is lost (restored as a plain non-null `var`). |
 | **`inner` class** | a nested type | The `inner` modifier (implicit outer `this` capture) is not marked vs. a plain nested class. |
@@ -759,18 +759,19 @@ type's subtypes are themselves injected into the consumer's session via their `s
    (`b = a * 10`) still needs the callee scope and is rejected at the omitting call (a real `$default` synthetic would
    lift it); and the receiver-rewrite is single-eval only for a trivial receiver (§7).
 
-7. **Generic-fidelity gaps surfaced by the atomicfu CLR port (#133)** — three DOWNSTREAM-of-facadegen gaps (the
-   facadegen symbol surface is verified correct in each; reproduced by the `roundtrip-generic-inline-ext` /
-   `roundtrip-generic-operator` / `roundtrip-nothing-return` RT_XFAIL sections). (a) A **generic inline extension on a
-   generic receiver** (`inline fun <T> Cell<T>.update(fn:(T)->T)`) — FIR infers `T` from the receiver, but `kotc`'s
-   facadegen inline-**splice** path (`BirEmitterCalls.kt`) refuses a cross-module inline call with a lambda AND an
-   extension receiver (the sibling ownerless splice already threads `extRecv`); route: **kotc**. (b) A Kotlin
-   **`operator get`/`set` on a generic DotKt type** — emitted as a plain `get`/`set` method, but `bir2cir`'s
-   `NetInteropBinding.DefaultIndexerAccessor` binds it to the BCL indexer `get_Item`/`set_Item` the emitted type lacks;
-   route: **bir2cir**. (c) The **`Nothing` return** carrier (§10.3) — `bir2cir` stamp + `kotc` `coneOf`; facadegen's
-   reader is landed.
+7. **Generic-fidelity gaps surfaced by the atomicfu CLR port (#133)** — **ALL THREE FIXED.** Three
+   DOWNSTREAM-of-facadegen gaps (the facadegen symbol surface was verified correct in each; the
+   `roundtrip-generic-inline-ext` / `roundtrip-generic-operator` / `roundtrip-nothing-return` sections now PASS).
+   (a) A **generic inline extension on a generic receiver** (`inline fun <T> Cell<T>.update(fn:(T)->T)`) — `kotc`'s
+   facadegen inline-**splice** path (`BirEmitterInline.inlineSpliceCall`) now threads the extension receiver in
+   `recvs.extension` (the same shape the owner-less splice uses; owner stays the facadegen file class so `bir2cir`'s
+   owner-ful `ResolveInlinePayload` finds the `[KotlinInline]` body); route: **kotc**. (b) A Kotlin **`operator get`/`set`
+   on a generic DotKt type** — `bir2cir`'s `NetInteropBinding` now keeps the plain emitted `get`/`set` method (which the
+   Kotlin type declares) instead of the BCL `get_Item`/`set_Item` fallback when the owner has no .NET indexer property;
+   route: **bir2cir**. (c) The **`Nothing` return** carrier (§10.3) — `bir2cir` records + stamps `[KotlinNothing]` and
+   `kotc` `coneOf` resolves it to `bt.nothingType`; facadegen's reader was already landed. Route: **bir2cir + kotc**.
 
-Status: **#1 (variance/bounds), #5 (sealed), #6 (default args) are FIXED; #2 companion IMPLICIT access is FIXED
+Status: **#1 (variance/bounds), #5 (sealed), #6 (default args), #7 (atomicfu generic-fidelity gaps) are FIXED; #2 companion IMPLICIT access is FIXED
 (`50c2c9f`); #3 (fun interface) is PARTIAL** (nature restored, SAM-lambda pinned-compiler-blocked). **#4 (enum
 class) remains a KNOWN / ACCEPTED limitation** — blocked by the pinned Kotlin 2.4.0 `FirDeclarationGenerationExtension`
 surface (no `FirEnumEntry` synthesis), not by a missing `[Kotlin*]` attribute we could add. The only object/companion

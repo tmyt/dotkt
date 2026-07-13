@@ -1054,6 +1054,9 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 					"Short" -> return bt.shortType.coneType; "Byte" -> return bt.byteType.coneType
 					"Boolean" -> return bt.booleanType.coneType; "Char" -> return bt.charType.coneType
 					"String" -> return bt.stringType.coneType; "Unit" -> return bt.unitType.coneType
+					// #133 case3: a facadegen-restored `Nothing` return (from the [KotlinNothing] marker) -> the real FIR
+					// Nothing type, so `if (c) x else fail()` keeps x's type instead of widening to Any?.
+					"Nothing" -> return bt.nothingType.coneType
 				}
 				val arity = node.args?.size ?: 0
 				val cid = if ('.' in node.name) ClassId(FqName(node.name.substringBeforeLast('.')), Name.identifier(node.name.substringAfterLast('.')))

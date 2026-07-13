@@ -356,6 +356,14 @@ static class BirTypeLowering
             // harmless on any other node that happens to carry an sfunc-typed `type`/`ret`.
             if (SuspendFnSlot(obj["type"]) is JsonNode h2t) copy["suspendFnType"] = h2t;
             if (SuspendFnSlot(obj["ret"]) is JsonNode h2r) copy["retSuspendFnType"] = h2r;
+            // #133 case3 — KOTLIN `Nothing` RETURN metadata. LowerType erases a `kotlin.Nothing` return to `object`
+            // (KotlinAllToClr / the leaf map) — Nothing has no CLR analog. That fold destroys the "this never returns
+            // normally" fact, so a re-consuming DotKt assembly widens `if (c) x else fail()` to Any? instead of keeping
+            // x's type. Record the pre-erasure fact alongside (the `nullable`/`retSuspendFnType` positional-fact model)
+            // so RoundtripMetadata stamps a bare [KotlinNothing] on the return and facadegen restores Nothing. A
+            // `Nothing?` return already stripped its reference-`?` (ReferenceNullableStrip) to a bare `kotlin.Nothing`
+            // here, its nullability carried by the [Nullable] byte — so the bare-Fqn check covers both.
+            if (IsNothingRet(obj["ret"])) copy["retNothing"] = true;
             // ANNOTATION-BASE DERIVATION (annotation-base-lowering-to-bir2cir, USER 2026-07-02): kotc emits a user
             // `annotation class` as a plain class carrying `"annotation":true` (base:null) — the Kotlin fact. bir2cir
             // is the Kotlin<->CLR layer that DERIVES the CLR base: an annotation class extends System.Attribute. Set
@@ -416,6 +424,13 @@ static class BirTypeLowering
             return o.DeepClone();
         return null;
     }
+
+    // #133 case3 — true iff a `ret` slot is the bare `kotlin.Nothing` FQN (a `fun f(): Nothing`), the pre-erasure fact
+    // RoundtripMetadata reads to stamp [KotlinNothing]. A `Nothing?` return already stripped its reference-`?` to a bare
+    // `kotlin.Nothing` (ReferenceNullableStrip) by this point, so the bare-Fqn check covers the nullable case too.
+    static bool IsNothingRet(JsonNode slot) =>
+        slot is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s == "fqn"
+        && o["name"] is JsonValue nv && nv.TryGetValue<string>(out var n) && n == "kotlin.Nothing";
 
     // A `sig` value is a STRUCTURED array of parameter-type TypeNodes (#37 m3b) — the overload key ilemit matches
     // against a method def's lowered `params[].type`. Lower each element through the SAME structured type path the

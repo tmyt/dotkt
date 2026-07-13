@@ -1182,17 +1182,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// arg rides as a delegate — AXIS ②). A lambda-less inline call is NOT gated here — it falls through to the
 			// plain call below, where the callee is a real generic method (the JIT inlines it). This fires ONLY for a
 			// facadegen-named fileClass; the receiver-carrying stdlib scope/util fns have no fileClass and take the
-			// owner-less path below. The `extRecv == null` gate is retained for this facadegen path (its receiver-splice
-			// shape is untested).
-			if (callNeedsSplice(call)) {
-					// This facadegen path's extension-receiver splice shape is untested, so a RECEIVER call must NOT fall
-					// through to the plain delegate call below (a spliced non-local return would become the closure's own
-					// return — a silent miscompile). Fail loud rather than degrade.
-					if (extRecv != null) return unsupported(call,
-						"a cross-module inline call with a lambda AND an extension receiver",
-						"the facadegen receiver-splice shape is not yet implemented")
-					return inlineSpliceCall(call, fileClass)
-				}
+			// owner-less path below. An EXTENSION receiver (`Cell<T>.update { … }`, #133 case1) rides through
+			// `inlineSpliceCall` in `recvs.extension` — the SAME shape the owner-less path threads, spliced onto payload
+			// param[0] (`__self`) by bir2cir.
+			if (callNeedsSplice(call)) return inlineSpliceCall(call, fileClass)
 			// PLAIN static call by identity to the referenced .NET file class (bir2cir's NetInteropBinding shapes it
 			// to clrStatic / clrGenericStatic). This is the fall-through for a lambda-less inline call (the callee is a
 			// real generic method) as well as every non-inline top-level fun.

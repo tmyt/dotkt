@@ -201,12 +201,17 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
  *  args, one entry per regular param (a normal/crossinline literal lambda as an `inlineLambda` carrier, a NOINLINE
  *  lambda / any other arg as its `expr` = a real delegate — AXIS ②). bir2cir OWNS the splice: it re-lowers the carried
  *  body in the app context (so it binds against app types). There is NO `fallback` slot — the engine fails loud if it
- *  cannot splice. This facadegen path is gated at the call site on `extRecv == null` (its receiver shape is untested — a
- *  receiver call takes the owner-less path instead), so `recvs` is always empty here. */
+ *  cannot splice. An EXTENSION-receiver call (`Cell<T>.update { … }`, #133 case1) rides through here too: the receiver
+ *  goes in `recvs.extension` (the SAME shape the owner-less path uses); owner stays the facadegen file class so bir2cir
+ *  resolves the payload via its OWNER-FUL path (the owner-less resolver only searches `kotlin.*`). */
 internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): String {
 	val callee = call.symbol.owner
 	val name = callee.name.asString()
-	val extRecv = extensionReceiver(call)   // null here — the call-site gate guarantees it
+	// A facadegen-injected cross-module inline EXTENSION fun (`Cell<T>.update { … }`, #133 case1): the extension receiver
+	// rides in `recvs.extension` (the SAME shape the owner-less path threads) — bir2cir's InlineSplice binds it to
+	// payload param[0] (`__self`). owner STAYS the facadegen file class so bir2cir resolves the [KotlinInline] payload via
+	// the OWNER-FUL ResolveInlinePayload (the owner-less path only searches `kotlin.*`, which a `LibKt` owner is not).
+	val extRecv = extensionReceiver(call)
 	val params = callee.parameters.filter { it.kind == IrParameterKind.Regular }
 	// One arg per Regular param, INDEX-ALIGNED with `params` (an omitted-default slot stays null): `regularArgs` drops
 	// omitted-default nulls, which — now that ANY inline+lambda call splices (AXIS ①) — would shift the lambda into the
@@ -238,7 +243,9 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 		else "null"
 	}
 	val retType = birType(callee.returnType).toJson()
-	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${str(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":{},"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
+	val extRecvJson = extRecv?.let { expr(it) }
+	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
+	return """{"k":"callInline","callee":${str(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${str(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
 }
 
 /** paramSig (#95 §4.2, overload disambiguator): one TYPE NODE per callee DECLARED parameter in the SAME order the

@@ -31,12 +31,7 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
-	# #133 — GENERIC round-trip fidelity gaps surfaced by the atomicfu CLR port. In all three the facadegen SYMBOL
-	# SURFACE is already correct (the meta carries the type-params, the receiver-generic Cell<T>, the operator bit); the
-	# loss is DOWNSTREAM of facadegen. Each routes to a single owning layer and flips to FIXED when that layer lands.
-	[roundtrip-generic-inline-ext]="#133 case1 (kotc): facadegen restores the generic inline ext + receiver-generic correctly and FIR infers T from the receiver, but kotc BirEmitterCalls.kt refuses to SPLICE a facadegen-injected cross-module inline call with a lambda AND an extension receiver ('facadegen receiver-splice shape not yet implemented') — the sibling ownerless splice path already handles extRecv"
-	[roundtrip-generic-operator]="#133 case2 (bir2cir): a Kotlin 'operator fun get/set' on a generic DotKt type is emitted as a PLAIN get/set method, but bir2cir NetInteropBinding.cs DefaultIndexerAccessor falls back to the BCL indexer accessor get_Item/set_Item (which the emitted type lacks) -> ilemit 'clrInstance method not resolved: Arr\`1[..].get_Item'"
-	[roundtrip-nothing-return]="#133 case3 (bir2cir+kotc): a Kotlin 'Nothing' return erases to CLR object; needs bir2cir RoundtripMetadata to stamp [KotlinNothing] on the return + kotc coneOf to resolve the bare Nothing node to bt.nothingType. facadegen's reader is LANDED (RetTypeSfxN), so this flips to FIXED once bir2cir+kotc land"
+	[roundtrip-defargs]="#134: pre-existing cross-module constructor default-arg regression — kotc doesn't fill the omitted ctor default; unrelated to #133"
 	# (#11 FIXED 2026-07-05: a suspend call inside an INLINE scope function used as a sub-expression —
 	# `doFetch = with(lib){ b.fetch() }` — no longer refuses in kotc; kotc emits the inlined valueBlock verbatim
 	# and bir2cir's SuspendColdLowering flattens it, segmenting the suspend call as an ordinary suspension point.)

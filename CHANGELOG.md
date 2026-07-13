@@ -7,18 +7,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
-- **facadegen: read a `[KotlinNothing]` return marker to restore a Kotlin `Nothing` return** (#133) — a Kotlin
-  `fun f(): Nothing` has no CLR analog and erases to `object`; facadegen's `RetTypeSfxN` now surfaces the erased
-  return as `kotlin.Nothing` when the return parameter carries the `[KotlinNothing]` marker (riding the same
-  `retAttrs` channel as `[Nullable]`/`[KotlinSuspendFunctionType]`, NRT composing on top). This is the facadegen
-  half of the `Nothing` round-trip; it is inert until bir2cir stamps the marker and kotc's `coneOf` resolves the
-  bare `Nothing` type node — see the three new `verify-roundtrip.sh` reproducers below.
-- **verify-roundtrip.sh: three RT_XFAIL reproducers for the #133 generic-fidelity gaps** (surfaced by the
-  atomicfu CLR port). In all three the facadegen symbol surface is verified correct; the loss is downstream and
-  each routes to one owning layer: `roundtrip-generic-inline-ext` (kotc splice of a cross-module inline call with
-  a lambda + extension receiver), `roundtrip-generic-operator` (bir2cir binding a Kotlin `operator get/set` on a
-  generic DotKt type to the BCL `get_Item`/`set_Item` indexer instead of the emitted plain `get`/`set`), and
-  `roundtrip-nothing-return` (bir2cir marker stamp + kotc `coneOf`). Each flips to FIXED when its layer lands.
+- **Consume-as-Kotlin round-trip: three generic-fidelity gaps fixed** (#133, surfaced by the atomicfu CLR port).
+  In all three the facadegen symbol surface was already correct; the loss was DOWNSTREAM, each in one owning layer.
+  Reproduced + gated by `verify-roundtrip.sh` `roundtrip-generic-inline-ext` / `roundtrip-generic-operator` /
+  `roundtrip-nothing-return` (now PASS).
+  - **kotc: a generic inline extension on a generic receiver** (`inline fun <T> Cell<T>.update(fn:(T)->T)` called
+    `c.update { it + 1 }`) now splices cross-module. `BirEmitterInline.inlineSpliceCall` threads the extension
+    receiver in `recvs.extension` (the same shape the owner-less splice uses); the owner stays the facadegen file
+    class so bir2cir's owner-ful `ResolveInlinePayload` binds the `[KotlinInline]` body. Removed the
+    `BirEmitterCalls` refusal of a facadegen inline call carrying a lambda AND an extension receiver.
+  - **bir2cir: a Kotlin `operator get`/`set` on a generic DotKt type** (`class Arr<T> { operator fun get/set }`,
+    used `r[1]` / `r2[0] = x`) now binds to the plain `get`/`set` method the Kotlin type emitted, instead of the
+    BCL `get_Item`/`set_Item` indexer accessor the emitted type lacks. `NetInteropBinding` keeps the emitted method
+    when the owner declares it and has no .NET indexer property.
+  - **bir2cir + kotc: a Kotlin `Nothing` return** (`fun fail(): Nothing`) now round-trips. bir2cir records the
+    pre-erasure fact (`BirTypeLowering`, alongside the `Nothing`→`object` erasure) and stamps a `[KotlinNothing]`
+    return marker (`RoundtripMetadata`); kotc's `coneOf` resolves the restored bare `Nothing` node to
+    `bt.nothingType`. So a consumer's `val y: String = if (c) "ok" else fail(...)` keeps `String` instead of
+    widening to `Any?`. (facadegen's `RetTypeSfxN` reader landed earlier in #133.)
 
 ## 0.9.5 — 2026-07-13
 

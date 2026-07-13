@@ -137,7 +137,16 @@ static class NetInteropBinding
         if (propKind == "index-get" || propKind == "index-set")
         {
             var isIxSet = propKind == "index-set";
-            method = DefaultIndexerAccessor(netType, isIxSet) ?? (isIxSet ? "set_Item" : "get_Item");
+            // A genuine .NET indexer -> its `get_`/`set_` accessor (a custom `[IndexerName]` honored via DefaultMember).
+            // Otherwise (#133 case2): a facadegen-injected DotKt owner (a Kotlin-emitted type — e.g. `class Arr<T>` with
+            // `operator fun get/set`) has NO .NET indexer property; it emitted the PLAIN operator method the frontend
+            // named (`method` = "get"/"set", facadegen's clrName). Bind to that REAL method when the type declares it —
+            // the get_Item/set_Item BCL fallback dangles on the Kotlin-emitted type. A DotKt owner declares the literal
+            // `get`/`set`; a BCL indexer type declares `get_Item` (found by DefaultIndexerAccessor above), so this cleanly
+            // separates the two. The get_Item/set_Item fallback survives for a BCL type whose indexer DefaultMember is
+            // absent from the metadata (defensive; unchanged behavior).
+            method = DefaultIndexerAccessor(netType, isIxSet)
+                ?? (method != null && DeclaresPublicMethodNamed(netType, method) ? method : (isIxSet ? "set_Item" : "get_Item"));
         }
         else if (propKind == "get" || propKind == "set")
         {
