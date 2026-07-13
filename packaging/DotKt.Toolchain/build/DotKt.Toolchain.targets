@@ -9,6 +9,14 @@
     <DotKtTypeMeta>$(BaseIntermediateOutputPath)dotkt-clrtypes.meta</DotKtTypeMeta>
     <!-- The .NET import list extracted from the .kt sources by the kotc scan-imports pass (PSI parser, not regex). -->
     <DotKtImportList>$(BaseIntermediateOutputPath)dotkt-clrimports.txt</DotKtImportList>
+    <!-- ilemit emits real CIL (Reflection.Emit) and must load each referenced type's RUNTIME (implementation)
+         assembly — it takes its refs from @(ReferenceCopyLocalPaths) (the runtime set), NOT @(ReferencePath) (which
+         resolves to a package's ref/ reference assembly — method-body-less; deriving a class from one fails with
+         "does not have an implementation"). For OutputType=Library a package's runtime dll is NOT copy-local by
+         default (CopyLocalLockFileAssemblies defaults false for a non-runtime output), so a Library consuming any
+         DotKt/.NET package would starve ilemit of it (#132). Force the transitive package runtime assets into the
+         copy-local set so ilemit sees them for a Library exactly as it already does for an Exe. -->
+    <CopyLocalLockFileAssemblies Condition="'$(CopyLocalLockFileAssemblies)' == ''">true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <!-- MPP (#119): opt-in multiplatform (common `expect` + CLR `actual`) for an ordinary user project.
@@ -80,11 +88,15 @@
   <Target Name="DotKtBir2Cir" BeforeTargets="DotKtIlEmit" DependsOnTargets="KotlinCompile">
     <ItemGroup>
       <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
-      <_DotKtBir2CirRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
-      <!-- The @Clr-metadata REFERENCE stdlib (DotKt.Private.Stdlib) is a compile-only reference (NOT copy-local), so
-           it's absent from @(ReferenceCopyLocalPaths) above; pull it from @(ReferencePath). bir2cir reads its
-           @ClrTypeAlias/@ClrIntrinsic labels to lower kotlin.* — the same ref scripts/verify-il.sh hands it. -->
-      <_DotKtBir2CirRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Private.Stdlib'" />
+      <!-- Every NON-framework compile reference, taken from @(ReferencePath): the @Clr-metadata REFERENCE stdlib
+           (DotKt.Private.Stdlib — bir2cir reads its @ClrTypeAlias/@ClrIntrinsic labels to lower kotlin.*, the same ref
+           scripts/verify-il.sh hands it), the runtime stdlib, AND every user PackageReference / ProjectReference /
+           explicit <Reference> a call may cross into (an MPP/kotlinx-style DotKt library, a .NET package). Framework /
+           targeting-pack assemblies (System.*, %(FrameworkReferenceName)=Microsoft.NETCore.App) are excluded — bir2cir
+           resolves the BCL by runtime reflection. Reading @(ReferencePath) (not @(ReferenceCopyLocalPaths)) is what
+           reaches a Library's transitive PackageReference dlls: for OutputType=Library a package runtime dll is NOT
+           copy-local (the consuming app pulls it), so it never appears in the copy-local set (#132). -->
+      <_DotKtBir2CirRef Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' == ''" />
     </ItemGroup>
     <RemoveDir Directories="$(DotKtCirOut)" />
     <MakeDir Directories="$(DotKtCirOut)" />
@@ -98,13 +110,14 @@
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir">
     <ItemGroup>
       <_DotKtCir Include="$(DotKtCirOut)/*.cir.json" />
-      <!-- ilemit needs the RUNTIME stdlib (DotKt.Stdlib) to resolve kotlin.* calls (e.g. kotlin.io.ConsoleKt.println).
-           For an Exe it is copy-local (in @(ReferenceCopyLocalPaths)); for a LIBRARY a PackageReference's runtime dll
-           is NOT copy-local (transitive — the consuming app pulls it), so it is absent there and present only in
-           @(ReferencePath). Pull it from @(ReferencePath) always (mirroring the bir2cir DotKt.Private.Stdlib line),
-           and exclude it from the copy-local glob so an Exe does not get it twice. -->
-      <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll' and '%(FileName)' != 'DotKt.Stdlib'" />
-      <_DotKtRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Stdlib'" />
+      <!-- ilemit's refs are the RUNTIME (implementation) assemblies from the copy-local set: the runtime stdlib
+           (DotKt.Stdlib, real kotlin.* bodies — resolves kotlin.io.ConsoleKt.println etc.), plus every user
+           PackageReference / ProjectReference / explicit <Reference> runtime dll a call may cross into. The
+           @Clr-metadata REFERENCE stdlib (DotKt.Private.Stdlib) is a compile-only <Reference Private=false>, so it is
+           never copy-local and never reaches ilemit — correct: its throw-stub bodies are a pure metadata surface for
+           bir2cir. Framework/targeting-pack assemblies (System.*) are never copy-local either — ilemit resolves the BCL
+           by runtime reflection. CopyLocalLockFileAssemblies=true (set above) makes this set complete for a Library. -->
+      <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
       <!-- The [Kotlin*] round-trip metadata attributes ilemit stamps so this library round-trips (is consumable AS
            KOTLIN by another .ktproj — [KotlinFileClass] restores a file facade's statics as top-level functions,
            [KotlinFunction] restores infix/operator/suspend, etc.) are SYNTHESIZED PER-ASSEMBLY by ilemit (embedded

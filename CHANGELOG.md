@@ -5,6 +5,35 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Packaging
+
+- **Any non-stdlib DotKt reference now reaches bir2cir/ilemit in a `Library` project** (#132-general), and a new
+  gate covers the packaged nupkg-resolution path (#130). The shipped `DotKt.Toolchain.targets` fed both bir2cir and
+  ilemit from `@(ReferenceCopyLocalPaths)` (the copy-local runtime set) plus a hard-coded special-case for the two
+  stdlib dlls. For `<OutputType>Library</OutputType>` a `PackageReference`'s runtime dll is NOT copy-local (it is
+  transitive — the consuming app pulls it), so any OTHER DotKt package/project reference (an MPP/kotlinx-style
+  library, a .NET package) was absent from the copy-local set and never reached bir2cir/ilemit → the emit failed
+  with unresolved types. (`Exe` output masked it: package refs are copy-local for an Exe.) The two layers are now
+  each sourced for what they actually need:
+  - **bir2cir** reads compile-time METADATA (a metadata-only reflection load), so it takes EVERY non-framework
+    reference from `@(ReferencePath)` — the @Clr-metadata reference stdlib, the runtime stdlib, and every user
+    package/project/explicit reference (a package's method-body-less `ref/` assembly is fine for metadata).
+    Framework/targeting-pack assemblies are excluded by `%(ReferencePath.FrameworkReferenceName) == ''`
+    (empirically the reliable .NET 10 marker — `ReferenceSourceTarget` is `ResolveAssemblyReference` for BOTH
+    framework and package refs, so it does NOT discriminate).
+  - **ilemit** emits real CIL and must load each type's RUNTIME (implementation) assembly — a package's `ref/`
+    assembly has no method bodies and deriving a class from one fails ("does not have an implementation"). It keeps
+    taking `@(ReferenceCopyLocalPaths)` (the runtime set; framework assemblies and the `Private=false` reference
+    stdlib are never copy-local), and the targets now set `CopyLocalLockFileAssemblies=true` so a Library's
+    transitive package runtime dlls join that set — reaching ilemit for a Library exactly as they already did for
+    an Exe.
+
+  The copy-local glob's per-name stdlib special-cases are removed. New gate `scripts/verify-packaged-sdk.sh` packs
+  the 5 nupkgs to a local feed (isolated `globalPackagesFolder`, local-only source — no cache masking) and drives
+  three throwaway projects through real nupkg resolution: an `Exe` (build+run), a `Library` consuming a second
+  DotKt library via `PackageReference` (the #132-general reproducer — RED before the fix, GREEN after), and a
+  `DotKt.Sdk.Mpp` multiplatform Exe (build+run).
+
 ### Fixed
 
 - **Consume-as-Kotlin round-trip: an omitted cross-module DEFAULT argument is now filled from the facadegen
