@@ -36,6 +36,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **`String.split`/`replace`/`substring` on a COMPUTED (non-const/local) receiver no longer crashes with
+  `EntryPointNotFoundException` at `dotkt$CharSequence.subSequence` (#148, the residual of #92).** A `kotlin.text`
+  CharSequence extension (`split`/`replace`/`substring`/…) on a `String` receiver requires bir2cir to adapter-wrap
+  the receiver into the synthetic `dotkt$StringCharSequence` (a real `subSequence`/`get_length` body); an UNwrapped
+  String reaches the `dotkt$CharSequence` slot raw and the extension's virtual interface call hits the body-less
+  synthetic method → `EntryPointNotFound` at runtime. The `StringCharSequenceBridge`'s static-String detector only
+  recognized const/local/param + a `ret`-carrying call, so a String from a **property getter** (`cfg.body`), an
+  **app top-level fun result** (`load()`), a **`!!`/elvis** result, or a **map indexer** (`m[k]!!`) — none of which
+  carry a `ret` on their BIR node — was left unwrapped (a literal/local receiver was fine, which is why it read as
+  "literal vs BCL-origin"; the true trigger is const/local vs any computed expression). Fixed by routing the detector
+  through the shared `StaticType.Surface` static-type resolver (#59), so every String origin is classified uniformly
+  (a ret-less `callInstance`/`callStatic` resolves its return type from the ref.dll or the THIS-file file class; a
+  `!!`/elvis `valueBlock` resolves through its result; a nullable-String value into a NON-nullable CharSeq slot —
+  frontend-guaranteed non-null — is peeled and wrapped). Gate: `cases/il-charseqbcl` (property-read / app-fun-result /
+  `!!` / `StringBuilder.toString()` receivers into split/replace/substring — the BCL-origin path #92 left un-gated).
 - **Deeply-nested inlined lambdas/blocks in one function no longer crash the pipeline with a JSON depth error**
   (#147). A function with enough nested inline lambdas/blocks produces a BIR (and derived CIR) whose method-body
   JSON nests deeper than System.Text.Json's default `MaxDepth` of 64 — legal Kotlin that hard-crashed bir2cir with

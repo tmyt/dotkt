@@ -468,6 +468,7 @@ il_check comparable Comparable "$ROOT/cases/il-comparable" "$(printf 'a<b\nc>b\n
 il_check charseq CS "$ROOT/cases/il-charseq" "$(printf '5\ne\n3\ne\n5')"
 il_check charseqx CSX "$ROOT/cases/il-charseqx" "$(printf 'False\nFalse')"
 il_check charseqs CSStr "$ROOT/cases/il-charseqs" "$(printf '5\ne\nllo\n5\n3\n3\nTrue\nTrue')"
+il_check charseqbcl CSBcl "$ROOT/cases/il-charseqbcl" "$(printf 'f:a\nf:b\nf:c\np:k1\np:k2\nm:1\nm:2\nu-v\nell\nk1+k2')"   # #148: computed/BCL-origin String receiver (property-read/app-fun-result/`!!`/StringBuilder.toString) into a stdlib CharSequence ext (split/replace/substring) — bir2cir must adapter-wrap it (else EntryPointNotFound on the body-less dotkt$CharSequence.subSequence; the #92 residual)
 il_check substr Substr "$ROOT/cases/il-substr" "$(printf 'ell\nworld\nhello\nworld')"
 il_check subseq SubSeq "$ROOT/cases/il-subseq" "$(printf 'ell\n1\nhel\nllo')"
 il_check seqfilter SeqFilter "$ROOT/cases/il-seqfilter" "$(printf '3,4,5,6\n20,40,60\n4\n3,4,5,6\n3')"

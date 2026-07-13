@@ -57,6 +57,15 @@ sealed class BirScope
     // sequence — so a `var` is in scope for the SUBSEQUENT siblings/children only (lexical block scoping).
     public BirScope Child() => new(this);
 
+    // Seed a scope from an existing name->type map (a consumer that tracks its own lexical environment — e.g. the
+    // StringCharSequenceBridge's Env — hands StaticType.Surface a BirScope so `local` reads resolve).
+    public static BirScope FromVars(IReadOnlyDictionary<string, TypeNode> vars)
+    {
+        var s = new BirScope();
+        foreach (var kv in vars) s.VarTypes[kv.Key] = kv.Value;
+        return s;
+    }
+
     // Record a `var` declaration into THIS (mutable child) scope, in place. No-op for a non-var / untyped node.
     public void Declare(JsonObject o)
     {
@@ -78,10 +87,16 @@ static class StaticType
     // recovered here from the emitted decl's fields/methods — the "file's emitted types" half of the #59 resolution.
     public static Dictionary<string, JsonObject> LocalTypes;
 
+    // The current file's file-class name (top-level funs/props live here, keyed off the root `fileClass`). Lets a
+    // `callStatic{owner:null}` to a THIS-file top-level fun resolve its return type locally (the ref.dll has no such
+    // app symbol). Set as a side effect of CollectTypes (always paired with a LocalTypes assignment).
+    public static string LocalFileClass;
+
     // Build the bare-FQN -> type-decl map from a BIR file root (recursing into nested `types`).
     public static Dictionary<string, JsonObject> CollectTypes(JsonNode root)
     {
         var map = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        LocalFileClass = (root as JsonObject)?["fileClass"] is JsonValue fcv && fcv.TryGetValue<string>(out var fcn) ? fcn : null;
         void Walk(JsonNode n)
         {
             if (n is JsonObject o)
@@ -104,9 +119,10 @@ static class StaticType
     }
 
     // A member's declared type on a THIS-assembly emitted type: a property/field named `member` (or the field behind a
-    // `get_<field>` / `is<Field>` getter), else a method named `member`'s return type. null when the owner/member is
-    // not an emitted local type.
-    static TypeNode LocalMemberType(string ownerFqn, string member)
+    // `get_<field>` / `is<Field>` getter), else a method named `member`'s return type. `argCount >= 0` disambiguates
+    // same-name method OVERLOADS by preferring a `params`-count match (a name-only hit is the fallback when no arity
+    // matches, e.g. a defaulted-param call whose emitted sig differs). null when the owner/member is not an emitted type.
+    static TypeNode LocalMemberType(string ownerFqn, string member, int argCount = -1)
     {
         if (LocalTypes == null || ownerFqn == null || member == null || !LocalTypes.TryGetValue(ownerFqn, out var td)) return null;
         var field = member.StartsWith("get_", StringComparison.Ordinal) ? member.Substring(4)
@@ -117,9 +133,16 @@ static class StaticType
                 if (f is JsonObject fo && (fo["name"] as JsonValue)?.GetValue<string>() == field && TypeJson.Read(fo["type"]) is TypeNode ft)
                     return ft;
         if (td["methods"] is JsonArray ms)
+        {
+            TypeNode nameHit = null;
             foreach (var m in ms)
                 if (m is JsonObject mo && (mo["name"] as JsonValue)?.GetValue<string>() == member && TypeJson.Read(mo["ret"]) is TypeNode mr)
-                    return mr;
+                {
+                    if (argCount >= 0 && (mo["params"] as JsonArray)?.Count == argCount) return mr;  // exact overload
+                    nameHit ??= mr;
+                }
+            return nameHit;
+        }
         return null;
     }
 
@@ -145,7 +168,9 @@ static class StaticType
             case "callStatic" or "callInstance": return TypeJson.Read(o["ret"]) ?? ResolveCallReturn(o);
             // A property/field read carries no type slot -> resolve the property getter's return type from the ref.dll.
             case "clrPropGet": return TypeJson.Read(o["ret"]) ?? ResolveFieldType(o);
-            case "field" or "lateinitGet" or "staticField": return ResolveFieldType(o);
+            // A field read carries an explicit `ret` only when its owner is GENERIC (kotc's retHint) — a property read on
+            // a generic owner instantiated at a concrete type (`Box<String>.item`); prefer it, else resolve the getter.
+            case "field" or "lateinitGet" or "staticField": return TypeJson.Read(o["ret"]) ?? ResolveFieldType(o);
             case "new" or "newClr": return TypeJson.Read(o["type"]);
             case "newArray" or "newArrayInit" or "newArraySized":            // an array factory / sized ctor -> Array<elem>
                 return TypeJson.Read(o["elem"]) is TypeNode ae ? new TypeNode.Fqn("kotlin.Array", new[] { ae }) : null;
@@ -160,7 +185,11 @@ static class StaticType
             case "concat": return new TypeNode.Fqn("kotlin.String");         // a template/`+` concat is always String
             case "isInst" or "isInstRef" or "objEq": return new TypeNode.Fqn("kotlin.Boolean");
             // An expression-level ternary (`if`-expr / elvis / when-expr) -> its branch type.
-            case "cond": return Surface(o["then"], scope) ?? Surface(o["else"], scope);
+            // A value-position ternary carries kotc's UNIFIED branch type (`type`) — prefer it: the branches may differ
+            // (`if (c) "s" else charSeq` unifies to CharSequence), so resolving off the then-branch alone would mis-type
+            // the whole expression (and mis-wrap it). A statement-position/`!!`-desugar cond carries no `type` -> fall
+            // back to the branch types (the `x!!.split(...)` receiver path relies on this then-branch resolution).
+            case "cond": return TypeJson.Read(o["type"]) ?? Surface(o["then"], scope) ?? Surface(o["else"], scope);
             // A spliced inline call becomes a `valueBlock {stmts, result}` (InlineSplice) — its static type is the RESULT's,
             // resolved with the block's OWN `var`s in scope (e.g. an `apply`-splice's result is `{k:local,__self}` declared
             // in its stmts). Without this, a member call on a spliced value (`buildString{}.…`, a spliced map access) can't
@@ -201,10 +230,13 @@ static class StaticType
         if (TypeJson.Read(o["owner"] ?? o["ownerType"]) is TypeNode.Fqn of)
         {
             var owner = ReferenceMetadataIndex.BareOwnerFqn(of.Name);
-            return LocalMemberType(owner, method) ?? Refs?.TryMemberReturn(owner, method, argCount);
+            return LocalMemberType(owner, method, argCount) ?? Refs?.TryMemberReturn(owner, method, argCount);
         }
-        // owner=null: a top-level fun — resolve via its file-class owner from the ref.dll.
-        return o["owner"] is null ? Refs?.TryTopLevelReturn(method, recvKey, argCount) : null;
+        // owner=null: a top-level fun — resolve via the THIS-assembly file class first (an app-own top-level fun the
+        // ref.dll can't know), then the ref.dll file-class owner (a stdlib top-level fun).
+        return o["owner"] is null
+            ? LocalMemberType(LocalFileClass, method, argCount) ?? Refs?.TryTopLevelReturn(method, recvKey, argCount)
+            : null;
     }
 
     // A field / property read without a type slot: resolve the property GETTER's declared return type (`get_<name>`,
