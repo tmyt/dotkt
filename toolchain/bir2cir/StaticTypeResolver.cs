@@ -92,6 +92,51 @@ static class StaticType
     // app symbol). Set as a side effect of CollectTypes (always paired with a LocalTypes assignment).
     public static string LocalFileClass;
 
+    // CROSS-FILE aggregation (#149): the union of EVERY input file's declared types + file classes across the whole
+    // compilation (bare FQN -> the decl). LocalTypes is PER-FILE, so a receiver whose static type is declared in a
+    // SIBLING .kt of the SAME assembly — a cross-file user-class property (`c.body` where `class Cfg` lives in another
+    // file), a cross-file top-level fun result — resolves in neither the current file's LocalTypes nor the ref.dll and
+    // stays null (so a String-typed cross-file receiver reached the `dotkt$CharSequence` slot UNWRAPPED). The bir2cir
+    // driver sees ALL the app's BIR, so it seeds this assembly-wide fallback ONCE before Phase 1; LocalMemberType
+    // consults it whenever the per-file LocalTypes misses. The stored decls are LIVE references into each `bir.Root` —
+    // an already-processed file is seen in its post-Phase-1 (in-place-mutated) state, a not-yet-processed file raw —
+    // but only plain field/return IDENTITIES are read (`kotlin.String`, `kotlin.Int`, a user FQN), which no in-place
+    // Phase-1 pass alters and which IsStringTokT matches in both the `kotlin.*` and lowered `System.*` spellings, so
+    // the sole order-dependence is a benign residual MISS, never a wrong-type answer.
+    public static Dictionary<string, JsonObject> GlobalTypes;
+    // The file-class names across ALL files — a `callStatic{owner:null}` cross-file top-level fun walks these.
+    public static List<string> GlobalFileClasses;
+
+    // Seed the cross-file GlobalTypes / GlobalFileClasses from every input file's raw root. Idempotent; call once per
+    // compilation before Phase 1. Mirrors CollectTypes' registration rule (a decl with fields/methods, recursing into
+    // nested `types`, plus each root file class) but unions across all roots and does NOT touch LocalFileClass.
+    public static void CollectGlobal(IEnumerable<JsonNode> roots)
+    {
+        var map = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        var fcs = new List<string>();
+        void Walk(JsonNode n)
+        {
+            if (n is JsonObject o)
+            {
+                if (o["name"] is JsonValue nv && nv.TryGetValue<string>(out var name) && (o["fields"] is JsonArray || o["methods"] is JsonArray))
+                    map[name] = o;
+                if (o["types"] is JsonArray ts) foreach (var t in ts) if (t != null) Walk(t);
+            }
+        }
+        foreach (var root in roots)
+            if (root is JsonObject ro)
+            {
+                if ((ro["fileClass"] as JsonValue)?.GetValue<string>() is string fc)
+                {
+                    if (ro["fields"] is JsonArray || ro["methods"] is JsonArray) map[fc] = ro;
+                    fcs.Add(fc);
+                }
+                if (ro["types"] is JsonArray top) foreach (var t in top) if (t != null) Walk(t);
+            }
+        GlobalTypes = map;
+        GlobalFileClasses = fcs;
+    }
+
     // Build the bare-FQN -> type-decl map from a BIR file root (recursing into nested `types`).
     public static Dictionary<string, JsonObject> CollectTypes(JsonNode root)
     {
@@ -122,9 +167,9 @@ static class StaticType
     // `get_<field>` / `is<Field>` getter), else a method named `member`'s return type. `argCount >= 0` disambiguates
     // same-name method OVERLOADS by preferring a `params`-count match (a name-only hit is the fallback when no arity
     // matches, e.g. a defaulted-param call whose emitted sig differs). null when the owner/member is not an emitted type.
-    static TypeNode LocalMemberType(string ownerFqn, string member, int argCount = -1)
+    static TypeNode LocalMemberType(string ownerFqn, string member, int argCount = -1, bool exactArity = false)
     {
-        if (LocalTypes == null || ownerFqn == null || member == null || !LocalTypes.TryGetValue(ownerFqn, out var td)) return null;
+        if (member == null || LookupType(ownerFqn) is not JsonObject td) return null;
         var field = member.StartsWith("get_", StringComparison.Ordinal) ? member.Substring(4)
                   : member.StartsWith("set_", StringComparison.Ordinal) ? member.Substring(4)
                   : member;
@@ -141,8 +186,33 @@ static class StaticType
                     if (argCount >= 0 && (mo["params"] as JsonArray)?.Count == argCount) return mr;  // exact overload
                     nameHit ??= mr;
                 }
-            return nameHit;
+            // `exactArity` (cross-file owner:null resolution) suppresses the name-only fallback — a same-name sibling of
+            // a DIFFERENT arity must not answer for the callee (it would guess a wrong return type; #149 should-fix 2).
+            return exactArity ? null : nameHit;
         }
+        return null;
+    }
+
+    // The type decl for an owner FQN: the current file's LocalTypes first (post-lowering, authoritative for THIS file),
+    // then the cross-file GlobalTypes fallback (a sibling .kt's user class / file class — #149).
+    static JsonObject LookupType(string ownerFqn)
+    {
+        if (ownerFqn == null) return null;
+        if (LocalTypes != null && LocalTypes.TryGetValue(ownerFqn, out var td)) return td;
+        if (GlobalTypes != null && GlobalTypes.TryGetValue(ownerFqn, out var gd)) return gd;
+        return null;
+    }
+
+    // A `callStatic{owner:null}` to a top-level fun DECLARED in a SIBLING file (#149): search every OTHER file class for
+    // an EXACT-arity method match (the current file class is tried by the caller first, so skip it here). Exact-arity
+    // ONLY — an `owner:null` call carries no package, so a name-only cross-file guess could answer for a same-name
+    // sibling of a different arity (or shadow the ref.dll's recv-key-disambiguated stdlib resolution) with a wrong
+    // return type; a miss here falls through to `Refs.TryTopLevelReturn`, which filters by the receiver key.
+    static TypeNode TryGlobalTopLevel(string method, int argCount)
+    {
+        if (GlobalFileClasses == null || argCount < 0) return null;
+        foreach (var fc in GlobalFileClasses)
+            if (fc != LocalFileClass && LocalMemberType(fc, method, argCount, exactArity: true) is TypeNode t) return t;
         return null;
     }
 
@@ -235,7 +305,7 @@ static class StaticType
         // owner=null: a top-level fun — resolve via the THIS-assembly file class first (an app-own top-level fun the
         // ref.dll can't know), then the ref.dll file-class owner (a stdlib top-level fun).
         return o["owner"] is null
-            ? LocalMemberType(LocalFileClass, method, argCount) ?? Refs?.TryTopLevelReturn(method, recvKey, argCount)
+            ? LocalMemberType(LocalFileClass, method, argCount) ?? TryGlobalTopLevel(method, argCount) ?? Refs?.TryTopLevelReturn(method, recvKey, argCount)
             : null;
     }
 

@@ -10,6 +10,11 @@ static class StringCharSequenceBridge
     const string Adapter = "dotkt$StringCharSequence";
     static readonly HashSet<string> StringTokens = new(StringComparer.Ordinal)
         { "kotlin.String", "System.String", "string" };
+    // A StringBuilder is a non-String CharSequence that does NOT implement the synthetic `dotkt$CharSequence`; flowing
+    // one into a CharSequence slot is snapshot to a String first (#149-2, WrapStringBuilder). Every spelling the static
+    // type can carry at this stage (the Kotlin typealias, the JDK class it aliases, the CLR type it lowers to).
+    static readonly HashSet<string> StringBuilderTokens = new(StringComparer.Ordinal)
+        { "kotlin.text.StringBuilder", "java.lang.StringBuilder", "java.lang.AbstractStringBuilder", "System.Text.StringBuilder" };
 
     // Injected exactly once per app assembly (dedup below). Pre-BirTypeLowering vocabulary: kotlin.* signature tokens
     // (lowered by the next pass), CLR-call bodies (String.get_Chars/Length/Substring — the SAME shape kotc emits for a
@@ -199,13 +204,75 @@ static class StringCharSequenceBridge
         for (var i = 0; i < n; i++)
         {
             if (TypeJson.Read(sig[i]) is not TypeNode tn || !IsCharSeqT(tn) || args[i] is not JsonNode a) continue;
-            // A NON-nullable `dotkt$CharSequence` slot is guaranteed a non-null value by the frontend, so a nullable-String
-            // value (a `!!`/elvis result whose node still carries the pre-strip `String?` type at this stage) is safe to
-            // peel + wrap — this is the `x!!.split(...)` / `map[k]!!.split(...)` receiver path. A nullable slot
-            // (`CharSequence?`-receiver ext) keeps the strict bare-String test so a genuine null stays unwrapped.
-            if (IsStaticString(a, env, allowNullable: tn is TypeNode.Fqn))
-                args[i] = WrapAdapter(a);
+            var c = CoerceCharSeqArg(a, env, nonNullSlot: tn is TypeNode.Fqn);
+            if (!ReferenceEquals(c, a)) args[i] = c;
         }
+    }
+
+    // Coerce a value flowing into a `dotkt$CharSequence` slot into an interface-implementing value:
+    //   - a statically-String value            -> `new dotkt$StringCharSequence(str)` (WrapAdapter).
+    //   - a StringBuilder (#149-2)              -> snapshot to String via LibraryKt.toString, then WrapAdapter.
+    //   - a polymorphic if/else unified to      -> DESCEND into then/else and coerce EACH branch, so a String branch
+    //     CharSequence (#149-3)                    is wrapped while a genuine-CharSequence branch is left as-is.
+    // Anything else (a user `class S : CharSequence`, an already-wrapped adapter, an unknown expr) is returned as-is.
+    //
+    // `nonNullSlot` = the target slot is a NON-nullable `dotkt$CharSequence`: the frontend guarantees a non-null value,
+    // so a nullable-String value (a `!!`/elvis result still carrying the pre-strip `String?` type here) is safe to peel
+    // + wrap (the `x!!.split(...)` receiver path). A NULLABLE slot (`CharSequence?`-receiver ext) keeps the strict
+    // bare-String test so a genuine null stays unwrapped — EXCEPT a `!!` non-null assertion, which is provably non-null
+    // and so is peel-safe even there (#149-4, `x!!.isNullOrEmpty()`).
+    static JsonNode CoerceCharSeqArg(JsonNode a, Env env, bool nonNullSlot)
+    {
+        if (a is not JsonObject o) return a;
+        if (IsStaticString(a, env, allowNullable: nonNullSlot || IsNotNullAssertion(a))) return WrapAdapter(a);
+        if (IsStaticStringBuilder(a, env)) return WrapStringBuilder(a);
+        // The slot is CharSequence (every caller gates on IsCharSeqT), so a `cond` reaching here unifies String/CharSeq
+        // branches — coerce each. `!!`/elvis desugars are a valueBlock (handled above), never a bare `cond`, so this
+        // only descends a genuine `if/else`.
+        if (Str(o["k"]) == "cond")
+        {
+            if (o["then"] is JsonNode t) { var ct = CoerceCharSeqArg(t, env, nonNullSlot); if (!ReferenceEquals(ct, t)) o["then"] = ct; }
+            if (o["else"] is JsonNode e) { var ce = CoerceCharSeqArg(e, env, nonNullSlot); if (!ReferenceEquals(ce, e)) o["else"] = ce; }
+            return o;
+        }
+        return a;
+    }
+
+    // A `!!` non-null assertion desugars to `valueBlock{ var t = <e>; result = if (!(t == null)) t else throw }`. In the
+    // `then` arm `t` is proven non-null, so the whole block's value is GUARANTEED non-null (it throws otherwise) and is
+    // wrap-safe even into a nullable `CharSequence?` slot (#149-4, `x!!.isNullOrEmpty()`). Matched STRUCTURALLY — the
+    // condition is `!(t == null)` (the `objEq` RHS MUST be the null const, else `t != OTHER` does not prove non-null),
+    // and the `then` reads the SAME local `t` — so it stays tight (a nullable `if (s != sep) s else throw` does NOT
+    // match) and survives the exception-type substitution that already ran (`throw NPE` -> `newClr NRE`).
+    static bool IsNotNullAssertion(JsonNode n)
+    {
+        if (n is not JsonObject o || Str(o["k"]) != "valueBlock" || o["result"] is not JsonObject r || Str(r["k"]) != "cond") return false;
+        if (r["else"] is not JsonObject e || Str(e["k"]) != "throwExpr") return false;
+        if (r["cond"] is not JsonObject c || Str(c["k"]) != "unaryOp" || Str(c["op"]) != "!"
+            || c["e"] is not JsonObject eq || Str(eq["k"]) != "objEq") return false;
+        // RHS must be the null literal (`{k:const, value:null}`) — a `t == someNonNull` comparison is NOT a null check.
+        if (eq["rhs"] is not JsonObject rhs || Str(rhs["k"]) != "const" || rhs["value"] is not null) return false;
+        var lhsName = eq["lhs"] is JsonObject l && Str(l["k"]) == "local" ? Str(l["name"]) : null;
+        var thenName = r["then"] is JsonObject t && Str(t["k"]) == "local" ? Str(t["name"]) : null;
+        return lhsName != null && lhsName == thenName;
+    }
+
+    // A StringBuilder value: static type is one of the StringBuilder spellings (never String / the adapter / a user CS).
+    static bool IsStaticStringBuilder(JsonNode n, Env env)
+        => n is JsonObject && StaticType.Surface(n, BirScope.FromVars(env.Vars)) is TypeNode.Fqn { Args: null } f
+           && StringBuilderTokens.Contains(f.Name);
+
+    // Snapshot a StringBuilder to a String via the null-safe `kotlin.LibraryKt.toString(object)` (the same coercion
+    // CharSeqStringLowering uses for a non-String value flowing into a `string` slot), then wrap that String in the
+    // adapter. StringBuilder.split/replace consume the sequence immediately, so the snapshot is faithful (#149-2).
+    static JsonObject WrapStringBuilder(JsonNode sbExpr)
+    {
+        var snapshot = new JsonObject
+        {
+            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"), ["method"] = "toString",
+            ["sig"] = new JsonArray { TypeJson.Fqn("object") }, ["args"] = new JsonArray { sbExpr.DeepClone() },
+        };
+        return WrapAdapter(snapshot);
     }
 
     // (f): a static-String arg flowing into a SPLICED anonymous object's (`dotkt$obj*`) `CharSequence` ctor slot. A
@@ -228,18 +295,20 @@ static class StringCharSequenceBridge
                 args[i] = WrapAdapter(a);
     }
 
-    // (d): a store into a CharSequence-typed local `var cs: CharSequence = <String>`.
+    // (d): a store into a CharSequence-typed local `var cs: CharSequence = <String | StringBuilder | if/else>`.
     static void WrapVarInit(JsonObject node, Env env)
     {
-        if (IsCharSeqT(TypeJson.Read(node["type"])) && node["init"] is JsonNode init && IsStaticString(init, env))
-            node["init"] = WrapAdapter(init);
+        if (TypeJson.Read(node["type"]) is TypeNode tn && IsCharSeqT(tn) && node["init"] is JsonNode init
+            && CoerceCharSeqArg(init, env, nonNullSlot: tn is TypeNode.Fqn) is JsonNode ci && !ReferenceEquals(ci, init))
+            node["init"] = ci;
     }
 
-    // (c): a return of a static String into a CharSequence return type.
+    // (c): a return of a String | StringBuilder | polymorphic if/else into a CharSequence return type.
     static void WrapReturn(JsonObject node, Env env)
     {
-        if (IsCharSeqT(env.RetType) && node["value"] is JsonNode v && IsStaticString(v, env))
-            node["value"] = WrapAdapter(v);
+        if (env.RetType is TypeNode rt && IsCharSeqT(rt) && node["value"] is JsonNode v
+            && CoerceCharSeqArg(v, env, nonNullSlot: rt is TypeNode.Fqn) is JsonNode cv && !ReferenceEquals(cv, v))
+            node["value"] = cv;
     }
 
     // A structured Type is (nullable/array of) the CharSequence synthetic.
