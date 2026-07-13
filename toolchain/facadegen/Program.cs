@@ -1797,7 +1797,7 @@ static class FacadeGen
             case "System.Char": return new TN.Fqn("Char");
             case "System.String": return WrapNrt(new TN.Fqn("String"), t, attrs, ctx, my, wrap);
             case "System.Object": return AnyQ();
-            default: return MetaMode ? CrossTypeTN(t, self, attrs, ctx, my, ref pos, wrap) : AnyQ();
+            default: return MetaMode ? CrossTypeTN(t, attrs, ctx, my, ref pos, wrap) : AnyQ();
         }
     }
 
@@ -1835,10 +1835,12 @@ static class FacadeGen
     }
 
     // Cursor-threaded mirror of CrossTypeT (a reference to another .NET type). Advances `pos` over the array element /
-    // generic args in preorder and applies NRT via `wrap`. Same degrade decisions/structure as CrossTypeT.
-    static TN CrossTypeTN(Type t, Type self, IList<CustomAttributeData> attrs, MemberInfo ctx, int my, ref int pos, bool wrap)
+    // generic args in preorder and applies NRT via `wrap`. Same degrade decisions/structure as CrossTypeT — INCLUDING
+    // its `self` REBASE: children recurse with `t` (the cross type) as the new self, so a nested self-reference resolves
+    // as CrossTypeT does (a dotted Fqn), never MapTN's simple-name self-match branch.
+    static TN CrossTypeTN(Type t, IList<CustomAttributeData> attrs, MemberInfo ctx, int my, ref int pos, bool wrap)
     {
-        if (t.IsArray) { var e = MapTN(t.GetElementType(), self, attrs, ctx, ref pos, wrap); return IsAnyQ(e) ? AnyQ() : WrapNrt(new TN.Array(e), t, attrs, ctx, my, wrap); }
+        if (t.IsArray) { var e = MapTN(t.GetElementType(), t, attrs, ctx, ref pos, wrap); return IsAnyQ(e) ? AnyQ() : WrapNrt(new TN.Array(e), t, attrs, ctx, my, wrap); }
         if (t.IsByRef || t.IsPointer || t.IsGenericParameter || (string.IsNullOrEmpty(t.Namespace) && !t.IsGenericType)) return AnyQ();
         if (t.IsGenericType)
         {
@@ -1849,7 +1851,7 @@ static class FacadeGen
                 return DegradeToAny(t, "generic open def not injectable / not a simple identifier");
             var ga = t.GetGenericArguments();
             var args = new TN[ga.Length];
-            for (int i = 0; i < ga.Length; i++) args[i] = MapTN(ga[i], self, attrs, ctx, ref pos, wrap);
+            for (int i = 0; i < ga.Length; i++) args[i] = MapTN(ga[i], t, attrs, ctx, ref pos, wrap);
             if (args.Any(IsAnyQ)) return DegradeToAny(t, "a generic type argument was unresolvable");
             return WrapNrt(new TN.Fqn(openName, args), t, attrs, ctx, my, wrap);
         }
