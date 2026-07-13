@@ -537,6 +537,12 @@ sealed class Pipeline
         if (!_options.RefBuild)
             GenericSelfInstantiation.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // STAR-PROJECTION BOUND index (#2): the in-assembly generic type-param BOUNDS (`interface Key<E : Element>`
+        // -> {Key: [Element]}), collected across ALL staged roots (a `Key<*>` use may live in a sibling file from Key's
+        // declaration). Feeds StarProjectionBoundLowering so a `Key<object>` (kotc's star-projection erasure) is
+        // repointed to `Key<Element>` for the stdlib's OWN Key; a REFERENCED Key resolves via refs.TvBound instead.
+        var starProjBounds = StarProjectionBoundLowering.CollectTypeParamBounds(staged.Select(s => s.Root));
+
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
         foreach (var (substituted, outputName) in staged)
@@ -572,6 +578,12 @@ sealed class Pipeline
             // build (ref==rt BIR); this reproduces the substitution consequence so the rt.dll stays byte-identical. Runs
             // BEFORE BirTypeLowering (the constraint is still the pure `kotlin.Comparable` token here).
             if (_options.SubstituteStdlibBuild) StdlibSubstituteTypeParams.Apply(substituted);
+            // STAR-PROJECTION BOUND LOWERING (#2): a `T<*>` on a self-ref-bounded generic (`Key<E : Element>`) that kotc
+            // erased to `Key<object>` violates `E : Element` (illegal reified CLR instantiation). Repoint the objectish
+            // arg to the type-param BOUND (`Key<Element>`), reading the constraint from the in-assembly declaration (its
+            // self-build) or refs.TvBound (a referenced owner). ALL builds, BEFORE BirTypeLowering (still kotlin.Any /
+            // dotted Kotlin FQNs here), so ref.dll + rt.dll + app agree on the corrected signature.
+            StarProjectionBoundLowering.Apply(substituted, starProjBounds, refs);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
