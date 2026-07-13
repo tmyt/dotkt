@@ -633,6 +633,10 @@ il_check netgen3 Ng3 "$ROOT/cases/il-netgen3" "$(printf '4\n8\n8\nFalse\nTrue\n2
 # injected-runtime samples use). fieldvis: a .NET host reflects a DotKt-emitted property's CLR accessor visibility.
 il_check_inject fieldvis FieldVis "$ROOT/cases/il-fieldvis" "$(printf '150\nme\nPrivate\nPublic')" KfcFv
 il_check_inject delegatearg Dlg "$ROOT/cases/il-delegatearg" "$(printf '42\n20\n81')" KfcDel
+# delegobj (#1): override a BCL virtual whose delegate param has an `object`/Any? Invoke arg. facadegen surfaces the
+# delegate as a function type `(Any?) -> Unit` (not bare Any?), so the Kotlin override matches instead of
+# `error: 'Post' overrides nothing`.
+il_check_inject delegobj Dobj "$ROOT/cases/il-delegobj" "$(printf 'posted: 42\nbase-typed: 7')" KfcDelObj
 # delegnull (#150): a delegate type-arg's NRT byte survives into the Kotlin lambda param/return. The runtime.cs is
 # built with C# NRT ENABLED (il_check_inject_nrt), so `Func<string?>`/`Action<string?>` carry real [Nullable] bytes;
 # facadegen threads them into the fn node (contravariant sibling of #143). A lambda returning null into `Func<string?>`

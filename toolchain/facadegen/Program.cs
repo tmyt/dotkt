@@ -1645,7 +1645,11 @@ static class FacadeGen
             {
                 var dret = MapRetT(inv.ReturnType, self);
                 var dps = inv.GetParameters().Select(p => MapT(p.ParameterType, self)).ToArray();
-                if (!IsAnyQ(dret) && dps.All(a => !IsAnyQ(a))) return new TN.Fn(false, dret, dps);
+                // #1: keep the delegate a FUNCTION TYPE even when its Invoke has an `object`/Any? param or return
+                // (SendOrPostCallback.Invoke(object) -> `(Any?) -> Unit`). Collapsing the whole delegate to a bare
+                // `Any?` broke overriding a BCL virtual that takes such a delegate (`Post(cb, state)` no longer
+                // matched the injected member). `(Any?) -> R` is still a valid, more-specific type than bare `Any?`.
+                return new TN.Fn(false, dret, dps);
             }
             return AnyQ();
         }
@@ -1821,15 +1825,14 @@ static class FacadeGen
                 bool voidRet = inv.ReturnType.FullName == "System.Void";
                 TN dret = voidRet ? new TN.Fqn("Unit") : mapped[^1];
                 TN[] dps = voidRet ? mapped : mapped[..^1];
-                if (!IsAnyQ(dret) && dps.All(a => !IsAnyQ(a)))
-                    return WrapNrt(new TN.Fn(false, dret, dps), t, attrs, ctx, my, wrap);
-                return AnyQ();
+                // #1: an Any?-typed param/return no longer collapses the delegate to bare Any? (see MapT above).
+                return WrapNrt(new TN.Fn(false, dret, dps), t, attrs, ctx, my, wrap);
             }
             foreach (var g in t.GetGenericArguments()) MapTN(g, self, attrs, ctx, ref pos, false);  // advance cursor only
             var dret2 = MapRetT(inv.ReturnType, self);
             var dps2 = inv.GetParameters().Select(p => MapT(p.ParameterType, self)).ToArray();
-            if (!IsAnyQ(dret2) && dps2.All(a => !IsAnyQ(a)))
-                return WrapNrt(new TN.Fn(false, dret2, dps2), t, attrs, ctx, my, wrap);
+            // #1: keep the delegate a function type even with Any? Invoke params/return.
+            return WrapNrt(new TN.Fn(false, dret2, dps2), t, attrs, ctx, my, wrap);
         }
         return AnyQ();
     }

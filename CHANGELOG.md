@@ -36,6 +36,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Overriding a .NET virtual whose delegate parameter has an `object`/`Any?` `Invoke` no longer fails with
+  `overrides nothing` (#1).** facadegen mapped a delegate whose `Invoke` takes/returns `object` (e.g.
+  `SendOrPostCallback.Invoke(object)`) to a bare `Any?` — so a natural Kotlin override
+  (`class MyCtx : SynchronizationContext() { override fun Post(cb: (Any?) -> Unit, state: Any?) }`) could not match the
+  injected member. The delegate now faithfully surfaces as a **function type** `(Any?) -> Unit`. Behavioral note: a .NET
+  member overloaded on two adjacent-arity delegates (`Thread(ThreadStart)` = `() -> Unit` /
+  `Thread(ParameterizedThreadStart)` = `(Any?) -> Unit`) now needs an explicit lambda arity — `Thread({ -> … })` vs
+  `Thread({ x -> … })` — since a no-arrow `{ … }` matches both (docs/dotkt-semantics.md §8e). Gate: `cases/il-delegobj`.
 - **`Array(size){ mk<T?>(null) }` inside a generic class is now ilverify-clean — no spurious `[DelegateCtor]
   Unrecognized arguments` (#142).** When an `Array(size){…}` init-lambda inside a generic class returns a
   CONSTRUCTED-generic whose type-arg is a nullable type-var (`Ref<T?>`), bir2cir's `NullableGenericReturnErasure`

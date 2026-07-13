@@ -607,6 +607,22 @@ c.CollectionChanged -= h                                     // unsubscribe (del
   them awaits a downstream change that **elides a `ClrEvent`-typed fake-override member** (a .NET event is never a real
   inherited property). Subscribe via the concrete class event in the meantime.
 
+## 8e. A .NET delegate parameter surfaces as a Kotlin FUNCTION TYPE — even when its Invoke takes/returns `object`
+
+A .NET method/ctor parameter typed as a delegate is injected as a Kotlin **function type** (`(A) -> R`), so a lambda
+binds directly and — when it is a `virtual` — a Kotlin subclass can **override** it naturally. This holds **even when
+the delegate's `Invoke` has an `object`/`Any?` param or return** (#1): `SendOrPostCallback.Invoke(object)` surfaces as
+`(Any?) -> Unit`, so `class MyCtx : SynchronizationContext() { override fun Post(cb: (Any?) -> Unit, state: Any?) }`
+resolves. (Previously such a delegate collapsed to a bare `Any?`, and the override matched *nothing*.)
+
+- **Consequence — overload-arity ambiguity with a no-arrow lambda.** When a .NET type overloads a member on two
+  delegates of adjacent arity — the canonical case is `Thread(ThreadStart)` = `() -> Unit` **and**
+  `Thread(ParameterizedThreadStart)` = `(Any?) -> Unit` — a **bare `{ … }` lambda has ambiguous arity** (0, or 1 via
+  the implicit `it`) and matches BOTH candidates → *overload resolution ambiguity*. Pin the arity explicitly:
+  `Thread({ -> … })` selects `ThreadStart`; `Thread({ x -> … })` selects `ParameterizedThreadStart`. This is ordinary
+  Kotlin overload resolution over the now-faithfully-surfaced delegate types (an explicitly-typed lambda param never
+  ambiguates). It is the honest tradeoff for making an `object`-param delegate usable at all.
+
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
 A Kotlin value-type `X?` is the structural `System.Nullable<X>` (§ value types). The **not-null assertion**
