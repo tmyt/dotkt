@@ -79,6 +79,19 @@
   "Codex stalled on stdin" incidents). Also beware: the CLI can block on an interactive self-update prompt on the
   user's terminal — if Codex goes silent across agents, ask the user to check it, and fall back to empirical
   verification meanwhile.
+- **Sub-agents MUST NEVER touch the `main` working tree — parallel work goes in an ISOLATED WORKTREE, no exceptions (2026-07-13, user-directed after REPEATED data-loss accidents).**
+  Concurrent file-mutating agents on the one shared `main` tree entangle uncommitted edits and race the branch ref —
+  it has caused **repeated** losses. So: when running agents in parallel (or any concurrent agent that COMPILES —
+  its repro build contends on main's shared `build/`), give EACH `isolation: "worktree"` and **prepend a strong,
+  non-negotiable isolation block to its brief**, verbatim intent: *"You run in your OWN isolated git worktree on your
+  OWN branch. NEVER touch/edit/build/gate the main working tree; NEVER `git checkout/switch main`; NEVER `cd` out of
+  your worktree. Do ALL work (edits, installDist, dotnet build, gates, commits) INSIDE your worktree ONLY. Commit to
+  YOUR branch; the COORDINATOR integrates into main — you MUST NOT. If any step seems to require touching main, STOP
+  and report. Treat as a hard invariant."* **Only the coordinator integrates** — merge each branch into main ONE at a
+  time, resolve conflicts with `Edit` (never whole-file checkout), then run ONE integrated gate. Cut worktree branches
+  from a HEAD that already contains any in-flight main-direct work (wait for a legacy non-isolated agent to commit
+  first, else the merges conflict on shared files). Serialize (one mutating agent owns main+gate) ONLY when a task is
+  truly unsplittable; **default to worktree-isolated parallelism.** (Elaboration: MEMORY `parallel-agents-isolate-or-serialize`.)
 - **When ≥3 specialist round-trips fail to resolve ONE problem, escalate to a holistic Fable+Opus root-cause pass (2026-07-12, user-directed).**
   A "round-trip" = dispatch a single-layer specialist → it closes one seam → a NEW seam of the **same root** surfaces.
   The tell is whack-a-mole: the fault keeps **moving/renaming** (a new IL offset, a new store/pass site of the same
