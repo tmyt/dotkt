@@ -154,11 +154,13 @@ else
 fi
 
 # Build a sample's <srcDir>/runtime.cs into a referenced .NET assembly (name from <runtimeAsm>); echo its path.
-build_runtime() { # <srcDir> <runtimeAsm>
-	local srcdir="$1" rasm="$2" rt="$ROOT/build/rt-$rasm"
+# The optional <nullableMode> (default `disable`) selects the C# NRT context: `enable` emits real [Nullable] byte
+# arrays so facadegen's NRT reader (e.g. #150 delegate-arg nullability) is exercised end-to-end.
+build_runtime() { # <srcDir> <runtimeAsm> [nullableMode]
+	local srcdir="$1" rasm="$2" nullable="${3:-disable}" rt="$ROOT/build/rt-$rasm"
 	rm -rf "$rt"; mkdir -p "$rt"
 	cp "$srcdir/runtime.cs" "$rt/runtime.cs"
-	printf '%s\n' "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>$rasm</AssemblyName><Nullable>disable</Nullable></PropertyGroup></Project>" > "$rt/rt.csproj"
+	printf '%s\n' "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>$rasm</AssemblyName><Nullable>$nullable</Nullable></PropertyGroup></Project>" > "$rt/rt.csproj"
 	dotnet build "$rt" -c Release -o "$rt/out" -v q --nologo >/dev/null 2>&1 || true
 	echo "$rt/out/$rasm.dll"
 }
@@ -172,6 +174,33 @@ il_check_inject() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
 		name="$1"; asm="$2"; src="$3"; expected="$4"; rasm="$5"
 		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
 		refdll="$(build_runtime "$src" "$rasm")"; echo "$refdll" > "$RESULTS/refdll-$name"
+		RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
+		implist="$ROOT/build/$name.imports"
+		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
+		dotnet "$FACADEGEN_DLL" --meta "$meta" --refs "$(ls ${RD}*.dll | tr '\n' ';');$refdll" --import-list "$implist" >/dev/null 2>&1 || true
+		rm -rf "$birdir" "$ildir"; mkdir -p "$birdir" "$ildir"
+		if ! CLR_TYPES_METADATA="$meta" "$LAUNCHER" $src -no-stdlib -classpath "$CP" -d $birdir >/dev/null 2>&1; then
+			reason="compile error"; exit 0; fi
+		if ! il_emit "$name" "$ildir" "$asm" "$birdir" --ref "$refdll" --ref "$STDLIB_RT_DLL"; then
+			reason="ilemit error"; exit 0; fi
+		cp "$refdll" "$ildir/"; cp "$STDLIB_RT_DLL" "$ildir/"
+		if ! actual="$(dotnet "$ildir/$asm.dll" 2>/dev/null)"; then
+			reason="run crash"; detail="$(printf -- '--- expected ---\n%s\n--- actual (before crash) ---\n%s' "$expected" "$actual")"; exit 0; fi
+		if [[ "$actual" == "$expected" ]]; then ok=1; else mismatch "$expected" "$actual"; fi
+	) &
+}
+
+# Like il_check_inject but builds runtime.cs with C# NRT ENABLED (#150): the sample's own .NET assembly then carries
+# real [Nullable] byte arrays, so facadegen surfaces a delegate's nullable type-arg (`Action<string?>`/`Func<string?>`)
+# as a nullable Kotlin lambda param/return — a lambda body relying on that nullability (returning null into Func<string?>)
+# compiles only when the byte is honored. Everything else is identical to il_check_inject.
+il_check_inject_nrt() { # <name> <asm> <srcDir> <expected> <runtimeAsm>
+	gate
+	(
+		sample_guard "$1"
+		name="$1"; asm="$2"; src="$3"; expected="$4"; rasm="$5"
+		birdir="$ROOT/build/bir-$name"; ildir="$ROOT/build/il-$name"; meta="$ROOT/build/$name.meta"
+		refdll="$(build_runtime "$src" "$rasm" enable)"; echo "$refdll" > "$RESULTS/refdll-$name"
 		RD="$(ls -d /usr/share/dotnet/shared/Microsoft.NETCore.App/*/ | tail -1)"
 		implist="$ROOT/build/$name.imports"
 		"$LAUNCHER" --scan-imports --output "$implist" "$src"/*.kt >/dev/null 2>&1 || true
@@ -597,6 +626,11 @@ il_check netgen3 Ng3 "$ROOT/cases/il-netgen3" "$(printf '4\n8\n8\nFalse\nTrue\n2
 # injected-runtime samples use). fieldvis: a .NET host reflects a DotKt-emitted property's CLR accessor visibility.
 il_check_inject fieldvis FieldVis "$ROOT/cases/il-fieldvis" "$(printf '150\nme\nPrivate\nPublic')" KfcFv
 il_check_inject delegatearg Dlg "$ROOT/cases/il-delegatearg" "$(printf '42\n20\n81')" KfcDel
+# delegnull (#150): a delegate type-arg's NRT byte survives into the Kotlin lambda param/return. The runtime.cs is
+# built with C# NRT ENABLED (il_check_inject_nrt), so `Func<string?>`/`Action<string?>` carry real [Nullable] bytes;
+# facadegen threads them into the fn node (contravariant sibling of #143). A lambda returning null into `Func<string?>`
+# compiles only when the return surfaces as `String?` — the case would COMPILE-ERROR before the fix.
+il_check_inject_nrt delegnull DlgNull "$ROOT/cases/il-delegnull" "$(printf '<null>\nhello\nworld\n<n>\nx')" DlgNrtRt
 il_check_inject netenum NetEnum "$ROOT/cases/il-netenum" "$(printf '60\n6\nabbccc')" KfcNetEnum
 il_check_inject injbase InjBase "$ROOT/cases/il-injbase" "placed:0" KfcInjB
 il_check_inject injfqn InjFqn "$ROOT/cases/il-injfqn" "42" KfcInjF
