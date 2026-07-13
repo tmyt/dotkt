@@ -98,7 +98,13 @@
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir">
     <ItemGroup>
       <_DotKtCir Include="$(DotKtCirOut)/*.cir.json" />
-      <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <!-- ilemit needs the RUNTIME stdlib (DotKt.Stdlib) to resolve kotlin.* calls (e.g. kotlin.io.ConsoleKt.println).
+           For an Exe it is copy-local (in @(ReferenceCopyLocalPaths)); for a LIBRARY a PackageReference's runtime dll
+           is NOT copy-local (transitive — the consuming app pulls it), so it is absent there and present only in
+           @(ReferencePath). Pull it from @(ReferencePath) always (mirroring the bir2cir DotKt.Private.Stdlib line),
+           and exclude it from the copy-local glob so an Exe does not get it twice. -->
+      <_DotKtRef Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll' and '%(FileName)' != 'DotKt.Stdlib'" />
+      <_DotKtRef Include="@(ReferencePath)" Condition="'%(FileName)' == 'DotKt.Stdlib'" />
       <!-- The [Kotlin*] round-trip metadata attributes ilemit stamps so this library round-trips (is consumable AS
            KOTLIN by another .ktproj — [KotlinFileClass] restores a file facade's statics as top-level functions,
            [KotlinFunction] restores infix/operator/suspend, etc.) are SYNTHESIZED PER-ASSEMBLY by ilemit (embedded
