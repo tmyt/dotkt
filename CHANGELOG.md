@@ -36,6 +36,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **An `open`/`override` instance method of a DotKt library consumed AS KOTLIN now dispatches virtually — no
+  `KeyNotFoundException` / mis-dispatch when the call reaches ilemit un-reshaped (#139).** kotc's .NET-interop
+  `callInstance` path (a facadegen-reinjected owner) emitted NO `virtual` flag. When bir2cir resolves the owner off
+  the `--ref` DotKt assembly it reshapes the node to a `clrInstance` (where `virtual` is moot), which masked the gap
+  in the round-trip gate. But when bir2cir CANNOT resolve the owner (an asymmetry: kotc's `clrName` resolved it from
+  the facadegen injection metadata, bir2cir's `ResolveNetType` did not), the RAW `callInstance` reaches ilemit, which
+  read `virtual` UNCONDITIONALLY → `KeyNotFoundException`; and even null-tolerant, a defaulted non-virtual `call` on
+  an `open`/`override` member mis-dispatches (e.g. `d.sound()` on a base-typed reference printed the base result).
+  kotc now stamps `virtual` (`modality != FINAL || overrides`) on every `.NET`-interop `callInstance` — matching the
+  plain Kotlin member-call path — and ilemit reads it null-tolerantly (`IsVirtual`, defaulting FALSE) at the three
+  `callInstance`/`newBoundDelegate`/`newBoundClrDelegate` sites. New gate section `roundtrip-virtual-dispatch` covers
+  the BIR (`virtual` present), the reshaped `clrInstance` path, and the raw-`callInstance`-into-ilemit fallback +
+  ilverify.
+
 - **A NON-CONSTANT default parameter (`= {}` / a simple expression) is now preserved across the DotKt-as-Kotlin
   cross-module round-trip (#146, Avalonia report E(a); extends #134 to non-const defaults).** Consuming a DotKt
   library as Kotlin, a library function with an empty-lambda default — `fun column(configure: Panel.() -> Unit = {},

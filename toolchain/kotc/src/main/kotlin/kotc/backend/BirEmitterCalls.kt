@@ -694,10 +694,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// ilemit then hands back gp:T (matching the stack), so the value<->collection boundary box/unbox is
 			// correctly typed (else a value-type instantiation NullRefs/garbages). Needs ClrRef("gp:") -> MapType.
 			val retH = birType(call.type)
+			// `virtual` for the fallback where bir2cir cannot resolve the owner and the raw `method:"get"/"set"` node
+			// reaches ilemit (an open/override operator get/set must callvirt) — same rationale as the .NET-interop
+			// callInstance path below (#139). bir2cir drops it when it reshapes the indexer to a clrInstance accessor.
+			val ixVirtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
 			return if (name == "get")
-				"""{"k":"callInstance","ownerType":${str(mt)},"method":"get","prop":"index-get","argTypes":[${birType(a[0].type).toJson()}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
+				"""{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":"get","prop":"index-get","argTypes":[${birType(a[0].type).toJson()}],"ret":${str(retH)},"recv":${expr(recv)},"args":[${expr(a[0])}]}"""
 			else
-				"""{"k":"callInstance","ownerType":${str(mt)},"method":"set","prop":"index-set","argTypes":[${birType(a[0].type).toJson()},${birType(a[1].type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
+				"""{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":"set","prop":"index-set","argTypes":[${birType(a[0].type).toJson()},${birType(a[1].type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":${expr(recv)},"args":[${expr(a[0])},${expr(a[1])}]}"""
 		}
 	}
 
@@ -716,6 +720,13 @@ internal fun BirEmitter.call(call: IrCall): String {
 	if (clrType != null) {
 		val recv = dispatchReceiver(call)
 		val isStatic = recv == null || recv is IrGetObjectValue
+		// A NON-static callInstance emitted here is normally reshaped to a `clrInstance` by bir2cir's
+		// NetInteropBinding (which resolves the owner off the .NET refs) — where `virtual` is irrelevant. But a
+		// DotKt library consumed AS KOTLIN whose owner bir2cir cannot resolve (netType == null -> left un-reshaped)
+		// reaches ilemit as a raw `callInstance`; ilemit reads `virtual` to pick call vs callvirt. So stamp it here
+		// exactly like the plain Kotlin member-call path: virtual unless FINAL and not an override. Without it ilemit
+		// would default to a non-virtual `call`, mis-dispatching an `open`/`override` member (#139).
+		val clrCallVirtual = callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty()
 		// Address the member on the CONSTRUCTED .NET type (`clrg:Collection[int]`) so a member of a generic
 		// instantiation resolves. Two cases: (1) the receiver's own type IS the .NET type; (2) the member is
 		// INHERITED from a .NET base (receiver is a Kotlin subclass) -> use the subclass's .NET supertype,
@@ -765,7 +776,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 				return if (isStatic)
 					"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[$argsJson]${suspendCallTag(callee)}$anySlotTag}"""
 				else
-					"""{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"recv":${expr(recv!!)},"args":[$argsJson]${suspendCallTag(callee)}$anySlotTag}"""
+					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"recv":${expr(recv!!)},"args":[$argsJson]${suspendCallTag(callee)}$anySlotTag}"""
 			}
 		}
 		val prop = callee.correspondingPropertySymbol?.owner
@@ -796,8 +807,8 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// get_p/set_p method call.
 			extensionReceiver(call)?.let { pExt ->
 				return if (callee === prop.setter)
-					"""{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set","argTypes":[${birType(pExt.type).toJson()},${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[${expr(pExt)},${expr(regularArgs(call).first())}]}"""
-				else """{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[${birType(pExt.type).toJson()}],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[${expr(pExt)}]}"""
+					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set","argTypes":[${birType(pExt.type).toJson()},${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[${expr(pExt)},${expr(regularArgs(call).first())}]}"""
+				else """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[${birType(pExt.type).toJson()}],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[${expr(pExt)}]}"""
 			}
 			// A2 (#61): a `kotlin.clr.ClrEvent<T>` read is CLR-ONLY vocabulary — a .NET event has no plain-Kotlin
 			// call form (it exposes add_/remove_, not a get_); facadegen injects it purely to typecheck, so kotc
@@ -812,9 +823,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 			}
 			val propCallKind = if (isStatic) "callStatic" else "callInstance"
 			val propRecvField = if (isStatic) "" else ""","recv":$recvJson"""
+			// A non-static property-accessor callInstance carries `virtual` too (moot once bir2cir reshapes it to
+			// clrPropGet/clrPropSet; consistent with the other .NET-interop callInstance nodes — #139).
+			val propVirtualField = if (isStatic) "" else ""","virtual":$clrCallVirtual"""
 			return if (callee === prop.setter)
-				"""{"k":"$propCallKind","ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}]$propRecvField,"args":[${expr(regularArgs(call).first())}]}"""
-			else """{"k":"$propCallKind","ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[]}"""
+				"""{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set","argTypes":[${birType(regularArgs(call).first().type).toJson()}]$propRecvField,"args":[${expr(regularArgs(call).first())}]}"""
+			else """{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get","argTypes":[],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[]}"""
 		}
 		val member = name
 		val anySlotTag = if (isAnySlotMethod(callee)) ""","anySlot":true""" else ""
@@ -840,7 +854,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		if (!isStatic && extRecv != null && recv != null) {
 			val allArgs = (listOf(expr(extRecv)) + regularArgs(call).map { expr(it) }).joinToString(",")
 			val allArgTypes = (listOf(birType(extRecv.type).toJson()) + regularArgs(call).map { birType(it.type).toJson() }).joinToString(",")
-			return """{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag}"""
+			return """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag}"""
 		}
 		// A2 (#61): a PLAIN static/instance call by the .NET owner's FQN identity; bir2cir's NetInteropBinding
 		// resolves the owner off the .NET refs and shapes it (clrStatic/clrInstance). No .NET-shape decision here.
@@ -848,7 +862,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		return if (isStatic)
 			"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag$anySlotTag}"""
 		else
-			"""{"k":"callInstance","ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag$anySlotTag}"""
+			"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag$anySlotTag}"""
 	}
 
 	// Companion-object member -> a static member of the enclosing class (precedes user-property field access).

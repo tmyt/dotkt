@@ -1065,6 +1065,82 @@ nrexpected="$(printf '7\nok')"
 run_app nractual "$NR/appil/NothApp.dll"
 check_output roundtrip-nothing-return "$nrexpected" "$nractual" "a Kotlin Nothing return round-trips: the consumer's if/else with a Nothing branch keeps the non-Nothing type (no Any? widening)"
 
+# ----- VIRTUAL DISPATCH: an open/override instance method of a DotKt lib consumed AS KOTLIN dispatches virtually (#139) -----
+# kotc's .NET-interop callInstance path (a facadegen-reinjected owner) previously emitted NO `virtual` flag. bir2cir's
+# NetInteropBinding reshapes such a callInstance to a `clrInstance` (where virtual is moot) WHEN it resolves the owner
+# off the --ref DotKt assembly, so the normal path masks the gap. But when bir2cir CANNOT resolve the owner (an
+# asymmetry: kotc's clrName resolved it via the facadegen injection metadata, bir2cir's ResolveNetType did not), the
+# RAW callInstance reaches ilemit, which read `virtual` UNCONDITIONALLY -> KeyNotFoundException; and even null-tolerant,
+# a defaulted non-virtual `call` on an `open`/`override` member mis-dispatches. kotc now stamps `virtual`
+# (modality != FINAL || overrides) on every .NET-interop callInstance; ilemit reads it null-tolerantly (IsVirtual).
+# This section guards the ROOT (the app BIR carries `virtual`) AND both emit paths: (1) the normal reshaped clrInstance
+# path, (2) the FALLBACK where bir2cir is deliberately NOT given the DotKt --ref, forcing the raw callInstance into
+# ilemit — the exact uncovered path #139 crashed on. Both must print the same virtually-dispatched output + ilverify clean.
+VD="$ROOT/build/roundtrip-virtual-dispatch"; rm -rf "$VD"; mkdir -p "$VD/lib" "$VD/app" "$VD/libbir" "$VD/libil" "$VD/appbir" "$VD/appil" "$VD/appil2"
+cat > "$VD/lib/lib.kt" <<'EOF'
+package dispatch
+open class Animal(val name: String) {
+    open fun sound(): String = "generic"           // open   -> virtual:true
+    fun describe(): String = name + ":" + sound()  // final  -> virtual:false (calls the virtual sound() internally)
+}
+class Dog(name: String) : Animal(name) {
+    override fun sound(): String = "woof"           // override -> virtual:true
+}
+EOF
+cat > "$VD/app/app.kt" <<'EOF'
+import dispatch.Animal
+import dispatch.Dog
+fun main() {
+    val a: Animal = Animal("a")
+    val d: Animal = Dog("d")
+    println(a.sound())      // generic   open method, base receiver
+    println(d.sound())      // woof      DISCRIMINATOR: a plain `call Animal::sound` prints "generic"; callvirt -> "woof"
+    println(a.describe())   // a:generic final method
+    println(d.describe())   // d:woof    final describe, internal virtual sound() -> woof
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$VD/lib" -no-stdlib -classpath "$CP" -d "$VD/libbir" >/dev/null 2>&1 || true
+emit_il "$VD/libil" AnimalLib "$VD/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$VD/libil/AnimalLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+"$LAUNCHER" --scan-imports --output "$VD/imports.txt" "$VD/app"/*.kt >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$VD/meta" --refs "$REFS$VD/libil/AnimalLib.dll" --import-list "$VD/imports.txt" >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$VD/meta" "$LAUNCHER" "$VD/app" -no-stdlib -classpath "$CP" -d "$VD/appbir" >/dev/null 2>&1 || true
+# ROOT-fix guard: every callInstance on the reinjected dispatch.Animal owner carries a `virtual` flag (kotc #139).
+# A node WITH the flag serializes as `{"k":"callInstance","virtual":<b>,"ownerType":{...dispatch.Animal}}`; a
+# regression (missing flag) as `{"k":"callInstance","ownerType":{...dispatch.Animal}}` — assert the former exists and the latter never does.
+vd_has_virtual=$( { grep -oh '"k":"callInstance","virtual":[a-z]*,"ownerType":{"t":"fqn","name":"dispatch.Animal"}' "$VD/appbir"/*.bir.json 2>/dev/null || true; } | wc -l)
+vd_missing_virtual=$( { grep -oh '"k":"callInstance","ownerType":{"t":"fqn","name":"dispatch.Animal"}' "$VD/appbir"/*.bir.json 2>/dev/null || true; } | wc -l)
+vd_bir_ok=0; [[ "$vd_has_virtual" -ge 1 && "$vd_missing_virtual" -eq 0 ]] && vd_bir_ok=1
+# (1) NORMAL path: bir2cir WITH the DotKt --ref -> callInstance reshaped to clrInstance.
+emit_il "$VD/appil" AnimalApp --ref "$VD/libil/AnimalLib.dll" "$VD/appbir"/*.bir.json
+cp "$VD/libil/AnimalLib.dll" "$VD/appil/" 2>/dev/null || true
+vdexpected="$(printf 'generic\nwoof\na:generic\nd:woof')"
+run_app vdactual1 "$VD/appil/AnimalApp.dll"
+# (2) FALLBACK path: bir2cir NOT given the DotKt --ref, so it CANNOT reshape the callInstance -> the raw node reaches
+# ilemit (which still resolves the owner off its own --ref). This is the exact #139 crash path, now correct via `virtual`.
+cir2="$VD/appil2.cir"; rm -rf "$cir2"; mkdir -p "$cir2"
+vd_refarg=(); [[ -f "$STDLIB_REF_DLL" ]] && vd_refarg=(--ref "$STDLIB_REF_DLL")
+dotnet "$BIR2CIR_DLL" "$cir2" "${vd_refarg[@]}" "$VD/appbir"/*.bir.json >/dev/null 2>&1 || true
+vd_ilref=(); [[ -f "$STDLIB_RT_DLL" ]] && vd_ilref=(--ref "$STDLIB_RT_DLL")
+dotnet "$ILEMIT_DLL" "$VD/appil2" AnimalApp "${vd_ilref[@]}" --ref "$VD/libil/AnimalLib.dll" "$cir2"/*.cir.json >/dev/null 2>&1 || true
+[[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$VD/appil2/" 2>/dev/null || true
+cp "$VD/libil/AnimalLib.dll" "$VD/appil2/" 2>/dev/null || true
+run_app vdactual2 "$VD/appil2/AnimalApp.dll"
+# ilverify both emitted assemblies (formal call/callvirt-selection verification).
+vd_ilv_ok=1
+VD_ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
+VD_REFDIR="$(dirname "$(find /usr/share/dotnet/shared/Microsoft.NETCore.App -name System.Private.CoreLib.dll 2>/dev/null | sort | tail -1)")"
+if [[ -n "$VD_ILV" && -d "$VD_REFDIR" ]]; then
+	for dll in "$VD/appil/AnimalApp.dll" "$VD/appil2/AnimalApp.dll"; do
+		[[ -f "$dll" ]] || { vd_ilv_ok=0; continue; }
+		dotnet "$VD_ILV" "$dll" -r "$VD_REFDIR/*.dll" -r "$STDLIB_RT_DLL" -r "$VD/libil/AnimalLib.dll" 2>&1 | grep -qi 'Verified\.' || vd_ilv_ok=0
+	done
+fi
+vd_ok=0
+[[ "$vd_bir_ok" == 1 && "$vdactual1" == "$vdexpected" && "$vdactual2" == "$vdexpected" && "$vd_ilv_ok" == 1 ]] && vd_ok=1
+section_result roundtrip-virtual-dispatch "$vd_ok" "open/override instance method of a DotKt lib dispatches virtually as Kotlin; BIR carries virtual; reshaped + raw-callInstance paths; ilverify (#139)" \
+	"$(printf -- 'bir_ok=%s (has=%s missing=%s) ilv_ok=%s\n--- expected ---\n%s\n--- reshaped(clrInstance) ---\n%s\n--- raw callInstance->ilemit ---\n%s' "$vd_bir_ok" "$vd_has_virtual" "$vd_missing_virtual" "$vd_ilv_ok" "$vdexpected" "$vdactual1" "$vdactual2")"
+
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"
 printf '%s\n' "${SUMMARY[@]}"

@@ -9,6 +9,12 @@ using System.Text.Json;
 // EmitExpr: the BIR expression -> CIL evaluator (returns the .NET Type left on the stack).
 sealed partial class Emitter
 {
+    // Null-tolerant read of the `virtual` flag on a callInstance / newBoundDelegate node. Defaults to FALSE (a plain
+    // `call`) when the key is absent: a facadegen-reinjected .NET-interop callInstance (e.g. a DotKt library consumed
+    // AS KOTLIN) is emitted by kotc's clrType path WITHOUT `virtual` when bir2cir leaves it un-reshaped, so an
+    // unconditional GetProperty("virtual") would throw KeyNotFoundException (#139). A missing flag => non-virtual.
+    static bool IsVirtual(JsonElement e) => e.TryGetProperty("virtual", out var v) && v.GetBoolean();
+
     // ---- expressions: push one value, return its CLR type ----
     // @ClrIntrinsicAsDynamic dispatch: `recv.GetType().GetMethod(name).Invoke(recv, [args...])`, emitted inline (no
     // helper assembly). Resolves the bound member at RUNTIME, so ilemit needs NO static resolution -- this sidesteps the
@@ -229,7 +235,7 @@ sealed partial class Emitter
                         $"callInstance receiver is a value-type declaring type '{m.DeclaringType}' (method '{m.Name}'): this emit path pushes a plain receiver with no address/unbox/constrained., which is unverifiable IL — such an instance call must be lowered to 'constrainedCall' in bir2cir", null);
                 EmitExpr(e.GetProperty("recv"));
                 if (m == m0) EmitCallArgs(e.GetProperty("args"), m); else EmitArgsTyped(e.GetProperty("args"), mps, m);
-                _il.Emit(e.GetProperty("virtual").GetBoolean() ? OpCodes.Callvirt : OpCodes.Call, m);
+                _il.Emit(IsVirtual(e) ? OpCodes.Callvirt : OpCodes.Call, m);
                 return CoerceReturn(e, m == m0 ? rt : mrt);
             }
             case "constrainedCall":
@@ -704,7 +710,7 @@ sealed partial class Emitter
                 var ft = MapType(e.GetProperty("funcType"));
                 var mb = FindMethod(SlotName(e.GetProperty("ownerType")), e.GetProperty("method").GetString());
                 EmitExpr(e.GetProperty("recv"));
-                if (e.GetProperty("virtual").GetBoolean()) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mb); }
+                if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mb); }
                 else _il.Emit(OpCodes.Ldftn, mb);
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
                 return ft;
@@ -720,7 +726,7 @@ sealed partial class Emitter
                     BindingFlags.Public | BindingFlags.Instance, null, argTypes, null)
                     ?? type.GetMethod(e.GetProperty("method").GetString());
                 EmitExpr(e.GetProperty("recv"));
-                if (e.GetProperty("virtual").GetBoolean()) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mi); }
+                if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mi); }
                 else _il.Emit(OpCodes.Ldftn, mi);
                 _il.Emit(OpCodes.Newobj, DelegateCtor(ft));
                 return ft;
