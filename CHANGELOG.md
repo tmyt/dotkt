@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Added
+
+- **facadegen: read a `[KotlinNothing]` return marker to restore a Kotlin `Nothing` return** (#133) — a Kotlin
+  `fun f(): Nothing` has no CLR analog and erases to `object`; facadegen's `RetTypeSfxN` now surfaces the erased
+  return as `kotlin.Nothing` when the return parameter carries the `[KotlinNothing]` marker (riding the same
+  `retAttrs` channel as `[Nullable]`/`[KotlinSuspendFunctionType]`, NRT composing on top). This is the facadegen
+  half of the `Nothing` round-trip; it is inert until bir2cir stamps the marker and kotc's `coneOf` resolves the
+  bare `Nothing` type node — see the three new `verify-roundtrip.sh` reproducers below.
+- **verify-roundtrip.sh: three RT_XFAIL reproducers for the #133 generic-fidelity gaps** (surfaced by the
+  atomicfu CLR port). In all three the facadegen symbol surface is verified correct; the loss is downstream and
+  each routes to one owning layer: `roundtrip-generic-inline-ext` (kotc splice of a cross-module inline call with
+  a lambda + extension receiver), `roundtrip-generic-operator` (bir2cir binding a Kotlin `operator get/set` on a
+  generic DotKt type to the BCL `get_Item`/`set_Item` indexer instead of the emitted plain `get`/`set`), and
+  `roundtrip-nothing-return` (bir2cir marker stamp + kotc `coneOf`). Each flips to FIXED when its layer lands.
+
 ## 0.9.5 — 2026-07-13
 
 0.9.5 bumps the Kotlin frontend to **2.4.0** (compiler + stdlib, behavior-preserving), lands **first-class

@@ -1305,7 +1305,27 @@ static class FacadeGen
     static TN RetTypeSfxN(MethodInfo m, Type self)
     {
         var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
-        return SuspendFnNode(attrs) ?? ApplyNrt(MapRetT(m.ReturnType, self), m.ReturnType, attrs, m);
+        var sfn = SuspendFnNode(attrs);
+        if (sfn != null) return sfn;
+        // #133: a Kotlin `Nothing` return has no CLR analog — bir2cir erases it to `object` (BirTypeLowering
+        // kotlin.Nothing->object). The [KotlinNothing] return-parameter marker (stamped by bir2cir's RoundtripMetadata,
+        // riding the same retAttrs channel as [Nullable]/[KotlinSuspendFunctionType]) restores it, so the consumer's FIR
+        // sees `kotlin.Nothing` and an `if/else` with a Nothing branch keeps the non-Nothing type instead of widening to
+        // Any?. NRT composes on top: a `Nothing?` return rides the nullability byte. (kotc's coneOf resolves the bare
+        // `Nothing` type node to bt.nothingType.) Scope: this covers the top-level/member method + getter return path;
+        // a `suspend fun`'s Task<T> result (SuspendRetNode) and a companion-static fun that bypass RetTypeSfxN are not
+        // yet wired — extend them when the bir2cir marker producer lands if those positions need it.
+        if (HasNothingMarker(attrs)) return ApplyNrt(new TN.Fqn("Nothing"), m.ReturnType, attrs, m);
+        return ApplyNrt(MapRetT(m.ReturnType, self), m.ReturnType, attrs, m);
+    }
+
+    // #133: the bare marker `[KotlinNothing]` on a return parameter -> the erased `object` return was a Kotlin `Nothing`.
+    const string KNothingAttr = "DotKt.Runtime.CompilerServices.KotlinNothingAttribute";
+    static bool HasNothingMarker(IList<CustomAttributeData> attrs)
+    {
+        foreach (var cad in attrs)
+            if (cad.AttributeType.FullName == KNothingAttr) return true;
+        return false;
     }
 
     // A `suspend fun` is emitted returning Task / Task<T>; restore the Kotlin result type and gate Supported on it.

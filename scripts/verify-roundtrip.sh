@@ -31,6 +31,12 @@ done
 # bare `kotlin.coroutines.Continuation` at emit; they surface the REMAINING *cross-module* coroutine gaps
 # (below). This gate is the coroutine bundle's cross-module E2E check: when these flip to FIXED, prune them.
 declare -A RT_XFAIL=(
+	# #133 — GENERIC round-trip fidelity gaps surfaced by the atomicfu CLR port. In all three the facadegen SYMBOL
+	# SURFACE is already correct (the meta carries the type-params, the receiver-generic Cell<T>, the operator bit); the
+	# loss is DOWNSTREAM of facadegen. Each routes to a single owning layer and flips to FIXED when that layer lands.
+	[roundtrip-generic-inline-ext]="#133 case1 (kotc): facadegen restores the generic inline ext + receiver-generic correctly and FIR infers T from the receiver, but kotc BirEmitterCalls.kt refuses to SPLICE a facadegen-injected cross-module inline call with a lambda AND an extension receiver ('facadegen receiver-splice shape not yet implemented') — the sibling ownerless splice path already handles extRecv"
+	[roundtrip-generic-operator]="#133 case2 (bir2cir): a Kotlin 'operator fun get/set' on a generic DotKt type is emitted as a PLAIN get/set method, but bir2cir NetInteropBinding.cs DefaultIndexerAccessor falls back to the BCL indexer accessor get_Item/set_Item (which the emitted type lacks) -> ilemit 'clrInstance method not resolved: Arr\`1[..].get_Item'"
+	[roundtrip-nothing-return]="#133 case3 (bir2cir+kotc): a Kotlin 'Nothing' return erases to CLR object; needs bir2cir RoundtripMetadata to stamp [KotlinNothing] on the return + kotc coneOf to resolve the bare Nothing node to bt.nothingType. facadegen's reader is LANDED (RetTypeSfxN), so this flips to FIXED once bir2cir+kotc land"
 	# (#11 FIXED 2026-07-05: a suspend call inside an INLINE scope function used as a sub-expression —
 	# `doFetch = with(lib){ b.fetch() }` — no longer refuses in kotc; kotc emits the inlined valueBlock verbatim
 	# and bir2cir's SuspendColdLowering flattens it, segmenting the suspend call as an ordinary suspension point.)
@@ -879,6 +885,97 @@ cp "$UB/libil/UbLib.dll" "$UB/appil/" 2>/dev/null || true
 ubexpected="$(printf '200\n3\n250\n200')"
 run_app ubactual "$UB/appil/UbApp.dll"
 check_output roundtrip-ubyte "$ubexpected" "$ubactual" "UByte/UByteArray strict-mapping fidelity: System.Byte->UByte + System.Byte[]->UByteArray via consumer compile-dependency + value 200"
+
+# ----- #133 GENERIC-FIDELITY gaps (atomicfu CLR port): three RT_XFAIL reproducers, one per owning layer ----------
+# The atomicfu port reported that a DotKt lib consumed AS KOTLIN loses fidelity for (1) a generic INLINE EXTENSION on a
+# generic receiver, (2) an OPERATOR on a generic type, (3) a Kotlin `Nothing` return. Reproduced in-repo: in ALL three
+# the facadegen META is CORRECT (verified: inline+ext+typeParams+receiver-generic Cell<T> for (1); operator bit +
+# clrName:get for (2); the Nothing reader is landed for (3)). The failures are DOWNSTREAM of facadegen — each section is
+# a ready reproducer that flips to FIXED when its owning layer (kotc / bir2cir / bir2cir+kotc) lands. See RT_XFAIL above.
+
+# (1) GENERIC INLINE EXTENSION on a generic receiver — `c.update { it + 1 }` must infer T=Int from `c: Cell<Int>`. FIR
+# DOES infer it (facadegen's __self: Cell<T> meta is correct); kotc's facadegen inline-splice path refuses the lambda +
+# extension-receiver shape at BIR emit. Route: kotc BirEmitterCalls.kt.
+GIE="$ROOT/build/roundtrip-generic-inline-ext"; rm -rf "$GIE"; mkdir -p "$GIE/lib" "$GIE/app" "$GIE/libbir" "$GIE/libil" "$GIE/appbir" "$GIE/appil"
+cat > "$GIE/lib/lib.kt" <<'EOF'
+class Cell<T>(var v: T)
+inline fun <T> Cell<T>.update(fn: (T) -> T) { v = fn(v) }   // generic inline ext on a generic receiver
+EOF
+cat > "$GIE/app/app.kt" <<'EOF'
+fun main() {
+    val c = Cell(1)
+    c.update { it + 1 }   // infer T=Int from the receiver Cell<T>
+    println(c.v)          // 2
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$GIE/lib" -no-stdlib -classpath "$CP" -d "$GIE/libbir" >/dev/null 2>&1 || true
+emit_il "$GIE/libil" KLib "$GIE/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$GIE/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$GIE/k.meta" --refs "$REFS$GIE/libil/KLib.dll" Cell LibKt >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$GIE/k.meta" "$LAUNCHER" "$GIE/app" -no-stdlib -classpath "$CP" -d "$GIE/appbir" >/dev/null 2>&1 || true
+emit_il "$GIE/appil" KApp --ref "$GIE/libil/KLib.dll" "$GIE/appbir"/*.bir.json
+cp "$GIE/libil/KLib.dll" "$GIE/appil/" 2>/dev/null || true
+run_app gieactual "$GIE/appil/KApp.dll"
+check_output roundtrip-generic-inline-ext "2" "$gieactual" "a generic inline extension on a generic receiver infers T from the receiver and splices cross-module"
+
+# (2) OPERATOR on a generic type — `r[1]` / `r2[0] = x` on `class Arr<T> { operator fun get/set }`. facadegen surfaces
+# the operator bit + clrName:get; bir2cir binds the facadegen-injected owner's operator to the BCL indexer accessor
+# get_Item/set_Item instead of the plain get/set method Kotlin emitted. Route: bir2cir NetInteropBinding.cs.
+GOP="$ROOT/build/roundtrip-generic-operator"; rm -rf "$GOP"; mkdir -p "$GOP/lib" "$GOP/app" "$GOP/libbir" "$GOP/libil" "$GOP/appbir" "$GOP/appil"
+cat > "$GOP/lib/lib.kt" <<'EOF'
+class Arr<T>(val a: Array<T>) {
+    operator fun get(i: Int): T = a[i]
+    operator fun set(i: Int, x: T) { a[i] = x }
+}
+EOF
+cat > "$GOP/app/app.kt" <<'EOF'
+fun main() {
+    val r = Arr(arrayOf("a", "b"))
+    println(r[1])          // b   generic operator get
+    val r2 = Arr(arrayOf(10, 20))
+    r2[0] = 99             // generic operator set
+    println(r2[0])         // 99
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$GOP/lib" -no-stdlib -classpath "$CP" -d "$GOP/libbir" >/dev/null 2>&1 || true
+emit_il "$GOP/libil" KLib "$GOP/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$GOP/libil/KLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$GOP/k.meta" --refs "$REFS$GOP/libil/KLib.dll" Arr LibKt >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$GOP/k.meta" "$LAUNCHER" "$GOP/app" -no-stdlib -classpath "$CP" -d "$GOP/appbir" >/dev/null 2>&1 || true
+emit_il "$GOP/appil" KApp --ref "$GOP/libil/KLib.dll" "$GOP/appbir"/*.bir.json
+cp "$GOP/libil/KLib.dll" "$GOP/appil/" 2>/dev/null || true
+gopexpected="$(printf 'b\n99')"
+run_app gopactual "$GOP/appil/KApp.dll"
+check_output roundtrip-generic-operator "$gopexpected" "$gopactual" "a Kotlin operator get/set on a generic DotKt type resolves cross-module (plain get/set method, not the BCL get_Item indexer)"
+
+# (3) Kotlin `Nothing` return — `fun fail(): Nothing`. Sharp COMPILE-dependency: `val y: String = if (c) "ok" else
+# fail(...)` compiles to `String` ONLY if `fail` restored `Nothing` (else the if/else widens to Any? -> "expected String,
+# actual Any?"). facadegen's reader is landed; needs bir2cir to stamp [KotlinNothing] + kotc coneOf to resolve it.
+NR="$ROOT/build/roundtrip-nothing-return"; rm -rf "$NR"; mkdir -p "$NR/lib" "$NR/app" "$NR/libbir" "$NR/libil" "$NR/appbir" "$NR/appil"
+cat > "$NR/lib/lib.kt" <<'EOF'
+package fx
+fun fail(msg: String): Nothing = throw RuntimeException(msg)
+fun <T> pick(cond: Boolean, x: T): T = if (cond) x else fail("no")
+EOF
+cat > "$NR/app/app.kt" <<'EOF'
+import fx.fail
+import fx.pick
+fun main() {
+    println(pick(true, 7))                        // 7
+    val y: String = if (true) "ok" else fail("x") // compiles as String only if fail(): Nothing round-tripped
+    println(y)                                    // ok
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$NR/lib" -no-stdlib -classpath "$CP" -d "$NR/libbir" >/dev/null 2>&1 || true
+emit_il "$NR/libil" NothLib "$NR/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$NR/libil/NothLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NR/k.meta" --refs "$REFS$NR/libil/NothLib.dll" fx.LibKt >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$NR/k.meta" "$LAUNCHER" "$NR/app" -no-stdlib -classpath "$CP" -d "$NR/appbir" >/dev/null 2>&1 || true
+emit_il "$NR/appil" NothApp --ref "$NR/libil/NothLib.dll" "$NR/appbir"/*.bir.json
+cp "$NR/libil/NothLib.dll" "$NR/appil/" 2>/dev/null || true
+nrexpected="$(printf '7\nok')"
+run_app nractual "$NR/appil/NothApp.dll"
+check_output roundtrip-nothing-return "$nrexpected" "$nractual" "a Kotlin Nothing return round-trips: the consumer's if/else with a Nothing branch keeps the non-Nothing type (no Any? widening)"
 
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"

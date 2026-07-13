@@ -712,7 +712,7 @@ type's subtypes are themselves injected into the consumer's session via their `s
 | **`value`/inline class** (`@JvmInline`) | a **real wrapper class** (never erased, never a struct) | The OPPOSITE of Kotlin/JVM: no inline-class erasure and no name mangling — `Money` is emitted as an ordinary reference class (backing field + property + the synthesized `equals`/`hashCode`/`toString`), i.e. permanently "boxed". Structural equality survives; what is lost is the value-ness itself (identityless-ness is not enforced, no .NET `struct`, and the `value` modifier does not round-trip). The frontend still REQUIRES `@JvmInline` (JVM-frontend checker); the emitted `[kotlin.jvm.JvmInline]` attribute is skipped by ilemit. |
 | **`typealias`** | the expanded type | The alias name is not visible cross-module (it is expanded at use). |
 | **Contracts** (`@ExperimentalContracts`) | — | `callsInPlace`/returns-implies smart-cast facts are gone → consumer loses the smart-casts. |
-| **`Nothing`** (bottom type) | `void` / a throwing method | The bottom-type semantics (unreachable, `List<Nothing>` covariance) have no CLR analog. |
+| **`Nothing`** (bottom type) | erased to `object` | The bottom-type semantics (unreachable, `List<Nothing>` covariance) have no CLR analog. A `fun f(): Nothing` return currently degrades to `Any?`, so a consumer's `if (c) x else f()` widens instead of keeping `x`'s type. A **return-position** carrier is landing (#133): `facadegen` reads a `[KotlinNothing]` return marker and surfaces `kotlin.Nothing` (`RetTypeSfxN`, DONE) — inert until `bir2cir` stamps the marker (`RoundtripMetadata`) and `kotc`'s `coneOf` resolves the bare `Nothing` node to `bt.nothingType`. Nested occurrences (`List<Nothing>`, parameter positions) stay lost. See the `roundtrip-nothing-return` reproducer. |
 | **Function types with receiver** (`A.() -> B`) and **suspend function types** | a delegate / `Func<>` | The receiver-vs-argument distinction and the suspend-function-type identity degrade to an ordinary delegate. |
 | **`lateinit`** | a non-null `var` field | The definite-init contract / `isInitialized` is lost (restored as a plain non-null `var`). |
 | **`inner` class** | a nested type | The `inner` modifier (implicit outer `this` capture) is not marked vs. a plain nested class. |
@@ -758,6 +758,17 @@ type's subtypes are themselves injected into the consumer's session via their `s
    round-trips via the `this`→call-receiver rewrite. **Residual:** a default that reads another VALUE parameter
    (`b = a * 10`) still needs the callee scope and is rejected at the omitting call (a real `$default` synthetic would
    lift it); and the receiver-rewrite is single-eval only for a trivial receiver (§7).
+
+7. **Generic-fidelity gaps surfaced by the atomicfu CLR port (#133)** — three DOWNSTREAM-of-facadegen gaps (the
+   facadegen symbol surface is verified correct in each; reproduced by the `roundtrip-generic-inline-ext` /
+   `roundtrip-generic-operator` / `roundtrip-nothing-return` RT_XFAIL sections). (a) A **generic inline extension on a
+   generic receiver** (`inline fun <T> Cell<T>.update(fn:(T)->T)`) — FIR infers `T` from the receiver, but `kotc`'s
+   facadegen inline-**splice** path (`BirEmitterCalls.kt`) refuses a cross-module inline call with a lambda AND an
+   extension receiver (the sibling ownerless splice already threads `extRecv`); route: **kotc**. (b) A Kotlin
+   **`operator get`/`set` on a generic DotKt type** — emitted as a plain `get`/`set` method, but `bir2cir`'s
+   `NetInteropBinding.DefaultIndexerAccessor` binds it to the BCL indexer `get_Item`/`set_Item` the emitted type lacks;
+   route: **bir2cir**. (c) The **`Nothing` return** carrier (§10.3) — `bir2cir` stamp + `kotc` `coneOf`; facadegen's
+   reader is landed.
 
 Status: **#1 (variance/bounds), #5 (sealed), #6 (default args) are FIXED; #2 companion IMPLICIT access is FIXED
 (`50c2c9f`); #3 (fun interface) is PARTIAL** (nature restored, SAM-lambda pinned-compiler-blocked). **#4 (enum
