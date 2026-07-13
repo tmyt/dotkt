@@ -96,6 +96,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `!!`/elvis `valueBlock` resolves through its result; a nullable-String value into a NON-nullable CharSeq slot —
   frontend-guaranteed non-null — is peeled and wrapped). Gate: `cases/il-charseqbcl` (property-read / app-fun-result /
   `!!` / `StringBuilder.toString()` receivers into split/replace/substring — the BCL-origin path #92 left un-gated).
+- **Four more CharSequence wrap-site residuals no longer crash with `EntryPointNotFoundException` (#149, the coverage
+  #148 explicitly left open).** After #148 routed the static-String detector through `StaticType.Surface`, four
+  receiver shapes still reached the body-less `dotkt$CharSequence` slot unwrapped:
+  - **A CROSS-FILE receiver** — a `String`-typed user-class property (`c.body`) or top-level fun (`banner()`) declared
+    in a SIBLING `.kt` of the SAME assembly. `StaticType.LocalTypes` is PER-FILE, so such a receiver resolved in
+    neither the current file's types nor the ref.dll → unwrapped. bir2cir now aggregates EVERY input file's declared
+    types + file classes ONCE before Phase 1 (`StaticType.GlobalTypes`/`GlobalFileClasses`), and `LocalMemberType`
+    consults it as an assembly-wide fallback (a cross-file member return / owner=null top-level fun now resolves).
+  - **A StringBuilder receiver** (`sb.split(...)`) — a non-String `CharSequence` that does NOT implement the synthetic
+    interface: it is snapshot to a `String` via the null-safe `kotlin.LibraryKt.toString` and then adapter-wrapped.
+  - **A String BRANCH of a polymorphic `CharSequence` if/else** (`(if (c) "a-b" else cs).split(...)`) — the whole
+    `cond` unifies to `CharSequence`, so it was not itself wrapped; the coercion now DESCENDS into `then`/`else` and
+    wraps each String branch while leaving a genuine-CharSequence branch.
+  - **`x!!.isNullOrEmpty()`** — a nullable `CharSequence?` slot with a `!!` value stayed on the strict (unwrapped)
+    path. A `!!` non-null assertion is now recognized STRUCTURALLY (its `then` reads the same local the condition
+    null-checks) and is peel-safe even into a nullable slot (it is provably non-null or throws).
+  Gates: `cases/il-charseqxfile` (a MULTI-FILE case — cross-file property + top-level-fun receivers into split) and
+  `cases/il-charseqmore` (the cond-branch, StringBuilder, and `!!.isNullOrEmpty()` residuals).
 - **Deeply-nested inlined lambdas/blocks in one function no longer crash the pipeline with a JSON depth error**
   (#147). A function with enough nested inline lambdas/blocks produces a BIR (and derived CIR) whose method-body
   JSON nests deeper than System.Text.Json's default `MaxDepth` of 64 — legal Kotlin that hard-crashed bir2cir with
