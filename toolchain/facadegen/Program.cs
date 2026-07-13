@@ -478,6 +478,11 @@ static class FacadeGen
         var ctors = new JsonArray(); var props = new JsonArray(); var funs = new JsonArray();
         var memberExtProps = new JsonArray(); var events = new JsonArray(); var supers = new JsonArray();
         var staticFuns = new JsonArray(); var staticProps = new JsonArray(); var staticEvents = new JsonArray();
+        // C#-origin `[Extension]` static methods (`static int Twice(this W w)`) ALSO surface as TOP-LEVEL Kotlin
+        // extension funs (`fun W.Twice(): Int`) in a `file` decl keyed on this static class, so `import NS.*` reaches
+        // them (the C# `using NS;` analog). They stay a member extension in `funs` too (the `import NS.Ext.M` /
+        // `using static` analog); the two coexist because a user imports one way or the other, never both at once.
+        var csExtFuns = new JsonArray();
             // A Kotlin file-facade ([KotlinFileClass]) -> top-level functions/properties (a `file` decl).
             if (HasKotlinFileClass(t)) { EmitKotlinFileClass(t, files); return; }
             // A .NET enum -> an object whose entries are `val` props typed as the enum itself.
@@ -786,14 +791,30 @@ static class FacadeGen
                 if (!seen.Add(m.Name + "<" + string.Join(",", gp) + ">(" + Sig(ps, t) + ")")) continue;
                 var virt = m.IsVirtual && !m.IsFinal;
                 var retNode = k.suspend ? SuspendRetNode(m, t) : RetTypeSfxN(m, t);
-                // A MEMBER extension function (`class C { fun T.f() }`) -> first param `__self`; a C#-origin `[Extension]`
-                // static is ALSO an extension. `inline` carries the spliceable body (composes with suspend/generic).
-                var isExt = ps.Length > 0 && (ps[0].Name == "__self" || IsExtensionMethod(m));
+                // A fresh typeParams array per emission — a JsonNode can hold only one parent, so a C#-ext method
+                // (emitted BOTH as an object member AND a top-level fun below) must NOT share one array across the calls.
+                JsonArray Tps() => m.IsGenericMethodDefinition ? TypeParamsArr(m.GetGenericArguments(), t, false, false) : null;
+                // An extension function -> first param is the receiver: a DotKt MEMBER extension (`class C { fun T.f() }`)
+                // names it `__self`; a C#-origin `[Extension]` static (`static int Twice(this W w)`) names it for real.
+                // Either way `ext:true` keeps it a member extension, reachable via `import Owner.f` (the C# `using static`
+                // analog). `inline` carries the spliceable body (composes with suspend/generic).
+                var csExt = ps.Length > 0 && ps[0].Name != "__self" && IsExtensionMethod(m);
+                var isExt = ps.Length > 0 && (ps[0].Name == "__self" || csExt);
                 var (mm, mv) = ModVis(prot.Value, m.IsAbstract, virt, infix: k.infix, op: k.op, suspend: k.suspend,
                     inline: KotlinInlineBody(m) != null, ext: isExt);
                 funs.Add(FunObj(m.Name, retNode, mm, mv, GenuineNet(t) ? m.Name : null,   // identity BCL-member binding
-                    m.IsGenericMethodDefinition ? TypeParamsArr(m.GetGenericArguments(), t, false, false) : null,
-                    ParamsArr(ps, t)));
+                    Tps(), ParamsArr(ps, t)));
+                // A C#-origin `[Extension]` static ALSO surfaces as a TOP-LEVEL extension fun in a `file` decl (below),
+                // so `import NS.*` (the Kotlin analog of C# `using NS;`) brings it into scope — the whole Avalonia fluent
+                // startup/render surface is namespace-imported extension methods (UsePlatformDetect/…). #137. A byref
+                // receiver (`this ref W`/`this in W`, a struct ref-extension) is EXCLUDED from the top-level surface —
+                // its receiver would map to a `ClrRef<T>`, not sensibly a `w.M()` call target (it stays a member ext).
+                if (csExt && !ps[0].ParameterType.IsByRef)
+                {
+                    var (em, ev) = ModVis(prot.Value, false, false, infix: k.infix, op: k.op, suspend: k.suspend,
+                        inline: KotlinInlineBody(m) != null, ext: true);
+                    csExtFuns.Add(FunObj(m.Name, retNode, em, ev, null, Tps(), ParamsArr(ps, t)));
+                }
             }
             // .NET OPERATORS (`op_Addition`/…) are STATIC methods -> Kotlin `operator fun`s on a genuine .NET type: the
             // LEFT operand is the receiver, so a binary op drops param[0] and a unary op has no value params. `clrName =
@@ -825,6 +846,16 @@ static class FacadeGen
             if (staticProps.Count > 0) typeObj["staticProps"] = staticProps;
             if (staticEvents.Count > 0) typeObj["staticEvents"] = staticEvents;
             types.Add(typeObj);
+            // C#-origin `[Extension]` methods -> a `file` decl (pkg = the static class's namespace, fileClass = its
+            // FullName). The consumer restores each as a top-level extension fun and routes the call to the static
+            // method on this class (`NS.Ext.M(recv, …)`) — same shape as a DotKt [KotlinFileClass] top-level extension.
+            if (csExtFuns.Count > 0)
+                files.Add(new JsonObject
+                {
+                    ["pkg"] = string.IsNullOrEmpty(t.Namespace) ? "" : t.Namespace,
+                    ["fileClass"] = t.FullName,
+                    ["funs"] = csExtFuns
+                });
             Console.WriteLine($"meta: {t.FullName} ({(isStatic ? "object" : "class")})");
     }
 

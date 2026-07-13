@@ -36,6 +36,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **facadegen now surfaces C#-origin `[Extension]` methods as top-level Kotlin extension functions** (#137,
+  Avalonia report B). A C# extension method (`public static int Twice(this W w)` in a static class `NS.Ext`)
+  was only reachable via a per-member import (`import NS.Ext.Twice`, the `using static` analog); a
+  namespace-style `import NS.*` (the Kotlin analog of C# `using NS;` — how Avalonia's fluent
+  `UsePlatformDetect()`/`StartWithClassicDesktopLifetime()`/… startup surface is used) saw nothing, so
+  `w.Twice()` failed with `unresolved reference`. facadegen now emits each `[Extension]` static ADDITIONALLY
+  as a top-level extension fun in a `file` decl (pkg = the static class's namespace, fileClass = its FullName),
+  binding through the same path DotKt `[KotlinFileClass]` top-level extensions already use — no bir2cir change
+  needed (a `[Extension]` call is a plain static `NS.Ext.M(recv, …)` at the IL level). Non-generic, extra-param,
+  and generic (`fun <T> Box<T>.Echo(): T`) receivers all resolve, run, and are ilverify-clean. Also fixes a
+  latent crash: a generic `[Extension]` reused one `typeParams` JSON node across two emissions
+  (`The node already has a parent`), silently dropping the whole static class. Gated by `verify-il.sh` `csext`.
+
 - **Consume-as-Kotlin round-trip: an omitted cross-module DEFAULT argument is now filled from the facadegen
   metadata** (#134). Consuming a DotKt library as Kotlin, omitting a defaulted parameter anywhere but the
   trailing tail — a constructor `Pt(y = 4)` (omitting `x`) or a named-middle call `box(1, c = 9)` (omitting

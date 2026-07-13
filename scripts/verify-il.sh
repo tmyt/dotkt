@@ -566,6 +566,12 @@ il_check_inject ubyteinj UByteInj "$ROOT/cases/il-ubyteinj" "$(printf '200\n3\n2
 # c1net consumes types from its OWN runtime.cs (Probe assembly) via `import Probe.X` -> il_check_inject (build the
 # runtime, scan the imports through facadegen, --ref it). The old no-import-scan @Clr-facade path is gone.
 il_check_inject c1net C1Net "$ROOT/cases/il-c1net" "$(printf '42\nhi\n10\n15\n105\n52\n21\n41\n117\n20\n5\nyo!')" Probe
+# csext (#137, Avalonia report B): C#-origin `[Extension]` static methods (`static int Twice(this W w)`) surface as
+# TOP-LEVEL Kotlin extension functions (`fun W.Twice(): Int`) so `w.Twice()` resolves via `import Interop.*` — the
+# Kotlin analog of C# `using Interop;`. Covers non-generic, extra-param, and GENERIC (`fun <T> Box<T>.Echo(): T`)
+# receivers. The whole Avalonia startup/render surface (UsePlatformDetect/StartWithClassicDesktopLifetime/…) is
+# namespace-imported extension methods, so this is the enabling seam. (The `import Owner.member` form is in il-c1net.)
+il_check_inject csext CsExt "$ROOT/cases/il-csext" "$(printf '42\n22\nhi')" CsExtRt
 # N6: STATIC events subscribe via `+=`/`-=` — on a `static class`/`object` (an object member, the Console.CancelKeyPress
 # shape) and on a normal class (a companion property, the TaskScheduler.UnobservedTaskException shape). facadegen
 # surfaces both as `ClrEvent<T>` properties; bir2cir binds the operator to the event's STATIC add/remove accessor.
