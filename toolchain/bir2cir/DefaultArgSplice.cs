@@ -99,7 +99,7 @@ static class DefaultArgSplice
     // index N. A fresh deep clone per occurrence, so each filled value is a self-contained subtree.
     static JsonNode SpliceOne(string bir, JsonNode receiver, JsonArray args)
     {
-        JsonNode parsed; try { parsed = JsonNode.Parse(bir); } catch { return null; }
+        JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return null; }
         return SubstituteTokens(parsed, receiver, args);
     }
 

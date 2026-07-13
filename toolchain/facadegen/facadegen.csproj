@@ -10,6 +10,8 @@
     <!-- Shared single-source Type read/write helper of the BIR/CIR freeze (#37). Linked (not a project ref)
          so all three C# tools compile the SAME contract with no build-order dependency. -->
     <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
+    <!-- Shared JSON depth bound for BIR/CIR read/write (#147; TypeNode.Parse references it). -->
+    <Compile Include="../bir-common/BirJson.cs" Link="BirJson.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- I2: reflect over reference assemblies (the ref/ folder of frameworks/NuGet) without executing

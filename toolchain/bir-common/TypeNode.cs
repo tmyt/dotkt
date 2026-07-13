@@ -192,7 +192,7 @@ public abstract record TypeNode
     /// <summary>Parse a canonical type JSON string back into a <see cref="TypeNode"/>.</summary>
     public static TypeNode Parse(string json)
     {
-        using var doc = JsonDocument.Parse(json);
+        using var doc = JsonDocument.Parse(json, BirJson.DocOptions);
         return Read(doc.RootElement);
     }
 }
@@ -223,7 +223,7 @@ public static class BirCarrier
         switch (version)
         {
             case JsonV1:
-                return JsonNode.Parse(Encoding.UTF8.GetString(content))
+                return JsonNode.Parse(Encoding.UTF8.GetString(content), documentOptions: BirJson.DocOptions)
                        ?? throw new FormatException("carrier body decoded to a null JSON node");
             default:
                 if (version.StartsWith("bir-msgpack/"))

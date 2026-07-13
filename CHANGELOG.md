@@ -36,6 +36,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Deeply-nested inlined lambdas/blocks in one function no longer crash the pipeline with a JSON depth error**
+  (#147). A function with enough nested inline lambdas/blocks produces a BIR (and derived CIR) whose method-body
+  JSON nests deeper than System.Text.Json's default `MaxDepth` of 64 — legal Kotlin that hard-crashed bir2cir with
+  `maximum configured depth of 64 has been exceeded`. Raised the bound to 1024 on EVERY BIR/CIR read AND
+  full-document write site via a shared `DotKt.Bir.BirJson` helper: bir2cir's BIR readers (`Program.cs` main +
+  merge loop, `DefaultArgSplice`) and its indented CIR writer, ilemit's CIR readers + the file-class merge
+  re-parse/re-serialize (`Program.cs`), and the shared `TypeNode`/`BirCarrier` parse path in `bir-common`.
+  (Verified: a 20-deep `run { }` nest yields a 109-level BIR JSON — `JsonDocument.Parse` at the default throws at
+  exactly that input, at 1024 it parses and the whole pipeline compiles+runs.)
+
 - **A Kotlin lambda passed to a GENERIC BCL delegate ctor param over a user type now materializes as the target
   delegate** (#140, report P3). `System.Threading.ThreadLocal<Box>({ Box(42) })` — where `Box` is an app-emitted
   class — passes the lambda to `System.Func`1<Box>`, but the value on the stack stayed the internal

@@ -66,7 +66,7 @@ static class IlEmit
         var order = new List<string>();
         foreach (var d in docs)
         {
-            var node = System.Text.Json.Nodes.JsonNode.Parse(d.RootElement.GetRawText()).AsObject();
+            var node = System.Text.Json.Nodes.JsonNode.Parse(d.RootElement.GetRawText(), documentOptions: DotKt.Bir.BirJson.DocOptions).AsObject();
             var fc = node["fileClass"]?.GetValue<string>() ?? "";
             if (fc.Length > 0 && byFc.TryGetValue(fc, out var acc))
             {
@@ -85,7 +85,7 @@ static class IlEmit
         var result = new List<JsonElement>();
         foreach (var fc in order)
         {
-            var doc = JsonDocument.Parse(byFc[fc].ToJsonString());
+            var doc = JsonDocument.Parse(byFc[fc].ToJsonString(DotKt.Bir.BirJson.Writer), DotKt.Bir.BirJson.DocOptions);
             _mergedDocs.Add(doc);
             result.Add(doc.RootElement);
         }
@@ -95,14 +95,14 @@ static class IlEmit
     static JsonDocument LoadInputDocument(string path)
     {
         var json = File.ReadAllText(path);
-        using var doc = JsonDocument.Parse(json);
+        using var doc = JsonDocument.Parse(json, DotKt.Bir.BirJson.DocOptions);
         var root = doc.RootElement;
         if (!root.TryGetProperty("cirVersion", out _))
-            return JsonDocument.Parse(json);
+            return JsonDocument.Parse(json, DotKt.Bir.BirJson.DocOptions);
 
         if (root.TryGetProperty("cirDraft", out var draft) &&
             draft.TryGetProperty("executableCir", out var executable))
-            return JsonDocument.Parse(executable.GetRawText());
+            return JsonDocument.Parse(executable.GetRawText(), DotKt.Bir.BirJson.DocOptions);
 
         throw new InvalidOperationException(
             $"native CIR input '{path}' does not contain cirDraft.executableCir");   // #84: Main adds the `ilemit: ` prefix

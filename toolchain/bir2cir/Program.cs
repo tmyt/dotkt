@@ -73,7 +73,7 @@ sealed class Pipeline
         {
             var path = Path.GetFullPath(input);
             var json = File.ReadAllText(path);
-            var root = JsonNode.Parse(json) ?? throw new UsageException($"bir2cir: invalid JSON root: {path}");
+            var root = JsonNode.Parse(json, documentOptions: BirJson.DocOptions) ?? throw new UsageException($"bir2cir: invalid JSON root: {path}");
             files.Add(new BirFile(
                 path,
                 json,
@@ -680,7 +680,7 @@ sealed class Pipeline
         try
         {
             var roots = new List<JsonElement>();
-            foreach (var f in files) { var d = JsonDocument.Parse(f.Json); docs.Add(d); roots.Add(d.RootElement); }
+            foreach (var f in files) { var d = JsonDocument.Parse(f.Json, BirJson.DocOptions); docs.Add(d); roots.Add(d.RootElement); }
             try { IrSanity.Check(roots); }
             catch (IrSanityException ex) { throw new InvalidOperationException($"{ex.Decl}: sanity: {ex.Message}"); }
         }
@@ -771,7 +771,8 @@ sealed record CirFile(string OutputName, string Json);
 
 static class JsonOptions
 {
-    public static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
+    // MaxDepth raised off the STJ default (64) so a deeply-nested-lambda CIR document serializes (#147).
+    public static readonly JsonSerializerOptions Indented = new() { WriteIndented = true, MaxDepth = DotKt.Bir.BirJson.MaxDepth };
 }
 
 sealed class UsageException : Exception
