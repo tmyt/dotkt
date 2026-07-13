@@ -290,6 +290,11 @@ il_check enumtostr EnumToStr "$ROOT/cases/il-enumtostr" "$(printf 'A\nB\nC\nFals
 # reified `enumValues<TheNetEnum>()` / `enumValueOf<TheNetEnum>()` intrinsics resolve at the frontend; the backend
 # routes `e.name` (kotlin.Enum member on a .NET-enum-bound type-param) + enumValues/enumValueOf to System.Enum.
 il_check_imports netenumbound NetEnumBound "$ROOT/cases/il-netenumbound" "$(printf 'Friday\n7\n1')"
+# icmparity (#129): a Kotlin class implements a member of a same-name .NET arity FAMILY (System.IComparable +
+# System.IComparable`1). A Kotlin classifier cannot be arity-overloaded (K2 hard limit, dotkt-semantics §8d), so
+# facadegen names the GENERIC `IComparable1<T>` (non-generic keeps plain `IComparable`); implementing it uses the
+# VERBATIM .NET member `CompareTo(other: Ver?)`, not the Kotlin operator `compareTo`. Direct + upcast dispatch.
+il_check_imports icmparity IcmpArity "$ROOT/cases/il-icmparity" "$(printf -- '-2\n6')"
 # gendelegate (#140/P3): a Kotlin lambda into a GENERIC BCL delegate ctor param over a USER TypeBuilder
 # (ThreadLocal<Box> = Func<Box>, Progress<Box> = Action<Box>). The constructed TypeBuilderInstantiation
 # resolves the ctor on the OPEN def, so ilemit must substitute T->Box to materialize System.Func`1<Box>/
@@ -683,6 +688,11 @@ il_check_inject transinj TransInj "$ROOT/cases/il-transinj" "$(printf '1\nw1\n1\
 il_check_inject cbk Cbk "$ROOT/cases/il-cbk" "$(printf '=v42\nran')" PCbk
 il_check_inject clriface ClrIface "$ROOT/cases/il-clriface" "$(printf '2\na')" PIf
 il_check_inject clrimpl ClrImpl "$ROOT/cases/il-clrimpl" "$(printf 'draw:circle\ndraw:square\ncircle')" PImpl
+# ifacechainvt (#129): a Kotlin class implements an injected .NET interface whose BASE-INTERFACE CHAIN carries a
+# value-type generic slot (`IMid<Int> : IBase<Int>`). #128's value-type-generic-interface slot bridge must hold across
+# the transitively-inherited base link — the inherited `Get(): Int` and the direct `Rank(Int): Int` both use bare
+# int32 slots (not Nullable<int>). Direct + upcast-to-IMid<Int> dispatch.
+il_check_inject ifacechainvt IfaceChainVt "$ROOT/cases/il-ifacechainvt" "$(printf '21\n10\n23')" ChainRt
 # clrifaceimpl: a Kotlin class IMPLEMENTING a facadegen-injected .NET generic interface (IComparer<String>) — the other
 # interop-override samples only EXTEND a base class. bir2cir's DeclarationRename re-stamps the override:true/vis:public
 # off the injected interface member + fills its slot, so a direct call, an interface-typed upcast dispatch, AND a BCL

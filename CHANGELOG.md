@@ -48,6 +48,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   surfaces platform `T!`; a `[Nullable]=2` arg surfaces `T?`. Non-delegate positions keep their existing bare
   structure (the outer NRT is still folded by the caller's `ApplyNrt`), so the change is confined to delegate
   internals. New gate `il-delegnull` (`il_check_inject_nrt` builds the sample's runtime.cs with C# NRT enabled).
+- **The `System.IComparable` arity clash + base-interface-chain value-type slots (#129) are confirmed by-design and
+  now gated + documented.** Investigation (paired with the design reviewer) established there is no facadegen (or kotc)
+  code fix warranted: a Kotlin classifier cannot be arity-overloaded (K2 hard limit, `docs/dotkt-semantics.md` §8d),
+  so `import System.IComparable` + the natural `IComparable<Ver>` spelling resolving to the non-generic (arity-0) member
+  is the documented projection, not a bug. Implementing the generic member uses the arity-qualified `IComparable1<T>`
+  with the VERBATIM .NET surface (`override fun CompareTo(other: Ver?): Int`); for Kotlin comparability the idiom is
+  `kotlin.Comparable<T>` (it emits both CLR IComparable faces via bir2cir's ComparableBridgeSynthesis). The
+  base-interface-chain value-type case (`class Cell : IMid<Int>` inheriting `Get(): Int` through `IBase<T>`) already
+  works via #128's value-type-slot bridge across the transitively-inherited link. Two new gates lock both paths
+  (`il-icmparity`: the arity-family generic-interface implement + upcast dispatch; `il-ifacechainvt`: the value-type
+  base-interface chain); `docs/dotkt-semantics.md` §8d gains the implement-an-injected-interface guidance.
 - **Two same-name/same-arity top-level extensions on DIFFERENT receiver types (parallel `*Extensions` static classes in
   one namespace) now each bind to their OWN receiver's class — no silent mis-bind to the first candidate (#144).** A
   facadegen-injected C#-origin `[Extension]` method surfaces as a Kotlin top-level extension fun keyed by
