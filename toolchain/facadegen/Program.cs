@@ -742,7 +742,10 @@ static class FacadeGen
                     var sps = m.GetParameters();
                     if (!sps.All(p => Supported(p.ParameterType)) || !Supported(m.ReturnType)) continue;
                     if (!seen.Add("sm:" + m.Name + "<" + string.Join(",", sgp) + ">(" + Sig(sps, t) + ")")) continue;
-                    staticFuns.Add(FunObj(m.Name, MapRetT(m.ReturnType, t), new JsonObject(), "public", null,
+                    // #135: route the return through RetTypeSfxN (Nothing marker + NRT + ext-recv restore) — the same
+                    // reader the instance/interface/top-level loops use — instead of raw MapRetT, so a companion-static
+                    // `fun g(): Nothing` round-trips and NRT folds on companion statics.
+                    staticFuns.Add(FunObj(m.Name, RetTypeSfxN(m, t), new JsonObject(), "public", null,
                         m.IsGenericMethodDefinition ? TypeParamsArr(m.GetGenericArguments(), t, false, false) : null,
                         ParamsArr(sps, t)));
                 }
@@ -1389,9 +1392,9 @@ static class FacadeGen
         // riding the same retAttrs channel as [Nullable]/[KotlinSuspendFunctionType]) restores it, so the consumer's FIR
         // sees `kotlin.Nothing` and an `if/else` with a Nothing branch keeps the non-Nothing type instead of widening to
         // Any?. NRT composes on top: a `Nothing?` return rides the nullability byte. (kotc's coneOf resolves the bare
-        // `Nothing` type node to bt.nothingType.) Scope: this covers the top-level/member method + getter return path;
-        // a `suspend fun`'s Task<T> result (SuspendRetNode) and a companion-static fun that bypass RetTypeSfxN are not
-        // yet wired — extend them when the bir2cir marker producer lands if those positions need it.
+        // `Nothing` type node to bt.nothingType.) This covers the top-level/member method + getter return path AND the
+        // companion-static return (the companion-static loop calls RetTypeSfxN here); the suspend-return position reads
+        // the same marker via SuspendRetNode (#135).
         if (HasNothingMarker(attrs)) return ApplyNrt(new TN.Fqn("Nothing"), m.ReturnType, attrs, m);
         var rt = ApplyFlowContract(ApplyNrt(MapRetT(m.ReturnType, self), m.ReturnType, attrs, m), m.ReturnType, attrs);
         return HasExtFnMarker(attrs) ? WithExtRecv(rt) : rt;   // #145: a method returning `P.() -> R`
@@ -1452,11 +1455,21 @@ static class FacadeGen
     // no NRT slot -> no wrapper.
     static TN SuspendRetNode(MethodInfo m, Type self)
     {
+        var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
+        // #135: a `suspend fun f(): Nothing` — the Kotlin `Nothing` result is erased (Task<object> / Task); the
+        // [KotlinNothing] marker (stamped by bir2cir on the SAME retAttrs channel) restores it. Check BEFORE the Task
+        // unwrap so a non-generic `Task` return doesn't collapse to Unit. NRT (index 1, the result slot) folds on top.
+        if (HasNothingMarker(attrs))
+        {
+            byte nb = NrtByteAt(attrs, 1);
+            if (nb == 255) nb = NrtContextOf(m);
+            var nn = (TN)new TN.Fqn("Nothing");
+            return nb == 2 ? new TN.Nullable(nn) : nb == 0 ? new TN.Oblivious(nn) : nn;
+        }
         if (!IsTask1(m.ReturnType)) return new TN.Fqn("Unit");
         var inner = m.ReturnType.GetGenericArguments()[0];
         var node = MapRetT(inner, self);
         if (inner.IsValueType || node is TN.Nullable || node is TN.Oblivious) return node;
-        var attrs = CustomAttributeData.GetCustomAttributes(m.ReturnParameter);
         byte b = NrtByteAt(attrs, 1);
         if (b == 255) b = NrtContextOf(m);
         return b == 2 ? new TN.Nullable(node) : b == 0 ? new TN.Oblivious(node) : node;

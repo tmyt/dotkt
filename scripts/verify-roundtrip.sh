@@ -37,6 +37,11 @@ declare -A RT_XFAIL=(
 	# (#34b FIXED 2026-07-06: a top-level `val`/`var` fully round-trips — facadegen surfaces it as a `tlprop` meta
 	# token, kotc's ClrTypeInjection restores a non-extension top-level property and BirEmitter routes its read/write
 	# to `staticField`/`staticFieldSet` of the referenced file class; a top-level `val` is stamped `readOnly`.)
+	# #135 — the facadegen READER for a `suspend fun f(): Nothing` return is in place (SuspendRetNode reads
+	# [KotlinNothing]), but the PRODUCER doesn't stamp it: bir2cir SuspendColdLowering.BuildBridge() builds the
+	# Task<object> bridge from `suspendRet` (= kotlin.Nothing) but never derives retNothing onto it, so the marker
+	# never reaches the emitted return param. Flips to FIXED once bir2cir stamps retNothing on the suspend bridge.
+	[roundtrip-nothing-suspend]="#135 producer gap: bir2cir SuspendColdLowering.BuildBridge does not stamp [KotlinNothing] on the Task-bridge return"
 )
 
 # ---- section result collection (no section may abort the script) -----------------------------------
@@ -254,6 +259,63 @@ cp "$CE/libil/PaletteLib.dll" "$CE/appil/" 2>/dev/null || true
 ceexpected="$(printf 'RED\nFalse\n0')"
 run_app ceactual "$CE/appil/PaletteApp.dll"
 check_output roundtrip-enum "$ceexpected" "$ceactual" "cross-assembly basic-enum inherited System.Enum members (toString/==/hashCode) #105"
+
+# ----- KOTLIN `Nothing` RETURN round-trip (#135): companion-static + top-level `fun f(): Nothing` -----
+# A `fun f(): Nothing` erases to a CLR `object` return (Nothing has no CLR analog); bir2cir stamps [KotlinNothing]
+# on the return, facadegen restores `kotlin.Nothing`, so a consumer's `val r: String = if (c) x else f()` keeps x's
+# type instead of widening to Any?. #133 wired the PLAIN method/getter path; #135 extends the READER to the
+# companion-static return (which the facadegen companion-static loop read via raw MapRetT -> Any?, now RetTypeSfxN).
+# LOAD-BEARING: if either Nothing widened to Any?, the `val r: String = if/else` would fail to compile -> section FAIL.
+NO="$ROOT/build/roundtrip-nothing"; rm -rf "$NO"; mkdir -p "$NO/lib" "$NO/app" "$NO/libbir" "$NO/libil" "$NO/appbir" "$NO/appil"
+cat > "$NO/lib/lib.kt" <<'EOF'
+class Boom {
+    companion object { fun boom(): Nothing = throw RuntimeException("boom") }   // companion-static Nothing (#135)
+}
+fun fail(msg: String): Nothing = throw RuntimeException(msg)                    // top-level Nothing (#133 baseline)
+EOF
+cat > "$NO/app/app.kt" <<'EOF'
+fun pick(n: Int): String {
+    val r: String = if (n >= 0) "kept" else Boom.Companion.boom()   // companion-static Nothing keeps r: String
+    return if (n >= 0) r else fail("x")                             // top-level Nothing keeps the expr: String
+}
+fun main() { println(pick(1)) }
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$NO/lib" -no-stdlib -classpath "$CP" -d "$NO/libbir" >/dev/null 2>&1 || true
+emit_il "$NO/libil" NothingLib "$NO/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$NO/libil/NothingLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NO/meta" --refs "$REFS$NO/libil/NothingLib.dll" Boom LibKt >/dev/null 2>&1 || true
+CLR_TYPES_METADATA="$NO/meta" "$LAUNCHER" "$NO/app" -no-stdlib -classpath "$CP" -d "$NO/appbir" >/dev/null 2>&1 || true
+emit_il "$NO/appil" NothingApp --ref "$NO/libil/NothingLib.dll" "$NO/appbir"/*.bir.json
+cp "$NO/libil/NothingLib.dll" "$NO/appil/" 2>/dev/null || true
+noexpected="kept"
+run_app noactual "$NO/appil/NothingApp.dll"
+check_output roundtrip-nothing "$noexpected" "$noactual" "companion-static + top-level fun f(): Nothing round-trips (does not widen to Any?) #135"
+
+# ----- SUSPEND `Nothing` return round-trip (#135, XFAIL): `suspend fun f(): Nothing` (see RT_XFAIL) -----
+# The facadegen READER is ready (SuspendRetNode reads [KotlinNothing] before the Task unwrap); this is XFAIL on the
+# bir2cir PRODUCER gap (SuspendColdLowering.BuildBridge doesn't stamp retNothing on the Task-bridge return). When the
+# producer stamps it, `sfail()` stops widening to Any?, the lambda types as `suspend () -> Int`, and this flips FIXED.
+NS="$ROOT/build/roundtrip-nothing-suspend"; rm -rf "$NS"; mkdir -p "$NS/lib" "$NS/app" "$NS/libbir" "$NS/libil" "$NS/appbir" "$NS/appil"
+cat > "$NS/lib/lib.kt" <<'EOF'
+suspend fun sfail(): Nothing = throw RuntimeException("sfail")
+EOF
+cat > "$NS/app/app.kt" <<'EOF'
+import dotkt.support.blockOn
+fun main() {
+    val z: Int = blockOn { if (1 >= 0) 7 else sfail() }   // sfail(): Nothing keeps the lambda `suspend () -> Int`
+    println(z)
+}
+EOF
+CLR_TYPES_METADATA="" "$LAUNCHER" "$NS/lib" -no-stdlib -classpath "$CP" -d "$NS/libbir" >/dev/null 2>&1 || true
+emit_il "$NS/libil" SNothingLib "$NS/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$NS/libil/SNothingLib.dll" --refs "$REFS" >/dev/null 2>&1 || true
+dotnet "$FACADEGEN_DLL" --meta "$NS/meta" --refs "$REFS$NS/libil/SNothingLib.dll" LibKt System.Threading.Monitor >/dev/null 2>&1 || true
+write_coharness "$NS/app"
+CLR_TYPES_METADATA="$NS/meta" "$LAUNCHER" "$NS/app" -no-stdlib -classpath "$CP" -d "$NS/appbir" >/dev/null 2>&1 || true
+emit_il "$NS/appil" SNothingApp --ref "$NS/libil/SNothingLib.dll" "$NS/appbir"/*.bir.json
+cp "$NS/libil/SNothingLib.dll" "$NS/appil/" 2>/dev/null || true
+run_app nsactual "$NS/appil/SNothingApp.dll"
+check_output roundtrip-nothing-suspend "7" "$nsactual" "suspend fun f(): Nothing round-trips (reader ready; XFAIL on bir2cir producer) #135"
 
 R="$ROOT/build/roundtrip"; rm -rf "$R"; mkdir -p "$R/lib" "$R/app" "$R/libbir" "$R/libil" "$R/appbir" "$R/appil"
 
