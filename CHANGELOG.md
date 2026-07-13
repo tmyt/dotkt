@@ -292,6 +292,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **Non-null parameter PRECONDITIONS on the public surface** (#6). kotc now synthesizes JVM-Kotlin-style
+  design-by-contract checks — reproducing `Intrinsics.checkNotNullParameter`, which is a JVM-BACKEND lowering
+  (`JvmArgumentNullabilityAssertionsLowering`) absent from the Configuration→FIR→Fir2Ir pipeline kotc runs, so the IR
+  carried none. Every PUBLIC or PROTECTED member (top-level fun, member fun, constructor, property setter, default
+  interface method, `@PublishedApi internal`) checks each NON-NULL REFERENCE value parameter at entry: `if (p == null)
+  throw NullPointerException("Parameter specified as non-null is null: <owner>.<method>, parameter <p>")` — emitted as
+  ordinary BIR (an `if`/`objEq`/`throw`, the same null-check shape as `x!!`), so a null crossing a boundary (a platform
+  `T!`, an unsound cast, reflection ignoring NRT) fails fast at the entry instead of propagating to a later, mis-sited
+  `NullReferenceException`. `kotlin.NullPointerException` resolves to the BCL exception via the existing `@ClrTypeAlias`
+  path (no CLR knowledge in kotc). Value types / nullable / `Unit`/`Nothing` / type-parameter-typed params / receivers
+  / private/internal/local/inline members are skipped (see `docs/dotkt-semantics.md` §9c for the discriminator and the
+  deliberate JVM deviations). Gated by `verify-il.sh` `nncontract`.
+
 - **Consume-as-Kotlin round-trip: three generic-fidelity gaps fixed** (#133, surfaced by the atomicfu CLR port).
   In all three the facadegen symbol surface was already correct; the loss was DOWNSTREAM, each in one owning layer.
   Reproduced + gated by `verify-roundtrip.sh` `roundtrip-generic-inline-ext` / `roundtrip-generic-operator` /
