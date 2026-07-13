@@ -61,6 +61,7 @@ import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.classId
+import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
@@ -347,6 +348,17 @@ internal fun BirEmitter.extensionReceiver(call: org.jetbrains.kotlin.ir.expressi
 	val idx = params.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
 	return if (idx in 0 until call.arguments.size) call.arguments[idx] else null
 }
+
+/** #144: the extension-receiver classifier-ClassId key of a top-level extension callee, for disambiguating a
+ *  facadegen-injected `CallableId(package,name)` that two same-name/same-arity extensions on DIFFERENT receiver types
+ *  share (they live in distinct .NET static classes / file classes). Read straight off the RESOLVED callee's declared
+ *  extension-receiver `IrType` classifier `classId` — the SAME ClassId the injector's `coneOf` produced from the
+ *  metadata, so it string-matches `TopLevelSig.receiverKey` across facadegen's name vocabulary (a raw type-name compare
+ *  would diverge for `String`/primitive/generic/array receivers). Null for a non-extension callee, or a type-variable /
+ *  function-type receiver (no class classifier) — the arity-only path stays byte-identical. See `clrInjectedTopLevelFileClass`. */
+internal fun BirEmitter.injectedExtReceiverKey(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String? =
+	fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+		?.type?.classOrNull?.owner?.classId?.asString()
 
 /** Same index-by-parameter-kind approach as [dispatchReceiver]/[extensionReceiver], for an `IrPropertyReference`
  *  (which has no callee `IrFunction` of its own — the getter's parameter SHAPE is used to index its `arguments`).
@@ -1290,7 +1302,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// disambiguate (a single fileClass per CallableId). `suspend` is read straight
 		// off the resolved callee by `suspendCallTag(callee)` below.
 		(callee.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)
-			?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name), regularParams(callee).size) }?.let { fileClass ->
+			?.let { kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, callee.name), regularParams(callee).size, injectedExtReceiverKey(callee)) }?.let { fileClass ->
 			// A FACADEGEN-INJECTED cross-module `inline fun` taking ANY lambda arg (AXIS ①) MUST be source-inlined: emit a
 			// generic `callInline` node carrying the call bindings; bir2cir OWNS the splice (it re-lowers the carried body
 			// in the app context, so a non-local `return`/`break`/suspend through a spliced lambda works, and a noinline

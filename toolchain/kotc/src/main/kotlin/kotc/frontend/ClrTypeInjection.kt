@@ -76,10 +76,25 @@ private class ClrMethod(val name: String, val returnType: TypeNode, val open: Bo
 	val infix: Boolean = false, val operator: Boolean = false, val suspend: Boolean = false, val inline: Boolean = false, val ext: Boolean = false)
 // A restored top-level Kotlin function: its package, the .NET file-facade class to call, and the function itself.
 private class ClrTopLevel(val pkg: FqName, val fileClassDotNet: String, val fn: ClrMethod)
-// N5: one file-class candidate for a top-level CallableId (`.NET file class` + the value-param arity range it covers).
-// Several candidates under one CallableId = same-name same-package overloads across DIFFERENT source files; the backend
-// disambiguates by the resolved callee's arity. See `clrInjectedTopLevelFileClass`.
-internal class TopLevelSig(val fileClass: String, val minArity: Int, val maxArity: Int)
+// N5: one file-class candidate for a top-level CallableId (`.NET file class` + the value-param arity range it covers +
+// the extension-receiver classifier-ClassId KEY, or null for a non-extension). Several candidates under one CallableId =
+// same-name same-package overloads across DIFFERENT source files; the backend disambiguates by the resolved callee's
+// extension receiver type FIRST (#144), then its arity. See `clrInjectedTopLevelFileClass`.
+internal class TopLevelSig(val fileClass: String, val minArity: Int, val maxArity: Int, val receiverKey: String?)
+
+// #144: the .NET primitive-array element -> Kotlin SPECIALIZED primitive-array class-name map, shared by `coneOf` (which
+// resolves the injected type) and `ClrMetadataHolder.receiverClassifierClassId` (which computes the disambiguation KEY),
+// so the two agree byte-for-byte. `Int[]` -> `IntArray`, a .NET unsigned-element array -> the specialized unsigned array.
+internal val PRIM_ARRAY_ELEM = mapOf(
+	"Int" to "IntArray", "Long" to "LongArray", "Double" to "DoubleArray", "Float" to "FloatArray",
+	"Short" to "ShortArray", "Byte" to "ByteArray", "Boolean" to "BooleanArray", "Char" to "CharArray",
+	"UByte" to "UByteArray", "UShort" to "UShortArray", "UInt" to "UIntArray", "ULong" to "ULongArray",
+)
+// The scalar primitive/builtin receiver names `coneOf` resolves to a `kotlin.*` builtin ClassId (the facadegen metadata
+// emits the Kotlin simple name — `System.Int32` -> `Int`, `System.String` -> `String`). Same set drives the #144 key.
+internal val PRIMITIVE_RECEIVER_NAMES = setOf(
+	"Int", "Long", "Double", "Float", "Short", "Byte", "Boolean", "Char", "String", "Unit", "Nothing",
+)
 
 // Unsigned Kotlin types (scalar + specialized array) live in the `kotlin` package as LIBRARY types — they have no
 // `bt.*` builtin, so a facadegen-injected reference to one resolves straight off the symbol provider by ClassId, not
@@ -157,16 +172,31 @@ internal fun clrInjectedDotNetName(classId: ClassId): String? = ClrMetadataHolde
 // flat `Map<CallableId,String>` collapsed to LAST-PUT-WINS and mis-routed one of them to the wrong file class (a hard
 // ilemit "method not found"). This was a regression the A2 registry-removal introduced (the deleted receiver-
 // discriminator arbitrary-picked first; the flat map arbitrary-picked last). Fixed by carrying ALL file-class
-// candidates for a CallableId and disambiguating by the RESOLVED callee's value-param `arity` (the metadata `tlfun`
-// param count). A single (non-colliding) candidate is returned directly, so A2's byte-identical routing is preserved.
-internal fun clrInjectedTopLevelFileClass(callableId: CallableId, arity: Int): String? {
+// candidates for a CallableId and disambiguating by the RESOLVED callee's extension RECEIVER type (#144) then its
+// value-param `arity` (the metadata `tlfun` param count). A single (non-colliding) candidate is returned directly, so
+// A2's byte-identical routing is preserved.
+// #144: arity alone is NOT enough — two same-name/same-arity extensions on DIFFERENT receiver types (`FooExt.Tag(Foo)`
+// and `BarExt.Tag(Bar)` in one namespace, the Avalonia-style parallel `*Extensions` shape) share a CallableId AND an
+// arity, so the receiver type is the primary discriminator. `receiverKey` is the resolved callee's extension-receiver
+// classifier-ClassId string (null for a non-extension call, or an unresolvable receiver); it narrows the candidate set
+// before the arity range is applied. The KEY is a ClassId (not a raw type name), computed IDENTICALLY on both sides
+// (metadata: `receiverClassifierClassId`; backend: the resolved IrType's `classId`), so it matches across facadegen's
+// name vocabulary (bare `String`, namespace-less generic `Box`, primitive-array element) — a raw-name compare would not.
+internal fun clrInjectedTopLevelFileClass(callableId: CallableId, arity: Int, receiverKey: String?): String? {
 	val sigs = ClrMetadataHolder.topLevelSigByCallableId[callableId] ?: return null
 	// A2 byte-identical: a UNIQUE restored overload for this (package,name) -> its file class directly (the common
 	// case; a single `tlfun` spans an arity RANGE across its default-arg variants, but there is one file class either way).
 	if (sigs.size == 1) return sigs[0].fileClass
-	// N5: multiple file classes share this CallableId -> pick by the resolved callee's value-param arity. FIR already
+	// #144: narrow by the extension-receiver ClassId FIRST (FooExt.Tag(Foo) vs BarExt.Tag(Bar)); when the receivers
+	// coincide, the caller passes null (a non-extension overload set), or the key does not resolve on one side, this is a
+	// no-op (`ifEmpty`) and the N5 arity match below decides — never a WRONG non-first pick, at worst the pre-#144 first.
+	// By-design LIMITS (both degrade to the pre-#144 first-pick, never a wrong pick): the CLASSIFIER key cannot split two
+	// overloads on the SAME generic classifier with different args (`Tag(Cell<Int>)` vs `Tag(Cell<String>)`); and an
+	// `Any`/`ClrRef`/function-type/type-variable receiver has no resolvable classifier key -> arity-only.
+	val byRecv = if (receiverKey != null) sigs.filter { it.receiverKey == receiverKey }.ifEmpty { sigs } else sigs
+	// N5: multiple file classes still share this key -> pick by the resolved callee's value-param arity. FIR already
 	// resolved the call to a UNIQUE overload, so its arity lands in exactly one candidate's range -> 1:1 routing.
-	return (sigs.firstOrNull { arity in it.minArity..it.maxArity } ?: sigs.first()).fileClass
+	return (byRecv.firstOrNull { arity in it.minArity..it.maxArity } ?: byRecv.first()).fileClass
 }
 
 /**
@@ -361,10 +391,12 @@ private object ClrMetadataHolder {
 	val topLevelSigByCallableId: Map<CallableId, List<TopLevelSig>> by lazy {
 		buildMap<CallableId, MutableList<TopLevelSig>> {
 			for (tl in module?.topLevel.orEmpty()) {
-				val vps = if (tl.fn.ext && tl.fn.params.isNotEmpty()) tl.fn.params.drop(1) else tl.fn.params
+				val extReceiver = if (tl.fn.ext && tl.fn.params.isNotEmpty()) tl.fn.params[0] else null
+				val vps = if (extReceiver != null) tl.fn.params.drop(1) else tl.fn.params
 				val trailingOpt = vps.reversed().takeWhile { it.default != null }.count()
 				getOrPut(CallableId(tl.pkg, Name.identifier(tl.fn.name))) { ArrayList() }
-					.add(TopLevelSig(stripClrFileClass(tl.fileClassDotNet), vps.size - trailingOpt, vps.size))
+					.add(TopLevelSig(stripClrFileClass(tl.fileClassDotNet), vps.size - trailingOpt, vps.size,
+						extReceiver?.let { receiverClassifierClassId(it.type)?.asString() }))
 			}
 		}
 	}
@@ -417,6 +449,30 @@ private object ClrMetadataHolder {
 	// builds a generic type with the wrong number of arguments and crashes the fir2ir fake-override builder
 	// ("typeParameters size != typeArguments size"). Returning null instead just skips that reference (-> Any?/no edge).
 	fun classIdFor(name: String, arity: Int): ClassId? = byNameArity[name to arity]
+
+	// #144: the classifier ClassId of a top-level extension's receiver TYPE-NODE — the disambiguation key for two
+	// same-name/same-arity extensions on DIFFERENT receiver types. Resolved IDENTICALLY to how `coneOf` resolves the
+	// receiver's classifier (a `kotlin.*` primitive/builtin, a specialized primitive/unsigned array, an `Array<T>`, an
+	// unsigned scalar library type, an injected type by dotted `pkg.Name` or by `(simpleName, arity)`), but WITHOUT
+	// constructing type args, so it equals the BACKEND's resolved-IrType `classId` for the same receiver — both are
+	// produced from this same metadata by `coneOf`. Null for a receiver with no nameable classifier (a bare type
+	// variable / a function type / a simple name that does not resolve) -> the arity-only path (byte-identical to N5).
+	fun receiverClassifierClassId(t: TypeNode): ClassId? = when (t) {
+		is TypeNode.Nullable -> receiverClassifierClassId(t.of)
+		is TypeNode.Oblivious -> receiverClassifierClassId(t.of)
+		is TypeNode.ByRef -> null   // a `ClrRef<T>` byref receiver is not an overload-collision axis
+		is TypeNode.Array -> {
+			val prim = (t.elem as? TypeNode.Fqn)?.takeIf { it.args == null }?.name?.let { PRIM_ARRAY_ELEM[it] }
+			ClassId(FqName("kotlin"), Name.identifier(prim ?: "Array"))
+		}
+		is TypeNode.Fqn -> when {
+			t.args == null && t.name in PRIMITIVE_RECEIVER_NAMES -> ClassId(FqName("kotlin"), Name.identifier(t.name))
+			'.' in t.name -> ClassId(FqName(t.name.substringBeforeLast('.')), Name.identifier(t.name.substringAfterLast('.')))
+			t.name in UNSIGNED_KOTLIN_TYPES -> ClassId(FqName("kotlin"), Name.identifier(t.name))
+			else -> classIdFor(t.name, t.args?.size ?: 0)
+		}
+		is TypeNode.Tv, is TypeNode.Fn -> null
+	}
 }
 
 /**
@@ -1100,13 +1156,10 @@ class ClrTypeInjector(session: FirSession) : FirDeclarationGenerationExtension(s
 			is TypeNode.ByRef -> clrRefOf(coneOf(node.of, owner, methodTps))
 			// A .NET array -> Kotlin `Array<T>` / a primitive `IntArray`/etc.
 			is TypeNode.Array -> {
-				val prim = (node.elem as? TypeNode.Fqn)?.takeIf { it.args == null }?.name?.let {
-					mapOf("Int" to "IntArray", "Long" to "LongArray", "Double" to "DoubleArray", "Float" to "FloatArray",
-						"Short" to "ShortArray", "Byte" to "ByteArray", "Boolean" to "BooleanArray", "Char" to "CharArray",
-						// A .NET unsigned-element array -> Kotlin's SPECIALIZED unsigned primitive array (#53): System.Byte[]
-						// -> UByteArray (NOT Array<UByte>), consistent with the signed primitive arrays above.
-						"UByte" to "UByteArray", "UShort" to "UShortArray", "UInt" to "UIntArray", "ULong" to "ULongArray")[it]
-				}
+				// A .NET unsigned-element array -> Kotlin's SPECIALIZED unsigned primitive array (#53): System.Byte[]
+				// -> UByteArray (NOT Array<UByte>), consistent with the signed primitive arrays. Shared map (#144) so the
+				// injected type here and the `receiverClassifierClassId` disambiguation key agree.
+				val prim = (node.elem as? TypeNode.Fqn)?.takeIf { it.args == null }?.name?.let { PRIM_ARRAY_ELEM[it] }
 				val cid = if (prim != null) ClassId(FqName("kotlin"), Name.identifier(prim)) else ClassId(FqName("kotlin"), Name.identifier("Array"))
 				val sym = session.symbolProvider.getClassLikeSymbolByClassId(cid) ?: return bt.nullableAnyType.coneType
 				sym.constructType(if (prim != null) emptyArray() else arrayOf(coneOf(node.elem, owner, methodTps)), false)

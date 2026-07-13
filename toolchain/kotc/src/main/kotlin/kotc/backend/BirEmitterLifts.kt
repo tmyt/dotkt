@@ -397,7 +397,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		// the plain `owner:null` shape (the direct top-level ext-call `callStatic owner:null` in `call()`).
 		val injectedFileClass = if (fn.body == null)
 			(fn.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.let {
-				kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, fn.name), regularParams(fn).size)
+				kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, fn.name), regularParams(fn).size, injectedExtReceiverKey(fn))
 			} else null
 		val callE = if (injectedFileClass != null) {
 			// `__self` = the ext receiver, so it heads both the args and the shape/argTypes (matches the injected
@@ -517,7 +517,7 @@ internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFun
 	// top-level ext emits the plain `owner:null` shape. Only the receiver arg differs (`this.__recv` vs `__self`).
 	val injectedFileClass = if (fn.body == null)
 		(fn.parent as? org.jetbrains.kotlin.ir.declarations.IrPackageFragment)?.let {
-			kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, fn.name), regularParams(fn).size)
+			kotc.frontend.clrInjectedTopLevelFileClass(CallableId(it.packageFqName, fn.name), regularParams(fn).size, injectedExtReceiverKey(fn))
 		} else null
 	val callE = if (injectedFileClass != null) {
 		val extRecvParam = fn.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }

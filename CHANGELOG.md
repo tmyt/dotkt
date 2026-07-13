@@ -36,6 +36,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Two same-name/same-arity top-level extensions on DIFFERENT receiver types (parallel `*Extensions` static classes in
+  one namespace) now each bind to their OWN receiver's class — no silent mis-bind to the first candidate (#144).** A
+  facadegen-injected C#-origin `[Extension]` method surfaces as a Kotlin top-level extension fun keyed by
+  `CallableId(package, name)`. Two static classes in one namespace declaring a same-name, same-arity extension on
+  different receiver types (`FooExt.Tag(this Foo)` + `BarExt.Tag(this Bar)`, or `System.Linq` `Enumerable.Where` vs
+  `Queryable.Where`) both injected that one CallableId; kotc's `clrInjectedTopLevelFileClass` disambiguated candidates by
+  VALUE-PARAM ARITY ONLY, so a same-arity collision arbitrary-picked the first candidate → `bar.Tag()` silently bound to
+  `FooExt` (wrong static, wrong result). The disambiguation now keys on the resolved callee's extension-RECEIVER type,
+  identified by its classifier **ClassId** (`TopLevelSig.receiverKey` on the metadata side via `receiverClassifierClassId`,
+  the resolved `IrType.classId` on the backend side) — the same ClassId `coneOf` produced from the metadata, so the two
+  match by construction across facadegen's name vocabulary (a bare `String`, a namespace-less generic `Box`, a
+  primitive-array element — where a raw type-name compare would diverge). Receivers that share a classifier but differ
+  only in type args, or an `Any`/`ClrRef`/type-variable receiver, degrade to the pre-existing arity match (never a wrong
+  pick). New gate case `cases/il-csextrecv` (plain-class + primitive `this string`/`this int` receivers).
+
 - **An `open`/`override` instance method of a DotKt library consumed AS KOTLIN now dispatches virtually — no
   `KeyNotFoundException` / mis-dispatch when the call reaches ilemit un-reshaped (#139).** kotc's .NET-interop
   `callInstance` path (a facadegen-reinjected owner) emitted NO `virtual` flag. When bir2cir resolves the owner off
