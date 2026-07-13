@@ -265,17 +265,6 @@ static class BirTypeLowering
                 return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
-            case TypeNode.Oblivious ob:
-                // #157 — an NRT-OBLIVIOUS `T!` (a flexible/platform reference OR a facadegen .NET generic's un-annotated
-                // value-type arg) lowers to the BARE lowered inner in EVERY build — NEVER a `Nullable<T>` wrapper. It is a
-                // pure nullability ANNOTATION (NullableAttribute=0), not a container: the inner keeps THIS node's position
-                // (typeArg propagated, unlike Nullable which is a value-position container). Distinct from `T?`
-                // (TypeNode.Nullable): an explicit `Cell<Int?>` stays `Cell<Nullable<int32>>`; an oblivious `Cell<Int!>`
-                // (the inferred `Cell(40)` over a facadegen-injected `Cell<T>`) becomes `Cell<int32>`, so it matches the
-                // .NET member signatures (`Peek(Cell<int32>)`) — the SAME reified instantiation, no layout mismatch. ilemit
-                // has NO oblivious case, so the wrapper MUST NOT survive here. (kotc must emit this for `@FlexibleNullability`
-                // — see docs; until it does, no oblivious node reaches this pass and the case is inert.)
-                return LowerType(ob.Of, refBuild, force, typeArg);
             default:
                 return t;
         }

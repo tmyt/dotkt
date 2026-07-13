@@ -86,8 +86,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   oblivious type-VARIABLE in an INPUT/value-parameter position resolves to the BARE type variable (`Cell(40)` -> `Cell<Int>`,
   the value arg reified invariantly, matching the .NET member slot). The resolution is position-scoped: a `[MaybeNull] T`
   in an OUTPUT (return/getter) position stays flexible, so platform-type null-checkability is preserved (#143,
-  `ThreadLocal<T>.Value`). `oblivious` remains frontend-only — kotc still never emits a `TypeNode.Oblivious` to BIR (the
-  bir2cir `BirTypeLowering` Oblivious->bare-inner case stays a defensive no-op). Gate: `cases/il-genextval`.
+  `ThreadLocal<T>.Value`). `oblivious` remains frontend-only — kotc never emits a `TypeNode.Oblivious` to BIR, so the
+  earlier speculative bir2cir `BirTypeLowering` Oblivious->bare-inner lowering was removed as dead. Gate: `cases/il-genextval`.
 
 - **A delegate type-arg's nullability now survives into the injected Kotlin lambda param/return (#150).** facadegen
   built a delegate's `fn` node (`Action<T>`/`Func<T>`) with a plain `MapT` per type arg — no access to the member's
